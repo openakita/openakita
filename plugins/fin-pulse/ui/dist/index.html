@@ -21,13 +21,13 @@
   <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
   <style>
     /* ── Theme tokens ──
-       Clean white/black base; rose accent (#E86A7B) used only for
-       borders, tab underlines, icons, and button outlines. */
+       Clean white/black base; stock-market red accent (#D32F2F)
+       for borders, tab underlines, icons, and button outlines. */
     :root {
       --bg: #FFFFFF; --bg-card: #FFFFFF; --bg-hover: #F7F8FA;
       --text: #1a1a1a; --text-muted: #64748b; --text-dim: #94a3b8;
-      --primary: #E86A7B; --primary-hover: #D14D62;
-      --primary-soft: #FBCFD4;
+      --primary: #D32F2F; --primary-hover: #B71C1C;
+      --primary-soft: #FFCDD2;
       --success: #16a34a; --warning: #f59e0b; --danger: #ef4444;
       --border: #e2e8f0; --radius: 8px;
     }
@@ -35,6 +35,7 @@
       --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
       --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
       --border: #334155;
+      --primary: #EF5350; --primary-hover: #E53935; --primary-soft: #4a1a1a;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
@@ -142,7 +143,7 @@
     .seg-btn.active {
       color: var(--primary); background: var(--bg-card);
       border-color: var(--border);
-      box-shadow: 0 1px 3px rgba(232,106,123,.22);
+      box-shadow: 0 1px 3px rgba(211,47,47,.18);
     }
     /* ── Filter bar (horizontal sticky strip for Today tab) ── */
     .filter-bar {
@@ -172,7 +173,7 @@
       padding: 8px 10px; border: none; border-radius: 6px;
       background: transparent; color: var(--text); cursor: pointer; font-size: 13px;
     }
-    .ingest-split__menu button:hover { background: rgba(232,106,123,.12); color: var(--primary); }
+    .ingest-split__menu button:hover { background: rgba(211,47,47,.10); color: var(--primary); }
     .ingest-split__menu button[disabled] { opacity: .5; cursor: not-allowed; }
     /* ── Spinner icon ── */
     @keyframes fp-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
@@ -185,9 +186,9 @@
     .fp-progress {
       height: 3px; border-radius: 2px; overflow: hidden;
       background: linear-gradient(90deg,
-        rgba(232,106,123,.08) 0%,
-        rgba(232,106,123,.32) 50%,
-        rgba(232,106,123,.08) 100%);
+        rgba(211,47,47,.08) 0%,
+        rgba(211,47,47,.32) 50%,
+        rgba(211,47,47,.08) 100%);
       background-size: 400px 100%;
       animation: fp-shimmer 1.4s linear infinite;
     }
@@ -339,6 +340,81 @@
       padding: 18px; max-width: 360px;
     }
     .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    /* ── News card ── */
+    .news-card {
+      padding: 12px 0; border-bottom: 1px solid var(--border);
+      transition: background .12s;
+    }
+    .news-card:last-child { border-bottom: none; }
+    .news-card:hover { background: var(--bg-hover); margin: 0 -14px; padding: 12px 14px; border-radius: var(--radius); }
+    .news-card__header {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px;
+    }
+    .news-card__title {
+      font-size: 14px; font-weight: 500; color: var(--text);
+      text-decoration: none; display: block; word-break: break-word;
+      line-height: 1.5;
+    }
+    .news-card__title:hover { color: var(--primary); }
+    .news-card__summary {
+      font-size: 12px; color: var(--text-muted); margin-top: 4px;
+      line-height: 1.5; display: -webkit-box;
+      -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .news-card__footer {
+      display: flex; align-items: center; gap: 6px; margin-top: 8px; flex-wrap: wrap;
+    }
+    .news-card__time { font-size: 11px; color: var(--text-dim); }
+    .news-card__actions { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+    /* Source pill — colored by source */
+    .source-pill {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 500;
+      background: rgba(211,47,47,.08); color: #c62828; white-space: nowrap;
+    }
+    .source-pill--nn { background: rgba(245,158,11,.10); color: #b45309; }
+    .source-pill--rss { background: rgba(16,185,129,.10); color: #047857; }
+    .source-pill--direct { background: rgba(59,130,246,.10); color: #1d4ed8; }
+    /* Keyword tag */
+    .kw-tag {
+      display: inline-flex; padding: 1px 6px; border-radius: 4px;
+      font-size: 11px; font-weight: 500;
+      background: #eff6ff; color: #2563eb;
+    }
+    [data-theme="dark"] .kw-tag { background: rgba(59,130,246,.15); color: #60a5fa; }
+    /* AI score badge — color scales with score */
+    .ai-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 1px 8px; border-radius: 999px;
+      font-size: 11px; font-weight: 600;
+    }
+    .ai-badge--high { background: rgba(211,47,47,.10); color: #c62828; }
+    .ai-badge--mid { background: rgba(245,158,11,.10); color: #b45309; }
+    .ai-badge--low { background: var(--bg-hover); color: var(--text-muted); }
+    /* Keyword highlight */
+    mark.kw-hl { background: #FFF9C4; color: inherit; border-radius: 2px; padding: 0 1px; }
+    [data-theme="dark"] mark.kw-hl { background: rgba(255,235,59,.18); }
+    /* AI filter dialog overlay */
+    .ai-dialog-mask {
+      position: fixed; inset: 0; background: rgba(0,0,0,.35);
+      display: flex; align-items: center; justify-content: center; z-index: 999;
+    }
+    .ai-dialog {
+      background: var(--bg-card); color: var(--text);
+      border-radius: var(--radius); border: 1px solid var(--border);
+      padding: 20px; width: 380px; max-width: 90vw;
+    }
+    .ai-dialog__title {
+      font-size: 15px; font-weight: 600; color: var(--text);
+      margin-bottom: 14px; display: flex; align-items: center; gap: 6px;
+    }
+    .ai-dialog__title::before {
+      content: ""; width: 3px; height: 16px; background: var(--primary);
+      border-radius: 1px; display: inline-block;
+    }
+    .ai-dialog__field { margin-bottom: 12px; }
+    .ai-dialog__label { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 4px; }
+    .ai-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
     /* ── Collapsible ── */
     .coll { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; background: var(--bg-card); }
     .coll-head {
@@ -456,7 +532,7 @@ const I18N_DICT = {
   zh: {
     "app.title": "财经脉动",
     "app.subtitle": "Fin Pulse · 早午晚报 · 热点雷达 · Agent 对话",
-    "tabs.today": "今日资讯",
+    "tabs.today": "资讯",
     "tabs.digests": "早午晚报",
     "tabs.radar": "雷达预警",
     "tabs.ask": "Agent 对话",
@@ -482,11 +558,11 @@ const I18N_DICT = {
     "today.filters.sort.time": "按时间",
     "today.filters.sort.score": "按 AI 评分",
     "today.filters.reset": "重置",
-    "today.list.title": "今日新闻",
+    "today.list.title": "资讯",
     "today.list.empty": "没有命中当前筛选条件的新闻",
     "today.list.loading": "加载中…",
     "today.list.refresh": "刷新",
-    "today.list.ingest": "抓取全部数据源",
+    "today.list.ingest": "抓取全部",
     "today.list.copy": "复制",
     "today.list.copied": "已复制到剪贴板",
     "today.list.score": "AI {score}",
@@ -514,6 +590,27 @@ const I18N_DICT = {
     "today.drawer.via_reason.newsnow_invalid_source_id": "NewsNow 不支持此来源，已回退到直连",
     "today.drawer.via_reason.newsnow_http": "NewsNow 返回异常状态，已回退到直连",
     "today.drawer.via_reason.newsnow_error": "NewsNow 请求失败，已回退到直连",
+    "today.filters.keyword": "关键词",
+    "today.filters.keyword.placeholder": "搜索标题或摘要…",
+    "today.filters.ai": "AI 筛选",
+    "today.filters.ai.title": "AI 智能筛选",
+    "today.filters.ai.desc": "设置 AI 筛选条件，自动过滤不相关的资讯",
+    "today.filters.ai.minScore": "最低 AI 评分",
+    "today.filters.ai.keywords": "关键词规则（+必须 !排除）",
+    "today.filters.ai.keywords.placeholder": "+美联储 +降息\n!谣言\n特朗普 关税",
+    "today.filters.ai.sentiment": "情感倾向",
+    "today.filters.ai.sentiment.all": "全部",
+    "today.filters.ai.sentiment.positive": "积极",
+    "today.filters.ai.sentiment.negative": "消极",
+    "today.filters.ai.sentiment.neutral": "中性",
+    "today.filters.ai.apply": "应用筛选",
+    "today.filters.ai.clear": "清除 AI 筛选",
+    "today.filters.ai.active": "AI 筛选已激活",
+    "today.export": "导出",
+    "today.export.title": "导出 HTML 报表",
+    "today.export.done": "报表已下载",
+    "today.ingest.cooldown": "冷却中（{s}s）",
+    "today.list.ingest.all": "抓取全部",
     "digests.title": "早午晚报",
     "digests.hint": "点击右上方「早报 / 午报 / 晚报」即可生成对应时段的财经速报；已生成的会出现在下方卡片，可预览或一键再推送到 IM 通道。",
     "digests.run": "立即生成",
@@ -684,7 +781,7 @@ const I18N_DICT = {
   en: {
     "app.title": "Fin Pulse",
     "app.subtitle": "Daily Brief · Hot Radar · Ask News",
-    "tabs.today": "Today",
+    "tabs.today": "News",
     "tabs.digests": "Digests",
     "tabs.radar": "Radar",
     "tabs.ask": "Ask",
@@ -710,11 +807,11 @@ const I18N_DICT = {
     "today.filters.sort.time": "By time",
     "today.filters.sort.score": "By score",
     "today.filters.reset": "Reset",
-    "today.list.title": "Today's news",
+    "today.list.title": "News",
     "today.list.empty": "No articles match the current filters",
     "today.list.loading": "Loading…",
     "today.list.refresh": "Refresh",
-    "today.list.ingest": "Run ingest now",
+    "today.list.ingest": "Fetch all",
     "today.list.copy": "Copy",
     "today.list.copied": "Copied to clipboard",
     "today.list.score": "AI {score}",
@@ -742,6 +839,27 @@ const I18N_DICT = {
     "today.drawer.via_reason.newsnow_invalid_source_id": "NewsNow does not host this source — fell back to direct",
     "today.drawer.via_reason.newsnow_http": "NewsNow returned an unexpected HTTP status — fell back to direct",
     "today.drawer.via_reason.newsnow_error": "NewsNow request failed — fell back to direct",
+    "today.filters.keyword": "Keyword",
+    "today.filters.keyword.placeholder": "Search title or summary…",
+    "today.filters.ai": "AI Filter",
+    "today.filters.ai.title": "AI Smart Filter",
+    "today.filters.ai.desc": "Set AI filter criteria to automatically filter irrelevant news",
+    "today.filters.ai.minScore": "Min AI Score",
+    "today.filters.ai.keywords": "Keyword rules (+required !exclude)",
+    "today.filters.ai.keywords.placeholder": "+Federal Reserve +rate cut\n!rumour\nTrump tariff",
+    "today.filters.ai.sentiment": "Sentiment",
+    "today.filters.ai.sentiment.all": "All",
+    "today.filters.ai.sentiment.positive": "Positive",
+    "today.filters.ai.sentiment.negative": "Negative",
+    "today.filters.ai.sentiment.neutral": "Neutral",
+    "today.filters.ai.apply": "Apply filter",
+    "today.filters.ai.clear": "Clear AI filter",
+    "today.filters.ai.active": "AI filter active",
+    "today.export": "Export",
+    "today.export.title": "Export HTML report",
+    "today.export.done": "Report downloaded",
+    "today.ingest.cooldown": "Cooling down ({s}s)",
+    "today.list.ingest.all": "Fetch all",
     "digests.title": "Daily Briefs",
     "digests.hint": "Click Morning / Noon / Evening above to generate a brief for that slot. Generated briefs show up below — preview them or resend to any IM channel with one click.",
     "digests.run": "Generate now",
@@ -1422,6 +1540,139 @@ function IngestDrawer(props) {
   );
 }
 
+/* ── Keyword highlight helper ── */
+function highlightText(text, keyword) {
+  if (!keyword || !text) return text;
+  var lower = String(text).toLowerCase();
+  var kw = keyword.toLowerCase();
+  var idx = lower.indexOf(kw);
+  if (idx < 0) return text;
+  var parts = [];
+  var lastIdx = 0;
+  while (idx >= 0) {
+    if (idx > lastIdx) parts.push(text.substring(lastIdx, idx));
+    parts.push(<mark key={idx} className="kw-hl">{text.substring(idx, idx + kw.length)}</mark>);
+    lastIdx = idx + kw.length;
+    idx = lower.indexOf(kw, lastIdx);
+  }
+  if (lastIdx < text.length) parts.push(text.substring(lastIdx));
+  return parts;
+}
+
+/* ── Source pill class helper ── */
+function _sourcePillClass(source) {
+  if (!source) return "source-pill";
+  var kind = source.kind || "";
+  if (kind === "newsnow") return "source-pill source-pill--nn";
+  if (kind === "rss") return "source-pill source-pill--rss";
+  if (kind === "direct") return "source-pill source-pill--direct";
+  return "source-pill";
+}
+
+/* ── AI score badge class ── */
+function _aiBadgeClass(score) {
+  if (typeof score !== "number") return "ai-badge ai-badge--low";
+  if (score >= 7) return "ai-badge ai-badge--high";
+  if (score >= 4) return "ai-badge ai-badge--mid";
+  return "ai-badge ai-badge--low";
+}
+
+/* ── HTML report export ── */
+function exportHtmlReport(items, sourcesMap, filters, t) {
+  var now = new Date();
+  var dateStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+  var rows = items.map(function (it) {
+    var srcName = (sourcesMap[it.source_id] && sourcesMap[it.source_id].name) || it.source_id || "";
+    var score = (typeof it.ai_score === "number") ? it.ai_score.toFixed(1) : "-";
+    var tags = [];
+    try { tags = JSON.parse(it.ai_tags_json || "[]"); } catch (_) {}
+    return '<tr>' +
+      '<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666;white-space:nowrap">' + _escHtml(srcName) + '</td>' +
+      '<td style="padding:8px 12px;border-bottom:1px solid #eee"><a href="' + _escHtml(it.url || "") + '" target="_blank" style="color:#1a1a1a;text-decoration:none;font-weight:500">' + _escHtml(it.title || "") + '</a>' +
+      (it.summary ? '<div style="font-size:12px;color:#888;margin-top:4px">' + _escHtml(String(it.summary).slice(0, 200)) + '</div>' : '') +
+      (tags.length ? '<div style="margin-top:4px">' + tags.map(function (tg) { return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;background:#eff6ff;color:#2563eb;margin-right:4px">' + _escHtml(tg) + '</span>'; }).join("") + '</div>' : '') +
+      '</td>' +
+      '<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#888;white-space:nowrap">' + _escHtml(fmtDate(it.fetched_at)) + '</td>' +
+      '<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;text-align:center;font-weight:600;color:' + (parseFloat(score) >= 7 ? '#c62828' : parseFloat(score) >= 4 ? '#b45309' : '#888') + '">' + score + '</td>' +
+      '</tr>';
+  }).join("\n");
+  var filterDesc = (filters.source ? "Source: " + filters.source + " · " : "") +
+    "Window: " + filters.window + "h" +
+    (filters.keyword ? " · Keyword: " + filters.keyword : "");
+  var html = '<!DOCTYPE html>\n<html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' +
+    _escHtml("财经脉动资讯报表 · " + dateStr) +
+    '</title><style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;margin:0;padding:20px;background:#f5f5f5;color:#1a1a1a}' +
+    '.container{max-width:960px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);overflow:hidden}' +
+    '.header{background:linear-gradient(135deg,#D32F2F 0%,#B71C1C 100%);color:#fff;padding:24px 28px}' +
+    '.header h1{margin:0;font-size:22px;font-weight:700}.header p{margin:6px 0 0;font-size:13px;opacity:.85}' +
+    'table{width:100%;border-collapse:collapse}th{background:#fafafa;padding:10px 12px;font-size:12px;font-weight:600;color:#666;text-align:left;border-bottom:2px solid #eee}' +
+    '.footer{padding:16px 28px;font-size:11px;color:#aaa;text-align:center;border-top:1px solid #eee}' +
+    '</style></head><body><div class="container">' +
+    '<div class="header"><h1>财经脉动 · 资讯报表</h1><p>' + _escHtml(dateStr + " · " + filterDesc) + '</p></div>' +
+    '<table><thead><tr><th>来源</th><th>标题</th><th>时间</th><th>AI 分</th></tr></thead><tbody>' +
+    rows +
+    '</tbody></table>' +
+    '<div class="footer">Generated by Fin Pulse · ' + _escHtml(now.toISOString()) + '</div>' +
+    '</div></body></html>';
+  var blob = new Blob([html], {type: "text/html;charset=utf-8"});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = "finpulse-report-" + dateStr + ".html";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function _escHtml(s) {
+  return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/* ── AI Filter Dialog ── */
+function AIFilterDialog(props) {
+  var t = useT();
+  var [minScore, setMinScore] = useState(props.initialMinScore || 0);
+  var [keywords, setKeywords] = useState(props.initialKeywords || "");
+  var [sentiment, setSentiment] = useState(props.initialSentiment || "all");
+  return (
+    <div className="ai-dialog-mask" onClick={function (e) { if (e.target === e.currentTarget) props.onClose(); }}>
+      <div className="ai-dialog">
+        <div className="ai-dialog__title">{t("today.filters.ai.title")}</div>
+        <div style={{fontSize: 12, color: "var(--text-muted)", marginBottom: 14}}>{t("today.filters.ai.desc")}</div>
+        <div className="ai-dialog__field">
+          <div className="ai-dialog__label">{t("today.filters.ai.minScore")}</div>
+          <input className="input" type="number" min="0" max="10" step="0.5"
+                 style={{width: 100}} value={minScore}
+                 onChange={function (e) { setMinScore(parseFloat(e.target.value) || 0); }}/>
+        </div>
+        <div className="ai-dialog__field">
+          <div className="ai-dialog__label">{t("today.filters.ai.keywords")}</div>
+          <textarea className="input" rows="4" style={{resize: "vertical"}}
+                    placeholder={t("today.filters.ai.keywords.placeholder")}
+                    value={keywords}
+                    onChange={function (e) { setKeywords(e.target.value); }}/>
+        </div>
+        <div className="ai-dialog__field">
+          <div className="ai-dialog__label">{t("today.filters.ai.sentiment")}</div>
+          <div className="seg-group">
+            {["all", "positive", "negative", "neutral"].map(function (s) {
+              return <button key={s} type="button"
+                             className={"seg-btn " + (sentiment === s ? "active" : "")}
+                             onClick={function () { setSentiment(s); }}>
+                {t("today.filters.ai.sentiment." + s)}
+              </button>;
+            })}
+          </div>
+        </div>
+        <div className="ai-dialog__actions">
+          <button className="btn btn-sm" onClick={props.onClose}>{t("confirm.cancel")}</button>
+          <button className="btn btn-sm btn-primary"
+                  onClick={function () { props.onApply({minScore: minScore, keywords: keywords, sentiment: sentiment}); }}>
+            {t("today.filters.ai.apply")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Today Tab — live article feed ─────────────────────────────── */
 function TodayTab() {
   const t = useT();
@@ -1429,28 +1680,46 @@ function TodayTab() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState({ source: "", window: 24, minScore: 0, sort: "time" });
+  const [keyword, setKeyword] = useState("");
   const [ingesting, setIngesting] = useState(false);
   const [sources, setSources] = useState([]);
-  /* Most recent ingest summary (null = never ran). Shape:
-     {mode: "all"|"single", sourceId: string|null, totals, by_source, task_id}.
-     The inline drawer reads this; onIngest writes it. */
+  const [sourceConfig, setSourceConfig] = useState({});
   const [lastIngest, setLastIngest] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [aiFilterOpen, setAiFilterOpen] = useState(false);
+  const [aiFilter, setAiFilter] = useState(null);
 
-  /* Fetch the canonical source list once — keeps the dropdown in
-     sync with finpulse_models.SOURCE_DEFS and avoids id drift. */
+  /* Load sources + config for enabled state */
   useEffect(function () {
     let cancelled = false;
-    api("GET", "/sources").then(function (resp) {
-      if (cancelled || !resp || !resp.ok || !Array.isArray(resp.items)) return;
-      const mapped = resp.items.map(function (s) {
-        return { id: String(s.id || ""), name: String(s.display_zh || s.display_en || s.id || "") };
-      }).filter(function (s) { return s.id; });
-      if (mapped.length) setSources(mapped);
+    Promise.all([api("GET", "/sources"), api("GET", "/config")]).then(function (resps) {
+      if (cancelled) return;
+      var srcResp = resps[0], cfgResp = resps[1];
+      if (srcResp && srcResp.ok && Array.isArray(srcResp.items)) {
+        var mapped = srcResp.items.map(function (s) {
+          return {
+            id: String(s.id || ""), name: String(s.display_zh || s.display_en || s.id || ""),
+            kind: String(s.kind || ""), content_type: String(s.content_type || "news"),
+            default_enabled: !!s.default_enabled
+          };
+        }).filter(function (s) { return s.id && s.id !== "rss_generic"; });
+        setSources(mapped);
+      }
+      if (cfgResp && cfgResp.config) setSourceConfig(cfgResp.config);
     }).catch(function () {});
     return function () { cancelled = true; };
   }, []);
+
+  var enabledSources = sources.filter(function (s) {
+    var v = sourceConfig["source." + s.id + ".enabled"];
+    if (v === undefined || v === null || v === "") return s.default_enabled;
+    return v !== false && v !== "false";
+  });
+
+  var sourcesMap = {};
+  sources.forEach(function (s) { sourcesMap[s.id] = s; });
 
   const load = useCallback(async function () {
     setLoading(true);
@@ -1458,9 +1727,9 @@ function TodayTab() {
       const qs = {
         source_id: filters.source || undefined,
         since: filters.window ? hoursAgoISO(filters.window) : undefined,
-        min_score: filters.minScore > 0 ? filters.minScore : undefined,
+        min_score: (aiFilter && aiFilter.minScore > 0) ? aiFilter.minScore : (filters.minScore > 0 ? filters.minScore : undefined),
         sort: filters.sort || "time",
-        limit: 100,
+        limit: 200,
       };
       const query = Object.keys(qs)
         .filter(function (k) { return qs[k] !== undefined && qs[k] !== ""; })
@@ -1476,17 +1745,20 @@ function TodayTab() {
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, aiFilter]);
 
   useEffect(function () { load(); }, [load]);
-  /* The 8-second setInterval poll is intentionally gone — it masked
-     bugs in the ingest path (green toast + empty list) and consumed
-     resources. We refresh after every POST /ingest below, and the
-     user can click the in-card Refresh button at any time. */
+
+  /* Cooldown timer */
+  useEffect(function () {
+    if (cooldown <= 0) return;
+    var timer = setTimeout(function () { setCooldown(cooldown - 1); }, 1000);
+    return function () { clearTimeout(timer); };
+  }, [cooldown]);
 
   const runIngest = useCallback(async function (opts) {
     const single = !!(opts && opts.sourceId);
-    if (ingesting) return;
+    if (ingesting || cooldown > 0) return;
     setIngesting(true);
     setDrawerOpen(true);
     try {
@@ -1510,13 +1782,11 @@ function TodayTab() {
         reason: summary.reason || null,
         ok: !!(resp && resp.ok),
       });
-      /* Smart toast — choose colour + message based on the summary */
       const inserted = Number(totals.inserted || 0);
       const updated = Number(totals.updated || 0);
       const sourcesOk = Number(totals.sources_ok || 0);
       const sourcesTotal = Number(totals.sources_total || Object.keys(bySource).length || 0);
       const failed = Number(totals.failed_sources || 0);
-      const empty = Math.max(0, sourcesOk - _countNonEmpty(bySource));
       let level = "success", msg = "";
       if (summary.reason === "no_sources_enabled") {
         level = "warning";
@@ -1542,9 +1812,10 @@ function TodayTab() {
           empty: Math.max(0, sourcesTotal - sourcesOk - failed) });
       }
       window.oaToast({ level: level, message: msg });
+      setCooldown(30);
       load();
     } finally { setIngesting(false); }
-  }, [ingesting, load, t]);
+  }, [ingesting, cooldown, load, t]);
 
   const onIngestAll = useCallback(function () {
     setMenuOpen(false);
@@ -1559,17 +1830,79 @@ function TodayTab() {
 
   const onDismissDrawer = useCallback(function () { setDrawerOpen(false); }, []);
 
+  /* AI filter keyword matching (front-end) */
+  var aiKeywordTokens = [];
+  if (aiFilter && aiFilter.keywords) {
+    aiFilter.keywords.split("\n").forEach(function (line) {
+      line = line.trim();
+      if (!line) return;
+      if (line.startsWith("!")) return;
+      var word = line.replace(/^[+]/, "").trim();
+      if (word) aiKeywordTokens.push(word.toLowerCase());
+    });
+  }
+  var aiExcludeTokens = [];
+  if (aiFilter && aiFilter.keywords) {
+    aiFilter.keywords.split("\n").forEach(function (line) {
+      line = line.trim();
+      if (line.startsWith("!")) {
+        var w = line.substring(1).trim();
+        if (w) aiExcludeTokens.push(w.toLowerCase());
+      }
+    });
+  }
+
+  /* Filter items by keyword + AI filter */
+  var displayItems = items;
+  if (keyword) {
+    var kw = keyword.toLowerCase();
+    displayItems = displayItems.filter(function (it) {
+      return (it.title && it.title.toLowerCase().indexOf(kw) >= 0) ||
+             (it.summary && it.summary.toLowerCase().indexOf(kw) >= 0);
+    });
+  }
+  if (aiKeywordTokens.length) {
+    displayItems = displayItems.filter(function (it) {
+      var text = ((it.title || "") + " " + (it.summary || "")).toLowerCase();
+      return aiKeywordTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
+    });
+  }
+  if (aiExcludeTokens.length) {
+    displayItems = displayItems.filter(function (it) {
+      var text = ((it.title || "") + " " + (it.summary || "")).toLowerCase();
+      return !aiExcludeTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
+    });
+  }
+  if (aiFilter && aiFilter.sentiment && aiFilter.sentiment !== "all") {
+    displayItems = displayItems.filter(function (it) {
+      return it.sentiment === aiFilter.sentiment;
+    });
+  }
+
+  var onApplyAiFilter = useCallback(function (f) {
+    setAiFilter(f);
+    setAiFilterOpen(false);
+    if (f.minScore > 0) {
+      setFilters(function (prev) { return Object.assign({}, prev, {minScore: f.minScore}); });
+    }
+  }, []);
+
+  var onExport = useCallback(function () {
+    exportHtmlReport(displayItems, sourcesMap, Object.assign({}, filters, {keyword: keyword}), t);
+    window.oaToast({level: "success", message: t("today.export.done")});
+  }, [displayItems, sourcesMap, filters, keyword, t]);
+
   return (
     <div className="stack-layout">
-      {/* Filter bar — horizontal, always visible at the top */}
+      {/* Filter bar */}
       <div className="filter-bar">
         <div className="filter-bar__item">
           <span className="filter-bar__label">{t("today.filters.source")}</span>
-          <select className="input" style={{width: 150, padding: "6px 10px"}}
+          <select className="input" style={{width: 140, padding: "6px 10px"}}
                   value={filters.source}
                   onChange={function (e) { setFilters(Object.assign({}, filters, {source: e.target.value})); }}>
             <option value="">{t("today.filters.source.all")}</option>
-            {sources.map(function (s) { return <option key={s.id} value={s.id}>{s.name}</option>; })}
+            {enabledSources.map(function (s) { return <option key={s.id} value={s.id}>{s.name}</option>; })}
           </select>
         </div>
         <span className="filter-bar__sep"/>
@@ -1588,13 +1921,18 @@ function TodayTab() {
         </div>
         <span className="filter-bar__sep"/>
         <div className="filter-bar__item">
-          <span className="filter-bar__label">{t("today.filters.minScore")}</span>
-          <input className="input" type="number" min="0" max="10" step="0.5"
-                 style={{width: 76, padding: "6px 8px"}}
-                 value={filters.minScore}
-                 onChange={function (e) { setFilters(Object.assign({}, filters, {minScore: parseFloat(e.target.value) || 0})); }} />
+          <input className="input" type="text" style={{width: 160, padding: "6px 10px"}}
+                 placeholder={t("today.filters.keyword.placeholder")}
+                 value={keyword}
+                 onChange={function (e) { setKeyword(e.target.value); }}/>
         </div>
         <span className="filter-bar__sep"/>
+        <button className={"btn btn-sm" + (aiFilter ? " btn-primary" : "")} type="button"
+                onClick={function () { setAiFilterOpen(true); }}
+                title={aiFilter ? t("today.filters.ai.active") : ""}>
+          <Ico name="ai"/> {t("today.filters.ai")}
+        </button>
+        <span style={{flex: 1}}/>
         <div className="filter-bar__item">
           <span className="filter-bar__label">{t("today.filters.sortLabel")}</span>
           <div className="seg-group">
@@ -1608,26 +1946,26 @@ function TodayTab() {
             })}
           </div>
         </div>
-        <span style={{flex: 1}}/>
         <button className="btn btn-sm" type="button"
-                onClick={function () { setFilters({source: "", window: 24, minScore: 0, sort: "time"}); }}>
+                onClick={function () { setFilters({source: "", window: 24, minScore: 0, sort: "time"}); setKeyword(""); setAiFilter(null); }}>
           <Ico name="refresh"/> {t("today.filters.reset")}
         </button>
-        {/* Split ingest button — primary fires all sources; caret opens
-            a menu with the single-source action when a source is picked. */}
+        <button className="btn btn-sm" type="button" onClick={onExport} title={t("today.export.title")}>
+          <Ico name="save"/> {t("today.export")}
+        </button>
         <span className="ingest-split">
           <button className="btn btn-primary" type="button"
-                  disabled={ingesting}
+                  disabled={ingesting || cooldown > 0}
                   aria-busy={ingesting ? "true" : "false"}
                   onClick={onIngestAll}>
             {ingesting
               ? <span className="fp-spin"><Ico name="refresh"/></span>
               : <Ico name="play"/>}
             {" "}
-            {ingesting ? t("today.ingest.busy") : t("today.list.ingest")}
+            {ingesting ? t("today.ingest.busy") : cooldown > 0 ? tfmt(t("today.ingest.cooldown"), {s: cooldown}) : t("today.list.ingest.all")}
           </button>
           <button className="btn btn-primary btn--caret" type="button"
-                  disabled={ingesting}
+                  disabled={ingesting || cooldown > 0}
                   title={t("today.list.ingest.more")}
                   onClick={function () { setMenuOpen(!menuOpen); }}>
             <span style={{fontSize: 10}}>▾</span>
@@ -1635,32 +1973,44 @@ function TodayTab() {
           {menuOpen && (
             <div className="ingest-split__menu"
                  onMouseLeave={function () { setMenuOpen(false); }}>
-              <button type="button" disabled={!filters.source || ingesting}
-                      onClick={onIngestCurrent}>
-                {filters.source
-                  ? tfmt(t("today.drawer.source_single"), {source: _sourceName(sources, filters.source)})
-                  : t("today.list.ingest.current")}
-              </button>
+              {enabledSources.map(function (s) {
+                return (
+                  <button key={s.id} type="button"
+                          disabled={ingesting || cooldown > 0}
+                          onClick={function () { setMenuOpen(false); runIngest({sourceId: s.id}); }}>
+                    {s.name}
+                  </button>
+                );
+              })}
             </div>
           )}
         </span>
       </div>
 
+      {/* AI filter active indicator */}
+      {aiFilter && (
+        <div style={{display: "flex", alignItems: "center", gap: 8, padding: "4px 0"}}>
+          <span className="api-pill" style={{background: "rgba(211,47,47,.10)", color: "var(--primary)"}}>
+            <Ico name="ai"/> {t("today.filters.ai.active")}
+          </span>
+          <button className="btn btn-sm" onClick={function () { setAiFilter(null); }}>
+            {t("today.filters.ai.clear")}
+          </button>
+        </div>
+      )}
+
       {ingesting && <div className="fp-progress" aria-hidden="true"/>}
 
-      {/* Inline ingest-result drawer — appears right under the filter
-          bar after each run so users learn, at a glance, what actually
-          landed (and why empty runs were empty). */}
       {drawerOpen && lastIngest && (
-        <IngestDrawer summary={lastIngest} sources={sources}
+        <IngestDrawer summary={lastIngest} sources={sources.map(function (s) { return {id: s.id, name: s.name}; })}
                       onDismiss={onDismissDrawer} />
       )}
 
-      {/* News list — fills the remaining height */}
+      {/* News list */}
       <div className="card grow">
         <div className="oa-section-title">
           {t("today.list.title")}
-          <span className="oa-section-title__count">{total}</span>
+          <span className="oa-section-title__count">{displayItems.length}{total > displayItems.length ? " / " + total : ""}</span>
           <span className="oa-section-title__actions">
             <button className="btn btn-sm" type="button" onClick={load}>
               <Ico name="refresh"/> {loading ? t("today.list.loading") : t("today.list.refresh")}
@@ -1669,46 +2019,62 @@ function TodayTab() {
         </div>
         <div className="card-body">
           {loading && items.length === 0 && <div className="empty">{t("today.list.loading")}</div>}
-          {!loading && items.length === 0 && <div className="empty">{t("today.list.empty")}</div>}
-          {items.map(function (it) {
-            const score = (typeof it.ai_score === "number") ? it.ai_score.toFixed(1) : "-";
+          {!loading && displayItems.length === 0 && <div className="empty">{t("today.list.empty")}</div>}
+          {displayItems.map(function (it) {
+            var score = (typeof it.ai_score === "number") ? it.ai_score.toFixed(1) : "-";
+            var srcDef = sourcesMap[it.source_id];
+            var srcName = srcDef ? srcDef.name : (it.source_id || "");
+            var tags = [];
+            try { tags = JSON.parse(it.ai_tags_json || "[]"); } catch (_) {}
             return (
-              <div key={it.id}
-                   style={{padding: "10px 0", borderBottom: "1px solid var(--border)"}}>
-                <div style={{display: "flex", alignItems: "flex-start", gap: 8}}>
-                  <span className="api-pill" style={{flexShrink: 0}} title="ai score">
-                    {tfmt(t("today.list.score"), {score: score})}
+              <div key={it.id} className="news-card">
+                <div className="news-card__header">
+                  <span className={_sourcePillClass(srcDef)}>{srcName}</span>
+                  {srcDef && <ContentTypePill type={srcDef.content_type}/>}
+                  <span className="news-card__time">{fmtDate(it.fetched_at)}</span>
+                  <span className="news-card__actions">
+                    <button className="btn btn-sm"
+                            onClick={function () {
+                              copyText(it.title + "\n" + it.url);
+                              window.oaToast({level: "success", message: t("today.list.copied")});
+                            }}>
+                      <Ico name="copy"/>
+                    </button>
                   </span>
-                  <div style={{flex: 1, minWidth: 0}}>
-                    <a href={it.url} target="_blank" rel="noopener noreferrer"
-                       style={{color: "var(--text)", fontSize: 14, fontWeight: 500, textDecoration: "none", display: "block", wordBreak: "break-word"}}>
-                      {it.title}
-                    </a>
-                    <div style={{display: "flex", gap: 8, fontSize: 11, color: "var(--text-muted)", marginTop: 4}}>
-                      <span>{it.source_id}</span>
-                      <span>·</span>
-                      <span>{fmtDate(it.fetched_at)}</span>
-                    </div>
-                    {it.summary ? (
-                      <div style={{fontSize: 12, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.5}}>
-                        {String(it.summary).slice(0, 220)}
-                      </div>
-                    ) : null}
+                </div>
+                <a href={it.url} target="_blank" rel="noopener noreferrer" className="news-card__title">
+                  {keyword ? highlightText(it.title, keyword) : it.title}
+                </a>
+                {it.summary ? (
+                  <div className="news-card__summary">
+                    {keyword ? highlightText(String(it.summary).slice(0, 300), keyword) : String(it.summary).slice(0, 300)}
                   </div>
-                  <button className="btn btn-sm"
-                          style={{flexShrink: 0}}
-                          onClick={function () {
-                            copyText(it.title + "\n" + it.url);
-                            window.oaToast({level: "success", message: _i18n.t("today.list.copied")});
-                          }}>
-                    <Ico name="copy"/> {t("today.list.copy")}
-                  </button>
+                ) : null}
+                <div className="news-card__footer">
+                  {tags.map(function (tg, i) {
+                    return <span key={i} className="kw-tag">{tg}</span>;
+                  })}
+                  <span style={{flex: 1}}/>
+                  <span className={_aiBadgeClass(it.ai_score)}>
+                    AI {score}
+                  </span>
                 </div>
               </div>
             );
           })}
         </div>
       </div>
+
+      {/* AI Filter Dialog */}
+      {aiFilterOpen && (
+        <AIFilterDialog
+          initialMinScore={aiFilter ? aiFilter.minScore : filters.minScore}
+          initialKeywords={aiFilter ? aiFilter.keywords : ""}
+          initialSentiment={aiFilter ? aiFilter.sentiment : "all"}
+          onApply={onApplyAiFilter}
+          onClose={function () { setAiFilterOpen(false); }}
+        />
+      )}
     </div>
   );
 }
