@@ -556,7 +556,66 @@ class TestConfirmationMode:
         engine = PolicyEngine(config)
         result = engine.assert_tool_allowed("run_shell", {"command": "rm -rf /tmp/x"})
         assert result.decision == PolicyDecision.ALLOW
-        assert result.metadata.get("risk_level") == "high"
+        assert result.metadata.get("trust_mode") is True
+
+    def test_yolo_mode_allows_unknown_path_write(self, tmp_path):
+        config = SecurityConfig(
+            enabled=True,
+            zones=ZonePolicyConfig(
+                workspace=[str(tmp_path / "workspace")],
+                protected=[str(tmp_path / "protected")],
+                forbidden=[str(tmp_path / "forbidden")],
+                default_zone=Zone.WORKSPACE,
+            ),
+            confirmation=ConfirmationConfig(mode="yolo"),
+        )
+        engine = PolicyEngine(config)
+        result = engine.assert_tool_allowed("write_file", {"path": str(tmp_path / "other" / "a.txt")})
+        assert result.decision == PolicyDecision.ALLOW
+        assert result.metadata.get("trust_mode") is True
+
+    def test_yolo_mode_denies_protected_write(self, tmp_path):
+        protected = tmp_path / "protected"
+        config = SecurityConfig(
+            enabled=True,
+            zones=ZonePolicyConfig(
+                protected=[str(protected)],
+                forbidden=[],
+                default_zone=Zone.WORKSPACE,
+            ),
+            confirmation=ConfirmationConfig(mode="yolo"),
+        )
+        engine = PolicyEngine(config)
+        result = engine.assert_tool_allowed("write_file", {"path": str(protected / "sys.txt")})
+        assert result.decision == PolicyDecision.DENY
+        assert result.policy_name == "BaselineProtection"
+
+    def test_yolo_mode_denies_forbidden_read(self, tmp_path):
+        forbidden = tmp_path / "secrets"
+        config = SecurityConfig(
+            enabled=True,
+            zones=ZonePolicyConfig(
+                protected=[],
+                forbidden=[str(forbidden)],
+                default_zone=Zone.WORKSPACE,
+            ),
+            confirmation=ConfirmationConfig(mode="yolo"),
+        )
+        engine = PolicyEngine(config)
+        result = engine.assert_tool_allowed("read_file", {"path": str(forbidden / "id_rsa")})
+        assert result.decision == PolicyDecision.DENY
+        assert result.policy_name == "BaselineProtection"
+
+    def test_yolo_mode_allows_ordinary_shell_without_confirmation(self):
+        config = SecurityConfig(
+            enabled=True,
+            confirmation=ConfirmationConfig(mode="yolo"),
+            command_patterns=CommandPatternConfig(blocked_commands=[]),
+        )
+        engine = PolicyEngine(config)
+        result = engine.assert_tool_allowed("run_shell", {"command": "pip install requests"})
+        assert result.decision == PolicyDecision.ALLOW
+        assert result.metadata.get("trust_mode") is True
 
     def test_cautious_mode_confirms_medium(self):
         config = SecurityConfig(

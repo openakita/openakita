@@ -28,15 +28,15 @@ security:
     - C:/Windows/System32/config/**
     - /etc/shadow
     - /etc/gshadow
-    default_zone: controlled
+    default_zone: workspace
   confirmation:
     enabled: true
-    mode: smart
+    mode: yolo
     timeout_seconds: 60
     default_on_timeout: deny
     confirm_ttl: 120.0
   command_patterns:
-    enabled: true
+    enabled: false
     custom_critical: []
     custom_high: []
     excluded_patterns: []
@@ -55,7 +55,7 @@ security:
     max_snapshots: 50
     snapshot_dir: data/checkpoints
   self_protection:
-    enabled: true
+    enabled: false
     protected_dirs:
     - data/
     - identity/
@@ -66,7 +66,7 @@ security:
     death_switch_threshold: 3
     death_switch_total_multiplier: 3
   sandbox:
-    enabled: true
+    enabled: false
     backend: auto
     sandbox_risk_levels:
     - HIGH

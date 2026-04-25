@@ -193,7 +193,7 @@ class SecurityZonesUpdate(BaseModel):
     controlled: list[str] = []
     protected: list[str] = []
     forbidden: list[str] = []
-    default_zone: str = "controlled"
+    default_zone: str = "workspace"
 
 
 class SecurityCommandsUpdate(BaseModel):
@@ -213,6 +213,56 @@ class SecuritySandboxUpdate(BaseModel):
 class SecurityConfirmRequest(BaseModel):
     confirm_id: str
     decision: str  # allow_once | allow_session | allow_always | deny | sandbox (legacy: allow)
+
+
+def _normalize_permission_mode(mode: str) -> str:
+    """Normalize product/user-facing mode names to the existing backend modes."""
+    normalized = (mode or "yolo").strip().lower()
+    if normalized == "trust":
+        normalized = "yolo"
+    if normalized not in ("cautious", "smart", "yolo"):
+        normalized = "yolo"
+    return normalized
+
+
+def _permission_label(mode: str) -> str:
+    return "trust" if _normalize_permission_mode(mode) == "yolo" else mode
+
+
+def _mode_from_security(sec: dict[str, Any] | None) -> str:
+    conf = (sec or {}).get("confirmation", {})
+    mode = conf.get("mode")
+    if mode:
+        return _normalize_permission_mode(str(mode))
+    if conf.get("auto_confirm") is True:
+        return "yolo"
+    return "smart" if sec else "yolo"
+
+
+def _apply_permission_mode_defaults(sec: dict[str, Any], mode: str) -> None:
+    """Synchronize high-level permission mode with granular security defaults."""
+    mode = _normalize_permission_mode(mode)
+
+    conf = sec.setdefault("confirmation", {})
+    conf["mode"] = mode
+    conf.pop("auto_confirm", None)
+
+    zones = sec.setdefault("zones", {})
+    if mode == "yolo":
+        zones["default_zone"] = "workspace"
+        sec.setdefault("sandbox", {})["enabled"] = False
+        sec.setdefault("self_protection", {})["enabled"] = False
+        sec.setdefault("command_patterns", {})["enabled"] = False
+    elif mode == "smart":
+        zones["default_zone"] = "controlled"
+        sec.setdefault("sandbox", {})["enabled"] = True
+        sec.setdefault("self_protection", {})["enabled"] = True
+        sec.setdefault("command_patterns", {})["enabled"] = True
+    else:
+        zones["default_zone"] = "protected"
+        sec.setdefault("sandbox", {})["enabled"] = True
+        sec.setdefault("self_protection", {})["enabled"] = True
+        sec.setdefault("command_patterns", {})["enabled"] = True
 
 
 # ─── Routes ────────────────────────────────────────────────────────────
@@ -1069,13 +1119,15 @@ async def read_security_zones():
     from openakita.core.policy import _default_protected_paths, _default_forbidden_paths
 
     data = _read_policies_yaml() or {}
-    zones = data.get("security", {}).get("zones", {})
+    sec = data.get("security", {})
+    mode = _mode_from_security(sec)
+    zones = sec.get("zones", {})
     return {
         "workspace": zones.get("workspace", []),
         "controlled": zones.get("controlled", []),
         "protected": zones.get("protected") if zones.get("protected") is not None else _default_protected_paths(),
         "forbidden": zones.get("forbidden") if zones.get("forbidden") is not None else _default_forbidden_paths(),
-        "default_zone": zones.get("default_zone", "protected"),
+        "default_zone": zones.get("default_zone", "workspace" if mode == "yolo" else "controlled"),
     }
 
 
@@ -1152,9 +1204,11 @@ async def write_security_commands(body: SecurityCommandsUpdate):
 async def read_security_sandbox():
     """Read sandbox configuration."""
     data = _read_policies_yaml() or {}
-    sb = data.get("security", {}).get("sandbox", {})
+    sec = data.get("security", {})
+    mode = _mode_from_security(sec)
+    sb = sec.get("sandbox", {})
     return {
-        "enabled": sb.get("enabled", True),
+        "enabled": sb.get("enabled", mode != "yolo"),
         "backend": sb.get("backend", "auto"),
         "sandbox_risk_levels": sb.get("sandbox_risk_levels", ["HIGH"]),
         "exempt_commands": sb.get("exempt_commands", []),
@@ -1199,11 +1253,11 @@ async def read_permission_mode():
         from openakita.core.policy import get_policy_engine
 
         pe = get_policy_engine()
-        mode = getattr(pe, "_frontend_mode", "smart")
-        return {"mode": mode}
+        mode = _normalize_permission_mode(getattr(pe, "_frontend_mode", "yolo"))
+        return {"mode": mode, "label": _permission_label(mode)}
     except Exception as e:
         logger.debug(f"[Config API] permission-mode read fallback: {e}")
-        return {"mode": "smart"}
+        return {"mode": "yolo", "label": "trust"}
 
 
 class _PermissionModeBody(BaseModel):
@@ -1213,29 +1267,24 @@ class _PermissionModeBody(BaseModel):
 @router.post("/api/config/permission-mode")
 async def write_permission_mode(body: _PermissionModeBody):
     """设置安全模式并持久化到 YAML。"""
-    mode = body.mode
-    # accept legacy "trust" as alias for "yolo"
-    if mode == "trust":
-        mode = "yolo"
+    mode = _normalize_permission_mode(body.mode)
     if mode not in ("cautious", "smart", "yolo"):
         return {"status": "error", "message": f"无效的安全模式: {mode}"}
     try:
         from openakita.core.policy import get_policy_engine
+        from openakita.core.policy import reset_policy_engine
 
-        pe = get_policy_engine()
-        pe._frontend_mode = mode
-        pe._config.confirmation.mode = mode
-        pe._config.confirmation.auto_confirm = mode == "yolo"
         # Persist to YAML
         data = _read_policies_yaml()
         if data is not None:
             sec = data.setdefault("security", {})
-            conf = sec.setdefault("confirmation", {})
-            conf["mode"] = mode
-            conf.pop("auto_confirm", None)
+            _apply_permission_mode_defaults(sec, mode)
             _write_policies_yaml(data)
+            reset_policy_engine()
+        pe = get_policy_engine()
+        pe._frontend_mode = mode
         logger.info(f"[Config API] Permission mode set to: {mode}")
-        return {"status": "ok", "mode": mode}
+        return {"status": "ok", "mode": mode, "label": _permission_label(mode)}
     except Exception as e:
         logger.warning(f"[Config API] permission-mode write error: {e}")
         return {"status": "error", "message": str(e)}
@@ -1328,14 +1377,14 @@ async def read_security_confirmation():
     data = _read_policies_yaml()
     if data is None:
         return {
-            "mode": "smart",
+            "mode": "yolo",
             "timeout_seconds": 60,
             "default_on_timeout": "deny",
             "confirm_ttl": 120,
         }
     c = data.get("security", {}).get("confirmation", {})
     return {
-        "mode": c.get("mode", "smart"),
+        "mode": c.get("mode", _mode_from_security(data.get("security", {}))),
         "timeout_seconds": c.get("timeout_seconds", 60),
         "default_on_timeout": c.get("default_on_timeout", "deny"),
         "confirm_ttl": c.get("confirm_ttl", 120),
@@ -1358,11 +1407,11 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
     sec = data.setdefault("security", {})
     conf = sec.setdefault("confirmation", {})
     if body.mode is not None:
-        m = "yolo" if body.mode == "trust" else body.mode
+        m = _normalize_permission_mode(body.mode)
         if m not in ("cautious", "smart", "yolo"):
             return {"status": "error", "message": f"无效 mode: {body.mode}"}
-        conf["mode"] = m
-        conf.pop("auto_confirm", None)
+        _apply_permission_mode_defaults(sec, m)
+        conf = sec.setdefault("confirmation", {})
     if body.timeout_seconds is not None:
         conf["timeout_seconds"] = body.timeout_seconds
     if body.default_on_timeout is not None:
@@ -1389,7 +1438,7 @@ async def read_self_protection():
     data = _read_policies_yaml()
     if data is None:
         return {
-            "enabled": True,
+            "enabled": False,
             "protected_dirs": _default_protected_dirs,
             "death_switch_threshold": 3,
             "death_switch_total_multiplier": 3,
@@ -1397,7 +1446,9 @@ async def read_self_protection():
             "audit_path": "",
             "readonly_mode": False,
         }
-    sp = data.get("security", {}).get("self_protection", {})
+    sec = data.get("security", {})
+    mode = _mode_from_security(sec)
+    sp = sec.get("self_protection", {})
     try:
         from openakita.core.policy import get_policy_engine
 
@@ -1406,7 +1457,7 @@ async def read_self_protection():
     except Exception:
         readonly = False
     return {
-        "enabled": sp.get("enabled", True),
+        "enabled": sp.get("enabled", mode != "yolo"),
         "protected_dirs": sp.get("protected_dirs") if sp.get("protected_dirs") is not None else _default_protected_dirs,
         "death_switch_threshold": sp.get("death_switch_threshold", 3),
         "death_switch_total_multiplier": sp.get("death_switch_total_multiplier", 3),

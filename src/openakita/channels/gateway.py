@@ -4311,18 +4311,28 @@ class MessageGateway:
             f"⚠️ **安全确认**\n\n"
             f"工具: `{tool_name}`\n"
             f"风险等级: **{risk_level}**\n"
+            f"确认码: `{confirm_id[-4:] if confirm_id else '----'}`\n"
             f"原因: {reason}\n\n"
-            f"请回复 **允许** / **拒绝** / **会话允许** / **沙箱**"
+            f"请回复 **允许 {confirm_id[-4:] if confirm_id else '----'}** / "
+            f"**会话允许 {confirm_id[-4:] if confirm_id else '----'}** / "
+            f"**始终允许 {confirm_id[-4:] if confirm_id else '----'}** / "
+            f"**拒绝 {confirm_id[-4:] if confirm_id else '----'}** / "
+            f"**沙箱 {confirm_id[-4:] if confirm_id else '----'}**"
         )
 
         if hasattr(adapter, "build_simple_card") and hasattr(adapter, "send_card"):
             card = adapter.build_simple_card(
                 title=f"⚠️ 安全确认 — {risk_level}",
-                content=(f"**工具**: {tool_name}\n**原因**: {reason}"),
+                content=(
+                    f"**工具**: {tool_name}\n"
+                    f"**确认码**: {confirm_id[-4:] if confirm_id else '----'}\n"
+                    f"**原因**: {reason}"
+                ),
                 buttons=[
                     {"text": "✅ 允许", "value": {"action": "security_allow", "confirm_id": confirm_id}},
                     {"text": "❌ 拒绝", "value": {"action": "security_deny", "confirm_id": confirm_id}},
                     {"text": "本次会话允许", "value": {"action": "security_allow_session", "confirm_id": confirm_id}},
+                    {"text": "始终允许", "value": {"action": "security_allow_always", "confirm_id": confirm_id}},
                     {"text": "沙箱执行", "value": {"action": "security_sandbox", "confirm_id": confirm_id}},
                 ],
             )
@@ -4360,6 +4370,9 @@ class MessageGateway:
         confirm_id = (event.get("id") or "") or ""
         timeout = float(session.get_metadata("security_timeout") or 120)
         pe = get_policy_engine()
+        if getattr(pe, "_is_trust_mode", lambda: False)():
+            logger.debug("[Security] Skip IM security confirmation in trust mode")
+            return
 
         im_adapter = self._adapters.get(session.channel)
         interactive_attempt = bool(
@@ -4400,15 +4413,26 @@ class MessageGateway:
         except TimeoutError:
             text = ""
 
+        code = confirm_id[-4:].lower() if confirm_id else ""
+        original_user = getattr(message, "user_id", "") or ""
+        reply_user = getattr(getattr(reply_msg, "message", None), "user_id", "") if "reply_msg" in locals() else ""
+        if original_user and reply_user and reply_user != original_user:
+            logger.warning("[Security] Ignored IM confirmation from a different user")
+            text = ""
+        if code and code not in text:
+            text = ""
+
         decision = "deny"
-        if text in ("允许", "allow", "yes", "y", "allow_once"):
+        tokens = text.split()
+        action = tokens[0] if tokens else ""
+        if action in ("允许", "allow", "yes", "y", "allow_once"):
             decision = "allow_once"
-        elif text in ("始终允许", "allow_always", "always"):
+        elif action in ("始终允许", "allow_always", "always"):
             decision = "allow_always"
-        elif text in ("会话允许", "allow_session", "session"):
+        elif action in ("会话允许", "allow_session", "session"):
             decision = "allow_session"
         # 兼容两种字形：交互卡片按钮文案是"沙箱执行"，历史上也出现过"沙盒"。
-        elif text in ("沙箱", "沙箱执行", "沙盒", "沙盒执行", "sandbox"):
+        elif action in ("沙箱", "沙箱执行", "沙盒", "沙盒执行", "sandbox"):
             decision = "sandbox"
 
         if confirm_id:

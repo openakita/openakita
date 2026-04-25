@@ -103,6 +103,7 @@ type AllowlistData = {
 };
 
 type TabId = "zones" | "commands" | "sandbox" | "audit" | "checkpoints" | "confirmation" | "selfprotection";
+type PermissionMode = "yolo" | "smart" | "cautious";
 
 export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityViewProps) {
   const { t } = useTranslation();
@@ -116,6 +117,8 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   const [confirmConfig, setConfirmConfig] = useState<ConfirmConfig>({ mode: "smart", timeout_seconds: 60, default_on_timeout: "deny", confirm_ttl: 120 });
   const [selfProtect, setSelfProtect] = useState<SelfProtectConfig>({ enabled: true, protected_dirs: ["data/", "identity/", "logs/", "src/"], death_switch_threshold: 3, death_switch_total_multiplier: 3, audit_to_file: true, audit_path: "", readonly_mode: false });
   const [allowlist, setAllowlist] = useState<AllowlistData>({ commands: [], tools: [] });
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("yolo");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const api = useCallback(async (path: string, method = "GET", body?: unknown) => {
@@ -131,7 +134,8 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   const load = useCallback(async () => {
     if (!serviceRunning) return;
     try {
-      const [zRes, cRes, sRes, cfRes, spRes, alRes] = await Promise.all([
+      const [modeRes, zRes, cRes, sRes, cfRes, spRes, alRes] = await Promise.all([
+        api("/api/config/permission-mode"),
         api("/api/config/security/zones"),
         api("/api/config/security/commands"),
         api("/api/config/security/sandbox"),
@@ -139,6 +143,8 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
         api("/api/config/security/self-protection"),
         api("/api/config/security/allowlist"),
       ]);
+      const m = modeRes?.mode === "trust" ? "yolo" : modeRes?.mode;
+      if (m === "yolo" || m === "smart" || m === "cautious") setPermissionMode(m);
       if (zRes && Array.isArray(zRes.workspace)) setZones(zRes);
       if (cRes && Array.isArray(cRes.blocked_commands)) setCommands(cRes);
       if (sRes && typeof sRes.enabled === "boolean") setSandbox(sRes);
@@ -190,6 +196,20 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     setSaving(false);
   };
 
+  const selectPermissionMode = async (mode: PermissionMode) => {
+    setPermissionMode(mode);
+    setSaving(true);
+    try {
+      await api("/api/config/permission-mode", "POST", { mode });
+      toast.success(t("security.permissionModeSaved", "安全模式已更新"));
+      await load();
+      if (mode !== "yolo") setShowAdvanced(true);
+    } catch {
+      toast.error(t("security.saveFailed"));
+    }
+    setSaving(false);
+  };
+
   const rewindCheckpoint = async (id: string) => {
     if (!confirm(t("security.rewindConfirm", { id }))) return;
     try {
@@ -233,6 +253,24 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     { id: "audit", labelKey: "security.audit" },
     { id: "checkpoints", labelKey: "security.checkpoints" },
   ];
+  const advancedVisible = permissionMode !== "yolo" || showAdvanced;
+  const MODE_CARDS: Array<{ id: PermissionMode; title: string; desc: string }> = [
+    {
+      id: "yolo",
+      title: t("security.modeTrustTitle", "信任模式"),
+      desc: t("security.modeTrustCardDesc", "默认推荐。仅保护系统敏感目录和密钥目录，其他操作不打扰。"),
+    },
+    {
+      id: "smart",
+      title: t("security.modeProtectTitle", "保护模式"),
+      desc: t("security.modeProtectCardDesc", "对高风险命令、受控目录和沙箱执行进行确认或拦截。"),
+    },
+    {
+      id: "cautious",
+      title: t("security.modeStrictTitle", "严格模式"),
+      desc: t("security.modeStrictCardDesc", "适合企业或高风险环境，策略更保守。"),
+    },
+  ];
 
   return (
     <div className="mx-auto max-w-[1080px] space-y-5 px-6 py-5">
@@ -248,6 +286,50 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
         </div>
       </div>
 
+      {/* Mode switch */}
+      <Card className="border-border/50 shadow-sm">
+        <CardHeader className="px-5 py-4 pb-2">
+          <CardTitle className="text-sm font-semibold">{t("security.permissionMode", "安全模式")}</CardTitle>
+        </CardHeader>
+        <CardContent className="px-5 pb-5 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {MODE_CARDS.map((mode) => {
+              const active = permissionMode === mode.id;
+              return (
+                <button
+                  key={mode.id}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => selectPermissionMode(mode.id)}
+                  className={cn(
+                    "rounded-lg border p-4 text-left transition-colors",
+                    active ? "border-primary bg-primary/10" : "border-border/60 hover:bg-muted/40",
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">{mode.title}</span>
+                    {active && <Badge variant="secondary">{t("security.current", "当前")}</Badge>}
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{mode.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+          {permissionMode === "yolo" && (
+            <div className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 px-4 py-3">
+              <p className="text-xs text-muted-foreground">
+                {t("security.trustModeAdvancedHint", "当前为默认无感体验。下方细项属于高级设置，通常无需调整。")}
+              </p>
+              <Button variant="outline" size="sm" onClick={() => setShowAdvanced((v) => !v)}>
+                {showAdvanced ? t("security.hideAdvanced", "收起高级设置") : t("security.showAdvanced", "显示高级设置")}
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {advancedVisible && (
+        <>
       {/* Tab bar */}
       <div className="flex items-center justify-between overflow-x-auto flex-shrink-0">
         <ToggleGroup
@@ -677,6 +759,8 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
             )}
           </CardContent>
         </Card>
+      )}
+        </>
       )}
     </div>
   );

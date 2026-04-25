@@ -3070,6 +3070,7 @@ class ReasoningEngine:
                     if ask_user_calls:
                         # 先执行非 ask_user 工具
                         tool_results_for_msg: list[dict] = []
+                        _security_confirm_interrupted_ask = False
                         for tc in other_tool_calls:
                             t_name = self._tool_executor.canonicalize_tool_name(
                                 tc.get("name", "unknown")
@@ -3112,7 +3113,7 @@ class ReasoningEngine:
                                 {"status": "tool_execution", "tool_name": t_name},
                             )
                             # PolicyEngine 检查
-                            from .policy import PolicyDecision, get_policy_engine
+                            from .policy import PolicyDecision, PolicyResult, get_policy_engine
 
                             _pe = get_policy_engine()
                             _pr = _pe.assert_tool_allowed(
@@ -3131,6 +3132,7 @@ class ReasoningEngine:
                                     session_id=conversation_id or "",
                                     needs_sandbox=_needs_sb,
                                 )
+                                _pe.prepare_ui_confirm(t_id)
                                 yield {
                                     "type": "security_confirm",
                                     "tool": t_name,
@@ -3149,12 +3151,44 @@ class ReasoningEngine:
                                     ]
                                     + (["sandbox"] if _needs_sb else []),
                                 }
-                                r = (
-                                    f"⚠️ 需要用户确认: {_pr.reason}\n"
-                                    "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
-                                    "不要使用 ask_user 工具重复询问。"
+                                _decision = await _pe.wait_for_ui_resolution(
+                                    t_id,
+                                    float(_pe._config.confirmation.timeout_seconds),
                                 )
-                                _tool_is_error = True
+                                _pe.cleanup_ui_confirm(t_id)
+                                if _decision in (
+                                    "allow",
+                                    "allow_once",
+                                    "allow_session",
+                                    "allow_always",
+                                    "sandbox",
+                                ):
+                                    try:
+                                        r = await self._tool_executor.execute_tool_with_policy(
+                                            tool_name=t_name,
+                                            tool_input=t_args if isinstance(t_args, dict) else {},
+                                            policy_result=PolicyResult(
+                                                decision=PolicyDecision.ALLOW,
+                                                reason=f"用户已允许安全确认: {_decision}",
+                                                metadata={
+                                                    "confirmed_bypass": True,
+                                                    "needs_sandbox": _decision == "sandbox" or _needs_sb,
+                                                },
+                                            ),
+                                            session_id=conversation_id,
+                                        )
+                                        r = str(r) if r else ""
+                                        _tool_is_error = False
+                                    except Exception as exc:
+                                        r = f"Tool error after security confirmation: {exc}"
+                                        _tool_is_error = True
+                                else:
+                                    r = (
+                                        f"用户已拒绝安全确认: {_decision}。"
+                                        "不要再执行该操作，请选择安全替代方案或说明无法继续。"
+                                    )
+                                    _tool_is_error = True
+                                _security_confirm_interrupted_ask = True
                             else:
                                 _tool_is_error = False
                                 try:
@@ -3185,10 +3219,15 @@ class ReasoningEngine:
                                     "type": "tool_result",
                                     "tool_use_id": t_id,
                                     "content": r,
+                                    "is_error": _tool_is_error,
                                 }
                             )
+                            if _security_confirm_interrupted_ask:
+                                break
 
                         all_tool_results.extend(tool_results_for_msg)
+                        if _security_confirm_interrupted_ask:
+                            continue
 
                         # ask_user 事件
                         ask_raw = ask_user_calls[0].get("input")
@@ -3361,7 +3400,7 @@ class ReasoningEngine:
                         )
 
                         # PolicyEngine 检查（与 execute_batch 一致）
-                        from .policy import PolicyDecision, get_policy_engine
+                        from .policy import PolicyDecision, PolicyResult, get_policy_engine
 
                         _pe = get_policy_engine()
                         _tool_args_dict = tool_args if isinstance(tool_args, dict) else {}
@@ -3409,6 +3448,7 @@ class ReasoningEngine:
                                 session_id=conversation_id or "",
                                 needs_sandbox=_needs_sb,
                             )
+                            _pe.prepare_ui_confirm(tool_id)
                             yield {
                                 "type": "security_confirm",
                                 "tool": tool_name,
@@ -3422,17 +3462,50 @@ class ReasoningEngine:
                                 "options": ["allow_once", "allow_session", "allow_always", "deny"]
                                 + (["sandbox"] if _needs_sb else []),
                             }
-                            result_text = (
-                                f"⚠️ 需要用户确认: {_pr.reason}\n"
-                                "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
-                                "不要使用 ask_user 工具重复询问。"
+                            _decision = await _pe.wait_for_ui_resolution(
+                                tool_id,
+                                float(_pe._config.confirmation.timeout_seconds),
                             )
+                            _pe.cleanup_ui_confirm(tool_id)
+                            _confirmed_allowed = _decision in (
+                                "allow",
+                                "allow_once",
+                                "allow_session",
+                                "allow_always",
+                                "sandbox",
+                            )
+                            if _confirmed_allowed:
+                                try:
+                                    result_text = await self._tool_executor.execute_tool_with_policy(
+                                        tool_name=tool_name,
+                                        tool_input=_tool_args_dict,
+                                        policy_result=PolicyResult(
+                                            decision=PolicyDecision.ALLOW,
+                                            reason=f"用户已允许安全确认: {_decision}",
+                                            metadata={
+                                                "confirmed_bypass": True,
+                                                "needs_sandbox": _decision == "sandbox" or _needs_sb,
+                                            },
+                                        ),
+                                        session_id=conversation_id,
+                                    )
+                                    result_text = str(result_text) if result_text else ""
+                                    _confirm_is_error = False
+                                except Exception as exc:
+                                    result_text = f"Tool error after security confirmation: {exc}"
+                                    _confirm_is_error = True
+                            else:
+                                result_text = (
+                                    f"用户已拒绝安全确认: {_decision}。"
+                                    "不要再执行该操作，请选择安全替代方案或说明无法继续。"
+                                )
+                                _confirm_is_error = True
                             yield {
                                 "type": "tool_call_end",
                                 "tool": tool_name,
                                 "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
                                 "id": tool_id,
-                                "is_error": True,
+                                "is_error": _confirm_is_error,
                                 "result_summary": self._summarize_tool_result(tool_name, result_text) or "",
                             }
                             tool_results_for_msg.append(
@@ -3440,7 +3513,7 @@ class ReasoningEngine:
                                     "type": "tool_result",
                                     "tool_use_id": tool_id,
                                     "content": result_text,
-                                    "is_error": True,
+                                    "is_error": _confirm_is_error,
                                 }
                             )
                             continue

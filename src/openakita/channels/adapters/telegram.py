@@ -1400,6 +1400,7 @@ class TelegramAdapter(ChannelAdapter):
             "security_allow": "allow",
             "security_deny": "deny",
             "security_allow_session": "session",
+            "security_allow_always": "always",
             "security_sandbox": "sandbox",
         }
         row: list[Any] = []
