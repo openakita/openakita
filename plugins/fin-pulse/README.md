@@ -6,6 +6,13 @@
 > tools) — over eight first-party finance sources plus optional
 > NewsNow aggregation.
 
+| | |
+|---|---|
+| **Version** | 1.1.0 |
+| **SDK range** | `>=0.7.0,<0.8.0` |
+| **Plugin API** | `~2` / UI API `~1` |
+| **Package contents** | Python runtime, tests, vendored `ui/dist`, icons |
+
 ---
 
 ## 1. Feature summary
@@ -16,7 +23,7 @@
 | `hot_radar` | Match recent articles against keyword rules (`+must / !exclude / @alias`), fire IM dispatch with per-target cooldown. | `POST /hot_radar/run`, `POST /radar/evaluate`, `on_schedule` hook |
 | `ask_news` | Seven agent tools registered on `register_tools` so the host Brain can query the article/digest index directly from chat. | `fin_pulse_*` tools |
 
-### Data sources (V1.0)
+### Data sources (V1.1)
 
 Eight first-party fetchers plus optional **NewsNow** for social/aggregator
 augmentation. All fetchers share `BaseFetcher` + `NormalizedItem` and

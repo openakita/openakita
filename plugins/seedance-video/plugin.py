@@ -675,7 +675,7 @@ class Plugin(PluginBase):
                     "message": (
                         "AI 优化未授权：插件缺少 brain.access 权限。"
                         "请到「设置 → 系统组件 → 权限」点「一键授予」，"
-                        "或到「设置中心 → 插件管理 → Seedance 视频生成 → 权限」勾选保存。"
+                        "或到「设置中心 → 插件管理 → 即梦工作室 → 权限」勾选保存。"
                     ),
                 }
             brain = self._api.get_brain()

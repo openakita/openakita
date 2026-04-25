@@ -5,8 +5,9 @@
 
 | | |
 |---|---|
-| **版本** | 0.1.0 (Sprint 1 / S1 骨架) |
+| **版本** | 0.2.0 (Sprint 1-4 完整发布) |
 | **SDK 范围** | `>=0.7.0,<0.8.0` |
+| **Plugin API** | `~2` / UI API `~1` |
 | **入口** | `plugin.py` (`PluginBase`) + `ui/dist/index.html` |
 | **形态** | 双引擎（Playwright / MultiPost Compat）· 10 平台 · 6 Tab · 14 工具 |
 
@@ -108,7 +109,7 @@ py -3.11 -m ruff check .             # 0 error
 
 ---
 
-## 5 · 目录结构（当前 S1）
+## 5 · 目录结构（当前 0.2.0）
 
 ```
 plugins/omni-post/

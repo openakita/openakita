@@ -25,7 +25,7 @@ description: Multi-platform, multi-account social publishing engine — Douyin, 
 - 仅抓平台舆情/选题 → 调 `idea-research`
 - 需要跨平台实名认证 / 人工审核绕过 → **拒绝**
 
-## 2 · 工具清单（S1 骨架，14 个）
+## 2 · 工具清单（0.2.0 发布版，14 个）
 
 | 工具名 | 用途 | 关键参数 |
 |---|---|---|

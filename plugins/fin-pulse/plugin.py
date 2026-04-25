@@ -39,7 +39,7 @@ from openakita.plugins.api import PluginAPI, PluginBase
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "fin-pulse"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.1.0"
 REPORT_PLANS_CONFIG_KEY = "report_plans.v1"
 RADAR_PLAN_CONFIG_KEY = "radar_plan.v1"
 RADAR_FORCE_FETCH_CONFIG_KEY = "radar.last_force_fetch_ts"

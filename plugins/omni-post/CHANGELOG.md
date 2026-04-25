@@ -1,6 +1,21 @@
 # omni-post CHANGELOG
 
-## [Unreleased] — Sprint 4 (2026-04-24)
+## [Unreleased]
+
+- No pending changes.
+
+## [0.2.0] — 2026-04-25
+
+Release package: `omni-post-0.2.0.zip`.
+
+### Changed — release metadata
+
+- `plugin.json` now advertises `0.2.0` and targets Plugin API `~2`, matching
+  the current full-stack UI plugin contract.
+- README metadata now describes the Sprint 1-4 release as the packaged
+  baseline.
+
+## Sprint 4 (2026-04-24)
 
 Sprint 4 closes the roadmap: a compatibility engine that lets users
 reuse their daily browser via `MultiPost-Extension`, a daily selector
@@ -81,7 +96,7 @@ memory for downstream recommendation, and a real Settings tab.
 
 ---
 
-## [Unreleased] — Sprint 3 (2026-04-24)
+## Sprint 3 (2026-04-24)
 
 Sprint 3 adds scheduling (with timezone staggering), matrix publishing
 (multi-account × multi-platform with tag-routed copy overrides), the
@@ -122,7 +137,7 @@ Library).
 
 ---
 
-## [Unreleased] — Sprint 2 (2026-04-24)
+## Sprint 2 (2026-04-24)
 
 Sprint 2 widens the platform coverage, hardens the cookie vault, adds
 retry + half-auto fallback, and delivers the Account Matrix tab.
@@ -146,7 +161,7 @@ retry + half-auto fallback, and delivers the Account Matrix tab.
 
 ---
 
-## [Unreleased] — Sprint 1 skeleton (2026-04-24)
+## Sprint 1 skeleton (2026-04-24)
 
 Sprint 1 delivers the backbone: plugin scaffolding, data model, asset
 pipeline, Playwright engine base, and the first two UI tabs. Enough to

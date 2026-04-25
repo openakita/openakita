@@ -4,7 +4,20 @@ All notable changes to fin-pulse will be documented here. The format is
 loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased] — hybrid fetch rework
+## [Unreleased]
+
+- No pending changes.
+
+## [1.1.0] — 2026-04-25
+
+Release package: `fin-pulse-1.1.0.zip`.
+
+### Added — release packaging
+
+- `plugin.json` and `plugin.py` now advertise `1.1.0` for the hybrid
+  fetcher + scheduler dispatch release.
+- README metadata calls out the SDK range, Plugin API contract, and bundled
+  UI assets expected in the installable plugin zip.
 
 ### Changed — ingest path
 

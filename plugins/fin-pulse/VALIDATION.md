@@ -102,7 +102,7 @@ cd D:/OpenAkita/plugins/fin-pulse
 python -m pytest tests/ -q
 ```
 
-Expected outcome (as of `1.0.0`):
+Expected outcome (as of `1.1.0`):
 
 ```
 213 passed, 4 skipped in ~3s

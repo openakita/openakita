@@ -1,11 +1,18 @@
-# Seedance 视频生成 / Seedance Video Generator
+# 即梦工作室 / Seedance Studio
 
 基于火山引擎 Ark API 的 AI 视频生成插件 — 文生视频、图生视频、多模态、视频编辑、视频续写、长视频分镜拼接。
+
+| | |
+|---|---|
+| **版本** | 1.3.0 |
+| **SDK 范围** | `>=0.7.0,<0.8.0` |
+| **Plugin API** | `~2` / UI API `~1` |
+| **入口** | `plugin.py` (`PluginBase`) + `ui/dist/index.html` |
 
 ## 给小白用户
 
 1. 在 Settings 里粘贴 **ARK API Key**（[火山引擎控制台领取](https://console.volcengine.com/ark)）
-2. 打开 "Seedance 视频生成" 页签
+2. 打开 "即梦工作室" 页签
 3. 选择模式（文生视频 / 图生视频 / 编辑 / 续写 …），写一段描述
 4. 点【生成】，任务异步执行 — 进度自动推送到 UI
 5. 成功后视频自动下载到本地 `data_dir/videos/`，可直接预览播放

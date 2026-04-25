@@ -1,7 +1,7 @@
 {
   "id": "seedance-video",
   "name": "Seedance Video Generator",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "AI video generation powered by Volcengine Seedance — supports text-to-video, image-to-video, multimodal, editing, extension, and long video stitching.",
@@ -25,7 +25,7 @@
   ],
   "requires": {
     "openakita": ">=1.27.0",
-    "plugin_api": "~1",
+    "plugin_api": "~2",
     "plugin_ui_api": "~1",
     "sdk": ">=0.7.0,<0.8.0"
   },

@@ -5,7 +5,7 @@ env_any:
   - ARK_API_KEY
 ---
 
-# Seedance 视频生成 / Seedance Video
+# 即梦工作室 / Seedance Studio
 
 ## 是什么 / What
 
