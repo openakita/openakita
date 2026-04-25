@@ -747,6 +747,16 @@ fn runtime_venv_python_path(venv_dir: &Path) -> PathBuf {
     }
 }
 
+fn runtime_venv_backend_python_path(venv_dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        let pythonw = venv_dir.join("Scripts").join("pythonw.exe");
+        if pythonw.exists() {
+            return pythonw;
+        }
+    }
+    runtime_venv_python_path(venv_dir)
+}
+
 fn runtime_venv_bin_dir(venv_dir: &Path) -> PathBuf {
     if cfg!(windows) {
         venv_dir.join("Scripts")
@@ -1089,13 +1099,15 @@ fn get_backend_executable(venv_dir: &str) -> (PathBuf, Vec<String>) {
     // 1. 优先: dual runtime app venv
     match ensure_dual_runtime_env() {
         Ok(runtime) => {
+            let backend_python = runtime_venv_backend_python_path(&runtime.app_venv);
             log_to_file(&format!(
-                "[runtime] dual venv ready: app_python={}, agent_python={}",
+                "[runtime] dual venv ready: app_python={}, backend_python={}, agent_python={}",
                 runtime.app_python.display(),
+                backend_python.display(),
                 runtime.agent_python.display()
             ));
             return (
-                runtime.app_python,
+                backend_python,
                 vec!["-u".into(), "-m".into(), "openakita.main".into(), "serve".into()],
             );
         }
