@@ -29,8 +29,13 @@ def test_source_defs_contain_expected_canonical_ids() -> None:
     defs = _load_source_defs()
     expected = {
         "wallstreetcn",
+        "wallstreetcn-quick",
         "cls",
+        "cls-telegraph",
+        "cls-hot",
+        "xueqiu",
         "xueqiu-hotstock",
+        "fastbull-news",
         "eastmoney",
         "pbc_omo",
         "yicai",

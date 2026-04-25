@@ -19,11 +19,9 @@ except ImportError as exc:  # pragma: no cover — httpx ships with the host
 
 
 # Real-browser UA string. The previous ``Mozilla/5.0 (OpenAkita fin-pulse/1.0; ...)``
-# banner was flagged as a bot by Cloudflare on every edge it protects — NewsNow's
-# public aggregator returned "Attention Required!" challenge pages to us even
-# though TrendRadar (upstream reference) never hit them. We mirror TrendRadar's
-# exact ``DataFetcher.DEFAULT_HEADERS`` so we inherit their track record on the
-# shared upstream node (see ``D:/plugin-research-refs/repos/TrendRadar``).
+# banner was flagged as a bot by Cloudflare on every edge it protects. NewsNow's
+# public aggregator is less noisy with a mainstream Chrome UA and the standard
+# Accept-Language headers used by browser traffic.
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "

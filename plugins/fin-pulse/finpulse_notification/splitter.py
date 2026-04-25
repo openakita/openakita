@@ -1,13 +1,11 @@
-"""Line-boundary content splitter — ported from TrendRadar's
-``splitter._split_content_by_lines`` (issue #1065 fix).
+"""Line-boundary content splitter.
 
 Host IM adapters do **not** auto-chunk long messages; a 25 KB digest
 silently gets truncated by Feishu / DingTalk. We therefore split the
 markdown blob along ``\\n`` boundaries so no line is ever cut in the
 middle (which would leave half-rendered links / orphan scores / etc).
 
-The algorithm is intentionally close to TrendRadar's original, with
-two small hardenings:
+The algorithm is intentionally conservative, with two small hardenings:
 
 * Each chunk emitted **after the first** is prefixed with the caller's
   ``base_header`` (e.g. ``"[早报 续 2/3]\n"``) so recipients can tell

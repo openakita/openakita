@@ -2,7 +2,7 @@
 
 These tests stub the HTTP layer (the same pattern the rest of the suite
 uses) and confirm that the shared NewsNow envelope parser honours the
-TrendRadar contract:
+public API contract:
 
 * ``status in {"success", "cache"}`` → rows materialise
 * any other status → :class:`ValueError` (so callers can fall back)
@@ -285,3 +285,39 @@ class TestFetchFromNewsNow:
         )
         assert len(parsed) == 1
         assert parsed[0].published_at and "T" in parsed[0].published_at
+
+    def test_non_sortable_time_falls_back_to_fetched_at(self) -> None:
+        parsed = newsnow_base._parse_envelope(
+            {
+                "status": "success",
+                "items": [
+                    {
+                        "title": "relative time",
+                        "url": "https://x.com/relative",
+                        "time": "刚刚",
+                    }
+                ],
+            },
+            platform_id="p",
+            source_id="s",
+        )
+        assert len(parsed) == 1
+        assert parsed[0].published_at is None
+
+    def test_space_separated_timestamp_is_normalized(self) -> None:
+        parsed = newsnow_base._parse_envelope(
+            {
+                "status": "success",
+                "items": [
+                    {
+                        "title": "space time",
+                        "url": "https://x.com/space",
+                        "time": "2026-04-25 15:30",
+                    }
+                ],
+            },
+            platform_id="p",
+            source_id="s",
+        )
+        assert len(parsed) == 1
+        assert parsed[0].published_at == "2026-04-25T15:30:00"

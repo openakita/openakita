@@ -1,4 +1,4 @@
-"""Splitter red-line tests — protect the TrendRadar issue #1065 fix.
+"""Splitter red-line tests.
 
 The splitter is tiny but load-bearing: every push larger than the host
 adapter's byte budget flows through here, so we lock down:

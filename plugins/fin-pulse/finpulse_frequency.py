@@ -1,5 +1,5 @@
-"""Keyword matching DSL — lifted from TrendRadar's ``frequency.py`` with
-the ``deepcopy`` hardening called out in §13.2 of the fin-pulse plan.
+"""Keyword matching DSL with the ``deepcopy`` hardening called out in
+§13.2 of the fin-pulse plan.
 
 File syntax (one group per blank-line-separated block):
 
@@ -11,8 +11,7 @@ File syntax (one group per blank-line-separated block):
     - ``plain``   — any-of (all plain tokens within a group are OR'd;
                    groups themselves are OR'd).
     - ``/pattern/`` — regex pattern (case-insensitive), usable as a
-                   normal or ``+`` required token. Follows TrendRadar's
-                   ``frequency.py`` convention.
+                   normal or ``+`` required token.
     - ``@N``    — per-group max hits (e.g. ``@5`` caps this group to
                    5 matched articles). ``0`` = unlimited (default).
     - ``@alias`` — display alias (non-numeric), not used by the matcher.
@@ -114,8 +113,8 @@ def _try_compile_regex(body: str) -> Optional[re.Pattern]:
 def _classify_token(line: str) -> tuple[str, Token]:
     """Return ``(kind, token)`` for a raw line.
 
-    Supports ``/pattern/`` regex tokens (TrendRadar convention) and
-    ``@N`` per-group max-items directives.
+    Supports ``/pattern/`` regex tokens and ``@N`` per-group max-items
+    directives.
     """
     line = line.strip()
     if not line:

@@ -145,6 +145,7 @@ class FetchReport:
     # "NewsNow 被拦截 → 回退直连" so users see the full causal chain
     # instead of a bare "直连" badge.
     via_reason: str | None = None
+    channel_reports: list[dict[str, Any]] = field(default_factory=list)
 
 
 class BaseFetcher(abc.ABC):

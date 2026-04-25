@@ -1,9 +1,8 @@
-"""Shared NewsNow aggregator helper — single TrendRadar-style call.
+"""Shared NewsNow aggregator helper.
 
-TrendRadar's ``crawler/fetcher.py::DataFetcher`` survives every upstream
-HTML/JSON drift because it only ever speaks one protocol: the NewsNow
-envelope ``{status, items:[{title, url, mobileUrl, desc, ...}]}``. We
-mirror the same contract here so the CN hot-list fetchers
+The public NewsNow API speaks a compact envelope
+``{status, items:[{title, url, mobileUrl, desc, ...}]}``. We keep that
+contract in one helper so the CN hot-list fetchers
 (``wallstreetcn`` / ``cls`` / ``eastmoney`` / ``xueqiu``) can try the
 aggregator first and only fall back to their fragile direct scrapers
 when the aggregator is unavailable.
@@ -13,16 +12,16 @@ gives us one testable surface: the parse rules, the retry behaviour,
 and the rate-limit hook live in one place and every CN fetcher opts in
 by pointing at a platform id.
 
-Reference: ``D:/plugin-research-refs/repos/TrendRadar/trendradar/crawler/fetcher.py``
-(L20-115) — we share its envelope + item-shape expectations but keep
-our own canonical-item payload (``NormalizedItem``) so dedupe via
-``articles.url_hash`` stays consistent.
+The helper keeps our own canonical-item payload (``NormalizedItem``) so
+dedupe via ``articles.url_hash`` stays consistent.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from datetime import datetime, timezone
 from typing import Any
 
 from finpulse_fetchers._http import make_client
@@ -57,9 +56,7 @@ class NewsNowTransportError(RuntimeError):
         self.kind = kind
 
 
-# The public NewsNow endpoint maintained by the open-source author. The
-# default lines up with TrendRadar's ``DataFetcher.DEFAULT_API_URL`` so
-# users who migrate from there don't need to reconfigure anything.
+# The public NewsNow endpoint maintained by the open-source author.
 DEFAULT_NEWSNOW_URL = "https://newsnow.busiyi.world/api/s"
 
 # Only these statuses are treated as usable — matches
@@ -112,8 +109,8 @@ async def fetch_from_newsnow(
         return []
 
     url = f"{api_url}?id={platform_id}&latest"
-    # TrendRadar pattern: Chrome UA (already default) + explicit JSON
-    # Accept header keeps us off the Cloudflare bot list. One transparent
+    # Chrome UA (already default) + explicit JSON Accept header keeps us
+    # off the Cloudflare bot list. One transparent
     # retry absorbs the volunteer-run upstream's occasional cold-start
     # 502/504s without flooding the failure drawer.
     payload = await _call_newsnow(url, timeout_sec=timeout_sec)
@@ -187,8 +184,7 @@ def _parse_envelope(
 ) -> list[NormalizedItem]:
     """Turn a NewsNow response body into :class:`NormalizedItem` rows.
 
-    Guard rails mirror TrendRadar's ``crawl_websites`` (L151-173):
-    skip ``None`` / ``float`` / empty titles, use ``url`` with
+    Guard rails: skip ``None`` / ``float`` / empty titles, use ``url`` with
     ``mobileUrl`` fallback, and leave ranking / extra metadata inside
     ``extra`` so downstream consumers can opt into the signal.
     """
@@ -272,9 +268,9 @@ def _first_non_empty(*values: Any) -> str | None:
 
 def _coerce_published(value: Any) -> str | None:
     """NewsNow payloads use either an ISO string, a human date, or a
-    millisecond timestamp. We keep ISO / human as-is (the AI layer
-    tolerates both) and convert ms → ISO so downstream sort queries
-    get a sortable lexical form.
+    millisecond timestamp. We only return lexically sortable ISO-ish
+    timestamps; relative/human labels are left as ``None`` so the
+    database falls back to ``fetched_at`` for time-window queries.
     """
     if value is None:
         return None
@@ -288,11 +284,33 @@ def _coerce_published(value: Any) -> str | None:
         # NewsNow ships both 10-digit and 13-digit timestamps; normalise.
         if ts > 1e12:
             ts /= 1000.0
-        import time as _time
 
-        return _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(ts))
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
     s = str(value).strip()
-    return s or None
+    if not s:
+        return None
+    if re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", s):
+        return s
+
+    # Common NewsNow/direct-source shape: "2026-04-25 15:30[:00]".
+    # Treat it as source-local wall time. Do not append "Z": that makes
+    # browsers display the value as UTC and shifts Chinese news by +8h.
+    m = re.match(
+        r"^(?P<year>\d{4})-(?P<month>\d{1,2})-(?P<day>\d{1,2})"
+        r"\s+(?P<hour>\d{1,2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?",
+        s,
+    )
+    if m:
+        second = m.group("second") or "00"
+        return (
+            f"{int(m.group('year')):04d}-{int(m.group('month')):02d}-"
+            f"{int(m.group('day')):02d}T{int(m.group('hour')):02d}:"
+            f"{int(m.group('minute')):02d}:{int(second):02d}"
+        )
+
+    return None
 
 
 __all__ = [

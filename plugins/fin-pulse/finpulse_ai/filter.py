@@ -12,8 +12,7 @@ against the taxonomy on the finance-tuned 0-10 scale (see
   ``{"score": 0.0, "reason": "analysis failed"}`` without killing the
   batch (Horizon-style isolation).
 * Cache the interest-text SHA-256 in ``config['ai_interests_sha256']``
-  so edits to the interest blurb force a re-score pass (fixes the
-  TrendRadar AI cache bug #1068).
+  so edits to the interest blurb force a re-score pass.
 
 The module is deliberately **side-effect-free on import** — no network
 I/O happens unless the caller awaits :func:`extract_tags` or

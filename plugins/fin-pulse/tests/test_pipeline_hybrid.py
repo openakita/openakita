@@ -113,6 +113,140 @@ class TestIngestVia:
         assert totals["sources_total"] >= 2
         assert totals["sources_ok"] >= 2
 
+    def test_explicit_newsnow_source_runs_when_channels_enabled(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tm = FinpulseTaskManager(tmp_path / "pipe.db")
+        _run(tm.init())
+        overrides = _disable_all_sources()
+        overrides["source.wallstreetcn.enabled"] = "true"
+        overrides["newsnow.mode"] = "public"
+        overrides["newsnow.min_interval_s"] = "0"
+        _run(tm.set_configs(overrides))
+
+        def fake_get_fetcher(
+            source_id: str, *, config: dict[str, str] | None = None
+        ) -> Any:
+            if source_id == "newsnow":
+                return _DirectStub(
+                    source_id="newsnow",
+                    items=[
+                        NormalizedItem(
+                            source_id="wallstreetcn",
+                            title="NewsNow headline",
+                            url="https://wallstreetcn.com/a/newsnow",
+                        )
+                    ],
+                    via="newsnow",
+                )
+            return None
+
+        monkeypatch.setattr(pipeline_mod, "get_fetcher", fake_get_fetcher)
+
+        summary = _run(ingest(tm, sources=["newsnow"], since_hours=24))
+
+        assert summary["ok"] is True
+        assert summary["totals"]["fetched"] == 1
+        assert summary["by_source"]["newsnow"]["via"] == "newsnow"
+
+    def test_newsnow_channel_reports_expand_summary_by_subsource(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tm = FinpulseTaskManager(tmp_path / "pipe.db")
+        _run(tm.init())
+        overrides = _disable_all_sources()
+        overrides["source.xueqiu.enabled"] = "true"
+        overrides["source.xueqiu-hotstock.enabled"] = "true"
+        overrides["newsnow.mode"] = "public"
+        overrides["newsnow.min_interval_s"] = "0"
+        _run(tm.set_configs(overrides))
+
+        class _NewsNowStub(_DirectStub):
+            async def fetch(self, **_: Any) -> list[NormalizedItem]:
+                self._channel_reports = [
+                    {"source_id": "xueqiu", "count": 1, "error": None},
+                    {"source_id": "xueqiu-hotstock", "count": 1, "error": None},
+                ]
+                return [
+                    NormalizedItem(
+                        source_id="xueqiu",
+                        title="Xueqiu News",
+                        url="https://xueqiu.com/a/news",
+                    ),
+                    NormalizedItem(
+                        source_id="xueqiu-hotstock",
+                        title="Xueqiu Hot Stock",
+                        url="https://xueqiu.com/a/hot",
+                    ),
+                ]
+
+        def fake_get_fetcher(
+            source_id: str, *, config: dict[str, str] | None = None
+        ) -> Any:
+            if source_id == "newsnow":
+                return _NewsNowStub(source_id="newsnow", items=[], via="newsnow")
+            return None
+
+        monkeypatch.setattr(pipeline_mod, "get_fetcher", fake_get_fetcher)
+
+        summary = _run(ingest(tm, sources=["newsnow"], since_hours=24))
+
+        assert summary["ok"] is True
+        assert "newsnow" not in summary["by_source"]
+        assert summary["by_source"]["xueqiu"]["fetched"] == 1
+        assert summary["by_source"]["xueqiu-hotstock"]["fetched"] == 1
+        assert summary["totals"]["sources_total"] == 2
+        assert summary["totals"]["sources_ok"] == 2
+
+    def test_explicit_direct_source_does_not_pull_newsnow(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tm = FinpulseTaskManager(tmp_path / "pipe.db")
+        _run(tm.init())
+        overrides = _disable_all_sources()
+        overrides["source.eastmoney.enabled"] = "true"
+        overrides["source.wallstreetcn.enabled"] = "true"
+        overrides["newsnow.mode"] = "public"
+        overrides["newsnow.min_interval_s"] = "0"
+        _run(tm.set_configs(overrides))
+
+        called: list[str] = []
+
+        def fake_get_fetcher(
+            source_id: str, *, config: dict[str, str] | None = None
+        ) -> Any:
+            called.append(source_id)
+            if source_id == "eastmoney":
+                return _DirectStub(
+                    source_id="eastmoney",
+                    items=[
+                        NormalizedItem(
+                            source_id="eastmoney",
+                            title="EastMoney only",
+                            url="https://eastmoney.com/a/only",
+                        )
+                    ],
+                    via="direct",
+                )
+            if source_id == "newsnow":
+                raise AssertionError("explicit direct ingest must not fetch newsnow")
+            return None
+
+        monkeypatch.setattr(pipeline_mod, "get_fetcher", fake_get_fetcher)
+
+        summary = _run(ingest(tm, sources=["eastmoney"], since_hours=24))
+
+        assert summary["ok"] is True
+        assert summary["totals"]["fetched"] == 1
+        assert "newsnow" not in called
+        assert "newsnow" not in summary["by_source"]
+
 
 class TestIngestNoSourcesEnabled:
     def test_returns_skipped_and_flips_task_status(

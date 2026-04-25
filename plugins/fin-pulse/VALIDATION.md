@@ -1,7 +1,7 @@
 # fin-pulse · 踩坑规避与手工校验清单
 
 > Living doc. Each entry documents a known pitfall in the upstream
-> reference repos (TrendRadar, Horizon, go-stock, PbcCrawler,
+> reference repos (Horizon, go-stock, PbcCrawler,
 > fed-statement-scraping, x-monitor) and the concrete defensive
 > measure fin-pulse lands. Re-run the manual probes in §3 after any
 > fetcher / dispatcher / scheduler change.
@@ -12,14 +12,14 @@
 
 | # | Pitfall | Source | Fin-pulse fix | Evidence |
 |---|---------|--------|---------------|----------|
-| 1 | NewsNow `api_url` 写死源码 | TrendRadar `DataFetcher` | `newsnow.api_url` 从 `config` 读；设置页三段向导可改，公共/自建/关闭三档 | `finpulse_fetchers/newsnow_fetcher.py` + `ui/dist/index.html` (Settings § NewsNow) |
+| 1 | NewsNow `api_url` 写死源码 | 上游示例实现 | `newsnow.api_url` 从 `config` 读；设置页三段向导可改，公共/自建/关闭三档 | `finpulse_fetchers/newsnow_fetcher.py` + `ui/dist/index.html` (Settings § NewsNow) |
 | 2 | 文章标题当文件名，Windows 因非法字符崩 | PbcCrawler `crawl.py` | 统一用 `sha256(canonical_url)[:16]` 作 `article.id`；`url_hash` 唯一索引 | `finpulse_fetchers/base.py::NormalizedItem.url_hash` + `articles.url_hash UNIQUE` |
 | 3 | `fcntl` Windows 不可用 | x-monitor `monitor.py` | 去掉 `fcntl`；aiosqlite 的 WAL 模式单连接即可串行写 | `finpulse_task_manager.py::init` (`PRAGMA journal_mode=WAL`) |
-| 4 | `filter_words` 下游可变对象泄漏 | TrendRadar `frequency.py` | `load_frequency_words` 返回时对 `filter_words` `copy.deepcopy`；同时对 `global_filters` 也做一次 | `finpulse_frequency.py::load_frequency_words` + `tests/test_frequency.py` |
-| 5 | 兴趣文件改了分数不刷新 | TrendRadar issue #1068 | `ai_interests_sha256` 比对；变化即 `reset_ai_scores()` 置空 `ai_score` 列 | `finpulse_ai/filter.py::score_batch` + `tests/test_ai_filter.py::test_interest_change_invalidates` |
-| 6 | MCP `days` 无 clamp 直落 SQL | TrendRadar PR #1069 | `_clamp(v, 1, 90, 1)` + `_clamp(limit, 1, 200, 50)` 所有 7 个工具入口统一套用 | `finpulse_services/query.py::_clamp` + `tests/test_services_query.py::TestClamp` |
-| 7 | 长榜单推 IM 被截断、标题丢失 | TrendRadar issue #1065 | `split_by_lines(footer, max_bytes, base_header)` 按行切，保证每块 < 25 KB 并把首行头部复制给后续块 | `finpulse_notification/splitter.py` + `tests/test_splitter.py` |
-| 8 | Ollama `127.0.0.1` 在 Docker 里失效 | TrendRadar 多次上报 | fin-pulse 不直接管理 LLM endpoint —— 调用透传到宿主 `LLMClient`；Settings 的「AI Brain」卡片明示「在 OpenAkita 主 Settings → Models 修改 provider / base_url」 | `finpulse_ai/filter.py` (全部 `await api.get_brain().chat(...)`) + README §4.4 |
+| 4 | `filter_words` 下游可变对象泄漏 | 关键词 DSL 常见陷阱 | `load_frequency_words` 返回时对 `filter_words` `copy.deepcopy`；同时对 `global_filters` 也做一次 | `finpulse_frequency.py::load_frequency_words` + `tests/test_frequency.py` |
+| 5 | 兴趣文件改了分数不刷新 | AI 缓存常见陷阱 | `ai_interests_sha256` 比对；变化即 `reset_ai_scores()` 置空 `ai_score` 列 | `finpulse_ai/filter.py::score_batch` + `tests/test_ai_filter.py::test_interest_change_invalidates` |
+| 6 | MCP `days` 无 clamp 直落 SQL | Agent 工具参数常见陷阱 | `_clamp(v, 1, 90, 1)` + `_clamp(limit, 1, 200, 50)` 所有 7 个工具入口统一套用 | `finpulse_services/query.py::_clamp` + `tests/test_services_query.py::TestClamp` |
+| 7 | 长榜单推 IM 被截断、标题丢失 | IM 推送常见陷阱 | `split_by_lines(footer, max_bytes, base_header)` 按行切，保证每块 < 25 KB 并把首行头部复制给后续块 | `finpulse_notification/splitter.py` + `tests/test_splitter.py` |
+| 8 | Ollama `127.0.0.1` 在 Docker 里失效 | 自托管 LLM 常见陷阱 | fin-pulse 不直接管理 LLM endpoint —— 调用透传到宿主 `LLMClient`；Settings 的「AI Brain」卡片明示「在 OpenAkita 主 Settings → Models 修改 provider / base_url」 | `finpulse_ai/filter.py` (全部 `await api.get_brain().chat(...)`) + README §4.4 |
 
 > 修法 #1 ~ #3 在 Phase 1/2；#4 ~ #7 在 Phase 3/4；#8 是架构决策，写入文档 + UI 提示。
 

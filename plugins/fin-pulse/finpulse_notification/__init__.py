@@ -4,9 +4,8 @@ needs to live plugin-side is **line-boundary batching**: host adapters
 do not auto-chunk long markdown, so a 25 KB daily brief would be
 silently truncated by Feishu / DingTalk.
 
-See :func:`splitter.split_by_lines` — a direct port of TrendRadar's
-``_split_content_by_lines`` with two hardenings required by the
-plan §10.4 (``base_header`` prepended to every follow-up chunk; lone
+See :func:`splitter.split_by_lines` — a line-boundary splitter with two
+hardenings required by the plan §10.4 (``base_header`` prepended to every follow-up chunk; lone
 oversize lines emit as their own chunk instead of being dropped).
 """
 

@@ -205,8 +205,8 @@ class GenericRSSFetcher(BaseFetcher):
     """Configurable RSS aggregator — reads feed URLs from config.
 
     ``config['rss_generic.feeds']`` is a newline-separated list of feed
-    URLs. ``config['rss_generic.feeds_json']`` may also hold TrendRadar-
-    style structured entries (``[{name,url,enabled}]``). Each URL emits
+    URLs. ``config['rss_generic.feeds_json']`` may also hold structured
+    entries (``[{name,url,enabled}]``). Each URL emits
     items under ``source_id='rss_generic'``; the originating feed URL/name
     is preserved in ``extra`` so the UI can distinguish sources within the
     same aggregator.

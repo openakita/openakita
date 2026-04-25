@@ -85,9 +85,13 @@ class NewsNowFetcher(BaseFetcher):
 
 def _resolve_channels(config: dict[str, str]) -> list[tuple[str, str]]:
     """Return ``[(source_id, newsnow_id), ...]`` for enabled newsnow sources."""
+    only_raw = (config.get("_newsnow.only_sources") or "").strip()
+    only_sources = {s.strip() for s in only_raw.split(",") if s.strip()}
     channels: list[tuple[str, str]] = []
     for sid, defn in SOURCE_DEFS.items():
         if defn.get("kind") != "newsnow":
+            continue
+        if only_sources and sid not in only_sources and str(defn.get("newsnow_id") or "") not in only_sources:
             continue
         newsnow_id = defn.get("newsnow_id")
         if not newsnow_id:

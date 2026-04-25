@@ -173,22 +173,29 @@ CONTENT_TYPES: Final[tuple[str, ...]] = tuple(FRESHNESS_DEFAULTS.keys())
 #   newsnow_id    – upstream NewsNow channel id (only for kind=newsnow)
 #   max_age_hours – per-source freshness override (0 = use FRESHNESS_DEFAULTS)
 #
-# TrendRadar keeps NewsNow platforms and RSS feeds editable in YAML. fin-pulse
-# mirrors that catalog/fetch/filter/report split, but deliberately does not
-# mirror TrendRadar's scheduler or notification dispatcher: OpenAkita's host
-# scheduler and IM channels remain the delivery layer.
+# fin-pulse keeps NewsNow platforms and RSS feeds editable in config while
+# OpenAkita's host scheduler and IM channels remain the delivery layer.
 
 
 SOURCE_DEFS: Final[dict[str, dict[str, object]]] = {
     # ── NewsNow: Chinese finance core ────────────────────────────────
     "wallstreetcn": {
-        "display_zh": "华尔街见闻",
+        "display_zh": "华尔街见闻·最热",
         "display_en": "WallStreet CN",
         "kind": "newsnow",
-        "content_type": "flash",
+        "content_type": "news",
         "newsnow_id": "wallstreetcn",
         "default_enabled": True,
         "homepage": "https://wallstreetcn.com/",
+    },
+    "wallstreetcn-quick": {
+        "display_zh": "华尔街见闻·快讯",
+        "display_en": "WallStreet CN Flash",
+        "kind": "newsnow",
+        "content_type": "flash",
+        "newsnow_id": "wallstreetcn-quick",
+        "default_enabled": True,
+        "homepage": "https://wallstreetcn.com/live",
     },
     "wallstreetcn-news": {
         "display_zh": "华尔街见闻·新闻",
@@ -200,11 +207,20 @@ SOURCE_DEFS: Final[dict[str, dict[str, object]]] = {
         "homepage": "https://wallstreetcn.com/",
     },
     "cls": {
-        "display_zh": "财联社电报",
+        "display_zh": "财联社·综合",
+        "display_en": "CLS Telegraph",
+        "kind": "newsnow",
+        "content_type": "news",
+        "newsnow_id": "cls",
+        "default_enabled": True,
+        "homepage": "https://www.cls.cn/telegraph",
+    },
+    "cls-telegraph": {
+        "display_zh": "财联社·电报",
         "display_en": "CLS Telegraph",
         "kind": "newsnow",
         "content_type": "flash",
-        "newsnow_id": "cls",
+        "newsnow_id": "cls-telegraph",
         "default_enabled": True,
         "homepage": "https://www.cls.cn/telegraph",
     },
@@ -214,6 +230,15 @@ SOURCE_DEFS: Final[dict[str, dict[str, object]]] = {
         "kind": "newsnow",
         "content_type": "news",
         "newsnow_id": "cls-depth",
+        "default_enabled": True,
+        "homepage": "https://www.cls.cn/",
+    },
+    "cls-hot": {
+        "display_zh": "财联社·热门",
+        "display_en": "CLS Hot",
+        "kind": "newsnow",
+        "content_type": "news",
+        "newsnow_id": "cls-hot",
         "default_enabled": True,
         "homepage": "https://www.cls.cn/",
     },
@@ -244,6 +269,15 @@ SOURCE_DEFS: Final[dict[str, dict[str, object]]] = {
         "default_enabled": True,
         "homepage": "https://xueqiu.com/",
     },
+    "xueqiu": {
+        "display_zh": "雪球·新闻热榜",
+        "display_en": "Xueqiu News",
+        "kind": "newsnow",
+        "content_type": "news",
+        "newsnow_id": "xueqiu",
+        "default_enabled": True,
+        "homepage": "https://xueqiu.com/",
+    },
     "fastbull": {
         "display_zh": "快牛快讯",
         "display_en": "Fastbull Express",
@@ -253,12 +287,30 @@ SOURCE_DEFS: Final[dict[str, dict[str, object]]] = {
         "default_enabled": True,
         "homepage": "https://www.fastbull.com/",
     },
+    "fastbull-news": {
+        "display_zh": "快牛资讯",
+        "display_en": "Fastbull News",
+        "kind": "newsnow",
+        "content_type": "news",
+        "newsnow_id": "fastbull-news",
+        "default_enabled": True,
+        "homepage": "https://www.fastbull.com/news",
+    },
     "mktnews": {
-        "display_zh": "市场新闻",
+        "display_zh": "市场新闻·综合",
         "display_en": "MktNews",
         "kind": "newsnow",
         "content_type": "flash",
         "newsnow_id": "mktnews",
+        "default_enabled": True,
+        "homepage": "https://mktnews.net/",
+    },
+    "mktnews-flash": {
+        "display_zh": "市场新闻·快讯",
+        "display_en": "MktNews Flash",
+        "kind": "newsnow",
+        "content_type": "flash",
+        "newsnow_id": "mktnews-flash",
         "default_enabled": True,
         "homepage": "https://mktnews.net/",
     },
@@ -327,13 +379,31 @@ SOURCE_DEFS: Final[dict[str, dict[str, object]]] = {
         "homepage": "https://www.bilibili.com/",
     },
     "36kr": {
-        "display_zh": "36氪快讯",
-        "display_en": "36Kr Newsflash",
+        "display_zh": "36氪",
+        "display_en": "36Kr",
         "kind": "newsnow",
         "content_type": "news",
         "newsnow_id": "36kr",
         "default_enabled": False,
         "homepage": "https://www.36kr.com/newsflashes",
+    },
+    "36kr-quick": {
+        "display_zh": "36氪快讯",
+        "display_en": "36Kr Newsflash",
+        "kind": "newsnow",
+        "content_type": "flash",
+        "newsnow_id": "36kr-quick",
+        "default_enabled": False,
+        "homepage": "https://www.36kr.com/newsflashes",
+    },
+    "36kr-renqi": {
+        "display_zh": "36氪人气榜",
+        "display_en": "36Kr Popular",
+        "kind": "newsnow",
+        "content_type": "news",
+        "newsnow_id": "36kr-renqi",
+        "default_enabled": False,
+        "homepage": "https://www.36kr.com/",
     },
     # ── Direct fetchers ──────────────────────────────────────────────
     "eastmoney": {

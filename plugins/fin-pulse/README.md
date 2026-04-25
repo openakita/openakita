@@ -36,8 +36,7 @@ dedupe on a canonical URL hash; cross-source re-sightings are tracked via
 | `newsnow` *(opt)* | NewsNow 公共服务或自建 (非-CN 频道) | NewsNow only |
 
 The 4 CN hot-list sources all default to calling the community-run NewsNow
-aggregator (same contract as [TrendRadar](https://github.com/sansan0/TrendRadar))
-first — `?id=wallstreetcn-hot` / `cls-hot` / `eastmoney` / `xueqiu-hotstock`.
+aggregator first — `?id=wallstreetcn-hot` / `cls-hot` / `eastmoney` / `xueqiu-hotstock`.
 When the aggregator is unreachable, returns an empty envelope, or the 300-second
 public cooldown is in effect, each fetcher silently falls back to its legacy
 direct scraper. Which path actually served the rows is surfaced to the Today tab
@@ -313,8 +312,7 @@ Critical dirs:
 
 ## 9. Credits
 
-- **TrendRadar** — keyword DSL, line-boundary splitter, MCP clamp
-  helper inspiration.
+- **NewsNow community** — public hot-list aggregation endpoint.
 - **Horizon** — AI scoring prompts, cross-source dedupe
   (simhash + title).
 - **go-stock** — `canSendAlert` cooldown idea.

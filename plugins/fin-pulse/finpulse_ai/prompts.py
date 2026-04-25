@@ -85,7 +85,7 @@ def build_score_items_block(items: list[dict[str, str]]) -> str:
 
 RULES_SUGGEST_SYSTEM_ZH: Final[str] = (
     "你是一名财经雷达规则编辑。你会把用户用自然语言描述的关注点翻译成"
-    " TrendRadar 兼容的规则 DSL。DSL 规则如下：\n"
+    " fin-pulse 可执行的规则 DSL。DSL 规则如下：\n"
     "- 每一组写在一个空行分隔的段落里；段落内所有词都要满足才算命中\n"
     "- 前缀 `+` 表示该词必须命中（等价）\n"
     "- 前缀 `!` 表示该词一旦出现则整条排除\n"
@@ -98,7 +98,7 @@ RULES_SUGGEST_SYSTEM_ZH: Final[str] = (
 
 RULES_SUGGEST_SYSTEM_EN: Final[str] = (
     "You are a finance-radar rules editor. Translate the user's plain-language "
-    "watchlist into a TrendRadar-compatible rules DSL:\n"
+    "watchlist into a fin-pulse rules DSL:\n"
     "- Each group is separated by a blank line; all keywords in a group must "
     "co-occur for a hit.\n"
     "- Prefix `+` marks a required keyword.\n"

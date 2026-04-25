@@ -59,6 +59,32 @@ class TestNewsNowUnified:
         assert len(items) >= 1
         assert "wallstreetcn" in called_ids
         assert "cls" in called_ids
+        assert "xueqiu" in called_ids
+        assert "xueqiu-hotstock" in called_ids
+
+    def test_can_limit_to_one_newsnow_subsource(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        called_ids: list[str] = []
+
+        async def fake_fetch(**kwargs: Any) -> list[NormalizedItem]:
+            called_ids.append(kwargs["platform_id"])
+            return _make_items(kwargs["source_id"], 1)
+
+        import finpulse_fetchers.newsnow as nn_mod
+        monkeypatch.setattr(newsnow_base, "fetch_from_newsnow", fake_fetch)
+        monkeypatch.setattr(nn_mod, "fetch_from_newsnow", fake_fetch)
+        monkeypatch.setattr(nn_mod, "jittered_sleep", lambda *a, **k: asyncio.sleep(0))
+
+        cfg = {
+            "newsnow.mode": "public",
+            "newsnow.api_url": "https://x.example/api/s",
+            "_newsnow.only_sources": "xueqiu",
+        }
+        items = _run(NewsNowFetcher(config=cfg).fetch())
+
+        assert called_ids == ["xueqiu"]
+        assert {item.source_id for item in items} == {"xueqiu"}
 
     def test_one_channel_failure_does_not_block_others(
         self, monkeypatch: pytest.MonkeyPatch

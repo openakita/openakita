@@ -3,9 +3,7 @@ routes) and the Agent tools (``_handle_tool``).
 
 Design constraints inherited from §9 of the plan:
 
-* Every numeric argument flows through :func:`_clamp`, the exact same
-  helper TrendRadar uses at
-  ``mcp_server/services/data_service.py`` L624-L647 — so a misbehaving
+* Every numeric argument flows through :func:`_clamp`, so a misbehaving
   LLM that hands in ``limit=99999`` cannot turn the query into a full
   table scan.
 * Functions are kept thin: they translate validated args into
@@ -43,9 +41,8 @@ __all__ = [
 def _clamp(v: Any, lo: int, hi: int, default: int) -> int:
     """Coerce ``v`` into an integer clamped to ``[lo, hi]``.
 
-    Returns ``default`` when ``v`` is missing / unparseable — mirrors
-    the TrendRadar helper that refuses to propagate a stray ``None``
-    into the SQL ``LIMIT`` clause.
+    Returns ``default`` when ``v`` is missing / unparseable so a stray
+    ``None`` never propagates into the SQL ``LIMIT`` clause.
     """
 
     if v is None:
@@ -276,7 +273,7 @@ async def get_status(*, tm: Any, args: dict[str, Any]) -> dict[str, Any]:
 async def list_tasks(*, tm: Any, args: dict[str, Any]) -> dict[str, Any]:
     """List recent tasks. ``limit`` is clamped to ``[1, 200]`` as per
     the plan's §9.2 contract; callers that ask for more silently get
-    capped instead of an error, matching TrendRadar's policy.
+    capped instead of an error.
     """
 
     if tm is None:
@@ -358,9 +355,8 @@ async def search_news(
 ) -> dict[str, Any]:
     """Search the articles index by keyword, source, and time window.
 
-    The ``q`` parameter accepts the same ``+must`` / ``!exclude`` DSL
-    as TrendRadar's rule syntax, but V1.0 treats it as a plain LIKE
-    term — the compiler integration is already available via
+    The ``q`` parameter accepts ``+must`` / ``!exclude`` syntax, but V1.0
+    treats it as a plain LIKE term — the compiler integration is already available via
     :mod:`finpulse_frequency`, but wiring it in would change the
     semantics of the REST ``GET /articles?q=`` endpoint. A future
     commit can flip a flag here without touching the handler.

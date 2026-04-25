@@ -12,8 +12,8 @@ default ``false`` to avoid LLM spend).
 2. **Title simhash** — simple 64-bit feature-hash shingling on the
    title tokens. Two articles whose simhash differ by fewer than
    ``threshold`` bits (default 3) are considered duplicates of the
-   same headline. Tuned empirically on the TrendRadar / Horizon
-   corpora — stricter thresholds miss cross-platform rewrites, looser
+   same headline. Tuned empirically on finance-news corpora — stricter
+   thresholds miss cross-platform rewrites, looser
    thresholds over-cluster.
 """
 

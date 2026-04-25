@@ -2,8 +2,8 @@
 
 Covers three contracts the Agent-tools handler depends on:
 
-* :func:`_clamp` (and its float twin) behaves exactly like TrendRadar's
-  ``_clamp_int`` — missing / non-numeric / out-of-range values snap to
+* :func:`_clamp` (and its float twin) keeps missing / non-numeric /
+  out-of-range values snapping to
   ``default`` / ``lo`` / ``hi`` instead of raising.
 * Every service function returns a plain dict with ``ok`` and either a
   typed payload or an ``error`` envelope; no function raises on a bad

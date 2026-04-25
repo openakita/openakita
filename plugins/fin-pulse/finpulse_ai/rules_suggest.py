@@ -2,7 +2,7 @@
 
 Accepts a user's plain-language description ("我想追踪美联储的政策动向，
 以及特朗普对中国关税的任何最新表态，但排除小道消息和论坛贴文") and
-returns a TrendRadar-compatible rules_text suitable for
+returns a fin-pulse rules_text suitable for
 ``POST /radar/evaluate``. The function is intentionally tolerant: any
 Brain failure falls back to a deterministic heuristic so the UI always
 gets *something* useful even when the host has no LLM configured.
