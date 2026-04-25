@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS assets_bus (
 _ARTICLE_EVENT_TIME_SQL = (
     "CASE "
     "WHEN published_at GLOB '????-??-??T??:??*' THEN published_at "
+    "WHEN published_at GLOB '????-??-?? ??:??*' THEN REPLACE(published_at, ' ', 'T') "
     "ELSE fetched_at "
     "END"
 )
@@ -283,6 +284,19 @@ class FinpulseTaskManager:
             await self._db.execute(
                 "INSERT OR IGNORE INTO config (key, value, updated_at) VALUES (?, ?, ?)",
                 (key, val, now),
+            )
+        for key in (
+            "newsnow.mode",
+            "newsnow.api_url",
+            "newsnow.min_interval_s",
+        ):
+            default_val = DEFAULT_CONFIG.get(key, "")
+            if not default_val:
+                continue
+            await self._db.execute(
+                "UPDATE config SET value = ?, updated_at = ? "
+                "WHERE key = ? AND TRIM(value) = ''",
+                (default_val, now, key),
             )
 
     # ── Config ───────────────────────────────────────────────────────
@@ -616,7 +630,9 @@ class FinpulseTaskManager:
             wheres.append("ai_score >= ?")
             args.append(float(min_score))
         where_sql = (" WHERE " + " AND ".join(wheres)) if wheres else ""
-        order_sql = f" ORDER BY {_ARTICLE_EVENT_TIME_SQL} DESC"
+        sort_key = (sort or "time_desc").lower()
+        direction = "ASC" if sort_key in {"time_asc", "asc", "oldest"} else "DESC"
+        order_sql = f" ORDER BY {_ARTICLE_EVENT_TIME_SQL} {direction}"
         count_rows = await self._db.execute_fetchall(
             f"SELECT COUNT(*) FROM articles{where_sql}", args
         )
@@ -734,6 +750,22 @@ class FinpulseTaskManager:
         if not rows:
             return None
         return self._row_to_digest(rows[0])
+
+    async def update_digest_push_results(
+        self, digest_id: str, push_results: dict[str, Any]
+    ) -> None:
+        assert self._db is not None
+        await self._db.execute(
+            "UPDATE digests SET push_results_json = ? WHERE id = ?",
+            (json.dumps(push_results or {}, ensure_ascii=False), digest_id),
+        )
+        await self._db.commit()
+
+    async def delete_digest(self, digest_id: str) -> bool:
+        assert self._db is not None
+        result = await self._db.execute("DELETE FROM digests WHERE id = ?", (digest_id,))
+        await self._db.commit()
+        return (result.rowcount or 0) > 0
 
     async def list_digests(
         self, *, session: str | None = None, offset: int = 0, limit: int = 50

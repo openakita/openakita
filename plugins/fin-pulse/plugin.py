@@ -25,6 +25,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,112 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "fin-pulse"
 PLUGIN_VERSION = "1.0.0"
+REPORT_PLANS_CONFIG_KEY = "report_plans.v1"
+RADAR_PLAN_CONFIG_KEY = "radar_plan.v1"
+RADAR_FORCE_FETCH_CONFIG_KEY = "radar.last_force_fetch_ts"
+RADAR_FORCE_FETCH_MIN_INTERVAL_S = 300
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _default_report_plans() -> dict[str, Any]:
+    return {
+        "plans": {
+            "morning": {
+                "id": "morning",
+                "kind": "builtin",
+                "label": "早报",
+                "session": "morning",
+                "time": "08:00",
+                "repeat": "daily",
+                "since_hours": 12,
+                "top_k": 20,
+                "source_ids": [],
+                "channel": "",
+                "chat_id": "",
+                "locked": False,
+                "enabled": False,
+            },
+            "noon": {
+                "id": "noon",
+                "kind": "builtin",
+                "label": "午报",
+                "session": "noon",
+                "time": "12:30",
+                "repeat": "daily",
+                "since_hours": 6,
+                "top_k": 15,
+                "source_ids": [],
+                "channel": "",
+                "chat_id": "",
+                "locked": False,
+                "enabled": False,
+            },
+            "evening": {
+                "id": "evening",
+                "kind": "builtin",
+                "label": "晚报",
+                "session": "evening",
+                "time": "19:00",
+                "repeat": "daily",
+                "since_hours": 12,
+                "top_k": 20,
+                "source_ids": [],
+                "channel": "",
+                "chat_id": "",
+                "locked": False,
+                "enabled": False,
+            },
+        }
+    }
+
+
+def _default_radar_plan() -> dict[str, Any]:
+    return {
+        "id": "radar",
+        "label": "雷达预警",
+        "time": "09:00",
+        "repeat": "every15",
+        "since_hours": 24,
+        "limit": 100,
+        "source_ids": [],
+        "channel": "",
+        "chat_id": "",
+        "chat_name": "",
+        "rules_text": "",
+        "force_refresh": False,
+        "locked": False,
+        "enabled": False,
+    }
+
+
+def _purge_finpulse_module_cache() -> int:
+    """Drop fin-pulse helper modules so host hot-reload cannot mix versions.
+
+    The host reloads ``plugin.py`` from the fresh runtime copy, but Python's
+    module cache may still hold old ``finpulse_task_manager`` /
+    ``finpulse_pipeline`` modules.  That caused the live app to call a new
+    route signature against an old manager class after plugin reloads.
+    """
+
+    prefixes = (
+        "finpulse_",
+        "finpulse_ai",
+        "finpulse_fetchers",
+        "finpulse_notification",
+        "finpulse_report",
+        "finpulse_services",
+    )
+    removed = 0
+    for name in list(sys.modules):
+        if name == __name__:
+            continue
+        if name.startswith(prefixes):
+            sys.modules.pop(name, None)
+            removed += 1
+    return removed
 
 
 # V1.0 canonical mode identifiers; mirrored in finpulse_models.MODES from
@@ -67,6 +174,10 @@ class Plugin(PluginBase):
     # ── Lifecycle ────────────────────────────────────────────────────
 
     def on_load(self, api: PluginAPI) -> None:
+        purged_modules = _purge_finpulse_module_cache()
+        if purged_modules:
+            api.log(f"cleared {purged_modules} cached fin-pulse modules before reload", "debug")
+
         # Step 1 — cache handle + per-plugin data dir.
         self._api = api
         host_data_dir = api.get_data_dir()
@@ -88,6 +199,7 @@ class Plugin(PluginBase):
         self._pipeline: Any | None = None
         self._dispatch: Any | None = None
         self._init_task: asyncio.Task | None = None
+        self._plans_task: asyncio.Task | None = None
         if self._data_dir is not None:
             try:
                 from finpulse_task_manager import FinpulseTaskManager  # type: ignore
@@ -178,11 +290,23 @@ class Plugin(PluginBase):
         try:
             if self._tm is not None:
                 await self._tm.init()
+                if self._plans_task is None or self._plans_task.done():
+                    self._plans_task = self._api.spawn_task(
+                        self._report_plan_loop(), name=f"{PLUGIN_ID}:report-plans"
+                    )
         except Exception as exc:  # noqa: BLE001 — top-level bootstrap
             logger.error("fin-pulse task manager init failed: %s", exc)
             raise
 
     async def on_unload(self) -> None:
+        if self._plans_task is not None and not self._plans_task.done():
+            self._plans_task.cancel()
+            try:
+                await self._plans_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("fin-pulse report plan loop drain error: %s", exc)
         if self._init_task is not None and not self._init_task.done():
             self._init_task.cancel()
             try:
@@ -196,6 +320,314 @@ class Plugin(PluginBase):
                 await self._tm.close()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("fin-pulse task manager close error: %s", exc)
+
+    # ── Report plans (fin-pulse owned scheduler) ─────────────────────
+
+    async def _load_report_plans(self) -> dict[str, Any]:
+        if self._tm is None:
+            return _default_report_plans()
+        cfg = await self._tm.get_all_config()
+        raw = cfg.get(REPORT_PLANS_CONFIG_KEY) or ""
+        base = _default_report_plans()
+        if not raw.strip():
+            return base
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return base
+        if not isinstance(parsed, dict):
+            return base
+        plans = parsed.get("plans")
+        if isinstance(plans, dict):
+            base["plans"].update({str(k): v for k, v in plans.items() if isinstance(v, dict)})
+        return base
+
+    async def _save_report_plans(self, data: dict[str, Any]) -> None:
+        if self._tm is None:
+            return
+        await self._tm.set_configs(
+            {REPORT_PLANS_CONFIG_KEY: json.dumps(data, ensure_ascii=False)}
+        )
+
+    async def _load_radar_plan(self) -> dict[str, Any]:
+        if self._tm is None:
+            return _default_radar_plan()
+        cfg = await self._tm.get_all_config()
+        raw = cfg.get(RADAR_PLAN_CONFIG_KEY) or ""
+        if not raw.strip():
+            return _default_radar_plan()
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return _default_radar_plan()
+        if not isinstance(parsed, dict):
+            return _default_radar_plan()
+        base = _default_radar_plan()
+        base.update(parsed)
+        return self._normalize_radar_plan(base)
+
+    async def _save_radar_plan(self, plan: dict[str, Any]) -> None:
+        if self._tm is None:
+            return
+        await self._tm.set_configs(
+            {RADAR_PLAN_CONFIG_KEY: json.dumps(plan, ensure_ascii=False)}
+        )
+
+    def _normalize_radar_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": "radar",
+            "label": str(plan.get("label") or "雷达预警"),
+            "time": str(plan.get("time") or "09:00")[:5],
+            "repeat": str(plan.get("repeat") or "every15"),
+            "since_hours": max(1, min(int(plan.get("since_hours") or 24), 168)),
+            "limit": max(1, min(int(plan.get("limit") or 100), 500)),
+            "source_ids": [str(s) for s in plan.get("source_ids", []) if str(s).strip()]
+            if isinstance(plan.get("source_ids"), list)
+            else [],
+            "channel": str(plan.get("channel") or ""),
+            "chat_id": str(plan.get("chat_id") or ""),
+            "chat_name": str(plan.get("chat_name") or ""),
+            "rules_text": str(plan.get("rules_text") or ""),
+            "force_refresh": bool(plan.get("force_refresh", False)),
+            "locked": bool(plan.get("locked", True)),
+            "enabled": bool(plan.get("enabled", True)),
+            "last_run_key": str(plan.get("last_run_key") or ""),
+            "last_result": plan.get("last_result") if isinstance(plan.get("last_result"), dict) else {},
+            "updated_at": str(plan.get("updated_at") or _utcnow_iso()),
+        }
+
+    def _normalize_report_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
+        pid = str(plan.get("id") or plan.get("session") or f"custom_{int(time.time())}")
+        kind = "builtin" if pid in {"morning", "noon", "evening"} else "custom"
+        session = str(plan.get("session") or pid)
+        if kind == "builtin":
+            session = pid
+        return {
+            "id": pid,
+            "kind": str(plan.get("kind") or kind),
+            "label": str(plan.get("label") or plan.get("title") or pid),
+            "title": str(plan.get("title") or plan.get("label") or ""),
+            "session": session,
+            "time": str(plan.get("time") or "09:00")[:5],
+            "repeat": str(plan.get("repeat") or "daily"),
+            "since_hours": max(1, min(int(plan.get("since_hours") or 12), 72)),
+            "top_k": max(1, min(int(plan.get("top_k") or 20), 60)),
+            "source_ids": [str(s) for s in plan.get("source_ids", []) if str(s).strip()]
+            if isinstance(plan.get("source_ids"), list)
+            else [],
+            "channel": str(plan.get("channel") or ""),
+            "chat_id": str(plan.get("chat_id") or ""),
+            "chat_name": str(plan.get("chat_name") or ""),
+            "locked": bool(plan.get("locked", True)),
+            "enabled": bool(plan.get("enabled", True)),
+            "preIngest": bool(plan.get("preIngest", False)),
+            "last_run_key": str(plan.get("last_run_key") or ""),
+            "last_result": plan.get("last_result") if isinstance(plan.get("last_result"), dict) else {},
+            "updated_at": str(plan.get("updated_at") or _utcnow_iso()),
+        }
+
+    def _plan_due(self, plan: dict[str, Any], now: datetime) -> tuple[bool, str]:
+        if not plan.get("enabled") or not plan.get("locked"):
+            return False, ""
+        if str(plan.get("time") or "") != now.strftime("%H:%M"):
+            return False, ""
+        repeat = str(plan.get("repeat") or "daily")
+        if repeat == "weekdays" and now.weekday() >= 5:
+            return False, ""
+        if repeat == "weekly" and now.weekday() != 0:
+            return False, ""
+        key = now.strftime("%Y-%m-%dT%H:%M")
+        return str(plan.get("last_run_key") or "") != key, key
+
+    def _radar_plan_due(self, plan: dict[str, Any], now: datetime) -> tuple[bool, str]:
+        if not plan.get("enabled") or not plan.get("locked"):
+            return False, ""
+        repeat = str(plan.get("repeat") or "every15")
+        if repeat == "every15":
+            minute = (now.minute // 15) * 15
+            key = now.strftime("%Y-%m-%dT%H:") + f"{minute:02d}"
+            return str(plan.get("last_run_key") or "") != key, key
+        if repeat == "hourly":
+            key = now.strftime("%Y-%m-%dT%H")
+            return str(plan.get("last_run_key") or "") != key, key
+        return self._plan_due(plan, now)
+
+    async def _maybe_force_radar_ingest(
+        self, *, source_ids: list[str], since_hours: int, force_refresh: bool
+    ) -> dict[str, Any] | None:
+        if not force_refresh or self._tm is None or self._pipeline is None:
+            return None
+        cfg = await self._tm.get_all_config()
+        try:
+            last = float(cfg.get(RADAR_FORCE_FETCH_CONFIG_KEY) or "0")
+        except ValueError:
+            last = 0.0
+        elapsed = time.time() - last if last > 0 else RADAR_FORCE_FETCH_MIN_INTERVAL_S
+        if elapsed < RADAR_FORCE_FETCH_MIN_INTERVAL_S:
+            return {
+                "ok": True,
+                "skipped": True,
+                "reason": "min_interval",
+                "remaining_s": round(RADAR_FORCE_FETCH_MIN_INTERVAL_S - elapsed, 1),
+            }
+        result = await self._pipeline.ingest(
+            sources=[str(s) for s in source_ids] if source_ids else None,
+            since_hours=since_hours,
+        )
+        await self._tm.set_configs({RADAR_FORCE_FETCH_CONFIG_KEY: str(time.time())})
+        return result
+
+    async def _report_plan_loop(self) -> None:
+        while True:
+            try:
+                await asyncio.sleep(20)
+                if self._tm is None or self._pipeline is None:
+                    continue
+                data = await self._load_report_plans()
+                changed = False
+                now = datetime.now()
+                for pid, raw in list((data.get("plans") or {}).items()):
+                    plan = self._normalize_report_plan(raw)
+                    due, run_key = self._plan_due(plan, now)
+                    if not due:
+                        continue
+                    logger.info("fin-pulse report plan due: %s", pid)
+                    result = await self._run_report_plan(plan, manual=False)
+                    plan["last_run_key"] = run_key
+                    plan["last_result"] = result
+                    data["plans"][pid] = plan
+                    changed = True
+                if changed:
+                    await self._save_report_plans(data)
+                radar_plan = await self._load_radar_plan()
+                due, run_key = self._radar_plan_due(radar_plan, now)
+                if due:
+                    logger.info("fin-pulse radar plan due: %s", run_key)
+                    result = await self._run_radar_plan(radar_plan, manual=False)
+                    radar_plan["last_run_key"] = run_key
+                    radar_plan["last_result"] = result
+                    await self._save_radar_plan(radar_plan)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("fin-pulse report plan loop error: %s", exc)
+
+    async def _run_report_plan(
+        self, plan: dict[str, Any], *, manual: bool = False
+    ) -> dict[str, Any]:
+        if self._tm is None or self._pipeline is None:
+            return {"ok": False, "reason": "pipeline_unavailable"}
+        if self._dispatch is None:
+            return {"ok": False, "reason": "dispatch_unavailable"}
+        channel = str(plan.get("channel") or "")
+        chat_id = str(plan.get("chat_id") or "")
+        if not channel or not chat_id:
+            return {"ok": False, "reason": "missing_target"}
+        source_ids = plan.get("source_ids") if isinstance(plan.get("source_ids"), list) else []
+        since_hours = max(1, min(int(plan.get("since_hours") or 12), 72))
+        top_k = max(1, min(int(plan.get("top_k") or 20), 60))
+        if plan.get("preIngest"):
+            logger.info("fin-pulse report plan %s ingest start", plan.get("id"))
+            await self._pipeline.ingest(
+                sources=[str(s) for s in source_ids] if source_ids else None,
+                since_hours=since_hours,
+            )
+            logger.info("fin-pulse report plan %s ingest done", plan.get("id"))
+        task = await self._tm.create_task(
+            mode="daily_brief",
+            params={"plan_id": plan.get("id"), "manual": manual},
+            status="running",
+        )
+        digest = await self._pipeline.run_daily_brief(
+            session=str(plan.get("session") or plan.get("id") or "morning"),
+            since_hours=since_hours,
+            top_k=top_k,
+            lang="zh",
+            source_ids=[str(s) for s in source_ids] if source_ids else None,
+            title=str(plan.get("title") or plan.get("label") or ""),
+            task_id=task["id"],
+        )
+        row = await self._tm.get_digest(str(digest.get("digest_id") or ""))
+        html = (row or {}).get("html_blob") or ""
+        markdown = (row or {}).get("markdown_blob") or ""
+        content = html.strip() or markdown.strip()
+        content_kind = "html" if html.strip() else "text"
+        result = await self._dispatch.send(
+            channel=channel,
+            chat_id=chat_id,
+            content=content,
+            cooldown_key=None if manual else f"report-plan:{plan.get('id')}:{_today_utc_ymd()}",
+            cooldown_s=0 if manual else 60,
+            dedupe_by_content=False,
+            content_kind=content_kind,
+            file_name=f"fin-pulse-{plan.get('id') or 'report'}.pdf" if content_kind == "html" else None,
+            fallback_text=markdown.strip() if content_kind == "html" else None,
+        )
+        digest_id = str(digest.get("digest_id") or "")
+        if digest_id:
+            await self._tm.update_digest_push_results(digest_id, result.as_dict())
+        logger.info(
+            "fin-pulse report plan %s dispatch ok=%s chunks=%s errors=%s",
+            plan.get("id"),
+            result.ok,
+            result.sent_chunks,
+            result.errors,
+        )
+        return {
+            "ok": result.ok,
+            "digest": digest,
+            "dispatch": result.as_dict(),
+            "content_kind": result.content_kind,
+        }
+
+    async def _run_radar_plan(
+        self, plan: dict[str, Any], *, manual: bool = False
+    ) -> dict[str, Any]:
+        if self._tm is None or self._pipeline is None:
+            return {"ok": False, "reason": "pipeline_unavailable"}
+        if self._dispatch is None:
+            return {"ok": False, "reason": "dispatch_unavailable"}
+        channel = str(plan.get("channel") or "")
+        chat_id = str(plan.get("chat_id") or "")
+        rules_text = str(plan.get("rules_text") or "")
+        if not channel or not chat_id:
+            return {"ok": False, "reason": "missing_target"}
+        if not rules_text.strip():
+            return {"ok": False, "reason": "missing_rules"}
+        source_ids = plan.get("source_ids") if isinstance(plan.get("source_ids"), list) else []
+        since_hours = max(1, min(int(plan.get("since_hours") or 24), 168))
+        limit = max(1, min(int(plan.get("limit") or 100), 500))
+        ingest_result = await self._maybe_force_radar_ingest(
+            source_ids=[str(s) for s in source_ids],
+            since_hours=since_hours,
+            force_refresh=bool(plan.get("force_refresh")),
+        )
+        if ingest_result is not None:
+            logger.info("fin-pulse radar plan ingest result: %s", ingest_result.get("totals") or ingest_result)
+        task = await self._tm.create_task(
+            mode="hot_radar",
+            params={"plan_id": "radar", "manual": manual, "source_ids": source_ids},
+            status="running",
+        )
+        result = await self._pipeline.run_hot_radar(
+            self._dispatch,
+            rules_text=rules_text,
+            targets=[{"channel": channel, "chat_id": chat_id}],
+            since_hours=since_hours,
+            limit=limit,
+            title="财经脉动雷达预警",
+            cooldown_s=0 if manual else 600,
+            task_id=task["id"],
+            dedupe_by_content=not manual,
+            source_ids=[str(s) for s in source_ids] if source_ids else None,
+        )
+        result["ingest"] = ingest_result
+        logger.info(
+            "fin-pulse radar plan dispatch hits=%s dispatched=%s",
+            len(result.get("hits") or []),
+            result.get("dispatched"),
+        )
+        return result
 
     # ── Schedule hook (Phase 4c) ────────────────────────────────────
 
@@ -262,11 +694,15 @@ class Plugin(PluginBase):
         self, payload: dict[str, Any], channel: str, chat_id: str
     ) -> dict[str, Any]:
         session = str(payload.get("session") or "morning")
-        if session not in {"morning", "noon", "evening"}:
+        if session not in {"morning", "noon", "evening"} and not session.startswith("custom"):
             return {"ok": False, "reason": "invalid_session", "session": session}
         since_hours = int(payload.get("since_hours", 12) or 12)
         top_k = int(payload.get("top_k", 20) or 20)
         lang = str(payload.get("lang") or "zh")
+        title = payload.get("title")
+        source_ids = payload.get("source_ids")
+        if not isinstance(source_ids, list):
+            source_ids = None
         internal_task = await self._tm.create_task(
             mode="daily_brief",
             params={
@@ -274,6 +710,8 @@ class Plugin(PluginBase):
                 "since_hours": since_hours,
                 "top_k": top_k,
                 "lang": lang,
+                "title": title,
+                "source_ids": source_ids,
                 "scheduled": True,
                 "channel": channel,
                 "chat_id": chat_id,
@@ -285,6 +723,8 @@ class Plugin(PluginBase):
             since_hours=max(1, min(since_hours, 72)),
             top_k=max(1, min(top_k, 60)),
             lang=lang,
+            source_ids=[str(s) for s in source_ids] if source_ids else None,
+            title=str(title) if title else None,
             task_id=internal_task["id"],
         )
         dispatched: dict[str, Any] | None = None
@@ -762,9 +1202,8 @@ class Plugin(PluginBase):
         ) -> dict[str, Any]:
             """Translate article title/summary via the host Brain.
 
-            This mirrors TrendRadar's translation idea but keeps it scoped to
-            on-demand card translation instead of adding another background
-            pipeline.
+            This keeps translation scoped to on-demand card actions instead
+            of adding another background pipeline.
             """
 
             raw_items = payload.get("items") if isinstance(payload, dict) else None
@@ -867,14 +1306,22 @@ class Plugin(PluginBase):
             if self._tm is None or self._pipeline is None:
                 raise HTTPException(status_code=503, detail="pipeline_unavailable")
             session = payload.get("session") if isinstance(payload, dict) else None
-            if session not in {"morning", "noon", "evening"}:
+            session = str(session or "")
+            if session not in {"morning", "noon", "evening"} and not session.startswith("custom"):
                 raise HTTPException(
                     status_code=400,
-                    detail="session must be one of morning|noon|evening",
+                    detail="session must be morning|noon|evening or custom*",
                 )
             since_hours = payload.get("since_hours", 12)
             top_k = payload.get("top_k", 20)
             lang = payload.get("lang", "zh") or "zh"
+            title = payload.get("title")
+            raw_source_ids = payload.get("source_ids")
+            source_ids = (
+                [str(s) for s in raw_source_ids if str(s).strip()]
+                if isinstance(raw_source_ids, list)
+                else None
+            )
             try:
                 since_hours_int = max(1, min(int(since_hours), 72))
                 top_k_int = max(1, min(int(top_k), 60))
@@ -882,6 +1329,40 @@ class Plugin(PluginBase):
                 raise HTTPException(
                     status_code=400, detail=f"invalid numeric arg: {exc}"
                 ) from exc
+            now = datetime.now(timezone.utc)
+            since_iso = datetime.fromtimestamp(
+                now.timestamp() - since_hours_int * 3600, tz=timezone.utc
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            freshness_hours = min(2, since_hours_int)
+            fresh_since_iso = datetime.fromtimestamp(
+                now.timestamp() - freshness_hours * 3600, tz=timezone.utc
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            if source_ids:
+                window_total = 0
+                fresh_total = 0
+                for source_id in source_ids:
+                    _, source_window_total = await self._tm.list_articles(
+                        source_id=source_id, since=since_iso, sort="time_desc", limit=1
+                    )
+                    _, source_fresh_total = await self._tm.list_articles(
+                        source_id=source_id, since=fresh_since_iso, sort="time_desc", limit=1
+                    )
+                    window_total += source_window_total
+                    fresh_total += source_fresh_total
+            else:
+                _, window_total = await self._tm.list_articles(
+                    since=since_iso, sort="time_desc", limit=1
+                )
+                _, fresh_total = await self._tm.list_articles(
+                    since=fresh_since_iso, sort="time_desc", limit=1
+                )
+            auto_ingested = False
+            if window_total <= 0 or fresh_total <= 0:
+                await self._pipeline.ingest(
+                    sources=source_ids,
+                    since_hours=since_hours_int,
+                )
+                auto_ingested = True
             task = await self._tm.create_task(
                 mode="daily_brief",
                 params={
@@ -889,6 +1370,9 @@ class Plugin(PluginBase):
                     "since_hours": since_hours_int,
                     "top_k": top_k_int,
                     "lang": lang,
+                    "title": str(title) if title else None,
+                    "source_ids": source_ids,
+                    "auto_ingested": auto_ingested,
                 },
                 status="running",
             )
@@ -898,9 +1382,16 @@ class Plugin(PluginBase):
                     since_hours=since_hours_int,
                     top_k=top_k_int,
                     lang=lang,
+                    source_ids=source_ids,
+                    title=str(title) if title else None,
                     task_id=task["id"],
                 )
-                return {"ok": True, "task_id": task["id"], "digest": result}
+                return {
+                    "ok": True,
+                    "task_id": task["id"],
+                    "digest": result,
+                    "auto_ingested": auto_ingested,
+                }
             except Exception as exc:  # noqa: BLE001
                 from finpulse_errors import map_exception
 
@@ -949,6 +1440,15 @@ class Plugin(PluginBase):
             html_blob = row.get("html_blob") or ""
             return HTMLResponse(content=html_blob, media_type="text/html")
 
+        @router.delete("/digests/{digest_id}")
+        async def delete_digest(digest_id: str) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            removed = await self._tm.delete_digest(digest_id)
+            if not removed:
+                raise HTTPException(status_code=404, detail="not_found")
+            return {"ok": True, "id": digest_id, "deleted": True}
+
         # ── Hot radar ───────────────────────────────────────────────
 
         @router.post("/radar/evaluate")
@@ -964,12 +1464,26 @@ class Plugin(PluginBase):
             limit = int(payload.get("limit", 100) or 100)
             min_score = payload.get("min_score")
             min_score_f = float(min_score) if min_score is not None else None
-            return await self._pipeline.evaluate_radar(
+            source_ids = payload.get("source_ids")
+            if not isinstance(source_ids, list):
+                source_ids = None
+            ingest_result = None
+            if bool(payload.get("force_refresh")):
+                ingest_result = await self._maybe_force_radar_ingest(
+                    source_ids=[str(s) for s in source_ids] if source_ids else [],
+                    since_hours=max(1, min(since_hours, 168)),
+                    force_refresh=True,
+                )
+            result = await self._pipeline.evaluate_radar(
                 rules_text=rules_text,
                 since_hours=max(1, min(since_hours, 168)),
                 limit=max(1, min(limit, 500)),
                 min_score=min_score_f,
+                source_ids=[str(s) for s in source_ids] if source_ids else None,
             )
+            if ingest_result is not None:
+                result["ingest"] = ingest_result
+            return result
 
         @router.post("/radar/ai-suggest")
         async def radar_ai_suggest(
@@ -1083,6 +1597,16 @@ class Plugin(PluginBase):
             min_score_f = float(min_score) if min_score is not None else None
             cooldown_s = float(payload.get("cooldown_s", 600) or 600)
             title = payload.get("title")
+            source_ids = payload.get("source_ids")
+            if not isinstance(source_ids, list):
+                source_ids = None
+            ingest_result = None
+            if bool(payload.get("force_refresh")):
+                ingest_result = await self._maybe_force_radar_ingest(
+                    source_ids=[str(s) for s in source_ids] if source_ids else [],
+                    since_hours=since_hours,
+                    force_refresh=True,
+                )
             task = await self._tm.create_task(
                 mode="hot_radar",
                 params={
@@ -1092,6 +1616,7 @@ class Plugin(PluginBase):
                     "min_score": min_score_f,
                     "cooldown_s": cooldown_s,
                     "title": title,
+                    "source_ids": source_ids,
                 },
                 status="running",
             )
@@ -1106,7 +1631,9 @@ class Plugin(PluginBase):
                     title=title if isinstance(title, str) else None,
                     cooldown_s=cooldown_s,
                     task_id=task["id"],
+                    source_ids=[str(s) for s in source_ids] if source_ids else None,
                 )
+                result["ingest"] = ingest_result
                 return {"ok": True, "task_id": task["id"], "result": result}
             except Exception as exc:  # noqa: BLE001
                 from finpulse_errors import map_exception
@@ -1148,6 +1675,111 @@ class Plugin(PluginBase):
                 header=header,
             )
             return {"ok": result.ok, "dispatch": result.as_dict()}
+
+        @router.get("/radar-plan")
+        async def get_radar_plan() -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            return {"ok": True, "plan": await self._load_radar_plan()}
+
+        @router.put("/radar-plan")
+        async def save_radar_plan(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            plan = self._normalize_radar_plan(payload if isinstance(payload, dict) else {})
+            plan["locked"] = True
+            plan["enabled"] = bool(plan.get("channel") and plan.get("chat_id") and str(plan.get("rules_text") or "").strip())
+            plan["updated_at"] = _utcnow_iso()
+            await self._save_radar_plan(plan)
+            return {"ok": True, "plan": plan}
+
+        @router.post("/radar-plan/unlock")
+        async def unlock_radar_plan() -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            plan = await self._load_radar_plan()
+            plan["locked"] = False
+            plan["enabled"] = False
+            await self._save_radar_plan(plan)
+            return {"ok": True, "plan": plan}
+
+        @router.post("/radar-plan/run")
+        async def run_radar_plan() -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            plan = await self._load_radar_plan()
+            result = await self._run_radar_plan(plan, manual=True)
+            plan["last_result"] = result
+            await self._save_radar_plan(plan)
+            return {"ok": bool(result.get("ok")), "result": result}
+
+        @router.get("/report-plans")
+        async def list_report_plans() -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            data = await self._load_report_plans()
+            plans = {
+                pid: self._normalize_report_plan(plan)
+                for pid, plan in (data.get("plans") or {}).items()
+                if isinstance(plan, dict)
+            }
+            return {"ok": True, "plans": plans}
+
+        @router.put("/report-plans/{plan_id}")
+        async def save_report_plan(
+            plan_id: str, payload: dict[str, Any] = Body(...)
+        ) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            data = await self._load_report_plans()
+            plan = self._normalize_report_plan(dict(payload or {}, id=plan_id))
+            plan["locked"] = True
+            plan["enabled"] = bool(plan.get("channel") and plan.get("chat_id"))
+            plan["updated_at"] = _utcnow_iso()
+            data.setdefault("plans", {})[plan_id] = plan
+            await self._save_report_plans(data)
+            return {"ok": True, "plan": plan}
+
+        @router.post("/report-plans/{plan_id}/unlock")
+        async def unlock_report_plan(plan_id: str) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            data = await self._load_report_plans()
+            plan = data.setdefault("plans", {}).get(plan_id)
+            if not isinstance(plan, dict):
+                raise HTTPException(status_code=404, detail="not_found")
+            plan = self._normalize_report_plan(plan)
+            plan["locked"] = False
+            plan["enabled"] = False
+            data["plans"][plan_id] = plan
+            await self._save_report_plans(data)
+            return {"ok": True, "plan": plan}
+
+        @router.delete("/report-plans/{plan_id}")
+        async def delete_report_plan(plan_id: str) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            if plan_id in {"morning", "noon", "evening"}:
+                raise HTTPException(status_code=400, detail="builtin plan cannot be deleted")
+            data = await self._load_report_plans()
+            removed = data.setdefault("plans", {}).pop(plan_id, None)
+            await self._save_report_plans(data)
+            return {"ok": True, "deleted": removed is not None}
+
+        @router.post("/report-plans/{plan_id}/run")
+        async def run_report_plan(plan_id: str) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            data = await self._load_report_plans()
+            raw = data.setdefault("plans", {}).get(plan_id)
+            if not isinstance(raw, dict):
+                raise HTTPException(status_code=404, detail="not_found")
+            plan = self._normalize_report_plan(raw)
+            result = await self._run_report_plan(plan, manual=True)
+            plan["last_result"] = result
+            data["plans"][plan_id] = plan
+            await self._save_report_plans(data)
+            return {"ok": bool(result.get("ok")), "result": result}
 
         # ── Schedules ───────────────────────────────────────────────
 
@@ -1195,15 +1827,21 @@ class Plugin(PluginBase):
             description: str
             if mode == "daily_brief":
                 session = str(payload.get("session") or "morning")
-                if session not in {"morning", "noon", "evening"}:
+                if session not in {"morning", "noon", "evening"} and not session.startswith("custom"):
                     raise HTTPException(
                         status_code=400,
-                        detail="session must be morning|noon|evening",
+                        detail="session must be morning|noon|evening or custom*",
                     )
                 body["session"] = session
                 body["since_hours"] = int(payload.get("since_hours", 12) or 12)
                 body["top_k"] = int(payload.get("top_k", 20) or 20)
                 body["lang"] = str(payload.get("lang") or "zh")
+                title = payload.get("title")
+                if isinstance(title, str) and title.strip():
+                    body["title"] = title.strip()
+                source_ids = payload.get("source_ids")
+                if isinstance(source_ids, list):
+                    body["source_ids"] = [str(s) for s in source_ids if str(s).strip()]
                 name_suffix = session
                 description = f"fin-pulse {session} brief → {channel}/{chat_id}"
             else:

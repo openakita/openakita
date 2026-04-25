@@ -25,8 +25,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
+import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from finpulse_notification import DEFAULT_BATCH_BYTES, split_by_lines
@@ -44,6 +47,7 @@ class DispatchResult:
     sent_chunks: int = 0
     skipped: str | None = None  # "cooldown" | "empty" | "dedup"
     errors: list[str] = field(default_factory=list)
+    content_kind: str = "text"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +57,7 @@ class DispatchResult:
             "sent_chunks": self.sent_chunks,
             "skipped": self.skipped,
             "errors": list(self.errors),
+            "content_kind": self.content_kind,
         }
 
 
@@ -60,6 +65,44 @@ def _content_key(channel: str, text: str) -> str:
     """Stable short hash used when ``dedupe_by_content`` is requested."""
     h = hashlib.sha256(f"{channel}::{text}".encode("utf-8")).hexdigest()
     return h[:12]
+
+
+def _strip_markdown_inline(text: str) -> str:
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"[*_`>#]+", "", text)
+    return " ".join(text.split()).strip()
+
+
+def _build_file_caption(*, header: str = "", fallback_text: str | None = None) -> str:
+    """Short friendly caption attached to PDF files when the IM supports it."""
+    body = fallback_text or ""
+    title = header.strip()
+    highlights: list[str] = []
+    for raw in body.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#") and not title:
+            title = _strip_markdown_inline(line.lstrip("#").strip())
+            continue
+        if re.match(r"^\d+[\).]\s+", line):
+            cleaned = _strip_markdown_inline(re.sub(r"^\d+[\).]\s+", "", line))
+            if cleaned and not cleaned.startswith(("http://", "https://")):
+                highlights.append(cleaned)
+        if len(highlights) >= 3:
+            break
+    title = title or "Fin Pulse 报表"
+    lines = [
+        f"{title}",
+        "",
+        "PDF 报表已生成，完整排版内容请查看附件。",
+    ]
+    if highlights:
+        lines.append("")
+        lines.append("AI 摘要：")
+        lines.extend(f"- {item[:120]}" for item in highlights)
+    caption = "\n".join(lines).strip()
+    return caption[:900]
 
 
 class DispatchService:
@@ -94,6 +137,10 @@ class DispatchService:
         cooldown_s: float = 0.0,
         dedupe_by_content: bool = False,
         header: str = "",
+        content_kind: str = "text",
+        file_name: str | None = None,
+        fallback_text: str | None = None,
+        file_caption: str | None = None,
     ) -> DispatchResult:
         """Push ``content`` to one ``(channel, chat_id)`` target.
 
@@ -106,7 +153,7 @@ class DispatchService:
         * ``header`` is prepended to every follow-up chunk to make
           mid-stream batches self-identify.
         """
-        result = DispatchResult(ok=False, channel=channel, chat_id=chat_id)
+        result = DispatchResult(ok=False, channel=channel, chat_id=chat_id, content_kind=content_kind)
 
         text = content or ""
         if not text.strip():
@@ -127,6 +174,31 @@ class DispatchService:
                 result.ok = True
                 return result
 
+        adapter = self._get_adapter(channel)
+        if content_kind == "html" and adapter is not None:
+            caption = file_caption or _build_file_caption(
+                header=header, fallback_text=fallback_text
+            )
+            sent_file, file_error = await self._try_send_pdf_file(
+                adapter,
+                chat_id=chat_id,
+                html=text,
+                file_name=file_name,
+                caption=caption,
+            )
+            if sent_file:
+                result.sent_chunks = 1
+                result.ok = True
+                result.content_kind = "pdf"
+                for k in effective_keys:
+                    self._cooldown[k] = now
+                return result
+            if file_error:
+                result.errors.append(f"pdf_file:{file_error}")
+            if fallback_text is not None:
+                text = fallback_text
+                result.content_kind = "text"
+
         max_bytes = self._batch_bytes.get(channel, self._batch_bytes["default"])
         try:
             chunks = split_by_lines(
@@ -145,13 +217,12 @@ class DispatchService:
         sent = 0
         for i, chunk in enumerate(chunks):
             try:
-                # ``api.send_message`` is fire-and-forget on the host
-                # side — it schedules a task on the running loop. We
-                # still await a tiny sleep between chunks to stay
-                # adapter-rate-friendly.
-                self._api.send_message(
-                    channel=channel, chat_id=chat_id, text=chunk
-                )
+                if adapter is not None:
+                    await adapter.send_text(chat_id, chunk)
+                else:
+                    # Fall back to PluginAPI's fire-and-forget bridge when
+                    # the host gateway is not directly exposed.
+                    self._api.send_message(channel=channel, chat_id=chat_id, text=chunk)
                 sent += 1
             except Exception as exc:  # noqa: BLE001 — defensive boundary
                 logger.warning(
@@ -176,6 +247,80 @@ class DispatchService:
             for k in effective_keys:
                 self._cooldown[k] = now
         return result
+
+    def _get_adapter(self, channel: str) -> Any | None:
+        host = getattr(self._api, "_host", {}) or {}
+        gateway = host.get("gateway") if isinstance(host, dict) else None
+        if gateway is None or not hasattr(gateway, "get_adapter"):
+            return None
+        try:
+            return gateway.get_adapter(channel)
+        except Exception:
+            return None
+
+    async def _try_send_pdf_file(
+        self,
+        adapter: Any,
+        *,
+        chat_id: str,
+        html: str,
+        file_name: str | None = None,
+        caption: str | None = None,
+    ) -> tuple[bool, str | None]:
+        if not hasattr(adapter, "send_file"):
+            return False, "unsupported"
+        tmp_path: Path | None = None
+        tmp_dir: tempfile.TemporaryDirectory[str] | None = None
+        try:
+            tmp_dir = tempfile.TemporaryDirectory(prefix="fin-pulse-")
+            safe_name = Path(file_name or "fin-pulse-report.pdf").name
+            if safe_name.lower().endswith(".html"):
+                safe_name = safe_name[:-5] + ".pdf"
+            elif not safe_name.lower().endswith(".pdf"):
+                safe_name += ".pdf"
+            tmp_path = Path(tmp_dir.name) / safe_name
+            await self._render_html_to_pdf(html, tmp_path)
+            try:
+                await adapter.send_file(chat_id, str(tmp_path), caption=caption or "")
+            except TypeError as exc:
+                if "caption" not in str(exc):
+                    raise
+                await adapter.send_file(chat_id, str(tmp_path))
+            return True, None
+        except NotImplementedError as exc:
+            return False, str(exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("pdf file dispatch failed on %s: %s", getattr(adapter, "channel_name", "?"), exc)
+            return False, str(exc)
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if tmp_dir is not None:
+                tmp_dir.cleanup()
+
+    async def _render_html_to_pdf(self, html: str, out_path: Path) -> None:
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as exc:
+            raise RuntimeError("playwright_unavailable") from exc
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content(html, wait_until="load")
+                await page.pdf(
+                    path=str(out_path),
+                    format="A4",
+                    print_background=True,
+                    margin={"top": "14mm", "right": "12mm", "bottom": "14mm", "left": "12mm"},
+                )
+                await page.close()
+            finally:
+                await browser.close()
 
     async def broadcast(
         self,

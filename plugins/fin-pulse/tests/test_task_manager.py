@@ -83,6 +83,32 @@ def test_default_config_seeded(tm_path: Path) -> None:
     _run(_body())
 
 
+def test_default_config_backfills_blank_newsnow_keys(tm_path: Path) -> None:
+    async def _body() -> None:
+        tm = await _init(tm_path)
+        try:
+            await tm.set_configs(
+                {
+                    "newsnow.mode": "",
+                    "newsnow.api_url": "",
+                    "newsnow.min_interval_s": "",
+                }
+            )
+        finally:
+            await tm.close()
+
+        tm2 = await _init(tm_path)
+        try:
+            cfg = await tm2.get_all_config()
+            assert cfg["newsnow.mode"] == "public"
+            assert cfg["newsnow.api_url"] == "https://newsnow.busiyi.world/api/s"
+            assert cfg["newsnow.min_interval_s"] == "300"
+        finally:
+            await tm2.close()
+
+    _run(_body())
+
+
 def test_update_task_safe_rejects_unknown_column(tm_path: Path) -> None:
     async def _body() -> None:
         tm = await _init(tm_path)
@@ -132,6 +158,86 @@ def test_article_upsert_dedupes_by_url_hash(tm_path: Path) -> None:
             assert row is not None
             assert row["title"] == "updated"
             assert row["raw"]["source_extra"] == "later"
+        finally:
+            await tm.close()
+
+    _run(_body())
+
+
+def test_article_list_window_falls_back_for_non_iso_published_at(tm_path: Path) -> None:
+    async def _body() -> None:
+        tm = await _init(tm_path)
+        try:
+            await tm.upsert_article(
+                source_id="wallstreetcn",
+                url="https://wallstreetcn.com/articles/non-iso",
+                url_hash="h_non_iso",
+                title="刚抓到的非 ISO 时间新闻",
+                fetched_at="2026-04-24T12:00:00Z",
+                published_at="刚刚",
+            )
+
+            rows, total = await tm.list_articles(
+                since="2026-04-24T00:00:00Z",
+                limit=10,
+            )
+
+            assert total == 1
+            assert rows[0]["title"] == "刚抓到的非 ISO 时间新闻"
+        finally:
+            await tm.close()
+
+    _run(_body())
+
+
+def test_article_list_window_uses_space_separated_published_at(tm_path: Path) -> None:
+    async def _body() -> None:
+        tm = await _init(tm_path)
+        try:
+            await tm.upsert_article(
+                source_id="nbs",
+                url="https://stats.gov.cn/old-report",
+                url_hash="h_old_space_time",
+                title="旧发布日期不应出现在近 6 小时",
+                fetched_at="2026-04-24T12:00:00Z",
+                published_at="2023-12-31 09:30",
+            )
+
+            rows, total = await tm.list_articles(
+                since="2026-04-24T06:00:00Z",
+                limit=10,
+            )
+
+            assert total == 0
+            assert rows == []
+        finally:
+            await tm.close()
+
+    _run(_body())
+
+
+def test_article_list_sort_supports_time_asc(tm_path: Path) -> None:
+    async def _body() -> None:
+        tm = await _init(tm_path)
+        try:
+            await tm.upsert_article(
+                source_id="cls",
+                url="https://cls.example/old",
+                url_hash="h_sort_old",
+                title="old",
+                fetched_at="2026-04-24T08:00:00Z",
+            )
+            await tm.upsert_article(
+                source_id="cls",
+                url="https://cls.example/new",
+                url_hash="h_sort_new",
+                title="new",
+                fetched_at="2026-04-24T10:00:00Z",
+            )
+
+            rows, _ = await tm.list_articles(sort="time_asc", limit=10)
+
+            assert [row["title"] for row in rows[:2]] == ["old", "new"]
         finally:
             await tm.close()
 
@@ -211,6 +317,9 @@ def test_digest_roundtrip(tm_path: Path) -> None:
             items, total = await tm.list_digests(session="morning")
             assert total == 1
             assert items[0]["id"] == did
+            assert await tm.delete_digest(did) is True
+            assert await tm.get_digest(did) is None
+            assert await tm.delete_digest(did) is False
         finally:
             await tm.close()
 
