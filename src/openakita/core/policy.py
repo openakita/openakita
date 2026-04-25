@@ -553,7 +553,7 @@ class PolicyEngine:
         # F7: Temporary allowlists granted by skill activation.
         self._skill_allowlists: dict[str, set[str]] = {}
         # P3-3: 前端安全模式 (synced to confirmation.mode)
-        self._frontend_mode: str = "smart"
+        self._frontend_mode: str = self._config.confirmation.mode
         # Smart-mode session trust escalation counter
         self._session_allow_count: int = 0
 

@@ -101,7 +101,7 @@ tests/                  # Test suite
 
 ## Known Gotchas
 
-- Windows shell: use `write_file` + `run_shell python script.py` for complex text processing; avoid PowerShell escaping issues.
+- Windows shell: use `write_file` + `run_powershell` to execute `python script.py` for complex text processing; use `run_shell` only when bash/Git Bash/POSIX shell semantics are explicitly required.
 - `identity/AGENT.md` is OpenAkita's own behavior spec, NOT the industry-standard `AGENTS.md` file — don't confuse them.
 - The `prompt/compiler.py` must be re-run when identity files change; `builder.py` auto-detects staleness via `check_compiled_outdated()`.
 - Skill loading order: `__builtin__` → workspace → `.cursor/skills` → `.claude/skills` → `skills/` → global home dirs.

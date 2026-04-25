@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { toast } from "sonner";
-import { Loader2, RotateCw, Save, ShieldAlert } from "lucide-react";
+import { Loader2, LockKeyhole, RotateCw, Save, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
 
 type SecurityViewProps = {
   apiBaseUrl: string;
@@ -256,21 +256,27 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     { id: "checkpoints", labelKey: "security.checkpoints" },
   ];
   const advancedVisible = permissionMode !== "yolo" || showAdvanced;
-  const MODE_CARDS: Array<{ id: PermissionMode; title: string; desc: string }> = [
+  const MODE_CARDS: Array<{ id: PermissionMode; title: string; desc: string; icon: typeof ShieldCheck; tone: string }> = [
     {
       id: "yolo",
       title: t("security.modeTrustTitle", "信任模式"),
       desc: t("security.modeTrustCardDesc", "默认推荐。仅保护系统敏感目录和密钥目录，其他操作不打扰。"),
+      icon: ShieldCheck,
+      tone: "text-emerald-600 bg-emerald-500/10 border-emerald-500/20",
     },
     {
       id: "smart",
       title: t("security.modeProtectTitle", "保护模式"),
       desc: t("security.modeProtectCardDesc", "对高风险命令、受控目录和沙箱执行进行确认或拦截。"),
+      icon: Shield,
+      tone: "text-blue-600 bg-blue-500/10 border-blue-500/20",
     },
     {
       id: "cautious",
       title: t("security.modeStrictTitle", "严格模式"),
       desc: t("security.modeStrictCardDesc", "适合企业或高风险环境，策略更保守。"),
+      icon: LockKeyhole,
+      tone: "text-amber-600 bg-amber-500/10 border-amber-500/20",
     },
   ];
 
@@ -297,6 +303,7 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {MODE_CARDS.map((mode) => {
               const active = permissionMode === mode.id;
+              const ModeIcon = mode.icon;
               return (
                 <button
                   key={mode.id}
@@ -309,7 +316,12 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold">{mode.title}</span>
+                    <span className="flex items-center gap-2 text-sm font-semibold">
+                      <span className={cn("grid size-8 place-items-center rounded-lg border", mode.tone)}>
+                        <ModeIcon size={16} />
+                      </span>
+                      {mode.title}
+                    </span>
                     {active && <Badge variant="secondary">{t("security.current", "当前")}</Badge>}
                   </div>
                   <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{mode.desc}</p>

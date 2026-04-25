@@ -36,7 +36,7 @@ class InterventionLevel(IntEnum):
     """干预级别（递增严重程度）"""
 
     NONE = 0
-    NUDGE = 1  # 注入提示消息
+    NUDGE = 1  # 仅记录/观测，默认不注入对话
     STRATEGY_SWITCH = 2  # 回滚 + 换策略
     MODEL_SWITCH = 3  # 切换模型
     ESCALATE = 4  # 请求用户介入
@@ -132,7 +132,7 @@ UNPRODUCTIVE_ADMIN_TOOLS = frozenset(
 # enabled, signature_repeat checks for these tools:
 #   - use a higher repeat threshold (POLL_REPEAT_MULTIPLIER × normal)
 #   - cap intervention at NUDGE (never STRATEGY_SWITCH / TERMINATE)
-#   - inject a softer prompt suggesting ``org_wait_for_deliverable``
+#   - record a soft event without injecting another prompt into the LLM context
 POLL_FRIENDLY_TOOLS = frozenset(
     {
         "org_list_delegated_tasks",
@@ -140,9 +140,28 @@ POLL_FRIENDLY_TOOLS = frozenset(
         "org_get_task_progress",
         "org_get_node_status",
         "org_wait_for_deliverable",
+        # Synthetic signature name used for read_file calls that monitor
+        # background command terminal files. Polling those files is expected.
+        "read_file_terminal",
     }
 )
 POLL_REPEAT_MULTIPLIER = 2  # raise repeat thresholds by this factor
+
+# These tools often make legitimate progress through a sequence of different
+# arguments. Exact signature repeats are still handled below; do not nudge only
+# because the same tool name appears several times with different params.
+VARYING_ARG_REPEAT_NUDGE_EXEMPT_TOOLS = frozenset(
+    {
+        "run_shell",
+        "run_powershell",
+        "write_file",
+        "edit_file",
+        "read_file",
+        "grep",
+        "glob",
+        "run_skill_script",
+    }
+)
 
 
 class RuntimeSupervisor:
@@ -417,18 +436,23 @@ class RuntimeSupervisor:
     def _check_signature_repeat(self, iteration: int) -> Intervention | None:
         """签名重复检测。
 
-        死循环的本质特征是 **同一工具用同一组参数反复调用却毫无进展**——这只能
-        通过精确签名重复（``most_common_count``）来识别。仅"工具名相同但参数各异"
-        （``top_count``）反映的是 agent 在干活：写多个文件、跑多条命令、推进多个
-        todo step、派多个不同子任务，它们不该被当成死循环。
+        死循环的本质特征是 **同一工具用同一组参数连续重复调用却毫无进展**。
+        这里必须同时满足两点才会升级为严重干预：
+
+        1. 精确签名相同（同一工具 + 同一组参数）
+        2. 出现在尾部连续重复，而不是只在最近窗口里累计出现过几次
+
+        仅"工具名相同但参数各异"（``top_count``）反映的是 agent 在干活：写多个
+        文件、跑多条命令、推进多个 todo step、派多个不同子任务，它们不该被当成
+        死循环，也不应向 LLM 注入提示。
 
         因此分级：
 
-        * ``most_common_count >= TERMINATE``：同一精确签名重复 N 次 → TERMINATE
-        * ``most_common_count >= STRATEGY_SWITCH``：同一精确签名重复 N 次 → 回滚
-        * 1-2 种签名 ping-pong 高频交替 → STRATEGY_SWITCH（真死循环的另一种形态）
-        * ``top_count >= WARN`` 或 ``most_common_count >= WARN``：仅 NUDGE 软提示
-          （提醒可能效率不高，单轮屏蔽该工具迫使模型确认进度，但不强制结束任务）
+        * ``tail_same_count >= TERMINATE``：同一精确签名连续 N 次 → TERMINATE
+        * ``tail_same_count >= STRATEGY_SWITCH``：同一精确签名连续 N 次 → 回滚并注入提示
+        * 1-2 种签名 ping-pong 高频交替 → 仅 NUDGE 软事件，不回滚、不注入
+        * ``top_count >= WARN`` 或 ``tail_same_count >= WARN``：仅 NUDGE 软事件
+          （记录到日志/trace，不写入 LLM 上下文，避免干扰模型正常推进）
 
         组织协调者轮询白名单（``POLL_FRIENDLY_TOOLS``）：对
         ``org_list_delegated_tasks`` 等合法等待工具放宽阈值且最高仅 NUDGE，
@@ -447,16 +471,20 @@ class RuntimeSupervisor:
 
         sig_counts = Counter(recent)
         most_common_sig, most_common_count = sig_counts.most_common(1)[0]
+        tail_sig = recent[-1]
+        tail_same_count = 0
+        for sig in reversed(recent):
+            if sig != tail_sig:
+                break
+            tail_same_count += 1
 
-        # 提取 most_common_sig 对应的工具名，用于 STRATEGY_SWITCH 场景
-        _most_common_tool = (
-            most_common_sig.split("(")[0] if "(" in most_common_sig else most_common_sig
-        )
+        # 提取尾部重复签名对应的工具名，用于严重干预判断。
+        _tail_tool = tail_sig.split("(")[0] if "(" in tail_sig else tail_sig
 
         # 白名单豁免：top 工具是 poll-friendly 且未达到放宽后的阈值时直接放行；
         # 达到放宽阈值时强制只发 NUDGE，绝不 STRATEGY_SWITCH/TERMINATE。
         top_is_poll = self._is_poll_friendly(top_name)
-        sig_is_poll = self._is_poll_friendly(_most_common_tool)
+        sig_is_poll = self._is_poll_friendly(_tail_tool)
         # poll-friendly tools 用放宽后的 warn 阈值触发 NUDGE；TERMINATE / STRATEGY_SWITCH
         # 路径直接通过 ``not sig_is_poll`` 兜底跳过，无需单独阈值。
         poll_warn_threshold = (
@@ -467,49 +495,54 @@ class RuntimeSupervisor:
         # 历史上曾用 top_count（按工具名聚合）触发 TERMINATE，会把 "agent 写 5 个
         # 不同文件 / 跑 5 条不同命令 / 推进 5 个 todo step" 这类合法工作误判为
         # 死循环。已在 v2 改为只看 ``most_common_count``（精确签名）。
-        if most_common_count >= self._signature_repeat_terminate and not sig_is_poll:
+        if tail_same_count >= self._signature_repeat_terminate and not sig_is_poll:
             return Intervention(
                 level=InterventionLevel.TERMINATE,
                 pattern=PatternType.SIGNATURE_REPEAT,
-                message=f"Dead loop: '{most_common_sig[:60]}' repeated {most_common_count} times",
+                message=f"Dead loop: '{tail_sig[:60]}' repeated {tail_same_count} consecutive times",
                 should_terminate=True,
             )
 
-        if most_common_count >= SIGNATURE_REPEAT_STRATEGY_SWITCH and not sig_is_poll:
+        if tail_same_count >= SIGNATURE_REPEAT_STRATEGY_SWITCH and not sig_is_poll:
             return Intervention(
                 level=InterventionLevel.STRATEGY_SWITCH,
                 pattern=PatternType.SIGNATURE_REPEAT,
-                message=f"Repeated signature '{most_common_sig[:60]}' ({most_common_count}x) — rollback",
+                message=f"Repeated signature '{tail_sig[:60]}' ({tail_same_count}x consecutive) — rollback",
                 should_inject_prompt=True,
                 should_rollback=True,
                 prompt_injection=(
-                    "[系统提示] 检测到连续相同工具调用已达 3 次，系统已回滚。"
+                    "[系统提示] 检测到同一工具使用完全相同参数连续重复调用，系统已回滚。"
                     "如果任务已完成，请直接回复用户最终结果，不要再调用任何工具。"
                     "如果确实需要继续，必须使用完全不同的工具或参数。"
                     "禁止再次调用与之前相同的工具+参数组合。"
-                    + self._extra_hint_for_tool(_most_common_tool)
+                    + self._extra_hint_for_tool(_tail_tool)
                 ),
             )
 
-        # 交替模式检测：窗口内仅 1-2 种签名以 ping-pong 方式反复切换
+        # 交替模式检测：窗口内仅 1-2 种签名以 ping-pong 方式反复切换。
+        # 这可能是读写/检查-执行类正常工作流，不应回滚或注入提示；只记录软事件。
         if len(set(recent)) <= 2 and len(recent) >= 6:
             transitions = sum(1 for i in range(len(recent) - 1) if recent[i] != recent[i + 1])
             if transitions >= len(recent) // 2:
                 return Intervention(
-                    level=InterventionLevel.STRATEGY_SWITCH,
+                    level=InterventionLevel.NUDGE,
                     pattern=PatternType.SIGNATURE_REPEAT,
                     message=f"Alternating tool pattern ({transitions} transitions in {len(recent)} calls)",
-                    should_inject_prompt=True,
-                    should_rollback=True,
-                    prompt_injection=(
-                        "[系统提示] 检测到工具调用在两个操作间交替循环。"
-                        "请停止当前模式，直接回复用户结果。"
-                    ),
+                    should_inject_prompt=False,
+                    prompt_injection="",
                 )
 
         # --- NUDGE checks (lower severity) ---
         # poll-friendly 路径：threshold 放宽 POLL_REPEAT_MULTIPLIER 倍。
         if top_is_poll and top_count >= poll_warn_threshold:
+            if top_name == "read_file_terminal":
+                return Intervention(
+                    level=InterventionLevel.NUDGE,
+                    pattern=PatternType.SIGNATURE_REPEAT,
+                    message=f"Terminal output file polled {top_count} times",
+                    should_inject_prompt=False,
+                    prompt_injection="",
+                )
             return Intervention(
                 level=InterventionLevel.NUDGE,
                 pattern=PatternType.SIGNATURE_REPEAT,
@@ -517,44 +550,30 @@ class RuntimeSupervisor:
                     f"Poll-friendly tool '{top_name}' called {top_count} times — "
                     "suggest org_wait_for_deliverable"
                 ),
-                should_inject_prompt=True,
-                prompt_injection=(
-                    f"[系统提示] 你已连续 {top_count} 次调用 {top_name} 轮询下属进度。"
-                    "建议改用 org_wait_for_deliverable 阻塞等待下属交付，"
-                    "可避免无效轮询。如果下属已全部交付，请直接 org_accept_deliverable "
-                    "并向用户输出汇总，不要再轮询。"
-                ),
-                throttled_tool_names=[top_name],
+                should_inject_prompt=False,
+                prompt_injection="",
             )
 
-        if top_count >= self._signature_repeat_warn and not top_is_poll:
+        if (
+            top_count >= self._signature_repeat_warn
+            and not top_is_poll
+            and top_name not in VARYING_ARG_REPEAT_NUDGE_EXEMPT_TOOLS
+        ):
             return Intervention(
                 level=InterventionLevel.NUDGE,
                 pattern=PatternType.SIGNATURE_REPEAT,
                 message=f"Tool '{top_name}' called {top_count} times with varying args",
-                should_inject_prompt=True,
-                prompt_injection=(
-                    f"[系统提示] 你已经连续 {top_count} 次调用 {top_name}，"
-                    "工具已返回结果。请停止重复调用该工具，用自然语言整理结果回复用户。"
-                    "如果还需要其他信息，请换一个不同的工具或方法。"
-                    + self._extra_hint_for_tool(top_name)
-                ),
-                throttled_tool_names=[top_name],
+                should_inject_prompt=False,
+                prompt_injection="",
             )
 
-        if most_common_count >= self._signature_repeat_warn and not sig_is_poll:
-            _sig_tool = most_common_sig.split("(")[0] if "(" in most_common_sig else top_name
+        if tail_same_count >= self._signature_repeat_warn and not sig_is_poll:
             return Intervention(
                 level=InterventionLevel.NUDGE,
                 pattern=PatternType.SIGNATURE_REPEAT,
-                message=f"Repeated signature '{most_common_sig[:60]}' ({most_common_count} times)",
-                should_inject_prompt=True,
-                prompt_injection=(
-                    "[系统提示] 你在最近几轮中用完全相同的参数重复调用了同一个工具。"
-                    "请停止重复调用该工具，用自然语言回复用户，或使用其他工具。"
-                    + self._extra_hint_for_tool(_sig_tool)
-                ),
-                throttled_tool_names=[_sig_tool],
+                message=f"Repeated signature '{tail_sig[:60]}' ({tail_same_count} consecutive times)",
+                should_inject_prompt=False,
+                prompt_injection="",
             )
 
         return None
@@ -683,14 +702,8 @@ class RuntimeSupervisor:
                     level=InterventionLevel.NUDGE,
                     pattern=PatternType.EDIT_THRASHING,
                     message=f"File '{short_path}' has {cycle_count} read-write cycles",
-                    should_inject_prompt=True,
-                    prompt_injection=(
-                        f"[系统提示] 检测到你对文件 '{short_path}' 进行了多次读写循环。"
-                        "请：\n"
-                        "1. 先确认文件的完整内容和需要修改的部分\n"
-                        "2. 一次性完成所有修改，避免反复读写\n"
-                        "3. 如果修改不生效，分析根本原因而不是重复尝试"
-                    ),
+                    should_inject_prompt=False,
+                    prompt_injection="",
                 )
 
         return None
@@ -795,25 +808,12 @@ class RuntimeSupervisor:
 
         rounds = self._consecutive_tool_rounds
 
-        if has_active_todo:
-            msg = (
-                f"[系统提示] 已连续执行 {rounds} 轮，Plan 仍有未完成步骤。"
-                "如果遇到困难，请换一种方法继续推进。"
-            )
-        else:
-            msg = (
-                f"[系统提示] 你已连续执行了 {rounds} 轮工具调用。请自我评估：\n"
-                "1. 当前任务进度如何？\n"
-                "2. 是否陷入了循环？\n"
-                "3. 如果任务已完成，请停止工具调用，直接回复用户。"
-            )
-
         return Intervention(
             level=InterventionLevel.NUDGE,
             pattern=PatternType.PLAN_DRIFT,
             message=f"Self-check at {rounds} consecutive rounds",
-            should_inject_prompt=True,
-            prompt_injection=msg,
+            should_inject_prompt=False,
+            prompt_injection="",
         )
 
     def _check_unproductive_loop(self, iteration: int) -> Intervention | None:
@@ -846,12 +846,8 @@ class RuntimeSupervisor:
                 level=InterventionLevel.NUDGE,
                 pattern=PatternType.UNPRODUCTIVE_LOOP,
                 message="Last 3 tool calls are all administrative",
-                should_inject_prompt=True,
-                prompt_injection=(
-                    "[系统提示] 你最近连续多轮都只在调用管理/计划类工具，"
-                    "没有执行任何实质性操作。"
-                    "请立即开始执行具体工作，或直接回复结果。"
-                ),
+                should_inject_prompt=False,
+                prompt_injection="",
             )
         return None
 

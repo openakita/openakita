@@ -2202,7 +2202,7 @@ class OrgRuntime:
         if platform.system() == "Windows" and has_external:
             runtime_section += (
                 "\n- Shell 注意: Windows 环境，复杂文本处理请用 write_file 写 Python 脚本"
-                " + run_shell python xxx.py 执行，避免 PowerShell 转义问题"
+                " + run_powershell 执行 python xxx.py；只有明确需要 bash/Git Bash 语义时才用 run_shell"
             )
         parts.append(runtime_section)
 

@@ -417,7 +417,7 @@ _STATIC_FALLBACKS: dict[str, str] = {
 1. **已安装技能** — 技能可能来自内置目录、用户工作区目录或项目目录；不要猜路径，使用 `list_skills` / `get_skill_info`
 2. **MCP 服务器工具** — 通过 MCP 协议调用的外部工具
 3. **Shell 命令** — 系统命令和脚本
-4. **临时脚本** — write_file 写脚本 + run_shell 执行
+4. **临时脚本** — write_file 写脚本 + 平台命令工具执行（Windows 用 run_powershell，其他环境用 run_shell）
 5. **网络搜索 + 安装** — 搜索 GitHub 找到并安装新能力
 6. **自己编写技能** — 用 skill-creator 创建永久技能
 

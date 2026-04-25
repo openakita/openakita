@@ -460,7 +460,8 @@ class FilesystemHandler:
                     "疑似因内容过长导致 JSON 参数被截断）。\n"
                     "请缩短内容后重试：\n"
                     "1. 将大文件拆分为多次写入（每次 < 8000 字符）\n"
-                    "2. 或用 run_shell 执行 Python 脚本生成大文件"
+                    "2. 或用平台命令工具执行 Python 脚本生成大文件"
+                    "（Windows 用 run_powershell，其他环境用 run_shell）"
                 )
             return "❌ write_file 缺少必要参数 'path'。请提供文件路径和内容后重试。"
         if content is None:

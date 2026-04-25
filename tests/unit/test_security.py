@@ -758,6 +758,12 @@ class TestDeathSwitchMultiplier:
 # ---------------------------------------------------------------------------
 
 class TestYAMLNewFields:
+    def test_default_frontend_mode_matches_trust_mode(self):
+        engine = PolicyEngine()
+
+        assert engine.config.confirmation.mode == "yolo"
+        assert engine._frontend_mode == "yolo"
+
     def test_load_confirmation_mode(self, tmp_path):
         yaml_path = tmp_path / "POLICIES.yaml"
         yaml_path.write_text("""

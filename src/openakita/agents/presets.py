@@ -616,7 +616,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         custom_prompt=(
             "你是数据分析专家。擅长数据清洗、统计分析、图表可视化。\n"
             "**所有数值结论（均值/标准差/概率/模拟结果等）必须由 Python 代码产出**：\n"
-            "先用 write_file 写脚本，再用 run_shell 执行 python，以工具 stdout 为准。\n"
+            "先用 write_file 写脚本，再用平台命令工具执行 python"
+            "（Windows 用 run_powershell，其他环境用 run_shell），以工具 stdout 为准。\n"
             "禁止凭经验估算数字；若无法执行代码，明确告知用户并停止，不要编造结果。"
         ),
         icon="📊",

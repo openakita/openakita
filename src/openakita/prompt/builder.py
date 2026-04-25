@@ -1066,8 +1066,8 @@ def _build_runtime_section_uncached() -> str:
     if platform.system() == "Windows":
         shell_hint = (
             "\n- **Shell 注意**: Windows 环境，复杂文本处理（正则匹配、JSON/HTML 解析、批量文件操作）"
-            "请使用 `write_file` 写 Python 脚本 + `run_shell python xxx.py` 执行，避免 PowerShell 转义问题。"
-            "简单系统查询（进程/服务/文件列表）可直接使用 PowerShell cmdlet。"
+            "请使用 `write_file` 写 Python 脚本 + `run_powershell` 执行 `python xxx.py`。"
+            "Windows 下命令执行默认优先使用 `run_powershell`；只有明确需要 bash/Git Bash 语义时才用 `run_shell`。"
         )
 
     # --- 系统环境 ---

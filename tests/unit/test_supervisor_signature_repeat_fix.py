@@ -35,27 +35,32 @@ from openakita.core.supervisor import (
 
 
 class TestVaryingParamsDoNotTerminate:
-    def test_run_shell_with_distinct_commands_does_not_terminate(self):
+    def test_run_shell_with_distinct_commands_does_not_intervene(self):
         sup = RuntimeSupervisor(enabled=True)
         for i in range(8):
             sup.record_tool_signature(f"run_shell(hash_{i})")
         out = sup._check_signature_repeat(iteration=8)
-        if out is not None:
-            assert out.level == InterventionLevel.NUDGE, (
-                f"varying-arg run_shell must not TERMINATE/STRATEGY_SWITCH, "
-                f"got {out.level} ({out.message})"
-            )
-            assert not out.should_terminate
-            assert not out.should_rollback
+        assert out is None, (
+            "varying-arg run_shell is normal progress and should not be nudged "
+            f"as repetition, got {out}"
+        )
 
-    def test_write_file_to_distinct_paths_does_not_terminate(self):
+    def test_run_powershell_with_distinct_commands_does_not_intervene(self):
+        sup = RuntimeSupervisor(enabled=True)
+        for i in range(8):
+            sup.record_tool_signature(f"run_powershell(hash_{i})")
+        out = sup._check_signature_repeat(iteration=8)
+        assert out is None, (
+            "varying-arg run_powershell is normal progress and should not be "
+            f"nudged as repetition, got {out}"
+        )
+
+    def test_write_file_to_distinct_paths_does_not_intervene(self):
         sup = RuntimeSupervisor(enabled=True)
         for i in range(8):
             sup.record_tool_signature(f"write_file(path_hash_{i})")
         out = sup._check_signature_repeat(iteration=8)
-        if out is not None:
-            assert out.level == InterventionLevel.NUDGE
-            assert not out.should_terminate
+        assert out is None
 
     def test_update_todo_step_with_distinct_steps_does_not_terminate(self):
         """The original symptom: plan推进每步 in_progress + completed 两次
@@ -68,6 +73,22 @@ class TestVaryingParamsDoNotTerminate:
             assert out.level == InterventionLevel.NUDGE
             assert not out.should_terminate
             assert not out.should_rollback
+
+    def test_terminal_file_polling_is_capped_at_nudge(self):
+        """Monitoring a background command by repeatedly reading its terminal
+        file is expected and must not terminate the task."""
+        sup = RuntimeSupervisor(enabled=True)
+        for _ in range(8):
+            sup.record_tool_signature("read_file_terminal(same_hash)")
+
+        out = sup._check_signature_repeat(iteration=8)
+
+        assert out is not None
+        assert out.level == InterventionLevel.NUDGE
+        assert out.should_inject_prompt is False
+        assert out.prompt_injection == ""
+        assert not out.should_terminate
+        assert not out.should_rollback
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +107,7 @@ class TestExactRepeatStillTerminates:
         assert out.should_terminate
 
     def test_alternating_two_signatures_strategy_switch(self):
-        """1-2 种签名 ping-pong 仍然是真死循环 → STRATEGY_SWITCH。"""
+        """1-2 种签名 ping-pong 可能是正常检查/执行流，只记录软事件。"""
         sup = RuntimeSupervisor(enabled=True)
         for i in range(8):
             sup.record_tool_signature(
@@ -94,12 +115,42 @@ class TestExactRepeatStillTerminates:
             )
         out = sup._check_signature_repeat(iteration=8)
         assert out is not None
-        # 8 calls split evenly => most_common_count = 4 → STRATEGY_SWITCH
-        # 或交替模式分支 → STRATEGY_SWITCH
-        assert out.level in (
-            InterventionLevel.STRATEGY_SWITCH,
-            InterventionLevel.TERMINATE,
-        )
+        assert out.level == InterventionLevel.NUDGE
+        assert out.should_inject_prompt is False
+        assert not out.should_rollback
+        assert not out.should_terminate
+
+    def test_non_consecutive_repeats_do_not_strategy_switch(self):
+        """最近窗口内累计重复不等于连续重复，不应回滚或注入提示。"""
+        sup = RuntimeSupervisor(enabled=True)
+        for sig in (
+            "read_file(a)",
+            "write_file(b)",
+            "read_file(a)",
+            "grep(c)",
+            "read_file(a)",
+            "glob(d)",
+            "read_file(a)",
+            "list_directory(e)",
+        ):
+            sup.record_tool_signature(sig)
+
+        out = sup._check_signature_repeat(iteration=8)
+
+        assert out is None
+
+    def test_consecutive_exact_repeat_strategy_switch_injects_prompt(self):
+        sup = RuntimeSupervisor(enabled=True)
+        for _ in range(4):
+            sup.record_tool_signature("read_file(same_hash)")
+
+        out = sup._check_signature_repeat(iteration=4)
+
+        assert out is not None
+        assert out.level == InterventionLevel.STRATEGY_SWITCH
+        assert out.should_rollback
+        assert out.should_inject_prompt
+        assert "完全相同参数连续重复" in out.prompt_injection
 
 
 # ---------------------------------------------------------------------------
@@ -153,4 +204,43 @@ class TestUnproductiveAdminPruned:
         out = sup._check_unproductive_loop(iteration=5)
         assert out is not None
         assert out.level == InterventionLevel.STRATEGY_SWITCH
+
+
+class TestNudgesDoNotInjectPrompt:
+    def test_exact_repeat_nudge_is_log_only(self):
+        sup = RuntimeSupervisor(enabled=True, signature_repeat_terminate=99)
+        for _ in range(3):
+            sup.record_tool_signature("read_file(same_hash)")
+
+        out = sup._check_signature_repeat(iteration=3)
+
+        assert out is not None
+        assert out.level == InterventionLevel.NUDGE
+        assert out.should_inject_prompt is False
+        assert out.prompt_injection == ""
+
+    def test_edit_thrashing_nudge_is_log_only(self):
+        sup = RuntimeSupervisor(enabled=True)
+        for i in range(3):
+            sup.record_tool_call("read_file", {"path": "a.py"}, iteration=i * 2)
+            sup.record_tool_call("write_file", {"path": "a.py"}, iteration=i * 2 + 1)
+
+        out = sup._check_edit_thrashing(iteration=6)
+
+        assert out is not None
+        assert out.level == InterventionLevel.NUDGE
+        assert out.should_inject_prompt is False
+        assert out.prompt_injection == ""
+
+    def test_unproductive_three_call_nudge_is_log_only(self):
+        sup = RuntimeSupervisor(enabled=True)
+        for i in range(3):
+            sup.record_tool_call("get_todo_status", {}, iteration=i)
+
+        out = sup._check_unproductive_loop(iteration=3)
+
+        assert out is not None
+        assert out.level == InterventionLevel.NUDGE
+        assert out.should_inject_prompt is False
+        assert out.prompt_injection == ""
 

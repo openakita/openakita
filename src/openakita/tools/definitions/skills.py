@@ -63,7 +63,7 @@ SKILLS_TOOLS = [
     {
         "name": "run_skill_script",
         "category": "Skills",
-        "description": "Execute a skill's pre-built script file. IMPORTANT: Many skills (xlsx, docx, pptx, pdf, etc.) are instruction-only — they have NO scripts. For those skills, use get_skill_info to read instructions, then write code and execute via run_shell instead.",
+        "description": "Execute a skill's pre-built script file. IMPORTANT: Many skills (xlsx, docx, pptx, pdf, etc.) are instruction-only — they have NO scripts. For those skills, use get_skill_info to read instructions, then write code and execute it with the platform command tool (run_powershell on Windows, run_shell when bash/POSIX semantics are required).",
         "detail": """运行技能的**预置脚本**。
 
 **⚠️ 重要提醒**：
@@ -72,7 +72,7 @@ SKILLS_TOOLS = [
 此时**不要重试 run_skill_script**，而应：
 1. 用 get_skill_info 读取技能的完整指令
 2. 按照指令编写 Python 代码
-3. 用 run_shell 执行代码
+3. 用平台命令工具执行代码（Windows 优先 run_powershell；需要 bash/POSIX 语义时用 run_shell）
 
 **适用场景**：
 - 执行技能内预置的脚本（如 recalc.py 等）
@@ -81,7 +81,7 @@ SKILLS_TOOLS = [
 **使用方法**：
 1. 先用 get_skill_info 了解可用脚本列表
 2. 仅当技能有可执行脚本时使用本工具
-3. 如果失败提示"no executable scripts"，改用 run_shell
+3. 如果失败提示"no executable scripts"，改用平台命令工具执行代码
 
 **配置缺失处理**：
 如果脚本因缺少配置（API Key/凭据/路径等）而失败，应主动帮用户完成配置（引导获取、写入配置文件），而不是告诉用户"缺少XX无法使用"。""",

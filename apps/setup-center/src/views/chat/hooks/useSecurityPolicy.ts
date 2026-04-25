@@ -38,7 +38,7 @@ function shouldAutoAllow(
 }
 
 export function useSecurityPolicy(apiBase: string) {
-  const [permissionMode, setPermissionModeLocal] = useState<PermissionMode>("smart");
+  const [permissionMode, setPermissionModeLocal] = useState<PermissionMode>("yolo");
   const sessionTrustRef = useRef(new Map<string, SessionTrustEntry>());
 
   const fetchMode = useCallback(() => {

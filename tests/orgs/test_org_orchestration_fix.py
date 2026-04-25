@@ -254,7 +254,8 @@ class TestSupervisorPollWhitelist:
         # 应该是 NUDGE 或 None，绝不能 TERMINATE / STRATEGY_SWITCH
         if out is not None:
             assert out.level == InterventionLevel.NUDGE
-            assert "wait" in (out.prompt_injection or "").lower()
+            assert out.should_inject_prompt is False
+            assert out.prompt_injection == ""
 
     def test_poll_friendly_extreme_repeats_still_capped_at_nudge(
         self, monkeypatch,
@@ -269,6 +270,7 @@ class TestSupervisorPollWhitelist:
         out = sup._check_signature_repeat(iteration=40)
         assert out is not None
         assert out.level == InterventionLevel.NUDGE
+        assert out.should_inject_prompt is False
 
     def test_normal_tool_still_terminates_after_threshold(self):
         sup = RuntimeSupervisor(enabled=True)

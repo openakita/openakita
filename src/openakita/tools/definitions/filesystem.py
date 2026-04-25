@@ -28,6 +28,9 @@ FILESYSTEM_TOOLS = [
             "- write_file/edit_file instead of sed/awk/echo >\n"
             "- grep/glob instead of find/grep/rg\n"
             "- web_fetch instead of curl (for reading webpage content)\n\n"
+            "Windows routing:\n"
+            "- Prefer run_powershell for Windows command execution, including python, pip, git, npm, and PowerShell cmdlets.\n"
+            "- Use run_shell on Windows only when you explicitly need bash/Git Bash/POSIX shell semantics.\n\n"
             "Long-running commands:\n"
             "- Commands that don't complete within block_timeout_ms (default 30s) are moved "
             "to background. Output streams to data/terminals/{session_id}.txt.\n"
@@ -58,7 +61,8 @@ FILESYSTEM_TOOLS = [
 - 设为 0 可立即后台化（用于 dev server 等长驻进程）
 
 **Windows 特殊处理**:
-- PowerShell cmdlet 自动编码（EncodedCommand）
+- 默认优先使用 run_powershell 执行 Windows 命令
+- 本工具仅在明确需要 bash/Git Bash/POSIX shell 语义时使用
 - UTF-8 代码页自动设置（chcp 65001）
 - 多行 python -c 自动修复""",
         "input_schema": {

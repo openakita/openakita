@@ -968,6 +968,12 @@ class ReasoningEngine:
             except Exception:
                 param_str = str(inp)
 
+            if name == "read_file":
+                path = str(inp.get("path", "") or inp.get("file_path", ""))
+                normalized_path = path.replace("\\", "/").lower()
+                if "/terminals/" in normalized_path and normalized_path.endswith(".txt"):
+                    name = "read_file_terminal"
+
             if name in self._browser_page_read_tools and len(param_str) <= 20 and _last_browser_url:
                 param_str = f"{param_str}|url={_last_browser_url}"
 
@@ -1883,7 +1889,8 @@ class ReasoningEngine:
                         f"[系统提示] 工具 {_tool_names} 累计失败已达 {self.PERSISTENT_FAIL_LIMIT} 次"
                         f"（含跨回滚），通常是因为参数过长被 API 截断。"
                         "你必须改用完全不同的策略：\n"
-                        "- 使用 run_shell 执行 Python 脚本来生成大文件\n"
+                        "- 使用平台命令工具执行 Python 脚本来生成大文件"
+                        "（Windows 用 run_powershell，其他环境用 run_shell）\n"
                         "- 将内容拆分成多次小写入\n"
                         "- 先写骨架，再逐步填充\n"
                         "禁止再次用同样方式调用该工具。"
@@ -1975,9 +1982,9 @@ class ReasoningEngine:
                         )
                         is_error = r.get("is_error", False) if isinstance(r, dict) else False
                     if not is_error and result_content:
-                        is_error = any(
-                            m in result_content
-                            for m in ["❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:"]
+                        stripped_result = result_content.lstrip()
+                        is_error = stripped_result.startswith(
+                            ("❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:")
                         )
                     self._supervisor.record_tool_call(
                         tool_name=_tc_name,
@@ -2143,9 +2150,8 @@ class ReasoningEngine:
                                 f"(iter={iteration}, pattern={intervention.pattern.value})"
                             )
                         else:
-                            tools = []
                             logger.info(
-                                f"[Supervisor] NUDGE: tools stripped to force text response "
+                                f"[Supervisor] NUDGE: prompt injected; tools left available "
                                 f"(iter={iteration}, pattern={intervention.pattern.value})"
                             )
                         max_no_tool_retries = 0
@@ -2401,6 +2407,11 @@ class ReasoningEngine:
                     param_str = json.dumps(inp, sort_keys=True, ensure_ascii=False)
                 except Exception:
                     param_str = str(inp)
+                if name == "read_file":
+                    path = str(inp.get("path", "") or inp.get("file_path", ""))
+                    normalized_path = path.replace("\\", "/").lower()
+                    if "/terminals/" in normalized_path and normalized_path.endswith(".txt"):
+                        name = "read_file_terminal"
                 if (
                     name in self._browser_page_read_tools
                     and len(param_str) <= 20
@@ -3940,10 +3951,16 @@ class ReasoningEngine:
                             _sr_content = (
                                 str(_sr.get("content", "")) if isinstance(_sr, dict) else str(_sr)
                             )
-                        _sr_err = any(
-                            m in _sr_content
-                            for m in ["❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:"]
-                        )
+                            _sr_err = (
+                                bool(_sr.get("is_error", False)) if isinstance(_sr, dict) else False
+                            )
+                        else:
+                            _sr_err = False
+                        if not _sr_err and _sr_content:
+                            _stripped_sr = _sr_content.lstrip()
+                            _sr_err = _stripped_sr.startswith(
+                                ("❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:")
+                            )
                         self._supervisor.record_tool_call(
                             tool_name=_stn,
                             params=_stc.get("input", {}),
@@ -4094,9 +4111,8 @@ class ReasoningEngine:
                                     f"(iter={_iteration}, pattern={intervention.pattern.value})"
                                 )
                             else:
-                                tools = []
                                 logger.info(
-                                    f"[Supervisor] NUDGE: tools stripped to force text response "
+                                    f"[Supervisor] NUDGE: prompt injected; tools left available "
                                     f"(iter={_iteration}, pattern={intervention.pattern.value})"
                                 )
                             max_no_tool_retries = 0
@@ -5274,7 +5290,8 @@ class ReasoningEngine:
                                     "[系统] ⚠️ 严重警告：你已经连续多轮只是在描述将要做什么，"
                                     "但从未实际调用工具执行。系统日志确认你没有生成任何文件。"
                                     "文字描述≠实际执行。"
-                                    "请立即调用 run_shell 或 write_file 等工具来完成实际操作，"
+                                    "请立即调用 write_file、平台命令工具"
+                                    "（Windows 用 run_powershell，其他环境用 run_shell）等工具来完成实际操作，"
                                     "不要再输出任何描述性文字。"
                                 ),
                             }
