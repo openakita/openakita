@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AI Video Studio">
+  <title>AI Video Studio</title>
+  <defs>
+    <linearGradient id="vs-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#4338CA"/>
+      <stop offset="55%"  stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#818CF8"/>
+    </linearGradient>
+    <linearGradient id="vs-clap" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E0E7FF"/>
+    </linearGradient>
+    <linearGradient id="vs-spark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#FDE68A"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+    <filter id="vs-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Rounded background -->
+  <rect x="0" y="0" width="64" height="64" rx="14" ry="14" fill="url(#vs-bg)"/>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" ry="13.5"
+        fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+
+  <!-- Clapperboard hinge (tilted top flap) -->
+  <path d="M14 18 L50 14 L50 24 L14 28 Z"
+        fill="url(#vs-clap)" opacity="0.95" rx="2"/>
+  <!-- Clapperboard stripe lines on hinge -->
+  <g stroke="#6366F1" stroke-width="1.8" stroke-linecap="round" opacity="0.5">
+    <line x1="20" y1="17.2" x2="23" y2="25.8"/>
+    <line x1="28" y1="16" x2="31" y2="24.6"/>
+    <line x1="36" y1="14.8" x2="39" y2="23.4"/>
+    <line x1="44" y1="13.6" x2="47" y2="22.2"/>
+  </g>
+
+  <!-- Clapperboard body (screen area) -->
+  <rect x="14" y="26" width="36" height="22" rx="3" ry="3"
+        fill="url(#vs-clap)" opacity="0.92"/>
+  <!-- Screen inner (dark area = video viewfinder) -->
+  <rect x="18" y="30" width="28" height="14" rx="2" ry="2"
+        fill="#312E81" opacity="0.7"/>
+  <!-- Play triangle inside screen -->
+  <polygon points="28,33 28,41 36,37" fill="rgba(255,255,255,0.85)"/>
+
+  <!-- AI sparkle (top-right) -->
+  <g filter="url(#vs-glow)">
+    <path d="M48 8 L50 14 L56 16 L50 18 L48 24 L46 18 L40 16 L46 14 Z"
+          fill="url(#vs-spark)" opacity="0.95"/>
+  </g>
+  <!-- Small secondary sparkle -->
+  <path d="M54 26 L55 29 L58 30 L55 31 L54 34 L53 31 L50 30 L53 29 Z"
+        fill="#FDE68A" opacity="0.7"/>
+  <!-- Tiny tertiary sparkle -->
+  <path d="M10 12 L11 14 L13 15 L11 16 L10 18 L9 16 L7 15 L9 14 Z"
+        fill="#FDE68A" opacity="0.5"/>
+</svg>

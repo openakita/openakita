@@ -5,7 +5,7 @@
   "type": "python",
   "entry": "plugin.py",
   "description": "AI video generation powered by Volcengine Seedance — supports text-to-video, image-to-video, multimodal, editing, extension, and long video stitching.",
-  "display_name_zh": "Seedance 视频生成",
+  "display_name_zh": "即梦工作室",
   "display_name_en": "Seedance Video Generator",
   "description_i18n": {
     "zh": "基于火山引擎 Seedance 的 AI 视频生成 — 支持文生视频、图生视频、多模态、视频编辑、视频续写、长视频拼接。",
@@ -35,11 +35,11 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "icon": "",
-    "title": "Seedance 视频生成",
+    "icon": "icon.svg",
+    "title": "即梦工作室",
     "title_i18n": {
-      "en": "Seedance Video",
-      "zh": "Seedance 视频生成"
+      "en": "Seedance Studio",
+      "zh": "即梦工作室"
     },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
