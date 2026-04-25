@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "display_name_zh": "财经脉动",
   "display_name_en": "Fin Pulse",
+  "icon": "icon.svg",
   "description": "Finance news radar — daily briefing, hotspot radar, and ask-news agent tools",
   "description_i18n": {
     "zh": "面向金融人群的资讯脉搏 — 早午晚报、热点雷达、Agent 对话三模式，8 金融重点源 + RSS + 可选 NewsNow",
@@ -48,7 +49,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "icon": "icon.svg",
+    "icon": "finpulse-brand.svg",
     "title": "财经脉动",
     "title_i18n": { "zh": "财经脉动", "en": "Fin Pulse" },
     "sidebar_group": "apps",

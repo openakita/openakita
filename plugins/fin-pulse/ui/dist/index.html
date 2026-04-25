@@ -25,23 +25,23 @@
        for borders, tab underlines, icons, and button outlines. */
     :root {
       --bg: #FFFFFF; --bg-card: #FFFFFF; --bg-hover: #F7F8FA;
-      --text: #1a1a1a; --text-muted: #64748b; --text-dim: #94a3b8;
+      --text: #1a1a1a; --text-muted: #5E3540; --text-dim: #7A4E59;
       --primary: #D32F2F; --primary-hover: #B71C1C;
       --primary-soft: #FFCDD2;
       --success: #16a34a; --warning: #f59e0b; --danger: #ef4444;
-      --border: #e2e8f0; --radius: 8px;
+      --border: #CBD5E1; --border-strong: #D32F2F; --radius: 8px;
     }
     [data-theme="dark"] {
       --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
       --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
-      --border: #334155;
+      --border: #475569; --border-strong: #EF5350;
       --primary: #EF5350; --primary-hover: #E53935; --primary-soft: #4a1a1a;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
         --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
         --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
-        --border: #334155;
+        --border: #475569; --border-strong: #EF5350;
       }
     }
     /* ── Reset + typography ── */
@@ -149,22 +149,107 @@
     .filter-bar {
       display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px;
       padding: 12px 14px; background: var(--bg-card);
-      border: 1px solid var(--border); border-radius: var(--radius);
+      border: 1.5px solid var(--border); border-radius: var(--radius);
     }
+    .filter-bar--news { align-items: stretch; }
     .filter-bar__item { display: inline-flex; align-items: center; gap: 6px; }
     .filter-bar__label { font-size: 12px; color: var(--text); font-weight: 500; }
     .filter-bar__sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
-    /* ── Ingest split-button (main action + dropdown for single-source) ── */
-    .ingest-split { display: inline-flex; align-items: stretch; position: relative; }
-    .ingest-split .btn { border-radius: 0; }
-    .ingest-split .btn:first-child { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
-    .ingest-split .btn--caret {
-      padding: 0 8px; min-width: 28px; border-left: 1px solid rgba(255,255,255,.32);
-      border-top-right-radius: 6px; border-bottom-right-radius: 6px;
+    .time-filter-compact {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px; border: 1.5px solid var(--border); border-radius: 999px;
+      background: rgba(255,255,255,.55);
     }
+    .time-filter-compact .seg-btn { min-height: 24px; padding: 3px 9px; border-radius: 999px; }
+    .time-filter-wrap { position: relative; display: inline-flex; align-items: center; }
+    .custom-time-range {
+      position: absolute; top: calc(100% + 8px); left: 0; z-index: 30;
+      display: grid; grid-template-columns: 1fr; gap: 8px;
+      width: 280px; padding: 10px;
+      border: 1px solid rgba(211,47,47,.18); border-radius: 14px;
+      background: rgba(255,255,255,.98);
+      box-shadow: 0 16px 36px rgba(52,16,24,.16), 0 0 0 1px rgba(255,255,255,.65) inset;
+    }
+    .custom-time-row { display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 8px; }
+    .custom-time-row span { font-size: 12px; color: var(--text-muted); }
+    .custom-time-range::before {
+      content: ""; position: absolute; top: -6px; left: 24px; width: 10px; height: 10px;
+      background: rgba(255,255,255,.98); border-left: 1px solid rgba(211,47,47,.18);
+      border-top: 1px solid rgba(211,47,47,.18); transform: rotate(45deg);
+    }
+    .custom-time-range .input { width: 100%; padding: 6px 8px; font-size: 12px; }
+    .search-box {
+      display: inline-flex; align-items: center; gap: 6px;
+      min-width: 260px; padding: 3px 4px 3px 10px;
+      border: 1.5px solid rgba(211,47,47,.24); border-radius: 999px;
+      background: linear-gradient(180deg, #fff, rgba(255,247,247,.86));
+      box-shadow: 0 2px 8px rgba(211,47,47,.06);
+    }
+    .search-box:focus-within {
+      border-color: rgba(211,47,47,.45);
+      box-shadow: 0 0 0 3px rgba(211,47,47,.08), 0 3px 12px rgba(211,47,47,.08);
+    }
+    .search-box input {
+      flex: 1; min-width: 0; border: 0; outline: none; background: transparent;
+      color: var(--text); font-size: 13px; padding: 4px 0;
+    }
+    .btn-icon-round {
+      width: 30px; height: 30px; padding: 0; border-radius: 999px;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .search-box .btn-icon-round .oa-icon { color: #fff; width: 16px; height: 16px; }
+    .btn-ai-glow {
+      border-color: rgba(37,99,235,.38);
+      background: linear-gradient(135deg, rgba(37,99,235,.18), rgba(14,165,233,.16), rgba(124,58,237,.18));
+      color: #1d4ed8; font-weight: 700; position: relative; overflow: hidden;
+      isolation: isolate;
+      box-shadow: 0 0 0 1px rgba(56,189,248,.14), 0 0 10px rgba(37,99,235,.12), 0 5px 14px rgba(30,64,175,.10);
+      animation: fp-ai-pulse-ring 4.2s ease-out infinite;
+    }
+    .btn-ai-glow::before {
+      content: ""; position: absolute; inset: 0; border-radius: inherit;
+      inset: -6px;
+      background:
+        radial-gradient(circle, rgba(240,249,255,.96) 0 8%, rgba(56,189,248,.45) 9% 13%, transparent 14%),
+        repeating-radial-gradient(circle, rgba(37,99,235,.32) 0 2px, rgba(56,189,248,.16) 3px, transparent 4px 14px);
+      filter: blur(.2px);
+      opacity: .30; animation: fp-ai-burst 4.2s ease-out infinite;
+      pointer-events: none;
+      z-index: -1;
+    }
+    .btn-ai-glow::after {
+      content: none;
+    }
+    .btn-ai-glow > * { position: relative; z-index: 1; }
+    .btn-ai-glow.btn-primary {
+      color: #fff; border-color: rgba(125,211,252,.45);
+      background: linear-gradient(135deg, #1d4ed8, #0284c7 45%, #7c3aed);
+      box-shadow: 0 0 0 1px rgba(125,211,252,.20), 0 0 14px rgba(37,99,235,.22), 0 4px 12px rgba(30,64,175,.18);
+    }
+    @keyframes fp-ai-burst {
+      0% { transform: scale(.40); opacity: .38; }
+      60% { transform: scale(1.04); opacity: .16; }
+      100% { transform: scale(1.14); opacity: 0; }
+    }
+    @keyframes fp-ai-pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(56,189,248,.16), 0 0 10px rgba(37,99,235,.12), 0 5px 14px rgba(30,64,175,.10); }
+      72% { box-shadow: 0 0 0 6px rgba(56,189,248,0), 0 0 14px rgba(37,99,235,.16), 0 6px 16px rgba(30,64,175,.12); }
+      100% { box-shadow: 0 0 0 0 rgba(56,189,248,0), 0 0 10px rgba(37,99,235,.12), 0 5px 14px rgba(30,64,175,.10); }
+    }
+    .sort-pill { display: inline-flex; align-items: center; gap: 5px; }
+    /* ── Ingest split-button (main action + dropdown for single-source) ── */
+    .ingest-split { display: inline-flex; align-items: stretch; position: relative; filter: drop-shadow(0 4px 10px rgba(211,47,47,.12)); }
+    .ingest-split .btn { border-radius: 0; }
+    .ingest-split .btn:first-child { border-top-left-radius: 999px; border-bottom-left-radius: 999px; padding-left: 14px; }
+    .ingest-split .btn--caret {
+      padding: 0 10px; min-width: 34px; border-left: 1px solid rgba(255,255,255,.32);
+      border-top-right-radius: 999px; border-bottom-right-radius: 999px;
+    }
+    .ingest-split .btn--caret .oa-icon { transition: transform .16s; }
+    .ingest-split.is-open .btn--caret .oa-icon { transform: rotate(180deg); }
     .ingest-split__menu {
       position: absolute; top: calc(100% + 4px); right: 0; z-index: 20;
-      min-width: 200px; padding: 6px;
+      min-width: 240px; max-height: 280px; overflow: auto; padding: 6px;
       background: var(--bg-card); border: 1px solid var(--border);
       border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.12);
     }
@@ -263,6 +348,112 @@
                         line-height: 1.55; color: inherit; background: transparent; }
     .fp-codeblock__copy { position: absolute; top: 6px; right: 6px;
                           padding: 2px 8px; font-size: 11px; }
+    .digest-workbench {
+      display: grid; grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      gap: 12px; align-items: start;
+    }
+    .digest-left, .digest-preview-pane {
+      display: flex; flex-direction: column; gap: 12px; min-width: 0;
+    }
+    .digest-preview-pane { position: sticky; top: 0; }
+    .digest-preview-frame {
+      width: 100%; min-height: calc(100vh - 210px);
+      border: 1px solid var(--border); border-radius: 12px; background: #fff;
+    }
+    .digest-history-list {
+      display: flex; flex-direction: column; gap: 8px; max-height: 360px;
+      overflow-y: auto; padding-right: 2px;
+    }
+    @media (max-width: 980px) {
+      .digest-workbench { grid-template-columns: 1fr; }
+      .digest-preview-pane { position: static; }
+    }
+    .radar-workbench {
+      display: grid; grid-template-columns: minmax(380px, 500px) minmax(0, 1fr);
+      gap: 12px; align-items: stretch; height: calc(100vh - 132px); min-height: 740px;
+      overflow: hidden;
+    }
+    .radar-left, .radar-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+    .radar-left { height: 100%; overflow-y: auto; overflow-x: visible; padding-right: 4px; }
+    .radar-left .card { margin: 0; }
+    .radar-left .card--compact { flex: 0 0 auto; min-height: 0; display: flex; flex-direction: column; }
+    .radar-left .card--compact textarea { flex: 0 0 auto; height: 118px; min-height: 108px; }
+    .radar-right { height: 100%; overflow: hidden; }
+    .radar-right > .card.grow { height: 100%; min-height: 0; overflow: auto; }
+    .radar-rule-help {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+      background: linear-gradient(180deg, rgba(211,47,47,.06), rgba(255,247,247,.82));
+      padding: 6px 10px; margin-bottom: 8px; line-height: 1.4;
+    }
+    .radar-rule-help code {
+      background: #fff; color: #b91c1c; border-color: rgba(211,47,47,.34);
+      font-weight: 800; box-shadow: 0 1px 0 rgba(211,47,47,.08);
+    }
+    .radar-intro { padding: 6px 10px; margin-bottom: 0; line-height: 1.45; }
+    .radar-exec-card { flex: 0 0 auto; overflow: visible; }
+    .radar-exec-card .source-chip-grid--rail {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px; max-height: 104px !important; padding-right: 6px;
+    }
+    .radar-exec-card .source-chip {
+      width: 100%; min-width: 0; justify-content: flex-start; overflow: hidden;
+    }
+    .source-chip__name {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .radar-card--locked {
+      position: relative;
+      border: 2px solid rgba(37,99,235,.46) !important;
+      background: linear-gradient(180deg, rgba(239,246,255,.78), rgba(255,255,255,.98)) !important;
+      box-shadow: 0 0 0 2px rgba(37,99,235,.08), 0 8px 20px rgba(30,64,175,.08) !important;
+    }
+    .radar-card--locked::before {
+      content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
+      border-radius: var(--radius) 0 0 var(--radius);
+      background: linear-gradient(180deg, #2563eb, #38bdf8);
+      opacity: .78;
+    }
+    .radar-title-text { white-space: nowrap; flex: 0 0 auto; }
+    .radar-locked-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 7px; border-radius: 999px;
+      border: 1.5px solid rgba(37,99,235,.28);
+      background: rgba(37,99,235,.08); color: #1d4ed8;
+      font-size: 11px; font-weight: 800; white-space: nowrap; flex: 0 0 auto;
+    }
+    .radar-report-hero {
+      border: 1px solid rgba(211,47,47,.16); border-radius: 14px; padding: 14px;
+      background: linear-gradient(135deg, rgba(211,47,47,.10), rgba(255,255,255,.94));
+      margin-bottom: 12px;
+    }
+    .radar-report-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+    .radar-report-metric { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-card); padding: 8px 10px; }
+    .radar-report-metric b { display: block; font-size: 16px; color: var(--primary); }
+    .radar-report-metric span { font-size: 11px; color: var(--text-muted); }
+    .radar-report-section { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+    .radar-hit-card { padding: 10px 0; border-bottom: 1px solid var(--border); }
+    .radar-hit-card__title { color: var(--text); font-size: 13px; font-weight: 650; text-decoration: none; line-height: 1.5; }
+    .radar-hit-card__meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; font-size: 11px; color: var(--text-muted); }
+    .report-plan-card--locked {
+      border: 2px solid rgba(37,99,235,.46) !important;
+      background: linear-gradient(180deg, rgba(239,246,255,.72), rgba(255,255,255,.98)) !important;
+      box-shadow: 0 0 0 2px rgba(37,99,235,.08), 0 8px 20px rgba(30,64,175,.08);
+    }
+    .report-plan-card--locked .kw-tag:first-of-type {
+      border-color: rgba(37,99,235,.28); background: rgba(37,99,235,.08); color: #1d4ed8;
+      font-weight: 800;
+    }
+    @media (max-width: 980px) {
+      .radar-workbench { grid-template-columns: 1fr; height: auto; overflow: visible; }
+      .radar-left, .radar-right, .radar-right > .card.grow { height: auto; overflow: visible; }
+    }
+    .agent-tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; align-items: stretch; }
+    .agent-tool-card { margin: 0; display: flex; flex-direction: column; height: 190px; min-height: 190px; }
+    .agent-tool-json {
+      flex: 1 1 96px; min-height: 96px; max-height: 96px; background: var(--bg-hover);
+      padding: 8px 10px; border-radius: 6px; font-size: 11px; overflow: auto; margin: 0;
+    }
+    .agent-tool-actions { display: flex; gap: 6px; margin-top: 10px; align-items: center; }
     /* ── Label bar ── */
     .label { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 6px;
              display: flex; align-items: center; gap: 6px; }
@@ -275,7 +466,7 @@
     .input {
       width: 100%; padding: 8px 10px; font-size: 13px;
       color: var(--text); background: var(--bg-card);
-      border: 1px solid var(--border); border-radius: var(--radius);
+      border: 1.5px solid var(--border); border-radius: var(--radius);
       transition: border-color .15s;
     }
     .input:focus { outline: none; border-color: var(--primary); }
@@ -296,7 +487,7 @@
     .field-warn-tip:hover { opacity: .95; }
     /* ── Cards ── */
     .card {
-      background: var(--bg-card); border: 1px solid var(--border);
+      background: var(--bg-card); border: 1.5px solid var(--border);
       border-radius: var(--radius); padding: 14px; margin-bottom: 12px;
     }
     .card-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
@@ -304,7 +495,7 @@
     .btn {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 7px 14px; font-size: 13px; font-weight: 500;
-      border: 1px solid var(--border); background: var(--bg-card);
+      border: 1.5px solid var(--border); background: var(--bg-card);
       color: var(--text); border-radius: var(--radius); cursor: pointer;
       transition: background .15s, border-color .15s;
     }
@@ -336,9 +527,12 @@
     }
     .confirm-dialog {
       background: var(--bg-card); color: var(--text);
-      border-radius: var(--radius); border: 1px solid var(--border);
-      padding: 18px; max-width: 360px;
+      border-radius: var(--radius); border: 1.5px solid var(--border);
+      padding: 20px; width: min(480px, 92vw); max-width: 480px;
+      box-shadow: 0 18px 48px rgba(15,23,42,.22);
     }
+    .confirm-dialog .card-title { font-size: 16px; margin-bottom: 10px; }
+    .confirm-message { font-size: 13px; color: var(--text); line-height: 1.7; word-break: break-word; }
     .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
     /* ── News card ── */
     .news-card {
@@ -367,7 +561,7 @@
     .news-card__time { font-size: 11px; color: var(--text-dim); }
     .news-card__actions { margin-left: auto; display: flex; gap: 4px; align-items: center; }
     .news-card--compact {
-      padding: 10px; border: 1px solid rgba(211,47,47,.18); border-radius: var(--radius);
+      padding: 10px; border: 1.5px solid rgba(211,47,47,.24); border-radius: var(--radius);
       background: var(--bg-card); min-width: 0; box-shadow: 0 1px 4px rgba(15,23,42,.04);
     }
     .news-card.news-card--compact:hover {
@@ -381,7 +575,7 @@
     .news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
     .news-source-group {
       margin: 14px 0 18px; padding: 10px 12px 12px;
-      border: 1px solid rgba(15,23,42,.08); border-left: 3px solid var(--primary);
+      border: 1.5px solid rgba(15,23,42,.12); border-left: 4px solid var(--primary);
       border-radius: 10px; background: linear-gradient(180deg, rgba(211,47,47,.025), var(--bg-card));
       box-shadow: 0 1px 5px rgba(15,23,42,.035);
     }
@@ -405,13 +599,34 @@
     /* Source chip grids (settings + news source rail) */
     .source-chip-grid { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .source-chip-grid--rail {
-      flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px;
-      scrollbar-width: thin;
+      width: 100%; max-height: 92px; overflow-y: auto; overflow-x: hidden;
+      padding: 2px 4px 2px 0; scrollbar-width: thin; align-content: flex-start;
     }
+    .filter-source-panel {
+      display: flex; flex-direction: column; gap: 8px;
+      width: 100%; min-width: 0;
+      padding-bottom: 8px; border-bottom: 1px solid rgba(15,23,42,.08);
+    }
+    .filter-source-panel__head {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .filter-source-cats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .filter-source-cat {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--bg-card); color: var(--text-muted);
+      font-size: 12px; cursor: pointer;
+    }
+    .filter-source-cat:hover { border-color: var(--primary); color: var(--text); }
+    .filter-source-cat--active {
+      border-color: rgba(211,47,47,.28); background: rgba(211,47,47,.10);
+      color: var(--primary);
+    }
+    .filter-source-cat__count { font-size: 10px; color: var(--text-muted); }
     .source-chip {
       display: inline-flex; align-items: center; gap: 6px;
       min-height: 28px; padding: 4px 10px;
-      border: 1px solid var(--border); border-radius: 8px;
+      border: 1.5px solid var(--border); border-radius: 8px;
       background: var(--bg-card); color: var(--text);
       font-size: 12px; font-weight: 500; cursor: pointer;
       white-space: nowrap; transition: border-color .12s, background .12s, color .12s;
@@ -455,10 +670,39 @@
     .switch-row { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
     .source-master-switch {
       display: inline-flex; align-items: center; gap: 8px;
-      border: 1px solid var(--border); border-radius: 999px;
+      border: 1.5px solid var(--border); border-radius: 999px;
       padding: 5px 10px; background: rgba(255,255,255,.92);
       color: var(--text); font-size: 12px;
     }
+    .channel-picker { position: relative; width: 100%; }
+    .channel-picker__button {
+      width: 100%; min-height: 38px; display: flex; align-items: center; gap: 10px;
+      padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius);
+      background: var(--bg-card); color: var(--text); text-align: left; cursor: pointer;
+      overflow: hidden;
+    }
+    .channel-picker__button:hover { border-color: rgba(211,47,47,.28); }
+    .channel-picker__button.is-empty { color: var(--text-muted); }
+    .channel-picker__main { flex: 1; min-width: 0; }
+    .channel-picker__title { font-size: 13px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .channel-picker__sub { display: block; max-width: 100%; font-size: 11px; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .channel-picker__platform {
+      flex: 0 0 auto; min-width: 42px; text-align: center; padding: 2px 7px;
+      border-radius: 999px; background: rgba(211,47,47,.08); color: var(--primary);
+      font-size: 11px; font-weight: 700;
+    }
+    .channel-picker__menu {
+      position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 80;
+      max-height: 260px; overflow-y: auto; padding: 6px;
+      border: 1.5px solid rgba(15,23,42,.16); border-radius: 12px;
+      background: var(--bg-card); box-shadow: 0 16px 36px rgba(15,23,42,.16);
+    }
+    .channel-picker__item {
+      width: 100%; border: 0; background: transparent; border-radius: 9px;
+      padding: 8px 9px; display: flex; align-items: center; gap: 10px;
+      color: var(--text); text-align: left; cursor: pointer;
+    }
+    .channel-picker__item:hover, .channel-picker__item--active { background: var(--bg-hover); }
     .custom-source-dialog__mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
     .custom-source-dialog__preview {
       font-size: 11px; color: var(--text-muted); word-break: break-all;
@@ -519,7 +763,9 @@
       background: var(--bg-card); color: var(--text);
       border-radius: var(--radius); border: 1px solid var(--border);
       padding: 20px; width: 380px; max-width: 90vw;
+      max-height: 88vh; overflow: auto;
     }
+    .ai-dialog--wide { width: 560px; }
     .ai-dialog__title {
       font-size: 15px; font-weight: 600; color: var(--text);
       margin-bottom: 14px; display: flex; align-items: center; gap: 6px;
@@ -530,9 +776,27 @@
     }
     .ai-dialog__field { margin-bottom: 12px; }
     .ai-dialog__label { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 4px; }
+    .ai-dialog__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+    .choice-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border: 1px solid var(--border);
+      border-radius: 8px; background: var(--bg);
+      font-size: 12px; color: var(--text); cursor: pointer;
+    }
+    .choice-row input { accent-color: var(--primary); }
+    .choice-row__text { display: flex; flex-direction: column; gap: 2px; }
+    .choice-row__hint { color: var(--text-muted); font-size: 11px; }
     .ai-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    .export-preview {
+      width: min(960px, 94vw); height: min(760px, 90vh);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .export-preview iframe {
+      flex: 1; width: 100%; border: 1px solid var(--border);
+      border-radius: 10px; background: #fff;
+    }
     /* ── Collapsible ── */
-    .coll { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; background: var(--bg-card); }
+    .coll { border: 1.5px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; background: var(--bg-card); }
     .coll-head {
       display: flex; align-items: center; gap: 8px;
       padding: 10px 14px; cursor: pointer; user-select: none;
@@ -647,11 +911,10 @@ const { useState, useEffect, useCallback, useRef } = React;
 const I18N_DICT = {
   zh: {
     "app.title": "财经脉动",
-    "app.subtitle": "Fin Pulse · 早午晚报 · 热点雷达 · Agent 对话",
+    "app.subtitle": "Fin Pulse · 早午晚报 · 热点雷达",
     "tabs.today": "资讯",
     "tabs.digests": "早午晚报",
     "tabs.radar": "雷达预警",
-    "tabs.ask": "Agent 对话",
     "tabs.settings": "设置",
     "banner.noChannel.title": "尚未配置 IM 推送通道",
     "banner.noChannel.desc": "请先在 OpenAkita 主程序配置至少一个 IM 通道（飞书/企微/钉钉）并授予 channel.send 权限。",
@@ -665,6 +928,12 @@ const I18N_DICT = {
     "today.filters.title": "筛选",
     "today.filters.source": "数据源",
     "today.filters.source.all": "全部",
+    "today.sources.cat.all": "全部",
+    "today.sources.cat.realtime": "实时",
+    "today.sources.cat.news": "资讯",
+    "today.sources.cat.rank": "榜单",
+    "today.sources.cat.policy_data": "政策/数据",
+    "today.sources.cat.other": "其他",
     "today.filters.window": "时间范围",
     "today.filters.window.6h": "近 6 小时",
     "today.filters.window.24h": "近 24 小时",
@@ -674,6 +943,9 @@ const I18N_DICT = {
     "today.filters.window.to": "结束",
     "today.filters.sortLabel": "排序",
     "today.filters.sort.time": "按时间",
+    "today.filters.sort.time_desc": "时间降序",
+    "today.filters.sort.time_asc": "时间升序",
+    "today.filters.search.submit": "搜索",
     "today.filters.view": "视图",
     "today.filters.view.grouped": "聚合",
     "today.filters.view.timeline": "时间线",
@@ -721,7 +993,7 @@ const I18N_DICT = {
     "today.filters.keyword.placeholder": "搜索标题或摘要…",
     "today.filters.ai": "AI 筛选",
     "today.filters.ai.title": "AI 筛选 / 兴趣命中置顶",
-    "today.filters.ai.desc": "参考 TrendRadar：先用自然语言描述关注方向，再用 +必须、!排除、普通关键词做快速命中；命中内容置顶，其他资讯保留在下方。",
+    "today.filters.ai.desc": "先用自然语言描述关注方向，再用 +必须、!排除、普通关键词做快速命中；情感倾向会参与智能评分和排序，不再依赖文章预置字段。",
     "today.filters.ai.interests": "关注方向",
     "today.filters.ai.interests.placeholder": "例如：关注美联储利率、人民币汇率、A股流动性、AI 算力和中美关税变化",
     "today.filters.ai.keywords": "辅助规则（+必须 !排除 普通关键词）",
@@ -733,15 +1005,37 @@ const I18N_DICT = {
     "today.filters.ai.sentiment.neutral": "中性",
     "today.filters.ai.apply": "应用 AI 筛选",
     "today.filters.ai.clear": "清除 AI 筛选",
-    "today.filters.ai.active": "AI 筛选已激活：命中置顶，其他资讯保留",
+    "today.filters.ai.active": "AI 筛选已激活：智能评分命中",
+    "today.filters.ai.score": "AI 命中 {score}",
     "today.translate": "翻译",
     "today.translate.original": "原文",
     "today.translate.loading": "翻译中…",
     "today.translate.fail": "翻译失败：{err}",
     "today.export": "导出",
     "today.export.title": "导出 HTML 报表",
-    "today.export.done": "报表已下载",
+    "today.export.done": "报表已生成，可预览或下载",
     "today.export.fail": "导出失败：{err}",
+    "today.export.dialog.title": "导出 HTML 报告",
+    "today.export.dialog.desc": "选择要写入独立 HTML 页面里的内容，导出的文件可直接在浏览器打开。",
+    "today.export.scope": "导出范围",
+    "today.export.scope.current": "当前筛选结果",
+    "today.export.scope.current.hint": "使用页面当前来源、时间、AI 与关键词筛选",
+    "today.export.scope.loaded": "当前时间窗口全部加载内容",
+    "today.export.scope.loaded.hint": "忽略来源/关键词/AI，只使用当前时间窗口",
+    "today.export.fields": "内容字段",
+    "today.export.include.summary": "摘要",
+    "today.export.include.tags": "AI 标签/指标",
+    "today.export.include.meta": "来源与时间",
+    "today.export.include.group": "按来源分组",
+    "today.export.limit": "最多导出",
+    "today.export.limit.all": "全部",
+    "today.export.create": "生成 HTML",
+    "today.export.preview.title": "HTML 报表预览",
+    "today.export.preview.download": "下载 HTML",
+    "today.export.preview.open": "新窗口打开",
+    "today.export.include.brief": "AI 要点摘要",
+    "today.export.include.insights": "来源统计与重点提示",
+    "today.export.include.links": "原文链接",
     "today.ingest.cooldown": "冷却中（{s}s）",
     "today.list.ingest.all": "抓取全部",
     "digests.title": "早午晚报",
@@ -760,7 +1054,7 @@ const I18N_DICT = {
     "digests.resend.success": "已发送",
     "digests.resend.fail": "发送失败：{err}",
     "radar.editor.title": "关键词规则",
-    "radar.editor.hintHtml": "每行一个关键词 · <code>+必须</code> <code>!排除</code> <code>@alias</code> 别名 · 空行分组 · <code>[GLOBAL_FILTER]</code> 段表示对所有组生效的负面词。不熟悉语法？点「示例填写」快速开始，或点「AI 优化」让大脑替你写规则。",
+    "radar.editor.hintHtml": "规则：<code>+必须</code><code>!排除</code><code>@alias</code><code>[GLOBAL_FILTER]</code>；空行分组。可点「示例填写」或「AI 优化」。",
     "radar.editor.hint": "每行一个关键词；`+` 必须、`!` 排除、`@alias` 别名、空行分组、`[GLOBAL_FILTER]` 全局排除",
     "radar.window": "时间窗口",
     "radar.evaluate": "试运行",
@@ -931,11 +1225,10 @@ const I18N_DICT = {
   },
   en: {
     "app.title": "Fin Pulse",
-    "app.subtitle": "Daily Brief · Hot Radar · Ask News",
+    "app.subtitle": "Daily Brief · Hot Radar",
     "tabs.today": "News",
     "tabs.digests": "Digests",
     "tabs.radar": "Radar",
-    "tabs.ask": "Ask",
     "tabs.settings": "Settings",
     "banner.noChannel.title": "No IM channel configured",
     "banner.noChannel.desc": "Configure at least one IM channel in OpenAkita Settings and grant channel.send.",
@@ -949,6 +1242,12 @@ const I18N_DICT = {
     "today.filters.title": "Filters",
     "today.filters.source": "Source",
     "today.filters.source.all": "All",
+    "today.sources.cat.all": "All",
+    "today.sources.cat.realtime": "Realtime",
+    "today.sources.cat.news": "News",
+    "today.sources.cat.rank": "Rankings",
+    "today.sources.cat.policy_data": "Policy/Data",
+    "today.sources.cat.other": "Other",
     "today.filters.window": "Window",
     "today.filters.window.6h": "Last 6h",
     "today.filters.window.24h": "Last 24h",
@@ -958,6 +1257,9 @@ const I18N_DICT = {
     "today.filters.window.to": "To",
     "today.filters.sortLabel": "Sort",
     "today.filters.sort.time": "By time",
+    "today.filters.sort.time_desc": "Newest first",
+    "today.filters.sort.time_asc": "Oldest first",
+    "today.filters.search.submit": "Search",
     "today.filters.view": "View",
     "today.filters.view.grouped": "Grouped",
     "today.filters.view.timeline": "Timeline",
@@ -1005,7 +1307,7 @@ const I18N_DICT = {
     "today.filters.keyword.placeholder": "Search title or summary…",
     "today.filters.ai": "AI Filter",
     "today.filters.ai.title": "AI Filter / Interest Matches",
-    "today.filters.ai.desc": "TrendRadar-inspired: describe your interests in natural language, then use +required, !exclude and plain keywords for quick matching. Matches are promoted while other articles stay visible.",
+    "today.filters.ai.desc": "Describe interests in natural language, then use +required, !exclude and plain keywords. Sentiment is scored locally instead of relying on pre-filled article fields.",
     "today.filters.ai.interests": "Interest description",
     "today.filters.ai.interests.placeholder": "E.g. Fed rates, RMB FX, A-share liquidity, AI compute and US-China tariffs",
     "today.filters.ai.keywords": "Helper rules (+required !exclude plain keywords)",
@@ -1017,15 +1319,37 @@ const I18N_DICT = {
     "today.filters.ai.sentiment.neutral": "Neutral",
     "today.filters.ai.apply": "Promote matches",
     "today.filters.ai.clear": "Clear smart filter",
-    "today.filters.ai.active": "Smart filter active: matches promoted, other articles kept",
+    "today.filters.ai.active": "Smart filter active: AI-scored matches",
+    "today.filters.ai.score": "AI hit {score}",
     "today.translate": "Translate",
     "today.translate.original": "Original",
     "today.translate.loading": "Translating…",
     "today.translate.fail": "Translation failed: {err}",
     "today.export": "Export",
     "today.export.title": "Export HTML report",
-    "today.export.done": "Report downloaded",
+    "today.export.done": "Report generated. Preview or download it.",
     "today.export.fail": "Export failed: {err}",
+    "today.export.dialog.title": "Export HTML Report",
+    "today.export.dialog.desc": "Choose what to include in the standalone HTML page.",
+    "today.export.scope": "Scope",
+    "today.export.scope.current": "Current filtered results",
+    "today.export.scope.current.hint": "Use current source, window, AI and keyword filters",
+    "today.export.scope.loaded": "All loaded in current window",
+    "today.export.scope.loaded.hint": "Ignore source / keyword / AI filters",
+    "today.export.fields": "Fields",
+    "today.export.include.summary": "Summary",
+    "today.export.include.tags": "AI tags / metrics",
+    "today.export.include.meta": "Source and time",
+    "today.export.include.group": "Group by source",
+    "today.export.limit": "Max items",
+    "today.export.limit.all": "All",
+    "today.export.create": "Generate HTML",
+    "today.export.preview.title": "HTML report preview",
+    "today.export.preview.download": "Download HTML",
+    "today.export.preview.open": "Open in new window",
+    "today.export.include.brief": "AI-style key brief",
+    "today.export.include.insights": "Source stats and highlights",
+    "today.export.include.links": "Original links",
     "today.ingest.cooldown": "Cooling down ({s}s)",
     "today.list.ingest.all": "Fetch all",
     "digests.title": "Daily Briefs",
@@ -1044,7 +1368,7 @@ const I18N_DICT = {
     "digests.resend.success": "Sent",
     "digests.resend.fail": "Dispatch failed: {err}",
     "radar.editor.title": "Keyword rules",
-    "radar.editor.hintHtml": "One keyword per line · <code>+must</code> <code>!exclude</code> <code>@alias</code> · blank line = group · <code>[GLOBAL_FILTER]</code> applies negative filters to every group. New to this? Click &quot;Template&quot; for a starter, or &quot;AI optimise&quot; to let the brain draft rules for you.",
+    "radar.editor.hintHtml": "Rules: <code>+must</code><code>!exclude</code><code>@alias</code><code>[GLOBAL_FILTER]</code>; blank line = group. Use Template or AI optimise.",
     "radar.editor.hint": "One keyword per line; `+` must, `!` exclude, `@alias` alias, blank line = group, `[GLOBAL_FILTER]` = global exclude.",
     "radar.window": "Window",
     "radar.evaluate": "Dry run",
@@ -1263,8 +1587,8 @@ function useT() {
 }
 
 /* ── Tab registry ── */
-const TAB_IDS = ["today", "digests", "radar", "ask", "settings"];
-const TAB_ICONS = { today: "news", digests: "doc", radar: "radar", ask: "chat", settings: "cog" };
+const TAB_IDS = ["today", "digests", "radar", "settings"];
+const TAB_ICONS = { today: "news", digests: "doc", radar: "radar", settings: "cog" };
 
 /* ── Icon shim — binds to window.OpenAkitaIcons (from icons.js).
    Short aliases keep call-sites terse while the bundle stays ~3KB. */
@@ -1280,8 +1604,25 @@ const ICON_ALIAS = {
      keep fallbacks to keep first-render safe. */
   pause: "close", bell: "warning", refresh: "refresh",
 };
+const ICONIFY_SVG = {
+  /* SVG paths adapted from Iconify collections:
+     mdi:finance, solar:filter-bold-duotone,
+     solar:download-square-bold-duotone, solar:magic-stick-3-bold-duotone. */
+  brand: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="ifp-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#150B2E"/><stop offset=".48" stop-color="#64162E"/><stop offset="1" stop-color="#D32F2F"/></linearGradient><linearGradient id="ifp-mark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFF7D6"/><stop offset=".46" stop-color="#FFB86C"/><stop offset="1" stop-color="#FFFFFF"/></linearGradient><filter id="ifp-glow" x="-35%" y="-35%" width="170%" height="170%"><feGaussianBlur stdDeviation="1.5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><rect width="64" height="64" rx="18" fill="url(#ifp-bg)"/><circle cx="48" cy="15" r="20" fill="#FFD166" opacity=".18"/><circle cx="12" cy="52" r="18" fill="#7C3AED" opacity=".18"/><rect x="8" y="8" width="48" height="48" rx="15" fill="rgba(255,255,255,.08)" stroke="rgba(255,255,255,.18)"/><g transform="translate(8 8) scale(2)" fill="url(#ifp-mark)" filter="url(#ifp-glow)"><path d="m6 16.5l-3 2.94V11h3m5 3.66l-1.57-1.34L8 14.64V7h3m5 6l-3 3V3h3m2.81 9.81L17 11h5v5l-1.79-1.79L13 21.36l-3.47-3.02L5.75 22H3l6.47-6.34L13 18.64"/></g></svg>',
+  morning: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 18h18v2H3v-2m8-16h2v4h-2V2M4.22 5.64l1.42-1.42l2.83 2.83l-1.42 1.42l-2.83-2.83M19.78 5.64l-2.83 2.83l-1.42-1.42l2.83-2.83l1.42 1.42M12 8a6 6 0 0 1 6 6v2H6v-2a6 6 0 0 1 6-6m0 2a4 4 0 0 0-4 4h8a4 4 0 0 0-4-4Z"/></svg>',
+  noonIcon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 7a5 5 0 1 1 0 10a5 5 0 0 1 0-10m0-5h1v4h-2V2h1m0 16h1v4h-2v-4h1M4.22 5.64l1.42-1.42l2.12 2.12l-1.42 1.42l-2.12-2.12m12.02.7l2.12-2.12l1.42 1.42l-2.12 2.12l-1.42-1.42M2 11h4v2H2v-2m16 0h4v2h-4v-2M4.22 18.36l2.12-2.12l1.42 1.42l-2.12 2.12l-1.42-1.42m12.02-.7l1.42-1.42l2.12 2.12l-1.42 1.42l-2.12-2.12Z"/></svg>',
+  eveningIcon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 18h18v2H3v-2m3-4a6 6 0 0 1 12 0v2H6v-2m2 0h8a4 4 0 0 0-8 0M11 2h2v4h-2V2M4.22 5.64l1.42-1.42l2.83 2.83l-1.42 1.42l-2.83-2.83m15.56 0l-2.83 2.83l-1.42-1.42l2.83-2.83l1.42 1.42M12 22l-3-3h6l-3 3Z"/></svg>',
+  customReport: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 3h11l5 5v13H4V3m10 1.5V9h4.5L14 4.5M7 12h10v2H7v-2m0 4h7v2H7v-2m0-8h4v2H7V8Z"/></svg>',
+  search: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9.5 3a6.5 6.5 0 0 1 5.16 10.45l4.45 4.44a.86.86 0 0 1-1.22 1.22l-4.44-4.45A6.5 6.5 0 1 1 9.5 3Zm0 1.75a4.75 4.75 0 1 0 0 9.5 4.75 4.75 0 0 0 0-9.5Z"/></svg>',
+  filter: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" opacity=".35" d="M3 5.5C3 4.67 3.67 4 4.5 4h15c.83 0 1.5.67 1.5 1.5 0 .38-.14.74-.4 1.02L15 12.68V18a1.5 1.5 0 0 1-.66 1.24l-3 2A1.5 1.5 0 0 1 9 20V12.68L3.4 6.52A1.5 1.5 0 0 1 3 5.5Z"/><path fill="currentColor" d="M7 4h10l-5 5.55L7 4Z"/></svg>',
+  download: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" opacity=".35" d="M3 7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7Z"/><path fill="currentColor" d="M11 6.75a1 1 0 1 1 2 0v6.08l2.04-2.04a1 1 0 1 1 1.42 1.42l-3.75 3.75a1 1 0 0 1-1.42 0l-3.75-3.75a1 1 0 1 1 1.42-1.42L11 12.83V6.75Z"/></svg>',
+  magic: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" opacity=".35" d="m14.2 4.3 5.5 5.5a2 2 0 0 1 0 2.83L9.63 22.7a2 2 0 0 1-2.83 0L1.3 17.2a2 2 0 0 1 0-2.83L11.37 4.3a2 2 0 0 1 2.83 0Z"/><path fill="currentColor" d="m12.8 5.7 5.5 5.5-2.12 2.12-5.5-5.5L12.8 5.7ZM19 2l.58 1.42L21 4l-1.42.58L19 6l-.58-1.42L17 4l1.42-.58L19 2ZM5 3l.8 1.95L7.75 5.75 5.8 6.55 5 8.5l-.8-1.95-1.95-.8 1.95-.8L5 3Z"/></svg>'
+};
 function Ico(props) {
   const name = props.name || "";
+  if (ICONIFY_SVG[name]) {
+    return <span className="oa-icon" dangerouslySetInnerHTML={{__html: ICONIFY_SVG[name]}} />;
+  }
   const lib = window.OpenAkitaIcons;
   if (lib) {
     const key = (typeof lib[name] === "function") ? name
@@ -1293,68 +1634,9 @@ function Ico(props) {
   return <span className="oa-icon" aria-hidden="true">·</span>;
 }
 
-/* ── Brand mark — inline SVG matching icon.svg for pixel-perfect hero ── */
-/* Kept structurally identical to plugins/fin-pulse/icon.svg so the main
-   page hero and the sidebar/loading-splash icon read as one brand. */
-const BRAND_SVG = (
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true">' +
-    '<defs>' +
-      '<linearGradient id="hbg" x1="0%" y1="0%" x2="100%" y2="100%">' +
-        '<stop offset="0%"  stop-color="#0B1220"/>' +
-        '<stop offset="55%" stop-color="#121D33"/>' +
-        '<stop offset="100%" stop-color="#1C2541"/>' +
-      '</linearGradient>' +
-      '<linearGradient id="hred" x1="0%" y1="0%" x2="0%" y2="100%">' +
-        '<stop offset="0%"  stop-color="#FF8190"/>' +
-        '<stop offset="100%" stop-color="#D01F33"/>' +
-      '</linearGradient>' +
-      '<linearGradient id="hvol" x1="0%" y1="0%" x2="0%" y2="100%">' +
-        '<stop offset="0%"  stop-color="#FF6B7C" stop-opacity="0.70"/>' +
-        '<stop offset="100%" stop-color="#8A1625" stop-opacity="0.55"/>' +
-      '</linearGradient>' +
-      '<linearGradient id="hline" x1="0%" y1="0%" x2="100%" y2="0%">' +
-        '<stop offset="0%"  stop-color="#FFD2A8"/>' +
-        '<stop offset="100%" stop-color="#FFE9B5"/>' +
-      '</linearGradient>' +
-    '</defs>' +
-    '<rect x="0" y="0" width="64" height="64" rx="14" ry="14" fill="url(#hbg)"/>' +
-    '<g opacity="0.16" stroke="#9FB3D1" stroke-width="0.5" stroke-dasharray="1.6,2.2">' +
-      '<line x1="6" y1="16" x2="58" y2="16"/>' +
-      '<line x1="6" y1="30" x2="58" y2="30"/>' +
-      '<line x1="6" y1="44" x2="58" y2="44"/>' +
-    '</g>' +
-    '<g fill="url(#hvol)">' +
-      '<rect x="10.5" y="52" width="5" height="6" rx="1"/>' +
-      '<rect x="19.5" y="50" width="5" height="8" rx="1"/>' +
-      '<rect x="29.5" y="49" width="5" height="9" rx="1"/>' +
-      '<rect x="39.5" y="47" width="5" height="11" rx="1"/>' +
-      '<rect x="48.5" y="46" width="5" height="12" rx="1"/>' +
-    '</g>' +
-    '<g stroke="#FF8A96" stroke-width="1" stroke-linecap="round">' +
-      '<line x1="13" y1="32" x2="13" y2="48"/>' +
-      '<line x1="22" y1="24" x2="22" y2="42"/>' +
-      '<line x1="32" y1="17" x2="32" y2="36"/>' +
-      '<line x1="42" y1="12" x2="42" y2="32"/>' +
-      '<line x1="51" y1="7"  x2="51" y2="32"/>' +
-    '</g>' +
-    '<g fill="url(#hred)">' +
-      '<rect x="10.5" y="36" width="5" height="10" rx="1"/>' +
-      '<rect x="19.5" y="26" width="5" height="14" rx="1"/>' +
-      '<rect x="29.5" y="20" width="5" height="14" rx="1"/>' +
-      '<rect x="39.5" y="14" width="5" height="16" rx="1"/>' +
-      '<rect x="48"   y="10" width="6" height="18" rx="1.2"/>' +
-    '</g>' +
-    '<path d="M13 41 L22 33 L32 27 L42 22 L51 14" ' +
-      'fill="none" stroke="url(#hline)" stroke-width="1.8" ' +
-      'stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>' +
-    '<circle cx="51" cy="14" r="4.2" fill="none" stroke="#FFF1C2" stroke-width="0.7" opacity="0.55"/>' +
-    '<circle cx="51" cy="14" r="2.4" fill="#FFF1C2"/>' +
-    '<g stroke="#FFBC74" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">' +
-      '<path d="M52 10 L58 6"/>' +
-      '<path d="M58 6 L58 10 M58 6 L54 6"/>' +
-    '</g>' +
-  '</svg>'
-);
+/* ── Brand mark — Iconify-based hero mark ── */
+/* The header uses mdi:finance wrapped in the fin-pulse brand palette. */
+const BRAND_SVG = ICONIFY_SVG.brand;
 function BrandMark() {
   return <span className="oa-hero-title__icon" dangerouslySetInnerHTML={{__html: BRAND_SVG}} />;
 }
@@ -1516,8 +1798,114 @@ function formatChannelLabel(ch) {
   if (!ch || typeof ch !== "object") return String(ch || "");
   const cid = String(ch.channel_id || "");
   const name = String(ch.chat_name || ch.display_name || ch.alias || "");
-  if (name) return cid + " · " + name;
+  if (name) return name;
   return cid;
+}
+function channelKey(ch) {
+  if (!ch || typeof ch !== "object") return "";
+  return String(ch.channel_id || "") + "::" + String(ch.chat_id || "");
+}
+function channelPlatform(ch) {
+  const cid = String((ch && ch.channel_id) || "");
+  const raw = cid.split(":")[0] || cid || "IM";
+  const map = {feishu: "飞书", qqbot: "QQ", wework_ws: "企微", wework: "企微", dingtalk: "钉钉", wechat: "微信", telegram: "TG"};
+  return map[raw] || raw;
+}
+function channelSubtitle(ch) {
+  if (!ch || typeof ch !== "object") return "";
+  const cid = String(ch.channel_id || "");
+  const chat = String(ch.chat_id || "");
+  if (chat) return cid + " · " + chat;
+  return cid;
+}
+function normalizeChannels(list) {
+  const seen = {};
+  return (list || []).filter(function (c) {
+    const cid = String((c && c.channel_id) || c || "");
+    const chat = String((c && c.chat_id) || "");
+    const key = cid + "::" + chat;
+    if (!cid || cid === "cli" || seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+function ChannelPicker(props) {
+  const [open, setOpen] = useState(false);
+  const channels = normalizeChannels(props.channels || []);
+  const selected = channels.find(function (c) { return channelKey(c) === props.value; }) || null;
+  const placeholder = props.placeholder || "选择一个 IM 通道";
+  const disabled = !!props.disabled;
+  return (
+    <div className="channel-picker">
+      <button type="button" className={"channel-picker__button" + (selected ? "" : " is-empty")}
+              disabled={disabled}
+              onClick={function (e) { e.stopPropagation(); if (!disabled) setOpen(!open); }}>
+        {selected ? <span className="channel-picker__platform">{channelPlatform(selected)}</span> : null}
+        <span className="channel-picker__main">
+          <span className="channel-picker__title">{selected ? formatChannelLabel(selected) : placeholder}</span>
+          {selected ? <span className="channel-picker__sub">{channelSubtitle(selected)}</span> : null}
+        </span>
+        <span style={{color: "var(--text-muted)"}}>⌄</span>
+      </button>
+      {open && !disabled && (
+        <div className="channel-picker__menu">
+          {channels.length === 0 ? (
+            <div className="empty" style={{padding: 12}}>暂无可用 IM 通道</div>
+          ) : channels.map(function (c) {
+            const key = channelKey(c);
+            const active = key === props.value;
+            return (
+              <button key={key} type="button" className={"channel-picker__item" + (active ? " channel-picker__item--active" : "")}
+                      onClick={function (e) {
+                        e.stopPropagation();
+                        setOpen(false);
+                        props.onChange && props.onChange(c, key);
+                      }}>
+                <span className="channel-picker__platform">{channelPlatform(c)}</span>
+                <span className="channel-picker__main">
+                  <span className="channel-picker__title">{formatChannelLabel(c)}</span>
+                  <span className="channel-picker__sub">{channelSubtitle(c)}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+function SourcePicker(props) {
+  const sources = props.sources || [];
+  const picked = Array.isArray(props.value) ? props.value : [];
+  const disabled = !!props.disabled;
+  const pickedSet = {};
+  picked.forEach(function (id) { pickedSet[id] = true; });
+  const onChange = props.onChange || function () {};
+  return (
+    <div>
+      <div style={{display: "flex", alignItems: "center", gap: 8, marginBottom: 6}}>
+        <span className="filter-bar__label">{props.label || "数据源"}</span>
+        <span style={{fontSize: 11, color: "var(--text-muted)"}}>{picked.length ? ("已选 " + picked.length) : "全部来源"}</span>
+        <span style={{flex: 1}}/>
+        <button className="btn btn-sm" type="button" disabled={disabled} onClick={function (e) { e.stopPropagation(); onChange(sources.map(function (s) { return s.id; })); }}>全选</button>
+        <button className="btn btn-sm" type="button" disabled={disabled} onClick={function (e) { e.stopPropagation(); onChange([]); }}>全部</button>
+      </div>
+      <div className="source-chip-grid source-chip-grid--rail" style={{maxHeight: props.maxHeight || 76}}>
+        {sources.map(function (src) {
+          const on = !!pickedSet[src.id];
+          return (
+            <button key={src.id} type="button" disabled={disabled} className={"source-chip " + (on ? "source-chip--active" : "")}
+                    onClick={function (e) {
+                      e.stopPropagation();
+                      onChange(on ? picked.filter(function (id) { return id !== src.id; }) : picked.concat([src.id]));
+                    }}>
+              <span className="source-chip__dot"/><span className="source-chip__name">{src.name}</span><span className="source-chip__type">{src.content_type}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /* ── Global confirm (ConfirmHost / oaConfirm / oaToast) ── */
@@ -1570,7 +1958,7 @@ function ConfirmHost() {
     <div className="confirm-mask" onClick={function () { close(false); }}>
       <div className="confirm-dialog" onClick={function (e) { e.stopPropagation(); }}>
         {pending.title ? <div className="card-title">{pending.title}</div> : null}
-        <div style={{fontSize: 13, color: "var(--text)"}}>{pending.message}</div>
+        <div className="confirm-message">{pending.message}</div>
         <div className="confirm-actions">
           <button className="btn btn-sm" onClick={function () { close(false); }}>{pending.cancelText}</button>
           <button className={"btn btn-sm " + (pending.danger ? "btn-danger" : "btn-primary")}
@@ -1594,12 +1982,36 @@ function fmtDate(iso) {
   const pad = function (n) { return n < 10 ? "0" + n : "" + n; };
   return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
+function _fmtWallClock(raw, withHour) {
+  if (!raw) return "";
+  var s = String(raw).trim();
+  var m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (!m) return "";
+  var pad = function (n) { n = Number(n || 0); return n < 10 ? "0" + n : "" + n; };
+  var date = m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+  if (!withHour || !m[4]) return date;
+  return date + " " + pad(m[4]) + ":" + pad(m[5]);
+}
+function fmtArticleDate(it) {
+  if (!it) return "";
+  if (it.published_at) {
+    return _fmtWallClock(it.published_at, true) || fmtDate(it.published_at);
+  }
+  return fmtDate(it.fetched_at || "");
+}
 function fmtTimelineBucket(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return String(iso).slice(0, 16);
   const pad = function (n) { return n < 10 ? "0" + n : "" + n; };
   return pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":00";
+}
+function fmtArticleTimelineBucket(it) {
+  if (it && it.published_at) {
+    var wall = _fmtWallClock(it.published_at, true);
+    if (wall) return wall.slice(5, 13) + ":00";
+  }
+  return fmtTimelineBucket(articleTime(it));
 }
 function fmtTimelineMinute(iso) {
   if (!iso) return "";
@@ -1836,58 +2248,109 @@ function _itemMetricPills(it) {
   return pills;
 }
 
+function _tokenizeInterestText(text) {
+  var stop = {"关注": 1, "重点": 1, "新闻": 1, "资讯": 1, "变化": 1, "相关": 1, "以及": 1, "例如": 1, "一个": 1, "这个": 1};
+  var out = [];
+  String(text || "").split(/[\n，,、；;。.!！?？：:\s]+/).forEach(function (word) {
+    word = word.trim();
+    if (word.length >= 2 && !stop[word]) out.push(word.toLowerCase());
+  });
+  return out;
+}
+
+function _inferSentimentFromText(text) {
+  text = String(text || "").toLowerCase();
+  var positive = ["上涨", "涨停", "走强", "反弹", "回暖", "利好", "增长", "增持", "突破", "创新高", "上调", "扩张", "乐观", "positive", "bullish", "surge", "gain", "beat", "upgrade"];
+  var negative = ["下跌", "跌停", "走弱", "回落", "承压", "利空", "下降", "减持", "亏损", "暴跌", "下调", "收缩", "担忧", "风险", "negative", "bearish", "slump", "loss", "miss", "downgrade"];
+  var pos = 0, neg = 0;
+  positive.forEach(function (w) { if (text.indexOf(w) >= 0) pos += 1; });
+  negative.forEach(function (w) { if (text.indexOf(w) >= 0) neg += 1; });
+  if (pos > neg) return "positive";
+  if (neg > pos) return "negative";
+  return "neutral";
+}
+
+function _aiScoreArticle(it, ctx) {
+  var text = ((it.title || "") + " " + (it.summary || "") + " " + JSON.stringify(it.raw || {})).toLowerCase();
+  if (ctx.excludeTokens.some(function (tok) { return text.indexOf(tok) >= 0; })) return {excluded: true, score: 0, sentiment: "neutral"};
+  var score = 0;
+  ctx.keywordTokens.forEach(function (tok) { if (text.indexOf(tok) >= 0) score += 12; });
+  ctx.interestTokens.forEach(function (tok) { if (text.indexOf(tok) >= 0) score += 8; });
+  var inferred = it.sentiment || _inferSentimentFromText(text);
+  if (ctx.sentiment && ctx.sentiment !== "all") {
+    score += inferred === ctx.sentiment ? 10 : 2;
+  }
+  return {excluded: false, score: score, sentiment: inferred};
+}
+
 /* ── HTML report export ── */
-async function exportHtmlReport(items, sourcesMap, filters, t) {
+async function exportHtmlReport(items, sourcesMap, filters, t, options) {
+  options = Object.assign({includeSummary: true, includeTags: true, includeMeta: true, includeLinks: true, includeBrief: true, includeInsights: true, groupBySource: false, limit: "1000"}, options || {});
   var now = new Date();
   var dateStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
-  var rows = items.map(function (it) {
-    var srcName = (sourcesMap[it.source_id] && sourcesMap[it.source_id].name) || it.source_id || "";
+  var exportItems = items.slice();
+  var limitNum = options.limit === "all" ? 0 : parseInt(options.limit, 10);
+  if (limitNum > 0) exportItems = exportItems.slice(0, limitNum);
+  var sourceCounts = {};
+  exportItems.forEach(function (it) {
+    var srcDef = sourcesMap[it.source_id] || _legacySourceDefinition(it.source_id || "");
+    var name = _sourceDisplayName(srcDef) || it.source_id || "未知来源";
+    sourceCounts[name] = (sourceCounts[name] || 0) + 1;
+  });
+  var topSources = Object.keys(sourceCounts).sort(function (a, b) { return sourceCounts[b] - sourceCounts[a]; }).slice(0, 6);
+  var briefItems = exportItems.slice(0, Math.min(8, exportItems.length));
+  var rowFor = function (it) {
+    var srcDef = sourcesMap[it.source_id] || _legacySourceDefinition(it.source_id || "");
+    var srcName = _sourceDisplayName(srcDef) || it.source_id || "";
     var tags = [];
     try { tags = JSON.parse(it.ai_tags_json || "[]"); } catch (_) {}
+    var metricPills = _itemMetricPills(it);
     return '<tr>' +
-      '<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666;white-space:nowrap">' + _escHtml(srcName) + '</td>' +
-      '<td style="padding:8px 12px;border-bottom:1px solid #eee"><a href="' + _escHtml(it.url || "") + '" target="_blank" style="color:#1a1a1a;text-decoration:none;font-weight:500">' + _escHtml(it.title || "") + '</a>' +
-      (it.summary ? '<div style="font-size:12px;color:#888;margin-top:4px">' + _escHtml(String(it.summary).slice(0, 200)) + '</div>' : '') +
-      (tags.length ? '<div style="margin-top:4px">' + tags.map(function (tg) { return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;background:#eff6ff;color:#2563eb;margin-right:4px">' + _escHtml(tg) + '</span>'; }).join("") + '</div>' : '') +
+      (options.includeMeta ? '<td class="meta">' + _escHtml(srcName) + '</td>' : '') +
+      '<td>' + (options.includeLinks ? '<a href="' + _escHtml(it.url || "") + '" target="_blank" rel="noopener noreferrer">' + _escHtml(it.title || "") + '</a>' : '<strong>' + _escHtml(it.title || "") + '</strong>') +
+      (options.includeSummary && it.summary ? '<div class="summary">' + _escHtml(String(it.summary).slice(0, 260)) + '</div>' : '') +
+      (options.includeTags && (tags.length || metricPills.length) ? '<div class="tags">' + tags.concat(metricPills).map(function (tg) { return '<span>' + _escHtml(tg) + '</span>'; }).join("") + '</div>' : '') +
       '</td>' +
-      '<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#888;white-space:nowrap">' + _escHtml(fmtDate(articleTime(it))) + '</td>' +
+      (options.includeMeta ? '<td class="meta">' + _escHtml(fmtArticleDate(it)) + '</td>' : '') +
       '</tr>';
-  }).join("\n");
+  };
+  var rows = "";
+  if (options.groupBySource) {
+    var groups = {};
+    exportItems.forEach(function (it) {
+      var srcDef = sourcesMap[it.source_id] || _legacySourceDefinition(it.source_id || "");
+      var name = _sourceDisplayName(srcDef) || it.source_id || "未知来源";
+      if (!groups[name]) groups[name] = [];
+      groups[name].push(it);
+    });
+    Object.keys(groups).sort().forEach(function (name) {
+      rows += '<tr class="group-row"><td colspan="' + (options.includeMeta ? 3 : 1) + '">' + _escHtml(name) + ' · ' + groups[name].length + '</td></tr>';
+      rows += groups[name].map(rowFor).join("\n");
+    });
+  } else {
+    rows = exportItems.map(rowFor).join("\n");
+  }
   var filterDesc = (filters.source ? "Source: " + filters.source + " · " : "") +
     "Window: " + filters.window + "h" +
     (filters.keyword ? " · Keyword: " + filters.keyword : "");
   var html = '<!DOCTYPE html>\n<html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' +
     _escHtml("财经脉动资讯报表 · " + dateStr) +
-    '</title><style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;margin:0;padding:20px;background:#f5f5f5;color:#1a1a1a}' +
-    '.container{max-width:960px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);overflow:hidden}' +
-    '.header{background:linear-gradient(135deg,#D32F2F 0%,#B71C1C 100%);color:#fff;padding:24px 28px}' +
-    '.header h1{margin:0;font-size:22px;font-weight:700}.header p{margin:6px 0 0;font-size:13px;opacity:.85}' +
-    'table{width:100%;border-collapse:collapse}th{background:#fafafa;padding:10px 12px;font-size:12px;font-weight:600;color:#666;text-align:left;border-bottom:2px solid #eee}' +
-    '.footer{padding:16px 28px;font-size:11px;color:#aaa;text-align:center;border-top:1px solid #eee}' +
+    '</title><style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;margin:0;padding:20px;background:#f5f5f5;color:#1a1a1a;line-height:1.55}' +
+    '.container{max-width:1040px;margin:0 auto;background:#fff;border-radius:16px;box-shadow:0 2px 16px rgba(0,0,0,.08);overflow:hidden}' +
+    '.header{background:linear-gradient(135deg,#D32F2F 0%,#80151F 100%);color:#fff;padding:26px 30px}.header h1{margin:0;font-size:24px;font-weight:750}.header p{margin:8px 0 0;font-size:13px;opacity:.86}' +
+    '.stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.stats span{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:5px 10px;font-size:12px}.brief{padding:22px 28px;border-bottom:1px solid #eee}.brief h2{font-size:16px;margin:0 0 10px}.brief ul{margin:0;padding-left:18px}.brief li{margin:6px 0}.insights{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:12px}.insights div{background:#fff7f7;border:1px solid #f1d8dc;border-radius:12px;padding:10px 12px;font-size:12px;color:#7a2a32}' +
+    'table{width:100%;border-collapse:collapse}th{background:#fff7f7;padding:11px 14px;font-size:12px;font-weight:700;color:#7a2a32;text-align:left;border-bottom:1px solid #f1d8dc}td{padding:10px 14px;border-bottom:1px solid #f0f0f0;vertical-align:top}a{color:#1a1a1a;text-decoration:none;font-weight:650}.meta{font-size:12px;color:#777;white-space:nowrap}.summary{font-size:12px;color:#666;margin-top:5px}.tags{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}.tags span{display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;background:#fff0f1;color:#b91c1c}.group-row td{background:#fafafa;color:#b91c1c;font-weight:700;font-size:12px}' +
+    '.empty{padding:36px;text-align:center;color:#777}.footer{padding:16px 28px;font-size:11px;color:#aaa;text-align:center;border-top:1px solid #eee}' +
     '</style></head><body><div class="container">' +
-    '<div class="header"><h1>财经脉动 · 资讯报表</h1><p>' + _escHtml(dateStr + " · " + filterDesc) + '</p></div>' +
-    '<table><thead><tr><th>来源</th><th>标题</th><th>时间</th></tr></thead><tbody>' +
+    '<div class="header"><h1>财经脉动 · 资讯报表</h1><p>' + _escHtml(dateStr + " · " + filterDesc) + '</p><div class="stats"><span>导出 ' + exportItems.length + ' 条</span><span>总加载 ' + items.length + ' 条</span><span>Generated by Fin Pulse</span></div></div>' +
+    (options.includeBrief && briefItems.length ? '<section class="brief"><h2>AI 要点摘要</h2><ul>' + briefItems.map(function (it) { return '<li>' + _escHtml(it.title || "") + '</li>'; }).join("") + '</ul>' + (options.includeInsights ? '<div class="insights">' + topSources.map(function (name) { return '<div><strong>' + _escHtml(name) + '</strong><br>' + sourceCounts[name] + ' 条资讯</div>'; }).join("") + '</div>' : '') + '</section>' : '') +
+    (exportItems.length ? '<table><thead><tr>' + (options.includeMeta ? '<th>来源</th>' : '') + '<th>标题</th>' + (options.includeMeta ? '<th>时间</th>' : '') + '</tr></thead><tbody>' : '<div class="empty">当前配置下没有可导出的资讯</div>') +
     rows +
-    '</tbody></table>' +
+    (exportItems.length ? '</tbody></table>' : '') +
     '<div class="footer">Generated by Fin Pulse · ' + _escHtml(now.toISOString()) + '</div>' +
     '</div></body></html>';
-  var blob = new Blob([html], {type: "text/html;charset=utf-8"});
-  var url = URL.createObjectURL(blob);
   var filename = "finpulse-report-" + dateStr + ".html";
-  try {
-    if (window.OpenAkita && typeof window.OpenAkita.download === "function") {
-      var resp = await window.OpenAkita.download(url, filename);
-      if (resp && resp.ok === false) {
-        throw new Error(resp.error || resp.detail || "download bridge failed");
-      }
-    } else {
-      var a = document.createElement("a");
-      a.href = url; a.download = filename;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    }
-  } finally {
-    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-  }
+  return {html: html, filename: filename, dataUrl: "data:text/html;charset=utf-8," + encodeURIComponent(html)};
 }
 function _escHtml(s) {
   return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -1942,6 +2405,116 @@ function AIFilterDialog(props) {
   );
 }
 
+function ExportDialog(props) {
+  var t = useT();
+  var [scope, setScope] = useState("current");
+  var [includeSummary, setIncludeSummary] = useState(true);
+  var [includeTags, setIncludeTags] = useState(true);
+  var [includeMeta, setIncludeMeta] = useState(true);
+  var [includeBrief, setIncludeBrief] = useState(true);
+  var [includeInsights, setIncludeInsights] = useState(true);
+  var [includeLinks, setIncludeLinks] = useState(true);
+  var [groupBySource, setGroupBySource] = useState(true);
+  var [limit, setLimit] = useState("1000");
+  function CheckRow(p) {
+    return (
+      <label className="choice-row">
+        <input type="checkbox" checked={p.checked} onChange={function (e) { p.onChange(e.target.checked); }}/>
+        <span className="choice-row__text"><span>{p.label}</span>{p.hint ? <span className="choice-row__hint">{p.hint}</span> : null}</span>
+      </label>
+    );
+  }
+  return (
+    <div className="ai-dialog-mask" onClick={function (e) { if (e.target === e.currentTarget) props.onClose(); }}>
+      <div className="ai-dialog ai-dialog--wide">
+        <div className="ai-dialog__title"><Ico name="download"/> {t("today.export.dialog.title")}</div>
+        <div style={{fontSize: 12, color: "var(--text-muted)", marginBottom: 14}}>{t("today.export.dialog.desc")}</div>
+        <div className="ai-dialog__field">
+          <div className="ai-dialog__label">{t("today.export.scope")}</div>
+          <div className="ai-dialog__grid">
+            <label className="choice-row">
+              <input type="radio" name="exportScope" checked={scope === "current"} onChange={function () { setScope("current"); }}/>
+              <span className="choice-row__text"><span>{t("today.export.scope.current")}</span><span className="choice-row__hint">{t("today.export.scope.current.hint")} · {props.currentCount}</span></span>
+            </label>
+            <label className="choice-row">
+              <input type="radio" name="exportScope" checked={scope === "loaded"} onChange={function () { setScope("loaded"); }}/>
+              <span className="choice-row__text"><span>{t("today.export.scope.loaded")}</span><span className="choice-row__hint">{t("today.export.scope.loaded.hint")} · {props.loadedCount}</span></span>
+            </label>
+          </div>
+        </div>
+        <div className="ai-dialog__field">
+          <div className="ai-dialog__label">{t("today.export.fields")}</div>
+          <div className="ai-dialog__grid">
+            <CheckRow checked={includeSummary} onChange={setIncludeSummary} label={t("today.export.include.summary")}/>
+            <CheckRow checked={includeTags} onChange={setIncludeTags} label={t("today.export.include.tags")}/>
+            <CheckRow checked={includeMeta} onChange={setIncludeMeta} label={t("today.export.include.meta")}/>
+            <CheckRow checked={includeBrief} onChange={setIncludeBrief} label={t("today.export.include.brief")}/>
+            <CheckRow checked={includeInsights} onChange={setIncludeInsights} label={t("today.export.include.insights")}/>
+            <CheckRow checked={includeLinks} onChange={setIncludeLinks} label={t("today.export.include.links")}/>
+            <CheckRow checked={groupBySource} onChange={setGroupBySource} label={t("today.export.include.group")}/>
+          </div>
+        </div>
+        <div className="ai-dialog__field">
+          <div className="ai-dialog__label">{t("today.export.limit")}</div>
+          <select className="input" value={limit} onChange={function (e) { setLimit(e.target.value); }}>
+            <option value="100">100</option>
+            <option value="300">300</option>
+            <option value="1000">1000</option>
+            <option value="all">{t("today.export.limit.all")}</option>
+          </select>
+        </div>
+        <div className="ai-dialog__actions">
+          <button className="btn btn-sm" onClick={props.onClose}>{t("confirm.cancel")}</button>
+          <button className="btn btn-sm btn-primary"
+                  onClick={function () { props.onExport({scope: scope, includeSummary: includeSummary, includeTags: includeTags, includeMeta: includeMeta, includeBrief: includeBrief, includeInsights: includeInsights, includeLinks: includeLinks, groupBySource: groupBySource, limit: limit}); }}>
+            <Ico name="download"/> {t("today.export.create")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExportPreviewDialog(props) {
+  var t = useT();
+  var report = props.report || {};
+  var srcDoc = report.html || "";
+  var dataUrl = report.dataUrl || ("data:text/html;charset=utf-8," + encodeURIComponent(srcDoc));
+  function triggerDownload() {
+    var a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = report.filename || "finpulse-report.html";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+  function openWindow() {
+    var win = window.open("", "_blank", "noopener,noreferrer");
+    if (win) {
+      win.document.open();
+      win.document.write(srcDoc);
+      win.document.close();
+    } else {
+      window.location.href = dataUrl;
+    }
+  }
+  return (
+    <div className="ai-dialog-mask" onClick={function (e) { if (e.target === e.currentTarget) props.onClose(); }}>
+      <div className="ai-dialog export-preview">
+        <div className="oa-section-title" style={{margin: 0}}>
+          <span><Ico name="download"/> {t("today.export.preview.title")}</span>
+          <span className="oa-section-title__actions">
+            <button className="btn btn-sm" type="button" onClick={openWindow}>{t("today.export.preview.open")}</button>
+            <button className="btn btn-sm btn-primary" type="button" onClick={triggerDownload}>{t("today.export.preview.download")}</button>
+            <button className="btn btn-sm" type="button" onClick={props.onClose}>{t("confirm.cancel")}</button>
+          </span>
+        </div>
+        <iframe title={t("today.export.preview.title")} srcDoc={srcDoc}/>
+      </div>
+    </div>
+  );
+}
+
 function NewsCardCompact(props) {
   var it = props.item;
   var t = useT();
@@ -1963,7 +2536,8 @@ function NewsCardCompact(props) {
         <span className={_sourcePillClass(srcDef)}>{srcName}</span>
         {srcDef && srcDef.content_type && <ContentTypePill type={srcDef.content_type}/>}
         {subSource && <span className="kw-tag">{subSource}</span>}
-        <span className="news-card__time">{fmtDate(articleTime(it))}</span>
+        {props.aiFilterActive && it._aiScore > 0 && <span className="api-pill" style={{background: "rgba(124,58,237,.10)", color: "#7C3AED"}}><Ico name="magic"/> {tfmt(t("today.filters.ai.score"), {score: it._aiScore})}</span>}
+        <span className="news-card__time">{fmtArticleDate(it)}</span>
       </div>
       <a href={it.url} target="_blank" rel="noopener noreferrer" className="news-card__title">
         {keyword && !showingTranslation ? highlightText(titleText, keyword) : titleText}
@@ -2004,9 +2578,12 @@ function TodayTab() {
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState({ window: 24, sort: "time", since: "", until: "" });
+  const [filters, setFilters] = useState({ window: 24, sort: "time_desc", since: "", until: "" });
   const [focusedSources, setFocusedSources] = useState([]);
+  const [sourceCategory, setSourceCategory] = useState("all");
+  const [searchDraft, setSearchDraft] = useState("");
   const [keyword, setKeyword] = useState("");
+  const [customTimeOpen, setCustomTimeOpen] = useState(false);
   const [ingesting, setIngesting] = useState(false);
   const [sources, setSources] = useState([]);
   const [sourceConfig, setSourceConfig] = useState({});
@@ -2017,6 +2594,8 @@ function TodayTab() {
   const [cooldown, setCooldown] = useState(0);
   const [aiFilterOpen, setAiFilterOpen] = useState(false);
   const [aiFilter, setAiFilter] = useState(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportPreview, setExportPreview] = useState(null);
   const [viewMode, setViewMode] = useState("grouped");
   const [collapsedGroups, setCollapsedGroups] = useState({});
   const [translationConfig, setTranslationConfig] = useState({enabled: true, target_language: "中文", scope: "title_summary"});
@@ -2073,7 +2652,7 @@ function TodayTab() {
   items.forEach(function (it) {
     var sid = it.source_id || "";
     if (sid && !sourcesMap[sid]) {
-      sourcesMap[sid] = {id: sid, name: sid, content_type: ""};
+      sourcesMap[sid] = _legacySourceDefinition(sid);
     }
   });
 
@@ -2118,7 +2697,7 @@ function TodayTab() {
     setDrawerOpen(true);
     try {
       var src = single ? sourcesMap[opts.sourceId] : null;
-      var target = src ? (src.probe_target || src.fetcher_id || src.id) : opts.sourceId;
+      var target = src && src.kind === "newsnow" ? src.id : (src ? (src.probe_target || src.fetcher_id || src.id) : opts.sourceId);
       const path = single ? ("/ingest/source/" + encodeURIComponent(target)) : "/ingest";
       const body = single ? null : { since_hours: 24 };
       let resp = null;
@@ -2169,7 +2748,7 @@ function TodayTab() {
           empty: Math.max(0, sourcesTotal - sourcesOk - failed) });
       }
       window.oaToast({ level: level, message: msg });
-      setCooldown(30);
+      setCooldown(single ? 3 : 30);
       load();
     } finally { setIngesting(false); }
   }, [ingesting, cooldown, load, t, sourcesMap]);
@@ -2187,24 +2766,18 @@ function TodayTab() {
 
   const onDismissDrawer = useCallback(function () { setDrawerOpen(false); }, []);
 
-  /* AI filter keyword matching (TrendRadar-inspired interests + helper rules) */
+  /* AI filter keyword matching + local scoring. */
   var aiKeywordTokens = [];
-  var aiInterestTokens = [];
-  if (aiFilter && aiFilter.interests) {
-    String(aiFilter.interests).split(/[\n，,、；;。.!！?？：:\s]+/).forEach(function (word) {
-      word = word.trim();
-      if (word.length >= 2 && ["关注", "重点", "新闻", "变化", "相关", "以及", "例如"].indexOf(word) < 0) {
-        aiInterestTokens.push(word.toLowerCase());
-      }
-    });
-  }
+  var aiInterestTokens = aiFilter && aiFilter.interests ? _tokenizeInterestText(aiFilter.interests) : [];
   if (aiFilter && aiFilter.keywords) {
     String(aiFilter.keywords).split("\n").forEach(function (line) {
       line = line.trim();
       if (!line) return;
       if (line.startsWith("!")) return;
-      var word = line.replace(/^[+]/, "").trim();
-      if (word) aiKeywordTokens.push(word.toLowerCase());
+      line.replace(/^[+]/, "").split(/[，,、；;\s]+/).forEach(function (word) {
+        word = word.trim();
+        if (word) aiKeywordTokens.push(word.toLowerCase());
+      });
     });
   }
   var aiExcludeTokens = [];
@@ -2212,41 +2785,14 @@ function TodayTab() {
     String(aiFilter.keywords).split("\n").forEach(function (line) {
       line = line.trim();
       if (line.startsWith("!")) {
-        var w = line.substring(1).trim();
-        if (w) aiExcludeTokens.push(w.toLowerCase());
+        line.substring(1).split(/[，,、；;\s]+/).forEach(function (w) {
+          w = w.trim();
+          if (w) aiExcludeTokens.push(w.toLowerCase());
+        });
       }
     });
   }
 
-  /* Match items by keyword + AI filter, but keep non-matches visible below. */
-  var hasMatchRule = !!keyword || aiKeywordTokens.length > 0 || aiInterestTokens.length > 0 ||
-    aiExcludeTokens.length > 0 || !!(aiFilter && aiFilter.sentiment && aiFilter.sentiment !== "all");
-  var matchedItems = [];
-  var remainingItems = [];
-  items.forEach(function (it) {
-    var text = ((it.title || "") + " " + (it.summary || "")).toLowerCase();
-    var matched = true;
-    if (keyword) {
-      matched = text.indexOf(keyword.toLowerCase()) >= 0;
-    }
-    if (matched && aiKeywordTokens.length) {
-      matched = aiKeywordTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
-    }
-    if (matched && aiInterestTokens.length) {
-      matched = aiInterestTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
-    }
-    if (matched && aiExcludeTokens.length) {
-      matched = !aiExcludeTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
-    }
-    if (matched && aiFilter && aiFilter.sentiment && aiFilter.sentiment !== "all") {
-      matched = it.sentiment === aiFilter.sentiment;
-    }
-    if (hasMatchRule && matched) matchedItems.push(it);
-    else remainingItems.push(it);
-  });
-  var displayItems = hasMatchRule ? matchedItems.concat(remainingItems) : items.slice();
-  var sourceRank = {};
-  sources.forEach(function (s, idx) { sourceRank[s.id] = idx; });
   var fetchedSourceIds = [];
   var fetchedSeen = {};
   items.forEach(function (it) {
@@ -2261,8 +2807,104 @@ function TodayTab() {
     var cb = items.filter(function (it) { return (it.source_id || "unknown") === b; }).length;
     return cb - ca;
   });
+  var sourceRank = {};
+  sources.forEach(function (s, idx) { sourceRank[s.id] = idx; });
+
+  var availableSourceIds = [];
+  var availableSeen = {};
+  enabledSources.forEach(function (s) {
+    if (s && s.id && !availableSeen[s.id]) {
+      availableSeen[s.id] = true;
+      availableSourceIds.push(s.id);
+    }
+  });
+  fetchedSourceIds.forEach(function (sid) {
+    if (sid && !availableSeen[sid]) {
+      availableSeen[sid] = true;
+      availableSourceIds.push(sid);
+    }
+  });
+  availableSourceIds.sort(function (a, b) {
+    var ca = items.filter(function (it) { return (it.source_id || "unknown") === a; }).length;
+    var cb = items.filter(function (it) { return (it.source_id || "unknown") === b; }).length;
+    if (cb !== ca) return cb - ca;
+    var ra = Object.prototype.hasOwnProperty.call(sourceRank, a) ? sourceRank[a] : 999;
+    var rb = Object.prototype.hasOwnProperty.call(sourceRank, b) ? sourceRank[b] : 999;
+    return ra - rb;
+  });
+
+  var categorySourceSet = {};
+  if (sourceCategory !== "all") {
+    availableSourceIds.forEach(function (sid) {
+      var src = sourcesMap[sid] || _legacySourceDefinition(sid);
+      if (_sourceCategoryKey(src) === sourceCategory) categorySourceSet[sid] = true;
+    });
+  }
+  var activeSourceSet = {};
+  focusedSources.forEach(function (sid) { activeSourceSet[sid] = true; });
+  var sourceScopedItems = items.filter(function (it) {
+    var sid = it.source_id || "unknown";
+    if (sourceCategory !== "all" && !categorySourceSet[sid]) return false;
+    if (focusedSources.length && !activeSourceSet[sid]) return false;
+    return true;
+  });
+
+  /* Match items by keyword + AI filter. Sentiment is scored, not field-gated. */
+  var hasMatchRule = !!keyword || aiKeywordTokens.length > 0 || aiInterestTokens.length > 0 ||
+    aiExcludeTokens.length > 0 || !!(aiFilter && aiFilter.sentiment && aiFilter.sentiment !== "all");
+  var aiOnlySentiment = !keyword && aiKeywordTokens.length === 0 && aiInterestTokens.length === 0 &&
+    !!(aiFilter && aiFilter.sentiment && aiFilter.sentiment !== "all");
+  var aiCtx = {
+    keywordTokens: aiKeywordTokens,
+    interestTokens: aiInterestTokens,
+    excludeTokens: aiExcludeTokens,
+    sentiment: aiFilter && aiFilter.sentiment ? aiFilter.sentiment : "all"
+  };
+  var matchedItems = [];
+  var remainingItems = [];
+  sourceScopedItems.forEach(function (it) {
+    var text = ((it.title || "") + " " + (it.summary || "")).toLowerCase();
+    var matched = true;
+    var aiScore = _aiScoreArticle(it, aiCtx);
+    it._aiScore = aiScore.score;
+    it._aiSentiment = aiScore.sentiment;
+    if (keyword) {
+      matched = text.indexOf(keyword.toLowerCase()) >= 0;
+    }
+    if (matched && aiKeywordTokens.length) {
+      matched = aiKeywordTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
+    }
+    if (matched && aiInterestTokens.length) {
+      matched = aiInterestTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
+    }
+    if (matched && aiExcludeTokens.length) {
+      matched = !aiScore.excluded;
+    }
+    if (matched && aiFilter && (aiKeywordTokens.length || aiInterestTokens.length || aiOnlySentiment)) {
+      matched = aiOnlySentiment ? aiScore.score > 0 : aiScore.score >= 8;
+    }
+    if (hasMatchRule && matched) matchedItems.push(it);
+    else remainingItems.push(it);
+  });
+  matchedItems.sort(function (a, b) {
+    var sd = (b._aiScore || 0) - (a._aiScore || 0);
+    if (sd !== 0) return sd;
+    return String(articleTime(b)).localeCompare(String(articleTime(a)));
+  });
+  var displayItems = hasMatchRule ? matchedItems : sourceScopedItems.slice();
   var focusedSourceSet = {};
   focusedSources.forEach(function (sid, idx) { focusedSourceSet[sid] = idx + 1; });
+  var sourceCategoryCounts = {};
+  SOURCE_CATEGORY_KEYS.forEach(function (key) { sourceCategoryCounts[key] = 0; });
+  availableSourceIds.forEach(function (sid) {
+    var cat = _sourceCategoryKey(sourcesMap[sid] || _legacySourceDefinition(sid));
+    sourceCategoryCounts[cat] = (sourceCategoryCounts[cat] || 0) + 1;
+    sourceCategoryCounts.all += 1;
+  });
+  var visibleSourceIds = availableSourceIds.filter(function (sid) {
+    if (sourceCategory === "all") return true;
+    return _sourceCategoryKey(sourcesMap[sid] || _legacySourceDefinition(sid)) === sourceCategory;
+  });
 
   var groupItemsBySource = function (list) {
     var grouped = {};
@@ -2293,6 +2935,10 @@ function TodayTab() {
     setAiFilterOpen(false);
   }, []);
 
+  var submitSearch = useCallback(function () {
+    setKeyword(searchDraft.trim());
+  }, [searchDraft]);
+
   var toggleFocusedSource = useCallback(function (sid) {
     setFocusedSources(function (prev) {
       if (prev.indexOf(sid) >= 0) return prev.filter(function (x) { return x !== sid; });
@@ -2300,14 +2946,21 @@ function TodayTab() {
     });
   }, []);
 
-  var onExport = useCallback(async function () {
+  var onExportConfirm = useCallback(async function (options) {
     try {
-      await exportHtmlReport(displayItems, sourcesMap, Object.assign({}, filters, {source: focusedSources.join(","), keyword: keyword}), t);
+      var exportItems = options && options.scope === "loaded" ? items : displayItems;
+      var exportFilters = Object.assign({}, filters, {
+        source: options && options.scope === "loaded" ? "" : focusedSources.join(","),
+        keyword: options && options.scope === "loaded" ? "" : keyword
+      });
+      var report = await exportHtmlReport(exportItems, sourcesMap, exportFilters, t, options);
+      setExportOpen(false);
+      setExportPreview(report);
       window.oaToast({level: "success", message: t("today.export.done")});
     } catch (err) {
       window.oaToast({level: "error", message: tfmt(t("today.export.fail"), {err: (err && err.message) || String(err)})});
     }
-  }, [displayItems, sourcesMap, filters, focusedSources, keyword, t]);
+  }, [items, displayItems, sourcesMap, filters, focusedSources, keyword, t]);
 
   var onTranslateArticle = useCallback(async function (it) {
     if (!it || !it.id) return;
@@ -2371,12 +3024,13 @@ function TodayTab() {
             {focusedSourceSet[sid] && <span className="api-pill" style={{background: "rgba(211,47,47,.10)", color: "var(--primary)"}}>{t("today.group.focused")}</span>}
             {subLabels.slice(0, 3).map(function (label) { return <span key={label} className="kw-tag">{label}</span>; })}
             <span className="oa-section-title__count">{groupItems.length}</span>
-            <span className="news-source-group__meta">{groupItems[0] ? fmtDate(articleTime(groupItems[0])) : ""}</span>
+            <span className="news-source-group__meta">{groupItems[0] ? fmtArticleDate(groupItems[0]) : ""}</span>
           </div>
           {!collapsed && (
             <div className="news-grid">
               {groupItems.map(function (it) {
                 return <NewsCardCompact key={it.id} item={it} source={srcDef} keyword={keyword}
+                                        aiFilterActive={!!aiFilter}
                                         translation={translatedMap[it.id]}
                                         translating={!!translatingIds[it.id]}
                                         onTranslate={translationConfig.enabled === false ? null : onTranslateArticle}/>;
@@ -2391,7 +3045,7 @@ function TodayTab() {
   var renderTimeline = function (list) {
     var grouped = {};
     list.forEach(function (it) {
-      var key = fmtTimelineBucket(articleTime(it));
+      var key = fmtArticleTimelineBucket(it);
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(it);
     });
@@ -2415,6 +3069,7 @@ function TodayTab() {
                   return (
                     <div key={it.id} style={{position: "relative"}}>
                       <NewsCardCompact item={it} source={srcDef} keyword={keyword}
+                                       aiFilterActive={!!aiFilter}
                                        translation={translatedMap[it.id]}
                                        translating={!!translatingIds[it.id]}
                                        onTranslate={translationConfig.enabled === false ? null : onTranslateArticle}/>
@@ -2433,85 +3088,114 @@ function TodayTab() {
     <div className="stack-layout">
       {/* Filter bar */}
       <div className="filter-bar filter-bar--news">
-        <div className="source-chip-grid source-chip-grid--rail">
-          <SourceChip
-            source={{display_zh: t("today.filters.source.all"), content_type: "all"}}
-            enabled={true}
-            active={focusedSources.length === 0}
-            showType={false}
-            onClick={function () { setFocusedSources([]); }}
-          />
-          {fetchedSourceIds.map(function (sid) {
-            var s = sourcesMap[sid] || {id: sid, name: sid};
-            var known = sources.some(function (x) { return x.id === sid; });
-            var enabled = known ? enabledSources.some(function (x) { return x.id === sid; }) : true;
-            return (
-              <SourceChip
-                key={sid}
-                source={s}
-                enabled={enabled}
-                active={focusedSources.indexOf(sid) >= 0}
-                title={enabled ? "" : t("today.sources.disabledHint")}
-                onClick={function () {
-                  if (!enabled) window.oaToast({level: "warning", message: t("today.sources.disabledHint")});
-                  toggleFocusedSource(sid);
-                }}
-              />
-            );
-          })}
+        <div className="filter-source-panel">
+          <div className="filter-source-panel__head">
+            <span className="filter-bar__label">{t("today.filters.source")}</span>
+            <div className="filter-source-cats">
+              {SOURCE_CATEGORY_KEYS.map(function (cat) {
+                return (
+                  <button key={cat} type="button"
+                          className={"filter-source-cat " + (sourceCategory === cat ? "filter-source-cat--active" : "")}
+                          onClick={function () { setSourceCategory(cat); setFocusedSources([]); }}>
+                    {t("today.sources.cat." + cat)}
+                    <span className="filter-source-cat__count">{sourceCategoryCounts[cat] || 0}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="source-chip-grid source-chip-grid--rail">
+            <SourceChip
+              source={{display_zh: t("today.filters.source.all"), content_type: "all"}}
+              enabled={true}
+              active={focusedSources.length === 0}
+              showType={false}
+              onClick={function () { setFocusedSources([]); }}
+            />
+            {visibleSourceIds.map(function (sid) {
+              var s = sourcesMap[sid] || _legacySourceDefinition(sid);
+              var known = sources.some(function (x) { return x.id === sid; });
+              var enabled = known ? enabledSources.some(function (x) { return x.id === sid; }) : true;
+              return (
+                <SourceChip
+                  key={sid}
+                  source={s}
+                  enabled={enabled}
+                  active={focusedSources.indexOf(sid) >= 0}
+                  title={enabled ? "" : t("today.sources.disabledHint")}
+                  onClick={function () {
+                    if (!enabled) window.oaToast({level: "warning", message: t("today.sources.disabledHint")});
+                    toggleFocusedSource(sid);
+                  }}
+                />
+              );
+            })}
+          </div>
         </div>
         <div className="filter-bar__row">
           <div className="filter-bar__item">
             <span className="filter-bar__label">{t("today.filters.window")}</span>
-            <div className="seg-group">
-              {[{h:6,k:"6h"},{h:24,k:"24h"},{h:72,k:"72h"}].map(function (w) {
-                const active = filters.window === w.h;
-                return <button key={w.h} type="button"
-                               className={"seg-btn " + (active ? "active" : "")}
-                               onClick={function () { setFilters(Object.assign({}, filters, {window: w.h})); }}>
-                  {t("today.filters.window." + w.k)}
-                </button>;
-              })}
-              <button type="button"
-                      className={"seg-btn " + (filters.window === "custom" ? "active" : "")}
-                      onClick={function () { setFilters(Object.assign({}, filters, {window: "custom"})); }}>
-                {t("today.filters.window.custom")}
-              </button>
+            <div className="time-filter-wrap">
+              <div className="time-filter-compact">
+                {[{h:6,k:"6h"},{h:24,k:"24h"},{h:72,k:"72h"}].map(function (w) {
+                  const active = filters.window === w.h;
+                  return <button key={w.h} type="button"
+                                 className={"seg-btn " + (active ? "active" : "")}
+                                 onClick={function () { setCustomTimeOpen(false); setFilters(Object.assign({}, filters, {window: w.h})); }}>
+                    {t("today.filters.window." + w.k)}
+                  </button>;
+                })}
+                <button type="button"
+                        className={"seg-btn " + (filters.window === "custom" ? "active" : "")}
+                        onClick={function () { setFilters(Object.assign({}, filters, {window: "custom"})); setCustomTimeOpen(!customTimeOpen); }}>
+                  {t("today.filters.window.custom")}
+                </button>
+              </div>
+              {filters.window === "custom" && customTimeOpen && (
+                <div className="custom-time-range" onMouseLeave={function () { setCustomTimeOpen(false); }}>
+                  <label className="custom-time-row">
+                    <span>{t("today.filters.window.from")}</span>
+                    <input className="input" type="datetime-local"
+                           value={filters.since || ""}
+                           onChange={function (e) { setFilters(Object.assign({}, filters, {since: e.target.value})); }}/>
+                  </label>
+                  <label className="custom-time-row">
+                    <span>{t("today.filters.window.to")}</span>
+                    <input className="input" type="datetime-local"
+                           value={filters.until || ""}
+                           onChange={function (e) { setFilters(Object.assign({}, filters, {until: e.target.value})); }}/>
+                  </label>
+                </div>
+              )}
             </div>
           </div>
-          {filters.window === "custom" && (
-            <React.Fragment>
-              <input className="input" type="datetime-local" style={{width: 170, padding: "6px 10px"}}
-                     title={t("today.filters.window.from")}
-                     value={filters.since || ""}
-                     onChange={function (e) { setFilters(Object.assign({}, filters, {since: e.target.value})); }}/>
-              <input className="input" type="datetime-local" style={{width: 170, padding: "6px 10px"}}
-                     title={t("today.filters.window.to")}
-                     value={filters.until || ""}
-                     onChange={function (e) { setFilters(Object.assign({}, filters, {until: e.target.value})); }}/>
-            </React.Fragment>
-          )}
           <span className="filter-bar__sep"/>
-          <div className="filter-bar__item">
-            <input className="input" type="text" style={{width: 190, padding: "6px 10px"}}
+          <div className="search-box">
+            <input type="text"
                    placeholder={t("today.filters.keyword.placeholder")}
-                   value={keyword}
-                   onChange={function (e) { setKeyword(e.target.value); }}/>
+                   value={searchDraft}
+                   onChange={function (e) { setSearchDraft(e.target.value); }}
+                   onKeyDown={function (e) { if (e.key === "Enter") submitSearch(); }}/>
+            <button className="btn btn-sm btn-primary btn-icon-round" type="button"
+                    title={t("today.filters.search.submit")}
+                    onClick={submitSearch}>
+              <Ico name="search"/>
+            </button>
           </div>
-          <button className={"btn btn-sm" + (aiFilter ? " btn-primary" : "")} type="button"
-                  onClick={function () { setAiFilterOpen(true); }}
-                  title={aiFilter ? t("today.filters.ai.active") : ""}>
-            <Ico name="ai"/> {t("today.filters.ai")}
+          <button className={"btn btn-sm btn-ai-glow" + (aiFilter ? " btn-primary" : "")} type="button"
+                  onClick={function () { aiFilter ? setAiFilter(null) : setAiFilterOpen(true); }}
+                  title={aiFilter ? t("today.filters.ai.clear") : ""}>
+            <Ico name={aiFilter ? "close" : "magic"}/> {aiFilter ? t("today.filters.ai.clear") : t("today.filters.ai")}
           </button>
           <div className="filter-bar__item">
             <span className="filter-bar__label">{t("today.filters.sortLabel")}</span>
             <div className="seg-group">
-              {[{k:"time"}].map(function (s) {
+              {[{k:"time_desc", icon:"↓"},{k:"time_asc", icon:"↑"}].map(function (s) {
                 const active = filters.sort === s.k;
                 return <button key={s.k} type="button"
                                className={"seg-btn " + (active ? "active" : "")}
                                onClick={function () { setFilters(Object.assign({}, filters, {sort: s.k})); }}>
-                  {t("today.filters.sort." + s.k)}
+                  <span className="sort-pill"><span>{s.icon}</span>{t("today.filters.sort." + s.k)}</span>
                 </button>;
               })}
             </div>
@@ -2530,20 +3214,20 @@ function TodayTab() {
           </div>
           <span style={{flex: 1}}/>
           <button className="btn btn-sm" type="button"
-                  onClick={function () { setFilters({window: 24, sort: "time", since: "", until: ""}); setFocusedSources([]); setKeyword(""); setAiFilter(null); }}>
+                  onClick={function () { setFilters({window: 24, sort: "time_desc", since: "", until: ""}); setFocusedSources([]); setSourceCategory("all"); setSearchDraft(""); setKeyword(""); setAiFilter(null); }}>
             <Ico name="refresh"/> {t("today.filters.reset")}
           </button>
-          <button className="btn btn-sm" type="button" onClick={onExport} title={t("today.export.title")}>
-            <Ico name="save"/> {t("today.export")}
+          <button className="btn btn-sm" type="button" onClick={function () { setExportOpen(true); }} title={t("today.export.title")}>
+            <Ico name="download"/> {t("today.export")}
           </button>
-          <span className="ingest-split">
+          <span className={"ingest-split " + (menuOpen ? "is-open" : "")}>
             <button className="btn btn-primary" type="button"
                     disabled={ingesting || cooldown > 0}
                     aria-busy={ingesting ? "true" : "false"}
                     onClick={onIngestAll}>
               {ingesting
                 ? <span className="fp-spin"><Ico name="refresh"/></span>
-                : <Ico name="play"/>}
+                : <Ico name="refresh"/>}
               {" "}
               {ingesting ? t("today.ingest.busy") : cooldown > 0 ? tfmt(t("today.ingest.cooldown"), {s: cooldown}) : t("today.list.ingest.all")}
             </button>
@@ -2551,7 +3235,7 @@ function TodayTab() {
                     disabled={ingesting || cooldown > 0}
                     title={t("today.list.ingest.more")}
                     onClick={function () { setMenuOpen(!menuOpen); }}>
-              <span style={{fontSize: 10}}>▾</span>
+              <Ico name="chevronDown"/>
             </button>
             {menuOpen && (
               <div className="ingest-split__menu"
@@ -2575,7 +3259,7 @@ function TodayTab() {
       {aiFilter && (
         <div style={{display: "flex", alignItems: "center", gap: 8, padding: "4px 0"}}>
           <span className="api-pill" style={{background: "rgba(211,47,47,.10)", color: "var(--primary)"}}>
-            <Ico name="ai"/> {t("today.filters.ai.active")}
+            <Ico name="magic"/> {t("today.filters.ai.active")}
           </span>
           <button className="btn btn-sm" onClick={function () { setAiFilter(null); }}>
             {t("today.filters.ai.clear")}
@@ -2612,26 +3296,13 @@ function TodayTab() {
           {!loading && displayItems.length === 0 && <div className="empty">{t("today.list.empty")}</div>}
           {viewMode === "grouped" ? (
             hasMatchRule ? (
-              <React.Fragment>
-                {matchedItems.length > 0 && (
-                  <div>
-                    <div className="oa-section-title" style={{marginTop: 0}}>
-                      {t("today.group.matches")}
-                      <span className="oa-section-title__count">{matchedItems.length}</span>
-                    </div>
-                    {renderSourceGroups(matchedItems, "matched")}
-                  </div>
-                )}
-                {remainingItems.length > 0 && (
-                  <div>
-                    <div className="oa-section-title">
-                      {t("today.group.others")}
-                      <span className="oa-section-title__count">{remainingItems.length}</span>
-                    </div>
-                    {renderSourceGroups(remainingItems, "remaining")}
-                  </div>
-                )}
-              </React.Fragment>
+              <div>
+                <div className="oa-section-title" style={{marginTop: 0}}>
+                  <Ico name="filter"/> {t("today.group.matches")}
+                  <span className="oa-section-title__count">{matchedItems.length}</span>
+                </div>
+                {renderSourceGroups(displayItems, "matched")}
+              </div>
             ) : renderSourceGroups(displayItems, "all")
           ) : (
             renderTimeline(displayItems)
@@ -2649,6 +3320,20 @@ function TodayTab() {
           onClose={function () { setAiFilterOpen(false); }}
         />
       )}
+      {exportOpen && (
+        <ExportDialog
+          currentCount={displayItems.length}
+          loadedCount={items.length}
+          onExport={onExportConfirm}
+          onClose={function () { setExportOpen(false); }}
+        />
+      )}
+      {exportPreview && (
+        <ExportPreviewDialog
+          report={exportPreview}
+          onClose={function () { setExportPreview(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -2659,8 +3344,19 @@ function DigestsTab() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [previewHtml, setPreviewHtml] = useState("");
   const [running, setRunning] = useState("");
   const [channels, setChannels] = useState([]);
+  const [activeSession, setActiveSession] = useState("morning");
+  const [sources, setSources] = useState([]);
+  const [customOpen, setCustomOpen] = useState(true);
+  const [reportConfigs, setReportConfigs] = useState({
+    morning: {id: "morning", kind: "builtin", label: "早报", session: "morning", time: "08:00", repeat: "daily", since_hours: 12, top_k: 20, source_ids: [], channel: "", chat_id: "", locked: false, preIngest: false},
+    noon: {id: "noon", kind: "builtin", label: "午报", session: "noon", time: "12:30", repeat: "daily", since_hours: 6, top_k: 15, source_ids: [], channel: "", chat_id: "", locked: false, preIngest: false},
+    evening: {id: "evening", kind: "builtin", label: "晚报", session: "evening", time: "19:00", repeat: "daily", since_hours: 12, top_k: 20, source_ids: [], channel: "", chat_id: "", locked: false, preIngest: false},
+  });
+  const [customReports, setCustomReports] = useState([]);
+  const [customDraft, setCustomDraft] = useState({title: "自定义财经报表", time: "09:30", repeat: "daily", since_hours: 24, top_k: 20, source_ids: [], channel: "", chat_id: "", preIngest: false});
 
   const load = useCallback(async function () {
     setLoading(true);
@@ -2677,113 +3373,466 @@ function DigestsTab() {
       const names = (fb && fb.channels) || [];
       list = names.map(function (n) { return { channel_id: String(n), chat_id: "" }; });
     }
-    setChannels(list);
+    setChannels(normalizeChannels(list));
   }, []);
-  useEffect(function () { load(); loadChannels(); }, [load, loadChannels]);
+  const loadSources = useCallback(async function () {
+    const resp = await api("GET", "/sources");
+    const rawSources = (resp && resp.ok && Array.isArray(resp.items) && resp.items.length) ? resp.items : SOURCE_FALLBACK;
+    const mapped = rawSources.map(function (s) {
+      return {
+        id: String(s.id || ""),
+        name: String(s.display_zh || s.display_en || s.name || s.id || ""),
+        kind: String(s.kind || ""),
+        content_type: String(s.content_type || "news"),
+      };
+    }).filter(function (s) { return s.id; });
+    setSources(mapped);
+  }, []);
+  const loadPlans = useCallback(async function () {
+    const resp = await api("GET", "/report-plans");
+    const plans = (resp && resp.plans) || {};
+    const nextBuiltins = {};
+    ["morning", "noon", "evening"].forEach(function (id) {
+      if (plans[id]) nextBuiltins[id] = plans[id];
+    });
+    if (Object.keys(nextBuiltins).length) {
+      setReportConfigs(function (prev) {
+        return Object.assign({}, prev, nextBuiltins);
+      });
+    }
+    setCustomReports(Object.keys(plans).filter(function (id) {
+      return ["morning", "noon", "evening"].indexOf(id) < 0;
+    }).map(function (id) { return plans[id]; }));
+  }, []);
+  useEffect(function () { load(); loadChannels(); loadPlans(); loadSources(); }, [load, loadChannels, loadPlans, loadSources]);
 
-  const onRun = useCallback(async function (session) {
+  const sessionMeta = {
+    morning: {icon: "morning", label: t("digests.session.morning"), time: "08:00",
+      desc: "开盘/上班前速览：隔夜海外、政策线索、今日市场关注。"},
+    noon: {icon: "noonIcon", label: t("digests.session.noon"), time: "12:30",
+      desc: "盘中热点更新：新增热点、快讯密度、行业和个股异动。"},
+    evening: {icon: "eveningIcon", label: t("digests.session.evening"), time: "19:00",
+      desc: "收盘/下班复盘：全天汇总、重点复盘、明日关注方向。"},
+  };
+  const sourceNameMap = {};
+  sources.forEach(function (s) { sourceNameMap[s.id] = s.name; });
+  var latestBySession = {};
+  items.forEach(function (d) {
+    if (!latestBySession[d.session]) latestBySession[d.session] = d;
+  });
+
+  const selectDigest = useCallback(async function (digest) {
+    if (!digest || !digest.id) return;
+    setSelected(digest);
+    setPreviewHtml("");
+    try {
+      const resp = await api("GET", "/digests/" + encodeURIComponent(digest.id));
+      if (resp && resp.ok && resp.digest) {
+        setSelected(resp.digest);
+        setPreviewHtml(resp.digest.html_blob || "");
+      }
+    } catch (_) {}
+  }, []);
+
+  const updateReportConfig = function (session, patch) {
+    setReportConfigs(function (prev) {
+      return Object.assign({}, prev, {[session]: Object.assign({}, prev[session] || {}, patch)});
+    });
+  };
+  const updateCustomReport = function (session, patch) {
+    setCustomReports(function (prev) {
+      return prev.map(function (r) { return r.session === session ? Object.assign({}, r, patch) : r; });
+    });
+  };
+  const toggleSource = function (cfg, sourceId, onChange) {
+    const current = Array.isArray(cfg.source_ids) ? cfg.source_ids : [];
+    const exists = current.indexOf(sourceId) >= 0;
+    onChange({source_ids: exists ? current.filter(function (id) { return id !== sourceId; }) : current.concat([sourceId])});
+  };
+  const selectAllSources = function (onChange) {
+    onChange({source_ids: sources.map(function (s) { return s.id; })});
+  };
+  const renderSourcePicker = function (cfg, onChange) {
+    const picked = Array.isArray(cfg.source_ids) ? cfg.source_ids : [];
+    return (
+      <div style={{gridColumn: "1 / -1"}}>
+        <div style={{display: "flex", alignItems: "center", gap: 8, marginBottom: 6}}>
+          <span className="filter-bar__label">新闻来源</span>
+          <span style={{fontSize: 11, color: "var(--text-muted)"}}>{picked.length ? ("已选 " + picked.length) : "全部来源"}</span>
+          <span style={{flex: 1}}/>
+          <button className="btn btn-sm" type="button" onClick={function (e) { e.stopPropagation(); selectAllSources(onChange); }}>全选</button>
+          <button className="btn btn-sm" type="button" onClick={function (e) { e.stopPropagation(); onChange({source_ids: []}); }}>全部来源</button>
+        </div>
+        <div className="source-chip-grid source-chip-grid--rail" style={{maxHeight: 86}}>
+          {sources.map(function (src) {
+            const on = picked.indexOf(src.id) >= 0;
+            return (
+              <button key={src.id} type="button" className={"source-chip " + (on ? "source-chip--active" : "")}
+                      onClick={function (e) { e.stopPropagation(); toggleSource(cfg, src.id, onChange); }}>
+                <span className="source-chip__dot"/>{src.name}<span className="source-chip__type">{src.content_type}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  const renderChannelSelect = function (cfg, onChange) {
+    const current = channels.find(function (c) {
+      return c.channel_id === cfg.channel && (c.chat_id || "") === (cfg.chat_id || "");
+    });
+    const currentValue = current ? channelKey(current) : "";
+    return (
+      <label style={{gridColumn: "1 / -1"}}><span className="filter-bar__label">通知通道</span>
+        <ChannelPicker
+          channels={channels}
+          value={currentValue}
+          onChange={function (pick) {
+            onChange({channel: pick.channel_id || "", chat_id: pick.chat_id || "", chat_name: pick.chat_name || pick.display_name || pick.alias || ""});
+          }}/>
+      </label>
+    );
+  };
+
+  const onRun = useCallback(async function (session, cfg) {
     if (running) return;
     setRunning(session);
     try {
-      const resp = await api("POST", "/digest/run", {session: session, since_hours: 12, top_k: 20, lang: "zh"});
+      const runCfg = cfg || reportConfigs[session] || customReports.find(function (r) { return r.session === session; }) || reportConfigs.morning;
+      const sourceIds = Array.isArray(runCfg.source_ids) ? runCfg.source_ids : [];
+      if (runCfg.preIngest) {
+        await api("POST", "/ingest", {since_hours: runCfg.since_hours, sources: sourceIds.length ? sourceIds : undefined});
+      }
+      const resp = await api("POST", "/digest/run", {
+        session: session,
+        title: runCfg.title || "",
+        since_hours: runCfg.since_hours,
+        top_k: runCfg.top_k,
+        source_ids: sourceIds,
+        lang: "zh"
+      });
       window.oaToast({level: resp && resp.ok ? "success" : "error",
-        message: resp && resp.ok ? "generated " + session : ("failed: " + (resp && resp.detail || ""))});
-      load();
+        message: resp && resp.ok ? ("HTML 简报已生成" + (resp.auto_ingested ? "，已自动抓取最新资讯" : "")) : ("failed: " + (resp && resp.detail || ""))});
+      await load();
+      if (resp && resp.ok && resp.digest && resp.digest.digest_id) {
+        selectDigest({
+          id: resp.digest.digest_id,
+          session: session,
+          generated_at: resp.digest.generated_at,
+          stats: resp.digest.stats || {}
+        });
+      }
     } finally { setRunning(""); }
-  }, [running, load]);
+  }, [running, load, reportConfigs, customReports, selectDigest]);
 
-  const onResend = useCallback(async function (digest) {
-    if (!channels.length) {
-      window.oaToast({level: "warning", message: "no channel registered"});
+  const planIdFor = function (session, cfg) { return cfg.id || session; };
+  const savePlan = useCallback(async function (session, cfg) {
+    const planId = planIdFor(session, cfg);
+    if (!cfg.channel || !cfg.chat_id) {
+      window.oaToast({level: "warning", message: "请选择通知通道"});
       return;
     }
-    const pick = channels[0] || {};
-    const channel = pick.channel_id || "";
-    const defaultChatId = pick.chat_id || "";
-    const chat_id = window.prompt("chat_id for " + channel + "?", defaultChatId);
-    if (!chat_id) return;
+    const resp = await api("PUT", "/report-plans/" + encodeURIComponent(planId), Object.assign({}, cfg, {
+      id: planId,
+      session: session,
+      label: cfg.label || (sessionMeta[session] && sessionMeta[session].label) || cfg.title || "自定义报表",
+      title: cfg.title || (sessionMeta[session] && sessionMeta[session].label) || cfg.label || "",
+    }));
+    if (resp && resp.ok && resp.plan) {
+      if (["morning", "noon", "evening"].indexOf(session) >= 0) updateReportConfig(session, resp.plan);
+      else updateCustomReport(session, resp.plan);
+      window.oaToast({level: "success", message: "报表推送配置已保存并生效"});
+      await loadPlans();
+    } else {
+      window.oaToast({level: "error", message: "保存失败"});
+    }
+  }, [loadPlans]);
+  const unlockPlan = useCallback(async function (session, cfg) {
+    const planId = planIdFor(session, cfg);
+    const resp = await api("POST", "/report-plans/" + encodeURIComponent(planId) + "/unlock");
+    if (resp && resp.ok && resp.plan) {
+      if (["morning", "noon", "evening"].indexOf(session) >= 0) updateReportConfig(session, resp.plan);
+      else updateCustomReport(session, resp.plan);
+    }
+  }, []);
+  const runPlan = useCallback(async function (session, cfg) {
+    const planId = planIdFor(session, cfg);
+    setRunning(planId);
+    try {
+      const resp = await api("POST", "/report-plans/" + encodeURIComponent(planId) + "/run");
+      window.oaToast({level: resp && resp.ok ? "success" : "error", message: resp && resp.ok ? "已生成 HTML 报表并推送" : "推送失败"});
+      await load();
+      await loadPlans();
+    } finally { setRunning(""); }
+  }, [load, loadPlans]);
+  const deleteCustomPlan = useCallback(async function (cfg) {
+    const planId = cfg.id || cfg.session;
+    const ok = await window.oaConfirm({title: "删除自定义报表计划", message: cfg.label || cfg.title || planId, danger: true, okText: "删除"});
+    if (!ok) return;
+    const resp = await api("DELETE", "/report-plans/" + encodeURIComponent(planId));
+    if (resp && resp.ok) {
+      await loadPlans();
+      window.oaToast({level: "success", message: "自定义报表计划已删除"});
+    }
+  }, [loadPlans]);
+  const onResend = useCallback(async function (digest) {
+    if (!digest || !digest.session) return;
+    const cfg = reportConfigs[digest.session] || customReports.find(function (r) { return r.session === digest.session; });
+    if (!cfg || !cfg.locked) {
+      window.oaToast({level: "warning", message: "该报表还没有保存推送配置"});
+      return;
+    }
+    runPlan(digest.session, cfg);
+  }, [reportConfigs, customReports, runPlan]);
+
+  const applySessionDefaults = function (session) {
+    setActiveSession(session);
+  };
+  const addCustomReport = function () {
+    const title = String(customDraft.title || "").trim();
+    if (!title) {
+      window.oaToast({level: "warning", message: "请先填写自定义报表名称"});
+      return;
+    }
+    const session = "custom_" + Date.now();
+    setCustomReports(function (prev) {
+      return prev.concat([Object.assign({}, customDraft, {
+        id: session,
+        session: session,
+        kind: "custom",
+        icon: "customReport",
+        label: title,
+        locked: false,
+        enabled: false,
+        name: "fin-pulse custom brief",
+      })]);
+    });
+    setActiveSession(session);
+    window.oaToast({level: "success", message: "已添加自定义报表"});
+  };
+  const previewUrl = selected && selected.id ? "/api/plugins/fin-pulse/digests/" + selected.id + "/html" : "";
+  const onDeleteDigest = useCallback(async function (digest) {
+    if (!digest || !digest.id) return;
     const ok = await window.oaConfirm({
-      title: t("digests.resend"),
-      message: tfmt(t("digests.resend.confirm"), {channel: channel + ":" + chat_id}),
-      okText: t("digests.resend"),
+      title: "删除历史简报",
+      message: digest.title || (sessionMeta[digest.session] ? sessionMeta[digest.session].label : digest.session),
+      danger: true,
+      okText: "删除",
     });
     if (!ok) return;
-    const resp = await api("POST", "/dispatch/send", {
-      channel: channel, chat_id: chat_id,
-      content: digest.markdown_blob || "",
-      cooldown_s: 0,
-    });
+    const resp = await api("DELETE", "/digests/" + encodeURIComponent(digest.id));
     if (resp && resp.ok) {
-      window.oaToast({level: "success", message: t("digests.resend.success")});
+      if (selected && selected.id === digest.id) {
+        setSelected(null);
+        setPreviewHtml("");
+      }
+      await load();
+      window.oaToast({level: "success", message: "历史简报已删除"});
     } else {
-      window.oaToast({level: "error",
-        message: tfmt(t("digests.resend.fail"), {err: (resp && resp.dispatch && resp.dispatch.error) || "unknown"})});
+      window.oaToast({level: "error", message: "删除失败"});
     }
-  }, [channels, t]);
-
-  /* Icon + session map — semantic icons, not generic "play" */
-  const SESSION_META = {
-    morning: {icon: "refresh"},
-    noon: {icon: "target"},
-    evening: {icon: "bell"},
+  }, [load, selected]);
+  const downloadPreview = function () {
+    if (!previewUrl) return;
+    var a = document.createElement("a");
+    a.href = previewUrl;
+    a.download = "finpulse-" + ((selected && selected.session) || "digest") + ".html";
+    a.target = "_blank";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+  const renderReportCard = function (session, cfg, custom) {
+    var meta = custom ? {icon: cfg.icon || "customReport", label: cfg.label || cfg.title || "自定义报表", time: cfg.time || "09:30", desc: "自定义报表计划：保存后按设定时间自动生成 HTML 报表并推送。"} : sessionMeta[session];
+    var latest = latestBySession[session];
+    var active = activeSession === session;
+    var onCfgChange = custom ? function (patch) { updateCustomReport(session, patch); } : function (patch) { updateReportConfig(session, patch); };
+    var sourceSummary = (cfg.source_ids && cfg.source_ids.length) ? cfg.source_ids.slice(0, 3).map(function (id) { return sourceNameMap[id] || id; }).join("、") + (cfg.source_ids.length > 3 ? " 等" : "") : "全部来源";
+    var locked = !!cfg.locked;
+    var channelLabel = cfg.channel ? formatChannelLabel({channel_id: cfg.channel, chat_id: cfg.chat_id, chat_name: cfg.chat_name}) : "未配置通道";
+    var lastResult = cfg.last_result || {};
+    var dispatch = lastResult.dispatch || {};
+    var dispatchText = dispatch.ok ? ("推送成功 · " + (dispatch.content_kind || lastResult.content_kind || "text")) : (dispatch.errors && dispatch.errors.length ? ("推送失败 · " + dispatch.errors[0]) : "");
+    return (
+      <div key={session} className={"card report-plan-card" + (locked ? " report-plan-card--locked" : "")}
+           style={{margin: 0, borderColor: active ? "rgba(211,47,47,.42)" : "var(--border)", background: active ? "linear-gradient(180deg,#fff,rgba(255,247,247,.72))" : "var(--bg-card)"}}
+           onClick={function () { applySessionDefaults(session); }}>
+        <div style={{display: "flex", alignItems: "center", gap: 8}}>
+          <span className="api-pill" style={{background: "rgba(211,47,47,.10)", color: "var(--primary)"}}><Ico name={meta.icon}/> {meta.label}</span>
+          <span style={{marginLeft: "auto", fontSize: 12, color: "var(--text-muted)"}}>{cfg.time || meta.time}</span>
+          {locked ? <span className="kw-tag">已锁定生效</span> : <span className="kw-tag">可编辑</span>}
+          {custom && <button className="btn btn-sm btn-danger" type="button" onClick={function (e) { e.stopPropagation(); deleteCustomPlan(cfg); }}><Ico name="trash"/></button>}
+        </div>
+        <div style={{fontSize: 13, color: "var(--text)", lineHeight: 1.5, marginTop: 10}}>{meta.desc}</div>
+        <div style={{display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10}}>
+          <span className="kw-tag">{cfg.since_hours}h 窗口</span>
+          <span className="kw-tag">Top {cfg.top_k}</span>
+          <span className="kw-tag">{sourceSummary}</span>
+          <span className="kw-tag">{channelLabel}</span>
+          {latest ? <span className="kw-tag">最新 {fmtDate(latest.generated_at)}</span> : <span className="kw-tag">待生成</span>}
+          {dispatchText ? <span className="kw-tag">{dispatchText}</span> : null}
+        </div>
+        <div className="card-body" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "10px 0 0"}}>
+          {custom && (
+            <label style={{gridColumn: "1 / -1"}}><span className="filter-bar__label">报表名称</span>
+              <input className="input" value={cfg.title || cfg.label || ""}
+                     disabled={locked}
+                     onChange={function (e) { onCfgChange({title: e.target.value, label: e.target.value}); }}/>
+            </label>
+          )}
+          <label><span className="filter-bar__label">推送时间</span>
+            <input className="input" type="time" value={cfg.time || meta.time}
+                   disabled={locked}
+                   onClick={function (e) { e.stopPropagation(); }}
+                   onChange={function (e) { onCfgChange({time: e.target.value}); }}/>
+          </label>
+          <label><span className="filter-bar__label">重复方式</span>
+            <select className="input" value={cfg.repeat || "daily"} disabled={locked}
+                    onClick={function (e) { e.stopPropagation(); }}
+                    onChange={function (e) { onCfgChange({repeat: e.target.value}); }}>
+              <option value="daily">每天</option>
+              <option value="weekdays">工作日</option>
+              <option value="weekly">每周一</option>
+            </select>
+          </label>
+          <label><span className="filter-bar__label">覆盖时长（小时）</span>
+            <input className="input" type="number" min="1" max="72" value={cfg.since_hours}
+                   disabled={locked}
+                   onClick={function (e) { e.stopPropagation(); }}
+                   onChange={function (e) { onCfgChange({since_hours: e.target.value}); }}/>
+          </label>
+          <label><span className="filter-bar__label">条目数</span>
+            <input className="input" type="number" min="1" max="60" value={cfg.top_k}
+                   disabled={locked}
+                   onClick={function (e) { e.stopPropagation(); }}
+                   onChange={function (e) { onCfgChange({top_k: e.target.value}); }}/>
+          </label>
+          {!locked && renderSourcePicker(cfg, onCfgChange)}
+          {!locked && renderChannelSelect(cfg, onCfgChange)}
+          <label style={{gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8}}>
+            <input type="checkbox" checked={!!cfg.preIngest}
+                   disabled={locked}
+                   onClick={function (e) { e.stopPropagation(); }}
+                   onChange={function (e) { onCfgChange({preIngest: e.target.checked}); }}/>
+            <span style={{fontSize: 13, color: "var(--text)"}}>强制先抓取最新资讯</span>
+          </label>
+        </div>
+        <div style={{display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap"}}>
+          <button className="btn btn-sm btn-primary" disabled={!!running}
+                  onClick={function (e) { e.stopPropagation(); applySessionDefaults(session); onRun(session, cfg); }}>
+            <Ico name="download"/> {running === session ? t("today.list.loading") : "生成并预览"}
+          </button>
+          {locked ? (
+            <>
+              <button className="btn btn-sm" disabled={!!running} onClick={function (e) { e.stopPropagation(); runPlan(session, cfg); }}>
+                <Ico name="send"/> 立即推送
+              </button>
+              <button className="btn btn-sm" onClick={function (e) { e.stopPropagation(); unlockPlan(session, cfg); }}>
+                <Ico name="edit"/> 解锁编辑
+              </button>
+            </>
+          ) : (
+            <button className="btn btn-sm btn-primary" onClick={function (e) { e.stopPropagation(); savePlan(session, cfg); }}>
+              <Ico name="download"/> 保存并生效
+            </button>
+          )}
+          {latest && <button className="btn btn-sm" onClick={function (e) { e.stopPropagation(); selectDigest(latest); }}><Ico name="eye"/> 预览</button>}
+        </div>
+      </div>
+    );
   };
 
   return (
-    <div className="stack-layout">
-      <div className="card grow">
-        <div className="oa-section-title">
-          {t("digests.title")}
-          <span className="oa-section-title__count">{items.length}</span>
-          <span className="oa-section-title__actions">
-            <div className="seg-group" role="group" aria-label={t("digests.runGroup")}>
-              {["morning", "noon", "evening"].map(function (s) {
-                const meta = SESSION_META[s] || {icon: "refresh"};
-                const active = running === s;
-                return <button key={s} type="button"
-                               className={"seg-btn " + (active ? "active" : "")}
-                               disabled={!!running}
-                               title={t("digests.run")}
-                               onClick={function () { onRun(s); }}>
-                  <Ico name={meta.icon}/> {t("digests.session." + s)}
-                </button>;
-              })}
-            </div>
-          </span>
+    <div className="digest-workbench">
+      <div className="digest-left">
+        <div className="card">
+          <div className="oa-section-title">
+            {t("digests.title")}工作台
+            <span className="oa-section-title__count">{items.length}</span>
+          </div>
+          <div className="oa-hint">左侧配置时段和任务，右侧实时预览 HTML 报表。生成时如果数据为空或不够新，会自动先抓取一次。</div>
+          <div className="card-body" style={{display: "grid", gridTemplateColumns: "1fr", gap: 10}}>
+            {["morning", "noon", "evening"].map(function (s) {
+              return renderReportCard(s, reportConfigs[s], false);
+            })}
+          </div>
         </div>
-        <div className="oa-hint">{t("digests.hint")}</div>
 
-        <div className="card-body">
+        <div className="card">
+          <div className="oa-section-title">
+            自定义报表工作台
+            <span className="oa-section-title__count">{customReports.length}</span>
+          </div>
+          <div className="oa-hint" style={{marginBottom: 10}}>把早午晚报的参数全部自定义：名称、覆盖时长、条目数、新闻来源；添加后会成为可生成、可预览、可定时的报表卡片。</div>
+          <div className="card-body" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, paddingTop: 0}}>
+            <label style={{gridColumn: "1 / -1"}}><span className="filter-bar__label">报表名称</span>
+              <input className="input" value={customDraft.title} onChange={function (e) { setCustomDraft(Object.assign({}, customDraft, {title: e.target.value})); }}/>
+            </label>
+            <label><span className="filter-bar__label">默认执行时间</span>
+              <input className="input" type="time" value={customDraft.time}
+                     onChange={function (e) { setCustomDraft(Object.assign({}, customDraft, {time: e.target.value})); }}/>
+            </label>
+            <label><span className="filter-bar__label">重复方式</span>
+              <select className="input" value={customDraft.repeat || "daily"}
+                      onChange={function (e) { setCustomDraft(Object.assign({}, customDraft, {repeat: e.target.value})); }}>
+                <option value="daily">每天</option>
+                <option value="weekdays">工作日</option>
+                <option value="weekly">每周一</option>
+              </select>
+            </label>
+            <label><span className="filter-bar__label">覆盖时长（小时）</span>
+              <input className="input" type="number" min="1" max="72" value={customDraft.since_hours}
+                     onChange={function (e) { setCustomDraft(Object.assign({}, customDraft, {since_hours: e.target.value})); }}/>
+            </label>
+            <label><span className="filter-bar__label">条目数</span>
+              <input className="input" type="number" min="1" max="60" value={customDraft.top_k}
+                     onChange={function (e) { setCustomDraft(Object.assign({}, customDraft, {top_k: e.target.value})); }}/>
+            </label>
+            {renderSourcePicker(customDraft, function (patch) { setCustomDraft(Object.assign({}, customDraft, patch)); })}
+            {renderChannelSelect(customDraft, function (patch) { setCustomDraft(Object.assign({}, customDraft, patch)); })}
+            <button className="btn btn-sm btn-primary" type="button" style={{gridColumn: "1 / -1"}} onClick={addCustomReport}>
+              <Ico name="plus"/> 创建自定义报表计划
+            </button>
+          </div>
+          <div className={"coll" + (customOpen ? " coll--open" : "")} style={{marginTop: 10}}>
+            <div className="coll-head" onClick={function () { setCustomOpen(!customOpen); }}>
+              <span className="coll-head__arrow">▶</span>
+              <span className="coll-head__title">自定义报表计划</span>
+              <span className="coll-head__badge">{customReports.length}</span>
+            </div>
+            {customOpen && (
+              <div className="coll-body">
+                {!customReports.length ? <div className="empty" style={{padding: 12}}>暂无自定义报表计划</div> : (
+                  <div style={{display: "grid", gridTemplateColumns: "1fr", gap: 10}}>
+                    {customReports.map(function (r) { return renderReportCard(r.session, r, true); })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="oa-section-title">历史简报 <span className="oa-section-title__count">{items.length}</span></div>
           {loading && items.length === 0 && <div className="empty">{t("today.list.loading")}</div>}
           {!loading && items.length === 0 && <div className="empty">{t("digests.empty")}</div>}
-          <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12}}>
+          <div className="digest-history-list">
             {items.map(function (d) {
-              const sMeta = SESSION_META[d.session] || {icon: "refresh"};
+              var meta = sessionMeta[d.session] || sessionMeta.morning;
               return (
-                <div key={d.id}
-                     className="card"
-                     style={{margin: 0, cursor: "pointer", transition: "box-shadow .12s, transform .12s"}}
-                     onMouseEnter={function (e) { e.currentTarget.style.boxShadow = "0 4px 12px rgba(232,106,123,.20)"; }}
-                     onMouseLeave={function (e) { e.currentTarget.style.boxShadow = "none"; }}
-                     onClick={function () { setSelected(d); }}>
-                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, color: "var(--text-muted)"}}>
-                    <span style={{display: "inline-flex", alignItems: "center", gap: 4, color: "var(--primary)", fontWeight: 500}}>
-                      <Ico name={sMeta.icon}/> {t("digests.session." + d.session) || d.session}
-                    </span>
-                    <span>{fmtDate(d.generated_at)}</span>
+                <div key={d.id} className="card" style={{margin: 0, padding: 10, cursor: "pointer"}}
+                     onClick={function () { selectDigest(d); }}>
+                  <div style={{display: "flex", alignItems: "center", gap: 6, fontSize: 12}}>
+                    <span className="api-pill"><Ico name={meta.icon}/> {meta.label}</span>
+                    <span style={{marginLeft: "auto", color: "var(--text-muted)"}}>{fmtDate(d.generated_at)}</span>
                   </div>
-                  <div style={{fontSize: 14, fontWeight: 600, marginTop: 8, color: "var(--text)"}}>{d.title || d.session}</div>
-                  <div style={{fontSize: 11, color: "var(--text-muted)", marginTop: 4}}>
-                    {(d.stats && (d.stats.total_selected || 0)) || 0} {t("digests.items")}
-                  </div>
-                  <div style={{display: "flex", gap: 6, marginTop: 10}}>
-                    <button className="btn btn-sm"
-                            onClick={function (e) { e.stopPropagation(); setSelected(d); }}>
-                      <Ico name="eye"/> {t("digests.preview")}
-                    </button>
-                    <button className="btn btn-sm btn-primary"
-                            onClick={function (e) { e.stopPropagation(); onResend(d); }}>
-                      <Ico name="send"/> {t("digests.resend")}
-                    </button>
+                  <div style={{display: "flex", alignItems: "center", gap: 8, marginTop: 8}}>
+                    <div style={{flex: 1, minWidth: 0}}>
+                      <div style={{fontSize: 13, fontWeight: 700, color: "var(--text)"}}>{d.title || meta.label}</div>
+                      <div style={{fontSize: 12, color: "var(--text-muted)"}}>{(d.stats && (d.stats.total_selected || 0)) || 0} {t("digests.items")}</div>
+                    </div>
+                    <button className="btn btn-sm" onClick={function (e) { e.stopPropagation(); selectDigest(d); }}><Ico name="eye"/></button>
+                    <button className="btn btn-sm btn-danger" onClick={function (e) { e.stopPropagation(); onDeleteDigest(d); }}><Ico name="trash"/></button>
                   </div>
                 </div>
               );
@@ -2791,21 +3840,28 @@ function DigestsTab() {
           </div>
         </div>
       </div>
-      {selected && (
-        <div className="confirm-mask" onClick={function () { setSelected(null); }}>
-          <div className="confirm-dialog"
-               style={{maxWidth: "92vw", width: 880, maxHeight: "88vh", display: "flex", flexDirection: "column"}}
-               onClick={function (e) { e.stopPropagation(); }}>
-            <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10}}>
-              <div className="card-title" style={{margin: 0}}>{selected.title || selected.session}</div>
-              <button className="btn btn-sm" onClick={function () { setSelected(null); }}>×</button>
-            </div>
-            <iframe src={"/api/plugins/fin-pulse/digests/" + selected.id + "/html"}
-                    title="digest-preview"
-                    style={{flex: 1, width: "100%", minHeight: 400, border: "1px solid var(--border)", borderRadius: 6, background: "#fff"}}/>
+
+      <div className="digest-preview-pane">
+        <div className="card grow">
+          <div className="oa-section-title">
+            HTML 报表即时预览
+            {selected && <span className="oa-section-title__count">{sessionMeta[selected.session] ? sessionMeta[selected.session].label : selected.session}</span>}
+            <span className="oa-section-title__actions">
+              <button className="btn btn-sm" disabled={!selected} onClick={downloadPreview}><Ico name="download"/> 下载 HTML</button>
+              <button className="btn btn-sm" disabled={!selected} onClick={function () { selected && copyText(selected.markdown_blob || selected.title || ""); window.oaToast({level: "success", message: t("today.list.copied")}); }}><Ico name="copy"/> 复制摘要</button>
+              <button className="btn btn-sm btn-primary" disabled={!selected} onClick={function () { selected && onResend(selected); }}><Ico name="send"/> 再推送</button>
+            </span>
           </div>
+          {selected ? (
+            <iframe className="digest-preview-frame" srcDoc={previewHtml || selected.html_blob || ""} title="digest-preview"/>
+          ) : (
+            <div className="empty" style={{minHeight: 360, display: "flex", alignItems: "center", justifyContent: "center"}}>
+              请选择历史简报，或点击左侧“生成并预览”。
+            </div>
+          )}
         </div>
-      )}
+      </div>
+
     </div>
   );
 }
@@ -2841,6 +3897,17 @@ function RadarTab() {
   /* Rules library (saved presets) */
   const [library, setLibrary] = useState([]);
   const [libOpen, setLibOpen] = useState(false);
+  const [channels, setChannels] = useState([]);
+  const [sources, setSources] = useState([]);
+  const [selectedSourceIds, setSelectedSourceIds] = useState([]);
+  const [forceRefresh, setForceRefresh] = useState(false);
+  const [radarRepeat, setRadarRepeat] = useState("every15");
+  const [radarTime, setRadarTime] = useState("09:00");
+  const [radarLocked, setRadarLocked] = useState(false);
+  const [radarTargetKey, setRadarTargetKey] = useState("");
+  const [pushing, setPushing] = useState(false);
+  const [savingRadarPlan, setSavingRadarPlan] = useState(false);
+  const [radarResult, setRadarResult] = useState(null);
 
   /* Preload stored rules + library */
   const loadLibrary = useCallback(async function () {
@@ -2856,6 +3923,81 @@ function RadarTab() {
     })();
     loadLibrary();
   }, [loadLibrary]);
+  const loadRadarPlan = useCallback(async function () {
+    const resp = await api("GET", "/radar-plan");
+    const plan = resp && resp.plan;
+    if (!plan) return;
+    if (plan.rules_text) setRulesText(String(plan.rules_text || ""));
+    setSelectedSourceIds(Array.isArray(plan.source_ids) ? plan.source_ids : []);
+    setForceRefresh(!!plan.force_refresh);
+    setRadarRepeat(String(plan.repeat || "every15"));
+    setRadarTime(String(plan.time || "09:00").slice(0, 5));
+    setRadarLocked(!!plan.locked);
+    setRadarTargetKey(plan.channel ? (String(plan.channel) + "::" + String(plan.chat_id || "")) : "");
+  }, []);
+  useEffect(function () { loadRadarPlan().catch(function () {}); }, [loadRadarPlan]);
+  useEffect(function () {
+    (async function () {
+      const resp = await api("GET", "/scheduler/channels");
+      let list = (resp && Array.isArray(resp.channels)) ? resp.channels : [];
+      if (!list.length) {
+        const fb = await api("GET", "/available-channels");
+        const names = (fb && fb.channels) || [];
+        list = names.map(function (n) { return { channel_id: String(n), chat_id: "" }; });
+      }
+      list = normalizeChannels(list);
+      setChannels(list);
+      setRadarTargetKey(function (prev) {
+        if (prev) return prev;
+        var first = list[0];
+        return first ? channelKey(first) : "";
+      });
+    })();
+  }, []);
+  useEffect(function () {
+    (async function () {
+      const resp = await api("GET", "/sources");
+      const rawSources = (resp && resp.ok && Array.isArray(resp.items) && resp.items.length) ? resp.items : SOURCE_FALLBACK;
+      setSources(rawSources.map(function (s) {
+        return {
+          id: String(s.id || ""),
+          name: String(s.display_zh || s.display_en || s.name || s.id || ""),
+          content_type: String(s.content_type || "news"),
+        };
+      }).filter(function (s) { return s.id; }));
+    })();
+  }, []);
+
+  const selectedTarget = (function () {
+    return channels.find(function (c) {
+      return channelKey(c) === radarTargetKey;
+    }) || null;
+  })();
+  const radarSourceMap = {};
+  sources.forEach(function (s) { radarSourceMap[s.id] = s; });
+  const hitMatchScore = function (h) {
+    const terms = Array.isArray(h.matched_terms) ? h.matched_terms.length : 0;
+    const ai = Number(h.ai_score || 0);
+    return terms * 10 + ai;
+  };
+  const contentTypeLabel = function (ct) {
+    const key = "settings.sources.ct." + (ct || "news");
+    const val = t(key);
+    return val === key ? (ct || "news") : val;
+  };
+  const radarGroups = (function () {
+    const buckets = {};
+    hits.slice().sort(function (a, b) { return hitMatchScore(b) - hitMatchScore(a); }).forEach(function (h) {
+      const src = radarSourceMap[h.source_id] || {};
+      const ct = h.content_type || src.content_type || "news";
+      if (!buckets[ct]) buckets[ct] = [];
+      buckets[ct].push(h);
+    });
+    return Object.keys(buckets).sort(function (a, b) { return buckets[b].length - buckets[a].length; }).map(function (ct) {
+      return {type: ct, label: contentTypeLabel(ct), items: buckets[ct]};
+    });
+  })();
+  const topRadarHits = hits.slice().sort(function (a, b) { return hitMatchScore(b) - hitMatchScore(a); }).slice(0, 3);
 
   const onEvaluate = useCallback(async function () {
     setLoading(true);
@@ -2864,6 +4006,8 @@ function RadarTab() {
         rules_text: rulesText,
         since_hours: sinceHours,
         limit: 100,
+        source_ids: selectedSourceIds,
+        force_refresh: forceRefresh,
       });
       if (resp && resp.ok) {
         setHits(resp.items || resp.hits || []);
@@ -2873,7 +4017,7 @@ function RadarTab() {
         window.oaToast({level: "error", message: "evaluate failed: " + (resp && resp.detail || "")});
       }
     } finally { setLoading(false); }
-  }, [rulesText, sinceHours]);
+  }, [rulesText, sinceHours, selectedSourceIds, forceRefresh]);
 
   const onFillTemplate = useCallback(function () {
     setRulesText(function (prev) {
@@ -2954,13 +4098,84 @@ function RadarTab() {
     loadLibrary();
   }, [t, loadLibrary]);
 
+  const onRunHotRadar = useCallback(async function () {
+    if (!rulesText.trim()) {
+      window.oaToast({level: "warning", message: t("radar.save.empty")});
+      return;
+    }
+    if (!selectedTarget) {
+      window.oaToast({level: "warning", message: "请选择通知通道"});
+      return;
+    }
+    const channel = selectedTarget.channel_id || "";
+    const chat_id = selectedTarget.chat_id || "";
+    setPushing(true);
+    setRadarResult(null);
+    try {
+      if (!hits.length) await onEvaluate();
+      const resp = await api("POST", "/hot_radar/run", {
+        rules_text: rulesText,
+        targets: [{channel: channel, chat_id: chat_id}],
+        since_hours: sinceHours,
+        limit: 100,
+        source_ids: selectedSourceIds,
+        force_refresh: forceRefresh,
+        cooldown_s: 600,
+        title: "财经脉动雷达预警"
+      });
+      setRadarResult(resp || {});
+      window.oaToast({level: resp && resp.ok ? "success" : "error", message: resp && resp.ok ? "雷达预警已推送" : "预警失败"});
+    } finally { setPushing(false); }
+  }, [rulesText, selectedTarget, sinceHours, selectedSourceIds, forceRefresh, t, hits.length, onEvaluate]);
+
+  const onSaveRadarPlan = useCallback(async function () {
+    if (!rulesText.trim()) {
+      window.oaToast({level: "warning", message: t("radar.save.empty")});
+      return;
+    }
+    if (!selectedTarget) {
+      window.oaToast({level: "warning", message: "请选择通知通道"});
+      return;
+    }
+    setSavingRadarPlan(true);
+    try {
+      const resp = await api("PUT", "/radar-plan", {
+        rules_text: rulesText,
+        since_hours: sinceHours,
+        limit: 100,
+        source_ids: selectedSourceIds,
+        force_refresh: forceRefresh,
+        repeat: radarRepeat,
+        time: radarTime,
+        channel: selectedTarget.channel_id || "",
+        chat_id: selectedTarget.chat_id || "",
+        chat_name: selectedTarget.chat_name || selectedTarget.display_name || selectedTarget.alias || "",
+      });
+      if (resp && resp.ok) {
+        setRadarLocked(true);
+        window.oaToast({level: "success", message: "雷达定时扫描已保存并生效"});
+      } else {
+        window.oaToast({level: "error", message: "保存失败：" + ((resp && (resp.detail || resp.error)) || "unknown")});
+      }
+    } finally { setSavingRadarPlan(false); }
+  }, [rulesText, selectedTarget, sinceHours, selectedSourceIds, forceRefresh, radarRepeat, radarTime, t]);
+
+  const onUnlockRadarPlan = useCallback(async function () {
+    const resp = await api("POST", "/radar-plan/unlock", {});
+    if (resp && resp.ok) setRadarLocked(false);
+  }, []);
+
   return (
-    <div className="stack-layout">
-      {/* Rule editor on top — kept compact so the hit preview gets the
-          bulk of the vertical space. */}
-      <div className="card card--compact">
+    <div className="radar-workbench">
+      <div className="radar-left">
+      <div className="card">
+        <div className="oa-section-title">雷达预警工作台</div>
+        <div className="oa-hint radar-intro">填写规则、选择窗口和通道后即可试运行或推送；右侧预览独立滚动。</div>
+      </div>
+      <div className={"card card--compact" + (radarLocked ? " radar-card--locked" : "")}>
         <div className="oa-section-title">
-          {t("radar.editor.title")}
+          <span className="radar-title-text">{t("radar.editor.title")}</span>
+          {radarLocked ? <span className="radar-locked-badge">已锁定生效</span> : null}
           <span className="oa-section-title__actions">
             <button className="btn btn-sm" type="button" onClick={onFillTemplate} title={t("radar.template.tooltip")}>
               <Ico name="book"/> {t("radar.template")}
@@ -3008,17 +4223,19 @@ function RadarTab() {
             </div>
           </span>
         </div>
-        <div className="oa-hint" dangerouslySetInnerHTML={{__html: t("radar.editor.hintHtml")}}/>
+        <div className="oa-hint radar-rule-help" dangerouslySetInnerHTML={{__html: t("radar.editor.hintHtml")}}/>
         <textarea
           className="input"
-          style={{minHeight: 120, maxHeight: 180, resize: "vertical", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, lineHeight: 1.6}}
+          style={{resize: "vertical", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, lineHeight: 1.6}}
           value={rulesText}
+          disabled={radarLocked}
           onChange={function (e) { setRulesText(e.target.value); }}
           placeholder={RADAR_TEMPLATE}/>
         <div style={{display: "flex", gap: 8, marginTop: 10, alignItems: "center"}}>
           <span style={{fontSize: 11, color: "var(--text-muted)"}}>{t("radar.window")}</span>
           <select className="input" style={{width: 110, padding: "6px 8px"}}
                   value={sinceHours}
+                  disabled={radarLocked}
                   onChange={function (e) { setSinceHours(parseInt(e.target.value, 10) || 24); }}>
             <option value={6}>6h</option>
             <option value={24}>24h</option>
@@ -3034,7 +4251,66 @@ function RadarTab() {
         </div>
       </div>
 
-      {/* Hit preview at the bottom — fills remaining height */}
+      <div className={"card radar-exec-card" + (radarLocked ? " radar-card--locked" : "")}>
+        <div className="oa-section-title">
+          <span className="radar-title-text">预警执行</span>
+          {radarLocked ? <span className="radar-locked-badge">定时扫描生效中</span> : null}
+          <span className="oa-section-title__actions">
+            {radarLocked ? (
+              <button className="btn btn-sm" onClick={onUnlockRadarPlan}><Ico name="edit"/> 解锁编辑</button>
+            ) : null}
+            <button className="btn btn-sm btn-primary" disabled={pushing} onClick={onRunHotRadar}>
+              <Ico name="send"/> {pushing ? "推送中…" : "立即预警"}
+            </button>
+            <button className="btn btn-sm" disabled={savingRadarPlan || radarLocked} onClick={onSaveRadarPlan}>
+              <Ico name="bell"/> {savingRadarPlan ? "保存中…" : "保存定时扫描"}
+            </button>
+          </span>
+        </div>
+        <div style={{display: "grid", gridTemplateColumns: "1fr", gap: 10}}>
+          <label>
+            <span className="filter-bar__label">通知通道</span>
+            <ChannelPicker
+              channels={channels}
+              value={radarTargetKey}
+              disabled={radarLocked}
+              placeholder={channels.length ? "选择 IM 通道" : "暂无可用 IM 通道"}
+              onChange={function (_pick, key) { setRadarTargetKey(key); }}/>
+          </label>
+          <SourcePicker sources={sources} value={selectedSourceIds} onChange={setSelectedSourceIds} maxHeight={58} disabled={radarLocked} label="匹配数据源"/>
+          <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8}}>
+            <label>
+              <span className="filter-bar__label">扫描频率</span>
+              <select className="input" value={radarRepeat} disabled={radarLocked}
+                      onChange={function (e) { setRadarRepeat(e.target.value); }}>
+                <option value="every15">每 15 分钟</option>
+                <option value="hourly">每小时</option>
+                <option value="daily">每天固定时间</option>
+              </select>
+            </label>
+            <label>
+              <span className="filter-bar__label">固定时间</span>
+              <input className="input" type="time" value={radarTime} disabled={radarLocked || radarRepeat !== "daily"}
+                     onChange={function (e) { setRadarTime(e.target.value); }}/>
+            </label>
+          </div>
+          <label className="source-master-switch" style={{justifyContent: "flex-start"}}>
+            <input type="checkbox" checked={forceRefresh} disabled={radarLocked}
+                   onChange={function (e) { setForceRefresh(e.target.checked); }}/>
+            <span>强制拉取最新新闻</span>
+            <span style={{color: "var(--text-muted)"}}>最短间隔 5 分钟</span>
+          </label>
+          <div className="oa-hint radar-intro">立即预警会按所选数据源先验证命中，再直推 IM；定时扫描由 fin-pulse 自己执行，不再创建主程序计划。</div>
+          {radarResult && (
+            <div className="oa-hint" style={{padding: "8px 10px", background: "var(--bg-hover)", borderRadius: 8}}>
+              最近执行：{radarResult.ok ? "成功" : "失败"} · 命中 {((radarResult.result && radarResult.result.hits) || []).length || meta.total || 0} 条
+            </div>
+          )}
+        </div>
+      </div>
+      </div>
+
+      <div className="radar-right">
       <div className="card grow">
         <div className="oa-section-title">
           {t("radar.hits.title")}
@@ -3046,22 +4322,63 @@ function RadarTab() {
         <div className="card-body">
           {loading && hits.length === 0 && <div className="empty">{t("radar.evaluate.loading")}</div>}
           {!loading && hits.length === 0 && <div className="empty">{t("radar.hits.empty")}</div>}
-          {hits.map(function (h) {
-            return (
-              <div key={h.id || h.url}
-                   style={{padding: "10px 0", borderBottom: "1px solid var(--border)"}}>
-                <a href={h.url} target="_blank" rel="noopener noreferrer"
-                   style={{color: "var(--text)", fontSize: 13, fontWeight: 500, textDecoration: "none"}}>
-                  {h.title}
-                </a>
-                <div style={{fontSize: 11, color: "var(--text-muted)", marginTop: 4, display: "flex", gap: 8, alignItems: "center"}}>
-                  <span className="api-pill" style={{fontSize: 11, padding: "1px 8px"}}>{h.source_id}</span>
-                  <span>{fmtDate(h.fetched_at)}</span>
+          {!!hits.length && (
+            <>
+              <div className="radar-report-hero">
+                <div style={{display: "flex", alignItems: "center", gap: 8}}>
+                  <span className="api-pill" style={{background: "rgba(211,47,47,.10)", color: "var(--primary)"}}>
+                    <Ico name="radar"/> 雷达命中报表
+                  </span>
+                  <span style={{marginLeft: "auto", fontSize: 12, color: "var(--text-muted)"}}>按匹配度优先 · 按资讯类型分组</span>
                 </div>
+                <div className="radar-report-grid">
+                  <div className="radar-report-metric"><b>{hits.length}</b><span>命中资讯</span></div>
+                  <div className="radar-report-metric"><b>{radarGroups.length}</b><span>资讯类型</span></div>
+                  <div className="radar-report-metric"><b>{meta.since_hours}h</b><span>扫描窗口</span></div>
+                </div>
+                {!!topRadarHits.length && (
+                  <div style={{marginTop: 12}}>
+                    <div style={{fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 6}}>最高匹配度 Top 3</div>
+                    {topRadarHits.map(function (h, idx) {
+                      const src = radarSourceMap[h.source_id] || {};
+                      return (
+                        <div key={"top-" + (h.id || h.url || idx)} style={{fontSize: 12, color: "var(--text)", lineHeight: 1.6}}>
+                          {idx + 1}. {h.title} <span style={{color: "var(--text-muted)"}}>· {src.name || h.source_id} · 匹配 {hitMatchScore(h).toFixed(1)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            );
-          })}
+              {radarGroups.map(function (group) {
+                return (
+                  <section key={group.type} className="radar-report-section">
+                    <div className="oa-section-title" style={{marginBottom: 4}}>
+                      {group.label}
+                      <span className="oa-section-title__count">{group.items.length}</span>
+                    </div>
+                    {group.items.map(function (h) {
+                      const src = radarSourceMap[h.source_id] || {};
+                      const terms = Array.isArray(h.matched_terms) ? h.matched_terms : [];
+                      return (
+                        <div key={h.id || h.url} className="radar-hit-card">
+                          <a href={h.url} target="_blank" rel="noopener noreferrer" className="radar-hit-card__title">{h.title}</a>
+                          <div className="radar-hit-card__meta">
+                            <span className="api-pill" style={{fontSize: 11, padding: "1px 8px"}}>{src.name || h.source_id}</span>
+                            <span>匹配度 {hitMatchScore(h).toFixed(1)}</span>
+                            <span>{fmtDate(h.published_at || h.fetched_at)}</span>
+                            {terms.slice(0, 4).map(function (term) { return <span key={term} className="kw-tag">{term}</span>; })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </section>
+                );
+              })}
+            </>
+          )}
         </div>
+      </div>
       </div>
 
       {/* AI-suggest modal */}
@@ -3166,26 +4483,44 @@ const ASK_TOOLS = [
   },
 ];
 
-function AskTab() {
+function AgentToolsHint() {
   const t = useT();
+  const featured = ASK_TOOLS.filter(function (tool) {
+    return ["fin_pulse_create", "fin_pulse_search_news", "fin_pulse_settings_set"].indexOf(tool.name) >= 0;
+  });
   return (
-    <div>
-      <div className="card">
-        <div className="card-title">{t("ask.title")}</div>
-        <div style={{fontSize: 12, color: "var(--text-muted)"}}>{t("ask.intro")}</div>
+    <Collapsible title={t("ask.title")} badge={ASK_TOOLS.length}>
+      <div className="oa-hint" style={{marginBottom: 10}}>{t("ask.intro")}</div>
+      <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10, marginBottom: 10}}>
+        {featured.map(function (tool) {
+          return (
+            <div key={"featured-" + tool.name} className="card" style={{margin: 0, padding: 12}}>
+              <code style={{fontSize: 12, fontWeight: 700, color: "var(--primary)"}}>{tool.name}</code>
+              <div style={{fontSize: 12, color: "var(--text-muted)", margin: "6px 0 10px"}}>{tool.desc_zh}</div>
+              <button className="btn btn-sm" type="button"
+                      onClick={function () {
+                        copyText(tool.prompt_zh);
+                        window.oaToast({level: "success", message: _i18n.t("ask.copied")});
+                      }}>
+                <Ico name="copy"/> {t("ask.copy.prompt")}
+              </button>
+            </div>
+          );
+        })}
       </div>
-      <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 12}}>
+      <Collapsible title="完整工具 JSON" badge={ASK_TOOLS.length}>
+        <div className="agent-tool-grid">
         {ASK_TOOLS.map(function (tool) {
           return (
-            <div key={tool.name} className="card" style={{margin: 0}}>
+            <div key={tool.name} className="card agent-tool-card">
               <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6}}>
                 <code style={{fontSize: 13, fontWeight: 600, color: "var(--primary)"}}>{tool.name}</code>
               </div>
               <div style={{fontSize: 12, color: "var(--text-muted)", marginBottom: 8}}>{tool.desc_zh}</div>
-              <pre style={{background: "var(--bg-hover)", padding: "8px 10px", borderRadius: 6, fontSize: 11, overflowX: "auto", margin: 0}}>
+              <pre className="agent-tool-json">
                 {JSON.stringify(tool.sample, null, 2)}
               </pre>
-              <div style={{display: "flex", gap: 6, marginTop: 10}}>
+              <div className="agent-tool-actions">
                 <button className="btn btn-sm"
                         onClick={function () {
                           copyText(tool.prompt_zh);
@@ -3205,7 +4540,8 @@ function AskTab() {
           );
         })}
       </div>
-    </div>
+      </Collapsible>
+    </Collapsible>
   );
 }
 
@@ -3254,25 +4590,44 @@ function CodeBlock(props) {
    underlying rows still live alongside other host-managed schedules —
    we just skip the redirect hand-off. */
 const SCHEDULE_TEMPLATES = {
-  morning:  {mode: "daily_brief", session: "morning", cron: "0 8 * * *",   since_hours: 12, top_k: 20, name: "fin-pulse morning"},
-  noon:     {mode: "daily_brief", session: "noon",    cron: "30 12 * * *", since_hours: 12, top_k: 15, name: "fin-pulse noon"},
-  evening:  {mode: "daily_brief", session: "evening", cron: "0 19 * * *",  since_hours: 12, top_k: 20, name: "fin-pulse evening"},
-  radar:    {mode: "hot_radar",                       cron: "*/15 * * * *", since_hours: 24, limit: 100, cooldown_s: 600, name: "fin-pulse radar"},
+  morning:  {mode: "daily_brief", session: "morning", time: "08:00", repeat: "daily",    since_hours: 12, top_k: 20, name: "fin-pulse morning brief"},
+  noon:     {mode: "daily_brief", session: "noon",    time: "12:30", repeat: "daily",    since_hours: 6,  top_k: 15, name: "fin-pulse noon brief"},
+  evening:  {mode: "daily_brief", session: "evening", time: "19:00", repeat: "daily",    since_hours: 12, top_k: 20, name: "fin-pulse evening brief"},
+  radar:    {mode: "hot_radar",                       time: "09:00", repeat: "every15", since_hours: 24, limit: 100, cooldown_s: 600, name: "fin-pulse radar alert"},
 };
+
+function scheduleCronFromForm(timeValue, repeatValue) {
+  var time = String(timeValue || "09:00");
+  var parts = time.split(":");
+  var hour = Math.max(0, Math.min(23, parseInt(parts[0] || "9", 10) || 9));
+  var minute = Math.max(0, Math.min(59, parseInt(parts[1] || "0", 10) || 0));
+  if (repeatValue === "every15") return "*/15 * * * *";
+  if (repeatValue === "hourly") return minute + " * * * *";
+  if (repeatValue === "weekdays") return minute + " " + hour + " * * 1-5";
+  if (repeatValue === "weekly") return minute + " " + hour + " * * 1";
+  return minute + " " + hour + " * * *";
+}
+
+function scheduleRepeatLabel(value) {
+  return ({
+    daily: "每天",
+    weekdays: "工作日",
+    weekly: "每周一",
+    hourly: "每小时",
+    every15: "每 15 分钟",
+  })[value] || value;
+}
 
 function ScheduleDialog(props) {
   const t = useT();
   const tpl = props.template || "morning";
-  const preset = SCHEDULE_TEMPLATES[tpl] || SCHEDULE_TEMPLATES.morning;
-  const channels = props.channels || [];
+  const preset = Object.assign({}, SCHEDULE_TEMPLATES[tpl] || SCHEDULE_TEMPLATES.morning, props.config || {});
+  const channels = normalizeChannels(props.channels || []);
   const firstChannel = channels[0] || {};
-  const tzDisplay = (function () {
-    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) { return ""; }
-  })();
-
   const [form, setForm] = useState({
     name: preset.name,
-    cron: preset.cron,
+    time: preset.time || "09:00",
+    repeat: preset.repeat || "daily",
     channel: firstChannel.channel_id || "",
     chat_id: firstChannel.chat_id || "",
     rules_text: tpl === "radar" ? (props.defaultRulesText || "+美联储") : "",
@@ -3284,22 +4639,10 @@ function ScheduleDialog(props) {
     setForm(function (prev) { return Object.assign({}, prev, {[key]: val}); });
   };
 
-  const onChannelChange = function (e) {
-    const cid = e.target.value;
-    const pick = channels.find(function (c) { return c.channel_id === cid; }) || {};
-    setForm(function (prev) {
-      return Object.assign({}, prev, {channel: cid, chat_id: pick.chat_id || prev.chat_id});
-    });
-  };
-
   const onSubmit = async function () {
     if (submitting) return;
     if (!form.name.trim()) {
       window.oaToast({level: "warning", message: t("settings.schedules.dialog.name")});
-      return;
-    }
-    if (!form.cron.trim()) {
-      window.oaToast({level: "warning", message: t("settings.schedules.dialog.cron")});
       return;
     }
     if (!form.channel || !form.chat_id) {
@@ -3311,7 +4654,8 @@ function ScheduleDialog(props) {
       const body = {
         mode: preset.mode,
         name: form.name.trim(),
-        cron: form.cron.trim(),
+        cron: scheduleCronFromForm(form.time, form.repeat),
+        repeat: form.repeat,
         channel: form.channel,
         chat_id: form.chat_id,
         enabled: !!form.enabled,
@@ -3320,6 +4664,8 @@ function ScheduleDialog(props) {
         body.session = preset.session;
         body.since_hours = preset.since_hours;
         body.top_k = preset.top_k;
+        body.title = preset.title || preset.label || "";
+        body.source_ids = Array.isArray(preset.source_ids) ? preset.source_ids : [];
         body.lang = "zh";
       } else {
         body.rules_text = form.rules_text || "";
@@ -3338,23 +4684,26 @@ function ScheduleDialog(props) {
   };
 
   const hasChannels = channels.length > 0;
-  const titleLabel = t("settings.schedules.tpl." + tpl);
+  const titleLabel = (props.config && (props.config.label || props.config.title)) || t("settings.schedules.tpl." + tpl);
+  const selectedChannelValue = (function () {
+    var idx = channels.findIndex(function (c) { return c.channel_id === form.channel && (c.chat_id || "") === (form.chat_id || ""); });
+    if (idx < 0) return "";
+    var pick = channels[idx];
+    return channelKey(pick);
+  })();
   const channelLabel = (function () {
-    const pick = channels.find(function (c) { return c.channel_id === form.channel; });
+    const pick = channels.find(function (c) { return c.channel_id === form.channel && (c.chat_id || "") === (form.chat_id || ""); });
     if (!pick) return "—";
     return formatChannelLabel(pick);
   })();
-  const previewMsg = tfmt(
-    t("settings.schedules.dialog.preview." + tpl),
-    {cron: form.cron || preset.cron, channel: channelLabel}
-  );
+  const cronPreview = scheduleCronFromForm(form.time, form.repeat);
   const typeLabel = preset.mode === "daily_brief"
     ? t("settings.schedules.dialog.type.digest")
     : t("settings.schedules.dialog.type.radar");
 
   return (
     <div className="confirm-mask" onClick={function () { props.onDone && props.onDone(false); }}>
-      <div className="confirm-dialog" style={{maxWidth: 560}} onClick={function (e) { e.stopPropagation(); }}>
+      <div className="confirm-dialog" style={{maxWidth: 620, width: "92vw"}} onClick={function (e) { e.stopPropagation(); }}>
         <div className="card-title" style={{marginBottom: 12}}>
           {tfmt(t("settings.schedules.dialog.title"), {template: titleLabel})}
         </div>
@@ -3368,18 +4717,46 @@ function ScheduleDialog(props) {
               <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>{t("settings.schedules.dialog.type")}</span>
               <div className="input" style={{background: "var(--bg-subtle, rgba(0,0,0,.03))", cursor: "not-allowed"}}>{typeLabel}</div>
             </div>
-            <div style={{display: "flex", flexDirection: "column", gap: 4}}>
-              <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>{t("settings.schedules.dialog.trigger")}</span>
-              <div className="input" style={{background: "var(--bg-subtle, rgba(0,0,0,.03))", cursor: "not-allowed"}}>{t("settings.schedules.dialog.trigger.cron")}</div>
-            </div>
+            <label style={{display: "flex", flexDirection: "column", gap: 4}}>
+              <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>执行时间点</span>
+              <input className="input" type="time" value={form.time}
+                     disabled={form.repeat === "every15"}
+                     onChange={function (e) { update("time", e.target.value); }}/>
+            </label>
           </div>
-          <label style={{display: "flex", flexDirection: "column", gap: 4}}>
-            <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>{t("settings.schedules.dialog.time")}</span>
-            <input className="input" value={form.cron} onChange={function (e) { update("cron", e.target.value); }} placeholder={preset.cron}/>
-            <span className="oa-hint" style={{fontSize: 11}}>
-              <a href="https://crontab.guru" target="_blank" rel="noreferrer">crontab.guru</a> · {t("settings.schedules.dialog.cron.hint")} · TZ: {tzDisplay || "host"}
-            </span>
-          </label>
+          <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10}}>
+            <label style={{display: "flex", flexDirection: "column", gap: 4}}>
+              <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>重复方式</span>
+              <select className="input" value={form.repeat} onChange={function (e) { update("repeat", e.target.value); }}>
+                {preset.mode === "hot_radar" ? (
+                  <>
+                    <option value="every15">每 15 分钟</option>
+                    <option value="hourly">每小时</option>
+                    <option value="daily">每天固定时间</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="daily">每天</option>
+                    <option value="weekdays">工作日</option>
+                    <option value="weekly">每周一</option>
+                  </>
+                )}
+              </select>
+            </label>
+            <label style={{display: "flex", flexDirection: "column", gap: 4}}>
+              <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>通知通道</span>
+              <ChannelPicker
+                channels={channels}
+                value={selectedChannelValue}
+                disabled={!hasChannels}
+                placeholder={hasChannels ? "选择一个 IM 通道" : t("settings.schedules.dialog.no_channel")}
+                onChange={function (pick) {
+                  setForm(function (prev) {
+                    return Object.assign({}, prev, {channel: pick.channel_id || "", chat_id: pick.chat_id || ""});
+                  });
+                }}/>
+            </label>
+          </div>
           {preset.mode === "hot_radar" && (
             <label style={{display: "flex", flexDirection: "column", gap: 4}}>
               <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>{t("settings.schedules.dialog.rules")}</span>
@@ -3388,25 +4765,10 @@ function ScheduleDialog(props) {
             </label>
           )}
           <div style={{display: "flex", flexDirection: "column", gap: 4}}>
-            <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>{t("settings.schedules.dialog.content")}</span>
+            <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>计划预览</span>
             <div className="oa-hint" style={{fontSize: 12, padding: "8px 10px", background: "var(--bg-subtle, rgba(0,0,0,.03))", borderRadius: 6, color: "var(--text)"}}>
-              {previewMsg}
+              {form.name || preset.name} · {scheduleRepeatLabel(form.repeat)} · {form.repeat === "every15" ? "自动滚动扫描" : form.time} · {preset.since_hours || 24}h · Top {preset.top_k || preset.limit || 20} · {(preset.source_ids || []).length ? (preset.source_ids.length + " 个来源") : "全部来源"} · 写入主程序计划接口 · {channelLabel} · cron: {cronPreview}
             </div>
-          </div>
-          <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10}}>
-            <label style={{display: "flex", flexDirection: "column", gap: 4}}>
-              <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>{t("settings.schedules.dialog.channel")}</span>
-              <select className="input" value={form.channel} onChange={onChannelChange} disabled={!hasChannels}>
-                <option value="">{hasChannels ? "—" : t("settings.schedules.dialog.no_channel")}</option>
-                {channels.map(function (c) {
-                  return <option key={c.channel_id + ":" + (c.chat_id || "")} value={c.channel_id}>{formatChannelLabel(c)}</option>;
-                })}
-              </select>
-            </label>
-            <label style={{display: "flex", flexDirection: "column", gap: 4}}>
-              <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>{t("settings.schedules.dialog.chat_id")}</span>
-              <input className="input" value={form.chat_id} onChange={function (e) { update("chat_id", e.target.value); }}/>
-            </label>
           </div>
           <label style={{display: "flex", alignItems: "center", gap: 8, userSelect: "none"}}>
             <input type="checkbox" checked={!!form.enabled}
@@ -3464,8 +4826,42 @@ function ContentTypePill(props) {
   return <span className={"ct-pill ct-pill--" + ct}>{label}</span>;
 }
 
+const SOURCE_CATEGORY_KEYS = ["all", "realtime", "news", "rank", "policy_data", "other"];
+
+const LEGACY_SOURCE_DEFS = {
+  xueqiu: {id: "xueqiu", display_zh: "雪球", display_en: "Xueqiu", kind: "newsnow", content_type: "hot_stock", group: "newsnow", fetcher_id: "newsnow", probe_target: "newsnow", default_enabled: true},
+  newsnow: {id: "newsnow", display_zh: "NewsNow 聚合", display_en: "NewsNow", kind: "newsnow", content_type: "news", group: "newsnow", fetcher_id: "newsnow", probe_target: "newsnow", default_enabled: true}
+};
+
 function _sourceDisplayName(s) {
-  return (s && (s.display_zh || s.display_en || s.name || s.id)) || "";
+  if (!s) return "";
+  var legacy = LEGACY_SOURCE_DEFS[s.id || ""];
+  return s.display_zh || s.display_en || s.name || (legacy && legacy.display_zh) || s.id || "";
+}
+
+function _sourceTypeLabel(s, t) {
+  if (!s) return "";
+  var ct = s.content_type || "";
+  if (ct && ct !== "all") return t("settings.sources.ct." + ct) || ct;
+  var cat = _sourceCategoryKey(s);
+  return cat && cat !== "all" ? (t("today.sources.cat." + cat) || cat) : "";
+}
+
+function _legacySourceDefinition(sourceId) {
+  var legacy = LEGACY_SOURCE_DEFS[sourceId || ""];
+  if (legacy) return Object.assign({}, legacy);
+  return {id: sourceId, display_zh: sourceId, name: sourceId, content_type: "other", group: "other"};
+}
+
+function _sourceCategoryKey(s) {
+  var id = String((s && s.id) || "");
+  var newsnowId = String((s && s.newsnow_id) || "");
+  var ct = String((s && s.content_type) || "");
+  if (ct === "flash") return "realtime";
+  if (ct === "hot_stock" || /(^|-)hot($|-)/.test(id) || ["baidu", "weibo", "zhihu", "toutiao", "bilibili"].indexOf(newsnowId) >= 0) return "rank";
+  if (ct === "policy" || ct === "data" || ct === "filing") return "policy_data";
+  if (ct === "news") return "news";
+  return "other";
 }
 
 function _probeSummaryLabel(summary, t) {
@@ -3528,15 +4924,17 @@ function _customFeedDisplayName(f, idx) {
 }
 
 function SourceChip(props) {
+  const t = useT();
   var s = props.source || {};
   var enabled = props.enabled !== false;
   var active = !!props.active;
   var cls = "source-chip " + (enabled ? "source-chip--on" : "source-chip--off") + (active ? " source-chip--active" : "");
+  var typeLabel = _sourceTypeLabel(s, t);
   return (
     <button type="button" className={cls} onClick={props.onClick} title={props.title || _sourceDisplayName(s)}>
       <span className="source-chip__dot"/>
       <span>{_sourceDisplayName(s)}</span>
-      {props.showType !== false && <span className="source-chip__type">{s.content_type || s.group || s.kind || ""}</span>}
+      {props.showType !== false && typeLabel && <span className="source-chip__type">{typeLabel}</span>}
     </button>
   );
 }
@@ -3639,12 +5037,7 @@ function SettingsForm(props) {
   const t = useT();
   const [config, setConfig] = useState({});
   const [loaded, setLoaded] = useState(false);
-  const [channels, setChannels] = useState([]);
-  const [schedules, setSchedules] = useState([]);
   const [savingKey, setSavingKey] = useState("");
-  const [scheduleDialog, setScheduleDialog] = useState(null);
-  const [channelsRefreshing, setChannelsRefreshing] = useState(false);
-  const [rowPending, setRowPending] = useState({});
 
   const [allSources, setAllSources] = useState([]);
   const [probeStates, setProbeStates] = useState({});
@@ -3665,22 +5058,12 @@ function SettingsForm(props) {
 
   const reloadAll = useCallback(async function (opts) {
     const silent = !!(opts && opts.silent);
-    const [cfg, ch, sched, srcResp] = await Promise.all([
+    const [cfg, srcResp] = await Promise.all([
       api("GET", "/config"),
-      api("GET", "/scheduler/channels"),
-      api("GET", "/schedules"),
       api("GET", "/sources"),
     ]);
     var cfgData = (cfg && cfg.config) || {};
     setConfig(cfgData);
-    let list = (ch && Array.isArray(ch.channels)) ? ch.channels : [];
-    if (!list.length) {
-      const fb = await api("GET", "/available-channels");
-      const names = (fb && fb.channels) || [];
-      list = names.map(function (n) { return { channel_id: String(n), chat_id: "" }; });
-    }
-    setChannels(list);
-    setSchedules((sched && sched.items) || []);
     if (srcResp && srcResp.ok && Array.isArray(srcResp.items) && srcResp.items.length) {
       setAllSources(srcResp.items);
     } else {
@@ -3691,26 +5074,6 @@ function SettingsForm(props) {
     if (!silent) return;
   }, []);
   useEffect(function () { reloadAll(); }, [reloadAll]);
-
-  const reloadSchedules = useCallback(async function () {
-    const sched = await api("GET", "/schedules");
-    setSchedules((sched && sched.items) || []);
-  }, []);
-
-  const onRefreshChannels = useCallback(async function () {
-    setChannelsRefreshing(true);
-    try {
-      const ch = await api("GET", "/scheduler/channels");
-      let list = (ch && Array.isArray(ch.channels)) ? ch.channels : [];
-      if (!list.length) {
-        const fb = await api("GET", "/available-channels");
-        const names = (fb && fb.channels) || [];
-        list = names.map(function (n) { return { channel_id: String(n), chat_id: "" }; });
-      }
-      setChannels(list);
-      window.oaToast({level: "success", message: t("settings.channels.refreshed")});
-    } finally { setChannelsRefreshing(false); }
-  }, [t]);
 
   const setCfgField = function (key, value) {
     setConfig(function (prev) { return Object.assign({}, prev, {[key]: value}); });
@@ -3724,60 +5087,6 @@ function SettingsForm(props) {
     }
   }, [t]);
 
-  const onSendTest = useCallback(async function (ch) {
-    const channel = (ch && ch.channel_id) || "";
-    const defaultChatId = (ch && ch.chat_id) || "";
-    const chat_id = window.prompt("chat_id for " + channel, defaultChatId);
-    if (!chat_id) return;
-    const resp = await api("POST", "/dispatch/send", {
-      channel: channel, chat_id: chat_id,
-      content: "[fin-pulse] channel test — " + new Date().toISOString(),
-      cooldown_s: 0,
-    });
-    window.oaToast({
-      level: resp && resp.ok ? "success" : "error",
-      message: resp && resp.ok ? "sent" : "failed: " + (resp && resp.dispatch && resp.dispatch.error || ""),
-    });
-  }, []);
-
-  const markRow = function (id, key, val) {
-    setRowPending(function (prev) {
-      const copy = Object.assign({}, prev);
-      copy[id] = Object.assign({}, prev[id] || {}, {[key]: val});
-      return copy;
-    });
-  };
-  const onTriggerRow = useCallback(async function (s) {
-    markRow(s.id, "run", true);
-    try {
-      const resp = await api("POST", "/schedules/" + s.id + "/trigger");
-      window.oaToast({
-        level: resp && resp.ok ? "success" : "error",
-        message: resp && resp.ok ? t("settings.schedules.row.triggered") : "failed",
-      });
-    } finally { markRow(s.id, "run", false); }
-  }, [t]);
-  const onToggleRow = useCallback(async function (s) {
-    markRow(s.id, "toggle", true);
-    try {
-      const resp = await api("POST", "/schedules/" + s.id + "/toggle");
-      if (resp && resp.ok) await reloadSchedules();
-      else window.oaToast({level: "error", message: "toggle failed"});
-    } finally { markRow(s.id, "toggle", false); }
-  }, [reloadSchedules]);
-  const onDeleteRow = useCallback(async function (s) {
-    if (!window.confirm(t("settings.schedules.row.confirm_delete"))) return;
-    markRow(s.id, "del", true);
-    try {
-      const resp = await api("DELETE", "/schedules/" + s.id);
-      if (resp && resp.ok) {
-        window.oaToast({level: "success", message: t("settings.schedules.row.deleted")});
-        await reloadSchedules();
-      } else {
-        window.oaToast({level: "error", message: "delete failed"});
-      }
-    } finally { markRow(s.id, "del", false); }
-  }, [reloadSchedules, t]);
 
   /* ── Source toggle ── */
   const onToggleSource = useCallback(async function (sid) {
@@ -3792,7 +5101,7 @@ function SettingsForm(props) {
   const onProbeSource = useCallback(async function (sid) {
     var srcDef = allSources.find(function (s) { return s.id === sid; });
     var isNewsNow = srcDef && srcDef.kind === "newsnow";
-    var endpoint = isNewsNow ? "/ingest/source/newsnow" : "/ingest/source/" + sid;
+    var endpoint = "/ingest/source/" + encodeURIComponent(sid);
     setProbingIds(function (p) { return Object.assign({}, p, {[sid]: true}); });
     try {
       var resp = await api("POST", endpoint);
@@ -3926,8 +5235,6 @@ function SettingsForm(props) {
     newsnowMode === "public" ? NEWSNOW_PUBLIC_MIN_INTERVAL_S : 0,
     rawMinInterval
   ));
-  var radarRules = String(config["radar_rules"] || "+美联储 +降息");
-  var hasAnyChannel = channels.length > 0;
 
   return (
     <div>
@@ -4144,119 +5451,15 @@ function SettingsForm(props) {
         </div>
       </div>
 
-      {/* ════════ IM Channels ════════ */}
-      <div className="card">
-        <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8}}>
-          <div className="card-title" style={{margin: 0}}>{t("settings.channels.title")}</div>
-          <button className="btn btn-sm" type="button"
-                  disabled={channelsRefreshing}
-                  onClick={onRefreshChannels}>
-            <Ico name="refresh"/> {t("settings.channels.refresh")}
-          </button>
-        </div>
-        {!hasAnyChannel ? (
-          <div className="oa-config-banner" role="alert">
-            <span className="oa-icon oa-config-banner__icon"><Ico name="warn"/></span>
-            <div className="oa-config-banner__text">
-              <strong>{t("banner.noChannel.title")}</strong>
-              <div style={{fontSize: 12, color: "var(--text)", marginTop: 2}}>
-                {t("banner.noChannel.desc")}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div style={{display: "flex", flexWrap: "wrap", gap: 8}}>
-            {channels.map(function (ch, idx) {
-              const key = (ch.channel_id || "") + ":" + (ch.chat_id || idx);
-              return (
-                <div key={key} style={{display: "flex", alignItems: "center", gap: 6}}>
-                  <span className="api-pill">{formatChannelLabel(ch)}</span>
-                  <button className="btn btn-sm" onClick={function () { onSendTest(ch); }}>
-                    <Ico name="send"/> {t("settings.channels.send")}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* ════════ Scheduled Tasks ════════ */}
-      <div className="card">
-        <div className="card-title" style={{marginBottom: 6}}>{t("settings.schedules.title")}</div>
-        <div className="oa-hint" style={{marginBottom: 10}}>{t("settings.schedules.desc")}</div>
-        <div style={{display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8, marginBottom: 14}}>
-          {["morning", "noon", "evening", "radar"].map(function (tpl) {
-            return (
-              <button key={tpl}
-                      className="btn"
-                      type="button"
-                      style={{display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4, padding: "10px 12px", textAlign: "left"}}
-                      onClick={function () { setScheduleDialog(tpl); }}>
-                <span style={{fontWeight: 600}}>
-                  <Ico name={tpl === "radar" ? "target" : "bell"}/> {t("settings.schedules.tpl." + tpl)}
-                </span>
-                <span className="oa-hint" style={{fontSize: 11}}>{t("settings.schedules.tpl." + tpl + ".desc")}</span>
-              </button>
-            );
-          })}
-        </div>
-        {schedules.length === 0 ? (
-          <div className="empty">{t("settings.schedules.none")}</div>
-        ) : (
-          <div>
-            {schedules.map(function (s) {
-              const pending = rowPending[s.id] || {};
-              const enabled = s.enabled !== false;
-              return (
-                <div key={s.id}
-                     style={{display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid var(--border)", flexWrap: "wrap"}}>
-                  <span className="api-pill">{s.name || s.id}</span>
-                  <span style={{fontSize: 11, color: "var(--text-muted)"}}>{s.cron || s.cron_expression || ""}</span>
-                  <span className={"api-pill " + (enabled ? "" : "api-pill--missing")} style={{fontSize: 11}}>
-                    {enabled ? t("settings.schedules.row.enabled") : t("settings.schedules.row.disabled")}
-                  </span>
-                  <span style={{flex: 1, minWidth: 8}}/>
-                  <span style={{fontSize: 11, color: "var(--text-muted)"}}>
-                    {s.channel || s.channel_id || ""}{s.chat_id ? " · " + s.chat_id : ""}
-                  </span>
-                  <button className="btn btn-sm"
-                          disabled={!!pending.run}
-                          onClick={function () { onTriggerRow(s); }}>
-                    <Ico name="play"/> {t("settings.schedules.row.run")}
-                  </button>
-                  <button className="btn btn-sm"
-                          disabled={!!pending.toggle}
-                          onClick={function () { onToggleRow(s); }}>
-                    <Ico name={enabled ? "pause" : "play"}/>{" "}
-                    {enabled ? t("settings.schedules.row.pause") : t("settings.schedules.row.resume")}
-                  </button>
-                  <button className="btn btn-sm"
-                          disabled={!!pending.del}
-                          onClick={function () { onDeleteRow(s); }}>
-                    <Ico name="trash"/> {t("settings.schedules.row.delete")}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {scheduleDialog ? (
-          <ScheduleDialog
-            template={scheduleDialog}
-            channels={channels}
-            defaultRulesText={radarRules}
-            onDone={function (ok) {
-              setScheduleDialog(null);
-              if (ok) reloadAll();
-            }}/>
-        ) : null}
-      </div>
-
       {/* ════════ LLM ════════ */}
       <div className="card">
         <div className="card-title">{t("settings.llm.title")}</div>
         <div className="oa-hint">{t("settings.llm.hint")}</div>
+      </div>
+
+      {/* Agent tools are hints for the host chat, not a standalone plugin tab. */}
+      <div className="card">
+        <AgentToolsHint />
       </div>
     </div>
   );
@@ -4324,8 +5527,7 @@ function App() {
         {activeTab === 0 && <TodayTab />}
         {activeTab === 1 && <DigestsTab />}
         {activeTab === 2 && <RadarTab />}
-        {activeTab === 3 && <AskTab />}
-        {activeTab === 4 && <SettingsTab goToTab={setActiveTab} />}
+        {activeTab === 3 && <SettingsTab goToTab={setActiveTab} />}
       </div>
       <ConfirmHost />
     </div>
