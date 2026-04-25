@@ -802,14 +802,32 @@ class Plugin(PluginBase):
                 "Do not add commentary."
             )
             try:
-                response = await brain.chat(
-                    messages=[{"role": "user", "content": user_payload}],
-                    system=system_prompt,
-                    temperature=0.1,
-                    max_tokens=1800,
-                )
+                if hasattr(brain, "think_lightweight"):
+                    response = await brain.think_lightweight(
+                        prompt=user_payload,
+                        system=system_prompt,
+                        max_tokens=1800,
+                    )
+                elif hasattr(brain, "think"):
+                    response = await brain.think(
+                        prompt=user_payload,
+                        system=system_prompt,
+                        max_tokens=1800,
+                    )
+                elif hasattr(brain, "chat"):
+                    response = await brain.chat(
+                        messages=[{"role": "user", "content": user_payload}],
+                        system=system_prompt,
+                        temperature=0.1,
+                        max_tokens=1800,
+                    )
+                else:
+                    return {
+                        "ok": False,
+                        "error": "brain has no think_lightweight/think/chat method",
+                    }
             except Exception as exc:  # noqa: BLE001
-                logger.warning("translate brain.chat failed: %s", exc)
+                logger.warning("translate brain call failed: %s", exc)
                 return {"ok": False, "error": f"brain error: {exc}"}
             raw_text = response if isinstance(response, str) else getattr(response, "content", None)
             if raw_text is None and isinstance(response, dict):

@@ -775,6 +775,7 @@ const I18N_DICT = {
     "settings.sources.nn.mode": "模式",
     "settings.sources.nn.floor": "最小间隔",
     "settings.sources.nn.floor.unit": "秒",
+    "settings.sources.nn.publicHint": "公共服务：https://newsnow.busiyi.world/api/s · 开源作者自费维护（v0.0.39），建议最小间隔不低于 {floor} 秒，避免过载。",
     "settings.translation.title": "AI 翻译",
     "settings.translation.desc": "资讯卡片的翻译按钮会调用 OpenAkita 大脑，将标题和摘要翻译为目标语言。",
     "settings.translation.enabled": "启用卡片翻译",
@@ -1048,6 +1049,7 @@ const I18N_DICT = {
     "settings.sources.nn.mode": "Mode",
     "settings.sources.nn.floor": "Min interval",
     "settings.sources.nn.floor.unit": "sec",
+    "settings.sources.nn.publicHint": "Public service: https://newsnow.busiyi.world/api/s · maintained at the author's cost (v0.0.39). Keep the interval at least {floor}s to avoid overload.",
     "settings.translation.title": "AI Translation",
     "settings.translation.desc": "The translate button on news cards calls the OpenAkita Brain to translate titles and summaries.",
     "settings.translation.enabled": "Enable card translation",
@@ -1136,6 +1138,28 @@ const _i18n = (window.OpenAkitaI18n && window.OpenAkitaI18n.api) || {
   t: function (k) { var d = I18N_DICT.zh; return (d && d[k]) || k; },
   locale: function () { return "zh"; },
 };
+
+const SOURCE_FALLBACK = [
+  {id:"wallstreetcn", display_zh:"华尔街见闻", display_en:"WallStreet CN", kind:"newsnow", content_type:"flash", newsnow_id:"wallstreetcn", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"wallstreetcn-news", display_zh:"华尔街见闻·新闻", display_en:"WallStreet CN News", kind:"newsnow", content_type:"news", newsnow_id:"wallstreetcn-news", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"cls", display_zh:"财联社电报", display_en:"CLS Telegraph", kind:"newsnow", content_type:"flash", newsnow_id:"cls", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"cls-depth", display_zh:"财联社·深度", display_en:"CLS In-depth", kind:"newsnow", content_type:"news", newsnow_id:"cls-depth", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"jin10", display_zh:"金十数据", display_en:"Jin10", kind:"newsnow", content_type:"flash", newsnow_id:"jin10", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"gelonghui", display_zh:"格隆汇", display_en:"Gelonghui", kind:"newsnow", content_type:"news", newsnow_id:"gelonghui", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"xueqiu-hotstock", display_zh:"雪球·热门股票", display_en:"Xueqiu Hot Stocks", kind:"newsnow", content_type:"hot_stock", newsnow_id:"xueqiu-hotstock", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"fastbull", display_zh:"快牛快讯", display_en:"Fastbull Express", kind:"newsnow", content_type:"flash", newsnow_id:"fastbull", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"mktnews", display_zh:"市场新闻", display_en:"MktNews", kind:"newsnow", content_type:"flash", newsnow_id:"mktnews", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"eastmoney", display_zh:"东方财富", display_en:"EastMoney", kind:"direct", content_type:"news", default_enabled:true, group:"direct", fetcher_id:"eastmoney", probe_target:"eastmoney"},
+  {id:"pbc_omo", display_zh:"央行公开市场", display_en:"PBC OMO", kind:"direct", content_type:"policy", default_enabled:true, group:"direct", fetcher_id:"pbc_omo", probe_target:"pbc_omo"},
+  {id:"yicai", display_zh:"第一财经", display_en:"Yicai", kind:"direct", content_type:"news", default_enabled:true, group:"direct", fetcher_id:"yicai", probe_target:"yicai"},
+  {id:"nbd", display_zh:"每日经济新闻", display_en:"National Business Daily", kind:"direct", content_type:"news", default_enabled:true, group:"direct", fetcher_id:"nbd", probe_target:"nbd"},
+  {id:"stcn", display_zh:"证券时报", display_en:"Securities Times", kind:"direct", content_type:"news", default_enabled:true, group:"direct", fetcher_id:"stcn", probe_target:"stcn"},
+  {id:"nbs", display_zh:"国家统计局", display_en:"NBS of China", kind:"rss", content_type:"data", default_enabled:true, group:"builtin_rss", fetcher_id:"nbs", probe_target:"nbs"},
+  {id:"fed_fomc", display_zh:"美联储 FOMC", display_en:"Fed FOMC", kind:"rss", content_type:"policy", default_enabled:true, group:"builtin_rss", fetcher_id:"fed_fomc", probe_target:"fed_fomc"},
+  {id:"sec_edgar", display_zh:"美国 SEC EDGAR", display_en:"SEC EDGAR", kind:"rss", content_type:"filing", default_enabled:true, group:"builtin_rss", fetcher_id:"sec_edgar", probe_target:"sec_edgar"},
+  {id:"rss_generic", display_zh:"自定义 RSS", display_en:"Custom RSS", kind:"rss", content_type:"custom", default_enabled:true, group:"custom_rss", fetcher_id:"rss_generic", probe_target:"rss_generic"}
+];
+
 function useT() {
   const [, setTick] = useState(0);
   useEffect(function () {
@@ -1677,6 +1701,31 @@ function _aiBadgeClass(score) {
   return "ai-badge ai-badge--low";
 }
 
+function _itemSubSourceLabel(it, source) {
+  var raw = (it && it.raw) || {};
+  var ct = (source && source.content_type) || "";
+  if (raw.feed_name) return raw.feed_name;
+  if (raw.category) return raw.category;
+  if (raw.channel) return raw.channel;
+  if (raw.platform && raw.platform !== it.source_id) return raw.platform;
+  if (raw.via === "newsnow") {
+    if (ct === "hot_stock") return "榜单";
+    if (ct === "flash") return "实时";
+  }
+  if (raw.via) return raw.via;
+  return "";
+}
+
+function _itemMetricPills(it) {
+  var raw = (it && it.raw) || {};
+  var pills = [];
+  var rank = raw.rank || raw.order || raw.index;
+  if (rank !== undefined && rank !== null && rank !== "") pills.push("No." + rank);
+  var heat = raw.hot || raw.heat || raw.hot_value || raw.hotValue || raw.score;
+  if (heat !== undefined && heat !== null && heat !== "") pills.push("热度 " + heat);
+  return pills;
+}
+
 /* ── HTML report export ── */
 async function exportHtmlReport(items, sourcesMap, filters, t) {
   var now = new Date();
@@ -1794,6 +1843,8 @@ function NewsCardCompact(props) {
   var showingTranslation = tr && tr.showing;
   var score = (typeof it.ai_score === "number") ? it.ai_score.toFixed(1) : "-";
   var srcName = _sourceDisplayName(srcDef) || it.source_id || "";
+  var subSource = _itemSubSourceLabel(it, srcDef);
+  var metricPills = _itemMetricPills(it);
   var tags = [];
   try { tags = JSON.parse(it.ai_tags_json || "[]"); } catch (_) {}
   var titleText = showingTranslation ? (tr.title_translated || it.title) : it.title;
@@ -1803,6 +1854,7 @@ function NewsCardCompact(props) {
       <div className="news-card__header">
         <span className={_sourcePillClass(srcDef)}>{srcName}</span>
         {srcDef && srcDef.content_type && <ContentTypePill type={srcDef.content_type}/>}
+        {subSource && <span className="kw-tag">{subSource}</span>}
         <span className="news-card__time">{fmtDate(it.fetched_at)}</span>
       </div>
       <a href={it.url} target="_blank" rel="noopener noreferrer" className="news-card__title">
@@ -1816,6 +1868,9 @@ function NewsCardCompact(props) {
       <div className="news-card__footer">
         {tags.slice(0, 4).map(function (tg, i) {
           return <span key={i} className="kw-tag">{tg}</span>;
+        })}
+        {metricPills.map(function (label, i) {
+          return <span key={"m" + i} className="api-pill api-pill--missing">{label}</span>;
         })}
         <span style={{flex: 1}}/>
         <span className={_aiBadgeClass(it.ai_score)}>AI {score}</span>
@@ -1843,7 +1898,7 @@ function TodayTab() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState({ window: 24, minScore: 0, sort: "time" });
-  const [focusedSource, setFocusedSource] = useState("");
+  const [focusedSources, setFocusedSources] = useState([]);
   const [keyword, setKeyword] = useState("");
   const [ingesting, setIngesting] = useState(false);
   const [sources, setSources] = useState([]);
@@ -1867,19 +1922,22 @@ function TodayTab() {
     Promise.all([api("GET", "/sources"), api("GET", "/config")]).then(function (resps) {
       if (cancelled) return;
       var srcResp = resps[0], cfgResp = resps[1];
-      if (srcResp && srcResp.ok && Array.isArray(srcResp.items)) {
-        var mapped = srcResp.items.map(function (s) {
+      var rawSources = (srcResp && srcResp.ok && Array.isArray(srcResp.items) && srcResp.items.length) ? srcResp.items : SOURCE_FALLBACK;
+      if (rawSources.length) {
+        var mapped = rawSources.map(function (s) {
           return {
             id: String(s.id || ""), name: String(s.display_zh || s.display_en || s.id || ""),
             kind: String(s.kind || ""), content_type: String(s.content_type || "news"),
             group: String(s.group || ""),
+            display_zh: String(s.display_zh || s.name || s.id || ""),
+            display_en: String(s.display_en || s.name || s.id || ""),
             fetcher_id: String(s.fetcher_id || s.id || ""),
             probe_target: String(s.probe_target || s.fetcher_id || s.id || ""),
             default_enabled: !!s.default_enabled
           };
         }).filter(function (s) { return s.id; });
         setSources(mapped);
-        setSourcesLoadError("");
+        setSourcesLoadError((srcResp && srcResp.ok) ? "" : t("today.sources.loadFail"));
       } else {
         setSourcesLoadError(t("today.sources.loadFail"));
       }
@@ -1905,6 +1963,12 @@ function TodayTab() {
 
   var sourcesMap = {};
   sources.forEach(function (s) { sourcesMap[s.id] = s; });
+  items.forEach(function (it) {
+    var sid = it.source_id || "";
+    if (sid && !sourcesMap[sid]) {
+      sourcesMap[sid] = {id: sid, name: sid, content_type: ""};
+    }
+  });
 
   const load = useCallback(async function () {
     setLoading(true);
@@ -2009,9 +2073,9 @@ function TodayTab() {
 
   const onIngestCurrent = useCallback(function () {
     setMenuOpen(false);
-    if (!focusedSource) return;
-    runIngest({ sourceId: focusedSource });
-  }, [runIngest, focusedSource]);
+    if (!focusedSources.length) return;
+    runIngest({ sourceId: focusedSources[0] });
+  }, [runIngest, focusedSources]);
 
   const onDismissDrawer = useCallback(function () { setDrawerOpen(false); }, []);
 
@@ -2067,6 +2131,22 @@ function TodayTab() {
   var displayItems = hasMatchRule ? matchedItems.concat(remainingItems) : items.slice();
   var sourceRank = {};
   sources.forEach(function (s, idx) { sourceRank[s.id] = idx; });
+  var fetchedSourceIds = [];
+  var fetchedSeen = {};
+  items.forEach(function (it) {
+    var sid = it.source_id || "unknown";
+    if (!fetchedSeen[sid]) {
+      fetchedSeen[sid] = true;
+      fetchedSourceIds.push(sid);
+    }
+  });
+  fetchedSourceIds.sort(function (a, b) {
+    var ca = items.filter(function (it) { return (it.source_id || "unknown") === a; }).length;
+    var cb = items.filter(function (it) { return (it.source_id || "unknown") === b; }).length;
+    return cb - ca;
+  });
+  var focusedSourceSet = {};
+  focusedSources.forEach(function (sid, idx) { focusedSourceSet[sid] = idx + 1; });
 
   var groupItemsBySource = function (list) {
     var grouped = {};
@@ -2079,8 +2159,11 @@ function TodayTab() {
   };
   var sortedGroupIds = function (grouped) {
     return Object.keys(grouped).sort(function (a, b) {
-      if (focusedSource && a === focusedSource) return -1;
-      if (focusedSource && b === focusedSource) return 1;
+      var fa = focusedSourceSet[a] || 0;
+      var fb = focusedSourceSet[b] || 0;
+      if (fa && fb) return fa - fb;
+      if (fa) return -1;
+      if (fb) return 1;
       var ra = Object.prototype.hasOwnProperty.call(sourceRank, a) ? sourceRank[a] : 999;
       var rb = Object.prototype.hasOwnProperty.call(sourceRank, b) ? sourceRank[b] : 999;
       var diff = ra - rb;
@@ -2097,14 +2180,21 @@ function TodayTab() {
     }
   }, []);
 
+  var toggleFocusedSource = useCallback(function (sid) {
+    setFocusedSources(function (prev) {
+      if (prev.indexOf(sid) >= 0) return prev.filter(function (x) { return x !== sid; });
+      return prev.concat([sid]);
+    });
+  }, []);
+
   var onExport = useCallback(async function () {
     try {
-      await exportHtmlReport(displayItems, sourcesMap, Object.assign({}, filters, {source: focusedSource, keyword: keyword}), t);
+      await exportHtmlReport(displayItems, sourcesMap, Object.assign({}, filters, {source: focusedSources.join(","), keyword: keyword}), t);
       window.oaToast({level: "success", message: t("today.export.done")});
     } catch (err) {
       window.oaToast({level: "error", message: tfmt(t("today.export.fail"), {err: (err && err.message) || String(err)})});
     }
-  }, [displayItems, sourcesMap, filters, focusedSource, keyword, t]);
+  }, [displayItems, sourcesMap, filters, focusedSources, keyword, t]);
 
   var onTranslateArticle = useCallback(async function (it) {
     if (!it || !it.id) return;
@@ -2144,6 +2234,11 @@ function TodayTab() {
     return ids.map(function (sid) {
       var groupItems = grouped[sid] || [];
       var srcDef = sourcesMap[sid] || {id: sid, name: sid, content_type: ""};
+      var subLabels = [];
+      groupItems.forEach(function (it) {
+        var label = _itemSubSourceLabel(it, srcDef);
+        if (label && subLabels.indexOf(label) < 0) subLabels.push(label);
+      });
       var collapseKey = keyPrefix + ":" + sid;
       var collapsed = !!collapsedGroups[collapseKey];
       return (
@@ -2160,7 +2255,8 @@ function TodayTab() {
             <span style={{fontSize: 10, color: "var(--text-muted)"}}>{collapsed ? "▶" : "▼"}</span>
             <span className={_sourcePillClass(srcDef)}>{_sourceDisplayName(srcDef) || sid}</span>
             {srcDef.content_type && <ContentTypePill type={srcDef.content_type}/>}
-            {focusedSource === sid && <span className="api-pill" style={{background: "rgba(211,47,47,.10)", color: "var(--primary)"}}>{t("today.group.focused")}</span>}
+            {focusedSourceSet[sid] && <span className="api-pill" style={{background: "rgba(211,47,47,.10)", color: "var(--primary)"}}>{t("today.group.focused")}</span>}
+            {subLabels.slice(0, 3).map(function (label) { return <span key={label} className="kw-tag">{label}</span>; })}
             <span className="oa-section-title__count">{groupItems.length}</span>
             <span className="news-source-group__meta">{groupItems[0] ? fmtDate(groupItems[0].fetched_at) : ""}</span>
           </div>
@@ -2187,22 +2283,24 @@ function TodayTab() {
           <SourceChip
             source={{display_zh: t("today.filters.source.all"), content_type: "all"}}
             enabled={true}
-            active={!focusedSource}
+            active={focusedSources.length === 0}
             showType={false}
-            onClick={function () { setFocusedSource(""); }}
+            onClick={function () { setFocusedSources([]); }}
           />
-          {sources.map(function (s) {
-            var enabled = enabledSources.some(function (x) { return x.id === s.id; });
+          {fetchedSourceIds.map(function (sid) {
+            var s = sourcesMap[sid] || {id: sid, name: sid};
+            var known = sources.some(function (x) { return x.id === sid; });
+            var enabled = known ? enabledSources.some(function (x) { return x.id === sid; }) : true;
             return (
               <SourceChip
-                key={s.id}
+                key={sid}
                 source={s}
                 enabled={enabled}
-                active={focusedSource === s.id}
+                active={focusedSources.indexOf(sid) >= 0}
                 title={enabled ? "" : t("today.sources.disabledHint")}
                 onClick={function () {
                   if (!enabled) window.oaToast({level: "warning", message: t("today.sources.disabledHint")});
-                  setFocusedSource(focusedSource === s.id ? "" : s.id);
+                  toggleFocusedSource(sid);
                 }}
               />
             );
@@ -2261,7 +2359,7 @@ function TodayTab() {
           </div>
           <span style={{flex: 1}}/>
           <button className="btn btn-sm" type="button"
-                  onClick={function () { setFilters({window: 24, minScore: 0, sort: "time"}); setFocusedSource(""); setKeyword(""); setAiFilter(null); }}>
+                  onClick={function () { setFilters({window: 24, minScore: 0, sort: "time"}); setFocusedSources([]); setKeyword(""); setAiFilter(null); }}>
             <Ico name="refresh"/> {t("today.filters.reset")}
           </button>
           <button className="btn btn-sm" type="button" onClick={onExport} title={t("today.export.title")}>
@@ -3251,6 +3349,20 @@ function _parseCustomFeedsFromConfig(cfg) {
   });
 }
 
+function _customFeedDisplayName(f, idx) {
+  var name = String((f && f.name) || "").trim();
+  var url = String((f && f.url) || "").trim();
+  if (name && name !== url) return name;
+  try {
+    var u = new URL(url);
+    var q = u.searchParams.get("q");
+    if (q) return "Bing: " + decodeURIComponent(q.replace(/\+/g, " "));
+    return u.hostname || ("RSS " + (idx + 1));
+  } catch (_) {
+    return name || ("RSS " + (idx + 1));
+  }
+}
+
 function SourceChip(props) {
   var s = props.source || {};
   var enabled = props.enabled !== false;
@@ -3341,8 +3453,10 @@ function SettingsForm(props) {
     }
     setChannels(list);
     setSchedules((sched && sched.items) || []);
-    if (srcResp && srcResp.ok && Array.isArray(srcResp.items)) {
+    if (srcResp && srcResp.ok && Array.isArray(srcResp.items) && srcResp.items.length) {
       setAllSources(srcResp.items);
+    } else {
+      setAllSources(SOURCE_FALLBACK);
     }
     setCustomFeeds(_parseCustomFeedsFromConfig(cfgData));
     setLoaded(true);
@@ -3565,6 +3679,7 @@ function SettingsForm(props) {
 
   var rawNewsnowMode = config["newsnow.mode"];
   var newsnowMode = (rawNewsnowMode && String(rawNewsnowMode)) || "public";
+  if (newsnowMode !== "off" && newsnowMode !== "public") newsnowMode = "public";
   var rawMinInterval = parseInt(config["newsnow.min_interval_s"] || "300", 10);
   var newsnowFloor = (isNaN(rawMinInterval) ? 300 : Math.max(
     newsnowMode === "public" ? NEWSNOW_PUBLIC_MIN_INTERVAL_S : 0,
@@ -3653,8 +3768,9 @@ function SettingsForm(props) {
                 return (
                   <div key={f.id} className="source-chip" title={f.url}>
                     <span className="source-chip__dot"/>
-                    <span>{f.name}</span>
+                    <span>{_customFeedDisplayName(f, idx)}</span>
                     <span className="source-chip__type">RSS</span>
+                    <span className="source-chip__type" title={f.url}>链接</span>
                     {customProbeLabels[idx] && (
                       <span style={{fontSize: 11, color: customProbeLabels[idx].indexOf("OK") >= 0 || customProbeLabels[idx].indexOf("可用") >= 0 ? "var(--success)" : "var(--danger)"}}>
                         {customProbeLabels[idx]}
@@ -3712,20 +3828,10 @@ function SettingsForm(props) {
             title={t("settings.sources.cat.newsnow")}
             badge={tfmt(t("settings.sources.count"), {n: newsnowSources.length})}
             defaultOpen={false}>
-            {/* Status bar */}
-            <div className="nn-status-bar">
-              <span className="nn-status-bar__pill">
-                {t("settings.sources.nn.mode")}: {t("settings.newsnow.mode." + newsnowMode)}
-              </span>
-              {newsnowMode === "public" && (
-                <span style={{fontSize: 11, color: "var(--text-muted)"}}>
-                  {tfmt(t("settings.sources.nn.warn"), {floor: newsnowFloor})}
-                </span>
-              )}
-              <span className="source-row__spacer"/>
-              {/* Mode selector pills */}
+            <div style={{display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap"}}>
+              <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>{t("settings.sources.nn.mode")}</span>
               <div style={{display: "flex", gap: 4}}>
-                {["off", "public", "self_host"].map(function (m) {
+                {["off", "public"].map(function (m) {
                   var active = newsnowMode === m;
                   return <span key={m}
                                className={"api-pill " + (active ? "" : "api-pill--missing")}
@@ -3739,7 +3845,9 @@ function SettingsForm(props) {
                                      setCfgField("newsnow.min_interval_s", String(NEWSNOW_PUBLIC_MIN_INTERVAL_S));
                                    }
                                  }
-                                 persist({"newsnow.mode": m});
+                                persist(m === "public"
+                                  ? {"newsnow.mode": m, "newsnow.api_url": NEWSNOW_PUBLIC_URL, "newsnow.min_interval_s": String(Math.max(newsnowFloor, NEWSNOW_PUBLIC_MIN_INTERVAL_S))}
+                                  : {"newsnow.mode": m});
                                }}>
                     {t("settings.newsnow.mode." + m)}
                   </span>;
@@ -3748,17 +3856,22 @@ function SettingsForm(props) {
             </div>
 
             {newsnowMode === "public" && (
-              <div style={{display: "flex", gap: 8, alignItems: "center", marginBottom: 10, fontSize: 12}}>
-                <span style={{color: "var(--text-muted)"}}>{t("settings.sources.nn.floor")}:</span>
-                <input className="input" type="number" style={{width: 80}}
-                       min={NEWSNOW_PUBLIC_MIN_INTERVAL_S} step={60}
-                       value={newsnowFloor}
-                       onChange={function (e) {
-                         var v = Math.max(NEWSNOW_PUBLIC_MIN_INTERVAL_S, parseInt(e.target.value || "300", 10) || NEWSNOW_PUBLIC_MIN_INTERVAL_S);
-                         setCfgField("newsnow.min_interval_s", String(v));
-                       }}
-                       onBlur={function () { persist({"newsnow.min_interval_s": String(newsnowFloor)}); }}/>
-                <span style={{color: "var(--text-muted)", fontSize: 11}}>{t("settings.sources.nn.floor.unit")}</span>
+              <div style={{marginBottom: 10}}>
+                <div style={{display: "flex", gap: 8, alignItems: "center", fontSize: 12}}>
+                  <span style={{color: "var(--text-muted)"}}>{t("settings.sources.nn.floor")}:</span>
+                  <input className="input" type="number" style={{width: 80}}
+                         min={NEWSNOW_PUBLIC_MIN_INTERVAL_S} step={60}
+                         value={newsnowFloor}
+                         onChange={function (e) {
+                           var v = Math.max(NEWSNOW_PUBLIC_MIN_INTERVAL_S, parseInt(e.target.value || "300", 10) || NEWSNOW_PUBLIC_MIN_INTERVAL_S);
+                           setCfgField("newsnow.min_interval_s", String(v));
+                         }}
+                         onBlur={function () { persist({"newsnow.min_interval_s": String(newsnowFloor)}); }}/>
+                  <span style={{color: "var(--text-muted)", fontSize: 11}}>{t("settings.sources.nn.floor.unit")}</span>
+                </div>
+                <div className="oa-hint" style={{fontSize: 11, marginTop: 4}}>
+                  {tfmt(t("settings.sources.nn.publicHint"), {floor: NEWSNOW_PUBLIC_MIN_INTERVAL_S})}
+                </div>
               </div>
             )}
 
