@@ -727,16 +727,18 @@ class Plugin(PluginBase):
             q: str | None = Query(None),
             source_id: str | None = Query(None),
             since: str | None = Query(None),
+            until: str | None = Query(None),
             min_score: float | None = Query(None),
             sort: str = Query("time"),
             offset: int = Query(0, ge=0),
-            limit: int = Query(50, ge=1, le=200),
+            limit: int = Query(50, ge=1, le=1000),
         ) -> dict[str, Any]:
             if self._tm is None:
                 raise HTTPException(status_code=503, detail="task_manager_unavailable")
             items, total = await self._tm.list_articles(
                 source_id=source_id,
                 since=since,
+                until=until,
                 q=q,
                 min_score=min_score,
                 sort=sort,

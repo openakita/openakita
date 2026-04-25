@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS articles (
     dedupe_primary_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_articles_event_time ON articles(COALESCE(published_at, fetched_at) DESC);
 CREATE INDEX IF NOT EXISTS idx_articles_score ON articles(ai_score DESC);
 CREATE INDEX IF NOT EXISTS idx_articles_source ON articles(source_id, fetched_at DESC);
 
@@ -114,6 +115,13 @@ CREATE TABLE IF NOT EXISTS assets_bus (
     created_at TEXT
 );
 """
+
+_ARTICLE_EVENT_TIME_SQL = (
+    "CASE "
+    "WHEN published_at GLOB '????-??-??T??:??*' THEN published_at "
+    "ELSE fetched_at "
+    "END"
+)
 
 
 # ── Default config ───────────────────────────────────────────────────────
@@ -547,8 +555,9 @@ class FinpulseTaskManager:
         """Mark articles older than their source's freshness ceiling.
 
         ``cutoffs`` maps ``source_id`` → ISO timestamp string.  Articles
-        from that source with ``published_at < cutoff`` (or ``fetched_at``
-        if ``published_at`` is NULL) get ``is_stale = 1``.
+        from that source with sortable ``published_at < cutoff`` (or
+        ``fetched_at`` if ``published_at`` is missing / non-ISO) get
+        ``is_stale = 1``.
 
         Returns the total number of rows updated.
         """
@@ -558,7 +567,7 @@ class FinpulseTaskManager:
             cur = await self._db.execute(
                 "UPDATE articles SET is_stale = 1 "
                 "WHERE source_id = ? AND is_stale = 0 "
-                "AND COALESCE(published_at, fetched_at) < ?",
+                f"AND {_ARTICLE_EVENT_TIME_SQL} < ?",
                 (sid, cutoff),
             )
             total += cur.rowcount
@@ -580,6 +589,7 @@ class FinpulseTaskManager:
         *,
         source_id: str | None = None,
         since: str | None = None,
+        until: str | None = None,
         q: str | None = None,
         min_score: float | None = None,
         sort: str = "time",
@@ -593,8 +603,11 @@ class FinpulseTaskManager:
             wheres.append("source_id = ?")
             args.append(source_id)
         if since:
-            wheres.append("fetched_at >= ?")
+            wheres.append(f"{_ARTICLE_EVENT_TIME_SQL} >= ?")
             args.append(since)
+        if until:
+            wheres.append(f"{_ARTICLE_EVENT_TIME_SQL} <= ?")
+            args.append(until)
         if q:
             wheres.append("(title LIKE ? OR summary LIKE ?)")
             like = f"%{q}%"
@@ -603,11 +616,7 @@ class FinpulseTaskManager:
             wheres.append("ai_score >= ?")
             args.append(float(min_score))
         where_sql = (" WHERE " + " AND ".join(wheres)) if wheres else ""
-        order_sql = (
-            " ORDER BY ai_score DESC, fetched_at DESC"
-            if sort == "score"
-            else " ORDER BY fetched_at DESC"
-        )
+        order_sql = f" ORDER BY {_ARTICLE_EVENT_TIME_SQL} DESC"
         count_rows = await self._db.execute_fetchall(
             f"SELECT COUNT(*) FROM articles{where_sql}", args
         )

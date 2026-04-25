@@ -379,10 +379,16 @@
       overflow: hidden; min-height: 42px;
     }
     .news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
-    .news-source-group { margin-bottom: 16px; }
+    .news-source-group {
+      margin: 14px 0 18px; padding: 10px 12px 12px;
+      border: 1px solid rgba(15,23,42,.08); border-left: 3px solid var(--primary);
+      border-radius: 10px; background: linear-gradient(180deg, rgba(211,47,47,.025), var(--bg-card));
+      box-shadow: 0 1px 5px rgba(15,23,42,.035);
+    }
+    .news-source-group + .news-source-group { margin-top: 18px; }
     .news-source-group__head {
-      display: flex; align-items: center; gap: 8px; margin: 12px 0 8px;
-      padding-bottom: 6px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px; margin: 0 0 10px;
+      padding: 0 0 8px; border-bottom: 1px solid rgba(15,23,42,.08);
       cursor: pointer; user-select: none;
     }
     .news-source-group__title { font-size: 13px; font-weight: 600; color: var(--text); }
@@ -412,7 +418,10 @@
     }
     .source-chip:hover { border-color: var(--primary); }
     .source-chip--on { border-color: rgba(211,47,47,.22); background: var(--bg-card); }
-    .source-chip--off { opacity: .52; }
+    .source-chip--off {
+      opacity: .72; color: var(--text-muted); background: rgba(148,163,184,.06);
+      border-style: dashed;
+    }
     .source-chip.source-chip--active {
       border-color: var(--primary); background: rgba(211,47,47,.12); color: var(--primary);
       box-shadow: inset 0 0 0 1px rgba(211,47,47,.20);
@@ -424,7 +433,62 @@
       padding: 0 5px; border-radius: 999px; background: var(--bg-hover);
       color: var(--text-muted); font-size: 10px; font-weight: 500;
     }
+    .source-chip--off .source-chip__dot { background: #cbd5e1; }
+    .source-chip--off .source-chip__type { opacity: .8; }
     .source-panel-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .source-subsection {
+      border: 1px solid rgba(15,23,42,.08); border-radius: 10px;
+      padding: 12px; margin-top: 12px; background: var(--bg-card);
+    }
+    .source-subsection__head {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+    }
+    .source-subsection__title {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 13px; font-weight: 600; color: var(--text);
+    }
+    .source-subsection__title::before {
+      content: ""; width: 3px; height: 16px; background: var(--primary);
+      border-radius: 1px; display: inline-block;
+    }
+    .source-subsection__actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .switch-row { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
+    .source-master-switch {
+      display: inline-flex; align-items: center; gap: 8px;
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 5px 10px; background: rgba(255,255,255,.92);
+      color: var(--text); font-size: 12px;
+    }
+    .custom-source-dialog__mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+    .custom-source-dialog__preview {
+      font-size: 11px; color: var(--text-muted); word-break: break-all;
+      margin-top: 6px; padding: 6px 10px;
+      border: 1px dashed var(--border); border-radius: 8px; background: var(--bg);
+    }
+    .timeline {
+      position: relative; display: flex; flex-direction: column; gap: 16px;
+      padding: 4px 0 4px 0;
+    }
+    .timeline::before {
+      content: ""; position: absolute; left: 78px; top: 0; bottom: 0;
+      width: 2px; background: linear-gradient(180deg, rgba(211,47,47,.30), rgba(211,47,47,.06));
+    }
+    .timeline-slot {
+      position: relative; display: grid; grid-template-columns: 92px 1fr; gap: 14px;
+    }
+    .timeline-slot__time {
+      position: sticky; top: 8px; align-self: start;
+      color: var(--primary); font-size: 12px; font-weight: 700;
+      text-align: right; padding-right: 20px; line-height: 1.3;
+    }
+    .timeline-slot__time::after {
+      content: ""; position: absolute; right: -7px; top: 3px;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--bg-card); border: 2px solid var(--primary);
+      box-shadow: 0 0 0 3px rgba(211,47,47,.10);
+    }
+    .timeline-slot__meta { display: block; color: var(--text-muted); font-size: 10px; font-weight: 500; margin-top: 3px; }
+    .timeline-slot__items { min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
     .filter-bar--news { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
     .filter-bar__row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; }
     /* Keyword tag */
@@ -605,10 +669,11 @@ const I18N_DICT = {
     "today.filters.window.6h": "近 6 小时",
     "today.filters.window.24h": "近 24 小时",
     "today.filters.window.72h": "近 3 天",
-    "today.filters.minScore": "最低 AI 评分",
+    "today.filters.window.custom": "自定义",
+    "today.filters.window.from": "开始",
+    "today.filters.window.to": "结束",
     "today.filters.sortLabel": "排序",
     "today.filters.sort.time": "按时间",
-    "today.filters.sort.score": "按 AI 评分",
     "today.filters.view": "视图",
     "today.filters.view.grouped": "聚合",
     "today.filters.view.timeline": "时间线",
@@ -641,7 +706,8 @@ const I18N_DICT = {
     "today.drawer.via.direct": "直连",
     "today.drawer.via.cooldown": "冷却",
     "today.drawer.via.none": "无结果",
-    "today.drawer.status.ok": "成功 {inserted}+{updated}",
+    "today.drawer.status.ok": "抓取 {fetched} · 新增 {inserted} · 更新 {updated}",
+    "today.drawer.status.fetchedOnly": "抓取 {fetched} · 无新增",
     "today.drawer.status.empty": "无新文章",
     "today.drawer.status.error": "失败",
     "today.drawer.source_single": "只抓取：{source}",
@@ -653,20 +719,21 @@ const I18N_DICT = {
     "today.drawer.via_reason.newsnow_error": "NewsNow 请求失败，已回退到直连",
     "today.filters.keyword": "关键词",
     "today.filters.keyword.placeholder": "搜索标题或摘要…",
-    "today.filters.ai": "智能筛选",
-    "today.filters.ai.title": "智能筛选 / 命中置顶",
-    "today.filters.ai.desc": "本次先用前端规则把命中资讯置顶展示；后续可升级为 TrendRadar 式后端批量分类评分。",
-    "today.filters.ai.minScore": "最低 AI 评分",
-    "today.filters.ai.keywords": "关键词规则（+必须 !排除）",
-    "today.filters.ai.keywords.placeholder": "+美联储 +降息\n!谣言\n特朗普 关税",
+    "today.filters.ai": "AI 筛选",
+    "today.filters.ai.title": "AI 筛选 / 兴趣命中置顶",
+    "today.filters.ai.desc": "参考 TrendRadar：先用自然语言描述关注方向，再用 +必须、!排除、普通关键词做快速命中；命中内容置顶，其他资讯保留在下方。",
+    "today.filters.ai.interests": "关注方向",
+    "today.filters.ai.interests.placeholder": "例如：关注美联储利率、人民币汇率、A股流动性、AI 算力和中美关税变化",
+    "today.filters.ai.keywords": "辅助规则（+必须 !排除 普通关键词）",
+    "today.filters.ai.keywords.placeholder": "+美联储\n+降息\n!谣言\n特朗普 关税",
     "today.filters.ai.sentiment": "情感倾向",
     "today.filters.ai.sentiment.all": "全部",
     "today.filters.ai.sentiment.positive": "积极",
     "today.filters.ai.sentiment.negative": "消极",
     "today.filters.ai.sentiment.neutral": "中性",
-    "today.filters.ai.apply": "置顶命中",
-    "today.filters.ai.clear": "清除智能筛选",
-    "today.filters.ai.active": "智能筛选已激活：命中置顶，其他资讯保留",
+    "today.filters.ai.apply": "应用 AI 筛选",
+    "today.filters.ai.clear": "清除 AI 筛选",
+    "today.filters.ai.active": "AI 筛选已激活：命中置顶，其他资讯保留",
     "today.translate": "翻译",
     "today.translate.original": "原文",
     "today.translate.loading": "翻译中…",
@@ -749,8 +816,10 @@ const I18N_DICT = {
     "settings.sources.probeAll": "全部检测",
     "settings.sources.probe.direct": "检测直连与 RSS",
     "settings.sources.probe.newsnow": "检测 NewsNow",
+    "settings.sources.probe.custom": "检测自定义 RSS",
     "settings.sources.probe.summary": "抓取 {fetched} · 新增 {inserted} · 更新 {updated}",
     "settings.sources.rss.master": "自定义 RSS 总开关",
+    "settings.sources.disabled.hint": "未启用，点击可开启",
     "settings.sources.ct.flash": "快讯",
     "settings.sources.ct.news": "新闻",
     "settings.sources.ct.hot_stock": "热股",
@@ -761,16 +830,21 @@ const I18N_DICT = {
     "settings.sources.custom.bing.title": "Bing 新闻 RSS",
     "settings.sources.custom.bing.placeholder": "输入搜索关键词，如：科技 编程",
     "settings.sources.custom.bing.add": "添加此 Bing RSS",
-    "settings.sources.custom.add": "+ 添加自定义 RSS",
+    "settings.sources.custom.add": "+ 添加 RSS 来源",
+    "settings.sources.custom.dialog.title": "添加 RSS 来源",
+    "settings.sources.custom.dialog.mode.custom": "自填 RSS 链接",
+    "settings.sources.custom.dialog.mode.bing": "Bing 新闻 RSS",
     "settings.sources.custom.name": "来源名称",
     "settings.sources.custom.url": "RSS 地址",
     "settings.sources.custom.name.placeholder": "自定义来源名称",
     "settings.sources.custom.url.placeholder": "https://example.com/feed.xml",
+    "settings.sources.custom.bing.name.placeholder": "来源名称，例如：Bing 白酒",
     "settings.sources.custom.save": "保存",
     "settings.sources.custom.cancel": "取消",
     "settings.sources.custom.delete": "删除",
     "settings.sources.custom.delete.confirm": "确认删除此自定义来源？",
     "settings.sources.custom.empty": "暂无自定义来源",
+    "settings.sources.custom.listTitle": "自定义 RSS",
     "settings.sources.nn.warn": "公共服务由开源作者自费维护（v0.0.39），已默认开启；最小抓取间隔 {floor} 秒，避免过载。",
     "settings.sources.nn.mode": "模式",
     "settings.sources.nn.floor": "最小间隔",
@@ -879,10 +953,11 @@ const I18N_DICT = {
     "today.filters.window.6h": "Last 6h",
     "today.filters.window.24h": "Last 24h",
     "today.filters.window.72h": "Last 3d",
-    "today.filters.minScore": "Min AI score",
+    "today.filters.window.custom": "Custom",
+    "today.filters.window.from": "From",
+    "today.filters.window.to": "To",
     "today.filters.sortLabel": "Sort",
     "today.filters.sort.time": "By time",
-    "today.filters.sort.score": "By score",
     "today.filters.view": "View",
     "today.filters.view.grouped": "Grouped",
     "today.filters.view.timeline": "Timeline",
@@ -915,7 +990,8 @@ const I18N_DICT = {
     "today.drawer.via.direct": "Direct",
     "today.drawer.via.cooldown": "Cooldown",
     "today.drawer.via.none": "No data",
-    "today.drawer.status.ok": "{inserted}+{updated} items",
+    "today.drawer.status.ok": "fetched {fetched} · +{inserted} new · {updated} updated",
+    "today.drawer.status.fetchedOnly": "fetched {fetched} · no new items",
     "today.drawer.status.empty": "empty",
     "today.drawer.status.error": "failed",
     "today.drawer.source_single": "Single source: {source}",
@@ -927,11 +1003,12 @@ const I18N_DICT = {
     "today.drawer.via_reason.newsnow_error": "NewsNow request failed — fell back to direct",
     "today.filters.keyword": "Keyword",
     "today.filters.keyword.placeholder": "Search title or summary…",
-    "today.filters.ai": "Smart Filter",
-    "today.filters.ai.title": "Smart Filter / Promote Matches",
-    "today.filters.ai.desc": "This version promotes front-end rule matches while keeping the rest visible. Later it can move to TrendRadar-style backend batch classification and scoring.",
-    "today.filters.ai.minScore": "Min AI Score",
-    "today.filters.ai.keywords": "Keyword rules (+required !exclude)",
+    "today.filters.ai": "AI Filter",
+    "today.filters.ai.title": "AI Filter / Interest Matches",
+    "today.filters.ai.desc": "TrendRadar-inspired: describe your interests in natural language, then use +required, !exclude and plain keywords for quick matching. Matches are promoted while other articles stay visible.",
+    "today.filters.ai.interests": "Interest description",
+    "today.filters.ai.interests.placeholder": "E.g. Fed rates, RMB FX, A-share liquidity, AI compute and US-China tariffs",
+    "today.filters.ai.keywords": "Helper rules (+required !exclude plain keywords)",
     "today.filters.ai.keywords.placeholder": "+Federal Reserve +rate cut\n!rumour\nTrump tariff",
     "today.filters.ai.sentiment": "Sentiment",
     "today.filters.ai.sentiment.all": "All",
@@ -1023,8 +1100,10 @@ const I18N_DICT = {
     "settings.sources.probeAll": "Probe all",
     "settings.sources.probe.direct": "Probe Direct & RSS",
     "settings.sources.probe.newsnow": "Probe NewsNow",
+    "settings.sources.probe.custom": "Probe custom RSS",
     "settings.sources.probe.summary": "Fetched {fetched} · New {inserted} · Updated {updated}",
     "settings.sources.rss.master": "Custom RSS master switch",
+    "settings.sources.disabled.hint": "Disabled. Click to enable.",
     "settings.sources.ct.flash": "Flash",
     "settings.sources.ct.news": "News",
     "settings.sources.ct.hot_stock": "Hot Stock",
@@ -1035,16 +1114,21 @@ const I18N_DICT = {
     "settings.sources.custom.bing.title": "Bing News RSS",
     "settings.sources.custom.bing.placeholder": "Enter search keywords, e.g.: tech programming",
     "settings.sources.custom.bing.add": "Add this Bing RSS",
-    "settings.sources.custom.add": "+ Add Custom RSS",
+    "settings.sources.custom.add": "+ Add RSS Source",
+    "settings.sources.custom.dialog.title": "Add RSS Source",
+    "settings.sources.custom.dialog.mode.custom": "Custom RSS URL",
+    "settings.sources.custom.dialog.mode.bing": "Bing News RSS",
     "settings.sources.custom.name": "Source name",
     "settings.sources.custom.url": "RSS URL",
     "settings.sources.custom.name.placeholder": "Custom source name",
     "settings.sources.custom.url.placeholder": "https://example.com/feed.xml",
+    "settings.sources.custom.bing.name.placeholder": "Source name, e.g. Bing AI",
     "settings.sources.custom.save": "Save",
     "settings.sources.custom.cancel": "Cancel",
     "settings.sources.custom.delete": "Delete",
     "settings.sources.custom.delete.confirm": "Delete this custom source?",
     "settings.sources.custom.empty": "No custom sources yet",
+    "settings.sources.custom.listTitle": "Custom RSS",
     "settings.sources.nn.warn": "Public service maintained at author's cost (v0.0.39), enabled by default; min fetch interval {floor}s to prevent overload.",
     "settings.sources.nn.mode": "Mode",
     "settings.sources.nn.floor": "Min interval",
@@ -1141,14 +1225,22 @@ const _i18n = (window.OpenAkitaI18n && window.OpenAkitaI18n.api) || {
 
 const SOURCE_FALLBACK = [
   {id:"wallstreetcn", display_zh:"华尔街见闻", display_en:"WallStreet CN", kind:"newsnow", content_type:"flash", newsnow_id:"wallstreetcn", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
-  {id:"wallstreetcn-news", display_zh:"华尔街见闻·新闻", display_en:"WallStreet CN News", kind:"newsnow", content_type:"news", newsnow_id:"wallstreetcn-news", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"wallstreetcn-news", display_zh:"华尔街见闻·新闻", display_en:"WallStreet CN News", kind:"newsnow", content_type:"news", newsnow_id:"wallstreetcn-news", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
   {id:"cls", display_zh:"财联社电报", display_en:"CLS Telegraph", kind:"newsnow", content_type:"flash", newsnow_id:"cls", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
-  {id:"cls-depth", display_zh:"财联社·深度", display_en:"CLS In-depth", kind:"newsnow", content_type:"news", newsnow_id:"cls-depth", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"cls-depth", display_zh:"财联社·深度", display_en:"CLS In-depth", kind:"newsnow", content_type:"news", newsnow_id:"cls-depth", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
   {id:"jin10", display_zh:"金十数据", display_en:"Jin10", kind:"newsnow", content_type:"flash", newsnow_id:"jin10", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
   {id:"gelonghui", display_zh:"格隆汇", display_en:"Gelonghui", kind:"newsnow", content_type:"news", newsnow_id:"gelonghui", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
   {id:"xueqiu-hotstock", display_zh:"雪球·热门股票", display_en:"Xueqiu Hot Stocks", kind:"newsnow", content_type:"hot_stock", newsnow_id:"xueqiu-hotstock", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
-  {id:"fastbull", display_zh:"快牛快讯", display_en:"Fastbull Express", kind:"newsnow", content_type:"flash", newsnow_id:"fastbull", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
-  {id:"mktnews", display_zh:"市场新闻", display_en:"MktNews", kind:"newsnow", content_type:"flash", newsnow_id:"mktnews", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"fastbull", display_zh:"快牛快讯", display_en:"Fastbull Express", kind:"newsnow", content_type:"flash", newsnow_id:"fastbull", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"mktnews", display_zh:"市场新闻", display_en:"MktNews", kind:"newsnow", content_type:"flash", newsnow_id:"mktnews", default_enabled:true, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"baidu-hot", display_zh:"百度热搜", display_en:"Baidu Hot Search", kind:"newsnow", content_type:"news", newsnow_id:"baidu", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"weibo-hot", display_zh:"微博热搜", display_en:"Weibo Hot Search", kind:"newsnow", content_type:"news", newsnow_id:"weibo", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"zhihu-hot", display_zh:"知乎热榜", display_en:"Zhihu Hot List", kind:"newsnow", content_type:"news", newsnow_id:"zhihu", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"toutiao-hot", display_zh:"今日头条热榜", display_en:"Toutiao Trending", kind:"newsnow", content_type:"news", newsnow_id:"toutiao", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"thepaper", display_zh:"澎湃新闻", display_en:"The Paper", kind:"newsnow", content_type:"news", newsnow_id:"thepaper", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"ithome", display_zh:"IT之家", display_en:"ITHome", kind:"newsnow", content_type:"news", newsnow_id:"ithome", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"bilibili-hot", display_zh:"B站热榜", display_en:"Bilibili Trending", kind:"newsnow", content_type:"news", newsnow_id:"bilibili", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
+  {id:"36kr", display_zh:"36氪快讯", display_en:"36Kr Newsflash", kind:"newsnow", content_type:"news", newsnow_id:"36kr", default_enabled:false, group:"newsnow", fetcher_id:"newsnow", probe_target:"newsnow"},
   {id:"eastmoney", display_zh:"东方财富", display_en:"EastMoney", kind:"direct", content_type:"news", default_enabled:true, group:"direct", fetcher_id:"eastmoney", probe_target:"eastmoney"},
   {id:"pbc_omo", display_zh:"央行公开市场", display_en:"PBC OMO", kind:"direct", content_type:"policy", default_enabled:true, group:"direct", fetcher_id:"pbc_omo", probe_target:"pbc_omo"},
   {id:"yicai", display_zh:"第一财经", display_en:"Yicai", kind:"direct", content_type:"news", default_enabled:true, group:"direct", fetcher_id:"yicai", probe_target:"yicai"},
@@ -1502,8 +1594,31 @@ function fmtDate(iso) {
   const pad = function (n) { return n < 10 ? "0" + n : "" + n; };
   return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
+function fmtTimelineBucket(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso).slice(0, 16);
+  const pad = function (n) { return n < 10 ? "0" + n : "" + n; };
+  return pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":00";
+}
+function fmtTimelineMinute(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = function (n) { return n < 10 ? "0" + n : "" + n; };
+  return pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+function articleTime(it) {
+  return (it && (it.published_at || it.fetched_at)) || "";
+}
 function hoursAgoISO(hours) {
   const d = new Date(Date.now() - hours * 3600 * 1000);
+  return d.toISOString().replace(/\.\d+Z$/, "Z");
+}
+function datetimeLocalToISO(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "";
   return d.toISOString().replace(/\.\d+Z$/, "Z");
 }
 function copyText(text) {
@@ -1539,13 +1654,13 @@ function _countNonEmpty(bySource) {
   let n = 0;
   Object.keys(bySource || {}).forEach(function (k) {
     const row = bySource[k] || {};
-    if (!row.error && Number(row.inserted || 0) + Number(row.updated || 0) > 0) n += 1;
+    if (!row.error && Number(row.fetched || 0) > 0) n += 1;
   });
   return n;
 }
 function _pillClass(row) {
   if (row.error || row.error_kind) return "fp-pill fp-pill--error";
-  if (Number(row.inserted || 0) + Number(row.updated || 0) > 0) return "fp-pill fp-pill--ok";
+  if (Number(row.fetched || 0) > 0) return "fp-pill fp-pill--ok";
   return "fp-pill fp-pill--empty";
 }
 function _viaKey(row) {
@@ -1620,12 +1735,15 @@ function IngestDrawer(props) {
           const label = _sourceName(sources, id);
           const ins = Number(row.inserted || 0);
           const upd = Number(row.updated || 0);
+          const fetched = Number(row.fetched || 0);
           let statusText = "";
           if (row.error || row.error_kind) {
             statusText = t("today.drawer.status.error");
           } else if (ins + upd > 0) {
             statusText = tfmt(t("today.drawer.status.ok"),
-                              {inserted: ins, updated: upd});
+                              {fetched: fetched, inserted: ins, updated: upd});
+          } else if (fetched > 0) {
+            statusText = tfmt(t("today.drawer.status.fetchedOnly"), {fetched: fetched});
           } else {
             statusText = t("today.drawer.status.empty");
           }
@@ -1693,14 +1811,6 @@ function _sourcePillClass(source) {
   return "source-pill";
 }
 
-/* ── AI score badge class ── */
-function _aiBadgeClass(score) {
-  if (typeof score !== "number") return "ai-badge ai-badge--low";
-  if (score >= 7) return "ai-badge ai-badge--high";
-  if (score >= 4) return "ai-badge ai-badge--mid";
-  return "ai-badge ai-badge--low";
-}
-
 function _itemSubSourceLabel(it, source) {
   var raw = (it && it.raw) || {};
   var ct = (source && source.content_type) || "";
@@ -1732,7 +1842,6 @@ async function exportHtmlReport(items, sourcesMap, filters, t) {
   var dateStr = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
   var rows = items.map(function (it) {
     var srcName = (sourcesMap[it.source_id] && sourcesMap[it.source_id].name) || it.source_id || "";
-    var score = (typeof it.ai_score === "number") ? it.ai_score.toFixed(1) : "-";
     var tags = [];
     try { tags = JSON.parse(it.ai_tags_json || "[]"); } catch (_) {}
     return '<tr>' +
@@ -1741,8 +1850,7 @@ async function exportHtmlReport(items, sourcesMap, filters, t) {
       (it.summary ? '<div style="font-size:12px;color:#888;margin-top:4px">' + _escHtml(String(it.summary).slice(0, 200)) + '</div>' : '') +
       (tags.length ? '<div style="margin-top:4px">' + tags.map(function (tg) { return '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;background:#eff6ff;color:#2563eb;margin-right:4px">' + _escHtml(tg) + '</span>'; }).join("") + '</div>' : '') +
       '</td>' +
-      '<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#888;white-space:nowrap">' + _escHtml(fmtDate(it.fetched_at)) + '</td>' +
-      '<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;text-align:center;font-weight:600;color:' + (parseFloat(score) >= 7 ? '#c62828' : parseFloat(score) >= 4 ? '#b45309' : '#888') + '">' + score + '</td>' +
+      '<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#888;white-space:nowrap">' + _escHtml(fmtDate(articleTime(it))) + '</td>' +
       '</tr>';
   }).join("\n");
   var filterDesc = (filters.source ? "Source: " + filters.source + " · " : "") +
@@ -1758,7 +1866,7 @@ async function exportHtmlReport(items, sourcesMap, filters, t) {
     '.footer{padding:16px 28px;font-size:11px;color:#aaa;text-align:center;border-top:1px solid #eee}' +
     '</style></head><body><div class="container">' +
     '<div class="header"><h1>财经脉动 · 资讯报表</h1><p>' + _escHtml(dateStr + " · " + filterDesc) + '</p></div>' +
-    '<table><thead><tr><th>来源</th><th>标题</th><th>时间</th><th>AI 分</th></tr></thead><tbody>' +
+    '<table><thead><tr><th>来源</th><th>标题</th><th>时间</th></tr></thead><tbody>' +
     rows +
     '</tbody></table>' +
     '<div class="footer">Generated by Fin Pulse · ' + _escHtml(now.toISOString()) + '</div>' +
@@ -1788,7 +1896,7 @@ function _escHtml(s) {
 /* ── AI Filter Dialog ── */
 function AIFilterDialog(props) {
   var t = useT();
-  var [minScore, setMinScore] = useState(props.initialMinScore || 0);
+  var [interests, setInterests] = useState(props.initialInterests || "");
   var [keywords, setKeywords] = useState(props.initialKeywords || "");
   var [sentiment, setSentiment] = useState(props.initialSentiment || "all");
   return (
@@ -1797,10 +1905,11 @@ function AIFilterDialog(props) {
         <div className="ai-dialog__title">{t("today.filters.ai.title")}</div>
         <div style={{fontSize: 12, color: "var(--text-muted)", marginBottom: 14}}>{t("today.filters.ai.desc")}</div>
         <div className="ai-dialog__field">
-          <div className="ai-dialog__label">{t("today.filters.ai.minScore")}</div>
-          <input className="input" type="number" min="0" max="10" step="0.5"
-                 style={{width: 100}} value={minScore}
-                 onChange={function (e) { setMinScore(parseFloat(e.target.value) || 0); }}/>
+          <div className="ai-dialog__label">{t("today.filters.ai.interests")}</div>
+          <textarea className="input" rows="4" style={{resize: "vertical"}}
+                    placeholder={t("today.filters.ai.interests.placeholder")}
+                    value={interests}
+                    onChange={function (e) { setInterests(e.target.value); }}/>
         </div>
         <div className="ai-dialog__field">
           <div className="ai-dialog__label">{t("today.filters.ai.keywords")}</div>
@@ -1824,7 +1933,7 @@ function AIFilterDialog(props) {
         <div className="ai-dialog__actions">
           <button className="btn btn-sm" onClick={props.onClose}>{t("confirm.cancel")}</button>
           <button className="btn btn-sm btn-primary"
-                  onClick={function () { props.onApply({minScore: minScore, keywords: keywords, sentiment: sentiment}); }}>
+                  onClick={function () { props.onApply({interests: interests, keywords: keywords, sentiment: sentiment}); }}>
             {t("today.filters.ai.apply")}
           </button>
         </div>
@@ -1841,7 +1950,6 @@ function NewsCardCompact(props) {
   var tr = props.translation || null;
   var translating = !!props.translating;
   var showingTranslation = tr && tr.showing;
-  var score = (typeof it.ai_score === "number") ? it.ai_score.toFixed(1) : "-";
   var srcName = _sourceDisplayName(srcDef) || it.source_id || "";
   var subSource = _itemSubSourceLabel(it, srcDef);
   var metricPills = _itemMetricPills(it);
@@ -1855,7 +1963,7 @@ function NewsCardCompact(props) {
         <span className={_sourcePillClass(srcDef)}>{srcName}</span>
         {srcDef && srcDef.content_type && <ContentTypePill type={srcDef.content_type}/>}
         {subSource && <span className="kw-tag">{subSource}</span>}
-        <span className="news-card__time">{fmtDate(it.fetched_at)}</span>
+        <span className="news-card__time">{fmtDate(articleTime(it))}</span>
       </div>
       <a href={it.url} target="_blank" rel="noopener noreferrer" className="news-card__title">
         {keyword && !showingTranslation ? highlightText(titleText, keyword) : titleText}
@@ -1873,7 +1981,6 @@ function NewsCardCompact(props) {
           return <span key={"m" + i} className="api-pill api-pill--missing">{label}</span>;
         })}
         <span style={{flex: 1}}/>
-        <span className={_aiBadgeClass(it.ai_score)}>AI {score}</span>
         <button className="btn btn-sm"
                 disabled={translating || !props.onTranslate}
                 onClick={function () { props.onTranslate && props.onTranslate(it); }}>
@@ -1897,7 +2004,7 @@ function TodayTab() {
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [filters, setFilters] = useState({ window: 24, minScore: 0, sort: "time" });
+  const [filters, setFilters] = useState({ window: 24, sort: "time", since: "", until: "" });
   const [focusedSources, setFocusedSources] = useState([]);
   const [keyword, setKeyword] = useState("");
   const [ingesting, setIngesting] = useState(false);
@@ -1974,9 +2081,10 @@ function TodayTab() {
     setLoading(true);
     try {
       const qs = {
-        since: filters.window ? hoursAgoISO(filters.window) : undefined,
+        since: filters.window === "custom" ? datetimeLocalToISO(filters.since) : (filters.window ? hoursAgoISO(filters.window) : undefined),
+        until: filters.window === "custom" ? datetimeLocalToISO(filters.until) : undefined,
         sort: filters.sort || "time",
-        limit: 200,
+        limit: 1000,
       };
       const query = Object.keys(qs)
         .filter(function (k) { return qs[k] !== undefined && qs[k] !== ""; })
@@ -2079,10 +2187,19 @@ function TodayTab() {
 
   const onDismissDrawer = useCallback(function () { setDrawerOpen(false); }, []);
 
-  /* AI filter keyword matching (front-end) */
+  /* AI filter keyword matching (TrendRadar-inspired interests + helper rules) */
   var aiKeywordTokens = [];
+  var aiInterestTokens = [];
+  if (aiFilter && aiFilter.interests) {
+    String(aiFilter.interests).split(/[\n，,、；;。.!！?？：:\s]+/).forEach(function (word) {
+      word = word.trim();
+      if (word.length >= 2 && ["关注", "重点", "新闻", "变化", "相关", "以及", "例如"].indexOf(word) < 0) {
+        aiInterestTokens.push(word.toLowerCase());
+      }
+    });
+  }
   if (aiFilter && aiFilter.keywords) {
-    aiFilter.keywords.split("\n").forEach(function (line) {
+    String(aiFilter.keywords).split("\n").forEach(function (line) {
       line = line.trim();
       if (!line) return;
       if (line.startsWith("!")) return;
@@ -2092,7 +2209,7 @@ function TodayTab() {
   }
   var aiExcludeTokens = [];
   if (aiFilter && aiFilter.keywords) {
-    aiFilter.keywords.split("\n").forEach(function (line) {
+    String(aiFilter.keywords).split("\n").forEach(function (line) {
       line = line.trim();
       if (line.startsWith("!")) {
         var w = line.substring(1).trim();
@@ -2102,9 +2219,8 @@ function TodayTab() {
   }
 
   /* Match items by keyword + AI filter, but keep non-matches visible below. */
-  var hasMatchRule = !!keyword || aiKeywordTokens.length > 0 || aiExcludeTokens.length > 0 ||
-    !!(aiFilter && aiFilter.sentiment && aiFilter.sentiment !== "all") ||
-    !!(aiFilter && aiFilter.minScore > 0);
+  var hasMatchRule = !!keyword || aiKeywordTokens.length > 0 || aiInterestTokens.length > 0 ||
+    aiExcludeTokens.length > 0 || !!(aiFilter && aiFilter.sentiment && aiFilter.sentiment !== "all");
   var matchedItems = [];
   var remainingItems = [];
   items.forEach(function (it) {
@@ -2116,14 +2232,14 @@ function TodayTab() {
     if (matched && aiKeywordTokens.length) {
       matched = aiKeywordTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
     }
+    if (matched && aiInterestTokens.length) {
+      matched = aiInterestTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
+    }
     if (matched && aiExcludeTokens.length) {
       matched = !aiExcludeTokens.some(function (tok) { return text.indexOf(tok) >= 0; });
     }
     if (matched && aiFilter && aiFilter.sentiment && aiFilter.sentiment !== "all") {
       matched = it.sentiment === aiFilter.sentiment;
-    }
-    if (matched && aiFilter && aiFilter.minScore > 0) {
-      matched = typeof it.ai_score === "number" && it.ai_score >= aiFilter.minScore;
     }
     if (hasMatchRule && matched) matchedItems.push(it);
     else remainingItems.push(it);
@@ -2175,9 +2291,6 @@ function TodayTab() {
   var onApplyAiFilter = useCallback(function (f) {
     setAiFilter(f);
     setAiFilterOpen(false);
-    if (f.minScore > 0) {
-      setFilters(function (prev) { return Object.assign({}, prev, {minScore: f.minScore}); });
-    }
   }, []);
 
   var toggleFocusedSource = useCallback(function (sid) {
@@ -2258,7 +2371,7 @@ function TodayTab() {
             {focusedSourceSet[sid] && <span className="api-pill" style={{background: "rgba(211,47,47,.10)", color: "var(--primary)"}}>{t("today.group.focused")}</span>}
             {subLabels.slice(0, 3).map(function (label) { return <span key={label} className="kw-tag">{label}</span>; })}
             <span className="oa-section-title__count">{groupItems.length}</span>
-            <span className="news-source-group__meta">{groupItems[0] ? fmtDate(groupItems[0].fetched_at) : ""}</span>
+            <span className="news-source-group__meta">{groupItems[0] ? fmtDate(articleTime(groupItems[0])) : ""}</span>
           </div>
           {!collapsed && (
             <div className="news-grid">
@@ -2273,6 +2386,47 @@ function TodayTab() {
         </div>
       );
     });
+  };
+
+  var renderTimeline = function (list) {
+    var grouped = {};
+    list.forEach(function (it) {
+      var key = fmtTimelineBucket(articleTime(it));
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(it);
+    });
+    var keys = Object.keys(grouped).sort(function (a, b) { return b.localeCompare(a); });
+    return (
+      <div className="timeline">
+        {keys.map(function (key) {
+          var groupItems = grouped[key] || [];
+          groupItems.sort(function (a, b) {
+            return String(articleTime(b)).localeCompare(String(articleTime(a)));
+          });
+          return (
+            <div key={key} className="timeline-slot">
+              <div className="timeline-slot__time">
+                {key}
+                <span className="timeline-slot__meta">{groupItems.length} 条</span>
+              </div>
+              <div className="timeline-slot__items">
+                {groupItems.map(function (it) {
+                  var srcDef = sourcesMap[it.source_id] || {id: it.source_id, name: it.source_id, content_type: ""};
+                  return (
+                    <div key={it.id} style={{position: "relative"}}>
+                      <NewsCardCompact item={it} source={srcDef} keyword={keyword}
+                                       translation={translatedMap[it.id]}
+                                       translating={!!translatingIds[it.id]}
+                                       onTranslate={translationConfig.enabled === false ? null : onTranslateArticle}/>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
@@ -2318,8 +2472,25 @@ function TodayTab() {
                   {t("today.filters.window." + w.k)}
                 </button>;
               })}
+              <button type="button"
+                      className={"seg-btn " + (filters.window === "custom" ? "active" : "")}
+                      onClick={function () { setFilters(Object.assign({}, filters, {window: "custom"})); }}>
+                {t("today.filters.window.custom")}
+              </button>
             </div>
           </div>
+          {filters.window === "custom" && (
+            <React.Fragment>
+              <input className="input" type="datetime-local" style={{width: 170, padding: "6px 10px"}}
+                     title={t("today.filters.window.from")}
+                     value={filters.since || ""}
+                     onChange={function (e) { setFilters(Object.assign({}, filters, {since: e.target.value})); }}/>
+              <input className="input" type="datetime-local" style={{width: 170, padding: "6px 10px"}}
+                     title={t("today.filters.window.to")}
+                     value={filters.until || ""}
+                     onChange={function (e) { setFilters(Object.assign({}, filters, {until: e.target.value})); }}/>
+            </React.Fragment>
+          )}
           <span className="filter-bar__sep"/>
           <div className="filter-bar__item">
             <input className="input" type="text" style={{width: 190, padding: "6px 10px"}}
@@ -2335,7 +2506,7 @@ function TodayTab() {
           <div className="filter-bar__item">
             <span className="filter-bar__label">{t("today.filters.sortLabel")}</span>
             <div className="seg-group">
-              {[{k:"time"},{k:"score"}].map(function (s) {
+              {[{k:"time"}].map(function (s) {
                 const active = filters.sort === s.k;
                 return <button key={s.k} type="button"
                                className={"seg-btn " + (active ? "active" : "")}
@@ -2359,7 +2530,7 @@ function TodayTab() {
           </div>
           <span style={{flex: 1}}/>
           <button className="btn btn-sm" type="button"
-                  onClick={function () { setFilters({window: 24, minScore: 0, sort: "time"}); setFocusedSources([]); setKeyword(""); setAiFilter(null); }}>
+                  onClick={function () { setFilters({window: 24, sort: "time", since: "", until: ""}); setFocusedSources([]); setKeyword(""); setAiFilter(null); }}>
             <Ico name="refresh"/> {t("today.filters.reset")}
           </button>
           <button className="btn btn-sm" type="button" onClick={onExport} title={t("today.export.title")}>
@@ -2463,14 +2634,7 @@ function TodayTab() {
               </React.Fragment>
             ) : renderSourceGroups(displayItems, "all")
           ) : (
-            <div className="news-grid">
-              {displayItems.map(function (it) {
-                return <NewsCardCompact key={it.id} item={it} source={sourcesMap[it.source_id]} keyword={keyword}
-                                        translation={translatedMap[it.id]}
-                                        translating={!!translatingIds[it.id]}
-                                        onTranslate={translationConfig.enabled === false ? null : onTranslateArticle}/>;
-              })}
-            </div>
+            renderTimeline(displayItems)
           )}
         </div>
       </div>
@@ -2478,7 +2642,7 @@ function TodayTab() {
       {/* AI Filter Dialog */}
       {aiFilterOpen && (
         <AIFilterDialog
-          initialMinScore={aiFilter ? aiFilter.minScore : filters.minScore}
+          initialInterests={aiFilter ? aiFilter.interests : ""}
           initialKeywords={aiFilter ? aiFilter.keywords : ""}
           initialSentiment={aiFilter ? aiFilter.sentiment : "all"}
           onApply={onApplyAiFilter}
@@ -3377,6 +3541,66 @@ function SourceChip(props) {
   );
 }
 
+function CustomSourceDialog(props) {
+  var t = useT();
+  var [mode, setMode] = useState("custom");
+  var [name, setName] = useState("");
+  var [value, setValue] = useState("");
+  var trimmed = value.trim();
+  var url = mode === "bing"
+    ? ("https://www.bing.com/news/search?q=" + encodeURIComponent(trimmed) + "&format=RSS")
+    : trimmed;
+  var canSave = mode === "bing" ? !!trimmed : /^https?:\/\//i.test(trimmed);
+  var placeholder = mode === "bing"
+    ? t("settings.sources.custom.bing.placeholder")
+    : t("settings.sources.custom.url.placeholder");
+  var namePlaceholder = mode === "bing"
+    ? t("settings.sources.custom.bing.name.placeholder")
+    : t("settings.sources.custom.name.placeholder");
+  return (
+    <div className="ai-dialog-mask" onClick={function (e) { if (e.target === e.currentTarget) props.onClose(); }}>
+      <div className="ai-dialog">
+        <div className="ai-dialog__title">{t("settings.sources.custom.dialog.title")}</div>
+        <div className="custom-source-dialog__mode">
+          <button className={"btn btn-sm " + (mode === "custom" ? "btn-primary" : "")}
+                  onClick={function () { setMode("custom"); setValue(""); }}>
+            {t("settings.sources.custom.dialog.mode.custom")}
+          </button>
+          <button className={"btn btn-sm " + (mode === "bing" ? "btn-primary" : "")}
+                  onClick={function () { setMode("bing"); setValue(""); }}>
+            {t("settings.sources.custom.dialog.mode.bing")}
+          </button>
+        </div>
+        <div className="ai-dialog__field">
+          <div className="ai-dialog__label">{t("settings.sources.custom.name")}</div>
+          <input className="input" value={name} placeholder={namePlaceholder}
+                 onChange={function (e) { setName(e.target.value); }}/>
+        </div>
+        <div className="ai-dialog__field">
+          <div className="ai-dialog__label">{mode === "bing" ? t("settings.sources.custom.bing.title") : t("settings.sources.custom.url")}</div>
+          <input className="input" value={value} placeholder={placeholder}
+                 onChange={function (e) { setValue(e.target.value); }}/>
+          {trimmed && <div className="custom-source-dialog__preview">{url}</div>}
+        </div>
+        <div className="ai-dialog__actions">
+          <button className="btn btn-sm" onClick={props.onClose}>{t("settings.sources.custom.cancel")}</button>
+          <button className="btn btn-sm btn-primary" disabled={!canSave}
+                  onClick={function () {
+                    props.onSave({
+                      id: "cf_" + Date.now(),
+                      url: url,
+                      name: name.trim() || (mode === "bing" ? ("Bing: " + trimmed) : trimmed),
+                      enabled: true,
+                    });
+                  }}>
+            {t("settings.sources.custom.save")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SourceRow(props) {
   var s = props.source;
   var t = useT();
@@ -3427,8 +3651,12 @@ function SettingsForm(props) {
   const [probeLabels, setProbeLabels] = useState({});
   const [probingIds, setProbingIds] = useState({});
 
-  const [bingKeywords, setBingKeywords] = useState("");
   const [customFeeds, setCustomFeeds] = useState([]);
+  const [customDialogOpen, setCustomDialogOpen] = useState(false);
+  // Compatibility for older hot-loaded settings render functions.
+  // The inline add forms were replaced by CustomSourceDialog, but keeping
+  // these state slots prevents stale closures from throwing during refresh.
+  const [bingKeywords, setBingKeywords] = useState("");
   const [addingCustom, setAddingCustom] = useState(false);
   const [newCustomName, setNewCustomName] = useState("");
   const [newCustomUrl, setNewCustomUrl] = useState("");
@@ -3615,27 +3843,15 @@ function SettingsForm(props) {
     setCustomFeeds(feeds);
   }, [persist]);
 
-  const onAddBingRss = useCallback(async function () {
-    if (!bingKeywords.trim()) return;
-    var url = "https://www.bing.com/news/search?q=" + encodeURIComponent(bingKeywords.trim()) + "&format=RSS";
-    var feed = {id: "cf_" + Date.now(), url: url, name: "Bing: " + bingKeywords.trim()};
+  const onSaveCustomFeed = useCallback(async function (feed) {
+    if (!feed || !feed.url) return;
     var next = customFeeds.concat([feed]);
     await persistCustomFeeds(next);
-    setBingKeywords("");
+    setCustomDialogOpen(false);
     window.oaToast({level: "success", message: t("settings.saved")});
-  }, [bingKeywords, customFeeds, persistCustomFeeds, t]);
-
-  const onAddCustomRss = useCallback(async function () {
-    if (!newCustomUrl.trim()) return;
-    var feed = {id: "cf_" + Date.now(), url: newCustomUrl.trim(), name: newCustomName.trim() || newCustomUrl.trim()};
-    var next = customFeeds.concat([feed]);
-    await persistCustomFeeds(next);
-    setNewCustomName(""); setNewCustomUrl(""); setAddingCustom(false);
-    window.oaToast({level: "success", message: t("settings.saved")});
-  }, [newCustomName, newCustomUrl, customFeeds, persistCustomFeeds, t]);
+  }, [customFeeds, persistCustomFeeds, t]);
 
   const onDeleteCustom = useCallback(async function (idx) {
-    if (!window.confirm(t("settings.sources.custom.delete.confirm"))) return;
     var next = customFeeds.filter(function (_, i) { return i !== idx; });
     await persistCustomFeeds(next);
   }, [customFeeds, persistCustomFeeds, t]);
@@ -3655,6 +3871,31 @@ function SettingsForm(props) {
       setCustomProbing(function (p) { return Object.assign({}, p, {[idx]: false}); });
     }
   }, [t]);
+
+  const onProbeAllCustom = useCallback(async function () {
+    if (!customFeeds.length) return;
+    setCustomProbing(function (p) { return Object.assign({}, p, {all: true}); });
+    try {
+      var okCount = 0;
+      var total = customFeeds.length;
+      var nextLabels = {};
+      for (var i = 0; i < customFeeds.length; i += 1) {
+        var feed = customFeeds[i];
+        var resp = await api("POST", "/sources/probe-rss", {url: feed.url});
+        if (resp && resp.ok) {
+          okCount += 1;
+          nextLabels[i] = tfmt(t("settings.sources.probe.ok"), {n: resp.count || 0});
+        } else {
+          nextLabels[i] = t("settings.sources.probe.fail");
+        }
+      }
+      setCustomProbeLabels(nextLabels);
+      setProbeLabels(function (p) { return Object.assign({}, p, {custom_rss: okCount + "/" + total + " OK"}); });
+      setProbeStates(function (p) { return Object.assign({}, p, {custom_rss: okCount > 0 ? "ok" : "err"}); });
+    } finally {
+      setCustomProbing(function (p) { return Object.assign({}, p, {all: false}); });
+    }
+  }, [customFeeds, t]);
 
   if (!loaded) return <div className="card"><div className="empty">{t("today.list.loading")}</div></div>;
 
@@ -3708,7 +3949,7 @@ function SettingsForm(props) {
                     source={s}
                     enabled={isEnabled(s.id)}
                     onClick={function () { onToggleSource(s.id); }}
-                    title={(s.homepage || "") + (config["source." + s.id + ".last_error"] ? "\n" + config["source." + s.id + ".last_error"] : "")}
+                    title={(isEnabled(s.id) ? "" : t("settings.sources.disabled.hint") + "\n") + (s.homepage || "") + (config["source." + s.id + ".last_error"] ? "\n" + config["source." + s.id + ".last_error"] : "")}
                   />
                 );
               })}
@@ -3731,95 +3972,62 @@ function SettingsForm(props) {
             title={t("settings.sources.cat.custom")}
             badge={tfmt(t("settings.sources.count"), {n: customFeeds.length})}
             defaultOpen={false}>
-            <div className="source-chip-grid" style={{marginBottom: 10}}>
-              <SourceChip
-                source={rssGenericSource}
-                enabled={isEnabled("rss_generic")}
-                onClick={function () { onToggleSource("rss_generic"); }}
-                title={t("settings.sources.rss.master")}
-              />
-            </div>
-            {/* Bing RSS builder */}
-            <div className="bing-builder">
-              <div className="label">{t("settings.sources.custom.bing.title")}</div>
-              <div className="bing-builder__row">
-                <input className="input" type="text" style={{flex: 1, minWidth: 120}}
-                       placeholder={t("settings.sources.custom.bing.placeholder")}
-                       value={bingKeywords}
-                       onChange={function (e) { setBingKeywords(e.target.value); }}/>
-                <button className="btn btn-sm btn-primary" onClick={onAddBingRss}
-                        disabled={!bingKeywords.trim()}>
-                  {t("settings.sources.custom.bing.add")}
-                </button>
+            <div className="source-subsection">
+              <div className="source-subsection__head">
+                <div className="source-subsection__title">{t("settings.sources.custom.listTitle")}</div>
+                <div className="source-subsection__actions">
+                  <button className="source-master-switch" type="button"
+                          onClick={function () { onToggleSource("rss_generic"); }}
+                          title={t("settings.sources.rss.master")}>
+                    <ToggleSwitch on={isEnabled("rss_generic")} onChange={function (e) { e.stopPropagation(); onToggleSource("rss_generic"); }}/>
+                    <span>{t("settings.sources.custom.listTitle")}</span>
+                  </button>
+                  <button className="btn btn-sm" disabled={!customFeeds.length || !!customProbing.all}
+                          onClick={onProbeAllCustom}>
+                    <Ico name="refresh"/> {customProbing.all ? t("settings.sources.probing") : t("settings.sources.probe.custom")}
+                  </button>
+                  {probeLabels.custom_rss && (
+                    <span style={{fontSize: 11, color: probeStates.custom_rss === "ok" ? "var(--success)" : "var(--danger)"}}>
+                      {probeLabels.custom_rss}
+                    </span>
+                  )}
+                  <button className="btn btn-sm" onClick={function () { setCustomDialogOpen(true); }}>
+                    {t("settings.sources.custom.add")}
+                  </button>
+                </div>
               </div>
-              {bingKeywords.trim() && (
-                <div className="bing-builder__preview">
-                  {"https://www.bing.com/news/search?q=" + encodeURIComponent(bingKeywords.trim()) + "&format=RSS"}
+              {customFeeds.length === 0 ? (
+                <div className="empty" style={{padding: "10px 0"}}>{t("settings.sources.custom.empty")}</div>
+              ) : (
+                <div className="source-chip-grid" style={{marginTop: 8}}>
+                {customFeeds.map(function (f, idx) {
+                  return (
+                    <div key={f.id} className="source-chip" title={f.url}>
+                      <span className="source-chip__dot"/>
+                      <span>{_customFeedDisplayName(f, idx)}</span>
+                      <span className="source-chip__type">RSS</span>
+                      <span className="source-chip__type" title={f.url}>链接</span>
+                      {customProbeLabels[idx] && (
+                        <span style={{fontSize: 11, color: customProbeLabels[idx].indexOf("OK") >= 0 || customProbeLabels[idx].indexOf("可用") >= 0 ? "var(--success)" : "var(--danger)"}}>
+                          {customProbeLabels[idx]}
+                        </span>
+                      )}
+                      <button className="btn btn-sm" title={t("settings.sources.custom.delete")}
+                              onClick={function (e) { e.stopPropagation(); onDeleteCustom(idx); }}>
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
                 </div>
               )}
             </div>
 
-            {/* Existing custom feeds */}
-            {customFeeds.length === 0 && !addingCustom ? (
-              <div className="empty" style={{padding: "10px 0"}}>{t("settings.sources.custom.empty")}</div>
-            ) : (
-              <div className="source-chip-grid" style={{marginTop: 8}}>
-              {customFeeds.map(function (f, idx) {
-                return (
-                  <div key={f.id} className="source-chip" title={f.url}>
-                    <span className="source-chip__dot"/>
-                    <span>{_customFeedDisplayName(f, idx)}</span>
-                    <span className="source-chip__type">RSS</span>
-                    <span className="source-chip__type" title={f.url}>链接</span>
-                    {customProbeLabels[idx] && (
-                      <span style={{fontSize: 11, color: customProbeLabels[idx].indexOf("OK") >= 0 || customProbeLabels[idx].indexOf("可用") >= 0 ? "var(--success)" : "var(--danger)"}}>
-                        {customProbeLabels[idx]}
-                      </span>
-                    )}
-                    <button className="btn btn-sm" disabled={!!customProbing[idx]}
-                            onClick={function () { onProbeCustom(f.url, idx); }}>
-                      {customProbing[idx] ? t("settings.sources.probing") : t("settings.sources.probe")}
-                    </button>
-                    <button className="btn btn-sm" onClick={function () { onDeleteCustom(idx); }}>
-                      <Ico name="trash"/>
-                    </button>
-                  </div>
-                );
-              })}
-              </div>
-            )}
-
-            {/* Add custom form */}
-            {addingCustom ? (
-              <div className="custom-add-form">
-                <div className="custom-add-form__row">
-                  <input className="input" type="text" style={{flex: 1}}
-                         placeholder={t("settings.sources.custom.name.placeholder")}
-                         value={newCustomName}
-                         onChange={function (e) { setNewCustomName(e.target.value); }}/>
-                </div>
-                <div className="custom-add-form__row">
-                  <input className="input" type="text" style={{flex: 1}}
-                         placeholder={t("settings.sources.custom.url.placeholder")}
-                         value={newCustomUrl}
-                         onChange={function (e) { setNewCustomUrl(e.target.value); }}/>
-                </div>
-                <div style={{display: "flex", gap: 8}}>
-                  <button className="btn btn-sm btn-primary" onClick={onAddCustomRss}
-                          disabled={!newCustomUrl.trim()}>
-                    {t("settings.sources.custom.save")}
-                  </button>
-                  <button className="btn btn-sm" onClick={function () { setAddingCustom(false); setNewCustomName(""); setNewCustomUrl(""); }}>
-                    {t("settings.sources.custom.cancel")}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div style={{paddingTop: 8}}>
-                <button className="btn btn-sm" onClick={function () { setAddingCustom(true); }}>
-                  {t("settings.sources.custom.add")}
-                </button>
-              </div>
+            {customDialogOpen && (
+              <CustomSourceDialog
+                onSave={onSaveCustomFeed}
+                onClose={function () { setCustomDialogOpen(false); }}
+              />
             )}
           </Collapsible>
 
@@ -3828,31 +4036,27 @@ function SettingsForm(props) {
             title={t("settings.sources.cat.newsnow")}
             badge={tfmt(t("settings.sources.count"), {n: newsnowSources.length})}
             defaultOpen={false}>
-            <div style={{display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap"}}>
-              <span style={{fontSize: 12, color: "var(--text)", fontWeight: 600}}>{t("settings.sources.nn.mode")}</span>
-              <div style={{display: "flex", gap: 4}}>
-                {["off", "public"].map(function (m) {
-                  var active = newsnowMode === m;
-                  return <span key={m}
-                               className={"api-pill " + (active ? "" : "api-pill--missing")}
-                               style={{cursor: "pointer", fontSize: 11}}
-                               onClick={function () {
-                                 setCfgField("newsnow.mode", m);
-                                 if (m === "public") {
-                                   setCfgField("newsnow.api_url", NEWSNOW_PUBLIC_URL);
-                                   var cur = parseInt(config["newsnow.min_interval_s"] || "300", 10);
-                                   if (isNaN(cur) || cur < NEWSNOW_PUBLIC_MIN_INTERVAL_S) {
-                                     setCfgField("newsnow.min_interval_s", String(NEWSNOW_PUBLIC_MIN_INTERVAL_S));
-                                   }
-                                 }
-                                persist(m === "public"
-                                  ? {"newsnow.mode": m, "newsnow.api_url": NEWSNOW_PUBLIC_URL, "newsnow.min_interval_s": String(Math.max(newsnowFloor, NEWSNOW_PUBLIC_MIN_INTERVAL_S))}
-                                  : {"newsnow.mode": m});
-                               }}>
-                    {t("settings.newsnow.mode." + m)}
-                  </span>;
-                })}
-              </div>
+            <div style={{display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap"}}>
+              <label className="switch-row">
+                <ToggleSwitch
+                  on={newsnowMode === "public"}
+                  onChange={function () {
+                    var next = newsnowMode === "public" ? "off" : "public";
+                    setCfgField("newsnow.mode", next);
+                    if (next === "public") {
+                      setCfgField("newsnow.api_url", NEWSNOW_PUBLIC_URL);
+                      setCfgField("newsnow.min_interval_s", String(Math.max(newsnowFloor, NEWSNOW_PUBLIC_MIN_INTERVAL_S)));
+                    }
+                    persist(next === "public"
+                      ? {"newsnow.mode": next, "newsnow.api_url": NEWSNOW_PUBLIC_URL, "newsnow.min_interval_s": String(Math.max(newsnowFloor, NEWSNOW_PUBLIC_MIN_INTERVAL_S))}
+                      : {"newsnow.mode": next});
+                  }}
+                />
+                <span>{t("settings.sources.nn.mode")}</span>
+              </label>
+              <span className={"api-pill " + (newsnowMode === "public" ? "" : "api-pill--missing")}>
+                {t("settings.newsnow.mode." + newsnowMode)}
+              </span>
             </div>
 
             {newsnowMode === "public" && (
@@ -3885,7 +4089,7 @@ function SettingsForm(props) {
                     source={s}
                     enabled={!disabled && isEnabled(s.id)}
                     onClick={disabled ? function () {} : function () { onToggleSource(s.id); }}
-                    title={String(s.newsnow_id || s.id)}
+                    title={(isEnabled(s.id) ? "" : t("settings.sources.disabled.hint") + "\n") + String(s.newsnow_id || s.id)}
                   />
                 );
               })}
