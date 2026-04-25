@@ -366,6 +366,23 @@
     }
     .news-card__time { font-size: 11px; color: var(--text-dim); }
     .news-card__actions { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+    .news-card--compact {
+      padding: 10px; border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--bg-card); min-width: 0;
+    }
+    .news-card--compact:hover { border-color: rgba(211,47,47,.28); box-shadow: 0 4px 14px rgba(0,0,0,.05); }
+    .news-card--compact .news-card__title {
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden; min-height: 42px;
+    }
+    .news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+    .news-source-group { margin-bottom: 16px; }
+    .news-source-group__head {
+      display: flex; align-items: center; gap: 8px; margin: 12px 0 8px;
+      padding-bottom: 6px; border-bottom: 1px solid var(--border);
+    }
+    .news-source-group__title { font-size: 13px; font-weight: 600; color: var(--text); }
+    .news-source-group__meta { margin-left: auto; font-size: 11px; color: var(--text-muted); }
     /* Source pill — colored by source */
     .source-pill {
       display: inline-flex; align-items: center; gap: 3px;
@@ -375,6 +392,34 @@
     .source-pill--nn { background: rgba(245,158,11,.10); color: #b45309; }
     .source-pill--rss { background: rgba(16,185,129,.10); color: #047857; }
     .source-pill--direct { background: rgba(59,130,246,.10); color: #1d4ed8; }
+    /* Source chip grids (settings + news source rail) */
+    .source-chip-grid { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .source-chip-grid--rail {
+      flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px;
+      scrollbar-width: thin;
+    }
+    .source-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      min-height: 28px; padding: 4px 10px;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg-card); color: var(--text);
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      white-space: nowrap; transition: border-color .12s, background .12s, color .12s;
+    }
+    .source-chip:hover { border-color: var(--primary); }
+    .source-chip--on { border-color: rgba(211,47,47,.38); background: rgba(211,47,47,.06); }
+    .source-chip--off { opacity: .52; }
+    .source-chip--active { border-color: var(--primary); background: rgba(211,47,47,.10); color: var(--primary); }
+    .source-chip__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+    .source-chip--on .source-chip__dot,
+    .source-chip--active .source-chip__dot { background: var(--primary); }
+    .source-chip__type {
+      padding: 0 5px; border-radius: 999px; background: var(--bg-hover);
+      color: var(--text-muted); font-size: 10px; font-weight: 500;
+    }
+    .source-panel-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .filter-bar--news { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+    .filter-bar__row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; }
     /* Keyword tag */
     .kw-tag {
       display: inline-flex; padding: 1px 6px; border-radius: 4px;
@@ -557,6 +602,9 @@ const I18N_DICT = {
     "today.filters.sortLabel": "排序",
     "today.filters.sort.time": "按时间",
     "today.filters.sort.score": "按 AI 评分",
+    "today.filters.view": "视图",
+    "today.filters.view.grouped": "聚合",
+    "today.filters.view.timeline": "时间线",
     "today.filters.reset": "重置",
     "today.list.title": "资讯",
     "today.list.empty": "没有命中当前筛选条件的新闻",
@@ -681,6 +729,10 @@ const I18N_DICT = {
     "settings.sources.probe.ok": "可用 · {n} 条",
     "settings.sources.probe.fail": "不可用",
     "settings.sources.probeAll": "全部检测",
+    "settings.sources.probe.direct": "检测直连与 RSS",
+    "settings.sources.probe.newsnow": "检测 NewsNow",
+    "settings.sources.probe.summary": "抓取 {fetched} · 新增 {inserted} · 更新 {updated}",
+    "settings.sources.rss.master": "自定义 RSS 总开关",
     "settings.sources.ct.flash": "快讯",
     "settings.sources.ct.news": "新闻",
     "settings.sources.ct.hot_stock": "热股",
@@ -806,6 +858,9 @@ const I18N_DICT = {
     "today.filters.sortLabel": "Sort",
     "today.filters.sort.time": "By time",
     "today.filters.sort.score": "By score",
+    "today.filters.view": "View",
+    "today.filters.view.grouped": "Grouped",
+    "today.filters.view.timeline": "Timeline",
     "today.filters.reset": "Reset",
     "today.list.title": "News",
     "today.list.empty": "No articles match the current filters",
@@ -930,6 +985,10 @@ const I18N_DICT = {
     "settings.sources.probe.ok": "OK · {n} items",
     "settings.sources.probe.fail": "Unavailable",
     "settings.sources.probeAll": "Probe all",
+    "settings.sources.probe.direct": "Probe Direct & RSS",
+    "settings.sources.probe.newsnow": "Probe NewsNow",
+    "settings.sources.probe.summary": "Fetched {fetched} · New {inserted} · Updated {updated}",
+    "settings.sources.rss.master": "Custom RSS master switch",
     "settings.sources.ct.flash": "Flash",
     "settings.sources.ct.news": "News",
     "settings.sources.ct.hot_stock": "Hot Stock",
@@ -1673,6 +1732,48 @@ function AIFilterDialog(props) {
   );
 }
 
+function NewsCardCompact(props) {
+  var it = props.item;
+  var t = useT();
+  var keyword = props.keyword || "";
+  var srcDef = props.source || {};
+  var score = (typeof it.ai_score === "number") ? it.ai_score.toFixed(1) : "-";
+  var srcName = _sourceDisplayName(srcDef) || it.source_id || "";
+  var tags = [];
+  try { tags = JSON.parse(it.ai_tags_json || "[]"); } catch (_) {}
+  return (
+    <div className="news-card news-card--compact">
+      <div className="news-card__header">
+        <span className={_sourcePillClass(srcDef)}>{srcName}</span>
+        {srcDef && srcDef.content_type && <ContentTypePill type={srcDef.content_type}/>}
+        <span className="news-card__time">{fmtDate(it.fetched_at)}</span>
+      </div>
+      <a href={it.url} target="_blank" rel="noopener noreferrer" className="news-card__title">
+        {keyword ? highlightText(it.title, keyword) : it.title}
+      </a>
+      {it.summary ? (
+        <div className="news-card__summary">
+          {keyword ? highlightText(String(it.summary).slice(0, 260), keyword) : String(it.summary).slice(0, 260)}
+        </div>
+      ) : null}
+      <div className="news-card__footer">
+        {tags.slice(0, 4).map(function (tg, i) {
+          return <span key={i} className="kw-tag">{tg}</span>;
+        })}
+        <span style={{flex: 1}}/>
+        <span className={_aiBadgeClass(it.ai_score)}>AI {score}</span>
+        <button className="btn btn-sm"
+                onClick={function () {
+                  copyText(it.title + "\n" + it.url);
+                  window.oaToast({level: "success", message: t("today.list.copied")});
+                }}>
+          <Ico name="copy"/>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ── Today Tab — live article feed ─────────────────────────────── */
 function TodayTab() {
   const t = useT();
@@ -1690,6 +1791,7 @@ function TodayTab() {
   const [cooldown, setCooldown] = useState(0);
   const [aiFilterOpen, setAiFilterOpen] = useState(false);
   const [aiFilter, setAiFilter] = useState(null);
+  const [viewMode, setViewMode] = useState("grouped");
 
   /* Load sources + config for enabled state */
   useEffect(function () {
@@ -1702,9 +1804,12 @@ function TodayTab() {
           return {
             id: String(s.id || ""), name: String(s.display_zh || s.display_en || s.id || ""),
             kind: String(s.kind || ""), content_type: String(s.content_type || "news"),
+            group: String(s.group || ""),
+            fetcher_id: String(s.fetcher_id || s.id || ""),
+            probe_target: String(s.probe_target || s.fetcher_id || s.id || ""),
             default_enabled: !!s.default_enabled
           };
-        }).filter(function (s) { return s.id && s.id !== "rss_generic"; });
+        }).filter(function (s) { return s.id; });
         setSources(mapped);
       }
       if (cfgResp && cfgResp.config) setSourceConfig(cfgResp.config);
@@ -1762,7 +1867,9 @@ function TodayTab() {
     setIngesting(true);
     setDrawerOpen(true);
     try {
-      const path = single ? ("/ingest/source/" + encodeURIComponent(opts.sourceId)) : "/ingest";
+      var src = single ? sourcesMap[opts.sourceId] : null;
+      var target = src ? (src.probe_target || src.fetcher_id || src.id) : opts.sourceId;
+      const path = single ? ("/ingest/source/" + encodeURIComponent(target)) : "/ingest";
       const body = single ? null : { since_hours: 24 };
       let resp = null;
       try {
@@ -1815,7 +1922,7 @@ function TodayTab() {
       setCooldown(30);
       load();
     } finally { setIngesting(false); }
-  }, [ingesting, cooldown, load, t]);
+  }, [ingesting, cooldown, load, t, sourcesMap]);
 
   const onIngestAll = useCallback(function () {
     setMenuOpen(false);
@@ -1878,6 +1985,15 @@ function TodayTab() {
       return it.sentiment === aiFilter.sentiment;
     });
   }
+  var groupedItems = {};
+  displayItems.forEach(function (it) {
+    var sid = it.source_id || "unknown";
+    if (!groupedItems[sid]) groupedItems[sid] = [];
+    groupedItems[sid].push(it);
+  });
+  var groupedSourceIds = Object.keys(groupedItems).sort(function (a, b) {
+    return groupedItems[b].length - groupedItems[a].length;
+  });
 
   var onApplyAiFilter = useCallback(function (f) {
     setAiFilter(f);
@@ -1895,96 +2011,119 @@ function TodayTab() {
   return (
     <div className="stack-layout">
       {/* Filter bar */}
-      <div className="filter-bar">
-        <div className="filter-bar__item">
-          <span className="filter-bar__label">{t("today.filters.source")}</span>
-          <select className="input" style={{width: 140, padding: "6px 10px"}}
-                  value={filters.source}
-                  onChange={function (e) { setFilters(Object.assign({}, filters, {source: e.target.value})); }}>
-            <option value="">{t("today.filters.source.all")}</option>
-            {enabledSources.map(function (s) { return <option key={s.id} value={s.id}>{s.name}</option>; })}
-          </select>
+      <div className="filter-bar filter-bar--news">
+        <div className="source-chip-grid source-chip-grid--rail">
+          <SourceChip
+            source={{display_zh: t("today.filters.source.all"), content_type: "all"}}
+            enabled={true}
+            active={!filters.source}
+            showType={false}
+            onClick={function () { setFilters(Object.assign({}, filters, {source: ""})); }}
+          />
+          {enabledSources.map(function (s) {
+            return (
+              <SourceChip
+                key={s.id}
+                source={s}
+                enabled={true}
+                active={filters.source === s.id}
+                onClick={function () { setFilters(Object.assign({}, filters, {source: filters.source === s.id ? "" : s.id})); }}
+              />
+            );
+          })}
         </div>
-        <span className="filter-bar__sep"/>
-        <div className="filter-bar__item">
-          <span className="filter-bar__label">{t("today.filters.window")}</span>
-          <div className="seg-group">
-            {[{h:6,k:"6h"},{h:24,k:"24h"},{h:72,k:"72h"}].map(function (w) {
-              const active = filters.window === w.h;
-              return <button key={w.h} type="button"
-                             className={"seg-btn " + (active ? "active" : "")}
-                             onClick={function () { setFilters(Object.assign({}, filters, {window: w.h})); }}>
-                {t("today.filters.window." + w.k)}
-              </button>;
-            })}
-          </div>
-        </div>
-        <span className="filter-bar__sep"/>
-        <div className="filter-bar__item">
-          <input className="input" type="text" style={{width: 160, padding: "6px 10px"}}
-                 placeholder={t("today.filters.keyword.placeholder")}
-                 value={keyword}
-                 onChange={function (e) { setKeyword(e.target.value); }}/>
-        </div>
-        <span className="filter-bar__sep"/>
-        <button className={"btn btn-sm" + (aiFilter ? " btn-primary" : "")} type="button"
-                onClick={function () { setAiFilterOpen(true); }}
-                title={aiFilter ? t("today.filters.ai.active") : ""}>
-          <Ico name="ai"/> {t("today.filters.ai")}
-        </button>
-        <span style={{flex: 1}}/>
-        <div className="filter-bar__item">
-          <span className="filter-bar__label">{t("today.filters.sortLabel")}</span>
-          <div className="seg-group">
-            {[{k:"time"},{k:"score"}].map(function (s) {
-              const active = filters.sort === s.k;
-              return <button key={s.k} type="button"
-                             className={"seg-btn " + (active ? "active" : "")}
-                             onClick={function () { setFilters(Object.assign({}, filters, {sort: s.k})); }}>
-                {t("today.filters.sort." + s.k)}
-              </button>;
-            })}
-          </div>
-        </div>
-        <button className="btn btn-sm" type="button"
-                onClick={function () { setFilters({source: "", window: 24, minScore: 0, sort: "time"}); setKeyword(""); setAiFilter(null); }}>
-          <Ico name="refresh"/> {t("today.filters.reset")}
-        </button>
-        <button className="btn btn-sm" type="button" onClick={onExport} title={t("today.export.title")}>
-          <Ico name="save"/> {t("today.export")}
-        </button>
-        <span className="ingest-split">
-          <button className="btn btn-primary" type="button"
-                  disabled={ingesting || cooldown > 0}
-                  aria-busy={ingesting ? "true" : "false"}
-                  onClick={onIngestAll}>
-            {ingesting
-              ? <span className="fp-spin"><Ico name="refresh"/></span>
-              : <Ico name="play"/>}
-            {" "}
-            {ingesting ? t("today.ingest.busy") : cooldown > 0 ? tfmt(t("today.ingest.cooldown"), {s: cooldown}) : t("today.list.ingest.all")}
-          </button>
-          <button className="btn btn-primary btn--caret" type="button"
-                  disabled={ingesting || cooldown > 0}
-                  title={t("today.list.ingest.more")}
-                  onClick={function () { setMenuOpen(!menuOpen); }}>
-            <span style={{fontSize: 10}}>▾</span>
-          </button>
-          {menuOpen && (
-            <div className="ingest-split__menu"
-                 onMouseLeave={function () { setMenuOpen(false); }}>
-              {enabledSources.map(function (s) {
-                return (
-                  <button key={s.id} type="button"
-                          disabled={ingesting || cooldown > 0}
-                          onClick={function () { setMenuOpen(false); runIngest({sourceId: s.id}); }}>
-                    {s.name}
-                  </button>
-                );
+        <div className="filter-bar__row">
+          <div className="filter-bar__item">
+            <span className="filter-bar__label">{t("today.filters.window")}</span>
+            <div className="seg-group">
+              {[{h:6,k:"6h"},{h:24,k:"24h"},{h:72,k:"72h"}].map(function (w) {
+                const active = filters.window === w.h;
+                return <button key={w.h} type="button"
+                               className={"seg-btn " + (active ? "active" : "")}
+                               onClick={function () { setFilters(Object.assign({}, filters, {window: w.h})); }}>
+                  {t("today.filters.window." + w.k)}
+                </button>;
               })}
             </div>
-          )}
-        </span>
+          </div>
+          <span className="filter-bar__sep"/>
+          <div className="filter-bar__item">
+            <input className="input" type="text" style={{width: 190, padding: "6px 10px"}}
+                   placeholder={t("today.filters.keyword.placeholder")}
+                   value={keyword}
+                   onChange={function (e) { setKeyword(e.target.value); }}/>
+          </div>
+          <button className={"btn btn-sm" + (aiFilter ? " btn-primary" : "")} type="button"
+                  onClick={function () { setAiFilterOpen(true); }}
+                  title={aiFilter ? t("today.filters.ai.active") : ""}>
+            <Ico name="ai"/> {t("today.filters.ai")}
+          </button>
+          <div className="filter-bar__item">
+            <span className="filter-bar__label">{t("today.filters.sortLabel")}</span>
+            <div className="seg-group">
+              {[{k:"time"},{k:"score"}].map(function (s) {
+                const active = filters.sort === s.k;
+                return <button key={s.k} type="button"
+                               className={"seg-btn " + (active ? "active" : "")}
+                               onClick={function () { setFilters(Object.assign({}, filters, {sort: s.k})); }}>
+                  {t("today.filters.sort." + s.k)}
+                </button>;
+              })}
+            </div>
+          </div>
+          <div className="filter-bar__item">
+            <span className="filter-bar__label">{t("today.filters.view")}</span>
+            <div className="seg-group">
+              {["grouped", "timeline"].map(function (mode) {
+                return <button key={mode} type="button"
+                               className={"seg-btn " + (viewMode === mode ? "active" : "")}
+                               onClick={function () { setViewMode(mode); }}>
+                  {t("today.filters.view." + mode)}
+                </button>;
+              })}
+            </div>
+          </div>
+          <span style={{flex: 1}}/>
+          <button className="btn btn-sm" type="button"
+                  onClick={function () { setFilters({source: "", window: 24, minScore: 0, sort: "time"}); setKeyword(""); setAiFilter(null); }}>
+            <Ico name="refresh"/> {t("today.filters.reset")}
+          </button>
+          <button className="btn btn-sm" type="button" onClick={onExport} title={t("today.export.title")}>
+            <Ico name="save"/> {t("today.export")}
+          </button>
+          <span className="ingest-split">
+            <button className="btn btn-primary" type="button"
+                    disabled={ingesting || cooldown > 0}
+                    aria-busy={ingesting ? "true" : "false"}
+                    onClick={onIngestAll}>
+              {ingesting
+                ? <span className="fp-spin"><Ico name="refresh"/></span>
+                : <Ico name="play"/>}
+              {" "}
+              {ingesting ? t("today.ingest.busy") : cooldown > 0 ? tfmt(t("today.ingest.cooldown"), {s: cooldown}) : t("today.list.ingest.all")}
+            </button>
+            <button className="btn btn-primary btn--caret" type="button"
+                    disabled={ingesting || cooldown > 0}
+                    title={t("today.list.ingest.more")}
+                    onClick={function () { setMenuOpen(!menuOpen); }}>
+              <span style={{fontSize: 10}}>▾</span>
+            </button>
+            {menuOpen && (
+              <div className="ingest-split__menu"
+                   onMouseLeave={function () { setMenuOpen(false); }}>
+                {enabledSources.map(function (s) {
+                  return (
+                    <button key={s.id} type="button"
+                            disabled={ingesting || cooldown > 0}
+                            onClick={function () { setMenuOpen(false); runIngest({sourceId: s.id}); }}>
+                      {s.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </span>
+        </div>
       </div>
 
       {/* AI filter active indicator */}
@@ -2020,48 +2159,33 @@ function TodayTab() {
         <div className="card-body">
           {loading && items.length === 0 && <div className="empty">{t("today.list.loading")}</div>}
           {!loading && displayItems.length === 0 && <div className="empty">{t("today.list.empty")}</div>}
-          {displayItems.map(function (it) {
-            var score = (typeof it.ai_score === "number") ? it.ai_score.toFixed(1) : "-";
-            var srcDef = sourcesMap[it.source_id];
-            var srcName = srcDef ? srcDef.name : (it.source_id || "");
-            var tags = [];
-            try { tags = JSON.parse(it.ai_tags_json || "[]"); } catch (_) {}
-            return (
-              <div key={it.id} className="news-card">
-                <div className="news-card__header">
-                  <span className={_sourcePillClass(srcDef)}>{srcName}</span>
-                  {srcDef && <ContentTypePill type={srcDef.content_type}/>}
-                  <span className="news-card__time">{fmtDate(it.fetched_at)}</span>
-                  <span className="news-card__actions">
-                    <button className="btn btn-sm"
-                            onClick={function () {
-                              copyText(it.title + "\n" + it.url);
-                              window.oaToast({level: "success", message: t("today.list.copied")});
-                            }}>
-                      <Ico name="copy"/>
-                    </button>
-                  </span>
-                </div>
-                <a href={it.url} target="_blank" rel="noopener noreferrer" className="news-card__title">
-                  {keyword ? highlightText(it.title, keyword) : it.title}
-                </a>
-                {it.summary ? (
-                  <div className="news-card__summary">
-                    {keyword ? highlightText(String(it.summary).slice(0, 300), keyword) : String(it.summary).slice(0, 300)}
+          {viewMode === "grouped" ? (
+            groupedSourceIds.map(function (sid) {
+              var groupItems = groupedItems[sid] || [];
+              var srcDef = sourcesMap[sid] || {id: sid, name: sid, content_type: ""};
+              return (
+                <div key={sid} className="news-source-group">
+                  <div className="news-source-group__head">
+                    <span className={_sourcePillClass(srcDef)}>{_sourceDisplayName(srcDef) || sid}</span>
+                    {srcDef.content_type && <ContentTypePill type={srcDef.content_type}/>}
+                    <span className="oa-section-title__count">{groupItems.length}</span>
+                    <span className="news-source-group__meta">{groupItems[0] ? fmtDate(groupItems[0].fetched_at) : ""}</span>
                   </div>
-                ) : null}
-                <div className="news-card__footer">
-                  {tags.map(function (tg, i) {
-                    return <span key={i} className="kw-tag">{tg}</span>;
-                  })}
-                  <span style={{flex: 1}}/>
-                  <span className={_aiBadgeClass(it.ai_score)}>
-                    AI {score}
-                  </span>
+                  <div className="news-grid">
+                    {groupItems.map(function (it) {
+                      return <NewsCardCompact key={it.id} item={it} source={srcDef} keyword={keyword}/>;
+                    })}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          ) : (
+            <div className="news-grid">
+              {displayItems.map(function (it) {
+                return <NewsCardCompact key={it.id} item={it} source={sourcesMap[it.source_id]} keyword={keyword}/>;
+              })}
+            </div>
+          )}
         </div>
       </div>
 
@@ -2890,6 +3014,69 @@ function ContentTypePill(props) {
   return <span className={"ct-pill ct-pill--" + ct}>{label}</span>;
 }
 
+function _sourceDisplayName(s) {
+  return (s && (s.display_zh || s.display_en || s.name || s.id)) || "";
+}
+
+function _probeSummaryLabel(summary, t) {
+  var totals = (summary && summary.totals) || {};
+  var fetched = Number(totals.fetched || totals.received || 0);
+  var inserted = Number(totals.inserted || 0);
+  var updated = Number(totals.updated || 0);
+  if (fetched + inserted + updated <= 0) {
+    var by = (summary && summary.by_source) || {};
+    Object.keys(by).forEach(function (k) {
+      var r = by[k] || {};
+      fetched += Number(r.fetched || r.received || 0);
+      inserted += Number(r.inserted || 0);
+      updated += Number(r.updated || 0);
+    });
+  }
+  return tfmt(t("settings.sources.probe.summary"), {
+    fetched: fetched,
+    inserted: inserted,
+    updated: updated,
+  });
+}
+
+function _parseCustomFeedsFromConfig(cfg) {
+  var rawJson = String((cfg && cfg["rss_generic.feeds_json"]) || "").trim();
+  if (rawJson) {
+    try {
+      var parsed = JSON.parse(rawJson);
+      if (Array.isArray(parsed)) {
+        return parsed.map(function (entry, i) {
+          if (typeof entry === "string") return {id: "cf_" + i, url: entry, name: entry, enabled: true};
+          return {
+            id: String((entry && entry.id) || ("cf_" + i)),
+            url: String((entry && entry.url) || ""),
+            name: String((entry && entry.name) || (entry && entry.url) || ""),
+            enabled: entry && entry.enabled === false ? false : true,
+          };
+        }).filter(function (f) { return f.url; });
+      }
+    } catch (_) {}
+  }
+  var feedsRaw = String((cfg && cfg["rss_generic.feeds"]) || "");
+  return feedsRaw.split("\n").map(function (l) { return l.trim(); }).filter(Boolean).map(function (url, i) {
+    return {id: "cf_" + i, url: url, name: url.length > 50 ? url.substring(0, 47) + "…" : url, enabled: true};
+  });
+}
+
+function SourceChip(props) {
+  var s = props.source || {};
+  var enabled = props.enabled !== false;
+  var active = !!props.active;
+  var cls = "source-chip " + (enabled ? "source-chip--on" : "source-chip--off") + (active ? " source-chip--active" : "");
+  return (
+    <button type="button" className={cls} onClick={props.onClick} title={props.title || _sourceDisplayName(s)}>
+      <span className="source-chip__dot"/>
+      <span>{_sourceDisplayName(s)}</span>
+      {props.showType !== false && <span className="source-chip__type">{s.content_type || s.group || s.kind || ""}</span>}
+    </button>
+  );
+}
+
 function SourceRow(props) {
   var s = props.source;
   var t = useT();
@@ -2969,11 +3156,7 @@ function SettingsForm(props) {
     if (srcResp && srcResp.ok && Array.isArray(srcResp.items)) {
       setAllSources(srcResp.items);
     }
-    var feedsRaw = String(cfgData["rss_generic.feeds"] || "");
-    var parsed = feedsRaw.split("\n").map(function (l) { return l.trim(); }).filter(Boolean);
-    setCustomFeeds(parsed.map(function (url, i) {
-      return {id: "cf_" + i, url: url, name: url.length > 50 ? url.substring(0, 47) + "…" : url};
-    }));
+    setCustomFeeds(_parseCustomFeedsFromConfig(cfgData));
     setLoaded(true);
     if (!silent) return;
   }, []);
@@ -3084,9 +3267,8 @@ function SettingsForm(props) {
     try {
       var resp = await api("POST", endpoint);
       if (resp && resp.ok) {
-        var n = (resp.summary && resp.summary.inserted) || (resp.summary && resp.summary.received) || 0;
         setProbeStates(function (p) { return Object.assign({}, p, {[sid]: "ok"}); });
-        setProbeLabels(function (p) { return Object.assign({}, p, {[sid]: tfmt(t("settings.sources.probe.ok"), {n: n})}); });
+        setProbeLabels(function (p) { return Object.assign({}, p, {[sid]: _probeSummaryLabel(resp.summary, t)}); });
       } else {
         setProbeStates(function (p) { return Object.assign({}, p, {[sid]: "err"}); });
         setProbeLabels(function (p) { return Object.assign({}, p, {[sid]: t("settings.sources.probe.fail")}); });
@@ -3099,10 +3281,35 @@ function SettingsForm(props) {
     }
   }, [t, allSources]);
 
+  const onProbeSourceGroup = useCallback(async function (key, sources) {
+    setProbingIds(function (p) { return Object.assign({}, p, {[key]: true}); });
+    try {
+      var payload = key === "newsnow" ? null : {sources: sources.map(function (s) { return s.fetcher_id || s.id; })};
+      var resp = await api("POST", key === "newsnow" ? "/ingest/source/newsnow" : "/ingest", payload);
+      if (resp && resp.ok) {
+        setProbeStates(function (p) { return Object.assign({}, p, {[key]: "ok"}); });
+        setProbeLabels(function (p) { return Object.assign({}, p, {[key]: _probeSummaryLabel(resp.summary, t)}); });
+      } else {
+        setProbeStates(function (p) { return Object.assign({}, p, {[key]: "err"}); });
+        setProbeLabels(function (p) { return Object.assign({}, p, {[key]: t("settings.sources.probe.fail")}); });
+      }
+    } catch (_) {
+      setProbeStates(function (p) { return Object.assign({}, p, {[key]: "err"}); });
+      setProbeLabels(function (p) { return Object.assign({}, p, {[key]: t("settings.sources.probe.fail")}); });
+    } finally {
+      setProbingIds(function (p) { return Object.assign({}, p, {[key]: false}); });
+    }
+  }, [t]);
+
   /* ── Custom feed helpers ── */
   const persistCustomFeeds = useCallback(async function (feeds) {
     var urls = feeds.map(function (f) { return f.url; });
-    await persist({"rss_generic.feeds": urls.join("\n")});
+    await persist({
+      "rss_generic.feeds": urls.join("\n"),
+      "rss_generic.feeds_json": JSON.stringify(feeds.map(function (f) {
+        return {name: f.name || f.url, url: f.url, enabled: f.enabled !== false};
+      })),
+    });
     setCustomFeeds(feeds);
   }, [persist]);
 
@@ -3151,9 +3358,13 @@ function SettingsForm(props) {
 
   /* Classify sources */
   var directSources = allSources.filter(function (s) {
-    return (s.kind === "direct" || s.kind === "rss") && s.id !== "rss_generic";
+    return s.group === "direct" || s.group === "builtin_rss" ||
+      ((s.kind === "direct" || s.kind === "rss") && s.id !== "rss_generic");
   });
   var newsnowSources = allSources.filter(function (s) { return s.kind === "newsnow"; });
+  var rssGenericSource = allSources.find(function (s) { return s.id === "rss_generic"; }) || {
+    id: "rss_generic", display_zh: t("settings.sources.cat.custom"), content_type: "custom", group: "custom_rss", default_enabled: true
+  };
 
   var isEnabled = function (sid) {
     var v = config["source." + sid + ".enabled"];
@@ -3186,21 +3397,30 @@ function SettingsForm(props) {
             title={t("settings.sources.cat.direct")}
             badge={tfmt(t("settings.sources.count"), {n: directSources.length})}
             defaultOpen={true}>
-            {directSources.map(function (s) {
-              return (
-                <SourceRow
-                  key={s.id}
-                  source={s}
-                  enabled={isEnabled(s.id)}
-                  probeState={probeStates[s.id]}
-                  probeLabel={probeLabels[s.id]}
-                  probing={!!probingIds[s.id]}
-                  lastError={config["source." + s.id + ".last_error"]}
-                  onToggle={function () { onToggleSource(s.id); }}
-                  onProbe={function () { onProbeSource(s.id); }}
-                />
-              );
-            })}
+            <div className="source-chip-grid">
+              {directSources.map(function (s) {
+                return (
+                  <SourceChip
+                    key={s.id}
+                    source={s}
+                    enabled={isEnabled(s.id)}
+                    onClick={function () { onToggleSource(s.id); }}
+                    title={(s.homepage || "") + (config["source." + s.id + ".last_error"] ? "\n" + config["source." + s.id + ".last_error"] : "")}
+                  />
+                );
+              })}
+            </div>
+            <div className="source-panel-actions">
+              <button className="btn btn-sm" disabled={!!probingIds.direct_rss}
+                      onClick={function () { onProbeSourceGroup("direct_rss", directSources); }}>
+                <Ico name="refresh"/> {probingIds.direct_rss ? t("settings.sources.probing") : t("settings.sources.probe.direct")}
+              </button>
+              {probeLabels.direct_rss && (
+                <span style={{fontSize: 11, color: probeStates.direct_rss === "ok" ? "var(--success)" : "var(--danger)"}}>
+                  {probeLabels.direct_rss}
+                </span>
+              )}
+            </div>
           </Collapsible>
 
           {/* Category 2: Custom sources */}
@@ -3208,6 +3428,14 @@ function SettingsForm(props) {
             title={t("settings.sources.cat.custom")}
             badge={tfmt(t("settings.sources.count"), {n: customFeeds.length})}
             defaultOpen={false}>
+            <div className="source-chip-grid" style={{marginBottom: 10}}>
+              <SourceChip
+                source={rssGenericSource}
+                enabled={isEnabled("rss_generic")}
+                onClick={function () { onToggleSource("rss_generic"); }}
+                title={t("settings.sources.rss.master")}
+              />
+            </div>
             {/* Bing RSS builder */}
             <div className="bing-builder">
               <div className="label">{t("settings.sources.custom.bing.title")}</div>
@@ -3232,13 +3460,13 @@ function SettingsForm(props) {
             {customFeeds.length === 0 && !addingCustom ? (
               <div className="empty" style={{padding: "10px 0"}}>{t("settings.sources.custom.empty")}</div>
             ) : (
-              customFeeds.map(function (f, idx) {
+              <div className="source-chip-grid" style={{marginTop: 8}}>
+              {customFeeds.map(function (f, idx) {
                 return (
-                  <div key={f.id} className="source-row">
-                    <ToggleSwitch on={true} onChange={function () {}}/>
-                    <span className="source-row__name" title={f.url}>{f.name}</span>
-                    <ContentTypePill type="custom"/>
-                    <span className="source-row__spacer"/>
+                  <div key={f.id} className="source-chip" title={f.url}>
+                    <span className="source-chip__dot"/>
+                    <span>{f.name}</span>
+                    <span className="source-chip__type">RSS</span>
                     {customProbeLabels[idx] && (
                       <span style={{fontSize: 11, color: customProbeLabels[idx].indexOf("OK") >= 0 || customProbeLabels[idx].indexOf("可用") >= 0 ? "var(--success)" : "var(--danger)"}}>
                         {customProbeLabels[idx]}
@@ -3253,7 +3481,8 @@ function SettingsForm(props) {
                     </button>
                   </div>
                 );
-              })
+              })}
+              </div>
             )}
 
             {/* Add custom form */}
@@ -3345,31 +3574,32 @@ function SettingsForm(props) {
               </div>
             )}
 
-            {/* NewsNow source list */}
-            {newsnowSources.map(function (s) {
-              var disabled = newsnowMode === "off";
-              return (
-                <div key={s.id} className={"source-row" + (disabled ? " source-row--disabled" : "")}>
-                  <ToggleSwitch
-                    on={!disabled && isEnabled(s.id)}
-                    onChange={disabled ? function () {} : function () { onToggleSource(s.id); }}/>
-                  <span className="source-row__name">{s.display_zh || s.display_en || s.id}</span>
-                  <ContentTypePill type={s.content_type}/>
-                  <span className="source-row__spacer"/>
-                  {probeLabels[s.id] && (
-                    <span style={{fontSize: 11, color: probeStates[s.id] === "ok" ? "var(--success)" : "var(--danger)"}}>
-                      {probeLabels[s.id]}
-                    </span>
-                  )}
-                  <span className={probeStates[s.id] === "ok" ? "source-dot source-dot--ok" : probeStates[s.id] === "err" ? "source-dot source-dot--err" : "source-dot source-dot--unknown"}/>
-                  <button className="btn btn-sm"
-                          disabled={disabled || !!probingIds[s.id]}
-                          onClick={function () { onProbeSource(s.id); }}>
-                    {probingIds[s.id] ? t("settings.sources.probing") : t("settings.sources.probe")}
-                  </button>
-                </div>
-              );
-            })}
+            {/* NewsNow source chips */}
+            <div className="source-chip-grid">
+              {newsnowSources.map(function (s) {
+                var disabled = newsnowMode === "off";
+                return (
+                  <SourceChip
+                    key={s.id}
+                    source={s}
+                    enabled={!disabled && isEnabled(s.id)}
+                    onClick={disabled ? function () {} : function () { onToggleSource(s.id); }}
+                    title={String(s.newsnow_id || s.id)}
+                  />
+                );
+              })}
+            </div>
+            <div className="source-panel-actions">
+              <button className="btn btn-sm" disabled={newsnowMode === "off" || !!probingIds.newsnow}
+                      onClick={function () { onProbeSourceGroup("newsnow", newsnowSources); }}>
+                <Ico name="refresh"/> {probingIds.newsnow ? t("settings.sources.probing") : t("settings.sources.probe.newsnow")}
+              </button>
+              {probeLabels.newsnow && (
+                <span style={{fontSize: 11, color: probeStates.newsnow === "ok" ? "var(--success)" : "var(--danger)"}}>
+                  {probeLabels.newsnow}
+                </span>
+              )}
+            </div>
           </Collapsible>
         </div>
       </div>

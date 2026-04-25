@@ -12,6 +12,7 @@ re-implementing the feedparser dance.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -204,21 +205,51 @@ class GenericRSSFetcher(BaseFetcher):
     """Configurable RSS aggregator — reads feed URLs from config.
 
     ``config['rss_generic.feeds']`` is a newline-separated list of feed
-    URLs. Each URL emits items under ``source_id='rss_generic'``; the
-    originating feed host is preserved in ``extra['feed_host']`` so the
-    UI can distinguish sources within the same aggregator.
+    URLs. ``config['rss_generic.feeds_json']`` may also hold TrendRadar-
+    style structured entries (``[{name,url,enabled}]``). Each URL emits
+    items under ``source_id='rss_generic'``; the originating feed URL/name
+    is preserved in ``extra`` so the UI can distinguish sources within the
+    same aggregator.
     """
 
     source_id = "rss_generic"
 
-    async def fetch(self, **_: Any) -> list[NormalizedItem]:
+    def _resolve_feeds(self) -> list[dict[str, str]]:
+        raw_json = (self._config.get("rss_generic.feeds_json") or "").strip()
+        feeds: list[dict[str, str]] = []
+        if raw_json:
+            try:
+                parsed = json.loads(raw_json)
+                if isinstance(parsed, list):
+                    for entry in parsed:
+                        if not isinstance(entry, dict):
+                            continue
+                        if entry.get("enabled") is False:
+                            continue
+                        url = str(entry.get("url") or "").strip()
+                        if not url:
+                            continue
+                        name = str(entry.get("name") or url).strip()
+                        feeds.append({"url": url, "name": name})
+            except Exception as exc:  # noqa: BLE001 - fallback to legacy list
+                logger.warning("invalid rss_generic.feeds_json: %s", exc)
+        if feeds:
+            return feeds
         feeds_cfg = self._config.get("rss_generic.feeds", "")
-        feeds = [ln.strip() for ln in feeds_cfg.splitlines() if ln.strip()]
+        return [
+            {"url": ln.strip(), "name": ln.strip()}
+            for ln in feeds_cfg.splitlines()
+            if ln.strip()
+        ]
+
+    async def fetch(self, **_: Any) -> list[NormalizedItem]:
+        feeds = self._resolve_feeds()
         if not feeds:
             return []
         out: list[NormalizedItem] = []
         async with make_client(timeout=self._timeout_sec) as client:
-            for feed_url in feeds[:32]:  # hard cap so a huge paste cannot DoS the run
+            for feed in feeds[:32]:  # hard cap so a huge paste cannot DoS the run
+                feed_url = feed["url"]
                 try:
                     body = await fetch_text(client, feed_url)
                 except Exception as exc:  # noqa: BLE001 — per-feed isolation
@@ -233,6 +264,7 @@ class GenericRSSFetcher(BaseFetcher):
                     continue
                 for item in items:
                     item.extra.setdefault("feed_url", feed_url)
+                    item.extra.setdefault("feed_name", feed.get("name") or feed_url)
                 out.extend(items)
         return out
 

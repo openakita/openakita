@@ -2,8 +2,7 @@
 
 The route itself is a thin serialisation wrapper over
 ``finpulse_models.SOURCE_DEFS``. We verify that the mapping hasn't
-drifted (so the frontend KNOWN_SOURCES fallback stays in sync) and
-that every entry carries the fields the UI relies on.
+drifted and that every entry carries the fields the dynamic UI relies on.
 """
 
 from __future__ import annotations
@@ -31,14 +30,16 @@ def test_source_defs_contain_expected_canonical_ids() -> None:
     expected = {
         "wallstreetcn",
         "cls",
-        "xueqiu",
+        "xueqiu-hotstock",
         "eastmoney",
         "pbc_omo",
+        "yicai",
+        "nbd",
+        "stcn",
         "nbs",
         "fed_fomc",
         "sec_edgar",
         "rss_generic",
-        "newsnow",
     }
     assert expected.issubset(set(defs.keys())), (
         f"SOURCE_DEFS drifted — missing: {expected - set(defs.keys())}"
@@ -58,21 +59,25 @@ def test_source_defs_shape_is_ui_friendly() -> None:
         assert "default_enabled" in meta, f"{sid!r} missing default_enabled"
 
 
-def test_frontend_known_sources_fallback_matches() -> None:
-    """The UI keeps a static KNOWN_SOURCES fallback for the first paint
-    before the async /sources response lands. If an id drifts between
-    the frontend fallback and the backend dictionary the user would
-    see an empty article list again (exactly the P0 bug we just fixed).
+def test_iter_sources_for_ui_exposes_fetch_contract() -> None:
+    """The frontend no longer ships a static KNOWN_SOURCES fallback.
+    It depends on the backend contract to explain source display groups
+    and the executable fetcher/probe target for each row.
     """
-    index_html = (PLUGIN_DIR / "ui" / "dist" / "index.html").read_text("utf-8")
-    defs = _load_source_defs()
-    # The fallback is an array of {id, name} objects; assert the three
-    # most-used finance-first ids survive.
-    for required_id in ("wallstreetcn", "cls", "pbc_omo", "fed_fomc", "newsnow"):
-        assert f'id: "{required_id}"' in index_html, (
-            f"KNOWN_SOURCES fallback missing canonical id: {required_id!r}"
-        )
-        assert required_id in defs, f"SOURCE_DEFS missing id: {required_id!r}"
+    from finpulse_models import iter_sources_for_ui  # type: ignore
+
+    items = iter_sources_for_ui()
+    by_id = {item["id"]: item for item in items}
+    assert len(items) == len(_load_source_defs())
+    assert by_id["wallstreetcn"]["group"] == "newsnow"
+    assert by_id["wallstreetcn"]["fetcher_id"] == "newsnow"
+    assert by_id["wallstreetcn"]["can_probe_individual"] is False
+    assert by_id["eastmoney"]["fetcher_id"] == "eastmoney"
+    assert by_id["rss_generic"]["group"] == "custom_rss"
+    for item in items:
+        assert item["probe_target"]
+        assert isinstance(item["capabilities"], list)
+        assert isinstance(item["ui_order"], int)
 
 
 def test_plugin_exposes_sources_route() -> None:

@@ -564,23 +564,10 @@ class Plugin(PluginBase):
             ``finpulse_models.SOURCE_DEFS`` list).
             """
             try:
-                from finpulse_models import SOURCE_DEFS  # type: ignore
+                from finpulse_models import iter_sources_for_ui  # type: ignore
             except ImportError:
                 return {"ok": True, "items": []}
-            items = [
-                {
-                    "id": sid,
-                    "display_zh": str(meta.get("display_zh") or sid),
-                    "display_en": str(meta.get("display_en") or sid),
-                    "kind": str(meta.get("kind") or ""),
-                    "content_type": str(meta.get("content_type") or "news"),
-                    "newsnow_id": str(meta.get("newsnow_id") or ""),
-                    "default_enabled": bool(meta.get("default_enabled")),
-                    "homepage": str(meta.get("homepage") or ""),
-                }
-                for sid, meta in SOURCE_DEFS.items()
-            ]
-            return {"ok": True, "items": items}
+            return {"ok": True, "items": iter_sources_for_ui()}
 
         @router.post("/sources/probe-rss")
         async def probe_rss(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:

@@ -28,7 +28,7 @@ Sections:
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Any, Final
 
 # ── Modes ────────────────────────────────────────────────────────────────
 
@@ -172,6 +172,11 @@ CONTENT_TYPES: Final[tuple[str, ...]] = tuple(FRESHNESS_DEFAULTS.keys())
 #   content_type  – one of CONTENT_TYPES
 #   newsnow_id    – upstream NewsNow channel id (only for kind=newsnow)
 #   max_age_hours – per-source freshness override (0 = use FRESHNESS_DEFAULTS)
+#
+# TrendRadar keeps NewsNow platforms and RSS feeds editable in YAML. fin-pulse
+# mirrors that catalog/fetch/filter/report split, but deliberately does not
+# mirror TrendRadar's scheduler or notification dispatcher: OpenAkita's host
+# scheduler and IM channels remain the delivery layer.
 
 
 SOURCE_DEFS: Final[dict[str, dict[str, object]]] = {
@@ -336,6 +341,87 @@ SOURCE_DEFS: Final[dict[str, dict[str, object]]] = {
 SOURCE_IDS: Final[tuple[str, ...]] = tuple(SOURCE_DEFS.keys())
 
 
+def get_source_group(source_id: str) -> str:
+    """Return the UI/source-management group for *source_id*."""
+    defn = SOURCE_DEFS.get(source_id, {})
+    kind = str(defn.get("kind") or "")
+    if kind == "newsnow":
+        return "newsnow"
+    if source_id == "rss_generic":
+        return "custom_rss"
+    if kind == "rss":
+        return "builtin_rss"
+    if kind == "direct":
+        return "direct"
+    return "other"
+
+
+def get_source_fetcher_id(source_id: str) -> str:
+    """Return the executable fetcher id used by SOURCE_REGISTRY."""
+    defn = SOURCE_DEFS.get(source_id, {})
+    if defn.get("kind") == "newsnow":
+        return "newsnow"
+    return source_id
+
+
+def get_source_probe_target(source_id: str) -> str:
+    """Return the source id that should be used for health probing."""
+    return get_source_fetcher_id(source_id)
+
+
+def get_source_capabilities(source_id: str) -> tuple[str, ...]:
+    """Return compact capabilities for UI badges and grouped source chips."""
+    defn = SOURCE_DEFS.get(source_id, {})
+    kind = str(defn.get("kind") or "")
+    content_type = str(defn.get("content_type") or "news")
+    caps: list[str] = []
+    if kind == "newsnow":
+        caps.append("hotlist")
+    elif kind == "rss":
+        caps.append("rss")
+    elif kind == "direct":
+        caps.append("direct")
+    if content_type == "custom":
+        caps.append("custom_rss")
+    elif content_type:
+        caps.append(content_type)
+    # Preserve order while removing duplicates.
+    return tuple(dict.fromkeys(caps))
+
+
+def iter_sources_for_ui() -> list[dict[str, Any]]:
+    """Return SOURCE_DEFS with derived UI/fetch contract fields.
+
+    The fetcher registry executes at a different granularity than the
+    display catalog: all NewsNow channels share the single ``newsnow``
+    fetcher. Exposing that mapping here keeps frontend probing/ingest
+    logic from guessing.
+    """
+    items: list[dict[str, Any]] = []
+    for order, (sid, meta) in enumerate(SOURCE_DEFS.items()):
+        group = get_source_group(sid)
+        fetcher_id = get_source_fetcher_id(sid)
+        items.append(
+            {
+                "id": sid,
+                "display_zh": str(meta.get("display_zh") or sid),
+                "display_en": str(meta.get("display_en") or sid),
+                "kind": str(meta.get("kind") or ""),
+                "group": group,
+                "content_type": str(meta.get("content_type") or "news"),
+                "capabilities": list(get_source_capabilities(sid)),
+                "newsnow_id": str(meta.get("newsnow_id") or ""),
+                "fetcher_id": fetcher_id,
+                "probe_target": get_source_probe_target(sid),
+                "can_probe_individual": group != "newsnow",
+                "default_enabled": bool(meta.get("default_enabled")),
+                "homepage": str(meta.get("homepage") or ""),
+                "ui_order": order,
+            }
+        )
+    return items
+
+
 def get_max_age_hours(source_id: str) -> int:
     """Return the freshness ceiling for *source_id* in hours.
 
@@ -375,5 +461,10 @@ __all__ = [
     "SESSIONS",
     "SOURCE_DEFS",
     "SOURCE_IDS",
+    "get_source_capabilities",
+    "get_source_fetcher_id",
+    "get_source_group",
+    "get_source_probe_target",
     "get_max_age_hours",
+    "iter_sources_for_ui",
 ]
