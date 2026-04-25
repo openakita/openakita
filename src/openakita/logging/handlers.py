@@ -8,6 +8,7 @@
 """
 
 import logging
+import os
 import sys
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
@@ -57,14 +58,19 @@ class ColoredConsoleHandler(logging.StreamHandler):
 
     def __init__(self, stream: TextIO = None):
         output_stream = stream or sys.stdout
+        if output_stream is None or getattr(output_stream, "closed", False):
+            output_stream = open(os.devnull, "w", encoding="utf-8")
         # 双保险：即使 _ensure_utf8 已全局 reconfigure stdout，这里仍对 handler 自身
         # 的 stream 做 UTF-8 包装，防止 logging 在 _ensure_utf8 导入之前初始化的极端场景。
-        if sys.platform == "win32" and hasattr(output_stream, "buffer"):
-            import io
-
-            output_stream = io.TextIOWrapper(
-                output_stream.buffer, encoding="utf-8", errors="replace", line_buffering=True
-            )
+        if sys.platform == "win32":
+            try:
+                if hasattr(output_stream, "reconfigure"):
+                    output_stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+            except (OSError, ValueError):
+                # pythonw.exe can run with sys.stdout attached to a closed file.
+                # In that mode logs still go to file/session handlers; the console
+                # handler should become a no-op instead of breaking requests.
+                output_stream = open(os.devnull, "w", encoding="utf-8")
         super().__init__(output_stream)
         # 检测是否支持颜色（Windows 需要特殊处理）
         self._supports_color = self._check_color_support()
