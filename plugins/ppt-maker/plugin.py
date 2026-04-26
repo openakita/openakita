@@ -14,6 +14,8 @@ from fastapi import APIRouter
 
 from openakita.plugins.api import PluginAPI, PluginBase
 
+from ppt_maker_inline.file_utils import resolve_plugin_data_root
+
 
 PLUGIN_ID = "ppt-maker"
 
@@ -27,8 +29,7 @@ class Plugin(PluginBase):
 
     def on_load(self, api: PluginAPI) -> None:
         self._api = api
-        data_dir = api.get_data_dir() or Path.cwd() / "data" / PLUGIN_ID
-        data_dir.mkdir(parents=True, exist_ok=True)
+        data_dir = resolve_plugin_data_root(api.get_data_dir() or Path.cwd() / "data")
         self._data_dir = data_dir
 
         router = APIRouter()
@@ -38,8 +39,9 @@ class Plugin(PluginBase):
             return {
                 "ok": True,
                 "plugin": PLUGIN_ID,
-                "phase": 0,
+                "phase": 1,
                 "data_dir": str(data_dir),
+                "db_path": str(data_dir / "ppt_maker.db"),
             }
 
         api.register_api_routes(router)
@@ -48,7 +50,7 @@ class Plugin(PluginBase):
 
     async def _handle_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         if tool_name == "ppt_list_projects":
-            return "ppt-maker is loaded. Project storage is added in Phase 1."
+            return "ppt-maker project storage is available. Routes are wired in Phase 9."
         return f"{tool_name} is registered; implementation is added in later phases."
 
     async def on_unload(self) -> None:

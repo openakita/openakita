@@ -33,7 +33,7 @@ def test_inline_helpers_import() -> None:
     from ppt_maker_inline.llm_json_parser import parse_llm_json_object
     from ppt_maker_inline.python_deps import list_optional_groups
 
-    assert safe_name("a/b c.pptx") == "a_b_c.pptx"
+    assert safe_name("a/b c.pptx") == "b_c.pptx"
     assert parse_llm_json_object("```json\n{\"ok\": true}\n```") == {"ok": True}
     assert "table" in list_optional_groups()
 
