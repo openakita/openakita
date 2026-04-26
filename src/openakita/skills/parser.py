@@ -57,6 +57,8 @@ class SkillMetadata:
     supported_os: list[str] = field(default_factory=list)
     required_bins: list[str] = field(default_factory=list)
     required_env: list[str] = field(default_factory=list)
+    python_env: str = ""
+    python_dependencies: list[str] = field(default_factory=list)
 
     # 配置 schema（供 Setup Center 自动生成配置表单）
     # 每个元素: {"key": str, "label": str, "type": "text"|"secret"|"number"|"select"|"bool",
@@ -349,6 +351,8 @@ class SkillParser:
         supported_os: list[str] = []
         required_bins: list[str] = []
         required_env: list[str] = []
+        python_env = ""
+        python_dependencies: list[str] = []
 
         if akita_meta:
             os_val = akita_meta.get("os", [])
@@ -365,6 +369,19 @@ class SkillParser:
                 env_val = requires.get("env", [])
                 if isinstance(env_val, list):
                     required_env = [str(e) for e in env_val]
+
+            python_val = akita_meta.get("python", {})
+            if isinstance(python_val, dict):
+                env_val = python_val.get("env", "")
+                if isinstance(env_val, str):
+                    python_env = env_val.strip()
+                deps_val = python_val.get("dependencies", [])
+                if isinstance(deps_val, list):
+                    python_dependencies = [str(dep).strip() for dep in deps_val if str(dep).strip()]
+                elif isinstance(deps_val, str):
+                    python_dependencies = [
+                        dep.strip() for dep in deps_val.splitlines() if dep.strip()
+                    ]
 
         # F1: 新字段解析
         when_to_use = str(data.get("when-to-use", "") or "")
@@ -412,6 +429,8 @@ class SkillParser:
             supported_os=supported_os,
             required_bins=required_bins,
             required_env=required_env,
+            python_env=python_env,
+            python_dependencies=python_dependencies,
             config=config,
             when_to_use=when_to_use,
             keywords=keywords,

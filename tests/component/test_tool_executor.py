@@ -16,6 +16,7 @@ def _make_registry(*tool_names: str) -> MagicMock:
     registry.has_tool.side_effect = lambda n: n in result_map
     registry.execute_by_tool = AsyncMock(side_effect=lambda n, _: result_map[n])
     registry.get_handler_name_for_tool.return_value = "filesystem"
+    registry.get_permission_check.return_value = None
     return registry
 
 
@@ -46,17 +47,18 @@ class TestExecuteTool:
         registry.has_tool.return_value = True
         registry.execute_by_tool.side_effect = _execute_by_tool
         registry.get_handler_name_for_tool.return_value = "plan"
+        registry.get_permission_check.return_value = None
         executor = ToolExecutor(handler_registry=registry, max_parallel=1)
 
         await executor.execute_tool(
-            "create_plan",
+            "create_todo",
             {
                 "task_summary": "demo",
                 "steps": '[{"id":"step_1","description":"first"}]',
             },
         )
 
-        assert captured["tool_name"] == "create_plan"
+        assert captured["tool_name"] == "create_todo"
         assert isinstance(captured["params"]["steps"], list)
         assert captured["params"]["steps"][0]["id"] == "step_1"
 
@@ -94,6 +96,7 @@ async def test_structured_tool_error_marks_tool_result_as_error():
     registry = MagicMock()
     registry.has_tool.return_value = True
     registry.get_handler_name_for_tool.return_value = "skills"
+    registry.get_permission_check.return_value = None
     registry.execute_by_tool = AsyncMock(
         return_value=ToolError(
             error_type=ErrorType.TIMEOUT,

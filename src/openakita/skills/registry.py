@@ -116,6 +116,8 @@ class SkillEntry:
     supported_os: list[str] = field(default_factory=list)
     required_bins: list[str] = field(default_factory=list)
     required_env: list[str] = field(default_factory=list)
+    python_env: str = ""
+    python_dependencies: list[str] = field(default_factory=list)
 
     # 技能路径 (用于延迟加载)
     skill_path: str | None = None
@@ -267,6 +269,8 @@ class SkillEntry:
             supported_os=list(meta.supported_os),
             required_bins=list(meta.required_bins),
             required_env=list(meta.required_env),
+            python_env=meta.python_env,
+            python_dependencies=list(meta.python_dependencies),
             config=list(meta.config) if meta.config else [],
             when_to_use=meta.when_to_use,
             keywords=list(meta.keywords),
@@ -331,6 +335,8 @@ class SkillEntry:
                 "handler": self.handler or "",
                 "trust_level": self.trust_level,
                 "plugin_source": self.plugin_source or "",
+                "python_env": self.python_env,
+                "python_dependencies": list(self.python_dependencies),
             },
         )
 

@@ -1316,7 +1316,7 @@ def _build_python_info(
 
     if can_pip_install:
         lines.append(
-            "- 推荐: 写脚本后用 `python script.py` 执行；需要依赖时使用 `pip install <package>`"
+            "- 推荐: 写脚本后用 `python script.py` 执行；需要依赖时先判断当前 Agent、skill 或项目环境，不要默认污染共享 agent-venv"
         )
     else:
         fallback_venv = settings.project_root / "data" / "venv"
@@ -1328,6 +1328,16 @@ def _build_python_info(
         )
     if legacy_mode:
         lines.append("- **兼容模式**: 当前使用 legacy PyInstaller fallback，动态 pip install 可能不可靠")
+    lines.extend(
+        [
+            "",
+            "### 环境隔离规则",
+            "- 不同 Agent 可配置独立 agent scoped venv；长期依赖优先进入当前 Agent 环境。",
+            "- skill 预置 Python 脚本若声明依赖，运行前使用 skill scoped venv。",
+            "- 用户项目已有 `.venv`、`pyproject.toml`、`requirements.txt` 或 `uv.lock` 时，优先遵守项目自己的环境。",
+            "- 一次性探索依赖应使用 scratch/临时环境，避免写入共享 agent-venv。",
+        ]
+    )
 
     return "\n".join(lines)
 

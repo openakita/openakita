@@ -652,6 +652,11 @@ class Agent:
 
         # Agent profile and custom prompt (set by AgentFactory)
         self._agent_profile = None
+        self._agent_profile_id = "default"
+        self._runtime_env_mode = "shared"
+        self._runtime_env_dependencies: list[str] = []
+        self._runtime_env_python: str | None = None
+        self._execution_env_spec = None
         self._custom_prompt_suffix: str = ""
         self._preferred_endpoint: str | None = None
 
@@ -728,6 +733,37 @@ class Agent:
             memory_manager=self.memory_manager,
             plan_exit_pending=self._plan_exit_pending,
         )
+
+    def configure_runtime_environment(self, profile) -> None:
+        """Apply AgentProfile runtime policy to tools created during __init__.
+
+        Agent instances are initialized before AgentFactory applies profile
+        filters. This hook lets the factory attach the stable profile id and an
+        optional managed agent venv without changing legacy shared behavior.
+        """
+        self._agent_profile = profile
+        self._agent_profile_id = getattr(profile, "id", "default") or "default"
+        self._runtime_env_mode = getattr(profile, "runtime_env_mode", "shared") or "shared"
+        self._runtime_env_dependencies = list(
+            getattr(profile, "runtime_env_dependencies", []) or []
+        )
+        self._runtime_env_python = getattr(profile, "runtime_env_python", None)
+        self._execution_env_spec = None
+
+        if self._runtime_env_mode == "agent":
+            try:
+                from ..runtime_envs import resolve_agent_env
+
+                self._execution_env_spec = resolve_agent_env(
+                    self._agent_profile_id,
+                    deps=self._runtime_env_dependencies,
+                )
+            except Exception as exc:
+                logger.warning("Failed to resolve agent runtime env for %s: %s", self._agent_profile_id, exc)
+
+        if hasattr(self.shell_tool, "execution_env_spec"):
+            self.shell_tool.execution_env_spec = self._execution_env_spec
+            self.shell_tool.runtime_env_mode = self._runtime_env_mode
 
         logger.info(f"Agent '{self.name}' created (with refactored sub-modules)")
 
@@ -2152,8 +2188,28 @@ class Agent:
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
+        prompt += self._build_runtime_env_prompt_section()
         prompt += self._build_multi_agent_prompt_section()
         return prompt
+
+    def _build_runtime_env_prompt_section(self) -> str:
+        mode = getattr(self, "_runtime_env_mode", "shared") or "shared"
+        profile_id = getattr(self, "_agent_profile_id", "default") or "default"
+        spec = getattr(self, "_execution_env_spec", None)
+        if spec is None:
+            env_line = "当前 Agent 使用共享 `agent-venv` fallback；不要把长期任务依赖随意安装到共享环境。"
+        else:
+            env_line = (
+                f"当前 AgentProfile `{profile_id}` 使用独立 Python 环境 "
+                f"`{spec.venv_path}`；该 Agent 的临时 Python/pip 依赖应优先进入此环境。"
+            )
+        return (
+            "\n\n### Agent Python 环境策略\n"
+            f"- runtime_env_mode: `{mode}`\n"
+            f"- {env_line}\n"
+            "- 操作用户项目时，先检查项目自己的 `.venv`、`pyproject.toml`、`requirements.txt`、`uv.lock`，优先遵守项目环境。\n"
+            "- 运行 skill 预置 Python 脚本时，优先使用 skill 声明的 Python 环境和依赖。"
+        )
 
     async def _build_system_prompt_compiled(
         self,
@@ -2279,6 +2335,7 @@ class Agent:
         self._last_effective_mode = _effective_mode
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
+        prompt += self._build_runtime_env_prompt_section()
         prompt += self._build_multi_agent_prompt_section()
         return prompt
 

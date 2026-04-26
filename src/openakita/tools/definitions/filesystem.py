@@ -90,6 +90,14 @@ FILESYSTEM_TOOLS = [
                     "description": "终端会话 ID。同一会话的命令共享工作目录和环境变量。默认 1。",
                     "default": 1,
                 },
+                "env_scope": {
+                    "type": "string",
+                    "description": (
+                        "Python 环境作用域，可选：agent（当前 Agent 环境，默认）、"
+                        "scratch（一次性临时环境）、shared（历史共享 agent-venv）。"
+                    ),
+                    "enum": ["agent", "scratch", "shared"],
+                },
                 "timeout": {
                     "type": "integer",
                     "description": "（兼容旧参数）超时时间（秒），优先使用 block_timeout_ms",

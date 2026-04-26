@@ -713,6 +713,8 @@ class SkillLoader:
         script_name: str,
         args: list[str] | None = None,
         cwd: Path | None = None,
+        python_executable: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> tuple[bool, str]:
         """
         运行技能脚本
@@ -753,10 +755,11 @@ class SkillLoader:
         args = args or []
 
         if script_path.suffix == ".py":
-            # PyInstaller 兼容: 使用 runtime_env 获取正确的 Python 解释器
+            # Prefer the caller-provided managed env. Fall back to the legacy
+            # packaged/source interpreter for backwards compatibility.
             from openakita.runtime_env import get_python_executable
 
-            py = get_python_executable()
+            py = python_executable or get_python_executable()
             if not py:
                 return False, "Python 解释器不可用，无法执行脚本"
             cmd = [py, str(script_path)] + args
@@ -799,6 +802,7 @@ class SkillLoader:
                 cwd=cwd or skill.skill_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                env=env,
                 **extra,
             )
             try:

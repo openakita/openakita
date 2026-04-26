@@ -161,6 +161,13 @@ class AgentProfile:
     memory_inherit_global: bool = True
     user_profile_content: str = ""
 
+    # Python runtime isolation. "shared" preserves the historical agent-venv
+    # behavior; "agent" gives this AgentProfile a managed venv; "custom" is
+    # reserved for explicit external interpreters or future remote runtimes.
+    runtime_env_mode: str = "shared"  # "shared" | "agent" | "custom"
+    runtime_env_dependencies: list[str] = field(default_factory=list)
+    runtime_env_python: str | None = None
+
     # Execution constraints (inspired by Claude Code's BaseAgentDefinition)
     max_turns: int | None = None  # Max reasoning iterations per delegation
     background: bool = False  # Force background execution
