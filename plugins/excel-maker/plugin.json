@@ -1,0 +1,65 @@
+{
+  "id": "excel-maker",
+  "name": "Excel Maker",
+  "version": "0.1.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Guided Excel report workbook generation, refinement, formula explanation, and quality audit.",
+  "display_name_zh": "Excel 报表助手",
+  "display_name_en": "Excel Maker",
+  "description_i18n": {
+    "zh": "通过需求澄清、表格剖析、受控方案、公式说明和质量审计生成可编辑 XLSX 报表。",
+    "en": "Generate editable XLSX reports through guided requirements, profiling, controlled plans, formula explanations, and audits."
+  },
+  "author": "OpenAkita",
+  "category": "productivity",
+  "tags": ["excel", "xlsx", "csv", "report", "workbook", "formula", "office"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~1",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0",
+    "python": ">=3.11"
+  },
+  "provides": {
+    "tools": [
+      "excel_start_project",
+      "excel_import_workbook",
+      "excel_profile_workbook",
+      "excel_clarify_requirements",
+      "excel_generate_report_plan",
+      "excel_generate_formula",
+      "excel_plan_cleanup",
+      "excel_apply_operations",
+      "excel_build_workbook",
+      "excel_audit_workbook",
+      "excel_export_workbook",
+      "excel_list_projects",
+      "excel_cancel"
+    ],
+    "routes": true,
+    "skill": "SKILL.md"
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "icon": "",
+    "title": "Excel 报表助手",
+    "title_i18n": {
+      "zh": "Excel 报表助手",
+      "en": "Excel Maker"
+    },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  },
+  "load_timeout": 15
+}
+

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Excel Maker</title>
+    <link rel="stylesheet" href="./_assets/styles.css" />
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel">
+      const { useEffect, useMemo, useState } = React;
+
+      const apiBase = "";
+      const tabs = ["Create", "Projects", "Datasets", "Templates", "Settings"];
+
+      async function pluginFetch(path, options = {}) {
+        const response = await fetch(apiBase + path, {
+          ...options,
+          headers: options.body instanceof FormData
+            ? options.headers || {}
+            : { "Content-Type": "application/json", ...(options.headers || {}) },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) {
+          throw new Error(typeof data.detail === "string" ? data.detail : data.error || "Request failed");
+        }
+        return data;
+      }
+
+      function StatusBadge({ value }) {
+        return <span className="status">{value || "unknown"}</span>;
+      }
+
+      function ErrorPanel({ error, onClose }) {
+        if (!error) return null;
+        return <div className="error"><div>{error}</div><button className="btn danger" onClick={onClose}>关闭</button></div>;
+      }
+
+      function FileUploadZone({ projectId, onUploaded }) {
+        const [busy, setBusy] = useState(false);
+        async function upload(file) {
+          if (!file) return;
+          setBusy(true);
+          const form = new FormData();
+          form.append("file", file);
+          if (projectId) form.append("project_id", projectId);
+          try {
+            const data = await pluginFetch("/upload", { method: "POST", body: form });
+            onUploaded(data.workbook);
+          } finally {
+            setBusy(false);
+          }
+        }
+        return (
+          <div className="upload">
+            <p>上传 .xlsx / .csv / .tsv，源文件不会被覆盖。</p>
+            <input type="file" accept=".xlsx,.csv,.tsv" disabled={busy} onChange={(e) => upload(e.target.files[0])} />
+          </div>
+        );
+      }
+
+      function CreateTab({ refresh }) {
+        const [title, setTitle] = useState("经营分析报表");
+        const [goal, setGoal] = useState("整理数据，生成可交付 Excel 报表");
+        const [project, setProject] = useState(null);
+        const [workbook, setWorkbook] = useState(null);
+        const [profile, setProfile] = useState(null);
+        const [questions, setQuestions] = useState([]);
+        const [plan, setPlan] = useState(null);
+        const [artifact, setArtifact] = useState(null);
+        const [error, setError] = useState("");
+
+        async function createProject() {
+          setError("");
+          const data = await pluginFetch("/projects", {
+            method: "POST",
+            body: JSON.stringify({ title, goal, audience: "", period: "", style: "business" }),
+          });
+          setProject(data.project);
+          refresh();
+        }
+
+        async function importAndProfile(wb) {
+          setError("");
+          setWorkbook(wb);
+          const imported = await pluginFetch("/workbooks/import", {
+            method: "POST",
+            body: JSON.stringify({ path: wb.original_path, project_id: project && project.id, name: wb.filename }),
+          });
+          setWorkbook(imported.workbook);
+          const profiled = await pluginFetch(`/workbooks/${imported.workbook.id}/profile`, {
+            method: "POST",
+            body: JSON.stringify({ force: true }),
+          });
+          setProfile(profiled.profile);
+          refresh();
+        }
+
+        async function clarify() {
+          const data = await pluginFetch("/ai/clarify", {
+            method: "POST",
+            body: JSON.stringify({ project_id: project && project.id, workbook_id: workbook && workbook.id, goal, profile }),
+          });
+          setQuestions(data.questions || []);
+        }
+
+        async function makePlan() {
+          const data = await pluginFetch("/ai/report-plan", {
+            method: "POST",
+            body: JSON.stringify({ project_id: project && project.id, workbook_id: workbook && workbook.id, brief: { goal }, profile }),
+          });
+          setPlan(data.plan);
+        }
+
+        async function build() {
+          const data = await pluginFetch(`/reports/${project.id}/build`, {
+            method: "POST",
+            body: JSON.stringify({ workbook_id: workbook && workbook.id, plan }),
+          });
+          setArtifact(data.artifact);
+          refresh();
+        }
+
+        return (
+          <div>
+            <ErrorPanel error={error} onClose={() => setError("")} />
+            <div className="grid">
+              <div className="card">
+                <h2>1. 新建报表项目</h2>
+                <div className="field"><label>标题</label><input value={title} onChange={(e) => setTitle(e.target.value)} /></div>
+                <div className="field"><label>目标</label><textarea rows="3" value={goal} onChange={(e) => setGoal(e.target.value)} /></div>
+                <button className="btn primary" onClick={() => createProject().catch((e) => setError(e.message))}>创建项目</button>
+                {project && <p>当前项目：<b>{project.title}</b> <StatusBadge value={project.status} /></p>}
+              </div>
+              <div className="card">
+                <h2>2. 上传并分析</h2>
+                <FileUploadZone projectId={project && project.id} onUploaded={(wb) => importAndProfile(wb).catch((e) => setError(e.message))} />
+                {workbook && <p>工作簿：{workbook.filename} <StatusBadge value={workbook.status} /></p>}
+              </div>
+            </div>
+            <div className="card">
+              <h2>3. 需求澄清与方案</h2>
+              <div className="row">
+                <button className="btn" disabled={!profile} onClick={() => clarify().catch((e) => setError(e.message))}>生成追问</button>
+                <button className="btn" disabled={!profile} onClick={() => makePlan().catch((e) => setError(e.message))}>生成 WorkbookPlan</button>
+                <button className="btn primary" disabled={!project || !plan} onClick={() => build().catch((e) => setError(e.message))}>生成 XLSX 报表</button>
+              </div>
+              {questions.length > 0 && <ul>{questions.map((q) => <li key={q}>{q}</li>)}</ul>}
+              {plan && <pre>{JSON.stringify(plan, null, 2)}</pre>}
+              {artifact && <p>已生成：<a href={`/artifacts/${artifact.id}/download`}>{artifact.path.split(/[\\/]/).pop()}</a></p>}
+            </div>
+          </div>
+        );
+      }
+
+      function ProjectsTab({ projects, refresh }) {
+        return (
+          <div className="card">
+            <h2>Projects</h2>
+            <table>
+              <thead><tr><th>标题</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+              <tbody>
+                {projects.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.title}<br /><small>{p.goal}</small></td>
+                    <td><StatusBadge value={p.status} /></td>
+                    <td>{new Date(p.created_at * 1000).toLocaleString()}</td>
+                    <td><button className="btn" onClick={() => refresh()}>刷新</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+
+      function DatasetsTab() {
+        const [id, setId] = useState("");
+        const [preview, setPreview] = useState(null);
+        const [error, setError] = useState("");
+        return (
+          <div className="card">
+            <h2>Datasets</h2>
+            <ErrorPanel error={error} onClose={() => setError("")} />
+            <div className="row">
+              <input placeholder="workbook_id" value={id} onChange={(e) => setId(e.target.value)} />
+              <button className="btn" onClick={() => pluginFetch(`/workbooks/${id}/preview`).then((d) => setPreview(d.preview)).catch((e) => setError(e.message))}>查看预览</button>
+            </div>
+            {preview && <pre>{JSON.stringify(preview, null, 2)}</pre>}
+          </div>
+        );
+      }
+
+      function TemplatesTab() {
+        const [path, setPath] = useState("");
+        const [templates, setTemplates] = useState([]);
+        const [error, setError] = useState("");
+        async function load() {
+          const data = await pluginFetch("/templates");
+          setTemplates(data.templates || []);
+        }
+        useEffect(() => { load().catch((e) => setError(e.message)); }, []);
+        return (
+          <div className="card">
+            <h2>Templates</h2>
+            <ErrorPanel error={error} onClose={() => setError("")} />
+            <div className="row">
+              <input placeholder="服务端模板路径 .xlsx" value={path} onChange={(e) => setPath(e.target.value)} />
+              <button className="btn" onClick={() => pluginFetch("/templates", { method: "POST", body: JSON.stringify({ path }) }).then(load).catch((e) => setError(e.message))}>登记模板</button>
+            </div>
+            <table><tbody>{templates.map((t) => <tr key={t.id}><td>{t.name}</td><td><StatusBadge value={t.status} /></td><td><button className="btn" onClick={() => pluginFetch(`/templates/${t.id}/diagnose`, { method: "POST", body: "{}" }).then(load).catch((e) => setError(e.message))}>诊断</button></td></tr>)}</tbody></table>
+          </div>
+        );
+      }
+
+      function SettingsTab() {
+        const [settings, setSettings] = useState(null);
+        const [deps, setDeps] = useState([]);
+        const [stats, setStats] = useState(null);
+        const [error, setError] = useState("");
+        async function load() {
+          const [s, d, st] = await Promise.all([pluginFetch("/settings"), pluginFetch("/system/python-deps"), pluginFetch("/storage/stats")]);
+          setSettings(s.settings); setDeps(d.groups || []); setStats(st.stats);
+        }
+        useEffect(() => { load().catch((e) => setError(e.message)); }, []);
+        return (
+          <div className="grid">
+            <div className="card">
+              <h2>Settings</h2>
+              <ErrorPanel error={error} onClose={() => setError("")} />
+              {settings && <pre>{JSON.stringify(settings, null, 2)}</pre>}
+              <button className="btn" onClick={() => pluginFetch("/storage/open-folder", { method: "POST", body: JSON.stringify({}) }).catch((e) => setError(e.message))}>打开数据目录</button>
+            </div>
+            <div className="card">
+              <h2>Dependencies</h2>
+              {deps.map((dep) => (
+                <div key={dep.id} className="row" style={{ marginBottom: 8 }}>
+                  <b>{dep.id}</b><StatusBadge value={dep.status} />
+                  <button className="btn" disabled={dep.detect_only || dep.installed} onClick={() => pluginFetch(`/system/python-deps/${dep.id}/install`, { method: "POST", body: "{}" }).then(load).catch((e) => setError(e.message))}>安装</button>
+                </div>
+              ))}
+              <h3>Storage</h3>
+              {stats && <pre>{JSON.stringify(stats, null, 2)}</pre>}
+            </div>
+          </div>
+        );
+      }
+
+      function App() {
+        const [active, setActive] = useState("Create");
+        const [projects, setProjects] = useState([]);
+        const [error, setError] = useState("");
+        async function refresh() {
+          const data = await pluginFetch("/projects");
+          setProjects(data.projects || []);
+        }
+        useEffect(() => { refresh().catch((e) => setError(e.message)); }, []);
+        return (
+          <main className="app">
+            <section className="hero">
+              <h1>Excel 报表助手</h1>
+              <p>上传表格、梳理口径、生成可编辑 XLSX，并附带公式解释和质量审计。</p>
+            </section>
+            <ErrorPanel error={error} onClose={() => setError("")} />
+            <nav className="tabs">{tabs.map((tab) => <button key={tab} className={"tab " + (active === tab ? "active" : "")} onClick={() => setActive(tab)}>{tab}</button>)}</nav>
+            {active === "Create" && <CreateTab refresh={refresh} />}
+            {active === "Projects" && <ProjectsTab projects={projects} refresh={refresh} />}
+            {active === "Datasets" && <DatasetsTab />}
+            {active === "Templates" && <TemplatesTab />}
+            {active === "Settings" && <SettingsTab />}
+          </main>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>
+
