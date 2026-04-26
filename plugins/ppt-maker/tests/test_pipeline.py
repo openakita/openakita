@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from ppt_models import DeckMode, ProjectCreate, ProjectStatus, TaskCreate
 from ppt_pipeline import PIPELINE_STEPS, PptPipeline
 from ppt_task_manager import PptTaskManager

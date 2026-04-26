@@ -3,7 +3,6 @@ from __future__ import annotations
 import zipfile
 
 import pytest
-
 from ppt_source_loader import SourceLoader, SourceParseError
 
 

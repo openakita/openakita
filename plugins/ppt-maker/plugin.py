@@ -13,10 +13,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict
-
-from openakita.plugins.api import PluginAPI, PluginBase
-
+from ppt_audit import PptAudit
+from ppt_design import DesignBuilder
+from ppt_exporter import PptxExporter, PptxExportError
+from ppt_ir import SlideIrBuilder
 from ppt_maker_inline.file_utils import (
     dataset_dir,
     project_dir,
@@ -27,18 +27,16 @@ from ppt_maker_inline.file_utils import (
 )
 from ppt_maker_inline.python_deps import PythonDepsManager
 from ppt_maker_inline.upload_preview import register_upload_preview_routes
-from ppt_source_loader import MissingDependencyError, SourceLoader, SourceParseError
-from ppt_table_analyzer import TableAnalyzer
-from ppt_template_manager import TemplateDiagnosticError, TemplateManager
-from ppt_design import DesignBuilder
-from ppt_audit import PptAudit
-from ppt_exporter import PptxExportError, PptxExporter
-from ppt_ir import SlideIrBuilder
 from ppt_models import DeckMode, ProjectCreate, ProjectStatus
 from ppt_outline import OutlineBuilder
 from ppt_pipeline import PptPipeline
+from ppt_source_loader import MissingDependencyError, SourceLoader, SourceParseError
+from ppt_table_analyzer import TableAnalyzer
 from ppt_task_manager import PptTaskManager
+from ppt_template_manager import TemplateDiagnosticError, TemplateManager
+from pydantic import BaseModel, ConfigDict
 
+from openakita.plugins.api import PluginAPI, PluginBase
 
 PLUGIN_ID = "ppt-maker"
 

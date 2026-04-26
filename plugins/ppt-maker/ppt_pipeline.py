@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 from ppt_audit import PptAudit
 from ppt_design import DesignBuilder
@@ -14,7 +15,6 @@ from ppt_maker_inline.file_utils import project_dir
 from ppt_models import ErrorKind, ProjectStatus, TaskCreate, TaskStatus
 from ppt_outline import OutlineBuilder
 from ppt_task_manager import PptTaskManager
-
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 

@@ -1,24 +1,23 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
-from ppt_models import (
-    BUILTIN_TEMPLATES,
-    ChartType,
-    DeckMode,
-    ERROR_HINTS,
-    ErrorKind,
-    ProjectCreate,
-    SlideType,
-    TemplateCategory,
-)
 from ppt_maker_inline.file_utils import (
     assert_within_root,
     resolve_plugin_data_root,
     safe_name,
     slugify,
 )
+from ppt_models import (
+    BUILTIN_TEMPLATES,
+    ERROR_HINTS,
+    ChartType,
+    DeckMode,
+    ErrorKind,
+    ProjectCreate,
+    SlideType,
+    TemplateCategory,
+)
+from pydantic import ValidationError
 
 
 def test_project_model_rejects_unknown_fields() -> None:

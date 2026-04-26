@@ -25,3 +25,32 @@ downloadable editable PPTX.
 For enterprise templates, call `ppt_upload_template` and
 `ppt_diagnose_template` before generating the design spec.
 
+## Mode Decision
+
+- Use `topic_to_deck` when the user gives only a topic or goal.
+- Use `files_to_deck` when source files or URLs are the primary material.
+- Use `outline_to_deck` when the user already has an outline.
+- Use `table_to_deck` when CSV/XLSX/table data is central to the request.
+- Use `template_deck` when a corporate PPTX template or brand guideline is provided.
+- Use `revise_deck` when the user asks to rewrite a slide, change page count, or adjust style.
+
+## Important Gates
+
+- Always confirm the outline before generating the final deck.
+- Always confirm the design/spec_lock before export.
+- For table decks, ensure profile, insights, and chart specs exist.
+- For template decks, ensure template profile, brand tokens, and layout map exist.
+
+## Error Codes
+
+- `validation`: input or schema issue.
+- `dependency`: optional dependency missing.
+- `brain`: Akita Brain unavailable or failed.
+- `source_parse`: source document parsing failed.
+- `table_parse`: table parsing/profiling failed.
+- `template`: PPTX template diagnostics failed.
+- `export`: PPTX export failed.
+- `audit`: quality check failed.
+- `cancelled`: user cancelled the task.
+- `unknown`: inspect project logs.
+

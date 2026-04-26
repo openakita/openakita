@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import zipfile
+from pathlib import Path
 
 import pytest
-
 from ppt_template_manager import TemplateDiagnosticError, TemplateManager
 
 
@@ -60,9 +60,12 @@ def test_diagnose_to_files_writes_profile_brand_and_layout_map(tmp_path) -> None
 
     result = TemplateManager().diagnose_to_files(pptx, tmp_path / "template")
 
-    assert json.loads(open(result["paths"]["profile_path"], encoding="utf-8").read())["layout_count"] == 2
-    assert json.loads(open(result["paths"]["brand_tokens_path"], encoding="utf-8").read())["accent_color"] == "#FFB000"
-    assert "content" in json.loads(open(result["paths"]["layout_map_path"], encoding="utf-8").read())
+    profile = json.loads(Path(result["paths"]["profile_path"]).read_text(encoding="utf-8"))
+    brand = json.loads(Path(result["paths"]["brand_tokens_path"]).read_text(encoding="utf-8"))
+    layout_map = json.loads(Path(result["paths"]["layout_map_path"]).read_text(encoding="utf-8"))
+    assert profile["layout_count"] == 2
+    assert brand["accent_color"] == "#FFB000"
+    assert "content" in layout_map
 
 
 def test_invalid_template_fails(tmp_path) -> None:

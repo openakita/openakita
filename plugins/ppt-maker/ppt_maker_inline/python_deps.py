@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 OPTIONAL_DEP_GROUPS: dict[str, dict[str, Any]] = {
     "doc_parsing": {
         "packages": ["python-docx", "pypdf", "beautifulsoup4"],

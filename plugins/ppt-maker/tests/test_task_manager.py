@@ -3,7 +3,6 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-
 from ppt_models import DeckMode, ProjectCreate, ProjectStatus, TaskCreate, TaskStatus
 from ppt_task_manager import PptTaskManager
 

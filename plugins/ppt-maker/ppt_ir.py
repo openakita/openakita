@@ -8,7 +8,6 @@ from typing import Any
 
 from ppt_models import DeckMode, SlideType
 
-
 FALLBACK_LAYOUTS: dict[str, str] = {
     SlideType.COVER.value: "cover",
     SlideType.AGENDA.value: "agenda",

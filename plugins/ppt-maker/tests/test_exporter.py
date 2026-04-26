@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from pptx import Presentation
-
 from ppt_design import DesignBuilder
 from ppt_exporter import PptxExporter
 from ppt_ir import SlideIrBuilder
 from ppt_models import DeckMode
 from ppt_outline import OutlineBuilder
+from pptx import Presentation
 
 
 def test_exporter_writes_editable_pptx(tmp_path) -> None:

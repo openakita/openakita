@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ppt_table_analyzer import TableAnalyzer
 
@@ -41,9 +42,9 @@ def test_analyze_to_files_writes_profile_insights_and_chart_specs(tmp_path) -> N
     profile_path = result["paths"]["profile_path"]
     insights_path = result["paths"]["insights_path"]
     chart_specs_path = result["paths"]["chart_specs_path"]
-    assert json.loads(open(profile_path, encoding="utf-8").read())["column_count"] == 9
-    assert json.loads(open(insights_path, encoding="utf-8").read())["key_findings"]
-    assert json.loads(open(chart_specs_path, encoding="utf-8").read())
+    assert json.loads(Path(profile_path).read_text(encoding="utf-8"))["column_count"] == 9
+    assert json.loads(Path(insights_path).read_text(encoding="utf-8"))["key_findings"]
+    assert json.loads(Path(chart_specs_path).read_text(encoding="utf-8"))
     assert "最多 8 列" in result["profile"]["quality_warnings"][0]
 
 

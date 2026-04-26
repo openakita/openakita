@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ppt_design import DesignBuilder
 from ppt_models import DeckMode
@@ -29,8 +30,9 @@ def test_design_spec_references_brand_tokens_and_layout_map(tmp_path) -> None:
     assert "Brand Display" in design["design_spec_markdown"]
     assert design["spec_lock"]["theme"]["primary_color"] == "#111111"
     assert design["spec_lock"]["layout_map"]["cover"]["pptx_layout"] == "Title Slide"
-    assert "Slide Plan" in open(paths["design_spec_path"], encoding="utf-8").read()
-    assert json.loads(open(paths["spec_lock_path"], encoding="utf-8").read())["needs_confirmation"] is True
+    assert "Slide Plan" in Path(paths["design_spec_path"]).read_text(encoding="utf-8")
+    spec_lock = json.loads(Path(paths["spec_lock_path"]).read_text(encoding="utf-8"))
+    assert spec_lock["needs_confirmation"] is True
 
 
 def test_confirm_design_marks_spec_lock_complete() -> None:

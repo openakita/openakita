@@ -4,10 +4,9 @@ import json
 from dataclasses import dataclass
 
 import pytest
-from pydantic import ValidationError
-
 from ppt_brain_adapter import BrainAccessError, PptBrainAdapter
 from ppt_models import DeckMode
+from pydantic import ValidationError
 
 
 @dataclass

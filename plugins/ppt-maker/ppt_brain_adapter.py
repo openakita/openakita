@@ -7,12 +7,10 @@ import time
 from pathlib import Path
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
 from ppt_maker_inline.file_utils import ensure_dir, safe_name
 from ppt_maker_inline.llm_json_parser import parse_llm_json_object
 from ppt_models import ChartType, DeckMode, SlideType
-
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 T = TypeVar("T", bound=BaseModel)
 

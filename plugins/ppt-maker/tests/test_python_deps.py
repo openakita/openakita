@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from ppt_maker_inline.python_deps import PythonDepsManager, list_optional_groups
 
 

@@ -10,7 +10,6 @@ from types import TracebackType
 from typing import Any
 
 import aiosqlite
-
 from ppt_models import (
     DatasetRecord,
     DeckMode,
@@ -25,7 +24,6 @@ from ppt_models import (
     TemplateCategory,
     TemplateRecord,
 )
-
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS projects (
