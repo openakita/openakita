@@ -33,7 +33,9 @@ from ppt_design import DesignBuilder
 from ppt_audit import PptAudit
 from ppt_exporter import PptxExportError, PptxExporter
 from ppt_ir import SlideIrBuilder
+from ppt_models import DeckMode, ProjectCreate, ProjectStatus
 from ppt_outline import OutlineBuilder
+from ppt_pipeline import PptPipeline
 from ppt_task_manager import PptTaskManager
 
 
@@ -45,6 +47,20 @@ class ParseSourceRequest(BaseModel):
 
     path: str
     kind: str | None = None
+
+
+class ProjectCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: DeckMode = DeckMode.TOPIC_TO_DECK
+    title: str
+    prompt: str = ""
+    audience: str = ""
+    style: str = "tech_business"
+    slide_count: int = 8
+    template_id: str | None = None
+    dataset_id: str | None = None
+    metadata: dict[str, Any] = {}
 
 
 class DatasetCreateRequest(BaseModel):
@@ -112,7 +128,54 @@ class Plugin(PluginBase):
                 "phase": 1,
                 "data_dir": str(data_dir),
                 "db_path": str(data_dir / "ppt_maker.db"),
+                "pipeline_steps": 10,
             }
+
+        @router.post("/projects")
+        async def create_project(payload: ProjectCreateRequest) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                project = await manager.create_project(ProjectCreate(**payload.model_dump()))
+            return {"ok": True, "project": project.model_dump(mode="json")}
+
+        @router.get("/projects")
+        async def list_projects() -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                projects = await manager.list_projects()
+            return {"ok": True, "projects": [item.model_dump(mode="json") for item in projects]}
+
+        @router.get("/projects/{project_id}")
+        async def get_project(project_id: str) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                project = await manager.get_project(project_id)
+                slides = await manager.list_slides(project_id)
+                exports = await manager.list_exports(project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="Project not found")
+            return {
+                "ok": True,
+                "project": project.model_dump(mode="json"),
+                "slides": slides,
+                "exports": exports,
+            }
+
+        @router.delete("/projects/{project_id}")
+        async def delete_project(project_id: str) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                deleted = await manager.delete_project(project_id)
+            return {"ok": True, "deleted": deleted}
+
+        @router.post("/projects/{project_id}/cancel")
+        async def cancel_project(project_id: str) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                count = await manager.cancel_project_tasks(project_id)
+                await manager.update_project_safe(project_id, status=ProjectStatus.CANCELLED)
+            await self._broadcast("task_update", {"project_id": project_id, "status": "cancelled"})
+            return {"ok": True, "cancelled_tasks": count}
+
+        @router.post("/projects/{project_id}/retry")
+        async def retry_project(project_id: str) -> dict[str, Any]:
+            result = await PptPipeline(data_root=data_dir, emit=self._broadcast).run(project_id)
+            return {"ok": True, "result": result}
 
         @router.post("/upload")
         async def upload(request: Request) -> dict[str, Any]:
@@ -503,9 +566,41 @@ class Plugin(PluginBase):
         api.log(f"{PLUGIN_ID}: loaded")
 
     async def _handle_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        if tool_name == "ppt_list_projects":
-            return "ppt-maker project storage is available. Routes are wired in Phase 9."
-        return f"{tool_name} is registered; implementation is added in later phases."
+        if self._data_dir is None:
+            return json.dumps({"ok": False, "error": "ppt-maker is not loaded"}, ensure_ascii=False)
+        data_dir = self._data_dir
+        async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+            if tool_name == "ppt_list_projects":
+                projects = await manager.list_projects()
+                return json.dumps(
+                    {"ok": True, "projects": [item.model_dump(mode="json") for item in projects]},
+                    ensure_ascii=False,
+                )
+            if tool_name == "ppt_start_project":
+                project = await manager.create_project(ProjectCreate(**arguments))
+                return json.dumps({"ok": True, "project": project.model_dump(mode="json")}, ensure_ascii=False)
+            if tool_name == "ppt_cancel":
+                project_id = str(arguments.get("project_id") or "")
+                count = await manager.cancel_project_tasks(project_id)
+                await manager.update_project_safe(project_id, status=ProjectStatus.CANCELLED)
+                return json.dumps({"ok": True, "cancelled_tasks": count}, ensure_ascii=False)
+        if tool_name in {"ppt_generate_deck", "ppt_export"}:
+            project_id = str(arguments.get("project_id") or "")
+            result = await PptPipeline(data_root=data_dir, emit=self._broadcast).run(project_id)
+            return json.dumps({"ok": True, "result": result}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": f"{tool_name} is registered but not wired until a later phase."},
+            ensure_ascii=False,
+        )
+
+    async def _broadcast(self, event_name: str, payload: dict[str, Any]) -> None:
+        if self._api is None:
+            return
+        broadcast = getattr(self._api, "broadcast_ui_event", None)
+        if callable(broadcast):
+            result = broadcast(event_name, payload)
+            if hasattr(result, "__await__"):
+                await result
 
     async def on_unload(self) -> None:
         if self._api:

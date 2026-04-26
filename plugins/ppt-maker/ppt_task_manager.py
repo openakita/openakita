@@ -319,6 +319,21 @@ class PptTaskManager:
             rows = [_row_dict(row) for row in await cur.fetchall()]
         return [self._project_record(row) for row in rows if row is not None]
 
+    async def delete_project(self, project_id: str) -> bool:
+        for table in (
+            "tasks",
+            "sources",
+            "datasets",
+            "outlines",
+            "design_specs",
+            "slides",
+            "exports",
+        ):
+            await self._conn.execute(f"DELETE FROM {table} WHERE project_id = ?", (project_id,))
+        cur = await self._conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        await self._conn.commit()
+        return cur.rowcount > 0
+
     async def update_project_safe(self, project_id: str, **updates: Any) -> ProjectRecord | None:
         if not updates:
             return await self.get_project(project_id)
@@ -398,6 +413,19 @@ class PptTaskManager:
         )
         await self._conn.commit()
         return await self.get_task(task_id)
+
+    async def cancel_project_tasks(self, project_id: str) -> int:
+        now = _now()
+        cur = await self._conn.execute(
+            """
+            UPDATE tasks
+               SET status = ?, completed_at = ?, updated_at = ?
+             WHERE project_id = ? AND status IN ('pending', 'running')
+            """,
+            (TaskStatus.CANCELLED.value, now, now, project_id),
+        )
+        await self._conn.commit()
+        return cur.rowcount
 
     async def create_source(
         self,
