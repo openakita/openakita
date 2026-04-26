@@ -843,7 +843,7 @@ async def update_plugin_config(
 
 
 @router.get("/{plugin_id}/_admin/readme")
-async def get_plugin_readme(plugin_id: str) -> dict[str, str]:
+async def get_plugin_readme(plugin_id: str) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
     plugin_dir = _plugins_dir() / plugin_id
     if not plugin_dir.is_dir():
@@ -1012,7 +1012,7 @@ async def get_plugin_logs(
     plugin_id: str,
     request: Request,
     lines: int = 100,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
     pm = _get_plugin_manager(request)
     if pm is not None:

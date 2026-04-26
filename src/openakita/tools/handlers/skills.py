@@ -692,7 +692,11 @@ class SkillsHandler:
         action = SkillEvent.DISABLE if any_disabled else SkillEvent.ENABLE
         self.agent.propagate_skill_change(action, rescan=False)
 
-        output = f"✅ 技能状态已更新（{len(applied)} 项变更）\n\n"
+        output = (
+            f"✅ 外部技能启用列表已更新（{len(applied)} 项变更）\n\n"
+            "说明: 本操作只修改 `data/skills.json` 的 `external_allowlist`，"
+            "不修改安全策略白名单或 IM 白名单。\n\n"
+        )
         if reason:
             output += f"**原因**: {reason}\n\n"
         output += "**变更详情**:\n"
