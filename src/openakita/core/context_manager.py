@@ -13,6 +13,7 @@
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from ..tracing.tracer import get_tracer
@@ -26,6 +27,23 @@ logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN = 2  # JSON 序列化后约 2 字符 = 1 token
 CHUNK_MAX_TOKENS = 30000  # 每次发给 LLM 压缩的单块上限
 CONTEXT_BOUNDARY_MARKER = "[上下文边界]"  # 话题切换边界标记
+
+
+@dataclass(frozen=True)
+class ContextPressure:
+    """Unified context pressure snapshot used by compression and tracing."""
+
+    max_tokens: int
+    system_tokens: int
+    tools_tokens: int
+    messages_tokens: int
+    estimated_total_tokens: int
+    calibrated_total_tokens: int
+    hard_limit: int
+    soft_limit: int
+    available_message_budget: int
+    trigger_tokens: int
+    last_real_input_tokens: int | None = None
 
 
 class _CancelledError(Exception):
@@ -252,6 +270,73 @@ class ContextManager:
 
         return microcompact(messages)
 
+    def estimate_tools_tokens(self, tools: list | None) -> int:
+        """Estimate tool schema/catalog token footprint."""
+        if not tools:
+            return 0
+        try:
+            tools_text = json.dumps(tools, ensure_ascii=False, default=str)
+            return self.estimate_tokens(tools_text)
+        except Exception:
+            return len(tools) * 200
+
+    def calculate_context_pressure(
+        self,
+        messages: list[dict],
+        *,
+        system_prompt: str = "",
+        tools: list | None = None,
+        max_tokens: int | None = None,
+        conversation_id: str | None = None,
+        last_real_input_tokens: int | None = None,
+    ) -> ContextPressure:
+        """Calculate total prompt pressure from messages, system prompt, tools, and real usage."""
+        from ..config import settings as _settings
+
+        resolved_max = max_tokens or self.get_max_context_tokens(conversation_id=conversation_id)
+        system_tokens = self.estimate_tokens(system_prompt)
+        tools_tokens = self.estimate_tools_tokens(tools)
+        messages_tokens = self.estimate_messages_tokens(messages)
+        hard_limit = resolved_max - system_tokens - tools_tokens - 500
+        min_hard_limit = max(min(1024, int(resolved_max * 0.3)), 256)
+        if hard_limit < min_hard_limit:
+            logger.warning(
+                f"[Compress] hard_limit too small ({hard_limit}), "
+                f"max={resolved_max}, system={system_tokens}, tools={tools_tokens}. "
+                f"Falling back to {min_hard_limit}."
+            )
+            hard_limit = min_hard_limit
+        threshold = float(_settings.context_compression_threshold)
+        soft_limit = int(hard_limit * threshold)
+        estimated_total = system_tokens + tools_tokens + messages_tokens
+        calibrated_total = estimated_total
+        if last_real_input_tokens:
+            decay = float(getattr(_settings, "context_real_usage_decay", 0.9) or 0.9)
+            calibrated_total = max(estimated_total, int(last_real_input_tokens * decay))
+        # Compare against the message soft limit while still letting large
+        # system/tools overhead contribute to pressure. With local estimates this
+        # reduces to the old messages-driven behavior, but real usage calibration
+        # can now push the trigger above the soft limit even when messages look
+        # deceptively small.
+        trigger_tokens = max(
+            messages_tokens,
+            int(calibrated_total - (system_tokens + tools_tokens) * threshold),
+        )
+        available_message_budget = max(0, soft_limit - messages_tokens)
+        return ContextPressure(
+            max_tokens=resolved_max,
+            system_tokens=system_tokens,
+            tools_tokens=tools_tokens,
+            messages_tokens=messages_tokens,
+            estimated_total_tokens=estimated_total,
+            calibrated_total_tokens=calibrated_total,
+            hard_limit=hard_limit,
+            soft_limit=soft_limit,
+            available_message_budget=available_message_budget,
+            trigger_tokens=trigger_tokens,
+            last_real_input_tokens=last_real_input_tokens,
+        )
+
     def snip_old_segments(self, messages: list[dict]) -> tuple[list[dict], int]:
         """直接丢弃最早的对话段 (History Snip)。
 
@@ -267,7 +352,9 @@ class ContextManager:
         *,
         system_prompt: str = "",
         tools: list | None = None,
+        memory_manager: object | None = None,
         conversation_id: str | None = None,
+        last_real_input_tokens: int | None = None,
     ) -> list[dict]:
         """API 返回 413/prompt-too-long 后的紧急压缩。
 
@@ -291,7 +378,10 @@ class ContextManager:
             system_prompt=system_prompt,
             tools=tools,
             max_tokens=tighter_budget,
+            memory_manager=memory_manager,
             conversation_id=conversation_id,
+            last_real_input_tokens=last_real_input_tokens,
+            force=True,
         )
 
     async def compress_if_needed(
@@ -303,6 +393,8 @@ class ContextManager:
         max_tokens: int | None = None,
         memory_manager: object | None = None,
         conversation_id: str | None = None,
+        last_real_input_tokens: int | None = None,
+        force: bool = False,
     ) -> list[dict]:
         """
         如果上下文接近限制，执行压缩 (autocompact)。
@@ -330,31 +422,21 @@ class ContextManager:
         Returns:
             压缩后的消息列表
         """
-        max_tokens = max_tokens or self.get_max_context_tokens(conversation_id=conversation_id)
-
-        system_tokens = self.estimate_tokens(system_prompt)
-
-        tools_tokens = 0
-        if tools:
-            try:
-                tools_text = json.dumps(tools, ensure_ascii=False, default=str)
-                tools_tokens = self.estimate_tokens(tools_text)
-            except Exception:
-                tools_tokens = len(tools) * 200
-
-        hard_limit = max_tokens - system_tokens - tools_tokens - 500
-        min_hard_limit = max(min(1024, int(max_tokens * 0.3)), 256)
-        if hard_limit < min_hard_limit:
-            logger.warning(
-                f"[Compress] hard_limit too small ({hard_limit}), "
-                f"max={max_tokens}, system={system_tokens}, tools={tools_tokens}. "
-                f"Falling back to {min_hard_limit}."
-            )
-            hard_limit = min_hard_limit
         from ..config import settings as _settings
 
-        _threshold = _settings.context_compression_threshold
-        soft_limit = int(hard_limit * _threshold)
+        pressure = self.calculate_context_pressure(
+            messages,
+            system_prompt=system_prompt,
+            tools=tools,
+            max_tokens=max_tokens,
+            conversation_id=conversation_id,
+            last_real_input_tokens=last_real_input_tokens,
+        )
+        max_tokens = pressure.max_tokens
+        system_tokens = pressure.system_tokens
+        tools_tokens = pressure.tools_tokens
+        hard_limit = pressure.hard_limit
+        soft_limit = pressure.soft_limit
 
         _overhead_bytes = len(system_prompt.encode("utf-8")) if system_prompt else 0
         if tools:
@@ -365,15 +447,18 @@ class ContextManager:
             except Exception:
                 _overhead_bytes += len(tools) * 800
 
-        current_tokens = self.estimate_messages_tokens(messages)
+        current_tokens = pressure.messages_tokens
 
         logger.info(
             f"[Compress] Budget: max_ctx={max_tokens}, system={system_tokens}, "
             f"tools={tools_tokens}({len(tools) if tools else 0}个), "
-            f"hard={hard_limit}, soft={soft_limit}, msgs={current_tokens}({len(messages)}条)"
+            f"hard={hard_limit}, soft={soft_limit}, msgs={current_tokens}({len(messages)}条), "
+            f"estimated_total={pressure.estimated_total_tokens}, "
+            f"calibrated_total={pressure.calibrated_total_tokens}, "
+            f"last_real={pressure.last_real_input_tokens}"
         )
 
-        if current_tokens <= soft_limit:
+        if not force and pressure.trigger_tokens <= soft_limit:
             return messages
 
         # v2: 压缩前记忆提取 — 确保即将被压缩的消息先保存到记忆
@@ -390,12 +475,16 @@ class ContextManager:
 
         ctx_span = tracer.start_span("context_compression", SpanType.CONTEXT)
         ctx_span.set_attribute("tokens_before", current_tokens)
+        ctx_span.set_attribute("estimated_total_tokens", pressure.estimated_total_tokens)
+        ctx_span.set_attribute("calibrated_total_tokens", pressure.calibrated_total_tokens)
+        ctx_span.set_attribute("system_tokens", system_tokens)
+        ctx_span.set_attribute("tools_tokens", tools_tokens)
         ctx_span.set_attribute("soft_limit", soft_limit)
         ctx_span.set_attribute("hard_limit", hard_limit)
 
         logger.info(
-            f"Context approaching limit ({current_tokens} tokens, soft={soft_limit}, "
-            f"hard={hard_limit}), compressing with LLM..."
+            f"Context approaching limit (msgs={current_tokens}, trigger={pressure.trigger_tokens}, "
+            f"soft={soft_limit}, hard={hard_limit}), compressing with LLM..."
         )
 
         def _end_ctx_span(result_msgs: list[dict]) -> list[dict]:

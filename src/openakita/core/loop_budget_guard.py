@@ -25,14 +25,17 @@ class LoopBudgetDecision:
     should_stop: bool
     exit_reason: str = ""
     message: str = ""
+    should_warn: bool = False
 
 
 @dataclass
 class LoopBudgetGuard:
     max_total_tool_calls: int = 30
     readonly_stagnation_limit: int = 3
-    token_anomaly_threshold: int = 200_000
+    readonly_stagnation_hard_limit: int = 6
+    token_anomaly_threshold: int = 40_000
     total_tool_calls_seen: int = 0
+    token_anomaly_recoveries: int = 0
     readonly_seen_fingerprints: set[str] = field(default_factory=set)
     readonly_stagnation_rounds: int = 0
 
@@ -60,27 +63,53 @@ class LoopBudgetGuard:
             else:
                 self.readonly_seen_fingerprints.add(fingerprint)
                 self.readonly_stagnation_rounds = 0
-            if self.readonly_stagnation_rounds >= self.readonly_stagnation_limit:
+            if self.readonly_stagnation_rounds >= self.readonly_stagnation_hard_limit:
                 return LoopBudgetDecision(
                     True,
                     "readonly_stagnation",
                     "⚠️ 只读探索已经连续多轮没有获得新信息，任务已自动终止。"
                     "请基于已经读取到的内容总结结论，或提供更具体的文件/关键词继续。",
                 )
+            if self.readonly_stagnation_rounds >= self.readonly_stagnation_limit:
+                return LoopBudgetDecision(
+                    False,
+                    "readonly_stagnation_warning",
+                    "⚠️ 只读探索已经连续多轮没有获得明显新信息。请换查询角度、扩大/缩小关键词，"
+                    "或基于已有材料收敛结论。",
+                    should_warn=True,
+                )
         else:
             self.readonly_stagnation_rounds = 0
         return LoopBudgetDecision(False)
 
-    def check_token_growth(self, input_tokens: int, output_tokens: int) -> LoopBudgetDecision:
+    def check_token_growth(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        *,
+        recovered: bool = False,
+        max_recoveries: int = 1,
+    ) -> LoopBudgetDecision:
+        if recovered:
+            self.token_anomaly_recoveries += 1
+            return LoopBudgetDecision(False)
         if (
             input_tokens + output_tokens > self.token_anomaly_threshold
             and self.total_tool_calls_seen >= max(5, self.max_total_tool_calls // 2)
         ):
+            if self.token_anomaly_recoveries < max_recoveries:
+                return LoopBudgetDecision(
+                    False,
+                    "token_growth_recoverable",
+                    "⚠️ 检测到上下文 token 异常膨胀，将先执行强制压缩并在下一轮继续。",
+                    should_warn=True,
+                )
             return LoopBudgetDecision(
                 True,
                 "token_growth_terminated",
                 "⚠️ 检测到上下文 token 异常膨胀且工具调用已接近预算，"
-                "已自动终止以避免继续扩大上下文。请基于已有信息总结结论。",
+                "已尝试压缩但仍未恢复到安全区，已自动终止以避免继续扩大上下文。"
+                "请基于已有信息总结结论。",
             )
         return LoopBudgetDecision(False)
 

@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     # Agent 配置
     agent_name: str = Field(default="OpenAkita", description="Agent 名称")
     max_iterations: int = Field(
-        default=30,
+        default=100,
         ge=5,
-        description="Ralph 循环最大迭代次数（最小值 5，推荐 20~50）",
+        description="Ralph/ReAct 循环最大迭代次数（最终防死循环硬上限；推荐 50~150）",
     )
 
     # Plan 模式建议阈值（ComplexitySignal.score 达到此值时建议用户使用 Plan 模式）
@@ -522,6 +522,48 @@ class Settings(BaseSettings):
         default=5000,
         description="触发单条工具结果独立压缩的 token 阈值",
     )
+    context_real_usage_decay: float = Field(
+        default=0.9,
+        ge=0.1,
+        le=1.0,
+        description="用上一轮真实 input_tokens 反向校准上下文压力时的衰减系数",
+    )
+    context_token_anomaly_threshold: int = Field(
+        default=40000,
+        description="单轮 LLM usage 触发强制压缩/降载的阈值（不是直接终止阈值）",
+    )
+    context_token_anomaly_max_recoveries: int = Field(
+        default=1,
+        ge=0,
+        description="单任务内 token 异常触发后允许强制压缩恢复的次数，超过后才允许硬终止",
+    )
+    context_cached_summary_chars: int = Field(
+        default=2400,
+        description="缓存/聚合工具结果摘要的默认字符预算",
+    )
+    context_tool_results_total_chars: int = Field(
+        default=80000,
+        description="单轮工具结果进入上下文前的总字符预算（后续会按上下文压力动态调整）",
+    )
+    api_tools_schema_budget_tokens: int = Field(
+        default=12000,
+        description="发送给 LLM API 的 tools schema 估算 token 预算，超出后动态 defer 非核心工具",
+    )
+    same_tool_call_limit: int = Field(
+        default=5,
+        ge=1,
+        description="同一工具同参数在单任务内允许执行的最大次数",
+    )
+    readonly_stagnation_limit: int = Field(
+        default=3,
+        ge=1,
+        description="只读探索连续无新信息的软提醒轮数",
+    )
+    readonly_stagnation_hard_limit: int = Field(
+        default=6,
+        ge=1,
+        description="只读探索连续无新信息的硬终止轮数",
+    )
 
     # === Harness 配置 ===
     supervisor_enabled: bool = Field(
@@ -533,7 +575,7 @@ class Settings(BaseSettings):
         default=600, description="单次任务最大时长秒 (0=不限制，默认 600=10分钟)"
     )
     task_budget_iterations: int = Field(
-        default=50, description="单次任务最大迭代次数 (0=不限制，默认 50)"
+        default=100, description="单次任务最大迭代次数 (0=不限制，默认 100；与 max_iterations 对齐)"
     )
     task_budget_tool_calls: int = Field(
         default=30, description="单次任务最大工具调用次数 (0=不限制，默认 30)"

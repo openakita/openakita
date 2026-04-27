@@ -714,6 +714,49 @@ def build_system_prompt(
     if user_core_section:
         user_parts.append(user_core_section)
 
+    # Section-level final budget guard. Individual builders already budget their
+    # own content, but plugin hooks, AGENTS.md, memory and catalogs combine here.
+    section_budgets = {
+        "system": max(budget_config.identity_budget + 3000, 1000),
+        "developer": max(budget_config.memory_budget + 2500, 800),
+        "user": max(budget_config.user_budget, 100),
+        "tool": max(budget_config.catalogs_budget, 500),
+    }
+    if system_parts:
+        system_joined = "\n\n".join(system_parts)
+        system_result = apply_budget(system_joined, section_budgets["system"], "system")
+        if system_result.truncated:
+            logger.warning(
+                "[PromptBudget] system section truncated: %s -> %s tokens",
+                system_result.original_tokens,
+                system_result.final_tokens,
+            )
+        system_parts = [system_result.content]
+    if developer_parts:
+        developer_joined = "\n\n".join(developer_parts)
+        developer_result = apply_budget(developer_joined, section_budgets["developer"], "developer")
+        if developer_result.truncated:
+            logger.warning(
+                "[PromptBudget] developer section truncated: %s -> %s tokens",
+                developer_result.original_tokens,
+                developer_result.final_tokens,
+            )
+        developer_parts = [developer_result.content]
+    if user_parts:
+        user_joined = "\n\n".join(user_parts)
+        user_result = apply_budget(user_joined, section_budgets["user"], "user")
+        user_parts = [user_result.content]
+    if tool_parts:
+        tool_joined = "\n\n".join(tool_parts)
+        tool_result = apply_budget(tool_joined, section_budgets["tool"], "tool")
+        if tool_result.truncated:
+            logger.warning(
+                "[PromptBudget] tool section truncated: %s -> %s tokens",
+                tool_result.original_tokens,
+                tool_result.final_tokens,
+            )
+        tool_parts = [tool_result.content]
+
     # 组装最终提示词
     sections: list[str] = []
     if system_parts:
@@ -738,6 +781,14 @@ def build_system_prompt(
     total_tokens = estimate_tokens(system_prompt)
     logger.info(
         f"System prompt built: {total_tokens} tokens (mode={mode}, prompt_mode={prompt_mode.value})"
+    )
+    logger.debug(
+        "[PromptBudget] sections tokens: system=%d developer=%d user=%d tool=%d total=%d",
+        estimate_tokens("\n\n".join(system_parts)),
+        estimate_tokens("\n\n".join(developer_parts)),
+        estimate_tokens("\n\n".join(user_parts)),
+        estimate_tokens("\n\n".join(tool_parts)),
+        total_tokens,
     )
 
     return system_prompt
@@ -1656,6 +1707,12 @@ def _build_catalogs_section(
             plugin_text = plugin_catalog.get_catalog()
             if plugin_text:
                 plugin_result = apply_budget(plugin_text, budget_tokens * 10 // 100, "plugins")
+                if plugin_result.truncated:
+                    logger.warning(
+                        "[PromptBudget] plugin catalog truncated: %s -> %s tokens",
+                        plugin_result.original_tokens,
+                        plugin_result.final_tokens,
+                    )
                 parts.append(plugin_result.content)
         except Exception as e:
             logger.error(
