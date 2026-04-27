@@ -147,21 +147,6 @@ POLL_FRIENDLY_TOOLS = frozenset(
 )
 POLL_REPEAT_MULTIPLIER = 2  # raise repeat thresholds by this factor
 
-# These tools often make legitimate progress through a sequence of different
-# arguments. Exact signature repeats are still handled below; do not nudge only
-# because the same tool name appears several times with different params.
-VARYING_ARG_REPEAT_NUDGE_EXEMPT_TOOLS = frozenset(
-    {
-        "run_shell",
-        "run_powershell",
-        "write_file",
-        "edit_file",
-        "read_file",
-        "grep",
-        "glob",
-        "run_skill_script",
-    }
-)
 NETWORK_READ_TOOLS = frozenset({"web_fetch", "web_search", "news_search"})
 
 
@@ -560,19 +545,6 @@ class RuntimeSupervisor:
                     f"Poll-friendly tool '{top_name}' called {top_count} times — "
                     "suggest org_wait_for_deliverable"
                 ),
-                should_inject_prompt=False,
-                prompt_injection="",
-            )
-
-        if (
-            top_count >= self._signature_repeat_warn
-            and not top_is_poll
-            and top_name not in VARYING_ARG_REPEAT_NUDGE_EXEMPT_TOOLS
-        ):
-            return Intervention(
-                level=InterventionLevel.NUDGE,
-                pattern=PatternType.SIGNATURE_REPEAT,
-                message=f"Tool '{top_name}' called {top_count} times with varying args",
                 should_inject_prompt=False,
                 prompt_injection="",
             )

@@ -5347,6 +5347,9 @@ class Agent:
                     if tr.get("tool_use_id") == tc.get("id", ""):
                         raw = str(tr.get("result_content", tr.get("result_preview", "")))
                         is_error = tr.get("is_error", False)
+                        if self._is_internal_tool_control_message(raw):
+                            result_hint = ""
+                            break
                         max_len = 800 if name in self._DELEGATION_TOOLS else per_tool_budget
                         if len(raw) > max_len:
                             result_hint = raw[:max_len].replace("\n", " ") + "..."
@@ -5382,6 +5385,20 @@ class Agent:
         parts.append("\n\n[执行摘要]\n" + "\n".join(lines))
 
         return "".join(parts)
+
+    @staticmethod
+    def _is_internal_tool_control_message(text: str) -> bool:
+        """Runtime control hints are for the current loop only, not history replay."""
+        stripped = text.strip()
+        if stripped.startswith("[系统提示]") or stripped.startswith("[context_note:"):
+            return True
+        if stripped.startswith("[系统] 工具 ") and (
+            "已达上限" in stripped
+            or "已从本轮可用工具中临时移除" in stripped
+            or "请整合操作或继续下一步" in stripped
+        ):
+            return True
+        return False
 
     def _build_work_summary_section(self) -> str:
         """Build [子Agent工作总结] section from sub_agent_records.

@@ -70,10 +70,21 @@ class TestVaryingParamsDoNotTerminate:
         for i in range(8):
             sup.record_tool_signature(f"update_todo_step(step_{i})")
         out = sup._check_signature_repeat(iteration=8)
-        if out is not None:
-            assert out.level == InterventionLevel.NUDGE
-            assert not out.should_terminate
-            assert not out.should_rollback
+        assert out is None
+
+    def test_web_search_with_distinct_queries_does_not_intervene(self):
+        sup = RuntimeSupervisor(enabled=True)
+        for i in range(8):
+            sup.record_tool_signature(f"web_search(query_hash_{i})")
+        out = sup._check_signature_repeat(iteration=8)
+        assert out is None
+
+    def test_any_tool_with_distinct_args_does_not_intervene(self):
+        sup = RuntimeSupervisor(enabled=True)
+        for i in range(8):
+            sup.record_tool_signature(f"custom_tool(arg_hash_{i})")
+        out = sup._check_signature_repeat(iteration=8)
+        assert out is None
 
     def test_terminal_file_polling_is_capped_at_nudge(self):
         """Monitoring a background command by repeatedly reading its terminal

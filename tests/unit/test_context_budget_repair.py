@@ -1,6 +1,7 @@
 import pytest
 
 from openakita.core.context_manager import ContextManager
+from openakita.core.reasoning_engine import ReasoningEngine, TOKEN_ANOMALY_THRESHOLD
 from openakita.core.loop_budget_guard import LoopBudgetGuard
 from openakita.core.microcompact import microcompact
 from openakita.prompt.budget import BudgetConfig
@@ -143,6 +144,44 @@ def test_microcompact_dedupes_cached_and_repeated_tool_results():
 
     compacted = microcompact(messages, current_time=1)
     assert "duplicate merged" in compacted[1]["content"][0]["content"]
+
+
+def test_token_anomaly_compaction_uses_configured_summary_chars(monkeypatch):
+    monkeypatch.setattr("openakita.core.reasoning_engine.settings.context_cached_summary_chars", 100)
+    engine = object.__new__(ReasoningEngine)
+    working_messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_name": "web_search",
+                    "content": "x" * 500,
+                }
+            ],
+        }
+    ]
+    react_trace = [
+        {
+            "tool_results": [
+                {
+                    "tool_name": "web_search",
+                    "result_content": "y" * 500,
+                }
+            ]
+        }
+    ]
+
+    engine._compact_after_token_anomaly(
+        working_messages,
+        react_trace,
+        TOKEN_ANOMALY_THRESHOLD + 1,
+    )
+
+    assert working_messages[0]["content"][0]["compacted_after_token_anomaly"]
+    assert react_trace[0]["tool_results"][0]["compacted_after_token_anomaly"]
+    assert len(working_messages[0]["content"][0]["content"]) < 500
+    assert len(react_trace[0]["tool_results"][0]["result_content"]) < 500
 
 
 def test_plugin_catalog_is_budgeted():

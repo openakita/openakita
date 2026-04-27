@@ -784,6 +784,8 @@ class ReasoningEngine:
         if tokens <= TOKEN_ANOMALY_THRESHOLD:
             return
 
+        summary_chars = int(getattr(settings, "context_cached_summary_chars", 2400) or 2400)
+
         for msg in working_messages:
             content = msg.get("content") if isinstance(msg, dict) else None
             if not isinstance(content, list):
@@ -792,7 +794,7 @@ class ReasoningEngine:
                 if not isinstance(item, dict) or item.get("type") != "tool_result":
                     continue
                 text = str(item.get("content", ""))
-                if len(text) > _CACHE_SUMMARY_CHARS:
+                if len(text) > summary_chars:
                     item["content"] = _compact_cached_tool_content(
                         str(item.get("tool_name") or "tool_result"),
                         text,
@@ -807,7 +809,7 @@ class ReasoningEngine:
                 if not isinstance(item, dict):
                     continue
                 text = str(item.get("result_content", ""))
-                if len(text) > _CACHE_SUMMARY_CHARS:
+                if len(text) > summary_chars:
                     item["result_content"] = _compact_cached_tool_content(
                         str(item.get("tool_name") or "tool_result"),
                         text,
