@@ -66,6 +66,16 @@ _EXECUTE_RE = re.compile(
     re.IGNORECASE,
 )
 _INDEX_RE = re.compile(r"(?:第\s*)?(\d+)\s*(?:条|项|个|index)?", re.IGNORECASE)
+_ARITHMETIC_OR_COUNT_RE = re.compile(
+    r"(\d+\s*[+\-*/×÷]\s*\d+|calculate|calculation|count|revised count|sum|times|"
+    r"算一下|计算|合计|数量|总数|等于多少)",
+    re.IGNORECASE,
+)
+_NON_ACTION_DISCUSSION_RE = re.compile(
+    r"(suppose|hypothetical|what should you do|what would you do|if i say|"
+    r"假设|如果我说|只是讨论|不需要执行|不要执行|如何处理|应该怎么)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -116,6 +126,18 @@ class RiskIntentClassifier:
                 parameters=self._extract_parameters(text, target),
             )
 
+        if self._is_non_action_discussion(text, intent, target, operation):
+            return RiskIntentResult(
+                risk_level=RiskLevel.NONE,
+                operation_kind=OperationKind.NONE,
+                target_kind=target,
+                access_mode=AccessMode.READ_ONLY,
+                requires_confirmation=False,
+                reason="non_action_discussion",
+                action=self._read_action(target),
+                parameters=self._extract_parameters(text, target),
+            )
+
         destructive_signal = self._intent_destructive_signal(intent)
         if operation == OperationKind.NONE and destructive_signal:
             operation = OperationKind.WRITE
@@ -140,6 +162,8 @@ class RiskIntentClassifier:
             OperationKind.OVERWRITE,
         }:
             risk = RiskLevel.HIGH if self._is_sensitive_target(target) else RiskLevel.MEDIUM
+            if target == TargetKind.UNKNOWN and not self._intent_high_risk_signal(intent):
+                risk = RiskLevel.LOW
             return RiskIntentResult(
                 risk_level=risk,
                 operation_kind=operation,
@@ -166,6 +190,38 @@ class RiskIntentClassifier:
     def _intent_destructive_signal(intent: Any | None) -> bool:
         complexity = getattr(intent, "complexity", None)
         return bool(getattr(complexity, "destructive_potential", False))
+
+    @staticmethod
+    def _intent_high_risk_signal(intent: Any | None) -> bool:
+        hint = str(getattr(intent, "risk_level_hint", "") or "").lower()
+        if hint in {"risklevelhint.high", "high", "medium", "risklevelhint.medium"}:
+            return True
+        complexity = getattr(intent, "complexity", None)
+        return bool(getattr(complexity, "destructive_potential", False))
+
+    @classmethod
+    def _is_non_action_discussion(
+        cls,
+        text: str,
+        intent: Any | None,
+        target: TargetKind,
+        operation: OperationKind,
+    ) -> bool:
+        if operation == OperationKind.EXECUTE or cls._is_sensitive_target(target):
+            return False
+
+        requires_tools = getattr(intent, "requires_tools", None)
+        risk_hint = str(getattr(intent, "risk_level_hint", "") or "").lower()
+        if requires_tools is False and risk_hint in {"", "none", "low", "risklevelhint.none", "risklevelhint.low"}:
+            return True
+
+        if _ARITHMETIC_OR_COUNT_RE.search(text):
+            return True
+
+        if _NON_ACTION_DISCUSSION_RE.search(text):
+            return True
+
+        return False
 
     @staticmethod
     def _operation_kind(text: str) -> OperationKind:

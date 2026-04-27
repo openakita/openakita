@@ -975,6 +975,8 @@ class Brain:
         result: list[Tool] = []
         skipped = 0
         deferred = 0
+        promoted = 0
+        always_available = 0
         for tool in tools:
             name = tool.get("name", "")
             description = tool.get("detail") or tool.get("description", "")
@@ -1002,6 +1004,10 @@ class Brain:
                 deferred += 1
                 continue
             else:
+                if tool.get("_always_available"):
+                    always_available += 1
+                if tool.get("_promoted"):
+                    promoted += 1
                 result.append(
                     Tool(
                         name=name,
@@ -1020,9 +1026,13 @@ class Brain:
             )
         if deferred:
             logger.debug(
-                "[Brain] defer_loading: %d/%d tools deferred (schema omitted)",
+                "[Brain] defer_loading: deferred=%d structured=%d total=%d "
+                "always_available=%d promoted=%d",
                 deferred,
                 len(result),
+                len(tools),
+                always_available,
+                promoted,
             )
 
         return result if result else None

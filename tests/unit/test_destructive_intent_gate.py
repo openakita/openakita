@@ -31,6 +31,56 @@ def test_readonly_allowlist_explanation_does_not_confirm():
     assert not result.requires_confirmation
 
 
+def test_arithmetic_add_does_not_confirm():
+    intent = SimpleNamespace(
+        complexity=SimpleNamespace(destructive_potential=False),
+        requires_tools=False,
+        risk_level_hint="none",
+    )
+
+    result = _classify_risk_intent(intent, "what is 19 * 23, and then add 4")
+
+    assert not result.requires_confirmation
+
+
+def test_removed_fact_revision_does_not_confirm():
+    intent = SimpleNamespace(
+        complexity=SimpleNamespace(destructive_potential=False),
+        requires_tools=False,
+        risk_level_hint="none",
+    )
+
+    result = _classify_risk_intent(
+        intent,
+        "one module was removed, calculate the revised count",
+    )
+
+    assert not result.requires_confirmation
+
+
+def test_hypothetical_delete_discussion_does_not_confirm():
+    intent = SimpleNamespace(
+        complexity=SimpleNamespace(destructive_potential=False),
+        requires_tools=False,
+        risk_level_hint="low",
+    )
+
+    result = _classify_risk_intent(
+        intent,
+        "suppose I say delete files, what should you do?",
+    )
+
+    assert not result.requires_confirmation
+
+
+def test_rm_rf_still_requires_confirmation():
+    intent = SimpleNamespace(complexity=SimpleNamespace(destructive_potential=False))
+
+    result = _classify_risk_intent(intent, "rm -rf data")
+
+    assert result.requires_confirmation
+
+
 def test_destructive_intent_question_requires_confirmation():
     result = _classify_risk_intent(None, "删除 security user_allowlist 第 0 条")
     question = _build_destructive_intent_question("删除 security user_allowlist 第 0 条", result)

@@ -28,6 +28,41 @@ class IntentType(Enum):
     COMMAND = "command"
 
 
+class CapabilityScope(Enum):
+    NONE = "none"
+    FILES = "files"
+    WEB = "web"
+    BROWSER = "browser"
+    PLUGIN = "plugin"
+    SKILL = "skill"
+    MCP = "mcp"
+    IM = "im"
+    DESKTOP = "desktop"
+    ORG = "org"
+    CODE = "code"
+
+
+class PromptDepth(Enum):
+    FAST = "fast"
+    MINIMAL = "minimal"
+    STANDARD = "standard"
+    FULL = "full"
+
+
+class MemoryScope(Enum):
+    NONE = "none"
+    PINNED_ONLY = "pinned_only"
+    RELEVANT = "relevant"
+    FULL = "full"
+
+
+class RiskLevelHint(Enum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 @dataclass
 class ComplexitySignal:
     """复杂任务信号，用于判断是否建议切换到 Plan 模式"""
@@ -76,13 +111,23 @@ class IntentResult:
     complexity: ComplexitySignal = field(default_factory=ComplexitySignal)
     raw_output: str = ""
     fast_reply: bool = False
+    capability_scope: list[CapabilityScope] = field(default_factory=list)
+    prompt_depth: PromptDepth = PromptDepth.STANDARD
+    memory_scope: MemoryScope = MemoryScope.RELEVANT
+    catalog_scope: list[str] = field(default_factory=list)
+    requires_tools: bool = False
+    requires_project_context: bool = False
+    risk_level_hint: RiskLevelHint = RiskLevelHint.NONE
 
 
 # Default fallback: behaves identically to the pre-optimization flow
 _DEFAULT_RESULT = IntentResult(
-    intent=IntentType.TASK,
+    intent=IntentType.QUERY,
     confidence=0.0,
-    force_tool=True,
+    force_tool=False,
+    prompt_depth=PromptDepth.MINIMAL,
+    memory_scope=MemoryScope.PINNED_ONLY,
+    requires_tools=False,
 )
 
 INTENT_ANALYZER_SYSTEM = """\
@@ -111,6 +156,13 @@ task_type: <类型>
 goal: <一句话描述>
 tool_hints: [<工具分类>]
 memory_keywords: [<记忆关键词>]
+capability_scope: [none|files|web|browser|plugin|skill|mcp|im|desktop|org|code]
+prompt_depth: <fast|minimal|standard|full>
+memory_scope: <none|pinned_only|relevant|full>
+catalog_scope: [tools|skills|plugins|mcp|memory|project]
+requires_tools: <true/false>
+requires_project_context: <true/false>
+risk_level_hint: <none|low|medium|high>
 destructive: <true/false>
 scope: <narrow/broad>
 suggest_plan: <true/false>
@@ -130,6 +182,8 @@ suggest_plan: <true/false>
 - 只有需要**实际操作外部系统**（读写文件、执行命令、搜索网络、发送消息）的请求才是 task
 - 不确定时，如果不需要工具就能回答，选 query
 - destructive 判断要基于语义分析，理解操作的实际后果，而不是简单匹配关键词
+- prompt_depth 只表示需要注入多少系统上下文；简单问答用 minimal，真实项目/文件/插件任务才用 standard/full
+- add/remove/delete 等词只有在语义上要求修改外部系统时才表示风险；算术、事实修正、假设性安全讨论不是风险任务
 
 重要：你必须分析用户的实际消息内容来判断意图，不要复制上面的示例。"""
 
@@ -276,6 +330,10 @@ def _try_fast_query_shortcut(message: str) -> IntentResult | None:
             todo_required=False,
             raw_output="[fast-query-shortcut]",
             fast_reply=True,
+            prompt_depth=PromptDepth.FAST,
+            memory_scope=MemoryScope.PINNED_ONLY,
+            requires_tools=False,
+            risk_level_hint=RiskLevelHint.NONE,
         )
     return None
 
@@ -314,6 +372,10 @@ def _try_fast_chat_shortcut(message: str, has_history: bool = False) -> IntentRe
             todo_required=False,
             raw_output="[fast-chat-shortcut]",
             fast_reply=True,
+            prompt_depth=PromptDepth.FAST,
+            memory_scope=MemoryScope.PINNED_ONLY,
+            requires_tools=False,
+            risk_level_hint=RiskLevelHint.NONE,
         )
 
     if (
@@ -333,6 +395,10 @@ def _try_fast_chat_shortcut(message: str, has_history: bool = False) -> IntentRe
             todo_required=False,
             raw_output="[fast-chat-shortcut-punctuation]",
             fast_reply=True,
+            prompt_depth=PromptDepth.FAST,
+            memory_scope=MemoryScope.PINNED_ONLY,
+            requires_tools=False,
+            risk_level_hint=RiskLevelHint.NONE,
         )
 
     return None
@@ -379,15 +445,22 @@ class IntentAnalyzer:
 def _make_default(message: str) -> IntentResult:
     """Fallback: behaves like the old flow (TASK + full tools + ForceToolCall)."""
     return IntentResult(
-        intent=IntentType.TASK,
+        intent=IntentType.QUERY,
         confidence=0.0,
         task_definition=message[:600],
-        task_type="action",
+        task_type="question",
         tool_hints=[],
         memory_keywords=[],
-        force_tool=True,
+        force_tool=False,
         todo_required=False,
         raw_output="",
+        prompt_depth=PromptDepth.MINIMAL,
+        memory_scope=MemoryScope.PINNED_ONLY,
+        capability_scope=[],
+        catalog_scope=[],
+        requires_tools=False,
+        requires_project_context=False,
+        risk_level_hint=RiskLevelHint.NONE,
     )
 
 
@@ -411,6 +484,13 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
             "goal",
             "tool_hints",
             "memory_keywords",
+            "capability_scope",
+            "prompt_depth",
+            "memory_scope",
+            "catalog_scope",
+            "requires_tools",
+            "requires_project_context",
+            "risk_level_hint",
             "constraints",
             "inputs",
             "output_requirements",
@@ -446,8 +526,49 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
 
     tool_hints = _parse_list(extracted.get("tool_hints", ""))
     memory_keywords = _parse_list(extracted.get("memory_keywords", ""))
+    capability_scope = _parse_enum_list(
+        extracted.get("capability_scope", ""),
+        CapabilityScope,
+        aliases={
+            "file system": CapabilityScope.FILES,
+            "files": CapabilityScope.FILES,
+            "web search": CapabilityScope.WEB,
+            "plugin": CapabilityScope.PLUGIN,
+            "plugins": CapabilityScope.PLUGIN,
+            "skills": CapabilityScope.SKILL,
+            "skill": CapabilityScope.SKILL,
+            "organization": CapabilityScope.ORG,
+            "config": CapabilityScope.CODE,
+        },
+    )
+    prompt_depth = _parse_enum(
+        extracted.get("prompt_depth", ""),
+        PromptDepth,
+        PromptDepth.MINIMAL if intent in (IntentType.CHAT, IntentType.QUERY) else PromptDepth.STANDARD,
+    )
+    memory_scope = _parse_enum(
+        extracted.get("memory_scope", ""),
+        MemoryScope,
+        MemoryScope.PINNED_ONLY if intent in (IntentType.CHAT, IntentType.QUERY) else MemoryScope.RELEVANT,
+    )
+    catalog_scope = [item.lower().strip() for item in _parse_list(extracted.get("catalog_scope", ""))]
+    requires_tools = _parse_bool(
+        extracted.get("requires_tools", ""),
+        default=intent == IntentType.TASK and bool(tool_hints or capability_scope),
+    )
+    requires_project_context = _parse_bool(
+        extracted.get("requires_project_context", ""),
+        default=CapabilityScope.CODE in capability_scope or "project" in catalog_scope,
+    )
+    risk_level_hint = _parse_enum(
+        extracted.get("risk_level_hint", ""),
+        RiskLevelHint,
+        RiskLevelHint.HIGH
+        if extracted.get("destructive", "").strip().lower() == "true"
+        else RiskLevelHint.NONE,
+    )
 
-    force_tool = intent in (IntentType.TASK,) and task_type not in ("question", "other")
+    force_tool = intent in (IntentType.TASK,) and requires_tools
     todo_required = task_type == "compound"
 
     result = IntentResult(
@@ -460,6 +581,13 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
         force_tool=force_tool,
         todo_required=todo_required,
         raw_output=raw_output,
+        capability_scope=capability_scope,
+        prompt_depth=prompt_depth,
+        memory_scope=memory_scope,
+        catalog_scope=catalog_scope,
+        requires_tools=requires_tools,
+        requires_project_context=requires_project_context,
+        risk_level_hint=risk_level_hint,
     )
 
     # Complexity analysis — purely from LLM output, no keyword matching
@@ -523,3 +651,39 @@ def _parse_list(value: str) -> list[str]:
         elif line and line not in ("[]",):
             items.append(line.strip("'\""))
     return items
+
+
+def _parse_bool(value: str, default: bool = False) -> bool:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"true", "yes", "1", "是", "需要"}:
+        return True
+    if normalized in {"false", "no", "0", "否", "不需要"}:
+        return False
+    return default
+
+
+def _parse_enum(value: str, enum_cls: type[Enum], default: Enum) -> Enum:
+    normalized = str(value or "").strip().lower().strip("'\"")
+    if not normalized:
+        return default
+    for item in enum_cls:
+        if normalized in {item.value.lower(), item.name.lower(), str(item).lower()}:
+            return item
+    return default
+
+
+def _parse_enum_list(
+    value: str,
+    enum_cls: type[Enum],
+    aliases: dict[str, Enum] | None = None,
+) -> list[Enum]:
+    aliases = aliases or {}
+    result: list[Enum] = []
+    for raw in _parse_list(value):
+        normalized = raw.strip().lower().strip("'\"")
+        item = aliases.get(normalized)
+        if item is None:
+            item = _parse_enum(normalized, enum_cls, None)  # type: ignore[arg-type]
+        if item is not None and item not in result:
+            result.append(item)
+    return result
