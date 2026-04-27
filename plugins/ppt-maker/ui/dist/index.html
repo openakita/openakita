@@ -315,7 +315,21 @@
 
       function CostBreakdown({ draft }) {
         const complexity = draft.mode === "table_to_deck" || draft.mode === "template_deck" ? "中" : "低";
-        return <div className="oa-cost"><div className="range">{draft.slide_count} 页</div><div className="human">复杂度 {complexity}，会生成 outline/design/IR/audit。</div><span className="conf medium">PPTX 可编辑导出</span></div>;
+        const modeName = (modes.find((item) => item.id === draft.mode) || modes[0]).title;
+        const pageCount = draft.slide_count || "未填写";
+        return (
+          <div className="oa-cost">
+            <div className="oa-cost__main">
+              <div><span className="oa-cost__label">预览</span><div className="range">{pageCount}<small>{draft.slide_count ? " 页" : ""}</small></div></div>
+              <div className="oa-cost__meta">
+                <span>{modeName}</span>
+                <span>复杂度 {complexity}</span>
+                <span>PPTX 可编辑导出</span>
+              </div>
+            </div>
+            <div className="oa-cost__steps"><span>大纲</span><span>设计</span><span>页面内容</span><span>质量检查</span></div>
+          </div>
+        );
       }
 
       function FileUploadZone({ hint = "拖入文件或点击上传。", accept = "", multiple = false, disabled = false, manual = false, uploadExtra = {}, onFilesSelected, onUploaded, onUploads }) {
@@ -527,11 +541,21 @@
 
       function FlowHint({ mode }) {
         const meta = modes.find((item) => item.id === mode) || modes[0];
+        const focus = {
+          topic_to_deck: ["明确汇报主题、目标受众与沟通目的", "无需绑定素材，可直接基于文字需求生成初稿", "项目创建后需先确认大纲，再进入后续生成阶段"],
+          files_to_deck: ["基础信息用于确定资料改写后的汇报定位", "建议先在素材页完成参考资料解析", "需求描述应说明保留重点、表达对象与输出口径"],
+          outline_to_deck: ["需求描述应提供章节结构或页面标题", "基础信息用于确定页数、受众和视觉风格", "适用于已有目录并需要补全内容的场景"],
+          table_to_deck: ["需绑定已完成分析的数据集", "基础信息用于确定数据汇报的受众和叙事角度", "需求描述应明确指标口径、关注趋势与结论方向"],
+          template_deck: ["建议绑定已完成诊断的企业模板", "基础信息定义内容，模板诊断结果定义品牌外观", "适用于客户提案或公司统一风格汇报"],
+          revise_deck: ["建议先解析参考稿件或旧版 PPT", "基础信息用于定义改稿对象、语气与展示目标", "需求描述应明确重排、精简、补充或审计要求"],
+        }[mode] || [];
         return (
           <div className="flow-hint">
-            <div><strong>当前模式：</strong>{meta.title}</div>
-            <div>{meta.input}</div>
-            <div className="text-dim">{meta.next}</div>
+            <div className="flow-hint__title"><strong>{meta.title}</strong><span>{meta.desc}</span></div>
+            <div className="mode-focus-grid">
+              {focus.map((item, index) => <div className="mode-focus-item" key={item}><span>{index + 1}</span>{item}</div>)}
+            </div>
+            <div className="text-dim">{meta.input} {meta.next}</div>
           </div>
         );
       }
@@ -539,12 +563,12 @@
       function CreateTab({ setError, refreshProjects, datasets, templates, onNavigate }) {
         const [draft, setDraft] = useDraft("ppt-maker:create", {
           mode: "topic_to_deck",
-          title: "OpenAkita 插件生态路线图",
-          prompt: "面向企业管理层，科技商务风",
-          audience: "企业管理层",
+          title: "",
+          prompt: "",
+          audience: "",
           style: "tech_business",
           custom_style: "",
-          slide_count: 8,
+          slide_count: "",
           dataset_id: "",
           template_id: "",
         });
@@ -558,7 +582,7 @@
             prompt: draft.prompt,
             audience: draft.audience,
             style: draft.style === "custom" ? (draft.custom_style || "custom") : draft.style,
-            slide_count: draft.slide_count,
+            slide_count: Number(draft.slide_count || 8),
             dataset_id: draft.dataset_id || null,
             template_id: draft.template_id || null,
             metadata: { source: "ppt-maker-ui" },
@@ -580,53 +604,53 @@
               <ModeChips active={draft.mode} onChange={(mode) => update("mode", mode)} />
               <FlowHint mode={draft.mode} />
               <div className="card">
-                <div className="label">基础信息</div>
+                <div className="section-title">基础信息</div>
                 <div className="grid-2">
-                  <div className="form-row"><div className="text-xs text-muted">标题</div><input className="input" value={draft.title} onChange={(e) => update("title", e.target.value)} /></div>
-                  <div className="form-row"><div className="text-xs text-muted">受众</div><input className="input" value={draft.audience} onChange={(e) => update("audience", e.target.value)} /></div>
+                  <div className="form-row"><div className="form-label-title">标题 <span>生成内容的主题</span></div><input className="input" value={draft.title} onChange={(e) => update("title", e.target.value)} placeholder="例如：OpenAkita 插件生态路线图" /></div>
+                  <div className="form-row"><div className="form-label-title">受众 <span>决定表达深浅和语气</span></div><input className="input" value={draft.audience} onChange={(e) => update("audience", e.target.value)} placeholder="例如：企业管理层、销售负责人、客户决策人" /></div>
                 </div>
                 <div className="grid-2">
-                  <div className="form-row"><div className="text-xs text-muted">页数</div><input className="input" type="number" min="1" max="80" value={draft.slide_count} onChange={(e) => update("slide_count", Number(e.target.value))} /></div>
+                  <div className="form-row"><div className="form-label-title">页数 <span>控制内容密度</span></div><input className="input" type="number" min="1" max="80" value={draft.slide_count} onChange={(e) => update("slide_count", e.target.value)} placeholder="例如：8" /></div>
                   <div className="form-row">
-                    <div className="text-xs text-muted">风格预设</div>
+                    <div className="form-label-title">风格预设 <span>决定视觉方向</span></div>
                     <select className="input select" value={draft.style} onChange={(e) => update("style", e.target.value)}>
                       {stylePresets.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
                     </select>
                   </div>
                 </div>
-                <div className="style-help">{(stylePresets.find(([id]) => id === draft.style) || stylePresets[0])[2]}</div>
+                <div className="style-help"><strong>当前风格说明：</strong>{(stylePresets.find(([id]) => id === draft.style) || stylePresets[0])[2]}</div>
                 {draft.style === "custom" && (
-                  <div className="form-row"><div className="text-xs text-muted">自定义风格</div><input className="input" value={draft.custom_style || ""} onChange={(e) => update("custom_style", e.target.value)} placeholder="例如：深紫渐变、少文字、多图表、咨询风" /></div>
+                  <div className="form-row"><div className="form-label-title">自定义风格 <span>补充颜色、版式或语气</span></div><input className="input" value={draft.custom_style || ""} onChange={(e) => update("custom_style", e.target.value)} placeholder="例如：深紫渐变、少文字、多图表、咨询风" /></div>
                 )}
-                <div className="form-row"><div className="text-xs text-muted">需求描述</div><textarea className="input textarea" value={draft.prompt} onChange={(e) => update("prompt", e.target.value)} /></div>
+                <div className="form-row"><div className="form-label-title">需求描述 <span>写清目标、重点、限制和想要的结论</span></div><textarea className="input textarea" value={draft.prompt} onChange={(e) => update("prompt", e.target.value)} placeholder="例如：面向企业管理层，说明产品价值、关键能力、落地计划和下一步建议；整体采用科技商务风。" /></div>
               </div>
               <div className="card">
-                <div className="label">素材绑定</div>
+                <div className="section-title">素材绑定</div>
                 <div className="resource-guide">
                   <div className={"resource-card " + (draft.mode === "files_to_deck" || draft.mode === "revise_deck" || draft.mode === "table_to_deck" ? "required" : "")}>
                     <div><strong>素材库</strong><span>{draft.mode === "files_to_deck" || draft.mode === "revise_deck" ? "建议先解析" : draft.mode === "table_to_deck" ? "必需先分析" : "可选"}</span></div>
-                    <p>Markdown / PDF / DOCX / PPTX 走解析；CSV / XLSX 走分析。同一个数据集可同时放参考资料和数据文件。</p>
+                    <p>资料用于生成正文和大纲，表格用于生成数据洞察页；同一个素材集可以同时放参考资料和数据文件。</p>
+                    <div className="resource-card__select">
+                      <label>数据集（表格汇报时选择）</label>
+                      <select className="input select" value={draft.dataset_id || ""} onChange={(e) => update("dataset_id", e.target.value)}>
+                        <option value="">{draft.mode === "table_to_deck" ? "请选择已分析数据集" : "不绑定数据集"}</option>
+                        {datasets.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}
+                      </select>
+                    </div>
                     <button className="btn btn-sm" onClick={() => onNavigate("Materials")}>去素材页</button>
                   </div>
                   <div className={"resource-card " + (draft.mode === "template_deck" ? "required" : "")}>
                     <div><strong>企业模板</strong><span>{draft.mode === "template_deck" ? "推荐" : "可选"}</span></div>
-                    <p>PPTX 模板需先诊断出 brand tokens 和 layout map。</p>
+                    <p>模板用于套用公司品牌色、字体和版式。上传 PPTX 后需要先诊断，再在这里绑定。</p>
+                    <div className="resource-card__select">
+                      <label>企业模板（套模板时选择）</label>
+                      <select className="input select" value={draft.template_id || ""} onChange={(e) => update("template_id", e.target.value)}>
+                        <option value="">{draft.mode === "template_deck" ? "请选择已诊断模板" : "不绑定模板"}</option>
+                        {templates.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}
+                      </select>
+                    </div>
                     <button className="btn btn-sm" onClick={() => onNavigate("Templates")}>去模板页</button>
                   </div>
-                </div>
-                <div className="form-row">
-                  <div className="text-xs text-muted">数据集（table_to_deck）</div>
-                  <select className="input select" value={draft.dataset_id || ""} onChange={(e) => update("dataset_id", e.target.value)}>
-                    <option value="">{draft.mode === "table_to_deck" ? "请选择已分析数据集" : "不绑定数据集"}</option>
-                    {datasets.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}
-                  </select>
-                </div>
-                <div className="form-row">
-                  <div className="text-xs text-muted">企业模板（template_deck）</div>
-                  <select className="input select" value={draft.template_id || ""} onChange={(e) => update("template_id", e.target.value)}>
-                    <option value="">{draft.mode === "template_deck" ? "请选择已诊断模板" : "不绑定模板"}</option>
-                    {templates.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}
-                  </select>
                 </div>
                 <CostBreakdown draft={draft} />
               </div>
@@ -644,35 +668,83 @@
 
       function ProjectsTab({ projects, refreshProjects, setError }) {
         const [detail, setDetail] = useState(null);
+        const [filter, setFilter] = useState("all");
+        const readyCount = projects.filter((item) => item.status === "ready").length;
+        const activeCount = projects.filter((item) => !["ready", "failed", "cancelled"].includes(item.status)).length;
+        const failedCount = projects.filter((item) => item.status === "failed").length;
+        const visibleProjects = projects.filter((item) => {
+          if (filter === "all") return true;
+          if (filter === "active") return !["ready", "failed", "cancelled"].includes(item.status);
+          return item.status === filter;
+        });
         async function load(projectId) { setError(null); setDetail(await request(`/projects/${projectId}`)); }
-        async function retry(projectId) { setError(null); setDetail(await request(`/projects/${projectId}/retry`, { method: "POST" })); refreshProjects(); }
-        async function cancel(projectId) { setError(null); await request(`/projects/${projectId}/cancel`, { method: "POST" }); refreshProjects(); }
-        async function remove(projectId) { setError(null); await request(`/projects/${projectId}`, { method: "DELETE" }); setDetail(null); refreshProjects(); }
+        async function retry(projectId) { setError(null); const data = await request(`/projects/${projectId}/retry`, { method: "POST" }); setDetail(data); refreshProjects(); }
+        async function cancel(projectId) { setError(null); await request(`/projects/${projectId}/cancel`, { method: "POST" }); if (detail?.project?.id === projectId) setDetail(null); refreshProjects(); }
+        async function remove(projectId) { setError(null); await request(`/projects/${projectId}`, { method: "DELETE" }); if (detail?.project?.id === projectId) setDetail(null); refreshProjects(); }
+        const selectedProject = detail?.project || detail;
         return (
-          <div className="split-layout">
-            <div className="split-left oa-list-panel">
-              <div className="oa-list-panel__filters"><button className="btn btn-primary" onClick={refreshProjects}>刷新项目</button></div>
-              <hr className="oa-list-panel__divider" />
-              <div className="oa-list-panel__items">
-                {projects.map((p) => (
-                  <div className="task-card" key={p.id} onClick={() => load(p.id)}>
-                    <div className="task-info">
-                      <h4>{p.title}</h4>
-                      <div className="task-meta"><span>{p.mode}</span><span className={"badge badge-" + statusClass(p.status)}>{p.status}</span><span>{shortId(p.id)}</span></div>
-                      <div className="flex gap-2 flex-wrap" style={{marginTop: 8}}>
-                        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); retry(p.id); }}>继续/重试</button>
-                        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); cancel(p.id); }}>取消</button>
-                        <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); remove(p.id); }}>删除</button>
+          <div className="asset-workspace project-workspace">
+            <div className="asset-toolbar card">
+              <div><div className="label">项目管理</div><p>项目会按“大纲确认 → 设计确认 → 页面生成 → 质量检查 → 导出”推进。停在确认点时，需要在这里继续或重试。</p></div>
+              <div className="asset-stats"><span>全部 <strong>{projects.length}</strong></span><span>进行中 <strong>{activeCount}</strong></span><span>已完成 <strong>{readyCount}</strong></span><span>失败 <strong>{failedCount}</strong></span></div>
+            </div>
+            <div className="asset-grid-layout project-grid-layout">
+              <div className="asset-main card">
+                <div className="asset-main__head"><strong className="section-title">项目列表</strong><span>{visibleProjects.length} 个项目</span></div>
+                <div className="asset-main__controls">
+                  <div className="asset-filter">
+                    <span className="asset-filter__label">状态</span>
+                    <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button>
+                    <button className={filter === "active" ? "active" : ""} onClick={() => setFilter("active")}>进行中</button>
+                    <button className={filter === "ready" ? "active" : ""} onClick={() => setFilter("ready")}>已完成</button>
+                    <button className={filter === "failed" ? "active" : ""} onClick={() => setFilter("failed")}>失败</button>
+                  </div>
+                  <button className="btn btn-primary" onClick={refreshProjects}>刷新项目</button>
+                </div>
+                <div className="project-card-grid">
+                  {visibleProjects.map((p) => (
+                    <div className={"project-card " + (selectedProject?.id === p.id ? "selected" : "")} key={p.id} onClick={() => load(p.id).catch(setError)}>
+                      <div className="project-card__head">
+                        <strong>{p.title || "未命名项目"}</strong>
+                        <span className={"badge badge-" + statusClass(p.status)}>{p.status}</span>
+                      </div>
+                      <div className="project-card__meta">
+                        <span>{p.mode}</span><span>{p.slide_count || "?"} 页</span><span>{shortId(p.id)}</span>
+                      </div>
+                      <div className="project-stage-line">
+                        <span className={statusClass(p.status) === "done" ? "done" : "active"}>{p.status === "ready" ? "已可导出" : p.status === "failed" ? "生成失败" : "等待推进"}</span>
+                        <em>{p.updated_at ? new Date(p.updated_at * 1000).toLocaleString() : "暂无更新时间"}</em>
+                      </div>
+                      <div className="project-card__actions">
+                        <button className="btn btn-sm btn-primary" onClick={(e) => { e.stopPropagation(); retry(p.id).catch(setError); }}>继续/重试</button>
+                        <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); cancel(p.id).catch(setError); }}>取消</button>
+                        <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); remove(p.id).catch(setError); }}>删除</button>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                  {visibleProjects.length === 0 && <div className="empty-note">暂无符合条件的项目。创建页生成项目后，会出现在这里。</div>}
+                </div>
               </div>
-              <div className="oa-list-panel__footer">共 {projects.length} 个项目</div>
+              <div className="asset-sidebar project-detail-panel card">
+                <div className="section-title">项目详情</div>
+                {detail ? (
+                  <div className="project-detail">
+                    <div className="project-detail__hero">
+                      <strong>{selectedProject?.title || "项目详情"}</strong>
+                      <span className={"badge badge-" + statusClass(selectedProject?.status)}>{selectedProject?.status || "unknown"}</span>
+                      <p>{selectedProject?.prompt || "暂无需求描述"}</p>
+                    </div>
+                    <div className="project-detail__grid">
+                      <div><span>模式</span><strong>{selectedProject?.mode || "-"}</strong></div>
+                      <div><span>页数</span><strong>{selectedProject?.slide_count || "-"}</strong></div>
+                      <div><span>数据集</span><strong>{shortId(selectedProject?.dataset_id) || "未绑定"}</strong></div>
+                      <div><span>模板</span><strong>{shortId(selectedProject?.template_id) || "未绑定"}</strong></div>
+                    </div>
+                    <details className="template-raw"><summary>查看原始项目 JSON</summary><JsonBlock value={detail} /></details>
+                  </div>
+                ) : <div className="empty-note">在左侧选择一个项目，可查看当前状态、绑定素材、生成结果和原始详情。</div>}
+              </div>
             </div>
-            <PreviewShell title="未选择项目" hint="在左侧项目列表中点击一项查看详情">
-              {detail && <div style={{width: "100%"}}><div className="card-title">项目详情</div><JsonBlock value={detail} /></div>}
-            </PreviewShell>
           </div>
         );
       }
@@ -1028,21 +1100,150 @@
         );
       }
 
+      function TemplateDiagnosticSummary({ diagnosis, template }) {
+        const profile = diagnosis?.template_profile || null;
+        const brand = diagnosis?.brand_tokens || null;
+        const layoutMap = diagnosis?.layout_map || null;
+        const layoutEntries = Object.entries(layoutMap || {});
+        const matchedLayouts = layoutEntries.filter(([, value]) => value?.source === "pptx").length;
+        const slideSize = profile?.slide_size;
+        const warnings = profile?.warnings || [];
+        if (!template) return <div className="empty-note">选择或上传一个企业模板后，这里会展示诊断摘要。</div>;
+        if (!profile) {
+          return (
+            <div className="template-summary template-summary--empty">
+              <div className="template-summary__hero">
+                <strong>{template.name || "企业模板"}</strong>
+                <span>还没有诊断结果</span>
+                <p>点击“诊断模板”，系统会读取 PPTX 的页面尺寸、品牌色、字体和版式，并判断哪些页面类型可以直接套用模板。</p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="template-summary">
+            <div className="template-summary__hero">
+              <strong>{template.name || profile.name || "企业模板"}</strong>
+              <span>{matchedLayouts} / {layoutEntries.length || 0} 个页面类型命中模板版式</span>
+              <p>诊断结果会用于生成阶段：品牌色和字体决定视觉风格，版式映射决定封面、章节页、内容页等页面如何套用模板。</p>
+            </div>
+            <div className="template-summary__grid">
+              <div className="template-summary__card"><span>页面尺寸</span><strong>{slideSize ? `${slideSize.width} × ${slideSize.height} ${slideSize.unit || ""}` : "默认宽屏"}</strong><p>{slideSize?.source === "default" ? "未读取到尺寸，使用默认 16:9 宽屏。" : "已从模板文件读取页面尺寸。"}</p></div>
+              <div className="template-summary__card"><span>品牌色</span><div className="template-color-row">{(profile.detected_colors || []).slice(0, 5).map((color) => <i key={color} style={{background: `#${color}`}} title={`#${color}`} />)}{!(profile.detected_colors || []).length && <em>未检测到，使用默认色</em>}</div>{brand && <p>主色 {brand.primary_color}，强调色 {brand.accent_color}</p>}</div>
+              <div className="template-summary__card"><span>字体</span><strong>{(profile.detected_fonts || []).slice(0, 2).join(" / ") || "使用默认字体"}</strong>{brand && <p>标题 {brand.font_heading}，正文 {brand.font_body}</p>}</div>
+              <div className="template-summary__card"><span>模板版式</span><strong>{profile.layout_count || 0} 个</strong><p>已识别模板中的可用 layout（版式，即 PPT 母版里的页面布局）。</p></div>
+            </div>
+            <div className="template-layout-map">
+              <div className="template-layout-map__head">页面类型匹配情况</div>
+              <div className="template-layout-map__items">
+                {layoutEntries.map(([key, value]) => (
+                  <div className={"template-layout-chip " + (value?.source === "pptx" ? "matched" : "fallback")} key={key}>
+                    <strong>{key}</strong><span>{value?.pptx_layout || value?.fallback || "内置兜底"}</span><em>{value?.source === "pptx" ? "使用模板" : "使用内置兜底"}</em>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {warnings.length > 0 && <div className="template-warning"><strong>使用前提醒</strong>{warnings.map((item) => <span key={item}>{item}</span>)}</div>}
+            <details className="template-raw"><summary>查看原始诊断 JSON</summary><JsonBlock value={diagnosis} /></details>
+          </div>
+        );
+      }
+
+      function TemplateDiagnosisModal({ diagnosis, template, onClose }) {
+        if (!diagnosis && !template) return null;
+        return (
+          <div className="modal-mask" onClick={onClose}>
+            <div className="modal-card template-diagnosis-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="analysis-modal__head">
+                <div>
+                  <strong>模板诊断结果</strong>
+                  <span>{template?.name || diagnosis?.template?.name || "企业模板"}</span>
+                </div>
+                <button className="btn btn-sm" onClick={onClose}>关闭</button>
+              </div>
+              <div className="analysis-modal__body">
+                <TemplateDiagnosticSummary diagnosis={diagnosis} template={template || diagnosis?.template} />
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       function TemplatesTab({ setError, refreshData, templates }) {
         const [path, setPath] = useState("");
+        const [templateName, setTemplateName] = useState("");
+        const [pendingTemplateFile, setPendingTemplateFile] = useState(null);
+        const [uploadingTemplate, setUploadingTemplate] = useState(false);
+        const [diagnoseAfterUpload, setDiagnoseAfterUpload] = useState(false);
+        const [templateUploadPhase, setTemplateUploadPhase] = useState("");
         const [template, setTemplate] = useState(null);
+        const [diagnosis, setDiagnosis] = useState(null);
+        const [diagnosisModal, setDiagnosisModal] = useState(null);
         const [deleteTarget, setDeleteTarget] = useState(null);
-        async function upload() { setError(null); const data = await request("/templates/upload", { method: "POST", body: { path } }); setTemplate(data); refreshData(); }
-        async function diagnose() { if (!template?.template?.id) return; setError(null); const data = await request(`/templates/${template.template.id}/diagnose`, { method: "POST" }); setTemplate(data); refreshData(); }
-        async function handleUploaded(data) {
+        const selectedTemplate = template?.template || template;
+        async function upload() {
           setError(null);
-          const uploadedPath = data?.source?.path || "";
-          setPath(uploadedPath);
-          if (uploadedPath) {
-            const created = await request("/templates/upload", { method: "POST", body: { path: uploadedPath, name: data.source.filename } });
-            setTemplate(created);
+          const name = templateName.trim();
+          if (!name) throw new Error("请先填写模板名称，再上传或登记模板。");
+          if (!pendingTemplateFile && !path.trim()) throw new Error("请先选择 PPTX 模板文件，或填写本地模板路径。");
+          setUploadingTemplate(true);
+          setTemplateUploadPhase("上传模板中...");
+          try {
+            let templatePath = path.trim();
+            if (pendingTemplateFile) {
+              const uploaded = await uploadFile(pendingTemplateFile, "", { collection_name: name });
+              templatePath = uploaded?.source?.path || "";
+            }
+            const data = await request("/templates/upload", { method: "POST", body: { path: templatePath, name } });
+            setTemplate(data);
+            setDiagnosis(null);
+            if (diagnoseAfterUpload && data?.template?.id) {
+              setTemplateUploadPhase("同步诊断中，请稍候...");
+              const diagnosed = await request(`/templates/${data.template.id}/diagnose`, { method: "POST" });
+              setTemplate(diagnosed);
+              setDiagnosis(diagnosed);
+              setDiagnosisModal(diagnosed);
+            }
+            setPendingTemplateFile(null);
+            setPath("");
             refreshData();
+          } finally {
+            setTemplateUploadPhase("");
+            setUploadingTemplate(false);
           }
+        }
+        async function diagnoseTemplate(item = selectedTemplate) {
+          if (!item?.id) return;
+          setError(null);
+          const data = await request(`/templates/${item.id}/diagnose`, { method: "POST" });
+          setTemplate(data);
+          setDiagnosis(data);
+          setDiagnosisModal(data);
+          refreshData();
+        }
+        function handleTemplateSelected(files) {
+          const file = files?.[0];
+          if (!file) return;
+          setPendingTemplateFile(file);
+          if (!templateName.trim()) setTemplateName(file.name.replace(/\.pptx$/i, ""));
+        }
+        async function viewDiagnosis(item) {
+          setError(null);
+          setTemplate({ template: item });
+          if (item.status === "diagnosed") {
+            const data = await request(`/templates/${item.id}/diagnosis`);
+            setDiagnosis(data);
+            setDiagnosisModal(data);
+          } else {
+            setDiagnosis(null);
+            setDiagnosisModal({ template: item });
+          }
+        }
+        async function selectTemplate(item) {
+          setError(null);
+          setPath(item.original_path || "");
+          setTemplate({ template: item });
+          setDiagnosis(item.status === "diagnosed" ? await request(`/templates/${item.id}/diagnosis`) : null);
         }
         async function confirmDelete(deleteFiles) {
           if (!deleteTarget) return;
@@ -1050,31 +1251,72 @@
           await request(`/templates/${deleteTarget.id}`, { method: "DELETE", body: { delete_files: deleteFiles } });
           setDeleteTarget(null);
           setTemplate(null);
+          setDiagnosis(null);
           refreshData();
         }
+        const diagnosedCount = templates.filter((item) => item.status === "diagnosed").length;
         return (
-          <div className="split-layout">
-            <div className="split-left">
-              <div className="card"><div className="label">企业模板</div><FileUploadZone accept=".pptx" onUploaded={handleUploaded} hint="上传企业 PPTX 模板，抽取 brand_tokens 与 layout_map。" /><div className="form-row"><div className="text-xs text-muted">PPTX 模板路径</div><input className="input" value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\\OpenAkita\\test-assets\\ppt-maker\\company_template.pptx" /></div><div className="flex gap-2"><button className="btn btn-primary" onClick={upload}>登记模板</button><button className="btn" onClick={diagnose} disabled={!template?.template?.id}>诊断模板</button></div><div className="text-xs text-dim" style={{marginTop: 8}}>MVP 抽取 brand_tokens 和 layout_map，不承诺 1:1 复刻动画、SmartArt 或复杂母版。</div></div>
-              <div className="card">
-                <div className="label">模板库</div>
-                <div className="asset-list">
-                  {templates.map((item) => (
-                    <div className="asset-item" key={item.id} onClick={() => { setPath(item.original_path || ""); setTemplate({ template: item }); }}>
-                      <strong>{item.name}</strong>
-                      <span>{item.status} · {item.category || "template"}</span>
-                      <div className="asset-item__actions">
-                        <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: item.id, name: item.name }); }}>删除</button>
+          <div className="asset-workspace template-workspace">
+            <div className="asset-toolbar card">
+              <div><div className="label">模板库</div><p>企业 PPTX 模板在这里上传和诊断。诊断会提取品牌色、字体、页面尺寸和版式映射，供创建页绑定使用。</p></div>
+              <div className="asset-stats"><span>全部 <strong>{templates.length}</strong></span><span>已诊断 <strong>{diagnosedCount}</strong></span><span>待诊断 <strong>{templates.length - diagnosedCount}</strong></span></div>
+            </div>
+            <div className="asset-grid-layout">
+              <div className="asset-sidebar asset-sidebar--upload card">
+                <div className="form-row">
+                  <div className="field-title">模板名称（必填）</div>
+                  <input className="input" value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="例如：集团品牌汇报模板" />
+                </div>
+                <div className="field-title">上传企业模板</div>
+                <FileUploadZone accept=".pptx" manual disabled={!templateName.trim() || uploadingTemplate} onFilesSelected={handleTemplateSelected} hint="先填写模板名称，再选择一个 PPTX 文件；上传后会登记为可管理的企业模板。" />
+                <label className="upload-process-option">
+                  <input type="checkbox" checked={diagnoseAfterUpload} onChange={(e) => setDiagnoseAfterUpload(e.target.checked)} disabled={uploadingTemplate} />
+                  <span>
+                    <strong>上传后同步诊断模板</strong>
+                    <small>诊断完成后才结束上传；结果会在弹窗中展示，并可在右侧模板管理卡片再次查看。</small>
+                  </span>
+                </label>
+                <div className="pending-upload template-pending-upload">
+                  <div className="pending-upload__head">
+                    <span>{pendingTemplateFile ? "待上传模板" : "待上传文件预览"}</span>
+                    {pendingTemplateFile && <span className="pending-upload__hint">点击 × 可移除文件</span>}
+                  </div>
+                  {pendingTemplateFile ? (
+                    <div className="pending-upload__list">
+                      <div className="pending-upload__item">
+                        <span className="pending-upload__item-icon is-template">PPTX</span>
+                        <span className="pending-upload__item-name" title={pendingTemplateFile.name}>{pendingTemplateFile.name}</span>
+                        <span className="pending-upload__item-size">{(pendingTemplateFile.size / 1024).toFixed(1)} KB</span>
+                        <button className="pending-upload__item-remove" onClick={() => setPendingTemplateFile(null)} title="移除该文件">×</button>
                       </div>
                     </div>
-                  ))}
-                  {templates.length === 0 && <div className="empty-note">还没有企业模板。上传 PPTX 后会出现在这里，创建页可以精准绑定。</div>}
+                  ) : (
+                    <div className="pending-upload__empty">还没有选择模板文件。<br />从上方上传区选择 PPTX 后，会显示在这里。</div>
+                  )}
+                </div>
+                <div className="form-row"><div className="form-label-title">PPTX 模板路径 <span>也可粘贴本地绝对路径</span></div><input className="input" value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\\OpenAkita\\test-assets\\ppt-maker\\company_template.pptx" /></div>
+                <button className="btn btn-primary btn-block" onClick={() => upload().catch(setError)} disabled={!templateName.trim() || (!pendingTemplateFile && !path.trim()) || uploadingTemplate}>{uploadingTemplate ? (templateUploadPhase || "上传中...") : "确认上传"}</button>
+                <div className="template-tip"><strong>诊断会做什么？</strong><span>读取品牌色、字体、页面尺寸和 layout map（页面类型到模板版式的映射）。动画、SmartArt 和复杂母版会尽量保留外观方向，但不承诺 1:1 复刻。</span></div>
+              </div>
+              <div className="asset-main card">
+                <div className="asset-main__head"><strong className="section-title">模板管理</strong><span>{templates.length} 个模板</span></div>
+                <div className="template-manager-grid template-manager-grid--cards">
+                  <div className="template-list-panel">
+                    <div className="template-list-panel__head">模板文件</div>
+                    <div className="template-card-list template-card-list--grid">
+                      {templates.map((item) => (
+                        <div className={"template-card " + (selectedTemplate?.id === item.id ? "selected" : "")} key={item.id} onClick={() => selectTemplate(item).catch(setError)}>
+                          <div className="template-card__main"><strong>{item.name}</strong><span>{item.status === "diagnosed" ? "已诊断，可在创建页绑定" : "待诊断，先点击诊断模板"}</span><code title={item.original_path}>{item.original_path}</code></div>
+                          <div className="template-card__actions"><span className={"material-badge " + (item.status === "diagnosed" ? "is-processed" : "is-pending")}>{item.status === "diagnosed" ? "已诊断" : "待诊断"}</span><button className="btn btn-sm btn-primary" onClick={(e) => { e.stopPropagation(); diagnoseTemplate(item).catch(setError); }}>诊断</button><button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); viewDiagnosis(item).catch(setError); }}>查看结果</button><button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: item.id, name: item.name }); }}>删除</button></div>
+                        </div>
+                      ))}
+                      {templates.length === 0 && <div className="empty-note">还没有企业模板。左侧上传 PPTX 后，会出现在这里。</div>}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-            <PreviewShell title="暂无模板诊断" hint="左侧上传模板后点击诊断">
-              {template && <div style={{width: "100%"}}><div className="card-title">模板诊断结果</div><JsonBlock value={template} /></div>}
-            </PreviewShell>
+            {diagnosisModal && <TemplateDiagnosisModal diagnosis={diagnosisModal} template={diagnosisModal?.template} onClose={() => setDiagnosisModal(null)} />}
             <DeleteAssetConfirmModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={(deleteFiles) => confirmDelete(deleteFiles).catch(setError)} />
           </div>
         );
@@ -1082,15 +1324,56 @@
 
       function ExportsTab({ projects }) {
         const exports = projects.flatMap((p) => (p.exports || []).map((e) => ({ ...e, project_title: p.title })));
+        const [selectedExport, setSelectedExport] = useState(exports[0] || null);
+        useEffect(() => {
+          if (!selectedExport && exports.length) setSelectedExport(exports[0]);
+          if (selectedExport && !exports.some((item) => item.id === selectedExport.id)) setSelectedExport(exports[0] || null);
+        }, [exports.length]);
         return (
-          <div className="split-layout">
-            <div className="split-left oa-list-panel">
-              <div className="oa-list-panel__items">
-                {exports.map((e) => <div className="task-card" key={e.id}><div className="task-info"><h4>{e.project_title}</h4><div className="task-meta"><span>{e.kind}</span><span>{shortId(e.id)}</span></div><a className="btn btn-primary btn-sm" href={`${PLUGIN_BASE}/exports/${e.id}/download`} target="_blank">下载 PPTX</a></div></div>)}
-              </div>
-              <div className="oa-list-panel__footer">共 {exports.length} 个导出文件</div>
+          <div className="asset-workspace export-workspace">
+            <div className="asset-toolbar card">
+              <div><div className="label">导出文件</div><p>项目生成完成后会在这里形成 PPTX 导出记录。选择一个文件可查看来源项目、文件信息并下载。</p></div>
+              <div className="asset-stats"><span>全部 <strong>{exports.length}</strong></span><span>PPTX <strong>{exports.filter((item) => (item.kind || "pptx") === "pptx").length}</strong></span></div>
             </div>
-            <PreviewShell title="暂无导出" hint="项目 ready 后会在左侧出现 PPTX 下载项" />
+            <div className="asset-grid-layout export-grid-layout">
+              <div className="asset-main card">
+                <div className="asset-main__head"><strong className="section-title">导出列表</strong><span>{exports.length} 个文件</span></div>
+                <div className="export-card-grid">
+                  {exports.map((e) => (
+                    <div className={"export-card " + (selectedExport?.id === e.id ? "selected" : "")} key={e.id} onClick={() => setSelectedExport(e)}>
+                      <div className="export-card__icon">PPTX</div>
+                      <div className="export-card__main">
+                        <strong>{e.project_title || "未命名项目"}</strong>
+                        <span>{e.kind || "pptx"} · {shortId(e.id)}</span>
+                        <code title={e.path}>{e.path || "导出路径待返回"}</code>
+                      </div>
+                      <a className="btn btn-primary btn-sm" href={`${PLUGIN_BASE}/exports/${e.id}/download`} target="_blank" onClick={(event) => event.stopPropagation()}>下载</a>
+                    </div>
+                  ))}
+                  {exports.length === 0 && <div className="empty-note">暂无导出文件。项目状态 ready 后，会在这里出现可下载的 PPTX。</div>}
+                </div>
+              </div>
+              <div className="asset-sidebar export-detail-panel card">
+                <div className="section-title">文件预览</div>
+                {selectedExport ? (
+                  <div className="export-detail">
+                    <div className="export-detail__hero">
+                      <span>PPTX</span>
+                      <strong>{selectedExport.project_title || "导出文件"}</strong>
+                      <p>这是可编辑的 PowerPoint 文件，可下载后继续在 PowerPoint 中修改。</p>
+                    </div>
+                    <div className="project-detail__grid">
+                      <div><span>导出 ID</span><strong>{shortId(selectedExport.id)}</strong></div>
+                      <div><span>类型</span><strong>{selectedExport.kind || "pptx"}</strong></div>
+                      <div><span>来源项目</span><strong>{selectedExport.project_title || "-"}</strong></div>
+                      <div><span>状态</span><strong>可下载</strong></div>
+                    </div>
+                    <code className="export-detail__path">{selectedExport.path || "未返回路径"}</code>
+                    <a className="btn btn-primary btn-block" href={`${PLUGIN_BASE}/exports/${selectedExport.id}/download`} target="_blank">下载 PPTX</a>
+                  </div>
+                ) : <div className="empty-note">左侧选择一个导出文件后，这里会显示下载信息。</div>}
+              </div>
+            </div>
           </div>
         );
       }

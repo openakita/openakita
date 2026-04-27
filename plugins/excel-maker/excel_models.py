@@ -225,7 +225,12 @@ class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     data_dir: str = ""
+    uploads_dir: str = ""
+    workbooks_dir: str = ""
+    projects_dir: str = ""
     export_dir: str = ""
+    templates_dir: str = ""
+    cache_dir: str = ""
     default_style: str = "business"
     brand_color: str = "#2563eb"
     font_family: str = "Microsoft YaHei"

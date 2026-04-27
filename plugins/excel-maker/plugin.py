@@ -21,9 +21,6 @@ from excel_formula import generate_formula
 from excel_importer import WorkbookImporter, WorkbookImportError
 from excel_maker_inline.file_utils import (
     copy_into,
-    ensure_child,
-    export_dir,
-    project_dir,
     resolve_plugin_data_root,
     safe_name,
     unique_child,
@@ -172,7 +169,7 @@ class Plugin(PluginBase):
         self._data_dir = data_dir
         self._deps = PythonDepsManager(data_dir)
         router = APIRouter()
-        register_upload_preview_routes(router, data_dir / "uploads", prefix="/uploads")
+        register_upload_preview_routes(router, self._storage_paths()["uploads"], prefix="/uploads")
 
         @router.get("/healthz")
         async def healthz() -> dict[str, Any]:
@@ -187,28 +184,47 @@ class Plugin(PluginBase):
 
         @router.get("/settings")
         async def get_settings() -> dict[str, Any]:
-            return {"ok": True, "settings": self._settings().model_dump(mode="json")}
+            settings = self._settings()
+            return {
+                "ok": True,
+                "settings": settings.model_dump(mode="json"),
+                "resolved": {key: str(path) for key, path in self._storage_paths(settings).items()},
+            }
 
         @router.put("/settings")
         async def update_settings(payload: SettingsUpdateRequest) -> dict[str, Any]:
             settings = self._settings()
             values = settings.model_dump()
+            path_keys = {
+                "data_dir",
+                "uploads_dir",
+                "workbooks_dir",
+                "projects_dir",
+                "export_dir",
+                "templates_dir",
+                "cache_dir",
+            }
             for key, value in payload.model_dump(exclude_none=True).items():
-                if key in {"data_dir", "export_dir"} and value:
+                if key in path_keys and value:
                     write_probe(value)
                 values[key] = value
             values["updated_at"] = __import__("time").time()
             self._save_settings(Settings(**values))
-            return {"ok": True, "settings": values, "reload_recommended": "data_dir" in payload.model_dump(exclude_none=True)}
+            return {
+                "ok": True,
+                "settings": values,
+                "resolved": {key: str(path) for key, path in self._storage_paths(Settings(**values)).items()},
+                "reload_recommended": "data_dir" in payload.model_dump(exclude_none=True),
+            }
 
         @router.get("/storage/stats")
         async def storage_stats() -> dict[str, Any]:
-            return {"ok": True, "stats": collect_storage_stats(data_dir)}
+            return {"ok": True, "stats": collect_storage_stats(data_dir, self._storage_paths())}
 
         @router.post("/storage/open-folder")
         async def open_folder(payload: StorageOpenRequest) -> dict[str, Any]:
             try:
-                target = ensure_child(data_dir, payload.path) if payload.path else data_dir
+                target = self._safe_open_path(payload.path)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             if not target.exists():
@@ -224,7 +240,7 @@ class Plugin(PluginBase):
         @router.get("/storage/list-dir")
         async def list_dir(path: str | None = None) -> dict[str, Any]:
             try:
-                target = ensure_child(data_dir, path or data_dir)
+                target = self._safe_open_path(path)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             if not target.is_dir():
@@ -246,8 +262,8 @@ class Plugin(PluginBase):
         @router.post("/storage/mkdir")
         async def mkdir(payload: StorageMkdirRequest) -> dict[str, Any]:
             try:
-                parent = ensure_child(data_dir, payload.parent or data_dir)
-                target = ensure_child(data_dir, parent / safe_name(payload.name, "folder"))
+                parent = self._safe_open_path(payload.parent)
+                target = parent / safe_name(payload.name, "folder")
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             target.mkdir(parents=True, exist_ok=True)
@@ -255,7 +271,7 @@ class Plugin(PluginBase):
 
         @router.post("/cleanup")
         async def cleanup() -> dict[str, Any]:
-            cache = data_dir / "cache"
+            cache = self._storage_paths()["cache"]
             removed = 0
             if cache.exists():
                 for item in cache.iterdir():
@@ -355,7 +371,7 @@ class Plugin(PluginBase):
             if upload_file is None or not hasattr(upload_file, "filename") or not hasattr(upload_file, "read"):
                 raise HTTPException(status_code=400, detail="Missing upload field: file")
             filename = safe_name(str(upload_file.filename or "upload.xlsx"))
-            target = unique_child(data_dir / "uploads", filename)
+            target = unique_child(self._storage_paths()["uploads"], filename)
             content = await upload_file.read()
             target.write_bytes(content)
             async with ExcelTaskManager(data_dir / "excel_maker.db") as manager:
@@ -390,7 +406,13 @@ class Plugin(PluginBase):
                 workbook = await manager.get_workbook(workbook_id)
             if workbook is None or not workbook.profile_path:
                 raise HTTPException(status_code=404, detail="Workbook preview not found")
-            return {"ok": True, "preview": WorkbookImporter(data_dir).preview(workbook.profile_path, sheet)}
+            return {
+                "ok": True,
+                "preview": WorkbookImporter(
+                    data_dir,
+                    workbooks_root=self._storage_paths()["workbooks"],
+                ).preview(workbook.profile_path, sheet),
+            }
 
         @router.post("/workbooks/{workbook_id}/profile")
         async def profile_workbook(workbook_id: str, payload: ProfileWorkbookRequest) -> dict[str, Any]:
@@ -423,7 +445,7 @@ class Plugin(PluginBase):
                 brief=payload.brief,
             )
             if payload.project_id:
-                plan_path = project_dir(data_dir, payload.project_id) / "workbook_plan.json"
+                plan_path = self._project_dir(payload.project_id) / "workbook_plan.json"
                 plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
                 async with ExcelTaskManager(data_dir / "excel_maker.db") as manager:
                     await manager.create_artifact(project_id=payload.project_id, kind=ArtifactKind.PLAN, path=str(plan_path))
@@ -499,7 +521,8 @@ class Plugin(PluginBase):
 
         @router.post("/templates")
         async def upload_template(payload: TemplateUploadRequest) -> dict[str, Any]:
-            copied = copy_into(payload.path, data_dir / "templates", payload.name or Path(payload.path).name)
+            templates_dir = self._storage_paths()["templates"]
+            copied = copy_into(payload.path, templates_dir, payload.name or Path(payload.path).name)
             async with ExcelTaskManager(data_dir / "excel_maker.db") as manager:
                 template = await manager.create_template(name=payload.name or copied.stem, original_path=str(copied))
             return {"ok": True, "template": self._public_template(template)}
@@ -511,7 +534,7 @@ class Plugin(PluginBase):
             if template is None:
                 raise HTTPException(status_code=404, detail="Template not found")
             try:
-                out_path = data_dir / "templates" / f"{template_id}_diagnostic.json"
+                out_path = self._storage_paths()["templates"] / f"{template_id}_diagnostic.json"
                 diagnostic = TemplateManager().diagnose(template.original_path, out_path)
             except TemplateDiagnosticError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -552,7 +575,10 @@ class Plugin(PluginBase):
             else:
                 source_path = Path(workbook.original_path)
         try:
-            imported = WorkbookImporter(data_dir).import_file(source_path, workbook.id)
+            imported = WorkbookImporter(
+                data_dir,
+                workbooks_root=self._storage_paths()["workbooks"],
+            ).import_file(source_path, workbook.id)
         except WorkbookImportError as exc:
             async with ExcelTaskManager(data_dir / "excel_maker.db") as manager:
                 await manager.update_workbook_safe(workbook.id, status=WorkbookStatus.FAILED, metadata={"error": str(exc)})
@@ -582,7 +608,7 @@ class Plugin(PluginBase):
             workbook = await manager.get_workbook(workbook_id)
         if workbook is None or not workbook.profile_path:
             raise HTTPException(status_code=404, detail="Workbook import profile not found")
-        profile_path = data_dir / "workbooks" / workbook_id / "profile.json"
+        profile_path = self._storage_paths()["workbooks"] / workbook_id / "profile.json"
         if profile_path.exists() and not force:
             profile = json.loads(profile_path.read_text(encoding="utf-8"))
         else:
@@ -681,7 +707,7 @@ class Plugin(PluginBase):
             return None
         path = Path(workbook.profile_path)
         if path.name == "import_profile.json":
-            profile_path = data_dir / "workbooks" / workbook_id / "profile.json"
+            profile_path = self._storage_paths()["workbooks"] / workbook_id / "profile.json"
             if profile_path.exists():
                 path = profile_path
         if path.exists():
@@ -703,7 +729,10 @@ class Plugin(PluginBase):
                 workbook = await manager.get_workbook(workbook_id)
             if workbook and workbook.profile_path:
                 try:
-                    preview = WorkbookImporter(data_dir).preview(workbook.profile_path)
+                    preview = WorkbookImporter(
+                        data_dir,
+                        workbooks_root=self._storage_paths()["workbooks"],
+                    ).preview(workbook.profile_path)
                 except Exception:
                     preview = None
         plan = self._load_saved_plan(data_dir, project_id) if payload.plan is None else None
@@ -720,7 +749,8 @@ class Plugin(PluginBase):
             )
         async with ExcelTaskManager(data_dir / "excel_maker.db") as manager:
             version = await manager.next_artifact_version(project_id, ArtifactKind.WORKBOOK)
-        output_path = export_dir(data_dir, project_id) / f"report_v{version}.xlsx"
+        output_path = self._storage_paths()["exports"] / safe_name(project_id) / f"report_v{version}.xlsx"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             WorkbookBuilder().build(plan=plan, profile=profile, preview=preview, output_path=output_path)
         except WorkbookBuildError as exc:
@@ -747,7 +777,7 @@ class Plugin(PluginBase):
         artifact_id: str | None = None,
         plan: WorkbookPlan | None = None,
     ) -> dict[str, Any]:
-        audit_path = project_dir(data_dir, project_id) / "audit.json"
+        audit_path = self._project_dir(project_id) / "audit.json"
         audit = WorkbookAuditor().audit(workbook_path, audit_path)
         async with ExcelTaskManager(data_dir / "excel_maker.db") as manager:
             items = await manager.replace_audit_items(project_id, audit["items"], artifact_id=artifact_id)
@@ -800,21 +830,50 @@ class Plugin(PluginBase):
         return data
 
     def _cleanup_project_files(self, data_dir: Path, project_id: str, workbook_ids: list[str]) -> list[str]:
+        storage = self._storage_paths()
         candidates = [
-            data_dir / "projects" / safe_name(project_id),
-            data_dir / "exports" / safe_name(project_id),
-            *[data_dir / "workbooks" / safe_name(workbook_id) for workbook_id in workbook_ids],
+            storage["projects"] / safe_name(project_id),
+            storage["exports"] / safe_name(project_id),
+            *[storage["workbooks"] / safe_name(workbook_id) for workbook_id in workbook_ids],
         ]
         removed: list[str] = []
         for candidate in candidates:
-            try:
-                target = ensure_child(data_dir, candidate)
-            except ValueError:
-                continue
-            if target.exists() and target.is_dir():
-                shutil.rmtree(target)
-                removed.append(str(target))
+            if candidate.exists() and candidate.is_dir():
+                shutil.rmtree(candidate)
+                removed.append(str(candidate))
         return removed
+
+    def _project_dir(self, project_id: str) -> Path:
+        path = self._storage_paths()["projects"] / safe_name(project_id)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _storage_paths(self, settings: Settings | None = None) -> dict[str, Path]:
+        assert self._data_dir is not None
+        current = settings or self._settings()
+        root = Path(current.data_dir or self._data_dir).expanduser()
+        paths = {
+            "uploads": current.uploads_dir or root / "uploads",
+            "workbooks": current.workbooks_dir or root / "workbooks",
+            "projects": current.projects_dir or root / "projects",
+            "exports": current.export_dir or root / "exports",
+            "templates": current.templates_dir or root / "templates",
+            "cache": current.cache_dir or root / "cache",
+        }
+        resolved = {key: Path(path).expanduser().resolve() for key, path in paths.items()}
+        for path in resolved.values():
+            path.mkdir(parents=True, exist_ok=True)
+        return resolved
+
+    def _safe_open_path(self, path: str | None = None) -> Path:
+        assert self._data_dir is not None
+        if not path:
+            return self._storage_paths()["uploads"].parent
+        target = Path(path).expanduser().resolve()
+        roots = [self._data_dir.resolve(), *self._storage_paths().values()]
+        if not any(root == target or root in target.parents for root in roots):
+            raise ValueError("Path is outside configured excel-maker directories")
+        return target
 
     def _cleanup_template_files(self, template: Any | None) -> list[str]:
         if template is None:
@@ -830,7 +889,7 @@ class Plugin(PluginBase):
         return removed
 
     def _load_saved_plan(self, data_dir: Path, project_id: str) -> WorkbookPlan | None:
-        plan_path = project_dir(data_dir, project_id) / "workbook_plan.json"
+        plan_path = self._project_dir(project_id) / "workbook_plan.json"
         if not plan_path.exists():
             return None
         try:
@@ -923,7 +982,15 @@ class Plugin(PluginBase):
                 return Settings(**config[SETTINGS_KEY])
         path = self._settings_path()
         if not path.exists():
-            return Settings(data_dir=str(self._data_dir), export_dir=str(self._data_dir / "exports"))
+            return Settings(
+                data_dir=str(self._data_dir),
+                uploads_dir=str(self._data_dir / "uploads"),
+                workbooks_dir=str(self._data_dir / "workbooks"),
+                projects_dir=str(self._data_dir / "projects"),
+                export_dir=str(self._data_dir / "exports"),
+                templates_dir=str(self._data_dir / "templates"),
+                cache_dir=str(self._data_dir / "cache"),
+            )
         data = json.loads(path.read_text(encoding="utf-8"))
         return Settings(**data)
 

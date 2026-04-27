@@ -79,8 +79,9 @@ def detect_header_row(rows: list[list[Any]], max_scan: int = 10) -> int | None:
 
 
 class WorkbookImporter:
-    def __init__(self, data_root: str | Path) -> None:
+    def __init__(self, data_root: str | Path, *, workbooks_root: str | Path | None = None) -> None:
         self._data_root = Path(data_root)
+        self._workbooks_root = Path(workbooks_root) if workbooks_root else self._data_root / "workbooks"
 
     def import_file(self, source_path: str | Path, workbook_id: str) -> ImportedWorkbook:
         source = Path(source_path).expanduser().resolve()
@@ -90,7 +91,7 @@ class WorkbookImporter:
         if suffix not in SUPPORTED_EXTENSIONS:
             raise WorkbookImportError(f"Unsupported workbook type: {suffix}")
 
-        target_dir = self._data_root / "workbooks" / workbook_id
+        target_dir = self._workbooks_root / workbook_id
         target_dir.mkdir(parents=True, exist_ok=True)
         imported_path = target_dir / source.name
         if imported_path != source:

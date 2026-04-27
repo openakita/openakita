@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from excel_auditor import WorkbookAuditor
 from excel_importer import WorkbookImporter
 from excel_plan import WorkbookPlanBuilder
@@ -10,6 +11,8 @@ from excel_workbook_builder import WorkbookBuilder
 
 
 def test_csv_import_profile_build_and_audit(tmp_path) -> None:
+    pytest.importorskip("openpyxl")
+
     source = tmp_path / "sales.csv"
     source.write_text("region,revenue\nEast,10\nWest,20\n", encoding="utf-8")
 

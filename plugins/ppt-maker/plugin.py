@@ -608,6 +608,20 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=404, detail="Template not found")
             return {"ok": True, "template": template.model_dump(mode="json")}
 
+        @router.get("/templates/{template_id}/diagnosis")
+        async def get_template_diagnosis(template_id: str) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                template = await manager.get_template(template_id)
+            if template is None:
+                raise HTTPException(status_code=404, detail="Template not found")
+            return {
+                "ok": True,
+                "template": template.model_dump(mode="json"),
+                "template_profile": _read_json_if_exists(template.profile_path),
+                "brand_tokens": _read_json_if_exists(template.brand_tokens_path),
+                "layout_map": _read_json_if_exists(template.layout_map_path),
+            }
+
         @router.post("/templates/{template_id}/diagnose")
         async def diagnose_template(template_id: str) -> dict[str, Any]:
             async with PptTaskManager(data_dir / "ppt_maker.db") as manager:

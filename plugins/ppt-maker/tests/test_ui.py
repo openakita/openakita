@@ -39,6 +39,16 @@ def test_ui_contains_six_tabs_and_core_widgets() -> None:
     assert "/datasets/${item.id}/profile" in html or "datasets/${item.id}/profile" in html
     assert "确认上传" in html
     assert "处理选中素材" in html
+    assert "TemplateDiagnosticSummary" in html
+    assert "TemplateDiagnosisModal" in html
+    assert "/templates/${item.id}/diagnosis" in html or "templates/${item.id}/diagnosis" in html
+    assert "模板管理" in html
+    assert "模板名称（必填）" in html
+    assert "上传后同步诊断模板" in html
+    assert "同步诊断中，请稍候..." in html
+    assert "页面类型匹配情况" in html
+    assert "品牌色" in html
+    assert "查看原始诊断 JSON" in html
     assert "使用前检查" in html
     assert "这些字段可能缺值较多或表格过宽" in html
     assert "手动登记路径" not in html
@@ -53,7 +63,7 @@ def test_ui_contains_six_tabs_and_core_widgets() -> None:
     assert "/storage/mkdir" in html
     assert "FolderPickerModal" in html
     assert "上传文件命名规则" in html
-    assert "asset-list" in html
+    assert "template-card-list" in html
     assert "centered-tab" in html
     assert "/api/plugins/ppt-maker" in html
     assert "split-layout" in html
