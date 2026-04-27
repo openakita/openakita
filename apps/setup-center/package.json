@@ -12,6 +12,7 @@
     "build:cap": "cross-env VITE_BUILD_TARGET=capacitor vite build",
     "preview": "vite preview",
     "preview:web": "cross-env VITE_BUILD_TARGET=web vite preview --outDir dist-web",
+    "smoke:routes": "node tests/smoke/hash-routes.mjs",
     "tauri": "tauri",
     "cap:sync": "npx cap sync",
     "cap:android": "npx cap open android",
@@ -70,6 +71,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "cross-env": "^7.0.3",
+    "playwright": "^1.59.1",
     "typescript": "^5.7.3",
     "vite": "^6.1.1"
   }
