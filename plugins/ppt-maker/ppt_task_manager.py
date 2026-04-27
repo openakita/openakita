@@ -179,6 +179,12 @@ _DATASET_WRITABLE = frozenset(
         "metadata_json",
     }
 )
+_SOURCE_WRITABLE = frozenset(
+    {
+        "status",
+        "metadata_json",
+    }
+)
 _TEMPLATE_WRITABLE = frozenset(
     {
         "profile_path",
@@ -481,6 +487,37 @@ class PptTaskManager:
                 rows = [_row_dict(row) for row in await cur.fetchall()]
         return [self._source_record(row) for row in rows if row is not None]
 
+    async def get_source(self, source_id: str) -> SourceRecord | None:
+        async with self._conn.execute("SELECT * FROM sources WHERE id = ?", (source_id,)) as cur:
+            row = _row_dict(await cur.fetchone())
+        return self._source_record(row) if row is not None else None
+
+    async def delete_source(self, source_id: str) -> bool:
+        cur = await self._conn.execute("DELETE FROM sources WHERE id = ?", (source_id,))
+        await self._conn.commit()
+        return cur.rowcount > 0
+
+    async def update_source_safe(self, source_id: str, **updates: Any) -> SourceRecord | None:
+        if not updates:
+            return await self.get_source(source_id)
+        if "metadata" in updates:
+            updates["metadata_json"] = _json(updates.pop("metadata"))
+        bad = set(updates) - _SOURCE_WRITABLE
+        if bad:
+            raise ValueError(f"Unsupported source update columns: {sorted(bad)}")
+        if "metadata_json" in updates and not isinstance(updates["metadata_json"], str):
+            updates["metadata_json"] = _json(updates["metadata_json"])
+        if "status" in updates and not isinstance(updates["status"], str):
+            updates["status"] = updates["status"].value
+        updates["updated_at"] = _now()
+        sets = ", ".join(f"{key} = ?" for key in updates)
+        await self._conn.execute(
+            f"UPDATE sources SET {sets} WHERE id = ?",
+            [*updates.values(), source_id],
+        )
+        await self._conn.commit()
+        return await self.get_source(source_id)
+
     async def create_dataset(
         self,
         *,
@@ -536,6 +573,11 @@ class PptTaskManager:
         )
         await self._conn.commit()
         return await self.get_dataset(dataset_id)
+
+    async def delete_dataset(self, dataset_id: str) -> bool:
+        cur = await self._conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
+        await self._conn.commit()
+        return cur.rowcount > 0
 
     async def create_template(
         self,

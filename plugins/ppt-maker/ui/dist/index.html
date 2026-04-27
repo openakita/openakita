@@ -21,17 +21,16 @@
       const tabs = [
         ["Create", "创建"],
         ["Projects", "项目"],
-        ["Sources", "资料"],
-        ["Tables", "表格"],
+        ["Materials", "素材"],
         ["Templates", "模板"],
         ["Exports", "导出"],
         ["Settings", "设置"],
       ];
       const modes = [
         { id: "topic_to_deck", title: "主题生成", icon: "spark", desc: "从一句目标开始生成汇报大纲", input: "告诉我主题、受众、场景和希望说服谁。", next: "创建项目后先确认大纲。" },
-        { id: "files_to_deck", title: "资料生成", icon: "doc", desc: "把文档资料整理成结构化 PPT", input: "先到资料页解析 Markdown、PDF、DOCX 或参考 PPT。", next: "建议先上传/解析资料，再创建项目。" },
+        { id: "files_to_deck", title: "资料生成", icon: "doc", desc: "把文档资料整理成结构化 PPT", input: "先到素材页解析 Markdown、PDF、DOCX 或参考 PPT。", next: "建议先上传/解析资料，再创建项目。" },
         { id: "outline_to_deck", title: "大纲生成", icon: "outline", desc: "将已有提纲补全为演示文稿", input: "在需求描述中粘贴章节、页标题或会议提纲。", next: "大纲会进入确认流程，可再调整页序。" },
-        { id: "table_to_deck", title: "表格汇报", icon: "table", desc: "从 CSV/XLSX 生成数据洞察页", input: "先到表格页完成数据体检、自动洞察和图表方案。", next: "必须绑定已完成分析的数据集。" },
+        { id: "table_to_deck", title: "表格汇报", icon: "table", desc: "从 CSV/XLSX 生成数据洞察页", input: "先到素材页完成数据体检、自动洞察和图表方案。", next: "必须绑定已完成分析的数据集。" },
         { id: "template_deck", title: "企业模板", icon: "template", desc: "按品牌模板生成客户提案", input: "先到模板页上传企业 PPTX 并完成诊断。", next: "建议绑定已诊断模板。" },
         { id: "revise_deck", title: "改稿优化", icon: "edit", desc: "针对已有页面做改写和审计", input: "上传参考 PPT 或在需求里说明要改哪几页。", next: "适合做二次润色、重排和审计。" },
       ];
@@ -61,10 +60,13 @@
         });
       }
 
-      function uploadFile(file, projectId = "") {
+      function uploadFile(file, projectId = "", extra = {}) {
         const form = new FormData();
         form.append("file", file);
         if (projectId) form.append("project_id", projectId);
+        Object.entries(extra || {}).forEach(([key, value]) => {
+          if (value != null && value !== "") form.append(key, value);
+        });
         return fetch(`${PLUGIN_BASE}/upload`, { method: "POST", body: form }).then((response) => {
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           return response.json();
@@ -156,20 +158,39 @@
         const profile = dataset?.profile;
         const insights = dataset?.insights;
         const chartSpecs = dataset?.chart_specs || insights?.chart_suggestions || [];
+        const qualityWarnings = profile?.quality_warnings || [];
+        const missingWarnings = qualityWarnings.filter((item) => item.includes("缺失值超过 30%"));
+        const otherWarnings = qualityWarnings.filter((item) => !item.includes("缺失值超过 30%"));
+        const missingColumns = missingWarnings.map((item) => item.replace(/^列\s+/, "").replace(/\s+缺失值超过 30%。?$/, ""));
+        const chartTypeName = (type) => ({
+          line: "趋势折线图",
+          bar: "柱状图",
+          horizontal_bar: "横向条形图",
+          pie: "占比饼图",
+          table: "明细摘要表",
+          metric_cards: "核心指标卡",
+        })[type] || type;
+        const chartReason = (spec) => {
+          if (spec.type === "metric_cards") return "适合在 PPT 中提炼多个关键数值，作为经营指标或核心 KPI 展示。";
+          if (spec.type === "table") return "适合保留关键明细，方便在汇报中给出数据依据。";
+          if (spec.type === "line") return `适合观察 ${spec.y || "指标"} 随 ${spec.x || "时间/维度"} 的变化趋势。`;
+          if (spec.type === "bar" || spec.type === "horizontal_bar") return `适合比较不同 ${spec.x || "分类"} 下的 ${spec.y || "指标"} 差异。`;
+          return spec.reason || "可作为演示文稿中的候选图表。";
+        };
         if (!dataset) return null;
         if (!profile) {
           return (
             <div className="analysis-help">
-              <strong>已登记数据集，下一步请点击“分析表格”。</strong>
-              <div>登记只代表系统知道这个 CSV/XLSX 文件在哪里；分析后才会知道有多少行列、哪些列适合作为指标、哪些字段适合做图表。</div>
+              <strong>数据集尚未完成分析。</strong>
+              <div>执行分析后，系统将生成字段结构、质量检查、指标/维度识别与推荐图表方案，供后续 PPT 生成流程引用。</div>
             </div>
           );
         }
         return (
           <div className="analysis-summary">
             <div className="analysis-help">
-              <strong>表格分析结果是什么意思？</strong>
-              <div>系统先做“数据体检”：读取表头、判断每列是数字/日期/文本，检查空值和列数风险；再生成“自动洞察”和“图表方案”，后续生成 PPT 时会用这些结果来决定讲什么、画什么图。</div>
+              <strong>分析结果概览</strong>
+              <div>系统已完成字段识别、数据质量检查、候选指标/维度提取，并生成可用于演示文稿的数据叙事与图表方案。</div>
             </div>
             <div className="summary-grid">
               <div className="summary-card"><span>行数</span><strong>{profile.row_count}</strong></div>
@@ -187,17 +208,92 @@
               {chartSpecs.map((spec) => (
                 <div className="chart-spec-card" key={spec.id}>
                   <strong>{spec.title}</strong>
-                  <span>{spec.type} · {spec.reason}</span>
+                  <span>{chartTypeName(spec.type)} · {chartReason(spec)}</span>
                 </div>
               ))}
               {!chartSpecs.length && <p className="text-muted">暂未生成图表方案。</p>}
             </div>
-            {(profile.quality_warnings || []).length > 0 && (
-              <div className="analysis-section warning">
-                <h4>数据质量提醒</h4>
-                {profile.quality_warnings.map((item, index) => <p key={index}>{item}</p>)}
+            {qualityWarnings.length > 0 && (
+              <div className="analysis-section warning quality-summary">
+                <div className="quality-summary__head">
+                  <h4>使用前检查</h4>
+                  <span>{qualityWarnings.length} 项提醒</span>
+                </div>
+                <p className="quality-summary__intro">这里不是报错，而是在提醒：这些字段可能缺值较多或表格过宽，生成 PPT 时建议只选关键列，或先清洗数据。</p>
+                <div className="quality-summary__items">
+                  {otherWarnings.map((item, index) => <div className="quality-chip" key={index}>{item}</div>)}
+                  {missingColumns.length > 0 && (
+                    <div className="quality-chip">
+                      {missingColumns.length} 个字段缺失较多：{missingColumns.slice(0, 6).join("、")}{missingColumns.length > 6 ? ` 等 ${missingColumns.length} 个` : ""}
+                    </div>
+                  )}
+                </div>
+                {missingColumns.length > 6 && (
+                  <details className="quality-details">
+                    <summary>查看全部缺失字段</summary>
+                    <div>{missingColumns.join("、")}</div>
+                  </details>
+                )}
               </div>
             )}
+          </div>
+        );
+      }
+
+      function AnalysisModal({ dataset, onClose }) {
+        if (!dataset) return null;
+        return (
+          <div className="modal-mask" onClick={onClose}>
+            <div className="modal-card analysis-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="analysis-modal__head">
+                <div>
+                  <strong>表格分析结果</strong>
+                  <span>{dataset.dataset?.name || dataset.dataset?.id || "数据集"}</span>
+                </div>
+                <button className="btn btn-sm" onClick={onClose}>关闭</button>
+              </div>
+              <div className="analysis-modal__body">
+                <TableAnalysisSummary dataset={dataset} />
+                <details style={{marginTop: 12}}>
+                  <summary className="text-xs text-muted">查看原始 JSON</summary>
+                  <JsonBlock value={dataset} />
+                </details>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function DeleteAssetConfirmModal({ target, onClose, onConfirm }) {
+        const [deleteFiles, setDeleteFiles] = useState(false);
+        if (!target) return null;
+        return (
+          <div className="modal-mask" onClick={onClose}>
+            <div className="modal-card delete-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="delete-modal__head">
+                <div className="delete-modal__icon" aria-hidden="true">!</div>
+                <div className="delete-modal__title">
+                  <strong>{target.ids ? "确认删除该数据集文件夹？" : "确认删除该素材？"}</strong>
+                  <div className="delete-modal__target">
+                    <span className="delete-modal__tag">{target.ids ? "目标文件夹" : "目标素材"}</span>
+                    <span className="delete-modal__name" title={target.name || target.id}>{target.name || target.id}</span>
+                  </div>
+                </div>
+                <button className="btn btn-sm" onClick={onClose}>关闭</button>
+              </div>
+              <div className="delete-modal__body">
+                <p>默认只删除素材库里的登记记录，不影响磁盘上的原始文件。删除后，{target.ids ? "这个文件夹及其中素材" : "这条素材"}不会再出现在当前列表中。</p>
+                <label className="delete-modal__option">
+                  <input type="checkbox" checked={deleteFiles} onChange={(e) => setDeleteFiles(e.target.checked)} />
+                  <span>同时删除插件存储目录里的文件和分析结果</span>
+                </label>
+                <div className="delete-modal__hint">为避免误删，系统只会删除插件保存目录内的内容；手动登记的外部路径会自动保留。</div>
+              </div>
+              <div className="modal-actions">
+                <button className="btn" onClick={onClose}>取消</button>
+                <button className="btn btn-danger" onClick={() => onConfirm(deleteFiles)}>确认删除</button>
+              </div>
+            </div>
           </div>
         );
       }
@@ -222,18 +318,28 @@
         return <div className="oa-cost"><div className="range">{draft.slide_count} 页</div><div className="human">复杂度 {complexity}，会生成 outline/design/IR/audit。</div><span className="conf medium">PPTX 可编辑导出</span></div>;
       }
 
-      function FileUploadZone({ hint = "拖入文件或点击上传。", accept = "", onUploaded }) {
+      function FileUploadZone({ hint = "拖入文件或点击上传。", accept = "", multiple = false, disabled = false, manual = false, uploadExtra = {}, onFilesSelected, onUploaded, onUploads }) {
         const inputId = `upload-${Math.random().toString(36).slice(2)}`;
         async function handleChange(e) {
-          const file = e.target.files && e.target.files[0];
-          if (!file || !onUploaded) return;
-          const data = await uploadFile(file);
-          onUploaded(data);
+          const files = Array.from(e.target.files || []);
+          if (!files.length) return;
+          if (manual) {
+            if (onFilesSelected) onFilesSelected(files);
+            e.target.value = "";
+            return;
+          }
+          const results = [];
+          for (const file of files) {
+            const data = await uploadFile(file, "", uploadExtra);
+            results.push(data);
+            if (onUploaded) onUploaded(data);
+          }
+          if (onUploads) onUploads(results);
           e.target.value = "";
         }
         return (
-          <label className="upload-zone" htmlFor={inputId}>
-            <input id={inputId} type="file" accept={accept} onChange={handleChange} />
+          <label className={`upload-zone ${disabled ? "is-disabled" : ""}`} htmlFor={disabled ? undefined : inputId}>
+            <input id={inputId} type="file" accept={accept} multiple={multiple} disabled={disabled} onChange={handleChange} />
             <div className="upload-zone__title">点击上传素材</div>
             <div className="upload-zone__hint">{hint}</div>
           </label>
@@ -497,15 +603,10 @@
               <div className="card">
                 <div className="label">素材绑定</div>
                 <div className="resource-guide">
-                  <div className={"resource-card " + (draft.mode === "files_to_deck" || draft.mode === "revise_deck" ? "required" : "")}>
-                    <div><strong>资料文档</strong><span>{draft.mode === "files_to_deck" || draft.mode === "revise_deck" ? "推荐先准备" : "可选"}</span></div>
-                    <p>Markdown、PDF、DOCX、参考 PPTX，用于资料理解。</p>
-                    <button className="btn btn-sm" onClick={() => onNavigate("Sources")}>去资料页</button>
-                  </div>
-                  <div className={"resource-card " + (draft.mode === "table_to_deck" ? "required" : "")}>
-                    <div><strong>表格数据</strong><span>{draft.mode === "table_to_deck" ? "必需" : "可选"}</span></div>
-                    <p>CSV/XLSX 需要先完成数据体检、自动洞察和图表方案。</p>
-                    <button className="btn btn-sm" onClick={() => onNavigate("Tables")}>去表格页</button>
+                  <div className={"resource-card " + (draft.mode === "files_to_deck" || draft.mode === "revise_deck" || draft.mode === "table_to_deck" ? "required" : "")}>
+                    <div><strong>素材库</strong><span>{draft.mode === "files_to_deck" || draft.mode === "revise_deck" ? "建议先解析" : draft.mode === "table_to_deck" ? "必需先分析" : "可选"}</span></div>
+                    <p>Markdown / PDF / DOCX / PPTX 走解析；CSV / XLSX 走分析。同一个数据集可同时放参考资料和数据文件。</p>
+                    <button className="btn btn-sm" onClick={() => onNavigate("Materials")}>去素材页</button>
                   </div>
                   <div className={"resource-card " + (draft.mode === "template_deck" ? "required" : "")}>
                     <div><strong>企业模板</strong><span>{draft.mode === "template_deck" ? "推荐" : "可选"}</span></div>
@@ -576,74 +677,353 @@
         );
       }
 
-      function SourcesTab({ setError, sources, refreshData }) {
-        const [path, setPath] = useState("");
-        const [parsed, setParsed] = useState(null);
-        async function parse() { setError(null); setParsed(await request("/sources/parse", { method: "POST", body: { path } })); }
-        async function handleUploaded(data) {
+      const TABLE_EXTS = ["csv", "tsv", "xlsx"];
+      const SOURCE_EXTS = ["md", "markdown", "txt", "pdf", "docx", "pptx"];
+      function fileExt(name) {
+        const idx = String(name || "").lastIndexOf(".");
+        return idx >= 0 ? name.slice(idx + 1).toLowerCase() : "";
+      }
+      function isTableFile(name) { return TABLE_EXTS.includes(fileExt(name)); }
+      function materialBucket(item) {
+        if (item.assetType === "dataset") {
+          return item.status === "profiled" ? "processed" : "pending";
+        }
+        return item.status === "parsed" ? "processed" : "pending";
+      }
+      function bucketLabel(bucket) {
+        return bucket === "processed" ? "已处理" : "待处理";
+      }
+      function typeLabel(item) {
+        return item.assetType === "dataset" ? "表格数据" : "参考资料";
+      }
+      function buildMaterials(sources, datasets) {
+        const items = [];
+        for (const dataset of datasets) {
+          items.push({
+            assetType: "dataset",
+            id: dataset.id,
+            name: dataset.name,
+            kind: dataset.metadata?.kind || "table",
+            status: dataset.status,
+            collection: dataset.metadata?.collection || dataset.name || "未分组",
+            path: dataset.original_path,
+            updatedAt: dataset.updated_at || dataset.created_at,
+            raw: dataset,
+          });
+        }
+        for (const source of sources) {
+          items.push({
+            assetType: "source",
+            id: source.id,
+            name: source.filename,
+            kind: source.kind,
+            status: source.status,
+            collection: source.metadata?.collection || "未分组",
+            path: source.path,
+            updatedAt: source.updated_at || source.created_at,
+            raw: source,
+          });
+        }
+        return items;
+      }
+
+      function MaterialsTab({ setError, refreshData, sources, datasets }) {
+        const [collectionName, setCollectionName] = useState("");
+        const [pendingFiles, setPendingFiles] = useState([]);
+        const [uploading, setUploading] = useState(false);
+        const [processAfterUpload, setProcessAfterUpload] = useState(false);
+        const [uploadPhase, setUploadPhase] = useState("");
+        const [selected, setSelected] = useState({});
+        const [statusFilter, setStatusFilter] = useState("all");
+        const [typeFilter, setTypeFilter] = useState("all");
+        const [expandedCollections, setExpandedCollections] = useState({});
+        const [analysisModal, setAnalysisModal] = useState(null);
+        const [parseModal, setParseModal] = useState(null);
+        const [deleteTarget, setDeleteTarget] = useState(null);
+        const materials = buildMaterials(sources, datasets);
+        async function registerUploadedAsDataset(uploadedSource) {
+          const uploadedPath = uploadedSource?.path || "";
+          if (!uploadedPath) return null;
+          const name = collectionName.trim();
+          return await request("/datasets", {
+            method: "POST",
+            body: { path: uploadedPath, name: uploadedSource.filename || name, collection_name: name },
+          });
+        }
+        async function processMaterial(item, options = {}) {
+          const showResult = options.showResult !== false;
           setError(null);
-          setPath(data?.source?.path || "");
-          setParsed(data);
+          if (item.assetType === "dataset") {
+            const data = await request(`/datasets/${item.id}/profile`, { method: "POST" });
+            if (showResult) setAnalysisModal(data);
+          } else {
+            const data = await request(`/sources/${item.id}/parse`, { method: "POST" });
+            if (showResult) setParseModal({ source: item.raw, parsed: data?.parsed });
+          }
           refreshData();
         }
+        async function confirmUpload() {
+          setError(null);
+          if (!collectionName.trim()) throw new Error("请先填写素材集名称，再上传文件。");
+          if (!pendingFiles.length) throw new Error("请先选择要上传的素材文件。");
+          setUploading(true);
+          setUploadPhase("上传素材中...");
+          try {
+            const uploadedMaterials = [];
+            for (const file of pendingFiles) {
+              const uploaded = await uploadFile(file, "", { collection_name: collectionName.trim() });
+              if (isTableFile(uploaded?.source?.filename || file.name)) {
+                const created = await registerUploadedAsDataset(uploaded.source);
+                if (created?.dataset) {
+                  uploadedMaterials.push({ assetType: "dataset", id: created.dataset.id, raw: created.dataset });
+                }
+              } else if (uploaded?.source) {
+                uploadedMaterials.push({ assetType: "source", id: uploaded.source.id, raw: uploaded.source });
+              }
+            }
+            if (processAfterUpload && uploadedMaterials.length > 0) {
+              setUploadPhase("同步处理中，请稍候...");
+              for (const item of uploadedMaterials) {
+                await processMaterial(item, { showResult: false });
+              }
+            }
+            setPendingFiles([]);
+            refreshData();
+          } finally {
+            setUploadPhase("");
+            setUploading(false);
+          }
+        }
+        const visibleMaterials = materials.filter((item) => {
+          if (statusFilter !== "all" && materialBucket(item) !== statusFilter) return false;
+          if (typeFilter !== "all" && item.assetType !== typeFilter) return false;
+          return true;
+        });
+        const groupedCollections = visibleMaterials.reduce((acc, item) => {
+          const key = item.collection || "未分组";
+          acc[key] = acc[key] || [];
+          acc[key].push(item);
+          return acc;
+        }, {});
+        const selectedIds = Object.entries(selected).filter(([, value]) => value).map(([id]) => id);
+        function toggleSelected(id) { setSelected((prev) => ({ ...prev, [id]: !prev[id] })); }
+        function toggleCollection(name) { setExpandedCollections((prev) => ({ ...prev, [name]: prev[name] === false })); }
+        function selectCollection(items) {
+          setSelected(items.reduce((acc, item) => ({ ...acc, [item.id]: true }), {}));
+        }
+        async function processSelected() {
+          for (const id of selectedIds) {
+            const item = materials.find((entry) => entry.id === id);
+            if (item) await processMaterial(item);
+          }
+          setSelected({});
+        }
+        async function processCollection(name) {
+          setError(null);
+          const group = materials.filter((item) => (item.collection || "未分组") === name);
+          for (const item of group) await processMaterial(item);
+          setSelected({});
+        }
+        async function viewResult(item) {
+          setError(null);
+          if (item.assetType === "dataset") {
+            if (item.status === "profiled") {
+              setAnalysisModal(await request(`/datasets/${item.id}/analysis`));
+            } else {
+              setAnalysisModal({ dataset: item.raw });
+            }
+          } else if (item.status === "parsed") {
+            setParseModal({ source: item.raw, parsed: item.raw.metadata?.parsed });
+          }
+        }
+        async function confirmDelete(deleteFiles) {
+          if (!deleteTarget) return;
+          setError(null);
+          const targets = deleteTarget.targets || [{ id: deleteTarget.id, assetType: deleteTarget.assetType }];
+          for (const entry of targets) {
+            const endpoint = entry.assetType === "dataset" ? "datasets" : "sources";
+            await request(`/${endpoint}/${entry.id}`, { method: "DELETE", body: { delete_files: deleteFiles } });
+          }
+          setDeleteTarget(null);
+          setSelected((prev) => {
+            const next = { ...prev };
+            targets.forEach(({ id }) => { delete next[id]; });
+            return next;
+          });
+          refreshData();
+        }
+        const stats = {
+          total: materials.length,
+          processed: materials.filter((item) => materialBucket(item) === "processed").length,
+          pending: materials.filter((item) => materialBucket(item) === "pending").length,
+          tables: materials.filter((item) => item.assetType === "dataset").length,
+          docs: materials.filter((item) => item.assetType === "source").length,
+        };
         return (
-          <div className="split-layout">
-            <div className="split-left">
-              <div className="card"><div className="label">资料上传与解析</div><div className="analysis-help"><strong>可以连续上传多份用户素材，系统会按设置页规则归集和命名。</strong><div>解析资料会把文档内容转成后续生成大纲可用的结构化文本；资料库保留原文件路径，方便你后续绑定、复查和管理。</div></div><FileUploadZone accept=".md,.txt,.pdf,.docx,.pptx" onUploaded={handleUploaded} hint="支持 Markdown、TXT、PDF、DOCX、PPTX；上传后会进入设置页配置的资料目录。" /><div className="form-row"><div className="text-xs text-muted">文件路径</div><input className="input" value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\\OpenAkita\\test-assets\\ppt-maker\\product_brief.md" /></div><button className="btn btn-primary" onClick={parse}>解析资料</button></div>
-              <div className="card">
-                <div className="label">资料库</div>
-                <div className="asset-list">
-                  {sources.map((item) => <button className="asset-item" key={item.id} onClick={() => setPath(item.path)}><strong>{item.filename}</strong><span>{item.kind} · {item.status}</span></button>)}
-                  {sources.length === 0 && <div className="empty-note">还没有上传资料。所有资料默认保存在插件数据目录的 uploads 文件夹。</div>}
+          <div className="asset-workspace">
+            <div className="asset-toolbar card">
+              <div>
+                <div className="label">素材库</div>
+                <p>资料和表格统一在这里管理：上传 CSV/XLSX 自动建数据集做体检分析；上传 Markdown/PDF/DOCX/PPTX 自动登记并支持解析。</p>
+              </div>
+              <div className="asset-stats">
+                <span>全部 <strong>{stats.total}</strong></span>
+                <span>已处理 <strong>{stats.processed}</strong></span>
+                <span>待处理 <strong>{stats.pending}</strong></span>
+                <span>表格 <strong>{stats.tables}</strong></span>
+                <span>资料 <strong>{stats.docs}</strong></span>
+              </div>
+            </div>
+            <div className="asset-grid-layout">
+              <div className="asset-sidebar asset-sidebar--upload card">
+                <div className="form-row">
+                  <div className="field-title">素材集名称（必填）</div>
+                  <input className="input" value={collectionName} onChange={(e) => setCollectionName(e.target.value)} placeholder="例如：2026Q2 销售汇报素材" />
+                </div>
+                <div className="field-title">上传素材文件</div>
+                <FileUploadZone multiple manual accept=".md,.markdown,.txt,.pdf,.docx,.pptx,.csv,.tsv,.xlsx" disabled={!collectionName.trim() || uploading} onFilesSelected={(files) => setPendingFiles((prev) => [...prev, ...files])} hint="先填写素材集名称，再选择一个或多个文件；CSV/XLSX 会建数据集，资料类只登记不分析。" />
+                <label className="upload-process-option">
+                  <input type="checkbox" checked={processAfterUpload} onChange={(e) => setProcessAfterUpload(e.target.checked)} disabled={uploading} />
+                  <span>
+                    <strong>上传后同步处理素材</strong>
+                    <small>表格需要分析、资料需要解析后才方便用于生成。勾选后会等处理完成再结束上传，结果请到右侧素材管理卡片查看。</small>
+                  </span>
+                </label>
+                <div className="pending-upload">
+                  <div className="pending-upload__head">
+                    <span>{pendingFiles.length ? `待上传文件（${pendingFiles.length}）` : "待上传文件预览"}</span>
+                    {pendingFiles.length > 0 && (
+                      <span className="pending-upload__hint">点击 × 可移除单个文件</span>
+                    )}
+                  </div>
+                  {pendingFiles.length === 0 ? (
+                    <div className="pending-upload__empty">
+                      还没有选择文件。<br />从上方"点击上传素材"挑选文件，预览会显示在这里。
+                    </div>
+                  ) : (
+                    <div className="pending-upload__list">
+                      {pendingFiles.map((file, index) => (
+                        <div className="pending-upload__item" key={`${file.name}-${index}`}>
+                          <span className={"pending-upload__item-icon " + (isTableFile(file.name) ? "is-table" : "is-doc")}>{isTableFile(file.name) ? "表" : "文"}</span>
+                          <span className="pending-upload__item-name" title={file.name}>{file.name}</span>
+                          <span className="pending-upload__item-size">{(file.size / 1024).toFixed(1)} KB</span>
+                          <button className="pending-upload__item-remove" onClick={() => setPendingFiles((prev) => prev.filter((_, i) => i !== index))} title="移除该文件">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button className="btn btn-primary btn-block" onClick={() => confirmUpload().catch(setError)} disabled={!collectionName.trim() || pendingFiles.length === 0 || uploading}>{uploading ? (uploadPhase || "上传中...") : "确认上传"}</button>
+              </div>
+              <div className="asset-main card">
+                <div className="asset-main__head">
+                  <strong className="section-title">素材管理</strong>
+                  <span>{visibleMaterials.length} 个结果</span>
+                </div>
+                <div className="asset-main__controls">
+                  <div className="asset-filter">
+                    <span className="asset-filter__label">状态</span>
+                    <button className={statusFilter === "all" ? "active" : ""} onClick={() => setStatusFilter("all")}>全部</button>
+                    <button className={statusFilter === "pending" ? "active" : ""} onClick={() => setStatusFilter("pending")}>待处理</button>
+                    <button className={statusFilter === "processed" ? "active" : ""} onClick={() => setStatusFilter("processed")}>已处理</button>
+                  </div>
+                  <div className="asset-filter">
+                    <span className="asset-filter__label">类型</span>
+                    <button className={typeFilter === "all" ? "active" : ""} onClick={() => setTypeFilter("all")}>全部</button>
+                    <button className={typeFilter === "source" ? "active" : ""} onClick={() => setTypeFilter("source")}>资料</button>
+                    <button className={typeFilter === "dataset" ? "active" : ""} onClick={() => setTypeFilter("dataset")}>表格</button>
+                  </div>
+                  <button className="btn btn-primary" onClick={() => processSelected().catch(setError)} disabled={selectedIds.length === 0}>处理选中素材 ({selectedIds.length})</button>
+                </div>
+                <div className="collection-accordion">
+                  {Object.entries(groupedCollections).map(([name, items]) => {
+                    const processedCount = items.filter((item) => materialBucket(item) === "processed").length;
+                    const open = expandedCollections[name] !== false;
+                    return (
+                      <section className="collection-panel" key={name}>
+                        <div className="collection-panel__head" onClick={() => toggleCollection(name)} role="button" tabIndex="0">
+                          <div>
+                            <strong>{open ? "▾" : "▸"} {name}</strong>
+                            <span>{items.length} 个素材 · 已处理 {processedCount} · 待处理 {items.length - processedCount}</span>
+                          </div>
+                          <div className="collection-panel__actions" onClick={(e) => e.stopPropagation()}>
+                            <button className="btn btn-sm" onClick={() => selectCollection(items)}>选择整组</button>
+                            <button className="btn btn-sm btn-primary" onClick={() => processCollection(name).catch(setError)}>整组处理</button>
+                            <button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget({ name: `素材集：${name}`, ids: items.map((item) => item.id), targets: items.map((item) => ({ id: item.id, assetType: item.assetType })) })}>删除文件夹</button>
+                          </div>
+                        </div>
+                        {open && (
+                          <div className="dataset-grid">
+                            {items.map((item) => (
+                              <div className={"dataset-card material-card " + (selected[item.id] ? "selected " : "") + (item.assetType === "dataset" ? "is-table" : "is-doc")} key={item.id}>
+                                <label className="dataset-card__check">
+                                  <input type="checkbox" checked={!!selected[item.id]} onChange={() => toggleSelected(item.id)} />
+                                  <span className={"material-badge " + (materialBucket(item) === "processed" ? "is-processed" : "is-pending")}>{bucketLabel(materialBucket(item))}</span>
+                                </label>
+                                <div className="material-card__type">
+                                  <span className={"material-type-tag " + (item.assetType === "dataset" ? "is-table" : "is-doc")}>{typeLabel(item)}</span>
+                                  <span className="material-kind">{item.kind || "unknown"}</span>
+                                </div>
+                                <strong>{item.name}</strong>
+                                <span className="material-card__sub">{shortId(item.id)}</span>
+                                <code title={item.path}>{item.path}</code>
+                                <div className="dataset-card__actions">
+                                  <button className="btn btn-sm btn-primary" onClick={() => processMaterial(item).catch(setError)}>{item.assetType === "dataset" ? "分析" : "解析"}</button>
+                                  <button className="btn btn-sm" onClick={() => viewResult(item).catch(setError)} disabled={materialBucket(item) !== "processed"}>查看结果</button>
+                                  <button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget({ id: item.id, name: item.name, assetType: item.assetType })}>删除</button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    );
+                  })}
+                  {visibleMaterials.length === 0 && <div className="empty-note">暂无符合条件的素材。左侧命名素材集并上传文件后，会按文件夹显示在这里。</div>}
                 </div>
               </div>
             </div>
-            <PreviewShell title="暂无解析结果" hint="左侧输入文档路径后点击解析">
-              {parsed && <div style={{width: "100%"}}><div className="card-title">资料解析结果</div><JsonBlock value={parsed} /></div>}
-            </PreviewShell>
+            <AnalysisModal dataset={analysisModal} onClose={() => setAnalysisModal(null)} />
+            <SourceParsedModal payload={parseModal} onClose={() => setParseModal(null)} />
+            <DeleteAssetConfirmModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={(deleteFiles) => confirmDelete(deleteFiles).catch(setError)} />
           </div>
         );
       }
 
-      function TablesTab({ setError, refreshData, datasets }) {
-        const [path, setPath] = useState("");
-        const [dataset, setDataset] = useState(null);
-        async function create() { setError(null); const data = await request("/datasets", { method: "POST", body: { path } }); setDataset(data); refreshData(); }
-        async function profile() { if (!dataset?.dataset?.id) return; setError(null); const data = await request(`/datasets/${dataset.dataset.id}/profile`, { method: "POST" }); setDataset(data); refreshData(); }
-        async function handleUploaded(data) {
-          setError(null);
-          const uploadedPath = data?.source?.path || "";
-          setPath(uploadedPath);
-          if (uploadedPath) {
-            const created = await request("/datasets", { method: "POST", body: { path: uploadedPath, name: data.source.filename } });
-            setDataset(created);
-            refreshData();
-          }
-        }
+      function SourceParsedModal({ payload, onClose }) {
+        if (!payload || !payload.source) return null;
+        const source = payload.source;
+        const parsed = payload.parsed || source.metadata?.parsed || null;
         return (
-          <div className="split-layout">
-            <div className="split-left">
-              <div className="card">
-                <div className="label">表格数据</div>
-                <div className="analysis-help">
-                  <strong>上传不是结束，系统会把表格归集到资料目录，并登记成可复用的数据集。</strong>
-                  <div>“分析表格”会生成三类结果：数据体检（行列/字段类型/质量提醒）、自动洞察（可讲的结论）、图表方案（适合放进 PPT 的图表草案）。</div>
+          <div className="modal-mask" onClick={onClose}>
+            <div className="modal-card analysis-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="analysis-modal__head">
+                <div>
+                  <strong>资料解析结果</strong>
+                  <span>{source.filename || source.id}</span>
                 </div>
-                <FileUploadZone accept=".csv,.xlsx" onUploaded={handleUploaded} hint="支持 CSV/XLSX；上传后会按设置页规则归集，并自动登记为数据集。" />
-                <div className="form-row"><div className="text-xs text-muted">CSV/XLSX 路径</div><input className="input" value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\\OpenAkita\\test-assets\\ppt-maker\\sales_kpi.csv" /></div>
-                <div className="flex gap-2"><button className="btn btn-primary" onClick={create}>登记数据集</button><button className="btn" onClick={profile} disabled={!dataset?.dataset?.id}>分析表格</button></div>
+                <button className="btn btn-sm" onClick={onClose}>关闭</button>
               </div>
-              <div className="card">
-                <div className="label">数据集管理</div>
-                <div className="asset-list">
-                  {datasets.map((item) => <button className="asset-item" key={item.id} onClick={() => { setPath(item.original_path); setDataset({ dataset: item }); }}><strong>{item.name}</strong><span>{item.status} · {item.metadata?.kind || "table"}</span></button>)}
-                  {datasets.length === 0 && <div className="empty-note">还没有数据集。上传 CSV/XLSX 后会出现在这里，创建页可以精准绑定。</div>}
-                </div>
+              <div className="analysis-modal__body">
+                {parsed ? (
+                  <div className="parse-summary">
+                    <div className="parse-summary__row"><span className="parse-summary__key">标题</span><span>{parsed.title || "（未提取到标题）"}</span></div>
+                    <div className="parse-summary__row"><span className="parse-summary__key">类型</span><span>{parsed.kind || source.kind}</span></div>
+                    <div className="parse-summary__row"><span className="parse-summary__key">字符数</span><span>{parsed.text_length ?? (parsed.text ? parsed.text.length : 0)}</span></div>
+                    <div className="parse-summary__preview">
+                      <div className="parse-summary__key">正文预览</div>
+                      <pre>{(parsed.text_preview || parsed.text || "（无文字内容）").slice(0, 1500)}</pre>
+                    </div>
+                    <details style={{marginTop: 12}}>
+                      <summary className="text-xs text-muted">查看原始 JSON</summary>
+                      <JsonBlock value={parsed} />
+                    </details>
+                  </div>
+                ) : (
+                  <div className="empty-note">该资料还没有解析结果，可在卡片点击"解析"。</div>
+                )}
               </div>
             </div>
-            <PreviewShell title="暂无表格分析" hint="左侧登记数据集并点击“分析表格”">
-              {dataset && <div style={{width: "100%"}}><div className="card-title">表格分析结果</div><TableAnalysisSummary dataset={dataset} /><details style={{marginTop: 12}}><summary className="text-xs text-muted">查看原始 JSON（调试用）</summary><JsonBlock value={dataset} /></details></div>}
-            </PreviewShell>
           </div>
         );
       }
@@ -651,6 +1031,7 @@
       function TemplatesTab({ setError, refreshData, templates }) {
         const [path, setPath] = useState("");
         const [template, setTemplate] = useState(null);
+        const [deleteTarget, setDeleteTarget] = useState(null);
         async function upload() { setError(null); const data = await request("/templates/upload", { method: "POST", body: { path } }); setTemplate(data); refreshData(); }
         async function diagnose() { if (!template?.template?.id) return; setError(null); const data = await request(`/templates/${template.template.id}/diagnose`, { method: "POST" }); setTemplate(data); refreshData(); }
         async function handleUploaded(data) {
@@ -663,6 +1044,14 @@
             refreshData();
           }
         }
+        async function confirmDelete(deleteFiles) {
+          if (!deleteTarget) return;
+          setError(null);
+          await request(`/templates/${deleteTarget.id}`, { method: "DELETE", body: { delete_files: deleteFiles } });
+          setDeleteTarget(null);
+          setTemplate(null);
+          refreshData();
+        }
         return (
           <div className="split-layout">
             <div className="split-left">
@@ -670,7 +1059,15 @@
               <div className="card">
                 <div className="label">模板库</div>
                 <div className="asset-list">
-                  {templates.map((item) => <button className="asset-item" key={item.id} onClick={() => { setPath(item.original_path || ""); setTemplate({ template: item }); }}><strong>{item.name}</strong><span>{item.status} · {item.category || "template"}</span></button>)}
+                  {templates.map((item) => (
+                    <div className="asset-item" key={item.id} onClick={() => { setPath(item.original_path || ""); setTemplate({ template: item }); }}>
+                      <strong>{item.name}</strong>
+                      <span>{item.status} · {item.category || "template"}</span>
+                      <div className="asset-item__actions">
+                        <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: item.id, name: item.name }); }}>删除</button>
+                      </div>
+                    </div>
+                  ))}
                   {templates.length === 0 && <div className="empty-note">还没有企业模板。上传 PPTX 后会出现在这里，创建页可以精准绑定。</div>}
                 </div>
               </div>
@@ -678,6 +1075,7 @@
             <PreviewShell title="暂无模板诊断" hint="左侧上传模板后点击诊断">
               {template && <div style={{width: "100%"}}><div className="card-title">模板诊断结果</div><JsonBlock value={template} /></div>}
             </PreviewShell>
+            <DeleteAssetConfirmModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={(deleteFiles) => confirmDelete(deleteFiles).catch(setError)} />
           </div>
         );
       }
@@ -703,27 +1101,25 @@
         const opKind = dep.op_kind || "install";
         const logLines = dep.log_tail || [];
         return (
-          <div className="sysdep-card">
-            <div className="sysdep-card__head">
-              <div className="sysdep-card__title">
-                <span>{dep.id}</span>
-                {busy ? (
-                  <span className="sysdep-card__badge sysdep-card__badge--busy">
-                    <span className="sysdep-spinner" />
-                    {opKind === "uninstall" ? "卸载中" : "安装中"} {formatElapsed(dep.elapsed_sec)}
-                  </span>
-                ) : dep.installed ? (
-                  <span className="sysdep-card__badge sysdep-card__badge--ok">已安装</span>
-                ) : (
-                  <span className="sysdep-card__badge sysdep-card__badge--missing">未安装</span>
-                )}
-              </div>
+          <div className="pydep-row">
+            <div className="pydep-row__main">
+              <strong>{dep.id}</strong>
+              <span>{dep.description}</span>
+              <code>{dep.packages?.length ? dep.packages.join(" · ") : "仅检测"}</code>
             </div>
-            <div className="sysdep-card__path">
-              {dep.description}
-              {dep.packages?.length ? ` · pip: ${dep.packages.join(", ")}` : " · 仅检测，当前版本暂不自动安装"}
+            <div className="pydep-row__status">
+              {busy ? (
+                <span className="sysdep-card__badge sysdep-card__badge--busy">
+                  <span className="sysdep-spinner" />
+                  {opKind === "uninstall" ? "卸载中" : "安装中"} {formatElapsed(dep.elapsed_sec)}
+                </span>
+              ) : dep.installed ? (
+                <span className="sysdep-card__badge sysdep-card__badge--ok">已安装</span>
+              ) : (
+                <span className="sysdep-card__badge sysdep-card__badge--missing">未安装</span>
+              )}
             </div>
-            <div className="sysdep-card__actions">
+            <div className="pydep-row__actions">
               {!busy && !dep.installed && !dep.detect_only && (
                 <button className="btn btn-sm btn-primary" onClick={() => onInstall(dep.id)}>安装</button>
               )}
@@ -732,27 +1128,29 @@
               )}
               {busy && <button className="btn btn-sm" disabled>{opKind === "uninstall" ? "卸载中..." : "安装中..."}</button>}
             </div>
-            {!busy && dep.installed && confirmingUninstall && (
-              <div className="sysdep-card__sudo-hint" style={{borderColor:"var(--danger)", background:"rgba(239,68,68,.08)"}}>
-                <div>确认卸载这个依赖组吗？这些包安装在当前 Python 环境中，卸载后文档解析、表格处理或高级导出等对应能力会不可用。</div>
-                <div className="sysdep-card__sudo-cmd"><code>pip uninstall -y {dep.packages?.join(" ")}</code></div>
-                <div className="flex gap-2" style={{justifyContent:"flex-end", marginTop: 10}}>
-                  <button className="btn btn-sm" onClick={() => setConfirmingUninstall(false)}>取消</button>
-                  <button className="btn btn-sm btn-danger" onClick={() => { setConfirmingUninstall(false); onUninstall(dep.id); }}>确认卸载</button>
+            <div className="pydep-row__detail">
+              {!busy && dep.installed && confirmingUninstall && (
+                <div className="sysdep-card__sudo-hint" style={{borderColor:"var(--danger)", background:"rgba(239,68,68,.08)"}}>
+                  <div>确认卸载这个依赖组吗？这些包安装在当前 Python 环境中，卸载后对应能力会不可用。</div>
+                  <div className="sysdep-card__sudo-cmd"><code>pip uninstall -y {dep.packages?.join(" ")}</code></div>
+                  <div className="flex gap-2" style={{justifyContent:"flex-end", marginTop: 10}}>
+                    <button className="btn btn-sm" onClick={() => setConfirmingUninstall(false)}>取消</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => { setConfirmingUninstall(false); onUninstall(dep.id); }}>确认卸载</button>
+                  </div>
                 </div>
-              </div>
-            )}
-            {(busy || logLines.length > 0 || dep.error) && (
-              <div className="sysdep-log">
-                <div className="sysdep-log__head">
-                  <span>{opKind === "uninstall" ? "卸载日志" : "安装日志"}</span>
-                  {dep.elapsed_sec != null && <span>{formatElapsed(dep.elapsed_sec)}</span>}
+              )}
+              {(busy || logLines.length > 0 || dep.error) && (
+                <div className="sysdep-log">
+                  <div className="sysdep-log__head">
+                    <span>{opKind === "uninstall" ? "卸载日志" : "安装日志"}</span>
+                    {dep.elapsed_sec != null && <span>{formatElapsed(dep.elapsed_sec)}</span>}
+                  </div>
+                  <pre className={"sysdep-log__body" + (!logLines.length ? " sysdep-log__body--empty" : "")}>
+                    {logLines.length ? logLines.join("\n") : (dep.error || "等待 pip 输出...")}
+                  </pre>
                 </div>
-                <pre className={"sysdep-log__body" + (!logLines.length ? " sysdep-log__body--empty" : "")}>
-                  {logLines.length ? logLines.join("\n") : (dep.error || "等待 pip 输出...")}
-                </pre>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         );
       }
@@ -768,6 +1166,8 @@
         const [recheckingDeps, setRecheckingDeps] = useState(false);
         const [notice, setNotice] = useState("");
         const pollRef = useRef(null);
+        const regularDeps = (deps?.groups || []).filter((dep) => !dep.detect_only);
+        const experimentalDeps = (deps?.groups || []).filter((dep) => dep.detect_only);
 
         const updateDependency = useCallback((dependency) => {
           setDeps((prev) => mergeDependency(prev, dependency));
@@ -779,7 +1179,6 @@
           try {
             const data = await request("/healthz");
             setHealth(data);
-            setNotice("健康检查完成：插件 API 可用。");
           } finally {
             setCheckingHealth(false);
           }
@@ -802,7 +1201,6 @@
           const t0 = Date.now();
           try {
             await loadDeps({ quiet: true });
-            setNotice("依赖检测完成，状态已刷新。");
           } finally {
             const elapsed = Date.now() - t0;
             if (elapsed < 400) await new Promise((resolve) => setTimeout(resolve, 400 - elapsed));
@@ -898,15 +1296,9 @@
             <div className="centered-tab__inner">
               <div className="setting-section">
                 <h3 className="setting-title">系统组件与依赖下载</h3>
-                <div className="text-xs text-dim" style={{marginBottom: 8}}>PythonDepsPanel</div>
-                <div className="deps-help">
+                <div className="deps-help deps-help--system">
                   <strong>可选依赖只服务于对应能力，不会影响基础主题生成。</strong>
-                  <div>文档解析、表格处理、图表渲染、高级导出和 Marp 桥接都按需安装。这里使用白名单依赖组，禁止输入任意 pip 包名。</div>
-                  <ul>
-                    <li>安装会调用当前 OpenAkita 使用的 Python 环境执行 <code>pip install</code>，日志会在下方持续刷新。</li>
-                    <li>安装完成后会自动重新检测；无需关闭弹窗或刷新页面。</li>
-                    <li>卸载只针对对应依赖组，会影响依赖这些包的 PPT 功能。</li>
-                  </ul>
+                  <div>文档解析、表格处理、图表渲染、高级导出和 Marp 桥接都按需安装。这里使用白名单依赖组，禁止输入任意 pip 包名。安装会调用当前 OpenAkita 使用的 Python 环境执行 pip，完成后自动刷新状态。</div>
                 </div>
                 <div className="flex gap-2 flex-wrap" style={{marginBottom: 12}}>
                   <button className="btn btn-primary" onClick={checkHealth} disabled={checkingHealth}>
@@ -916,7 +1308,6 @@
                     {loadingDeps || recheckingDeps ? <><span className="sysdep-spinner" /> 检测中...</> : "检测可选依赖"}
                   </button>
                 </div>
-                {notice && <div className="oa-config-banner oa-config-banner--info"><span className="oa-config-banner__icon">i</span><div className="oa-config-banner__text">{notice}</div></div>}
                 {health && (
                   <div className="health-card">
                     <strong>健康检查通过</strong>
@@ -924,14 +1315,40 @@
                     <code>{health.data_dir}</code>
                   </div>
                 )}
-                {(deps?.groups || []).map((dep) => (
-                  <PythonDepCard
-                    key={dep.id}
-                    dep={dep}
-                    onInstall={(depId) => startDepOp(depId, "install").catch(setError)}
-                    onUninstall={(depId) => startDepOp(depId, "uninstall").catch(setError)}
-                  />
-                ))}
+                <div className="sysdep-card sysdep-card--compact">
+                  <div className="sysdep-card__head">
+                    <div className="sysdep-card__title">Python 可选依赖</div>
+                  </div>
+                  <div className="pydep-list">
+                    {regularDeps.map((dep) => (
+                      <PythonDepCard
+                        key={dep.id}
+                        dep={dep}
+                        onInstall={(depId) => startDepOp(depId, "install").catch(setError)}
+                        onUninstall={(depId) => startDepOp(depId, "uninstall").catch(setError)}
+                      />
+                    ))}
+                  </div>
+                </div>
+                {experimentalDeps.length > 0 && (
+                  <div className="sysdep-card sysdep-card--compact">
+                    <div className="sysdep-card__head">
+                      <div className="sysdep-card__title">高级 / 实验功能</div>
+                      <span className="sysdep-card__badge sysdep-card__badge--missing">暂未启用</span>
+                    </div>
+                    <div className="experimental-list">
+                      {experimentalDeps.map((dep) => (
+                        <div className="experimental-row" key={dep.id}>
+                          <div>
+                            <strong>{dep.id}</strong>
+                            <span>{dep.description}</span>
+                          </div>
+                          <span>仅检测 · 当前版本不参与基础 PPT 生成</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="setting-section">
@@ -954,16 +1371,16 @@
                   <div className="form-row">
                     <div className="text-xs text-muted">上传归集方式</div>
                     <select className="input select" value={settings.upload_subdir_mode || "type"} onChange={(e) => saveSettings({ upload_subdir_mode: e.target.value }).catch(setError)}>
-                      <option value="type">按素材类型：sources / tables / templates</option>
-                      <option value="date">按日期：20260427</option>
-                      <option value="flat">不分子目录</option>
+                      <option value="type">按用途自动归档（资料 / 表格 / 模板）</option>
+                      <option value="date">按上传日期归档</option>
+                      <option value="flat">全部保存到当前目录</option>
                     </select>
                   </div>
                   <div className="form-row">
                     <div className="text-xs text-muted">分析结果归集方式</div>
                     <select className="input select" value={settings.analysis_subdir_mode || "date"} onChange={(e) => saveSettings({ analysis_subdir_mode: e.target.value }).catch(setError)}>
-                      <option value="date">按日期 + 记录 ID</option>
-                      <option value="flat">只按记录 ID</option>
+                      <option value="date">按分析日期和记录编号归档</option>
+                      <option value="flat">按记录编号归档</option>
                     </select>
                   </div>
                 </div>
@@ -1046,12 +1463,11 @@
         const body = useMemo(() => ({
           Create: <CreateTab {...props} />,
           Projects: <ProjectsTab {...props} />,
-          Sources: <SourcesTab {...props} />,
-          Tables: <TablesTab {...props} />,
+          Materials: <MaterialsTab {...props} />,
           Templates: <TemplatesTab {...props} />,
           Exports: <ExportsTab {...props} />,
           Settings: <SettingsTab {...props} />,
-        }[active]), [active, projects, datasets, templates, health]);
+        }[active]), [active, projects, sources, datasets, templates, health]);
         return (
           <main className="app">
             <header className="header">
@@ -1063,7 +1479,7 @@
             </header>
             <nav className="tabs">{tabs.map(([id, label]) => <button key={id} className={"tab " + (active === id ? "active" : "")} onClick={() => setActive(id)}>{label}</button>)}</nav>
             <section className="content">
-              <div>
+              <div className="tab-body" data-tab={active}>
                 <ErrorPanel error={error} />
                 <ProgressPanel event={event} />
                 {body}

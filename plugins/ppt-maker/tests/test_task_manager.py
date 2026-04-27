@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-from ppt_models import DeckMode, ProjectCreate, ProjectStatus, TaskCreate, TaskStatus
+from ppt_models import DeckMode, ProjectCreate, ProjectStatus, SourceStatus, TaskCreate, TaskStatus
 from ppt_task_manager import PptTaskManager
 
 
@@ -90,6 +90,11 @@ async def test_sources_datasets_templates_and_wal(tmp_path) -> None:
         )
         sources = await manager.list_sources()
         project_sources = await manager.list_sources(project_id=project.id)
+        assert await manager.get_source(source.id) is not None
+        assert await manager.delete_source(source.id) is True
+        assert await manager.delete_dataset(dataset.id) is True
+        assert await manager.get_dataset(dataset.id) is None
+        assert await manager.delete_source(source.id) is False
 
     with sqlite3.connect(db_path) as conn:
         journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
@@ -100,6 +105,28 @@ async def test_sources_datasets_templates_and_wal(tmp_path) -> None:
     assert dataset.status == "created"
     assert template.category is not None
     assert journal_mode.lower() == "wal"
+
+
+@pytest.mark.asyncio
+async def test_update_source_safe_persists_status_and_metadata(tmp_path) -> None:
+    async with PptTaskManager(tmp_path / "ppt_maker.db") as manager:
+        source = await manager.create_source(
+            kind="markdown",
+            filename="brief.md",
+            path="uploads/brief.md",
+            metadata={"collection": "Q2"},
+        )
+        updated = await manager.update_source_safe(
+            source.id,
+            status=SourceStatus.PARSED,
+            metadata={"collection": "Q2", "parsed": {"text_length": 1234}},
+        )
+        with pytest.raises(ValueError):
+            await manager.update_source_safe(source.id, kind="bad")
+
+    assert updated is not None
+    assert updated.status == SourceStatus.PARSED
+    assert updated.metadata.get("parsed") == {"text_length": 1234}
 
 
 @pytest.mark.asyncio

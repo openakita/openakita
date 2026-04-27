@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -29,7 +30,7 @@ from ppt_maker_inline.file_utils import (
 from ppt_maker_inline.python_deps import PythonDepsManager
 from ppt_maker_inline.storage_stats import collect_storage_stats
 from ppt_maker_inline.upload_preview import register_upload_preview_routes
-from ppt_models import DeckMode, ProjectCreate, ProjectStatus
+from ppt_models import DeckMode, ProjectCreate, ProjectStatus, SourceStatus
 from ppt_outline import OutlineBuilder
 from ppt_pipeline import PptPipeline
 from ppt_source_loader import MissingDependencyError, SourceLoader, SourceParseError
@@ -70,6 +71,7 @@ class DatasetCreateRequest(BaseModel):
     path: str
     name: str | None = None
     project_id: str | None = None
+    collection_name: str | None = None
 
 
 class TemplateUploadRequest(BaseModel):
@@ -117,6 +119,12 @@ class SettingsUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     updates: dict[str, str] = {}
+
+
+class DeleteAssetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delete_files: bool = False
 
 
 class Plugin(PluginBase):
@@ -300,12 +308,13 @@ class Plugin(PluginBase):
             form = await request.form()
             upload = form.get("file")
             project_id = str(form.get("project_id") or "") or None
+            collection_name = str(form.get("collection_name") or "").strip()
             if upload is None or not hasattr(upload, "filename") or not hasattr(upload, "read"):
                 raise HTTPException(status_code=400, detail="Missing upload field: file")
 
             settings = _load_settings(data_dir)
             filename = _format_upload_filename(str(upload.filename or "upload.bin"), settings)
-            target_dir = _upload_target_dir(data_dir, settings, filename)
+            target_dir = _upload_target_dir(data_dir, settings, filename, collection_name=collection_name)
             target = unique_child(target_dir, filename)
             content = await upload.read()
             target.write_bytes(content)
@@ -321,7 +330,7 @@ class Plugin(PluginBase):
                     metadata={
                         "size": len(content),
                         "original_filename": str(upload.filename or ""),
-                        "collection": target.parent.name,
+                        "collection": collection_name or target.parent.name,
                         "storage_dir": str(target.parent),
                         "preview_url": f"/uploads/{target.name}",
                     },
@@ -337,6 +346,29 @@ class Plugin(PluginBase):
             async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
                 sources = await manager.list_sources()
             return {"ok": True, "sources": [item.model_dump(mode="json") for item in sources]}
+
+        @router.delete("/sources/{source_id}")
+        async def delete_source(
+            source_id: str,
+            payload: DeleteAssetRequest | None = None,
+        ) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                source = await manager.get_source(source_id)
+                if source is None:
+                    raise HTTPException(status_code=404, detail="Source not found")
+                deleted = await manager.delete_source(source_id)
+            metadata = source.metadata or {}
+            paths_to_clean: list[str | None] = [
+                source.path,
+                metadata.get("parsed_path"),
+                metadata.get("parsed_text_path"),
+            ]
+            file_result = _delete_stored_paths(
+                data_dir,
+                paths_to_clean,
+                enabled=bool(payload and payload.delete_files),
+            )
+            return {"ok": True, "deleted": deleted, **file_result}
 
         @router.post("/sources/parse")
         async def parse_source(payload: ParseSourceRequest) -> dict[str, Any]:
@@ -360,6 +392,72 @@ class Plugin(PluginBase):
                 },
             }
 
+        @router.post("/sources/{source_id}/parse")
+        async def parse_source_by_id(source_id: str) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                source = await manager.get_source(source_id)
+                if source is None:
+                    raise HTTPException(status_code=404, detail="Source not found")
+                loader = SourceLoader()
+                try:
+                    parsed = await loader.parse(source.path, kind=source.kind)
+                except MissingDependencyError as exc:
+                    raise HTTPException(
+                        status_code=424,
+                        detail={"error": str(exc), "dependency_group": exc.dependency_group},
+                    ) from exc
+                except SourceParseError as exc:
+                    await manager.update_source_safe(source_id, status=SourceStatus.FAILED)
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                settings = _load_settings(data_dir)
+                analysis_dir = _analysis_dir(data_dir, settings, "sources_analysis", source_id)
+                analysis_dir.mkdir(parents=True, exist_ok=True)
+                full_text = parsed.text or ""
+                parsed_payload = {
+                    "kind": parsed.kind,
+                    "title": parsed.title,
+                    "text": full_text,
+                    "metadata": parsed.metadata,
+                    "source_id": source_id,
+                    "source_path": source.path,
+                }
+                parsed_json_path = analysis_dir / "parsed.json"
+                parsed_text_path = analysis_dir / "parsed_text.txt"
+                parsed_json_path.write_text(
+                    json.dumps(parsed_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                parsed_text_path.write_text(full_text, encoding="utf-8")
+                merged_metadata = {
+                    **(source.metadata or {}),
+                    "parsed_path": str(parsed_json_path),
+                    "parsed_text_path": str(parsed_text_path),
+                    "parsed": {
+                        "title": parsed.title,
+                        "kind": parsed.kind,
+                        "text_preview": full_text[:1200],
+                        "text_length": len(full_text),
+                        "metadata": parsed.metadata,
+                    },
+                }
+                updated = await manager.update_source_safe(
+                    source_id,
+                    status=SourceStatus.PARSED,
+                    metadata=merged_metadata,
+                )
+            return {
+                "ok": True,
+                "source": (updated or source).model_dump(mode="json"),
+                "parsed": {
+                    "kind": parsed.kind,
+                    "title": parsed.title,
+                    "text": parsed.text,
+                    "metadata": parsed.metadata,
+                    "parsed_path": str(parsed_json_path),
+                    "parsed_text_path": str(parsed_text_path),
+                },
+            }
+
         @router.post("/datasets")
         async def create_dataset(payload: DatasetCreateRequest) -> dict[str, Any]:
             source_path = Path(payload.path)
@@ -370,7 +468,10 @@ class Plugin(PluginBase):
                     project_id=payload.project_id,
                     name=payload.name or source_path.stem,
                     original_path=str(source_path),
-                    metadata={"kind": SourceLoader().detect_kind(source_path)},
+                    metadata={
+                        "kind": SourceLoader().detect_kind(source_path),
+                        "collection": payload.collection_name or payload.name or source_path.stem,
+                    },
                 )
             return {"ok": True, "dataset": dataset.model_dump(mode="json")}
 
@@ -387,6 +488,42 @@ class Plugin(PluginBase):
             if dataset is None:
                 raise HTTPException(status_code=404, detail="Dataset not found")
             return {"ok": True, "dataset": dataset.model_dump(mode="json")}
+
+        @router.delete("/datasets/{dataset_id}")
+        async def delete_dataset(
+            dataset_id: str,
+            payload: DeleteAssetRequest | None = None,
+        ) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                dataset = await manager.get_dataset(dataset_id)
+                if dataset is None:
+                    raise HTTPException(status_code=404, detail="Dataset not found")
+                deleted = await manager.delete_dataset(dataset_id)
+            file_result = _delete_stored_paths(
+                data_dir,
+                [
+                    dataset.original_path,
+                    dataset.profile_path,
+                    dataset.insights_path,
+                    dataset.chart_specs_path,
+                ],
+                enabled=bool(payload and payload.delete_files),
+            )
+            return {"ok": True, "deleted": deleted, **file_result}
+
+        @router.get("/datasets/{dataset_id}/analysis")
+        async def dataset_analysis(dataset_id: str) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                dataset = await manager.get_dataset(dataset_id)
+            if dataset is None:
+                raise HTTPException(status_code=404, detail="Dataset not found")
+            return {
+                "ok": True,
+                "dataset": dataset.model_dump(mode="json"),
+                "profile": _read_json_if_exists(dataset.profile_path),
+                "insights": _read_json_if_exists(dataset.insights_path),
+                "chart_specs": _read_json_if_exists(dataset.chart_specs_path),
+            }
 
         @router.post("/datasets/{dataset_id}/profile")
         async def profile_dataset(dataset_id: str) -> dict[str, Any]:
@@ -521,10 +658,26 @@ class Plugin(PluginBase):
             return {"ok": True, "template": template.model_dump(mode="json")}
 
         @router.delete("/templates/{template_id}")
-        async def delete_template(template_id: str) -> dict[str, Any]:
+        async def delete_template(
+            template_id: str,
+            payload: DeleteAssetRequest | None = None,
+        ) -> dict[str, Any]:
             async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                template = await manager.get_template(template_id)
+                if template is None:
+                    raise HTTPException(status_code=404, detail="Template not found")
                 deleted = await manager.delete_template(template_id)
-            return {"ok": True, "deleted": deleted}
+            file_result = _delete_stored_paths(
+                data_dir,
+                [
+                    template.original_path,
+                    template.profile_path,
+                    template.brand_tokens_path,
+                    template.layout_map_path,
+                ],
+                enabled=bool(payload and payload.delete_files),
+            )
+            return {"ok": True, "deleted": deleted, **file_result}
 
         @router.post("/projects/{project_id}/outline")
         async def generate_outline(project_id: str) -> dict[str, Any]:
@@ -860,6 +1013,68 @@ def _tool_definitions() -> list[dict[str, Any]]:
     ]
 
 
+def _delete_stored_paths(
+    data_dir: Path,
+    raw_paths: list[str | None],
+    *,
+    enabled: bool,
+) -> dict[str, Any]:
+    if not enabled:
+        return {"files_deleted": [], "files_skipped": []}
+    settings = _load_settings(data_dir)
+    roots = [data_dir, *_storage_folders(data_dir, settings).values()]
+    root_paths = [_resolve_for_compare(root) for root in roots]
+    deleted: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for raw_path in raw_paths:
+        if not raw_path:
+            continue
+        path = Path(raw_path)
+        comparable = _resolve_for_compare(path)
+        if not any(_is_relative_to(comparable, root) for root in root_paths):
+            skipped.append({"path": str(path), "reason": "不在插件存储目录内，已保留"})
+            continue
+        if not path.exists():
+            skipped.append({"path": str(path), "reason": "文件不存在"})
+            continue
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+            deleted.append(str(path))
+            _remove_empty_storage_parents(path.parent, root_paths)
+        except OSError as exc:
+            skipped.append({"path": str(path), "reason": str(exc)})
+    return {"files_deleted": deleted, "files_skipped": skipped}
+
+
+def _resolve_for_compare(path: Path) -> Path:
+    try:
+        return path.resolve(strict=False)
+    except OSError:
+        return path.absolute()
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _remove_empty_storage_parents(start: Path, root_paths: list[Path]) -> None:
+    current = _resolve_for_compare(start)
+    root_set = {str(root) for root in root_paths}
+    while str(current) not in root_set and any(_is_relative_to(current, root) for root in root_paths):
+        try:
+            current.rmdir()
+        except OSError:
+            break
+        current = current.parent
+
+
 def _read_json_if_exists(path: str | None) -> Any:
     if not path:
         return None
@@ -1071,6 +1286,7 @@ def _storage_folders(data_dir: Path, settings: dict[str, str] | None = None) -> 
         "datasets": _setting_path(settings, "datasets_dir", data_dir / "datasets"),
         "templates": _setting_path(settings, "templates_dir", data_dir / "templates"),
         "exports": _setting_path(settings, "exports_dir", data_dir / "exports"),
+        "sources_analysis": data_dir / "sources_analysis",
     }
 
 
@@ -1113,8 +1329,17 @@ def _apply_name_pattern(pattern: str, values: dict[str, str]) -> str:
     return result
 
 
-def _upload_target_dir(data_dir: Path, settings: dict[str, str], filename: str) -> Path:
+def _upload_target_dir(
+    data_dir: Path,
+    settings: dict[str, str],
+    filename: str,
+    *,
+    collection_name: str = "",
+) -> Path:
     base = _storage_folders(data_dir, settings)["uploads"]
+    collection = safe_name(collection_name, fallback="") if collection_name else ""
+    if collection:
+        return base / collection
     mode = settings.get("upload_subdir_mode") or "type"
     if mode == "date":
         return base / _today()

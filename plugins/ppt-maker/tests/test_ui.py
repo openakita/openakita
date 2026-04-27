@@ -5,19 +5,48 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_ui_contains_seven_tabs_and_core_widgets() -> None:
+def test_ui_contains_six_tabs_and_core_widgets() -> None:
     html = (ROOT / "ui" / "dist" / "index.html").read_text(encoding="utf-8")
 
-    for tab in ["Create", "Projects", "Sources", "Tables", "Templates", "Exports", "Settings"]:
+    for tab in ["Create", "Projects", "Materials", "Templates", "Exports", "Settings"]:
         assert tab in html
+    assert '"Sources"' not in html
+    assert '"Tables"' not in html
+    assert "SourcesTab" not in html
+    assert "TablesTab" not in html
     for marker in ["FileUploadZone", "CostBreakdown", "ErrorPanel", "ProgressPanel"]:
         assert marker in html
-    assert "PythonDepsPanel" in html
+    assert "Python 可选依赖" in html
     assert "/system/python-deps" in html
     assert "table_to_deck" in html
     assert "template_deck" in html
     assert "brand_tokens" in html
     assert "图表方案" in html
+    assert "MaterialsTab" in html
+    assert "素材集名称（必填）" in html
+    assert "上传后同步处理素材" in html
+    assert "同步处理中，请稍候..." in html
+    assert "结果请到右侧素材管理卡片查看" in html
+    assert "整组处理" in html
+    assert "素材管理" in html
+    assert "section-title" in html
+    assert "collection-accordion" in html
+    assert "material-type-tag" in html
+    assert "material-badge" in html
+    assert "参考资料" in html
+    assert "表格数据" in html
+    assert "/sources/${item.id}/parse" in html or "sources/${item.id}/parse" in html
+    assert "/datasets/${item.id}/profile" in html or "datasets/${item.id}/profile" in html
+    assert "确认上传" in html
+    assert "处理选中素材" in html
+    assert "使用前检查" in html
+    assert "这些字段可能缺值较多或表格过宽" in html
+    assert "手动登记路径" not in html
+    assert "确认删除该素材？" in html
+    assert "delete-modal__icon" in html
+    assert "同时删除插件存储目录里的文件和分析结果" in html
+    assert "删除文件夹" in html
+    assert "按用途自动归档" in html
     assert "/storage/stats" in html
     assert "/storage/open-folder" in html
     assert "/storage/list-dir" in html
