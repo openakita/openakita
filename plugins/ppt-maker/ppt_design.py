@@ -16,8 +16,9 @@ class DesignBuilder:
         outline: dict[str, Any],
         brand_tokens: dict[str, Any] | None = None,
         layout_map: dict[str, Any] | None = None,
+        style: str | None = None,
     ) -> dict[str, Any]:
-        brand_tokens = brand_tokens or self._default_brand()
+        brand_tokens = brand_tokens or self._default_brand(style)
         layout_map = layout_map or self._default_layout_map()
         mode = outline.get("mode", "topic_to_deck")
         design_spec = self._markdown(outline, brand_tokens, layout_map)
@@ -104,14 +105,48 @@ class DesignBuilder:
             lines.append(f"- {slide.get('index')}. {slide.get('title')} ({slide.get('slide_type')})")
         return "\n".join(lines) + "\n"
 
-    def _default_brand(self) -> dict[str, Any]:
-        return {
+    STYLE_PRESETS: dict[str, dict[str, str]] = {
+        "tech_business": {
             "primary_color": "#3457D5",
             "secondary_color": "#172033",
             "accent_color": "#FFB000",
             "font_heading": "Microsoft YaHei",
             "font_body": "Microsoft YaHei",
-        }
+        },
+        "consulting": {
+            "primary_color": "#143D59",
+            "secondary_color": "#1F4E79",
+            "accent_color": "#F4B41A",
+            "font_heading": "Microsoft YaHei",
+            "font_body": "Microsoft YaHei",
+        },
+        "education": {
+            "primary_color": "#2A9D8F",
+            "secondary_color": "#264653",
+            "accent_color": "#E9C46A",
+            "font_heading": "Microsoft YaHei",
+            "font_body": "Microsoft YaHei",
+        },
+        "academic": {
+            "primary_color": "#34495E",
+            "secondary_color": "#2C3E50",
+            "accent_color": "#8E44AD",
+            "font_heading": "Microsoft YaHei",
+            "font_body": "Microsoft YaHei",
+        },
+        "minimalist": {
+            "primary_color": "#1F2933",
+            "secondary_color": "#52606D",
+            "accent_color": "#F0B429",
+            "font_heading": "Microsoft YaHei",
+            "font_body": "Microsoft YaHei",
+        },
+    }
+
+    def _default_brand(self, style: str | None = None) -> dict[str, Any]:
+        key = (style or "tech_business").strip().lower()
+        preset = self.STYLE_PRESETS.get(key) or self.STYLE_PRESETS["tech_business"]
+        return dict(preset)
 
     def _default_layout_map(self) -> dict[str, Any]:
         return {

@@ -231,6 +231,29 @@ async def test_replace_list_and_update_slides(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_replace_slides_allows_same_slide_ids_across_projects(tmp_path) -> None:
+    async with PptTaskManager(tmp_path / "ppt_maker.db") as manager:
+        first = await manager.create_project(ProjectCreate(mode=DeckMode.TOPIC_TO_DECK, title="A"))
+        second = await manager.create_project(ProjectCreate(mode=DeckMode.TOPIC_TO_DECK, title="B"))
+
+        first_records = await manager.replace_slides(
+            first.id,
+            [{"id": "slide_01", "slide_type": "cover", "title": "A"}],
+        )
+        second_records = await manager.replace_slides(
+            second.id,
+            [{"id": "slide_01", "slide_type": "cover", "title": "B"}],
+        )
+        first_listed = await manager.list_slides(first.id)
+        second_listed = await manager.list_slides(second.id)
+
+    assert [record["id"] for record in first_records] == ["slide_01"]
+    assert [record["id"] for record in second_records] == ["slide_01"]
+    assert [record["id"] for record in first_listed] == ["slide_01"]
+    assert [record["id"] for record in second_listed] == ["slide_01"]
+
+
+@pytest.mark.asyncio
 async def test_create_and_get_export(tmp_path) -> None:
     async with PptTaskManager(tmp_path / "ppt_maker.db") as manager:
         project = await manager.create_project(
@@ -247,4 +270,21 @@ async def test_create_and_get_export(tmp_path) -> None:
     assert fetched is not None
     assert fetched["metadata"] == {"audit_ok": True}
     assert [item["id"] for item in exports] == [export["id"]]
+
+
+@pytest.mark.asyncio
+async def test_delete_export_removes_record(tmp_path) -> None:
+    async with PptTaskManager(tmp_path / "ppt_maker.db") as manager:
+        project = await manager.create_project(ProjectCreate(mode=DeckMode.TOPIC_TO_DECK, title="Roadmap"))
+        export = await manager.create_export(
+            project_id=project.id,
+            path="exports/roadmap.pptx",
+        )
+        deleted = await manager.delete_export(export["id"])
+        fetched = await manager.get_export(export["id"])
+        exports = await manager.list_exports(project.id)
+
+    assert deleted is True
+    assert fetched is None
+    assert exports == []
 

@@ -112,3 +112,152 @@ async def test_generate_table_insights_validates_structured_output(tmp_path) -> 
     assert result.key_findings == ["Revenue grew 12%"]
     assert result.chart_suggestions[0]["type"] == "bar"
 
+
+# ── Three-stage Brain pipeline (outline → layout → per-slide content) ────
+
+
+@pytest.mark.asyncio
+async def test_generate_outline_returns_body_and_bullets(tmp_path) -> None:
+    payload = {
+        "title": "AI 平台 2026",
+        "mode": "topic_to_deck",
+        "audience": "engineers",
+        "storyline": ["背景", "方案", "落地"],
+        "slides": [
+            {
+                "index": 1,
+                "title": "封面",
+                "purpose": "建立主题",
+                "slide_type": "cover",
+                "key_points": [],
+                "body": "AI 平台 2026 战略汇报。",
+                "speaker_note": "欢迎大家。",
+                "image_query": "modern data center",
+                "icon_query": None,
+            },
+            {
+                "index": 2,
+                "title": "核心方案",
+                "purpose": "讲方案",
+                "slide_type": "content",
+                "key_points": ["统一接入", "自动化", "可观测"],
+                "body": "用三层架构整合现有能力，按季度推进试点。",
+                "speaker_note": "方案三大支柱。",
+                "image_query": None,
+                "icon_query": "rocket",
+            },
+        ],
+        "confirmation_questions": ["页数是否合适？"],
+    }
+    brain = FakeBrain(payload)
+    adapter = PptBrainAdapter(FakeApi(granted=True, brain=brain), data_root=tmp_path)
+
+    outline = await adapter.generate_outline(
+        mode=DeckMode.TOPIC_TO_DECK,
+        requirements={"title": "AI 平台 2026", "slide_count": 2},
+        context="## Source\nKey context here",
+        project_id="ppt_outline",
+        verbosity="balanced",
+    )
+
+    assert outline.title == "AI 平台 2026"
+    assert len(outline.slides) == 2
+    assert outline.slides[0].slide_type.value == "cover"
+    assert all(slide.body for slide in outline.slides)
+    # The verbosity hint and context must reach the prompt.
+    sent_prompt = brain.calls[0]["prompt"]
+    assert "40 words" in sent_prompt
+    assert "Source" in sent_prompt
+
+
+@pytest.mark.asyncio
+async def test_select_layout_per_slide_validates_slide_types(tmp_path) -> None:
+    payload = {
+        "slides": [
+            {"index": 1, "slide_type": "cover"},
+            {"index": 2, "slide_type": "agenda"},
+            {"index": 3, "slide_type": "comparison"},
+            {"index": 4, "slide_type": "summary"},
+        ]
+    }
+    brain = FakeBrain(payload)
+    adapter = PptBrainAdapter(FakeApi(granted=True, brain=brain), data_root=tmp_path)
+
+    plan = await adapter.select_layout_per_slide(
+        outline={
+            "slides": [
+                {"index": 1, "title": "Cover", "key_points": [], "body": "Hi"},
+                {"index": 2, "title": "Agenda", "key_points": ["A"], "body": ""},
+                {"index": 3, "title": "Compare", "key_points": ["A vs B"], "body": ""},
+                {"index": 4, "title": "End", "key_points": ["next"], "body": ""},
+            ]
+        },
+        project_id="ppt_layout",
+    )
+
+    assert [c.index for c in plan.slides] == [1, 2, 3, 4]
+    assert plan.slides[0].slide_type.value == "cover"
+    assert plan.slides[2].slide_type.value == "comparison"
+
+
+@pytest.mark.asyncio
+async def test_select_layout_invalid_slide_type_is_rejected(tmp_path) -> None:
+    brain = FakeBrain({"slides": [{"index": 1, "slide_type": "totally_made_up"}]})
+    adapter = PptBrainAdapter(FakeApi(granted=True, brain=brain), data_root=tmp_path)
+
+    with pytest.raises(ValidationError):
+        await adapter.select_layout_per_slide(
+            outline={"slides": [{"index": 1, "title": "X"}]},
+            project_id="ppt_layout_bad",
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_slide_content_returns_validated_dict(tmp_path) -> None:
+    from ppt_models import SlideType
+
+    payload = {
+        "body": "围绕统一接入展开三大支柱。",
+        "bullets": ["统一身份", "事件中心", "可观测平台"],
+        "image_query": "platform architecture",
+        "icon_query": "rocket",
+        "speaker_note": "重点强调统一接入。",
+    }
+    brain = FakeBrain(payload)
+    adapter = PptBrainAdapter(FakeApi(granted=True, brain=brain), data_root=tmp_path)
+
+    content = await adapter.generate_slide_content_per_slide(
+        slide_outline={
+            "index": 2,
+            "title": "核心方案",
+            "body": "讲方案",
+            "key_points": ["统一接入"],
+        },
+        slide_type=SlideType.CONTENT,
+        deck_title="AI 平台 2026",
+        project_id="ppt_slide",
+    )
+
+    assert content["body"].startswith("围绕统一接入")
+    assert len(content["bullets"]) == 3
+    # Schema is layout_for(CONTENT), so the dict only contains allowed keys.
+    assert "speaker_note" in content
+
+
+@pytest.mark.asyncio
+async def test_generate_slide_content_rejects_garbage_json(tmp_path) -> None:
+    from ppt_models import SlideType
+
+    class BadBrain:
+        async def think(self, prompt, *, system, max_tokens):
+            return FakeResponse("not even close to JSON")
+
+    adapter = PptBrainAdapter(FakeApi(granted=True, brain=BadBrain()), data_root=tmp_path)
+
+    with pytest.raises((ValueError, ValidationError)):
+        await adapter.generate_slide_content_per_slide(
+            slide_outline={"index": 1, "title": "x", "body": "", "key_points": []},
+            slide_type=SlideType.CONTENT,
+            project_id="ppt_bad_json",
+        )
+

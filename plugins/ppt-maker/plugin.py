@@ -17,7 +17,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
+from ppt_activity_log import PptActivityLogger
 from ppt_audit import PptAudit
+from ppt_brain_adapter import PptBrainAdapter
 from ppt_design import DesignBuilder
 from ppt_exporter import PptxExporter, PptxExportError
 from ppt_ir import SlideIrBuilder
@@ -134,12 +136,30 @@ class Plugin(PluginBase):
         self._api: PluginAPI | None = None
         self._data_dir: Path | None = None
         self._deps: PythonDepsManager | None = None
+        self._brain_adapter: PptBrainAdapter | None = None
+        self._asset_provider: Any = None
+        self._activity_logger: PptActivityLogger | None = None
 
     def on_load(self, api: PluginAPI) -> None:
         self._api = api
         data_dir = resolve_plugin_data_root(api.get_data_dir() or Path.cwd() / "data")
         self._data_dir = data_dir
         self._deps = PythonDepsManager(data_dir)
+        self._brain_adapter = PptBrainAdapter(api, data_root=data_dir)
+        self._activity_logger = PptActivityLogger(data_root=data_dir)
+        self._brain_adapter.bind_activity_logger(
+            self._activity_logger,
+            emit=lambda event: self._broadcast("ppt_activity", event),
+        )
+        try:
+            from ppt_asset_provider import PptAssetProvider  # type: ignore
+
+            self._asset_provider = PptAssetProvider(
+                settings=_load_settings(data_dir),
+                data_root=data_dir,
+            )
+        except Exception:  # noqa: BLE001
+            self._asset_provider = None
 
         router = APIRouter()
         register_upload_preview_routes(router, data_dir / "uploads", prefix="/uploads")
@@ -275,13 +295,37 @@ class Plugin(PluginBase):
                 project = await manager.get_project(project_id)
                 slides = await manager.list_slides(project_id)
                 exports = await manager.list_exports(project_id)
+                outline = await manager.latest_outline(project_id)
+                design = await manager.latest_design_spec(project_id)
             if project is None:
                 raise HTTPException(status_code=404, detail="Project not found")
             return {
                 "ok": True,
                 "project": project.model_dump(mode="json"),
+                "outline": outline,
+                "design": design,
                 "slides": slides,
                 "exports": exports,
+            }
+
+        @router.get("/projects/{project_id}/activity")
+        async def get_project_activity(
+            project_id: str, since: float | None = None, limit: int = 200
+        ) -> dict[str, Any]:
+            assert self._activity_logger is not None
+            try:
+                limit_clamped = max(1, min(int(limit), 1000))
+            except (TypeError, ValueError):
+                limit_clamped = 200
+            events = self._activity_logger.read(
+                project_id, since=since, limit=limit_clamped
+            )
+            return {
+                "ok": True,
+                "project_id": project_id,
+                "events": events,
+                "count": len(events),
+                "latest_ts": events[-1]["ts"] if events else None,
             }
 
         @router.delete("/projects/{project_id}")
@@ -300,7 +344,7 @@ class Plugin(PluginBase):
 
         @router.post("/projects/{project_id}/retry")
         async def retry_project(project_id: str) -> dict[str, Any]:
-            result = await PptPipeline(data_root=data_dir, emit=self._broadcast).run(project_id)
+            result = await self._make_pipeline(data_dir).run(project_id)
             return {"ok": True, "result": result}
 
         @router.post("/upload")
@@ -864,6 +908,38 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=404, detail="Export not found")
             return FileResponse(export["path"], filename=Path(export["path"]).name)
 
+        @router.delete("/exports/{export_id}")
+        async def delete_export(
+            export_id: str,
+            payload: DeleteAssetRequest | None = None,
+        ) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                export = await manager.get_export(export_id)
+                if export is None:
+                    raise HTTPException(status_code=404, detail="Export not found")
+                deleted = await manager.delete_export(export_id)
+            file_result = _delete_stored_paths(
+                data_dir,
+                [export.get("path")],
+                enabled=bool(payload and payload.delete_files),
+            )
+            return {"ok": True, "deleted": deleted, **file_result}
+
+        @router.post("/exports/{export_id}/open-folder")
+        async def open_export_folder(export_id: str) -> dict[str, Any]:
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                export = await manager.get_export(export_id)
+            if export is None:
+                raise HTTPException(status_code=404, detail="Export not found")
+            path = Path(export["path"]).expanduser().resolve(strict=False)
+            if not path.exists():
+                raise HTTPException(status_code=404, detail="Export file not found")
+            try:
+                _open_folder(path.parent)
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"Cannot open folder: {exc}") from exc
+            return {"ok": True, "path": str(path.parent), "file": path.name}
+
         api.register_api_routes(router)
         api.register_tools(_tool_definitions(), self._handle_tool)
         api.log(f"{PLUGIN_ID}: loaded")
@@ -972,11 +1048,27 @@ class Plugin(PluginBase):
                 return json.dumps({"ok": True, "cancelled_tasks": count}, ensure_ascii=False)
         if tool_name in {"ppt_generate_deck", "ppt_export"}:
             project_id = str(arguments.get("project_id") or "")
-            result = await PptPipeline(data_root=data_dir, emit=self._broadcast).run(project_id)
+            result = await self._make_pipeline(data_dir).run(project_id)
             return json.dumps({"ok": True, "result": result}, ensure_ascii=False)
         return json.dumps(
             {"ok": False, "error": f"{tool_name} is registered but not wired until a later phase."},
             ensure_ascii=False,
+        )
+
+    def _make_pipeline(self, data_dir: Path) -> PptPipeline:
+        settings = _load_settings(data_dir)
+        if self._asset_provider is not None and hasattr(self._asset_provider, "update_settings"):
+            try:
+                self._asset_provider.update_settings(settings)
+            except Exception:  # noqa: BLE001
+                pass
+        return PptPipeline(
+            data_root=data_dir,
+            emit=self._broadcast,
+            brain_adapter=self._brain_adapter,
+            asset_provider=self._asset_provider,
+            settings=settings,
+            activity_logger=self._activity_logger,
         )
 
     async def _broadcast(self, event_name: str, payload: dict[str, Any]) -> None:
@@ -1254,6 +1346,18 @@ def _default_settings() -> dict[str, str]:
         "analysis_subdir_mode": "date",
         "upload_naming_rule": "{date}_{original}",
         "export_naming_rule": "{date}_{project_id}",
+        # AI generation knobs (consumed by PptPipeline / PptBrainAdapter)
+        "verbosity": "balanced",
+        "tone": "professional",
+        "language": "zh-CN",
+        "single_shot_mode": "false",
+        "web_search_enabled": "false",
+        # Image / icon resolution (consumed by PptAssetProvider)
+        "image_provider": "none",
+        "pexels_api_key": "",
+        "pixabay_api_key": "",
+        "dashscope_api_key": "",
+        "dashscope_image_model": "wanx-v1",
     }
 
 
