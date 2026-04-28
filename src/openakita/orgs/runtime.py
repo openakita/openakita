@@ -1676,33 +1676,34 @@ class OrgRuntime:
                     logger.debug(f"[OrgRuntime] failure diagnosis failed on {node.id}: {diag_err}")
                     diagnosis = None
 
-                # 静默策略 1（硬 verify）：verify_incomplete + 用户原始 prompt 没有
-                # "附件交付意图"时，整张诊断卡片完全不展示——既不拼到 result_text、
-                # 也不进 event/ws payload。日志里仍然记录了 exit_reason=verify_incomplete。
-                # 静默策略 2（软 verify，P0-3）：is_soft_verify=True 表示协调者节点
-                # 通过下属交付实质完成本任务，是"积极信号"。历史版本会保留一张
-                # "ℹ️ 复盘提示"卡片提示用户"已通过下属交付完成"，但该卡片几乎
-                # 100% 是噪音（用户已经看到下属交付物 + task_complete 气泡），
-                # 反而引发"明明完成了为什么还有失败提示"的误解。这里同样彻底静默。
+                # 静默策略（一刀切，2026-04-28 收紧）：
+                # verify_incomplete 系列（含 verify_incomplete / verify_incomplete_with_children）
+                # 是「verify 规则没匹配」而非「真硬失败」。在「文件已落盘 + 黑板已通知 +
+                # 节点输出了完整成果文本」的典型场景下，这类卡片只会让用户困惑
+                # 「明明完成了为什么还报错」，纯噪音。
+                #
+                # 历史窄窗口策略（仅静默「不要附件」+「软 verify」两种）留了
+                # 「硬 verify + 用户说了"写一份"被 expects_artifact 命中」的窗口
+                # 没堵——典型如 2026-04-28 14:39:37 的 _134209 失败链：主编实际
+                # 已经 write_file 4594 字节、blackboard 已通知，verify 仍因为
+                # 没调 deliver_artifacts/org_submit_deliverable 而硬判 INCOMPLETE。
+                # 用户多次明确反馈「这个卡片对用户很不友好」「早就说不要这个了」。
+                #
+                # 现策略：root_cause 只要以 "verify_incomplete" 开头就一律 diagnosis=None，
+                # 不再依赖 expects_artifact / is_soft_verify 区分窗口。日志保留
+                # 一条 INFO 用于事后回溯。event/ws payload 通过下方 `if diagnosis`
+                # 分支自动跳过 → UI + 事件双砍（用户选 scope=all 语义）。
+                # 真硬失败（loop_terminated / max_iterations / org_delegate_loop 等）
+                # 不受影响，保留「为什么失败」卡片。
                 rc_for_silence = (diagnosis or {}).get("root_cause") if diagnosis else None
-                if (
-                    diagnosis
-                    and not is_soft_verify
-                    and rc_for_silence == "verify_incomplete"
-                    and not expects_artifact
+                if diagnosis and rc_for_silence and rc_for_silence.startswith(
+                    "verify_incomplete"
                 ):
                     logger.info(
-                        "[OrgRuntime] silencing verify_incomplete diagnosis card for "
-                        "org=%s node=%s (user prompt did not request file artifact)",
-                        org.id, node.id,
-                    )
-                    diagnosis = None
-                elif diagnosis and is_soft_verify:
-                    logger.info(
-                        "[OrgRuntime] silencing soft verify_incomplete diagnosis card "
-                        "for org=%s node=%s (already accepted child deliverable; "
-                        "review hint is pure noise to end users)",
-                        org.id, node.id,
+                        "[OrgRuntime] silencing verify_incomplete* diagnosis card "
+                        "for org=%s node=%s (rc=%s, soft_verify=%s; "
+                        "review-hint suppressed from UI + event payload)",
+                        org.id, node.id, rc_for_silence, is_soft_verify,
                     )
                     diagnosis = None
 
