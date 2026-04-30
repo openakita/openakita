@@ -45,21 +45,39 @@ All paths are rooted under ``/api/plugins/omni-post/``.
 from __future__ import annotations
 
 import asyncio
-import json
 import base64
+import json
 import logging
 from datetime import UTC
 from pathlib import Path
 from typing import Any
+
+PLUGIN_DIR = Path(__file__).resolve().parent
+
+# ``omni_post_cookies`` imports ``cryptography.fernet`` at module load time.
+# In packaged desktop builds the host-managed dependency dirs are not always
+# on sys.path yet, so the plugin makes Fernet importable before local imports.
+try:
+    from omni_post_dep_bootstrap import DepInstallFailed, dependency_status, ensure_importable
+
+    ensure_importable(
+        "cryptography.fernet",
+        "cryptography>=42.0.0",
+        plugin_dir=PLUGIN_DIR,
+        friendly_name="cryptography",
+    )
+except DepInstallFailed:
+    raise
+except Exception as exc:  # noqa: BLE001
+    raise RuntimeError(f"omni-post dependency bootstrap failed: {exc}") from exc
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from omni_post_adapters import load_selector_bundle
 from omni_post_assets import UploadPipeline
 from omni_post_cookies import CookieEncryptError, CookiePool
 from omni_post_engine_mp import MultiPostCompatEngine
-from omni_post_mdrm import OmniPostMdrmAdapter
-from omni_post_selfheal import SelfHealTicker
 from omni_post_engine_pw import PlaywrightEngine
+from omni_post_mdrm import OmniPostMdrmAdapter
 from omni_post_models import (
     DEFAULT_SETTINGS,
     ERROR_HINTS,
@@ -81,6 +99,8 @@ from omni_post_pipeline import (
     run_publish_task,
 )
 from omni_post_scheduler import ScheduleTicker, fanout_matrix, stagger_slots
+from omni_post_selfheal import SelfHealTicker
+from omni_post_system_deps import OmniPostSystemDeps
 from omni_post_task_manager import OmniPostTaskManager
 from pydantic import BaseModel, ConfigDict
 from starlette.responses import FileResponse
@@ -117,6 +137,9 @@ class OmniPostPlugin(PluginBase):
         self._scheduler: ScheduleTicker | None = None
         self._selfheal: SelfHealTicker | None = None
         self._mdrm: OmniPostMdrmAdapter | None = None
+        self._sysdeps = OmniPostSystemDeps()
+        self._python_dep_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._python_dep_errors: dict[str, str] = {}
 
     def on_load(self, api: PluginAPI) -> None:
         self._api = api
@@ -222,8 +245,12 @@ class OmniPostPlugin(PluginBase):
             for t in list(self._active_tasks):
                 if not t.done():
                     t.cancel()
+            for t in list(self._python_dep_tasks.values()):
+                if not t.done():
+                    t.cancel()
             if self._engine is not None:
                 await self._engine.close()
+            await self._sysdeps.aclose()
             if self._tm is not None:
                 await self._tm.close()
 
@@ -237,6 +264,50 @@ class OmniPostPlugin(PluginBase):
         @router.get("/healthz")
         async def healthz() -> dict:
             return {"ok": True, "plugin": PLUGIN_ID}
+
+        @router.get("/python-deps/components")
+        async def python_deps_components() -> dict:
+            return {"ok": True, "items": [self._cryptography_status()]}
+
+        @router.post("/python-deps/{dep_id}/install")
+        async def python_dep_install(dep_id: str) -> dict:
+            if dep_id != "cryptography":
+                raise HTTPException(404, f"unknown python dependency {dep_id}")
+            task = self._python_dep_tasks.get(dep_id)
+            if task is not None and not task.done():
+                return {"ok": True, "busy": True}
+            self._python_dep_errors.pop(dep_id, None)
+            task = asyncio.create_task(self._install_cryptography_dep())
+            self._python_dep_tasks[dep_id] = task
+            return {"ok": True, "busy": True}
+
+        @router.get("/python-deps/{dep_id}/status")
+        async def python_dep_status(dep_id: str) -> dict:
+            if dep_id != "cryptography":
+                raise HTTPException(404, f"unknown python dependency {dep_id}")
+            return self._cryptography_status()
+
+        @router.get("/system/components")
+        async def system_components() -> dict:
+            items = self._sysdeps.list_components()
+            self._refresh_upload_bins_if_ready(items)
+            return {"ok": True, "items": items}
+
+        @router.post("/system/{dep_id}/install")
+        async def system_install(dep_id: str, body: _SystemInstallBody) -> dict:
+            try:
+                return await self._sysdeps.start_install(dep_id, method_index=body.method_index)
+            except ValueError as e:
+                raise HTTPException(404, str(e)) from e
+
+        @router.get("/system/{dep_id}/status")
+        async def system_status(dep_id: str) -> dict:
+            try:
+                item = self._sysdeps.status(dep_id)
+            except ValueError as e:
+                raise HTTPException(404, str(e)) from e
+            self._refresh_upload_bins_if_ready([item])
+            return item
 
         @router.get("/catalog")
         async def catalog() -> dict:
@@ -1039,6 +1110,42 @@ class OmniPostPlugin(PluginBase):
         self._active_tasks.add(task)
         task.add_done_callback(self._active_tasks.discard)
 
+    def _cryptography_status(self) -> dict[str, Any]:
+        task = self._python_dep_tasks.get("cryptography")
+        busy = task is not None and not task.done()
+        error = self._python_dep_errors.get("cryptography", "")
+        status = dependency_status(
+            "cryptography.fernet",
+            "cryptography>=42.0.0",
+            plugin_dir=PLUGIN_DIR,
+            package_name="cryptography",
+            friendly_name="cryptography",
+        )
+        if error:
+            status["error"] = error
+        return {**status, "busy": busy, "log_tail": [error] if error else []}
+
+    async def _install_cryptography_dep(self) -> None:
+        try:
+            await asyncio.to_thread(
+                ensure_importable,
+                "cryptography.fernet",
+                "cryptography>=42.0.0",
+                plugin_dir=PLUGIN_DIR,
+                friendly_name="cryptography",
+            )
+        except DepInstallFailed as exc:
+            self._python_dep_errors["cryptography"] = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            self._python_dep_errors["cryptography"] = f"{type(exc).__name__}: {exc}"
+
+    def _refresh_upload_bins_if_ready(self, items: list[dict[str, Any]]) -> None:
+        if self._upload is None:
+            return
+        watched = {"ffmpeg", "ffprobe"}
+        if any(item.get("id") in watched and not item.get("busy") for item in items):
+            self._upload.refresh_system_bins()
+
     def _collect_selector_bundle(self) -> dict[str, dict[str, Any]]:
         """Load every platform's selector bundle as a flat dict.
 
@@ -1242,6 +1349,12 @@ class _MpAckBody(BaseModel):
     error_kind: str | None = None
     error_message: str | None = None
     metrics: dict[str, Any] | None = None
+
+
+class _SystemInstallBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method_index: int = 0
 
 
 # ── Tool definitions (LLM-callable) ───────────────────────────────

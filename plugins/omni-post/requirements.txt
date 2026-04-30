@@ -4,16 +4,17 @@
 # aiosqlite, aiofiles, Pillow, pydantic, fastapi) are reused from the
 # host and intentionally NOT declared here to avoid version conflicts.
 #
-# cryptography — symmetric Fernet encryption for the cookie pool. The
-# key is derived from the OpenAkita identity/ salt on first load so
-# cookies never hit disk in cleartext (see omni_post_cookies.py).
+# cryptography — symmetric Fernet encryption for the cookie pool. This is
+# intentionally NOT declared in plugin.json requires.pip: omni-post installs
+# and prioritizes it through omni_post_dep_bootstrap.py so packaged builds can
+# recover from host sys.path shadowing without blocking plugin installation.
 cryptography>=42.0.0
 
 # System-level binaries (NOT pip packages):
 #   - ffmpeg / ffprobe: required for upload metadata (duration, codec,
 #     dimensions) and thumbnail generation. On missing binaries the
-#     plugin falls back to ErrorKind.dependency with an install hint
-#     (see omni_post_assets.py::probe_ffmpeg_available).
+#     plugin degrades gracefully and exposes detection/install status in
+#     Settings -> Dependencies & Runtime.
 #     * Windows: winget install Gyan.FFmpeg
 #     * macOS:   brew install ffmpeg
 #     * Linux:   apt install ffmpeg  /  dnf install ffmpeg
