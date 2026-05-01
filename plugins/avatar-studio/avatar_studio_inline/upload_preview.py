@@ -93,8 +93,8 @@ def add_upload_preview_route(
     base.mkdir(parents=True, exist_ok=True)
     allowed = _normalize_extensions(allowed_extensions)
 
-    @router.get(route_path)
-    async def _serve(rel_path: str) -> FileResponse:
+    @router.get(route_path, response_class=FileResponse)
+    async def _serve(rel_path: str):
         if not rel_path or "\x00" in rel_path:
             raise HTTPException(status_code=404, detail="not found")
         try:

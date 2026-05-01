@@ -132,9 +132,9 @@ class AgentFactory:
         from openakita.core.agent import Agent
 
         agent = Agent(name=profile.get_display_name(), brain=parent_brain, **kwargs)
-        agent._agent_profile = profile
 
         await agent.initialize(start_scheduler=False, lightweight=True)
+        agent.configure_runtime_environment(profile)
 
         self._apply_skill_filter(agent, profile)
         self._apply_tool_filter(agent, profile)

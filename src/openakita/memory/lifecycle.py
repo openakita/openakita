@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .extractor import MemoryExtractor
+from .retention import apply_retention
 from .storage import _is_db_locked
 
 if TYPE_CHECKING:
@@ -264,14 +265,21 @@ class LifecycleManager:
             episode = await self.extractor.generate_episode(
                 conv_turns, session_id, source="daily_consolidation"
             )
-            if episode:
-                self.store.save_episode(episode)
+            if not episode:
+                logger.warning(
+                    "[Lifecycle] Episode generation returned empty for session %s; "
+                    "leaving turns unextracted for retry",
+                    session_id,
+                )
+                continue
 
-                for turn_obj in conv_turns:
-                    items = await self.extractor.extract_from_turn_v2(turn_obj)
-                    for item in items:
-                        self._save_extracted_item(item, episode.id)
-                    total += len(items)
+            self.store.save_episode(episode)
+
+            for turn_obj in conv_turns:
+                items = await self.extractor.extract_from_turn_v2(turn_obj)
+                for item in items:
+                    self._save_extracted_item(item, episode.id)
+                total += len(items)
 
             indices = [t["turn_index"] for t in turns]
             self.store.mark_turns_extracted(session_id, indices)
@@ -302,6 +310,7 @@ class LifecycleManager:
             "ERROR": MemoryType.ERROR,
             "RULE": MemoryType.RULE,
             "PERSONA_TRAIT": MemoryType.PERSONA_TRAIT,
+            "EXPERIENCE": MemoryType.EXPERIENCE,
         }
         mem_type = type_map.get(item.get("type", "FACT"), MemoryType.FACT)
         importance = item.get("importance", 0.5)
@@ -371,6 +380,7 @@ class LifecycleManager:
             source_episode_id=episode_id,
             tags=[item.get("type", "fact").lower()],
         )
+        apply_retention(mem, item.get("duration"))
         self.store.save_semantic(mem)
 
     # ==================================================================
@@ -470,7 +480,16 @@ class LifecycleManager:
 
     def compute_decay(self) -> int:
         """Apply decay to SHORT_TERM memories, archive low-scoring ones."""
-        memories = self.store.query_semantic(priority="SHORT_TERM", limit=500)
+        memories = self.store.query_semantic(
+            priority=MemoryPriority.SHORT_TERM.value,
+            limit=500,
+        )
+        legacy_memories = self.store.query_semantic(
+            priority="SHORT_TERM",
+            limit=500,
+        )
+        seen = {m.id for m in memories}
+        memories.extend(m for m in legacy_memories if m.id not in seen)
         decayed = 0
 
         for mem in memories:
@@ -495,7 +514,7 @@ class LifecycleManager:
                 )
                 decayed += 1
 
-        expired = self.store.db.cleanup_expired()
+        expired = self.store.cleanup_expired()
         decayed += expired
 
         if decayed > 0:

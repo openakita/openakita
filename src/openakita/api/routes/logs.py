@@ -17,6 +17,8 @@ from pathlib import Path
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
+from openakita.utils.redaction import redact_text
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -65,7 +67,7 @@ def _read_log_tail(log_path: Path, tail_bytes: int) -> dict:
             if start > 0:
                 f.seek(start)
             raw = f.read()
-        content = raw.decode("utf-8", errors="replace")
+        content = redact_text(raw.decode("utf-8", errors="replace"))
         return {"path": path_str, "content": content, "truncated": truncated}
     except Exception as e:
         logger.error("Failed to read log %s: %s", log_path, e)
@@ -166,7 +168,7 @@ async def receive_frontend_log(request: Request):
             _rotate_frontend_log(log_path)
             with open(log_path, "a", encoding="utf-8") as f:
                 for line in lines:
-                    f.write(str(line) + "\n")
+                    f.write(redact_text(line) + "\n")
     except Exception as e:
         logger.error("Failed to write frontend log: %s", e)
         return {"ok": False, "error": str(e)}

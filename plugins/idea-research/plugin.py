@@ -30,7 +30,6 @@ tests in ``tests/test_routes.py``.
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import logging
 import os
@@ -39,11 +38,21 @@ import subprocess
 import sys
 import time
 import uuid
-from collections import deque
 from contextlib import suppress
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+
+PLUGIN_DIR = Path(__file__).resolve().parent
+
+# The packaged desktop server may start from a PyInstaller wrapper before the
+# host has appended plugin-managed dependency dirs. Ensure those paths are
+# visible before importing httpx and local helper modules.
+try:
+    from idea_research_inline.dep_bootstrap import ensure_runtime_paths
+
+    ensure_runtime_paths(PLUGIN_DIR)
+except Exception as exc:  # noqa: BLE001
+    raise RuntimeError(f"idea-research dependency path bootstrap failed: {exc}") from exc
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -99,6 +108,7 @@ from idea_pipeline import (
     run_script_remix,
 )
 from idea_research_inline.mdrm_adapter import MdrmAdapter
+from idea_research_inline.python_deps import PythonDepsManager
 from idea_research_inline.upload_preview import add_upload_preview_routes
 from idea_task_manager import IdeaTaskManager
 
@@ -176,154 +186,6 @@ class OpenFolderBody(_StrictBase):
 
 
 # --------------------------------------------------------------------------- #
-# Optional Python dependencies                                                 #
-# --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class _PythonDepSpec:
-    id: str
-    display_name: str
-    packages: tuple[str, ...]
-    import_names: tuple[str, ...]
-    description: str
-
-
-@dataclass
-class _PythonDepState:
-    busy: bool = False
-    op_kind: str = ""
-    started_at: float = 0.0
-    finished_at: float = 0.0
-    return_code: int | None = None
-    error: str = ""
-    log_tail: deque[str] = field(default_factory=lambda: deque(maxlen=80))
-
-
-_PYTHON_DEPS: dict[str, _PythonDepSpec] = {
-    "secure_cookies": _PythonDepSpec(
-        id="secure_cookies",
-        display_name="Cookies 安全存储",
-        packages=("cryptography", "keyring"),
-        import_names=("cryptography.fernet", "keyring"),
-        description="用于把 5 平台 cookies 用 Fernet 加密，并把主密钥托管到系统 keyring。",
-    ),
-    "browser_crawler": _PythonDepSpec(
-        id="browser_crawler",
-        display_name="浏览器爬虫引擎",
-        packages=("playwright",),
-        import_names=("playwright.async_api",),
-        description="用于引擎 B 的抖音、小红书、快手、B 站登录态、微博浏览器采集。",
-    ),
-}
-
-
-class PythonDepsManager:
-    """Small whitelist-only pip installer for optional plugin packages."""
-
-    def __init__(self) -> None:
-        self._state = {dep_id: _PythonDepState() for dep_id in _PYTHON_DEPS}
-
-    def list_components(self) -> list[dict[str, Any]]:
-        return [self.detect(dep_id) for dep_id in _PYTHON_DEPS]
-
-    def detect(self, dep_id: str) -> dict[str, Any]:
-        spec = self._require(dep_id)
-        st = self._state[dep_id]
-        missing = [
-            name for name in spec.import_names if not self._is_importable(name)
-        ]
-        return {
-            "id": spec.id,
-            "display_name": spec.display_name,
-            "description": spec.description,
-            "packages": list(spec.packages),
-            "imports": list(spec.import_names),
-            "found": not missing,
-            "missing": missing,
-            "busy": st.busy,
-            "last_op": self.status(dep_id),
-        }
-
-    def status(self, dep_id: str) -> dict[str, Any]:
-        self._require(dep_id)
-        st = self._state[dep_id]
-        return {
-            "busy": st.busy,
-            "op_kind": st.op_kind,
-            "elapsed_sec": round((time.time() - st.started_at) if st.started_at else 0, 1),
-            "return_code": st.return_code,
-            "error": st.error,
-            "log_tail": list(st.log_tail),
-        }
-
-    async def start_install(self, dep_id: str) -> dict[str, Any]:
-        spec = self._require(dep_id)
-        argv = [sys.executable, "-m", "pip", "install", *spec.packages]
-        return await self._start(dep_id, "install", argv)
-
-    async def start_uninstall(self, dep_id: str) -> dict[str, Any]:
-        spec = self._require(dep_id)
-        argv = [sys.executable, "-m", "pip", "uninstall", "-y", *spec.packages]
-        return await self._start(dep_id, "uninstall", argv)
-
-    async def _start(self, dep_id: str, op_kind: str, argv: list[str]) -> dict[str, Any]:
-        self._require(dep_id)
-        st = self._state[dep_id]
-        if st.busy:
-            return {"ok": True, "busy": True, "status": self.status(dep_id)}
-        st.busy = True
-        st.op_kind = op_kind
-        st.started_at = time.time()
-        st.finished_at = 0.0
-        st.return_code = None
-        st.error = ""
-        st.log_tail.clear()
-        st.log_tail.append("$ " + " ".join(argv))
-        asyncio.create_task(self._run(dep_id, argv), name=f"{PLUGIN_ID}:pydep:{dep_id}:{op_kind}")
-        return {"ok": True, "busy": True, "status": self.status(dep_id)}
-
-    async def _run(self, dep_id: str, argv: list[str]) -> None:
-        st = self._state[dep_id]
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            assert proc.stdout is not None
-            while True:
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-                st.log_tail.append(line.decode("utf-8", errors="replace").rstrip())
-            st.return_code = await proc.wait()
-            if st.return_code:
-                st.error = f"pip exited with code {st.return_code}"
-        except Exception as exc:  # noqa: BLE001
-            st.return_code = -1
-            st.error = str(exc)
-            st.log_tail.append(str(exc))
-        finally:
-            st.busy = False
-            st.finished_at = time.time()
-
-    @staticmethod
-    def _is_importable(name: str) -> bool:
-        try:
-            return importlib.util.find_spec(name) is not None
-        except (ImportError, ModuleNotFoundError, ValueError):
-            return False
-
-    @staticmethod
-    def _require(dep_id: str) -> _PythonDepSpec:
-        try:
-            return _PYTHON_DEPS[dep_id]
-        except KeyError as exc:
-            raise ValueError(f"unknown python dependency group: {dep_id}") from exc
-
-
-# --------------------------------------------------------------------------- #
 # Plugin                                                                       #
 # --------------------------------------------------------------------------- #
 
@@ -344,7 +206,7 @@ class Plugin(PluginBase):
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._running_tasks: set[str] = set()
         self._scheduler_stop = asyncio.Event()
-        self._pydeps = PythonDepsManager()
+        self._pydeps = PythonDepsManager(plugin_dir=PLUGIN_DIR)
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                            #

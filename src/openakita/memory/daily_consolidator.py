@@ -513,7 +513,7 @@ class DailyConsolidator:
                     if not other_memory:
                         continue
 
-                    is_dup = await self.memory_manager.check_duplicate_with_llm(
+                    is_dup = await self.memory_manager._check_duplicate_with_llm(
                         memory.content, other_memory.content
                     )
 

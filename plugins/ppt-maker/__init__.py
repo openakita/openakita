@@ -1,0 +1,2 @@
+"""ppt-maker plugin package."""
+

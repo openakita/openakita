@@ -154,7 +154,7 @@ class ToolRegistry:
 
         for tc in tool_calls:
             name = tc.get("name", "")
-            inp = tc.get("input", {})
+            inp = tc.get("input", tc.get("arguments", {}))
             is_safe = self.is_concurrency_safe(name, inp)
 
             if is_safe:

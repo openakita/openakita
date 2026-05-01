@@ -1764,6 +1764,80 @@ async function api(method, path, body) {
   return json;
 }
 
+/* ── Async ingest helper ──
+   `/ingest` and `/ingest/source/{id}` return immediately with a
+   `task_id` and run in the background so the host iframe bridge's
+   30s hard timeout never trips on first-run fan-outs. We poll
+   `/tasks/{task_id}` until terminal and rebuild a `summary`-shaped
+   response so all the legacy probe / report / Today-tab callers can
+   keep reading `resp.summary.totals` without changes downstream.
+
+   `kind` controls the polling cadence: full-fan-out runs ("all"
+   mode) start at 800ms and back off to 2s; a single-source probe
+   ("single") starts at 300ms and tops out at 1s so the Settings
+   button feels snappy. The hard wall is 5 minutes — anything past
+   that almost certainly means a stuck upstream and we surface it
+   as `error_kind="timeout"`. */
+const INGEST_TERMINAL_STATUS = { succeeded: 1, skipped: 1, failed: 1, canceled: 1 };
+async function _waitForIngestTask(taskId, opts) {
+  const kind = (opts && opts.kind) || "all";
+  const maxWaitMs = (opts && opts.maxWaitMs) || 5 * 60 * 1000;
+  const initial = kind === "single" ? 300 : 800;
+  const ceiling = kind === "single" ? 1000 : 2000;
+  const started = Date.now();
+  let delay = initial;
+  /* eslint-disable no-await-in-loop */
+  while (Date.now() - started < maxWaitMs) {
+    await new Promise(function (r) { setTimeout(r, delay); });
+    delay = Math.min(Math.round(delay * 1.4), ceiling);
+    let row;
+    try {
+      row = await api("GET", "/tasks/" + encodeURIComponent(taskId));
+    } catch (err) {
+      continue;
+    }
+    if (!row || !row.ok || !row.task) continue;
+    var task = row.task;
+    if (task.status && INGEST_TERMINAL_STATUS[String(task.status).toLowerCase()]) {
+      var summary = task.result || {};
+      var ok = task.status === "succeeded" || task.status === "skipped";
+      return {
+        ok: ok,
+        task_id: taskId,
+        status: task.status,
+        summary: summary,
+        error_kind: task.error_kind || (summary && summary.error_kind) || null,
+        error_message: task.error_message || null,
+        detail: ok ? undefined : (task.error_message || task.error_kind || ("status_" + task.status)),
+      };
+    }
+  }
+  return {
+    ok: false,
+    task_id: taskId,
+    status: "timeout",
+    error_kind: "timeout",
+    detail: "ingest task " + taskId + " did not complete within " + Math.round(maxWaitMs / 1000) + "s",
+  };
+}
+
+/* Kick off an ingest run and resolve only when the backend task
+   reaches a terminal status. Accepts the same (path, body) shape as
+   the underlying `api()` helper so callers don't have to know about
+   the async/poll plumbing. */
+async function ingestAndWait(path, body, opts) {
+  let resp;
+  try {
+    resp = await api("POST", path, body);
+  } catch (err) {
+    return { ok: false, detail: (err && err.message) || String(err) };
+  }
+  if (!resp || !resp.ok) return resp || { ok: false, detail: "no-response" };
+  if (resp.summary) return resp;
+  if (!resp.task_id) return resp;
+  return await _waitForIngestTask(resp.task_id, opts || {});
+}
+
 /* ── Settings hook (Phase 1 placeholder — Phase 6 hydrates from /config) ── */
 function useSettings() {
   /* `available_channels` here holds the host's rich channel entries
@@ -2700,12 +2774,7 @@ function TodayTab() {
       var target = src && src.kind === "newsnow" ? src.id : (src ? (src.probe_target || src.fetcher_id || src.id) : opts.sourceId);
       const path = single ? ("/ingest/source/" + encodeURIComponent(target)) : "/ingest";
       const body = single ? null : { since_hours: 24 };
-      let resp = null;
-      try {
-        resp = await api("POST", path, body);
-      } catch (err) {
-        resp = { ok: false, detail: (err && err.message) || String(err) };
-      }
+      const resp = await ingestAndWait(path, body, { kind: single ? "single" : "all" });
       const summary = (resp && resp.summary) || {};
       const totals = summary.totals || {};
       const bySource = summary.by_source || {};
@@ -3501,7 +3570,11 @@ function DigestsTab() {
       const runCfg = cfg || reportConfigs[session] || customReports.find(function (r) { return r.session === session; }) || reportConfigs.morning;
       const sourceIds = Array.isArray(runCfg.source_ids) ? runCfg.source_ids : [];
       if (runCfg.preIngest) {
-        await api("POST", "/ingest", {since_hours: runCfg.since_hours, sources: sourceIds.length ? sourceIds : undefined});
+        await ingestAndWait(
+          "/ingest",
+          {since_hours: runCfg.since_hours, sources: sourceIds.length ? sourceIds : undefined},
+          { kind: "all" }
+        );
       }
       const resp = await api("POST", "/digest/run", {
         session: session,
@@ -5104,7 +5177,7 @@ function SettingsForm(props) {
     var endpoint = "/ingest/source/" + encodeURIComponent(sid);
     setProbingIds(function (p) { return Object.assign({}, p, {[sid]: true}); });
     try {
-      var resp = await api("POST", endpoint);
+      var resp = await ingestAndWait(endpoint, null, { kind: "single" });
       if (resp && resp.ok) {
         setProbeStates(function (p) { return Object.assign({}, p, {[sid]: "ok"}); });
         setProbeLabels(function (p) { return Object.assign({}, p, {[sid]: _probeSummaryLabel(resp.summary, t)}); });
@@ -5124,7 +5197,11 @@ function SettingsForm(props) {
     setProbingIds(function (p) { return Object.assign({}, p, {[key]: true}); });
     try {
       var payload = key === "newsnow" ? null : {sources: sources.map(function (s) { return s.fetcher_id || s.id; })};
-      var resp = await api("POST", key === "newsnow" ? "/ingest/source/newsnow" : "/ingest", payload);
+      var resp = await ingestAndWait(
+        key === "newsnow" ? "/ingest/source/newsnow" : "/ingest",
+        payload,
+        { kind: "all" }
+      );
       if (resp && resp.ok) {
         setProbeStates(function (p) { return Object.assign({}, p, {[key]: "ok"}); });
         setProbeLabels(function (p) { return Object.assign({}, p, {[key]: _probeSummaryLabel(resp.summary, t)}); });

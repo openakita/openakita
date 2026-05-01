@@ -119,6 +119,9 @@ class ProfileCreateRequest(BaseModel):
     identity_mode: Literal["shared", "custom"] = "shared"
     memory_mode: Literal["shared", "isolated"] = "shared"
     memory_inherit_global: bool = True
+    runtime_env_mode: Literal["shared", "agent", "custom"] = "shared"
+    runtime_env_dependencies: list[str] = Field(default_factory=list)
+    runtime_env_python: str | None = Field(None, max_length=1000)
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -140,6 +143,9 @@ class ProfileUpdateRequest(BaseModel):
     identity_mode: Literal["shared", "custom"] | None = None
     memory_mode: Literal["shared", "isolated"] | None = None
     memory_inherit_global: bool | None = None
+    runtime_env_mode: Literal["shared", "agent", "custom"] | None = None
+    runtime_env_dependencies: list[str] | None = None
+    runtime_env_python: str | None = Field(None, max_length=1000)
 
 
 class ProfileVisibilityRequest(BaseModel):
@@ -156,24 +162,27 @@ def _mask_credential_value(value: str) -> str:
 
 
 def _mask_bot_credentials(bot: dict) -> dict:
+    from openakita.utils.redaction import redact_value
+
     result = dict(bot)
     creds = result.get("credentials")
     if isinstance(creds, dict):
-        result["credentials"] = {
-            k: _mask_credential_value(v) if isinstance(v, str) else v
-            for k, v in creds.items()
-        }
+        result["credentials"] = redact_value(creds)
     return result
 
 
 def _unmask_credentials(submitted: dict, stored: dict) -> dict:
     """Restore original values when the submitted value matches its masked form."""
+    from openakita.utils.redaction import REDACTION
+
     result = dict(submitted)
     for key, new_val in submitted.items():
         if not isinstance(new_val, str) or key not in stored:
             continue
         stored_val = stored.get(key)
-        if isinstance(stored_val, str) and new_val == _mask_credential_value(stored_val):
+        if isinstance(stored_val, str) and (
+            new_val == REDACTION or new_val == _mask_credential_value(stored_val)
+        ):
             result[key] = stored_val
     return result
 
@@ -489,6 +498,9 @@ async def create_agent_profile(body: ProfileCreateRequest):
         identity_mode=body.identity_mode,
         memory_mode=body.memory_mode,
         memory_inherit_global=body.memory_inherit_global,
+        runtime_env_mode=body.runtime_env_mode,
+        runtime_env_dependencies=body.runtime_env_dependencies,
+        runtime_env_python=body.runtime_env_python,
         created_by="user",
     )
 

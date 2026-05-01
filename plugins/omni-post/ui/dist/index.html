@@ -980,6 +980,21 @@ const I18N_DICT = {
     "omniPost.engine.desc.mp": "MultiPost：需浏览器 + 扩展，复用日常登录态。",
     "omniPost.settings.section.engine": "引擎",
     "omniPost.settings.section.runtime": "运行时",
+    "omniPost.settings.section.deps": "依赖与运行环境",
+    "omniPost.settings.deps.desc": "这些依赖只影响本插件：cryptography 用于加密账号 Cookie；FFmpeg/FFprobe 用于素材元数据和缩略图；Playwright Chromium 用于自研发布引擎。",
+    "omniPost.settings.deps.status.ok": "已就绪",
+    "omniPost.settings.deps.status.missing": "未就绪",
+    "omniPost.settings.deps.status.installing": "安装中",
+    "omniPost.settings.deps.install": "安装",
+    "omniPost.settings.deps.recheck": "重新检测",
+    "omniPost.settings.deps.path": "路径：{path}",
+    "omniPost.settings.deps.version": "版本：{version}",
+    "omniPost.settings.deps.target": "安装目标：{path}",
+    "omniPost.settings.deps.manual": "手动命令",
+    "omniPost.settings.deps.log": "安装日志",
+    "omniPost.settings.deps.systemNotice": "FFmpeg/FFprobe 是系统级组件，安装会影响所有使用它们的程序；Playwright Chromium 安装在用户缓存目录。",
+    "omniPost.settings.deps.installOk": "依赖已安装",
+    "omniPost.settings.deps.installFail": "安装失败：{msg}",
     "omniPost.settings.section.scheduler": "调度与自愈",
     "omniPost.settings.field.headless": "Playwright 无头模式",
     "omniPost.settings.field.headless.desc": "生产服务器建议开启；本地调试时关闭可以看到真实浏览器。",
@@ -1193,6 +1208,21 @@ const I18N_DICT = {
     "omniPost.engine.desc.mp": "MultiPost: needs a browser + extension, reuses everyday logins.",
     "omniPost.settings.section.engine": "Engine",
     "omniPost.settings.section.runtime": "Runtime",
+    "omniPost.settings.section.deps": "Dependencies & Runtime",
+    "omniPost.settings.deps.desc": "These dependencies are scoped to this plugin: cryptography encrypts account cookies; FFmpeg/FFprobe extract media metadata and thumbnails; Playwright Chromium powers the self-developed publishing engine.",
+    "omniPost.settings.deps.status.ok": "Ready",
+    "omniPost.settings.deps.status.missing": "Missing",
+    "omniPost.settings.deps.status.installing": "Installing",
+    "omniPost.settings.deps.install": "Install",
+    "omniPost.settings.deps.recheck": "Re-check",
+    "omniPost.settings.deps.path": "Path: {path}",
+    "omniPost.settings.deps.version": "Version: {version}",
+    "omniPost.settings.deps.target": "Target: {path}",
+    "omniPost.settings.deps.manual": "Manual command",
+    "omniPost.settings.deps.log": "Install log",
+    "omniPost.settings.deps.systemNotice": "FFmpeg/FFprobe are system-wide components and may affect other programs; Playwright Chromium is installed in the user browser cache.",
+    "omniPost.settings.deps.installOk": "Dependency installed",
+    "omniPost.settings.deps.installFail": "Install failed: {msg}",
     "omniPost.settings.section.scheduler": "Scheduler & self-heal",
     "omniPost.settings.field.headless": "Playwright headless mode",
     "omniPost.settings.field.headless.desc": "Recommended on prod servers; turn off locally to see the real browser.",
@@ -3102,6 +3132,124 @@ function MultiPostGuide() {
   );
 }
 
+function DependencyPanel() {
+  const t = useT();
+  const [items, setItems] = useState([]);
+  const [busyId, setBusyId] = useState("");
+  const pollRef = useRef(null);
+
+  function bodyOf(resp) {
+    return resp && resp.body ? resp.body : (resp || {});
+  }
+
+  const refresh = useCallback(async function () {
+    const py = await pluginApi("GET", "/python-deps/components").catch(function () { return null; });
+    const sys = await pluginApi("GET", "/system/components").catch(function () { return null; });
+    const pyItems = (bodyOf(py).items || []).map(function (x) { return Object.assign({ group: "python" }, x); });
+    const sysItems = (bodyOf(sys).items || []).map(function (x) { return Object.assign({ group: "system" }, x); });
+    setItems(pyItems.concat(sysItems));
+  }, []);
+
+  useEffect(function () { refresh(); }, [refresh]);
+  useEffect(function () {
+    if (!busyId) {
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = null;
+      return;
+    }
+    const tick = async function () {
+      const current = items.find(function (x) { return x.id === busyId; });
+      const prefix = current && current.group === "python" ? "/python-deps/" : "/system/";
+      const r = await pluginApi("GET", prefix + encodeURIComponent(busyId) + "/status").catch(function () { return null; });
+      const st = bodyOf(r);
+      await refresh();
+      if (!st.busy) {
+        setBusyId("");
+        if (st.found) showToast(t("omniPost.settings.deps.installOk"), "success");
+        else showToast(t("omniPost.settings.deps.installFail", { msg: st.error || "missing" }), "error");
+      }
+    };
+    tick();
+    pollRef.current = setInterval(tick, 3000);
+    return function () { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [busyId, items, refresh, t]);
+
+  async function install(item) {
+    if (!item || busyId) return;
+    setBusyId(item.id);
+    const prefix = item.group === "python" ? "/python-deps/" : "/system/";
+    const body = item.group === "python" ? {} : { method_index: 0 };
+    const r = await pluginApi("POST", prefix + encodeURIComponent(item.id) + "/install", body)
+      .catch(function (err) { return { ok: false, body: { error: err && err.message } }; });
+    const b = bodyOf(r);
+    if (b.ok === false || (r && r.ok === false)) {
+      setBusyId("");
+      showToast(t("omniPost.settings.deps.installFail", { msg: b.error || b.detail || r.status }), "error");
+    }
+    refresh();
+  }
+
+  function statusBadge(item) {
+    if (item.busy || busyId === item.id) {
+      return <span className="badge badge-running">{t("omniPost.settings.deps.status.installing")}</span>;
+    }
+    return item.found
+      ? <span className="badge badge-done">{t("omniPost.settings.deps.status.ok")}</span>
+      : <span className="badge badge-failed">{t("omniPost.settings.deps.status.missing")}</span>;
+  }
+
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <Ico name="cog" />
+        <h3 style={{ margin: 0 }}>{t("omniPost.settings.section.deps")}</h3>
+        <span style={{ flex: 1 }} />
+        <button className="btn btn-sm" onClick={refresh}>{t("omniPost.settings.deps.recheck")}</button>
+      </div>
+      <p className="cal-sub" style={{ marginTop: 0 }}>{t("omniPost.settings.deps.desc")}</p>
+      <p className="cal-sub" style={{ marginTop: 0 }}>{t("omniPost.settings.deps.systemNotice")}</p>
+      <div style={{ display: "grid", gap: 10 }}>
+        {items.map(function (item) {
+          const canInstall = !item.found && (
+            item.group === "python" || (item.methods && item.methods.length && item.methods[0].command_hint)
+          );
+          const path = item.import_path || item.location || "";
+          return (
+            <div key={item.group + ":" + item.id} className="lib-card">
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <strong>{item.label || item.id}</strong>
+                {statusBadge(item)}
+                {item.version ? <span className="badge badge-pending">{t("omniPost.settings.deps.version", { version: item.version })}</span> : null}
+                <span style={{ flex: 1 }} />
+                {canInstall && (
+                  <button className="btn btn-sm btn-primary" disabled={!!busyId} onClick={function () { install(item); }}>
+                    {t("omniPost.settings.deps.install")}
+                  </button>
+                )}
+              </div>
+              {path ? <p className="cal-sub mono" style={{ margin: "6px 0 0 0" }}>{t("omniPost.settings.deps.path", { path })}</p> : null}
+              {item.target_dir ? <p className="cal-sub mono" style={{ margin: "4px 0 0 0" }}>{t("omniPost.settings.deps.target", { path: item.target_dir })}</p> : null}
+              {item.error ? <p className="cal-sub" style={{ color: "var(--danger)", margin: "6px 0 0 0" }}>{item.error}</p> : null}
+              {item.manual_command ? (
+                <div style={{ marginTop: 6 }}>
+                  <button className="btn btn-sm" onClick={function () { copyToClipboard(item.manual_command); }}>
+                    {t("omniPost.settings.deps.manual")}
+                  </button>
+                </div>
+              ) : null}
+              {item.log_tail && item.log_tail.length ? (
+                <pre className="mono text-xs" style={{ whiteSpace: "pre-wrap", margin: "8px 0 0 0", maxHeight: 120, overflow: "auto" }}>
+                  {item.log_tail.join("\n")}
+                </pre>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Settings tab (S4) ────────────────────────────────────────────── */
 function SettingsTab() {
   const t = useT();
@@ -3109,7 +3257,7 @@ function SettingsTab() {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(function () {
-    pluginApi("GET", "/settings").then(function (r) { setDraft(r || {}); })
+    pluginApi("GET", "/settings").then(function (r) { setDraft((r && r.body) || r || {}); })
                                  .catch(function () { setDraft({}); });
   }, []);
 
@@ -3145,7 +3293,7 @@ function SettingsTab() {
         if (draft[k] !== undefined && draft[k] !== null) patch[k] = draft[k];
       });
       const r = await pluginApi("PUT", "/settings", patch);
-      if (r && typeof r === "object") setDraft(r);
+      if (r && typeof r === "object") setDraft(r.body || r);
       showToast(t("omniPost.settings.saved"), "success");
     } catch (err) {
       showToast(t("omniPost.settings.save.failed").replace("{err}", String(err && err.message || err)), "error");
@@ -3175,6 +3323,7 @@ function SettingsTab() {
       </div>
       <div className="tab-panel" style={{ maxWidth: 880 }}>
       <MultiPostGuide />
+      <DependencyPanel />
 
       {/* Engine ---------------------------------------------------- */}
       <div className="card" style={{ padding: 16, marginBottom: 12 }}>

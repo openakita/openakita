@@ -1,0 +1,2 @@
+"""word-maker plugin package."""
+

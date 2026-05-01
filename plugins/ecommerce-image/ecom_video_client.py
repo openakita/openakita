@@ -135,7 +135,7 @@ class EcomVideoClient:
             lower = (msg or "").lower()
             if resp.status_code in (401, 403) or "api key" in lower or "ak/sk" in lower:
                 raise RuntimeError(
-                    "Ark API key 无效或未配置。请到「电商内容生成 → 设置 → "
+                    "Ark API key 无效或未配置。请到「电商素材小助理 → 设置 → "
                     "Ark API Key」重新填入有效的火山方舟 API Key（控制台地址："
                     "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey ）。"
                     f"原始错误：{msg}"

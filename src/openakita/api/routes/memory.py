@@ -14,7 +14,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from openakita.memory.types import MemoryType, SemanticMemory
+from openakita.memory.retention import apply_retention
+from openakita.memory.types import MemoryPriority, MemoryType, SemanticMemory
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,14 @@ def _serialize(mem: Any) -> dict:
     }
 
 
+def _priority_for_importance(mem_type: MemoryType, importance: float) -> MemoryPriority:
+    if importance >= 0.85 or mem_type == MemoryType.RULE:
+        return MemoryPriority.PERMANENT
+    if importance >= 0.6:
+        return MemoryPriority.LONG_TERM
+    return MemoryPriority.SHORT_TERM
+
+
 @router.post("")
 async def create_memory(request: Request, body: MemoryCreateRequest):
     """Create a new memory entry from the chat UI."""
@@ -122,23 +131,29 @@ async def create_memory(request: Request, body: MemoryCreateRequest):
     if not store:
         raise HTTPException(503, "Memory store not available")
     try:
-        mem_type = MemoryType.FACT
+        content = body.content.strip()
+        if not content:
+            raise HTTPException(400, "Memory content cannot be empty")
         try:
             mem_type = MemoryType(body.type)
         except ValueError:
-            pass
+            raise HTTPException(400, f"Invalid memory type: {body.type}") from None
         mem = SemanticMemory(
             type=mem_type,
-            content=body.content,
+            priority=_priority_for_importance(mem_type, body.importance_score),
+            content=content,
             source="chat_ui",
             subject=body.subject or "",
             predicate=body.predicate or "",
             importance_score=body.importance_score,
             tags=body.tags or [],
         )
+        apply_retention(mem)
         mem_id = store.save_semantic(mem)
         _sync_json(request)
         return {"status": "ok", "id": mem_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Failed to save memory: {e}")
 
@@ -154,6 +169,7 @@ async def list_memories(
     offset: int = 0,
     sort_by: str = "importance_score",
     sort_order: str = "desc",
+    include_inactive: bool = False,
 ):
     store = _get_store(request)
     if not store:
@@ -163,7 +179,12 @@ async def list_memories(
     search = search or q
 
     if search:
-        results = store.search_semantic(search, limit=limit, filter_type=type)
+        results = store.search_semantic(
+            search,
+            limit=limit,
+            filter_type=type,
+            include_inactive=include_inactive,
+        )
         return {
             "memories": [_serialize(m) for m in results],
             "total": len(results),
@@ -178,6 +199,9 @@ async def list_memories(
         sort_order=sort_order,
         limit=limit,
         offset=offset,
+        scope="global",
+        scope_owner="",
+        include_inactive=include_inactive,
     )
     return {
         "memories": [_serialize(m) for m in results],
@@ -447,7 +471,10 @@ async def update_memory(request: Request, memory_id: str, body: MemoryUpdateRequ
 
     updates: dict = {}
     if body.content is not None:
-        updates["content"] = body.content
+        content = body.content.strip()
+        if not content:
+            raise HTTPException(400, "Memory content cannot be empty")
+        updates["content"] = content
     if body.importance_score is not None:
         updates["importance_score"] = body.importance_score
     if body.tags is not None:

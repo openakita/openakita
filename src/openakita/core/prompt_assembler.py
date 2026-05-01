@@ -74,6 +74,10 @@ class PromptAssembler:
         user_input_tokens: int = 0,
         prompt_profile: "Any | None" = None,
         prompt_tier: "Any | None" = None,
+        prompt_mode: "Any | None" = None,
+        memory_scope: "Any | None" = None,
+        catalog_scope: list[str] | None = None,
+        include_project_guidelines: bool | None = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2) - 异步版本。
@@ -128,6 +132,10 @@ class PromptAssembler:
             context_window=context_window,
             prompt_profile=prompt_profile,
             prompt_tier=prompt_tier,
+            prompt_mode=prompt_mode,
+            memory_scope=memory_scope,
+            catalog_scope=catalog_scope,
+            include_project_guidelines=include_project_guidelines,
         )
 
     def _build_compiled_sync(

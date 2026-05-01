@@ -579,16 +579,33 @@ class MemoryStorage:
                     raise
                 logger.error(f"Failed to batch save memories: {e}")
 
-    def load_all(self, scope: str = "global", scope_owner: str = "") -> list[dict]:
+    def load_all(
+        self,
+        scope: str = "global",
+        scope_owner: str = "",
+        *,
+        active_only: bool = True,
+    ) -> list[dict]:
         if not self._conn:
             return []
         try:
+            conditions = [
+                "(scope IS NULL OR scope = ?)",
+                "(scope_owner IS NULL OR scope_owner = ?)",
+            ]
+            params: list[Any] = [scope, scope_owner]
+            if active_only:
+                conditions.extend(
+                    [
+                        "(expires_at IS NULL OR expires_at >= ?)",
+                        "(superseded_by IS NULL OR superseded_by = '')",
+                    ]
+                )
+                params.append(datetime.now().isoformat())
+            where = " AND ".join(conditions)
             cursor = self._conn.execute(
-                "SELECT * FROM memories "
-                "WHERE (scope IS NULL OR scope = ?) "
-                "AND (scope_owner IS NULL OR scope_owner = ?) "
-                "ORDER BY created_at DESC",
-                (scope, scope_owner),
+                f"SELECT * FROM memories WHERE {where} ORDER BY created_at DESC",
+                params,
             )
             return self._rows_to_dicts(cursor)
         except Exception as e:
@@ -643,6 +660,7 @@ class MemoryStorage:
             "metadata",
             "scope",
             "scope_owner",
+            "expires_at",
         }
         filtered = {k: v for k, v in updates.items() if k in allowed}
         if not filtered:
@@ -680,6 +698,7 @@ class MemoryStorage:
         scope_owner: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        active_only: bool = True,
     ) -> list[dict]:
         if not self._conn:
             return []
@@ -708,6 +727,10 @@ class MemoryStorage:
         if scope_owner is not None:
             conditions.append("(scope_owner IS NULL OR scope_owner = ?)")
             params.append(scope_owner)
+        if active_only:
+            conditions.append("(expires_at IS NULL OR expires_at >= ?)")
+            params.append(datetime.now().isoformat())
+            conditions.append("(superseded_by IS NULL OR superseded_by = '')")
 
         where = " AND ".join(conditions) if conditions else "1=1"
         params.extend([limit, offset])
@@ -729,6 +752,7 @@ class MemoryStorage:
         memory_type: str | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        active_only: bool = True,
     ) -> int:
         if not self._conn:
             return 0
@@ -744,6 +768,10 @@ class MemoryStorage:
             if scope_owner is not None:
                 conditions.append("(scope_owner IS NULL OR scope_owner = ?)")
                 params.append(scope_owner)
+            if active_only:
+                conditions.append("(expires_at IS NULL OR expires_at >= ?)")
+                params.append(datetime.now().isoformat())
+                conditions.append("(superseded_by IS NULL OR superseded_by = '')")
             where = " AND ".join(conditions) if conditions else "1=1"
             cur = self._conn.execute(f"SELECT COUNT(*) FROM memories WHERE {where}", params)
             return cur.fetchone()[0]
@@ -766,6 +794,7 @@ class MemoryStorage:
         sort_order: str = "desc",
         limit: int = 50,
         offset: int = 0,
+        active_only: bool = True,
     ) -> tuple[list[dict], int]:
         """Paginated query with SQL-level sorting. Returns (rows, total_count)."""
         if not self._conn:
@@ -791,6 +820,10 @@ class MemoryStorage:
         if scope_owner is not None:
             conditions.append("(scope_owner IS NULL OR scope_owner = ?)")
             params.append(scope_owner)
+        if active_only:
+            conditions.append("(expires_at IS NULL OR expires_at >= ?)")
+            params.append(datetime.now().isoformat())
+            conditions.append("(superseded_by IS NULL OR superseded_by = '')")
 
         where = " AND ".join(conditions) if conditions else "1=1"
 
@@ -824,6 +857,7 @@ class MemoryStorage:
         limit: int = 10,
         scope: str | None = None,
         scope_owner: str | None = None,
+        active_only: bool = True,
     ) -> list[dict]:
         """Full-text search using FTS5 with BM25 ranking, with LIKE fallback for CJK.
 
@@ -842,6 +876,10 @@ class MemoryStorage:
         if scope_owner is not None:
             scope_clauses.append("(m.scope_owner IS NULL OR m.scope_owner = ?)")
             scope_params.append(scope_owner)
+        if active_only:
+            scope_clauses.append("(m.expires_at IS NULL OR m.expires_at >= ?)")
+            scope_params.append(datetime.now().isoformat())
+            scope_clauses.append("(m.superseded_by IS NULL OR m.superseded_by = '')")
         scope_where = (" AND " + " AND ".join(scope_clauses)) if scope_clauses else ""
 
         try:
@@ -877,6 +915,10 @@ class MemoryStorage:
             if scope_owner is not None:
                 where += " AND (scope_owner IS NULL OR scope_owner = ?)"
                 like_params.append(scope_owner)
+            if active_only:
+                where += " AND (expires_at IS NULL OR expires_at >= ?)"
+                like_params.append(datetime.now().isoformat())
+                where += " AND (superseded_by IS NULL OR superseded_by = '')"
             like_params.append(limit)
             cursor = self._conn.execute(
                 f"SELECT * FROM memories WHERE {where} LIMIT ?",
@@ -1715,6 +1757,22 @@ class MemoryStorage:
                     raise
                 logger.error(f"Failed to cleanup expired memories: {e}")
                 return 0
+
+    def get_expired_memory_ids(self) -> list[str]:
+        if not self._conn:
+            return []
+        now = datetime.now().isoformat()
+        try:
+            cursor = self._conn.execute(
+                "SELECT id FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?",
+                (now,),
+            )
+            return [row["id"] for row in self._rows_to_dicts(cursor)]
+        except Exception as e:
+            if _is_db_locked(e):
+                raise
+            logger.error(f"Failed to list expired memories: {e}")
+            return []
 
     def close(self) -> None:
         with self._lock:

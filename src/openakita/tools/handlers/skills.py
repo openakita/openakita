@@ -329,6 +329,11 @@ class SkillsHandler:
             output += f"**许可证**: {skill.license}\n"
         if skill.compatibility:
             output += f"**兼容性**: {skill.compatibility}\n"
+        if getattr(skill, "python_env", "") or getattr(skill, "python_dependencies", None):
+            output += f"**Python 环境**: {getattr(skill, 'python_env', '') or 'agent'}\n"
+            deps = list(getattr(skill, "python_dependencies", []) or [])
+            if deps:
+                output += f"**Python 依赖**: {', '.join(deps)}\n"
         if skill.model:
             output += f"**推荐模型**: {skill.model}\n"
         if skill.execution_context and skill.execution_context != "inline":
@@ -385,9 +390,66 @@ class SkillsHandler:
             if not allowed:
                 return f"❌ 工作目录被拒绝: {cwd_raw}\ncwd 只能位于项目工作区或技能目录内。"
 
+        skill_entry = self.agent.skill_registry.get(skill_name)
+        python_executable: str | None = None
+        script_env: dict[str, str] | None = None
+        env_scope = "legacy"
+        deps_hash = ""
+        try:
+            import os
+            import time
+
+            deps = list(getattr(skill_entry, "python_dependencies", []) or []) if skill_entry else []
+            py_env = (getattr(skill_entry, "python_env", "") or "").strip().lower() if skill_entry else ""
+            spec = None
+            if skill_entry and (deps or py_env == "skill"):
+                from ...runtime_envs import (
+                    apply_execution_environment,
+                    ensure_execution_env,
+                    resolve_skill_env,
+                )
+
+                spec = ensure_execution_env(resolve_skill_env(skill_entry.skill_id, deps=deps))
+                env_scope = "skill"
+                deps_hash = spec.deps_hash
+                python_executable = str(spec.python_path)
+                script_env = apply_execution_environment(os.environ.copy(), spec)
+            elif getattr(self.agent, "_execution_env_spec", None) is not None:
+                from ...runtime_envs import apply_execution_environment, ensure_execution_env
+
+                spec = ensure_execution_env(getattr(self.agent, "_execution_env_spec"))
+                env_scope = "agent"
+                deps_hash = spec.deps_hash
+                python_executable = str(spec.python_path)
+                script_env = apply_execution_environment(os.environ.copy(), spec)
+        except Exception as exc:
+            return f"❌ 技能 Python 环境准备失败:\n{exc}"
+
+        started_at = time.monotonic()
         success, output = self.agent.skill_loader.run_script(
-            skill_name, script_name, args, cwd=resolved_cwd
+            skill_name,
+            script_name,
+            args,
+            cwd=resolved_cwd,
+            python_executable=python_executable,
+            env=script_env,
         )
+
+        try:
+            from ...experience import get_tool_experience_tracker
+
+            get_tool_experience_tracker().record(
+                tool_name="run_skill_script",
+                agent_profile_id=getattr(self.agent, "_agent_profile_id", "default"),
+                skill_name=skill_entry.skill_id if skill_entry else skill_name,
+                env_scope=env_scope,
+                deps_hash=deps_hash,
+                success=success,
+                duration_ms=(time.monotonic() - started_at) * 1000,
+                output=output,
+            )
+        except Exception:
+            pass
 
         if success:
             return f"✅ 脚本执行成功:\n{output}"
@@ -637,7 +699,11 @@ class SkillsHandler:
         action = SkillEvent.DISABLE if any_disabled else SkillEvent.ENABLE
         self.agent.propagate_skill_change(action, rescan=False)
 
-        output = f"✅ 技能状态已更新（{len(applied)} 项变更）\n\n"
+        output = (
+            f"✅ 外部技能启用列表已更新（{len(applied)} 项变更）\n\n"
+            "说明: 本操作只修改 `data/skills.json` 的 `external_allowlist`，"
+            "不修改安全策略白名单或 IM 白名单。\n\n"
+        )
         if reason:
             output += f"**原因**: {reason}\n\n"
         output += "**变更详情**:\n"

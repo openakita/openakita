@@ -24,6 +24,7 @@ from __future__ import annotations
 from openakita.core.supervisor import (
     InterventionLevel,
     RuntimeSupervisor,
+    SIGNATURE_REPEAT_STRATEGY_SWITCH,
     SIGNATURE_REPEAT_TERMINATE,
     UNPRODUCTIVE_ADMIN_TOOLS,
 )
@@ -69,10 +70,21 @@ class TestVaryingParamsDoNotTerminate:
         for i in range(8):
             sup.record_tool_signature(f"update_todo_step(step_{i})")
         out = sup._check_signature_repeat(iteration=8)
-        if out is not None:
-            assert out.level == InterventionLevel.NUDGE
-            assert not out.should_terminate
-            assert not out.should_rollback
+        assert out is None
+
+    def test_web_search_with_distinct_queries_does_not_intervene(self):
+        sup = RuntimeSupervisor(enabled=True)
+        for i in range(8):
+            sup.record_tool_signature(f"web_search(query_hash_{i})")
+        out = sup._check_signature_repeat(iteration=8)
+        assert out is None
+
+    def test_any_tool_with_distinct_args_does_not_intervene(self):
+        sup = RuntimeSupervisor(enabled=True)
+        for i in range(8):
+            sup.record_tool_signature(f"custom_tool(arg_hash_{i})")
+        out = sup._check_signature_repeat(iteration=8)
+        assert out is None
 
     def test_terminal_file_polling_is_capped_at_nudge(self):
         """Monitoring a background command by repeatedly reading its terminal
@@ -151,6 +163,18 @@ class TestExactRepeatStillTerminates:
         assert out.should_rollback
         assert out.should_inject_prompt
         assert "完全相同参数连续重复" in out.prompt_injection
+
+    def test_repeated_web_fetch_strategy_switch_throttles_network_tool(self):
+        sup = RuntimeSupervisor(enabled=True)
+        for _ in range(SIGNATURE_REPEAT_STRATEGY_SWITCH):
+            sup.record_tool_signature("web_fetch(same_url_hash)")
+
+        out = sup._check_signature_repeat(iteration=SIGNATURE_REPEAT_STRATEGY_SWITCH)
+
+        assert out is not None
+        assert out.level == InterventionLevel.STRATEGY_SWITCH
+        assert out.throttled_tool_names == ["web_fetch"]
+        assert "缓存摘要" in out.prompt_injection
 
 
 # ---------------------------------------------------------------------------

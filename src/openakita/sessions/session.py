@@ -74,6 +74,7 @@ class SessionContext:
     current_topic_start: int = 0  # 当前话题起始消息索引
     agent_profile_id: str = "default"
     agent_switch_history: list[dict] = field(default_factory=list)
+    working_facts: dict[str, Any] = field(default_factory=dict)
     handoff_events: list[dict] = field(default_factory=list)  # agent_handoff events for SSE
     # Active agents in this session (multi-agent collaboration)
     active_agents: list[str] = field(default_factory=list)
@@ -179,6 +180,7 @@ class SessionContext:
             "current_topic_start": self.current_topic_start,
             "agent_profile_id": self.agent_profile_id,
             "agent_switch_history": self.agent_switch_history,
+            "working_facts": self.working_facts,
             "handoff_events": self.handoff_events,
             "active_agents": self.active_agents,
             "delegation_chain": self.delegation_chain,
@@ -198,6 +200,7 @@ class SessionContext:
             current_topic_start=data.get("current_topic_start", 0),
             agent_profile_id=data.get("agent_profile_id", "default"),
             agent_switch_history=data.get("agent_switch_history", []),
+            working_facts=data.get("working_facts", {}),
             handoff_events=data.get("handoff_events", []),
             active_agents=data.get("active_agents", []),
             delegation_chain=data.get("delegation_chain", []),

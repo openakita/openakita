@@ -61,7 +61,6 @@ from avatar_models import (
     check_audio_duration,
     estimate_cost,
 )
-from avatar_tts_edge import EDGE_VOICES
 from avatar_pipeline import (
     AvatarPipelineContext,
     run_pipeline,
@@ -78,6 +77,7 @@ from avatar_studio_inline.upload_preview import (
 )
 from avatar_studio_inline.vendor_client import VendorError
 from avatar_task_manager import AvatarTaskManager
+from avatar_tts_edge import EDGE_VOICES
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -88,6 +88,36 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "avatar-studio"
 SETTINGS_KEY = "avatar_studio_settings"
+
+# Plugin's own directory — used by ``dep_bootstrap`` to locate the
+# ``deps/`` subdir managed by the host's ``install_pip_deps``. Resolved
+# at module-import time so on_load (and any background workers) see a
+# stable value even if the process later changes cwd.
+PLUGIN_DIR = Path(__file__).resolve().parent
+
+PYTHON_DEPS: dict[str, dict[str, str]] = {
+    "oss2": {
+        "id": "oss2",
+        "display_name": "阿里云 OSS SDK",
+        "description": "上传图片、音频、视频到 OSS，给 DashScope 提供公网 URL。",
+        "import_name": "oss2",
+        "pip_spec": "oss2>=2.18.0",
+    },
+    "mutagen": {
+        "id": "mutagen",
+        "display_name": "Mutagen",
+        "description": "读取音频时长，避免数字人口播视频被固定为 5 秒。",
+        "import_name": "mutagen",
+        "pip_spec": "mutagen>=1.47.0",
+    },
+    "dashscope": {
+        "id": "dashscope",
+        "display_name": "DashScope SDK",
+        "description": "部分旧流程或第三方扩展会直接调用 DashScope Python SDK。",
+        "import_name": "dashscope",
+        "pip_spec": "dashscope>=1.20.0",
+    },
+}
 
 
 def _read_audio_duration(path: Path) -> float | None:
@@ -100,10 +130,29 @@ def _read_audio_duration(path: Path) -> float | None:
     5-second placeholder — which is fine for cost preview but produces
     a video that's exactly 5 s long regardless of how much was said,
     so the placeholder really is a fallback only.
+
+    Mutagen is auto-bootstrapped in the background by ``Plugin.on_load``
+    so by the time we get here it's almost always already importable;
+    when it isn't (e.g. install thread is still running, or the user is
+    offline) we silently fall back to the 5-second placeholder rather
+    than block the pipeline on a synchronous install.
     """
     try:
-        from mutagen import File as MutagenFile  # type: ignore[import-not-found]
-    except ImportError:  # pragma: no cover - declared in requirements.txt
+        from avatar_studio_inline.dep_bootstrap import ensure_importable
+
+        # We pass ``plugin_dir=None`` here on purpose: this helper is
+        # called from the pipeline worker which doesn't carry the
+        # plugin_dir reference, and the host's optional-modules dir is
+        # the dominant install target anyway. The synchronous install
+        # path inside ``ensure_importable`` is gated by ``_RESOLVED``
+        # so the second call after preinstall_async finished is free.
+        mutagen_pkg = ensure_importable(
+            "mutagen",
+            "mutagen>=1.47.0",
+            friendly_name="mutagen (audio metadata)",
+        )
+        MutagenFile = mutagen_pkg.File  # noqa: N806 - mirror upstream API
+    except Exception:  # noqa: BLE001 - missing dep must never break the pipeline
         return None
     try:
         info = MutagenFile(str(path))
@@ -381,6 +430,10 @@ class UpdateVoiceBody(BaseModel):
     label: str
 
 
+class PythonDepInstallBody(BaseModel):
+    force: bool = False
+
+
 class CreateFigureBody(BaseModel):
     model_config = _strict_model()
 
@@ -640,7 +693,41 @@ class Plugin(PluginBase):
         self._comfy_client = AvatarComfyClient(read_settings=self._read_settings)
         # Single ``OssUploader`` instance — it lazy-reads settings on every
         # call so a key rotation in Settings takes effect without reload.
-        self._oss = OssUploader(read_settings=self._read_settings)
+        # Pass ``plugin_dir`` so ``dep_bootstrap`` can probe
+        # ``<plugin_dir>/deps/`` (where the host's ``install_pip_deps``
+        # writes ``requires.pip`` packages) before falling back to
+        # ``~/.openakita/modules/avatar-studio/site-packages/``.
+        self._oss = OssUploader(
+            read_settings=self._read_settings,
+            plugin_dir=PLUGIN_DIR,
+        )
+
+        # Kick off a background ``oss2 / mutagen`` pre-install so the user's
+        # first OSS upload doesn't pay the ``pip install`` latency. Safe to
+        # call when deps are already importable — bootstrap short-circuits.
+        # We run BEFORE registering routes so the install thread has the
+        # whole route-registration phase to make progress in.
+        try:
+            import importlib
+            import sys
+
+            sys.modules.pop("avatar_studio_inline.dep_bootstrap", None)
+            importlib.invalidate_caches()
+            from avatar_studio_inline.dep_bootstrap import preinstall_async
+
+            preinstall_async(
+                [
+                    ("oss2", "oss2>=2.18.0"),
+                    ("mutagen", "mutagen>=1.47.0"),
+                ],
+                plugin_dir=PLUGIN_DIR,
+            )
+        except Exception as exc:  # noqa: BLE001
+            api.log(
+                f"avatar-studio: dep preinstall skipped ({exc!r}); "
+                "uploads will install on first use",
+                level="warning",
+            )
         self._poll_tasks: dict[str, asyncio.Task[Any]] = {}
         # Background ``wan2.2-s2v-detect`` jobs spawned from POST /figures.
         # Tracked separately from pipeline polls so DELETE /figures/{id}
@@ -1303,7 +1390,6 @@ class Plugin(PluginBase):
         try:
             cfg = self._load_settings()
             backend = ctx.params.get("backend", "dashscope")
-            tts_engine = cfg.get("tts_engine", "cosyvoice")
             workflow_id = ctx.params.get("workflow_id") or ""
             if not workflow_id and backend == "runninghub":
                 workflow_id = cfg.get(f"rh_wf_{ctx.mode}") or ""
@@ -1544,7 +1630,20 @@ class Plugin(PluginBase):
             from avatar_models import SYSTEM_VOICES
 
             sys_rows = [{**v.to_dict(), "is_system": True} for v in SYSTEM_VOICES]
-            custom_rows = [{**row, "is_system": False} for row in await self._tm.list_voices()]
+            try:
+                custom_rows = [
+                    {**row, "is_system": False}
+                    for row in await self._tm.list_voices()
+                ]
+            except RuntimeError as exc:
+                # _async_init() is scheduled in the background during plugin
+                # load. The UI may request /voices immediately, before SQLite
+                # is open. System voices are static and should still render;
+                # custom voices will appear on the next refresh after init.
+                if "init() must be called first" not in str(exc):
+                    raise
+                logger.info("avatar-studio: /voices served before DB init")
+                custom_rows = []
             return {"ok": True, "voices": sys_rows + custom_rows}
 
         @router.post("/voices")
@@ -1746,6 +1845,56 @@ class Plugin(PluginBase):
             return {"ok": ok}
 
         # System ──────────────────────────────────────────────────────
+
+        def _python_dep_spec(dep_id: str) -> dict[str, str]:
+            spec = PYTHON_DEPS.get(dep_id)
+            if spec is None:
+                raise HTTPException(status_code=404, detail=f"Unknown Python dependency: {dep_id}")
+            return spec
+
+        def _python_dep_status(dep_id: str) -> dict[str, Any]:
+            spec = _python_dep_spec(dep_id)
+            from avatar_studio_inline.dep_bootstrap import probe_dependency
+
+            status = probe_dependency(
+                dep_id,
+                spec["import_name"],
+                plugin_dir=PLUGIN_DIR,
+            )
+            return {**spec, **status}
+
+        @router.get("/system/python-deps")
+        async def list_python_deps() -> dict[str, Any]:
+            return {
+                "ok": True,
+                "components": [
+                    _python_dep_status(dep_id)
+                    for dep_id in PYTHON_DEPS
+                ],
+            }
+
+        @router.get("/system/python-deps/{dep_id}/status")
+        async def python_dep_status(dep_id: str) -> dict[str, Any]:
+            return {"ok": True, "component": _python_dep_status(dep_id)}
+
+        @router.post("/system/python-deps/{dep_id}/install")
+        async def install_python_dep(
+            dep_id: str,
+            body: PythonDepInstallBody | None = None,
+        ) -> dict[str, Any]:
+            spec = _python_dep_spec(dep_id)
+            from avatar_studio_inline.dep_bootstrap import start_install
+
+            if body and body.force:
+                logger.info("avatar-studio: force reinstall requested for %s", dep_id)
+            component = start_install(
+                dep_id,
+                spec["import_name"],
+                spec["pip_spec"],
+                plugin_dir=PLUGIN_DIR,
+                friendly_name=spec["display_name"],
+            )
+            return {"ok": True, "component": {**spec, **component}}
 
         def _enriched_settings() -> dict[str, Any]:
             # Single source of truth for the Settings response shape so

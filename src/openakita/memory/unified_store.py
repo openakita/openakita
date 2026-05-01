@@ -58,6 +58,19 @@ class UnifiedStore:
         if self.search.backend_type != "fts5":
             self._fts5_fallback = FTS5Backend(self.db)
 
+    @staticmethod
+    def _is_active_dict(memory: dict) -> bool:
+        if memory.get("superseded_by"):
+            return False
+        expires_at = memory.get("expires_at")
+        if expires_at:
+            try:
+                if datetime.fromisoformat(expires_at) < datetime.now():
+                    return False
+            except Exception:
+                return False
+        return True
+
     # ======================================================================
     # Semantic Memory
     # ======================================================================
@@ -119,6 +132,8 @@ class UnifiedStore:
             existing = self.db.get_memory(mid)
             if not existing:
                 continue
+            if not self._is_active_dict(existing):
+                continue
             if (existing.get("scope") or "global") != scope:
                 continue
             if (existing.get("scope_owner") or "") != scope_owner:
@@ -130,10 +145,11 @@ class UnifiedStore:
 
     def update_semantic(self, memory_id: str, updates: dict) -> bool:
         ok = self.db.update_memory(memory_id, updates)
-        if ok and "content" in updates:
+        reindex_fields = {"content", "type", "priority", "importance_score", "tags"}
+        if ok and reindex_fields.intersection(updates):
             self.search.delete(memory_id)
             mem = self.db.get_memory(memory_id)
-            if mem:
+            if mem and self._is_active_dict(mem):
                 self.search.add(
                     memory_id,
                     mem["content"],
@@ -150,6 +166,13 @@ class UnifiedStore:
         self.search.delete(memory_id)
         return self.db.delete_memory(memory_id)
 
+    def cleanup_expired(self) -> int:
+        expired_ids = self.db.get_expired_memory_ids()
+        count = self.db.cleanup_expired()
+        for memory_id in expired_ids:
+            self.search.delete(memory_id)
+        return count
+
     def bump_access(self, memory_ids: list[str]) -> None:
         """Batch-increment access_count for memories confirmed useful by LLM."""
         if not memory_ids:
@@ -164,9 +187,11 @@ class UnifiedStore:
                 },
             )
 
-    def get_semantic(self, memory_id: str) -> SemanticMemory | None:
+    def get_semantic(self, memory_id: str, *, include_inactive: bool = False) -> SemanticMemory | None:
         d = self.db.get_memory(memory_id)
         if d is None:
+            return None
+        if not include_inactive and not self._is_active_dict(d):
             return None
         self.db.update_memory(
             memory_id,
@@ -184,6 +209,7 @@ class UnifiedStore:
         filter_type: str | None = None,
         scope: str = "global",
         scope_owner: str = "",
+        include_inactive: bool = False,
     ) -> list[SemanticMemory]:
         scored = self.search_semantic_scored(
             query,
@@ -191,6 +217,7 @@ class UnifiedStore:
             filter_type=filter_type,
             scope=scope,
             scope_owner=scope_owner,
+            include_inactive=include_inactive,
         )
         return [mem for mem, _score in scored]
 
@@ -201,6 +228,7 @@ class UnifiedStore:
         filter_type: str | None = None,
         scope: str = "global",
         scope_owner: str = "",
+        include_inactive: bool = False,
     ) -> list[tuple[SemanticMemory, float]]:
         """Like search_semantic but also returns the raw similarity score.
 
@@ -230,6 +258,8 @@ class UnifiedStore:
         for memory_id, score in ordered:
             d = self.db.get_memory(memory_id)
             if d:
+                if not include_inactive and not self._is_active_dict(d):
+                    continue
                 d_scope = d.get("scope") or "global"
                 d_owner = d.get("scope_owner") or ""
                 if d_scope == scope and d_owner == scope_owner:
@@ -239,6 +269,8 @@ class UnifiedStore:
         return scored
 
     def query_semantic(self, **kwargs: Any) -> list[SemanticMemory]:
+        include_inactive = bool(kwargs.pop("include_inactive", False))
+        kwargs.setdefault("active_only", not include_inactive)
         rows = self.db.query(**kwargs)  # scope/scope_owner pass through via kwargs
         return [SemanticMemory.from_dict(r) for r in rows]
 
@@ -255,7 +287,11 @@ class UnifiedStore:
         for mid, score in results:
             if score > 0.8:
                 d = self.db.get_memory(mid)
-                if d and d.get("subject", "").lower() == subject.lower():
+                if (
+                    d
+                    and self._is_active_dict(d)
+                    and d.get("subject", "").lower() == subject.lower()
+                ):
                     d_scope = d.get("scope") or "global"
                     d_owner = d.get("scope_owner") or ""
                     if d_scope == scope and d_owner == scope_owner:
@@ -267,17 +303,33 @@ class UnifiedStore:
         memory_type: str | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        include_inactive: bool = False,
     ) -> int:
-        return self.db.count(memory_type, scope=scope, scope_owner=scope_owner)
+        return self.db.count(
+            memory_type,
+            scope=scope,
+            scope_owner=scope_owner,
+            active_only=not include_inactive,
+        )
 
     def load_all_memories(
-        self, scope: str = "global", scope_owner: str = ""
+        self,
+        scope: str = "global",
+        scope_owner: str = "",
+        *,
+        include_inactive: bool = False,
     ) -> list[SemanticMemory]:
-        rows = self.db.load_all(scope=scope, scope_owner=scope_owner)
+        rows = self.db.load_all(
+            scope=scope,
+            scope_owner=scope_owner,
+            active_only=not include_inactive,
+        )
         return [SemanticMemory.from_dict(r) for r in rows]
 
     def query_paged(self, **kwargs: Any) -> tuple[list[SemanticMemory], int]:
         """Paginated query delegating to storage.query_paged()."""
+        include_inactive = bool(kwargs.pop("include_inactive", False))
+        kwargs.setdefault("active_only", not include_inactive)
         rows, total = self.db.query_paged(**kwargs)
         return [SemanticMemory.from_dict(r) for r in rows], total
 

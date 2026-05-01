@@ -8,30 +8,23 @@ Tests cover:
 - Policy Engine YAML loading (new + legacy format)
 """
 
-import json
-import os
-import tempfile
-from pathlib import Path
-
 import pytest
 
+from openakita.core.audit_logger import AuditLogger
+from openakita.core.checkpoint import CheckpointManager
 from openakita.core.policy import (
-    OpType,
+    CommandPatternConfig,
+    ConfirmationConfig,
     PolicyDecision,
     PolicyEngine,
     RiskLevel,
+    SandboxConfig,
     SecurityConfig,
+    SelfProtectionConfig,
+    UserAllowlistConfig,
     Zone,
     ZonePolicyConfig,
-    CommandPatternConfig,
-    SelfProtectionConfig,
-    SandboxConfig,
-    ConfirmationConfig,
-    CheckpointConfig,
-    UserAllowlistConfig,
 )
-from openakita.core.checkpoint import CheckpointManager
-from openakita.core.audit_logger import AuditLogger
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +210,21 @@ class TestShellCommandBlocking:
 
     def test_high_command_needs_confirm(self, engine):
         result = engine.assert_tool_allowed("run_shell", {"command": "rm -rf /tmp/test"})
+        assert result.decision == PolicyDecision.CONFIRM
+
+    def test_yolo_still_confirms_high_risk_shell(self, tmp_workspace):
+        config = SecurityConfig(
+            zones=ZonePolicyConfig(workspace=[str(tmp_workspace / "workspace")]),
+            confirmation=ConfirmationConfig(mode="yolo", auto_confirm=True),
+            command_patterns=CommandPatternConfig(enabled=True),
+            self_protection=SelfProtectionConfig(enabled=True),
+            sandbox=SandboxConfig(enabled=False),
+        )
+        trust_engine = PolicyEngine(config)
+        result = trust_engine.assert_tool_allowed(
+            "run_powershell",
+            {"command": "Remove-Item .\\data\\skills.json -Force"},
+        )
         assert result.decision == PolicyDecision.CONFIRM
 
     def test_normal_command_allowed(self, engine):

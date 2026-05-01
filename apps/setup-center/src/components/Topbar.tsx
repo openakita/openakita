@@ -55,7 +55,7 @@ export type TopbarProps = {
   saveEnvKeys?: (keys: string[]) => Promise<{ restartRequired?: boolean }>;
   restartService?: () => Promise<void>;
   askConfirm?: (msg: string, onConfirm: () => void) => void;
-  setView?: React.Dispatch<React.SetStateAction<ViewId>>;
+  setView?: (view: ViewId) => void;
 };
 
 export function Topbar({

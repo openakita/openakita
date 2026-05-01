@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     # Agent 配置
     agent_name: str = Field(default="OpenAkita", description="Agent 名称")
     max_iterations: int = Field(
-        default=30,
+        default=100,
         ge=5,
-        description="Ralph 循环最大迭代次数（最小值 5，推荐 20~50）",
+        description="Ralph/ReAct 循环最大迭代次数（最终防死循环硬上限；推荐 50~150）",
     )
 
     # Plan 模式建议阈值（ComplexitySignal.score 达到此值时建议用户使用 Plan 模式）
@@ -522,6 +522,58 @@ class Settings(BaseSettings):
         default=5000,
         description="触发单条工具结果独立压缩的 token 阈值",
     )
+    context_real_usage_decay: float = Field(
+        default=0.9,
+        ge=0.1,
+        le=1.0,
+        description="用上一轮真实 input_tokens 反向校准上下文压力时的衰减系数",
+    )
+    context_token_anomaly_threshold: int = Field(
+        default=80000,
+        description="单轮 LLM usage 触发强制压缩/降载的阈值（不是直接终止阈值）。值越大越宽松，长任务建议 ≥80000",
+    )
+    context_token_anomaly_max_recoveries: int = Field(
+        default=3,
+        ge=0,
+        description="单任务内 token 异常触发后允许强制压缩恢复的次数，超过后才允许硬终止；长任务建议 3~5",
+    )
+    context_hard_terminate_ratio: float = Field(
+        default=0.98,
+        ge=0.5,
+        le=0.99,
+        description=(
+            "硬终止比例：单轮 input+output tokens 占模型上下文窗口的此比例时，"
+            "LoopBudgetGuard 才允许真正终止任务（0.5~0.99，越大越宽松）。"
+            "如果当前压力安全且未到此比例，即使触发了 token 异常阈值也只压缩不终止"
+        ),
+    )
+    context_cached_summary_chars: int = Field(
+        default=2400,
+        description="缓存/聚合工具结果摘要的默认字符预算",
+    )
+    context_tool_results_total_chars: int = Field(
+        default=80000,
+        description="单轮工具结果进入上下文前的总字符预算（后续会按上下文压力动态调整）",
+    )
+    api_tools_schema_budget_tokens: int = Field(
+        default=12000,
+        description="发送给 LLM API 的 tools schema 估算 token 预算，超出后动态 defer 非核心工具",
+    )
+    same_tool_call_limit: int = Field(
+        default=8,
+        ge=1,
+        description="同一工具同参数在单任务内允许执行的最大次数；长任务建议 8~12",
+    )
+    readonly_stagnation_limit: int = Field(
+        default=3,
+        ge=1,
+        description="只读探索连续无新信息的软提醒轮数",
+    )
+    readonly_stagnation_hard_limit: int = Field(
+        default=10,
+        ge=1,
+        description="只读探索连续无新信息的硬终止轮数；长任务建议 10~15",
+    )
 
     # === Harness 配置 ===
     supervisor_enabled: bool = Field(
@@ -533,10 +585,11 @@ class Settings(BaseSettings):
         default=600, description="单次任务最大时长秒 (0=不限制，默认 600=10分钟)"
     )
     task_budget_iterations: int = Field(
-        default=50, description="单次任务最大迭代次数 (0=不限制，默认 50)"
+        default=100, description="单次任务最大迭代次数 (0=不限制，默认 100；与 max_iterations 对齐)"
     )
     task_budget_tool_calls: int = Field(
-        default=30, description="单次任务最大工具调用次数 (0=不限制，默认 30)"
+        default=100,
+        description="单次任务最大工具调用次数 (0=不限制，默认 100；长任务/复杂工作流可设 0 或 200+)",
     )
 
     # === 追踪配置 ===
@@ -889,19 +942,21 @@ class RuntimeState:
     def save(self) -> None:
         """把当前 settings 中的可持久化字段写入 JSON 文件（原子写入 + 备份）。"""
         from .utils.atomic_io import safe_json_write
+        from .utils.redaction import redact_value
 
         data: dict = {}
         for key in _PERSISTABLE_KEYS:
             data[key] = getattr(settings, key)
         try:
             safe_json_write(self.state_file, data)
-            logger.info(f"[RuntimeState] Saved: {data}")
+            logger.info(f"[RuntimeState] Saved: {redact_value(data)}")
         except Exception as e:
             logger.error(f"[RuntimeState] Failed to save: {e}")
 
     def load(self) -> None:
         """从 JSON 文件恢复设置到 settings 单例，仅覆盖可持久化字段（支持 .bak 回退）。"""
         from .utils.atomic_io import read_json_safe
+        from .utils.redaction import redact_value
 
         data = read_json_safe(self.state_file)
         if data is None:
@@ -915,7 +970,9 @@ class RuntimeState:
                     new_val = data[key]
                     if old_val != new_val:
                         setattr(settings, key, new_val)
-                        applied.append(f"{key}: {old_val} -> {new_val}")
+                        applied.append(
+                            f"{key}: {redact_value(old_val)} -> {redact_value(new_val)}"
+                        )
             if applied:
                 logger.info(f"[RuntimeState] Restored: {'; '.join(applied)}")
             else:

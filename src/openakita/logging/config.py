@@ -17,6 +17,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from ..utils.redaction import RedactionFilter
 from .handlers import ColoredConsoleHandler, ErrorOnlyHandler, SessionLogHandler
 
 
@@ -101,12 +102,14 @@ def setup_logging(
 
     # 创建格式化器
     formatter = logging.Formatter(log_format)
+    redaction_filter = RedactionFilter()
 
     # 控制台处理器
     if log_to_console:
         console_handler = ColoredConsoleHandler(sys.stdout)
         console_handler.setLevel(logging.DEBUG)
         console_handler.setFormatter(formatter)
+        console_handler.addFilter(redaction_filter)
         root_logger.addHandler(console_handler)
 
     # 文件处理器
@@ -124,6 +127,7 @@ def setup_logging(
         )
         main_handler.setLevel(logging.DEBUG)
         main_handler.setFormatter(formatter)
+        main_handler.addFilter(redaction_filter)
         root_logger.addHandler(main_handler)
 
         # 错误日志文件（只记录 ERROR/CRITICAL，按天轮转）
@@ -137,6 +141,7 @@ def setup_logging(
         )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(formatter)
+        error_handler.addFilter(redaction_filter)
         root_logger.addHandler(error_handler)
 
     # 会话日志处理器（供 AI 查询当前会话日志）
@@ -144,6 +149,7 @@ def setup_logging(
     # 会话日志使用简化格式，只保留消息内容
     session_formatter = logging.Formatter("%(message)s")
     session_handler.setFormatter(session_formatter)
+    session_handler.addFilter(redaction_filter)
     root_logger.addHandler(session_handler)
 
     # 减少第三方库的日志输出

@@ -398,6 +398,21 @@ async def write_env(body: EnvUpdateRequest):
     count = len([v for v in safe_entries.values() if v]) + len(body.delete_keys)
     logger.info(f"[Config API] Updated .env with {count} entries")
 
+    # Push changes into the in-process Settings singleton so consumers that
+    # read ``getattr(settings, ...)`` on each task (e.g. LoopBudgetGuard,
+    # ContextManager.calculate_context_pressure, ReasoningEngine ratio
+    # injection) see the new values without a process restart.
+    try:
+        from openakita.config import settings as _settings
+
+        _settings_changed = _settings.reload()
+        if _settings_changed:
+            logger.info(
+                "[Config API] Settings hot-reloaded fields: %s", _settings_changed
+            )
+    except Exception as exc:
+        logger.warning("[Config API] Settings.reload() failed: %s", exc)
+
     # Determine if any changed keys require a service restart
     _RESTART_REQUIRED_PREFIXES = (
         "TELEGRAM_",
@@ -421,6 +436,32 @@ async def write_env(body: EnvUpdateRequest):
         "MAX_TOKENS",
         "OPENAKITA_THEME",
         "LANGUAGE",
+        # Context / long-task / task-budget knobs — read fresh on each task
+        # so they hot-reload as soon as Settings.reload() above runs.
+        "CONTEXT_",
+        "TASK_BUDGET_",
+        "API_TOOLS_",
+        "SAME_TOOL_",
+        "READONLY_STAGNATION_",
+        "MAX_ITERATIONS",
+        "THINKING_MODE",
+        "PROGRESS_TIMEOUT_",
+        "HARD_TIMEOUT_",
+        "TOOL_MAX_PARALLEL",
+        "FORCE_TOOL_CALL_",
+        "CONFIRMATION_TEXT_",
+        "ALLOW_PARALLEL_TOOLS",
+        "MEMORY_",
+        "PERSONA_",
+        "AGENT_NAME",
+        "PROACTIVE_",
+        "STICKER_",
+        "SCHEDULER_",
+        "SELFCHECK_",
+        "DESKTOP_NOTIFY_",
+        "SESSION_TIMEOUT_",
+        "SESSION_MAX_HISTORY",
+        "BACKUP_",
     )
     changed_keys = {k for k, v in safe_entries.items() if v} | set(body.delete_keys)
     restart_required = any(
@@ -719,15 +760,27 @@ async def restart_service(request: Request):
 
 @router.get("/api/config/skills")
 async def read_skills_config():
-    """Read data/skills.json (skill selection/allowlist)."""
+    """Read data/skills.json (external skill selection only)."""
     sk_path = _project_root() / "data" / "skills.json"
     if not sk_path.exists():
-        return {"skills": {}}
+        return {"kind": "skill_external_allowlist", "skills": {}}
     try:
         data = json.loads(sk_path.read_text(encoding="utf-8"))
-        return {"skills": data}
+        return {"kind": "skill_external_allowlist", "skills": data}
     except Exception as e:
-        return {"error": str(e), "skills": {}}
+        return {"kind": "skill_external_allowlist", "error": str(e), "skills": {}}
+
+
+@router.get("/api/config/skills/external-allowlist")
+async def read_skill_external_allowlist():
+    """Read the external skill enablement allowlist.
+
+    This is intentionally separate from the security user_allowlist in
+    identity/POLICIES.yaml and from IM channel group allowlists.
+    """
+    from openakita.core.security_actions import list_skill_external_allowlist
+
+    return list_skill_external_allowlist()
 
 
 @router.post("/api/config/skills")
@@ -742,9 +795,7 @@ async def write_skills_config(body: SkillsWriteRequest, request: Request):
 
     若 request 中尚无 agent（启动前调用），则仅写盘，刷新将在 Agent 初始化时自然发生。
     """
-    import asyncio as _asyncio
-
-    from openakita.skills.allowlist_io import overwrite_allowlist
+    from openakita.core.security_actions import maybe_refresh_skills, set_skill_external_allowlist
 
     content = body.content if isinstance(body.content, dict) else {}
     al = content.get("external_allowlist") if isinstance(content, dict) else None
@@ -752,7 +803,7 @@ async def write_skills_config(body: SkillsWriteRequest, request: Request):
     # 优先走唯一写入点；若 payload 不是标准 allowlist 结构，回退到旧的整文件覆盖，
     # 以保持前端「原样写入」的兼容（例如把非 allowlist 字段写进去）。
     if isinstance(al, list):
-        overwrite_allowlist({str(x).strip() for x in al if str(x).strip()})
+        set_skill_external_allowlist([str(x).strip() for x in al if str(x).strip()])
     else:
         sk_path = _project_root() / "data" / "skills.json"
         sk_path.parent.mkdir(parents=True, exist_ok=True)
@@ -763,20 +814,24 @@ async def write_skills_config(body: SkillsWriteRequest, request: Request):
 
     # 触发统一刷新（rescan=False：仅重算 allowlist+catalog+pool，无需再扫盘）
     try:
-        from openakita.core.agent import Agent
-        from openakita.skills.events import SkillEvent
-
-        agent = getattr(request.app.state, "agent", None)
-        actual_agent = agent if isinstance(agent, Agent) else getattr(agent, "_local_agent", None)
-        if actual_agent is not None and hasattr(actual_agent, "propagate_skill_change"):
-            await _asyncio.to_thread(
-                actual_agent.propagate_skill_change, SkillEvent.ENABLE, rescan=False
-            )
+        await maybe_refresh_skills(
+            {"status": "ok", "kind": "skill_external_allowlist"},
+            lambda: getattr(request.app.state, "agent", None),
+        )
     except Exception as e:
         logger.warning("[Config API] post-write skill propagate failed: %s", e)
 
     logger.info("[Config API] Updated skills.json")
-    return {"status": "ok"}
+    return {"status": "ok", "kind": "skill_external_allowlist"}
+
+
+@router.post("/api/config/skills/external-allowlist")
+async def write_skill_external_allowlist(body: dict, request: Request):
+    """Replace the external skill allowlist via the explicit skill-only endpoint."""
+    content = {
+        "external_allowlist": body.get("external_allowlist", body.get("skill_ids", [])),
+    }
+    return await write_skills_config(SkillsWriteRequest(content=content), request)
 
 
 @router.get("/api/config/disabled-views")
@@ -1355,18 +1410,15 @@ async def security_confirm(body: SecurityConfirmRequest):
 async def reset_death_switch():
     """Reset the death switch (exit read-only mode)."""
     try:
-        from openakita.core.policy import get_policy_engine
+        from openakita.core.security_actions import (
+            maybe_broadcast_death_switch_reset,
+            reset_death_switch as reset_death_switch_action,
+        )
 
-        engine = get_policy_engine()
-        engine.reset_readonly_mode()
+        result = reset_death_switch_action()
     except Exception as e:
         return {"status": "error", "message": str(e)}
-    try:
-        from openakita.api.routes.websocket import broadcast_event
-
-        await broadcast_event("security:death_switch", {"active": False})
-    except Exception:
-        pass
+    await maybe_broadcast_death_switch_reset(result)
     return {"status": "ok", "readonly_mode": False}
 
 
@@ -1508,50 +1560,60 @@ async def write_self_protection(body: _SelfProtectionUpdate):
     return {"status": "ok"}
 
 
-# ── User allowlist CRUD ──────────────────────────────────────────────
+# ── Security user allowlist CRUD ─────────────────────────────────────
 
 
 @router.get("/api/config/security/allowlist")
 async def read_user_allowlist():
-    """Read the persistent user allowlist."""
+    """Read the persistent security user_allowlist."""
     try:
-        from openakita.core.policy import get_policy_engine
+        from openakita.core.security_actions import list_security_allowlist
 
-        return get_policy_engine().get_user_allowlist()
+        return list_security_allowlist()
     except Exception:
-        return {"commands": [], "tools": []}
+        return {"kind": "security_user_allowlist", "commands": [], "tools": []}
+
+
+@router.get("/api/config/security/user-allowlist")
+async def read_security_user_allowlist():
+    """Explicit alias for security tool/command allow rules."""
+    return await read_user_allowlist()
 
 
 @router.post("/api/config/security/allowlist")
 async def add_allowlist_entry(body: dict):
-    """Add an entry to the persistent user allowlist."""
+    """Add an entry to the persistent security user_allowlist."""
     entry_type = body.get("type", "command")
     entry = {k: v for k, v in body.items() if k != "type"}
     try:
-        from openakita.core.policy import get_policy_engine
+        from openakita.core.security_actions import add_security_allowlist_entry
 
-        pe = get_policy_engine()
-        al = pe._config.user_allowlist
-        if entry_type == "command":
-            al.commands.append(entry)
-        else:
-            al.tools.append(entry)
-        pe._save_user_allowlist()
-        return {"status": "ok"}
+        return add_security_allowlist_entry(entry_type, entry)
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "kind": "security_user_allowlist", "message": str(e)}
+
+
+@router.post("/api/config/security/user-allowlist")
+async def add_security_user_allowlist_entry(body: dict):
+    """Explicit alias for adding security tool/command allow rules."""
+    return await add_allowlist_entry(body)
 
 
 @router.delete("/api/config/security/allowlist/{entry_type}/{index}")
 async def delete_allowlist_entry(entry_type: str, index: int):
-    """Remove an entry from the persistent user allowlist."""
+    """Remove an entry from the persistent security user_allowlist."""
     try:
-        from openakita.core.policy import get_policy_engine
+        from openakita.core.security_actions import remove_security_allowlist_entry
 
-        ok = get_policy_engine().remove_allowlist_entry(entry_type, index)
-        return {"status": "ok" if ok else "error", "message": "" if ok else "无效索引"}
+        return remove_security_allowlist_entry(entry_type, index)
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "kind": "security_user_allowlist", "message": str(e)}
+
+
+@router.delete("/api/config/security/user-allowlist/{entry_type}/{index}")
+async def delete_security_user_allowlist_entry(entry_type: str, index: int):
+    """Explicit alias for removing security tool/command allow rules."""
+    return await delete_allowlist_entry(entry_type, index)
 
 
 @router.get("/api/config/extensions")

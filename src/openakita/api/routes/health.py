@@ -150,6 +150,14 @@ async def health(request: Request):
     }
 
 
+@router.get("/api/logs/health-summary")
+async def logs_health_summary():
+    """Aggregate repeated background warnings into a UI-friendly summary."""
+    from openakita.core.log_health import get_log_health_registry
+
+    return get_log_health_registry().summary()
+
+
 def _get_llm_client(agent: object):
     """Resolve LLMClient from Agent."""
     from openakita.core.agent import Agent

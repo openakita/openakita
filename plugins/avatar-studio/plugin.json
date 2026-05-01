@@ -11,6 +11,7 @@
     "zh": "基于阿里云 DashScope 的数字人工作室 — 照片说话 / 视频换嘴 / 视频换人 / 数字人合成，内置音色库与形象库。",
     "en": "DashScope-powered digital human studio — photo speak / video relip / video reface / avatar compose, with built-in voice & figure libraries."
   },
+  "icon": "icon.svg",
   "author": "OpenAkita",
   "category": "creative",
   "tags": ["digital-human", "tts", "video", "dashscope", "avatar"],
@@ -44,7 +45,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "icon": "",
+    "icon": "icon.svg",
     "title": "数字人工作室",
     "title_i18n": {
       "en": "Avatar Studio",

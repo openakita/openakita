@@ -1174,6 +1174,8 @@ function PythonDepsPanel() {
       <div className="ir-deps-grid">
         {items.map(dep => {
           const isActive = active.startsWith(dep.id + ":") || dep.busy;
+          const importRows = dep.import_status || [];
+          const runtime = dep.runtime || {};
           return (
             <div className="ir-dep" key={dep.id} data-ok={dep.found ? "true" : "false"}>
               <div className="ir-dep__head">
@@ -1184,10 +1186,33 @@ function PythonDepsPanel() {
                 </span>
               </div>
               <p>{dep.description}</p>
-              <code className="ir-mono">{dep.packages.join(" ")}</code>
+              {dep.packages?.length > 0 && <code className="ir-mono">{dep.packages.join(" ")}</code>}
+              {dep.missing?.length > 0 && <small className="ir-dep__warn">{t("st_deps_missing_items")}: {dep.missing.join(", ")}</small>}
+              {importRows.length > 0 && (
+                <div className="ir-dep__meta">
+                  {importRows.map(row => (
+                    <span key={row.name} data-ok={row.found ? "true" : "false"}>
+                      {row.name}: {row.found ? (row.version || row.path || "ok") : (row.error || "missing")}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {runtime.name && (
+                <div className="ir-dep__meta">
+                  <span data-ok={runtime.found ? "true" : "false"}>
+                    {runtime.name}: {runtime.found ? (runtime.path || "ok") : (runtime.error || "missing")}
+                  </span>
+                </div>
+              )}
+              <details className="ir-dep__details">
+                <summary>{t("st_deps_details")}</summary>
+                <div><b>{t("st_deps_python")}:</b> <code>{dep.python || "—"}</code></div>
+                <div><b>{t("st_deps_target")}:</b> <code>{dep.target_dir || "—"}</code></div>
+                <div><b>{t("st_deps_manual")}:</b> <code>{dep.manual_command || "—"}</code></div>
+              </details>
               <div className="ir-cookie__actions">
                 <button className="ir-btn ir-btn--xs ir-btn--primary" disabled={isActive || dep.found} onClick={() => start(dep.id, "install")}>{t("st_deps_install")}</button>
-                <button className="ir-btn ir-btn--xs ir-btn--danger" disabled={isActive || !dep.found} onClick={() => start(dep.id, "uninstall")}>{t("st_deps_uninstall")}</button>
+                <button className="ir-btn ir-btn--xs ir-btn--danger" disabled={isActive || !dep.found || dep.can_uninstall === false} onClick={() => start(dep.id, "uninstall")}>{t("st_deps_uninstall")}</button>
               </div>
             </div>
           );
@@ -1196,6 +1221,8 @@ function PythonDepsPanel() {
       {status && (
         <div className="ir-dep-log">
           <div>{status.busy ? t("st_deps_running") : t("st_deps_log")}</div>
+          {status.error && <small className="ir-dep__warn">{status.error}</small>}
+          {status.manual_command && <code className="ir-mono">{status.manual_command}</code>}
           <pre>{(status.log_tail || []).join("\n")}</pre>
         </div>
       )}

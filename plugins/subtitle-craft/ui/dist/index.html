@@ -35,7 +35,7 @@
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
       --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
-      --primary: #6366f1; --primary-hover: #4f46e5; --primary-light: rgba(99,102,241,.1);
+      --primary: #d97706; --primary-hover: #b45309; --primary-light: rgba(217,119,6,.1);
       --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
       --border: #e2e8f0; --radius: 8px;
     }
@@ -55,6 +55,8 @@
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
     .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
     .header { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
+    .oa-hero-title__icon--app { background: none; box-shadow: none; overflow: hidden; padding: 0; }
+    .oa-hero-title__icon--app img { width: 36px; height: 36px; display: block; }
     .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
     .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
     .tab { padding: 9px 16px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
@@ -72,7 +74,7 @@
     .btn-sm { padding: 4px 10px; font-size: 12px; }
     .btn-danger { color: var(--danger); border-color: var(--danger); }
     .input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
-    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(217,119,6,.15); }
     .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
     .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
     .label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 8px; line-height: 1.3; }
@@ -87,7 +89,7 @@
     .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
     .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
     .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
-    .tag-blue { background: rgba(99,102,241,.15); color: #818cf8; }
+    .tag-blue { background: rgba(217,119,6,.15); color: #f59e0b; }
     .tag-orange { background: rgba(245,158,11,.15); color: #fbbf24; }
     .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
     .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
@@ -96,7 +98,7 @@
     .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
     .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
     .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
-    .upload-zone:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .upload-zone:hover { border-color: var(--primary); background: rgba(217,119,6,.04); }
     .upload-zone.has-file { padding: 12px; border-style: solid; }
     .split-layout { display: flex; gap: 20px; height: 100%; }
     .split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
@@ -186,15 +188,15 @@
     .oa-mode-tile:hover::before { background: var(--primary); }
     .oa-mode-tile.active {
       border-color: var(--primary);
-      background: linear-gradient(135deg, rgba(99,102,241,.10), rgba(99,102,241,.02));
+      background: linear-gradient(135deg, rgba(217,119,6,.10), rgba(217,119,6,.02));
     }
     .oa-mode-tile.active::before { background: var(--primary); }
     .oa-mode-tile__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .oa-mode-tile__name { font-size: 13px; font-weight: 600; color: var(--text); }
     .oa-mode-tile__chip {
       font-size: 10px; padding: 1px 7px; border-radius: 999px;
-      background: rgba(99,102,241,.12); color: var(--primary);
-      border: 1px solid rgba(99,102,241,.25); font-weight: 500;
+      background: rgba(217,119,6,.12); color: var(--primary);
+      border: 1px solid rgba(217,119,6,.25); font-weight: 500;
       letter-spacing: .04em; flex-shrink: 0;
     }
     .oa-mode-tile.active .oa-mode-tile__chip {
@@ -234,7 +236,7 @@
     .oa-hook-quote {
       padding: 12px 14px;
       border-left: 3px solid var(--primary);
-      background: rgba(99,102,241,.05);
+      background: rgba(217,119,6,.05);
       border-radius: 0 6px 6px 0;
       margin-bottom: 14px;
     }
@@ -273,7 +275,7 @@
     .oa-feature-card__icon {
       width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0;
       display: inline-flex; align-items: center; justify-content: center;
-      background: rgba(99,102,241,.12); color: var(--primary);
+      background: rgba(217,119,6,.12); color: var(--primary);
     }
     .oa-feature-card__icon > svg { width: 16px; height: 16px; }
     .oa-feature-card__title { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
@@ -310,9 +312,9 @@
     }
     .oa-preview-card__title-chip {
       width: 32px; height: 32px; border-radius: 8px;
-      background: linear-gradient(135deg, var(--primary), #8b5cf6);
+      background: linear-gradient(135deg, var(--primary), #fbbf24);
       color: #fff; display: inline-flex; align-items: center; justify-content: center;
-      box-shadow: 0 2px 8px rgba(99,102,241,.25);
+      box-shadow: 0 2px 8px rgba(217,119,6,.25);
     }
     .oa-preview-card__title-chip > svg { width: 18px; height: 18px; }
     .oa-preview-card__refresh {
@@ -358,7 +360,7 @@
       border: 1px solid rgba(34,197,94,.4);
     }
     .cost-table--styled .total-row td {
-      background: rgba(99,102,241,.08);
+      background: rgba(217,119,6,.08);
       font-weight: 700; font-size: 14px; color: var(--text);
       border-top: 2px solid var(--primary); padding: 12px 10px;
     }
@@ -460,7 +462,7 @@
     .deps-help {
       font-size: 12px; color: var(--text-muted); line-height: 1.6;
       padding: 10px 12px; border-radius: 6px;
-      background: rgba(99,102,241,.05); border: 1px solid rgba(99,102,241,.20);
+      background: rgba(217,119,6,.05); border: 1px solid rgba(217,119,6,.20);
     }
     .deps-help strong { color: var(--text); }
     .deps-help ul { margin: 6px 0 0 18px; padding: 0; }
@@ -1728,12 +1730,9 @@ function App() {
     <div className="app">
       <div className="header">
         <h1 className="oa-hero-title">
-          <span className="oa-hero-title__icon"
-                dangerouslySetInnerHTML={{__html:
-                  (window.OpenAkitaIcons && window.OpenAkitaIcons.subtitleCraft)
-                    ? window.OpenAkitaIcons.subtitleCraft()
-                    : (window.OpenAkitaIcons && window.OpenAkitaIcons.subtitles
-                        ? window.OpenAkitaIcons.subtitles() : "")}} />
+          <span className="oa-hero-title__icon oa-hero-title__icon--app">
+            <img src="icon.svg" alt="" aria-hidden="true" />
+          </span>
           <span className="oa-hero-title__text">
             {t("app.title")}
             <span className="oa-hero-title__sub">{t("app.subtitle")}</span>

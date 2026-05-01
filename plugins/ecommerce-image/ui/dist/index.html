@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>电商内容生成</title>
+<title>电商素材小助理</title>
 <!--
   Self-contained plugin UI: bootstrap + UI Kit are inlined under _assets/.
   bootstrap.js no-ops outside of an iframe, so direct-source dev mode falls
@@ -18,7 +18,7 @@
   --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
   --bg-main: var(--bg);
   --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
-  --primary: #6366f1; --primary-hover: #4f46e5; --primary-light: rgba(99,102,241,.1);
+  --primary: #f97316; --primary-hover: #ea580c; --primary-light: rgba(249,115,22,.1);
   --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
   --border: #e2e8f0; --radius: 8px;
   --oa-primary: var(--primary); --oa-text: var(--text); --oa-text-muted: var(--text-muted);
@@ -45,6 +45,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .app { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
 .header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
 .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.oa-hero-title__icon--app { background: none; box-shadow: none; overflow: hidden; padding: 0; }
+.oa-hero-title__icon--app img { width: 36px; height: 36px; display: block; }
 .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
 .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
 .tab { padding: 10px 18px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; user-select: none; }
@@ -63,7 +65,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .btn-danger { color: var(--danger); border-color: var(--danger); }
 .btn-ghost { border: none; background: transparent; }
 .input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
-.input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+.input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(249,115,22,.15); }
 .textarea { resize: vertical; min-height: 72px; max-height: 400px; font-family: inherit; }
 .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
 /* Form-field label — upgraded to a "section label" look (small accent
@@ -86,7 +88,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
 .tag-gray { background: rgba(148,163,184,.15); color: #94a3b8; }
 .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 20px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); font-size: 13px; }
-.upload-zone:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+.upload-zone:hover { border-color: var(--primary); background: rgba(249,115,22,.04); }
 .upload-zone.has-image { padding: 8px; border-style: solid; }
 .upload-preview { max-width: 100%; max-height: 160px; border-radius: 6px; object-fit: contain; }
 .multi-upload-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 8px; margin-top: 8px; }
@@ -95,7 +97,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .multi-upload-item .remove-btn { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; border: none; font-size: 12px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: .15s; }
 .multi-upload-item:hover .remove-btn { opacity: 1; }
 .multi-upload-add { display: flex; align-items: center; justify-content: center; border: 2px dashed var(--border); border-radius: 6px; aspect-ratio: 1; cursor: pointer; font-size: 24px; color: var(--text-muted); transition: .15s; }
-.multi-upload-add:hover { border-color: var(--primary); color: var(--primary); background: rgba(99,102,241,.04); }
+.multi-upload-add:hover { border-color: var(--primary); color: var(--primary); background: rgba(249,115,22,.04); }
 .multi-upload-count { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
 .ai-opt-row { display: flex; justify-content: flex-end; margin-top: 4px; }
 .btn-ai-opt { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; font-size: 12px; border-radius: 5px; border: 1px solid var(--primary); background: transparent; color: var(--primary); cursor: pointer; transition: all .15s; }
@@ -142,7 +144,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .empty-state-icon { font-size: 40px; margin-bottom: 12px; opacity: .5; }
 .example-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 12px; }
 .example-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; cursor: pointer; transition: .15s; }
-.example-card:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+.example-card:hover { border-color: var(--primary); background: rgba(249,115,22,.04); }
 .example-card h4 { font-size: 12px; font-weight: 500; margin-bottom: 4px; }
 .example-card p { font-size: 11px; color: var(--text-dim); }
 .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 1000; display: flex; align-items: center; justify-content: center; cursor: pointer; }
@@ -224,15 +226,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .prompt-wrap .prompt-counter { position: absolute; bottom: 8px; right: 12px; font-size: 11px; color: var(--text-dim); pointer-events: none; background: linear-gradient(to right, transparent, var(--bg) 30%); padding: 2px 4px 2px 16px; border-radius: 4px; }
 
 /* ── tip-bar (subtle inline hint, matches seedance-video) ── */
-.tip-bar { background: rgba(99,102,241,.08); border: 1px solid rgba(99,102,241,.2); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--primary); margin-bottom: 12px; }
+.tip-bar { background: rgba(249,115,22,.08); border: 1px solid rgba(249,115,22,.2); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--primary); margin-bottom: 12px; }
 
 /* ── Guide (提示词教学) Styles ── */
 .guide-container { padding: 24px; max-width: 900px; margin: 0 auto; overflow-y: auto; height: 100%; }
-.guide-banner { background: linear-gradient(135deg, var(--primary), #6366f1); color: #fff; padding: 14px 20px; border-radius: 10px; margin-bottom: 20px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.guide-banner { background: linear-gradient(135deg, var(--primary), #fb923c); color: #fff; padding: 14px 20px; border-radius: 10px; margin-bottom: 20px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
 .guide-banner strong { font-weight: 600; }
 .guide-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
 .guide-card-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; cursor: pointer; user-select: none; font-weight: 600; font-size: 15px; transition: background .15s; }
-.guide-card-header:hover { background: rgba(99,102,241,.06); }
+.guide-card-header:hover { background: rgba(249,115,22,.06); }
 .guide-card-title { display: flex; align-items: center; gap: 8px; }
 .guide-chevron { font-size: 11px; color: var(--text-dim); transition: transform .2s; }
 .guide-chevron.open { transform: rotate(90deg); }
@@ -2221,10 +2223,11 @@ function App() {
     <div className="app">
       <div className="header">
         <h1 className="oa-hero-title" style={{margin:0}}>
-          <span className="oa-hero-title__icon"
-                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.cart() : ""}} />
+          <span className="oa-hero-title__icon oa-hero-title__icon--app">
+            <img src="icon.svg" alt="" aria-hidden="true" />
+          </span>
           <span className="oa-hero-title__text">
-            电商内容生成
+            电商素材小助理
             <span className="oa-hero-title__sub">DASHSCOPE + ARK · 主图 / 详情页 / 海报 / 视频</span>
           </span>
         </h1>

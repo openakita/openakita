@@ -45,7 +45,7 @@ export interface AdvancedViewProps {
   askConfirm: (msg: string, onConfirm: () => void) => void;
   refreshAll: () => Promise<void>;
   restartService: () => Promise<void>;
-  setView: React.Dispatch<React.SetStateAction<ViewId>>;
+  setView: (view: ViewId) => void;
 }
 
 export function AdvancedView(props: AdvancedViewProps) {
@@ -409,6 +409,86 @@ export function AdvancedView(props: AdvancedViewProps) {
           <div className="grid3">
             {FB({ k: "LOG_TO_CONSOLE", label: t("config.agentLogConsole") })}
             {FB({ k: "LOG_TO_FILE", label: t("config.agentLogFile") })}
+          </div>
+        </Section>
+      </div>
+
+      {/* ── Card 1.5: 长任务与上下文保护 ── */}
+      <div className="card" style={{ marginTop: 12 }}>
+        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("config.ctxLongTaskTitle")}</h3>
+        <p className="text-xs text-muted-foreground mb-2">{t("config.ctxLongTaskHint")}</p>
+
+        <div className="mb-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!!busy}
+            onClick={() => {
+              setEnvDraft((prev) => {
+                let next = prev;
+                next = envSet(next, "CONTEXT_HARD_TERMINATE_RATIO", "0.98");
+                next = envSet(next, "CONTEXT_TOKEN_ANOMALY_THRESHOLD", "80000");
+                next = envSet(next, "CONTEXT_TOKEN_ANOMALY_MAX_RECOVERIES", "3");
+                next = envSet(next, "TASK_BUDGET_TOOL_CALLS", "200");
+                next = envSet(next, "SAME_TOOL_CALL_LIMIT", "10");
+                next = envSet(next, "READONLY_STAGNATION_HARD_LIMIT", "12");
+                next = envSet(next, "CONTEXT_COMPRESSION_THRESHOLD", "0.85");
+                return next;
+              });
+              notifySuccess(t("config.ctxLongTaskPresetSaved"));
+            }}
+          >
+            {t("config.ctxLongTaskPresetBtn")}
+          </Button>
+        </div>
+
+        <Section title={t("config.ctxMgmtTitle")}>
+          <div className="grid3">
+            {FT({ k: "CONTEXT_MAX_WINDOW", label: t("config.ctxMaxWindow"), placeholder: t("config.ctxMaxWindowPlaceholder"), help: t("config.ctxMaxWindowHelp") })}
+            {FT({ k: "CONTEXT_COMPRESSION_THRESHOLD", label: t("config.ctxCompressionThreshold"), placeholder: "0.85", help: t("config.ctxCompressionThresholdHelp") })}
+            {FT({ k: "CONTEXT_HARD_TERMINATE_RATIO", label: t("config.ctxHardTerminateRatio"), placeholder: "0.98", help: t("config.ctxHardTerminateRatioHelp") })}
+          </div>
+          <div className="grid3 mt-2">
+            {FT({ k: "CONTEXT_MIN_RECENT_TURNS", label: t("config.ctxMinRecentTurns"), placeholder: "12", help: t("config.ctxMinRecentTurnsHelp") })}
+            {FT({ k: "CONTEXT_LARGE_TOOL_THRESHOLD", label: t("config.ctxLargeToolThreshold"), placeholder: "5000", help: t("config.ctxLargeToolThresholdHelp") })}
+            {FB({ k: "CONTEXT_ENABLE_TOOL_COMPRESSION", label: t("config.ctxEnableToolCompression"), help: t("config.ctxEnableToolCompressionHelp"), defaultValue: true })}
+          </div>
+        </Section>
+
+        <Section title={t("config.ctxAnomalyTitle")} className="mt-2">
+          <div className="grid2">
+            {FT({ k: "CONTEXT_TOKEN_ANOMALY_THRESHOLD", label: t("config.ctxAnomalyThreshold"), placeholder: "80000", help: t("config.ctxAnomalyThresholdHelp") })}
+            {FT({ k: "CONTEXT_TOKEN_ANOMALY_MAX_RECOVERIES", label: t("config.ctxAnomalyMaxRecoveries"), placeholder: "3", help: t("config.ctxAnomalyMaxRecoveriesHelp") })}
+          </div>
+        </Section>
+
+        <Section title={t("config.ctxTaskBudgetTitle")} className="mt-2">
+          <div className="grid3">
+            {FT({ k: "TASK_BUDGET_TOOL_CALLS", label: t("config.ctxTaskBudgetToolCalls"), placeholder: "100", help: t("config.ctxTaskBudgetToolCallsHelp") })}
+            {FT({ k: "SAME_TOOL_CALL_LIMIT", label: t("config.ctxSameToolLimit"), placeholder: "8", help: t("config.ctxSameToolLimitHelp") })}
+            {FT({ k: "READONLY_STAGNATION_HARD_LIMIT", label: t("config.ctxReadonlyHardLimit"), placeholder: "10", help: t("config.ctxReadonlyHardLimitHelp") })}
+          </div>
+          <div className="grid2 mt-2">
+            {FT({ k: "TASK_BUDGET_DURATION", label: t("config.ctxTaskBudgetDuration"), placeholder: "600", help: t("config.ctxTaskBudgetDurationHelp") })}
+            {FT({ k: "TASK_BUDGET_ITERATIONS", label: t("config.ctxTaskBudgetIterations"), placeholder: "100", help: t("config.ctxTaskBudgetIterationsHelp") })}
+          </div>
+        </Section>
+
+        <Section title={t("config.ctxAdvancedTitle")} subtitle={t("config.ctxAdvancedHint")} className="mt-2">
+          <div className="grid3">
+            {FT({ k: "CONTEXT_REAL_USAGE_DECAY", label: t("config.ctxRealUsageDecay"), placeholder: "0.9", help: t("config.ctxRealUsageDecayHelp") })}
+            {FT({ k: "CONTEXT_COMPRESSION_RATIO", label: t("config.ctxCompressionRatio2"), placeholder: "0.25", help: t("config.ctxCompressionRatio2Help") })}
+            {FT({ k: "CONTEXT_BOUNDARY_COMPRESSION_RATIO", label: t("config.ctxBoundaryRatio2"), placeholder: "0.25", help: t("config.ctxBoundaryRatio2Help") })}
+          </div>
+          <div className="grid3 mt-2">
+            {FT({ k: "CONTEXT_CACHED_SUMMARY_CHARS", label: t("config.ctxCachedSummaryChars"), placeholder: "2400", help: t("config.ctxCachedSummaryCharsHelp") })}
+            {FT({ k: "CONTEXT_TOOL_RESULTS_TOTAL_CHARS", label: t("config.ctxToolResultsTotalChars"), placeholder: "80000", help: t("config.ctxToolResultsTotalCharsHelp") })}
+            {FT({ k: "API_TOOLS_SCHEMA_BUDGET_TOKENS", label: t("config.apiToolsSchemaBudget"), placeholder: "12000", help: t("config.apiToolsSchemaBudgetHelp") })}
+          </div>
+          <div className="grid3 mt-2">
+            {FT({ k: "READONLY_STAGNATION_LIMIT", label: t("config.ctxReadonlySoftLimit"), placeholder: "3", help: t("config.ctxReadonlySoftLimitHelp") })}
+            {FT({ k: "TASK_BUDGET_TOKENS", label: t("config.ctxTaskBudgetTokens"), placeholder: "0", help: t("config.ctxTaskBudgetTokensHelp") })}
+            {FT({ k: "TASK_BUDGET_COST", label: t("config.ctxTaskBudgetCost"), placeholder: "0", help: t("config.ctxTaskBudgetCostHelp") })}
           </div>
         </Section>
       </div>

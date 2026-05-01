@@ -204,6 +204,8 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 session_id TEXT,
+                request_id TEXT DEFAULT '',
+                turn_id TEXT DEFAULT '',
                 endpoint_name TEXT,
                 model TEXT,
                 operation_type TEXT,
@@ -220,29 +222,33 @@ class Database:
                 estimated_cost REAL DEFAULT 0
             );
 
+        """)
+        await self._connection.commit()
+        await self._ensure_token_usage_schema()
+
+    async def _ensure_token_usage_schema(self) -> None:
+        """Migrate token_usage before creating indexes that depend on new columns."""
+        cursor = await self._connection.execute("PRAGMA table_info(token_usage)")
+        existing = {str(row["name"]) for row in await cursor.fetchall()}
+        required_columns = {
+            "request_id": "TEXT DEFAULT ''",
+            "turn_id": "TEXT DEFAULT ''",
+            "agent_profile_id": "TEXT DEFAULT 'default'",
+            "estimated_cost": "REAL DEFAULT 0",
+        }
+        for column, ddl in required_columns.items():
+            if column not in existing:
+                await self._connection.execute(
+                    f"ALTER TABLE token_usage ADD COLUMN {column} {ddl}"
+                )
+        await self._connection.executescript("""
             CREATE INDEX IF NOT EXISTS idx_token_usage_ts ON token_usage(timestamp);
             CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
+            CREATE INDEX IF NOT EXISTS idx_token_usage_request ON token_usage(request_id);
             CREATE INDEX IF NOT EXISTS idx_token_usage_endpoint ON token_usage(endpoint_name);
             CREATE INDEX IF NOT EXISTS idx_token_usage_op ON token_usage(operation_type);
         """)
         await self._connection.commit()
-
-        # Migration: 为旧数据库添加 estimated_cost 列
-        try:
-            await self._connection.execute(
-                "ALTER TABLE token_usage ADD COLUMN estimated_cost REAL DEFAULT 0"
-            )
-            await self._connection.commit()
-        except Exception:
-            pass  # 列已存在则忽略
-        # Migration: 为旧数据库添加 agent_profile_id 列
-        try:
-            await self._connection.execute(
-                "ALTER TABLE token_usage ADD COLUMN agent_profile_id TEXT DEFAULT 'default'"
-            )
-            await self._connection.commit()
-        except Exception:
-            pass  # 列已存在则忽略
 
     # ===== 对话相关 =====
 
@@ -660,6 +666,7 @@ class Database:
                    SUM(output_tokens) AS total_output,
                    SUM(input_tokens + output_tokens) AS total_tokens,
                    COUNT(*) AS request_count,
+                   GROUP_CONCAT(DISTINCT request_id) AS request_ids,
                    GROUP_CONCAT(DISTINCT operation_type) AS operation_types,
                    GROUP_CONCAT(DISTINCT endpoint_name) AS endpoints,
                    COALESCE(SUM(estimated_cost), 0) AS total_cost

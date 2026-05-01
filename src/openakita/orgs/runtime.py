@@ -251,6 +251,16 @@ class OrgRuntime:
         # 长度受限：每个 org 最多保留最近 N 个，防止长时间运行的组织集合膨胀。
         self._closed_chains: dict[str, "OrderedDict[str, float]"] = {}
         self._closed_chain_max_per_org: int = 512
+        # Root 节点已在「某次主任务」里通过 org_accept_deliverable 验收过的
+        # task_chain_id 集合（按 org 隔离）。后续到达同 chain_id 的 TASK_DELIVERED
+        # 视为「已被并入主任务汇总」，drain / mailbox 路径都让 root_delivery_bypass
+        # 失效 → 走已有的「closed chain skip」分支（mark_processed + 不激活 ReAct）。
+        # 关键：不影响首次到达——P0-1「root 节点最后总结」修复完整保留，仅去重
+        # 主任务结束后 mailbox 残留消息触发的「补汇总」空跑 ReAct（每次约 150K
+        # tokens 浪费，详见 2026-04-28 13:42:53 _134209 现象）。
+        # OrderedDict + LRU 上限：与 _closed_chains 同款设计，防长跑组织内存膨胀。
+        self._root_processed_chains: dict[str, "OrderedDict[str, float]"] = {}
+        self._root_processed_chain_max_per_org: int = 512
         self.max_concurrent_per_node: int = 2
         self._idle_tasks: dict[str, asyncio.Task] = {}
 
@@ -1208,6 +1218,37 @@ class OrgRuntime:
                 "[OrgRuntime] chain_event set failed", exc_info=True,
             )
 
+    def _mark_chain_processed_by_root(self, org_id: str, chain_id: str) -> None:
+        """登记 chain_id 已被 root 节点本次主任务通过 org_accept_deliverable
+        处理过。后续到达同 chain_id 的 TASK_DELIVERED 视为「已被并入主任务汇总」，
+        在 `_on_node_message` / `_drain_node_pending` 中走「closed chain skip」分支，
+        避免 mailbox 残留消息触发空跑「补汇总」ReAct（每次约 150K tokens 浪费）。
+
+        与 `_mark_chain_closed` 的区别：本集合只代表「root 节点已综合处理过」，
+        不影响 `is_chain_closed` 的「下属任务链是否被验收」语义。
+        """
+        if not org_id or not chain_id:
+            return
+        bucket = self._root_processed_chains.get(org_id)
+        if bucket is None:
+            bucket = OrderedDict()
+            self._root_processed_chains[org_id] = bucket
+        if chain_id in bucket:
+            bucket.move_to_end(chain_id)
+        else:
+            bucket[chain_id] = time.time()
+            while len(bucket) > self._root_processed_chain_max_per_org:
+                bucket.popitem(last=False)
+
+    def _is_chain_processed_by_root(
+        self, org_id: str, chain_id: str | None,
+    ) -> bool:
+        """查询 chain_id 是否已被 root 节点本次主任务处理过。"""
+        if not org_id or not chain_id:
+            return False
+        bucket = self._root_processed_chains.get(org_id)
+        return bool(bucket and chain_id in bucket)
+
     def _cleanup_accepted_chain(
         self,
         org_id: str,
@@ -1585,6 +1626,36 @@ class OrgRuntime:
                 org.total_tasks_completed += 1
                 self._node_consecutive_failures.pop(f"{org.id}:{node.id}", None)
                 self._org_quota_failures.pop(org.id, None)
+
+            # ── Root 节点 chain 去重登记 ───────────────────────────
+            # 当 root 节点在「正常完成」的主任务里通过 org_accept_deliverable
+            # 验收过任意下属 chain 时，把这些 chain_id 登记到 _root_processed_chains。
+            # 后续 mailbox 中残留的同 chain TASK_DELIVERED 在 _on_node_message /
+            # _drain_node_pending 中会被 root_delivery_bypass=False 命中，走
+            # 「closed chain skip」分支，避免空跑「补汇总」ReAct（每次 ~150K tokens）。
+            #
+            # 严格三条件（缺一不登记，避免回归 P0-1「最后由子节点说话」bug）：
+            #   1. _is_root_node = True（仅 root 关心去重，子节点 accept 不应登记）
+            #   2. is_normal = True（失败/终止任务不污染集合）
+            #   3. react_trace 里有成功的 org_accept_deliverable
+            try:
+                if _is_root_node and is_normal:
+                    accepted_chains = self._extract_accepted_chain_ids(react_trace)
+                    for cid in accepted_chains:
+                        self._mark_chain_processed_by_root(org.id, cid)
+                    if accepted_chains:
+                        logger.info(
+                            "[OrgRuntime] root node %s task_completed: "
+                            "registered %d processed chain(s) for dedup: %s",
+                            node.id, len(accepted_chains),
+                            [c[:8] for c in accepted_chains],
+                        )
+            except Exception:
+                logger.debug(
+                    "[OrgRuntime] register root processed chains failed",
+                    exc_info=True,
+                )
+
             await self._save_org(org)
             self._heartbeat.record_activity(org.id)
 
@@ -1605,33 +1676,34 @@ class OrgRuntime:
                     logger.debug(f"[OrgRuntime] failure diagnosis failed on {node.id}: {diag_err}")
                     diagnosis = None
 
-                # 静默策略 1（硬 verify）：verify_incomplete + 用户原始 prompt 没有
-                # "附件交付意图"时，整张诊断卡片完全不展示——既不拼到 result_text、
-                # 也不进 event/ws payload。日志里仍然记录了 exit_reason=verify_incomplete。
-                # 静默策略 2（软 verify，P0-3）：is_soft_verify=True 表示协调者节点
-                # 通过下属交付实质完成本任务，是"积极信号"。历史版本会保留一张
-                # "ℹ️ 复盘提示"卡片提示用户"已通过下属交付完成"，但该卡片几乎
-                # 100% 是噪音（用户已经看到下属交付物 + task_complete 气泡），
-                # 反而引发"明明完成了为什么还有失败提示"的误解。这里同样彻底静默。
+                # 静默策略（一刀切，2026-04-28 收紧）：
+                # verify_incomplete 系列（含 verify_incomplete / verify_incomplete_with_children）
+                # 是「verify 规则没匹配」而非「真硬失败」。在「文件已落盘 + 黑板已通知 +
+                # 节点输出了完整成果文本」的典型场景下，这类卡片只会让用户困惑
+                # 「明明完成了为什么还报错」，纯噪音。
+                #
+                # 历史窄窗口策略（仅静默「不要附件」+「软 verify」两种）留了
+                # 「硬 verify + 用户说了"写一份"被 expects_artifact 命中」的窗口
+                # 没堵——典型如 2026-04-28 14:39:37 的 _134209 失败链：主编实际
+                # 已经 write_file 4594 字节、blackboard 已通知，verify 仍因为
+                # 没调 deliver_artifacts/org_submit_deliverable 而硬判 INCOMPLETE。
+                # 用户多次明确反馈「这个卡片对用户很不友好」「早就说不要这个了」。
+                #
+                # 现策略：root_cause 只要以 "verify_incomplete" 开头就一律 diagnosis=None，
+                # 不再依赖 expects_artifact / is_soft_verify 区分窗口。日志保留
+                # 一条 INFO 用于事后回溯。event/ws payload 通过下方 `if diagnosis`
+                # 分支自动跳过 → UI + 事件双砍（用户选 scope=all 语义）。
+                # 真硬失败（loop_terminated / max_iterations / org_delegate_loop 等）
+                # 不受影响，保留「为什么失败」卡片。
                 rc_for_silence = (diagnosis or {}).get("root_cause") if diagnosis else None
-                if (
-                    diagnosis
-                    and not is_soft_verify
-                    and rc_for_silence == "verify_incomplete"
-                    and not expects_artifact
+                if diagnosis and rc_for_silence and rc_for_silence.startswith(
+                    "verify_incomplete"
                 ):
                     logger.info(
-                        "[OrgRuntime] silencing verify_incomplete diagnosis card for "
-                        "org=%s node=%s (user prompt did not request file artifact)",
-                        org.id, node.id,
-                    )
-                    diagnosis = None
-                elif diagnosis and is_soft_verify:
-                    logger.info(
-                        "[OrgRuntime] silencing soft verify_incomplete diagnosis card "
-                        "for org=%s node=%s (already accepted child deliverable; "
-                        "review hint is pure noise to end users)",
-                        org.id, node.id,
+                        "[OrgRuntime] silencing verify_incomplete* diagnosis card "
+                        "for org=%s node=%s (rc=%s, soft_verify=%s; "
+                        "review-hint suppressed from UI + event payload)",
+                        org.id, node.id, rc_for_silence, is_soft_verify,
                     )
                     diagnosis = None
 
@@ -2369,6 +2441,11 @@ class OrgRuntime:
             # 被 close，TASK_DELIVERED 还没到根节点 mailbox 就被这条软屏障
             # 吃掉了。只对根 + TASK_DELIVERED 这一组合放行，避免破坏其它
             # 合法的 close 行为。
+            #
+            # 2026-04-28 收紧：去重已被 root 主任务 org_accept_deliverable 验收
+            # 过的 chain（_root_processed_chains 中），避免同 chain 的多条
+            # TASK_DELIVERED 在主任务结束后又触发空跑「补汇总」ReAct（每次约
+            # 150K tokens 浪费，详见 _134209 现象）。首次到达仍正常激活。
             try:
                 _is_root_for_gate = bool(
                     self.get_org(org_id) and
@@ -2377,7 +2454,9 @@ class OrgRuntime:
             except Exception:
                 _is_root_for_gate = False
             _root_delivery_bypass = (
-                _is_root_for_gate and msg.msg_type == MsgType.TASK_DELIVERED
+                _is_root_for_gate
+                and msg.msg_type == MsgType.TASK_DELIVERED
+                and not self._is_chain_processed_by_root(org_id, chain_id_peek)
             )
             if closed and msg.msg_type not in (
                 MsgType.TASK_ASSIGN,
@@ -2463,7 +2542,7 @@ class OrgRuntime:
                         messenger.mark_processed(msg.id)
                     return
 
-            logger.info(
+            logger.debug(
                 f"[OrgRuntime] Node {node_id} already has {active_count} "
                 f"active tasks, message {msg.id} stays in mailbox"
             )
@@ -2860,6 +2939,10 @@ class OrgRuntime:
         for k in list(self._root_activation_origin.keys()):
             if k.startswith(f"{org_id}:"):
                 self._root_activation_origin.pop(k, None)
+        # _root_processed_chains 仅服务于「主任务汇总轮内的重复 TASK_DELIVERED
+        # 去重」，没有跨 org-restart 的语义意义；deactivate 时直接释放，避免
+        # 长跑实例累积。与 _closed_chains 的"保留已关闭链知识"不同。
+        self._root_processed_chains.pop(org_id, None)
 
     def _get_save_lock(self, org_id: str) -> asyncio.Lock:
         lock = self._save_locks.get(org_id)
@@ -3062,6 +3145,7 @@ class OrgRuntime:
             # 同 `_on_node_message` 的软屏障：已关闭 chain 的非派工消息不再激活 ReAct，
             # 只标记为已处理让其从队列中"自然消失"。否则 drain 路径会绕过 handler 门禁。
             # P0-1：同样对 root + TASK_DELIVERED 放行，理由见 _on_node_message 的注释。
+            # 2026-04-28 收紧：去重已被 root 主任务验收过的 chain，避免空跑「补汇总」轮。
             if suppress_on:
                 chain_peek = msg.metadata.get("task_chain_id") if msg.metadata else None
                 closed = (
@@ -3073,7 +3157,9 @@ class OrgRuntime:
                 except Exception:
                     _is_root_for_drain = False
                 _root_delivery_bypass = (
-                    _is_root_for_drain and msg.msg_type == MsgType.TASK_DELIVERED
+                    _is_root_for_drain
+                    and msg.msg_type == MsgType.TASK_DELIVERED
+                    and not self._is_chain_processed_by_root(org.id, chain_peek)
                 )
                 if closed and msg.msg_type not in (
                     MsgType.TASK_ASSIGN,
@@ -4544,6 +4630,65 @@ class OrgRuntime:
         except Exception:
             return False
         return False
+
+    @staticmethod
+    def _extract_accepted_chain_ids(
+        react_trace: list[dict] | None,
+    ) -> list[str]:
+        """扫一遍 ReAct trace，抽出所有「成功的」 ``org_accept_deliverable``
+        调用所验收的 ``task_chain_id`` 列表。
+
+        判定方式与 :func:`failure_diagnoser._has_accepted_child_signal` 对齐：
+        - 工具名 == ``org_accept_deliverable``
+        - tool_results 中对应 ``tool_use_id`` 的条目 ``is_error`` 为 False
+        - 且 result_content 不含 "_is_error_entry" 失败 marker（这里简化为
+          只看 is_error 标志位 + 非 ``ok=false`` 的 JSON 标记）
+
+        结果用于 root 节点 task_completed 时登记到 ``_root_processed_chains``，
+        让后续 mailbox 残留的同 chain TASK_DELIVERED 不再触发重复 ReAct。
+
+        trace 缺失/异常一律返回空列表（保守策略，宁可不去重也不误吞）。
+        """
+        if not react_trace:
+            return []
+        accepted: list[str] = []
+        try:
+            for iter_entry in react_trace:
+                if not isinstance(iter_entry, dict):
+                    continue
+                results_by_id: dict[str, dict] = {}
+                for r in (iter_entry.get("tool_results") or ()):
+                    if isinstance(r, dict):
+                        rid = r.get("tool_use_id") or r.get("id") or ""
+                        if rid:
+                            results_by_id[rid] = r
+                for call in iter_entry.get("tool_calls") or ():
+                    if not isinstance(call, dict):
+                        continue
+                    if str(call.get("name") or "") != "org_accept_deliverable":
+                        continue
+                    tool_id = call.get("id") or ""
+                    res = results_by_id.get(tool_id, {}) if tool_id else {}
+                    if bool(res.get("is_error")):
+                        continue
+                    res_text = str(res.get("result_content") or "")
+                    # tool_handler 失败时直接返回中文短句（"组织未运行..." 等）
+                    # 而不是 JSON；只要 result 不是「以 { 开头的成功 JSON」就保守跳过。
+                    rt = res_text.strip()
+                    if rt.startswith("{"):
+                        if '"ok": false' in rt or '"ok":false' in rt:
+                            continue
+                    elif rt:
+                        # 非 JSON 失败短句（"组织未运行" / "缺少 from_node" / "不能验收..."）
+                        # 一律视为未真正 accept。
+                        continue
+                    inp = call.get("input") if isinstance(call.get("input"), dict) else {}
+                    chain_id = str(inp.get("task_chain_id") or "").strip()
+                    if chain_id:
+                        accepted.append(chain_id)
+        except Exception:
+            return []
+        return accepted
 
     async def _synthesize_task_delivered_to_parent(
         self,

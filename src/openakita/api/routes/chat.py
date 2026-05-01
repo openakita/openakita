@@ -16,7 +16,9 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from openakita.core.confirmation_state import ConfirmationDecision, get_confirmation_store
 from openakita.core.engine_bridge import engine_stream, is_dual_loop, to_engine
+from openakita.core.security_actions import execute_controlled_action
 
 from ..schemas import ChatAnswerRequest, ChatControlRequest, ChatRequest
 from .conversation_lifecycle import get_lifecycle_manager
@@ -24,6 +26,121 @@ from .conversation_lifecycle import get_lifecycle_manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _format_controlled_action_result(
+    decision: ConfirmationDecision,
+    result: dict,
+    *,
+    original_message: str = "",
+) -> str:
+    if decision == ConfirmationDecision.CANCEL:
+        return "已取消该高风险操作，未执行任何修改。"
+    prefix = "已按只查看处理" if decision == ConfirmationDecision.INSPECT_ONLY else "已按确认执行受控操作"
+    return (
+        f"{prefix}。\n\n"
+        f"原始请求：{original_message}\n\n"
+        f"结果：\n```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```"
+    )
+
+
+async def _handle_pending_risk_answer(
+    *,
+    request: Request,
+    conversation_id: str,
+    answer: str,
+    as_stream: bool,
+) -> JSONResponse | StreamingResponse | dict | None:
+    store = get_confirmation_store()
+    pending = store.get(conversation_id)
+    if pending is None:
+        return None
+
+    decision, consumed = store.consume(conversation_id, answer)
+    if decision == ConfirmationDecision.UNKNOWN or consumed is None:
+        return None
+
+    classification = dict(consumed.classification)
+    parameters = dict(classification.get("parameters") or {})
+    if decision == ConfirmationDecision.CANCEL:
+        result = {"status": "cancelled", "kind": "pending_risk_confirmation"}
+    elif decision == ConfirmationDecision.INSPECT_ONLY:
+        target = classification.get("target_kind")
+        inspect_action = None
+        if target == "security_user_allowlist":
+            inspect_action = "list_security_allowlist"
+        elif target == "skill_external_allowlist":
+            inspect_action = "list_skill_external_allowlist"
+        result = execute_controlled_action(inspect_action, parameters)
+    else:
+        result = execute_controlled_action(classification.get("action"), parameters)
+
+    try:
+        from openakita.core.security_actions import (
+            maybe_broadcast_death_switch_reset,
+            maybe_refresh_skills,
+        )
+
+        await maybe_broadcast_death_switch_reset(result)
+        await maybe_refresh_skills(result, lambda: getattr(request.app.state, "agent", None))
+    except Exception:
+        pass
+
+    response_text = _format_controlled_action_result(
+        decision,
+        result,
+        original_message=consumed.original_message,
+    )
+
+    session_manager = getattr(request.app.state, "session_manager", None)
+    if session_manager and conversation_id:
+        try:
+            session = session_manager.get_session(
+                channel="desktop",
+                chat_id=conversation_id,
+                user_id="desktop_user",
+                create_if_missing=True,
+            )
+            if session:
+                session.add_message("user", answer)
+                session.add_message(
+                    "assistant",
+                    response_text,
+                    controlled_confirmation={
+                        "decision": decision.value,
+                        "confirmation_id": consumed.confirmation_id,
+                        "result": result,
+                    },
+                )
+                session_manager.persist()
+        except Exception as exc:
+            logger.warning("[Chat API] Failed to persist controlled confirmation: %s", exc)
+
+    if not as_stream:
+        return {
+            "status": "ok",
+            "conversation_id": conversation_id,
+            "decision": decision.value,
+            "confirmation_id": consumed.confirmation_id,
+            "result": result,
+            "message": response_text,
+        }
+
+    async def _gen():
+        payload = {"type": "text_delta", "content": response_text}
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        done = {"type": "done", "controlled_confirmation": True}
+        yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/api/commands")
@@ -323,6 +440,8 @@ async def _stream_chat(
     session_manager: object | None = None,
     http_request: Request | None = None,
     busy_generation: int = 0,
+    request_id: str = "",
+    requested_mode: str = "",
 ) -> AsyncIterator[str]:
     """Generate SSE events via Agent.chat_with_session_stream().
 
@@ -420,6 +539,7 @@ async def _stream_chat(
         import uuid as _uuid
 
         conversation_id = chat_request.conversation_id or f"api_{_uuid.uuid4().hex[:12]}"
+        turn_id = f"{conversation_id}:{request_id or _uuid.uuid4().hex[:12]}"
         session = None
         session_messages_history: list[dict] = []
 
@@ -459,6 +579,8 @@ async def _stream_chat(
                     attachments=chat_request.attachments,
                     thinking_mode=chat_request.thinking_mode,
                     thinking_depth=chat_request.thinking_depth,
+                    request_id=request_id,
+                    turn_id=turn_id,
                 ):
                     await _agent_queue.put(ev)
             except Exception as exc:
@@ -770,8 +892,11 @@ async def _stream_chat(
             _eff_mode = getattr(actual_agent, "_last_effective_mode", None) or chat_request.mode
             yield _sse("done", {
                 "usage": _usage_data,
+                "request_id": request_id,
+                "turn_id": turn_id,
                 "effective_mode": _eff_mode,
-                "requested_mode": chat_request.mode,
+                "requested_mode": requested_mode or chat_request.mode,
+                "tool_policy_source": getattr(actual_agent, "_last_tool_policy_source", "mode_ruleset"),
             })
 
     except Exception as e:
@@ -914,12 +1039,22 @@ async def chat(request: Request, body: ChatRequest):
 
     conversation_id = body.conversation_id
     client_id = body.client_id or ""
+    request_id = f"chat_{_uuid.uuid4().hex[:12]}"
 
     if not (body.message or "").strip() and not body.attachments:
         return JSONResponse(
             status_code=400,
             content={"error": "empty_message", "message": "消息内容不能为空"},
         )
+
+    pending_response = await _handle_pending_risk_answer(
+        request=request,
+        conversation_id=conversation_id,
+        answer=body.message or "",
+        as_stream=True,
+    )
+    if pending_response is not None:
+        return pending_response
 
     # ── Busy-lock check (via lifecycle manager) ──
     lifecycle = get_lifecycle_manager()
@@ -1028,10 +1163,18 @@ async def chat(request: Request, body: ChatRequest):
     )
 
     # Pass pre-resolved conversation_id so _stream_chat doesn't generate a new one
+    requested_mode = body.mode
+    body.mode = effective_mode
     body.conversation_id = conversation_id
 
     sse_gen = _stream_chat(
-        body, agent, session_manager, http_request=request, busy_generation=busy_gen
+        body,
+        agent,
+        session_manager,
+        http_request=request,
+        busy_generation=busy_gen,
+        request_id=request_id,
+        requested_mode=requested_mode,
     )
     if is_dual_loop():
         sse_gen = engine_stream(sse_gen)
@@ -1058,11 +1201,20 @@ async def chat_busy(
 @router.post("/api/chat/answer")
 async def chat_answer(request: Request, body: ChatAnswerRequest):
     """Handle user answer to an ask_user event."""
+    if body.conversation_id:
+        pending_response = await _handle_pending_risk_answer(
+            request=request,
+            conversation_id=body.conversation_id,
+            answer=body.answer,
+            as_stream=False,
+        )
+        if pending_response is not None:
+            return pending_response
     return {
         "status": "ok",
         "conversation_id": body.conversation_id,
         "answer": body.answer,
-        "hint": "Please send the answer as a new /api/chat message with the same conversation_id",
+        "hint": "No pending risk confirmation matched this conversation_id and answer.",
     }
 
 

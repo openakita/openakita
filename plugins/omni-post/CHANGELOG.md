@@ -179,8 +179,9 @@ MDRM memory and self-healing selectors.
   accounts / assets / settings / upload / sse); 14 LLM tools registered;
   `on_unload` cancels in-flight pipelines and closes the Playwright
   engine + SQLite connection.
-- `requirements.txt`: explicit `cryptography>=42.0.0` for the Fernet
-  cookie vault; Playwright + aiosqlite are reused from host.
+- `requirements.txt`: records `cryptography>=42.0.0` for the Fernet cookie
+  vault, while packaged builds install and prioritize it through
+  `omni_post_dep_bootstrap.py`; Playwright + aiosqlite are reused from host.
 
 #### Data model
 

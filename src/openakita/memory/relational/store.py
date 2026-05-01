@@ -28,6 +28,13 @@ class RelationalMemoryStore:
         self._conn = conn
         self._ensure_tables()
 
+    @staticmethod
+    def _active_node_where(alias: str = "") -> tuple[str, list[str]]:
+        prefix = f"{alias}." if alias else ""
+        return f"({prefix}valid_until IS NULL OR {prefix}valid_until >= ?)", [
+            datetime.now().isoformat()
+        ]
+
     # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
@@ -498,9 +505,10 @@ class RelationalMemoryStore:
             if not ranked_ids:
                 return self.search_like(query, limit)
             placeholders = ",".join("?" for _ in ranked_ids)
+            active_where, active_params = self._active_node_where()
             cur2 = self._conn.execute(
-                f"SELECT * FROM mdrm_nodes WHERE id IN ({placeholders})",
-                ranked_ids,
+                f"SELECT * FROM mdrm_nodes WHERE id IN ({placeholders}) AND {active_where}",
+                ranked_ids + active_params,
             )
             desc = cur2.description
             nodes_by_id: dict[str, MemoryNode] = {}
@@ -516,12 +524,16 @@ class RelationalMemoryStore:
             return []
         escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = f"%{escaped}%"
+        active_where, active_params = self._active_node_where()
         cur = self._conn.execute(
             """SELECT * FROM mdrm_nodes
-               WHERE content LIKE ? ESCAPE '\\' OR action_verb LIKE ? ESCAPE '\\'
-               OR project LIKE ? ESCAPE '\\'
+               WHERE (content LIKE ? ESCAPE '\\' OR action_verb LIKE ? ESCAPE '\\'
+               OR project LIKE ? ESCAPE '\\')
+               AND """
+            + active_where
+            + """
                ORDER BY importance DESC LIMIT ?""",
-            (pattern, pattern, pattern, limit),
+            (pattern, pattern, pattern, *active_params, limit),
         )
         return [self._row_to_node(cur.description, r) for r in cur.fetchall()]
 
@@ -534,29 +546,37 @@ class RelationalMemoryStore:
         row = cur.fetchone()
         canonical = row[0] if row else name_lower
 
+        active_where, active_params = self._active_node_where("n")
         cur = self._conn.execute(
             """SELECT n.* FROM mdrm_nodes n
                JOIN mdrm_entity_index ei ON n.id = ei.node_id
-               WHERE ei.entity_name = ?
+               WHERE ei.entity_name = ? AND """
+            + active_where
+            + """
                ORDER BY n.importance DESC LIMIT ?""",
-            (canonical, limit),
+            (canonical, *active_params, limit),
         )
         return [self._row_to_node(cur.description, r) for r in cur.fetchall()]
 
     def search_by_time_range(
         self, start: datetime, end: datetime, limit: int = 50
     ) -> list[MemoryNode]:
+        active_where, active_params = self._active_node_where()
         cur = self._conn.execute(
             """SELECT * FROM mdrm_nodes
-               WHERE occurred_at >= ? AND occurred_at <= ?
+               WHERE occurred_at >= ? AND occurred_at <= ? AND """
+            + active_where
+            + """
                ORDER BY occurred_at DESC LIMIT ?""",
-            (start.isoformat(), end.isoformat(), limit),
+            (start.isoformat(), end.isoformat(), *active_params, limit),
         )
         return [self._row_to_node(cur.description, r) for r in cur.fetchall()]
 
     def get_all_nodes(self, limit: int = 2000) -> list[MemoryNode]:
+        active_where, active_params = self._active_node_where()
         cur = self._conn.execute(
-            "SELECT * FROM mdrm_nodes ORDER BY importance DESC LIMIT ?", (limit,)
+            f"SELECT * FROM mdrm_nodes WHERE {active_where} ORDER BY importance DESC LIMIT ?",
+            (*active_params, limit),
         )
         return [self._row_to_node(cur.description, r) for r in cur.fetchall()]
 

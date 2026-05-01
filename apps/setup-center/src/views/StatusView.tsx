@@ -62,7 +62,7 @@ export interface StatusViewProps {
   doStopService: (wsId?: string | null) => Promise<void>;
   waitForServiceDown: (base: string, maxMs?: number) => Promise<boolean>;
   doStartLocalService: (wsId: string) => Promise<void>;
-  setView: React.Dispatch<React.SetStateAction<ViewId>>;
+  setView: (view: ViewId) => void;
 }
 
 export function StatusView(props: StatusViewProps) {

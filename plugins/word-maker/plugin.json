@@ -1,0 +1,65 @@
+{
+  "id": "word-maker",
+  "name": "Word Maker",
+  "version": "0.1.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Guided Word document generation with requirement clarification, templates, DOCX export, and project history.",
+  "display_name_zh": "Word 文档助手",
+  "display_name_en": "Word Maker",
+  "description_i18n": {
+    "zh": "通过需求澄清、资料解析、模板变量校验和章节迭代生成可编辑 Word 文档。",
+    "en": "Generate editable Word documents through guided requirements, source ingestion, template validation, and section revision."
+  },
+  "icon": "icon.svg",
+  "author": "OpenAkita",
+  "category": "productivity",
+  "tags": ["word", "docx", "office", "template", "report", "document"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access",
+    "assets.publish"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~1",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0",
+    "python": ">=3.11"
+  },
+  "provides": {
+    "tools": [
+      "word_start_project",
+      "word_ingest_sources",
+      "word_upload_template",
+      "word_extract_template_vars",
+      "word_generate_outline",
+      "word_confirm_outline",
+      "word_fill_template",
+      "word_rewrite_section",
+      "word_audit",
+      "word_export",
+      "word_list_projects",
+      "word_cancel"
+    ],
+    "routes": true,
+    "skill": "SKILL.md"
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "icon": "icon.svg",
+    "title": "Word 文档助手",
+    "title_i18n": {
+      "en": "Word Maker",
+      "zh": "Word 文档助手"
+    },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  },
+  "load_timeout": 15
+}

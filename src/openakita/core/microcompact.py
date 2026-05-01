@@ -13,6 +13,7 @@ Microcompact — 请求前轻量上下文清理
 from __future__ import annotations
 
 import logging
+import hashlib
 import time
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,8 @@ def microcompact(
     now = current_time or time.time()
     cleaned = 0
     total_messages = len(messages)
+    seen_cache_refs: set[str] = set()
+    seen_tool_fingerprints: dict[str, int] = {}
 
     for i, msg in enumerate(messages):
         # Only process messages not in the last 3 (keep recent context intact)
@@ -62,6 +65,32 @@ def microcompact(
                 continue
 
             block_type = block.get("type", "")
+
+            if block_type == "tool_result" and not is_recent:
+                result_content = block.get("content", "")
+                cache_key = str(block.get("cache_key", "") or "")
+                if not cache_key and isinstance(result_content, str) and result_content.startswith("[系统缓存:"):
+                    cache_key = result_content.split("]", 1)[0]
+                if cache_key:
+                    if cache_key in seen_cache_refs:
+                        block["content"] = f"[cached tool result duplicate merged: {cache_key}]"
+                        cleaned += 1
+                        continue
+                    seen_cache_refs.add(cache_key)
+
+                tool_name = str(block.get("tool_name", "") or "")
+                if isinstance(result_content, str) and result_content:
+                    fp = hashlib.md5(result_content[:4000].encode("utf-8", errors="ignore")).hexdigest()[:12]
+                    semantic_key = f"{tool_name}:{fp}"
+                    previous = seen_tool_fingerprints.get(semantic_key, 0)
+                    if previous >= 1:
+                        block["content"] = (
+                            f"[tool result merged] 重复/相似的 {tool_name or 'tool'} 结果已合并；"
+                            f"保留最近结果，历史副本 fingerprint={fp}。"
+                        )
+                        cleaned += 1
+                        continue
+                    seen_tool_fingerprints[semantic_key] = previous + 1
 
             # 1. Clear expired tool results (except recent ones)
             if block_type == "tool_result" and not is_recent:

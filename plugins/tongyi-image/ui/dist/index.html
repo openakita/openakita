@@ -29,7 +29,7 @@
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
       --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
-      --primary: #6366f1; --primary-hover: #4f46e5; --primary-light: rgba(99,102,241,.1);
+      --primary: #7c3aed; --primary-hover: #6d28d9; --primary-light: rgba(124,58,237,.1);
       --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
       --border: #e2e8f0; --radius: 8px;
     }
@@ -50,6 +50,8 @@
     .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
     .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
     .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .oa-hero-title__icon--app { background: none; box-shadow: none; overflow: hidden; padding: 0; }
+    .oa-hero-title__icon--app img { width: 36px; height: 36px; display: block; }
     .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
     .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
     .tab { padding: 10px 18px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
@@ -68,7 +70,7 @@
     .btn-sm { padding: 4px 10px; font-size: 12px; }
     .btn-danger { color: var(--danger); border-color: var(--danger); }
     .input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
-    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(124,58,237,.15); }
     .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
     .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
     /* Form-field label — upgraded to a "section label" look (small accent
@@ -86,7 +88,7 @@
     .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
     .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
     .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
-    .tag-blue { background: rgba(99,102,241,.15); color: #818cf8; }
+    .tag-blue { background: rgba(124,58,237,.15); color: #a78bfa; }
     .tag-orange { background: rgba(245,158,11,.15); color: #fbbf24; }
     .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
     .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
@@ -95,7 +97,7 @@
     .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
     .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
     .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
-    .upload-zone:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .upload-zone:hover { border-color: var(--primary); background: rgba(124,58,237,.04); }
     .upload-zone.has-image { padding: 8px; border-style: solid; }
     .upload-preview { max-width: 100%; max-height: 180px; border-radius: 6px; object-fit: contain; }
     .split-layout { display: flex; gap: 20px; height: 100%; }
@@ -127,7 +129,7 @@
     .keyword-tag { display: inline-block; padding: 3px 10px; margin: 3px; border-radius: 4px; font-size: 12px; background: var(--bg-hover); color: var(--text-muted); cursor: pointer; transition: .15s; border: 1px solid transparent; }
     .keyword-tag:hover { border-color: var(--primary); color: var(--primary); }
     .template-card { padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: .15s; margin-bottom: 8px; }
-    .template-card:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .template-card:hover { border-color: var(--primary); background: rgba(124,58,237,.04); }
     .template-card h4 { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
     .template-card p { font-size: 12px; color: var(--text-dim); }
     .setting-section { margin-bottom: 24px; }
@@ -848,8 +850,9 @@ function App() {
     <div className="app">
       <div className="header">
         <h1 className="oa-hero-title">
-          <span className="oa-hero-title__icon"
-                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.palette() : ""}} />
+          <span className="oa-hero-title__icon oa-hero-title__icon--app">
+            <img src="icon.svg" alt="" aria-hidden="true" />
+          </span>
           <span className="oa-hero-title__text">
             {t("app.title")}
             <span className="oa-hero-title__sub">{t("app.subtitle")}</span>

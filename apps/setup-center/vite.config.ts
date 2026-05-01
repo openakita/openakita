@@ -45,6 +45,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      react: path.resolve(__dirname, "./node_modules/react"),
+      "react-dom": path.resolve(__dirname, "./node_modules/react-dom"),
+      "react-i18next": path.resolve(__dirname, "./node_modules/react-i18next"),
       "@shared/providers.json": path.resolve(
         __dirname,
         "../../src/openakita/llm/registries/providers.json",
@@ -55,7 +58,7 @@ export default defineConfig({
     // calling react-i18next's useTranslation() against a different React copy
     // than the host renderer, causing "Cannot read properties of null
     // (reading 'useContext')" at hook-dispatch time.
-    dedupe: ["react", "react-dom", "three"],
+    dedupe: ["react", "react-dom", "react-i18next", "three"],
   },
   optimizeDeps: {
     include: [

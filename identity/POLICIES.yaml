@@ -31,12 +31,12 @@ security:
     default_zone: workspace
   confirmation:
     enabled: true
-    mode: yolo
+    mode: smart
     timeout_seconds: 60
     default_on_timeout: deny
     confirm_ttl: 120.0
   command_patterns:
-    enabled: false
+    enabled: true
     custom_critical: []
     custom_high: []
     excluded_patterns: []
@@ -55,7 +55,7 @@ security:
     max_snapshots: 50
     snapshot_dir: data/checkpoints
   self_protection:
-    enabled: false
+    enabled: true
     protected_dirs:
     - data/
     - identity/

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
+import { createContext, useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense, startTransition } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, setWsApiBaseUrl, logger, registerGlobalShortcut } from "./platform";
 import { getActiveServer, getActiveServerId } from "./platform/servers";
@@ -324,12 +324,17 @@ function MainApp() {
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const multiAgentEnabled = true;
   const [storeVisible, setStoreVisible] = useState(() => localStorage.getItem("openakita_storeVisible") === "true");
+  const transitionToView = useCallback((nextView: ViewId) => {
+    startTransition(() => {
+      setView(nextView);
+    });
+  }, []);
   // ── Hash-based deep link routing ──
   useEffect(() => {
     const onHashChange = () => {
       const parsed = _parseHashRoute(window.location.hash);
       if (parsed) {
-        setView(parsed.view);
+        transitionToView(parsed.view);
         if (parsed.stepId) setStepId(parsed.stepId);
       }
     };
@@ -345,7 +350,7 @@ function MainApp() {
       window.removeEventListener("hashchange", onHashChange);
       window.removeEventListener("message", onMessage);
     };
-  }, []);
+  }, [transitionToView]);
 
   // ── Data mode: "local" (Tauri commands) or "remote" (HTTP API) ──
   // Web mode always starts in "remote" since the backend is already running
@@ -380,6 +385,19 @@ function MainApp() {
     const parsed = _parseHashRoute(window.location.hash);
     return parsed?.stepId || "llm";
   });
+  const navigateToView = useCallback((nextView: ViewId, nextStepId?: StepId) => {
+    const newHash = _viewToHash(nextView, nextStepId);
+    startTransition(() => {
+      setView(nextView);
+      if (nextStepId) setStepId(nextStepId);
+      if (isMobile) setMobileSidebarOpen(false);
+    });
+    if (newHash) {
+      if (window.location.hash !== newHash) window.location.hash = newHash;
+    } else if (window.location.hash) {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  }, [isMobile]);
   const currentStepIdxRaw = useMemo(() => steps.findIndex((s) => s.id === stepId), [steps, stepId]);
   const currentStepIdx = currentStepIdxRaw < 0 ? 0 : currentStepIdxRaw;
 
@@ -474,7 +492,7 @@ function MainApp() {
       refreshStatus("local", baseUrl, true);
       autoCheckEndpoints(baseUrl);
       // 4. 跳过 onboarding，进入主界面
-      setView("status");
+      navigateToView("status");
     } catch (e) {
       logger.error("App", "obConnectExistingService failed", { error: String(e) });
     }
@@ -487,11 +505,11 @@ function MainApp() {
         const firstRun = await invoke<boolean>("is_first_run");
         if (firstRun) {
           await obProbeRunningService();
-          setView("onboarding");
+          navigateToView("onboarding");
           obLoadEnvCheck();
         } else {
           // 非首次启动：直接进入状态页面
-          setView("status");
+          navigateToView("status");
         }
       } catch {
         // is_first_run 命令不可用（开发模式），忽略
@@ -502,7 +520,7 @@ function MainApp() {
     const unlisten = listen<string>("app-launch-mode", async (e) => {
       if (e.payload === "first-run") {
         await obProbeRunningService();
-        setView("onboarding");
+        navigateToView("onboarding");
         obLoadEnvCheck();
       }
     });
@@ -514,7 +532,7 @@ function MainApp() {
         setObStep("ob-welcome");
         setObDetectedService(null);
         obProbeRunningService();
-        setView("onboarding");
+        navigateToView("onboarding");
         obLoadEnvCheck();
       }
     };
@@ -581,6 +599,19 @@ function MainApp() {
   const wsRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pageVisible, setPageVisible] = useState(true);
   const visibilityGraceRef = useRef(false); // 休眠恢复宽限期
+  const lastPluginAppsReadyEventRef = useRef(0);
+  const notifyPluginAppsReady = useCallback(() => {
+    const now = Date.now();
+    if (now - lastPluginAppsReadyEventRef.current < 30_000) return;
+    lastPluginAppsReadyEventRef.current = now;
+    try {
+      window.dispatchEvent(
+        new CustomEvent("openakita:plugin-apps-changed", {
+          detail: { source: "backend-ready" },
+        }),
+      );
+    } catch { /* ignore */ }
+  }, []);
   const [detectedProcesses, setDetectedProcesses] = useState<Array<{ pid: number; cmd: string }>>([]);
   const [serviceLog, setServiceLog] = useState<{ path: string; content: string; truncated: boolean } | null>(null);
   const [serviceLogError, setServiceLogError] = useState<string | null>(null);
@@ -737,6 +768,7 @@ function MainApp() {
               setApiBaseUrl(url);
               setServiceStatus({ running: true, pid: healthData.pid || null, pidFile: "" });
               if (svcVersion) setBackendVersion(svcVersion);
+              notifyPluginAppsReady();
               try { await refreshStatus("local", url, true); } catch { /* ignore */ }
               autoCheckEndpoints(url);
               if (svcVersion) setTimeout(() => checkVersionMismatch(svcVersion), 500);
@@ -819,7 +851,7 @@ function MainApp() {
         autoStartToastRef.current = null;
       }
     };
-  }, []);
+  }, [notifyPluginAppsReady]);
 
   // ── 页面可见性监听（休眠/睡眠恢复感知）──
   // Capacitor 环境下 visibilitychange 和 appStateChange 可能同时触发，
@@ -898,6 +930,7 @@ function MainApp() {
             const data = await res.json();
             if (data.version) setBackendVersion(data.version);
           } catch { /* ignore */ }
+          notifyPluginAppsReady();
         } else {
           throw new Error("non-ok");
         }
@@ -963,7 +996,7 @@ function MainApp() {
     let unlisten: null | (() => void) = null;
     (async () => {
       unlisten = await listen("open_status", async () => {
-        setView("status");
+        navigateToView("status");
         try {
           await refreshStatus(undefined, undefined, true);
         } catch {
@@ -1031,7 +1064,7 @@ function MainApp() {
       unlisten = await listen("quit_failed", async (ev) => {
         const p = ev.payload as any;
         const msg = String(p?.message || "退出失败：后台服务仍在运行。请先停止服务。");
-        setView("status");
+        navigateToView("status");
         notifyError(msg);
         try {
           await refreshStatus(undefined, undefined, true);
@@ -1941,6 +1974,7 @@ function MainApp() {
         setServiceStatus((prev) =>
           prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" }
         );
+        notifyPluginAppsReady();
         try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
         autoCheckEndpoints(apiBaseUrl);
         setTimeout(() => {
@@ -2039,6 +2073,15 @@ function MainApp() {
           "CONTEXT_MAX_WINDOW", "CONTEXT_COMPRESSION_RATIO", "CONTEXT_COMPRESSION_THRESHOLD",
           "CONTEXT_BOUNDARY_COMPRESSION_RATIO", "CONTEXT_MIN_RECENT_TURNS",
           "CONTEXT_ENABLE_TOOL_COMPRESSION", "CONTEXT_LARGE_TOOL_THRESHOLD",
+          "CONTEXT_HARD_TERMINATE_RATIO",
+          "CONTEXT_TOKEN_ANOMALY_THRESHOLD", "CONTEXT_TOKEN_ANOMALY_MAX_RECOVERIES",
+          "TASK_BUDGET_TOOL_CALLS", "SAME_TOOL_CALL_LIMIT",
+          "READONLY_STAGNATION_HARD_LIMIT", "READONLY_STAGNATION_LIMIT",
+          "CONTEXT_REAL_USAGE_DECAY",
+          "CONTEXT_CACHED_SUMMARY_CHARS", "CONTEXT_TOOL_RESULTS_TOTAL_CHARS",
+          "API_TOOLS_SCHEMA_BUDGET_TOKENS",
+          "TASK_BUDGET_TOKENS", "TASK_BUDGET_COST",
+          "TASK_BUDGET_DURATION", "TASK_BUDGET_ITERATIONS",
         ];
       default:
         return [];
@@ -2886,7 +2929,7 @@ function MainApp() {
           doStopService={doStopService}
           waitForServiceDown={waitForServiceDown}
           doStartLocalService={doStartLocalService}
-          setView={setView}
+          setView={navigateToView}
         />
       </div>
     );
@@ -2897,42 +2940,44 @@ function MainApp() {
     const percent = installProgress?.percent ?? (serviceStatus?.running ? 100 : 0);
     const runtimeLogHint = "~/.openakita/runtime/logs/bootstrap.log";
     return (
-      <div className="card border border-blue-200/70 bg-blue-50/50 dark:border-blue-500/30 dark:bg-blue-950/20">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-base font-bold tracking-tight">OpenAkita 运行环境准备</h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              桌面端会优先创建 app runtime venv 和 agent tools venv；失败时回退到 legacy PyInstaller 兼容模式。
-            </p>
+      <div className="mx-auto w-full max-w-6xl px-6 pt-5">
+        <div className="card border border-blue-200/70 bg-blue-50/50 dark:border-blue-500/30 dark:bg-blue-950/20">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-base font-bold tracking-tight">OpenAkita 运行环境准备</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                桌面端会优先创建 app runtime venv 和 agent tools venv；失败时回退到 legacy PyInstaller 兼容模式。
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!!busy || !currentWorkspaceId}
+              onClick={() => currentWorkspaceId && doStartLocalService(currentWorkspaceId)}
+            >
+              重试启动/修复
+            </Button>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!!busy || !currentWorkspaceId}
-            onClick={() => currentWorkspaceId && doStartLocalService(currentWorkspaceId)}
-          >
-            重试启动/修复
-          </Button>
+          <div className="mt-4 h-2 rounded-full bg-blue-100 dark:bg-blue-950 overflow-hidden">
+            <div
+              className="h-full bg-blue-500 transition-all"
+              style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
+            />
+          </div>
+          <div className="mt-3 grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
+            <div>当前阶段：<span className="font-medium text-foreground">{stage}</span></div>
+            <div>默认镜像：<span className="font-mono text-xs">{indexUrl || "https://mirrors.aliyun.com/pypi/simple/"}</span></div>
+            <div>App venv：<span className="font-mono text-xs">~/.openakita/runtime/app-venv</span></div>
+            <div>Agent venv：<span className="font-mono text-xs">~/.openakita/runtime/agent-venv</span></div>
+            <div>日志路径：<span className="font-mono text-xs">{runtimeLogHint}</span></div>
+            <div>状态：<span className="font-medium">{venvStatus || (serviceStatus?.running ? "后端运行中" : "尚未启动")}</span></div>
+          </div>
+          {installLiveLog && (
+            <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-200">
+              {installLiveLog.slice(-4000)}
+            </pre>
+          )}
         </div>
-        <div className="mt-4 h-2 rounded-full bg-blue-100 dark:bg-blue-950 overflow-hidden">
-          <div
-            className="h-full bg-blue-500 transition-all"
-            style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
-          />
-        </div>
-        <div className="mt-3 grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
-          <div>当前阶段：<span className="font-medium text-foreground">{stage}</span></div>
-          <div>默认镜像：<span className="font-mono text-xs">{indexUrl || "https://mirrors.aliyun.com/pypi/simple/"}</span></div>
-          <div>App venv：<span className="font-mono text-xs">~/.openakita/runtime/app-venv</span></div>
-          <div>Agent venv：<span className="font-mono text-xs">~/.openakita/runtime/agent-venv</span></div>
-          <div>日志路径：<span className="font-mono text-xs">{runtimeLogHint}</span></div>
-          <div>状态：<span className="font-medium">{venvStatus || (serviceStatus?.running ? "后端运行中" : "尚未启动")}</span></div>
-        </div>
-        {installLiveLog && (
-          <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-200">
-            {installLiveLog.slice(-4000)}
-          </pre>
-        )}
       </div>
     );
   }
@@ -3292,7 +3337,7 @@ function MainApp() {
         askConfirm={askConfirm}
         refreshAll={refreshAll}
         restartService={restartService}
-        setView={setView}
+        setView={navigateToView}
       />
     );
   }
@@ -4835,7 +4880,7 @@ function MainApp() {
                   visibilityGraceRef.current = true;
                   heartbeatFailCount.current = 0;
                   setTimeout(() => { visibilityGraceRef.current = false; }, 15000);
-                  setView("status");
+                  navigateToView("status");
                   await refreshAll();
                   // 关键：刷新端点列表、IM 状态等（forceAliveCheck=true 绕过 serviceStatus 闭包）
                   // 首次尝试
@@ -5029,7 +5074,7 @@ function MainApp() {
           key={pluginId}
           pluginId={pluginId}
           apiBase={httpApiBase()}
-          onViewChange={(v) => setView(v)}
+          onViewChange={(v) => navigateToView(v)}
         />
       );
     }
@@ -5198,16 +5243,7 @@ function MainApp() {
         collapsed={isMobile ? false : sidebarCollapsed}
         onToggleCollapsed={() => { if (!isMobile) setSidebarCollapsed((v) => !v); }}
         view={view}
-        onViewChange={(v) => {
-          setView(v);
-          setMobileSidebarOpen(false);
-          const newHash = _viewToHash(v);
-          if (newHash) {
-            window.location.hash = newHash;
-          } else if (window.location.hash) {
-            history.replaceState(null, "", window.location.pathname + window.location.search);
-          }
-        }}
+        onViewChange={(v) => navigateToView(v)}
         mobileOpen={mobileSidebarOpen}
         configExpanded={configExpanded}
         onToggleConfig={() => {
@@ -5218,14 +5254,13 @@ function MainApp() {
         stepId={stepId}
         onStepChange={(s: StepId) => {
           setStepId(s);
-          if (view === "wizard") window.location.hash = _viewToHash("wizard", s);
+          if (view === "wizard") navigateToView("wizard", s);
         }}
         disabledViews={disabledViews}
         storeVisible={storeVisible}
         desktopVersion={desktopVersion}
         backendVersion={backendVersion}
         serviceRunning={serviceStatus?.running ?? false}
-        onBugReport={() => setBugReportOpen(true)}
         onRefreshStatus={async () => { await refreshStatus(undefined, undefined, true); }}
         isWeb={IS_WEB}
         httpApiBase={httpApiBase()}
@@ -5323,7 +5358,7 @@ function MainApp() {
           saveEnvKeys={saveEnvKeys}
           restartService={restartService}
           askConfirm={askConfirm}
-          setView={setView}
+          setView={navigateToView}
         />
 
         {showPwBanner && (
@@ -5339,8 +5374,7 @@ function MainApp() {
                 : t("web.passwordBanner", { defaultValue: "当前 Web 访问密码为系统自动生成，建议前往设置页面配置自定义密码以保障远程访问安全。" })}
             </span>
             <button className="btnSmall" style={{ whiteSpace: "nowrap", fontWeight: 500, fontSize: isMobile ? 11 : undefined, padding: isMobile ? "2px 8px" : undefined }} onClick={() => {
-              setView("wizard");
-              setStepId("advanced");
+              navigateToView("wizard", "advanced");
               setShowPwBanner(false);
               localStorage.setItem("openakita_pw_banner_dismissed", "1");
             }}>{t("web.passwordBannerAction", { defaultValue: "去设置" })}</button>
@@ -5641,7 +5675,7 @@ function MainApp() {
         open={bugReportOpen}
         onClose={() => setBugReportOpen(false)}
         apiBase={httpApiBase()}
-        onNavigateToMyFeedback={() => setView("my_feedback")}
+        onNavigateToMyFeedback={() => navigateToView("my_feedback")}
         serviceRunning={serviceStatus?.running ?? false}
         currentWorkspaceId={currentWorkspaceId}
       />

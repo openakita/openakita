@@ -1,0 +1,9 @@
+docxtpl
+python-docx
+aiosqlite
+
+# Optional source readers / exporters used by later phases:
+# openpyxl
+# python-pptx
+# pypdf
+

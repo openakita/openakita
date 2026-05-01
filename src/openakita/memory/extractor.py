@@ -32,6 +32,19 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 
+def _loads_llm_json(text: str):
+    """Load JSON emitted by an LLM with a small repair pass.
+
+    This is intentionally conservative: it removes markdown fences and trailing
+    commas, but does not try to invent missing fields.
+    """
+    cleaned = text.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+    return json.loads(cleaned)
+
+
 class MemoryExtractor:
     """AI 驱动的记忆提取器 (v2)"""
 
@@ -229,7 +242,7 @@ duration 参考:
             if not json_match:
                 return []
 
-            data = json.loads(json_match.group())
+            data = _loads_llm_json(json_match.group())
             if not isinstance(data, list):
                 return []
 
@@ -433,7 +446,7 @@ duration 参考:
             if not json_match:
                 return self._parse_memory_list(text), []
 
-            data = json.loads(json_match.group())
+            data = _loads_llm_json(json_match.group())
             if not isinstance(data, dict):
                 return self._parse_memory_list(text), []
 
@@ -508,7 +521,7 @@ duration 参考:
         if not json_match:
             return []
         try:
-            data = json.loads(json_match.group())
+            data = _loads_llm_json(json_match.group())
             if not isinstance(data, list):
                 return []
             return self._parse_memory_items(data)
@@ -562,7 +575,7 @@ duration 参考:
 
         for tc in (tool_calls or [])[:5]:
             name = tc.get("name", "unknown")
-            inp = tc.get("input", {})
+            inp = tc.get("input", tc.get("arguments", {}))
             key_params = (
                 {
                     k: v
@@ -628,7 +641,7 @@ duration 参考:
                 text = (getattr(resp, "content", None) or str(resp)).strip()
                 json_match = re.search(r"\{[\s\S]*\}", text)
                 if json_match:
-                    data = json.loads(json_match.group())
+                    data = _loads_llm_json(json_match.group())
                     episode.summary = data.get("summary", "")
                     episode.goal = data.get("goal", "")
                     episode.outcome = data.get("outcome", "completed")
@@ -652,7 +665,7 @@ duration 参考:
                 continue
             for tc in turn.tool_calls:
                 name = tc.get("name", "")
-                inp = tc.get("input", {})
+                inp = tc.get("input", tc.get("arguments", {}))
                 key_params = {}
                 if isinstance(inp, dict):
                     for k in ("command", "path", "query", "url", "filename"):
@@ -1005,7 +1018,7 @@ duration 参考:
             json_match = re.search(r"\[[\s\S]*\]", response)
             if not json_match:
                 return []
-            data = json.loads(json_match.group())
+            data = _loads_llm_json(json_match.group())
             if not isinstance(data, list):
                 return []
 

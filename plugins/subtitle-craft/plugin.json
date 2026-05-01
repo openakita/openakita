@@ -9,6 +9,7 @@
     "zh": "AI 字幕全生命周期 — 自动生成（Paraformer-v2 词级时间戳）/ 多语翻译（Qwen-MT）/ 修复优化 / 样式烧制（ffmpeg + 可选 Playwright HTML）/ AI 选 Hook（Qwen-Plus 三轮窗口策略）",
     "en": "AI subtitle full lifecycle — auto subtitle (Paraformer-v2 word-level), multilingual translation (Qwen-MT), repair, style burn (ffmpeg + optional Playwright HTML overlay), and AI hook picker (Qwen-Plus 3-window strategy)"
   },
+  "icon": "icon.svg",
   "type": "python",
   "entry": "plugin.py",
   "author": "OpenAkita",
@@ -41,6 +42,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
+    "icon": "icon.svg",
     "title": "字幕工坊",
     "title_i18n": {
       "zh": "字幕工坊",

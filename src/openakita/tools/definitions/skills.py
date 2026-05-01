@@ -84,7 +84,10 @@ SKILLS_TOOLS = [
 3. 如果失败提示"no executable scripts"，改用平台命令工具执行代码
 
 **配置缺失处理**：
-如果脚本因缺少配置（API Key/凭据/路径等）而失败，应主动帮用户完成配置（引导获取、写入配置文件），而不是告诉用户"缺少XX无法使用"。""",
+如果脚本因缺少配置（API Key/凭据/路径等）而失败，应主动帮用户完成配置（引导获取、写入配置文件），而不是告诉用户"缺少XX无法使用"。
+
+**Python 环境**：
+声明了 `metadata.openakita.python.dependencies` 的技能会在执行前准备独立 skill venv；未声明依赖的 Python 脚本优先使用当前 Agent 环境。""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -209,17 +212,22 @@ SKILLS_TOOLS = [
     {
         "name": "manage_skill_enabled",
         "category": "Skills",
-        "description": "Enable or disable external skills by updating the allowlist. Use when: (1) User asks to organize/clean up skills, (2) User wants to disable unused skills to reduce noise, (3) AI recommends enabling/disabling skills based on usage patterns.",
+        "description": "Enable or disable external skills by updating the skill external_allowlist. This is NOT the security user_allowlist and NOT an IM channel allowlist.",
         "detail": """启用或禁用外部技能。
 
 **功能**：
 - 批量设置多个技能的启用/禁用状态
-- 修改后立即生效（自动写入 data/skills.json 并热重载）
+- 修改后立即生效（自动写入 data/skills.json 的 `external_allowlist` 并热重载）
 
 **适用场景**：
 - 用户要求整理技能（禁用不常用的、启用需要的）
 - 根据工作场景调整技能集合
 - 减少技能噪声，提升响应质量
+
+**边界**：
+- 这里只管理“外部技能启用列表”
+- 不要用它处理安全策略白名单；安全工具/命令白名单在 `/api/config/security/user-allowlist`
+- 不要用它处理 IM 群/用户白名单；IM 通道配置由对应 channel 配置管理
 
 **注意**：
 - 系统技能不可禁用，仅外部技能支持

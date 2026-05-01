@@ -747,12 +747,58 @@ fn runtime_venv_python_path(venv_dir: &Path) -> PathBuf {
     }
 }
 
-fn runtime_venv_backend_python_path(venv_dir: &Path) -> PathBuf {
-    if cfg!(windows) {
-        let pythonw = venv_dir.join("Scripts").join("pythonw.exe");
-        if pythonw.exists() {
-            return pythonw;
+fn runtime_venv_home_python_path(venv_dir: &Path) -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let cfg_path = venv_dir.join("pyvenv.cfg");
+    let content = fs::read_to_string(cfg_path).ok()?;
+    for line in content.lines() {
+        let Some(home) = line.strip_prefix("home = ") else {
+            continue;
+        };
+        let py = PathBuf::from(home.trim()).join("python.exe");
+        if py.exists() {
+            return Some(py);
         }
+    }
+    None
+}
+
+fn runtime_venv_site_packages_dir(venv_dir: &Path) -> Option<PathBuf> {
+    if cfg!(windows) {
+        let sp = venv_dir.join("Lib").join("site-packages");
+        return sp.exists().then_some(sp);
+    }
+    None
+}
+
+fn python_string_literal(value: &Path) -> String {
+    format!("{:?}", value.to_string_lossy().to_string())
+}
+
+fn runtime_venv_backend_args(venv_dir: &Path) -> Vec<String> {
+    if cfg!(windows) && runtime_venv_home_python_path(venv_dir).is_some() {
+        if let Some(site_packages) = runtime_venv_site_packages_dir(venv_dir) {
+            let venv_python = runtime_venv_python_path(venv_dir);
+            let code = format!(
+                "import runpy, site, sys; sys.prefix = sys.exec_prefix = {}; sys.executable = {}; site.addsitedir({}); runpy.run_module('openakita.main', run_name='__main__')",
+                python_string_literal(venv_dir),
+                python_string_literal(&venv_python),
+                python_string_literal(&site_packages)
+            );
+            return vec!["-u".into(), "-c".into(), code, "serve".into()];
+        }
+    }
+    vec!["-u".into(), "-m".into(), "openakita.main".into(), "serve".into()]
+}
+
+fn runtime_venv_backend_python_path(venv_dir: &Path) -> PathBuf {
+    // Do not use the python.exe/pythonw.exe launcher files created by uv on
+    // Windows. They delegate to the managed CPython executable as a grandchild,
+    // which escapes our CREATE_NO_WINDOW flag and leaves a visible console.
+    if let Some(py) = runtime_venv_home_python_path(venv_dir) {
+        return py;
     }
     runtime_venv_python_path(venv_dir)
 }
@@ -923,7 +969,11 @@ fn ensure_app_venv(
     let app_py = runtime_venv_python_path(&app_venv_dir());
     let expected_version = env!("CARGO_PKG_VERSION");
     let manifest_ok = read_runtime_manifest()
-        .map(|m| m.app_version == expected_version && !m.legacy_mode)
+        .map(|m| {
+            m.app_version == expected_version
+                && m.wheel_hash == bootstrap.wheel.sha256
+                && !m.legacy_mode
+        })
         .unwrap_or(false);
     if manifest_ok && health_check_python(&app_py, "import openakita, pip, certifi", &log_path) {
         return Ok(app_py);
@@ -939,6 +989,7 @@ fn ensure_app_venv(
     cmd.args(["pip", "install", "--python"]);
     cmd.arg(&app_py);
     cmd.arg(wheel_arg);
+    cmd.args(["--reinstall-package", "openakita"]);
     // `uv pip install` does not support pip's `--prefer-binary` flag.
     // Keep binary preference on Python-side `pip install` calls only.
     cmd.args(["--index-url", &pip_index.url]);
@@ -1108,7 +1159,7 @@ fn get_backend_executable(venv_dir: &str) -> (PathBuf, Vec<String>) {
             ));
             return (
                 backend_python,
-                vec!["-u".into(), "-m".into(), "openakita.main".into(), "serve".into()],
+                runtime_venv_backend_args(&runtime.app_venv),
             );
         }
         Err(e) => {
@@ -2540,7 +2591,7 @@ fn openakita_list_processes() -> Vec<OpenAkitaProcess> {
         let mut pe: win::PROCESSENTRY32W = unsafe { std::mem::zeroed() };
         pe.dw_size = std::mem::size_of::<win::PROCESSENTRY32W>() as u32;
 
-        let mut python_pids: Vec<u32> = Vec::new();
+        let mut python_pids: Vec<(u32, u32)> = Vec::new();
 
         if unsafe { win::Process32FirstW(snap, &mut pe) } != 0 {
             loop {
@@ -2553,7 +2604,7 @@ fn openakita_list_processes() -> Vec<OpenAkitaProcess> {
                 );
                 let name_lower = name.to_ascii_lowercase();
                 if name_lower.contains("python") {
-                    python_pids.push(pe.th32_process_id);
+                    python_pids.push((pe.th32_process_id, pe.th32_parent_process_id));
                 }
                 if unsafe { win::Process32NextW(snap, &mut pe) } == 0 {
                     break;
@@ -2564,8 +2615,10 @@ fn openakita_list_processes() -> Vec<OpenAkitaProcess> {
             win::CloseHandle(snap);
         }
 
+        let mut matched: Vec<(u32, u32, String)> = Vec::new();
+
         // Step 2: 对每个 python 进程查命令行
-        for ppid in python_pids {
+        for (ppid, parent_pid) in python_pids {
             let mut c = Command::new("powershell");
             c.args([
                 "-NoProfile",
@@ -2583,12 +2636,21 @@ fn openakita_list_processes() -> Vec<OpenAkitaProcess> {
                 // 精确匹配模块调用签名，避免 venv 路径中 .openakita 误报
                 if s_lower.contains("openakita.main") && (s_lower.contains(" serve") || s_lower.ends_with("serve")) {
                     if is_pid_running(ppid) {
-                        out.push(OpenAkitaProcess {
-                            pid: ppid,
-                            cmd: s.trim().to_string(),
-                        });
+                        matched.push((ppid, parent_pid, s.trim().to_string()));
                     }
                 }
+            }
+        }
+
+        // uv-created venv python.exe can be a launcher parent that delegates to
+        // the managed CPython executable. Count only the leaf backend process.
+        for (pid, _parent, cmd) in &matched {
+            let has_matched_child = matched.iter().any(|(_, parent, _)| parent == pid);
+            if !has_matched_child {
+                out.push(OpenAkitaProcess {
+                    pid: *pid,
+                    cmd: cmd.clone(),
+                });
             }
         }
     }
@@ -3011,6 +3073,68 @@ enum VersionCheckResult {
     Upgraded,
 }
 
+fn runtime_wheel_hash_matches_bootstrap() -> bool {
+    let bootstrap_hash = match read_bootstrap_manifest() {
+        Ok(b) => b.wheel.sha256,
+        Err(e) => {
+            log_to_file(&format!("[version_check] bootstrap manifest unavailable: {e}"));
+            return true;
+        }
+    };
+    if bootstrap_hash.trim().is_empty() {
+        return true;
+    }
+    read_runtime_manifest()
+        .map(|m| !m.legacy_mode && m.wheel_hash == bootstrap_hash)
+        .unwrap_or(false)
+}
+
+fn stop_backend_for_restart(pid: u32, port: u16) -> VersionCheckResult {
+    if let Err(e) = graceful_stop_pid(pid, Some(port)) {
+        eprintln!(
+            "Failed to stop old backend (pid={}): {}. Keeping current backend.",
+            pid, e
+        );
+        return VersionCheckResult::RunningOk;
+    }
+
+    // 清理被终止进程对应的 PID 文件
+    for ent in list_service_pids() {
+        if let Some(data) = read_pid_file(&ent.workspace_id) {
+            if data.pid == pid || !is_pid_running(data.pid) {
+                let _ = fs::remove_file(service_pid_file(&ent.workspace_id));
+                remove_heartbeat_file(&ent.workspace_id);
+            }
+        }
+    }
+
+    eprintln!("Old backend (pid={}) stopped. New backend will be started automatically.", pid);
+    VersionCheckResult::Upgraded
+}
+
+fn healthy_backend_pid(port: u16) -> Option<u32> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .no_proxy()
+        .build()
+        .ok()?;
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/api/health", port))
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let json: serde_json::Value = resp.json().ok()?;
+    if json.get("service").and_then(|v| v.as_str()) != Some("openakita") {
+        return None;
+    }
+    json.get("pid")
+        .and_then(|v| v.as_u64())
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| is_pid_running(*pid))
+}
+
 /// DMG 覆盖安装后版本对账：检查运行中后端的版本，必要时替换。
 ///
 /// macOS 上通过 DMG 拖拽覆盖安装后，旧的 openakita-server 进程可能仍在端口上
@@ -3058,12 +3182,27 @@ fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
         .trim_start_matches('v');
     let desktop_version = app_version.trim_start_matches('v');
 
-    // 版本一致、dev 版本、或无法判断 → 保持现有后端
-    if backend_version.is_empty()
-        || backend_version == "0.0.0-dev"
-        || backend_version == desktop_version
-    {
+    // 版本无法判断或 dev 后端 → 保守保持现有后端。
+    if backend_version.is_empty() || backend_version == "0.0.0-dev" {
         return VersionCheckResult::RunningOk;
+    }
+
+    if backend_version == desktop_version {
+        if runtime_wheel_hash_matches_bootstrap() {
+            return VersionCheckResult::RunningOk;
+        }
+        let pid = match json.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32) {
+            Some(p) => p,
+            None => {
+                eprintln!("Runtime wheel changed but backend PID is unavailable; keeping current backend.");
+                return VersionCheckResult::RunningOk;
+            }
+        };
+        eprintln!(
+            "Runtime wheel changed for version {}. Stopping backend to refresh app-venv...",
+            desktop_version
+        );
+        return stop_backend_for_restart(pid, port);
     }
 
     // 核心防护：检查安装包内 bundled 后端版本。
@@ -3099,26 +3238,7 @@ fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
         }
     };
 
-    if let Err(e) = graceful_stop_pid(pid, Some(port)) {
-        eprintln!(
-            "Failed to stop old backend (pid={}): {}. Keeping current backend.",
-            pid, e
-        );
-        return VersionCheckResult::RunningOk;
-    }
-
-    // 清理被终止进程对应的 PID 文件
-    for ent in list_service_pids() {
-        if let Some(data) = read_pid_file(&ent.workspace_id) {
-            if data.pid == pid || !is_pid_running(data.pid) {
-                let _ = fs::remove_file(service_pid_file(&ent.workspace_id));
-                remove_heartbeat_file(&ent.workspace_id);
-            }
-        }
-    }
-
-    eprintln!("Old backend (pid={}) stopped. New backend will be started automatically.", pid);
-    VersionCheckResult::Upgraded
+    stop_backend_for_restart(pid, port)
 }
 
 /// 启动对账：清理残留锁文件和已死的 PID 文件
@@ -3451,6 +3571,22 @@ fn main() {
                         AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                         AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
                     });
+                } else if let Some(pid) = healthy_backend_pid(port) {
+                    let should_adopt = read_pid_file(ws_id)
+                        .map(|data| !is_pid_file_valid(&data) || data.pid != pid)
+                        .unwrap_or(true);
+                    if should_adopt {
+                        match write_pid_file(ws_id, pid, "external") {
+                            Ok(()) => log_to_file(&format!(
+                                "[auto-start] adopted healthy backend pid={} for ws={}",
+                                pid, ws_id
+                            )),
+                            Err(e) => log_to_file(&format!(
+                                "[auto-start] failed to adopt healthy backend pid={}: {}",
+                                pid, e
+                            )),
+                        }
+                    }
                 }
             } else {
                 log_to_file("[auto-start] skipped: no current_workspace_id in state");

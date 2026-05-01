@@ -5,7 +5,7 @@
   "python_version": "3.12",
   "wheel": {
     "name": "wheels/openakita-1.27.9-py3-none-any.whl",
-    "sha256": "9d0e7f301274a4b5d61338347f8b5a82daeb244f2c24d84ba4e31a9608350a7d"
+    "sha256": "be429deaf30301dcfd13074bed7deaa171e701ebbe5b0cdae89a18e34e14a823"
   },
   "uv": {
     "path": "bin/uv",

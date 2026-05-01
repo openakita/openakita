@@ -159,6 +159,13 @@ def resolve_tier(context_window: int) -> PromptTier:
     return PromptTier.LARGE
 
 
+def _scope_value(value: Any, default: str) -> str:
+    if value is None:
+        return default
+    raw = getattr(value, "value", value)
+    return str(raw).lower()
+
+
 # ---------------------------------------------------------------------------
 # 核心行为规则（代码硬编码，升级自动生效，用户不可删除）
 # 合并自原 _SYSTEM_POLICIES + _DEFAULT_USER_POLICIES，消除冗余。
@@ -448,6 +455,9 @@ def build_system_prompt(
     context_window: int = 0,
     prompt_profile: "PromptProfile | None" = None,
     prompt_tier: "PromptTier | None" = None,
+    memory_scope: Any | None = None,
+    catalog_scope: list[str] | None = None,
+    include_project_guidelines: bool | None = None,
 ) -> str:
     """
     组装系统提示词
@@ -479,6 +489,13 @@ def build_system_prompt(
     # Resolve profile & tier defaults
     _profile = prompt_profile or PromptProfile.LOCAL_AGENT
     _tier = prompt_tier or PromptTier.LARGE
+    _memory_scope = _scope_value(memory_scope, "relevant")
+    _catalog_scope = {str(item).lower() for item in (catalog_scope or [])}
+    _include_project_guidelines = (
+        include_project_guidelines
+        if include_project_guidelines is not None
+        else _profile != PromptProfile.CONSUMER_CHAT
+    )
 
     if budget_config is None:
         budget_config = BudgetConfig()
@@ -525,7 +542,7 @@ def build_system_prompt(
         _static_prompt_cache[f"compiled:{_id_dir_key}"] = (_now_ts, compiled)
 
     # 4. Identity 层（SOUL.md + agent.core）
-    if prompt_mode == PromptMode.FULL:
+    if prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL):
         identity_section = _cached_section(
             "identity",
             lambda: _build_identity_section(
@@ -533,17 +550,22 @@ def build_system_prompt(
                 identity_dir=identity_dir,
                 tools_enabled=tools_enabled,
                 budget_tokens=budget_config.identity_budget,
+                include_tooling=(
+                    prompt_mode == PromptMode.FULL
+                    and (tools_enabled or bool(_catalog_scope - {"index"}))
+                ),
             ),
+            force_recompute=True,
         )
 
-        if not is_sub_agent and mode == "agent":
+        if prompt_mode == PromptMode.FULL and not is_sub_agent and mode == "agent":
             system_parts.append(_build_delegation_rules())
 
         if identity_section:
             system_parts.append(identity_section)
 
         # Persona 层
-        if persona_manager:
+        if prompt_mode == PromptMode.FULL and persona_manager:
             persona_section = _build_persona_section(persona_manager)
             if persona_section:
                 system_parts.append(persona_section)
@@ -593,11 +615,7 @@ def build_system_prompt(
 
     # 8. 项目 AGENTS.md（FULL 和 MINIMAL 都注入；ask 模式和 CONSUMER_CHAT
     #    profile 跳过——纯聊天/轻量问答不需要开发规范）
-    if (
-        prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL)
-        and mode != "ask"
-        and _profile != PromptProfile.CONSUMER_CHAT
-    ):
+    if prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL) and mode != "ask" and _include_project_guidelines:
         agents_md_content = _cached_section("agents_md", _read_agents_md)
         if agents_md_content:
             from ..utils.context_scan import scan_context_content
@@ -625,6 +643,7 @@ def build_system_prompt(
             message_count=_msg_count,
             prompt_profile=_profile,
             prompt_tier=_tier,
+            catalog_scope=_catalog_scope,
         )
         if catalogs_section:
             tool_parts.append(catalogs_section)
@@ -649,8 +668,19 @@ def build_system_prompt(
         except Exception:
             pass
 
+    # 9.6 Working facts 层：当前会话短期事实，优先于长期记忆。
+    if prompt_mode == PromptMode.FULL and session_context:
+        try:
+            from ..core.working_facts import format_working_facts
+
+            working_facts_section = format_working_facts(session_context.get("working_facts"))
+            if working_facts_section:
+                developer_parts.append(working_facts_section)
+        except Exception as e:
+            logger.debug("Failed to build working facts section: %s", e)
+
     # 10. Memory 层（仅 FULL 模式）
-    if prompt_mode == PromptMode.FULL:
+    if _memory_scope in {"relevant", "full"} and prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL):
         if precomputed_memory is not None:
             memory_section = precomputed_memory
         else:
@@ -670,19 +700,62 @@ def build_system_prompt(
                 skip_experience=skip_experience,
                 skip_relational=skip_relational,
                 use_compact_guide=_use_compact,
+                pinned_only=_memory_scope == "pinned_only",
             )
         if memory_section:
             developer_parts.append(memory_section)
 
     # 11. User 层（仅 FULL 模式）
-    if prompt_mode == PromptMode.FULL:
-        user_section = _build_user_section(
-            compiled=compiled,
-            budget_tokens=budget_config.user_budget,
-            identity_dir=identity_dir,
-        )
-        if user_section:
-            user_parts.append(user_section)
+    user_core_section = _build_user_core_profile_section(
+        compiled=compiled,
+        budget_tokens=budget_config.user_budget,
+        identity_dir=identity_dir,
+    )
+    if user_core_section:
+        user_parts.append(user_core_section)
+
+    # Section-level final budget guard. Individual builders already budget their
+    # own content, but plugin hooks, AGENTS.md, memory and catalogs combine here.
+    section_budgets = {
+        "system": max(budget_config.identity_budget + 3000, 1000),
+        "developer": max(budget_config.memory_budget + 2500, 800),
+        "user": max(budget_config.user_budget, 100),
+        "tool": max(budget_config.catalogs_budget, 500),
+    }
+    if system_parts:
+        system_joined = "\n\n".join(system_parts)
+        system_result = apply_budget(system_joined, section_budgets["system"], "system")
+        if system_result.truncated:
+            logger.warning(
+                "[PromptBudget] system section truncated: %s -> %s tokens",
+                system_result.original_tokens,
+                system_result.final_tokens,
+            )
+        system_parts = [system_result.content]
+    if developer_parts:
+        developer_joined = "\n\n".join(developer_parts)
+        developer_result = apply_budget(developer_joined, section_budgets["developer"], "developer")
+        if developer_result.truncated:
+            logger.warning(
+                "[PromptBudget] developer section truncated: %s -> %s tokens",
+                developer_result.original_tokens,
+                developer_result.final_tokens,
+            )
+        developer_parts = [developer_result.content]
+    if user_parts:
+        user_joined = "\n\n".join(user_parts)
+        user_result = apply_budget(user_joined, section_budgets["user"], "user")
+        user_parts = [user_result.content]
+    if tool_parts:
+        tool_joined = "\n\n".join(tool_parts)
+        tool_result = apply_budget(tool_joined, section_budgets["tool"], "tool")
+        if tool_result.truncated:
+            logger.warning(
+                "[PromptBudget] tool section truncated: %s -> %s tokens",
+                tool_result.original_tokens,
+                tool_result.final_tokens,
+            )
+        tool_parts = [tool_result.content]
 
     # 组装最终提示词
     sections: list[str] = []
@@ -708,6 +781,14 @@ def build_system_prompt(
     total_tokens = estimate_tokens(system_prompt)
     logger.info(
         f"System prompt built: {total_tokens} tokens (mode={mode}, prompt_mode={prompt_mode.value})"
+    )
+    logger.debug(
+        "[PromptBudget] sections tokens: system=%d developer=%d user=%d tool=%d total=%d",
+        estimate_tokens("\n\n".join(system_parts)),
+        estimate_tokens("\n\n".join(developer_parts)),
+        estimate_tokens("\n\n".join(user_parts)),
+        estimate_tokens("\n\n".join(tool_parts)),
+        total_tokens,
     )
 
     return system_prompt
@@ -935,35 +1016,35 @@ def _build_identity_section(
     identity_dir: Path,
     tools_enabled: bool,
     budget_tokens: int,
+    include_tooling: bool = False,
 ) -> str:
-    """构建 Identity 层 — 双链路设计
+    """构建 Identity 层。
 
-    SOUL.md / AGENT.md 直接注入源文件（不编译不转换），用户修改立即生效。
-    源文件缺失时使用 _BUILT_IN_DEFAULTS 兜底。
-    用户自定义策略（policies.md）如存在则追加。
+    常规 prompt 只注入编译后的短身份核心，避免 SOUL/AGENT 长文反复进入每轮请求。
     """
-    import re
-
     parts = []
 
     parts.append("# OpenAkita System")
     parts.append("")
 
-    # SOUL — 直接注入（~60% 预算）
-    soul_content = _read_with_fallback(identity_dir / "SOUL.md", "soul")
-    if soul_content:
-        soul_clean = re.sub(r"<!--.*?-->", "", soul_content, flags=re.DOTALL).strip()
-        soul_result = apply_budget(soul_clean, budget_tokens * 60 // 100, "soul")
-        parts.append(soul_result.content)
+    identity_core = compiled.get("identity_core") or _BUILT_IN_DEFAULTS.get("soul", "")
+    if identity_core:
+        result = apply_budget(identity_core.strip(), budget_tokens * 30 // 100, "identity_core")
+        parts.append(result.content)
         parts.append("")
 
-    # AGENT — 直接注入（~25% 预算）
-    agent_content = _read_with_fallback(identity_dir / "AGENT.md", "agent_core")
-    if agent_content:
-        agent_clean = re.sub(r"<!--.*?-->", "", agent_content, flags=re.DOTALL).strip()
-        core_result = apply_budget(agent_clean, budget_tokens * 25 // 100, "agent_core")
-        parts.append(core_result.content)
+    agent_behavior = compiled.get("agent_behavior") or compiled.get("agent_core") or _BUILT_IN_DEFAULTS.get("agent_core", "")
+    if agent_behavior:
+        result = apply_budget(agent_behavior.strip(), budget_tokens * 40 // 100, "agent_behavior")
+        parts.append(result.content)
         parts.append("")
+
+    if tools_enabled and include_tooling:
+        agent_tooling = compiled.get("agent_tooling", "")
+        if agent_tooling:
+            result = apply_budget(agent_tooling.strip(), budget_tokens * 15 // 100, "agent_tooling")
+            parts.append(result.content)
+            parts.append("")
 
     # User policies (~15%) — 用户自定义策略文件
     policies_path = identity_dir / "prompts" / "policies.md"
@@ -1316,7 +1397,7 @@ def _build_python_info(
 
     if can_pip_install:
         lines.append(
-            "- 推荐: 写脚本后用 `python script.py` 执行；需要依赖时使用 `pip install <package>`"
+            "- 推荐: 写脚本后用 `python script.py` 执行；需要依赖时先判断当前 Agent、skill 或项目环境，不要默认污染共享 agent-venv"
         )
     else:
         fallback_venv = settings.project_root / "data" / "venv"
@@ -1328,6 +1409,16 @@ def _build_python_info(
         )
     if legacy_mode:
         lines.append("- **兼容模式**: 当前使用 legacy PyInstaller fallback，动态 pip install 可能不可靠")
+    lines.extend(
+        [
+            "",
+            "### 环境隔离规则",
+            "- 不同 Agent 可配置独立 agent scoped venv；长期依赖优先进入当前 Agent 环境。",
+            "- skill 预置 Python 脚本若声明依赖，运行前使用 skill scoped venv。",
+            "- 用户项目已有 `.venv`、`pyproject.toml`、`requirements.txt` 或 `uv.lock` 时，优先遵守项目自己的环境。",
+            "- 一次性探索依赖应使用 scratch/临时环境，避免写入共享 agent-venv。",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -1519,6 +1610,7 @@ def _build_catalogs_section(
     message_count: int = 0,
     prompt_profile: "PromptProfile | None" = None,
     prompt_tier: "PromptTier | None" = None,
+    catalog_scope: set[str] | None = None,
 ) -> str:
     """构建 Catalogs 层（工具/技能/插件/MCP 清单）
 
@@ -1531,6 +1623,7 @@ def _build_catalogs_section(
     """
     _profile = prompt_profile or PromptProfile.LOCAL_AGENT
     _tier = prompt_tier or PromptTier.LARGE
+    _scope = {str(item).lower() for item in (catalog_scope or set())}
 
     # Progressive disclosure: use index-only tool catalog for lightweight
     # scenarios (CONSUMER_CHAT, SMALL tier, early conversation turns, or
@@ -1540,6 +1633,7 @@ def _build_catalogs_section(
         or _tier == PromptTier.SMALL
         or (message_count > 0 and message_count <= 4)
         or mode in ("plan", "ask")
+        or "index" in _scope
     )
 
     parts = []
@@ -1566,7 +1660,7 @@ def _build_catalogs_section(
                 exc_info=True,
             )
 
-    if skill_catalog:
+    if skill_catalog and (not _scope or _scope & {"skills", "skill", "tools", "project"}):
         try:
             # Profile-aware exposure filter
             _exp_filter: str | None = None
@@ -1605,11 +1699,21 @@ def _build_catalogs_section(
                 exc_info=True,
             )
 
-    if plugin_catalog:
+    elif skill_catalog and _scope:
+        parts.append("## Skills\n\n技能可通过 `tool_search` / `get_skill_info` 按需发现，当前请求未注入完整技能清单。")
+
+    if plugin_catalog and (not _scope or _scope & {"plugins", "plugin"}):
         try:
             plugin_text = plugin_catalog.get_catalog()
             if plugin_text:
-                parts.append(plugin_text)
+                plugin_result = apply_budget(plugin_text, budget_tokens * 10 // 100, "plugins")
+                if plugin_result.truncated:
+                    logger.warning(
+                        "[PromptBudget] plugin catalog truncated: %s -> %s tokens",
+                        plugin_result.original_tokens,
+                        plugin_result.final_tokens,
+                    )
+                parts.append(plugin_result.content)
         except Exception as e:
             logger.error(
                 "[PromptBuilder] plugin catalog build failed, skipping: %s",
@@ -1617,7 +1721,10 @@ def _build_catalogs_section(
                 exc_info=True,
             )
 
-    if mcp_catalog:
+    elif plugin_catalog and _scope:
+        parts.append("## Plugins\n\n插件能力按需披露；需要插件时先用 `tool_search` 查询相关工具。")
+
+    if mcp_catalog and (not _scope or _scope & {"mcp"}):
         try:
             mcp_text = mcp_catalog.get_catalog()
             if mcp_text:
@@ -1629,6 +1736,9 @@ def _build_catalogs_section(
                 e,
                 exc_info=True,
             )
+
+    elif mcp_catalog and _scope:
+        parts.append("## MCP\n\nMCP 外部服务按需披露；需要时先用 `tool_search` 或 MCP catalog 查询。")
 
     if include_tools_guide:
         parts.append(_get_tools_guide_short())
@@ -1747,6 +1857,7 @@ def _build_memory_section(
     skip_experience: bool = False,
     skip_relational: bool = False,
     use_compact_guide: bool = False,
+    pinned_only: bool = False,
 ) -> str:
     """
     构建 Memory 层 — 渐进式披露:
@@ -1771,9 +1882,16 @@ def _build_memory_section(
         parts.append(scratchpad_text)
 
     # Layer 1.5: Pinned Rules — 从 SQLite 查询 RULE 类型记忆，独立注入，不受裁剪
-    pinned_rules = _build_pinned_rules_section(memory_manager)
+    pinned_rules = _build_pinned_rules_section(
+        memory_manager,
+        task_description=task_description,
+        memory_keywords=memory_keywords,
+    )
     if pinned_rules:
         parts.append(pinned_rules)
+
+    if pinned_only:
+        return "\n\n".join(parts)
 
     # Layer 2: Core Memory (MEMORY.md — 用户基本信息 + 永久规则)
     from openakita.memory.types import MEMORY_MD_MAX_CHARS as _MD_MAX
@@ -1901,11 +2019,14 @@ _PINNED_RULES_CHARS_PER_TOKEN = 3
 
 def _build_pinned_rules_section(
     memory_manager: Optional["MemoryManager"],
+    task_description: str = "",
+    memory_keywords: list[str] | None = None,
 ) -> str:
-    """从 SQLite 查询所有活跃的 RULE 类型记忆，作为独立段落注入 system prompt。
+    """Query active RULE memories and inject only rules relevant to this turn.
 
-    这些规则不受 memory_budget 裁剪，确保用户设定的行为规则始终可见。
-    设置独立的 token 上限防止异常膨胀。
+    Global rules are treated as candidates instead of unconditional mandates.
+    This keeps stale project-specific numbers or constraints from polluting
+    unrelated tasks while preserving explicit session-scoped rules.
     """
     store = getattr(memory_manager, "store", None)
     if store is None:
@@ -1918,19 +2039,25 @@ def _build_pinned_rules_section(
         from datetime import datetime
 
         now = datetime.now()
-        active_rules = [
-            r for r in rules if not r.superseded_by and (not r.expires_at or r.expires_at > now)
-        ]
+        active_rules = []
+        query_text = f"{task_description} {' '.join(memory_keywords or [])}".lower()
+        query_terms = _rule_terms(query_text)
+        for r in rules:
+            if r.superseded_by or (r.expires_at and r.expires_at <= now):
+                continue
+            include, reason = _should_inject_rule(r, query_terms)
+            if include:
+                active_rules.append((r, reason))
         if not active_rules:
             return ""
 
-        active_rules.sort(key=lambda r: r.importance_score, reverse=True)
+        active_rules.sort(key=lambda item: item[0].importance_score, reverse=True)
 
-        lines = ["## 用户设定的规则（必须遵守）\n"]
+        lines = ["## 当前相关规则\n", "以下规则按来源与相关性注入；跨会话规则仅在相关时参考。"]
         total_chars = 0
         max_chars = _PINNED_RULES_MAX_TOKENS * _PINNED_RULES_CHARS_PER_TOKEN
         seen_prefixes: set[str] = set()
-        for r in active_rules:
+        for r, reason in active_rules:
             content = (r.content or "").strip()
             if not content:
                 continue
@@ -1938,7 +2065,13 @@ def _build_pinned_rules_section(
             if prefix in seen_prefixes:
                 continue
             seen_prefixes.add(prefix)
-            line = f"- {content}"
+            source = getattr(r, "source", "") or getattr(r, "source_episode_id", "") or "memory"
+            scope = getattr(r, "scope", "global") or "global"
+            confidence = getattr(r, "confidence", 0.0)
+            line = (
+                f"- [{scope}; reason={reason}; confidence={confidence:.2f}; source={source}] "
+                f"{content}"
+            )
             if total_chars + len(line) > max_chars:
                 break
             lines.append(line)
@@ -1950,6 +2083,44 @@ def _build_pinned_rules_section(
     except Exception as e:
         logger.debug(f"Failed to build pinned rules section: {e}")
         return ""
+
+
+def _rule_terms(text: str) -> set[str]:
+    import re
+
+    return {t.lower() for t in re.findall(r"[A-Za-z0-9_\-\u4e00-\u9fff]{2,}", text or "")}
+
+
+def _should_inject_rule(rule: object, query_terms: set[str]) -> tuple[bool, str]:
+    """Return whether a rule should be injected and the visible reason."""
+    content = (getattr(rule, "content", "") or "").lower()
+    scope = (getattr(rule, "scope", "") or "global").lower()
+    tags = [str(t).lower() for t in (getattr(rule, "tags", []) or [])]
+    subject = str(getattr(rule, "subject", "") or "").lower()
+
+    if scope == "session":
+        return True, "current-session"
+
+    terms = _rule_terms(" ".join([content, subject, " ".join(tags)]))
+    if query_terms and terms.intersection(query_terms):
+        return True, "entity-match"
+
+    general_rule_markers = (
+        "回复",
+        "语言",
+        "称呼",
+        "不要",
+        "必须",
+        "始终",
+        "always",
+        "never",
+        "format",
+        "style",
+    )
+    if any(marker in content for marker in general_rule_markers):
+        return True, "general-behavior"
+
+    return False, "unrelated"
 
 
 def _get_core_memory(memory_manager: Optional["MemoryManager"], max_chars: int = 600) -> str:
@@ -2093,27 +2264,28 @@ def _build_user_section(
     budget_tokens: int,
     identity_dir: Path | None = None,
 ) -> str:
-    """构建 User 层 — 直接读取 USER.md 并运行时清洗。
-
-    不再依赖编译产物，用户修改后下一轮对话立即生效。
-    保留 compiled 参数以向后兼容。
-    """
-    if identity_dir is not None:
-        user_path = identity_dir / "USER.md"
-        try:
-            if user_path.exists():
-                raw = user_path.read_text(encoding="utf-8")
-                cleaned = _clean_user_content(raw)
-                if cleaned:
-                    user_result = apply_budget(cleaned, budget_tokens, "user")
-                    return user_result.content
-        except Exception:
-            pass
-
-    if not compiled.get("user"):
+    """构建 User 层 — 使用编译后的用户档案摘要，不全文注入 USER.md。"""
+    content = compiled.get("user_profile_core") or compiled.get("user") or ""
+    if not content:
         return ""
-    user_result = apply_budget(compiled["user"], budget_tokens, "user")
+    user_result = apply_budget(content, budget_tokens, "user")
     return user_result.content
+
+
+def _build_user_core_profile_section(
+    compiled: dict[str, str],
+    budget_tokens: int,
+    identity_dir: Path | None = None,
+) -> str:
+    """始终注入的用户核心档案。
+
+    这里只放用户明确要求长期遵守的 pinned 偏好和稳定事实，避免 minimal prompt
+    因压缩丢失语言、解释深度、称呼、长期工作偏好等要求。
+    """
+    content = _build_user_section(compiled, budget_tokens, identity_dir)
+    if not content:
+        return ""
+    return "## User Profile Core\n\n" + content
 
 
 def _get_tools_guide_short() -> str:

@@ -15,6 +15,7 @@ Reason -> Act -> Observe 三阶段循环。
 """
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import json
@@ -36,6 +37,7 @@ from .agent_state import AgentState, TaskState, TaskStatus
 from .context_manager import ContextManager
 from .context_manager import _CancelledError as _CtxCancelledError
 from .errors import UserCancelledError
+from .loop_budget_guard import LoopBudgetGuard
 from .resource_budget import BudgetAction, ResourceBudget, create_budget_from_settings
 from .response_handler import (
     ResponseHandler,
@@ -44,7 +46,7 @@ from .response_handler import (
     request_expects_artifact,
     strip_thinking_tags,
 )
-from .supervisor import RuntimeSupervisor
+from .supervisor import RuntimeSupervisor, TOKEN_ANOMALY_THRESHOLD
 
 # 不产出"最终交付物"的管理类工具集合 —— 用于：
 #   1) ``tools_executed_in_task`` 标记（仅这些工具被调用 → 视为本轮无实质执行）
@@ -81,14 +83,46 @@ from .tool_executor import ToolExecutor
 logger = logging.getLogger(__name__)
 
 _SSE_RESULT_PREVIEW_CHARS = 32000
-_MAX_TOOL_RESULTS_TOTAL_CHARS = 200_000
+_CACHEABLE_READONLY_TOOLS = frozenset({"web_fetch", "web_search", "news_search"})
+_READONLY_EXPLORATION_TOOLS = frozenset({
+    "read_file",
+    "list_directory",
+    "grep",
+    "glob",
+    "get_tool_info",
+    "list_skills",
+    "get_skill_info",
+    "search_memory",
+    "get_memory_stats",
+    "get_session_context",
+})
+_READONLY_STAGNATION_LIMIT = 3
+
+
+def _tool_result_fingerprint(tool_results: list[dict]) -> str:
+    parts: list[str] = []
+    for result in tool_results:
+        if not isinstance(result, dict):
+            continue
+        content = str(result.get("content", ""))
+        parts.append(hashlib.md5(content[:4000].encode("utf-8", errors="ignore")).hexdigest()[:10])
+    return "|".join(parts)
+
+
+def _is_readonly_exploration_round(tool_calls: list[dict]) -> bool:
+    if not tool_calls:
+        return False
+    names = {str(tc.get("name", "")) for tc in tool_calls if isinstance(tc, dict)}
+    return bool(names) and names.issubset(_READONLY_EXPLORATION_TOOLS)
 
 
 def _apply_tool_result_budget(
     tool_results: list[dict],
-    max_total: int = _MAX_TOOL_RESULTS_TOTAL_CHARS,
+    max_total: int | None = None,
 ) -> list[dict]:
     """Proportionally truncate tool results if total exceeds budget."""
+    if max_total is None:
+        max_total = int(getattr(settings, "context_tool_results_total_chars", 80_000) or 80_000)
     total = sum(len(str(r.get("content", ""))) for r in tool_results)
     if total <= max_total:
         return tool_results
@@ -106,6 +140,38 @@ def _apply_tool_result_budget(
                     + content[-half:]
                 )
     return tool_results
+
+
+def _readonly_tool_cache_key(tool_name: str, tool_args: Any) -> str | None:
+    """Stable cache key for repeatable read-only network tools."""
+    if tool_name not in _CACHEABLE_READONLY_TOOLS:
+        return None
+    try:
+        param_str = json.dumps(tool_args or {}, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:
+        param_str = str(tool_args)
+    return f"{tool_name}:{hashlib.md5(param_str.encode()).hexdigest()}"
+
+
+def _compact_cached_tool_content(tool_name: str, content: str) -> str:
+    """Create a compact cache summary so repeated network reads do not bloat context."""
+    text = str(content or "").strip()
+    summary_chars = int(getattr(settings, "context_cached_summary_chars", 2400) or 2400)
+    if len(text) <= summary_chars:
+        summary = text
+    else:
+        head = summary_chars // 2
+        tail = summary_chars - head
+        summary = (
+            text[:head]
+            + f"\n\n... [cached summary truncated {len(text) - summary_chars} chars] ...\n\n"
+            + text[-tail:]
+        )
+    return (
+        f"[系统缓存] {tool_name} 已用相同参数获取过，未再次发起外部请求。\n"
+        f"以下是上次结果摘要，请基于已有内容继续分析；如信息不足，请换查询角度或向用户说明需要更具体的目标。\n\n"
+        f"{summary}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -313,13 +379,32 @@ def _get_action_claim_re() -> "re.Pattern[str]":
         return pat
     verbs = (
         "保存|发送|创建|删除|修改|上传|下载|执行|生成|导出|复制|移动|"
-        "写入|添加|设置|配置|安装|部署|打包|编译|构建|启动|重启|停止|关闭"
+        "写入|添加|设置|配置|安装|部署|打包|编译|构建|启动|重启|停止|关闭|"
+        "记住|记录|存入|保存到记忆"
     )
     pat = _re.compile(
-        rf"(?:已[经]?|成功|顺利)(?:帮你?|为你|给你)?(?:{verbs})"
+        rf"(?:已[经]?|成功|顺利|我已经|我已)(?:帮你?|为你|给你)?(?:{verbs})"
     )
     _get_action_claim_re._cached = pat  # type: ignore[attr-defined]
     return pat
+
+
+def _guard_unbacked_action_claim(text: str, executed_tool_names: list[str]) -> str:
+    """Downgrade visible action claims when no successful tool receipt exists."""
+    if not text or not _get_action_claim_re().search(text):
+        return text
+    if executed_tool_names:
+        return text
+    memory_markers = ("记住", "记忆")
+    if any(marker in text for marker in memory_markers) and "add_memory" not in executed_tool_names:
+        return (
+            "我会在本轮对话中按这个信息处理，但当前没有检测到长期记忆写入凭证，"
+            "所以不会声称已经保存到记忆。"
+        )
+    return (
+        "当前没有检测到实际工具执行凭证，因此我不能声称外部动作已经完成。"
+        "我可以继续按你的要求执行，或先给出可执行方案。"
+    )
 
 
 class ReasoningEngine:
@@ -368,12 +453,18 @@ class ReasoningEngine:
         self._plugin_hooks = None
 
         # Agent Harness: Runtime Supervisor + Resource Budget
-        self._supervisor = RuntimeSupervisor(enabled=getattr(settings, "supervisor_enabled", True))
+        self._supervisor = RuntimeSupervisor(
+            enabled=getattr(settings, "supervisor_enabled", True),
+            token_anomaly_threshold=int(
+                getattr(settings, "context_token_anomaly_threshold", TOKEN_ANOMALY_THRESHOLD)
+                or TOKEN_ANOMALY_THRESHOLD
+            ),
+        )
         self._budget: ResourceBudget = create_budget_from_settings()
 
         # Checkpoint 管理
         self._checkpoints: list[Checkpoint] = []
-        self._tool_failure_counter: dict[str, int] = {}  # tool_name -> consecutive_failures
+        self._tool_failure_counter: dict[str, int] = {}  # tool_name(args_hash) -> consecutive_failures
         self._consecutive_truncation_count: int = 0  # 连续截断计数（防止截断→回滚死循环）
 
         # 跨 rollback 的持久性失败计数器（rollback 不会清除）
@@ -406,6 +497,50 @@ class ReasoningEngine:
                 "browser_screenshot",
             }
         )
+        self._readonly_tool_cache: dict[str, dict[str, str]] = {}
+
+    def _cached_readonly_tool_result(
+        self,
+        tool_name: str,
+        tool_args: Any,
+        tool_id: str,
+    ) -> dict | None:
+        key = _readonly_tool_cache_key(tool_name, tool_args)
+        if not key or key not in self._readonly_tool_cache:
+            return None
+        cached = self._readonly_tool_cache[key]
+        first_id = cached.get("first_tool_use_id", "")
+        summary = cached.get("summary", "")
+        pointer = key.split(":", 1)[-1][:10]
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_id,
+            "content": (
+                f"[系统缓存:{pointer}] {tool_name} 相同参数结果已在本任务中获取过，"
+                f"引用首次结果 {first_id or 'unknown'}；未再次发起外部请求。\n"
+                f"{summary[:600]}"
+            ),
+            "cached": True,
+            "tool_name": tool_name,
+            "cache_key": key,
+            "first_tool_use_id": first_id,
+        }
+
+    def _remember_readonly_tool_result(
+        self,
+        tool_name: str,
+        tool_args: Any,
+        result_text: str,
+        tool_id: str = "",
+    ) -> None:
+        key = _readonly_tool_cache_key(tool_name, tool_args)
+        if not key or not result_text:
+            return
+        if key not in self._readonly_tool_cache:
+            self._readonly_tool_cache[key] = {
+                "summary": _compact_cached_tool_content(tool_name, result_text),
+                "first_tool_use_id": tool_id,
+            }
 
     # ==================== Failure Analysis (Agent Harness) ====================
 
@@ -619,7 +754,12 @@ class ReasoningEngine:
 
         logger.debug(f"[Checkpoint] Saved: {cp.id} at iteration {iteration}")
 
-    def _record_tool_result(self, tool_name: str, success: bool) -> None:
+    def _record_tool_result(
+        self,
+        tool_name: str,
+        success: bool,
+        tool_args: Any | None = None,
+    ) -> None:
         """记录工具执行结果，用于连续失败检测。
 
         Plan/todo 家族工具的 ❌ 输出多为入参校验反馈而非真正的执行失败，
@@ -629,15 +769,62 @@ class ReasoningEngine:
         """
         if tool_name in self._PLAN_TOOL_NAMES:
             return
+        key = _tool_rate_limit_key(tool_name, tool_args or {})
         if success:
-            self._tool_failure_counter[tool_name] = 0
+            self._tool_failure_counter[key] = 0
             # 成功时也重置持久计数器
-            self._persistent_tool_failures.pop(tool_name, None)
+            self._persistent_tool_failures.pop(key, None)
         else:
-            self._tool_failure_counter[tool_name] = self._tool_failure_counter.get(tool_name, 0) + 1
-            self._persistent_tool_failures[tool_name] = (
-                self._persistent_tool_failures.get(tool_name, 0) + 1
+            self._tool_failure_counter[key] = self._tool_failure_counter.get(key, 0) + 1
+            self._persistent_tool_failures[key] = (
+                self._persistent_tool_failures.get(key, 0) + 1
             )
+
+    def _compact_after_token_anomaly(
+        self,
+        working_messages: list[dict],
+        react_trace: list[dict],
+        tokens: int,
+    ) -> None:
+        """Shrink large tool payloads after a token spike to avoid replay storms."""
+        anomaly_threshold = int(
+            getattr(settings, "context_token_anomaly_threshold", TOKEN_ANOMALY_THRESHOLD)
+            or TOKEN_ANOMALY_THRESHOLD
+        )
+        if tokens <= anomaly_threshold:
+            return
+
+        summary_chars = int(getattr(settings, "context_cached_summary_chars", 2400) or 2400)
+
+        for msg in working_messages:
+            content = msg.get("content") if isinstance(msg, dict) else None
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if not isinstance(item, dict) or item.get("type") != "tool_result":
+                    continue
+                text = str(item.get("content", ""))
+                if len(text) > summary_chars:
+                    item["content"] = _compact_cached_tool_content(
+                        str(item.get("tool_name") or "tool_result"),
+                        text,
+                    )
+                    item["compacted_after_token_anomaly"] = True
+
+        for trace in react_trace[-3:]:
+            results = trace.get("tool_results") if isinstance(trace, dict) else None
+            if not isinstance(results, list):
+                continue
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("result_content", ""))
+                if len(text) > summary_chars:
+                    item["result_content"] = _compact_cached_tool_content(
+                        str(item.get("tool_name") or "tool_result"),
+                        text,
+                    )
+                    item["compacted_after_token_anomaly"] = True
 
     def _should_rollback(
         self,
@@ -813,8 +1000,11 @@ class ReasoningEngine:
         self._last_react_trace = []
         self._last_delivery_receipts: list[dict] = []
         self._supervisor.reset()
+        self._readonly_tool_cache.clear()
         self._budget = create_budget_from_settings()
         self._budget.start()
+        _request_id = f"{conversation_id or 'unknown'}:{int(time.time() * 1000)}"
+        _turn_id = _request_id
         _session_key = conversation_id or ""
         state = (
             self._state.get_task_for_session(_session_key)
@@ -851,7 +1041,11 @@ class ReasoningEngine:
             },
         )
 
-        max_iterations = getattr(self, "_max_iterations_override", None) or settings.max_iterations
+        _configured_max_iterations = int(getattr(settings, "max_iterations", 100) or 100)
+        _task_budget_iterations = int(getattr(settings, "task_budget_iterations", 0) or 0)
+        if _task_budget_iterations > 0:
+            _configured_max_iterations = min(_configured_max_iterations, _task_budget_iterations)
+        max_iterations = getattr(self, "_max_iterations_override", None) or _configured_max_iterations
         self._max_iterations_override = None  # consume once
         self._empty_content_retries = 0
 
@@ -930,7 +1124,25 @@ class ReasoningEngine:
         tools_executed_in_task = False
         _supervisor_intervened = False
         _tool_call_counter: dict[str, int] = {}
-        _MAX_SAME_TOOL_PER_TASK = 5
+        _MAX_SAME_TOOL_PER_TASK = int(getattr(settings, "same_tool_call_limit", 5) or 5)
+        _loop_budget_guard = LoopBudgetGuard(
+            max_total_tool_calls=max(1, int(getattr(settings, "task_budget_tool_calls", 30) or 30)),
+            readonly_stagnation_limit=int(
+                getattr(settings, "readonly_stagnation_limit", _READONLY_STAGNATION_LIMIT)
+                or _READONLY_STAGNATION_LIMIT
+            ),
+            readonly_stagnation_hard_limit=int(
+                getattr(settings, "readonly_stagnation_hard_limit", 6) or 6
+            ),
+            token_anomaly_threshold=int(
+                getattr(settings, "context_token_anomaly_threshold", TOKEN_ANOMALY_THRESHOLD)
+                or TOKEN_ANOMALY_THRESHOLD
+            ),
+            near_context_ratio=float(
+                getattr(settings, "context_hard_terminate_ratio", 0.98) or 0.98
+            ),
+        )
+        _last_real_input_tokens: int | None = None
 
         _CONTENT_SAFETY_MINIMAL_PROMPT = (
             "你是 OpenAkita，一个 AI 助手。"
@@ -958,7 +1170,7 @@ class ReasoningEngine:
             """生成工具签名"""
             nonlocal _last_browser_url
             name = tc.get("name", "")
-            inp = tc.get("input", {})
+            inp = tc.get("input", tc.get("arguments", {}))
 
             if name == "browser_navigate":
                 _last_browser_url = inp.get("url", "")
@@ -981,9 +1193,16 @@ class ReasoningEngine:
             return f"{name}({param_hash})"
 
         # Mode-based tool filtering (same as reason_stream)
+        _pre_filter_tool_count = len(tools)
         tools = _filter_tools_by_mode(tools, mode)
+        _hidden_tool_count = max(0, _pre_filter_tool_count - len(tools))
         _allowed_tool_names = {t.get("name", "") for t in tools} if mode != "agent" else None
         self._tool_executor._current_mode = mode
+        _agent_ref = getattr(self._tool_executor, "_agent_ref", None)
+        if _agent_ref is not None:
+            with contextlib.suppress(Exception):
+                _agent_ref._last_effective_mode = mode
+                _agent_ref._last_tool_policy_source = "reason_mode_filter"
         _initial_tools = tools  # keep reference for refresh detection
 
         # ==================== 主循环 ====================
@@ -1073,6 +1292,7 @@ class ReasoningEngine:
                         tools=tools,
                         memory_manager=self._memory_manager,
                         conversation_id=conversation_id,
+                        last_real_input_tokens=_last_real_input_tokens,
                     )
                 except _CtxCancelledError:
                     # 仅当任务状态明确为“用户取消”时，才把压缩取消升级为任务取消。
@@ -1178,6 +1398,8 @@ class ReasoningEngine:
                     iteration=iteration,
                     agent_profile_id=agent_profile_id,
                     cancel_event=state.cancel_event,
+                    request_id=_request_id,
+                    turn_id=_turn_id,
                 )
 
                 if task_monitor:
@@ -1264,6 +1486,8 @@ class ReasoningEngine:
             # Resource Budget: 记录 token 消耗
             if _in_tokens or _out_tokens:
                 self._budget.record_tokens(_in_tokens, _out_tokens)
+                if _in_tokens:
+                    _last_real_input_tokens = _in_tokens
             _iter_trace: dict = {
                 "iteration": iteration + 1,
                 "timestamp": datetime.now().isoformat(),
@@ -1271,6 +1495,13 @@ class ReasoningEngine:
                 if hasattr(decision.type, "value")
                 else str(decision.type),
                 "model": current_model,
+                "tool_policy": {
+                    "mode": mode,
+                    "visible_count": len(tools),
+                    "hidden_count": _hidden_tool_count,
+                    "source": "reason_mode_filter",
+                    "visible_tools": sorted(t.get("name", "") for t in tools if t.get("name")),
+                },
                 "thinking": decision.thinking_content,
                 "thinking_duration_ms": _thinking_duration_ms,
                 "text": decision.text_content,
@@ -1278,7 +1509,7 @@ class ReasoningEngine:
                     {
                         "name": tc.get("name"),
                         "id": tc.get("id"),
-                        "input": tc.get("input", {}),
+                        "input": tc.get("input", tc.get("arguments", {})),
                     }
                     for tc in (decision.tool_calls or [])
                 ],
@@ -1717,6 +1948,7 @@ class ReasoningEngine:
                 # such as update_todo_step(step_1), update_todo_step(step_2), ...
                 _all_tool_calls = list(decision.tool_calls or [])
                 _rate_limited_by_id: dict[str, dict] = {}
+                _cached_by_id: dict[str, dict] = {}
                 _calls_to_execute = []
                 for tc in _all_tool_calls:
                     _tc_name = self._tool_executor.canonicalize_tool_name(tc.get("name", ""))
@@ -1740,8 +1972,29 @@ class ReasoningEngine:
                             ),
                         }
                     else:
-                        _calls_to_execute.append(tc)
+                        _cached_result = self._cached_readonly_tool_result(
+                            _tc_name,
+                            _tc_args,
+                            tc.get("id", ""),
+                        )
+                        if _cached_result is not None:
+                            _cached_by_id[tc.get("id", "")] = _cached_result
+                        else:
+                            _calls_to_execute.append(tc)
                 decision.tool_calls = _calls_to_execute
+                _budget_decision = _loop_budget_guard.record_tool_calls(_calls_to_execute)
+                if _budget_decision.should_stop:
+                    msg = _budget_decision.message
+                    react_trace.append(_iter_trace)
+                    self._save_react_trace(
+                        react_trace,
+                        conversation_id,
+                        session_type,
+                        _budget_decision.exit_reason,
+                        _trace_started_at,
+                    )
+                    self._last_exit_reason = "loop_terminated"
+                    return msg
 
                 # 执行工具
                 tool_results, executed, receipts = await self._tool_executor.execute_batch(
@@ -1751,16 +2004,31 @@ class ReasoningEngine:
                     allow_interrupt_checks=self._state.interrupt_enabled,
                     capture_delivery_receipts=True,
                 )
-                if _rate_limited_by_id:
+                for _exec_tc, _exec_result in zip(decision.tool_calls, tool_results, strict=False):
+                    if isinstance(_exec_result, dict):
+                        self._remember_readonly_tool_result(
+                            self._tool_executor.canonicalize_tool_name(_exec_tc.get("name", "")),
+                            _exec_tc.get("input", _exec_tc.get("arguments", {})),
+                            str(_exec_result.get("content", "")),
+                            _exec_tc.get("id", ""),
+                        )
+                if _rate_limited_by_id or _cached_by_id:
                     _executed_by_id = {r.get("tool_use_id"): r for r in tool_results}
                     merged_results = []
                     for tc in _all_tool_calls:
                         tid = tc.get("id", "")
                         if tid in _rate_limited_by_id:
                             merged_results.append(_rate_limited_by_id[tid])
+                        elif tid in _cached_by_id:
+                            merged_results.append(_cached_by_id[tid])
                         elif tid in _executed_by_id:
                             merged_results.append(_executed_by_id[tid])
                     tool_results = merged_results
+                    decision.tool_calls = [
+                        tc
+                        for tc in _all_tool_calls
+                        if tc.get("id", "") not in _rate_limited_by_id
+                    ]
 
                 all_tool_results.extend(tool_results)
 
@@ -1802,7 +2070,11 @@ class ReasoningEngine:
                             m in result_content
                             for m in ["❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:"]
                         )
-                    self._record_tool_result(_tc_name, success=not is_error)
+                    self._record_tool_result(
+                        _tc_name,
+                        success=not is_error,
+                        tool_args=tc.get("input", tc.get("arguments", {})),
+                    )
                     _r_summary = self._summarize_tool_result(_tc_name, result_content)
                     if _r_summary:
                         _icon = "❌" if is_error else "✅"
@@ -1876,6 +2148,24 @@ class ReasoningEngine:
                 _iter_trace["tool_results"] = _trace_results
                 react_trace.append(_iter_trace)
 
+                _budget_decision = _loop_budget_guard.record_tool_results(_all_tool_calls, tool_results)
+                if _budget_decision.should_stop:
+                    msg = _budget_decision.message
+                    self._save_react_trace(
+                        react_trace,
+                        conversation_id,
+                        session_type,
+                        _budget_decision.exit_reason,
+                        _trace_started_at,
+                    )
+                    self._last_exit_reason = "loop_terminated"
+                    return msg
+                if _budget_decision.should_warn:
+                    working_messages.append({"role": "user", "content": _budget_decision.message})
+                    _iter_trace.setdefault("loop_budget_warnings", []).append(
+                        _budget_decision.exit_reason
+                    )
+
                 # 持久性失败检测：跨 rollback 累计同一工具失败达上限时，
                 # 注入强制策略切换提示而非继续回滚（防止截断导致的无限循环）
                 _persistent_exceeded = {
@@ -1915,8 +2205,12 @@ class ReasoningEngine:
                 if _has_truncation:
                     self._consecutive_truncation_count += 1
                     for tc in decision.tool_calls:
-                        if isinstance(tc.get("input"), dict) and PARSE_ERROR_KEY in tc["input"]:
-                            self._tool_failure_counter.pop(tc.get("name", ""), None)
+                        _tc_input = tc.get("input", tc.get("arguments", {}))
+                        if isinstance(_tc_input, dict) and PARSE_ERROR_KEY in _tc_input:
+                            self._tool_failure_counter.pop(
+                                _tool_rate_limit_key(tc.get("name", ""), _tc_input),
+                                None,
+                            )
                     logger.info(
                         f"[ReAct] Iter {iteration + 1} — Tool args truncated "
                         f"(count: {self._consecutive_truncation_count}), "
@@ -1988,7 +2282,7 @@ class ReasoningEngine:
                         )
                     self._supervisor.record_tool_call(
                         tool_name=_tc_name,
-                        params=tc.get("input", {}),
+                        params=tc.get("input", tc.get("arguments", {})),
                         success=not is_error,
                         iteration=iteration,
                         result_text=result_content if is_error else None,
@@ -1998,6 +2292,101 @@ class ReasoningEngine:
                 self._supervisor.record_response(decision.text_content or "")
                 if _in_tokens or _out_tokens:
                     self._supervisor.record_token_usage(_in_tokens + _out_tokens)
+                    self._compact_after_token_anomaly(
+                        working_messages,
+                        react_trace,
+                        _in_tokens + _out_tokens,
+                    )
+                    _pressure = self._context_manager.calculate_context_pressure(
+                        working_messages,
+                        system_prompt=_build_effective_system_prompt(),
+                        tools=tools,
+                        conversation_id=conversation_id,
+                        last_real_input_tokens=_last_real_input_tokens,
+                    )
+                    _context_safe = _pressure.trigger_tokens <= _pressure.soft_limit
+                    _iter_trace["context_pressure"] = {
+                        "messages_tokens": _pressure.messages_tokens,
+                        "system_tokens": _pressure.system_tokens,
+                        "tools_tokens": _pressure.tools_tokens,
+                        "soft_limit": _pressure.soft_limit,
+                        "hard_limit": _pressure.hard_limit,
+                        "trigger_tokens": _pressure.trigger_tokens,
+                        "max_tokens": _pressure.max_tokens,
+                        "context_safe": _context_safe,
+                        "input_tokens": _in_tokens,
+                        "output_tokens": _out_tokens,
+                    }
+                    _budget_decision = _loop_budget_guard.check_token_growth(
+                        _in_tokens,
+                        _out_tokens,
+                        max_recoveries=int(
+                            getattr(settings, "context_token_anomaly_max_recoveries", 1) or 1
+                        ),
+                        context_safe=_context_safe,
+                        max_context_tokens=_pressure.max_tokens,
+                    )
+                    if _budget_decision.should_warn:
+                        before = self._context_manager.estimate_messages_tokens(working_messages)
+                        try:
+                            compacted = await self._context_manager.reactive_compact(
+                                working_messages,
+                                system_prompt=_build_effective_system_prompt(),
+                                tools=tools,
+                                memory_manager=self._memory_manager,
+                                conversation_id=conversation_id,
+                                last_real_input_tokens=_last_real_input_tokens,
+                            )
+                            working_messages = compacted
+                            after = self._context_manager.estimate_messages_tokens(working_messages)
+                            _recovered_pressure = self._context_manager.calculate_context_pressure(
+                                working_messages,
+                                system_prompt=_build_effective_system_prompt(),
+                                tools=tools,
+                                conversation_id=conversation_id,
+                                last_real_input_tokens=_last_real_input_tokens,
+                            )
+                            _loop_budget_guard.check_token_growth(
+                                _in_tokens,
+                                _out_tokens,
+                                recovered=True,
+                                context_safe=(
+                                    _recovered_pressure.trigger_tokens
+                                    <= _recovered_pressure.soft_limit
+                                ),
+                                max_context_tokens=_recovered_pressure.max_tokens,
+                            )
+                            _iter_trace["token_anomaly_recovered"] = {
+                                "before_tokens": before,
+                                "after_tokens": after,
+                                "after_trigger_tokens": _recovered_pressure.trigger_tokens,
+                                "after_soft_limit": _recovered_pressure.soft_limit,
+                            }
+                            continue
+                        except Exception as exc:
+                            logger.warning("[ReAct] Token anomaly recovery compact failed: %s", exc)
+                    if _budget_decision.should_stop:
+                        msg = _budget_decision.message
+                        _iter_trace["token_anomaly_terminated"] = {
+                            "exit_reason": _budget_decision.exit_reason,
+                            "input_tokens": _in_tokens,
+                            "output_tokens": _out_tokens,
+                            "max_tokens": _pressure.max_tokens,
+                            "hard_terminate_ratio": float(
+                                getattr(settings, "context_hard_terminate_ratio", 0.98) or 0.98
+                            ),
+                            "anomaly_threshold": _loop_budget_guard.token_anomaly_threshold,
+                            "tool_calls_seen": _loop_budget_guard.total_tool_calls_seen,
+                        }
+                        self._save_react_trace(
+                            react_trace,
+                            conversation_id,
+                            session_type,
+                            _budget_decision.exit_reason,
+                            _trace_started_at,
+                        )
+                        self._last_exit_reason = "loop_terminated"
+                        return msg
 
                 # 循环检测
                 consecutive_tool_rounds += 1
@@ -2113,9 +2502,16 @@ class ReasoningEngine:
                             task_id=state.task_id,
                         )
                         self._last_exit_reason = "loop_terminated"
+                        fallback_msg = (
+                            "⚠️ 检测到同一工具参数反复调用，任务已自动终止以避免继续消耗 token。\n"
+                            "已获取的工具结果已保留在本轮上下文摘要中；请基于已有摘要给出结论，"
+                            "或换一个查询目标继续。"
+                            if intervention.pattern.value == "signature_repeat"
+                            else "⚠️ 检测到工具调用陷入死循环，任务已自动终止。请重新描述您的需求。"
+                        )
                         return (
                             cleaned
-                            or "⚠️ 检测到工具调用陷入死循环，任务已自动终止。请重新描述您的需求。"
+                            or fallback_msg
                         )
 
                     if intervention.should_rollback:
@@ -2129,6 +2525,9 @@ class ReasoningEngine:
                                         "content": intervention.prompt_injection,
                                     }
                                 )
+                            if intervention.throttled_tool_names:
+                                _blocked = set(intervention.throttled_tool_names)
+                                tools = [t for t in tools if t.get("name") not in _blocked]
                             logger.info(
                                 f"[Supervisor] Rollback + strategy switch: {intervention.message}"
                             )
@@ -2179,7 +2578,7 @@ class ReasoningEngine:
                 f"当前 MAX_ITERATIONS={max_iterations} 设置过低，"
                 f"建议调整为 100~300 以支持复杂任务。"
             )
-        return "已达到最大工具调用次数，请重新描述您的需求。"
+        return "已达到最大迭代次数，请基于当前进展重新描述需求或缩小任务范围后继续。"
 
     # ==================== 流式输出 (SSE) ====================
 
@@ -2203,6 +2602,8 @@ class ReasoningEngine:
         session: Any = None,
         force_tool_retries: int | None = None,
         is_sub_agent: bool = False,
+        request_id: str = "",
+        turn_id: str = "",
     ):
         """
         流式推理循环，为 HTTP API (SSE) 设计。
@@ -2229,9 +2630,12 @@ class ReasoningEngine:
         self._last_react_trace = []
         self._last_delivery_receipts = []
         self._supervisor.reset()
+        self._readonly_tool_cache.clear()
         self._budget = create_budget_from_settings()
         self._budget.start()
         react_trace: list[dict] = []
+        _request_id = request_id or f"{conversation_id or 'unknown'}:stream"
+        _turn_id = turn_id or f"{conversation_id or 'unknown'}:{int(time.time() * 1000)}"
         all_tool_results: list[dict] = []
         _trace_started_at = datetime.now().isoformat()
         _endpoint_switched = False
@@ -2314,11 +2718,18 @@ class ReasoningEngine:
                     effective_prompt += f"\n\n{_coordinator_rules}"
 
             # Tool filtering by mode — restrict available tools based on current mode
+            _pre_filter_tool_count = len(tools)
             tools = _filter_tools_by_mode(tools, _effective_mode)
+            _hidden_tool_count = max(0, _pre_filter_tool_count - len(tools))
             _allowed_tool_names = (
                 {t.get("name", "") for t in tools} if _effective_mode != "agent" else None
             )
             self._tool_executor._current_mode = _effective_mode
+            _agent_ref = getattr(self._tool_executor, "_agent_ref", None)
+            if _agent_ref is not None:
+                with contextlib.suppress(Exception):
+                    _agent_ref._last_effective_mode = _effective_mode
+                    _agent_ref._last_tool_policy_source = "reason_stream_mode_filter"
 
             # === 端点覆盖 ===
             _endpoint_switched = False
@@ -2351,8 +2762,12 @@ class ReasoningEngine:
             state.original_user_messages = [
                 msg for msg in messages if self._is_human_user_message(msg)
             ]
+            _configured_max_iterations = int(getattr(settings, "max_iterations", 100) or 100)
+            _task_budget_iterations = int(getattr(settings, "task_budget_iterations", 0) or 0)
+            if _task_budget_iterations > 0:
+                _configured_max_iterations = min(_configured_max_iterations, _task_budget_iterations)
             max_iterations = (
-                getattr(self, "_max_iterations_override", None) or settings.max_iterations
+                getattr(self, "_max_iterations_override", None) or _configured_max_iterations
             )
             self._max_iterations_override = None  # consume once
             self._empty_content_retries = 0
@@ -2395,12 +2810,29 @@ class ReasoningEngine:
             tools_executed_in_task = False
             _supervisor_intervened = False
             _tool_call_counter: dict[str, int] = {}
-            _MAX_SAME_TOOL_PER_TASK = 5
+            _MAX_SAME_TOOL_PER_TASK = int(getattr(settings, "same_tool_call_limit", 5) or 5)
+            _loop_budget_guard = LoopBudgetGuard(
+                max_total_tool_calls=max(1, int(getattr(settings, "task_budget_tool_calls", 30) or 30)),
+                readonly_stagnation_limit=int(
+                    getattr(settings, "readonly_stagnation_limit", _READONLY_STAGNATION_LIMIT)
+                    or _READONLY_STAGNATION_LIMIT
+                ),
+                readonly_stagnation_hard_limit=int(
+                    getattr(settings, "readonly_stagnation_hard_limit", 6) or 6
+                ),
+                token_anomaly_threshold=int(
+                    getattr(settings, "context_token_anomaly_threshold", TOKEN_ANOMALY_THRESHOLD)
+                    or TOKEN_ANOMALY_THRESHOLD
+                ),
+                near_context_ratio=float(
+                    getattr(settings, "context_hard_terminate_ratio", 0.98) or 0.98
+                ),
+            )
 
             def _make_tool_sig(tc: dict) -> str:
                 nonlocal _last_browser_url
                 name = tc.get("name", "")
-                inp = tc.get("input", {})
+                inp = tc.get("input", tc.get("arguments", {}))
                 if name == "browser_navigate":
                     _last_browser_url = inp.get("url", "")
                 try:
@@ -2425,6 +2857,7 @@ class ReasoningEngine:
             _thinking_notice_emitted = False
             # --- Vision 降级通知节流（一次会话只发一次） ---
             _vision_notice_emitted = False
+            _last_real_input_tokens: int | None = None
 
             # --- 恢复的 Todo：补发 SSE 事件让前端重建 FloatingPlanBar ---
             if conversation_id:
@@ -2550,6 +2983,7 @@ class ReasoningEngine:
                             tools=tools,
                             memory_manager=self._memory_manager,
                             conversation_id=conversation_id,
+                            last_real_input_tokens=_last_real_input_tokens,
                         )
                     except _CtxCancelledError:
                         # 与 run() 保持一致：只在明确用户取消时终止。
@@ -2860,6 +3294,8 @@ class ReasoningEngine:
                     )
                 if _in_tokens or _out_tokens:
                     self._budget.record_tokens(_in_tokens, _out_tokens)
+                    if _in_tokens:
+                        _last_real_input_tokens = _in_tokens
                 # 流式路径下 brain 不落 token_tracking（详见 brain.messages_create_stream
                 # 注释），需在此显式落库以保留 cache_read/cache_create 命中统计。
                 if _in_tokens or _out_tokens or _cache_read or _cache_create:
@@ -2877,15 +3313,29 @@ class ReasoningEngine:
                                     cache_read_tokens=_cache_read,
                                 )
                                 break
-                        _tt_record_usage(
-                            model=current_model or "",
-                            endpoint_name=_ep_name,
-                            input_tokens=_in_tokens,
-                            output_tokens=_out_tokens,
-                            cache_creation_tokens=_cache_create,
-                            cache_read_tokens=_cache_read,
-                            estimated_cost=_cost,
+                        _tt = set_tracking_context(
+                            TokenTrackingContext(
+                                session_id=conversation_id or "",
+                                request_id=_request_id,
+                                turn_id=_turn_id,
+                                operation_type="chat_react_iteration_stream",
+                                channel="api",
+                                iteration=_iteration + 1,
+                                agent_profile_id=agent_profile_id,
+                            )
                         )
+                        try:
+                            _tt_record_usage(
+                                model=current_model or "",
+                                endpoint_name=_ep_name,
+                                input_tokens=_in_tokens,
+                                output_tokens=_out_tokens,
+                                cache_creation_tokens=_cache_create,
+                                cache_read_tokens=_cache_read,
+                                estimated_cost=_cost,
+                            )
+                        finally:
+                            reset_tracking_context(_tt)
                     except Exception as _tt_err:
                         logger.debug(
                             f"[ReAct-Stream] token_tracking record failed (non-fatal): {_tt_err}"
@@ -2897,6 +3347,15 @@ class ReasoningEngine:
                     if hasattr(decision.type, "value")
                     else str(decision.type),
                     "model": current_model,
+                "request_id": _request_id,
+                "turn_id": _turn_id,
+                "tool_policy": {
+                    "mode": _effective_mode,
+                    "visible_count": len(tools),
+                    "hidden_count": _hidden_tool_count,
+                    "source": "reason_stream_mode_filter",
+                    "visible_tools": sorted(t.get("name", "") for t in tools if t.get("name")),
+                },
                     "thinking": decision.thinking_content,
                     "thinking_duration_ms": _thinking_duration,
                     "text": decision.text_content,
@@ -2904,7 +3363,7 @@ class ReasoningEngine:
                         {
                             "name": tc.get("name"),
                             "id": tc.get("id"),
-                            "input": tc.get("input", {}),
+                            "input": tc.get("input", tc.get("arguments", {})),
                         }
                         for tc in (decision.tool_calls or [])
                     ],
@@ -3318,10 +3777,12 @@ class ReasoningEngine:
                     # ---- 正常工具执行（支持 cancel_event / skip_event 三路竞速中断） ----
                     tool_results_for_msg: list[dict] = []
                     _non_denied_tool_names: list[str] = []
+                    _actual_tool_calls_for_budget: list[dict] = []
                     _stream_cancelled = False
                     _stream_skipped = False
                     cancel_event = state.cancel_event if state else asyncio.Event()
                     skip_event = state.skip_event if state else asyncio.Event()
+                    _executed_tool_calls_for_budget: list[dict] = []
                     for tc in decision.tool_calls:
                         # 每个工具执行前检查取消
                         if state and state.cancelled:
@@ -3394,6 +3855,35 @@ class ReasoningEngine:
                             )
                             continue
 
+                        _cached_result = self._cached_readonly_tool_result(
+                            tool_name,
+                            tool_args,
+                            tool_id,
+                        )
+                        if _cached_result is not None:
+                            _cached_text = str(_cached_result.get("content", ""))
+                            yield {"type": "chain_text", "content": f"{tool_name} 使用缓存结果"}
+                            yield {
+                                "type": "tool_call_start",
+                                "tool": tool_name,
+                                "name": tool_name,
+                                "args": tool_args,
+                                "id": tool_id,
+                                "friendly_message": self._describe_tool_call(tool_name, tool_args),
+                                "cached": True,
+                            }
+                            yield {
+                                "type": "tool_call_end",
+                                "tool": tool_name,
+                                "result": _cached_text[:_SSE_RESULT_PREVIEW_CHARS],
+                                "id": tool_id,
+                                "is_error": False,
+                                "result_summary": self._summarize_tool_result(tool_name, _cached_text) or "",
+                                "cached": True,
+                            }
+                            tool_results_for_msg.append(_cached_result)
+                            continue
+
                         _tool_desc = self._describe_tool_call(tool_name, tool_args)
                         yield {"type": "chain_text", "content": _tool_desc}
 
@@ -3449,7 +3939,10 @@ class ReasoningEngine:
                             )
                             continue
 
+                        _executed_tool_calls_for_budget.append(tc)
+
                         if _pr.decision == PolicyDecision.CONFIRM:
+                            _actual_tool_calls_for_budget.append(tc)
                             _risk = _pr.metadata.get("risk_level") or "medium"
                             _needs_sb = _pr.metadata.get("needs_sandbox", False)
                             _pe.store_ui_pending(
@@ -3530,6 +4023,7 @@ class ReasoningEngine:
                             continue
 
                         _non_denied_tool_names.append(tool_name)
+                        _actual_tool_calls_for_budget.append(tc)
 
                         # 将工具执行与 cancel_event / skip_event 三路竞速
                         # 注意: 不在此处 clear_skip()，让已到达的 skip 信号自然被竞速消费
@@ -3578,6 +4072,12 @@ class ReasoningEngine:
                             elif tool_exec_task in done_set:
                                 result_text = tool_exec_task.result()
                                 result_text = str(result_text) if result_text else ""
+                                self._remember_readonly_tool_result(
+                                    tool_name,
+                                    tool_args,
+                                    result_text,
+                                    tool_id,
+                                )
                             else:
                                 result_text = f"[工具 {tool_name} 被用户中断]"
                                 _stream_cancelled = True
@@ -3769,6 +4269,24 @@ class ReasoningEngine:
                             _plan_exit_stop = True
                             break
 
+                    _budget_decision = _loop_budget_guard.record_tool_calls(
+                        _actual_tool_calls_for_budget
+                    )
+                    if _budget_decision.should_stop:
+                        msg = _budget_decision.message
+                        react_trace.append(_iter_trace)
+                        self._save_react_trace(
+                            react_trace,
+                            conversation_id,
+                            session_type,
+                            _budget_decision.exit_reason,
+                            _trace_started_at,
+                        )
+                        self._last_exit_reason = "loop_terminated"
+                        yield {"type": "text_delta", "content": msg}
+                        yield {"type": "done"}
+                        return
+
                     # exit_plan_mode was called → end the turn
                     if locals().get("_plan_exit_stop"):
                         logger.info(
@@ -3830,7 +4348,11 @@ class ReasoningEngine:
                                 m in r_content
                                 for m in ["❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:"]
                             )
-                            self._record_tool_result(_tc_name, success=not is_error)
+                            self._record_tool_result(
+                                _tc_name,
+                                success=not is_error,
+                                tool_args=tc_rec.get("input", tc_rec.get("arguments", {})),
+                            )
 
                     # 收集工具结果到 trace（保存完整内容，不截断）
                     _s_error_markers = ("❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:")
@@ -3847,6 +4369,29 @@ class ReasoningEngine:
                         })
                     react_trace.append(_iter_trace)
 
+                    _budget_decision = _loop_budget_guard.record_tool_results(
+                        list(decision.tool_calls or []),
+                        tool_results_for_msg,
+                    )
+                    if _budget_decision.should_stop:
+                        msg = _budget_decision.message
+                        self._save_react_trace(
+                            react_trace,
+                            conversation_id,
+                            session_type,
+                            _budget_decision.exit_reason,
+                            _trace_started_at,
+                        )
+                        self._last_exit_reason = "loop_terminated"
+                        yield {"type": "text_delta", "content": msg}
+                        yield {"type": "done"}
+                        return
+                    if _budget_decision.should_warn:
+                        working_messages.append({"role": "user", "content": _budget_decision.message})
+                        _iter_trace.setdefault("loop_budget_warnings", []).append(
+                            _budget_decision.exit_reason
+                        )
+
                     try:
                         state.transition(TaskStatus.OBSERVING)
                     except ValueError:
@@ -3860,8 +4405,12 @@ class ReasoningEngine:
                     if _has_truncation:
                         self._consecutive_truncation_count += 1
                         for tc in decision.tool_calls:
-                            if isinstance(tc.get("input"), dict) and PARSE_ERROR_KEY in tc["input"]:
-                                self._tool_failure_counter.pop(tc.get("name", ""), None)
+                            _tc_input = tc.get("input", tc.get("arguments", {}))
+                            if isinstance(_tc_input, dict) and PARSE_ERROR_KEY in _tc_input:
+                                self._tool_failure_counter.pop(
+                                    _tool_rate_limit_key(tc.get("name", ""), _tc_input),
+                                    None,
+                                )
                         logger.info(
                             f"[ReAct-Stream] Iter {_iteration + 1} — Tool args truncated "
                             f"(count: {self._consecutive_truncation_count}), "
@@ -3963,7 +4512,7 @@ class ReasoningEngine:
                             )
                         self._supervisor.record_tool_call(
                             tool_name=_stn,
-                            params=_stc.get("input", {}),
+                            params=_stc.get("input", _stc.get("arguments", {})),
                             success=not _sr_err,
                             iteration=_iteration,
                             result_text=_sr_content if _sr_err else None,
@@ -3971,6 +4520,106 @@ class ReasoningEngine:
                     self._supervisor.record_response(decision.text_content or "")
                     if _in_tokens or _out_tokens:
                         self._supervisor.record_token_usage(_in_tokens + _out_tokens)
+                        self._compact_after_token_anomaly(
+                            working_messages,
+                            react_trace,
+                            _in_tokens + _out_tokens,
+                        )
+                        _pressure = self._context_manager.calculate_context_pressure(
+                            working_messages,
+                            system_prompt=effective_prompt,
+                            tools=tools,
+                            conversation_id=conversation_id,
+                            last_real_input_tokens=_last_real_input_tokens,
+                        )
+                        _context_safe = _pressure.trigger_tokens <= _pressure.soft_limit
+                        _iter_trace["context_pressure"] = {
+                            "messages_tokens": _pressure.messages_tokens,
+                            "system_tokens": _pressure.system_tokens,
+                            "tools_tokens": _pressure.tools_tokens,
+                            "soft_limit": _pressure.soft_limit,
+                            "hard_limit": _pressure.hard_limit,
+                            "trigger_tokens": _pressure.trigger_tokens,
+                            "max_tokens": _pressure.max_tokens,
+                            "context_safe": _context_safe,
+                            "input_tokens": _in_tokens,
+                            "output_tokens": _out_tokens,
+                        }
+                        _budget_decision = _loop_budget_guard.check_token_growth(
+                            _in_tokens,
+                            _out_tokens,
+                            max_recoveries=int(
+                                getattr(settings, "context_token_anomaly_max_recoveries", 1) or 1
+                            ),
+                            context_safe=_context_safe,
+                            max_context_tokens=_pressure.max_tokens,
+                        )
+                        if _budget_decision.should_warn:
+                            before = self._context_manager.estimate_messages_tokens(working_messages)
+                            try:
+                                compacted = await self._context_manager.reactive_compact(
+                                    working_messages,
+                                    system_prompt=effective_prompt,
+                                    tools=tools,
+                                    memory_manager=self._memory_manager,
+                                    conversation_id=conversation_id,
+                                    last_real_input_tokens=_last_real_input_tokens,
+                                )
+                                working_messages = compacted
+                                after = self._context_manager.estimate_messages_tokens(working_messages)
+                                _recovered_pressure = self._context_manager.calculate_context_pressure(
+                                    working_messages,
+                                    system_prompt=effective_prompt,
+                                    tools=tools,
+                                    conversation_id=conversation_id,
+                                    last_real_input_tokens=_last_real_input_tokens,
+                                )
+                                _loop_budget_guard.check_token_growth(
+                                    _in_tokens,
+                                    _out_tokens,
+                                    recovered=True,
+                                    context_safe=(
+                                        _recovered_pressure.trigger_tokens
+                                        <= _recovered_pressure.soft_limit
+                                    ),
+                                    max_context_tokens=_recovered_pressure.max_tokens,
+                                )
+                                _iter_trace["token_anomaly_recovered"] = {
+                                    "before_tokens": before,
+                                    "after_tokens": after,
+                                    "after_trigger_tokens": _recovered_pressure.trigger_tokens,
+                                    "after_soft_limit": _recovered_pressure.soft_limit,
+                                }
+                                continue
+                            except Exception as exc:
+                                logger.warning(
+                                    "[ReAct-Stream] Token anomaly recovery compact failed: %s",
+                                    exc,
+                                )
+                        if _budget_decision.should_stop:
+                            msg = _budget_decision.message
+                            _iter_trace["token_anomaly_terminated"] = {
+                                "exit_reason": _budget_decision.exit_reason,
+                                "input_tokens": _in_tokens,
+                                "output_tokens": _out_tokens,
+                                "max_tokens": _pressure.max_tokens,
+                                "hard_terminate_ratio": float(
+                                    getattr(settings, "context_hard_terminate_ratio", 0.98) or 0.98
+                                ),
+                                "anomaly_threshold": _loop_budget_guard.token_anomaly_threshold,
+                                "tool_calls_seen": _loop_budget_guard.total_tool_calls_seen,
+                            }
+                            self._save_react_trace(
+                                react_trace,
+                                conversation_id,
+                                session_type,
+                                _budget_decision.exit_reason,
+                                _trace_started_at,
+                            )
+                            self._last_exit_reason = "loop_terminated"
+                            yield {"type": "text_delta", "content": msg}
+                            yield {"type": "done"}
+                            return
 
                     # --- 循环检测（Supervisor-based, 与 run() 一致） ---
                     consecutive_tool_rounds += 1
@@ -4083,7 +4732,13 @@ class ReasoningEngine:
                             )
                             msg = (
                                 cleaned
-                                or "⚠️ 检测到工具调用陷入死循环，任务已自动终止。请重新描述您的需求。"
+                                or (
+                                    "⚠️ 检测到同一工具参数反复调用，任务已自动终止以避免继续消耗 token。\n"
+                                    "已获取的工具结果已保留在本轮上下文摘要中；请基于已有摘要给出结论，"
+                                    "或换一个查询目标继续。"
+                                    if intervention.pattern.value == "signature_repeat"
+                                    else "⚠️ 检测到工具调用陷入死循环，任务已自动终止。请重新描述您的需求。"
+                                )
                             )
                             self._last_exit_reason = "loop_terminated"
                             yield {"type": "text_delta", "content": msg}
@@ -4142,7 +4797,7 @@ class ReasoningEngine:
                     f"建议在设置中调整为 100~300 以支持复杂任务）"
                 )
             else:
-                hint = "\n\n（已达到最大迭代次数）"
+                hint = "\n\n（已达到最大迭代次数，请基于当前进展重新描述需求或缩小任务范围后继续。）"
             self._last_exit_reason = "max_iterations"
             yield {"type": "text_delta", "content": hint}
             yield {"type": "done"}
@@ -4958,6 +5613,8 @@ class ReasoningEngine:
         iteration: int = 0,
         agent_profile_id: str = "default",
         cancel_event: asyncio.Event | None = None,
+        request_id: str = "",
+        turn_id: str = "",
     ) -> Decision:
         """
         推理阶段: 调用 LLM，返回结构化 Decision。
@@ -4975,6 +5632,8 @@ class ReasoningEngine:
             _tt = set_tracking_context(
                 TokenTrackingContext(
                     session_id=conversation_id or "",
+                    request_id=request_id,
+                    turn_id=turn_id,
                     operation_type="chat_react_iteration",
                     channel="api",
                     iteration=iteration,
@@ -5239,6 +5898,7 @@ class ReasoningEngine:
             cleaned_text = strip_thinking_tags(decision.text_content)
             _, cleaned_text = parse_intent_tag(cleaned_text)
             if cleaned_text and len(cleaned_text.strip()) > 0:
+                cleaned_text = _guard_unbacked_action_claim(cleaned_text, executed_tool_names)
                 last_user_request = ResponseHandler.get_last_user_request(original_messages)
                 # 汇总轮（root post-summary 注入的 [用户指令最终汇总] 提示）下，
                 # 本次 ReAct 的目的就是输出汇总文本而非再产出文件，verify 全程绕过。
@@ -5432,6 +6092,7 @@ class ReasoningEngine:
 
         # 未执行过"实质性"工具 — 解析意图声明标记
         intent, stripped_text = parse_intent_tag(decision.text_content or "")
+        stripped_text = _guard_unbacked_action_claim(stripped_text or "", executed_tool_names)
         logger.info(
             f"[IntentTag] intent={intent or 'NONE'}, "
             f"has_tool_calls=False, tools_executed_in_task=False, "
@@ -5947,6 +6608,8 @@ class ReasoningEngine:
                         compacted = await self._context_manager.reactive_compact(
                             working_messages,
                             system_prompt=getattr(state, "_system_prompt", ""),
+                            memory_manager=self._memory_manager,
+                            conversation_id=getattr(state, "session_id", None),
                         )
                         if compacted is not working_messages:
                             working_messages.clear()

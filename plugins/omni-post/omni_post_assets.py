@@ -94,14 +94,22 @@ class UploadPipeline:
         self._chunk_bytes = int(chunk_bytes)
         self._sessions: dict[str, UploadSession] = {}
 
+        self._ffprobe_bin: str | None = None
+        self._ffmpeg_bin: str | None = None
+        self.refresh_system_bins()
+
+    # ── Capability probe ────────────────────────────────────────────
+
+    def refresh_system_bins(self) -> dict[str, str | None]:
+        """Re-read ffmpeg/ffprobe from PATH after an in-plugin install."""
+
         self._ffprobe_bin = shutil.which("ffprobe")
         self._ffmpeg_bin = shutil.which("ffmpeg")
         if self._ffprobe_bin is None:
             logger.warning("omni-post: ffprobe not found in PATH — uploads will skip metadata")
         if self._ffmpeg_bin is None:
             logger.warning("omni-post: ffmpeg not found in PATH — uploads will skip thumbnails")
-
-    # ── Capability probe ────────────────────────────────────────────
+        return {"ffmpeg": self._ffmpeg_bin, "ffprobe": self._ffprobe_bin}
 
     def ffmpeg_available(self) -> bool:
         return self._ffmpeg_bin is not None

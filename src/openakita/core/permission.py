@@ -392,7 +392,11 @@ PLAN_MODE_RULESET: Ruleset = from_config(
     {
         "*": "deny",
         "read": "allow",
-        "edit": {"*": "deny", "data/plans/*.md": "allow"},
+        "edit": {
+            "*": "deny",
+            "data/plans/*.md": "allow",
+            "data\\plans\\*.md": "allow",
+        },
         "run_shell": "deny",
         "create_plan_file": "allow",
         "exit_plan_mode": "allow",
@@ -430,7 +434,6 @@ ASK_MODE_RULESET: Ruleset = from_config(
         "web_search": "allow",
         "news_search": "allow",
         "search_memory": "allow",
-        "add_memory": "allow",
         "get_memory_stats": "allow",
         "list_recent_tasks": "allow",
         "trace_memory": "allow",

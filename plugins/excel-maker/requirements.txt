@@ -1,0 +1,6 @@
+openpyxl
+pandas
+matplotlib
+xlrd
+pyxlsb
+

@@ -1,0 +1,6 @@
+# MVP runtime dependencies. Optional parser/export dependencies are managed by
+# the plugin's Settings tab and a whitelist-only dependency helper.
+python-pptx>=1.0.0
+markdown-it-py>=3.0.0
+Pillow>=10.0.0
+

@@ -5,8 +5,8 @@ PyInstaller 打包后 sys.executable 指向 openakita-server.exe 而非 Python �
 本模块提供统一的运行时环境检测层，确保 pip install / 脚本执行等功能正常工作。
 """
 
-import logging
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -418,6 +418,8 @@ def apply_agent_python_environment(env: dict[str, str]) -> dict[str, str]:
     merged["UV_INDEX_URL"] = pip_index["url"]
     if pip_index.get("trusted_host"):
         merged["PIP_TRUSTED_HOST"] = pip_index["trusted_host"]
+    # Keep agent subprocesses isolated from any host/app PYTHONPATH.
+    merged.pop("PYTHONPATH", None)
     merged["PYTHONNOUSERSITE"] = "1"
     return merged
 
@@ -433,6 +435,7 @@ def get_runtime_environment_report() -> dict:
     manifest = read_runtime_manifest()
     app_py = get_app_python_executable()
     agent_py = get_agent_python_executable()
+    host_py = get_python_executable()
     pip_index = resolve_pip_index()
     legacy_mode = bool(manifest.get("legacy_mode"))
 
@@ -449,6 +452,9 @@ def get_runtime_environment_report() -> dict:
         "mode": mode,
         "runtime_root": str(get_runtime_root()),
         "manifest": str(get_runtime_manifest_path()),
+        "host_python": host_py,
+        "sys_executable": sys.executable,
+        "is_frozen": IS_FROZEN,
         "app_python": app_py,
         "app_venv": str(get_app_venv_path()),
         "agent_python": agent_py,
@@ -462,6 +468,102 @@ def get_runtime_environment_report() -> dict:
         "legacy_mode": legacy_mode,
         "last_error": manifest.get("last_error"),
     }
+
+
+def _probe_python_tool(py: str | None, args: list[str], *, timeout: int = 8) -> str:
+    """Return a short version/probe string for a Python-backed command."""
+    if not py:
+        return "unavailable"
+    import subprocess
+
+    kwargs: dict = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": timeout,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        proc = subprocess.run([py, *args], **kwargs)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"probe failed: {type(exc).__name__}: {exc}"
+    output = (proc.stdout or proc.stderr or "").strip().splitlines()
+    text = output[-1] if output else f"exit {proc.returncode}"
+    if proc.returncode != 0:
+        return f"exit {proc.returncode}: {text}"
+    return text
+
+
+def _probe_uv_version() -> str:
+    import subprocess
+
+    candidates: list[str] = []
+    env_uv = os.environ.get("OPENAKITA_UV", "").strip()
+    if env_uv:
+        candidates.append(env_uv)
+    candidates.append("uv")
+    kwargs: dict = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": 8,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    for candidate in candidates:
+        try:
+            proc = subprocess.run([candidate, "--version"], **kwargs)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if proc.returncode == 0:
+            return (proc.stdout or proc.stderr or "").strip()
+    return "unavailable"
+
+
+def log_runtime_environment_report() -> None:
+    """Log the effective runtime contract once during service startup.
+
+    This makes packaged-only failures diagnosable: the log records which Python
+    executable owns host/plugin pip installs, which dual-venv interpreters are
+    active, and which PyPI mirror pip/uv will use.
+    """
+    try:
+        report = get_runtime_environment_report()
+        host_py = report.get("host_python")
+        app_py = report.get("app_python")
+        agent_py = report.get("agent_python")
+        logger.info(
+            "[runtime] mode=%s frozen=%s sys_executable=%s host_python=%s "
+            "app_python=%s agent_python=%s pip_index=%s trusted_host=%s "
+            "can_pip_install=%s legacy_mode=%s last_error=%s",
+            report.get("mode"),
+            report.get("is_frozen"),
+            report.get("sys_executable"),
+            host_py,
+            app_py,
+            agent_py,
+            report.get("pip_index_url"),
+            report.get("pip_trusted_host"),
+            report.get("can_pip_install"),
+            report.get("legacy_mode"),
+            report.get("last_error"),
+        )
+        logger.info(
+            "[runtime] versions: host=%s app=%s agent=%s host_pip=%s app_pip=%s "
+            "agent_pip=%s uv=%s",
+            _probe_python_tool(host_py, ["--version"]),
+            _probe_python_tool(app_py, ["--version"]),
+            _probe_python_tool(agent_py, ["--version"]),
+            _probe_python_tool(host_py, ["-m", "pip", "--version"]),
+            _probe_python_tool(app_py, ["-m", "pip", "--version"]),
+            _probe_python_tool(agent_py, ["-m", "pip", "--version"]),
+            _probe_uv_version(),
+        )
+    except Exception:
+        logger.debug("[runtime] failed to log runtime environment report", exc_info=True)
 
 
 def get_pip_command(packages: list[str], *, index_url: str | None = None) -> list[str] | None:

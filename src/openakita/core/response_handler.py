@@ -196,14 +196,40 @@ def parse_intent_tag(text: str) -> tuple[str | None, str]:
 # 设计要点：
 # - 仅看「用户原始请求」的文本特征，**不依赖** reasoning_engine 的 stale
 #   实例属性（verify 没执行的轮次该属性可能不可信）。
-# - 系统/组织合成的元指令前缀（如「[用户指令最终汇总]」）必须先剔除，
-#   避免命中其中包含的「文件/附件」字面值导致误判。
+# - 系统/组织合成的「被动通知」前缀（如「[收到任务交付]」「[用户指令最终汇总]」
+#   「[系统]」等共 17 种）必须先剔除，避免命中其中包含的「文件/附件/写一份」
+#   等字面值导致误判 → 进而让 root 节点 emit task_failed。
+#   注：「[收到任务]」不在豁免名单——它是子节点真正接到的工作派单，
+#   仍需走正常的 expects_artifact 判定。
 # - 关键词偏向「交付意图」而非泛指「话题里出现了文件」。
 
 _SYSTEM_REQUEST_PREFIXES_TUPLE: tuple[str, ...] = (
+    # reasoning_engine / agent 自注入的元指令、汇总、上下文头
     "[用户指令最终汇总]",
     "[系统]",
+    "[系统提示]",
     "[组织]",
+    "[以上是之前的对话历史",
+    # OrgRuntime._format_incoming_message 中 13 种 type_label，
+    # 其中只有 "[收到任务]" 是「子节点真正接到工作派单」，必须保留 verify；
+    # 其余 12 种均为被动收到的通知/反馈，root 或上游收到时只需文字汇总
+    # 即可，不应被强制要求附件交付，否则会被 _request_expects_artifact 误
+    # 判命中正文里出现的「文件 / 链接 / 写一份 / openakita-promotion-plan.md」
+    # 等关键字 → INCOMPLETE → root emit task_failed → 用户看到「任务验证未通过」
+    # 噪音卡片（详见 2026-04-28 13:42:53 _134209 失败链）。
+    "[收到任务结果]",
+    "[收到任务交付]",
+    "[任务已通过验收]",
+    "[任务被打回]",
+    "[收到汇报]",
+    "[收到提问]",
+    "[收到回答]",
+    "[收到上报]",
+    "[收到组织公告]",
+    "[收到部门公告]",
+    "[收到反馈]",
+    "[收到握手请求]",
+    "[收到消息]",
 )
 
 _ARTIFACT_INTENT_KEYWORDS: tuple[str, ...] = (
@@ -271,11 +297,15 @@ class ResponseHandler:
         self._brain = brain
         self._memory_manager = memory_manager
 
-    # 系统/组织自动注入的元指令前缀。命中其中任何一个意味着「user_request」
-    # 实际上不是真正用户输入，而是后端合成的汇总/通知/系统消息，关键词命中
-    # （如「文件」「链接」「附件」）会导致 verify 误判。显式白名单 3 个前缀，
-    # 不写正则一刀切，避免误伤恰好以 "[" 开头的真实用户输入。
-    _SYSTEM_REQUEST_PREFIXES: tuple[str, ...] = _SYSTEM_REQUEST_PREFIXES_TUPLE  # type: ignore[name-defined]
+    # 系统/组织自动注入的「被动收到」类元指令前缀（17 项）。命中其中任何
+    # 一个意味着「user_request」实际上不是真正用户输入，而是 OrgRuntime /
+    # reasoning_engine 后端合成的汇总/通知/系统消息：
+    #   - reasoning_engine / agent 自注入：「[用户指令最终汇总]」「[系统]」
+    #     「[系统提示]」「[组织]」「[以上是之前的对话历史」
+    #   - OrgRuntime 13 种 type_label 中除「[收到任务]」之外的 12 种被动通知
+    # 「[收到任务]」专门保留 verify，因为它是子节点真正接到的工作派单。
+    # 显式白名单制，不写正则一刀切，避免误伤恰好以 "[" 开头的真实用户输入。
+    _SYSTEM_REQUEST_PREFIXES: tuple[str, ...] = _SYSTEM_REQUEST_PREFIXES_TUPLE
 
     @staticmethod
     def _request_expects_artifact(user_request: str | None) -> bool:
@@ -315,6 +345,23 @@ class ResponseHandler:
         """
         if bypass:
             logger.info("[TaskVerify] Bypassed (supervisor intervention active)")
+            return True
+
+        # 内层兜底：当 user_request 命中「被动通知」类前缀（17 项，
+        # 含「[收到任务交付]」「[用户指令最终汇总]」「[系统]」等）时，上游
+        # reasoning_engine 计算 is_summary_round / supervisor bypass 可能因
+        # history 时间戳、消息压缩等边界情况失误，导致 bypass=False。这里
+        # 直接看 user_request 头部前缀做最终防线：
+        #   - root 节点收到下属 TASK_DELIVERED 时无需附件硬约束；
+        #   - 汇总轮、被动通知轮统一豁免 verify，避免错误 emit task_failed。
+        # 注意「[收到任务]」不在前缀里——子节点真正派单仍走完整 verify。
+        head = (user_request or "").lstrip()
+        if head and head.startswith(self._SYSTEM_REQUEST_PREFIXES):
+            preview = head[:30].replace("\n", " ")
+            logger.info(
+                "[TaskVerify] Bypassed (passive-notification prefix matched: %r)",
+                preview,
+            )
             return True
 
         delivery_receipts = delivery_receipts or []

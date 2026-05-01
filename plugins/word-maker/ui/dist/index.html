@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Word Maker · Word 文档助手</title>
+  <script src="_assets/bootstrap.js"></script>
+  <link rel="stylesheet" href="_assets/styles.css">
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/i18n.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
+  <style>
+    :root {
+      --bg:#f8fafc; --bg-card:#fff; --bg-hover:#f1f5f9;
+      --text:#1e293b; --text-muted:#64748b; --text-dim:#94a3b8;
+      --primary:#2563eb; --primary-hover:#1d4ed8;
+      --success:#22c55e; --warning:#f59e0b; --danger:#ef4444;
+      --border:#e2e8f0; --radius:8px;
+    }
+    [data-theme="dark"] {
+      --bg:#0f172a; --bg-card:#1e293b; --bg-hover:#334155;
+      --text:#f1f5f9; --text-muted:#94a3b8; --text-dim:#64748b; --border:#334155;
+    }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); line-height:1.5; -webkit-font-smoothing:antialiased; }
+    .app { display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+    .header { display:flex; align-items:center; justify-content:space-between; padding:12px 20px; border-bottom:1px solid var(--border); background:var(--bg-card); }
+    .header h1 { font-size:16px; font-weight:600; display:flex; align-items:center; gap:10px; }
+    .ak-logo { width:34px; height:34px; border:1px solid rgba(37,99,235,.28); border-radius:10px; background:radial-gradient(circle at 30% 20%,rgba(255,255,255,.55),transparent 28%),linear-gradient(135deg,#60a5fa 0%,var(--primary) 58%,#1e3a8a 100%); color:#fff; display:inline-flex; align-items:center; justify-content:center; box-shadow:0 10px 22px rgba(37,99,235,.22); }
+    .word-logo-icon { width:23px; height:23px; transform:translate(-1.5px,-0.5px); filter:drop-shadow(0 1px 1px rgba(30,58,138,.28)); }
+    .ui-icon { width:1em; height:1em; flex-shrink:0; vertical-align:-0.15em; }
+    .ak-sub { font-size:12px; font-weight:400; color:var(--text-muted); margin-left:4px; text-transform:uppercase; letter-spacing:.02em; }
+    .tabs { display:flex; gap:0; border-bottom:1px solid var(--border); background:var(--bg-card); padding:0 14px; }
+    .tab { padding:9px 16px; font-size:13px; cursor:pointer; border-bottom:2px solid transparent; color:var(--text-muted); transition:all .15s; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
+    .tab .ui-icon { width:16px; height:16px; }
+    .tab:hover { color:var(--text); background:var(--bg-hover); }
+    .tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:500; }
+    .content { flex:1; min-height:0; overflow:hidden; padding:14px 16px; position:relative; }
+    .content-scroll { max-height:100%; overflow-y:auto; }
+    .oa-config-banner { display:flex; align-items:center; gap:12px; margin:12px 20px 0; padding:10px 12px; border:1px solid rgba(245,158,11,.35); background:rgba(245,158,11,.09); border-radius:8px; flex-shrink:0; }
+    .oa-config-banner__icon { width:24px; height:24px; border-radius:50%; background:rgba(245,158,11,.16); color:var(--warning); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+    .oa-config-banner__text { flex:1; font-size:13px; }
+    .oa-config-banner__action { border:0; border-radius:6px; padding:7px 12px; background:var(--warning); color:#fff; cursor:pointer; font-size:13px; }
+    .split { display:grid; grid-template-columns:minmax(380px, 1.12fr) minmax(360px, .88fr); gap:14px; height:100%; min-height:0; }
+    .split-left, .split-right { min-height:0; overflow:auto; }
+    .split-right { border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card); }
+    .oa-preview-area { display:flex; flex-direction:column; }
+    .oa-preview-area--centered { align-items:center; justify-content:center; text-align:center; color:var(--text-muted); }
+    .oa-preview-empty__icon { width:54px; height:54px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--bg-hover); color:var(--primary); margin-bottom:10px; font-size:22px; }
+    .oa-preview-empty__title { font-size:14px; font-weight:600; color:var(--text); margin-bottom:4px; }
+    .oa-preview-empty__hint { font-size:12px; color:var(--text-muted); max-width:300px; }
+    .card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+    .card-title, .card h2 { font-size:14px; font-weight:600; margin-bottom:12px; display:flex; align-items:center; gap:6px; }
+    .label { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); margin:0 0 8px; line-height:1.3; }
+    .label::before { content:""; display:inline-block; width:3px; height:14px; border-radius:2px; background:var(--primary); flex-shrink:0; }
+    .form-row { margin-bottom:10px; }
+    .input, .select, .textarea { width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text); font-size:13px; outline:none; transition:border-color .15s, box-shadow .15s; }
+    .input:focus, .select:focus, .textarea:focus { border-color:var(--primary); box-shadow:0 0 0 2px rgba(37,99,235,.18); }
+    .textarea { resize:vertical; min-height:82px; font-family:inherit; }
+    .btn { padding:7px 14px; border-radius:6px; border:1px solid var(--border); background:var(--bg-card); color:var(--text); font-size:13px; cursor:pointer; transition:all .15s; display:inline-flex; align-items:center; gap:6px; }
+    .btn:hover { background:var(--bg-hover); }
+    .btn.primary, .btn-primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+    .btn.primary:hover, .btn-primary:hover { background:var(--primary-hover); }
+    .btn-danger { color:var(--danger); border-color:var(--danger); background:var(--bg-card); }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .mode-grid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:8px; }
+    .mode-card { border:1px solid var(--border); border-radius:8px; padding:10px; cursor:pointer; background:var(--bg-card); transition:all .15s; min-height:72px; }
+    .mode-card:hover { border-color:rgba(37,99,235,.5); background:rgba(37,99,235,.04); }
+    .mode-card.active { border-color:var(--primary); background:rgba(37,99,235,.08); box-shadow:0 0 0 1px rgba(37,99,235,.16) inset; }
+    .mode-card__title { font-size:13px; font-weight:600; margin-bottom:3px; display:flex; align-items:center; gap:6px; }
+    .mode-card__desc { font-size:11px; color:var(--text-muted); }
+    .pill { border:1px solid var(--border); border-radius:999px; padding:4px 9px; font-size:12px; color:var(--text-muted); background:var(--bg-card); }
+    .muted, .text-muted { color:var(--text-muted); font-size:13px; }
+    .text-xs { font-size:11px; } .text-sm { font-size:13px; }
+    .status { font-size:12px; font-weight:600; }
+    .ok { color:var(--success); } .warn { color:var(--warning); } .bad { color:var(--danger); }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    th, td { text-align:left; border-bottom:1px solid var(--border); padding:8px 6px; vertical-align:top; }
+    th { color:var(--text-muted); font-weight:600; background:var(--bg-hover); }
+    pre { white-space:pre-wrap; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px; font-size:12px; overflow:auto; }
+    .preview-head { padding:14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; gap:10px; align-items:center; }
+    .preview-body { padding:14px; overflow:auto; flex:1; }
+    .metric-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+    .metric { border:1px solid var(--border); border-radius:8px; padding:10px; background:var(--bg); }
+    .metric strong { display:block; font-size:16px; color:var(--text); }
+    .settings-grid { display:grid; grid-template-columns:minmax(420px,1fr) minmax(420px,1fr); gap:14px; height:100%; min-height:0; }
+    .settings-panel { min-height:0; overflow:auto; }
+    .settings-help { border:1px solid rgba(37,99,235,.18); background:rgba(37,99,235,.06); border-radius:8px; padding:10px 12px; color:var(--text-muted); margin-bottom:12px; font-size:12px; line-height:1.6; }
+    .settings-help strong { display:block; color:var(--text); font-size:13px; margin-bottom:3px; }
+    .dep-grid { display:grid; gap:8px; }
+    .dep-row { display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid var(--border); border-radius:8px; padding:10px; background:var(--bg); }
+    .dep-row strong { display:block; font-size:13px; color:var(--text); }
+    .dep-row span { font-size:11px; color:var(--text-muted); }
+    .dep-modules { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+    .dep-chip { border:1px solid var(--border); border-radius:999px; padding:3px 8px; font-size:11px; background:var(--bg-card); color:var(--text-muted); }
+    .dep-chip.ok { border-color:rgba(34,197,94,.35); color:var(--success); background:rgba(34,197,94,.08); }
+    .dep-chip.bad { border-color:rgba(239,68,68,.35); color:var(--danger); background:rgba(239,68,68,.08); }
+    .storage-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:10px; }
+    .storage-card { border:1px solid var(--border); border-radius:8px; padding:10px; background:var(--bg); }
+    .storage-card strong { display:block; font-size:18px; margin-top:2px; }
+    .folder-row { display:flex; gap:8px; align-items:center; }
+    .folder-row .input { flex:1; }
+    @media (max-width: 900px) { .split, .settings-grid { grid-template-columns:1fr; } .split-right { min-height:320px; } .mode-grid { grid-template-columns:1fr 1fr; } }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    (function () {
+      var tabs = ["create", "projects", "templates", "draft", "settings", "guide"];
+      var labels = { create: "创建", projects: "项目", templates: "模板", draft: "草稿", settings: "设置", guide: "指南" };
+      var icons = { create: "edit", projects: "projects", templates: "template", draft: "form-edit", settings: "settings-option", guide: "help" };
+      var docTypes = [
+        ["weekly_report", "周报", "适合周例会、工作同步"], ["meeting_minutes", "会议纪要", "提炼决议与行动项"], ["proposal", "项目建议书", "面向客户或管理层"],
+        ["acceptance_report", "验收报告", "交付验收与指标证明"], ["sop", "SOP", "流程、规范和操作指南"], ["research_report", "调研报告", "资料汇总与分析结论"]
+      ];
+      var iconBodies = {
+        "document-word": '<path fill="none" stroke="currentColor" stroke-width="2" d="M4.998 9V1H19.5L23 4.5V23H4M18 1v5h5m-9 6l-1.5 6.75h-.25L9.5 12H9l-2.75 6.75H6L4.5 12H4l2 7h.5L9 12.5h.5L12 19h.5l2-7z"/>',
+        "edit": '<path fill="none" stroke="currentColor" stroke-width="2" d="m14 4l6 6zm8.294 1.294c.39.39.387 1.025-.008 1.42L9 20l-7 2l2-7L17.286 1.714a1 1 0 0 1 1.42-.008zM3 19l2 2m2-4l8-8"/>',
+        "projects": '<path fill="none" stroke="currentColor" stroke-width="2" d="M9 15v8H1v-8zm14 0v8h-8v-8zM9 1v8H1V1zm14 0v8h-8V1z"/>',
+        "template": '<path fill="none" stroke="currentColor" stroke-width="2" d="M1 3h22v18H1zm0 5h22M7 8v13"/>',
+        "form-edit": '<path fill="none" stroke="currentColor" stroke-width="2" d="m11.996 8.336l3.497 3.498zm5.54-.54a.994.994 0 0 1-.004 1.416l-7.451 7.451L6 17.83l1.166-4.08l7.451-7.452a.997.997 0 0 1 1.416-.005z"/>',
+        "settings-option": '<path fill="none" stroke="currentColor" stroke-width="2" d="M12 9V0m3 12h9M0 12h9m3 12v-9m0 6a9 9 0 1 0 0-18a9 9 0 0 0 0 18ZM3.5 8.5L1 7.5m19.5 8l2.5 1M3 3l2.5 2.5M3 3l2.5 2.5M18 18l2.5 2.5m0-17.5L18 5.5M5.5 18L3 20.5m9-5.5a3 3 0 1 0 0-6a3 3 0 0 0 0 6Zm8.5-6.5l2.5-1m-7.5-4l1-2.5m-1 19.5l1 2.5m-8-2.5l-1 2.5m-4-7.5l-2.5 1m7.5-13L7.5 1"/>',
+        "help": '<path fill="none" stroke="currentColor" stroke-width="2" d="M12 23a1 1 0 1 0 0-2a1 1 0 0 0 0 2Zm0-5v-3c0-2 1-2 3-3s3-2.842 3-5A6 6 0 1 0 6 7"/>',
+        "status-warning": '<path fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="2" d="m12 3l10 18H2zm0 6v6m0 1v2"/>',
+        "status-good": '<path fill="none" stroke="currentColor" stroke-width="2" d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2S2 6.477 2 12s4.477 10 10 10ZM7 12l4 3l5-7"/>',
+        "document": '<path fill="none" stroke="currentColor" stroke-width="2" d="M14 1v7h7m0 15H3V1h12l3 3l3 3z"/>'
+      };
+      function svgIcon(name, className) {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true" class="' + (className || "ui-icon") + '">' + (iconBodies[name] || "") + '</svg>';
+      }
+      var state = {
+        tab: location.hash ? location.hash.slice(1) : "create",
+        health: null, settings: null, projects: [], selected: null, notice: "", error: "",
+        draft: JSON.parse(localStorage.getItem("word-maker-draft") || '{"doc_type":"research_report"}')
+      };
+      function esc(v) { return String(v == null ? "" : v).replace(/[&<>"]/g, function (ch) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]; }); }
+      function api(method, path, body) {
+        if (window.OpenAkita && window.OpenAkita.request) return window.OpenAkita.request(path, { method: method, body: body });
+        return fetch("/api/plugins/word-maker" + path, { method: method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined }).then(function (r) { return r.json(); });
+      }
+      function toast(msg, bad) { state.notice = msg; state.error = bad ? msg : ""; render(); setTimeout(function () { state.notice = ""; render(); }, 2200); }
+      function draft(key, value) { state.draft[key] = value; localStorage.setItem("word-maker-draft", JSON.stringify(state.draft)); }
+      function refresh() {
+        Promise.all([
+          api("GET", "/healthz").catch(function (e) { return { error: String(e.message || e) }; }),
+          api("GET", "/settings").catch(function () { return null; }),
+          api("GET", "/projects").catch(function () { return { projects: [] }; })
+        ]).then(function (items) {
+          state.health = items[0]; state.settings = items[1]; state.projects = items[2].projects || [];
+          render();
+        });
+      }
+      function setTab(tab) { state.tab = tab; location.hash = tab; refresh(); render(); }
+      function createProject() {
+        var body = {
+          title: state.draft.title || "未命名文档",
+          doc_type: state.draft.doc_type || "research_report",
+          audience: state.draft.audience || "",
+          tone: state.draft.tone || "professional",
+          language: state.draft.language || "zh-CN",
+          requirements: state.draft.requirements || ""
+        };
+        api("POST", "/projects", body).then(function (r) {
+          state.selected = r.project; state.draft.project_id = r.project.id; localStorage.setItem("word-maker-draft", JSON.stringify(state.draft)); setTab("projects"); toast("项目已创建：" + r.project.id);
+        }).catch(function (e) { toast("创建失败：" + (e.message || e), true); });
+      }
+      function inspectTemplate() {
+        var projectId = document.getElementById("tpl-project").value.trim() || currentProjectId();
+        var path = document.getElementById("tpl-path").value.trim() || state.draft.template_path || "";
+        if (!projectId || !path) return toast("请填写 project_id 和模板路径", true);
+        api("POST", "/projects/" + encodeURIComponent(projectId) + "/template", { template_path: path, context: {} }).then(function (r) {
+          document.getElementById("tpl-result").textContent = JSON.stringify(r.inspection, null, 2);
+          state.draft.template_path = path; localStorage.setItem("word-maker-draft", JSON.stringify(state.draft));
+        }).catch(function (e) { toast("模板检测失败：" + (e.message || e), true); });
+      }
+      function checkDeps() {
+        api("POST", "/deps/check", {}).then(function (r) {
+          state.settings = state.settings || {};
+          state.settings.deps = r.deps || {};
+          render();
+        });
+      }
+      function saveSettings(updates) {
+        var next = Object.assign({}, state.settings || {}, updates || {});
+        api("PUT", "/settings", {
+          custom_data_dir: next.custom_data_dir || "",
+          default_language: next.default_language || "zh-CN",
+          default_tone: next.default_tone || "professional",
+          retention_days: Number(next.retention_days || 30)
+        }).then(function (r) {
+          state.settings = r;
+          toast("设置已保存");
+        }).catch(function (e) { toast("保存失败：" + (e.message || e), true); });
+      }
+      function formatBytes(bytes) {
+        var value = Number(bytes || 0);
+        if (value >= 1024 * 1024) return (value / 1024 / 1024).toFixed(1) + " MB";
+        if (value >= 1024) return (value / 1024).toFixed(1) + " KB";
+        return value + " B";
+      }
+      function renderDeps(deps) {
+        var labels = { core: "核心 DOCX 生成", excel: "Excel 资料读取", ppt: "PPT 交接能力", pdf: "PDF 资料解析" };
+        var desc = { core: "渲染 Word 模板和保存项目所需", excel: "读取 .xlsx/.csv 辅助整理资料", ppt: "生成给 PPT Maker 的结构化资产", pdf: "从 PDF 中提取文本" };
+        return '<div class="dep-grid">' + Object.keys(deps || {}).map(function (group) {
+          var modules = deps[group] || {};
+          return '<div class="dep-row"><div><strong>' + esc(labels[group] || group) + '</strong><span>' + esc(desc[group] || "可选能力") + '</span></div><div class="dep-modules">' + Object.keys(modules).map(function (name) {
+            return '<span class="dep-chip ' + (modules[name] ? "ok" : "bad") + '">' + esc(name) + ' · ' + (modules[name] ? "已安装" : "缺失") + '</span>';
+          }).join("") + '</div></div>';
+        }).join("") + '</div>';
+      }
+      function renderStorageStats(stats) {
+        var extRows = Object.keys(stats.by_extension || {}).map(function (ext) {
+          var item = stats.by_extension[ext];
+          return '<div class="storage-card"><span class="text-xs text-muted">' + esc(ext) + '</span><strong>' + esc(item.count) + '</strong><span class="text-xs text-muted">' + formatBytes(item.bytes) + '</span></div>';
+        }).join("");
+        return '<div class="storage-grid"><div class="storage-card"><span class="text-xs text-muted">总文件数</span><strong>' + esc(stats.total_files || 0) + '</strong></div><div class="storage-card"><span class="text-xs text-muted">占用空间</span><strong>' + formatBytes(stats.total_bytes) + '</strong></div>' + extRows + '</div>';
+      }
+      function apiUpload(inputId, targetKey) {
+        var input = document.getElementById(inputId);
+        if (!input || !input.files || !input.files[0]) return toast("请先选择文件", true);
+        var form = new FormData();
+        form.append("file", input.files[0]);
+        return fetch("/api/plugins/word-maker/upload", { method: "POST", body: form }).then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        }).then(function (data) {
+          if (targetKey === "source_paths") {
+            state.draft.source_paths = state.draft.source_paths || [];
+            state.draft.source_paths.push(data.rel_path);
+          } else {
+            state.draft[targetKey] = data.rel_path;
+          }
+          localStorage.setItem("word-maker-draft", JSON.stringify(state.draft));
+          toast("已上传：" + data.filename);
+          render();
+        }).catch(function (e) { toast("上传失败：" + (e.message || e), true); });
+      }
+      function currentProjectId() {
+        return state.selected && state.selected.id || state.draft.project_id || (state.projects[0] && state.projects[0].id) || "";
+      }
+      function openFolderPicker() {
+        document.getElementById("folder-picker").style.display = "block";
+        api("POST", "/storage/open-folder", {}).catch(function () {});
+        api("GET", "/storage/list-dir").then(function (r) {
+          document.getElementById("folder-list").innerHTML = r.entries.map(function (x) {
+            return '<div class="pill">' + (x.is_dir ? "目录 " : "文件 ") + esc(x.name) + '</div>';
+          }).join(" ");
+        });
+      }
+      function loadStorageStats() {
+        api("GET", "/storage/stats").then(function (r) {
+          state.storage = r;
+          render();
+        }).catch(function (e) { toast("刷新空间失败：" + (e.message || e), true); });
+      }
+      function generateOutline(projectId) {
+        var project = state.projects.filter(function (p) { return p.id === projectId; })[0] || {};
+        api("POST", "/projects/" + encodeURIComponent(projectId) + "/outline/generate", {
+          requirement: project.requirements || state.draft.requirements || "",
+          doc_type: project.doc_type || state.draft.doc_type || "research_report",
+          sources_text: ""
+        }).then(function (r) {
+          state.draft.outline = r.data || r;
+          localStorage.setItem("word-maker-draft", JSON.stringify(state.draft));
+          toast("大纲已生成");
+          setTab("draft");
+        }).catch(function (e) { toast("大纲生成失败：" + (e.message || e), true); });
+      }
+      function renderProject(projectId) {
+        var fields = {};
+        try { fields = JSON.parse(document.getElementById("fields-json") && document.getElementById("fields-json").value || "{}"); }
+        catch (e) { return toast("字段 JSON 格式错误", true); }
+        api("POST", "/projects/" + encodeURIComponent(projectId) + "/render", {
+          template_path: state.draft.template_path || null,
+          source_paths: state.draft.source_paths || [],
+          fields: fields,
+          outline: state.draft.outline || {}
+        }).then(function () {
+          toast("已开始渲染，正在轮询状态");
+          pollProject(projectId, 0);
+        }).catch(function (e) { toast("渲染失败：" + (e.message || e), true); });
+      }
+      function pollProject(projectId, count) {
+        api("GET", "/projects/" + encodeURIComponent(projectId)).then(function (r) {
+          var project = r.project;
+          state.projects = state.projects.map(function (item) { return item.id === project.id ? project : item; });
+          render();
+          if (project.status === "rendering" && count < 20) setTimeout(function () { pollProject(projectId, count + 1); }, 1500);
+        });
+      }
+      function downloadProject(projectId, outputPath) {
+        var filename = String(outputPath || "document.docx").split(/[\\/]/).pop();
+        window.location.href = "/api/plugins/word-maker/projects/" + encodeURIComponent(projectId) + "/exports/" + encodeURIComponent(filename);
+      }
+      function cancelProject(projectId) {
+        oaConfirm("确认取消这个项目的后台任务？").then(function (ok) {
+          if (!ok) return;
+          api("POST", "/projects/" + encodeURIComponent(projectId) + "/cancel", {}).then(function () {
+            toast("项目已取消");
+            refresh();
+          });
+        });
+      }
+      function oaConfirm(message) {
+        if (window.OpenAkita && window.OpenAkita.confirm) return window.OpenAkita.confirm(message);
+        return Promise.resolve(window.confirm(message));
+      }
+      function wordLogoSvg() {
+        return svgIcon("document-word", "word-logo-icon");
+      }
+      function renderHeader() {
+        return '<div class="header"><h1><span class="ak-logo">' + wordLogoSvg() + '</span><span>Word 文档助手</span><span class="ak-sub">DOCX · TEMPLATE · BRAIN · PPT HANDOFF</span></h1></div>';
+      }
+      function renderTabs() {
+        return '<div class="tabs">' + tabs.map(function (tab) {
+          return '<div class="tab ' + (state.tab === tab ? "active" : "") + '" onclick="window.__wmTab(\'' + tab + '\')">' + svgIcon(icons[tab]) + labels[tab] + '</div>';
+        }).join("") + '</div>';
+      }
+      function renderBanner() {
+        var deps = state.settings && state.settings.deps || {};
+        var docxOk = deps.core && deps.core.docx;
+        var brainOk = state.settings && state.settings.brain_available;
+        if (docxOk && brainOk) return "";
+        return '<div class="oa-config-banner" role="alert"><span class="oa-config-banner__icon">' + svgIcon("status-warning") + '</span><div class="oa-config-banner__text"><strong>' + (docxOk ? "AI 辅助暂不可用" : "Word 生成依赖未完整检测到") + '</strong><div class="text-xs text-muted">' + (docxOk ? "仍可手动填写字段并生成 DOCX；需要 Brain 权限时再开启。" : "请到「设置」检测 python-docx/docxtpl 等依赖状态。") + '</div></div><button class="oa-config-banner__action" onclick="window.__wmTab(\'settings\')">去设置 ›</button></div>';
+      }
+      function latestProject() { return state.selected || state.projects[0] || null; }
+      function renderProjectPreview() {
+        var p = latestProject();
+        if (!p) {
+          return '<div class="split-right oa-preview-area oa-preview-area--centered"><span class="oa-preview-empty__icon">' + svgIcon("document") + '</span><div class="oa-preview-empty__title">暂无文档项目</div><div class="oa-preview-empty__hint">在左侧填写需求并点击「创建项目」，这里会显示项目状态、模板和导出文件。</div></div>';
+        }
+        return '<div class="split-right oa-preview-area"><div class="preview-head"><div><div class="card-title" style="margin:0">' + esc(p.title || "未命名文档") + '</div><div class="text-xs text-muted">' + esc(p.id) + ' · ' + esc(p.doc_type) + '</div></div><span class="pill">' + esc(p.status) + '</span></div><div class="preview-body"><div class="metric-grid"><div class="metric"><span class="text-xs text-muted">模板</span><strong>' + (state.draft.template_path ? "已选择" : "未选择") + '</strong></div><div class="metric"><span class="text-xs text-muted">资料</span><strong>' + esc((state.draft.source_paths || []).length) + '</strong></div><div class="metric"><span class="text-xs text-muted">输出</span><strong>' + (p.output_path ? "可下载" : "待生成") + '</strong></div></div><br><div class="card-title">输出/错误</div><pre>' + esc(p.error_message || p.output_path || "暂无输出。渲染成功后会在 projects/{project_id}/exports/document.docx 生成文件。") + '</pre>' + (p.output_path ? '<button class="btn primary" onclick="window.__wmDownload(\'' + p.id + '\',\'' + esc(p.output_path) + '\')">下载 DOCX</button>' : '') + '</div></div>';
+      }
+      function renderCreate() {
+        return '<div class="split"><div class="split-left content-scroll"><div class="card"><div class="card-title">选择文档类型</div><div class="mode-grid">' + docTypes.map(function (item) {
+          return '<div class="mode-card ' + (state.draft.doc_type === item[0] ? "active" : "") + '" onclick="window.__wmDraft(\'doc_type\',\'' + item[0] + '\');window.__wmRender()"><div class="mode-card__title">' + svgIcon("document") + item[1] + '</div><div class="mode-card__desc">' + item[2] + '</div></div>';
+        }).join("") + '</div></div><div class="card"><div class="card-title">需求输入</div><div class="form-row"><div class="label">标题</div><input class="input" placeholder="例如：智能客服项目验收报告" value="' + esc(state.draft.title || "") + '" oninput="window.__wmDraft(\'title\',this.value)"></div><div class="grid-2"><div class="form-row"><div class="label">目标受众</div><input class="input" placeholder="客户项目经理、验收委员会" value="' + esc(state.draft.audience || "") + '" oninput="window.__wmDraft(\'audience\',this.value)"></div><div class="form-row"><div class="label">语气</div><input class="input" placeholder="professional" value="' + esc(state.draft.tone || "professional") + '" oninput="window.__wmDraft(\'tone\',this.value)"></div></div><div class="form-row"><div class="label">交付要求</div><textarea class="textarea" placeholder="描述文档目标、已有资料、希望强调的内容和输出格式" oninput="window.__wmDraft(\'requirements\',this.value)">' + esc(state.draft.requirements || "") + '</textarea></div><div class="row"><button class="btn primary" onclick="window.__wmCreate()">创建项目</button><label class="btn">上传资料<input id="source-upload" type="file" style="display:none" onchange="window.__wmUpload(\'source-upload\',\'source_paths\')"></label><label class="btn">上传模板<input id="template-upload" type="file" accept=".docx" style="display:none" onchange="window.__wmUpload(\'template-upload\',\'template_path\')"></label></div></div></div>' + renderProjectPreview() + '</div>';
+      }
+      function renderProjects() {
+        var rows = state.projects.map(function (p) {
+          var download = p.output_path ? '<button class="btn" onclick="window.__wmDownload(\'' + p.id + '\',\'' + esc(p.output_path) + '\')">下载</button>' : '';
+          return '<tr><td>' + esc(p.id) + '</td><td>' + esc(p.title) + '</td><td>' + esc(p.doc_type) + '</td><td><span class="status">' + esc(p.status) + '</span></td><td>' + esc(p.error_message || p.output_path || "") + '</td><td class="row"><button class="btn" onclick="window.__wmOutline(\'' + p.id + '\')">生成大纲</button><button class="btn primary" onclick="window.__wmRenderProject(\'' + p.id + '\')">渲染</button><button class="btn" onclick="window.__wmCancel(\'' + p.id + '\')">取消</button>' + download + '</td></tr>';
+        }).join("");
+        return '<div class="split"><div class="split-left content-scroll"><div class="card"><div class="card-title">项目队列</div><table><thead><tr><th>id</th><th>标题</th><th>类型</th><th>状态</th><th>输出/错误</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div></div>' + renderProjectPreview() + '</div>';
+      }
+      function renderTemplates() {
+        return '<div class="split"><div class="split-left content-scroll"><div class="card"><div class="card-title">模板变量检测</div><div class="form-row"><div class="label">项目 ID</div><input id="tpl-project" class="input" placeholder="project_id" value="' + esc(currentProjectId()) + '"></div><div class="form-row"><div class="label">DOCX 模板路径或上传 rel_path</div><input id="tpl-path" class="input" placeholder="uploads/acceptance-template.docx" value="' + esc(state.draft.template_path || "") + '"></div><div class="row"><button class="btn primary" onclick="window.__wmInspectTemplate()">提取变量</button><label class="btn">上传模板<input id="template-upload-2" type="file" accept=".docx" style="display:none" onchange="window.__wmUpload(\'template-upload-2\',\'template_path\')"></label></div></div></div><div class="split-right oa-preview-area"><div class="preview-head"><div class="card-title" style="margin:0">检测结果</div><span class="pill">template</span></div><div class="preview-body"><pre id="tpl-result">等待检测。变量、缺失字段和渲染引擎会显示在这里。</pre></div></div></div>';
+      }
+      function renderDraft() {
+        return '<div class="split"><div class="split-left content-scroll"><div class="card"><div class="card-title">大纲 JSON</div><textarea class="textarea" style="min-height:220px" oninput="try{window.__wmDraft(\'outline\',JSON.parse(this.value||\'{}\'))}catch(e){}">' + esc(JSON.stringify(state.draft.outline || {}, null, 2)) + '</textarea></div><div class="card"><div class="card-title">字段 JSON</div><textarea id="fields-json" class="textarea" style="min-height:220px" placeholder="{&quot;title&quot;:&quot;报告标题&quot;}">' + esc(JSON.stringify(state.draft.fields || {}, null, 2)) + '</textarea><br><br><button class="btn primary" onclick="window.__wmRenderProject(window.__wmProjectId())">渲染当前项目</button></div></div>' + renderProjectPreview() + '</div>';
+      }
+      function renderSettings() {
+        var settings = state.settings || {};
+        var storage = state.storage || {};
+        return '<div class="settings-grid"><div class="settings-panel content-scroll"><div class="card"><div class="card-title">' + svgIcon("settings-option") + '系统组件与依赖</div><div class="settings-help"><strong>Word Maker 会按能力检测 Python 依赖。</strong><div>当前版本只做白名单检测，不在 UI 里安装任意 pip 包。核心 DOCX 生成缺失时，创建项目仍可用，但模板渲染会受影响。</div></div><div class="row" style="margin-bottom:12px"><button class="btn primary" onclick="window.__wmDeps()">检测可选依赖</button><span class="pill">Brain：' + (settings.brain_available ? "可用" : "不可用") + '</span></div>' + renderDeps(settings.deps || {}) + '</div><div class="card"><div class="card-title">' + svgIcon("document") + '存储空间</div><div class="settings-help"><strong>统计插件工作区内的上传、项目和导出文件。</strong><div>刷新空间只读取文件数量和大小，不会删除或移动任何文件。</div></div><div class="folder-row"><input class="input" readonly value="' + esc(settings.data_dir_active || "") + '"><button class="btn" onclick="window.__wmFolder()">浏览</button><button class="btn" onclick="window.__wmStorage()">刷新空间</button></div>' + (storage.total_files != null ? renderStorageStats(storage) : "") + '</div><div class="card" id="folder-picker" style="display:none"><div class="card-title">文件夹浏览</div><div id="folder-list" class="row"></div></div></div><div class="settings-panel content-scroll"><div class="card"><div class="card-title">' + svgIcon("form-edit") + '默认生成参数</div><div class="settings-help"><strong>这些配置会作为后续 Word 项目的默认值。</strong><div>自定义数据目录保存后，需要重新加载插件才会切换实际工作区；语言、语气和保留天数会立即保存到插件配置。</div></div><div class="form-row"><div class="label">自定义数据目录</div><input id="settings-custom-dir" class="input" placeholder="留空使用插件默认数据目录" value="' + esc(settings.custom_data_dir || "") + '"></div><div class="grid-2"><div class="form-row"><div class="label">默认语言</div><select id="settings-language" class="input select"><option value="zh-CN" ' + ((settings.default_language || "zh-CN") === "zh-CN" ? "selected" : "") + '>中文</option><option value="en-US" ' + (settings.default_language === "en-US" ? "selected" : "") + '>English</option></select></div><div class="form-row"><div class="label">默认语气</div><select id="settings-tone" class="input select"><option value="professional" ' + ((settings.default_tone || "professional") === "professional" ? "selected" : "") + '>专业正式</option><option value="concise" ' + (settings.default_tone === "concise" ? "selected" : "") + '>简洁直接</option><option value="friendly" ' + (settings.default_tone === "friendly" ? "selected" : "") + '>友好易读</option></select></div></div><div class="form-row"><div class="label">项目保留天数</div><input id="settings-retention" class="input" type="number" min="1" max="365" value="' + esc(settings.retention_days || 30) + '"></div><button class="btn primary" onclick="window.__wmSaveSettings({custom_data_dir:document.getElementById(\'settings-custom-dir\').value,default_language:document.getElementById(\'settings-language\').value,default_tone:document.getElementById(\'settings-tone\').value,retention_days:document.getElementById(\'settings-retention\').value})">保存设置</button></div></div></div>';
+      }
+      function renderGuide() {
+        return '<div class="split"><div class="split-left content-scroll"><div class="card"><div class="card-title">5 分钟烟测</div><ol style="padding-left:18px"><li>打开本页并确认顶部显示服务就绪。</li><li>Create 里输入标题和需求，创建项目。</li><li>上传资料和 DOCX 模板。</li><li>Templates 提取变量并确认缺失字段。</li><li>Draft 填写字段 JSON 并渲染 DOCX。</li><li>Projects 下载 document.docx。</li></ol></div><div class="card"><div class="card-title">模板变量示例</div><pre>{{ title }}\n{{ company_name }}\n{{ summary }}</pre></div></div><div class="split-right oa-preview-area oa-preview-area--centered"><span class="oa-preview-empty__icon">' + svgIcon("status-good") + '</span><div class="oa-preview-empty__title">验收目标</div><div class="oa-preview-empty__hint">用户能从需求、资料、模板出发，在 UI 中生成真实可下载 DOCX，并保留后续给 PPT Maker 的结构化出口。</div></div></div>';
+      }
+      function renderContent() {
+        return state.tab === "create" ? renderCreate() : state.tab === "projects" ? renderProjects() : state.tab === "templates" ? renderTemplates() : state.tab === "draft" ? renderDraft() : state.tab === "settings" ? renderSettings() : renderGuide();
+      }
+      function render() {
+        document.getElementById("app").innerHTML = '<div class="app">' + renderHeader() + renderTabs() + renderBanner() + (state.notice ? '<div class="oa-config-banner" style="border-color:' + (state.error ? "rgba(239,68,68,.35)" : "rgba(34,197,94,.35)") + ';background:' + (state.error ? "rgba(239,68,68,.08)" : "rgba(34,197,94,.08)") + '"><span class="oa-config-banner__icon">' + svgIcon(state.error ? "status-warning" : "status-good") + '</span><div class="oa-config-banner__text">' + esc(state.notice) + '</div></div>' : "") + '<div class="content">' + renderContent() + '</div></div>';
+      }
+      window.__wmTab = setTab; window.__wmDraft = draft; window.__wmCreate = createProject; window.__wmInspectTemplate = inspectTemplate; window.__wmDeps = checkDeps; window.__wmFolder = openFolderPicker; window.__wmStorage = loadStorageStats; window.__wmSaveSettings = saveSettings; window.__wmRender = render; window.__wmUpload = apiUpload; window.__wmOutline = generateOutline; window.__wmRenderProject = renderProject; window.__wmDownload = downloadProject; window.__wmCancel = cancelProject; window.__wmProjectId = currentProjectId; window.oaConfirm = oaConfirm;
+      window.addEventListener("openakita:ready", function (event) { if (event.detail && event.detail.theme) document.documentElement.setAttribute("data-theme", event.detail.theme); });
+      refresh(); render();
+    })();
+  </script>
+</body>
+</html>

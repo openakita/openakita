@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -269,7 +270,7 @@ class ToolExecutor:
         for i, tc in enumerate(tool_calls):
             tc_with_idx = {**tc, "_idx": i}
             name = tc.get("name", "")
-            inp = tc.get("input", {})
+            inp = tc.get("input", tc.get("arguments", {}))
 
             if self._is_concurrency_safe(name, inp):
                 current_safe.append(tc_with_idx)
@@ -449,6 +450,7 @@ class ToolExecutor:
         logs_before_count = len(logs_before)
 
         tracer = get_tracer()
+        started_at = time.monotonic()
         with tracer.tool_span(tool_name=tool_name, input_data=tool_input) as span:
             try:
                 # 通过 handler_registry 执行
@@ -491,6 +493,13 @@ class ToolExecutor:
                     tool_input=tool_input,
                     tool_result=result,
                 )
+                self._record_experience(
+                    tool_name,
+                    tool_input,
+                    result,
+                    success=True,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                )
                 return result
 
             except ToolError as e:
@@ -504,6 +513,14 @@ class ToolExecutor:
                     tool_input=tool_input,
                     tool_result=error_result,
                     error=str(e),
+                )
+                self._record_experience(
+                    tool_name,
+                    tool_input,
+                    error_result,
+                    success=False,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                    error_type=e.error_type.value,
                 )
                 return error_result
 
@@ -523,7 +540,51 @@ class ToolExecutor:
                     tool_result=error_result,
                     error=str(e),
                 )
+                self._record_experience(
+                    tool_name,
+                    tool_input,
+                    error_result,
+                    success=False,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                    error_type=tool_error.error_type.value,
+                )
                 return error_result
+
+    def _record_experience(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        result: str,
+        *,
+        success: bool,
+        duration_ms: float,
+        error_type: str = "",
+    ) -> None:
+        try:
+            # run_skill_script resolves its effective environment inside the
+            # skills handler; the agent-level spec here can be misleading.
+            if tool_name == "run_skill_script":
+                return
+
+            from ..experience import get_tool_experience_tracker
+            from ..runtime_envs import describe_execution_env
+
+            agent = getattr(self, "_agent_ref", None)
+            spec = getattr(agent, "_execution_env_spec", None)
+            env_info = describe_execution_env(spec)
+            get_tool_experience_tracker().record(
+                tool_name=tool_name,
+                agent_profile_id=getattr(agent, "_agent_profile_id", "default"),
+                env_scope=str(env_info.get("scope") or ""),
+                deps_hash=str(env_info.get("deps_hash") or ""),
+                success=success,
+                duration_ms=duration_ms,
+                error_type=error_type,
+                output=result,
+                input_summary=tool_input,
+            )
+        except Exception:
+            logger.debug("Failed to record tool experience for %s", tool_name, exc_info=True)
 
     async def execute_tool_with_policy(
         self,
@@ -626,7 +687,7 @@ class ToolExecutor:
 
         async def _run_one(tc: dict, idx: int) -> tuple[int, dict, str | None, list | None]:
             tool_name = self._canonicalize_tool_name(tc.get("name", ""))
-            tool_input = tc.get("input") or {}
+            tool_input = tc.get("input", tc.get("arguments", {})) or {}
             tool_use_id = tc.get("id", "")
 
             if isinstance(tool_input, dict):
@@ -870,6 +931,8 @@ class ToolExecutor:
                 "type": "tool_result",
                 "tool_use_id": tool_use_id,
                 "content": result_str,
+                "receipt_id": f"tool_{uuid.uuid4().hex[:12]}",
+                "tool_name": tool_name,
             }
             if not success:
                 tool_result["is_error"] = True

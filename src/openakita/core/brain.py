@@ -975,6 +975,10 @@ class Brain:
         result: list[Tool] = []
         skipped = 0
         deferred = 0
+        promoted = 0
+        always_available = 0
+        schema_budget = int(getattr(settings, "api_tools_schema_budget_tokens", 12000) or 12000)
+        schema_tokens = 0
         for tool in tools:
             name = tool.get("name", "")
             description = tool.get("detail") or tool.get("description", "")
@@ -992,6 +996,26 @@ class Brain:
                 skipped += 1
                 continue
 
+            tool_payload_tokens = 0
+            if schema:
+                try:
+                    tool_payload_tokens = max(
+                        1,
+                        len(
+                            json.dumps(
+                                {"name": name, "description": description, "input_schema": schema},
+                                ensure_ascii=False,
+                                default=str,
+                            )
+                        )
+                        // 4,
+                    )
+                except Exception:
+                    tool_payload_tokens = 200
+
+            if not is_deferred and schema_budget > 0 and schema_tokens + tool_payload_tokens > schema_budget:
+                is_deferred = True
+
             if is_deferred:
                 # Deferred tools are completely omitted from the API tools list.
                 # They remain visible in the system prompt's textual catalog
@@ -1002,6 +1026,11 @@ class Brain:
                 deferred += 1
                 continue
             else:
+                if tool.get("_always_available"):
+                    always_available += 1
+                if tool.get("_promoted"):
+                    promoted += 1
+                schema_tokens += tool_payload_tokens
                 result.append(
                     Tool(
                         name=name,
@@ -1019,10 +1048,26 @@ class Brain:
                 len(result),
             )
         if deferred:
-            logger.debug(
-                "[Brain] defer_loading: %d/%d tools deferred (schema omitted)",
+            logger.info(
+                "[Brain] defer_loading: deferred=%d total=%d schema_tokens~%d budget=%d "
+                "always_available=%d promoted=%d",
                 deferred,
+                len(tools),
+                schema_tokens,
+                schema_budget,
+                always_available,
+                promoted,
+            )
+        else:
+            logger.debug(
+                "[Brain] API tools schema_tokens~%d budget=%d count=%d total=%d "
+                "always_available=%d promoted=%d",
+                schema_tokens,
+                schema_budget,
                 len(result),
+                len(tools),
+                always_available,
+                promoted,
             )
 
         return result if result else None

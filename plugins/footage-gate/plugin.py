@@ -44,6 +44,25 @@ import time
 from pathlib import Path
 from typing import Any
 
+PLUGIN_DIR = Path(__file__).resolve().parent
+
+# ``footage_gate_pipeline`` imports modules with top-level ``import numpy``.
+# Bootstrap NumPy before those local imports so a freshly-added plugin can
+# load in the PyInstaller desktop build even when the host lacks NumPy.
+try:
+    from footage_gate_inline.dep_bootstrap import DepInstallFailed, ensure_importable
+
+    ensure_importable(
+        "numpy",
+        "numpy>=1.24.0",
+        plugin_dir=PLUGIN_DIR,
+        friendly_name="NumPy",
+    )
+except DepInstallFailed:
+    raise
+except Exception as exc:  # noqa: BLE001
+    raise RuntimeError(f"footage-gate dependency bootstrap failed: {exc}") from exc
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from footage_gate_inline.storage_stats import collect_storage_stats
 from footage_gate_inline.system_deps import SystemDepsManager
@@ -134,6 +153,26 @@ class Plugin(PluginBase):
         self._uploads_dir.mkdir(parents=True, exist_ok=True)
         self._tasks_dir: Path = self._data_dir / "tasks"
         self._tasks_dir.mkdir(parents=True, exist_ok=True)
+
+        # Pre-warm optional Python wheels that feature paths use later.
+        # NumPy is already ensured at module import; Pillow is optional but
+        # gives image probing / QC-grid rendering their full fidelity.
+        try:
+            from footage_gate_inline.dep_bootstrap import preinstall_async
+
+            preinstall_async(
+                [
+                    ("numpy", "numpy>=1.24.0"),
+                    ("PIL", "Pillow>=10.0.0"),
+                ],
+                plugin_dir=PLUGIN_DIR,
+            )
+        except Exception as exc:  # noqa: BLE001
+            api.log(
+                f"footage-gate: dependency preinstall skipped ({exc!r}); "
+                "feature paths will retry on first use",
+                level="warning",
+            )
 
         # Step 2 — task manager (init runs in async bootstrap).
         self._tm = FootageGateTaskManager(self._data_dir / "footage_gate.sqlite")

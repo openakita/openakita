@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TokenTrackingContext:
     session_id: str = ""
+    request_id: str = ""
+    turn_id: str = ""
     operation_type: str = "unknown"
     operation_detail: str = ""
     channel: str = ""
@@ -92,6 +94,8 @@ def record_usage(
     _write_queue.put(
         {
             "session_id": ctx.session_id if ctx else "",
+            "request_id": ctx.request_id if ctx else "",
+            "turn_id": ctx.turn_id if ctx else "",
             "endpoint_name": endpoint_name,
             "model": model,
             "operation_type": ctx.operation_type if ctx else "unknown",
@@ -114,14 +118,16 @@ def record_usage(
 
 _INSERT_SQL = """
 INSERT INTO token_usage (
-    session_id, endpoint_name, model, operation_type, operation_detail,
+    session_id, request_id, turn_id, endpoint_name, model, operation_type, operation_detail,
     input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
     context_tokens, iteration, channel, user_id, agent_profile_id, estimated_cost
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 _COLUMN_ORDER = (
     "session_id",
+    "request_id",
+    "turn_id",
     "endpoint_name",
     "model",
     "operation_type",
@@ -139,50 +145,58 @@ _COLUMN_ORDER = (
 )
 
 
+def ensure_token_usage_schema_sync(conn: sqlite3.Connection) -> None:
+    """Create/migrate token_usage before indexes reference newly added columns."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS token_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_id TEXT,
+            request_id TEXT DEFAULT '',
+            turn_id TEXT DEFAULT '',
+            endpoint_name TEXT,
+            model TEXT,
+            operation_type TEXT,
+            operation_detail TEXT,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_creation_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            context_tokens INTEGER DEFAULT 0,
+            iteration INTEGER DEFAULT 0,
+            channel TEXT,
+            user_id TEXT,
+            agent_profile_id TEXT DEFAULT 'default',
+            estimated_cost REAL DEFAULT 0
+        );
+    """)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(token_usage)").fetchall()}
+    required_columns = {
+        "request_id": "TEXT DEFAULT ''",
+        "turn_id": "TEXT DEFAULT ''",
+        "agent_profile_id": "TEXT DEFAULT 'default'",
+        "estimated_cost": "REAL DEFAULT 0",
+    }
+    for column, ddl in required_columns.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE token_usage ADD COLUMN {column} {ddl}")
+    conn.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_token_usage_ts ON token_usage(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
+        CREATE INDEX IF NOT EXISTS idx_token_usage_request ON token_usage(request_id);
+        CREATE INDEX IF NOT EXISTS idx_token_usage_endpoint ON token_usage(endpoint_name);
+        CREATE INDEX IF NOT EXISTS idx_token_usage_op ON token_usage(operation_type);
+    """)
+    conn.commit()
+
+
 def _writer_loop(db_path: str) -> None:
     """后台守护线程主循环：批量写入 token_usage 记录。"""
     try:
         conn = sqlite3.connect(db_path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS token_usage (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                session_id TEXT,
-                endpoint_name TEXT,
-                model TEXT,
-                operation_type TEXT,
-                operation_detail TEXT,
-                input_tokens INTEGER DEFAULT 0,
-                output_tokens INTEGER DEFAULT 0,
-                cache_creation_tokens INTEGER DEFAULT 0,
-                cache_read_tokens INTEGER DEFAULT 0,
-                context_tokens INTEGER DEFAULT 0,
-                iteration INTEGER DEFAULT 0,
-                channel TEXT,
-                user_id TEXT,
-                agent_profile_id TEXT DEFAULT 'default',
-                estimated_cost REAL DEFAULT 0
-            );
-            CREATE INDEX IF NOT EXISTS idx_token_usage_ts ON token_usage(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
-            CREATE INDEX IF NOT EXISTS idx_token_usage_endpoint ON token_usage(endpoint_name);
-        """)
-        # Migration: 为旧数据库添加 estimated_cost 列
-        try:
-            conn.execute("ALTER TABLE token_usage ADD COLUMN estimated_cost REAL DEFAULT 0")
-            conn.commit()
-        except Exception:
-            pass  # 列已存在则忽略
-        # Migration: 为旧数据库添加 agent_profile_id 列
-        try:
-            conn.execute(
-                "ALTER TABLE token_usage ADD COLUMN agent_profile_id TEXT DEFAULT 'default'"
-            )
-            conn.commit()
-        except Exception:
-            pass  # 列已存在则忽略
+        ensure_token_usage_schema_sync(conn)
     except Exception as e:
         logger.error(f"[TokenTracking] Failed to open database: {e}")
         return

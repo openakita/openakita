@@ -1,9 +1,9 @@
 {
   "id": "ecommerce-image",
-  "name": "电商内容生成",
+  "name": "电商素材小助理",
   "name_i18n": {
     "en": "E-Commerce Content",
-    "zh": "电商内容生成"
+    "zh": "电商素材小助理"
   },
   "version": "0.3.0",
   "type": "python",
@@ -12,6 +12,7 @@
   "description_i18n": {
     "zh": "AI 电商内容创作 — 商品主图、详情页、活动海报、视频生成，对标 LinkPix 全功能。"
   },
+  "icon": "icon.svg",
   "author": "OpenAkita",
   "category": "creative",
   "tags": ["ecommerce", "image", "video", "ai", "dashscope", "seedance"],
@@ -41,11 +42,11 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "icon": "",
-    "title": "电商内容生成",
+    "icon": "icon.svg",
+    "title": "电商素材小助理",
     "title_i18n": {
       "en": "E-Commerce Content",
-      "zh": "电商内容生成"
+      "zh": "电商素材小助理"
     },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme", "clipboard"]

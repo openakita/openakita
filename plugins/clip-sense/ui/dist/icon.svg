@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ClipSense Video Editor">
+  <title>ClipSense Video Editor</title>
+  <desc>App icon using the exact Iconify solar:video-frame-cut-bold path.</desc>
+  <defs>
+    <linearGradient id="clip-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0EA5E9"/>
+      <stop offset="0.58" stop-color="#0284C7"/>
+      <stop offset="1" stop-color="#075985"/>
+    </linearGradient>
+    <linearGradient id="clip-mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F0FDFF"/>
+      <stop offset="0.68" stop-color="#BAE6FD"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <filter id="clip-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="1.2" flood-color="#0C4A6E" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect width="64" height="64" rx="17" fill="url(#clip-bg)"/>
+  <circle cx="50" cy="14" r="18" fill="#7DD3FC" opacity="0.24"/>
+  <circle cx="13" cy="52" r="18" fill="#A5F3FC" opacity="0.22"/>
+  <rect x="6" y="6" width="52" height="52" rx="15" fill="rgba(255,255,255,0.11)" stroke="rgba(255,255,255,0.24)" stroke-width="1.5"/>
+  <!-- Iconify solar:video-frame-cut-bold, exact package path scaled to the app icon canvas. -->
+  <g transform="translate(8 8) scale(2)" fill="url(#clip-mark)" filter="url(#clip-shadow)">
+    <path fill-rule="evenodd" d="M12.75 2a.75.75 0 0 0-1.5 0v1.003H9.5a41 41 0 0 0-1.75.043v17.907a40 40 0 0 0 1.75.043h1.75V22a.75.75 0 0 0 1.5 0v-1.004h1.75a40 40 0 0 0 1.75-.043V3.046a40 40 0 0 0-1.75-.043h-1.75zm0 18.996v-.663a.75.75 0 0 0-1.5 0v.663zm0-17.993v.664a.75.75 0 0 1-1.5 0v-.664zm0 3.997a.75.75 0 0 0-1.5 0v3.333a.75.75 0 0 0 1.5 0zm0 6.667a.75.75 0 0 0-1.5 0V17a.75.75 0 0 0 1.5 0zM6.25 3.202c-.9.161-1.56.45-2.078.97c-.772.77-1.035 1.852-1.125 3.578H6.25zM3.006 9.25Q2.999 10.048 3 11v2q-.002.95.006 1.75H6.25v-5.5zm1.166 10.578c-.772-.771-1.035-1.853-1.125-3.578H6.25v4.547c-.9-.161-1.56-.45-2.078-.969M17.75 7.75V3.202c.9.161 1.56.45 2.078.97c.772.77 1.035 1.852 1.125 3.578zm3.244 1.5H17.75v5.5h3.244q.008-.8.006-1.75v-2q.002-.951-.006-1.75m-3.244 7h3.203c-.09 1.725-.353 2.807-1.125 3.578c-.518.519-1.177.808-2.078.969z" clip-rule="evenodd"/>
+  </g>
+</svg>

@@ -2023,6 +2023,12 @@ def serve(
 
         _version_str = get_version_string()
         logger.info(f"OpenAkita {_version_str} starting...")
+        try:
+            from .runtime_env import log_runtime_environment_report
+
+            log_runtime_environment_report()
+        except Exception:
+            logger.debug("Failed to log runtime environment report", exc_info=True)
 
         console.print(
             Panel(
@@ -2165,7 +2171,7 @@ def serve(
                         stop_im_channels(graceful=True, drain_timeout=30.0),
                         timeout=35.0,
                     )
-                except (asyncio.TimeoutError, TimeoutError):
+                except TimeoutError:
                     logger.warning("Shutdown timeout, forcing exit")
                 except Exception as e:
                     # 忽略停止过程中的异常（常见于 Windows asyncio）

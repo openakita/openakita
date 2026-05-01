@@ -1,7 +1,8 @@
 """L2 Component Tests: LifecycleManager dedup, decay, refresh."""
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 
 from openakita.memory.extractor import MemoryExtractor
 from openakita.memory.lifecycle import LifecycleManager
@@ -36,12 +37,22 @@ class TestDeduplication:
         assert removed == 0
 
     def test_removes_exact_duplicates(self, lifecycle, store):
-        store.save_semantic(SemanticMemory(
-            content="用户喜欢 Python", importance_score=0.8, type=MemoryType.PREFERENCE,
-        ))
-        store.save_semantic(SemanticMemory(
-            content="用户喜欢 Python", importance_score=0.5, type=MemoryType.PREFERENCE,
-        ))
+        store.save_semantic(
+            SemanticMemory(
+                content="用户喜欢 Python",
+                importance_score=0.8,
+                type=MemoryType.PREFERENCE,
+            ),
+            skip_dedup=True,
+        )
+        store.save_semantic(
+            SemanticMemory(
+                content="用户喜欢 Python",
+                importance_score=0.5,
+                type=MemoryType.PREFERENCE,
+            ),
+            skip_dedup=True,
+        )
 
         import asyncio
         removed = asyncio.get_event_loop().run_until_complete(lifecycle.deduplicate_batch())
@@ -74,7 +85,7 @@ class TestDecay:
         )
         store.save_semantic(mem)
 
-        decayed = lifecycle.compute_decay()
+        lifecycle.compute_decay()
         remaining = store.load_all_memories()
         assert any(m.content == "permanent rule" for m in remaining)
 

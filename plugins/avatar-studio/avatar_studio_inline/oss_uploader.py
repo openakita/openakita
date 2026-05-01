@@ -156,9 +156,15 @@ class OssUploader:
         read_settings: Any,
         *,
         sign_ttl_sec: int = DEFAULT_SIGN_TTL_SEC,
+        plugin_dir: Path | None = None,
     ) -> None:
         self._read_settings = read_settings
         self._sign_ttl_sec = int(sign_ttl_sec)
+        # Used by ``dep_bootstrap.ensure_importable`` to first look in
+        # ``<plugin_dir>/deps/`` (host-managed, populated by
+        # ``install_pip_deps`` from ``requires.pip``) before falling back
+        # to ``~/.openakita/modules/avatar-studio/site-packages/``.
+        self._plugin_dir = plugin_dir
 
     # ── lifecycle ─────────────────────────────────────────────────────
 
@@ -178,18 +184,27 @@ class OssUploader:
         return OssConfig.from_settings(self._read_settings() or {})
 
     def _bucket(self, cfg: OssConfig) -> Any:
-        # Lazy-import: oss2 pulls in cryptography + a slow native crc
-        # module, so we keep it out of the import-time path of plugin.py.
+        # Lazy-import + auto-bootstrap: oss2 pulls in cryptography + a
+        # slow native crc module, so we keep it out of the import-time
+        # path of plugin.py. If it's missing we ask the bootstrapper to
+        # find it under the host's optional-modules dir / install it
+        # privately — neither the host's ``inject_module_paths`` nor the
+        # docs route are reliable enough to count on (see
+        # ``dep_bootstrap.py`` module docstring).
         try:
-            import oss2  # type: ignore[import-not-found]
-        except ImportError as e:  # pragma: no cover
-            import sys
+            from .dep_bootstrap import DepInstallFailed, ensure_importable
+
+            oss2 = ensure_importable(
+                "oss2",
+                "oss2>=2.18.0",
+                plugin_dir=self._plugin_dir,
+                friendly_name="阿里云 OSS SDK (oss2)",
+            )
+        except DepInstallFailed as e:
+            raise OssUploadError(str(e), cause=e) from e
+        except Exception as e:  # noqa: BLE001 — defensive: bootstrap should never crash uploads
             raise OssUploadError(
-                "oss2 SDK not installed in the OpenAkita interpreter. Run:\n"
-                f"    {sys.executable} -m pip install oss2\n"
-                "(avatar-studio needs OSS to hand DashScope a public URL "
-                "for image/video/audio inputs.)",
-                cause=e,
+                f"oss2 自举失败：{type(e).__name__}: {e}", cause=e
             ) from e
         # ``oss2.Bucket(...)`` validates the bucket name eagerly and
         # raises ``ClientError`` for things like wrong length, illegal

@@ -578,12 +578,12 @@ class PolicyEngine:
                 forbidden=_default_forbidden_paths(),
                 default_zone=Zone.WORKSPACE,
             ),
-            confirmation=ConfirmationConfig(mode="yolo", auto_confirm=True),
+            confirmation=ConfirmationConfig(mode="smart", auto_confirm=False),
             command_patterns=CommandPatternConfig(
-                enabled=False,
+                enabled=True,
                 blocked_commands=list(_DEFAULT_BLOCKED_COMMANDS),
             ),
-            self_protection=SelfProtectionConfig(enabled=False),
+            self_protection=SelfProtectionConfig(enabled=True),
             sandbox=SandboxConfig(enabled=False),
             tool_policies=[
                 ToolPolicyRule(
@@ -929,6 +929,15 @@ class PolicyEngine:
                 )
                 self._audit(tool_name, params, result)
                 return result
+            if risk in (RiskLevel.HIGH, RiskLevel.MEDIUM):
+                result = PolicyResult(
+                    decision=PolicyDecision.CONFIRM,
+                    reason=f"信任模式下仍需确认中高风险命令: {command[:120]}",
+                    policy_name="BaselineProtection",
+                    metadata={"risk_level": risk.value, "trust_mode": True},
+                )
+                self._audit(tool_name, params, result)
+                return result
         return None
 
     def _command_touches_sensitive_area(self, command: str) -> bool:
@@ -1155,12 +1164,6 @@ class PolicyEngine:
         mode = self._config.confirmation.mode
 
         if risk == RiskLevel.HIGH:
-            if mode == "yolo":
-                self._on_allow(tool_name, params)
-                return PolicyResult(
-                    decision=PolicyDecision.ALLOW,
-                    metadata={"risk_level": risk.value, "needs_sandbox": needs_sandbox},
-                )
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,
                 reason=f"高风险命令，执行前需要您的确认: {command[:120]}",
@@ -1171,12 +1174,6 @@ class PolicyEngine:
             return result
 
         if risk == RiskLevel.MEDIUM:
-            if mode == "yolo":
-                self._on_allow(tool_name, params)
-                return PolicyResult(
-                    decision=PolicyDecision.ALLOW,
-                    metadata={"risk_level": risk.value},
-                )
             if mode == "smart":
                 if self._session_allow_count >= self._SMART_ESCALATION_THRESHOLD:
                     self._on_allow(tool_name, params)

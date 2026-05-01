@@ -286,6 +286,79 @@ class Plugin(PluginBase):
             f"{len(self._tool_definitions())} tools)"
         )
 
+    async def _run_ingest_background(
+        self,
+        *,
+        task_id: str,
+        sources: list[str] | None,
+        since_hours: int,
+    ) -> None:
+        """Run a pipeline ingest off the request thread.
+
+        The HTTP route returns 200 with ``task_id`` immediately and
+        spawns this coroutine via :meth:`PluginAPI.spawn_task` so the
+        host iframe bridge never sees a long-running request. The
+        pipeline writes the final summary into ``tasks.result_json``
+        and flips ``status`` to ``succeeded`` / ``skipped`` itself; we
+        only need to mop up uncaught exceptions here so the UI's
+        polling loop sees a ``failed`` row instead of a ``running``
+        row that never resolves.
+        """
+        if self._tm is None or self._pipeline is None:
+            return
+        try:
+            await self._pipeline.ingest(
+                sources=sources,
+                since_hours=since_hours,
+                task_id=task_id,
+            )
+        except asyncio.CancelledError:
+            try:
+                await self._tm.update_task_safe(
+                    task_id,
+                    status="canceled",
+                    error_kind="canceled",
+                    error_message="ingest task was canceled",
+                )
+            except Exception as drain_exc:  # noqa: BLE001
+                logger.warning(
+                    "fin-pulse: failed to mark ingest task %s canceled: %s",
+                    task_id,
+                    drain_exc,
+                )
+            raise
+        except Exception as exc:  # noqa: BLE001 — background boundary
+            logger.warning(
+                "fin-pulse: ingest task %s failed in background: %s",
+                task_id,
+                exc,
+            )
+            await self._mark_task_failed(task_id, exc)
+
+    async def _mark_task_failed(self, task_id: str, exc: BaseException) -> None:
+        if self._tm is None:
+            return
+        try:
+            from finpulse_errors import map_exception  # type: ignore
+
+            kind, msg, hints = map_exception(exc)
+        except Exception:  # noqa: BLE001 — fallback when error helper missing
+            kind, msg, hints = "unknown", str(exc), []
+        try:
+            await self._tm.update_task_safe(
+                task_id,
+                status="failed",
+                error_kind=kind,
+                error_message=msg,
+                error_hints=hints,
+            )
+        except Exception as drain_exc:  # noqa: BLE001
+            logger.warning(
+                "fin-pulse: failed to persist failure for task %s: %s",
+                task_id,
+                drain_exc,
+            )
+
     async def _async_init(self) -> None:
         try:
             if self._tm is not None:
@@ -1105,7 +1178,23 @@ class Plugin(PluginBase):
             return {"ok": True, "task_id": task_id, "status": "canceled"}
 
         @router.post("/ingest")
-        async def ingest_all(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+        async def ingest_all(
+            payload: dict[str, Any] = Body(default={}),
+            wait: bool = Query(False),
+        ) -> dict[str, Any]:
+            """Kick off an ingest run.
+
+            By default the response returns immediately with the
+            ``task_id`` and the pipeline runs in the background — that
+            keeps the host iframe bridge (30s hard timeout) from
+            failing on first-time pulls where a cold NewsNow upstream
+            can take 20-40s to complete. Callers that need the inline
+            summary (tests, agent tools) can opt in with ``?wait=true``.
+
+            UI flow: poll ``GET /tasks/{task_id}`` every 1-2s until
+            ``status`` is ``succeeded`` / ``skipped`` / ``failed`` and
+            read the summary from ``result_json``.
+            """
             if self._tm is None or self._pipeline is None:
                 raise HTTPException(status_code=503, detail="pipeline_unavailable")
             sources = payload.get("sources") if isinstance(payload, dict) else None
@@ -1115,28 +1204,44 @@ class Plugin(PluginBase):
                 params={"sources": sources, "since_hours": since_hours},
                 status="running",
             )
-            try:
-                summary = await self._pipeline.ingest(
+            if wait:
+                try:
+                    summary = await self._pipeline.ingest(
+                        sources=sources,
+                        since_hours=int(since_hours) if since_hours is not None else 24,
+                        task_id=task["id"],
+                    )
+                    return {"ok": True, "task_id": task["id"], "summary": summary}
+                except Exception as exc:  # noqa: BLE001
+                    await self._mark_task_failed(task["id"], exc)
+                    from finpulse_errors import map_exception
+
+                    _kind, msg, _hints = map_exception(exc)
+                    raise HTTPException(status_code=500, detail=msg) from exc
+            self._api.spawn_task(
+                self._run_ingest_background(
+                    task_id=task["id"],
                     sources=sources,
                     since_hours=int(since_hours) if since_hours is not None else 24,
-                    task_id=task["id"],
-                )
-                return {"ok": True, "task_id": task["id"], "summary": summary}
-            except Exception as exc:  # noqa: BLE001
-                from finpulse_errors import map_exception  # lazy — may be absent
-
-                kind, msg, hints = map_exception(exc)
-                await self._tm.update_task_safe(
-                    task["id"],
-                    status="failed",
-                    error_kind=kind,
-                    error_message=msg,
-                    error_hints=hints,
-                )
-                raise HTTPException(status_code=500, detail=msg) from exc
+                ),
+                name=f"{PLUGIN_ID}:ingest:{task['id']}",
+            )
+            return {
+                "ok": True,
+                "task_id": task["id"],
+                "status": "running",
+                "async": True,
+            }
 
         @router.post("/ingest/source/{source_id}")
-        async def ingest_source(source_id: str) -> dict[str, Any]:
+        async def ingest_source(
+            source_id: str,
+            wait: bool = Query(False),
+        ) -> dict[str, Any]:
+            """Single-source ingest with the same async-by-default
+            contract as ``POST /ingest`` — see that route's docstring
+            for the polling protocol.
+            """
             if self._tm is None or self._pipeline is None:
                 raise HTTPException(status_code=503, detail="pipeline_unavailable")
             task = await self._tm.create_task(
@@ -1144,23 +1249,32 @@ class Plugin(PluginBase):
                 params={"sources": [source_id], "since_hours": 24},
                 status="running",
             )
-            try:
-                summary = await self._pipeline.ingest(
-                    sources=[source_id], since_hours=24, task_id=task["id"]
-                )
-                return {"ok": True, "task_id": task["id"], "summary": summary}
-            except Exception as exc:  # noqa: BLE001
-                from finpulse_errors import map_exception
+            if wait:
+                try:
+                    summary = await self._pipeline.ingest(
+                        sources=[source_id], since_hours=24, task_id=task["id"]
+                    )
+                    return {"ok": True, "task_id": task["id"], "summary": summary}
+                except Exception as exc:  # noqa: BLE001
+                    await self._mark_task_failed(task["id"], exc)
+                    from finpulse_errors import map_exception
 
-                kind, msg, hints = map_exception(exc)
-                await self._tm.update_task_safe(
-                    task["id"],
-                    status="failed",
-                    error_kind=kind,
-                    error_message=msg,
-                    error_hints=hints,
-                )
-                raise HTTPException(status_code=500, detail=msg) from exc
+                    _kind, msg, _hints = map_exception(exc)
+                    raise HTTPException(status_code=500, detail=msg) from exc
+            self._api.spawn_task(
+                self._run_ingest_background(
+                    task_id=task["id"],
+                    sources=[source_id],
+                    since_hours=24,
+                ),
+                name=f"{PLUGIN_ID}:ingest:{source_id}:{task['id']}",
+            )
+            return {
+                "ok": True,
+                "task_id": task["id"],
+                "status": "running",
+                "async": True,
+            }
 
         @router.get("/articles")
         async def list_articles(

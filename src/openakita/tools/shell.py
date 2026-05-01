@@ -212,6 +212,24 @@ class ShellTool:
         self.shell = shell
         self._is_windows = sys.platform == "win32"
         self._oem_encoding: str | None = None
+        self.runtime_env_mode = "shared"
+        self.execution_env_spec = None
+
+    def _apply_runtime_environment(self, env: dict[str, str]) -> dict[str, str]:
+        spec = getattr(self, "execution_env_spec", None)
+        if spec is not None:
+            try:
+                from ..runtime_envs import apply_execution_environment, ensure_execution_env
+
+                return apply_execution_environment(env, ensure_execution_env(spec))
+            except Exception as exc:
+                logger.warning("Falling back to shared agent Python env: %s", exc)
+        try:
+            from ..runtime_env import apply_agent_python_environment
+
+            return apply_agent_python_environment(env)
+        except Exception:
+            return env
 
     # ------------------------------------------------------------------
     # 进程清理（Windows 安全杀死进程树）
@@ -437,13 +455,9 @@ class ShellTool:
         except Exception:
             pass
 
-        # Dual runtime: prefer agent tools venv for scripts and pip.
-        try:
-            from ..runtime_env import apply_agent_python_environment
-
-            cmd_env = apply_agent_python_environment(cmd_env)
-        except Exception:
-            pass
+        # Dual runtime: prefer the current AgentProfile env when configured,
+        # otherwise keep the historical shared agent tools venv.
+        cmd_env = self._apply_runtime_environment(cmd_env)
 
         # Windows 命令编码处理
         original_command = command
@@ -525,12 +539,7 @@ class ShellTool:
                 cmd_env["PATH"] = _shell_path
         except Exception:
             pass
-        try:
-            from ..runtime_env import apply_agent_python_environment
-
-            cmd_env = apply_agent_python_environment(cmd_env)
-        except Exception:
-            pass
+        cmd_env = self._apply_runtime_environment(cmd_env)
 
         # Windows 命令编码处理
         if self._is_windows and self._needs_powershell(command):
@@ -565,10 +574,21 @@ class ShellTool:
         """Install packages into the agent tools venv."""
         import shlex
 
-        from openakita.runtime_env import get_agent_pip_command
-
         packages = shlex.split(package) if isinstance(package, str) else [str(package)]
-        cmd = get_agent_pip_command(packages)
+        spec = getattr(self, "execution_env_spec", None)
+        if spec is not None:
+            try:
+                from openakita.runtime_env import get_pip_install_args
+                from openakita.runtime_envs import ensure_execution_env
+
+                ensured = ensure_execution_env(spec)
+                cmd = [str(ensured.python_path), *get_pip_install_args(packages)]
+            except Exception as exc:
+                return CommandResult(returncode=-1, stdout="", stderr=str(exc))
+        else:
+            from openakita.runtime_env import get_agent_pip_command
+
+            cmd = get_agent_pip_command(packages)
         if not cmd:
             return CommandResult(
                 returncode=-1,

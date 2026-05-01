@@ -21,7 +21,6 @@ import asyncio
 import json
 import logging
 import sys
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +152,22 @@ class MCPServer:
             mm = getattr(self._agent, "memory_manager", None)
             if not mm:
                 return "Memory system not available"
-            results = await mm.search(query, limit=limit)
+            retrieval_engine = getattr(mm, "retrieval_engine", None)
+            if retrieval_engine is not None:
+                candidates = retrieval_engine.retrieve_candidates(query=query, limit=limit)
+                results = [
+                    {
+                        "id": c.memory_id,
+                        "content": c.content,
+                        "type": c.memory_type,
+                        "source": c.source_type,
+                        "score": c.score,
+                    }
+                    for c in candidates
+                ]
+            else:
+                memories = mm.search_memories(query=query, limit=limit)
+                results = [m.to_dict() for m in memories]
             return json.dumps(results, ensure_ascii=False, indent=2)
 
         elif tool_name == "openakita_list_skills":

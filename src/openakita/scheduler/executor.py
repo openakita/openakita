@@ -11,6 +11,7 @@
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -714,6 +715,11 @@ class TaskExecutor:
         """
         try:
             from ..config import settings
+            from ..core.token_tracking import (
+                TokenTrackingContext,
+                reset_tracking_context,
+                set_tracking_context,
+            )
 
             if not settings.memory_nudge_enabled or settings.memory_nudge_interval <= 0:
                 return True, "Memory nudge disabled, skipping"
@@ -757,7 +763,22 @@ class TaskExecutor:
                 f"Conversation:\n{conversation_text}"
             )
 
-            response = await brain.think_lightweight(review_prompt, max_tokens=2048)
+            _tracking_token = set_tracking_context(
+                TokenTrackingContext(
+                    session_id="system_memory_nudge",
+                    request_id="system_memory_nudge",
+                    turn_id=f"system_memory_nudge:{int(time.time() * 1000)}",
+                    operation_type="background",
+                    operation_detail="system_memory_nudge",
+                    channel="scheduler",
+                    user_id="system",
+                    agent_profile_id="system",
+                )
+            )
+            try:
+                response = await brain.think_lightweight(review_prompt, max_tokens=2048)
+            finally:
+                reset_tracking_context(_tracking_token)
             raw = response.content.strip()
 
             import json
@@ -826,6 +847,11 @@ class TaskExecutor:
         """
         try:
             from ..config import settings
+            from ..core.token_tracking import (
+                TokenTrackingContext,
+                reset_tracking_context,
+                set_tracking_context,
+            )
 
             engine = self.proactive_engine
             if not engine:
@@ -857,7 +883,22 @@ class TaskExecutor:
                 )
 
             # 执行心跳
-            result = await engine.heartbeat()
+            _tracking_token = set_tracking_context(
+                TokenTrackingContext(
+                    session_id=task.id or "system_proactive_heartbeat",
+                    request_id=task.id or "system_proactive_heartbeat",
+                    turn_id=f"{task.id or 'system_proactive_heartbeat'}:{int(time.time() * 1000)}",
+                    operation_type="background",
+                    operation_detail="system_proactive_heartbeat",
+                    channel="scheduler",
+                    user_id="system",
+                    agent_profile_id="system",
+                )
+            )
+            try:
+                result = await engine.heartbeat()
+            finally:
+                reset_tracking_context(_tracking_token)
 
             if not result:
                 return True, "Heartbeat check passed, no message needed"

@@ -1,0 +1,2446 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PPT Maker · PPT 制作助手</title>
+    <script src="./_assets/bootstrap.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="stylesheet" href="./_assets/styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="./_assets/i18n.js"></script>
+    <script src="./_assets/icons.js"></script>
+    <script src="./_assets/markdown-mini.js"></script>
+    <script type="text/babel">
+      const { useCallback, useEffect, useMemo, useRef, useState } = React;
+      const PLUGIN_BASE = "/api/plugins/ppt-maker";
+      const tabs = [
+        ["Create", "创建"],
+        ["Projects", "项目"],
+        ["Exports", "导出"],
+        ["Materials", "素材"],
+        ["Templates", "模板"],
+        ["Settings", "设置"],
+      ];
+      const modes = [
+        { id: "topic_to_deck", title: "主题生成", icon: "spark", desc: "从一句目标开始生成汇报大纲", input: "告诉我主题、受众、场景和希望说服谁。", next: "创建项目后先确认大纲。" },
+        { id: "files_to_deck", title: "资料生成", icon: "doc", desc: "把文档资料整理成结构化 PPT", input: "先到素材页解析 Markdown、PDF、DOCX 或参考 PPT。", next: "建议先上传/解析资料，再创建项目。" },
+        { id: "outline_to_deck", title: "大纲生成", icon: "outline", desc: "将已有提纲补全为演示文稿", input: "在需求描述中粘贴章节、页标题或会议提纲。", next: "大纲会进入确认流程，可再调整页序。" },
+        { id: "table_to_deck", title: "表格汇报", icon: "table", desc: "从 CSV/XLSX 生成数据洞察页", input: "先到素材页完成数据体检、自动洞察和图表方案。", next: "必须绑定已完成分析的数据集。" },
+        { id: "template_deck", title: "企业模板", icon: "template", desc: "按品牌模板生成客户提案", input: "先到模板页上传企业 PPTX 并完成诊断。", next: "建议绑定已诊断模板。" },
+        { id: "revise_deck", title: "改稿优化", icon: "edit", desc: "针对已有页面做改写和审计", input: "上传参考 PPT 或在需求里说明要改哪几页。", next: "适合做二次润色、重排和审计。" },
+      ];
+      const stylePresets = [
+        ["tech_business", "科技商务", "橙红玫红色系，适合产品、技术、管理层汇报"],
+        ["consulting", "咨询汇报", "结构强、结论先行，适合方案和复盘"],
+        ["executive", "高管简报", "内容更克制，适合董事会和经营会"],
+        ["education", "课程培训", "阅读友好，适合教学和内部培训"],
+        ["custom", "自定义", "手动输入颜色、语气或视觉偏好"],
+      ];
+
+      function request(path, options = {}) {
+        const api = window.OpenAkita;
+        const url = path.startsWith("/api/") ? path : `${PLUGIN_BASE}${path}`;
+        if (api && typeof api.request === "function") {
+          return api.request(url, options);
+        }
+        const init = {
+          method: options.method || "GET",
+          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        };
+        if (options.body) init.body = JSON.stringify(options.body);
+        return fetch(url, init).then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const contentType = response.headers.get("content-type") || "";
+          return contentType.includes("application/json") ? response.json() : response.text();
+        });
+      }
+
+      function uploadFile(file, projectId = "", extra = {}) {
+        const form = new FormData();
+        form.append("file", file);
+        if (projectId) form.append("project_id", projectId);
+        Object.entries(extra || {}).forEach(([key, value]) => {
+          if (value != null && value !== "") form.append(key, value);
+        });
+        return fetch(`${PLUGIN_BASE}/upload`, { method: "POST", body: form }).then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        });
+      }
+
+      function useDraft(key, initial) {
+        const [value, setValue] = useState(() => {
+          try { return JSON.parse(localStorage.getItem(key)) || initial; } catch (_) { return initial; }
+        });
+        useEffect(() => localStorage.setItem(key, JSON.stringify(value)), [key, value]);
+        return [value, setValue];
+      }
+
+      function shortId(value) {
+        return value ? String(value).slice(0, 12) : "";
+      }
+
+      function statusClass(status) {
+        if (status === "ready" || status === "succeeded" || status === "profiled" || status === "diagnosed") return "done";
+        if (status === "failed") return "failed";
+        if (status === "cancelled") return "cancelled";
+        if (String(status || "").includes("ready") || String(status || "").includes("confirmed")) return "approval";
+        return "pending";
+      }
+
+      function formatElapsed(sec) {
+        const s = Math.max(0, Math.round(sec || 0));
+        const mm = String(Math.floor(s / 60)).padStart(2, "0");
+        const ss = String(s % 60).padStart(2, "0");
+        return `${mm}:${ss}`;
+      }
+
+      function mergeDependency(snapshot, dependency) {
+        if (!dependency) return snapshot;
+        const groups = snapshot?.groups || [];
+        const nextGroups = groups.some((item) => item.id === dependency.id)
+          ? groups.map((item) => item.id === dependency.id ? { ...item, ...dependency } : item)
+          : [...groups, dependency];
+        return { ...(snapshot || { ok: true }), groups: nextGroups };
+      }
+
+      function storageLabel(key) {
+        return ({
+          root: "插件数据目录",
+          uploads: "用户上传资料",
+          projects: "项目工作区",
+          datasets: "表格分析",
+          templates: "模板诊断",
+          exports: "导出文件",
+        })[key] || key;
+      }
+
+      function settingLabel(key) {
+        return ({
+          uploads_dir: "上传资料目录",
+          datasets_dir: "表格分析目录",
+          templates_dir: "模板诊断目录",
+          projects_dir: "项目工作区目录",
+          exports_dir: "导出文件目录",
+        })[key] || key;
+      }
+
+      function defaultPlaceholder(key) {
+        return ({
+          uploads_dir: "默认: 插件数据目录/uploads",
+          datasets_dir: "默认: 插件数据目录/datasets",
+          templates_dir: "默认: 插件数据目录/templates",
+          projects_dir: "默认: 插件数据目录/projects",
+          exports_dir: "默认: 插件数据目录/exports",
+        })[key] || "留空使用默认目录";
+      }
+
+      function storageKeyForSetting(key) {
+        return ({
+          uploads_dir: "uploads",
+          datasets_dir: "datasets",
+          templates_dir: "templates",
+          projects_dir: "projects",
+          exports_dir: "exports",
+        })[key] || "root";
+      }
+
+      function JsonBlock({ value }) {
+        return <pre className="json-block">{JSON.stringify(value, null, 2)}</pre>;
+      }
+
+      function TableAnalysisSummary({ dataset }) {
+        const profile = dataset?.profile;
+        const insights = dataset?.insights;
+        const chartSpecs = dataset?.chart_specs || insights?.chart_suggestions || [];
+        const qualityWarnings = profile?.quality_warnings || [];
+        const missingWarnings = qualityWarnings.filter((item) => item.includes("缺失值超过 30%"));
+        const otherWarnings = qualityWarnings.filter((item) => !item.includes("缺失值超过 30%"));
+        const missingColumns = missingWarnings.map((item) => item.replace(/^列\s+/, "").replace(/\s+缺失值超过 30%。?$/, ""));
+        const chartTypeName = (type) => ({
+          line: "趋势折线图",
+          bar: "柱状图",
+          horizontal_bar: "横向条形图",
+          pie: "占比饼图",
+          table: "明细摘要表",
+          metric_cards: "核心指标卡",
+        })[type] || type;
+        const chartReason = (spec) => {
+          if (spec.type === "metric_cards") return "适合在 PPT 中提炼多个关键数值，作为经营指标或核心 KPI 展示。";
+          if (spec.type === "table") return "适合保留关键明细，方便在汇报中给出数据依据。";
+          if (spec.type === "line") return `适合观察 ${spec.y || "指标"} 随 ${spec.x || "时间/维度"} 的变化趋势。`;
+          if (spec.type === "bar" || spec.type === "horizontal_bar") return `适合比较不同 ${spec.x || "分类"} 下的 ${spec.y || "指标"} 差异。`;
+          return spec.reason || "可作为演示文稿中的候选图表。";
+        };
+        if (!dataset) return null;
+        if (!profile) {
+          return (
+            <div className="analysis-help">
+              <strong>数据集尚未完成分析。</strong>
+              <div>执行分析后，系统将生成字段结构、质量检查、指标/维度识别与推荐图表方案，供后续 PPT 生成流程引用。</div>
+            </div>
+          );
+        }
+        return (
+          <div className="analysis-summary">
+            <div className="analysis-help">
+              <strong>分析结果概览</strong>
+              <div>系统已完成字段识别、数据质量检查、候选指标/维度提取，并生成可用于演示文稿的数据叙事与图表方案。</div>
+            </div>
+            <div className="summary-grid">
+              <div className="summary-card"><span>行数</span><strong>{profile.row_count}</strong></div>
+              <div className="summary-card"><span>列数</span><strong>{profile.column_count}</strong></div>
+              <div className="summary-card"><span>候选指标</span><strong>{profile.candidate_metrics?.length || 0}</strong></div>
+              <div className="summary-card"><span>候选维度</span><strong>{profile.candidate_dimensions?.length || 0}</strong></div>
+            </div>
+            <div className="analysis-section">
+              <h4>自动洞察</h4>
+              {(insights?.key_findings || []).map((item, index) => <p key={index}>{item}</p>)}
+              {!(insights?.key_findings || []).length && <p className="text-muted">暂未生成洞察。</p>}
+            </div>
+            <div className="analysis-section">
+              <h4>图表方案</h4>
+              {chartSpecs.map((spec) => (
+                <div className="chart-spec-card" key={spec.id}>
+                  <strong>{spec.title}</strong>
+                  <span>{chartTypeName(spec.type)} · {chartReason(spec)}</span>
+                </div>
+              ))}
+              {!chartSpecs.length && <p className="text-muted">暂未生成图表方案。</p>}
+            </div>
+            {qualityWarnings.length > 0 && (
+              <div className="analysis-section warning quality-summary">
+                <div className="quality-summary__head">
+                  <h4>使用前检查</h4>
+                  <span>{qualityWarnings.length} 项提醒</span>
+                </div>
+                <p className="quality-summary__intro">这里不是报错，而是在提醒：这些字段可能缺值较多或表格过宽，生成 PPT 时建议只选关键列，或先清洗数据。</p>
+                <div className="quality-summary__items">
+                  {otherWarnings.map((item, index) => <div className="quality-chip" key={index}>{item}</div>)}
+                  {missingColumns.length > 0 && (
+                    <div className="quality-chip">
+                      {missingColumns.length} 个字段缺失较多：{missingColumns.slice(0, 6).join("、")}{missingColumns.length > 6 ? ` 等 ${missingColumns.length} 个` : ""}
+                    </div>
+                  )}
+                </div>
+                {missingColumns.length > 6 && (
+                  <details className="quality-details">
+                    <summary>查看全部缺失字段</summary>
+                    <div>{missingColumns.join("、")}</div>
+                  </details>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      function AnalysisModal({ dataset, onClose }) {
+        if (!dataset) return null;
+        return (
+          <div className="modal-mask" onClick={onClose}>
+            <div className="modal-card analysis-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="analysis-modal__head">
+                <div>
+                  <strong>表格分析结果</strong>
+                  <span>{dataset.dataset?.name || dataset.dataset?.id || "数据集"}</span>
+                </div>
+                <button className="btn btn-sm" onClick={onClose}>关闭</button>
+              </div>
+              <div className="analysis-modal__body">
+                <TableAnalysisSummary dataset={dataset} />
+                <details style={{marginTop: 12}}>
+                  <summary className="text-xs text-muted">查看原始 JSON</summary>
+                  <JsonBlock value={dataset} />
+                </details>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function DeleteAssetConfirmModal({ target, onClose, onConfirm }) {
+        const [deleteFiles, setDeleteFiles] = useState(false);
+        if (!target) return null;
+        const hasFolder = !!target.ids;
+        const title = target.title || (hasFolder ? "确认删除该数据集文件夹？" : "确认删除该素材？");
+        const targetTag = target.targetTag || (hasFolder ? "目标文件夹" : "目标素材");
+        const description = target.description || `默认只删除素材库里的登记记录，不影响磁盘上的原始文件。删除后，${hasFolder ? "这个文件夹及其中素材" : "这条素材"}不会再出现在当前列表中。`;
+        const showDeleteFiles = target.showDeleteFiles !== false;
+        const deleteFilesLabel = target.deleteFilesLabel || "同时删除插件存储目录里的文件和分析结果";
+        const hint = target.hint || "为避免误删，系统只会删除插件保存目录内的内容；手动登记的外部路径会自动保留。";
+        return (
+          <div className="modal-mask" onClick={onClose}>
+            <div className="modal-card delete-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="delete-modal__head">
+                <div className="delete-modal__icon" aria-hidden="true">!</div>
+                <div className="delete-modal__title">
+                  <strong>{title}</strong>
+                  <div className="delete-modal__target">
+                    <span className="delete-modal__tag">{targetTag}</span>
+                    <span className="delete-modal__name" title={target.name || target.id}>{target.name || target.id}</span>
+                  </div>
+                </div>
+                <button className="btn btn-sm" onClick={onClose}>关闭</button>
+              </div>
+              <div className="delete-modal__body">
+                <p>{description}</p>
+                {showDeleteFiles && (
+                  <label className="delete-modal__option">
+                    <input type="checkbox" checked={deleteFiles} onChange={(e) => setDeleteFiles(e.target.checked)} />
+                    <span>{deleteFilesLabel}</span>
+                  </label>
+                )}
+                {showDeleteFiles && <div className="delete-modal__hint">{hint}</div>}
+              </div>
+              <div className="modal-actions">
+                <button className="btn" onClick={onClose}>取消</button>
+                <button className="btn btn-danger" onClick={() => onConfirm(deleteFiles)}>确认删除</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function ErrorPanel({ error }) {
+        if (!error) return null;
+        return <div className="oa-config-banner error-panel"><span className="oa-config-banner__icon">!</span><div className="oa-config-banner__text"><strong>错误</strong><br />{String(error.message || error)}</div></div>;
+      }
+
+      function ProgressPanel({ event }) {
+        if (!event) return null;
+        return (
+          <div className="oa-config-banner oa-config-banner--info">
+            <span className="oa-config-banner__icon">i</span>
+            <div className="oa-config-banner__text"><strong>{event.status || event.step}</strong><br />进度 {Math.round((event.progress || 0) * 100)}%</div>
+          </div>
+        );
+      }
+
+      function CostBreakdown({ draft }) {
+        const complexity = draft.mode === "table_to_deck" || draft.mode === "template_deck" ? "中" : "低";
+        const modeName = (modes.find((item) => item.id === draft.mode) || modes[0]).title;
+        const pageCount = draft.slide_count || "未填写";
+        return (
+          <div className="oa-cost">
+            <div className="oa-cost__main">
+              <div><span className="oa-cost__label">预览</span><div className="range">{pageCount}<small>{draft.slide_count ? " 页" : ""}</small></div></div>
+              <div className="oa-cost__meta">
+                <span>{modeName}</span>
+                <span>复杂度 {complexity}</span>
+                <span>PPTX 可编辑导出</span>
+              </div>
+            </div>
+            <div className="oa-cost__steps"><span>大纲</span><span>设计</span><span>页面内容</span><span>质量检查</span></div>
+          </div>
+        );
+      }
+
+      function CreateResultPanel({ draft, result, busy, phase, onNavigate, onGenerate }) {
+        const project = result?.project || result?.result?.project || null;
+        const projectId = project?.id || result?.project_id || result?.result?.project_id || null;
+        const status = project?.status || result?.status || result?.result?.status || "draft";
+        const modeName = (modes.find((item) => item.id === draft.mode) || modes[0]).title;
+        if (busy) {
+          return (
+            <div className="create-result create-result--busy">
+              <div className="create-result__hero">
+                <span className="create-spinner" />
+                <strong>{phase || "正在处理..."}</strong>
+                <p>请稍候，系统正在提交任务并刷新项目列表。完成后会在这里展示下一步操作。</p>
+              </div>
+            </div>
+          );
+        }
+        if (!result) {
+          return (
+            <div className="create-result">
+              <div className="create-result__hero">
+                <strong>创建前预览</strong>
+                <p>填写左侧必填信息后，点击“创建项目”。项目创建后不会立即导出，会先进入项目页完成大纲确认和设计确认。</p>
+              </div>
+              <div className="project-detail__grid">
+                <div><span>模式</span><strong>{modeName}</strong></div>
+                <div><span>页数</span><strong>{draft.slide_count || "默认 8"} 页</strong></div>
+                <div><span>数据集</span><strong>{draft.dataset_id ? shortId(draft.dataset_id) : "未绑定"}</strong></div>
+                <div><span>模板</span><strong>{draft.template_id ? shortId(draft.template_id) : "未绑定"}</strong></div>
+              </div>
+              <div className="create-next-tip">建议：素材和模板准备完成后再创建项目，后续推进会更稳定。</div>
+            </div>
+          );
+        }
+        return (
+          <div className="create-result">
+            <div className="create-result__hero">
+              <strong>{project ? "项目已创建" : "本次操作已完成"}</strong>
+              <span className={"badge badge-" + statusClass(status)}>{status}</span>
+              <p>{project ? "下一步请前往项目页继续推进。通常需要先确认大纲，再确认设计，最后生成并导出 PPTX。" : "操作结果已返回，可查看摘要或继续下一步。"}</p>
+            </div>
+            <div className="project-detail__grid">
+              <div><span>项目 ID</span><strong>{shortId(projectId) || "-"}</strong></div>
+              <div><span>当前状态</span><strong>{status}</strong></div>
+              <div><span>模式</span><strong>{project?.mode || modeName}</strong></div>
+              <div><span>页数</span><strong>{project?.slide_count || draft.slide_count || "默认 8"}</strong></div>
+            </div>
+            <div className="create-result__actions">
+              <button className="btn btn-primary" onClick={() => onNavigate("Projects")}>去项目页推进后续</button>
+              <button className="btn" onClick={onGenerate} disabled={!projectId}>继续生成</button>
+            </div>
+            <details className="template-raw"><summary>查看原始返回 JSON</summary><JsonBlock value={result} /></details>
+          </div>
+        );
+      }
+
+      function FileUploadZone({ hint = "拖入文件或点击上传。", accept = "", multiple = false, disabled = false, manual = false, uploadExtra = {}, onFilesSelected, onUploaded, onUploads }) {
+        const inputId = `upload-${Math.random().toString(36).slice(2)}`;
+        async function handleChange(e) {
+          const files = Array.from(e.target.files || []);
+          if (!files.length) return;
+          if (manual) {
+            if (onFilesSelected) onFilesSelected(files);
+            e.target.value = "";
+            return;
+          }
+          const results = [];
+          for (const file of files) {
+            const data = await uploadFile(file, "", uploadExtra);
+            results.push(data);
+            if (onUploaded) onUploaded(data);
+          }
+          if (onUploads) onUploads(results);
+          e.target.value = "";
+        }
+        return (
+          <label className={`upload-zone ${disabled ? "is-disabled" : ""}`} htmlFor={disabled ? undefined : inputId}>
+            <input id={inputId} type="file" accept={accept} multiple={multiple} disabled={disabled} onChange={handleChange} />
+            <div className="upload-zone__title">点击上传素材</div>
+            <div className="upload-zone__hint">{hint}</div>
+          </label>
+        );
+      }
+
+      function PreviewShell({ title, hint, children }) {
+        return (
+          <div className={"split-right oa-preview-area" + (!children ? " oa-preview-area--centered" : "")}>
+            {children || (
+              <div className="oa-preview-empty">
+                <span className="oa-preview-empty__icon">P</span>
+                <div className="oa-preview-empty__title">{title}</div>
+                <div className="oa-preview-empty__hint">{hint}</div>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      function FolderPickerModal({ open, title, initialPath, onCancel, onSelect }) {
+        const [path, setPath] = useState("");
+        const [items, setItems] = useState([]);
+        const [parent, setParent] = useState(null);
+        const [isAnchor, setIsAnchor] = useState(true);
+        const [loading, setLoading] = useState(false);
+        const [error, setError] = useState("");
+        const [newFolderMode, setNewFolderMode] = useState(false);
+        const [newFolderName, setNewFolderName] = useState("");
+        const newFolderInputRef = useRef(null);
+
+        const load = useCallback(async (nextPath) => {
+          setLoading(true);
+          setError("");
+          try {
+            const qs = nextPath ? `?path=${encodeURIComponent(nextPath)}` : "";
+            const data = await request(`/storage/list-dir${qs}`);
+            setPath(data.path || "");
+            setParent(data.parent || null);
+            setItems(data.items || []);
+            setIsAnchor(!!data.is_anchor);
+          } catch (err) {
+            setError(String(err.message || err));
+            if (nextPath) {
+              try {
+                const data = await request("/storage/list-dir");
+                setPath(data.path || "");
+                setParent(data.parent || null);
+                setItems(data.items || []);
+                setIsAnchor(!!data.is_anchor);
+              } catch (_) {}
+            }
+          } finally {
+            setLoading(false);
+          }
+        }, []);
+
+        useEffect(() => {
+          if (!open) return;
+          setNewFolderMode(false);
+          setNewFolderName("");
+          load(initialPath || "");
+        }, [open, initialPath, load]);
+
+        useEffect(() => {
+          if (newFolderMode && newFolderInputRef.current) newFolderInputRef.current.focus();
+        }, [newFolderMode]);
+
+        const crumbs = (() => {
+          if (!path) return [];
+          const norm = path.replace(/\\/g, "/");
+          const parts = norm.split("/").filter(Boolean);
+          const out = [];
+          if (norm.startsWith("/")) {
+            out.push({ name: "/", path: "/" });
+            let acc = "";
+            for (const part of parts) {
+              acc += "/" + part;
+              out.push({ name: part, path: acc });
+            }
+          } else if (parts[0] && /^[A-Za-z]:$/.test(parts[0])) {
+            out.push({ name: parts[0], path: parts[0] + "/" });
+            let acc = parts[0];
+            for (let i = 1; i < parts.length; i++) {
+              acc += "/" + parts[i];
+              out.push({ name: parts[i], path: acc });
+            }
+          } else {
+            out.push({ name: path, path });
+          }
+          return out;
+        })();
+
+        async function createFolder() {
+          const name = newFolderName.trim();
+          if (!name || !path) return;
+          await request("/storage/mkdir", { method: "POST", body: { parent: path, name } });
+          setNewFolderName("");
+          setNewFolderMode(false);
+          await load(path);
+        }
+
+        if (!open) return null;
+        return (
+          <div className="modal-mask" onClick={onCancel}>
+            <div className="modal-card folder-picker" onClick={(e) => e.stopPropagation()}>
+              <div className="folder-picker__head">
+                <div className="folder-picker__title">{title || "选择文件夹"}</div>
+                <div className="folder-picker__crumbs">
+                  <span className="folder-picker__crumb" onClick={() => load("")}>起始位置</span>
+                  {crumbs.map((crumb, index) => (
+                    <React.Fragment key={index}>
+                      <span className="folder-picker__crumb-sep">/</span>
+                      <span className="folder-picker__crumb" onClick={() => load(crumb.path)} title={crumb.path}>{crumb.name}</span>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+              {error && <div className="folder-picker__error">无法读取目录：{error}</div>}
+              <div className="folder-picker__body">
+                <div className="folder-picker__sidebar">
+                  <div className="folder-picker__shortcut" onClick={() => load("")}>起始位置</div>
+                </div>
+                <div className="folder-picker__list">
+                  {loading && <div className="folder-picker__empty">加载中...</div>}
+                  {!loading && !isAnchor && parent && (
+                    <div className="folder-picker__item" onClick={() => load(parent)}>
+                      <span className="folder-picker__item-icon">↰</span><span className="folder-picker__item-name">..</span>
+                    </div>
+                  )}
+                  {!loading && items.length === 0 && <div className="folder-picker__empty">这个目录下没有子文件夹</div>}
+                  {!loading && items.map((item) => (
+                    <div className="folder-picker__item" key={item.path} onClick={() => load(item.path)} title={item.path}>
+                      <span className="folder-picker__item-icon">📁</span><span className="folder-picker__item-name">{item.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="folder-picker__foot">
+                {newFolderMode ? (
+                  <>
+                    <input ref={newFolderInputRef} className="folder-picker__newinput" value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="输入新文件夹名称" />
+                    <button className="btn btn-sm" onClick={() => setNewFolderMode(false)}>取消</button>
+                    <button className="btn btn-sm btn-primary" disabled={!newFolderName.trim()} onClick={() => createFolder().catch((err) => setError(String(err.message || err)))}>创建</button>
+                  </>
+                ) : (
+                  <>
+                    <span className="folder-picker__current" title={path}>{path || "请选择一个起始位置"}</span>
+                    <button className="btn btn-sm" disabled={!path || isAnchor} onClick={() => setNewFolderMode(true)}>新建文件夹</button>
+                    <button className="btn btn-sm" onClick={onCancel}>取消</button>
+                    <button className="btn btn-sm btn-primary" disabled={!path || isAnchor} onClick={() => onSelect(path)}>选择此文件夹</button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function Icon({ name }) {
+        const paths = {
+          ppt: "m2.859 2.878l12.57-1.796a.5.5 0 0 1 .571.495v20.847a.5.5 0 0 1-.57.495L2.858 21.123a1 1 0 0 1-.859-.99V3.868a1 1 0 0 1 .859-.99ZM4 4.735v14.53l10 1.43V3.305L4 4.735ZM17 19h3V5h-3V3h4a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1h-4v-2ZM5 8h8v6H7v2H5V8Zm2 2v2h4v-2H7Z",
+          spark: "M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Zm6 9l.9 2.1L21 15l-2.1.9L18 18l-.9-2.1L15 15l2.1-.9L18 12ZM6 13l1.1 2.9L10 17l-2.9 1.1L6 21l-1.1-2.9L2 17l2.9-1.1L6 13Z",
+          doc: "M6 3h7l5 5v13H6V3Zm7 0v5h5",
+          outline: "M5 6h14M5 12h14M5 18h8",
+          table: "M4 5h16v14H4V5Zm0 5h16M10 5v14",
+          template: "M4 5h16v14H4V5Zm2 2v4h12V7H6Zm0 7h5v3H6v-3Zm8 0h4v3h-4v-3Z",
+          edit: "M4 20h4l11-11-4-4L4 16v4Zm12-16 4 4",
+        };
+        return <svg className={"ui-icon " + (name === "ppt" ? "ui-icon-fill" : "")} viewBox="0 0 24 24" aria-hidden="true"><path d={paths[name] || paths.ppt} /></svg>;
+      }
+
+      function ModeChips({ active, onChange }) {
+        return (
+          <div className="mode-group">
+            {modes.map((mode) => (
+              <button key={mode.id} type="button" className={"mode-chip " + (active === mode.id ? "active" : "")} onClick={() => onChange(mode.id)}>
+                <span className="mode-chip__head"><span className="mode-chip__icon"><Icon name={mode.icon} /></span><span className="mode-chip__title">{mode.title}</span></span>
+                <span className="mode-chip__desc">{mode.desc}</span>
+              </button>
+            ))}
+          </div>
+        );
+      }
+
+      function FlowHint({ mode }) {
+        const meta = modes.find((item) => item.id === mode) || modes[0];
+        const focus = {
+          topic_to_deck: ["明确汇报主题、目标受众与沟通目的", "无需绑定素材，可直接基于文字需求生成初稿", "项目创建后需先确认大纲，再进入后续生成阶段"],
+          files_to_deck: ["基础信息用于确定资料改写后的汇报定位", "建议先在素材页完成参考资料解析", "需求描述应说明保留重点、表达对象与输出口径"],
+          outline_to_deck: ["需求描述应提供章节结构或页面标题", "基础信息用于确定页数、受众和视觉风格", "适用于已有目录并需要补全内容的场景"],
+          table_to_deck: ["需绑定已完成分析的数据集", "基础信息用于确定数据汇报的受众和叙事角度", "需求描述应明确指标口径、关注趋势与结论方向"],
+          template_deck: ["建议绑定已完成诊断的企业模板", "基础信息定义内容，模板诊断结果定义品牌外观", "适用于客户提案或公司统一风格汇报"],
+          revise_deck: ["建议先解析参考稿件或旧版 PPT", "基础信息用于定义改稿对象、语气与展示目标", "需求描述应明确重排、精简、补充或审计要求"],
+        }[mode] || [];
+        return (
+          <div className="flow-hint">
+            <div className="flow-hint__title"><strong>{meta.title}</strong><span>{meta.desc}</span></div>
+            <div className="mode-focus-grid">
+              {focus.map((item, index) => <div className="mode-focus-item" key={item}><span>{index + 1}</span>{item}</div>)}
+            </div>
+            <div className="text-dim">{meta.input} {meta.next}</div>
+          </div>
+        );
+      }
+
+      function CreateTab({ setError, refreshProjects, datasets, templates, onNavigate }) {
+        const [draft, setDraft] = useDraft("ppt-maker:create", {
+          mode: "topic_to_deck",
+          title: "",
+          prompt: "",
+          audience: "",
+          style: "tech_business",
+          custom_style: "",
+          slide_count: "",
+          dataset_id: "",
+          template_id: "",
+        });
+        const [result, setResult] = useState(null);
+        const [createBusy, setCreateBusy] = useState(false);
+        const [generateBusy, setGenerateBusy] = useState(false);
+        const [createPhase, setCreatePhase] = useState("");
+        const update = (key, value) => setDraft({ ...draft, [key]: value });
+        async function startProject() {
+          setError(null);
+          setCreateBusy(true);
+          setCreatePhase("正在创建项目...");
+          try {
+            const body = {
+              mode: draft.mode,
+              title: draft.title,
+              prompt: draft.prompt,
+              audience: draft.audience,
+              style: draft.style === "custom" ? (draft.custom_style || "custom") : draft.style,
+              slide_count: Number(draft.slide_count || 8),
+              dataset_id: draft.dataset_id || null,
+              template_id: draft.template_id || null,
+              metadata: { source: "ppt-maker-ui" },
+            };
+            const data = await request("/projects", { method: "POST", body });
+            setResult(data);
+            refreshProjects();
+          } finally {
+            setCreatePhase("");
+            setCreateBusy(false);
+          }
+        }
+        async function generateDeck() {
+          const projectId = result?.project?.id;
+          if (!projectId) return;
+          setError(null);
+          setGenerateBusy(true);
+          setCreatePhase("正在推进生成流程...");
+          try {
+            setResult(await request(`/projects/${projectId}/retry`, { method: "POST" }));
+            refreshProjects();
+          } finally {
+            setCreatePhase("");
+            setGenerateBusy(false);
+          }
+        }
+        return (
+          <div className="split-layout">
+            <div className="split-left">
+              <ModeChips active={draft.mode} onChange={(mode) => update("mode", mode)} />
+              <FlowHint mode={draft.mode} />
+              <div className="card">
+                <div className="section-title">基础信息</div>
+                <div className="grid-2">
+                  <div className="form-row"><div className="form-label-title">标题 <span>生成内容的主题</span></div><input className="input" value={draft.title} onChange={(e) => update("title", e.target.value)} placeholder="例如：OpenAkita 插件生态路线图" /></div>
+                  <div className="form-row"><div className="form-label-title">受众 <span>决定表达深浅和语气</span></div><input className="input" value={draft.audience} onChange={(e) => update("audience", e.target.value)} placeholder="例如：企业管理层、销售负责人、客户决策人" /></div>
+                </div>
+                <div className="grid-2">
+                  <div className="form-row"><div className="form-label-title">页数 <span>控制内容密度</span></div><input className="input" type="number" min="1" max="80" value={draft.slide_count} onChange={(e) => update("slide_count", e.target.value)} placeholder="例如：8" /></div>
+                  <div className="form-row">
+                    <div className="form-label-title">风格预设 <span>决定视觉方向</span></div>
+                    <select className="input select" value={draft.style} onChange={(e) => update("style", e.target.value)}>
+                      {stylePresets.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="style-help"><strong>当前风格说明：</strong>{(stylePresets.find(([id]) => id === draft.style) || stylePresets[0])[2]}</div>
+                {draft.style === "custom" && (
+                  <div className="form-row"><div className="form-label-title">自定义风格 <span>补充颜色、版式或语气</span></div><input className="input" value={draft.custom_style || ""} onChange={(e) => update("custom_style", e.target.value)} placeholder="例如：深紫渐变、少文字、多图表、咨询风" /></div>
+                )}
+                <div className="form-row"><div className="form-label-title">需求描述 <span>写清目标、重点、限制和想要的结论</span></div><textarea className="input textarea" value={draft.prompt} onChange={(e) => update("prompt", e.target.value)} placeholder="例如：面向企业管理层，说明产品价值、关键能力、落地计划和下一步建议；整体采用科技商务风。" /></div>
+              </div>
+              <div className="card">
+                <div className="section-title">素材绑定</div>
+                <div className="resource-guide">
+                  <div className={"resource-card " + (draft.mode === "files_to_deck" || draft.mode === "revise_deck" || draft.mode === "table_to_deck" ? "required" : "")}>
+                    <div><strong>素材库</strong><span>{draft.mode === "files_to_deck" || draft.mode === "revise_deck" ? "建议先解析" : draft.mode === "table_to_deck" ? "必需先分析" : "可选"}</span></div>
+                    <p>资料用于生成正文和大纲，表格用于生成数据洞察页；同一个素材集可以同时放参考资料和数据文件。</p>
+                    <div className="resource-card__select">
+                      <label>数据集（表格汇报时选择）</label>
+                      <select className="input select" value={draft.dataset_id || ""} onChange={(e) => update("dataset_id", e.target.value)}>
+                        <option value="">{draft.mode === "table_to_deck" ? "请选择已分析数据集" : "不绑定数据集"}</option>
+                        {datasets.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}
+                      </select>
+                    </div>
+                    <button className="btn btn-sm" onClick={() => onNavigate("Materials")}>去素材页</button>
+                  </div>
+                  <div className={"resource-card " + (draft.mode === "template_deck" ? "required" : "")}>
+                    <div><strong>企业模板</strong><span>{draft.mode === "template_deck" ? "推荐" : "可选"}</span></div>
+                    <p>模板用于套用公司品牌色、字体和版式。上传 PPTX 后需要先诊断，再在这里绑定。</p>
+                    <div className="resource-card__select">
+                      <label>企业模板（套模板时选择）</label>
+                      <select className="input select" value={draft.template_id || ""} onChange={(e) => update("template_id", e.target.value)}>
+                        <option value="">{draft.mode === "template_deck" ? "请选择已诊断模板" : "不绑定模板"}</option>
+                        {templates.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.status}</option>)}
+                      </select>
+                    </div>
+                    <button className="btn btn-sm" onClick={() => onNavigate("Templates")}>去模板页</button>
+                  </div>
+                </div>
+                <CostBreakdown draft={draft} />
+              </div>
+              <div className="flex gap-2" style={{marginTop: 14}}>
+                <button className="btn btn-primary btn-block" onClick={() => startProject().catch(setError)} disabled={createBusy || generateBusy}>{createBusy ? "创建中..." : "创建项目"}</button>
+                <button className="btn" onClick={() => generateDeck().catch(setError)} disabled={!result?.project?.id || createBusy || generateBusy}>{generateBusy ? "推进中..." : "继续生成"}</button>
+              </div>
+            </div>
+            <PreviewShell title="创建结果与下一步" hint="创建后请到项目页推进大纲和设计确认">
+              <CreateResultPanel draft={draft} result={result} busy={createBusy || generateBusy} phase={createPhase} onNavigate={onNavigate} onGenerate={() => generateDeck().catch(setError)} />
+            </PreviewShell>
+          </div>
+        );
+      }
+
+      const ACTIVITY_STAGE_LABELS = {
+        run: "整体流程",
+        setup: "初始化",
+        ingest: "解析资料",
+        table_profile: "表格画像",
+        template_diagnose: "模板诊断",
+        requirements: "需求复核",
+        outline: "大纲",
+        layout_plan: "版式选择",
+        design: "设计方案",
+        ir: "页面 IR",
+        slide_content: "页面内容",
+        export: "导出",
+        audit_finalize: "审计归档",
+        context: "补充上下文",
+        web_search: "Web 搜索",
+        assets: "配图/图标",
+      };
+      function activityStageLabel(stage) {
+        if (!stage) return "事件";
+        if (ACTIVITY_STAGE_LABELS[stage]) return ACTIVITY_STAGE_LABELS[stage];
+        if (stage.startsWith("brain.")) return "Brain · " + stage.slice(6);
+        return stage;
+      }
+      function activityStatusEmoji(status, level) {
+        if (status === "start") return "▶";
+        if (status === "success") return "✓";
+        if (status === "fallback") return "↩";
+        if (status === "error") return "✗";
+        if (level === "warn") return "!";
+        return "•";
+      }
+      function activityStatusClass(status, level) {
+        if (status === "error" || level === "error") return "is-error";
+        if (status === "fallback" || level === "warn") return "is-warn";
+        if (status === "success") return "is-success";
+        if (status === "start") return "is-running";
+        return "is-info";
+      }
+      function formatActivityTime(iso, ts) {
+        if (iso) {
+          try { return new Date(iso).toLocaleTimeString(); } catch (_) {}
+        }
+        if (ts) return new Date(ts * 1000).toLocaleTimeString();
+        return "";
+      }
+      function ActivityLogPanel({ projectId, onError }) {
+        const [events, setEvents] = useState([]);
+        const [loading, setLoading] = useState(true);
+        const [autoScroll, setAutoScroll] = useState(true);
+        const [expanded, setExpanded] = useState({});
+        const [filter, setFilter] = useState("all");
+        const containerRef = useRef(null);
+        const seenRef = useRef(new Set());
+        useEffect(() => {
+          if (!projectId) return;
+          let cancelled = false;
+          seenRef.current = new Set();
+          setEvents([]);
+          setLoading(true);
+          (async () => {
+            try {
+              const data = await request("/projects/" + projectId + "/activity?limit=500");
+              if (cancelled) return;
+              const list = Array.isArray(data?.events) ? data.events : [];
+              const dedup = [];
+              for (const ev of list) {
+                const key = (ev.ts || "") + "|" + (ev.stage || "") + "|" + (ev.status || "") + "|" + (ev.message || "");
+                if (seenRef.current.has(key)) continue;
+                seenRef.current.add(key);
+                dedup.push(ev);
+              }
+              setEvents(dedup);
+            } catch (err) {
+              if (onError) onError(err);
+            } finally {
+              if (!cancelled) setLoading(false);
+            }
+          })();
+          const onActivity = (e) => {
+            const ev = (e && e.detail) || e;
+            if (!ev || ev.project_id !== projectId) return;
+            const key = (ev.ts || "") + "|" + (ev.stage || "") + "|" + (ev.status || "") + "|" + (ev.message || "");
+            if (seenRef.current.has(key)) return;
+            seenRef.current.add(key);
+            setEvents((prev) => [...prev, ev]);
+          };
+          window.addEventListener("ppt_activity", onActivity);
+          return () => {
+            cancelled = true;
+            window.removeEventListener("ppt_activity", onActivity);
+          };
+        }, [projectId]);
+        useEffect(() => {
+          if (!autoScroll) return;
+          const el = containerRef.current;
+          if (el) el.scrollTop = el.scrollHeight;
+        }, [events, autoScroll]);
+        const visible = events.filter((ev) => {
+          if (filter === "all") return true;
+          if (filter === "errors") return ev.status === "error" || ev.status === "fallback" || ev.level === "error" || ev.level === "warn";
+          if (filter === "brain") return (ev.stage || "").startsWith("brain.");
+          return true;
+        });
+        async function refresh() {
+          if (!projectId) return;
+          try {
+            const data = await request("/projects/" + projectId + "/activity?limit=500");
+            const list = Array.isArray(data?.events) ? data.events : [];
+            seenRef.current = new Set();
+            for (const ev of list) {
+              seenRef.current.add((ev.ts || "") + "|" + (ev.stage || "") + "|" + (ev.status || "") + "|" + (ev.message || ""));
+            }
+            setEvents(list);
+          } catch (err) { if (onError) onError(err); }
+        }
+        return (
+          <div className="activity-panel">
+            <div className="activity-head">
+              <div>
+                <strong className="section-title">处理过程日志</strong>
+                <p className="text-xs text-muted">实时记录 Brain 调用、版式选择、Web 搜索、配图获取等关键交互；事件也会同步写入 <code>data/projects/&lt;id&gt;/logs/activity.jsonl</code>。</p>
+              </div>
+              <div className="activity-toolbar">
+                <div className="activity-filter">
+                  <button className={"btn btn-xs " + (filter === "all" ? "btn-primary" : "")} onClick={() => setFilter("all")}>全部</button>
+                  <button className={"btn btn-xs " + (filter === "brain" ? "btn-primary" : "")} onClick={() => setFilter("brain")}>Brain</button>
+                  <button className={"btn btn-xs " + (filter === "errors" ? "btn-primary" : "")} onClick={() => setFilter("errors")}>异常/兜底</button>
+                </div>
+                <label className="text-xs" style={{display:'flex',alignItems:'center',gap:4}}>
+                  <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} /> 自动滚动
+                </label>
+                <button className="btn btn-xs" onClick={refresh}>刷新</button>
+              </div>
+            </div>
+            <div className="activity-stream" ref={containerRef}>
+              {loading && <div className="empty-note">加载中...</div>}
+              {!loading && visible.length === 0 && <div className="empty-note">暂无活动记录。点击“继续生成”后即可看到 Brain 调用、版式选择等过程信息。</div>}
+              {visible.map((ev, idx) => {
+                const key = (ev.ts || idx) + "_" + (ev.stage || "") + "_" + (ev.status || "") + "_" + idx;
+                const cls = activityStatusClass(ev.status, ev.level);
+                const hasDetails = ev.details && typeof ev.details === "object" && Object.keys(ev.details).length > 0;
+                const isOpen = !!expanded[key];
+                return (
+                  <div className={"activity-row " + cls} key={key}>
+                    <div className="activity-row__time">{formatActivityTime(ev.iso, ev.ts)}</div>
+                    <div className="activity-row__icon">{activityStatusEmoji(ev.status, ev.level)}</div>
+                    <div className="activity-row__body">
+                      <div className="activity-row__line">
+                        <span className="activity-row__stage">{activityStageLabel(ev.stage)}</span>
+                        <span className="activity-row__msg">{ev.message || ev.status || ""}</span>
+                        {hasDetails && (
+                          <button className="btn btn-xs activity-row__toggle" onClick={() => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }))}>{isOpen ? "收起" : "详情"}</button>
+                        )}
+                      </div>
+                      {isOpen && hasDetails && (
+                        <pre className="activity-row__details">{JSON.stringify(ev.details, null, 2)}</pre>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      }
+      function ProjectsTab({ projects, refreshProjects, setError, onNavigate }) {
+        const [detail, setDetail] = useState(null);
+        const [detailOpen, setDetailOpen] = useState(false);
+        const [filter, setFilter] = useState("all");
+        const [runningProjectId, setRunningProjectId] = useState("");
+        const [reviewBusy, setReviewBusy] = useState("");
+        const [draftSlides, setDraftSlides] = useState([]);
+        const [draftDesign, setDraftDesign] = useState("");
+        const [draftSpecLock, setDraftSpecLock] = useState({});
+        const [pageError, setPageError] = useState("");
+        const [projectErrors, setProjectErrors] = useState({});
+        const [deleteTarget, setDeleteTarget] = useState(null);
+        const steps = [
+          ["draft", "需求"],
+          ["outline_ready", "大纲"],
+          ["outline_confirmed", "大纲确认"],
+          ["design_ready", "设计"],
+          ["design_confirmed", "设计确认"],
+          ["ready", "导出"],
+        ];
+        const stepIndex = (status) => {
+          if (status === "failed" || status === "cancelled") return 0;
+          const idx = steps.findIndex(([id]) => id === status);
+          return idx >= 0 ? idx : 0;
+        };
+        const nextAction = (status) => {
+          if (status === "draft") return "点击继续后生成大纲";
+          if (status === "outline_ready") return "请打开大纲确认面板";
+          if (status === "outline_confirmed") return "点击继续后生成设计";
+          if (status === "design_ready") return "请打开设计确认面板";
+          if (status === "design_confirmed") return "点击继续后生成 PPTX";
+          if (status === "ready") return "已完成，可到导出页下载";
+          if (status === "failed") return "生成失败，请查看原因后重新生成";
+          if (status === "cancelled") return "已取消，可删除或重新创建";
+          return "等待推进";
+        };
+        const primaryActionLabel = (status) => {
+          if (status === "outline_ready") return "确认大纲";
+          if (status === "design_ready") return "确认设计";
+          if (status === "outline_confirmed") return "生成设计";
+          if (status === "design_confirmed") return "生成 PPTX";
+          if (status === "ready") return "去导出页";
+          if (status === "failed") return "重新生成";
+          if (status === "cancelled") return "已取消";
+          return "继续生成";
+        };
+        const outlineSlides = (outline) => outline?.outline?.slides || outline?.slides || [];
+        const designMarkdown = (design) => design?.design_markdown || design?.design_spec_markdown || design?.spec_lock?.design_spec_markdown || "";
+        const normalizeSlides = (slides) => (slides || []).map((slide, index) => ({
+          ...slide,
+          id: slide.id || `slide_${String(index + 1).padStart(2, "0")}`,
+          index: index + 1,
+          title: slide.title || slide.heading || `页面 ${index + 1}`,
+          purpose: slide.purpose || slide.notes || "说明这一页要表达的重点。",
+          slide_type: slide.slide_type || slide.type || "content",
+          key_points: slide.key_points || [],
+        }));
+        const syncReviewDrafts = (data) => {
+          setDraftSlides(normalizeSlides(outlineSlides(data?.outline)));
+          setDraftDesign(designMarkdown(data?.design));
+          setDraftSpecLock(data?.design?.spec_lock || {});
+        };
+        const updateTheme = (key, value) => {
+          setDraftSpecLock((prev) => ({ ...prev, theme: { ...(prev.theme || {}), [key]: value } }));
+        };
+        const readyCount = projects.filter((item) => item.status === "ready").length;
+        const activeCount = projects.filter((item) => !["ready", "failed", "cancelled"].includes(item.status)).length;
+        const failedCount = projects.filter((item) => item.status === "failed").length;
+        const visibleProjects = projects.filter((item) => {
+          if (filter === "all") return true;
+          if (filter === "active") return !["ready", "failed", "cancelled"].includes(item.status);
+          return item.status === filter;
+        });
+        async function load(projectId) {
+          setError(null);
+          setPageError("");
+          const data = await request(`/projects/${projectId}`);
+          setDetail(data);
+          syncReviewDrafts(data);
+          setDetailOpen(true);
+        }
+        async function retry(projectId) {
+          setError(null);
+          setPageError("");
+          setRunningProjectId(projectId);
+          setProjectErrors((prev) => ({ ...prev, [projectId]: "" }));
+          try {
+            await request(`/projects/${projectId}/retry`, { method: "POST" });
+            const data = await request(`/projects/${projectId}`);
+            setDetail(data);
+            syncReviewDrafts(data);
+            await refreshProjects({ local: true });
+          } catch (err) {
+            setProjectErrors((prev) => ({ ...prev, [projectId]: String(err.message || err) }));
+          } finally {
+            setRunningProjectId("");
+          }
+        }
+        async function openReview(projectId) {
+          await load(projectId);
+        }
+        function updateDraftSlide(index, patch) {
+          setDraftSlides((prev) => prev.map((slide, idx) => idx === index ? { ...slide, ...patch } : slide));
+        }
+        function addDraftSlide() {
+          setDraftSlides((prev) => normalizeSlides([
+            ...prev,
+            { title: `新增页面 ${prev.length + 1}`, slide_type: "content", purpose: "补充需要表达的内容。", key_points: [] },
+          ]));
+        }
+        function removeDraftSlide(index) {
+          setDraftSlides((prev) => normalizeSlides(prev.filter((_, idx) => idx !== index)));
+        }
+        function buildOutlinePayload() {
+          const base = detail?.outline?.outline || {};
+          const slides = normalizeSlides(draftSlides);
+          return { ...base, slides, storyline: slides.map((slide) => slide.purpose) };
+        }
+        async function saveReview(kind) {
+          const projectId = selectedProject?.id;
+          if (!projectId) return;
+          setError(null);
+          setPageError("");
+          setReviewBusy(kind + "-save");
+          setProjectErrors((prev) => ({ ...prev, [projectId]: "" }));
+          try {
+            if (kind === "outline") {
+              await request(`/projects/${projectId}/outline`, { method: "PUT", body: { outline: buildOutlinePayload(), confirmed: false } });
+            } else {
+              await request(`/projects/${projectId}/design/confirm`, { method: "PUT", body: { design: { design_spec_markdown: draftDesign, spec_lock: draftSpecLock }, confirmed: false } });
+            }
+            const data = await request(`/projects/${projectId}`);
+            setDetail(data);
+            syncReviewDrafts(data);
+            await refreshProjects({ local: true });
+          } catch (err) {
+            setProjectErrors((prev) => ({ ...prev, [projectId]: String(err.message || err) }));
+            setPageError(String(err.message || err));
+          } finally {
+            setReviewBusy("");
+          }
+        }
+        async function confirmReview(kind) {
+          const projectId = selectedProject?.id;
+          if (!projectId) return;
+          setError(null);
+          setPageError("");
+          setReviewBusy(kind);
+          setProjectErrors((prev) => ({ ...prev, [projectId]: "" }));
+          try {
+            if (kind === "outline") {
+              if (!draftSlides.length) throw new Error("当前项目还没有可确认的大纲，请先点击继续生成大纲。");
+              await request(`/projects/${projectId}/outline`, { method: "PUT", body: { outline: buildOutlinePayload(), confirmed: true } });
+            } else {
+              const design = { design_spec_markdown: draftDesign, spec_lock: draftSpecLock };
+              if (!design.design_spec_markdown && !Object.keys(design.spec_lock).length) throw new Error("当前项目还没有可确认的设计方案，请先点击继续生成设计。");
+              await request(`/projects/${projectId}/design/confirm`, { method: "PUT", body: { design, confirmed: true } });
+            }
+            const data = await request(`/projects/${projectId}`);
+            setDetail(data);
+            syncReviewDrafts(data);
+            await refreshProjects({ local: true });
+            await retry(projectId);
+          } catch (err) {
+            setProjectErrors((prev) => ({ ...prev, [projectId]: String(err.message || err) }));
+            setPageError(String(err.message || err));
+          } finally {
+            setReviewBusy("");
+          }
+        }
+        async function cancel(projectId) { setError(null); await request(`/projects/${projectId}/cancel`, { method: "POST" }); if (detail?.project?.id === projectId) setDetail(null); refreshProjects(); }
+        async function remove(projectId) { setError(null); await request(`/projects/${projectId}`, { method: "DELETE" }); if (detail?.project?.id === projectId) setDetail(null); setDeleteTarget(null); refreshProjects(); }
+        async function refreshProjectBoard() {
+          setError(null);
+          setPageError("");
+          try {
+            await refreshProjects({ local: true });
+          } catch (err) {
+            setPageError(String(err.message || err));
+          }
+        }
+        const selectedProject = detail?.project || detail;
+        return (
+          <div className="asset-workspace project-workspace">
+            <div className="asset-toolbar card">
+              <div><div className="label">项目管理</div><p>项目会按“大纲确认 → 设计确认 → 页面生成 → 质量检查 → 导出”推进。停在确认点时，需要在这里继续或重试。</p></div>
+              <div className="asset-stats"><span>全部 <strong>{projects.length}</strong></span><span>进行中 <strong>{activeCount}</strong></span><span>已完成 <strong>{readyCount}</strong></span><span>失败 <strong>{failedCount}</strong></span></div>
+            </div>
+            <div className="project-board card">
+              <div className="asset-main__head"><strong className="section-title">项目列表</strong><span>{visibleProjects.length} 个项目</span></div>
+              <div className="asset-main__controls">
+                <div className="asset-filter">
+                  <span className="asset-filter__label">状态</span>
+                  <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button>
+                  <button className={filter === "active" ? "active" : ""} onClick={() => setFilter("active")}>进行中</button>
+                  <button className={filter === "ready" ? "active" : ""} onClick={() => setFilter("ready")}>已完成</button>
+                  <button className={filter === "failed" ? "active" : ""} onClick={() => setFilter("failed")}>失败</button>
+                </div>
+                <button className="btn btn-primary" onClick={() => refreshProjectBoard()}>刷新项目</button>
+              </div>
+              {pageError && <div className="project-card__error">项目列表刷新失败：{pageError}</div>}
+              <div className="project-card-grid">
+                {visibleProjects.map((p) => {
+                  const running = runningProjectId === p.id;
+                  const currentStep = stepIndex(p.status);
+                  return (
+                    <div className={"project-card project-card--wide " + (running ? "is-running " : "") + (selectedProject?.id === p.id ? "selected" : "")} key={p.id}>
+                      <div className="project-card__head">
+                        <strong>{p.title || "未命名项目"}</strong>
+                        <span className={"badge badge-" + statusClass(p.status)}>{running ? "处理中" : p.status}</span>
+                      </div>
+                      <div className="project-card__meta">
+                        <span>{p.mode}</span><span>{p.slide_count || "?"} 页</span><span>{shortId(p.id)}</span>
+                      </div>
+                      <div className="project-timeline">
+                        {steps.map(([id, label], index) => (
+                          <div className={"project-timeline__step " + (index < currentStep ? "done " : "") + (index === currentStep ? "active " : "") + (running && index === currentStep ? "running" : "")} key={id}>
+                            <i>{index + 1}</i><span>{label}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="project-stage-line">
+                        <span className={p.status === "ready" ? "done" : "active"}>{running ? "正在推进，请稍候..." : nextAction(p.status)}</span>
+                        <em>{p.updated_at ? new Date(p.updated_at * 1000).toLocaleString() : "暂无更新时间"}</em>
+                      </div>
+                      {projectErrors[p.id] && <div className="project-card__error">推进失败：{projectErrors[p.id]}</div>}
+                      <div className="project-card__actions project-card__actions--split">
+                        <button className="btn btn-sm btn-primary project-card__primary-action" onClick={() => { if (p.status === "ready") onNavigate("Exports"); else (p.status === "outline_ready" || p.status === "design_ready" ? openReview(p.id) : retry(p.id)).catch(setError); }} disabled={!!runningProjectId || p.status === "cancelled"}>{running ? "处理中..." : primaryActionLabel(p.status)}</button>
+                        <div className="project-card__secondary-actions">
+                          <button className="btn btn-sm" onClick={() => load(p.id).catch(setError)}>详情</button>
+                          {!["ready", "failed", "cancelled"].includes(p.status) && <button className="btn btn-sm" onClick={() => cancel(p.id).catch(setError)} disabled={!!runningProjectId}>取消</button>}
+                          <button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget({ id: p.id, name: p.title || p.id, title: "确认删除该项目？", targetTag: "目标项目", showDeleteFiles: false, description: "删除后，这个项目、任务记录、页面记录和导出记录会从项目列表中移除。已生成的本地文件不会在这里同步删除。" })} disabled={!!runningProjectId}>删除</button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {visibleProjects.length === 0 && <div className="empty-note">暂无符合条件的项目。创建页生成项目后，会出现在这里。</div>}
+              </div>
+            </div>
+            {detailOpen && (
+              <div className="modal-mask" onClick={() => setDetailOpen(false)}>
+                <div className="modal-card project-detail-modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="analysis-modal__head">
+                    <div><strong>项目详情</strong><span>{selectedProject?.title || selectedProject?.id || "项目"}</span></div>
+                    <button className="btn btn-sm" onClick={() => setDetailOpen(false)}>关闭</button>
+                  </div>
+                  <div className="analysis-modal__body">
+                    <div className="project-detail">
+                      <div className="project-detail__hero">
+                        <strong>{selectedProject?.title || "项目详情"}</strong>
+                        <span className={"badge badge-" + statusClass(selectedProject?.status)}>{selectedProject?.status || "unknown"}</span>
+                        <p>{selectedProject?.prompt || "暂无需求描述"}</p>
+                      </div>
+                      <div className="project-detail__grid">
+                        <div><span>模式</span><strong>{selectedProject?.mode || "-"}</strong></div>
+                        <div><span>页数</span><strong>{selectedProject?.slide_count || "-"}</strong></div>
+                        <div><span>数据集</span><strong>{shortId(selectedProject?.dataset_id) || "未绑定"}</strong></div>
+                        <div><span>模板</span><strong>{shortId(selectedProject?.template_id) || "未绑定"}</strong></div>
+                      </div>
+                      {selectedProject?.id && (
+                        <ActivityLogPanel projectId={selectedProject.id} onError={setError} />
+                      )}
+                      {selectedProject?.status === "outline_ready" && (
+                        <div className="project-review-panel">
+                          <div className="project-review-head">
+                            <div><div className="section-title">大纲编辑与确认</div><p>请调整页面顺序、标题和每页用途。确认后，设计方案会基于这里的大纲重新推进。</p></div>
+                            <button className="btn btn-sm btn-primary" onClick={addDraftSlide}>新增页面</button>
+                          </div>
+                          <div className="project-review-list">
+                            {draftSlides.map((slide, index) => (
+                              <div className="project-review-item" key={index}>
+                                <div className="project-review-item__head">
+                                  <strong>第 {index + 1} 页</strong>
+                                  <button className="btn btn-sm btn-danger" onClick={() => removeDraftSlide(index)} disabled={draftSlides.length <= 1}>删除</button>
+                                </div>
+                                <input className="input" value={slide.title || ""} onChange={(e) => updateDraftSlide(index, { title: e.target.value })} placeholder="页面标题" />
+                                <textarea className="input textarea project-review-textarea" value={slide.purpose || ""} onChange={(e) => updateDraftSlide(index, { purpose: e.target.value })} placeholder="这一页要说明什么、希望听众理解什么" />
+                              </div>
+                            ))}
+                            {draftSlides.length === 0 && <div className="empty-note">还没有可确认的大纲。请先关闭弹窗，点击项目卡片的“继续/重试”生成大纲。</div>}
+                          </div>
+                          <div className="project-review-actions">
+                            <button className="btn" onClick={() => saveReview("outline").catch(setError)} disabled={!!reviewBusy || draftSlides.length === 0}>{reviewBusy === "outline-save" ? "保存中..." : "保存修改"}</button>
+                            <button className="btn btn-primary" onClick={() => confirmReview("outline").catch(setError)} disabled={!!reviewBusy || draftSlides.length === 0}>{reviewBusy === "outline" ? "确认中..." : "确认并进入设计生成"}</button>
+                          </div>
+                        </div>
+                      )}
+                      {selectedProject?.status === "design_ready" && (
+                        <div className="project-review-panel">
+                          <div className="section-title">设计编辑与确认</div>
+                          <p>请检查并编辑版式方向、品牌色、字体和页面类型匹配。确认后项目会进入 PPTX 生成与导出阶段。</p>
+                          <div className="project-design-fields">
+                            <div className="form-row"><div className="form-label-title">主色 <span>影响标题、重点数字和关键装饰</span></div><input className="input" value={draftSpecLock?.theme?.primary_color || ""} onChange={(e) => updateTheme("primary_color", e.target.value)} placeholder="#e84d2a" /></div>
+                            <div className="form-row"><div className="form-label-title">辅助色 <span>用于次级强调和背景层次</span></div><input className="input" value={draftSpecLock?.theme?.secondary_color || ""} onChange={(e) => updateTheme("secondary_color", e.target.value)} placeholder="#f97316" /></div>
+                            <div className="form-row"><div className="form-label-title">强调色 <span>用于图表高亮和提示信息</span></div><input className="input" value={draftSpecLock?.theme?.accent_color || ""} onChange={(e) => updateTheme("accent_color", e.target.value)} placeholder="#0f172a" /></div>
+                            <div className="form-row"><div className="form-label-title">标题字体 <span>影响每页标题和章节标题</span></div><input className="input" value={draftSpecLock?.theme?.font_heading || ""} onChange={(e) => updateTheme("font_heading", e.target.value)} placeholder="Microsoft YaHei" /></div>
+                            <div className="form-row"><div className="form-label-title">正文字体 <span>影响正文、备注和图表说明</span></div><input className="input" value={draftSpecLock?.theme?.font_body || ""} onChange={(e) => updateTheme("font_body", e.target.value)} placeholder="Microsoft YaHei" /></div>
+                          </div>
+                          <div className="project-design-preview">
+                            {draftDesign ? <textarea className="input textarea project-design-editor" value={draftDesign} onChange={(e) => setDraftDesign(e.target.value)} /> : <div className="empty-note">还没有可确认的设计方案。请先关闭弹窗，点击项目卡片的“继续/重试”生成设计。</div>}
+                          </div>
+                          <div className="project-review-actions">
+                            <button className="btn" onClick={() => saveReview("design").catch(setError)} disabled={!!reviewBusy || !draftDesign}>{reviewBusy === "design-save" ? "保存中..." : "保存修改"}</button>
+                            <button className="btn btn-primary" onClick={() => confirmReview("design").catch(setError)} disabled={!!reviewBusy || !draftDesign}>{reviewBusy === "design" ? "确认中..." : "确认并生成 PPTX"}</button>
+                          </div>
+                        </div>
+                      )}
+                      {["outline_confirmed", "design_confirmed", "ready", "failed", "cancelled"].includes(selectedProject?.status) && (
+                        <div className={"project-next-panel " + (selectedProject?.status === "ready" ? "is-ready" : selectedProject?.status === "failed" ? "is-failed" : "")}>
+                          <div>
+                            <strong>{selectedProject?.status === "ready" ? "项目已完成" : selectedProject?.status === "failed" ? "项目生成失败" : selectedProject?.status === "cancelled" ? "项目已取消" : "下一步操作"}</strong>
+                            <p>{selectedProject?.status === "ready" ? "PPTX 已生成，可以前往导出页下载文件。" : selectedProject?.status === "failed" ? "流程执行失败，可以重新生成；如果多次失败，请查看原始项目 JSON 或错误提示。" : selectedProject?.status === "outline_confirmed" ? "大纲已确认，下一步会生成设计方案并等待你确认。" : selectedProject?.status === "design_confirmed" ? "设计已确认，下一步会生成 PPTX 并进入导出阶段。" : "该项目已取消，不会继续推进。"}</p>
+                          </div>
+                          <div className="project-next-panel__actions">
+                            {selectedProject?.status === "ready" && <button className="btn btn-primary" onClick={() => { setDetailOpen(false); onNavigate("Exports"); }}>去导出页下载</button>}
+                            {selectedProject?.status === "failed" && <button className="btn btn-primary" onClick={() => retry(selectedProject.id).catch(setError)} disabled={!!runningProjectId}>重新生成</button>}
+                            {selectedProject?.status === "outline_confirmed" && <button className="btn btn-primary" onClick={() => retry(selectedProject.id).catch(setError)} disabled={!!runningProjectId}>生成设计方案</button>}
+                            {selectedProject?.status === "design_confirmed" && <button className="btn btn-primary" onClick={() => retry(selectedProject.id).catch(setError)} disabled={!!runningProjectId}>生成 PPTX</button>}
+                          </div>
+                        </div>
+                      )}
+                      {projectErrors[selectedProject?.id] && <div className="project-card__error">操作失败：{projectErrors[selectedProject.id]}</div>}
+                      <details className="template-raw"><summary>查看原始项目 JSON</summary><JsonBlock value={detail} /></details>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            <DeleteAssetConfirmModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={() => remove(deleteTarget.id).catch(setError)} />
+          </div>
+        );
+      }
+
+      const TABLE_EXTS = ["csv", "tsv", "xlsx"];
+      const SOURCE_EXTS = ["md", "markdown", "txt", "pdf", "docx", "pptx"];
+      function fileExt(name) {
+        const idx = String(name || "").lastIndexOf(".");
+        return idx >= 0 ? name.slice(idx + 1).toLowerCase() : "";
+      }
+      function isTableFile(name) { return TABLE_EXTS.includes(fileExt(name)); }
+      function materialBucket(item) {
+        if (item.assetType === "dataset") {
+          return item.status === "profiled" ? "processed" : "pending";
+        }
+        return item.status === "parsed" ? "processed" : "pending";
+      }
+      function bucketLabel(bucket) {
+        return bucket === "processed" ? "已处理" : "待处理";
+      }
+      function typeLabel(item) {
+        return item.assetType === "dataset" ? "表格数据" : "参考资料";
+      }
+      function buildMaterials(sources, datasets) {
+        const items = [];
+        for (const dataset of datasets) {
+          items.push({
+            assetType: "dataset",
+            id: dataset.id,
+            name: dataset.name,
+            kind: dataset.metadata?.kind || "table",
+            status: dataset.status,
+            collection: dataset.metadata?.collection || dataset.name || "未分组",
+            path: dataset.original_path,
+            updatedAt: dataset.updated_at || dataset.created_at,
+            raw: dataset,
+          });
+        }
+        for (const source of sources) {
+          items.push({
+            assetType: "source",
+            id: source.id,
+            name: source.filename,
+            kind: source.kind,
+            status: source.status,
+            collection: source.metadata?.collection || "未分组",
+            path: source.path,
+            updatedAt: source.updated_at || source.created_at,
+            raw: source,
+          });
+        }
+        return items;
+      }
+
+      function MaterialsTab({ setError, refreshData, sources, datasets }) {
+        const [collectionName, setCollectionName] = useState("");
+        const [pendingFiles, setPendingFiles] = useState([]);
+        const [uploading, setUploading] = useState(false);
+        const [processAfterUpload, setProcessAfterUpload] = useState(false);
+        const [uploadPhase, setUploadPhase] = useState("");
+        const [selected, setSelected] = useState({});
+        const [statusFilter, setStatusFilter] = useState("all");
+        const [typeFilter, setTypeFilter] = useState("all");
+        const [expandedCollections, setExpandedCollections] = useState({});
+        const [analysisModal, setAnalysisModal] = useState(null);
+        const [parseModal, setParseModal] = useState(null);
+        const [deleteTarget, setDeleteTarget] = useState(null);
+        const materials = buildMaterials(sources, datasets);
+        async function registerUploadedAsDataset(uploadedSource) {
+          const uploadedPath = uploadedSource?.path || "";
+          if (!uploadedPath) return null;
+          const name = collectionName.trim();
+          return await request("/datasets", {
+            method: "POST",
+            body: { path: uploadedPath, name: uploadedSource.filename || name, collection_name: name },
+          });
+        }
+        async function processMaterial(item, options = {}) {
+          const showResult = options.showResult !== false;
+          setError(null);
+          if (item.assetType === "dataset") {
+            const data = await request(`/datasets/${item.id}/profile`, { method: "POST" });
+            if (showResult) setAnalysisModal(data);
+          } else {
+            const data = await request(`/sources/${item.id}/parse`, { method: "POST" });
+            if (showResult) setParseModal({ source: item.raw, parsed: data?.parsed });
+          }
+          refreshData();
+        }
+        async function confirmUpload() {
+          setError(null);
+          if (!collectionName.trim()) throw new Error("请先填写素材集名称，再上传文件。");
+          if (!pendingFiles.length) throw new Error("请先选择要上传的素材文件。");
+          setUploading(true);
+          setUploadPhase("上传素材中...");
+          try {
+            const uploadedMaterials = [];
+            for (const file of pendingFiles) {
+              const uploaded = await uploadFile(file, "", { collection_name: collectionName.trim() });
+              if (isTableFile(uploaded?.source?.filename || file.name)) {
+                const created = await registerUploadedAsDataset(uploaded.source);
+                if (created?.dataset) {
+                  uploadedMaterials.push({ assetType: "dataset", id: created.dataset.id, raw: created.dataset });
+                }
+              } else if (uploaded?.source) {
+                uploadedMaterials.push({ assetType: "source", id: uploaded.source.id, raw: uploaded.source });
+              }
+            }
+            if (processAfterUpload && uploadedMaterials.length > 0) {
+              setUploadPhase("同步处理中，请稍候...");
+              for (const item of uploadedMaterials) {
+                await processMaterial(item, { showResult: false });
+              }
+            }
+            setPendingFiles([]);
+            refreshData();
+          } finally {
+            setUploadPhase("");
+            setUploading(false);
+          }
+        }
+        const visibleMaterials = materials.filter((item) => {
+          if (statusFilter !== "all" && materialBucket(item) !== statusFilter) return false;
+          if (typeFilter !== "all" && item.assetType !== typeFilter) return false;
+          return true;
+        });
+        const groupedCollections = visibleMaterials.reduce((acc, item) => {
+          const key = item.collection || "未分组";
+          acc[key] = acc[key] || [];
+          acc[key].push(item);
+          return acc;
+        }, {});
+        const selectedIds = Object.entries(selected).filter(([, value]) => value).map(([id]) => id);
+        function toggleSelected(id) { setSelected((prev) => ({ ...prev, [id]: !prev[id] })); }
+        function toggleCollection(name) { setExpandedCollections((prev) => ({ ...prev, [name]: prev[name] === false })); }
+        function selectCollection(items) {
+          setSelected(items.reduce((acc, item) => ({ ...acc, [item.id]: true }), {}));
+        }
+        async function processSelected() {
+          for (const id of selectedIds) {
+            const item = materials.find((entry) => entry.id === id);
+            if (item) await processMaterial(item);
+          }
+          setSelected({});
+        }
+        async function processCollection(name) {
+          setError(null);
+          const group = materials.filter((item) => (item.collection || "未分组") === name);
+          for (const item of group) await processMaterial(item);
+          setSelected({});
+        }
+        async function viewResult(item) {
+          setError(null);
+          if (item.assetType === "dataset") {
+            if (item.status === "profiled") {
+              setAnalysisModal(await request(`/datasets/${item.id}/analysis`));
+            } else {
+              setAnalysisModal({ dataset: item.raw });
+            }
+          } else if (item.status === "parsed") {
+            setParseModal({ source: item.raw, parsed: item.raw.metadata?.parsed });
+          }
+        }
+        async function confirmDelete(deleteFiles) {
+          if (!deleteTarget) return;
+          setError(null);
+          const targets = deleteTarget.targets || [{ id: deleteTarget.id, assetType: deleteTarget.assetType }];
+          for (const entry of targets) {
+            const endpoint = entry.assetType === "dataset" ? "datasets" : "sources";
+            await request(`/${endpoint}/${entry.id}`, { method: "DELETE", body: { delete_files: deleteFiles } });
+          }
+          setDeleteTarget(null);
+          setSelected((prev) => {
+            const next = { ...prev };
+            targets.forEach(({ id }) => { delete next[id]; });
+            return next;
+          });
+          refreshData();
+        }
+        const stats = {
+          total: materials.length,
+          processed: materials.filter((item) => materialBucket(item) === "processed").length,
+          pending: materials.filter((item) => materialBucket(item) === "pending").length,
+          tables: materials.filter((item) => item.assetType === "dataset").length,
+          docs: materials.filter((item) => item.assetType === "source").length,
+        };
+        return (
+          <div className="asset-workspace">
+            <div className="asset-toolbar card">
+              <div>
+                <div className="label">素材库</div>
+                <p>资料和表格统一在这里管理：上传 CSV/XLSX 自动建数据集做体检分析；上传 Markdown/PDF/DOCX/PPTX 自动登记并支持解析。</p>
+              </div>
+              <div className="asset-stats">
+                <span>全部 <strong>{stats.total}</strong></span>
+                <span>已处理 <strong>{stats.processed}</strong></span>
+                <span>待处理 <strong>{stats.pending}</strong></span>
+                <span>表格 <strong>{stats.tables}</strong></span>
+                <span>资料 <strong>{stats.docs}</strong></span>
+              </div>
+            </div>
+            <div className="asset-grid-layout">
+              <div className="asset-sidebar asset-sidebar--upload card">
+                <div className="form-row">
+                  <div className="field-title">素材集名称（必填）</div>
+                  <input className="input" value={collectionName} onChange={(e) => setCollectionName(e.target.value)} placeholder="例如：2026Q2 销售汇报素材" />
+                </div>
+                <div className="field-title">上传素材文件</div>
+                <FileUploadZone multiple manual accept=".md,.markdown,.txt,.pdf,.docx,.pptx,.csv,.tsv,.xlsx" disabled={!collectionName.trim() || uploading} onFilesSelected={(files) => setPendingFiles((prev) => [...prev, ...files])} hint="先填写素材集名称，再选择一个或多个文件；CSV/XLSX 会建数据集，资料类只登记不分析。" />
+                <label className="upload-process-option">
+                  <input type="checkbox" checked={processAfterUpload} onChange={(e) => setProcessAfterUpload(e.target.checked)} disabled={uploading} />
+                  <span>
+                    <strong>上传后同步处理素材</strong>
+                    <small>表格需要分析、资料需要解析后才方便用于生成。勾选后会等处理完成再结束上传，结果请到右侧素材管理卡片查看。</small>
+                  </span>
+                </label>
+                <div className="pending-upload">
+                  <div className="pending-upload__head">
+                    <span>{pendingFiles.length ? `待上传文件（${pendingFiles.length}）` : "待上传文件预览"}</span>
+                    {pendingFiles.length > 0 && (
+                      <span className="pending-upload__hint">点击 × 可移除单个文件</span>
+                    )}
+                  </div>
+                  {pendingFiles.length === 0 ? (
+                    <div className="pending-upload__empty">
+                      还没有选择文件。<br />从上方"点击上传素材"挑选文件，预览会显示在这里。
+                    </div>
+                  ) : (
+                    <div className="pending-upload__list">
+                      {pendingFiles.map((file, index) => (
+                        <div className="pending-upload__item" key={`${file.name}-${index}`}>
+                          <span className={"pending-upload__item-icon " + (isTableFile(file.name) ? "is-table" : "is-doc")}>{isTableFile(file.name) ? "表" : "文"}</span>
+                          <span className="pending-upload__item-name" title={file.name}>{file.name}</span>
+                          <span className="pending-upload__item-size">{(file.size / 1024).toFixed(1)} KB</span>
+                          <button className="pending-upload__item-remove" onClick={() => setPendingFiles((prev) => prev.filter((_, i) => i !== index))} title="移除该文件">×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button className="btn btn-primary btn-block" onClick={() => confirmUpload().catch(setError)} disabled={!collectionName.trim() || pendingFiles.length === 0 || uploading}>{uploading ? (uploadPhase || "上传中...") : "确认上传"}</button>
+              </div>
+              <div className="asset-main card">
+                <div className="asset-main__head">
+                  <strong className="section-title">素材管理</strong>
+                  <span>{visibleMaterials.length} 个结果</span>
+                </div>
+                <div className="asset-main__controls">
+                  <div className="asset-filter">
+                    <span className="asset-filter__label">状态</span>
+                    <button className={statusFilter === "all" ? "active" : ""} onClick={() => setStatusFilter("all")}>全部</button>
+                    <button className={statusFilter === "pending" ? "active" : ""} onClick={() => setStatusFilter("pending")}>待处理</button>
+                    <button className={statusFilter === "processed" ? "active" : ""} onClick={() => setStatusFilter("processed")}>已处理</button>
+                  </div>
+                  <div className="asset-filter">
+                    <span className="asset-filter__label">类型</span>
+                    <button className={typeFilter === "all" ? "active" : ""} onClick={() => setTypeFilter("all")}>全部</button>
+                    <button className={typeFilter === "source" ? "active" : ""} onClick={() => setTypeFilter("source")}>资料</button>
+                    <button className={typeFilter === "dataset" ? "active" : ""} onClick={() => setTypeFilter("dataset")}>表格</button>
+                  </div>
+                  <button className="btn btn-primary" onClick={() => processSelected().catch(setError)} disabled={selectedIds.length === 0}>处理选中素材 ({selectedIds.length})</button>
+                </div>
+                <div className="collection-accordion">
+                  {Object.entries(groupedCollections).map(([name, items]) => {
+                    const processedCount = items.filter((item) => materialBucket(item) === "processed").length;
+                    const open = expandedCollections[name] !== false;
+                    return (
+                      <section className="collection-panel" key={name}>
+                        <div className="collection-panel__head" onClick={() => toggleCollection(name)} role="button" tabIndex="0">
+                          <div>
+                            <strong>{open ? "▾" : "▸"} {name}</strong>
+                            <span>{items.length} 个素材 · 已处理 {processedCount} · 待处理 {items.length - processedCount}</span>
+                          </div>
+                          <div className="collection-panel__actions" onClick={(e) => e.stopPropagation()}>
+                            <button className="btn btn-sm" onClick={() => selectCollection(items)}>选择整组</button>
+                            <button className="btn btn-sm btn-primary" onClick={() => processCollection(name).catch(setError)}>整组处理</button>
+                            <button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget({ name: `素材集：${name}`, ids: items.map((item) => item.id), targets: items.map((item) => ({ id: item.id, assetType: item.assetType })) })}>删除文件夹</button>
+                          </div>
+                        </div>
+                        {open && (
+                          <div className="dataset-grid">
+                            {items.map((item) => (
+                              <div className={"dataset-card material-card " + (selected[item.id] ? "selected " : "") + (item.assetType === "dataset" ? "is-table" : "is-doc")} key={item.id}>
+                                <label className="dataset-card__check">
+                                  <input type="checkbox" checked={!!selected[item.id]} onChange={() => toggleSelected(item.id)} />
+                                  <span className={"material-badge " + (materialBucket(item) === "processed" ? "is-processed" : "is-pending")}>{bucketLabel(materialBucket(item))}</span>
+                                </label>
+                                <div className="material-card__type">
+                                  <span className={"material-type-tag " + (item.assetType === "dataset" ? "is-table" : "is-doc")}>{typeLabel(item)}</span>
+                                  <span className="material-kind">{item.kind || "unknown"}</span>
+                                </div>
+                                <strong>{item.name}</strong>
+                                <span className="material-card__sub">{shortId(item.id)}</span>
+                                <code title={item.path}>{item.path}</code>
+                                <div className="dataset-card__actions">
+                                  <button className="btn btn-sm btn-primary" onClick={() => processMaterial(item).catch(setError)}>{item.assetType === "dataset" ? "分析" : "解析"}</button>
+                                  <button className="btn btn-sm" onClick={() => viewResult(item).catch(setError)} disabled={materialBucket(item) !== "processed"}>查看结果</button>
+                                  <button className="btn btn-sm btn-danger" onClick={() => setDeleteTarget({ id: item.id, name: item.name, assetType: item.assetType })}>删除</button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    );
+                  })}
+                  {visibleMaterials.length === 0 && <div className="empty-note">暂无符合条件的素材。左侧命名素材集并上传文件后，会按文件夹显示在这里。</div>}
+                </div>
+              </div>
+            </div>
+            <AnalysisModal dataset={analysisModal} onClose={() => setAnalysisModal(null)} />
+            <SourceParsedModal payload={parseModal} onClose={() => setParseModal(null)} />
+            <DeleteAssetConfirmModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={(deleteFiles) => confirmDelete(deleteFiles).catch(setError)} />
+          </div>
+        );
+      }
+
+      function SourceParsedModal({ payload, onClose }) {
+        if (!payload || !payload.source) return null;
+        const source = payload.source;
+        const parsed = payload.parsed || source.metadata?.parsed || null;
+        return (
+          <div className="modal-mask" onClick={onClose}>
+            <div className="modal-card analysis-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="analysis-modal__head">
+                <div>
+                  <strong>资料解析结果</strong>
+                  <span>{source.filename || source.id}</span>
+                </div>
+                <button className="btn btn-sm" onClick={onClose}>关闭</button>
+              </div>
+              <div className="analysis-modal__body">
+                {parsed ? (
+                  <div className="parse-summary">
+                    <div className="parse-summary__row"><span className="parse-summary__key">标题</span><span>{parsed.title || "（未提取到标题）"}</span></div>
+                    <div className="parse-summary__row"><span className="parse-summary__key">类型</span><span>{parsed.kind || source.kind}</span></div>
+                    <div className="parse-summary__row"><span className="parse-summary__key">字符数</span><span>{parsed.text_length ?? (parsed.text ? parsed.text.length : 0)}</span></div>
+                    <div className="parse-summary__preview">
+                      <div className="parse-summary__key">正文预览</div>
+                      <pre>{(parsed.text_preview || parsed.text || "（无文字内容）").slice(0, 1500)}</pre>
+                    </div>
+                    <details style={{marginTop: 12}}>
+                      <summary className="text-xs text-muted">查看原始 JSON</summary>
+                      <JsonBlock value={parsed} />
+                    </details>
+                  </div>
+                ) : (
+                  <div className="empty-note">该资料还没有解析结果，可在卡片点击"解析"。</div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function TemplateDiagnosticSummary({ diagnosis, template }) {
+        const profile = diagnosis?.template_profile || null;
+        const brand = diagnosis?.brand_tokens || null;
+        const layoutMap = diagnosis?.layout_map || null;
+        const layoutEntries = Object.entries(layoutMap || {});
+        const matchedLayouts = layoutEntries.filter(([, value]) => value?.source === "pptx").length;
+        const slideSize = profile?.slide_size;
+        const warnings = profile?.warnings || [];
+        if (!template) return <div className="empty-note">选择或上传一个企业模板后，这里会展示诊断摘要。</div>;
+        if (!profile) {
+          return (
+            <div className="template-summary template-summary--empty">
+              <div className="template-summary__hero">
+                <strong>{template.name || "企业模板"}</strong>
+                <span>还没有诊断结果</span>
+                <p>点击“诊断模板”，系统会读取 PPTX 的页面尺寸、品牌色、字体和版式，并判断哪些页面类型可以直接套用模板。</p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="template-summary">
+            <div className="template-summary__hero">
+              <strong>{template.name || profile.name || "企业模板"}</strong>
+              <span>{matchedLayouts} / {layoutEntries.length || 0} 个页面类型命中模板版式</span>
+              <p>诊断结果会用于生成阶段：品牌色和字体决定视觉风格，版式映射决定封面、章节页、内容页等页面如何套用模板。</p>
+            </div>
+            <div className="template-summary__grid">
+              <div className="template-summary__card"><span>页面尺寸</span><strong>{slideSize ? `${slideSize.width} × ${slideSize.height} ${slideSize.unit || ""}` : "默认宽屏"}</strong><p>{slideSize?.source === "default" ? "未读取到尺寸，使用默认 16:9 宽屏。" : "已从模板文件读取页面尺寸。"}</p></div>
+              <div className="template-summary__card"><span>品牌色</span><div className="template-color-row">{(profile.detected_colors || []).slice(0, 5).map((color) => <i key={color} style={{background: `#${color}`}} title={`#${color}`} />)}{!(profile.detected_colors || []).length && <em>未检测到，使用默认色</em>}</div>{brand && <p>主色 {brand.primary_color}，强调色 {brand.accent_color}</p>}</div>
+              <div className="template-summary__card"><span>字体</span><strong>{(profile.detected_fonts || []).slice(0, 2).join(" / ") || "使用默认字体"}</strong>{brand && <p>标题 {brand.font_heading}，正文 {brand.font_body}</p>}</div>
+              <div className="template-summary__card"><span>模板版式</span><strong>{profile.layout_count || 0} 个</strong><p>已识别模板中的可用 layout（版式，即 PPT 母版里的页面布局）。</p></div>
+            </div>
+            <div className="template-layout-map">
+              <div className="template-layout-map__head">页面类型匹配情况</div>
+              <div className="template-layout-map__items">
+                {layoutEntries.map(([key, value]) => (
+                  <div className={"template-layout-chip " + (value?.source === "pptx" ? "matched" : "fallback")} key={key}>
+                    <strong>{key}</strong><span>{value?.pptx_layout || value?.fallback || "内置兜底"}</span><em>{value?.source === "pptx" ? "使用模板" : "使用内置兜底"}</em>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {warnings.length > 0 && <div className="template-warning"><strong>使用前提醒</strong>{warnings.map((item) => <span key={item}>{item}</span>)}</div>}
+            <details className="template-raw"><summary>查看原始诊断 JSON</summary><JsonBlock value={diagnosis} /></details>
+          </div>
+        );
+      }
+
+      function TemplateDiagnosisModal({ diagnosis, template, onClose }) {
+        if (!diagnosis && !template) return null;
+        return (
+          <div className="modal-mask" onClick={onClose}>
+            <div className="modal-card template-diagnosis-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="analysis-modal__head">
+                <div>
+                  <strong>模板诊断结果</strong>
+                  <span>{template?.name || diagnosis?.template?.name || "企业模板"}</span>
+                </div>
+                <button className="btn btn-sm" onClick={onClose}>关闭</button>
+              </div>
+              <div className="analysis-modal__body">
+                <TemplateDiagnosticSummary diagnosis={diagnosis} template={template || diagnosis?.template} />
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function TemplatesTab({ setError, refreshData, templates }) {
+        const [path, setPath] = useState("");
+        const [templateName, setTemplateName] = useState("");
+        const [pendingTemplateFile, setPendingTemplateFile] = useState(null);
+        const [uploadingTemplate, setUploadingTemplate] = useState(false);
+        const [diagnoseAfterUpload, setDiagnoseAfterUpload] = useState(false);
+        const [templateUploadPhase, setTemplateUploadPhase] = useState("");
+        const [template, setTemplate] = useState(null);
+        const [diagnosis, setDiagnosis] = useState(null);
+        const [diagnosisModal, setDiagnosisModal] = useState(null);
+        const [deleteTarget, setDeleteTarget] = useState(null);
+        const selectedTemplate = template?.template || template;
+        async function upload() {
+          setError(null);
+          const name = templateName.trim();
+          if (!name) throw new Error("请先填写模板名称，再上传或登记模板。");
+          if (!pendingTemplateFile && !path.trim()) throw new Error("请先选择 PPTX 模板文件，或填写本地模板路径。");
+          setUploadingTemplate(true);
+          setTemplateUploadPhase("上传模板中...");
+          try {
+            let templatePath = path.trim();
+            if (pendingTemplateFile) {
+              const uploaded = await uploadFile(pendingTemplateFile, "", { collection_name: name });
+              templatePath = uploaded?.source?.path || "";
+            }
+            const data = await request("/templates/upload", { method: "POST", body: { path: templatePath, name } });
+            setTemplate(data);
+            setDiagnosis(null);
+            if (diagnoseAfterUpload && data?.template?.id) {
+              setTemplateUploadPhase("同步诊断中，请稍候...");
+              const diagnosed = await request(`/templates/${data.template.id}/diagnose`, { method: "POST" });
+              setTemplate(diagnosed);
+              setDiagnosis(diagnosed);
+              setDiagnosisModal(diagnosed);
+            }
+            setPendingTemplateFile(null);
+            setPath("");
+            refreshData();
+          } finally {
+            setTemplateUploadPhase("");
+            setUploadingTemplate(false);
+          }
+        }
+        async function diagnoseTemplate(item = selectedTemplate) {
+          if (!item?.id) return;
+          setError(null);
+          const data = await request(`/templates/${item.id}/diagnose`, { method: "POST" });
+          setTemplate(data);
+          setDiagnosis(data);
+          setDiagnosisModal(data);
+          refreshData();
+        }
+        function handleTemplateSelected(files) {
+          const file = files?.[0];
+          if (!file) return;
+          setPendingTemplateFile(file);
+          if (!templateName.trim()) setTemplateName(file.name.replace(/\.pptx$/i, ""));
+        }
+        async function viewDiagnosis(item) {
+          setError(null);
+          setTemplate({ template: item });
+          if (item.status === "diagnosed") {
+            const data = await request(`/templates/${item.id}/diagnosis`);
+            setDiagnosis(data);
+            setDiagnosisModal(data);
+          } else {
+            setDiagnosis(null);
+            setDiagnosisModal({ template: item });
+          }
+        }
+        async function selectTemplate(item) {
+          setError(null);
+          setPath(item.original_path || "");
+          setTemplate({ template: item });
+          setDiagnosis(item.status === "diagnosed" ? await request(`/templates/${item.id}/diagnosis`) : null);
+        }
+        async function confirmDelete(deleteFiles) {
+          if (!deleteTarget) return;
+          setError(null);
+          await request(`/templates/${deleteTarget.id}`, { method: "DELETE", body: { delete_files: deleteFiles } });
+          setDeleteTarget(null);
+          setTemplate(null);
+          setDiagnosis(null);
+          refreshData();
+        }
+        const diagnosedCount = templates.filter((item) => item.status === "diagnosed").length;
+        return (
+          <div className="asset-workspace template-workspace">
+            <div className="asset-toolbar card">
+              <div><div className="label">模板库</div><p>企业 PPTX 模板在这里上传和诊断。诊断会提取品牌色、字体、页面尺寸和版式映射，供创建页绑定使用。</p></div>
+              <div className="asset-stats"><span>全部 <strong>{templates.length}</strong></span><span>已诊断 <strong>{diagnosedCount}</strong></span><span>待诊断 <strong>{templates.length - diagnosedCount}</strong></span></div>
+            </div>
+            <div className="asset-grid-layout">
+              <div className="asset-sidebar asset-sidebar--upload card">
+                <div className="form-row">
+                  <div className="field-title">模板名称（必填）</div>
+                  <input className="input" value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="例如：集团品牌汇报模板" />
+                </div>
+                <div className="field-title">上传企业模板</div>
+                <FileUploadZone accept=".pptx" manual disabled={!templateName.trim() || uploadingTemplate} onFilesSelected={handleTemplateSelected} hint="先填写模板名称，再选择一个 PPTX 文件；上传后会登记为可管理的企业模板。" />
+                <label className="upload-process-option">
+                  <input type="checkbox" checked={diagnoseAfterUpload} onChange={(e) => setDiagnoseAfterUpload(e.target.checked)} disabled={uploadingTemplate} />
+                  <span>
+                    <strong>上传后同步诊断模板</strong>
+                    <small>诊断完成后才结束上传；结果会在弹窗中展示，并可在右侧模板管理卡片再次查看。</small>
+                  </span>
+                </label>
+                <div className="pending-upload template-pending-upload">
+                  <div className="pending-upload__head">
+                    <span>{pendingTemplateFile ? "待上传模板" : "待上传文件预览"}</span>
+                    {pendingTemplateFile && <span className="pending-upload__hint">点击 × 可移除文件</span>}
+                  </div>
+                  {pendingTemplateFile ? (
+                    <div className="pending-upload__list">
+                      <div className="pending-upload__item">
+                        <span className="pending-upload__item-icon is-template">PPTX</span>
+                        <span className="pending-upload__item-name" title={pendingTemplateFile.name}>{pendingTemplateFile.name}</span>
+                        <span className="pending-upload__item-size">{(pendingTemplateFile.size / 1024).toFixed(1)} KB</span>
+                        <button className="pending-upload__item-remove" onClick={() => setPendingTemplateFile(null)} title="移除该文件">×</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="pending-upload__empty">还没有选择模板文件。<br />从上方上传区选择 PPTX 后，会显示在这里。</div>
+                  )}
+                </div>
+                <div className="form-row"><div className="form-label-title">PPTX 模板路径 <span>也可粘贴本地绝对路径</span></div><input className="input" value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\\OpenAkita\\test-assets\\ppt-maker\\company_template.pptx" /></div>
+                <button className="btn btn-primary btn-block" onClick={() => upload().catch(setError)} disabled={!templateName.trim() || (!pendingTemplateFile && !path.trim()) || uploadingTemplate}>{uploadingTemplate ? (templateUploadPhase || "上传中...") : "确认上传"}</button>
+                <div className="template-tip"><strong>诊断会做什么？</strong><span>读取品牌色、字体、页面尺寸和 layout map（页面类型到模板版式的映射）。动画、SmartArt 和复杂母版会尽量保留外观方向，但不承诺 1:1 复刻。</span></div>
+              </div>
+              <div className="asset-main card">
+                <div className="asset-main__head"><strong className="section-title">模板管理</strong><span>{templates.length} 个模板</span></div>
+                <div className="template-manager-grid template-manager-grid--cards">
+                  <div className="template-list-panel">
+                    <div className="template-list-panel__head">模板文件</div>
+                    <div className="template-card-list template-card-list--grid">
+                      {templates.map((item) => (
+                        <div className={"template-card " + (selectedTemplate?.id === item.id ? "selected" : "")} key={item.id} onClick={() => selectTemplate(item).catch(setError)}>
+                          <div className="template-card__main"><strong>{item.name}</strong><span>{item.status === "diagnosed" ? "已诊断，可在创建页绑定" : "待诊断，先点击诊断模板"}</span><code title={item.original_path}>{item.original_path}</code></div>
+                          <div className="template-card__actions"><span className={"material-badge " + (item.status === "diagnosed" ? "is-processed" : "is-pending")}>{item.status === "diagnosed" ? "已诊断" : "待诊断"}</span><button className="btn btn-sm btn-primary" onClick={(e) => { e.stopPropagation(); diagnoseTemplate(item).catch(setError); }}>诊断</button><button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); viewDiagnosis(item).catch(setError); }}>查看结果</button><button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: item.id, name: item.name }); }}>删除</button></div>
+                        </div>
+                      ))}
+                      {templates.length === 0 && <div className="empty-note">还没有企业模板。左侧上传 PPTX 后，会出现在这里。</div>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {diagnosisModal && <TemplateDiagnosisModal diagnosis={diagnosisModal} template={diagnosisModal?.template} onClose={() => setDiagnosisModal(null)} />}
+            <DeleteAssetConfirmModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={(deleteFiles) => confirmDelete(deleteFiles).catch(setError)} />
+          </div>
+        );
+      }
+
+      function ExportsTab({ projects, refreshProjects, setError }) {
+        const exports = projects.flatMap((p) => (p.exports || []).map((e) => ({ ...e, project_title: p.title })));
+        const [selectedExport, setSelectedExport] = useState(exports[0] || null);
+        const [downloadingId, setDownloadingId] = useState("");
+        const [downloadError, setDownloadError] = useState("");
+        const [openStatus, setOpenStatus] = useState("");
+        const [deleteTarget, setDeleteTarget] = useState(null);
+        const exportTime = (item) => item?.created_at ? new Date(item.created_at * 1000).toLocaleString() : "暂无生成时间";
+        useEffect(() => {
+          if (!selectedExport && exports.length) setSelectedExport(exports[0]);
+          if (selectedExport && !exports.some((item) => item.id === selectedExport.id)) setSelectedExport(exports[0] || null);
+        }, [exports.length]);
+        async function downloadExport(item) {
+          if (!item?.id) return;
+          setDownloadError("");
+          setDownloadingId(item.id);
+          try {
+            const iframe = document.createElement("iframe");
+            iframe.style.display = "none";
+            iframe.src = `${PLUGIN_BASE}/exports/${item.id}/download`;
+            document.body.appendChild(iframe);
+            window.setTimeout(() => {
+              iframe.remove();
+              setDownloadingId("");
+            }, 3000);
+          } catch (err) {
+            setDownloadError(`下载触发失败：${String(err.message || err)}。可以点击“打开文件位置”查看导出文件。`);
+            setDownloadingId("");
+          }
+        }
+        async function openExportFolder(item) {
+          if (!item?.id) return;
+          setDownloadError("");
+          setOpenStatus("正在打开导出目录...");
+          try {
+            const data = await request(`/exports/${item.id}/open-folder`, { method: "POST" });
+            setOpenStatus(`已打开导出目录：${data.file || "导出文件"}`);
+          } catch (err) {
+            setOpenStatus("");
+            setDownloadError(`打开导出目录失败：${String(err.message || err)}。请根据下方路径手动打开文件。`);
+          }
+        }
+        async function confirmDeleteExport(deleteFiles) {
+          if (!deleteTarget?.id) return;
+          setDownloadError("");
+          await request(`/exports/${deleteTarget.id}`, { method: "DELETE", body: { delete_files: deleteFiles } });
+          setDeleteTarget(null);
+          setSelectedExport(null);
+          await refreshProjects({ local: true });
+        }
+        return (
+          <div className="asset-workspace export-workspace">
+            <div className="asset-toolbar card">
+              <div><div className="label">导出文件</div><p>项目生成完成后会在这里形成 PPTX 导出记录。选择一个文件可查看来源项目、文件信息并下载。</p></div>
+              <div className="asset-stats"><span>全部 <strong>{exports.length}</strong></span><span>PPTX <strong>{exports.filter((item) => (item.kind || "pptx") === "pptx").length}</strong></span></div>
+            </div>
+            <div className="asset-grid-layout export-grid-layout">
+              <div className="asset-main card">
+                <div className="asset-main__head"><strong className="section-title">导出列表</strong><span>{exports.length} 个文件</span></div>
+                <div className="export-card-grid">
+                  {exports.map((e) => (
+                    <div className={"export-card " + (selectedExport?.id === e.id ? "selected" : "")} key={e.id} onClick={() => setSelectedExport(e)}>
+                      <div className="export-card__icon">PPTX</div>
+                      <div className="export-card__main">
+                        <strong>{e.project_title || "未命名项目"}</strong>
+                        <span>{e.kind || "pptx"} · {shortId(e.id)} · {exportTime(e)}</span>
+                        <code title={e.path}>{e.path || "导出路径待返回"}</code>
+                      </div>
+                    </div>
+                  ))}
+                  {exports.length === 0 && <div className="empty-note">暂无导出文件。项目状态 ready 后，会在这里出现可下载的 PPTX。</div>}
+                </div>
+              </div>
+              <div className="asset-sidebar export-detail-panel card">
+                <div className="section-title">文件预览</div>
+                {selectedExport ? (
+                  <div className="export-detail">
+                    <div className="export-detail__hero">
+                      <span>PPTX</span>
+                      <strong>{selectedExport.project_title || "导出文件"}</strong>
+                      <p>这是可编辑的 PowerPoint 文件，可下载后继续在 PowerPoint 中修改。</p>
+                    </div>
+                    <div className="project-detail__grid">
+                      <div><span>导出 ID</span><strong>{shortId(selectedExport.id)}</strong></div>
+                      <div><span>类型</span><strong>{selectedExport.kind || "pptx"}</strong></div>
+                      <div><span>来源项目</span><strong>{selectedExport.project_title || "-"}</strong></div>
+                      <div><span>状态</span><strong>可下载</strong></div>
+                      <div><span>生成时间</span><strong>{exportTime(selectedExport)}</strong></div>
+                    </div>
+                    <code className="export-detail__path">{selectedExport.path || "未返回路径"}</code>
+                    {openStatus && <div className="create-next-tip">{openStatus}</div>}
+                    {downloadError && <div className="project-card__error">{downloadError}</div>}
+                    <button className="btn btn-primary btn-block" onClick={() => downloadExport(selectedExport)} disabled={downloadingId === selectedExport.id}>{downloadingId === selectedExport.id ? "正在触发下载..." : "下载 PPTX"}</button>
+                    <button className="btn btn-block" onClick={() => openExportFolder(selectedExport)}>打开文件位置</button>
+                    <button className="btn btn-danger btn-block" onClick={() => setDeleteTarget({ id: selectedExport.id, name: selectedExport.project_title || selectedExport.id, title: "确认删除该导出文件？", targetTag: "目标导出", description: "默认只删除导出列表里的记录，不影响本地 PPTX 文件。删除后，这条导出记录不会再出现在导出列表中。", deleteFilesLabel: "同时删除本地 PPTX 文件", hint: "为避免误删，系统只会删除插件导出目录内的 PPTX 文件；外部路径会自动保留。" })}>删除导出记录</button>
+                  </div>
+                ) : <div className="empty-note">左侧选择一个导出文件后，这里会显示下载信息。</div>}
+              </div>
+            </div>
+            <DeleteAssetConfirmModal target={deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={(deleteFiles) => confirmDeleteExport(deleteFiles).catch(setError)} />
+          </div>
+        );
+      }
+
+      function PythonDepCard({ dep, onInstall, onUninstall }) {
+        const [confirmingUninstall, setConfirmingUninstall] = useState(false);
+        const busy = !!dep.busy;
+        const opKind = dep.op_kind || "install";
+        const logLines = dep.log_tail || [];
+        const checks = dep.checks || [];
+        const missingChecks = checks.filter((item) => !item.found);
+        const firstPath = checks.find((item) => item.path)?.path || "";
+        return (
+          <div className="pydep-row">
+            <div className="pydep-row__main">
+              <strong>{dep.id}</strong>
+              <span>{dep.description}</span>
+              <code>{dep.packages?.length ? dep.packages.join(" · ") : "仅检测"}</code>
+              {dep.id === "advanced_export" && !dep.installed && (
+                <small className="text-muted">缺少 python-pptx 时只影响 PPTX 导出，不影响插件加载和设置页。</small>
+              )}
+            </div>
+            <div className="pydep-row__status">
+              {busy ? (
+                <span className="sysdep-card__badge sysdep-card__badge--busy">
+                  <span className="sysdep-spinner" />
+                  {opKind === "uninstall" ? "卸载中" : "安装中"} {formatElapsed(dep.elapsed_sec)}
+                </span>
+              ) : dep.installed ? (
+                <span className="sysdep-card__badge sysdep-card__badge--ok">已安装</span>
+              ) : (
+                <span className="sysdep-card__badge sysdep-card__badge--missing">未安装</span>
+              )}
+            </div>
+            <div className="pydep-row__actions">
+              {!busy && !dep.installed && !dep.detect_only && (
+                <button className="btn btn-sm btn-primary" onClick={() => onInstall(dep.id)}>安装</button>
+              )}
+              {!busy && dep.installed && !dep.detect_only && !confirmingUninstall && (
+                <button className="btn btn-sm btn-danger" onClick={() => setConfirmingUninstall(true)}>卸载</button>
+              )}
+              {busy && <button className="btn btn-sm" disabled>{opKind === "uninstall" ? "卸载中..." : "安装中..."}</button>}
+            </div>
+            <div className="pydep-row__detail">
+              <div className="deps-help" style={{marginTop: 8, marginBottom: 8}}>
+                <div>检测环境：当前 OpenAkita 运行进程可见的 Python 路径，不等同于源码开发 venv。</div>
+                {dep.python_executable && <div>Python：<code>{dep.python_executable}</code></div>}
+                {dep.target_dir && <div>安装目标：<code>{dep.target_dir}</code></div>}
+                {firstPath && <div>当前导入位置：<code>{firstPath}</code></div>}
+                {missingChecks.length > 0 && (
+                  <div>缺失导入：{missingChecks.map((item) => item.import).join(" / ")}</div>
+                )}
+              </div>
+              {checks.length > 0 && (
+                <div className="experimental-list" style={{marginBottom: 8}}>
+                  {checks.map((item) => (
+                    <div className="experimental-row" key={item.import}>
+                      <div>
+                        <strong>{item.import}</strong>
+                        <span>{item.package}{item.version ? ` · v${item.version}` : ""}</span>
+                        {item.path && <code>{item.path}</code>}
+                        {!item.found && item.error && <span>{item.error}</span>}
+                      </div>
+                      <span>{item.found ? "可导入" : "缺失"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!busy && dep.installed && confirmingUninstall && (
+                <div className="sysdep-card__sudo-hint" style={{borderColor:"var(--danger)", background:"rgba(239,68,68,.08)"}}>
+                  <div>确认移除这个依赖组吗？系统只会清理本插件私有依赖目录中的文件，移除后对应能力会不可用。</div>
+                  <div className="sysdep-card__sudo-cmd"><code>{dep.target_dir || "plugin python_deps"}</code></div>
+                  <div className="flex gap-2" style={{justifyContent:"flex-end", marginTop: 10}}>
+                    <button className="btn btn-sm" onClick={() => setConfirmingUninstall(false)}>取消</button>
+                    <button className="btn btn-sm btn-danger" onClick={() => { setConfirmingUninstall(false); onUninstall(dep.id); }}>确认卸载</button>
+                  </div>
+                </div>
+              )}
+              {(busy || logLines.length > 0 || dep.error) && (
+                <div className="sysdep-log">
+                  <div className="sysdep-log__head">
+                    <span>{opKind === "uninstall" ? "卸载日志" : "安装日志"}</span>
+                    {dep.elapsed_sec != null && <span>{formatElapsed(dep.elapsed_sec)}</span>}
+                  </div>
+                  <pre className={"sysdep-log__body" + (!logLines.length ? " sysdep-log__body--empty" : "")}>
+                    {logLines.length ? logLines.join("\n") : (dep.error || "等待 pip 输出...")}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      function SettingsTab({ health, setHealth, setError }) {
+        const [deps, setDeps] = useState(null);
+        const [storage, setStorage] = useState(null);
+        const [settings, setSettings] = useState({});
+        const [folderPicker, setFolderPicker] = useState(null);
+        const [activeOps, setActiveOps] = useState({});
+        const [checkingHealth, setCheckingHealth] = useState(false);
+        const [loadingDeps, setLoadingDeps] = useState(false);
+        const [recheckingDeps, setRecheckingDeps] = useState(false);
+        const [notice, setNotice] = useState("");
+        const pollRef = useRef(null);
+        const regularDeps = (deps?.groups || []).filter((dep) => !dep.detect_only);
+        const experimentalDeps = (deps?.groups || []).filter((dep) => dep.detect_only);
+
+        const updateDependency = useCallback((dependency) => {
+          setDeps((prev) => mergeDependency(prev, dependency));
+        }, []);
+
+        async function checkHealth() {
+          setError(null);
+          setCheckingHealth(true);
+          try {
+            const data = await request("/healthz");
+            setHealth(data);
+          } finally {
+            setCheckingHealth(false);
+          }
+        }
+
+        const loadDeps = useCallback(async ({ quiet = false } = {}) => {
+          setError(null);
+          if (!quiet) setLoadingDeps(true);
+          try {
+            const data = await request("/system/python-deps");
+            setDeps(data);
+            return data;
+          } finally {
+            if (!quiet) setLoadingDeps(false);
+          }
+        }, [setError]);
+
+        async function recheckDeps() {
+          setRecheckingDeps(true);
+          const t0 = Date.now();
+          try {
+            await loadDeps({ quiet: true });
+          } finally {
+            const elapsed = Date.now() - t0;
+            if (elapsed < 400) await new Promise((resolve) => setTimeout(resolve, 400 - elapsed));
+            setRecheckingDeps(false);
+          }
+        }
+
+        async function startDepOp(depId, opKind) {
+          setError(null);
+          setNotice(opKind === "uninstall" ? "卸载已开始，正在等待 pip 输出..." : "安装已开始，正在等待 pip 输出...");
+          updateDependency({ id: depId, busy: true, status: "running", op_kind: opKind, log_tail: [], elapsed_sec: 0 });
+          setActiveOps((prev) => ({ ...prev, [depId]: opKind }));
+          try {
+            const data = await request(`/system/python-deps/${depId}/${opKind}`, { method: "POST" });
+            updateDependency(data.dependency);
+            if (!data.dependency?.busy) {
+              setActiveOps((prev) => {
+                const next = { ...prev };
+                delete next[depId];
+                return next;
+              });
+            }
+          } catch (err) {
+            setActiveOps((prev) => {
+              const next = { ...prev };
+              delete next[depId];
+              return next;
+            });
+            throw err;
+          }
+        }
+
+        useEffect(() => {
+          if (Object.keys(activeOps).length === 0) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            return;
+          }
+          const tick = async () => {
+            for (const [depId, opKind] of Object.entries(activeOps)) {
+              try {
+                const data = await request(`/system/python-deps/${depId}/status`);
+                const dependency = data.dependency;
+                updateDependency(dependency);
+                if (!dependency?.busy) {
+                  setActiveOps((prev) => {
+                    const next = { ...prev };
+                    delete next[depId];
+                    return next;
+                  });
+                  const ok = opKind === "uninstall" ? !dependency.installed : dependency.installed;
+                  setNotice(ok
+                    ? `${depId} ${opKind === "uninstall" ? "已卸载" : "已安装"}，状态已自动刷新。`
+                    : `${depId} ${opKind === "uninstall" ? "卸载" : "安装"}未完成，请查看日志。`);
+                }
+              } catch (_) {
+                // 临时网络抖动时继续下一轮轮询。
+              }
+            }
+          };
+          tick();
+          pollRef.current = setInterval(tick, 2500);
+          return () => {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+          };
+        }, [activeOps, updateDependency]);
+
+        async function loadStorage() { setError(null); setStorage(await request("/storage/stats")); }
+        async function loadSettings() {
+          const data = await request("/settings");
+          setSettings(data.settings || {});
+        }
+        async function saveSettings(updates) {
+          const data = await request("/settings", { method: "PUT", body: { updates } });
+          setSettings(data.settings || {});
+          await loadStorage();
+        }
+        async function openFolder(key, path = "") { setError(null); await request("/storage/open-folder", { method: "POST", body: { key, path } }); }
+        function chooseFolder(configKey) {
+          setFolderPicker({ key: configKey, title: `选择${settingLabel(configKey)}`, initialPath: settings[configKey] || "" });
+        }
+        async function handleFolderSelected(path) {
+          if (!folderPicker) return;
+          const key = folderPicker.key;
+          setFolderPicker(null);
+          await saveSettings({ [key]: path });
+          setNotice(`${settingLabel(key)}已切换到 ${path}`);
+        }
+        useEffect(() => { loadStorage().catch(() => {}); loadSettings().catch(() => {}); loadDeps({ quiet: true }).catch(() => {}); }, [loadDeps]);
+        return (
+          <div className="centered-tab">
+            <div className="centered-tab__inner">
+              <div className="setting-section">
+                <h3 className="setting-title">系统组件与依赖下载</h3>
+                <div className="deps-help deps-help--system">
+                  <strong>可选依赖只服务于对应能力，不会影响基础主题生成。</strong>
+                  <div>文档解析、表格处理、图表渲染、高级导出和 Marp 桥接都按需安装。这里检测的是当前 OpenAkita 运行环境，不是源码运行时的 venv。安装会调用打包环境可用的真实 Python，并写入本插件私有依赖目录，完成后自动刷新状态。</div>
+                </div>
+                <div className="flex gap-2 flex-wrap" style={{marginBottom: 12}}>
+                  <button className="btn btn-primary" onClick={checkHealth} disabled={checkingHealth}>
+                    {checkingHealth ? <><span className="sysdep-spinner" /> 健康检查中...</> : "健康检查"}
+                  </button>
+                  <button className="btn" onClick={recheckDeps} disabled={loadingDeps || recheckingDeps}>
+                    {loadingDeps || recheckingDeps ? <><span className="sysdep-spinner" /> 检测中...</> : "检测可选依赖"}
+                  </button>
+                </div>
+                {health && (
+                  <div className="health-card">
+                    <strong>健康检查通过</strong>
+                    <span>插件：{health.plugin} · 阶段：{health.phase} · Pipeline：{health.pipeline_steps} 步</span>
+                    <code>{health.data_dir}</code>
+                  </div>
+                )}
+                <div className="sysdep-card sysdep-card--compact">
+                  <div className="sysdep-card__head">
+                    <div className="sysdep-card__title">Python 可选依赖</div>
+                  </div>
+                  <div className="pydep-list">
+                    {regularDeps.map((dep) => (
+                      <PythonDepCard
+                        key={dep.id}
+                        dep={dep}
+                        onInstall={(depId) => startDepOp(depId, "install").catch(setError)}
+                        onUninstall={(depId) => startDepOp(depId, "uninstall").catch(setError)}
+                      />
+                    ))}
+                  </div>
+                </div>
+                {experimentalDeps.length > 0 && (
+                  <div className="sysdep-card sysdep-card--compact">
+                    <div className="sysdep-card__head">
+                      <div className="sysdep-card__title">高级 / 实验功能</div>
+                      <span className="sysdep-card__badge sysdep-card__badge--missing">暂未启用</span>
+                    </div>
+                    <div className="experimental-list">
+                      {experimentalDeps.map((dep) => (
+                        <div className="experimental-row" key={dep.id}>
+                          <div>
+                            <strong>{dep.id}</strong>
+                            <span>{dep.description}</span>
+                          </div>
+                          <span>仅检测 · 当前版本不参与基础 PPT 生成</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="setting-section">
+                <h3 className="setting-title">AI 内容生成</h3>
+                <div className="deps-help">
+                  <strong>本插件直接复用主程序的 Brain 接口，无需另配大模型 Key。</strong>
+                  <div>下方控制每页的篇幅（concise/balanced/detailed）、语气与是否在大纲阶段调用主程序内置的 Web 搜索补充上下文。所有设置即时保存。</div>
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <div className="text-xs text-muted">每页篇幅</div>
+                    <select className="input select" value={settings.verbosity || "balanced"} onChange={(e) => saveSettings({ verbosity: e.target.value }).catch(setError)}>
+                      <option value="concise">精简（约 20 词，3 条要点）</option>
+                      <option value="balanced">均衡（约 40 词，4 条要点）</option>
+                      <option value="detailed">详尽（约 60 词，5 条要点）</option>
+                    </select>
+                  </div>
+                  <div className="form-row">
+                    <div className="text-xs text-muted">语气</div>
+                    <select className="input select" value={settings.tone || "professional"} onChange={(e) => saveSettings({ tone: e.target.value }).catch(setError)}>
+                      <option value="professional">专业 / 商务</option>
+                      <option value="conversational">轻松 / 对话</option>
+                      <option value="academic">学术 / 严谨</option>
+                      <option value="bold">激进 / 颠覆</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <div className="text-xs text-muted">输出语言</div>
+                    <select className="input select" value={settings.language || "zh-CN"} onChange={(e) => saveSettings({ language: e.target.value }).catch(setError)}>
+                      <option value="zh-CN">简体中文</option>
+                      <option value="en-US">English</option>
+                      <option value="zh-TW">繁體中文</option>
+                      <option value="ja-JP">日本語</option>
+                    </select>
+                  </div>
+                  <div className="form-row">
+                    <div className="text-xs text-muted">高级开关</div>
+                    <label className="text-xs" style={{display: 'flex', alignItems: 'center', gap: 6}}>
+                      <input type="checkbox" checked={(settings.web_search_enabled || "false") === "true"} onChange={(e) => saveSettings({ web_search_enabled: e.target.checked ? "true" : "false" }).catch(setError)} />
+                      启用 Web 搜索补充事实（使用主程序内置搜索）
+                    </label>
+                    <label className="text-xs" style={{display: 'flex', alignItems: 'center', gap: 6}}>
+                      <input type="checkbox" checked={(settings.single_shot_mode || "false") === "true"} onChange={(e) => saveSettings({ single_shot_mode: e.target.checked ? "true" : "false" }).catch(setError)} />
+                      Single-shot 模式（跳过用户确认环节，自动产出 PPT）
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="setting-section">
+                <h3 className="setting-title">图片资源（独立配置，与其它插件不联动）</h3>
+                <div className="deps-help">
+                  <strong>三选一：免费图库 Pexels / Pixabay，或自配百炼 DashScope Key 直接调用 AI 生图。</strong>
+                  <div>选择 “none” 时只渲染图标 / 占位，导出仍可正常完成。Key 仅保存在本机 settings.json 中，不会上传到主程序。</div>
+                </div>
+                <div className="form-row">
+                  <div className="text-xs text-muted">图片来源</div>
+                  <select className="input select" value={settings.image_provider || "none"} onChange={(e) => saveSettings({ image_provider: e.target.value }).catch(setError)}>
+                    <option value="none">不启用图片（仅图标 / 占位）</option>
+                    <option value="pexels">Pexels（免费图库）</option>
+                    <option value="pixabay">Pixabay（免费图库）</option>
+                    <option value="dashscope">百炼 DashScope（AI 生成）</option>
+                  </select>
+                </div>
+                <div className="form-row">
+                  <div className="text-xs text-muted">Pexels API Key</div>
+                  <input type="password" className="input" placeholder="https://www.pexels.com/api/ 申请" value={settings.pexels_api_key || ""} onChange={(e) => setSettings({ ...settings, pexels_api_key: e.target.value })} onBlur={(e) => saveSettings({ pexels_api_key: e.target.value }).catch(setError)} />
+                </div>
+                <div className="form-row">
+                  <div className="text-xs text-muted">Pixabay API Key</div>
+                  <input type="password" className="input" placeholder="https://pixabay.com/api/docs/ 申请" value={settings.pixabay_api_key || ""} onChange={(e) => setSettings({ ...settings, pixabay_api_key: e.target.value })} onBlur={(e) => saveSettings({ pixabay_api_key: e.target.value }).catch(setError)} />
+                </div>
+                <div className="form-row">
+                  <div className="text-xs text-muted">百炼 DashScope API Key</div>
+                  <input type="password" className="input" placeholder="https://dashscope.console.aliyun.com 申请" value={settings.dashscope_api_key || ""} onChange={(e) => setSettings({ ...settings, dashscope_api_key: e.target.value })} onBlur={(e) => saveSettings({ dashscope_api_key: e.target.value }).catch(setError)} />
+                </div>
+                <div className="form-row">
+                  <div className="text-xs text-muted">百炼图像模型</div>
+                  <select className="input select" value={settings.dashscope_image_model || "wanx-v1"} onChange={(e) => saveSettings({ dashscope_image_model: e.target.value }).catch(setError)}>
+                    <option value="wanx-v1">wanx-v1（通用）</option>
+                    <option value="wanx2.1-t2i-turbo">wanx2.1-t2i-turbo（速度优先）</option>
+                    <option value="wanx2.1-t2i-plus">wanx2.1-t2i-plus（质量优先）</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="setting-section">
+                <h3 className="setting-title">文件夹、归集与命名</h3>
+                <div className="deps-help">
+                  <strong>每类目录都可以自定义，适合大量客户资料、表格和模板分开管理。</strong>
+                  <div>留空时使用插件数据目录；点击“选择”可浏览本机文件夹并新建目录。上传文件会按下方归集和命名规则保存，分析结果和导出文件也会写入对应目录。</div>
+                </div>
+                {["uploads_dir", "datasets_dir", "templates_dir", "projects_dir", "exports_dir"].map((key) => (
+                  <div className="form-row" key={key}>
+                    <div className="text-xs text-muted">{settingLabel(key)}</div>
+                    <div className="folder-row">
+                      <input className="input" value={settings[key] || ""} placeholder={defaultPlaceholder(key)} onChange={(e) => setSettings({ ...settings, [key]: e.target.value })} onBlur={(e) => saveSettings({ [key]: e.target.value }).catch(setError)} />
+                      <button className="btn btn-sm" onClick={() => chooseFolder(key)}>选择</button>
+                      <button className="btn btn-sm" onClick={() => openFolder(storageKeyForSetting(key), settings[key] || "")}>打开</button>
+                    </div>
+                  </div>
+                ))}
+                <div className="grid-2">
+                  <div className="form-row">
+                    <div className="text-xs text-muted">上传归集方式</div>
+                    <select className="input select" value={settings.upload_subdir_mode || "type"} onChange={(e) => saveSettings({ upload_subdir_mode: e.target.value }).catch(setError)}>
+                      <option value="type">按用途自动归档（资料 / 表格 / 模板）</option>
+                      <option value="date">按上传日期归档</option>
+                      <option value="flat">全部保存到当前目录</option>
+                    </select>
+                  </div>
+                  <div className="form-row">
+                    <div className="text-xs text-muted">分析结果归集方式</div>
+                    <select className="input select" value={settings.analysis_subdir_mode || "date"} onChange={(e) => saveSettings({ analysis_subdir_mode: e.target.value }).catch(setError)}>
+                      <option value="date">按分析日期和记录编号归档</option>
+                      <option value="flat">按记录编号归档</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <div className="text-xs text-muted">上传文件命名规则</div>
+                    <select className="input select" value={settings.upload_naming_rule || "{date}_{original}"} onChange={(e) => saveSettings({ upload_naming_rule: e.target.value }).catch(setError)}>
+                      <option value="{date}_{original}">日期_原文件名</option>
+                      <option value="{original}">保留原文件名</option>
+                      <option value="{kind}_{date}_{original}">类型_日期_原文件名</option>
+                    </select>
+                  </div>
+                  <div className="form-row">
+                    <div className="text-xs text-muted">导出文件命名规则</div>
+                    <select className="input select" value={settings.export_naming_rule || "{date}_{project_id}"} onChange={(e) => saveSettings({ export_naming_rule: e.target.value }).catch(setError)}>
+                      <option value="{date}_{project_id}">日期_项目ID</option>
+                      <option value="{project_id}">项目ID</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="folder-row" style={{marginTop: 8}}>
+                  <input className="input" readOnly value={storage?.data_dir || health?.data_dir || "点击刷新查看默认目录"} />
+                  <button className="btn btn-sm" onClick={() => openFolder("root")}>打开根目录</button>
+                  <button className="btn btn-sm" onClick={loadStorage}>刷新空间</button>
+                </div>
+                {storage?.stats && (
+                  <div className="storage-grid">
+                    {Object.entries(storage.stats).map(([key, item]) => (
+                      <div key={key} className="storage-card">
+                        <div className="text-xs text-dim">{storageLabel(key)}</div>
+                        <strong>{item.size_mb} MB</strong>
+                        <span>{item.file_count} 个文件</span>
+                        <button className="btn btn-sm" onClick={() => openFolder(key)}>打开</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <FolderPickerModal
+                open={!!folderPicker}
+                title={folderPicker?.title}
+                initialPath={folderPicker?.initialPath}
+                onCancel={() => setFolderPicker(null)}
+                onSelect={(path) => handleFolderSelected(path).catch(setError)}
+              />
+            </div>
+          </div>
+        );
+      }
+
+      function App() {
+        const [active, setActive] = useState("Create");
+        const [projects, setProjects] = useState([]);
+        const [sources, setSources] = useState([]);
+        const [datasets, setDatasets] = useState([]);
+        const [templates, setTemplates] = useState([]);
+        const [health, setHealth] = useState(null);
+        const [error, setError] = useState(null);
+        const [event, setEvent] = useState(null);
+        async function refreshProjects(options = {}) {
+          try {
+            const data = await request("/projects");
+            setProjects(data.projects || []);
+          } catch (err) {
+            if (options.local) throw err;
+            setError(err);
+          }
+        }
+        async function refreshData() {
+          try {
+            const [sourceData, datasetData, templateData] = await Promise.all([request("/sources"), request("/datasets"), request("/templates")]);
+            setSources(sourceData.sources || []);
+            setDatasets(datasetData.datasets || []);
+            setTemplates(templateData.templates || []);
+          } catch (err) { setError(err); }
+        }
+        useEffect(() => {
+          refreshProjects();
+          refreshData();
+          const onTask = (e) => setEvent(e.detail || e);
+          window.addEventListener("task_update", onTask);
+          return () => window.removeEventListener("task_update", onTask);
+        }, []);
+        const props = { projects, refreshProjects, sources, datasets, templates, refreshData, health, setHealth, setError };
+        props.onNavigate = setActive;
+        const body = useMemo(() => ({
+          Create: <CreateTab {...props} />,
+          Projects: <ProjectsTab {...props} />,
+          Materials: <MaterialsTab {...props} />,
+          Templates: <TemplatesTab {...props} />,
+          Exports: <ExportsTab {...props} />,
+          Settings: <SettingsTab {...props} />,
+        }[active]), [active, projects, sources, datasets, templates, health]);
+        return (
+          <main className="app">
+            <header className="header">
+              <h1>
+                <span className="ak-logo"><Icon name="ppt" /></span>
+                <span className="brand-copy"><span className="brand-title">PPT 制作助手</span><span className="ak-sub">需求梳理 · 表格洞察 · 模板适配 · PPTX 导出</span></span>
+              </h1>
+              <div className="header-right"><span>OpenAkita Plugin</span></div>
+            </header>
+            <nav className="tabs">{tabs.map(([id, label]) => <button key={id} className={"tab " + (active === id ? "active" : "")} onClick={() => setActive(id)}>{label}</button>)}</nav>
+            <section className="content">
+              <div className="tab-body" data-tab={active}>
+                {active !== "Projects" && <ErrorPanel error={error} />}
+                <ProgressPanel event={event} />
+                {body}
+              </div>
+            </section>
+          </main>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>

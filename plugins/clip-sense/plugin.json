@@ -9,6 +9,7 @@
     "zh": "AI 智能视频剪辑 — 高光提取 / 静音精剪 / 段落拆条 / 口播精编",
     "en": "AI-powered video editing — highlight extraction, silence removal, topic splitting, talking-head polish"
   },
+  "icon": "icon.svg",
   "type": "python",
   "entry": "plugin.py",
   "author": "OpenAkita",
@@ -40,6 +41,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
+    "icon": "icon.svg",
     "title": "智剪工坊",
     "title_i18n": {
       "zh": "智剪工坊",

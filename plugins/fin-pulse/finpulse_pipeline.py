@@ -127,6 +127,7 @@ async def _fetch_one(
     *,
     cfg: dict[str, str],
     timeout_sec: float,
+    overall_budget_sec: float,
     since: datetime | None,
 ) -> FetchReport:
     """Run a single fetcher and wrap its outcome in :class:`FetchReport`.
@@ -134,6 +135,14 @@ async def _fetch_one(
     Exceptions never escape — they are classified via
     :func:`finpulse_errors.map_exception` and surface as ``error_kind``
     on the report so the pipeline can write ``config['source.{id}.last_error']``.
+
+    ``overall_budget_sec`` bounds the total wall time spent on this
+    fetcher invocation. The aggregator-style ``newsnow`` fetcher fans
+    out to N channels, and a single ``httpx`` per-request timeout is
+    not enough to bound that — without this budget a slow upstream can
+    keep the whole pipeline waiting past the host bridge's 30s ceiling.
+    A breached budget is mapped to ``error_kind="timeout"`` so the
+    Settings panel renders the correct hint.
     """
     t0 = time.perf_counter()
     fetcher = get_fetcher(source_id, config=cfg)
@@ -147,9 +156,10 @@ async def _fetch_one(
     fetcher._timeout_sec = float(timeout_sec)  # type: ignore[attr-defined]
     try:
         if fetcher.supports_since:
-            items = await fetcher.fetch(since=since)
+            fetch_coro = fetcher.fetch(since=since)
         else:
-            items = await fetcher.fetch()
+            fetch_coro = fetcher.fetch()
+        items = await asyncio.wait_for(fetch_coro, timeout=overall_budget_sec)
         # Hybrid CN fetchers record which transport actually served the
         # rows via ``_last_via``. Stash it on the report so the Today
         # tab drawer can render a NewsNow / Direct badge per source.
@@ -287,6 +297,19 @@ async def ingest(
         concurrency = 4
     concurrency = max(1, min(concurrency, 16))
 
+    # ``fetch_overall_budget_sec`` bounds the wall time per fetcher so a
+    # single slow source (most often the NewsNow aggregator hitting a
+    # cold-start upstream) cannot hold the whole pipeline past the host
+    # bridge's 30s timeout. Default = 25s, honouring the bridge ceiling
+    # while leaving a small margin for the pipeline's own bookkeeping.
+    try:
+        overall_budget_sec = float(cfg.get("fetch_overall_budget_sec", "25") or "25")
+    except ValueError:
+        overall_budget_sec = 25.0
+    if overall_budget_sec <= 0:
+        overall_budget_sec = 25.0
+    overall_budget_sec = max(timeout_sec, overall_budget_sec)
+
     # NewsNow rate-limit: quietly drop the newsnow source from this run
     # when the caller is still within the public-aggregator cooldown so
     # we never hammer the volunteer-run upstream node. Every other source
@@ -303,7 +326,11 @@ async def ingest(
     async def _guarded(source_id: str) -> FetchReport:
         async with sem:
             return await _fetch_one(
-                source_id, cfg=cfg, timeout_sec=timeout_sec, since=since
+                source_id,
+                cfg=cfg,
+                timeout_sec=timeout_sec,
+                overall_budget_sec=overall_budget_sec,
+                since=since,
             )
 
     reports = await asyncio.gather(*[_guarded(sid) for sid in enabled])

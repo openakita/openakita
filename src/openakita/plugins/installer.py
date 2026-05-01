@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -22,6 +23,75 @@ from .bundles import BundleMapper
 from .manifest import ManifestError, parse_manifest
 
 logger = logging.getLogger(__name__)
+
+_SPEC_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
+
+
+def _normalise_dist_name(name: str) -> str:
+    """Return the normalised distribution name used by ``*.dist-info`` dirs."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _dist_name_from_spec(spec: str) -> str | None:
+    """Extract a best-effort package name from a pip requirement string."""
+    raw = spec.strip()
+    if not raw or raw.startswith(("-", ".")):
+        return None
+    if " @ " in raw:
+        raw = raw.split(" @ ", 1)[0].strip()
+    raw = raw.split(";", 1)[0].strip()
+    raw = raw.split("[", 1)[0].strip()
+    match = _SPEC_NAME_RE.match(raw)
+    if not match:
+        return None
+    return _normalise_dist_name(match.group(1))
+
+
+def _pip_output_excerpt(proc: subprocess.CompletedProcess[str], *, limit: int = 4000) -> str:
+    """Build a compact pip failure excerpt suitable for logs and API errors."""
+    text = (proc.stderr or proc.stdout or "").strip()
+    if not text:
+        return f"pip exited with code {proc.returncode} and produced no output"
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    excerpt = "\n".join(lines[-40:]) if lines else text
+    if len(excerpt) > limit:
+        excerpt = excerpt[-limit:]
+    return excerpt
+
+
+def _pip_subprocess_env(python_executable: str) -> dict[str, str]:
+    """Environment for plugin dependency installs.
+
+    Keep this local to the installer instead of changing process-wide env:
+    plugin installs should be UTF-8 and isolated from a user's shell
+    ``PYTHONPATH``, but the running OpenAkita process should not be mutated.
+    """
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONNOUSERSITE"] = "1"
+    env.pop("PYTHONPATH", None)
+
+    py_path = Path(python_executable)
+    if getattr(sys, "frozen", False) and py_path.parent.name == "_internal":
+        # The embedded Python used by the desktop build can need PYTHONHOME
+        # to find encodings/importlib when launched directly for ``-m pip``.
+        env.setdefault("PYTHONHOME", str(py_path.parent))
+    return env
+
+
+def _pip_install_context(
+    *,
+    python_executable: str,
+    deps_dir: Path,
+    specs: list[str],
+    extra_args: list[str],
+) -> str:
+    """Human-readable context for diagnosing packaged plugin installs."""
+    return (
+        f"python={python_executable!r}; target={str(deps_dir)!r}; "
+        f"specs={specs!r}; extra_args={extra_args!r}"
+    )
 
 
 class PluginInstallError(Exception):
@@ -296,32 +366,93 @@ def _download_to_file(url: str, dest: Path) -> None:
         raise PluginInstallError(f"Download failed: {e}") from e
 
 
-def install_pip_deps(plugin_dir: Path, manifest_requires: dict) -> bool:
+def _parse_pip_specs(manifest_requires: dict) -> list[str]:
+    """Normalise ``manifest.requires.pip`` into a list of pip-installable specs.
+
+    Returns an empty list when the field is absent or not a string/list, so
+    callers can short-circuit without doing the type-checking themselves.
+    """
     if not manifest_requires:
-        return True
+        return []
     raw = manifest_requires.get("pip")
     if raw is None:
-        return True
+        return []
     if isinstance(raw, str):
-        specs = [raw] if raw.strip() else []
-    elif isinstance(raw, list):
-        specs = [str(x).strip() for x in raw if str(x).strip()]
-    else:
-        logger.warning("requires.pip must be a string or list of strings")
-        return False
+        return [raw] if raw.strip() else []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    logger.warning("requires.pip must be a string or list of strings")
+    return []
+
+
+def _resolve_pip_runner() -> tuple[str, list[str]]:
+    """Pick the Python executable + base pip args for installing plugin deps.
+
+    Returns ``(python_path, extra_install_args)``. ``extra_install_args``
+    carries the configured PyPI mirror so e.g. China users don't time out
+    against the default pypi.org.
+
+    In a PyInstaller-frozen build ``sys.executable`` points at
+    ``openakita-server.exe`` which intercepts Click args and refuses
+    ``-m pip``. We must instead use ``runtime_env.get_python_executable()``
+    which resolves to the real ``_internal/python.exe`` (or the workspace /
+    user venv when one was bootstrapped). For source / pip-installed
+    deployments ``sys.executable`` is already a real Python so we keep it.
+    """
+    try:
+        from ..runtime_env import IS_FROZEN, get_python_executable, resolve_pip_index
+    except Exception:
+        return sys.executable, []
+    py = sys.executable
+    if IS_FROZEN:
+        resolved = get_python_executable()
+        if resolved:
+            py = resolved
+    extra: list[str] = []
+    try:
+        index = resolve_pip_index()
+        if index.get("url"):
+            extra.extend(["-i", index["url"]])
+            if index.get("trusted_host"):
+                extra.extend(["--trusted-host", index["trusted_host"]])
+    except Exception:
+        pass
+    return py, extra
+
+
+def install_pip_deps(plugin_dir: Path, manifest_requires: dict) -> bool:
+    """Install the plugin's ``requires.pip`` packages into ``<plugin_dir>/deps``.
+
+    The deps directory is appended to ``sys.path`` by ``PluginManager._load_python_plugin``
+    when the plugin loads, so packages installed here are private to this
+    plugin and don't leak into the host or other plugins.
+
+    Returns ``False`` on any pip failure / timeout — callers decide whether to
+    propagate that as an install error or merely log it.
+    """
+    specs = _parse_pip_specs(manifest_requires)
     if not specs:
         return True
 
     deps_dir = plugin_dir / "deps"
     deps_dir.mkdir(parents=True, exist_ok=True)
+    py, extra_args = _resolve_pip_runner()
+    context = _pip_install_context(
+        python_executable=py,
+        deps_dir=deps_dir,
+        specs=specs,
+        extra_args=extra_args,
+    )
     cmd = [
-        sys.executable,
+        py,
         "-m",
         "pip",
         "install",
         "--upgrade",
+        "--prefer-binary",
         "--target",
         str(deps_dir),
+        *extra_args,
         *specs,
     ]
     try:
@@ -330,19 +461,66 @@ def install_pip_deps(plugin_dir: Path, manifest_requires: dict) -> bool:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_pip_subprocess_env(py),
             timeout=600,
         )
-    except subprocess.TimeoutExpired:
-        logger.error("pip install timed out for %s", plugin_dir)
-        return False
-    if proc.returncode != 0:
+    except subprocess.TimeoutExpired as exc:
         logger.error(
-            "pip install failed for %s: %s",
+            "pip install timed out for %s after %ss (%s)",
             plugin_dir,
-            (proc.stderr or proc.stdout or "").strip(),
+            exc.timeout,
+            context,
         )
         return False
+    except OSError as exc:
+        logger.error("pip install failed to start for %s: %s (%s)", plugin_dir, exc, context)
+        return False
+    if proc.returncode != 0:
+        excerpt = _pip_output_excerpt(proc)
+        logger.error("pip install failed for %s (%s): %s", plugin_dir, context, excerpt)
+        return False
     return True
+
+
+def deps_appear_installed(plugin_dir: Path, manifest_requires: dict) -> bool:
+    """Best-effort check whether ``requires.pip`` packages already live in ``deps/``.
+
+    We match declared requirement names against ``*.dist-info`` directories
+    written by pip's ``--target`` mode. This remains intentionally best effort:
+    pip still owns full version resolution, but a stale unrelated dist-info
+    file should not make the host believe plugin dependencies are present.
+    """
+    if not _parse_pip_specs(manifest_requires):
+        return True
+    deps_dir = plugin_dir / "deps"
+    if not deps_dir.is_dir():
+        return False
+    expected = {
+        name for spec in _parse_pip_specs(manifest_requires)
+        if (name := _dist_name_from_spec(spec))
+    }
+    if not expected:
+        return True
+    found: set[str] = set()
+    try:
+        for child in deps_dir.iterdir():
+            if not child.is_dir() or not child.name.endswith(".dist-info"):
+                continue
+            dist_name = child.name[: -len(".dist-info")]
+            # ``pip --target`` writes e.g. ``openakita_plugin_sdk-0.7.0.dist-info``.
+            # Strip the version suffix by scanning from the right for the first
+            # segment that starts with a digit.
+            parts = dist_name.split("-")
+            for idx, part in enumerate(parts):
+                if part[:1].isdigit():
+                    dist_name = "-".join(parts[:idx]) or dist_name
+                    break
+            found.add(_normalise_dist_name(dist_name))
+    except OSError:
+        return False
+    return expected.issubset(found)
 
 
 def _finalize_install(plugin_dir: Path, *, remove_on_failure: bool = True) -> str:
@@ -355,7 +533,10 @@ def _finalize_install(plugin_dir: Path, *, remove_on_failure: bool = True) -> st
     if not install_pip_deps(plugin_dir, manifest.requires):
         if remove_on_failure:
             shutil.rmtree(plugin_dir, ignore_errors=True)
-        raise PluginInstallError(f"Plugin {manifest.id!r} installed but pip dependencies failed")
+        raise PluginInstallError(
+            f"Plugin {manifest.id!r} installed but pip dependencies failed. "
+            "See openakita.plugins.installer logs for the pip error excerpt."
+        )
     return manifest.id
 
 

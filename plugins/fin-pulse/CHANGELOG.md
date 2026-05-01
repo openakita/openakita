@@ -6,7 +6,30 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- No pending changes.
+### Performance — first-run "全部拉取" no longer trips the 30s bridge timeout
+
+- `NewsNowFetcher.fetch()` now fans out the 15+ default-enabled NewsNow
+  channels concurrently via `asyncio.gather` + a small semaphore (default
+  4, configurable via `newsnow.channel_concurrency`). The legacy serial
+  `for` loop turned a fresh "Today → 全部拉取" into a 30~50s wall on
+  cold connections; the new fan-out finishes in 8~12s typical, well
+  inside the host iframe bridge's 30s ceiling.
+- `finpulse_pipeline._fetch_one()` wraps each fetcher invocation in
+  `asyncio.wait_for(timeout=fetch_overall_budget_sec)` (default 25s, key
+  `fetch_overall_budget_sec`). A single broken aggregator can no longer
+  hold the whole pipeline past the bridge timeout; breaches are mapped
+  to `error_kind="timeout"` so the Settings → Sources panel renders the
+  correct hint.
+- `POST /ingest` and `POST /ingest/source/{id}` are async-by-default:
+  they create the task row, kick the pipeline into a background
+  `api.spawn_task`, and return `{ok:true, task_id, status:"running",
+  async:true}` immediately. Callers that need the inline summary (tests,
+  agent tools) opt in via `?wait=true`.
+- The Today / Settings probe / Reports pre-ingest UI now polls
+  `GET /tasks/{task_id}` until the status reaches a terminal value and
+  rebuilds the same `summary` shape downstream code already consumes —
+  no behavioural changes for the operator beyond "no more spurious
+  timeout toasts on first run".
 
 ## [1.1.0] — 2026-04-25
 

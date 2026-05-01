@@ -147,6 +147,36 @@ class TestLoadAll:
         failed = mgr.list_failed()
         assert "bad-plugin" in failed
 
+    async def test_missing_module_error_mentions_dependency_paths(self, tmp_path):
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        d = plugins_dir / "missing-dep"
+        d.mkdir()
+        (d / "plugin.json").write_text(
+            json.dumps({
+                "id": "missing-dep",
+                "name": "Missing Dep",
+                "version": "1.0.0",
+                "type": "python",
+                "requires": {"pip": ["missing-package>=1.0.0"]},
+            }),
+            encoding="utf-8",
+        )
+        (d / "plugin.py").write_text(
+            "import definitely_missing_pkg_xyz\n",
+            encoding="utf-8",
+        )
+
+        mgr = PluginManager(plugins_dir, state_path=tmp_path / "state.json")
+        await mgr.load_all()
+
+        failed = mgr.list_failed()
+        msg = failed["missing-dep"]
+        assert "definitely_missing_pkg_xyz" in msg
+        assert "requires.pip" in msg
+        assert "deps" in msg
+        assert "settings panel" in msg
+
     async def test_handles_manifest_error(self, tmp_path):
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()

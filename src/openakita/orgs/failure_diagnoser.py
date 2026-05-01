@@ -465,13 +465,22 @@ def format_human_summary(diagnosis: dict[str, Any]) -> str:
     evidence = diagnosis.get("evidence") or []
     root_cause = diagnosis.get("root_cause") or ""
 
-    # 软提示类（verify_incomplete*）只是 verify 规则没匹配，并不是硬失败，
-    # 用「ℹ️ 复盘提示」中性表述；硬失败（loop_terminated / max_iterations 等）
-    # 才用「为什么失败」强调失败语气，避免对所有非完美结束都喷"失败"二字。
+    # verify_incomplete* 系列（verify_incomplete / verify_incomplete_with_children）
+    # 是 verify 规则没匹配的「软提示」，不是真硬失败。在「文件已落盘 + 黑板已通知」
+    # 的典型场景下，这类卡片对终端用户只会造成「明明完成了为什么报错」的困惑，
+    # 用户已多次明确表态不要。
+    #
+    # 双保险：runtime.py 已经在 emit 前把 diagnosis 置空，本函数永远拿不到
+    # verify_incomplete* 的 diagnosis 字典。这里再加一道早退——即使后续有人
+    # 改 runtime 忘了静默、或评测/调试路径直接调 format_human_summary，UI 也
+    # 不会再吐出「ℹ️ 复盘提示」文案。模板字符串（_DIAGNOSIS_TEMPLATES）保留
+    # 供日志/审计 internal use，仅本函数对用户可见输出做拦截。
+    # 真硬失败（loop_terminated / max_iterations / org_delegate_loop 等）保持
+    # 「为什么失败」语气不变。
     if root_cause.startswith("verify_incomplete"):
-        prefix_label = "ℹ️ 复盘提示"
-    else:
-        prefix_label = "为什么失败"
+        return ""
+
+    prefix_label = "为什么失败"
 
     lines = [f"> **{prefix_label}**：{headline}"]
     if evidence:

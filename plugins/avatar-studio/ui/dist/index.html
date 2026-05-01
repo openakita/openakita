@@ -25,7 +25,7 @@
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
       --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
-      --primary: #6366f1; --primary-hover: #4f46e5;
+      --primary: #2563eb; --primary-hover: #1d4ed8;
       --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
       --border: #e2e8f0; --radius: 8px;
     }
@@ -58,8 +58,19 @@
     .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
     .header h1 .ak-logo {
       width: 28px; height: 28px; border-radius: 6px;
-      background: linear-gradient(135deg, var(--primary) 0%, #ec4899 100%);
+      background: linear-gradient(135deg, var(--primary) 0%, #38bdf8 100%);
       color: #fff; display: inline-flex; align-items: center; justify-content: center;
+    }
+    .oa-hero-title__icon--app {
+      background: none;
+      box-shadow: none;
+      overflow: hidden;
+      padding: 0;
+    }
+    .oa-hero-title__icon--app img {
+      width: 36px;
+      height: 36px;
+      display: block;
     }
     .header h1 .ak-sub {
       font-size: 12px; font-weight: 400; color: var(--text-muted);
@@ -106,7 +117,7 @@
       border-radius: 6px; background: var(--bg); color: var(--text);
       font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s;
     }
-    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.18); }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(37,99,235,.18); }
     /* Invalid form input — red border + ring. Paired with the
        ``.field-warn-icon`` to the right of the input so the user
        sees both a colour cue and a focusable element they can hover
@@ -159,17 +170,17 @@
     .folder-picker__title { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
     .folder-picker__crumbs { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; min-height: 22px; }
     .folder-picker__crumb { padding: 2px 8px; border-radius: 4px; cursor: pointer; transition: background .12s; user-select: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .folder-picker__crumb:hover { background: var(--bg-hover, rgba(99,102,241,.08)); color: var(--text); }
+    .folder-picker__crumb:hover { background: var(--bg-hover, rgba(37,99,235,.08)); color: var(--text); }
     .folder-picker__crumb-sep { color: var(--text-muted); opacity: .5; }
     .folder-picker__body { display: flex; flex: 1; min-height: 360px; max-height: 60vh; overflow: hidden; }
-    .folder-picker__sidebar { width: 160px; border-right: 1px solid var(--border); padding: 8px 0; overflow-y: auto; background: var(--bg-hover, rgba(99,102,241,.05)); flex-shrink: 0; }
+    .folder-picker__sidebar { width: 160px; border-right: 1px solid var(--border); padding: 8px 0; overflow-y: auto; background: var(--bg-hover, rgba(37,99,235,.05)); flex-shrink: 0; }
     .folder-picker__shortcut { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 12px; color: var(--text); cursor: pointer; transition: background .12s; }
     .folder-picker__shortcut:hover { background: var(--bg-card); }
     .folder-picker__shortcut.active { background: var(--bg-card); color: var(--primary); font-weight: 500; }
     .folder-picker__list { flex: 1; overflow-y: auto; padding: 4px 0; }
     .folder-picker__item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--text); cursor: pointer; transition: background .1s; user-select: none; }
-    .folder-picker__item:hover { background: var(--bg-hover, rgba(99,102,241,.08)); }
-    .folder-picker__item.selected { background: rgba(99, 102, 241, .12); color: var(--primary); }
+    .folder-picker__item:hover { background: var(--bg-hover, rgba(37,99,235,.08)); }
+    .folder-picker__item.selected { background: rgba(37, 99, 235, .12); color: var(--primary); }
     .folder-picker__item-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: .8; }
     .folder-picker__item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .folder-picker__empty { padding: 32px 16px; text-align: center; font-size: 12px; color: var(--text-muted); }
@@ -219,7 +230,7 @@
     .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* ── Tags / badges / mode chips ── */
     .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
-    .tag-blue { background: rgba(99,102,241,.15); color: #818cf8; }
+    .tag-blue { background: rgba(37,99,235,.15); color: #60a5fa; }
     .tag-orange { background: rgba(245,158,11,.15); color: #fbbf24; }
     .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
     .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
@@ -237,7 +248,7 @@
       text-align: left; user-select: none;
     }
     .mode-chip:hover { border-color: var(--primary); background: var(--bg-hover); }
-    .mode-chip.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; background: rgba(99,102,241,.06); }
+    .mode-chip.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; background: rgba(37,99,235,.06); }
     .mode-chip__title { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
     .mode-chip__desc { font-size: 11px; color: var(--text-muted); line-height: 1.35; }
     .mode-chip__icon { font-size: 16px; color: var(--primary); }
@@ -247,7 +258,7 @@
       padding: 18px; text-align: center; cursor: pointer; transition: .15s;
       color: var(--text-muted); position: relative;
     }
-    .upload-zone:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .upload-zone:hover { border-color: var(--primary); background: rgba(37,99,235,.04); }
     .upload-zone.has-file { border-style: solid; border-color: var(--primary); }
     .upload-zone__preview {
       max-width: 100%; max-height: 160px;
@@ -264,13 +275,13 @@
     .upload-zone__audio {
       display: flex; align-items: center; gap: 12px;
       padding: 10px 12px; margin: 0 auto 8px; max-width: 420px;
-      background: var(--card-2, rgba(99,102,241,.06));
+      background: var(--card-2, rgba(37,99,235,.06));
       border: 1px solid var(--border); border-radius: 8px;
       text-align: left;
     }
     .upload-zone__audio .ico {
       width: 32px; height: 32px; flex-shrink: 0;
-      color: var(--primary, #6366f1);
+      color: var(--primary, #2563eb);
     }
     .upload-zone__audio .ico svg { width: 100%; height: 100%; }
     .upload-zone__audio-meta { min-width: 0; flex: 1; color: var(--text); }
@@ -313,7 +324,7 @@
     .oa-loader__title { color: rgba(255,255,255,.78); font-size: 13px; line-height: 1.5; }
     .oa-loader__progress { width: min(260px, 70%); display: flex; flex-direction: column; gap: 4px; align-items: center; }
     .oa-loader__bar { width: 100%; height: 4px; background: rgba(255,255,255,.12); border-radius: 999px; overflow: hidden; }
-    .oa-loader__bar-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #8b5cf6); border-radius: 999px; transition: width .4s ease; }
+    .oa-loader__bar-fill { height: 100%; background: linear-gradient(90deg, #2563eb, #38bdf8); border-radius: 999px; transition: width .4s ease; }
     .oa-loader__pct { color: rgba(255,255,255,.55); font-size: 11px; }
     .oa-loader__cancel {
       margin-top: 4px; padding: 5px 14px;
@@ -363,7 +374,7 @@
     }
     .task-card:hover { background: var(--bg-hover); }
     .task-card.selected {
-      background: rgba(99,102,241,.08); border-color: rgba(99,102,241,.35);
+      background: rgba(37,99,235,.08); border-color: rgba(37,99,235,.35);
     }
     .task-info { flex: 1; min-width: 0; }
     .task-info h4 {
@@ -392,7 +403,7 @@
       font-size: 11px; font-weight: 500; line-height: 1.4;
     }
     .badge-pending { background: rgba(148,163,184,.15); color: #94a3b8; }
-    .badge-running { background: rgba(99,102,241,.15); color: #818cf8; }
+    .badge-running { background: rgba(37,99,235,.15); color: #60a5fa; }
     .badge-done { background: rgba(34,197,94,.15); color: #4ade80; }
     .badge-failed { background: rgba(239,68,68,.15); color: #f87171; }
     .badge-cancelled { background: rgba(245,158,11,.15); color: #fbbf24; }
@@ -417,7 +428,7 @@
     }
     .ak-table tr.row { cursor: pointer; transition: background .12s; }
     .ak-table tr.row:hover { background: var(--bg-hover); }
-    .ak-table tr.row.selected { background: rgba(99,102,241,.08); }
+    .ak-table tr.row.selected { background: rgba(37,99,235,.08); }
     .task-thumb {
       width: 56px; height: 36px; border-radius: 4px; background: #000;
       overflow: hidden; flex-shrink: 0;
@@ -547,14 +558,14 @@
       border-radius: 6px; border: 1px solid transparent;
       font-size: 12.5px; font-weight: 500; cursor: pointer;
       color: #fff;
-      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      background: linear-gradient(135deg, #2563eb 0%, #38bdf8 100%);
       transition: filter .15s, transform .15s, box-shadow .15s;
-      box-shadow: 0 1px 2px rgba(99,102,241,.25);
+      box-shadow: 0 1px 2px rgba(37,99,235,.25);
     }
     .voice-play-btn:hover:not(:disabled) {
       filter: brightness(1.05);
       transform: translateY(-1px);
-      box-shadow: 0 3px 8px rgba(99,102,241,.30);
+      box-shadow: 0 3px 8px rgba(37,99,235,.30);
     }
     .voice-play-btn:active:not(:disabled) { transform: translateY(0); }
     .voice-play-btn:disabled { opacity: .65; cursor: progress; }
@@ -1557,6 +1568,7 @@ function useDraft(key, initial) {
 
 /* ─── Tiny <Ico> component ────────────────────────────────────────── */
 const ICONS = {
+  bomb: '<g fill="none"><path stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="M10 16h2"/><path fill="currentColor" d="M14 12.5c0 .828-.448 1.5-1 1.5s-1-.672-1-1.5s.448-1.5 1-1.5s1 .672 1 1.5"/><ellipse cx="9" cy="12.5" fill="currentColor" rx="1" ry="1.5"/><path stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="m17 7l-2 2"/><path stroke="currentColor" stroke-width="1.5" d="M17.981 2.353a.558.558 0 0 1 1.038 0l.654 1.66c.057.143.17.257.315.314l1.659.654c.47.186.47.852 0 1.038l-1.66.654a.56.56 0 0 0-.314.315l-.654 1.659a.558.558 0 0 1-1.038 0l-.654-1.66a.56.56 0 0 0-.315-.314l-1.659-.654a.558.558 0 0 1 0-1.038l1.66-.654a.56.56 0 0 0 .314-.315z"/><path stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="M5.75 8.003a7.5 7.5 0 1 1-2.747 2.747"/></g>',
   video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
   list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
   mic: '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',
@@ -2369,7 +2381,7 @@ function ModelInfoCard({ mode, backend, settings }) {
     var wfKey = "rh_wf_" + mode;
     var presetId = (settings && settings[wfKey]) || "";
     return (
-      <div className="card" style={{background: "rgba(99,102,241,.04)", borderColor: "rgba(99,102,241,.25)"}}>
+      <div className="card" style={{background: "rgba(37,99,235,.04)", borderColor: "rgba(37,99,235,.25)"}}>
         <div className="label" style={{marginBottom: 6}}>
           <Ico name="info"/>RunningHub 信息
         </div>
@@ -2384,7 +2396,7 @@ function ModelInfoCard({ mode, backend, settings }) {
     var wfKey2 = "comfyui_wf_" + mode;
     var presetId2 = (settings && settings[wfKey2]) || "";
     return (
-      <div className="card" style={{background: "rgba(99,102,241,.04)", borderColor: "rgba(99,102,241,.25)"}}>
+      <div className="card" style={{background: "rgba(37,99,235,.04)", borderColor: "rgba(37,99,235,.25)"}}>
         <div className="label" style={{marginBottom: 6}}>
           <Ico name="info"/>本地 ComfyUI 信息
         </div>
@@ -2396,7 +2408,7 @@ function ModelInfoCard({ mode, backend, settings }) {
     );
   }
   return (
-    <div className="card" style={{background: "rgba(99,102,241,.04)", borderColor: "rgba(99,102,241,.25)"}}>
+    <div className="card" style={{background: "rgba(37,99,235,.04)", borderColor: "rgba(37,99,235,.25)"}}>
       <div className="label" style={{marginBottom: 6}}>
         <Ico name="info"/>{t("create.section.modelInfo")}
       </div>
@@ -2407,7 +2419,7 @@ function ModelInfoCard({ mode, backend, settings }) {
       <Row label={t("create.modelInfo.input")} value={md.inputs} />
       <Row label={t("create.modelInfo.notes")} value={md.notes} />
       <div style={{
-        marginTop: 8, paddingTop: 8, borderTop: "1px dashed rgba(99,102,241,.2)",
+        marginTop: 8, paddingTop: 8, borderTop: "1px dashed rgba(37,99,235,.2)",
         display: "flex", gap: 10, fontSize: 12, lineHeight: 1.5,
       }}>
         <div style={{width: 76, color: "var(--text-muted)", flexShrink: 0}}>
@@ -4251,6 +4263,87 @@ function ValidatedInput(props) {
   );
 }
 
+function PythonDepsPanel() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(function () {
+    setLoading(true);
+    pluginApi("GET", "/system/python-deps").then(function (r) {
+      if (r.ok && r.body && r.body.ok) setItems(r.body.components || []);
+    }).catch(function () {}).finally(function () { setLoading(false); });
+  }, []);
+
+  useEffect(function () {
+    refresh();
+    const timer = setInterval(function () {
+      if (items.some(function (x) { return x.busy; })) refresh();
+    }, 2500);
+    return function () { clearInterval(timer); };
+  }, [refresh, items]);
+
+  const install = function (id) {
+    pluginApi("POST", "/system/python-deps/" + id + "/install", {}).then(function (r) {
+      if (!r.ok || !r.body || !r.body.ok) {
+        showToast("依赖安装启动失败", "error");
+        return;
+      }
+      showToast("已开始安装依赖");
+      refresh();
+    }).catch(function (e) {
+      showToast((e && e.message) || "依赖安装启动失败", "error");
+    });
+  };
+
+  return (
+    <div>
+      <div className="text-xs text-dim" style={{marginBottom: 10, lineHeight: 1.5}}>
+        打包版会使用独立 Python 环境。这里可以检查并修复插件私有依赖，不需要手动打开命令行。
+      </div>
+      {loading && !items.length && <div className="text-xs text-muted">正在检测依赖…</div>}
+      {items.map(function (dep) {
+        const ok = !!dep.ok;
+        const busy = !!dep.busy;
+        const logTail = dep.log_tail || [];
+        return (
+          <div key={dep.id} className="oa-settings-section"
+               style={{padding: 12, marginBottom: 10, background: "var(--panel-2, rgba(0,0,0,.03))"}}>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div style={{fontWeight: 600}}>{dep.display_name || dep.id}</div>
+                <div className="text-xs text-dim" style={{marginTop: 2}}>{dep.description}</div>
+              </div>
+              <span className={"badge " + (ok ? "badge-success" : "badge-warning")}>
+                {busy ? "安装中" : (ok ? "可用" : "需安装")}
+              </span>
+            </div>
+            <div className="text-xs text-muted" style={{marginTop: 8, lineHeight: 1.5}}>
+              <div>包：<code>{dep.pip_spec}</code></div>
+              {dep.version && <div>版本：<code>{dep.version}</code></div>}
+              {dep.module_file && <div>路径：<code>{dep.module_file}</code></div>}
+              {!ok && dep.error && <div style={{color: "var(--danger)"}}>错误：{dep.error}</div>}
+              {dep.last_error && <div style={{color: "var(--danger)"}}>最近安装错误：{dep.last_error}</div>}
+            </div>
+            <div className="flex gap-2" style={{marginTop: 10}}>
+              <button className="btn btn-sm" type="button" disabled={busy}
+                      onClick={function () { install(dep.id); }}>
+                {busy && <span className="spinner-sm"/>} {ok ? "重新安装" : "安装"}
+              </button>
+              <button className="btn btn-sm" type="button" onClick={refresh}>刷新</button>
+            </div>
+            {!!logTail.length && (
+              <pre className="text-xs"
+                   style={{marginTop: 10, maxHeight: 120, overflow: "auto", whiteSpace: "pre-wrap"}}>
+                {logTail.slice(-8).join("\n")}
+              </pre>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SettingsTab({ settings, onSaved, voices }) {
   // Visual layout follows tongyi-image: each section is a separate
   // .oa-settings-section card with a leading icon. The first row of
@@ -4577,6 +4670,18 @@ function SettingsTab({ settings, onSaved, voices }) {
             </div>
           </div>
         </Collapsible>
+      </div>
+
+      {/* ── Python runtime dependencies ─────────────────────────── */}
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"
+            style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8}}>
+          <span style={{display: "inline-flex", alignItems: "center", gap: 6}}>
+            <span className="oa-icon"><Ico name="server"/></span>
+            Python 依赖
+          </span>
+        </h3>
+        <PythonDepsPanel/>
       </div>
 
       {/* ── Section 2: RunningHub ──────────────────────────────── */}
@@ -5131,7 +5236,7 @@ function PromptGuideTab() {
 // just before "settings" for parity with tongyi-image.
 const TAB_IDS = ["create", "tasks", "voices", "figures", "guide", "settings"];
 const TAB_ICONS = {
-  create: "video", tasks: "list", voices: "mic",
+  create: "bomb", tasks: "list", voices: "mic",
   figures: "user", guide: "info", settings: "cog",
 };
 
@@ -5176,7 +5281,9 @@ function App() {
             already announces "missing API key", a duplicate pill on the right
             would be visual noise (matches tongyi-image's design). */}
         <h1 className="oa-hero-title">
-          <span className="oa-hero-title__icon"><Ico name="video"/></span>
+          <span className="oa-hero-title__icon oa-hero-title__icon--app">
+            <img src="icon.svg" alt="" aria-hidden="true" />
+          </span>
           <span className="oa-hero-title__text">
             {t("app.title")}
             <span className="oa-hero-title__sub">{t("app.subtitle")}</span>

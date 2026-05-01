@@ -3905,12 +3905,12 @@ export function ChatView({
               </div>
               <div className="grid w-full max-w-[520px] grid-cols-1 gap-3 sm:grid-cols-2">
                 {[
-                  { id: "research", icon: <IconBarChart size={20} />, text: t("chat.quickStart.research", "帮我调研一下 OpenAkita 的竞品分析") },
-                  { id: "ppt", icon: <IconPlan size={20} />, text: t("chat.quickStart.ppt", "帮我做一个项目汇报 PPT 大纲") },
-                  { id: "search", icon: <IconGlobe size={20} />, text: t("chat.quickStart.search", "搜索 OpenAkita 最新动态") },
+                  { id: "research", icon: <IconBarChart size={20} />, text: t("chat.quickStart.research", "帮我做一份 OpenAkita 竞品分析") },
+                  { id: "ppt", icon: <IconPlan size={20} />, text: t("chat.quickStart.ppt", "帮我生成一份项目汇报 PPT 大纲") },
+                  { id: "search", icon: <IconGlobe size={20} />, text: t("chat.quickStart.search", "帮我搜索 OpenAkita 的最新动态") },
                   { id: "email", icon: <IconMail size={20} />, text: t("chat.quickStart.email", "帮我写一封商务邮件") },
                   { id: "summary", icon: <IconClipboard size={20} />, text: t("chat.quickStart.summary", "帮我总结一下今天的工作内容") },
-                  { id: "translate", icon: <IconGlobe size={20} />, text: t("chat.quickStart.translate", "把这段话翻译成英文") },
+                  { id: "translate", icon: <IconGlobe size={20} />, text: t("chat.quickStart.translate", "帮我把这段话翻译成英文") },
                 ].map((item) => (
                   <button
                     key={item.id}

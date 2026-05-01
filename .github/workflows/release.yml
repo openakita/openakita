@@ -287,7 +287,7 @@ jobs:
           # 资源（与 ci.yml 第 341 行保持一致）。
           pip install ./openakita-plugin-sdk
           pip install -e ".[all]"
-          pip install "pyinstaller>=6.18.0"
+          pip install build "pyinstaller>=6.18.0"
 
       - name: Clean previous PyInstaller output
         shell: bash
@@ -303,6 +303,68 @@ jobs:
 
       - name: Package Python backend (PyInstaller)
         run: python build/build_backend.py
+
+      - name: Prepare bootstrap wheel resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/bootstrap-wheels
+          rm -rf build/bootstrap-uv
+          mkdir -p build/bootstrap-wheels
+          python -m build --wheel --outdir build/bootstrap-wheels
+          python -m pip install --target build/bootstrap-uv --prefer-binary uv
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import shutil
+          import stat
+          from pathlib import Path
+
+          root = Path.cwd()
+          bootstrap_dir = root / "apps" / "setup-center" / "src-tauri" / "resources" / "bootstrap"
+          wheel_dir = bootstrap_dir / "wheels"
+          bin_dir = bootstrap_dir / "bin"
+          wheels = sorted((root / "build" / "bootstrap-wheels").glob("openakita-*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"expected exactly one openakita wheel, found {len(wheels)}")
+
+          wheel = wheels[0]
+          wheel_dir.mkdir(parents=True, exist_ok=True)
+          for stale in wheel_dir.glob("openakita-*.whl"):
+              stale.unlink()
+          dest = wheel_dir / wheel.name
+          shutil.copy2(wheel, dest)
+
+          uv_bin_name = "uv.exe" if os.name == "nt" else "uv"
+          uv_candidates = [
+              root / "build" / "bootstrap-uv" / "bin" / uv_bin_name,
+              root / "build" / "bootstrap-uv" / "Scripts" / uv_bin_name,
+          ]
+          uv_src = next((p for p in uv_candidates if p.exists()), None)
+          if uv_src is None:
+              raise SystemExit(f"uv binary not found in bootstrap-uv target: {uv_candidates}")
+          bin_dir.mkdir(parents=True, exist_ok=True)
+          uv_dest = bin_dir / uv_bin_name
+          shutil.copy2(uv_src, uv_dest)
+          uv_dest.chmod(uv_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+          sha256 = hashlib.sha256(dest.read_bytes()).hexdigest()
+          uv_sha256 = hashlib.sha256(uv_dest.read_bytes()).hexdigest()
+          manifest_path = bootstrap_dir / "manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          manifest["wheel"]["name"] = f"wheels/{dest.name}"
+          manifest["wheel"]["sha256"] = sha256
+          manifest.setdefault("uv", {})
+          manifest["uv"]["path"] = "bin/uv"
+          manifest["uv"]["windows_path"] = "bin/uv.exe"
+          manifest["uv"]["sha256"] = uv_sha256
+          manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          print(f"Bootstrap wheel: {dest}")
+          print(f"sha256: {sha256}")
+          print(f"Bootstrap uv: {uv_dest}")
+          print(f"uv sha256: {uv_sha256}")
+          PY
 
       - name: Copy backend to Tauri resources
         shell: bash

@@ -281,6 +281,9 @@ class FeishuAdapter(ChannelAdapter):
         self._streaming_last_patch: dict[str, float] = {}
         # session_key → 是否已 finalize
         self._streaming_finalized: set[str] = set()
+        # session_key → 后台卡片刷新任务。中间刷新不能阻塞 token 消费，
+        # 否则飞书 CardKit/PatchMessage API 变慢时会造成流式输出卡顿。
+        self._streaming_patch_tasks: dict[str, asyncio.Task] = {}
         # session_key → 思考内容（流式期间暂存，finalize 后清理）
         self._streaming_thinking: dict[str, str] = {}
         # session_key → 思考耗时(ms)
@@ -619,13 +622,33 @@ class FeishuAdapter(ChannelAdapter):
 
         # 探测 CardKit 流式卡片权限 (cardkit:card:write)
         try:
+            probe_card_json = json.dumps(
+                {
+                    "schema": "2.0",
+                    "body": {
+                        "direction": "vertical",
+                        "elements": [
+                            {
+                                "tag": "markdown",
+                                "content": "probe",
+                                "element_id": "probe_content",
+                            }
+                        ],
+                    },
+                }
+            )
             result = await self._cardkit_api(
                 "POST",
                 "/open-apis/cardkit/v1/cards",
-                body={"type": "card_json", "data": "{}", "settings": {}},
+                body={
+                    "type": "card_json",
+                    "data": probe_card_json,
+                    "settings": {"config": {"streaming_mode": True}},
+                },
+                validate=False,
             )
             code = result.get("code", -1)
-            if code == 0 or "card_id" in result.get("data", {}):
+            if code == 0 and "card_id" in result.get("data", {}):
                 self._cardkit_available = True
                 self._capabilities.append("CardKit 流式卡片")
             elif self._is_permission_error(result.get("msg", "")):
@@ -635,8 +658,8 @@ class FeishuAdapter(ChannelAdapter):
                     "建议在飞书开放平台开通 cardkit:card:write 权限。"
                 )
             else:
-                self._cardkit_available = True
-                self._capabilities.append("CardKit 流式卡片")
+                self._cardkit_available = False
+                logger.info(f"Feishu: CardKit 探测失败，回退 PatchMessage: {result}")
         except Exception:
             self._cardkit_available = False
 
@@ -1279,7 +1302,14 @@ class FeishuAdapter(ChannelAdapter):
             self._tenant_token_expires = time.time() + data.get("expire", 7200) - 300
             return self._tenant_token
 
-    async def _cardkit_api(self, method: str, path: str, body: dict | None = None) -> dict:
+    async def _cardkit_api(
+        self,
+        method: str,
+        path: str,
+        body: dict | None = None,
+        *,
+        validate: bool = True,
+    ) -> dict:
         """调用飞书 CardKit REST API。"""
         token = await self._get_tenant_access_token()
         import httpx
@@ -1295,7 +1325,11 @@ class FeishuAdapter(ChannelAdapter):
                 resp = await client.patch(url, json=body, headers=headers)
             else:
                 resp = await client.get(url, headers=headers)
-        return resp.json()
+        resp.raise_for_status()
+        result = resp.json()
+        if validate and result.get("code", 0) != 0:
+            raise RuntimeError(f"CardKit API failed: {result}")
+        return result
 
     async def _create_cardkit_card(self, content: str) -> tuple[str, str]:
         """创建 CardKit 流式卡片，返回 (card_id, element_id)。"""
@@ -1662,6 +1696,42 @@ class FeishuAdapter(ChannelAdapter):
             return False
         return True
 
+    def _schedule_stream_patch(self, sk: str, card_id: str, *, final: bool = False) -> None:
+        """调度一次后台卡片刷新，使用当前最新缓冲区内容。"""
+        existing = self._streaming_patch_tasks.get(sk)
+        if existing and not existing.done():
+            return
+        try:
+            self._streaming_patch_tasks[sk] = asyncio.create_task(
+                self._run_stream_patch(sk, card_id, final=final)
+            )
+        except RuntimeError:
+            logger.debug("Feishu: no running loop to schedule stream patch")
+
+    async def _run_stream_patch(self, sk: str, card_id: str, *, final: bool = False) -> None:
+        display = self._compose_thinking_display(sk)
+        try:
+            await self._patch_card_content(card_id, display, sk, final=final)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.info(f"Feishu: background streaming patch failed (non-fatal): {e}")
+        finally:
+            if self._streaming_patch_tasks.get(sk) is asyncio.current_task():
+                self._streaming_patch_tasks.pop(sk, None)
+
+    async def _cancel_stream_patch(self, sk: str, *, grace_seconds: float = 0.0) -> None:
+        task = self._streaming_patch_tasks.pop(sk, None)
+        if not task or task.done():
+            return
+        if grace_seconds > 0:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.wait_for(asyncio.shield(task), timeout=grace_seconds)
+                return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+
     async def stream_thinking(
         self,
         chat_id: str,
@@ -1696,12 +1766,8 @@ class FeishuAdapter(ChannelAdapter):
             if now - last_t < throttle_s:
                 return
 
-        display = self._compose_thinking_display(sk)
-        try:
-            await self._patch_card_content(card_id, display, sk)
-            self._streaming_last_patch[sk] = now
-        except Exception as e:
-            logger.info(f"Feishu: stream_thinking patch failed (non-fatal): {e}")
+        self._streaming_last_patch[sk] = now
+        self._schedule_stream_patch(sk, card_id)
 
     async def stream_chain_text(
         self,
@@ -1727,12 +1793,8 @@ class FeishuAdapter(ChannelAdapter):
         last_t = self._streaming_last_patch.get(sk, 0.0)
         throttle_s = self._streaming_throttle_ms / 1000.0
         if now - last_t >= throttle_s:
-            display = self._compose_thinking_display(sk)
-            try:
-                await self._patch_card_content(card_id, display, sk)
-                self._streaming_last_patch[sk] = now
-            except Exception as e:
-                logger.info(f"Feishu: stream_chain_text patch failed (non-fatal): {e}")
+            self._streaming_last_patch[sk] = now
+            self._schedule_stream_patch(sk, card_id)
 
     _THINKING_DISPLAY_MAX = 800
 
@@ -1797,12 +1859,12 @@ class FeishuAdapter(ChannelAdapter):
 
         if now - last_t >= throttle_s:
             has_thinking = sk in self._streaming_thinking
-            display_text = self._compose_thinking_display(sk) if has_thinking else (buf + " ▍")
-            try:
-                await self._patch_card_content(card_id, display_text, sk)
-                self._streaming_last_patch[sk] = now
-            except Exception as e:
-                logger.info(f"Feishu: streaming patch failed (non-fatal): {e}")
+            if not has_thinking:
+                # _compose_thinking_display normally handles this too, but keeping
+                # the branch makes the plain reply path explicit.
+                self._streaming_buffers[sk] = buf
+            self._streaming_last_patch[sk] = now
+            self._schedule_stream_patch(sk, card_id)
 
     async def finalize_stream(
         self,
@@ -1819,6 +1881,8 @@ class FeishuAdapter(ChannelAdapter):
         """
         sk = self._make_session_key(chat_id, thread_id)
         card_id = self._thinking_cards.get(sk)
+
+        await self._cancel_stream_patch(sk, grace_seconds=0.8)
 
         self._streaming_buffers.pop(sk, None)
         self._streaming_last_patch.pop(sk, None)
@@ -2419,6 +2483,7 @@ class FeishuAdapter(ChannelAdapter):
 
         # ---- 思考卡片处理：尝试 PATCH 占位卡片为最终回复 ----
         sk = self._make_session_key(message.chat_id, message.thread_id)
+        await self._cancel_stream_patch(sk)
 
         # 中间消息（ask_user 问题、提醒、反馈等）不参与卡片状态管理，
         # 保留思考卡片给最终回复使用

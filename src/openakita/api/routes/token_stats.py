@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query, Request
 
+from openakita.config import settings
 from openakita.storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,19 @@ router = APIRouter(prefix="/api/stats/tokens", tags=["token_stats"])
 
 _db_instance: Database | None = None
 _db_lock = asyncio.Lock()
+_last_db_error: dict[str, str] = {}
+
+
+def _db_unavailable_payload() -> dict[str, object]:
+    return {
+        "error": "database not available",
+        "diagnostic": {
+            "db_path": str(settings.db_full_path),
+            "stage": _last_db_error.get("stage", "unknown"),
+            "exception_type": _last_db_error.get("exception_type", ""),
+            "message": _last_db_error.get("message", ""),
+        },
+    }
 
 
 async def _get_db() -> Database | None:
@@ -39,10 +53,25 @@ async def _get_db() -> Database | None:
             await db.connect()
             if db._connection is None:
                 logger.error("[TokenStats] Database connect() returned but _connection is None")
+                _last_db_error.update(
+                    {
+                        "stage": "post_connect",
+                        "exception_type": "NoConnection",
+                        "message": "Database.connect() completed but connection is None",
+                    }
+                )
                 return None
             _db_instance = db
+            _last_db_error.clear()
         except Exception as e:
             logger.error(f"[TokenStats] Failed to connect database: {e}")
+            _last_db_error.update(
+                {
+                    "stage": "connect",
+                    "exception_type": type(e).__name__,
+                    "message": str(e)[:500],
+                }
+            )
             return None
     return _db_instance
 
@@ -126,7 +155,7 @@ async def summary(
 ):
     db = await _get_db()
     if db is None:
-        return {"error": "database not available"}
+        return _db_unavailable_payload()
     start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         rows = await db.get_token_usage_summary(
@@ -155,7 +184,7 @@ async def timeline(
 ):
     db = await _get_db()
     if db is None:
-        return {"error": "database not available"}
+        return _db_unavailable_payload()
     start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         rows = await db.get_token_usage_timeline(
@@ -183,7 +212,7 @@ async def sessions(
 ):
     db = await _get_db()
     if db is None:
-        return {"error": "database not available"}
+        return _db_unavailable_payload()
     start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         rows = await db.get_token_usage_sessions(
@@ -206,7 +235,7 @@ async def total(
 ):
     db = await _get_db()
     if db is None:
-        return {"error": "database not available"}
+        return _db_unavailable_payload()
     start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         row = await db.get_token_usage_total(start_time=start_str, end_time=end_str)
@@ -228,7 +257,7 @@ async def by_agent(
     """Token usage grouped by agent_profile_id for multi-agent mode."""
     db = await _get_db()
     if db is None:
-        return {"error": "database not available"}
+        return _db_unavailable_payload()
     start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         by_agent_data = await db.get_token_usage_by_agent(start_time=start_str, end_time=end_str)

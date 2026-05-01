@@ -211,6 +211,7 @@ class MemoryHandler:
             "skill": MemoryType.SKILL,
             "error": MemoryType.ERROR,
             "rule": MemoryType.RULE,
+            "experience": MemoryType.EXPERIENCE,
         }
         mem_type = type_map.get(mem_type_str, MemoryType.FACT)
 
@@ -743,7 +744,7 @@ class MemoryHandler:
                 if r.get("tool_calls"):
                     for tc in r["tool_calls"]:
                         output += f"  工具: {tc.get('name', 'N/A')}\n"
-                        inp = tc.get("input", {})
+                        inp = tc.get("input", tc.get("arguments", {}))
                         if isinstance(inp, dict):
                             inp_str = json.dumps(inp, ensure_ascii=False, default=str)
                             output += f"  参数: {inp_str[:300]}\n"

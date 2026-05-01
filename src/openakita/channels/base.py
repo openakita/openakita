@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import ClassVar
 
+from ..core.log_health import record_health_event
 from .types import MediaFile, OutgoingMessage, UnifiedMessage
 
 logger = logging.getLogger(__name__)
@@ -260,6 +261,13 @@ class ChannelAdapter(ABC):
 
     def _report_failure(self, reason: str) -> None:
         """通知网关本适配器已致命失败（认证错误等），使状态面板正确反映离线。"""
+        record_health_event(
+            "im",
+            f"{self.channel_name}:fatal_failure",
+            reason,
+            severity="error",
+            suggestion="该 IM 适配器已进入降级/离线状态，请检查机器人凭据、网络和平台权限。",
+        )
         if self._failure_callback:
             try:
                 self._failure_callback(self.channel_name, reason)

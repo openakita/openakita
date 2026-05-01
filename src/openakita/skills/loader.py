@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ..core.log_health import record_health_event
 from .categories import (
     RESERVED_NAMESPACE_DIRS,
     CategoryRegistry,
@@ -398,7 +399,14 @@ class SkillLoader:
                             except Exception:
                                 pass
                 except Exception as e:
-                    logger.error(f"Failed to load skill from {item}: {e}")
+                    if record_health_event(
+                        "skill",
+                        f"{item.name}:load",
+                        str(e),
+                        severity="error",
+                        suggestion="请检查技能目录是否包含合法 SKILL.md，以及 frontmatter/脚本路径是否正确。",
+                    ):
+                        logger.error(f"Failed to load skill from {item}: {e}")
             elif item.name in RESERVED_NAMESPACE_DIRS:
                 # 命名空间目录：保持旧行为（不作为用户面向的"大类"，
                 # 因此 _category_path 不向下累积；system 目录默认只读）
@@ -490,11 +498,31 @@ class SkillLoader:
             hard_errors = [e for e in (errors or []) if e.startswith("ERROR:")]
             warnings = [e for e in (errors or []) if not e.startswith("ERROR:")]
             for w in warnings:
-                logger.warning(f"Skill validation warning: {w}")
+                if record_health_event(
+                    "skill",
+                    f"{skill_dir.name}:validation_warning",
+                    w,
+                    suggestion="技能可以继续加载，但建议修正 metadata 字段以避免运行时行为不明确。",
+                ):
+                    logger.warning(f"Skill validation warning: {w}")
             if hard_errors:
                 for e in hard_errors:
-                    logger.error(f"Skill validation error: {e}")
-                logger.error(f"Skill '{skill_dir.name}' rejected due to validation errors")
+                    if record_health_event(
+                        "skill",
+                        f"{skill_dir.name}:validation_error",
+                        e,
+                        severity="error",
+                        suggestion="技能已被拒绝加载，请修正 SKILL.md 必填字段或 schema。",
+                    ):
+                        logger.error(f"Skill validation error: {e}")
+                if record_health_event(
+                    "skill",
+                    f"{skill_dir.name}:rejected",
+                    "rejected due to validation errors",
+                    severity="error",
+                    suggestion="技能已跳过加载，避免重复报错。",
+                ):
+                    logger.error(f"Skill '{skill_dir.name}' rejected due to validation errors")
                 return None
 
             sid = skill_dir.name
@@ -514,7 +542,14 @@ class SkillLoader:
             return skill
 
         except Exception as e:
-            logger.error(f"Failed to load skill from {skill_dir}: {e}")
+            if record_health_event(
+                "skill",
+                f"{skill_dir.name}:load",
+                str(e),
+                severity="error",
+                suggestion="请检查技能 metadata、引用文件和脚本路径；该错误已聚合限频。",
+            ):
+                logger.error(f"Failed to load skill from {skill_dir}: {e}")
             return None
 
     def _load_i18n(self, skill_dir: Path, metadata: SkillMetadata) -> None:
@@ -713,6 +748,8 @@ class SkillLoader:
         script_name: str,
         args: list[str] | None = None,
         cwd: Path | None = None,
+        python_executable: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> tuple[bool, str]:
         """
         运行技能脚本
@@ -753,10 +790,11 @@ class SkillLoader:
         args = args or []
 
         if script_path.suffix == ".py":
-            # PyInstaller 兼容: 使用 runtime_env 获取正确的 Python 解释器
+            # Prefer the caller-provided managed env. Fall back to the legacy
+            # packaged/source interpreter for backwards compatibility.
             from openakita.runtime_env import get_python_executable
 
-            py = get_python_executable()
+            py = python_executable or get_python_executable()
             if not py:
                 return False, "Python 解释器不可用，无法执行脚本"
             cmd = [py, str(script_path)] + args
@@ -799,6 +837,7 @@ class SkillLoader:
                 cwd=cwd or skill.skill_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                env=env,
                 **extra,
             )
             try:

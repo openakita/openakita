@@ -1,0 +1,70 @@
+{
+  "id": "ppt-maker",
+  "name": "PPT Maker",
+  "version": "0.1.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Guided presentation generation for editable PPTX decks, table-driven reports, and enterprise templates.",
+  "display_name_zh": "PPT 制作助手",
+  "display_name_en": "PPT Maker",
+  "description_i18n": {
+    "zh": "通过需求梳理、大纲确认、表格洞察、模板适配和质量检查生成可编辑 PPTX。",
+    "en": "Generate editable PPTX decks through guided requirements, outlines, table insights, template adaptation, and audit checks."
+  },
+  "icon": "icon.svg",
+  "author": "OpenAkita",
+  "category": "productivity",
+  "tags": ["ppt", "powerpoint", "presentation", "office", "table", "template"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~1",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0",
+    "python": ">=3.11"
+  },
+  "provides": {
+    "tools": [
+      "ppt_start_project",
+      "ppt_ingest_sources",
+      "ppt_ingest_table",
+      "ppt_profile_table",
+      "ppt_generate_table_insights",
+      "ppt_upload_template",
+      "ppt_diagnose_template",
+      "ppt_generate_outline",
+      "ppt_confirm_outline",
+      "ppt_generate_design",
+      "ppt_confirm_design",
+      "ppt_generate_deck",
+      "ppt_revise_slide",
+      "ppt_audit",
+      "ppt_export",
+      "ppt_list_projects",
+      "ppt_cancel"
+    ],
+    "routes": true,
+    "skill": "SKILL.md"
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "icon": "icon.svg",
+    "title": "PPT 制作助手",
+    "title_i18n": {
+      "zh": "PPT 制作助手",
+      "en": "PPT Maker"
+    },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  },
+  "load_timeout": 15
+}
+

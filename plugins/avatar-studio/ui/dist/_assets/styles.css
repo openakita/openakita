@@ -18,8 +18,8 @@
   --oa-text: var(--text, #1e293b);
   --oa-text-muted: var(--text-muted, #64748b);
   --oa-border: var(--border, #e2e8f0);
-  --oa-primary: var(--primary, #4f46e5);
-  --oa-primary-hover: var(--primary-hover, #4338ca);
+  --oa-primary: var(--primary, #2563eb);
+  --oa-primary-hover: var(--primary-hover, #1d4ed8);
   --oa-success: var(--success, #16a34a);
   --oa-warning: var(--warning, #f59e0b);
   --oa-danger: var(--danger, #ef4444);
@@ -371,9 +371,9 @@ details.oa-collapse[open] > summary.oa-collapse__summary .oa-collapse__chevron {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px;
   border-radius: 10px;
-  background: linear-gradient(135deg, var(--oa-primary), #8b5cf6);
+  background: linear-gradient(135deg, var(--oa-primary), #38bdf8);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
   flex-shrink: 0;
 }
 .oa-hero-title__icon > svg { width: 22px; height: 22px; }
@@ -436,7 +436,7 @@ details.oa-collapse[open] > summary.oa-collapse__summary .oa-collapse__chevron {
  * 9) AI button — a small "this is an AI feature" affordance. Used for
  *    things like "AI optimize prompt", "AI suggest", "AI rewrite".
  *
- *    Visual recipe: violet→pink gradient outline + faint inner gradient,
+ *    Visual recipe: blue gradient outline + faint inner gradient,
  *    sparkles icon with subtle pulse on hover. Stays small (~24px tall) so
  *    it can dock next to a section label or input header.
  *
@@ -448,7 +448,7 @@ details.oa-collapse[open] > summary.oa-collapse__summary .oa-collapse__chevron {
 /* Solid-fill gradient button. We deliberately use a filled style (not an
  * outline / ghost button) because in real use the AI affordance was hard
  * to spot when only the border carried color — the button blended into
- * the surrounding card. A filled violet→pink gradient pill with a moving
+ * the surrounding card. A filled blue gradient pill with a moving
  * background reads instantly as "this is the AI action". */
 .oa-ai-btn {
   display: inline-flex; align-items: center; gap: 6px;
@@ -456,13 +456,13 @@ details.oa-collapse[open] > summary.oa-collapse__summary .oa-collapse__chevron {
   font-size: 12px; font-weight: 600;
   line-height: 1;
   color: #fff;
-  background: linear-gradient(120deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+  background: linear-gradient(120deg, #2563eb 0%, #0ea5e9 50%, #38bdf8 100%);
   background-size: 200% 200%;
   background-position: 0% 50%;
   border: 0;
   border-radius: 999px;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(99, 102, 241, 0.25), 0 2px 8px rgba(236, 72, 153, 0.18);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25), 0 2px 8px rgba(14, 165, 233, 0.18);
   transition: transform 120ms ease, box-shadow 200ms ease, background-position 600ms ease;
   white-space: nowrap;
 }
@@ -474,7 +474,7 @@ details.oa-collapse[open] > summary.oa-collapse__summary .oa-collapse__chevron {
 .oa-ai-btn__icon > svg { width: 13px; height: 13px; }
 .oa-ai-btn:hover {
   background-position: 100% 50%;
-  box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.18), 0 4px 12px rgba(99, 102, 241, 0.30);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18), 0 4px 12px rgba(37, 99, 235, 0.30);
   transform: translateY(-1px);
 }
 .oa-ai-btn:hover .oa-ai-btn__icon {

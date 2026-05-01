@@ -224,7 +224,7 @@ def _to_safe_session_id(session_key: str) -> str:
     return re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", safe)
 
 
-@router.get("/api/im/sessions/{session_id}/messages")
+@router.get("/api/im/sessions/{session_id:path}/messages")
 async def get_session_messages(
     request: Request,
     session_id: str,
@@ -391,7 +391,7 @@ class DeleteMessagesRequest(BaseModel):
     turn_ids: list[int]
 
 
-@router.post("/api/im/sessions/{session_id}/messages/delete")
+@router.post("/api/im/sessions/{session_id:path}/messages/delete")
 async def delete_session_messages(request: Request, session_id: str, body: DeleteMessagesRequest):
     """Delete specific messages (conversation_turns) by their SQLite IDs."""
     storage = _get_storage()
@@ -435,7 +435,7 @@ async def delete_session_messages(request: Request, session_id: str, body: Delet
     return JSONResponse(content={"ok": True, "deleted": deleted})
 
 
-@router.delete("/api/im/sessions/{session_id}")
+@router.delete("/api/im/sessions/{session_id:path}")
 async def delete_im_session(request: Request, session_id: str):
     """Close and remove an IM session, including its SQLite conversation_turns."""
     session_mgr = _get_session_manager(request)

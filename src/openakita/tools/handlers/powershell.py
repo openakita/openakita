@@ -228,12 +228,27 @@ class PowerShellHandler:
         cwd = working_dir or getattr(self.agent, "default_cwd", None) or os.getcwd()
 
         env = os.environ.copy()
-        try:
-            from ...runtime_env import apply_agent_python_environment
+        spec = getattr(self.agent, "_execution_env_spec", None)
+        if spec is not None:
+            try:
+                from ...runtime_envs import apply_execution_environment, ensure_execution_env
 
-            env = apply_agent_python_environment(env)
-        except Exception:
-            pass
+                env = apply_execution_environment(env, ensure_execution_env(spec))
+            except Exception as exc:
+                logger.warning("[PowerShell] Falling back to shared agent Python env: %s", exc)
+                try:
+                    from ...runtime_env import apply_agent_python_environment
+
+                    env = apply_agent_python_environment(env)
+                except Exception:
+                    pass
+        else:
+            try:
+                from ...runtime_env import apply_agent_python_environment
+
+                env = apply_agent_python_environment(env)
+            except Exception:
+                pass
 
         logger.info(f"[PowerShell] Executing: {command[:300]}")
 

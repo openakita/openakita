@@ -39,9 +39,15 @@ def _get_terminal_manager(agent: "Agent") -> Any:
     agent_id = id(agent)
     mgr = _terminal_mgr_strong_refs.get(agent_id)
     if mgr is not None:
+        mgr.execution_env_spec = getattr(agent, "_execution_env_spec", None)
+        for session in getattr(mgr, "sessions", {}).values():
+            session.execution_env_spec = mgr.execution_env_spec
         return mgr
     cwd = getattr(agent, "default_cwd", None) or str(Path.cwd())
-    mgr = TerminalSessionManager(default_cwd=cwd)
+    mgr = TerminalSessionManager(
+        default_cwd=cwd,
+        execution_env_spec=getattr(agent, "_execution_env_spec", None),
+    )
     _terminal_mgr_strong_refs[agent_id] = mgr
     try:
         weakref.finalize(agent, _terminal_mgr_strong_refs.pop, agent_id, None)
@@ -305,12 +311,36 @@ class FilesystemHandler:
         session_id = params.get("session_id", 1)
 
         terminal_mgr = _get_terminal_manager(self.agent)
-        result = await terminal_mgr.execute(
-            command,
-            session_id=session_id,
-            block_timeout_ms=block_timeout_ms,
-            working_directory=working_directory,
-        )
+        previous_spec = getattr(terminal_mgr, "execution_env_spec", None)
+        requested_scope = str(params.get("env_scope") or "").strip().lower()
+        if requested_scope == "scratch":
+            try:
+                from ...runtime_envs import resolve_scratch_env
+
+                terminal_mgr.execution_env_spec = resolve_scratch_env(
+                    session_id=f"{getattr(self.agent, '_agent_profile_id', 'default')}:{session_id}"
+                )
+                for session in getattr(terminal_mgr, "sessions", {}).values():
+                    session.execution_env_spec = terminal_mgr.execution_env_spec
+            except Exception as exc:
+                logger.warning("Failed to resolve scratch env for run_shell: %s", exc)
+        elif requested_scope == "shared":
+            terminal_mgr.execution_env_spec = None
+            for session in getattr(terminal_mgr, "sessions", {}).values():
+                session.execution_env_spec = None
+
+        try:
+            result = await terminal_mgr.execute(
+                command,
+                session_id=session_id,
+                block_timeout_ms=block_timeout_ms,
+                working_directory=working_directory,
+            )
+        finally:
+            if requested_scope in {"scratch", "shared"}:
+                terminal_mgr.execution_env_spec = previous_spec
+                for session in getattr(terminal_mgr, "sessions", {}).values():
+                    session.execution_env_spec = previous_spec
 
         from ...logging import get_session_log_buffer
 
