@@ -1,0 +1,5 @@
+i18n:
+  zh:
+    name: 命令行通
+    description: 通过 CLI-Anything 生成的命令行界面控制桌面软件（如 GIMP、Blender、LibreOffice 等）。直接调用真实应用程序后端，比基于
+      desktop_* 工具的图形界面自动化更可靠。

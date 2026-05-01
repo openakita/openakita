@@ -1,0 +1,5 @@
+i18n:
+  zh:
+    name: 开放命令行
+    description: 通过命令行操作网站和 Electron 应用，复用 Chrome 登录会话。对于支持的站点（如 GitHub、Bilibili、Twitter/X、YouTube
+      等），优先于浏览器任务使用，提供确定性命令和结构化 JSON 输出。

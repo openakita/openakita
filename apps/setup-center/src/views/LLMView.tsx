@@ -329,6 +329,122 @@ export function LLMView(props: LLMViewProps) {
     return fetchModelsDirectly(params);
   }
 
+  type EndpointListKey = "endpoints" | "compiler_endpoints" | "stt_endpoints";
+
+  function endpointLists(config: Record<string, any>): EndpointListKey[] {
+    for (const key of ["endpoints", "compiler_endpoints", "stt_endpoints"] as EndpointListKey[]) {
+      if (!Array.isArray(config[key])) config[key] = [];
+    }
+    return ["endpoints", "compiler_endpoints", "stt_endpoints"];
+  }
+
+  function allocateEndpointEnv(endpoint: Record<string, unknown>, config: Record<string, any>): string {
+    const used = new Set<string>();
+    for (const listKey of endpointLists(config)) {
+      for (const ep of config[listKey]) {
+        if (ep?.api_key_env) used.add(String(ep.api_key_env));
+      }
+    }
+
+    const provider = String(endpoint.provider || "custom").toUpperCase().replace(/-/g, "_");
+    const baseName = `${provider}_API_KEY`;
+    if (!used.has(baseName)) return baseName;
+    for (let i = 2; i < 100; i += 1) {
+      const candidate = `${baseName}_${i}`;
+      if (!used.has(candidate)) return candidate;
+    }
+    return `${baseName}_${Math.random().toString(16).slice(2, 8)}`;
+  }
+
+  async function saveEndpointLocal(
+    endpoint: Record<string, unknown>,
+    apiKey: string | null,
+    endpointType: EndpointListKey,
+  ): Promise<{ status: string; endpoint: any; error?: string }> {
+    if (!IS_TAURI || !currentWorkspaceId || dataMode === "remote") {
+      throw new Error("本地保存不可用：服务未连接，且当前不是桌面本地工作区");
+    }
+
+    const raw = await readWorkspaceFile("data/llm_endpoints.json").catch(() => "{}");
+    const config = raw ? JSON.parse(raw) : {};
+    endpointLists(config);
+    const list = config[endpointType] as Record<string, unknown>[];
+    const name = String(endpoint.name || "").trim();
+    if (!name) return { status: "error", endpoint, error: "Endpoint must have a name" };
+
+    const existing = list.find((ep) => String(ep?.name || "") === name);
+    const savedEndpoint: Record<string, unknown> = { ...(existing || {}), ...endpoint };
+    let envVar = String((existing as any)?.api_key_env || savedEndpoint.api_key_env || "");
+
+    if (apiKey !== null) {
+      if (!envVar) envVar = allocateEndpointEnv(savedEndpoint, config);
+      savedEndpoint.api_key_env = envVar;
+      await invoke("workspace_update_env", {
+        workspaceId: currentWorkspaceId,
+        entries: [{ key: envVar, value: apiKey }],
+      });
+      setEnvDraft((e) => envSet(e, envVar, apiKey));
+    } else {
+      savedEndpoint.api_key_env = envVar;
+    }
+
+    const nextList = existing
+      ? list.map((ep) => (String(ep?.name || "") === name ? savedEndpoint : ep))
+      : [...list, savedEndpoint];
+    nextList.sort((a, b) => {
+      const pa = normalizePriority((a as any).priority, 999);
+      const pb = normalizePriority((b as any).priority, 999);
+      if (pa !== pb) return pa - pb;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+    config[endpointType] = nextList;
+    await writeWorkspaceFile("data/llm_endpoints.json", `${JSON.stringify(config, null, 2)}\n`);
+    return { status: "ok", endpoint: savedEndpoint };
+  }
+
+  async function saveEndpointConfig(
+    endpoint: Record<string, unknown>,
+    apiKey: string | null,
+    endpointType: EndpointListKey,
+  ): Promise<{ status: string; endpoint?: any; error?: string }> {
+    if (shouldUseHttpApi()) {
+      try {
+        const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ endpoint, api_key: apiKey, endpoint_type: endpointType }),
+        });
+        return await res.json();
+      } catch (e) {
+        if (dataMode === "remote" || !IS_TAURI) throw e;
+        logger.warn("LLMView", "saveEndpointConfig: HTTP failed, falling back to local file", { error: String(e) });
+      }
+    }
+    return saveEndpointLocal(endpoint, apiKey, endpointType);
+  }
+
+  async function deleteEndpointConfig(name: string, endpointType: EndpointListKey): Promise<void> {
+    if (shouldUseHttpApi()) {
+      try {
+        await safeFetch(
+          `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(name)}?endpoint_type=${endpointType}`,
+          { method: "DELETE" },
+        );
+        return;
+      } catch (e) {
+        if (dataMode === "remote" || !IS_TAURI) throw e;
+        logger.warn("LLMView", "deleteEndpointConfig: HTTP failed, falling back to local file", { error: String(e) });
+      }
+    }
+    if (!IS_TAURI || !currentWorkspaceId) throw new Error("本地删除不可用：未选择工作区");
+    const raw = await readWorkspaceFile("data/llm_endpoints.json").catch(() => "{}");
+    const config = raw ? JSON.parse(raw) : {};
+    endpointLists(config);
+    config[endpointType] = (config[endpointType] as Record<string, unknown>[])
+      .filter((ep) => String(ep?.name || "") !== name);
+    await writeWorkspaceFile("data/llm_endpoints.json", `${JSON.stringify(config, null, 2)}\n`);
+  }
+
   async function doFetchModels() {
     setModels([]);
     setSelectedModelId("");
@@ -532,16 +648,7 @@ export function LLMView(props: LLMViewProps) {
         capabilities: ["text"],
       };
 
-      const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint,
-          api_key: effectiveCompApiKeyValue || null,
-          endpoint_type: "compiler_endpoints",
-        }),
-      });
-      const data = await res.json();
+      const data = await saveEndpointConfig(endpoint, effectiveCompApiKeyValue || null, "compiler_endpoints");
       if (data.status === "error" || data.status === "conflict") {
         notifyError(data.error || "保存失败");
         return false;
@@ -569,10 +676,7 @@ export function LLMView(props: LLMViewProps) {
     if (!currentWorkspaceId && dataMode !== "remote") return;
     const _busyId = notifyLoading("删除编译端点...");
     try {
-      await safeFetch(
-        `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(epName)}?endpoint_type=compiler_endpoints`,
-        { method: "DELETE" },
-      );
+      await deleteEndpointConfig(epName, "compiler_endpoints");
       setSavedCompilerEndpoints((prev) => prev.filter((e) => e.name !== epName));
       notifySuccess(`编译端点 ${epName} 已删除`);
       loadSavedEndpoints().catch(() => {});
@@ -623,16 +727,7 @@ export function LLMView(props: LLMViewProps) {
         capabilities: ["text"],
       };
 
-      const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint,
-          api_key: effectiveSttApiKeyValue || null,
-          endpoint_type: "stt_endpoints",
-        }),
-      });
-      const data = await res.json();
+      const data = await saveEndpointConfig(endpoint, effectiveSttApiKeyValue || null, "stt_endpoints");
       if (data.status === "error" || data.status === "conflict") {
         notifyError(data.error || "保存失败");
         return false;
@@ -661,10 +756,7 @@ export function LLMView(props: LLMViewProps) {
     if (!currentWorkspaceId && dataMode !== "remote") return;
     const _busyId = notifyLoading("删除 STT 端点...");
     try {
-      await safeFetch(
-        `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(epName)}?endpoint_type=stt_endpoints`,
-        { method: "DELETE" },
-      );
+      await deleteEndpointConfig(epName, "stt_endpoints");
       setSavedSttEndpoints((prev) => prev.filter((e) => e.name !== epName));
       notifySuccess(`STT 端点 ${epName} 已删除`);
       loadSavedEndpoints().catch(() => {});
@@ -915,26 +1007,14 @@ export function LLMView(props: LLMViewProps) {
       if (editDraft.streamOnly) endpoint.stream_only = true;
 
       if (nameChanged) {
-        await safeFetch(
-          `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(editingOriginalName)}?endpoint_type=${epType}`,
-          { method: "DELETE" },
-        );
+        await deleteEndpointConfig(editingOriginalName, epType);
       }
       // Only send the API key when the user actually edited the input
       // (apiKeyDirty). Otherwise the prefilled masked value (sk-d****ab53)
       // would be echoed back and overwrite the real key on disk.
       // See v1.26.x commit 8ab550fa.
       const keyToSave = editDraft.apiKeyDirty ? (editDraft.apiKeyValue.trim() || null) : null;
-      const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint,
-          api_key: keyToSave,
-          endpoint_type: epType,
-        }),
-      });
-      const data = await res.json();
+      const data = await saveEndpointConfig(endpoint, keyToSave, epType);
       if (data.status === "conflict" || data.status === "error") {
         notifyError(data.error || "保存失败");
         return;
@@ -1000,16 +1080,7 @@ export function LLMView(props: LLMViewProps) {
         endpoint.extra_params = { enable_thinking: true };
       }
 
-      const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint,
-          api_key: effectiveApiKeyValue || null,
-          endpoint_type: "endpoints",
-        }),
-      });
-      const data = await res.json();
+      const data = await saveEndpointConfig(endpoint, effectiveApiKeyValue || null, "endpoints");
       if (data.status === "conflict") {
         notifyError(data.error || t("llm.configConflict"));
         return false;
@@ -1042,10 +1113,7 @@ export function LLMView(props: LLMViewProps) {
     if (!currentWorkspaceId && dataMode !== "remote") return;
     const _busyId = notifyLoading("删除端点...");
     try {
-      await safeFetch(
-        `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(name)}?endpoint_type=endpoints`,
-        { method: "DELETE" },
-      );
+      await deleteEndpointConfig(name, "endpoints");
       setSavedEndpoints((prev) => prev.filter((e) => e.name !== name));
       notifySuccess(`已删除端点：${name}`);
       loadSavedEndpoints().catch(() => {});

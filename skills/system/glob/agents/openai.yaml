@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: 文件搜索
+    description: 递归查找匹配指定模式的文件，按修改时间倒序排列，并自动跳过 .git、node_modules 等常见忽略目录。
