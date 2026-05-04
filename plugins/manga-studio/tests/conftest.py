@@ -33,7 +33,7 @@ for _m in (
     "direct_ark_client",
     "direct_wanxiang_client",
     "tts_client",
-    "comfy_client",
+    "comfy_client",  # phase 3.1 — workflow backend
     "script_writer",
     "prompt_assembler",
     "ffmpeg_service",
