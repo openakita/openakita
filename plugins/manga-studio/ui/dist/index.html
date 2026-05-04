@@ -314,6 +314,91 @@
       padding: 3px 10px; border-radius: 999px; font-size: 11px;
       background: rgba(99,102,241,.15); color: var(--accent); font-weight: 500;
     }
+    /* Characters tab (Phase 3.4) */
+    .char-tab-header {
+      display: flex; justify-content: space-between; align-items: flex-end;
+      margin-bottom: 16px; gap: 12px; flex-wrap: wrap;
+    }
+    .char-tab-header__title { font-size: 18px; font-weight: 600; color: var(--text); }
+    .char-tab-header__sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .char-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .char-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px; cursor: pointer;
+      display: flex; flex-direction: column; gap: 8px;
+      transition: border-color .15s, transform .15s;
+    }
+    .char-card:hover { border-color: var(--primary); transform: translateY(-1px); }
+    .char-card__thumb-row {
+      display: flex; gap: 6px; flex-wrap: wrap; min-height: 64px;
+      align-items: center;
+    }
+    .char-card__thumb {
+      width: 56px; height: 64px; object-fit: cover;
+      border-radius: 6px; background: var(--bg-deep); border: 1px solid var(--border);
+    }
+    .char-card__thumb--placeholder {
+      width: 56px; height: 64px; border-radius: 6px;
+      background: var(--bg-deep); border: 1px dashed var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; color: var(--text-muted); opacity: .6;
+    }
+    .char-card__name { font-size: 14px; font-weight: 600; color: var(--text); }
+    .char-card__meta { font-size: 11px; color: var(--text-muted); display: flex; gap: 6px; }
+    .char-card__chip {
+      padding: 1px 6px; border-radius: 999px;
+      background: rgba(99,102,241,.12); color: var(--accent); font-size: 10px;
+    }
+    .char-card__desc {
+      font-size: 12px; color: var(--text-muted); line-height: 1.4;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .char-editor {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 16px;
+    }
+    .char-editor__field--full { grid-column: 1 / -1; }
+    .char-editor__label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+    .char-refs-grid {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      margin-top: 6px;
+    }
+    .char-refs-thumb {
+      position: relative; width: 96px; height: 96px;
+      border-radius: 6px; overflow: hidden;
+      background: var(--bg-deep); border: 1px solid var(--border);
+    }
+    .char-refs-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .char-refs-thumb__remove {
+      position: absolute; top: 4px; right: 4px;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: rgba(0,0,0,.6); color: #fff; font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; border: none;
+    }
+    .char-refs-thumb__remove:hover { background: var(--danger); }
+    .char-refs-uploader {
+      width: 96px; height: 96px;
+      border-radius: 6px; border: 2px dashed var(--border);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: var(--text-muted); font-size: 11px; text-align: center;
+      padding: 4px; transition: border-color .15s, color .15s;
+    }
+    .char-refs-uploader:hover { border-color: var(--primary); color: var(--primary); }
+    .char-editor__footer {
+      grid-column: 1 / -1;
+      display: flex; justify-content: space-between; gap: 8px;
+      margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border);
+    }
+    @media (max-width: 720px) {
+      .char-editor { grid-template-columns: 1fr; }
+    }
     .ico { display: inline-flex; align-items: center; justify-content: center;
       width: 1em; height: 1em; vertical-align: -0.125em; flex-shrink: 0; }
     .spinner-sm {
@@ -488,6 +573,46 @@ const I18N = {
     "stub.title": "{label} · 即将上线",
     "stub.desc": "本页将在 Phase 3 / Phase 4 中陆续上线，对应后端能力当前已完成或在路上。",
     "stub.phase": "Phase {n}",
+    "char.title": "角色卡",
+    "char.subtitle": "复用角色 · 参考图驱动一致性 · IP-Adapter / DashScope 多参",
+    "char.btn.new": "新建角色",
+    "char.list.empty.title": "还没有角色卡",
+    "char.list.empty.hint": "新建一张角色卡，上传 1-3 张参考图，每集生成时勾选即可保持人物一致性。",
+    "char.label.name": "姓名",
+    "char.label.role": "角色定位",
+    "char.label.gender": "性别",
+    "char.label.age": "年龄段",
+    "char.label.appearance": "外观特征",
+    "char.label.personality": "性格 / 气质",
+    "char.label.description": "一句话介绍",
+    "char.label.voice": "默认语音",
+    "char.label.refs": "参考图（用于角色一致性）",
+    "char.role.protagonist": "主角",
+    "char.role.supporting": "配角",
+    "char.role.antagonist": "反派",
+    "char.role.cameo": "客串",
+    "char.gender.female": "女",
+    "char.gender.male": "男",
+    "char.gender.neutral": "中性",
+    "char.gender.unknown": "未指定",
+    "char.refs.upload": "+ 上传参考图",
+    "char.refs.uploading": "上传中…",
+    "char.refs.empty": "暂无参考图，强烈建议至少上传 1 张正面参考。",
+    "char.refs.hint": "1-3 张为佳，过多反而会让模型困惑。支持 PNG/JPG，单张 ≤ 5MB。",
+    "char.refs.remove": "移除",
+    "char.btn.save": "保存",
+    "char.btn.cancel": "取消",
+    "char.btn.delete": "删除",
+    "char.confirm.delete": "确定删除该角色卡？此操作不可撤销。",
+    "char.placeholder.name": "如：李雷",
+    "char.placeholder.appearance": "黑色短发，校服，戴黑框眼镜",
+    "char.placeholder.personality": "内向但坚定，遇事冷静",
+    "char.placeholder.description": "高一新生，意外觉醒上古剑灵的力量",
+    "char.toast.created": "角色已创建",
+    "char.toast.updated": "角色已更新",
+    "char.toast.deleted": "角色已删除",
+    "char.toast.upload_failed": "参考图上传失败：{msg}",
+    "char.toast.save_failed": "保存失败：{msg}",
     "settings.title": "设置",
     "settings.section.api": "直接后端 · API Keys",
     "settings.label.ark": "火山方舟 API Key (Seedance 视频)",
@@ -555,6 +680,46 @@ const I18N = {
     "stub.title": "{label} · Coming soon",
     "stub.desc": "This tab lights up in Phase 3 / Phase 4 — the backend capability is either ready or on the way.",
     "stub.phase": "Phase {n}",
+    "char.title": "Characters",
+    "char.subtitle": "Reusable characters · Reference-image driven consistency · IP-Adapter / DashScope multi-ref",
+    "char.btn.new": "New Character",
+    "char.list.empty.title": "No characters yet",
+    "char.list.empty.hint": "Create a character with 1–3 reference images; pick it on each generation to keep the same look across panels.",
+    "char.label.name": "Name",
+    "char.label.role": "Role",
+    "char.label.gender": "Gender",
+    "char.label.age": "Age range",
+    "char.label.appearance": "Appearance",
+    "char.label.personality": "Personality",
+    "char.label.description": "One-line bio",
+    "char.label.voice": "Default voice",
+    "char.label.refs": "Reference images (drives character consistency)",
+    "char.role.protagonist": "Protagonist",
+    "char.role.supporting": "Supporting",
+    "char.role.antagonist": "Antagonist",
+    "char.role.cameo": "Cameo",
+    "char.gender.female": "Female",
+    "char.gender.male": "Male",
+    "char.gender.neutral": "Neutral",
+    "char.gender.unknown": "Unspecified",
+    "char.refs.upload": "+ Upload reference",
+    "char.refs.uploading": "Uploading…",
+    "char.refs.empty": "No reference images yet. We strongly recommend at least one front-facing photo for consistent results.",
+    "char.refs.hint": "1–3 references work best; more often confuses the model. PNG/JPG up to 5 MB each.",
+    "char.refs.remove": "Remove",
+    "char.btn.save": "Save",
+    "char.btn.cancel": "Cancel",
+    "char.btn.delete": "Delete",
+    "char.confirm.delete": "Delete this character? This can't be undone.",
+    "char.placeholder.name": "e.g. Li Lei",
+    "char.placeholder.appearance": "Short black hair, school uniform, square glasses",
+    "char.placeholder.personality": "Introverted but determined, calm under pressure",
+    "char.placeholder.description": "First-year high-schooler who unlocks an ancient sword spirit",
+    "char.toast.created": "Character created",
+    "char.toast.updated": "Character updated",
+    "char.toast.deleted": "Character deleted",
+    "char.toast.upload_failed": "Reference upload failed: {msg}",
+    "char.toast.save_failed": "Save failed: {msg}",
     "settings.title": "Settings",
     "settings.section.api": "Direct Backend · API Keys",
     "settings.label.ark": "Volcengine Ark API Key (Seedance video)",
@@ -675,7 +840,7 @@ function App() {
         {[
           { id: "studio", label: t("tabs.studio"), icon: "🎬" },
           { id: "series", label: t("tabs.series"), icon: "📺", phase: 4 },
-          { id: "characters", label: t("tabs.characters"), icon: "👥", phase: 4 },
+          { id: "characters", label: t("tabs.characters"), icon: "👥" },
           { id: "workflows", label: t("tabs.workflows"), icon: "🧩", phase: 3 },
           { id: "settings", label: t("tabs.settings"), icon: "⚙︎" },
         ].map(function(it) {
@@ -697,7 +862,7 @@ function App() {
           <Studio t={t} catalog={catalog} settings={settings} toast={toast} />
         )}
         {tab === "series" && <StubTab t={t} label={t("tabs.series")} phase={4} />}
-        {tab === "characters" && <StubTab t={t} label={t("tabs.characters")} phase={4} />}
+        {tab === "characters" && <Characters t={t} catalog={catalog} toast={toast} />}
         {tab === "workflows" && <StubTab t={t} label={t("tabs.workflows")} phase={3} />}
         {tab === "settings" && (
           <Settings t={t} settings={settings} setSettings={setSettings} toast={toast} />
@@ -1073,6 +1238,385 @@ function TaskCard({ task, t, onCancel }) {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Characters tab (Phase 3.4) ──
+// Manages reusable character cards. Each card has 1-3 reference images
+// that the pipeline forwards to wan2.7-image (multi-ref) or to the
+// IP-Adapter node in the workflow backend, driving cross-panel
+// character consistency. The Studio tab pulls from this list at submit
+// time so the user binds characters into an episode by ID, not by
+// re-typing them every run.
+function Characters({ t, catalog, toast }) {
+  const [items, setItems] = useState(null); // null=loading, []=empty
+  const [editing, setEditing] = useState(null); // null | "new" | row
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(function() {
+    pluginApi("GET", "/characters").then(function(r) {
+      if (r && r.ok && r.body) setItems(r.body.characters || []);
+      else setItems([]);
+    });
+  }, [reloadKey]);
+
+  function reload() { setReloadKey(function(k) { return k + 1; }); }
+
+  function onSaved(msg) {
+    if (msg) toast(msg, "success");
+    setEditing(null);
+    reload();
+  }
+
+  if (editing) {
+    return (
+      <CharacterEditor
+        t={t}
+        catalog={catalog}
+        toast={toast}
+        initial={editing === "new" ? null : editing}
+        onCancel={function() { setEditing(null); }}
+        onSaved={onSaved}
+      />
+    );
+  }
+
+  return (
+    <div>
+      <div className="char-tab-header">
+        <div>
+          <div className="char-tab-header__title">{t("char.title")}</div>
+          <div className="char-tab-header__sub">{t("char.subtitle")}</div>
+        </div>
+        <button className="btn btn-primary" onClick={function() { setEditing("new"); }}>
+          {t("char.btn.new")}
+        </button>
+      </div>
+
+      {items === null ? (
+        <div className="text-muted">{t("common.loading")}</div>
+      ) : items.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state__icon">👥</div>
+          <div className="empty-state__title">{t("char.list.empty.title")}</div>
+          <div className="empty-state__hint">{t("char.list.empty.hint")}</div>
+        </div>
+      ) : (
+        <div className="char-grid">
+          {items.map(function(it) {
+            return (
+              <div
+                key={it.id}
+                className="char-card"
+                onClick={function() { setEditing(it); }}
+              >
+                <div className="char-card__thumb-row">
+                  {(it.ref_images || it.ref_images_json || []).slice(0, 3).map(function(url, i) {
+                    return <img key={i} className="char-card__thumb" src={url} alt={"ref " + (i + 1)} />;
+                  })}
+                  {(!it.ref_images || it.ref_images.length === 0) && (!it.ref_images_json || it.ref_images_json.length === 0) ? (
+                    <div className="char-card__thumb--placeholder">?</div>
+                  ) : null}
+                </div>
+                <div className="char-card__name">{it.name}</div>
+                <div className="char-card__meta">
+                  <span className="char-card__chip">{t("char.role." + (it.role_type || "supporting"))}</span>
+                  {it.gender ? (
+                    <span className="char-card__chip">{t("char.gender." + it.gender)}</span>
+                  ) : null}
+                </div>
+                {it.description ? (
+                  <div className="char-card__desc">{it.description}</div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Editor form for a single character — opens for both create and edit.
+// The "save" branches on whether `initial` is null (POST) or set (PUT).
+function CharacterEditor({ t, catalog, toast, initial, onCancel, onSaved }) {
+  const isEdit = initial && initial.id;
+  const [draft, setDraft] = useState(function() {
+    // appearance is stored as a dict in the DB but presented as a
+    // single text line in the UI (Pixelle-style "one happy path").
+    // Unwrap legacy strings or {description: ...} dicts; everything
+    // else collapses to a JSON-stringified blob the user can edit.
+    function unwrapAppearance(a) {
+      if (!a) return "";
+      if (typeof a === "string") return a;
+      if (typeof a === "object") {
+        if (typeof a.description === "string") return a.description;
+        try { return JSON.stringify(a); } catch (_) { return ""; }
+      }
+      return "";
+    }
+    if (initial) {
+      return {
+        name: initial.name || "",
+        role_type: initial.role_type || "supporting",
+        gender: initial.gender || "",
+        age_range: initial.age_range || "",
+        appearance: unwrapAppearance(initial.appearance_json || initial.appearance),
+        personality: initial.personality || "",
+        description: initial.description || "",
+        default_voice_id: initial.default_voice_id || "",
+        ref_images: (initial.ref_images_json || initial.ref_images || []).slice(0),
+      };
+    }
+    return {
+      name: "",
+      role_type: "supporting",
+      gender: "",
+      age_range: "",
+      appearance: "",
+      personality: "",
+      description: "",
+      default_voice_id: "",
+      ref_images: [],
+    };
+  });
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef(null);
+
+  function patch(updates) { setDraft(function(prev) { return Object.assign({}, prev, updates); }); }
+
+  async function uploadRef(ev) {
+    var file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast(t("char.toast.upload_failed", { msg: "> 5 MB" }), "error");
+      return;
+    }
+    setUploading(true);
+    try {
+      var fd = new FormData();
+      fd.append("file", file, file.name);
+      // FormData needs the multipart route; pluginApi forwards FormData
+      // when the body isn't a plain object.
+      var r = await pluginApi("POST", "/upload?kind=character_ref", fd);
+      if (r && r.ok && r.body && r.body.preview_url) {
+        patch({ ref_images: draft.ref_images.concat([r.body.preview_url]) });
+      } else {
+        toast(t("char.toast.upload_failed", { msg: (r && r.body && r.body.detail) || "?" }), "error");
+      }
+    } catch (e) {
+      toast(t("char.toast.upload_failed", { msg: String(e) }), "error");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  function removeRef(i) {
+    var next = draft.ref_images.slice();
+    next.splice(i, 1);
+    patch({ ref_images: next });
+  }
+
+  async function save() {
+    if (!draft.name || !draft.name.trim()) {
+      toast(t("char.toast.save_failed", { msg: t("char.label.name") }), "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      // Server expects appearance as a dict; wrap the free-text input
+      // as {"description": text} so the user doesn't have to write JSON.
+      var appearance = {};
+      if (draft.appearance && draft.appearance.trim()) {
+        appearance = { description: draft.appearance.trim() };
+      }
+      var body = {
+        name: draft.name.trim(),
+        role_type: draft.role_type || "supporting",
+        appearance: appearance,
+        personality: draft.personality || "",
+        description: draft.description || "",
+        ref_images: draft.ref_images || [],
+      };
+      if (draft.gender) body.gender = draft.gender;
+      if (draft.age_range) body.age_range = draft.age_range;
+      if (draft.default_voice_id) body.default_voice_id = draft.default_voice_id;
+
+      var r;
+      if (isEdit) {
+        r = await pluginApi("PUT", "/characters/" + initial.id, body);
+      } else {
+        r = await pluginApi("POST", "/characters", body);
+      }
+      if (r && r.ok && r.body && r.body.ok) {
+        onSaved(isEdit ? t("char.toast.updated") : t("char.toast.created"));
+      } else {
+        var msg = (r && r.body && (r.body.detail || r.body.message)) || "?";
+        toast(t("char.toast.save_failed", { msg: msg }), "error");
+      }
+    } catch (e) {
+      toast(t("char.toast.save_failed", { msg: String(e) }), "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onDelete() {
+    if (!isEdit) return;
+    if (!window.confirm(t("char.confirm.delete"))) return;
+    var r = await pluginApi("DELETE", "/characters/" + initial.id);
+    if (r && r.ok) {
+      onSaved(t("char.toast.deleted"));
+    } else {
+      toast(t("char.toast.save_failed", { msg: (r && r.body && r.body.detail) || "?" }), "error");
+    }
+  }
+
+  var roles = ["protagonist", "supporting", "antagonist", "cameo"];
+  var genders = ["female", "male", "neutral"];
+  var voices = (catalog && catalog.voices) || [];
+
+  return (
+    <div className="char-editor">
+      <div>
+        <label className="char-editor__label">{t("char.label.name")} *</label>
+        <input
+          className="input"
+          value={draft.name}
+          onChange={function(e) { patch({ name: e.target.value }); }}
+          placeholder={t("char.placeholder.name")}
+        />
+      </div>
+      <div>
+        <label className="char-editor__label">{t("char.label.role")}</label>
+        <select
+          className="input"
+          value={draft.role_type}
+          onChange={function(e) { patch({ role_type: e.target.value }); }}
+        >
+          {roles.map(function(r) {
+            return <option key={r} value={r}>{t("char.role." + r)}</option>;
+          })}
+        </select>
+      </div>
+      <div>
+        <label className="char-editor__label">{t("char.label.gender")}</label>
+        <select
+          className="input"
+          value={draft.gender}
+          onChange={function(e) { patch({ gender: e.target.value }); }}
+        >
+          <option value="">{t("char.gender.unknown")}</option>
+          {genders.map(function(g) {
+            return <option key={g} value={g}>{t("char.gender." + g)}</option>;
+          })}
+        </select>
+      </div>
+      <div>
+        <label className="char-editor__label">{t("char.label.age")}</label>
+        <input
+          className="input"
+          value={draft.age_range}
+          onChange={function(e) { patch({ age_range: e.target.value }); }}
+          placeholder="16-18"
+        />
+      </div>
+      <div className="char-editor__field--full">
+        <label className="char-editor__label">{t("char.label.appearance")}</label>
+        <input
+          className="input"
+          value={draft.appearance}
+          onChange={function(e) { patch({ appearance: e.target.value }); }}
+          placeholder={t("char.placeholder.appearance")}
+        />
+      </div>
+      <div>
+        <label className="char-editor__label">{t("char.label.personality")}</label>
+        <input
+          className="input"
+          value={draft.personality}
+          onChange={function(e) { patch({ personality: e.target.value }); }}
+          placeholder={t("char.placeholder.personality")}
+        />
+      </div>
+      <div>
+        <label className="char-editor__label">{t("char.label.voice")}</label>
+        <select
+          className="input"
+          value={draft.default_voice_id}
+          onChange={function(e) { patch({ default_voice_id: e.target.value }); }}
+        >
+          <option value="">—</option>
+          {voices.map(function(v) {
+            return <option key={v.id} value={v.id}>{v.label || v.id}</option>;
+          })}
+        </select>
+      </div>
+      <div className="char-editor__field--full">
+        <label className="char-editor__label">{t("char.label.description")}</label>
+        <input
+          className="input"
+          value={draft.description}
+          onChange={function(e) { patch({ description: e.target.value }); }}
+          placeholder={t("char.placeholder.description")}
+        />
+      </div>
+      <div className="char-editor__field--full">
+        <label className="char-editor__label">{t("char.label.refs")}</label>
+        <div className="char-refs-grid">
+          {(draft.ref_images || []).map(function(url, i) {
+            return (
+              <div key={i} className="char-refs-thumb">
+                <img src={url} alt={"ref " + (i + 1)} />
+                <button
+                  type="button"
+                  className="char-refs-thumb__remove"
+                  title={t("char.refs.remove")}
+                  onClick={function() { removeRef(i); }}
+                >×</button>
+              </div>
+            );
+          })}
+          <label className="char-refs-uploader">
+            {uploading ? t("char.refs.uploading") : t("char.refs.upload")}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              style={{ display: "none" }}
+              onChange={uploadRef}
+              disabled={uploading}
+            />
+          </label>
+        </div>
+        <div className="text-muted" style={{ fontSize: 11, marginTop: 6 }}>
+          {(draft.ref_images && draft.ref_images.length > 0)
+            ? t("char.refs.hint")
+            : t("char.refs.empty")}
+        </div>
+      </div>
+      <div className="char-editor__footer">
+        <div>
+          {isEdit ? (
+            <button
+              className="btn btn-danger"
+              onClick={onDelete}
+              disabled={saving}
+            >{t("char.btn.delete")}</button>
+          ) : <span />}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn" onClick={onCancel} disabled={saving}>
+            {t("char.btn.cancel")}
+          </button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? t("studio.btn.submit.loading") : t("char.btn.save")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
