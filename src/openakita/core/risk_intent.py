@@ -43,6 +43,9 @@ class TargetKind(str, Enum):
     SECURITY_POLICY = "security_policy"
     PROTECTED_FILE = "protected_file"
     SHELL_COMMAND = "shell_command"
+    # 用户给出技能的 URL / 路径，希望通过 `install_skill` 工具装配。
+    # 命中此 kind 时跳过 EXECUTE 通用路径，避免被误判为高危 shell。
+    SKILL_INSTALL = "skill_install"
 
 
 class AccessMode(str, Enum):
@@ -80,6 +83,112 @@ _SHELL_CONTEXT_RE = re.compile(
     r"命令\s|这条命令|这段命令|这个命令|run_shell|run_powershell)",
     re.IGNORECASE,
 )
+
+# ──────────────────────────────────────────────────────────────────────────
+# 「装技能」专属意图识别
+#
+# 用户在前端"技能广场/装技能"页面发起的请求，文案常见为：
+#   - "帮我装这个技能 https://github.com/owner/repo"
+#   - "安装 gitee.com/foo/bar"
+#   - "装一下 path/to/SKILL.md"
+#   - "把这个技能装上：xxx"
+#
+# 老版本由于带 "装/安装" 等动词 + URL 中带 ".com/" 路径，被
+# `_GENERIC_DO_RE` + `_SHELL_CONTEXT_RE` 间接判定为 EXECUTE/shell_command
+# 而触发高危确认弹窗；用户确认后又因为 classification.action=None 报
+# "该操作尚无受控执行入口"。
+#
+# 这里在 classify() 入口之前优先识别该类意图，命中即返回低风险 + 明确的
+# action="install_skill"，绕开 EXECUTE 通用路径。
+# ──────────────────────────────────────────────────────────────────────────
+
+# 装技能动词关键词集合。中文与字母词混排，且常见在中文里没有空白边界
+# （"帮我装" / "把xxx装上"），因此用 substring 而非 \b 匹配。
+_SKILL_INSTALL_VERB_KEYWORDS: tuple[str, ...] = (
+    # 中文动词
+    "装",
+    "安装",
+    "启用",
+    "加载",
+    "部署",
+    "试一下",
+    "试试",
+    # 英文动词
+    "install",
+    "setup",
+    "enable",
+)
+
+# 技能名词关键词。
+_SKILL_NOUN_KEYWORDS: tuple[str, ...] = (
+    "技能",
+    "skill",
+)
+
+# URL：http(s)://...
+_SKILL_URL_RE = re.compile(r"https?://[^\s\u4e00-\u9fff，。；！？]+", re.IGNORECASE)
+
+# 本地路径：以 / 或 \ 紧邻的 SKILL.md / skill.yaml / skill.yml；
+# 排除 https?:// 前缀，让 URL 优先识别。
+_SKILL_LOCAL_PATH_RE = re.compile(
+    r"(?<!://)(?:[A-Za-z]:)?[\w./\\\-]*[/\\](?:SKILL\.md|skill\.yaml|skill\.yml)",
+    re.IGNORECASE,
+)
+
+
+def _has_skill_install_verb(lowered: str) -> bool:
+    return any(kw in lowered for kw in _SKILL_INSTALL_VERB_KEYWORDS)
+
+
+def _has_skill_noun(lowered: str) -> bool:
+    return any(kw in lowered for kw in _SKILL_NOUN_KEYWORDS)
+
+
+def _detect_skill_install(text: str) -> dict[str, Any] | None:
+    """识别「装技能」专属意图。
+
+    返回 ``None`` 表示不是装技能；返回字典包含 ``url`` / ``path`` 之一即视为命中。
+
+    判定规则（任一命中即返回）：
+      A) 含 http(s):// URL 且（含装动词 + 含技能名词，或 URL 路径里包含
+         SKILL.md / skill.yaml / skills? 等技能仓库特征）
+      B) 含本地 SKILL.md / skill.yaml 路径（且含装动词或技能名词，避免误抓
+         代码片段引用）
+
+    URL 优先于本地路径，避免 "https://.../SKILL.md" 被路径正则抢走 URL 信息。
+    """
+    if not text:
+        return None
+
+    lowered = text.lower()
+    has_verb = _has_skill_install_verb(lowered)
+    has_noun = _has_skill_noun(lowered)
+
+    # A) URL 优先
+    url_match = _SKILL_URL_RE.search(text)
+    if url_match:
+        url = url_match.group(0).rstrip(".,;:!?'\"`)）】")
+        url_lower = url.lower()
+        url_has_skill_marker = bool(
+            re.search(
+                r"(skill\.md|skill\.yaml|skill\.yml|/skills?[/\-]|skill-pack|skill_pack)",
+                url_lower,
+            )
+        )
+        # URL 自带技能标记 → 强信号，无需动词
+        if url_has_skill_marker:
+            return {"url": url, "path": None}
+        # 普通仓库 URL + 装动词 + 技能名词 → 装技能
+        if has_verb and has_noun:
+            return {"url": url, "path": None}
+
+    # B) 本地路径，需要装动词或技能名词背书
+    local_match = _SKILL_LOCAL_PATH_RE.search(text)
+    if local_match and (has_verb or has_noun):
+        return {"url": None, "path": local_match.group(0)}
+
+    return None
+
 
 # 对上一轮 ask_user/risk-confirm 的肯定回复。短路豁免，避免被
 # 当成新的高风险请求重新走 risk gate（导致 confirm → confirm 死循环）。
@@ -210,6 +319,26 @@ class RiskIntentClassifier:
                 reason="affirmative_reply_to_prior_turn",
                 action=None,
                 parameters={},
+            )
+
+        # 短路：识别"装技能"专属意图。命中即直接返回低风险 + install_skill
+        # 引导，避免被通用 EXECUTE 路径误判为高危 shell。
+        skill_install = _detect_skill_install(text)
+        if skill_install is not None:
+            params: dict[str, Any] = {}
+            if skill_install.get("url"):
+                params["skill_url"] = skill_install["url"]
+            if skill_install.get("path"):
+                params["skill_path"] = skill_install["path"]
+            return RiskIntentResult(
+                risk_level=RiskLevel.LOW,
+                operation_kind=OperationKind.WRITE,
+                target_kind=TargetKind.SKILL_INSTALL,
+                access_mode=AccessMode.WRITE,
+                requires_confirmation=False,
+                reason="skill_install_intent",
+                action="install_skill",
+                parameters=params,
             )
 
         lowered = text.lower()

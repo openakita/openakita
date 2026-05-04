@@ -149,7 +149,10 @@ async def _handle_pending_risk_answer(
                         create_if_missing=True,
                     )
                     if session:
-                        session.add_message("user", answer)
+                        # 用户的"继续/确认"是回应高危确认弹窗的应答，并非新一轮
+                        # 真实意图（真实意图是 original_message，将在下一轮被 LLM
+                        # 重新规划）。标记 transient_for_llm 仅供 UI 展示。
+                        session.add_message("user", answer, transient_for_llm=True)
                         session.set_metadata(
                             "risk_authorized_replay",
                             {
@@ -202,10 +205,15 @@ async def _handle_pending_risk_answer(
                 create_if_missing=True,
             )
             if session:
-                session.add_message("user", answer)
+                # 用户的"确认/取消"回答 + 系统的受控操作回执 都仅供 UI 历史展示，
+                # 不再喂给 LLM —— 否则下一轮 LLM 会模仿"已确认高危..."句式
+                # 或被"受控操作未能执行"措辞带偏（详见 _prepare_session_context
+                # 中 transient_for_llm 跳过逻辑）。
+                session.add_message("user", answer, transient_for_llm=True)
                 session.add_message(
                     "assistant",
                     response_text,
+                    transient_for_llm=True,
                     controlled_confirmation={
                         "decision": decision.value,
                         "confirmation_id": consumed.confirmation_id,

@@ -125,4 +125,14 @@ def execute_controlled_action(action: str | None, parameters: dict[str, Any] | N
     if action == "set_skill_external_allowlist":
         values = params.get("external_allowlist", params.get("skill_ids", []))
         return set_skill_external_allowlist(list(values) if isinstance(values, list) else [])
-    return {"status": "error", "kind": "controlled_action", "message": "该操作尚无受控执行入口"}
+    return {
+        "status": "error",
+        "kind": "controlled_action",
+        "message": (
+            "我没有识别到对应的受控执行入口。如果你想装技能，请直接告诉我"
+            "技能的 URL 或本地路径（例如 `https://github.com/owner/repo` 或"
+            " `path/to/SKILL.md`），我会自动调用 install_skill 工具完成安装；"
+            "如果是想执行命令，请明确说明命令内容（例如 `运行: ls -la`），"
+            "我会通过受控的 run_powershell / run_shell 工具执行。"
+        ),
+    }

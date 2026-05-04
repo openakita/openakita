@@ -3949,6 +3949,11 @@ class Agent:
             role = msg.get("role", "user")
             content = msg.get("content", "")
             ts = msg.get("timestamp", "")
+            # 标记为「仅 UI 展示，不喂 LLM」的消息（例如风险确认/取消的系统回执），
+            # 跳过以避免污染上下文，导致下一轮 LLM 模仿"已确认高危..."口吻。
+            # UI 端依然能正常显示——history 物理上没删，只是不进 LLM messages。
+            if msg.get("transient_for_llm") or msg.get("transient"):
+                continue
             if role == "assistant":
                 for _marker in _STRIP_MARKERS:
                     while _marker in content:
