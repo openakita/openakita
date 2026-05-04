@@ -661,6 +661,12 @@ const I18N = {
     "tabs.characters": "角色卡",
     "tabs.workflows": "工作流",
     "tabs.settings": "设置",
+    "studio.section.series": "绑定剧集（可选）",
+    "studio.label.series": "选择剧集",
+    "studio.option.no_series": "（独立单集，不绑定剧集）",
+    "studio.series.applied": "已套用「{title}」的默认风格 / 比例 / 后端 / 角色",
+    "studio.section.characters": "出演角色（来自所选剧集）",
+    "studio.characters.empty": "未绑定角色（可在「角色」标签页创建后回到「剧集」绑定）",
     "studio.section.story": "剧情输入",
     "studio.label.story": "故事 / 剧情大纲",
     "studio.placeholder.story": "用一段话描述你想生成的漫剧故事，例如：\n少年李雷意外觉醒了上古剑灵的力量，在剑道部社团发现自己同班同学韩梅梅其实是一位转世剑仙……",
@@ -826,6 +832,12 @@ const I18N = {
     "tabs.characters": "Characters",
     "tabs.workflows": "Workflows",
     "tabs.settings": "Settings",
+    "studio.section.series": "Bind to Series (optional)",
+    "studio.label.series": "Series",
+    "studio.option.no_series": "(Standalone — no series binding)",
+    "studio.series.applied": "Applied defaults from \"{title}\" — style / ratio / backend / characters",
+    "studio.section.characters": "Cast (from selected series)",
+    "studio.characters.empty": "No characters bound (create some on the Characters tab and bind them on the Series tab).",
     "studio.section.story": "Story Input",
     "studio.label.story": "Story / Plot Outline",
     "studio.placeholder.story": "Describe the manga drama you want to generate, e.g.\nA high-school boy named Li Lei unlocks an ancient sword spirit in his kendo club, then discovers his classmate Han Meimei is a reincarnated sword immortal...",
@@ -1156,10 +1168,66 @@ function Studio({ t, catalog, settings, toast }) {
   const [submitting, setSubmitting] = useState(false);
   const [confirming, setConfirming] = useState(null); // null | { cost, threshold }
   const [tasks, setTasks] = useState([]);
+  // Phase 4.2 — optional series binding. ``seriesId`` "" means
+  // "standalone, not linked to any series". When the user picks a
+  // series we auto-fill the four shared fields (style / ratio /
+  // backend / characters) so they don't re-pick them across episodes.
+  // ``boundChars`` is the resolved list of character objects (not
+  // just IDs) so we can render the chip strip below the picker.
+  const [seriesList, setSeriesList] = useState([]);
+  const [seriesId, setSeriesId] = useState("");
+  const [boundChars, setBoundChars] = useState([]);
+  const [allChars, setAllChars] = useState([]);
 
   const styles = (catalog && catalog.visual_styles) || [];
   const ratios = (catalog && catalog.ratios) || ["9:16", "16:9", "1:1", "4:5"];
   const lang = (typeof t("app.title") === "string" && t("app.title") === "漫剧工作室") ? "zh" : "en";
+
+  // Load the series + character catalogues once. Refreshes are not
+  // automatic — users opening Studio after editing series/characters
+  // will see stale selectors until they switch tabs and back, which
+  // matches the existing /catalogs pattern in this UI.
+  useEffect(function() {
+    pluginApi("GET", "/series").then(function(r) {
+      if (r && r.ok && r.body) setSeriesList(r.body.series || []);
+    });
+    pluginApi("GET", "/characters").then(function(r) {
+      if (r && r.ok && r.body) setAllChars(r.body.characters || []);
+    });
+  }, []);
+
+  // When the user picks a series, pull its row and apply its defaults
+  // to the form. We resolve character IDs against ``allChars`` so the
+  // chips can show display names + thumbnails (instead of opaque
+  // ULIDs). If the user hand-edits any field afterwards we leave it
+  // alone — the auto-apply only fires on the picker change event.
+  async function applySeries(sid) {
+    setSeriesId(sid);
+    if (!sid) {
+      setBoundChars([]);
+      return;
+    }
+    var r = await pluginApi("GET", "/series/" + encodeURIComponent(sid));
+    if (!r || !r.ok || !r.body || !r.body.series) {
+      toast(lang === "zh" ? "剧集加载失败" : "Failed to load series", "error");
+      return;
+    }
+    var s = r.body.series;
+    if (s.visual_style) setStyle(s.visual_style);
+    if (s.ratio) setRatio(s.ratio);
+    if (s.backend_pref) setBackend(s.backend_pref);
+    var ids = s.default_characters_json || s.default_characters || [];
+    var resolved = ids.map(function(cid) {
+      var hit = (allChars || []).filter(function(c) { return c.id === cid; })[0];
+      return hit || { id: cid, name: cid };
+    });
+    setBoundChars(resolved);
+    toast(t("studio.series.applied", { title: s.title || sid }), "success");
+  }
+
+  function unbindChar(cid) {
+    setBoundChars(function(prev) { return prev.filter(function(c) { return c.id !== cid; }); });
+  }
 
   // Fetch cost preview whenever a cost-relevant input changes (debounced).
   useEffect(function() {
@@ -1197,7 +1265,7 @@ function Studio({ t, catalog, settings, toast }) {
   }, [tasks.length, tasks.map(function(x) { return x.status; }).join(",")]);
 
   function buildBody(confirmed) {
-    return {
+    var body = {
       story: story,
       n_panels: panels,
       seconds_per_panel: secs,
@@ -1207,6 +1275,11 @@ function Studio({ t, catalog, settings, toast }) {
       backend: backend,
       confirm_over_threshold: !!confirmed,
     };
+    if (seriesId) body.series_id = seriesId;
+    if (boundChars && boundChars.length > 0) {
+      body.bound_character_ids = boundChars.map(function(c) { return c.id; });
+    }
+    return body;
   }
 
   async function submit(confirmed) {
@@ -1252,6 +1325,63 @@ function Studio({ t, catalog, settings, toast }) {
   return (
     <div className="split-layout">
       <div className="split-left">
+        {/* Phase 4.2 — series picker. Optional. Empty value means
+            "standalone episode", which preserves the Phase-2 flow.
+            Picking a series triggers ``applySeries`` which mutates
+            style/ratio/backend/characters in one shot. */}
+        <div className="card">
+          <div className="card-title">📺 {t("studio.section.series")}</div>
+          <div className="form-row">
+            <div className="label">{t("studio.label.series")}</div>
+            <select
+              className="input"
+              value={seriesId}
+              onChange={function(e) { applySeries(e.target.value); }}
+            >
+              <option value="">{t("studio.option.no_series")}</option>
+              {seriesList.map(function(s) {
+                return <option key={s.id} value={s.id}>{s.title}</option>;
+              })}
+            </select>
+          </div>
+          {seriesId ? (
+            <div className="form-row">
+              <div className="label">{t("studio.section.characters")}</div>
+              {boundChars.length === 0 ? (
+                <div className="text-muted" style={{ fontSize: 12 }}>
+                  {t("studio.characters.empty")}
+                </div>
+              ) : (
+                <div className="flex flex-wrap" style={{ gap: 6 }}>
+                  {boundChars.map(function(c) {
+                    var thumb = (c.ref_images_json && c.ref_images_json[0])
+                      || (c.ref_images && c.ref_images[0])
+                      || null;
+                    return (
+                      <span
+                        key={c.id}
+                        className="series-editor__charchip active"
+                        onClick={function() { unbindChar(c.id); }}
+                        title={lang === "zh" ? "点击移除" : "Click to remove"}
+                        style={{ display: "flex", alignItems: "center", gap: 6 }}
+                      >
+                        {thumb ? (
+                          <img
+                            src={thumb}
+                            alt={c.name}
+                            style={{ width: 18, height: 18, borderRadius: "50%", objectFit: "cover" }}
+                          />
+                        ) : null}
+                        {c.name}
+                        <span style={{ opacity: .6, fontSize: 11 }}>×</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
         <div className="card">
           <div className="card-title">📝 {t("studio.section.story")}</div>
           <div className="form-row prompt-wrap">
