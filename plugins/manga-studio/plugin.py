@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -36,13 +37,29 @@ from fastapi import UploadFile
 from openakita.plugins.api import PluginAPI, PluginBase
 from pydantic import BaseModel, ConfigDict, Field
 
+from direct_ark_client import MangaArkClient
+from direct_wanxiang_client import MangaWanxiangClient
+from ffmpeg_service import FFmpegService
 from manga_inline.storage_stats import collect_storage_stats
 from manga_inline.upload_preview import (
     DEFAULT_PREVIEW_EXTENSIONS,
     add_upload_preview_route,
     build_preview_url,
 )
+from manga_models import (
+    DEFAULT_COST_THRESHOLD_CNY,
+    VISUAL_STYLES_BY_ID,
+    build_catalog,
+    estimate_cost,
+)
+from manga_pipeline import (
+    MangaPipeline,
+    MangaPipelineConfig,
+    PipelineError,
+)
 from manga_task_manager import MangaTaskManager
+from script_writer import MangaScriptWriter
+from tts_client import MangaTTSClient
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +127,49 @@ class _SettingsUpdate(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class _EpisodeCreate(BaseModel):
+    """POST /episodes body — schedules a Phase-2 pipeline run.
+
+    All fields default to sensible values so a UI can fire-and-forget
+    a quick drama with just ``story``. Required: ``story``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    story: str = Field(..., min_length=1, max_length=8000)
+    series_id: str | None = None
+    title: str = ""
+    n_panels: int = Field(6, ge=1, le=30)
+    seconds_per_panel: int = Field(5, ge=2, le=15)
+    visual_style: str = "shonen"
+    ratio: str = Field("9:16", pattern=r"^(9:16|16:9|1:1|4:5)$")
+    resolution: str = Field("480P", pattern=r"^(480P|720P)$")
+    bound_character_ids: list[str] = Field(default_factory=list)
+    fallback_voice: str = "zh-CN-XiaoxiaoNeural"
+    image_model: str = "wan2.7-image"
+    video_model: str = "seedance-1.0-lite-i2v"
+    burn_subtitles: bool = True
+    bgm_path: str | None = None
+    backend: str = Field("direct", pattern=r"^(direct|runninghub|comfyui_local)$")
+    confirm_over_threshold: bool = False
+
+
+class _CostPreviewRequest(BaseModel):
+    """POST /cost-preview body — pure estimation, no DB writes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    n_panels: int = Field(6, ge=1, le=30)
+    total_duration_sec: int = Field(30, ge=2, le=300)
+    story_chars: int = Field(500, ge=1, le=10000)
+    image_model: str = "wan2.7-image"
+    video_model: str = "seedance-1.0-lite-i2v"
+    resolution: str = "480P"
+    tts_engine: str = "edge"
+    use_qwen_for_script: bool = True
+    qwen_token_estimate: int = 1500
+
+
 PLUGIN_ID = "manga-studio"
 SETTINGS_KEY = "manga_studio_settings"
 PLUGIN_DIR = Path(__file__).resolve().parent
@@ -162,32 +222,63 @@ class Plugin(PluginBase):
             self._data_dir = data_dir
         self._tm = MangaTaskManager(self._data_dir / "manga.db")
 
-        # Phase 2 / Phase 3 placeholders — kept ``None`` until the matching
-        # client files land. Routes that depend on them must guard with a
-        # 503.
-        self._direct_ark = None
-        self._direct_wan = None
-        self._tts = None
-        self._comfy_client = None
-        self._oss = None
+        # Phase 2 — direct backend (Ark Seedance + DashScope wan2.7-image
+        # + TTS) wired with the ``read_settings`` callable so users can
+        # update API keys in Settings without a plugin reload (Pixelle
+        # A10). Phase 3 sets ``_comfy_client`` / ``_oss``.
+        self._direct_ark: MangaArkClient | None = None
+        self._direct_wan: MangaWanxiangClient | None = None
+        self._tts: MangaTTSClient | None = None
+        self._ffmpeg: FFmpegService | None = None
+        self._writer: MangaScriptWriter | None = None
+        self._pipeline: MangaPipeline | None = None
+        self._comfy_client: Any | None = None
+        self._oss: Any | None = None
 
-        # Background task registry — populated by ``api.spawn_task`` from
-        # the pipeline once Phase 2 lands. ``on_unload`` cancels everything
-        # in here, mirroring avatar-studio's pattern.
-        self._poll_tasks: dict[str, asyncio.Task] = {}
+        # Background task registry — populated when the pipeline kicks
+        # off via POST /episodes. ``on_unload`` cancels everything in
+        # here, mirroring avatar-studio's pattern.
+        self._poll_tasks: dict[str, asyncio.Task[Any]] = {}
 
         self._register_routes(api)
         self._register_tools(api)
 
         api.spawn_task(self._async_init(), name=f"{PLUGIN_ID}:init")
-        api.log("Manga Studio plugin loaded (phase 1: skeleton)")
+        api.log("Manga Studio plugin loaded (phase 2: direct backend)")
 
     async def _async_init(self) -> None:
-        """Initialise the SQLite schema. Called via ``api.spawn_task``."""
+        """Initialise the SQLite schema and Phase-2 collaborators.
+
+        Each client is constructed with a ``read_settings`` callable —
+        none of them touch the network at construction time, so a missing
+        API key only fails the FIRST request, not plugin load.
+        """
         try:
             await self._tm.init()
         except Exception as exc:  # noqa: BLE001 - never crash on_load
             self._api.log(f"manga-studio: task manager init failed: {exc!r}", "error")
+            return
+
+        # Construct the Phase-2 clients. ``read_settings`` is a fresh
+        # snapshot each call (see ``_read_settings``) — the clients pull
+        # the api_key on every request, never cache it.
+        try:
+            self._direct_ark = MangaArkClient(read_settings=self._read_settings)
+            self._direct_wan = MangaWanxiangClient(read_settings=self._read_settings)
+            self._tts = MangaTTSClient(read_settings=self._read_settings)
+            self._ffmpeg = FFmpegService()
+            self._writer = MangaScriptWriter(self._api)
+            self._pipeline = MangaPipeline(
+                wanxiang_client=self._direct_wan,
+                ark_client=self._direct_ark,
+                tts_client=self._tts,
+                ffmpeg=self._ffmpeg,
+                script_writer=self._writer,
+                task_manager=self._tm,
+                working_dir=self._data_dir / "episodes",
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._api.log(f"manga-studio: Phase-2 client wire-up failed: {exc!r}", "error")
 
     async def on_unload(self) -> None:
         """Cancel any background polling task and close the DB cleanly."""
@@ -408,12 +499,304 @@ class Plugin(PluginBase):
             },
         ]
 
-    async def _handle_tool(self, tool_name: str, args: dict) -> str:
-        """Phase 1 placeholder. Phase 2 wires real handlers per tool name."""
-        return (
-            f"manga-studio tool {tool_name!r} is registered but not yet "
-            f"wired (phase 1 skeleton). Args: {args!r}"
+    async def _handle_tool(self, tool_name: str, args: dict[str, Any]) -> str:
+        """Dispatch a tool call to its handler.
+
+        Each handler is small — just enough to translate the tool's
+        ``args`` dict into either a task-manager call or a pipeline
+        kick-off, then format the result as a single string the LLM
+        can read back to the user.
+
+        Errors propagate as a string starting with ``"error:"`` so the
+        caller (Brain ReAct loop) can detect failure without parsing
+        the result format.
+        """
+        try:
+            handler = self._TOOL_HANDLERS.get(tool_name)
+            if handler is None:
+                return f"error: unknown tool {tool_name!r}"
+            return await handler(self, args)
+        except Exception as exc:  # noqa: BLE001 - tool errors are user-visible
+            logger.exception("manga-studio tool %s failed", tool_name)
+            return f"error: tool {tool_name} raised {type(exc).__name__}: {exc}"
+
+    # ── Tool handlers ────────────────────────────────────────────────────
+    # Each handler returns the user-facing string. Keep them small:
+    # heavy logic should live in the pipeline / clients / task manager.
+
+    async def _tool_create_series(self, args: dict[str, Any]) -> str:
+        title = str(args.get("title") or "").strip()
+        if not title:
+            return "error: title is required"
+        sid = await self._tm.create_series(
+            title=title,
+            summary=str(args.get("summary") or ""),
+            visual_style=str(args.get("visual_style") or "shonen"),
+            ratio=str(args.get("ratio") or "9:16"),
         )
+        return f"created series {sid} ({title!r})"
+
+    async def _tool_create_episode(self, args: dict[str, Any]) -> str:
+        if self._pipeline is None:
+            return "error: Phase-2 pipeline not initialised yet (try again in a sec)"
+        story = str(args.get("story") or "").strip()
+        if not story:
+            return "error: story is required"
+        n_panels = int(args.get("n_panels") or 6)
+        seconds_per_panel = max(2, (int(args.get("total_duration") or 30)) // max(1, n_panels))
+        chars = args.get("characters") or []
+        if not isinstance(chars, list):
+            chars = []
+
+        episode_id = await self._tm.create_episode(
+            series_id=args.get("series_id"),
+            title=str(args.get("title") or ""),
+            story=story,
+            bound_characters=[str(c) for c in chars if c],
+        )
+        task_id = await self._spawn_pipeline_task(
+            episode_id=episode_id,
+            config=MangaPipelineConfig(
+                story=story,
+                n_panels=n_panels,
+                seconds_per_panel=seconds_per_panel,
+                visual_style=str(args.get("visual_style") or "shonen"),
+                ratio=str(args.get("ratio") or "9:16"),
+                bound_character_ids=[str(c) for c in chars if c],
+                series_id=args.get("series_id"),
+            ),
+            backend=str(args.get("backend") or "direct"),
+        )
+        return (
+            f"episode {episode_id} queued (task {task_id}); poll GET /tasks/{task_id} for progress"
+        )
+
+    async def _tool_episode_status(self, args: dict[str, Any]) -> str:
+        ep_id = str(args.get("episode_id") or "").strip()
+        if not ep_id:
+            return "error: episode_id is required"
+        episode = await self._tm.get_episode(ep_id)
+        if episode is None:
+            return f"error: episode {ep_id} not found"
+        # Find the most recent task for this episode (if any).
+        tasks = await self._tm.list_tasks(episode_id=ep_id, limit=1)
+        if tasks:
+            t = tasks[0]
+            return (
+                f"episode {ep_id}: status={t.get('status')} "
+                f"step={t.get('current_step')} progress={t.get('progress')}%"
+            )
+        if episode.get("final_video_path"):
+            return f"episode {ep_id}: ready, final={episode.get('final_video_path')}"
+        return f"episode {ep_id}: no task yet (just the row exists)"
+
+    async def _tool_list_episodes(self, args: dict[str, Any]) -> str:
+        limit = max(1, min(50, int(args.get("limit") or 20)))
+        rows = await self._tm.list_episodes(
+            series_id=args.get("series_id"),
+            limit=limit,
+        )
+        if not rows:
+            return "no episodes yet"
+        lines = [
+            f"- {r['id']}: {r.get('title') or '(untitled)'} "
+            f"({'ready' if r.get('final_video_path') else 'pending'})"
+            for r in rows
+        ]
+        return "\n".join(lines)
+
+    async def _tool_create_character(self, args: dict[str, Any]) -> str:
+        name = str(args.get("name") or "").strip()
+        if not name:
+            return "error: name is required"
+        cid = await self._tm.create_character(
+            name=name,
+            role_type=str(args.get("role_type") or "main"),
+            description=str(args.get("description") or ""),
+            appearance=args.get("appearance") if isinstance(args.get("appearance"), dict) else None,
+            ref_images=args.get("ref_images") if isinstance(args.get("ref_images"), list) else None,
+        )
+        return f"created character {cid} ({name!r})"
+
+    async def _tool_list_characters(self, args: dict[str, Any]) -> str:
+        rows = await self._tm.list_characters(role_type=args.get("role_type"))
+        if not rows:
+            return "no characters yet"
+        return "\n".join(
+            f"- {r['id']}: {r.get('name')} ({r.get('role_type')}, {r.get('gender')})" for r in rows
+        )
+
+    async def _tool_quick_drama(self, args: dict[str, Any]) -> str:
+        # quick_drama is just create_episode without a series.
+        return await self._tool_create_episode(args)
+
+    async def _tool_split_script(self, args: dict[str, Any]) -> str:
+        if self._writer is None:
+            return "error: script writer not initialised"
+        story = str(args.get("story") or "").strip()
+        if not story:
+            return "error: story is required"
+        n_panels = int(args.get("n_panels") or 6)
+        result = await self._writer.write_storyboard(
+            story=story,
+            n_panels=n_panels,
+            seconds_per_panel=int(args.get("seconds_per_panel") or 5),
+            characters=[],
+            visual_style_label=str(args.get("visual_style") or "少年热血"),
+        )
+        used = "brain" if result.used_brain else "deterministic fallback"
+        return (
+            f"storyboard ({used}): "
+            f"{len(result.data.get('panels', []))} panels, "
+            f"title={result.data.get('episode_title')!r}"
+        )
+
+    async def _tool_render_panel(self, args: dict[str, Any]) -> str:
+        # Dev / debug helper; v1.0 ships this as a not-yet-wired stub
+        # so the tool list is complete. Phase 3 fills in re-rendering.
+        return (
+            f"manga_render_panel for episode={args.get('episode_id')!r} "
+            f"panel={args.get('panel_index')!r} — not yet wired (Phase 3)"
+        )
+
+    async def _tool_cost_preview(self, args: dict[str, Any]) -> str:
+        n_panels = int(args.get("n_panels") or 6)
+        total_duration = int(args.get("total_duration") or 30)
+        cost = estimate_cost(
+            n_panels=n_panels,
+            total_duration_sec=total_duration,
+            story_chars=int(args.get("story_chars") or 500),
+            image_model=str(args.get("image_model") or "wan2.7-image"),
+            video_model=str(args.get("video_model") or "seedance-1.0-lite-i2v"),
+            resolution=str(args.get("resolution") or "480P"),
+            tts_engine=str(args.get("tts_engine") or "edge"),
+        )
+        warn = " (over threshold)" if cost["exceeds_threshold"] else ""
+        return f"estimated cost: {cost['formatted_total']}{warn}"
+
+    async def _tool_workflow_test(self, args: dict[str, Any]) -> str:
+        # Phase 3 wiring; v1.0 stub so the tool name resolves.
+        backend = str(args.get("backend") or "")
+        return (
+            f"workflow backend test ({backend!r}) — not yet wired (Phase 3 will add "
+            f"comfykit / RunningHub probes)"
+        )
+
+    # Map tool name → bound handler. Defined as a class attribute so a
+    # subclass can override one entry without copying the rest.
+    _TOOL_HANDLERS: dict[str, Callable[[Plugin, dict[str, Any]], Awaitable[str]]] = {  # noqa: F821
+        "manga_create_series": _tool_create_series,
+        "manga_create_episode": _tool_create_episode,
+        "manga_episode_status": _tool_episode_status,
+        "manga_list_episodes": _tool_list_episodes,
+        "manga_create_character": _tool_create_character,
+        "manga_list_characters": _tool_list_characters,
+        "manga_quick_drama": _tool_quick_drama,
+        "manga_split_script": _tool_split_script,
+        "manga_render_panel": _tool_render_panel,
+        "manga_cost_preview": _tool_cost_preview,
+        "manga_workflow_test": _tool_workflow_test,
+    }
+
+    # ── Pipeline dispatcher ──────────────────────────────────────────────
+
+    async def _spawn_pipeline_task(
+        self,
+        *,
+        episode_id: str,
+        config: MangaPipelineConfig,
+        backend: str = "direct",
+    ) -> str:
+        """Create a ``tasks`` row and spawn the background coroutine.
+
+        Returns the task_id so the caller can hand it back to the UI
+        for polling.
+        """
+        if self._pipeline is None:
+            raise RuntimeError("Phase-2 pipeline not initialised")
+        # Estimate cost for this run so the row carries the breakdown
+        # the UI's cost panel reads.
+        story_chars = len(config.story)
+        total_duration = config.n_panels * config.seconds_per_panel
+        try:
+            cost = estimate_cost(
+                n_panels=config.n_panels,
+                total_duration_sec=total_duration,
+                story_chars=story_chars,
+                image_model=config.image_model,
+                video_model=config.video_model,
+                resolution=config.resolution,
+                tts_engine="edge",
+            )
+        except Exception:  # noqa: BLE001 - cost estimation is non-fatal
+            cost = None
+
+        task_id = await self._tm.create_task(
+            mode="episode",
+            backend=backend,
+            episode_id=episode_id,
+            params={
+                "story": config.story,
+                "n_panels": config.n_panels,
+                "seconds_per_panel": config.seconds_per_panel,
+                "visual_style": config.visual_style,
+                "ratio": config.ratio,
+                "resolution": config.resolution,
+                "bound_character_ids": list(config.bound_character_ids),
+                "burn_subtitles": config.burn_subtitles,
+                "bgm_path": config.bgm_path,
+            },
+            cost_breakdown=cost,
+        )
+
+        coro = self._run_pipeline(episode_id=episode_id, task_id=task_id, config=config)
+        bg = self._api.spawn_task(coro, name=f"{PLUGIN_ID}:run:{task_id}")
+        if bg is not None:
+            self._poll_tasks[task_id] = bg
+        return task_id
+
+    async def _run_pipeline(
+        self,
+        *,
+        episode_id: str,
+        task_id: str,
+        config: MangaPipelineConfig,
+    ) -> None:
+        """Wrapper around ``MangaPipeline.run_episode`` that records
+        terminal status into the tasks row.
+
+        Pixelle anti-pattern: never let a background task die silently.
+        Even an unexpected exception is recorded so the UI can show
+        the user what went wrong.
+        """
+        if self._pipeline is None:
+            return
+        try:
+            await self._pipeline.run_episode(episode_id=episode_id, config=config, task_id=task_id)
+        except PipelineError as exc:
+            logger.warning("manga-studio pipeline failed: %s", exc)
+            await self._tm.update_task_safe(
+                task_id,
+                status="failed",
+                error_kind=exc.error_kind,
+                error_message=str(exc),
+                error_hints_json=exc.to_dict(),
+            )
+        except asyncio.CancelledError:
+            await self._tm.update_task_safe(
+                task_id, status="cancelled", error_message="cancelled by host"
+            )
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("manga-studio pipeline crashed")
+            await self._tm.update_task_safe(
+                task_id,
+                status="failed",
+                error_kind="unknown",
+                error_message=f"{type(exc).__name__}: {exc}",
+            )
+        finally:
+            self._poll_tasks.pop(task_id, None)
 
     # ── Routes ───────────────────────────────────────────────────────────
 
@@ -429,11 +812,13 @@ class Plugin(PluginBase):
             return {
                 "ok": True,
                 "plugin": PLUGIN_ID,
-                "phase": 1,
+                "phase": 2,
                 "backends_ready": {
                     "direct_ark": self._direct_ark is not None,
                     "direct_wan": self._direct_wan is not None,
                     "tts": self._tts is not None,
+                    "ffmpeg": self._ffmpeg is not None and self._ffmpeg.is_available(),
+                    "pipeline": self._pipeline is not None,
                     "comfy": self._comfy_client is not None,
                     "oss": self._oss is not None,
                 },
@@ -633,6 +1018,177 @@ class Plugin(PluginBase):
             if row is None:
                 raise HTTPException(status_code=404, detail="episode not found")
             return {"ok": True, "episode": row}
+
+        @router.post("/episodes")
+        async def create_episode(body: _EpisodeCreate) -> dict[str, Any]:
+            """Schedule a Phase-2 pipeline run.
+
+            Returns ``{episode_id, task_id, cost_preview}``. The pipeline
+            runs in the background; poll ``GET /tasks/{task_id}`` for
+            live progress.
+
+            If the estimated cost exceeds the configured threshold and
+            ``confirm_over_threshold`` is False, returns 402 Payment
+            Required with the cost breakdown so the UI can show a
+            confirmation modal.
+            """
+            if self._pipeline is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Phase-2 pipeline not initialised yet (try again in a moment)",
+                )
+            if body.visual_style not in VISUAL_STYLES_BY_ID:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"unknown visual_style {body.visual_style!r}",
+                )
+
+            total_duration = body.n_panels * body.seconds_per_panel
+            cost = estimate_cost(
+                n_panels=body.n_panels,
+                total_duration_sec=total_duration,
+                story_chars=len(body.story),
+                image_model=body.image_model,
+                video_model=body.video_model,
+                resolution=body.resolution,
+                tts_engine=str(self._read_settings().get("tts_engine") or "edge"),
+                threshold=float(
+                    self._read_settings().get("cost_threshold_cny") or DEFAULT_COST_THRESHOLD_CNY
+                ),
+            )
+            if cost["exceeds_threshold"] and not body.confirm_over_threshold:
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "ok": False,
+                        "reason": "cost_over_threshold",
+                        "cost_preview": cost,
+                        "hint_zh": (
+                            f"预估成本 {cost['formatted_total']} 超过阈值 ¥{cost['threshold']:.2f}，"
+                            f"请勾选确认后再次提交"
+                        ),
+                        "hint_en": (
+                            f"Estimated cost {cost['formatted_total']} exceeds the "
+                            f"¥{cost['threshold']:.2f} threshold; submit again with "
+                            f"confirm_over_threshold=true"
+                        ),
+                    },
+                )
+
+            episode_id = await self._tm.create_episode(
+                series_id=body.series_id,
+                title=body.title,
+                story=body.story,
+                bound_characters=body.bound_character_ids,
+            )
+            cfg = MangaPipelineConfig(
+                story=body.story,
+                n_panels=body.n_panels,
+                seconds_per_panel=body.seconds_per_panel,
+                visual_style=body.visual_style,
+                ratio=body.ratio,
+                resolution=body.resolution,
+                bound_character_ids=body.bound_character_ids,
+                fallback_voice=body.fallback_voice,
+                image_model=body.image_model,
+                video_model=body.video_model,
+                burn_subtitles=body.burn_subtitles,
+                bgm_path=body.bgm_path,
+                title_hint=body.title,
+                series_id=body.series_id,
+            )
+            task_id = await self._spawn_pipeline_task(
+                episode_id=episode_id, config=cfg, backend=body.backend
+            )
+            return {
+                "ok": True,
+                "episode_id": episode_id,
+                "task_id": task_id,
+                "cost_preview": cost,
+            }
+
+        @router.delete("/episodes/{ep_id}")
+        async def delete_episode(ep_id: str) -> dict[str, Any]:
+            ok = await self._tm.delete_episode(ep_id)
+            if not ok:
+                raise HTTPException(status_code=404, detail="episode not found")
+            return {"ok": True}
+
+        # ── Tasks ───────────────────────────────────────────────────
+        # Lightweight read-only surface so the UI can poll a running
+        # episode's progress without refetching the full episode row.
+
+        @router.get("/tasks")
+        async def list_tasks(
+            episode_id: str | None = None,
+            status: str | None = None,
+            limit: int = 50,
+        ) -> dict[str, Any]:
+            rows = await self._tm.list_tasks(episode_id=episode_id, status=status, limit=limit)
+            return {"ok": True, "tasks": rows}
+
+        @router.get("/tasks/{task_id}")
+        async def get_task(task_id: str) -> dict[str, Any]:
+            row = await self._tm.get_task(task_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="task not found")
+            return {"ok": True, "task": row}
+
+        @router.post("/tasks/{task_id}/cancel")
+        async def cancel_task(task_id: str) -> dict[str, Any]:
+            row = await self._tm.get_task(task_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="task not found")
+            bg = self._poll_tasks.get(task_id)
+            if bg is not None and not bg.done():
+                bg.cancel()
+            await self._tm.update_task_safe(
+                task_id, status="cancelled", error_message="cancelled by user"
+            )
+            return {"ok": True}
+
+        # ── Catalog & cost preview ──────────────────────────────────
+        # Static UI seed (visual_styles / voices / option lists) +
+        # cost estimator that the Studio tab calls before submit.
+
+        @router.get("/catalog")
+        async def get_catalog() -> dict[str, Any]:
+            cat = build_catalog()
+            return {
+                "ok": True,
+                "catalog": {
+                    "visual_styles": cat.visual_styles,
+                    "ratios": cat.ratios,
+                    "duration_options": cat.duration_options,
+                    "seconds_per_panel_options": cat.seconds_per_panel_options,
+                    "character_roles": cat.character_roles,
+                    "backends": cat.backends,
+                    "voices": cat.voices,
+                    "cost_threshold": cat.cost_threshold,
+                },
+            }
+
+        @router.post("/cost-preview")
+        async def cost_preview(body: _CostPreviewRequest) -> dict[str, Any]:
+            try:
+                cost = estimate_cost(
+                    n_panels=body.n_panels,
+                    total_duration_sec=body.total_duration_sec,
+                    story_chars=body.story_chars,
+                    image_model=body.image_model,
+                    video_model=body.video_model,
+                    resolution=body.resolution,
+                    tts_engine=body.tts_engine,
+                    use_qwen_for_script=body.use_qwen_for_script,
+                    qwen_token_estimate=body.qwen_token_estimate,
+                    threshold=float(
+                        self._read_settings().get("cost_threshold_cny")
+                        or DEFAULT_COST_THRESHOLD_CNY
+                    ),
+                )
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            return {"ok": True, "cost_preview": cost}
 
         # ── Upload (issue #479: serve back what the user uploaded) ──
         # Phase 1 lands the local-preview half of the upload flow:

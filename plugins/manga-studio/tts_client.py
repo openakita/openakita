@@ -92,9 +92,7 @@ async def _synth_edge(
             retryable=False,
         ) from exc
 
-    rate = (
-        f"+{int((speed - 1) * 100)}%" if speed >= 1 else f"{int((speed - 1) * 100)}%"
-    )
+    rate = f"+{int((speed - 1) * 100)}%" if speed >= 1 else f"{int((speed - 1) * 100)}%"
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 

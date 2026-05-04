@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from manga_inline.vendor_client import VendorError
 from tts_client import (
     MangaTTSClient,
@@ -15,7 +16,6 @@ from tts_client import (
     _synth_edge,
     resolve_engine,
 )
-
 
 # ─── Engine routing ─────────────────────────────────────────────────────
 

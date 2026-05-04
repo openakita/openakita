@@ -87,10 +87,15 @@ async def test_on_load_completes_without_raising(loaded_plugin) -> None:
     assert db.exists() or db.parent.exists()
 
 
-async def test_on_load_logged_phase1_banner(loaded_plugin) -> None:
+async def test_on_load_logs_phase_banner(loaded_plugin) -> None:
+    """Plugin logs a one-line load banner so the user sees something
+    in the host log on cold start. The exact phase label tracks the
+    current build (Phase 2 = direct backend wired)."""
     _, p = loaded_plugin
     levels_msgs = p._api.logged  # type: ignore[attr-defined]
-    assert any("phase 1" in msg.lower() for _lvl, msg in levels_msgs), levels_msgs
+    assert any("manga studio plugin loaded" in msg.lower() for _lvl, msg in levels_msgs), (
+        levels_msgs
+    )
 
 
 async def test_on_load_registers_11_tools(loaded_plugin) -> None:
@@ -114,14 +119,24 @@ async def test_on_load_registers_11_tools(loaded_plugin) -> None:
     )
 
 
-async def test_placeholder_handler_returns_friendly_message(
-    loaded_plugin,
-) -> None:
+async def test_unknown_tool_returns_error(loaded_plugin) -> None:
+    """An unregistered tool name returns a clear ``error:`` string —
+    the dispatch table never raises into the LLM."""
     _, p = loaded_plugin
     api = p._api  # type: ignore[attr-defined]
-    msg = await api.tool_handler("manga_quick_drama", {"story": "x"})
-    assert "manga_quick_drama" in msg
-    assert "phase 1" in msg.lower() or "not yet wired" in msg.lower()
+    msg = await api.tool_handler("manga_does_not_exist", {})
+    assert msg.startswith("error:")
+    assert "manga_does_not_exist" in msg
+
+
+async def test_workflow_test_tool_returns_phase3_stub(loaded_plugin) -> None:
+    """``manga_workflow_test`` is the only tool that's still a stub in
+    Phase 2 — it explicitly says ``Phase 3 will add`` so the user
+    knows what to expect."""
+    _, p = loaded_plugin
+    api = p._api  # type: ignore[attr-defined]
+    msg = await api.tool_handler("manga_workflow_test", {"backend": "runninghub"})
+    assert "Phase 3" in msg or "not yet wired" in msg
 
 
 async def test_on_load_registers_router(loaded_plugin) -> None:
@@ -183,20 +198,25 @@ def test_router_healthz_payload_shape(loaded_plugin) -> None:
 
 
 async def test_healthz_returns_phase_and_backend_map(loaded_plugin) -> None:
+    """The /healthz endpoint reports current phase + per-backend
+    readiness map. Cold start (no async-init drained) reports
+    ``False`` for every direct-backend client; the UI uses this to
+    show the red dots on the Settings tab."""
     _, p = loaded_plugin
     router = p._router  # type: ignore[attr-defined]
     healthz = next(r for r in router.routes if r.path == "/healthz")
     body = await healthz.endpoint()
     assert body["ok"] is True
-    assert body["phase"] == 1
-    assert set(body["backends_ready"]) == {
+    assert body["phase"] >= 2
+    assert {
         "direct_ark",
         "direct_wan",
         "tts",
+        "ffmpeg",
+        "pipeline",
         "comfy",
         "oss",
-    }
-    assert all(v is False for v in body["backends_ready"].values())
+    }.issubset(set(body["backends_ready"]))
 
 
 def test_redact_obscures_long_secrets(loaded_plugin) -> None:
