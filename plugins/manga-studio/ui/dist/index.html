@@ -2520,14 +2520,25 @@ function SeriesEditor({ t, catalog, toast, initial, onCancel, onSaved }) {
           ) : (
             <div className="ep-list">
               {episodes.map(function(ep) {
+                var prefix = ep.episode_no ? "EP" + String(ep.episode_no).padStart(2, "0") : "";
+                var dur = ep.duration_sec ? Math.round(ep.duration_sec) + "s" : null;
+                var when = ep.created_at ? new Date(ep.created_at * 1000).toLocaleString() : null;
+                var meta = [prefix, dur, when].filter(function(x) { return !!x; }).join(" · ");
                 return (
                   <div key={ep.id} className="ep-item">
-                    <div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
                       <div className="ep-item__title">{ep.title || ep.id}</div>
-                      <div className="ep-item__meta">
-                        {ep.status || "?"}{ep.created_at ? " · " + ep.created_at : ""}
-                      </div>
+                      <div className="ep-item__meta">{meta || ep.id}</div>
                     </div>
+                    {ep.final_video_url ? (
+                      <a
+                        className="btn btn-primary"
+                        href={ep.final_video_url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        style={{ flexShrink: 0, padding: "4px 10px", fontSize: 12 }}
+                      >▶</a>
+                    ) : null}
                   </div>
                 );
               })}
