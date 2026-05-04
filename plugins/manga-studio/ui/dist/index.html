@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>漫剧工作室 · Manga Studio</title>
+  <!--
+    Self-contained plugin UI: bootstrap + UI Kit are inlined under _assets/.
+    Files are byte-for-byte copies of avatar-studio's UI Kit (see
+    plugins-archive/_shared/web-uikit/README.md) — keep them in lock-step
+    when the kit changes upstream.
+  -->
+  <script src="_assets/bootstrap.js"></script>
+  <link rel="stylesheet" href="_assets/styles.css">
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/i18n.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
+  <style>
+    :root {
+      --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+      --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
+      --primary: #ec4899; --primary-hover: #db2777;
+      --accent: #6366f1; --accent-hover: #4f46e5;
+      --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+      --border: #e2e8f0; --radius: 8px;
+    }
+    [data-theme="dark"] {
+      --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+      --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+      --border: #334155;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+        --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+        --border: #334155;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 18px; border-bottom: 1px solid var(--border);
+      background: var(--bg-card);
+    }
+    .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 10px; margin: 0; }
+    .header-icon { width: 32px; height: 32px; border-radius: 7px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+      display: flex; align-items: center; justify-content: center; color: #fff;
+      box-shadow: 0 2px 6px rgba(236,72,153,.25);
+      font-size: 16px; font-weight: 700;
+    }
+    .header-title-wrap { display: flex; flex-direction: column; gap: 1px; }
+    .header-title-main { font-size: 15px; font-weight: 600; line-height: 1.2; }
+    .header-title-sub { font-size: 11px; font-weight: 400; color: var(--text-muted); line-height: 1.3; }
+    .header-right { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-muted); }
+    .api-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 500;
+      background: rgba(34,197,94,.12); color: var(--success);
+      cursor: default;
+    }
+    .api-pill--missing {
+      background: rgba(245,158,11,.15); color: var(--warning);
+      cursor: pointer;
+    }
+    .api-pill--missing:hover { filter: brightness(0.95); }
+    .lang-toggle, .theme-toggle {
+      cursor: pointer; user-select: none; padding: 4px 8px; border-radius: 5px;
+      font-size: 12px; font-weight: 500;
+    }
+    .lang-toggle:hover, .theme-toggle:hover { background: var(--bg-hover); color: var(--text); }
+    .tabs {
+      display: flex; gap: 0; border-bottom: 1px solid var(--border);
+      background: var(--bg-card); padding: 0 14px;
+    }
+    .tab {
+      padding: 9px 16px; font-size: 13px; cursor: pointer;
+      border-bottom: 2px solid transparent; color: var(--text-muted);
+      transition: all .15s; white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+    .tab .tab-badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--bg-hover); color: var(--text-muted); }
+    .content { flex: 1; min-height: 0; overflow: hidden; padding: 14px 16px; position: relative; }
+    .content > div { max-height: 100%; overflow-y: auto; }
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px; margin-bottom: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    }
+    .card-title {
+      font-size: 14px; font-weight: 600; margin-bottom: 12px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .label {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; font-weight: 600; color: var(--text);
+      margin: 0 0 8px; line-height: 1.3;
+    }
+    .label::before {
+      content: ""; display: inline-block; width: 3px; height: 14px;
+      border-radius: 2px; background: var(--primary); flex-shrink: 0;
+    }
+    .form-row { margin-bottom: 12px; }
+    .input {
+      width: 100%; padding: 8px 12px; border: 1px solid var(--border);
+      border-radius: 6px; background: var(--bg); color: var(--text);
+      font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s;
+      font-family: inherit;
+    }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(236,72,153,.18); }
+    .textarea { resize: vertical; min-height: 120px; }
+    .select {
+      appearance: none; padding-right: 28px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 8px center;
+    }
+    .btn {
+      padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg-card); color: var(--text); font-size: 13px;
+      cursor: pointer; transition: all .15s; display: inline-flex;
+      align-items: center; gap: 6px; font-family: inherit;
+    }
+    .btn:hover:not(:disabled) { background: var(--bg-hover); }
+    .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-block {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 12px 16px; font-size: 14px; font-weight: 600;
+      border-radius: 8px;
+    }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-danger { color: var(--danger); border-color: rgba(239,68,68,.4); }
+    .btn-danger:hover:not(:disabled) { background: rgba(239,68,68,.08); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
+    .items-center { align-items: center; } .justify-between { justify-content: space-between; }
+    .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; }
+    .text-sm { font-size: 13px; } .text-xs { font-size: 11px; }
+    .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
+    .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
+    .mt-2 { margin-top: 8px; } .mt-3 { margin-top: 12px; } .mb-2 { margin-bottom: 8px; }
+    .style-chip {
+      padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--bg-card); color: var(--text-muted); font-size: 12px;
+      cursor: pointer; transition: all .15s; user-select: none;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .style-chip:hover { border-color: var(--primary); color: var(--text); }
+    .style-chip.active {
+      border-color: var(--primary); color: var(--primary);
+      background: rgba(236,72,153,.10); font-weight: 600;
+    }
+    .ratio-btn {
+      min-width: 56px; height: 38px; padding: 0 12px;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+      font-size: 12px; font-weight: 500; transition: all .15s;
+      color: var(--text-muted); background: var(--bg-card); user-select: none;
+    }
+    .ratio-btn:hover { border-color: var(--primary); color: var(--text); }
+    .ratio-btn.active {
+      border-color: var(--primary); color: var(--primary);
+      background: rgba(236,72,153,.10); font-weight: 600;
+      box-shadow: 0 0 0 1px var(--primary) inset;
+    }
+    .slider-wrap { display: flex; align-items: center; gap: 12px; }
+    .slider-wrap input[type=range] { flex: 1; accent-color: var(--primary); }
+    .slider-val {
+      min-width: 48px; text-align: center; font-size: 14px;
+      font-weight: 600; color: var(--primary);
+    }
+    .switch {
+      position: relative; width: 36px; height: 20px;
+      border-radius: 10px; background: var(--border);
+      cursor: pointer; transition: .2s; flex-shrink: 0;
+    }
+    .switch.on { background: var(--primary); }
+    .switch::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: #fff; transition: .2s;
+    }
+    .switch.on::after { left: 18px; }
+    .toggle-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 6px;
+      cursor: pointer; transition: background .15s; user-select: none;
+    }
+    .toggle-row:hover { background: var(--bg-hover); }
+    .toggle-row__label { font-size: 13px; color: var(--text); flex: 1; }
+    .prompt-wrap { position: relative; }
+    .prompt-counter {
+      position: absolute; bottom: 8px; right: 12px;
+      font-size: 11px; color: var(--text-dim);
+      pointer-events: none;
+      background: linear-gradient(to right, transparent, var(--bg) 30%);
+      padding: 2px 4px 2px 16px; border-radius: 4px;
+    }
+    .cost-card {
+      background: linear-gradient(135deg, rgba(236,72,153,.06), rgba(99,102,241,.04));
+      border: 1px solid rgba(236,72,153,.18);
+    }
+    .cost-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: 4px 0; font-size: 12px;
+    }
+    .cost-row .label { font-size: 12px; color: var(--text-muted); margin: 0; }
+    .cost-row .label::before { display: none; }
+    .cost-row .val { font-weight: 500; color: var(--text); }
+    .cost-row.total {
+      border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 8px;
+      font-size: 14px; font-weight: 600;
+    }
+    .cost-row.total .val { color: var(--primary); font-size: 16px; }
+    .cost-row.over .val { color: var(--warning); }
+    .threshold-warn {
+      margin-top: 8px; padding: 8px 10px; border-radius: 6px;
+      background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.35);
+      font-size: 12px; color: var(--text); line-height: 1.4;
+    }
+    .task-card {
+      padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+      margin-bottom: 8px; background: var(--bg-card);
+      transition: border-color .15s;
+    }
+    .task-card:hover { border-color: rgba(236,72,153,.4); }
+    .task-card__head {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    }
+    .task-card__title {
+      font-size: 13px; font-weight: 600; flex: 1;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .task-card__meta {
+      font-size: 11px; color: var(--text-dim); margin-top: 4px;
+      display: flex; gap: 8px; flex-wrap: wrap;
+    }
+    .task-card__progress {
+      height: 4px; border-radius: 2px; background: var(--border);
+      overflow: hidden; margin-top: 8px;
+    }
+    .task-card__progress-fill {
+      height: 100%; background: var(--primary);
+      transition: width .3s;
+    }
+    .task-card__step {
+      font-size: 11px; color: var(--text-muted); margin-top: 4px;
+    }
+    .task-card__error {
+      margin-top: 8px; padding: 6px 8px; border-radius: 4px;
+      background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25);
+      font-size: 11px; color: var(--danger); line-height: 1.4;
+    }
+    .status-chip {
+      font-size: 10px; padding: 2px 8px; border-radius: 999px;
+      font-weight: 500; flex-shrink: 0;
+    }
+    .status-chip--running { background: rgba(99,102,241,.15); color: var(--accent); }
+    .status-chip--pending { background: rgba(148,163,184,.18); color: var(--text-muted); }
+    .status-chip--succeeded { background: rgba(34,197,94,.15); color: var(--success); }
+    .status-chip--failed { background: rgba(239,68,68,.15); color: var(--danger); }
+    .status-chip--cancelled { background: rgba(148,163,184,.18); color: var(--text-muted); }
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 40px 20px; color: var(--text-dim);
+      text-align: center; line-height: 1.6;
+    }
+    .empty-state__icon { font-size: 32px; margin-bottom: 8px; opacity: .6; }
+    .empty-state__title { font-size: 14px; font-weight: 500; color: var(--text-muted); margin-bottom: 6px; }
+    .empty-state__hint { font-size: 12px; }
+    .modal-mask {
+      position: fixed; inset: 0; background: rgba(0,0,0,.5);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 2000; padding: 20px;
+    }
+    .modal-card {
+      background: var(--bg-card); border-radius: 12px;
+      padding: 22px 24px; max-width: 460px; width: 100%;
+      box-shadow: 0 20px 50px rgba(0,0,0,.25);
+    }
+    .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .modal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 14px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .split-layout { display: flex; gap: 16px; height: 100%; overflow: hidden; }
+    .split-left { width: 58%; min-width: 360px; overflow-y: auto; flex-shrink: 0; }
+    .split-right { flex: 1; min-width: 0; overflow-y: auto; }
+    @media (max-width: 960px) {
+      .split-layout { flex-direction: column; overflow-y: auto; }
+      .split-left { width: 100%; min-width: unset; flex-shrink: 0; }
+    }
+    .stub-card {
+      text-align: center; padding: 40px 20px; color: var(--text-muted);
+      background: var(--bg-card); border: 1px dashed var(--border);
+      border-radius: 8px; line-height: 1.7;
+    }
+    .stub-card__title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+    .stub-card__phase {
+      display: inline-block; margin-top: 10px;
+      padding: 3px 10px; border-radius: 999px; font-size: 11px;
+      background: rgba(99,102,241,.15); color: var(--accent); font-weight: 500;
+    }
+    .ico { display: inline-flex; align-items: center; justify-content: center;
+      width: 1em; height: 1em; vertical-align: -0.125em; flex-shrink: 0; }
+    .spinner-sm {
+      width: 12px; height: 12px; border: 2px solid var(--border);
+      border-top-color: var(--primary); border-radius: 50%;
+      animation: spin .6s linear infinite; display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .toast-stack {
+      position: fixed; top: 16px; right: 16px; z-index: 3000;
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      padding: 10px 14px; border-radius: 8px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      box-shadow: 0 4px 12px rgba(0,0,0,.12);
+      font-size: 13px; max-width: 360px;
+      animation: ak-slide-in .15s ease-out;
+    }
+    .toast--success { border-left: 3px solid var(--success); }
+    .toast--error { border-left: 3px solid var(--danger); }
+    .toast--warning { border-left: 3px solid var(--warning); }
+    .toast--info { border-left: 3px solid var(--accent); }
+    @keyframes ak-slide-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ── Minimal Bridge SDK with direct HTTP fallback ──
+const BRIDGE_VER = 1;
+let _ctx = null, _caps = [], _pending = {}, _handlers = {};
+let _bridgeConnected = false;
+const _inIframe = window.parent !== window;
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function post(msg) { if (_inIframe) window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
+
+function _detectApiBase() {
+  if (_ctx && _ctx.apiBase) return _ctx.apiBase;
+  var loc = window.location;
+  if (loc.port === "5173" || loc.port === "1420") return "http://127.0.0.1:18900";
+  return loc.origin;
+}
+
+function directFetch(method, path, body) {
+  var url = path.startsWith("http") ? path : _detectApiBase() + path;
+  var opts = { method: method, headers: { "Content-Type": "application/json" } };
+  if (body && method !== "GET" && method !== "HEAD") {
+    if (body instanceof FormData) { opts.body = body; delete opts.headers["Content-Type"]; }
+    else { opts.body = JSON.stringify(body); }
+  }
+  return fetch(url, opts).then(function(resp) {
+    return resp.json().then(function(json) {
+      return { ok: resp.ok, status: resp.status, body: json };
+    }).catch(function() {
+      return { ok: resp.ok, status: resp.status, body: null };
+    });
+  });
+}
+
+function apiCall(method, path, body) {
+  if (!_inIframe || !_bridgeConnected) return directFetch(method, path, body);
+  return new Promise(function(resolve) {
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: resolve };
+    post({ type: "bridge:api-request", requestId: id, payload: { method: method, path: path, body: body } });
+    setTimeout(function() {
+      if (_pending[id]) {
+        delete _pending[id];
+        directFetch(method, path, body).then(resolve);
+      }
+    }, 5000);
+  });
+}
+
+function pluginApi(method, path, body) {
+  var pid = (_ctx && _ctx.pluginId) || "manga-studio";
+  return apiCall(method, "/api/plugins/" + pid + path, body);
+}
+
+window.addEventListener("message", function(e) {
+  var d = e.data;
+  if (!d || !d.__akita_bridge) return;
+  if (d.type === "bridge:init" && d.payload) {
+    _ctx = d.payload;
+    _bridgeConnected = true;
+    if (_ctx.theme) {
+      document.documentElement.setAttribute("data-theme", _ctx.theme.includes("dark") ? "dark" : "light");
+    }
+  }
+  if (d.type === "bridge:handshake-ack" && d.payload) { _caps = d.payload.capabilities || []; _bridgeConnected = true; }
+  var _ackTypes = ["bridge:api-response","bridge:clipboard-ack","bridge:download-ack"];
+  if (_ackTypes.indexOf(d.type) !== -1 && d.requestId && _pending[d.requestId]) {
+    _pending[d.requestId].resolve(d.payload);
+    delete _pending[d.requestId];
+  }
+  if (d.type === "bridge:theme-change" && d.payload) {
+    document.documentElement.setAttribute("data-theme", (d.payload.theme || "").includes("dark") ? "dark" : "light");
+  }
+});
+function _sendReady() {
+  post({ type: "bridge:ready" });
+  post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } });
+}
+_sendReady();
+if (_inIframe) {
+  var _readyInterval = setInterval(function() {
+    if (_bridgeConnected) { clearInterval(_readyInterval); return; }
+    _sendReady();
+  }, 300);
+  setTimeout(function() { clearInterval(_readyInterval); }, 20000);
+}
+
+window.__bridge = { apiCall: apiCall, pluginApi: pluginApi, getCtx: function() { return _ctx; } };
+</script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
+const { pluginApi } = window.__bridge;
+
+// ── i18n dictionary ──
+const I18N = {
+  zh: {
+    "app.title": "漫剧工作室",
+    "app.subtitle": "Manga Studio · 故事 → 分镜 → 漫画动画视频",
+    "tabs.studio": "工作室",
+    "tabs.series": "剧集",
+    "tabs.characters": "角色卡",
+    "tabs.workflows": "工作流",
+    "tabs.settings": "设置",
+    "studio.section.story": "剧情输入",
+    "studio.label.story": "故事 / 剧情大纲",
+    "studio.placeholder.story": "用一段话描述你想生成的漫剧故事，例如：\n少年李雷意外觉醒了上古剑灵的力量，在剑道部社团发现自己同班同学韩梅梅其实是一位转世剑仙……",
+    "studio.section.style": "美术风格",
+    "studio.section.layout": "分镜配置",
+    "studio.label.ratio": "画面比例",
+    "studio.label.panels": "分镜数",
+    "studio.label.duration": "每镜时长 (秒)",
+    "studio.section.output": "输出设置",
+    "studio.label.subtitles": "烧录字幕",
+    "studio.label.backend": "生成后端",
+    "studio.backend.direct": "直接 (Seedance)",
+    "studio.backend.runninghub": "RunningHub 工作流",
+    "studio.backend.comfyui_local": "本地 ComfyUI",
+    "studio.section.cost": "费用预估",
+    "studio.cost.total": "预估总价",
+    "studio.cost.threshold": "成本阈值",
+    "studio.cost.exceeds": "预估费用超过设置中的成本阈值，请确认后再提交。",
+    "studio.btn.submit": "生成漫剧",
+    "studio.btn.submit.loading": "提交中…",
+    "studio.confirm.title": "确认生成？",
+    "studio.confirm.desc": "本次生成预估费用为 {cost}，超过你设置的 {threshold} 阈值。继续将扣费生成。",
+    "studio.confirm.ok": "确认提交",
+    "studio.confirm.cancel": "取消",
+    "studio.section.tasks": "正在生成 / 最近任务",
+    "tasks.empty.title": "还没有任务",
+    "tasks.empty.hint": "提交左侧表单后，本次生成的进度会出现在这里。",
+    "tasks.step.queued": "排队中",
+    "tasks.step.compose": "拼装提示词",
+    "tasks.step.script": "撰写剧本",
+    "tasks.step.images": "生成分镜图",
+    "tasks.step.videos": "图生视频",
+    "tasks.step.tts": "合成台词",
+    "tasks.step.subtitles": "字幕轨",
+    "tasks.step.assemble": "拼接音视频",
+    "tasks.cancel": "取消",
+    "tasks.delete": "删除",
+    "stub.title": "{label} · 即将上线",
+    "stub.desc": "本页将在 Phase 3 / Phase 4 中陆续上线，对应后端能力当前已完成或在路上。",
+    "stub.phase": "Phase {n}",
+    "settings.title": "设置",
+    "settings.section.api": "直接后端 · API Keys",
+    "settings.label.ark": "火山方舟 API Key (Seedance 视频)",
+    "settings.label.dashscope": "阿里 DashScope API Key (万相生图 + CosyVoice)",
+    "settings.label.tts": "TTS 引擎",
+    "settings.tts.edge": "Edge-TTS（免费，需联网）",
+    "settings.tts.cosyvoice": "CosyVoice-v2（DashScope 计费）",
+    "settings.section.cost": "成本控制",
+    "settings.label.threshold": "单集成本阈值（CNY）",
+    "settings.threshold.hint": "超过此金额将弹窗确认。设为 0 关闭阈值检查。",
+    "settings.btn.save": "保存",
+    "settings.toast.saved": "设置已保存",
+    "settings.toast.failed": "保存失败：{msg}",
+    "common.loading": "加载中…",
+    "common.error": "出错了：{msg}",
+    "common.empty": "暂无数据",
+    "common.copy": "复制",
+    "common.copied": "已复制",
+  },
+  en: {
+    "app.title": "Manga Studio",
+    "app.subtitle": "Story → Storyboard → Animated Drama Video",
+    "tabs.studio": "Studio",
+    "tabs.series": "Series",
+    "tabs.characters": "Characters",
+    "tabs.workflows": "Workflows",
+    "tabs.settings": "Settings",
+    "studio.section.story": "Story Input",
+    "studio.label.story": "Story / Plot Outline",
+    "studio.placeholder.story": "Describe the manga drama you want to generate, e.g.\nA high-school boy named Li Lei unlocks an ancient sword spirit in his kendo club, then discovers his classmate Han Meimei is a reincarnated sword immortal...",
+    "studio.section.style": "Visual Style",
+    "studio.section.layout": "Storyboard Layout",
+    "studio.label.ratio": "Aspect Ratio",
+    "studio.label.panels": "Panels",
+    "studio.label.duration": "Seconds per Panel",
+    "studio.section.output": "Output Options",
+    "studio.label.subtitles": "Burn Subtitles",
+    "studio.label.backend": "Generation Backend",
+    "studio.backend.direct": "Direct (Seedance)",
+    "studio.backend.runninghub": "RunningHub Workflow",
+    "studio.backend.comfyui_local": "Local ComfyUI",
+    "studio.section.cost": "Cost Estimate",
+    "studio.cost.total": "Estimated Total",
+    "studio.cost.threshold": "Cost Threshold",
+    "studio.cost.exceeds": "Estimated cost exceeds the configured threshold; confirm before submitting.",
+    "studio.btn.submit": "Generate Drama",
+    "studio.btn.submit.loading": "Submitting…",
+    "studio.confirm.title": "Confirm Generation?",
+    "studio.confirm.desc": "Estimated cost is {cost}, above your {threshold} threshold. Continue to charge and generate.",
+    "studio.confirm.ok": "Confirm",
+    "studio.confirm.cancel": "Cancel",
+    "studio.section.tasks": "Active / Recent Tasks",
+    "tasks.empty.title": "No tasks yet",
+    "tasks.empty.hint": "Submit the form on the left to start a generation; live progress will show here.",
+    "tasks.step.queued": "Queued",
+    "tasks.step.compose": "Composing prompts",
+    "tasks.step.script": "Writing script",
+    "tasks.step.images": "Generating panels",
+    "tasks.step.videos": "Image-to-video",
+    "tasks.step.tts": "Synthesising voice",
+    "tasks.step.subtitles": "Subtitle track",
+    "tasks.step.assemble": "Assembling video",
+    "tasks.cancel": "Cancel",
+    "tasks.delete": "Delete",
+    "stub.title": "{label} · Coming soon",
+    "stub.desc": "This tab lights up in Phase 3 / Phase 4 — the backend capability is either ready or on the way.",
+    "stub.phase": "Phase {n}",
+    "settings.title": "Settings",
+    "settings.section.api": "Direct Backend · API Keys",
+    "settings.label.ark": "Volcengine Ark API Key (Seedance video)",
+    "settings.label.dashscope": "Alibaba DashScope API Key (Wan2.7 image + CosyVoice)",
+    "settings.label.tts": "TTS Engine",
+    "settings.tts.edge": "Edge-TTS (free, online)",
+    "settings.tts.cosyvoice": "CosyVoice-v2 (DashScope billed)",
+    "settings.section.cost": "Cost Guard",
+    "settings.label.threshold": "Cost threshold per episode (CNY)",
+    "settings.threshold.hint": "Above this amount you'll get a confirmation modal. Set to 0 to disable.",
+    "settings.btn.save": "Save",
+    "settings.toast.saved": "Settings saved",
+    "settings.toast.failed": "Save failed: {msg}",
+    "common.loading": "Loading…",
+    "common.error": "Error: {msg}",
+    "common.empty": "Nothing to show",
+    "common.copy": "Copy",
+    "common.copied": "Copied",
+  },
+};
+
+function _detectLang() {
+  try {
+    var stored = localStorage.getItem("manga-studio.lang");
+    if (stored === "zh" || stored === "en") return stored;
+  } catch (_) {}
+  var nav = (navigator.language || "en").toLowerCase();
+  return nav.startsWith("zh") ? "zh" : "en";
+}
+
+function format(s, vars) {
+  if (!s || !vars) return s;
+  return String(s).replace(/\{(\w+)\}/g, function(_m, n) {
+    return vars[n] != null ? String(vars[n]) : "{" + n + "}";
+  });
+}
+
+// ── Toast manager ──
+function useToasts() {
+  const [toasts, setToasts] = useState([]);
+  const push = useCallback(function(msg, type) {
+    var id = uid();
+    setToasts(function(prev) { return prev.concat([{ id: id, msg: msg, type: type || "info" }]); });
+    setTimeout(function() {
+      setToasts(function(prev) { return prev.filter(function(t) { return t.id !== id; }); });
+    }, 4000);
+  }, []);
+  return { toasts: toasts, push: push };
+}
+
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+
+// ── App root ──
+function App() {
+  const [lang, setLang] = useState(_detectLang);
+  const t = useCallback(function(key, vars) {
+    var d = I18N[lang] || I18N.zh;
+    return format(d[key] || I18N.en[key] || key, vars);
+  }, [lang]);
+  const [tab, setTab] = useState("studio");
+  const [theme, setTheme] = useState(function() {
+    return document.documentElement.getAttribute("data-theme") || "light";
+  });
+  const [catalog, setCatalog] = useState(null);
+  const [settings, setSettings] = useState(null);
+  const toaster = useToasts();
+  const toast = toaster.push;
+
+  function toggleLang() {
+    var next = lang === "zh" ? "en" : "zh";
+    setLang(next);
+    try { localStorage.setItem("manga-studio.lang", next); } catch (_) {}
+  }
+  function toggleTheme() {
+    var next = theme === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    setTheme(next);
+  }
+
+  // Pull catalog + settings on mount.
+  useEffect(function() {
+    pluginApi("GET", "/catalog").then(function(r) {
+      if (r && r.ok && r.body && r.body.catalog) setCatalog(r.body.catalog);
+    });
+    pluginApi("GET", "/settings").then(function(r) {
+      if (r && r.ok && r.body && r.body.settings) setSettings(r.body.settings);
+    });
+  }, []);
+
+  // Boolean — a pill in the header that turns green when both keys look set.
+  // Settings come back redacted, so we only know "is it non-empty"; that's
+  // enough for the indicator's purpose.
+  const apiReady = !!(settings && settings.ark_api_key && settings.dashscope_api_key);
+
+  return (
+    <div className="app">
+      <header className="header">
+        <h1>
+          <span className="header-icon">M</span>
+          <div className="header-title-wrap">
+            <span className="header-title-main">{t("app.title")}</span>
+            <span className="header-title-sub">{t("app.subtitle")}</span>
+          </div>
+        </h1>
+        <div className="header-right">
+          <span
+            className={"api-pill " + (apiReady ? "" : "api-pill--missing")}
+            onClick={apiReady ? null : function() { setTab("settings"); }}
+            title={apiReady ? "API ready" : "Click to configure API keys"}
+          >
+            {apiReady ? "API ready" : "API missing"}
+          </span>
+          <span className="lang-toggle" onClick={toggleLang}>{lang === "zh" ? "EN" : "中"}</span>
+          <span className="theme-toggle" onClick={toggleTheme}>{theme === "dark" ? "☀︎" : "☾"}</span>
+        </div>
+      </header>
+      <nav className="tabs">
+        {[
+          { id: "studio", label: t("tabs.studio"), icon: "🎬" },
+          { id: "series", label: t("tabs.series"), icon: "📺", phase: 4 },
+          { id: "characters", label: t("tabs.characters"), icon: "👥", phase: 4 },
+          { id: "workflows", label: t("tabs.workflows"), icon: "🧩", phase: 3 },
+          { id: "settings", label: t("tabs.settings"), icon: "⚙︎" },
+        ].map(function(it) {
+          return (
+            <div
+              key={it.id}
+              className={"tab" + (tab === it.id ? " active" : "")}
+              onClick={function() { setTab(it.id); }}
+            >
+              <span>{it.icon}</span>
+              <span>{it.label}</span>
+              {it.phase ? <span className="tab-badge">P{it.phase}</span> : null}
+            </div>
+          );
+        })}
+      </nav>
+      <main className="content">
+        {tab === "studio" && (
+          <Studio t={t} catalog={catalog} settings={settings} toast={toast} />
+        )}
+        {tab === "series" && <StubTab t={t} label={t("tabs.series")} phase={4} />}
+        {tab === "characters" && <StubTab t={t} label={t("tabs.characters")} phase={4} />}
+        {tab === "workflows" && <StubTab t={t} label={t("tabs.workflows")} phase={3} />}
+        {tab === "settings" && (
+          <Settings t={t} settings={settings} setSettings={setSettings} toast={toast} />
+        )}
+      </main>
+      <div className="toast-stack">
+        {toaster.toasts.map(function(it) {
+          return (
+            <div key={it.id} className={"toast toast--" + it.type}>
+              {it.msg}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Studio tab ──
+//
+// Single-page production form: story → style/ratio/panels → cost preview
+// → submit. Right column polls /tasks every 2s while at least one task
+// is in a non-terminal state.
+
+const STEP_KEYS = {
+  queued: "tasks.step.queued",
+  compose: "tasks.step.compose",
+  script: "tasks.step.script",
+  images: "tasks.step.images",
+  videos: "tasks.step.videos",
+  tts: "tasks.step.tts",
+  subtitles: "tasks.step.subtitles",
+  assemble: "tasks.step.assemble",
+};
+
+function Studio({ t, catalog, settings, toast }) {
+  const [story, setStory] = useState("");
+  const [style, setStyle] = useState("shonen");
+  const [ratio, setRatio] = useState("9:16");
+  const [panels, setPanels] = useState(6);
+  const [secs, setSecs] = useState(5);
+  const [burn, setBurn] = useState(true);
+  const [backend, setBackend] = useState("direct");
+  const [costPreview, setCostPreview] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [confirming, setConfirming] = useState(null); // null | { cost, threshold }
+  const [tasks, setTasks] = useState([]);
+
+  const styles = (catalog && catalog.visual_styles) || [];
+  const ratios = (catalog && catalog.ratios) || ["9:16", "16:9", "1:1", "4:5"];
+  const lang = (typeof t("app.title") === "string" && t("app.title") === "漫剧工作室") ? "zh" : "en";
+
+  // Fetch cost preview whenever a cost-relevant input changes (debounced).
+  useEffect(function() {
+    var alive = true;
+    var handle = setTimeout(function() {
+      pluginApi("POST", "/cost-preview", {
+        n_panels: panels,
+        total_duration_sec: panels * secs,
+        story_chars: story.length || 1,
+      }).then(function(r) {
+        if (!alive) return;
+        if (r && r.ok && r.body && r.body.cost_preview) setCostPreview(r.body.cost_preview);
+      });
+    }, 250);
+    return function() { alive = false; clearTimeout(handle); };
+  }, [panels, secs, story.length]);
+
+  // Poll /tasks while any task is non-terminal (or first 6 pull).
+  useEffect(function() {
+    var alive = true;
+    function pull() {
+      pluginApi("GET", "/tasks?limit=10").then(function(r) {
+        if (!alive) return;
+        if (r && r.ok && r.body && Array.isArray(r.body.tasks)) {
+          setTasks(r.body.tasks);
+        }
+      });
+    }
+    pull();
+    var hasActive = tasks.some(function(x) {
+      return x.status === "running" || x.status === "pending";
+    });
+    var iv = setInterval(pull, hasActive ? 2000 : 8000);
+    return function() { alive = false; clearInterval(iv); };
+  }, [tasks.length, tasks.map(function(x) { return x.status; }).join(",")]);
+
+  function buildBody(confirmed) {
+    return {
+      story: story,
+      n_panels: panels,
+      seconds_per_panel: secs,
+      visual_style: style,
+      ratio: ratio,
+      burn_subtitles: burn,
+      backend: backend,
+      confirm_over_threshold: !!confirmed,
+    };
+  }
+
+  async function submit(confirmed) {
+    if (!story.trim()) {
+      toast(lang === "zh" ? "请先填写故事内容" : "Please enter the story first", "warning");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      var r = await pluginApi("POST", "/episodes", buildBody(confirmed));
+      if (r.status === 402 && r.body && r.body.detail) {
+        var detail = r.body.detail;
+        setConfirming({
+          cost: detail.cost_preview && detail.cost_preview.formatted_total,
+          threshold: detail.cost_preview && ("¥" + detail.cost_preview.threshold.toFixed(2)),
+        });
+        return;
+      }
+      if (!r.ok) {
+        var msg = (r.body && (r.body.detail || r.body.message)) || ("HTTP " + r.status);
+        toast(lang === "zh" ? "提交失败：" + msg : "Submit failed: " + msg, "error");
+        return;
+      }
+      toast(lang === "zh" ? "已提交，开始生成…" : "Queued — generation started", "success");
+      setConfirming(null);
+      // Immediate refresh so the new task appears without waiting for the poll tick.
+      pluginApi("GET", "/tasks?limit=10").then(function(rr) {
+        if (rr && rr.ok && rr.body && Array.isArray(rr.body.tasks)) setTasks(rr.body.tasks);
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function cancelTask(taskId) {
+    var r = await pluginApi("POST", "/tasks/" + taskId + "/cancel", {});
+    if (r.ok) toast(lang === "zh" ? "已取消" : "Cancelled", "info");
+    pluginApi("GET", "/tasks?limit=10").then(function(rr) {
+      if (rr && rr.ok && rr.body && Array.isArray(rr.body.tasks)) setTasks(rr.body.tasks);
+    });
+  }
+
+  return (
+    <div className="split-layout">
+      <div className="split-left">
+        <div className="card">
+          <div className="card-title">📝 {t("studio.section.story")}</div>
+          <div className="form-row prompt-wrap">
+            <div className="label">{t("studio.label.story")}</div>
+            <textarea
+              className="input textarea"
+              placeholder={t("studio.placeholder.story")}
+              value={story}
+              maxLength={8000}
+              onChange={function(e) { setStory(e.target.value); }}
+            />
+            <span className="prompt-counter">{story.length} / 8000</span>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">🎨 {t("studio.section.style")}</div>
+          <div className="flex flex-wrap" style={{ gap: 6 }}>
+            {styles.map(function(s) {
+              return (
+                <span
+                  key={s.id}
+                  className={"style-chip" + (style === s.id ? " active" : "")}
+                  onClick={function() { setStyle(s.id); }}
+                  title={s.description}
+                >
+                  {(lang === "zh" ? s.label_zh : s.label_en) || s.id}
+                </span>
+              );
+            })}
+            {styles.length === 0 && (
+              <div className="text-xs text-dim">{t("common.loading")}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">🎞️ {t("studio.section.layout")}</div>
+          <div className="form-row">
+            <div className="label">{t("studio.label.ratio")}</div>
+            <div className="flex flex-wrap" style={{ gap: 6 }}>
+              {ratios.map(function(r) {
+                return (
+                  <div
+                    key={r}
+                    className={"ratio-btn" + (ratio === r ? " active" : "")}
+                    onClick={function() { setRatio(r); }}
+                  >{r}</div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="grid-2">
+            <div className="form-row">
+              <div className="label">{t("studio.label.panels")}</div>
+              <div className="slider-wrap">
+                <input
+                  type="range" min="1" max="12" step="1"
+                  value={panels}
+                  onChange={function(e) { setPanels(Number(e.target.value)); }}
+                />
+                <span className="slider-val">{panels}</span>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="label">{t("studio.label.duration")}</div>
+              <div className="slider-wrap">
+                <input
+                  type="range" min="3" max="10" step="1"
+                  value={secs}
+                  onChange={function(e) { setSecs(Number(e.target.value)); }}
+                />
+                <span className="slider-val">{secs}s</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">📤 {t("studio.section.output")}</div>
+          <div className="form-row">
+            <div className="label">{t("studio.label.backend")}</div>
+            <select
+              className="input select"
+              value={backend}
+              onChange={function(e) { setBackend(e.target.value); }}
+            >
+              <option value="direct">{t("studio.backend.direct")}</option>
+              <option value="runninghub" disabled>{t("studio.backend.runninghub")} (Phase 3)</option>
+              <option value="comfyui_local" disabled>{t("studio.backend.comfyui_local")} (Phase 3)</option>
+            </select>
+          </div>
+          <div
+            className="toggle-row"
+            onClick={function() { setBurn(!burn); }}
+          >
+            <span className={"switch" + (burn ? " on" : "")}></span>
+            <span className="toggle-row__label">{t("studio.label.subtitles")}</span>
+          </div>
+        </div>
+
+        <div className="card cost-card">
+          <div className="card-title">💰 {t("studio.section.cost")}</div>
+          {costPreview ? <CostBreakdown cost={costPreview} t={t} lang={lang} /> : (
+            <div className="text-xs text-muted">{t("common.loading")}</div>
+          )}
+        </div>
+
+        <button
+          className="btn btn-primary btn-block"
+          disabled={submitting || !story.trim()}
+          onClick={function() { submit(false); }}
+        >
+          {submitting ? <span className="spinner-sm"></span> : "✨"}
+          <span>{submitting ? t("studio.btn.submit.loading") : t("studio.btn.submit")}</span>
+        </button>
+      </div>
+
+      <div className="split-right">
+        <div className="card-title">⏳ {t("studio.section.tasks")}</div>
+        {tasks.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state__icon">🎬</div>
+            <div className="empty-state__title">{t("tasks.empty.title")}</div>
+            <div className="empty-state__hint">{t("tasks.empty.hint")}</div>
+          </div>
+        ) : tasks.map(function(task) {
+          return (
+            <TaskCard
+              key={task.id}
+              task={task}
+              t={t}
+              onCancel={function() { cancelTask(task.id); }}
+            />
+          );
+        })}
+      </div>
+
+      {confirming && (
+        <div className="modal-mask" onClick={function() { setConfirming(null); }}>
+          <div className="modal-card" onClick={function(e) { e.stopPropagation(); }}>
+            <div className="modal-title">{t("studio.confirm.title")}</div>
+            <div className="modal-desc">
+              {t("studio.confirm.desc", { cost: confirming.cost, threshold: confirming.threshold })}
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={function() { setConfirming(null); }}>
+                {t("studio.confirm.cancel")}
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={submitting}
+                onClick={function() { submit(true); }}
+              >
+                {t("studio.confirm.ok")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CostBreakdown({ cost, t, lang }) {
+  return (
+    <div>
+      {(cost.items || []).map(function(it, idx) {
+        return (
+          <div key={idx} className="cost-row">
+            <div className="label" style={{ margin: 0 }}>
+              {(lang === "zh" ? it.label_zh : it.label_en) || it.label_en || it.kind}
+            </div>
+            <div className="val">{it.formatted}</div>
+          </div>
+        );
+      })}
+      <div className={"cost-row total" + (cost.exceeds_threshold ? " over" : "")}>
+        <div className="label" style={{ margin: 0 }}>{t("studio.cost.total")}</div>
+        <div className="val">{cost.formatted_total}</div>
+      </div>
+      {cost.exceeds_threshold && (
+        <div className="threshold-warn">
+          {t("studio.cost.exceeds")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskCard({ task, t, onCancel }) {
+  var status = task.status || "pending";
+  var step = task.current_step || "queued";
+  var stepKey = STEP_KEYS[step] || ("tasks.step." + step);
+  var progress = Math.max(0, Math.min(100, Number(task.progress) || 0));
+  var isActive = status === "running" || status === "pending";
+  var error = task.error_message;
+  var hint = null;
+  if (task.error_hints_json) {
+    try {
+      var h = typeof task.error_hints_json === "string" ? JSON.parse(task.error_hints_json) : task.error_hints_json;
+      hint = h && (h.hint_zh || h.hint_en);
+    } catch (_) {}
+  }
+  return (
+    <div className="task-card">
+      <div className="task-card__head">
+        <div className="task-card__title">{task.id}</div>
+        <span className={"status-chip status-chip--" + status}>{status}</span>
+      </div>
+      <div className="task-card__meta">
+        {task.episode_id && <span>ep · {task.episode_id}</span>}
+        {task.backend && <span>backend · {task.backend}</span>}
+      </div>
+      <div className="task-card__progress">
+        <div className="task-card__progress-fill" style={{ width: progress + "%" }} />
+      </div>
+      <div className="task-card__step">
+        {t(stepKey)} · {progress}%
+      </div>
+      {error && (
+        <div className="task-card__error">
+          {hint || error}
+        </div>
+      )}
+      {isActive && (
+        <div className="mt-2">
+          <button className="btn btn-sm btn-danger" onClick={onCancel}>
+            {t("tasks.cancel")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Stub tabs ──
+function StubTab({ t, label, phase }) {
+  return (
+    <div>
+      <div className="stub-card">
+        <div className="empty-state__icon">🚧</div>
+        <div className="stub-card__title">{t("stub.title", { label: label })}</div>
+        <div>{t("stub.desc")}</div>
+        <div className="stub-card__phase">{t("stub.phase", { n: phase })}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Settings tab ──
+function Settings({ t, settings, setSettings, toast }) {
+  const [draft, setDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(function() {
+    if (settings) setDraft(Object.assign({}, settings));
+  }, [settings]);
+
+  if (!draft) return <div className="text-muted">{t("common.loading")}</div>;
+
+  function patch(updates) { setDraft(function(prev) { return Object.assign({}, prev, updates); }); }
+
+  async function save() {
+    setSaving(true);
+    try {
+      // Skip redacted fields whose dot-mask value the user didn't change —
+      // detect by comparing against the bullet character we know the host
+      // returned in `settings`.
+      var payload = {};
+      Object.keys(draft).forEach(function(k) {
+        var v = draft[k];
+        var orig = settings ? settings[k] : "";
+        if (typeof v === "string" && v.indexOf("•") !== -1 && v === orig) return;
+        payload[k] = v;
+      });
+      var r = await pluginApi("PUT", "/settings", payload);
+      if (!r.ok) {
+        toast(t("settings.toast.failed", { msg: (r.body && r.body.detail) || ("HTTP " + r.status) }), "error");
+        return;
+      }
+      if (r.body && r.body.settings) setSettings(r.body.settings);
+      toast(t("settings.toast.saved"), "success");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <div className="card">
+        <div className="card-title">🔑 {t("settings.section.api")}</div>
+        <div className="form-row">
+          <div className="label">{t("settings.label.ark")}</div>
+          <input
+            className="input" type="password"
+            value={draft.ark_api_key || ""}
+            placeholder="sk-..."
+            onChange={function(e) { patch({ ark_api_key: e.target.value }); }}
+          />
+        </div>
+        <div className="form-row">
+          <div className="label">{t("settings.label.dashscope")}</div>
+          <input
+            className="input" type="password"
+            value={draft.dashscope_api_key || ""}
+            placeholder="sk-..."
+            onChange={function(e) { patch({ dashscope_api_key: e.target.value }); }}
+          />
+        </div>
+        <div className="form-row">
+          <div className="label">{t("settings.label.tts")}</div>
+          <select
+            className="input select"
+            value={draft.tts_engine || "edge"}
+            onChange={function(e) { patch({ tts_engine: e.target.value }); }}
+          >
+            <option value="edge">{t("settings.tts.edge")}</option>
+            <option value="cosyvoice">{t("settings.tts.cosyvoice")}</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">💰 {t("settings.section.cost")}</div>
+        <div className="form-row">
+          <div className="label">{t("settings.label.threshold")}</div>
+          <input
+            className="input" type="number" min="0" step="0.5"
+            value={draft.cost_threshold_cny != null ? draft.cost_threshold_cny : 5}
+            onChange={function(e) { patch({ cost_threshold_cny: Number(e.target.value) }); }}
+          />
+          <div className="text-xs text-muted mt-2">{t("settings.threshold.hint")}</div>
+        </div>
+      </div>
+
+      <button className="btn btn-primary" onClick={save} disabled={saving}>
+        {saving ? <span className="spinner-sm"></span> : "💾"}
+        <span>{t("settings.btn.save")}</span>
+      </button>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
