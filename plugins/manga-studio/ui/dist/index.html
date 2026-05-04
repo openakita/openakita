@@ -399,6 +399,56 @@
     @media (max-width: 720px) {
       .char-editor { grid-template-columns: 1fr; }
     }
+    /* Workflows tab (Phase 3.5) */
+    .wf-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 16px; margin-bottom: 12px;
+    }
+    .wf-card__title {
+      font-size: 13px; font-weight: 600; color: var(--text);
+      margin-bottom: 4px;
+    }
+    .wf-card__hint {
+      font-size: 11px; color: var(--text-muted); line-height: 1.5;
+      margin-bottom: 10px;
+    }
+    .wf-row { margin-bottom: 12px; }
+    .wf-row__label {
+      display: block; font-size: 12px; color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .wf-backend-toggle {
+      display: flex; gap: 8px; flex-wrap: wrap;
+    }
+    .wf-backend-toggle__btn {
+      flex: 1; min-width: 160px;
+      padding: 10px 14px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--bg-card);
+      color: var(--text-muted); cursor: pointer; font-size: 13px;
+      transition: border-color .15s, color .15s;
+    }
+    .wf-backend-toggle__btn:hover { border-color: var(--primary); color: var(--text); }
+    .wf-backend-toggle__btn.active {
+      background: rgba(236,72,153,.12); border-color: var(--primary); color: var(--primary);
+    }
+    .wf-probe-banner {
+      padding: 10px 12px; border-radius: 6px;
+      font-size: 12px; line-height: 1.5;
+    }
+    .wf-probe-banner--idle {
+      background: var(--bg-deep); color: var(--text-muted);
+      border: 1px dashed var(--border);
+    }
+    .wf-probe-banner--ok {
+      background: rgba(34,197,94,.12); color: var(--success);
+      border: 1px solid rgba(34,197,94,.3);
+    }
+    .wf-probe-banner--fail {
+      background: rgba(239,68,68,.10); color: var(--danger);
+      border: 1px solid rgba(239,68,68,.3);
+    }
+    .wf-probe-banner__title { font-weight: 600; margin-bottom: 4px; }
+    .wf-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
     .ico { display: inline-flex; align-items: center; justify-content: center;
       width: 1em; height: 1em; vertical-align: -0.125em; flex-shrink: 0; }
     .spinner-sm {
@@ -613,6 +663,38 @@ const I18N = {
     "char.toast.deleted": "角色已删除",
     "char.toast.upload_failed": "参考图上传失败：{msg}",
     "char.toast.save_failed": "保存失败：{msg}",
+    "wf.title": "工作流后端",
+    "wf.subtitle": "RunningHub 云端工作流 · 本地 ComfyUI · 探活与工作流 ID 配置",
+    "wf.section.backend": "后端类型",
+    "wf.option.runninghub": "RunningHub（云端）",
+    "wf.option.comfyui_local": "本地 ComfyUI",
+    "wf.section.runninghub": "RunningHub 配置",
+    "wf.section.comfyui_local": "本地 ComfyUI 配置",
+    "wf.label.rh_api_key": "RunningHub API Key",
+    "wf.placeholder.rh_api_key": "rhk-...",
+    "wf.hint.rh_api_key": "在 RunningHub 控制台 → 我的 → API 钥匙 中获取。",
+    "wf.label.local_url": "ComfyUI URL",
+    "wf.placeholder.local_url": "http://127.0.0.1:8188",
+    "wf.hint.local_url": "运行 ComfyUI 时显示的地址，通常是 8188 端口。需要保持 ComfyUI 进程在线。",
+    "wf.section.workflows": "工作流映射",
+    "wf.workflow.hint.runninghub": "在 RunningHub 工作坊创建分享版本后，工作流 ID 会显示在 URL 上（数字字符串）。",
+    "wf.workflow.hint.comfyui_local": "导出工作流为 .json，填入文件路径（支持相对/绝对路径）。",
+    "wf.label.image": "分镜生图工作流",
+    "wf.label.animate": "图生视频工作流",
+    "wf.label.t2v": "文生视频工作流（可选 · 用于人脸审核失败时降级）",
+    "wf.placeholder.workflow_id_rh": "1234567890",
+    "wf.placeholder.workflow_path_local": "/path/to/workflow.json",
+    "wf.section.probe": "连接测试",
+    "wf.btn.probe": "测试连接",
+    "wf.btn.probe.loading": "测试中…",
+    "wf.btn.save": "保存",
+    "wf.btn.save.loading": "保存中…",
+    "wf.toast.saved": "工作流配置已保存",
+    "wf.probe.title": "探活结果",
+    "wf.probe.idle": "点击「测试连接」运行一次探活。RunningHub 仅检查 API Key + 客户端是否可构造，不会发送真实任务（不计费）。本地 ComfyUI 会发起一次 ``GET /system_stats`` 探测。",
+    "wf.probe.ok": "✓ 已连接",
+    "wf.probe.fail": "✗ 失败",
+    "wf.probe.dependency_hint": "提示：RunningHub 工作流需要 `comfykit` Python 包，请运行 `pip install comfykit>=0.1.12` 后重启服务。",
     "settings.title": "设置",
     "settings.section.api": "直接后端 · API Keys",
     "settings.label.ark": "火山方舟 API Key (Seedance 视频)",
@@ -720,6 +802,38 @@ const I18N = {
     "char.toast.deleted": "Character deleted",
     "char.toast.upload_failed": "Reference upload failed: {msg}",
     "char.toast.save_failed": "Save failed: {msg}",
+    "wf.title": "Workflow Backend",
+    "wf.subtitle": "RunningHub cloud · Local ComfyUI · Probe + workflow-ID configuration",
+    "wf.section.backend": "Backend Type",
+    "wf.option.runninghub": "RunningHub (cloud)",
+    "wf.option.comfyui_local": "Local ComfyUI",
+    "wf.section.runninghub": "RunningHub Configuration",
+    "wf.section.comfyui_local": "Local ComfyUI Configuration",
+    "wf.label.rh_api_key": "RunningHub API Key",
+    "wf.placeholder.rh_api_key": "rhk-...",
+    "wf.hint.rh_api_key": "Get this from RunningHub console → My → API Keys.",
+    "wf.label.local_url": "ComfyUI URL",
+    "wf.placeholder.local_url": "http://127.0.0.1:8188",
+    "wf.hint.local_url": "The address ComfyUI prints on start-up, usually port 8188. The ComfyUI process must stay running.",
+    "wf.section.workflows": "Workflow Mapping",
+    "wf.workflow.hint.runninghub": "After publishing a workflow on RunningHub, its ID appears in the URL (numeric string).",
+    "wf.workflow.hint.comfyui_local": "Export your workflow as .json and enter the file path (relative or absolute).",
+    "wf.label.image": "Panel Image-Generation",
+    "wf.label.animate": "Image-to-Video",
+    "wf.label.t2v": "Text-to-Video (optional · used as fallback when face moderation fails)",
+    "wf.placeholder.workflow_id_rh": "1234567890",
+    "wf.placeholder.workflow_path_local": "/path/to/workflow.json",
+    "wf.section.probe": "Connection Test",
+    "wf.btn.probe": "Test Connection",
+    "wf.btn.probe.loading": "Testing…",
+    "wf.btn.save": "Save",
+    "wf.btn.save.loading": "Saving…",
+    "wf.toast.saved": "Workflow settings saved",
+    "wf.probe.title": "Probe Result",
+    "wf.probe.idle": "Click \"Test Connection\" to run a probe. RunningHub only validates the API key + that the client can be constructed (no billable workflow run). Local ComfyUI issues a single GET /system_stats.",
+    "wf.probe.ok": "✓ Connected",
+    "wf.probe.fail": "✗ Failed",
+    "wf.probe.dependency_hint": "Tip: RunningHub workflow execution needs the `comfykit` Python package — run `pip install comfykit>=0.1.12` and restart the server.",
     "settings.title": "Settings",
     "settings.section.api": "Direct Backend · API Keys",
     "settings.label.ark": "Volcengine Ark API Key (Seedance video)",
@@ -841,7 +955,7 @@ function App() {
           { id: "studio", label: t("tabs.studio"), icon: "🎬" },
           { id: "series", label: t("tabs.series"), icon: "📺", phase: 4 },
           { id: "characters", label: t("tabs.characters"), icon: "👥" },
-          { id: "workflows", label: t("tabs.workflows"), icon: "🧩", phase: 3 },
+          { id: "workflows", label: t("tabs.workflows"), icon: "🧩" },
           { id: "settings", label: t("tabs.settings"), icon: "⚙︎" },
         ].map(function(it) {
           return (
@@ -863,7 +977,9 @@ function App() {
         )}
         {tab === "series" && <StubTab t={t} label={t("tabs.series")} phase={4} />}
         {tab === "characters" && <Characters t={t} catalog={catalog} toast={toast} />}
-        {tab === "workflows" && <StubTab t={t} label={t("tabs.workflows")} phase={3} />}
+        {tab === "workflows" && (
+          <Workflows t={t} settings={settings} setSettings={setSettings} toast={toast} />
+        )}
         {tab === "settings" && (
           <Settings t={t} settings={settings} setSettings={setSettings} toast={toast} />
         )}
@@ -1616,6 +1732,235 @@ function CharacterEditor({ t, catalog, toast, initial, onCancel, onSaved }) {
             {saving ? t("studio.btn.submit.loading") : t("char.btn.save")}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Workflows tab (Phase 3.5) ──
+// Configures the RunningHub / local-ComfyUI backend that the pipeline
+// uses when ``backend != "direct"`` on a generation request. The
+// "Test Connection" button hits POST /workflows/probe (which the
+// backend implemented in Phase 3.2) — RunningHub probes don't trigger
+// a billable workflow run.
+function Workflows({ t, settings, setSettings, toast }) {
+  // Local draft so the user can stage changes before saving without
+  // affecting the global settings state. Initialised from `settings`
+  // on mount and re-synced if the parent reloads.
+  const [draft, setDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probe, setProbe] = useState(null); // null=idle, {ok, backend, message}
+
+  useEffect(function() {
+    if (settings) setDraft(Object.assign({}, settings));
+  }, [settings]);
+
+  if (!draft) return <div className="text-muted">{t("common.loading")}</div>;
+
+  function patch(updates) {
+    setDraft(function(prev) { return Object.assign({}, prev, updates); });
+  }
+
+  function isRedacted(value) {
+    // Match the redaction format from `_redact` in plugin.py: leaves
+    // first 4 + last 4 chars + bullet fill in between.
+    return typeof value === "string" && value.indexOf("•") >= 0;
+  }
+
+  async function saveDraft() {
+    setSaving(true);
+    try {
+      // Build the payload for PUT /settings — skip api_key fields whose
+      // value is still the redacted dot-mask (user didn't edit them),
+      // so the backend doesn't overwrite the real key with bullets.
+      var payload = {};
+      var keys = [
+        "comfy_backend",
+        "runninghub_api_key",
+        "runninghub_workflow_image",
+        "runninghub_workflow_animate",
+        "runninghub_workflow_t2v",
+        "comfyui_local_url",
+        "comfyui_workflow_image",
+        "comfyui_workflow_animate",
+        "comfyui_workflow_t2v",
+      ];
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        var v = draft[k];
+        // Skip undefined; persist empty strings (user clearing a field).
+        if (v === undefined) continue;
+        if (k === "runninghub_api_key" && isRedacted(v)) continue;
+        payload[k] = v;
+      }
+      var r = await pluginApi("PUT", "/settings", payload);
+      if (r && r.ok && r.body && r.body.ok) {
+        toast(t("wf.toast.saved"), "success");
+        if (r.body.settings) setSettings(r.body.settings);
+      } else {
+        toast(t("settings.toast.failed", {
+          msg: (r && r.body && (r.body.detail || r.body.message)) || "?",
+        }), "error");
+      }
+    } catch (e) {
+      toast(t("settings.toast.failed", { msg: String(e) }), "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function probeBackend() {
+    setProbing(true);
+    setProbe(null);
+    try {
+      // The probe always reads from currently-saved settings (not draft)
+      // — make sure the user has saved changes first if they want to
+      // test new credentials. We DON'T auto-save here because that
+      // would surprise the user.
+      var r = await pluginApi("POST", "/workflows/probe");
+      if (r && r.ok && r.body && r.body.probe) {
+        setProbe(r.body.probe);
+      } else {
+        setProbe({
+          ok: false,
+          backend: draft.comfy_backend || "?",
+          message: (r && r.body && (r.body.detail || r.body.message)) || "probe failed",
+        });
+      }
+    } catch (e) {
+      setProbe({ ok: false, backend: draft.comfy_backend || "?", message: String(e) });
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  var backend = draft.comfy_backend || "runninghub";
+
+  return (
+    <div>
+      <div className="char-tab-header">
+        <div>
+          <div className="char-tab-header__title">{t("wf.title")}</div>
+          <div className="char-tab-header__sub">{t("wf.subtitle")}</div>
+        </div>
+      </div>
+
+      <div className="wf-card">
+        <div className="wf-card__title">{t("wf.section.backend")}</div>
+        <div className="wf-backend-toggle">
+          <button
+            className={"wf-backend-toggle__btn" + (backend === "runninghub" ? " active" : "")}
+            onClick={function() { patch({ comfy_backend: "runninghub" }); }}
+          >{t("wf.option.runninghub")}</button>
+          <button
+            className={"wf-backend-toggle__btn" + (backend === "comfyui_local" ? " active" : "")}
+            onClick={function() { patch({ comfy_backend: "comfyui_local" }); }}
+          >{t("wf.option.comfyui_local")}</button>
+        </div>
+      </div>
+
+      {backend === "runninghub" ? (
+        <div className="wf-card">
+          <div className="wf-card__title">{t("wf.section.runninghub")}</div>
+          <div className="wf-row">
+            <label className="wf-row__label">{t("wf.label.rh_api_key")}</label>
+            <input
+              className="input"
+              type="password"
+              value={draft.runninghub_api_key || ""}
+              onChange={function(e) { patch({ runninghub_api_key: e.target.value }); }}
+              placeholder={t("wf.placeholder.rh_api_key")}
+            />
+            <div className="wf-card__hint" style={{ marginTop: 4, marginBottom: 0 }}>
+              {t("wf.hint.rh_api_key")}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="wf-card">
+          <div className="wf-card__title">{t("wf.section.comfyui_local")}</div>
+          <div className="wf-row">
+            <label className="wf-row__label">{t("wf.label.local_url")}</label>
+            <input
+              className="input"
+              value={draft.comfyui_local_url || ""}
+              onChange={function(e) { patch({ comfyui_local_url: e.target.value }); }}
+              placeholder={t("wf.placeholder.local_url")}
+            />
+            <div className="wf-card__hint" style={{ marginTop: 4, marginBottom: 0 }}>
+              {t("wf.hint.local_url")}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="wf-card">
+        <div className="wf-card__title">{t("wf.section.workflows")}</div>
+        <div className="wf-card__hint">
+          {backend === "runninghub" ? t("wf.workflow.hint.runninghub") : t("wf.workflow.hint.comfyui_local")}
+        </div>
+        {[
+          { key: "image", label: t("wf.label.image") },
+          { key: "animate", label: t("wf.label.animate") },
+          { key: "t2v", label: t("wf.label.t2v") },
+        ].map(function(it) {
+          var fieldKey = (backend === "runninghub" ? "runninghub_workflow_" : "comfyui_workflow_") + it.key;
+          return (
+            <div className="wf-row" key={it.key}>
+              <label className="wf-row__label">{it.label}</label>
+              <input
+                className="input"
+                value={draft[fieldKey] || ""}
+                onChange={function(e) {
+                  var u = {}; u[fieldKey] = e.target.value; patch(u);
+                }}
+                placeholder={backend === "runninghub" ? t("wf.placeholder.workflow_id_rh") : t("wf.placeholder.workflow_path_local")}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="wf-card">
+        <div className="wf-card__title">{t("wf.section.probe")}</div>
+        {probe === null ? (
+          <div className="wf-probe-banner wf-probe-banner--idle">
+            {t("wf.probe.idle")}
+          </div>
+        ) : probe.ok ? (
+          <div className="wf-probe-banner wf-probe-banner--ok">
+            <div className="wf-probe-banner__title">
+              {t("wf.probe.ok")} · backend={probe.backend}
+            </div>
+            <div>{probe.message}</div>
+          </div>
+        ) : (
+          <div className="wf-probe-banner wf-probe-banner--fail">
+            <div className="wf-probe-banner__title">
+              {t("wf.probe.fail")} · backend={probe.backend}
+            </div>
+            <div>{probe.message}</div>
+            {probe.message && /comfykit/i.test(probe.message) ? (
+              <div style={{ marginTop: 6, fontSize: 11 }}>{t("wf.probe.dependency_hint")}</div>
+            ) : null}
+          </div>
+        )}
+        <div className="wf-actions">
+          <button
+            className="btn"
+            onClick={probeBackend}
+            disabled={probing}
+          >{probing ? t("wf.btn.probe.loading") : t("wf.btn.probe")}</button>
+        </div>
+      </div>
+
+      <div className="wf-actions">
+        <button
+          className="btn btn-primary"
+          onClick={saveDraft}
+          disabled={saving}
+        >{saving ? t("wf.btn.save.loading") : t("wf.btn.save")}</button>
       </div>
     </div>
   );

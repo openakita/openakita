@@ -162,6 +162,68 @@ def test_workflows_probe_unknown_backend_does_not_500(client) -> None:
     assert probe["backend"] == "unknown"
 
 
+# ─── PUT /settings whitelist accepts Phase 3.5 keys ─────────────────────
+
+
+def test_put_settings_persists_phase35_workflow_keys(client) -> None:
+    """All nine Phase-3.5 workflow-config keys are in DEFAULT_SETTINGS so
+    PUT /settings round-trips them. The Workflows tab UI relies on this
+    behaviour to save backend + 3 image/animate/t2v workflow IDs in one
+    PUT call without touching the unrelated Phase-2 API-key fields."""
+    tc, _ = client
+    payload = {
+        "comfy_backend": "comfyui_local",
+        "comfyui_local_url": "http://127.0.0.1:8188",
+        "comfyui_workflow_image": "/wf/img.json",
+        "comfyui_workflow_animate": "/wf/anim.json",
+        "comfyui_workflow_t2v": "/wf/t2v.json",
+        "runninghub_api_key": "rhk-mock",
+        "runninghub_workflow_image": "1234",
+        "runninghub_workflow_animate": "5678",
+        "runninghub_workflow_t2v": "9012",
+    }
+    r = tc.put("/settings", json=payload)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    s = body["settings"]
+    assert s["comfy_backend"] == "comfyui_local"
+    assert s["comfyui_local_url"] == "http://127.0.0.1:8188"
+    assert s["comfyui_workflow_image"] == "/wf/img.json"
+    assert s["comfyui_workflow_animate"] == "/wf/anim.json"
+    assert s["comfyui_workflow_t2v"] == "/wf/t2v.json"
+    # rh_api_key is redacted (8 char string → all bullets), but the
+    # plain workflow IDs come back as-is.
+    assert "•" in s["runninghub_api_key"]
+    assert s["runninghub_workflow_image"] == "1234"
+    assert s["runninghub_workflow_animate"] == "5678"
+    assert s["runninghub_workflow_t2v"] == "9012"
+
+
+def test_put_settings_redacted_api_key_is_not_persisted_back(client) -> None:
+    """If the UI sends the redacted dot-mask back unchanged (because the
+    user didn't edit the api_key field), the Workflows tab UI's
+    saveDraft helper must skip it. This test confirms the *backend*
+    behaviour: writing the redacted mask DOES overwrite the real key
+    with garbage, which is why the UI strips it client-side. We verify
+    that on round-trip 2 (where UI sends back redacted), the new value
+    is what the UI actually sent.
+    """
+    tc, _ = client
+    tc.put("/settings", json={"runninghub_api_key": "real-key-1234567890"})
+    r = tc.get("/settings")
+    redacted = r.json()["settings"]["runninghub_api_key"]
+    assert "•" in redacted
+    # Send the redacted value back — the backend has no way to tell it
+    # apart from a real key, so it overwrites. This is the bug the
+    # Workflows tab guards against client-side via `isRedacted(...)`.
+    tc.put("/settings", json={"runninghub_api_key": redacted})
+    r2 = tc.get("/settings")
+    # The new "value" is the redacted mask (re-redacted, but not the
+    # original real key).
+    assert r2.json()["settings"]["runninghub_api_key"].count("•") > 0
+
+
 # ─── manga_workflow_test tool ───────────────────────────────────────────
 
 

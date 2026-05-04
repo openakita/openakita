@@ -186,12 +186,21 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "dashscope_api_key": "",
     "dashscope_region": "beijing",
     "tts_engine": "edge",  # "edge" | "cosyvoice"
-    # Workflow backend (Phase 3)
+    # Workflow backend (Phase 3) — picked when ``backend != "direct"``
+    # on a generation request. ``comfy_backend`` selects between
+    # RunningHub (cloud) and a self-hosted ComfyUI install. The three
+    # ``*_workflow_*`` keys map workflow modes to either RunningHub
+    # workflow IDs (numeric strings RH gives you on the dashboard) or
+    # local-file paths to exported workflow JSONs.
     "comfy_backend": "runninghub",  # "runninghub" | "comfyui_local"
     "runninghub_api_key": "",
     "runninghub_workflow_image": "",
     "runninghub_workflow_animate": "",
+    "runninghub_workflow_t2v": "",
     "comfyui_local_url": "",
+    "comfyui_workflow_image": "",
+    "comfyui_workflow_animate": "",
+    "comfyui_workflow_t2v": "",
     # OSS — used by both backends to host reference images / panel images
     # / final videos so vendors can fetch via signed URL.
     "oss_endpoint": "",
