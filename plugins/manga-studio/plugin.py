@@ -37,6 +37,7 @@ from fastapi import UploadFile
 from openakita.plugins.api import PluginAPI, PluginBase
 from pydantic import BaseModel, ConfigDict, Field
 
+from comfy_client import MangaComfyClient
 from direct_ark_client import MangaArkClient
 from direct_wanxiang_client import MangaWanxiangClient
 from ffmpeg_service import FFmpegService
@@ -223,16 +224,17 @@ class Plugin(PluginBase):
         self._tm = MangaTaskManager(self._data_dir / "manga.db")
 
         # Phase 2 — direct backend (Ark Seedance + DashScope wan2.7-image
-        # + TTS) wired with the ``read_settings`` callable so users can
-        # update API keys in Settings without a plugin reload (Pixelle
-        # A10). Phase 3 sets ``_comfy_client`` / ``_oss``.
+        # + TTS). Phase 3.1 — ``_comfy_client`` (RunningHub + local
+        # ComfyUI). All clients are constructed with the
+        # ``read_settings`` callable so a Settings change takes effect
+        # on the very next request (Pixelle A10).
         self._direct_ark: MangaArkClient | None = None
         self._direct_wan: MangaWanxiangClient | None = None
         self._tts: MangaTTSClient | None = None
         self._ffmpeg: FFmpegService | None = None
         self._writer: MangaScriptWriter | None = None
         self._pipeline: MangaPipeline | None = None
-        self._comfy_client: Any | None = None
+        self._comfy_client: MangaComfyClient | None = None
         self._oss: Any | None = None
 
         # Background task registry — populated when the pipeline kicks
@@ -268,6 +270,7 @@ class Plugin(PluginBase):
             self._tts = MangaTTSClient(read_settings=self._read_settings)
             self._ffmpeg = FFmpegService()
             self._writer = MangaScriptWriter(self._api)
+            self._comfy_client = MangaComfyClient(read_settings=self._read_settings)
             self._pipeline = MangaPipeline(
                 wanxiang_client=self._direct_wan,
                 ark_client=self._direct_ark,
@@ -278,7 +281,7 @@ class Plugin(PluginBase):
                 working_dir=self._data_dir / "episodes",
             )
         except Exception as exc:  # noqa: BLE001
-            self._api.log(f"manga-studio: Phase-2 client wire-up failed: {exc!r}", "error")
+            self._api.log(f"manga-studio: client wire-up failed: {exc!r}", "error")
 
     async def on_unload(self) -> None:
         """Cancel any background polling task and close the DB cleanly."""
@@ -675,12 +678,22 @@ class Plugin(PluginBase):
         return f"estimated cost: {cost['formatted_total']}{warn}"
 
     async def _tool_workflow_test(self, args: dict[str, Any]) -> str:
-        # Phase 3 wiring; v1.0 stub so the tool name resolves.
-        backend = str(args.get("backend") or "")
-        return (
-            f"workflow backend test ({backend!r}) — not yet wired (Phase 3 will add "
-            f"comfykit / RunningHub probes)"
-        )
+        """Probe the configured workflow backend (Phase 3.1).
+
+        ``backend`` arg is informational — the actual backend that gets
+        probed is ``comfy_backend`` from settings (so the user always
+        gets a probe of what's actually configured). The tool surfaces
+        a single-line ``ok=… backend=… msg=…`` string the LLM can read
+        back in chat.
+        """
+        if self._comfy_client is None:
+            return "error: workflow client not initialised yet"
+        result = await self._comfy_client.probe_backend()
+        ok = result.get("ok")
+        backend = result.get("backend") or "?"
+        msg = result.get("message") or ""
+        flag = "ok" if ok else "FAIL"
+        return f"{flag} · backend={backend} · {msg}"
 
     # Map tool name → bound handler. Defined as a class attribute so a
     # subclass can override one entry without copying the rest.
@@ -819,6 +832,9 @@ class Plugin(PluginBase):
                     "tts": self._tts is not None,
                     "ffmpeg": self._ffmpeg is not None and self._ffmpeg.is_available(),
                     "pipeline": self._pipeline is not None,
+                    # ``comfy`` reports the *client* is constructed; ``ok``
+                    # status of a real probe lives at ``POST /workflows/probe``
+                    # to avoid a billable call on every healthz poll.
                     "comfy": self._comfy_client is not None,
                     "oss": self._oss is not None,
                 },
@@ -1167,6 +1183,22 @@ class Plugin(PluginBase):
                     "cost_threshold": cat.cost_threshold,
                 },
             }
+
+        # ── Workflows ───────────────────────────────────────────────
+        # Phase 3.1 — probe RunningHub or local ComfyUI without billing
+        # the user. The Workflows tab UI calls this on backend change
+        # to render the green / red dot + message. ``manga_workflow_test``
+        # tool delegates here too (via _tool_workflow_test).
+
+        @router.post("/workflows/probe")
+        async def workflows_probe() -> dict[str, Any]:
+            if self._comfy_client is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="workflow client not initialised yet (try again in a moment)",
+                )
+            result = await self._comfy_client.probe_backend()
+            return {"ok": True, "probe": result}
 
         @router.post("/cost-preview")
         async def cost_preview(body: _CostPreviewRequest) -> dict[str, Any]:

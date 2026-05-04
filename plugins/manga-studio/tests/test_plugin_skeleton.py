@@ -129,14 +129,24 @@ async def test_unknown_tool_returns_error(loaded_plugin) -> None:
     assert "manga_does_not_exist" in msg
 
 
-async def test_workflow_test_tool_returns_phase3_stub(loaded_plugin) -> None:
-    """``manga_workflow_test`` is the only tool that's still a stub in
-    Phase 2 — it explicitly says ``Phase 3 will add`` so the user
-    knows what to expect."""
+async def test_workflow_test_tool_dispatches_to_probe(loaded_plugin) -> None:
+    """Phase 3.1 wired the comfy client; ``manga_workflow_test`` now
+    delegates to ``MangaComfyClient.probe_backend()`` rather than
+    returning a Phase-3 stub. With nothing configured, the probe still
+    fires, just reporting ``FAIL · backend=… · …missing key…``.
+
+    The async init that constructs the client is fire-and-forget; the
+    skeleton fixture doesn't drain it, so we tolerate either outcome
+    (real probe string vs. ``error: workflow client not initialised``).
+    """
     _, p = loaded_plugin
     api = p._api  # type: ignore[attr-defined]
     msg = await api.tool_handler("manga_workflow_test", {"backend": "runninghub"})
-    assert "Phase 3" in msg or "not yet wired" in msg
+    assert (
+        msg.startswith("FAIL ·")
+        or msg.startswith("ok ·")
+        or msg.startswith("error: workflow client")
+    ), msg
 
 
 async def test_on_load_registers_router(loaded_plugin) -> None:
