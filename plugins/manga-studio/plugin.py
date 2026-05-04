@@ -33,10 +33,74 @@ from pathlib import Path
 from typing import Any
 
 from openakita.plugins.api import PluginAPI, PluginBase
+from pydantic import BaseModel, ConfigDict, Field
 
 from manga_task_manager import MangaTaskManager
 
 logger = logging.getLogger(__name__)
+
+
+# ─── Pydantic request models (must be module-level for FastAPI) ──────────
+#
+# Local-class request models break FastAPI body parsing — the framework
+# can't resolve their location (it falls back to "query") and the request
+# 422s with "Field required". Keeping them here also means the OpenAPI
+# schema picks up sensible names.
+
+
+class _CharacterCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., min_length=1, max_length=120)
+    role_type: str = Field("main", pattern="^(main|support|narrator|villain)$")
+    gender: str = "unknown"
+    age_range: str = ""
+    appearance: dict[str, Any] = Field(default_factory=dict)
+    personality: str = ""
+    description: str = ""
+    ref_images: list[dict[str, Any]] = Field(default_factory=list)
+    default_voice_id: str = ""
+
+
+class _CharacterUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = None
+    role_type: str | None = Field(None, pattern="^(main|support|narrator|villain)$")
+    gender: str | None = None
+    age_range: str | None = None
+    appearance: dict[str, Any] | None = None
+    personality: str | None = None
+    description: str | None = None
+    ref_images: list[dict[str, Any]] | None = None
+    default_voice_id: str | None = None
+
+
+class _SeriesCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(..., min_length=1, max_length=200)
+    summary: str = ""
+    visual_style: str = "shonen"
+    ratio: str = "9:16"
+    backend_pref: str = Field("direct", pattern="^(direct|runninghub|comfyui_local)$")
+    default_characters: list[str] = Field(default_factory=list)
+    cover_url: str = ""
+
+
+class _SeriesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = None
+    summary: str | None = None
+    visual_style: str | None = None
+    ratio: str | None = None
+    backend_pref: str | None = Field(None, pattern="^(direct|runninghub|comfyui_local)$")
+    default_characters: list[str] | None = None
+    cover_url: str | None = None
+
+
+class _SettingsUpdate(BaseModel):
+    """Loose schema — only known DEFAULT_SETTINGS keys are persisted; the
+    rest are filtered out by ``_save_settings`` with a warning log line."""
+
+    model_config = ConfigDict(extra="allow")
 
 
 PLUGIN_ID = "manga-studio"
@@ -348,7 +412,6 @@ class Plugin(PluginBase):
 
     def _register_routes(self, api: PluginAPI) -> None:
         from fastapi import APIRouter, HTTPException
-        from pydantic import BaseModel, ConfigDict
 
         router = APIRouter()
 
@@ -368,10 +431,6 @@ class Plugin(PluginBase):
                     "oss": self._oss is not None,
                 },
             }
-
-        # Settings — read all (with redacted secrets) and update.
-        class _SettingsUpdate(BaseModel):
-            model_config = ConfigDict(extra="allow")
 
         _SECRET_KEYS = (
             "ark_api_key",
@@ -408,6 +467,143 @@ class Plugin(PluginBase):
             except Exception as exc:  # noqa: BLE001 - surface a 400, not 500
                 raise HTTPException(400, f"failed to update settings: {exc!r}") from exc
             return {"ok": True, "settings": _redact(merged)}
+
+        # ── Characters ───────────────────────────────────────────────
+        # Reusable character cards. The single most-shared entity across
+        # episodes; the reason this plugin exists. Phase 2's pipeline
+        # consumes ``ref_images`` here as the IP-Adapter / DashScope
+        # multi-reference input that drives consistency.
+
+        @router.post("/characters")
+        async def create_character(body: _CharacterCreate) -> dict[str, Any]:
+            try:
+                cid = await self._tm.create_character(
+                    name=body.name,
+                    role_type=body.role_type,
+                    gender=body.gender,
+                    age_range=body.age_range,
+                    appearance=body.appearance,
+                    personality=body.personality,
+                    description=body.description,
+                    ref_images=body.ref_images,
+                    default_voice_id=body.default_voice_id,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            row = await self._tm.get_character(cid)
+            return {"ok": True, "character_id": cid, "character": row}
+
+        @router.get("/characters")
+        async def list_characters(role_type: str | None = None) -> dict[str, Any]:
+            try:
+                rows = await self._tm.list_characters(role_type=role_type)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {"ok": True, "characters": rows}
+
+        @router.get("/characters/{char_id}")
+        async def get_character(char_id: str) -> dict[str, Any]:
+            row = await self._tm.get_character(char_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="character not found")
+            return {"ok": True, "character": row}
+
+        @router.put("/characters/{char_id}")
+        async def update_character(char_id: str, body: _CharacterUpdate) -> dict[str, Any]:
+            existing = await self._tm.get_character(char_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="character not found")
+            updates: dict[str, Any] = {}
+            for k, v in body.model_dump(exclude_unset=True).items():
+                if v is None:
+                    continue
+                # The DB column for dict / list values is named ``*_json``
+                # — translate the public-API key here so the whitelist
+                # check inside ``update_character_safe`` accepts it.
+                if k in {"appearance", "ref_images"}:
+                    updates[f"{k}_json"] = v
+                else:
+                    updates[k] = v
+            try:
+                changed = await self._tm.update_character_safe(char_id, **updates)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {
+                "ok": True,
+                "changed": changed,
+                "character": await self._tm.get_character(char_id),
+            }
+
+        @router.delete("/characters/{char_id}")
+        async def delete_character(char_id: str) -> dict[str, Any]:
+            ok = await self._tm.delete_character(char_id)
+            if not ok:
+                raise HTTPException(status_code=404, detail="character not found")
+            return {"ok": True}
+
+        # ── Series ──────────────────────────────────────────────────
+        # Multi-episode container. Phase 2's pipeline reads the default
+        # character list / visual style / ratio / backend from the parent
+        # series row when the user creates an episode under it.
+
+        @router.post("/series")
+        async def create_series(body: _SeriesCreate) -> dict[str, Any]:
+            try:
+                sid = await self._tm.create_series(
+                    title=body.title,
+                    summary=body.summary,
+                    visual_style=body.visual_style,
+                    ratio=body.ratio,
+                    backend_pref=body.backend_pref,
+                    default_characters=body.default_characters,
+                    cover_url=body.cover_url,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            row = await self._tm.get_series(sid)
+            return {"ok": True, "series_id": sid, "series": row}
+
+        @router.get("/series")
+        async def list_series(limit: int = 100, offset: int = 0) -> dict[str, Any]:
+            rows = await self._tm.list_series(limit=limit, offset=offset)
+            return {"ok": True, "series": rows}
+
+        @router.get("/series/{ser_id}")
+        async def get_series(ser_id: str) -> dict[str, Any]:
+            row = await self._tm.get_series(ser_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="series not found")
+            return {"ok": True, "series": row}
+
+        @router.put("/series/{ser_id}")
+        async def update_series(ser_id: str, body: _SeriesUpdate) -> dict[str, Any]:
+            existing = await self._tm.get_series(ser_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="series not found")
+            updates: dict[str, Any] = {}
+            for k, v in body.model_dump(exclude_unset=True).items():
+                if v is None:
+                    continue
+                if k == "default_characters":
+                    updates["default_characters_json"] = v
+                else:
+                    updates[k] = v
+            try:
+                changed = await self._tm.update_series_safe(ser_id, **updates)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {
+                "ok": True,
+                "changed": changed,
+                "series": await self._tm.get_series(ser_id),
+            }
+
+        @router.delete("/series/{ser_id}")
+        async def delete_series(ser_id: str) -> dict[str, Any]:
+            ok = await self._tm.delete_series(ser_id)
+            if not ok:
+                raise HTTPException(status_code=404, detail="series not found")
+            return {"ok": True}
 
         api.register_api_routes(router)
         # Hold a reference for the next phase's CRUD routes to extend.
