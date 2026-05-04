@@ -744,3 +744,124 @@ Third-party licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
   <strong>OpenAkita — Open-Source Multi-Agent AI Assistant That Gets Things Done</strong><br/>
   <a href="https://openakita.ai">openakita.ai</a>
 </p>
+
+## FAQ
+
+### General
+
+**What is OpenAkita?**
+OpenAkita is an open-source, all-in-one AI assistant where multiple AI Agents work together to build an **AI company** that runs autonomously. It can search the web, operate your computer, manage files, run scheduled tasks, and respond across Telegram/Feishu/WeCom/DingTalk/QQ.
+
+**How is OpenAkita different from other AI assistants?**
+- **Multi-Agent**: Multiple specialized agents work in parallel (coding, writing, testing simultaneously)
+- **Organization Orchestration**: Build an AI company with CEO/CTO/Marketing roles
+- **6-Layer Security**: Path zoning, confirmation gates, command interception, file snapshots, self-protection, OS-level sandbox
+- **Scan-to-Bind**: Bind IM channels in 30 seconds by scanning a QR code
+- **Fully GUI-based**: No command line required for setup
+
+**What license does OpenAkita use?**
+Apache License 2.0 — free for commercial and personal use.
+
+### Installation & Setup
+
+**Do I need to install Python?**
+No! The Desktop App includes an isolated runtime. But for developers, you can also install via `pip install openakita[all]`.
+
+**How long does setup take?**
+- **Desktop App**: 3 minutes (download, install, enter API key, start chatting)
+- **pip Install**: 5 minutes (install, init wizard, run first task)
+- **Source Install**: 5 minutes (clone, venv, install, init)
+
+**What API keys do I need?**
+At least one LLM provider API key:
+- **Recommended**: Anthropic (Claude) or OpenAI (GPT-5)
+- **Budget-friendly**: DeepSeek, Qwen, Kimi
+- **Local**: Ollama (limited tool-calling capability)
+
+### Multi-Agent & Organization
+
+**What is Multi-Agent Collaboration?**
+Multiple specialized agents work in parallel. Example: "Create a competitive analysis" triggers a Research Agent + Analysis Agent + Writing Agent working simultaneously.
+
+**What is Organization Orchestration?**
+Build an AI company with hierarchical roles (CEO, CTO, CFO, Marketing Director). Each role operates independently with shared blackboard memory, message routing, and deadline detection.
+
+**How many agents can run simultaneously?**
+Depends on your LLM rate limits and system resources. OpenAkita uses an Agent Instance Pool with LRU eviction for efficient resource management.
+
+### IM Integration
+
+**Which IM platforms are supported?**
+- WeChat (scan-to-bind)
+- Feishu/Lark (WebSocket/Webhook)
+- WeCom (Smart Robot callback)
+- DingTalk (Stream WebSocket)
+- QQ Official (WebSocket)
+- Telegram (Webhook/Long Polling)
+- OneBot (compatible with NapCat/Lagrange/go-cqhttp)
+
+**How do I bind an IM channel?**
+Scan a QR code in 30 seconds — no developer account, no callback URL configuration, no technical knowledge required.
+
+### Plugin System
+
+**What types of plugins are there?**
+8 types: Tool, Channel, RAG, Memory, LLM, Hook, Skill, MCP — each extending different aspects of OpenAkita.
+
+**How do I install plugins?**
+Search the marketplace and click install, or install directly from GitHub. AI-generated skills are also available on the fly.
+
+**Is there a plugin SDK?**
+Yes! `openakita-plugin-sdk` (contrib/ module) with 6 modules: verification, quality_gates, intent_verifier, provider_score, error_coach, slideshow_risk/source_review.
+
+### Security
+
+**What is the 6-Layer Security Model?**
+1. **Path Zoning**: workspace/controlled/protected/forbidden
+2. **Confirmation Gate**: Dangerous ops require user approval
+3. **Command Interception**: redact, format, rm -rf blocked
+4. **File Snapshots**: Auto-checkpoint before writes, rollback available
+5. **Self-Protection**: data/, src/, identity/ locked from modification
+6. **OS-Level Sandbox**: Linux bwrap / macOS seatbelt / Windows MIC
+
+**Where is my data stored?**
+Locally on your machine only. Memory, config, and chat history are never sent to the cloud.
+
+### LLM Providers
+
+**How many LLM providers are supported?**
+30+ providers across International (Anthropic, OpenAI, Google Gemini, xAI, Mistral, OpenRouter, NVIDIA NIM, Grok, Fireworks, Cohere), China (Alibaba DashScope, Kimi, Xiaomi MiMo, MiniMax, DeepSeek, SiliconFlow, ZhiPu AI, Baidu Qianfan, Tencent Hunyuan, Yunwu, Meituan LongCat, iFlow), and Local (Ollama, LM Studio).
+
+**What if my primary model goes down?**
+Smart failover: when one model fails, the next picks up seamlessly.
+
+### Memory System
+
+**How does memory work?**
+Dual modes with automatic switching:
+- **Mode 1: Fragment Memory** — Working memory (current task) + Core memory (user profile) + Dynamic retrieval (past experiences)
+- **Mode 2: MDRM Relational Graph** — Causal chains, timelines, and entity relationship graphs for deeper understanding
+
+### Troubleshooting
+
+**Desktop app won't start?**
+- Ensure your OS is supported (Windows 10+, macOS 12+, Ubuntu 20.04+)
+- Check that port 8080 is not occupied by another application
+
+**API key not working?**
+- Verify the key is valid at the provider's console
+- Check network connectivity to the provider's API endpoint
+- Try a different provider to isolate the issue
+
+**Agent is stuck in a loop?**
+- Check the Agent Dashboard for real-time status
+- Use the Plan Mode progress bar to see task decomposition
+- Review the ReAct Reasoning Engine's think-act-observe cycle
+
+**Where can I get help?**
+- [Official Website](https://openakita.ai)
+- [Documentation](https://openakita.ai/docs)
+- [Discord Community](https://discord.gg/vFwxNVNH)
+- [GitHub Issues](https://github.com/openakita/openakita/issues)
+- [WeChat Official Account](https://openakita.ai)
+
