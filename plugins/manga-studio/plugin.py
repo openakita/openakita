@@ -32,9 +32,16 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from fastapi import UploadFile
 from openakita.plugins.api import PluginAPI, PluginBase
 from pydantic import BaseModel, ConfigDict, Field
 
+from manga_inline.storage_stats import collect_storage_stats
+from manga_inline.upload_preview import (
+    DEFAULT_PREVIEW_EXTENSIONS,
+    add_upload_preview_route,
+    build_preview_url,
+)
 from manga_task_manager import MangaTaskManager
 
 logger = logging.getLogger(__name__)
@@ -605,6 +612,121 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=404, detail="series not found")
             return {"ok": True}
 
+        # ── Episodes (read-only in Phase 1) ─────────────────────────
+        # Episode rows are CREATED by the Phase 2 pipeline (kicked off
+        # via POST /episodes — added in Phase 2 alongside the pipeline).
+        # Phase 1 only exposes the read side so the UI shell can list
+        # already-generated episodes after a process restart.
+
+        @router.get("/episodes")
+        async def list_episodes(
+            series_id: str | None = None,
+            limit: int = 100,
+            offset: int = 0,
+        ) -> dict[str, Any]:
+            rows = await self._tm.list_episodes(series_id=series_id, limit=limit, offset=offset)
+            return {"ok": True, "episodes": rows}
+
+        @router.get("/episodes/{ep_id}")
+        async def get_episode(ep_id: str) -> dict[str, Any]:
+            row = await self._tm.get_episode(ep_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="episode not found")
+            return {"ok": True, "episode": row}
+
+        # ── Upload (issue #479: serve back what the user uploaded) ──
+        # Phase 1 lands the local-preview half of the upload flow:
+        #
+        #   POST /upload         — accept a multipart file, save it under
+        #                          ``data/uploads/{kind}/<uuid>.<ext>`` and
+        #                          return a preview URL the UI can render
+        #                          inside an <img>/<video>/<audio> tag.
+        #   GET  /uploads/{path} — wired by ``add_upload_preview_route``
+        #                          (sandboxed against base_dir; see issue
+        #                          #479).
+        #
+        # OSS upload (so DashScope / RunningHub can fetch the file via
+        # signed URL) lands in Phase 2 once the OssUploader is wired —
+        # the route's response shape already includes ``oss_url`` =
+        # ``None`` so the UI can branch on it without breaking.
+        from fastapi import File
+
+        uploads_dir = self._data_dir / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        add_upload_preview_route(
+            router,
+            base_dir=uploads_dir,
+            allowed_extensions=DEFAULT_PREVIEW_EXTENSIONS,
+        )
+
+        _UPLOAD_KINDS: tuple[str, ...] = (
+            "character_ref",  # character reference sheet (front / side / pose)
+            "panel",  # already-generated storyboard panel image
+            "video",  # episode video / clip
+            "audio",  # voice clone reference / BGM
+            "other",
+        )
+
+        @router.post("/upload")
+        async def upload_file(
+            file: UploadFile = File(...),
+            kind: str = "character_ref",
+        ) -> dict[str, Any]:
+            if kind not in _UPLOAD_KINDS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"unknown kind {kind!r}; allowed={list(_UPLOAD_KINDS)}",
+                )
+            ext = Path(file.filename or "file").suffix.lower().lstrip(".") or ""
+            content = await file.read()
+            if not content:
+                raise HTTPException(status_code=400, detail="empty file")
+
+            subdir = uploads_dir / kind
+            subdir.mkdir(parents=True, exist_ok=True)
+
+            import uuid as _uuid
+
+            fname = f"{_uuid.uuid4().hex[:12]}.{ext}" if ext else _uuid.uuid4().hex[:12]
+            local_path = subdir / fname
+            local_path.write_bytes(content)
+            rel = f"{kind}/{fname}"
+            preview_url = build_preview_url(PLUGIN_ID, rel)
+
+            return {
+                "ok": True,
+                "kind": kind,
+                "filename": fname,
+                "rel_path": rel,
+                "size_bytes": len(content),
+                "preview_url": preview_url,
+                # Phase 2 fills these in once OSS is wired up; keep them in
+                # the response so the UI can shape its state from day one.
+                "oss_url": None,
+                "oss_key": None,
+                "oss_error": "OSS not configured (Phase 2 wiring pending)",
+            }
+
+        # ── Storage stats ────────────────────────────────────────────
+        # The Settings tab's storage panel polls this — knowing how much
+        # disk the plugin has burned is a real concern for users running
+        # locally on a small SSD; the helper caps the walk at 5000 files
+        # and runs off the loop so a deep tree can't stall a request.
+
+        @router.get("/storage")
+        async def storage_stats() -> dict[str, Any]:
+            stats = await collect_storage_stats(
+                self._data_dir,
+                max_files=5000,
+                sample_paths=10,
+                skip_hidden=True,
+            )
+            return {
+                "ok": True,
+                "data_dir": str(self._data_dir),
+                "stats": stats.to_dict(),
+            }
+
         api.register_api_routes(router)
-        # Hold a reference for the next phase's CRUD routes to extend.
+        # Hold a reference for Phase 2's pipeline routes to extend.
         self._router = router
