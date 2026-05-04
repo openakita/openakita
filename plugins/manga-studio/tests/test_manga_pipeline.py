@@ -334,6 +334,7 @@ def _build_pipeline(tmp_path: Path, monkeypatch):
         ffmpeg: _FakeFFmpeg | None = None,
         writer: _FakeWriter | None = None,
         tm: _FakeTaskManager | None = None,
+        comfy: Any | None = None,
     ) -> tuple[MangaPipeline, dict[str, Any]]:
         wx = wanxiang or _FakeWanxiang()
         ar = ark or _FakeArk()
@@ -368,6 +369,7 @@ def _build_pipeline(tmp_path: Path, monkeypatch):
             script_writer=wr,  # type: ignore[arg-type]
             task_manager=tm_,  # type: ignore[arg-type]
             working_dir=tmp_path / "manga",
+            comfy_client=comfy,
         )
         return pipe, {
             "wx": wx,
@@ -376,6 +378,7 @@ def _build_pipeline(tmp_path: Path, monkeypatch):
             "ff": ff,
             "wr": wr,
             "tm": tm_,
+            "comfy": comfy,
             "tmp": tmp_path,
         }
 
@@ -652,3 +655,231 @@ def test_pipeline_error_unknown_kind_falls_back_to_unknown_hint() -> None:
     err = PipelineError("x", error_kind="totally_made_up")
     d = err.to_dict()
     assert d["hint_zh"] == "未知错误"
+
+
+# ─── Phase 3.3 — workflow backend dispatch ────────────────────────────────
+
+
+class _FakeComfy:
+    """Minimal stand-in for MangaComfyClient — captures every call so
+    tests can verify the pipeline routed through the workflow backend
+    (and not the direct vendor) when ``config.backend != "direct"``."""
+
+    def __init__(
+        self,
+        *,
+        image_returns: dict[str, Any] | None = None,
+        i2v_returns: dict[str, Any] | None = None,
+        t2v_returns: dict[str, Any] | None = None,
+        image_raises: Exception | None = None,
+        i2v_raises: Exception | None = None,
+        t2v_raises: Exception | None = None,
+    ) -> None:
+        self.image_calls: list[dict[str, Any]] = []
+        self.i2v_calls: list[dict[str, Any]] = []
+        self.t2v_calls: list[dict[str, Any]] = []
+        self._image_returns = image_returns or {
+            "image_url": "https://wf/img.png",
+            "raw": {},
+        }
+        self._i2v_returns = i2v_returns or {
+            "video_url": "https://wf/clip.mp4",
+            "raw": {},
+        }
+        self._t2v_returns = t2v_returns or {
+            "video_url": "https://wf/t2v.mp4",
+            "raw": {},
+        }
+        self._image_raises = image_raises
+        self._i2v_raises = i2v_raises
+        self._t2v_raises = t2v_raises
+
+    async def generate_image(self, **kwargs: Any) -> dict[str, Any]:
+        self.image_calls.append(kwargs)
+        if self._image_raises is not None:
+            raise self._image_raises
+        return dict(self._image_returns)
+
+    async def generate_i2v(self, **kwargs: Any) -> dict[str, Any]:
+        self.i2v_calls.append(kwargs)
+        if self._i2v_raises is not None:
+            raise self._i2v_raises
+        return dict(self._i2v_returns)
+
+    async def generate_t2v(self, **kwargs: Any) -> dict[str, Any]:
+        self.t2v_calls.append(kwargs)
+        if self._t2v_raises is not None:
+            raise self._t2v_raises
+        return dict(self._t2v_returns)
+
+
+async def test_run_episode_workflow_backend_routes_through_comfy(_build_pipeline) -> None:
+    """When ``config.backend="runninghub"``, the pipeline must hit the
+    comfy client for both image and i2v steps and skip the direct
+    vendor calls entirely."""
+    comfy = _FakeComfy()
+    pipe, fakes = _build_pipeline(comfy=comfy)
+    config = MangaPipelineConfig(
+        story="李雷上学的故事",
+        n_panels=2,
+        seconds_per_panel=3,
+        backend="runninghub",
+        bound_character_ids=["c1"],
+        burn_subtitles=False,
+    )
+    res = await pipe.run_episode(episode_id="ep_wf", config=config)
+    assert res.errors == []
+    assert len(res.panels) == 2
+
+    assert len(comfy.image_calls) == 2
+    assert len(comfy.i2v_calls) == 2
+    assert len(fakes["wx"].submit_calls) == 0
+    assert len(fakes["ar"].i2v_calls) == 0
+
+
+async def test_run_episode_workflow_passes_ref_image_urls(_build_pipeline) -> None:
+    """Character ref-images must be forwarded to the workflow's
+    image-gen call so the IP-Adapter node can use them for character
+    consistency."""
+    comfy = _FakeComfy()
+    tm = _FakeTaskManager(
+        characters=[
+            {
+                "id": "c1",
+                "name": "李雷",
+                "default_voice_id": "zh-CN-YunjianNeural",
+                "ref_images_json": [
+                    "https://oss/hero_front.png",
+                    "https://oss/hero_side.png",
+                ],
+            }
+        ]
+    )
+    pipe, _ = _build_pipeline(comfy=comfy, tm=tm)
+    config = MangaPipelineConfig(
+        story="x",
+        n_panels=2,
+        backend="runninghub",
+        bound_character_ids=["c1"],
+        burn_subtitles=False,
+    )
+    await pipe.run_episode(episode_id="ep_ref", config=config)
+    assert comfy.image_calls
+    refs = comfy.image_calls[0].get("ref_image_urls") or []
+    assert "https://oss/hero_front.png" in refs
+
+
+async def test_run_episode_direct_backend_does_not_touch_comfy(_build_pipeline) -> None:
+    """The default ``backend="direct"`` keeps everything on wanxiang +
+    ark; the comfy client (when wired) must not be called.
+
+    The fake writer always returns 2 panels regardless of ``n_panels``
+    so we expect 2 wanxiang submits / 2 ark i2v calls — what matters is
+    the comfy counts stay at zero.
+    """
+    comfy = _FakeComfy()
+    pipe, fakes = _build_pipeline(comfy=comfy)
+    config = MangaPipelineConfig(
+        story="x",
+        n_panels=2,
+        bound_character_ids=["c1"],
+        burn_subtitles=False,
+    )
+    await pipe.run_episode(episode_id="ep_direct", config=config)
+    assert comfy.image_calls == []
+    assert comfy.i2v_calls == []
+    assert comfy.t2v_calls == []
+    assert len(fakes["wx"].submit_calls) == 2
+    assert len(fakes["ar"].i2v_calls) == 2
+
+
+async def test_run_episode_workflow_backend_without_comfy_aborts_fast(
+    _build_pipeline,
+) -> None:
+    """If the user picks ``backend="runninghub"`` but the comfy client
+    wasn't provided (mid-init race / misconfig), the FIRST panel's
+    image step raises ``PipelineError(kind=dependency)`` and the
+    pipeline aborts immediately rather than chewing through every
+    panel + falling back. This is the right behaviour because re-trying
+    won't help — the user has to fix their config first.
+    """
+    pipe, _ = _build_pipeline(comfy=None)
+    config = MangaPipelineConfig(
+        story="x",
+        n_panels=2,
+        backend="runninghub",
+        bound_character_ids=["c1"],
+        burn_subtitles=False,
+    )
+    with pytest.raises(PipelineError) as exc:
+        await pipe.run_episode(episode_id="ep_no_comfy", config=config)
+    assert exc.value.error_kind == "dependency"
+    assert "comfy client not configured" in str(exc.value)
+
+
+async def test_run_episode_workflow_image_error_recorded_but_pipeline_continues(
+    _build_pipeline,
+) -> None:
+    """A workflow-level error on one panel surfaces as a soft per-panel
+    error with kind=workflow (mapped from ``WorkflowError``); the
+    second panel still runs, so the overall episode finishes."""
+    from comfy_client import ERROR_KIND_WORKFLOW, WorkflowError
+
+    image_calls = {"n": 0}
+
+    class _PartialFailComfy(_FakeComfy):
+        async def generate_image(self, **kwargs: Any) -> dict[str, Any]:
+            image_calls["n"] += 1
+            if image_calls["n"] == 1:
+                raise WorkflowError("node 47 crashed", kind=ERROR_KIND_WORKFLOW)
+            return await super().generate_image(**kwargs)
+
+    pipe, _ = _build_pipeline(comfy=_PartialFailComfy())
+    config = MangaPipelineConfig(
+        story="x",
+        n_panels=2,
+        backend="runninghub",
+        bound_character_ids=["c1"],
+        burn_subtitles=False,
+    )
+    res = await pipe.run_episode(episode_id="ep_partial_wf", config=config)
+    assert len(res.panels) == 2
+    failed = [p for p in res.panels if p.error is not None]
+    assert len(failed) == 1
+    assert failed[0].error and failed[0].error["kind"] == ERROR_KIND_WORKFLOW
+    assert failed[0].error and "node 47" in failed[0].error["message"]
+    # Second panel succeeded → final video produced.
+    assert res.final_video_path.exists()
+
+
+async def test_run_episode_workflow_t2v_fallback_on_face_moderation(
+    _build_pipeline,
+) -> None:
+    """The face-moderation → t2v fallback path must use the workflow
+    t2v call when ``backend != "direct"``, not Seedance t2v.
+
+    The fake writer always emits 2 panels; both i2v calls get face-
+    moderated, so both fall back to t2v.
+    """
+    from comfy_client import WorkflowError
+
+    class _FaceModComfy(_FakeComfy):
+        async def generate_i2v(self, **kwargs: Any) -> dict[str, Any]:
+            self.i2v_calls.append(kwargs)
+            raise WorkflowError("face moderation", kind="moderation_face")
+
+    comfy = _FaceModComfy()
+    pipe, fakes = _build_pipeline(comfy=comfy)
+    config = MangaPipelineConfig(
+        story="x",
+        n_panels=2,
+        backend="runninghub",
+        bound_character_ids=["c1"],
+        burn_subtitles=False,
+    )
+    res = await pipe.run_episode(episode_id="ep_face_wf", config=config)
+    # Both i2v calls fail with moderation_face; both fall back to t2v.
+    assert len(comfy.i2v_calls) == 2
+    assert len(comfy.t2v_calls) == 2
+    assert len(fakes["ar"].t2v_calls) == 0
+    assert res.final_video_path.exists()

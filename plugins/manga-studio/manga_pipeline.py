@@ -116,7 +116,15 @@ class PipelineError(Exception):
 
 @dataclass(slots=True)
 class MangaPipelineConfig:
-    """Episode-level config (one ``run_episode`` call)."""
+    """Episode-level config (one ``run_episode`` call).
+
+    Phase 3.3 added ``backend`` to drive whether image/video generation
+    goes through the direct vendor APIs (DashScope wan2.7-image +
+    Seedance) or the comfy client (RunningHub / local ComfyUI). Valid
+    values: ``direct`` | ``runninghub`` | ``comfyui_local``. The
+    pipeline picks the matching client per step; everything else
+    (script writing, TTS, FFmpeg) stays unchanged.
+    """
 
     story: str
     n_panels: int
@@ -124,6 +132,7 @@ class MangaPipelineConfig:
     visual_style: str = "shonen"
     ratio: str = "9:16"
     resolution: str = "480P"
+    backend: str = "direct"
     bound_character_ids: list[str] = field(default_factory=list)
     fallback_voice: str = "zh-CN-XiaoxiaoNeural"
     image_model: str = "wan2.7-image"
@@ -228,6 +237,7 @@ class MangaPipeline:
         script_writer: MangaScriptWriter,
         task_manager: MangaTaskManager,
         working_dir: Path,
+        comfy_client: Any | None = None,
     ) -> None:
         self._wanxiang = wanxiang_client
         self._ark = ark_client
@@ -236,6 +246,11 @@ class MangaPipeline:
         self._writer = script_writer
         self._tm = task_manager
         self._root = Path(working_dir)
+        # Phase 3.3 — optional comfy client. Only consulted when
+        # ``config.backend`` is one of ``runninghub`` / ``comfyui_local``.
+        # Direct-only environments (no comfykit installed) leave this
+        # None and ``backend="direct"`` keeps everything working.
+        self._comfy = comfy_client
 
     # ─── Top-level orchestration ─────────────────────────────────
 
@@ -460,6 +475,7 @@ class MangaPipeline:
                     ref_urls=img_prompt.reference_image_urls,
                     ratio=config.ratio,
                     output_path=img_path,
+                    backend=config.backend,
                 )
                 panel.image_path = img_path
             except VendorError as exc:
@@ -474,6 +490,24 @@ class MangaPipeline:
                     ) from exc
                 panel.error = {"step": "panel_image", "kind": exc.kind, "message": str(exc)}
                 logger.warning("manga-studio panel %d image failed: %s", idx, exc)
+            except PipelineError as exc:
+                # Workflow-backend failures (and pipeline misconfig) come
+                # through as PipelineError. Mirror the VendorError branch:
+                # abort on the first panel for hard auth / config /
+                # dependency errors, soft-fail on everything else.
+                if idx == 0 and exc.error_kind in (
+                    "auth",
+                    "quota",
+                    "config",
+                    "dependency",
+                ):
+                    raise
+                panel.error = {
+                    "step": "panel_image",
+                    "kind": exc.error_kind,
+                    "message": str(exc),
+                }
+                logger.warning("manga-studio panel %d image failed (workflow): %s", idx, exc)
             except Exception as exc:  # noqa: BLE001
                 panel.error = {"step": "panel_image", "kind": "unknown", "message": str(exc)}
                 logger.warning("manga-studio panel %d image error: %s", idx, exc)
@@ -508,8 +542,14 @@ class MangaPipeline:
                         characters=characters,
                         config=config,
                     )
-            except VendorError as exc:
-                if exc.kind == "moderation_face" and panel.image_path:
+            except (VendorError, PipelineError) as exc:
+                # Both direct vendor (VendorError) and workflow backend
+                # (PipelineError mapped from WorkflowError) report face
+                # moderation through ``kind="moderation_face"``. We
+                # honour that signal regardless of the source so the
+                # T2V fallback works for both backends.
+                kind = exc.kind if isinstance(exc, VendorError) else exc.error_kind
+                if kind == "moderation_face" and panel.image_path:
                     # Pixelle anti-pattern recovery: face moderation
                     # rejection → drop the image and retry T2V.
                     logger.warning("manga-studio panel %d face-moderated; falling back to T2V", idx)
@@ -523,13 +563,18 @@ class MangaPipeline:
                             config=config,
                         )
                     except Exception as exc2:  # noqa: BLE001
+                        fallback_kind = (
+                            exc2.error_kind
+                            if isinstance(exc2, PipelineError)
+                            else getattr(exc2, "kind", "unknown")
+                        )
                         panel.error = {
                             "step": "panel_video",
-                            "kind": getattr(exc2, "kind", "unknown"),
+                            "kind": fallback_kind,
                             "message": str(exc2),
                         }
                 else:
-                    panel.error = {"step": "panel_video", "kind": exc.kind, "message": str(exc)}
+                    panel.error = {"step": "panel_video", "kind": kind, "message": str(exc)}
                     logger.warning("manga-studio panel %d video failed: %s", idx, exc)
             except Exception as exc:  # noqa: BLE001
                 panel.error = {"step": "panel_video", "kind": "unknown", "message": str(exc)}
@@ -626,15 +671,45 @@ class MangaPipeline:
         ref_urls: list[str],
         ratio: str,
         output_path: Path,
+        backend: str = "direct",
     ) -> None:
-        """Submit + poll a wan2.7-image task; download the result.
+        """Generate one panel image, downloading to ``output_path``.
 
-        ``submit_image`` returns the ``task_id`` directly (str, not a
-        dict), and ``poll_until_done`` already pre-extracts
-        ``output_url`` so we don't need to call
-        ``extract_output_image_url`` separately.
+        Branches on ``backend``:
+
+        - ``direct`` (default): DashScope wan2.7-image submit + poll.
+        - ``runninghub`` / ``comfyui_local``: ``MangaComfyClient.generate_image``
+          which runs the user's image workflow synchronously.
+
+        In either case the call returns a public URL and we stream it
+        into ``output_path``.
         """
         size = _ratio_to_size(ratio)
+        if backend in ("runninghub", "comfyui_local"):
+            url = await self._gen_panel_image_via_workflow(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                ref_urls=ref_urls,
+                size=size,
+            )
+        else:
+            url = await self._gen_panel_image_via_direct(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                ref_urls=ref_urls,
+                size=size,
+            )
+        await self._download_to(url, output_path)
+
+    async def _gen_panel_image_via_direct(
+        self,
+        *,
+        prompt: str,
+        negative_prompt: str,
+        ref_urls: list[str],
+        size: str,
+    ) -> str:
+        """Direct DashScope wan2.7-image: submit + poll + extract URL."""
         task_id = await self._wanxiang.submit_image(
             prompt=prompt,
             ref_images_url=ref_urls or None,
@@ -653,7 +728,46 @@ class MangaPipeline:
                 "wan2.7-image returned no output url",
                 error_kind="server",
             )
-        await self._download_to(url, output_path)
+        return url
+
+    async def _gen_panel_image_via_workflow(
+        self,
+        *,
+        prompt: str,
+        negative_prompt: str,
+        ref_urls: list[str],
+        size: str,
+    ) -> str:
+        """Workflow backend (RunningHub / local ComfyUI) image gen.
+
+        The comfy client raises ``WorkflowError`` on every failure mode;
+        we map that to ``PipelineError`` with the same ``error_kind``
+        so the rest of the pipeline (panel-soft-fail handling, task
+        row updates) doesn't need to special-case workflow errors.
+        """
+        if self._comfy is None:
+            raise PipelineError(
+                "workflow backend requested but comfy client not configured",
+                error_kind="dependency",
+            )
+        # Late-import keeps the module loadable when comfykit is absent
+        # — only callers that actually pick a workflow backend get to
+        # this branch in the first place.
+        from comfy_client import WorkflowError  # type: ignore[import-untyped]
+
+        try:
+            result = await self._comfy.generate_image(
+                prompt=prompt,
+                ref_image_urls=ref_urls or [],
+                negative_prompt=negative_prompt or "",
+                size=size,
+            )
+        except WorkflowError as exc:
+            raise PipelineError(
+                f"workflow image gen failed: {exc.message}",
+                error_kind=exc.kind,
+            ) from exc
+        return str(result.get("image_url") or "")
 
     async def _download_to(self, url: str, output_path: Path) -> None:
         """Stream-download ``url`` into ``output_path``.
@@ -689,28 +803,55 @@ class MangaPipeline:
         image_path: Path,
         config: MangaPipelineConfig,
     ) -> Path:
+        """Image-to-video for one panel — direct or workflow backend.
+
+        Both branches need a public image URL (not a local path) because
+        the remote service must fetch the source image. The caller is
+        expected to upload to OSS before calling I2V (see
+        ``panel['image_url']``).
+        """
         prompt = compose_i2v_prompt(panel=panel, style=style, duration_sec=config.seconds_per_panel)
-        # The Ark API takes a public image URL, not a local path. The
-        # plugin's upload route already gives us a preview URL we could
-        # use, but the orchestrator can be called from non-API paths
-        # (CLI / tests) — we expect the caller to upload to OSS first
-        # and pass a public URL via storyboard ``image_url``. As a
-        # last-resort fallback we emit a clear error.
         image_url = panel.get("image_url")
         if not image_url:
             raise PipelineError(
                 f"panel {idx}: image_url missing — upload to OSS before I2V",
                 error_kind="dependency",
             )
+        out = ep_dir / "panels" / f"panel_{idx:03d}.mp4"
+        if config.backend in ("runninghub", "comfyui_local"):
+            video_url = await self._gen_panel_video_i2v_via_workflow(
+                image_url=image_url,
+                prompt=prompt.prompt,
+                duration_sec=config.seconds_per_panel,
+                ratio=config.ratio,
+            )
+        else:
+            video_url = await self._gen_panel_video_i2v_via_direct(
+                image_url=image_url,
+                prompt=prompt.prompt,
+                duration_sec=config.seconds_per_panel,
+                ratio=config.ratio,
+                resolution=config.resolution,
+            )
+        await self._download_to(video_url, out)
+        return out
+
+    async def _gen_panel_video_i2v_via_direct(
+        self,
+        *,
+        image_url: str,
+        prompt: str,
+        duration_sec: int,
+        ratio: str,
+        resolution: str,
+    ) -> str:
         sub = await self._ark.submit_seedance_i2v(
             image_url=image_url,
-            prompt=prompt.prompt,
-            duration=config.seconds_per_panel,
-            ratio=config.ratio,
-            resolution=config.resolution,
+            prompt=prompt,
+            duration=duration_sec,
+            ratio=ratio,
+            resolution=resolution,
         )
-        # Volcengine returns ``{"id": "task_xxx", ...}`` from
-        # POST /contents/generations/tasks.
         task_id = str(sub.get("id") or sub.get("task_id") or "")
         if not task_id:
             raise PipelineError(
@@ -729,9 +870,36 @@ class MangaPipeline:
                 "seedance returned no video url",
                 error_kind="server",
             )
-        out = ep_dir / "panels" / f"panel_{idx:03d}.mp4"
-        await self._download_to(video_url, out)
-        return out
+        return video_url
+
+    async def _gen_panel_video_i2v_via_workflow(
+        self,
+        *,
+        image_url: str,
+        prompt: str,
+        duration_sec: int,
+        ratio: str,
+    ) -> str:
+        if self._comfy is None:
+            raise PipelineError(
+                "workflow backend requested but comfy client not configured",
+                error_kind="dependency",
+            )
+        from comfy_client import WorkflowError  # type: ignore[import-untyped]
+
+        try:
+            result = await self._comfy.generate_i2v(
+                image_url=image_url,
+                prompt=prompt,
+                duration_sec=duration_sec,
+                ratio=ratio,
+            )
+        except WorkflowError as exc:
+            raise PipelineError(
+                f"workflow i2v failed: {exc.message}",
+                error_kind=exc.kind,
+            ) from exc
+        return str(result.get("video_url") or "")
 
     async def _gen_panel_video_t2v(
         self,
@@ -743,17 +911,48 @@ class MangaPipeline:
         characters: list[dict[str, Any]],
         config: MangaPipelineConfig,
     ) -> Path:
+        """Text-to-video fallback (when face moderation rejected I2V).
+
+        Same dual-backend dispatch as I2V; the prompt is composed by
+        ``compose_t2v_prompt`` which embeds character descriptors so
+        the model has more to work with than the bare scene text.
+        """
         prompt = compose_t2v_prompt(
             panel=panel,
             characters=characters,
             style=style,
             duration_sec=config.seconds_per_panel,
         )
+        out = ep_dir / "panels" / f"panel_{idx:03d}.mp4"
+        if config.backend in ("runninghub", "comfyui_local"):
+            video_url = await self._gen_panel_video_t2v_via_workflow(
+                prompt=prompt.prompt,
+                duration_sec=config.seconds_per_panel,
+                ratio=config.ratio,
+            )
+        else:
+            video_url = await self._gen_panel_video_t2v_via_direct(
+                prompt=prompt.prompt,
+                duration_sec=config.seconds_per_panel,
+                ratio=config.ratio,
+                resolution=config.resolution,
+            )
+        await self._download_to(video_url, out)
+        return out
+
+    async def _gen_panel_video_t2v_via_direct(
+        self,
+        *,
+        prompt: str,
+        duration_sec: int,
+        ratio: str,
+        resolution: str,
+    ) -> str:
         sub = await self._ark.submit_seedance_t2v(
-            prompt=prompt.prompt,
-            duration=config.seconds_per_panel,
-            ratio=config.ratio,
-            resolution=config.resolution,
+            prompt=prompt,
+            duration=duration_sec,
+            ratio=ratio,
+            resolution=resolution,
         )
         task_id = str(sub.get("id") or sub.get("task_id") or "")
         if not task_id:
@@ -773,9 +972,34 @@ class MangaPipeline:
                 "seedance returned no video url",
                 error_kind="server",
             )
-        out = ep_dir / "panels" / f"panel_{idx:03d}.mp4"
-        await self._download_to(video_url, out)
-        return out
+        return video_url
+
+    async def _gen_panel_video_t2v_via_workflow(
+        self,
+        *,
+        prompt: str,
+        duration_sec: int,
+        ratio: str,
+    ) -> str:
+        if self._comfy is None:
+            raise PipelineError(
+                "workflow backend requested but comfy client not configured",
+                error_kind="dependency",
+            )
+        from comfy_client import WorkflowError  # type: ignore[import-untyped]
+
+        try:
+            result = await self._comfy.generate_t2v(
+                prompt=prompt,
+                duration_sec=duration_sec,
+                ratio=ratio,
+            )
+        except WorkflowError as exc:
+            raise PipelineError(
+                f"workflow t2v failed: {exc.message}",
+                error_kind=exc.kind,
+            ) from exc
+        return str(result.get("video_url") or "")
 
     # ─── Post-processing ────────────────────────────────────────
 

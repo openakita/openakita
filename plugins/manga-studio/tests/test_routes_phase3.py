@@ -173,9 +173,7 @@ async def test_tool_workflow_test_returns_fail_string_when_unconfigured(client) 
     assert "runninghub_api_key" in msg
 
 
-async def test_tool_workflow_test_returns_ok_string_when_configured(
-    client, monkeypatch
-) -> None:
+async def test_tool_workflow_test_returns_ok_string_when_configured(client, monkeypatch) -> None:
     _, p = client
     p._save_settings(
         {

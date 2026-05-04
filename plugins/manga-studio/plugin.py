@@ -279,6 +279,7 @@ class Plugin(PluginBase):
                 script_writer=self._writer,
                 task_manager=self._tm,
                 working_dir=self._data_dir / "episodes",
+                comfy_client=self._comfy_client,
             )
         except Exception as exc:  # noqa: BLE001
             self._api.log(f"manga-studio: client wire-up failed: {exc!r}", "error")
@@ -565,10 +566,10 @@ class Plugin(PluginBase):
                 seconds_per_panel=seconds_per_panel,
                 visual_style=str(args.get("visual_style") or "shonen"),
                 ratio=str(args.get("ratio") or "9:16"),
+                backend=str(args.get("backend") or "direct"),
                 bound_character_ids=[str(c) for c in chars if c],
                 series_id=args.get("series_id"),
             ),
-            backend=str(args.get("backend") or "direct"),
         )
         return (
             f"episode {episode_id} queued (task {task_id}); poll GET /tasks/{task_id} for progress"
@@ -718,13 +719,15 @@ class Plugin(PluginBase):
         *,
         episode_id: str,
         config: MangaPipelineConfig,
-        backend: str = "direct",
     ) -> str:
         """Create a ``tasks`` row and spawn the background coroutine.
 
         Returns the task_id so the caller can hand it back to the UI
-        for polling.
+        for polling. The backend label written to the task row comes
+        from ``config.backend`` (Phase 3.3 — the pipeline now branches
+        on it for image/video gen).
         """
+        backend = config.backend
         if self._pipeline is None:
             raise RuntimeError("Phase-2 pipeline not initialised")
         # Estimate cost for this run so the row carries the breakdown
@@ -1104,6 +1107,7 @@ class Plugin(PluginBase):
                 visual_style=body.visual_style,
                 ratio=body.ratio,
                 resolution=body.resolution,
+                backend=body.backend,
                 bound_character_ids=body.bound_character_ids,
                 fallback_voice=body.fallback_voice,
                 image_model=body.image_model,
@@ -1113,9 +1117,7 @@ class Plugin(PluginBase):
                 title_hint=body.title,
                 series_id=body.series_id,
             )
-            task_id = await self._spawn_pipeline_task(
-                episode_id=episode_id, config=cfg, backend=body.backend
-            )
+            task_id = await self._spawn_pipeline_task(episode_id=episode_id, config=cfg)
             return {
                 "ok": True,
                 "episode_id": episode_id,
