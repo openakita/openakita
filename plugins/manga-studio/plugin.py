@@ -59,6 +59,7 @@ from manga_pipeline import (
     PipelineError,
 )
 from manga_task_manager import MangaTaskManager
+from manga_templates import list_templates
 from script_writer import MangaScriptWriter
 from tts_client import MangaTTSClient
 
@@ -1194,6 +1195,18 @@ class Plugin(PluginBase):
                     "cost_threshold": cat.cost_threshold,
                 },
             }
+
+        # ── Story templates (Phase 4.4) ─────────────────────────────
+        # Read-only catalogue of curated quick-start story prompts.
+        # Pinned to the plugin version (see manga_templates.py); the UI
+        # fetches the whole list once and indexes locally so picking a
+        # template is purely client-side. Each item carries a default
+        # visual_style / ratio / panel layout so applying a template
+        # populates the Studio form without further round-trips.
+
+        @router.get("/templates")
+        async def get_templates() -> dict[str, Any]:
+            return {"ok": True, "templates": list_templates()}
 
         # ── Workflows ───────────────────────────────────────────────
         # Phase 3.1 — probe RunningHub or local ComfyUI without billing

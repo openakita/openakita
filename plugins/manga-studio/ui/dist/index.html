@@ -517,6 +517,52 @@
     @media (max-width: 720px) {
       .series-editor { grid-template-columns: 1fr; }
     }
+    /* Story templates (Phase 4.4) */
+    .tpl-modal {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.6);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000; padding: 20px;
+    }
+    .tpl-modal__panel {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 10px; padding: 20px;
+      max-width: 760px; width: 100%; max-height: 86vh;
+      overflow-y: auto;
+      box-shadow: 0 10px 40px rgba(0,0,0,.5);
+    }
+    .tpl-modal__header { margin-bottom: 12px; }
+    .tpl-modal__title { font-size: 18px; font-weight: 600; color: var(--text); }
+    .tpl-modal__sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .tpl-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }
+    .tpl-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px;
+      display: flex; flex-direction: column; gap: 6px;
+      cursor: pointer;
+      transition: border-color .15s, transform .15s;
+    }
+    .tpl-card:hover { border-color: var(--primary); transform: translateY(-1px); }
+    .tpl-card__head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .tpl-card__title { font-size: 14px; font-weight: 600; color: var(--text); }
+    .tpl-card__tag {
+      font-size: 10px; padding: 2px 8px; border-radius: 999px;
+      background: rgba(236,72,153,.15); color: var(--primary);
+    }
+    .tpl-card__blurb { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+    .tpl-card__meta { font-size: 10px; color: var(--text-muted); display: flex; gap: 6px; flex-wrap: wrap; }
+    .tpl-card__meta span {
+      padding: 1px 5px; border-radius: 4px; background: var(--bg-deep);
+    }
+    .tpl-modal__footer { display: flex; justify-content: flex-end; padding-top: 8px; border-top: 1px solid var(--border); }
+    .tpl-prompt-row { display: flex; gap: 8px; align-items: center; }
     /* Episode list (Phase 4.3) — surfaced inside Series detail */
     .ep-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
     .ep-item {
@@ -661,6 +707,12 @@ const I18N = {
     "tabs.characters": "角色卡",
     "tabs.workflows": "工作流",
     "tabs.settings": "设置",
+    "studio.btn.templates": "模板",
+    "studio.templates.title": "故事模板",
+    "studio.templates.subtitle": "一键导入预置剧本，零起步生成漫剧。点击后会自动套用对应风格 / 比例 / 分镜。",
+    "studio.templates.apply": "套用此模板",
+    "studio.templates.applied": "已套用模板「{title}」",
+    "studio.templates.close": "关闭",
     "studio.section.series": "绑定剧集（可选）",
     "studio.label.series": "选择剧集",
     "studio.option.no_series": "（独立单集，不绑定剧集）",
@@ -832,6 +884,12 @@ const I18N = {
     "tabs.characters": "Characters",
     "tabs.workflows": "Workflows",
     "tabs.settings": "Settings",
+    "studio.btn.templates": "Templates",
+    "studio.templates.title": "Story Templates",
+    "studio.templates.subtitle": "Pick a curated story to start in one click. Style, ratio and panel layout are applied automatically.",
+    "studio.templates.apply": "Apply This Template",
+    "studio.templates.applied": "Applied template \"{title}\"",
+    "studio.templates.close": "Close",
     "studio.section.series": "Bind to Series (optional)",
     "studio.label.series": "Series",
     "studio.option.no_series": "(Standalone — no series binding)",
@@ -1178,6 +1236,13 @@ function Studio({ t, catalog, settings, toast }) {
   const [seriesId, setSeriesId] = useState("");
   const [boundChars, setBoundChars] = useState([]);
   const [allChars, setAllChars] = useState([]);
+  // Phase 4.4 — story templates. Modal opens only on demand so we
+  // don't pay the GET on every Studio mount; once loaded, the list is
+  // cached for the lifetime of the tab. ``tplModalOpen`` lazy-fetches
+  // the catalogue on first open so the user sees a brief loading
+  // state instead of an empty grid if the network is slow.
+  const [tplModalOpen, setTplModalOpen] = useState(false);
+  const [tplList, setTplList] = useState(null);
 
   const styles = (catalog && catalog.visual_styles) || [];
   const ratios = (catalog && catalog.ratios) || ["9:16", "16:9", "1:1", "4:5"];
@@ -1227,6 +1292,34 @@ function Studio({ t, catalog, settings, toast }) {
 
   function unbindChar(cid) {
     setBoundChars(function(prev) { return prev.filter(function(c) { return c.id !== cid; }); });
+  }
+
+  // Open the templates modal. Lazy-loads the catalogue on first open
+  // so a fresh tab mount doesn't pay the GET if the user never opens
+  // the picker. Subsequent opens reuse the cached list.
+  async function openTemplates() {
+    setTplModalOpen(true);
+    if (tplList === null) {
+      var r = await pluginApi("GET", "/templates");
+      if (r && r.ok && r.body && Array.isArray(r.body.templates)) {
+        setTplList(r.body.templates);
+      } else {
+        setTplList([]);
+      }
+    }
+  }
+
+  function applyTemplate(tpl) {
+    if (!tpl) return;
+    var body = lang === "zh" ? (tpl.story_zh || tpl.story_en || "") : (tpl.story_en || tpl.story_zh || "");
+    setStory(body);
+    if (tpl.visual_style) setStyle(tpl.visual_style);
+    if (tpl.ratio) setRatio(tpl.ratio);
+    if (tpl.n_panels) setPanels(tpl.n_panels);
+    if (tpl.seconds_per_panel) setSecs(tpl.seconds_per_panel);
+    setTplModalOpen(false);
+    var label = lang === "zh" ? (tpl.title_zh || tpl.id) : (tpl.title_en || tpl.id);
+    toast(t("studio.templates.applied", { title: label }), "success");
   }
 
   // Fetch cost preview whenever a cost-relevant input changes (debounced).
@@ -1383,7 +1476,14 @@ function Studio({ t, catalog, settings, toast }) {
           ) : null}
         </div>
         <div className="card">
-          <div className="card-title">📝 {t("studio.section.story")}</div>
+          <div className="card-title tpl-prompt-row" style={{ justifyContent: "space-between" }}>
+            <span>📝 {t("studio.section.story")}</span>
+            <button
+              className="btn"
+              style={{ padding: "4px 10px", fontSize: 12 }}
+              onClick={openTemplates}
+            >📚 {t("studio.btn.templates")}</button>
+          </div>
           <div className="form-row prompt-wrap">
             <div className="label">{t("studio.label.story")}</div>
             <textarea
@@ -1537,6 +1637,48 @@ function Studio({ t, catalog, settings, toast }) {
                 onClick={function() { submit(true); }}
               >
                 {t("studio.confirm.ok")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {tplModalOpen && (
+        <div className="tpl-modal" onClick={function() { setTplModalOpen(false); }}>
+          <div className="tpl-modal__panel" onClick={function(e) { e.stopPropagation(); }}>
+            <div className="tpl-modal__header">
+              <div className="tpl-modal__title">📚 {t("studio.templates.title")}</div>
+              <div className="tpl-modal__sub">{t("studio.templates.subtitle")}</div>
+            </div>
+            {tplList === null ? (
+              <div className="text-muted">{t("common.loading")}</div>
+            ) : tplList.length === 0 ? (
+              <div className="text-muted">—</div>
+            ) : (
+              <div className="tpl-grid">
+                {tplList.map(function(tpl) {
+                  var title = lang === "zh" ? (tpl.title_zh || tpl.title_en) : (tpl.title_en || tpl.title_zh);
+                  var blurb = lang === "zh" ? (tpl.blurb_zh || tpl.blurb_en) : (tpl.blurb_en || tpl.blurb_zh);
+                  return (
+                    <div key={tpl.id} className="tpl-card" onClick={function() { applyTemplate(tpl); }}>
+                      <div className="tpl-card__head">
+                        <div className="tpl-card__title">{title || tpl.id}</div>
+                        {tpl.tag ? <span className="tpl-card__tag">{tpl.tag}</span> : null}
+                      </div>
+                      <div className="tpl-card__blurb">{blurb || ""}</div>
+                      <div className="tpl-card__meta">
+                        {tpl.visual_style ? <span>{tpl.visual_style}</span> : null}
+                        {tpl.ratio ? <span>{tpl.ratio}</span> : null}
+                        {tpl.n_panels ? <span>{tpl.n_panels} panels</span> : null}
+                        {tpl.seconds_per_panel ? <span>{tpl.seconds_per_panel}s/panel</span> : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="tpl-modal__footer">
+              <button className="btn" onClick={function() { setTplModalOpen(false); }}>
+                {t("studio.templates.close")}
               </button>
             </div>
           </div>

@@ -37,6 +37,7 @@ for _m in (
     "script_writer",
     "prompt_assembler",
     "ffmpeg_service",
+    "manga_templates",  # phase 4.4 — story templates
 ):
     sys.modules.pop(_m, None)
 
