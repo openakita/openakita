@@ -1,0 +1,18 @@
+# Plugin-local ruff overrides — kept identical to avatar-studio's effective
+# state. The two ignores below cover lints that only ever fire on vendored
+# helpers, never on plugin business code.
+extend = "../../pyproject.toml"
+
+[lint.per-file-ignores]
+# N999 fires on the plugin folder itself (kebab-case `manga-studio` is not a
+# valid Python module name) — but the host loads us by file path, not by
+# `import`, so the lint is academic. avatar-studio carries the exact same
+# unfixable warning.
+"manga_inline/__init__.py" = ["N999"]
+"__init__.py" = ["N999"]
+
+[format]
+# `oss_uploader.py` is a verbatim copy of avatar-studio's helper. Upstream
+# left it un-reformatted (one stray multi-line call); we mirror that state
+# rather than diverge from the vendored source.
+exclude = ["manga_inline/oss_uploader.py"]
