@@ -849,7 +849,7 @@
     "ctxTaskBudgetTokens": "Task token budget",
     "ctxTaskBudgetTokensHelp": "Total LLM tokens a single task is allowed to spend. 0 = unlimited",
     "ctxTaskBudgetDuration": "Task duration (seconds)",
-    "ctxTaskBudgetDurationHelp": "Max wall-clock seconds per task. 0 = unlimited; 600 = 10 min. Long tasks: 1800+",
+    "ctxTaskBudgetDurationHelp": "Max wall-clock seconds per task. 0 = unlimited; 600 = 10 min. Long tasks: 1800+. Since v2, when 100% is reached, the budget auto-renews if there were any tool calls / token output in the last 60s — it only pauses when there's truly no progress.",
     "ctxTaskBudgetIterations": "Task iteration cap",
     "ctxTaskBudgetIterationsHelp": "Max ReAct iterations per task (effective = min with Max Iterations). 0 = unlimited; suggested 100~300",
     "ctxTaskBudgetCost": "Task cost cap (USD)",

@@ -430,6 +430,8 @@ export function AdvancedView(props: AdvancedViewProps) {
                 next = envSet(next, "CONTEXT_TOKEN_ANOMALY_THRESHOLD", "80000");
                 next = envSet(next, "CONTEXT_TOKEN_ANOMALY_MAX_RECOVERIES", "3");
                 next = envSet(next, "TASK_BUDGET_TOOL_CALLS", "200");
+                next = envSet(next, "TASK_BUDGET_DURATION", "0");
+                next = envSet(next, "TASK_BUDGET_ITERATIONS", "300");
                 next = envSet(next, "SAME_TOOL_CALL_LIMIT", "10");
                 next = envSet(next, "READONLY_STAGNATION_HARD_LIMIT", "12");
                 next = envSet(next, "CONTEXT_COMPRESSION_THRESHOLD", "0.85");

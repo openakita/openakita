@@ -116,6 +116,30 @@ def _is_readonly_exploration_round(tool_calls: list[dict]) -> bool:
     return bool(names) and names.issubset(_READONLY_EXPLORATION_TOOLS)
 
 
+def _format_budget_pause_message(status: Any) -> str:
+    """统一的预算耗尽 PAUSE 文案。
+
+    旧文案 "请调整预算后继续" 误导用户去翻 .env，但实测打"继续"两个字
+    就能续上（系统会以新任务接力）；同时 duration 维度真正命中 PAUSE 时
+    意味着近 60s 没有工具调用 / token 产出（被 ResourceBudget._check_dimension
+    豁免逻辑过滤掉了"有进展"场景），可能已陷入循环——告知用户具体处理方式。
+    """
+    dim = getattr(status, "dimension", "") or "unknown"
+    pct = getattr(status, "usage_ratio", 0.0) or 0.0
+    if dim == "duration":
+        suffix = "（近 60s 无新工具调用或 token 产出，可能已陷入循环）"
+    else:
+        suffix = ""
+    return (
+        f"⚠️ 任务暂停（{dim}: {pct:.0%}{suffix}）\n\n"
+        f"▸ 直接回复\"继续\"即可让我接力完成（系统会以新任务接力，"
+        f"对话历史和已有进展都已保留）\n"
+        f"▸ 如果你预期任务时间确实较长，到【设置中心 → 高级设置 → 任务预算】"
+        f"把对应预算调高（TASK_BUDGET_DURATION 设为 0 = 不限时长，"
+        f"系统会在没有工具调用进展时才暂停）"
+    )
+
+
 def _apply_tool_result_budget(
     tool_results: list[dict],
     max_total: int | None = None,
@@ -1351,17 +1375,25 @@ class ReasoningEngine:
                     task_description=task_description,
                     task_id=state.task_id,
                 )
-                return (
-                    f"⚠️ 任务资源预算已用尽（{budget_status.dimension}: "
-                    f"{budget_status.usage_ratio:.0%}），任务暂停。\n"
-                    f"已完成的工作进度已保存，请调整预算后继续。"
-                )
+                return _format_budget_pause_message(budget_status)
             elif budget_status.action in (BudgetAction.WARNING, BudgetAction.DOWNGRADE):
-                logger.info(
-                    "[Budget] %s: %s — logged only, not injected",
-                    budget_status.dimension,
-                    budget_status.message,
+                # 非流式路径无事件通道，仅 log；下次进入流式或前端轮询时
+                # 用户能看到状态。NOT injected into LLM context (avoids
+                # 让 LLM 提前缩手缩脚 / 浪费 token).
+                threshold_name = (
+                    "downgrade"
+                    if budget_status.action == BudgetAction.DOWNGRADE
+                    else "warning"
                 )
+                if self._budget.should_emit_threshold(
+                    budget_status.dimension, threshold_name
+                ):
+                    logger.info(
+                        "[Budget] %s reached %s threshold: %s",
+                        budget_status.dimension,
+                        threshold_name,
+                        budget_status.message,
+                    )
 
             # 任务监控
             if task_monitor:
@@ -3029,20 +3061,39 @@ class ReasoningEngine:
                         task_description=task_description,
                         task_id=state.task_id,
                     )
-                    msg = (
-                        f"⚠️ 任务资源预算已用尽（{budget_status.dimension}: "
-                        f"{budget_status.usage_ratio:.0%}），任务暂停。\n"
-                        f"已完成的工作进度已保存，请调整预算后继续。"
-                    )
+                    msg = _format_budget_pause_message(budget_status)
                     yield {"type": "text_delta", "content": msg}
                     yield {"type": "done"}
                     return
                 elif budget_status.action in (BudgetAction.WARNING, BudgetAction.DOWNGRADE):
-                    logger.info(
-                        "[Budget] %s: %s — logged only, not injected",
-                        budget_status.dimension,
-                        budget_status.message,
+                    # 软提示路径：发 SSE 事件给前端 UI（用户能看到 banner），
+                    # 但**不**写入 LLM 上下文（避免污染 / 让 LLM 提前缩手）。
+                    # 阈值去抖：每个 (dimension, threshold) 仅触发一次 emit。
+                    threshold_name = (
+                        "downgrade"
+                        if budget_status.action == BudgetAction.DOWNGRADE
+                        else "warning"
                     )
+                    if self._budget.should_emit_threshold(
+                        budget_status.dimension, threshold_name
+                    ):
+                        logger.info(
+                            "[Budget-Stream] %s reached %s threshold: %s",
+                            budget_status.dimension,
+                            threshold_name,
+                            budget_status.message,
+                        )
+                        # 详情由前端按 dimension + level 自行 i18n 展示。
+                        yield {
+                            "type": "budget_warning",
+                            "dimension": budget_status.dimension,
+                            "level": threshold_name,
+                            "usage_ratio": budget_status.usage_ratio,
+                            "renewed": bool(budget_status.details.get("renewed", False))
+                            if isinstance(budget_status.details, dict)
+                            else False,
+                            "message": budget_status.message,
+                        }
 
                 # --- TaskMonitor: 迭代开始 + 模型切换检查 ---
                 if task_monitor:

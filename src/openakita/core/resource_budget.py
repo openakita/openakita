@@ -96,6 +96,11 @@ class ResourceBudget:
     ReasoningEngine 每轮迭代调用 check() 检查预算。
     """
 
+    # 默认"近期进展"判定窗口：60 秒。任务在 duration 命中 100% 时，
+    # 若窗口内仍有 tool_call / token 产出，则视为正常推进，降级为 WARNING
+    # 而非 PAUSE，避免误杀长任务。可通过 had_recent_progress(window) 自定义。
+    DEFAULT_PROGRESS_WINDOW_SECONDS: float = 60.0
+
     def __init__(
         self, config: BudgetConfig | None = None, parent: ResourceBudget | None = None
     ) -> None:
@@ -109,9 +114,22 @@ class ResourceBudget:
         self._iterations_used: int = 0
         self._tool_calls_used: int = 0
 
+        # 真实进展时间戳：用于 duration 维度的"有进展则不强杀"判定。
+        # iteration 不算进展（每轮固定调用一次，会让"有进展"永远为真）。
+        self._last_tool_call_at: float = 0.0
+        self._last_token_record_at: float = 0.0
+
         # 预算警告已触发标记（避免重复告警）
         self._warning_fired: set[str] = set()
         self._downgrade_fired: bool = False
+
+        # 阈值去抖：每个 (dimension, threshold_name) 仅触发一次 emit，
+        # 避免 80% / 90% 反复刷屏污染日志和前端 banner。
+        # threshold_name ∈ {"warning", "downgrade", "pause"}。
+        self._emitted_thresholds: set[tuple[str, str]] = set()
+
+        # 已被「有进展自动续期」豁免过的 PAUSE 次数（仅供运维统计）。
+        self._duration_renewals: int = 0
 
     @property
     def config(self) -> BudgetConfig:
@@ -138,12 +156,18 @@ class ResourceBudget:
         self._cost_used = 0.0
         self._iterations_used = 0
         self._tool_calls_used = 0
+        self._last_tool_call_at = 0.0
+        self._last_token_record_at = 0.0
         self._warning_fired.clear()
         self._downgrade_fired = False
+        self._emitted_thresholds.clear()
+        self._duration_renewals = 0
 
     def record_tokens(self, input_tokens: int = 0, output_tokens: int = 0) -> None:
         """记录 token 消耗"""
-        self._tokens_used += input_tokens + output_tokens
+        if input_tokens or output_tokens:
+            self._tokens_used += input_tokens + output_tokens
+            self._last_token_record_at = time.time()
         if self._parent is not None:
             self._parent.record_tokens(input_tokens, output_tokens)
 
@@ -161,9 +185,40 @@ class ResourceBudget:
 
     def record_tool_calls(self, count: int = 1) -> None:
         """记录工具调用"""
-        self._tool_calls_used += count
+        if count > 0:
+            self._tool_calls_used += count
+            self._last_tool_call_at = time.time()
         if self._parent is not None:
             self._parent.record_tool_calls(count)
+
+    def had_recent_progress(self, window_seconds: float | None = None) -> bool:
+        """近窗口内是否有真实进展（tool_call 或 token 产出）。
+
+        ``record_iteration`` 不算进展——它每轮固定调用一次，会让本判定永远为真。
+        仅 ``record_tool_calls`` / ``record_tokens`` 视为推进证据。
+        """
+        if window_seconds is None:
+            window_seconds = self.DEFAULT_PROGRESS_WINDOW_SECONDS
+        latest = max(self._last_tool_call_at, self._last_token_record_at)
+        if latest <= 0:
+            return False
+        return (time.time() - latest) <= window_seconds
+
+    def should_emit_threshold(self, dimension: str, threshold_name: str) -> bool:
+        """阈值去抖：每个 (dimension, threshold_name) 仅返回 True 一次。
+
+        触发后内部会自动登记，下次同维度同阈值返回 False。供 reasoning_engine
+        判断是否需要向前端 yield budget_warning 事件。
+        """
+        key = (dimension, threshold_name)
+        if key in self._emitted_thresholds:
+            return False
+        self._emitted_thresholds.add(key)
+        return True
+
+    @property
+    def duration_renewals(self) -> int:
+        return self._duration_renewals
 
     def allocate_sub_budget(self, ratio: float = 0.5) -> ResourceBudget:
         """为子任务/委派分配预算（按比例缩减）"""
@@ -315,6 +370,25 @@ class ResourceBudget:
         ratio = used / limit
 
         if ratio >= self._config.pause_threshold:
+            # duration 维度的"有进展则不强杀"豁免：当且仅当
+            #   1) 维度是 duration（其它维度——tokens/cost/iterations/
+            #      tool_calls——本身就是累计计数，命中 100% 是真的"用尽"），
+            #   2) 最近 60s 内有 tool_call 或 token 产出（说明任务在真正推进，
+            #      不是死循环），
+            # 时降级为 WARNING，让 ReAct 主循环继续，不强制 PAUSE。
+            # 这是为了对齐 LoopBudgetGuard 的"病态才打断、正常进展放行"哲学。
+            if dimension == "duration" and self.had_recent_progress():
+                self._duration_renewals += 1
+                return BudgetStatus(
+                    action=BudgetAction.WARNING,
+                    dimension=dimension,
+                    usage_ratio=ratio,
+                    message=(
+                        f"{dimension} over budget but task is making progress "
+                        f"({used:.1f}/{limit:.1f}, renewals={self._duration_renewals})"
+                    ),
+                    details={"renewed": True, "renewals": self._duration_renewals},
+                )
             return BudgetStatus(
                 action=BudgetAction.PAUSE,
                 dimension=dimension,

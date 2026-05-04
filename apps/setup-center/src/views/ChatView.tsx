@@ -2665,6 +2665,47 @@ export function ChatView({
                 ]);
                 continue;
               }
+              case "budget_warning": {
+                // 任务预算软提示：duration / tokens / iterations / tool_calls 维度
+                // 在 80% / 90% 触达时由后端发来，仅供 UI 展示，不影响任务运行。
+                // 后端已做去抖（每个 dim+level 仅 emit 一次），前端无需再过滤。
+                const dimension = String((event as any).dimension || "");
+                const level = String((event as any).level || "warning");
+                const ratio = Number((event as any).usage_ratio || 0);
+                const renewed = Boolean((event as any).renewed || false);
+                const pct = Math.round(ratio * 100);
+                let dimLabel = dimension;
+                if (dimension === "duration") dimLabel = "任务时长";
+                else if (dimension === "tokens") dimLabel = "Token 用量";
+                else if (dimension === "tool_calls") dimLabel = "工具调用次数";
+                else if (dimension === "iterations") dimLabel = "迭代次数";
+                else if (dimension === "cost_usd" || dimension === "cost") dimLabel = "成本";
+                let noticeText = "";
+                if (renewed) {
+                  noticeText =
+                    `${dimLabel}已超出预算（${pct}%），但任务仍在持续产出工具调用 / token，` +
+                    `已自动续期。如需停止任务，可点击下方"停止"按钮。` +
+                    `（如想取消时长限制：设置中心 → 高级设置 → 任务预算 → 把 TASK_BUDGET_DURATION 设为 0）`;
+                } else if (level === "downgrade") {
+                  noticeText =
+                    `${dimLabel}已用至 ${pct}%，接近上限。任务仍在继续，但可能即将触达 PAUSE。` +
+                    `如需让任务自然结束，可主动让我"基于已有进展给出阶段性结论"。`;
+                } else {
+                  noticeText =
+                    `${dimLabel}已用至 ${pct}%。任务仍在继续，无需操作；` +
+                    `如已经获得足够信息，可直接告诉我"基于已有进展收尾"。`;
+                }
+                updateMessages((prev) => [
+                  ...prev,
+                  {
+                    id: genId(),
+                    role: "system" as const,
+                    content: noticeText,
+                    timestamp: Date.now(),
+                  },
+                ]);
+                continue;
+              }
               case "error":
                 currentError = {
                   message: event.message,

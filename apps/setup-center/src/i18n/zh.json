@@ -849,7 +849,7 @@
     "ctxTaskBudgetTokens": "任务总 Token 预算",
     "ctxTaskBudgetTokensHelp": "单次任务允许累计消耗的 LLM tokens 总量。0 = 不限制",
     "ctxTaskBudgetDuration": "任务总时长（秒）",
-    "ctxTaskBudgetDurationHelp": "单次任务允许的总执行时长（秒）。0 = 不限制；600 = 10 分钟。长任务建议 1800+",
+    "ctxTaskBudgetDurationHelp": "单次任务允许的总执行时长（秒）。0 = 不限制；600 = 10 分钟。长任务建议 1800+。从 v2 起，命中 100% 时若近 60s 仍有工具调用 / token 产出会自动续期，仅在'真无进展'时才暂停",
     "ctxTaskBudgetIterations": "任务总迭代次数",
     "ctxTaskBudgetIterationsHelp": "单次任务允许的 ReAct 迭代轮数上限（与「最大迭代次数」二者取小）。0 = 不限制；建议 100~300",
     "ctxTaskBudgetCost": "任务总成本上限（USD）",
