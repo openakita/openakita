@@ -449,6 +449,84 @@
     }
     .wf-probe-banner__title { font-weight: 600; margin-bottom: 4px; }
     .wf-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+    /* Series tab (Phase 4.1) */
+    .series-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+    }
+    .series-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px; cursor: pointer;
+      display: flex; flex-direction: column; gap: 8px;
+      transition: border-color .15s, transform .15s;
+    }
+    .series-card:hover { border-color: var(--primary); transform: translateY(-1px); }
+    .series-card__cover {
+      width: 100%; aspect-ratio: 16 / 9; object-fit: cover;
+      border-radius: 6px; background: var(--bg-deep);
+    }
+    .series-card__cover--placeholder {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 32px; color: var(--text-muted); opacity: .4;
+      border: 1px dashed var(--border);
+    }
+    .series-card__title { font-size: 15px; font-weight: 600; color: var(--text); }
+    .series-card__meta {
+      font-size: 11px; color: var(--text-muted);
+      display: flex; gap: 6px; flex-wrap: wrap;
+    }
+    .series-card__chip {
+      padding: 1px 6px; border-radius: 999px;
+      background: rgba(99,102,241,.12); color: var(--accent); font-size: 10px;
+    }
+    .series-card__summary {
+      font-size: 12px; color: var(--text-muted); line-height: 1.4;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .series-editor {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 16px;
+    }
+    .series-editor__field--full { grid-column: 1 / -1; }
+    .series-editor__chargrid {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      max-height: 180px; overflow-y: auto;
+      padding: 8px; background: var(--bg-deep);
+      border: 1px solid var(--border); border-radius: 6px;
+    }
+    .series-editor__charchip {
+      padding: 4px 10px; border-radius: 999px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      font-size: 12px; cursor: pointer;
+      transition: border-color .15s, background .15s, color .15s;
+    }
+    .series-editor__charchip:hover { border-color: var(--primary); }
+    .series-editor__charchip.active {
+      background: rgba(236,72,153,.15);
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+    .series-editor__footer {
+      grid-column: 1 / -1;
+      display: flex; justify-content: space-between; gap: 8px;
+      margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border);
+    }
+    @media (max-width: 720px) {
+      .series-editor { grid-template-columns: 1fr; }
+    }
+    /* Episode list (Phase 4.3) — surfaced inside Series detail */
+    .ep-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .ep-item {
+      padding: 10px 12px; border-radius: 6px;
+      background: var(--bg-deep); border: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 10px;
+    }
+    .ep-item__title { font-size: 13px; color: var(--text); }
+    .ep-item__meta { font-size: 11px; color: var(--text-muted); }
     .ico { display: inline-flex; align-items: center; justify-content: center;
       width: 1em; height: 1em; vertical-align: -0.125em; flex-shrink: 0; }
     .spinner-sm {
@@ -695,6 +773,32 @@ const I18N = {
     "wf.probe.ok": "✓ 已连接",
     "wf.probe.fail": "✗ 失败",
     "wf.probe.dependency_hint": "提示：RunningHub 工作流需要 `comfykit` Python 包，请运行 `pip install comfykit>=0.1.12` 后重启服务。",
+    "series.title": "剧集",
+    "series.subtitle": "多集系列管理 · 跨集复用角色 / 风格 / 后端偏好",
+    "series.btn.new": "新建剧集",
+    "series.list.empty.title": "还没有剧集",
+    "series.list.empty.hint": "新建一个系列，把每一集都挂在它下面，可复用同一组角色和默认风格。",
+    "series.label.title": "标题",
+    "series.label.summary": "简介",
+    "series.label.style": "默认美术风格",
+    "series.label.ratio": "默认画面比例",
+    "series.label.backend": "默认生成后端",
+    "series.label.characters": "默认绑定角色",
+    "series.label.cover": "封面图 URL",
+    "series.placeholder.title": "如：剑灵觉醒之李雷",
+    "series.placeholder.summary": "一句话剧情简介",
+    "series.placeholder.cover": "https://... (可选，留空使用默认封面)",
+    "series.btn.save": "保存",
+    "series.btn.cancel": "取消",
+    "series.btn.delete": "删除",
+    "series.confirm.delete": "确定删除该剧集？所有挂在它下面的剧集 episode 不会被删除，但会失去关联。",
+    "series.toast.created": "剧集已创建",
+    "series.toast.updated": "剧集已更新",
+    "series.toast.deleted": "剧集已删除",
+    "series.card.no_chars": "未绑定角色",
+    "series.card.chars_count": "{n} 个角色",
+    "series.section.episodes": "本剧集已出片",
+    "series.episodes.empty": "还没有 episode，去 Studio 选择「绑定剧集」生成一集吧。",
     "settings.title": "设置",
     "settings.section.api": "直接后端 · API Keys",
     "settings.label.ark": "火山方舟 API Key (Seedance 视频)",
@@ -834,6 +938,32 @@ const I18N = {
     "wf.probe.ok": "✓ Connected",
     "wf.probe.fail": "✗ Failed",
     "wf.probe.dependency_hint": "Tip: RunningHub workflow execution needs the `comfykit` Python package — run `pip install comfykit>=0.1.12` and restart the server.",
+    "series.title": "Series",
+    "series.subtitle": "Multi-episode container · Reuse characters / style / backend across episodes",
+    "series.btn.new": "New Series",
+    "series.list.empty.title": "No series yet",
+    "series.list.empty.hint": "Create a series and pin episodes under it so they share the same characters and default style.",
+    "series.label.title": "Title",
+    "series.label.summary": "Summary",
+    "series.label.style": "Default Visual Style",
+    "series.label.ratio": "Default Aspect Ratio",
+    "series.label.backend": "Default Backend",
+    "series.label.characters": "Default Characters",
+    "series.label.cover": "Cover URL",
+    "series.placeholder.title": "e.g. The Awakening of Li Lei",
+    "series.placeholder.summary": "One-line plot summary",
+    "series.placeholder.cover": "https://... (optional, blank for default cover)",
+    "series.btn.save": "Save",
+    "series.btn.cancel": "Cancel",
+    "series.btn.delete": "Delete",
+    "series.confirm.delete": "Delete this series? Episodes pinned to it won't be deleted but will lose the link.",
+    "series.toast.created": "Series created",
+    "series.toast.updated": "Series updated",
+    "series.toast.deleted": "Series deleted",
+    "series.card.no_chars": "No characters",
+    "series.card.chars_count": "{n} character(s)",
+    "series.section.episodes": "Episodes in this series",
+    "series.episodes.empty": "No episodes yet. Open Studio, select \"Bind to series\" and generate one.",
     "settings.title": "Settings",
     "settings.section.api": "Direct Backend · API Keys",
     "settings.label.ark": "Volcengine Ark API Key (Seedance video)",
@@ -953,7 +1083,7 @@ function App() {
       <nav className="tabs">
         {[
           { id: "studio", label: t("tabs.studio"), icon: "🎬" },
-          { id: "series", label: t("tabs.series"), icon: "📺", phase: 4 },
+          { id: "series", label: t("tabs.series"), icon: "📺" },
           { id: "characters", label: t("tabs.characters"), icon: "👥" },
           { id: "workflows", label: t("tabs.workflows"), icon: "🧩" },
           { id: "settings", label: t("tabs.settings"), icon: "⚙︎" },
@@ -975,7 +1105,7 @@ function App() {
         {tab === "studio" && (
           <Studio t={t} catalog={catalog} settings={settings} toast={toast} />
         )}
-        {tab === "series" && <StubTab t={t} label={t("tabs.series")} phase={4} />}
+        {tab === "series" && <Series t={t} catalog={catalog} toast={toast} />}
         {tab === "characters" && <Characters t={t} catalog={catalog} toast={toast} />}
         {tab === "workflows" && (
           <Workflows t={t} settings={settings} setSettings={setSettings} toast={toast} />
@@ -1961,6 +2091,337 @@ function Workflows({ t, settings, setSettings, toast }) {
           onClick={saveDraft}
           disabled={saving}
         >{saving ? t("wf.btn.save.loading") : t("wf.btn.save")}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Series tab (Phase 4.1 + 4.3) ──
+// Multi-episode container. A series carries the default visual style,
+// ratio, backend preference, and bound character list — when the user
+// fires off a new episode under a series, the Studio tab pre-fills
+// from these defaults so they don't re-pick the same options every
+// run. The Phase-1 backend already created the routes; this commit
+// just lights up the UI on top.
+function Series({ t, catalog, toast }) {
+  const [items, setItems] = useState(null);
+  const [editing, setEditing] = useState(null); // null | "new" | row
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(function() {
+    pluginApi("GET", "/series").then(function(r) {
+      if (r && r.ok && r.body) setItems(r.body.series || []);
+      else setItems([]);
+    });
+  }, [reloadKey]);
+
+  function reload() { setReloadKey(function(k) { return k + 1; }); }
+  function onSaved(msg) {
+    if (msg) toast(msg, "success");
+    setEditing(null);
+    reload();
+  }
+
+  if (editing) {
+    return (
+      <SeriesEditor
+        t={t}
+        catalog={catalog}
+        toast={toast}
+        initial={editing === "new" ? null : editing}
+        onCancel={function() { setEditing(null); }}
+        onSaved={onSaved}
+      />
+    );
+  }
+
+  return (
+    <div>
+      <div className="char-tab-header">
+        <div>
+          <div className="char-tab-header__title">{t("series.title")}</div>
+          <div className="char-tab-header__sub">{t("series.subtitle")}</div>
+        </div>
+        <button className="btn btn-primary" onClick={function() { setEditing("new"); }}>
+          {t("series.btn.new")}
+        </button>
+      </div>
+
+      {items === null ? (
+        <div className="text-muted">{t("common.loading")}</div>
+      ) : items.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-state__icon">📺</div>
+          <div className="empty-state__title">{t("series.list.empty.title")}</div>
+          <div className="empty-state__hint">{t("series.list.empty.hint")}</div>
+        </div>
+      ) : (
+        <div className="series-grid">
+          {items.map(function(it) {
+            var chars = it.default_characters_json || it.default_characters || [];
+            return (
+              <div
+                key={it.id}
+                className="series-card"
+                onClick={function() { setEditing(it); }}
+              >
+                {it.cover_url ? (
+                  <img className="series-card__cover" src={it.cover_url} alt={it.title} />
+                ) : (
+                  <div className="series-card__cover series-card__cover--placeholder">📺</div>
+                )}
+                <div className="series-card__title">{it.title}</div>
+                <div className="series-card__meta">
+                  <span className="series-card__chip">{it.visual_style || "shonen"}</span>
+                  <span className="series-card__chip">{it.ratio || "9:16"}</span>
+                  <span className="series-card__chip">{it.backend_pref || "direct"}</span>
+                  <span className="series-card__chip">
+                    {chars.length > 0
+                      ? t("series.card.chars_count", { n: chars.length })
+                      : t("series.card.no_chars")}
+                  </span>
+                </div>
+                {it.summary ? (
+                  <div className="series-card__summary">{it.summary}</div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Editor for a single series — same shape as CharacterEditor (POST/PUT
+// branches on whether `initial` is set). Pulls the character list from
+// /characters so the user picks "default characters" by clicking
+// chips, not by typing IDs by hand.
+function SeriesEditor({ t, catalog, toast, initial, onCancel, onSaved }) {
+  const isEdit = initial && initial.id;
+  const [draft, setDraft] = useState(function() {
+    if (initial) {
+      return {
+        title: initial.title || "",
+        summary: initial.summary || "",
+        visual_style: initial.visual_style || "shonen",
+        ratio: initial.ratio || "9:16",
+        backend_pref: initial.backend_pref || "direct",
+        default_characters: (initial.default_characters_json || initial.default_characters || []).slice(0),
+        cover_url: initial.cover_url || "",
+      };
+    }
+    return {
+      title: "",
+      summary: "",
+      visual_style: "shonen",
+      ratio: "9:16",
+      backend_pref: "direct",
+      default_characters: [],
+      cover_url: "",
+    };
+  });
+  const [characters, setCharacters] = useState(null);
+  const [episodes, setEpisodes] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(function() {
+    pluginApi("GET", "/characters").then(function(r) {
+      if (r && r.ok && r.body) setCharacters(r.body.characters || []);
+      else setCharacters([]);
+    });
+  }, []);
+
+  // Phase 4.3 preview — load episodes that already belong to this
+  // series so the user sees their continuity without leaving the tab.
+  useEffect(function() {
+    if (!isEdit) return;
+    pluginApi("GET", "/episodes?series_id=" + encodeURIComponent(initial.id)).then(function(r) {
+      if (r && r.ok && r.body) setEpisodes(r.body.episodes || []);
+      else setEpisodes([]);
+    });
+  }, [isEdit, initial && initial.id]);
+
+  function patch(updates) { setDraft(function(prev) { return Object.assign({}, prev, updates); }); }
+
+  function toggleChar(cid) {
+    var list = draft.default_characters || [];
+    var i = list.indexOf(cid);
+    if (i < 0) patch({ default_characters: list.concat([cid]) });
+    else { var n = list.slice(); n.splice(i, 1); patch({ default_characters: n }); }
+  }
+
+  async function save() {
+    if (!draft.title || !draft.title.trim()) {
+      toast(t("char.toast.save_failed", { msg: t("series.label.title") }), "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      var body = {
+        title: draft.title.trim(),
+        summary: draft.summary || "",
+        visual_style: draft.visual_style || "shonen",
+        ratio: draft.ratio || "9:16",
+        backend_pref: draft.backend_pref || "direct",
+        default_characters: draft.default_characters || [],
+        cover_url: draft.cover_url || "",
+      };
+      var r;
+      if (isEdit) r = await pluginApi("PUT", "/series/" + initial.id, body);
+      else r = await pluginApi("POST", "/series", body);
+      if (r && r.ok && r.body && r.body.ok) {
+        onSaved(isEdit ? t("series.toast.updated") : t("series.toast.created"));
+      } else {
+        var msg = (r && r.body && (r.body.detail || r.body.message)) || "?";
+        toast(t("char.toast.save_failed", { msg: msg }), "error");
+      }
+    } catch (e) {
+      toast(t("char.toast.save_failed", { msg: String(e) }), "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onDelete() {
+    if (!isEdit) return;
+    if (!window.confirm(t("series.confirm.delete"))) return;
+    var r = await pluginApi("DELETE", "/series/" + initial.id);
+    if (r && r.ok) onSaved(t("series.toast.deleted"));
+    else toast(t("char.toast.save_failed", { msg: (r && r.body && r.body.detail) || "?" }), "error");
+  }
+
+  var styles = (catalog && catalog.visual_styles) || [];
+  var ratios = (catalog && catalog.ratios) || ["9:16", "16:9", "1:1", "4:5"];
+  var backends = ["direct", "runninghub", "comfyui_local"];
+
+  return (
+    <div className="series-editor">
+      <div className="series-editor__field--full">
+        <label className="char-editor__label">{t("series.label.title")} *</label>
+        <input
+          className="input"
+          value={draft.title}
+          onChange={function(e) { patch({ title: e.target.value }); }}
+          placeholder={t("series.placeholder.title")}
+        />
+      </div>
+      <div className="series-editor__field--full">
+        <label className="char-editor__label">{t("series.label.summary")}</label>
+        <input
+          className="input"
+          value={draft.summary}
+          onChange={function(e) { patch({ summary: e.target.value }); }}
+          placeholder={t("series.placeholder.summary")}
+        />
+      </div>
+      <div>
+        <label className="char-editor__label">{t("series.label.style")}</label>
+        <select
+          className="input"
+          value={draft.visual_style}
+          onChange={function(e) { patch({ visual_style: e.target.value }); }}
+        >
+          {styles.length > 0
+            ? styles.map(function(s) { return <option key={s.id} value={s.id}>{s.label_zh || s.label_en || s.id}</option>; })
+            : <option value="shonen">shonen</option>}
+        </select>
+      </div>
+      <div>
+        <label className="char-editor__label">{t("series.label.ratio")}</label>
+        <select
+          className="input"
+          value={draft.ratio}
+          onChange={function(e) { patch({ ratio: e.target.value }); }}
+        >
+          {ratios.map(function(r) { return <option key={r} value={r}>{r}</option>; })}
+        </select>
+      </div>
+      <div>
+        <label className="char-editor__label">{t("series.label.backend")}</label>
+        <select
+          className="input"
+          value={draft.backend_pref}
+          onChange={function(e) { patch({ backend_pref: e.target.value }); }}
+        >
+          {backends.map(function(b) {
+            return <option key={b} value={b}>{t("studio.backend." + b)}</option>;
+          })}
+        </select>
+      </div>
+      <div>
+        <label className="char-editor__label">{t("series.label.cover")}</label>
+        <input
+          className="input"
+          value={draft.cover_url}
+          onChange={function(e) { patch({ cover_url: e.target.value }); }}
+          placeholder={t("series.placeholder.cover")}
+        />
+      </div>
+      <div className="series-editor__field--full">
+        <label className="char-editor__label">{t("series.label.characters")}</label>
+        {characters === null ? (
+          <div className="text-muted" style={{ fontSize: 12 }}>{t("common.loading")}</div>
+        ) : characters.length === 0 ? (
+          <div className="text-muted" style={{ fontSize: 12 }}>{t("char.list.empty.title")}</div>
+        ) : (
+          <div className="series-editor__chargrid">
+            {characters.map(function(c) {
+              var picked = (draft.default_characters || []).indexOf(c.id) >= 0;
+              return (
+                <span
+                  key={c.id}
+                  className={"series-editor__charchip" + (picked ? " active" : "")}
+                  onClick={function() { toggleChar(c.id); }}
+                >{c.name}</span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {isEdit ? (
+        <div className="series-editor__field--full">
+          <label className="char-editor__label">{t("series.section.episodes")}</label>
+          {episodes === null ? (
+            <div className="text-muted" style={{ fontSize: 12 }}>{t("common.loading")}</div>
+          ) : episodes.length === 0 ? (
+            <div className="text-muted" style={{ fontSize: 12 }}>{t("series.episodes.empty")}</div>
+          ) : (
+            <div className="ep-list">
+              {episodes.map(function(ep) {
+                return (
+                  <div key={ep.id} className="ep-item">
+                    <div>
+                      <div className="ep-item__title">{ep.title || ep.id}</div>
+                      <div className="ep-item__meta">
+                        {ep.status || "?"}{ep.created_at ? " · " + ep.created_at : ""}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      <div className="series-editor__footer">
+        <div>
+          {isEdit ? (
+            <button className="btn btn-danger" onClick={onDelete} disabled={saving}>
+              {t("series.btn.delete")}
+            </button>
+          ) : <span />}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn" onClick={onCancel} disabled={saving}>
+            {t("series.btn.cancel")}
+          </button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? t("studio.btn.submit.loading") : t("series.btn.save")}
+          </button>
+        </div>
       </div>
     </div>
   );

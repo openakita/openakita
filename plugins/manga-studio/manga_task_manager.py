@@ -28,8 +28,10 @@ mirrors the design of ``plugins/avatar-studio/avatar_task_manager.py``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import sqlite3
 import time
 import uuid
 from collections.abc import Iterable
@@ -278,12 +280,55 @@ class MangaTaskManager:
         await self.close()
 
     async def init(self) -> None:
+        """Open the SQLite connection, configure WAL, and apply the schema.
+
+        Windows quirk: when a previous test's aiosqlite worker thread
+        was killed by an aggressive ``taskkill`` (CI), the OS sometimes
+        holds the journal lock for a few hundred ms before clearing.
+        We retry the WAL pragma a few times on ``OperationalError:
+        database is locked`` to make the init transparent to that
+        flake. Production runs hit a brand-new file under data_dir so
+        this branch is essentially never taken there.
+        """
         if self._db is not None:
             return
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(str(self._db_path))
         self._db.row_factory = aiosqlite.Row
-        await self._db.execute("PRAGMA journal_mode=WAL")
+
+        # Retry-loop for the very first SQL command after a fresh
+        # connection: ``PRAGMA journal_mode=WAL``. Windows sometimes
+        # holds the file via Defender / Search indexing for a few
+        # hundred ms after creation; on CI we've also seen prior tests
+        # leave aiosqlite worker-thread shutdowns half-pending. We do
+        # 10 × 100ms backoff (~5 s ceiling) and explicitly fetch + close
+        # the cursor each time so the connection isn't left with an
+        # unconsumed statement (which would otherwise blow up the
+        # subsequent ``commit()`` with "SQL statements in progress").
+        last_exc: Exception | None = None
+        for attempt in range(10):
+            try:
+                cursor = await self._db.execute("PRAGMA journal_mode=WAL")
+                try:
+                    await cursor.fetchall()
+                finally:
+                    await cursor.close()
+                last_exc = None
+                break
+            except sqlite3.OperationalError as exc:
+                msg = str(exc).lower()
+                if "locked" not in msg and "busy" not in msg:
+                    raise
+                last_exc = exc
+                logger.warning(
+                    "manga-studio: WAL pragma blocked by lock (attempt %d/10): %s",
+                    attempt + 1,
+                    exc,
+                )
+                await asyncio.sleep(0.1 * (attempt + 1))
+        if last_exc is not None:
+            raise last_exc
+
         await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
         await self._db.executescript(SCHEMA_SQL)
