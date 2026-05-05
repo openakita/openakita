@@ -149,6 +149,110 @@ async def test_workflow_test_tool_dispatches_to_probe(loaded_plugin) -> None:
     ), msg
 
 
+async def _fresh_plugin_with_init(tmp_path: Path):
+    """on_load + drain init **inside the running test loop** so spawned
+    tasks share the same loop as the test body. The shared
+    ``loaded_plugin`` fixture is sync (calls on_load before pytest's
+    event loop exists), which loses the spawned init task. This
+    helper rebuilds the plugin so the init fires on the correct loop.
+    """
+    import importlib
+
+    import plugin as plugin_module
+
+    importlib.reload(plugin_module)
+    api = _StubAPI(tmp_path)
+    p = plugin_module.Plugin()
+    p.on_load(api)
+    for t in list(api.spawned):
+        try:
+            await t
+        except Exception:  # noqa: BLE001
+            pass
+    return plugin_module, p, api
+
+
+async def test_render_panel_tool_calls_pipeline_image_step(tmp_path: Path) -> None:
+    """``manga_render_panel`` was a stub that just echoed its args back.
+    It now reads the episode row, recomposes the prompt, calls
+    ``_gen_panel_image`` with the persisted backend, and writes the
+    new URL back onto the storyboard."""
+    _, p, api = await _fresh_plugin_with_init(tmp_path)
+    if p._pipeline is None:  # type: ignore[attr-defined]
+        pytest.skip("pipeline init failed in stub host — render_panel can't run")
+
+    await p._tm.create_character(  # type: ignore[attr-defined]
+        name="Aoi", role_type="main", ref_images=[]
+    )
+    char_rows = await p._tm.list_characters()  # type: ignore[attr-defined]
+    char_id = char_rows[0]["id"]
+    ep_id = await p._tm.create_episode(  # type: ignore[attr-defined]
+        title="Test Ep", story="x", bound_characters=[char_id]
+    )
+    storyboard = {
+        "episode_title": "T",
+        "summary": "s",
+        "panels": [
+            {
+                "idx": 0,
+                "narration": "n",
+                "dialogue": [],
+                "characters_in_scene": ["Aoi"],
+                "camera": "wide",
+                "action": "stand",
+                "mood": "calm",
+                "background": "school",
+                "image_url": "",
+            }
+        ],
+    }
+    await p._tm.update_episode_safe(  # type: ignore[attr-defined]
+        ep_id, storyboard_json=storyboard
+    )
+
+    captured: dict[str, Any] = {}
+
+    async def fake_gen(self, *, prompt, negative_prompt, ref_urls, ratio, output_path, backend):
+        captured.update(prompt=prompt, backend=backend, ratio=ratio)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"PNG")
+        return "https://oss/regen.png"
+
+    import manga_pipeline as mp_mod  # noqa: PLC0415
+
+    original = mp_mod.MangaPipeline._gen_panel_image  # noqa: SLF001
+    mp_mod.MangaPipeline._gen_panel_image = fake_gen  # type: ignore[assignment]
+    try:
+        msg = await api.tool_handler(
+            "manga_render_panel",
+            {"episode_id": ep_id, "panel_index": 0},
+        )
+    finally:
+        mp_mod.MangaPipeline._gen_panel_image = original  # type: ignore[assignment]
+
+    assert "https://oss/regen.png" in msg, msg
+    assert captured["backend"] == "direct"
+    ep_row = await p._tm.get_episode(ep_id)  # type: ignore[attr-defined]
+    sb = ep_row["storyboard"]
+    assert sb["panels"][0]["image_url"] == "https://oss/regen.png"
+    await p.on_unload()
+
+
+async def test_render_panel_tool_rejects_bad_args(tmp_path: Path) -> None:
+    """Sanity: missing/invalid args yield a clean ``error:`` string."""
+    _, p, api = await _fresh_plugin_with_init(tmp_path)
+    if p._pipeline is None:  # type: ignore[attr-defined]
+        pytest.skip("pipeline init failed in stub host")
+
+    msg = await api.tool_handler("manga_render_panel", {})
+    assert msg.startswith("error:"), msg
+    msg = await api.tool_handler(
+        "manga_render_panel", {"episode_id": "nope", "panel_index": 0}
+    )
+    assert msg.startswith("error:") and "not found" in msg
+    await p.on_unload()
+
+
 async def test_on_load_registers_router(loaded_plugin) -> None:
     _, p = loaded_plugin
     api = p._api  # type: ignore[attr-defined]

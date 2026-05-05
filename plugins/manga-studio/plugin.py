@@ -486,12 +486,22 @@ class Plugin(PluginBase):
             },
             {
                 "name": "manga_render_panel",
-                "description": "Render a single storyboard panel (debug helper).",
+                "description": (
+                    "Re-render a single storyboard panel image (debug helper). "
+                    "Reads style/ratio/backend from the episode's series; pass "
+                    "explicit overrides to retry with a different look."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "episode_id": {"type": "string"},
                         "panel_index": {"type": "integer"},
+                        "visual_style": {"type": "string"},
+                        "ratio": {"type": "string"},
+                        "backend": {
+                            "type": "string",
+                            "enum": ["direct", "runninghub", "comfyui_local"],
+                        },
                     },
                     "required": ["episode_id", "panel_index"],
                 },
@@ -678,11 +688,100 @@ class Plugin(PluginBase):
         )
 
     async def _tool_render_panel(self, args: dict[str, Any]) -> str:
-        # Dev / debug helper; v1.0 ships this as a not-yet-wired stub
-        # so the tool list is complete. Phase 3 fills in re-rendering.
+        """Re-render a single panel image without rerunning the whole pipeline.
+
+        Loads the storyboard / characters from the episode row, calls
+        the image step (DashScope or workflow depending on the
+        episode's persisted ``backend``), and writes the resulting URL
+        back onto the storyboard so I2V will pick it up next time the
+        episode is re-run. Useful when an episode has one bad panel
+        you want to fix without spending another full episode of
+        credits.
+        """
+        if self._pipeline is None:
+            return "error: pipeline not ready (plugin still initialising)"
+
+        ep_id = str(args.get("episode_id") or "").strip()
+        panel_index = args.get("panel_index")
+        if not ep_id or not isinstance(panel_index, int):
+            return "error: episode_id (str) and panel_index (int) are required"
+
+        ep = await self._tm.get_episode(ep_id)
+        if ep is None:
+            return f"error: episode {ep_id!r} not found"
+
+        # ``_row_to_dict`` decodes ``foo_json`` columns into a parallel
+        # ``foo`` key. Read the decoded views — never the raw strings.
+        storyboard = ep.get("storyboard") or {}
+        if not isinstance(storyboard, dict):
+            return f"error: episode {ep_id!r} has no storyboard yet"
+        sb_panels_raw = storyboard.get("panels") or []
+        sb_panels: list[dict[str, Any]] = list(sb_panels_raw)
+        if panel_index < 0 or panel_index >= len(sb_panels):
+            return f"error: panel_index {panel_index} out of range (0..{len(sb_panels) - 1})"
+        sb_panel = sb_panels[panel_index]
+
+        from manga_models import VISUAL_STYLES_BY_ID  # noqa: PLC0415
+        from prompt_assembler import compose_image_prompt  # noqa: PLC0415
+
+        # Episodes have no style / ratio columns of their own — pull
+        # from the parent series, then fall back to caller-supplied
+        # args (handy when an episode isn't bound to a series).
+        style_id = "shounen"
+        ratio = "9:16"
+        backend = "direct"
+        series_id = ep.get("series_id")
+        if series_id:
+            ser = await self._tm.get_series(series_id)
+            if ser is not None:
+                style_id = str(ser.get("visual_style") or style_id)
+                ratio = str(ser.get("ratio") or ratio)
+                backend = str(ser.get("backend_pref") or backend)
+        style_id = str(args.get("visual_style") or style_id)
+        ratio = str(args.get("ratio") or ratio)
+        backend = str(args.get("backend") or backend)
+        style = VISUAL_STYLES_BY_ID.get(style_id) or next(iter(VISUAL_STYLES_BY_ID.values()))
+
+        bound_ids = ep.get("bound_characters") or []
+        characters: list[dict[str, Any]] = []
+        for cid in bound_ids:
+            row = await self._tm.get_character(str(cid))
+            if row is not None:
+                characters.append(row)
+
+        img_prompt = compose_image_prompt(
+            panel=sb_panel,
+            characters=characters,
+            style=style,
+            ratio=ratio,
+            panel_index=panel_index,
+        )
+
+        ep_dir = self._data_dir / "episodes" / ep_id
+        ep_dir.mkdir(parents=True, exist_ok=True)
+        img_path = ep_dir / "panels" / f"panel_{panel_index:03d}.png"
+
+        try:
+            gen_url = await self._pipeline._gen_panel_image(  # noqa: SLF001
+                prompt=img_prompt.prompt,
+                negative_prompt=img_prompt.negative_prompt,
+                ref_urls=img_prompt.reference_image_urls,
+                ratio=ratio,
+                output_path=img_path,
+                backend=backend,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"error: panel render failed: {exc}"
+
+        # Persist the new URL onto the storyboard so subsequent I2V re-runs see it.
+        sb_panels[panel_index] = {**sb_panel, "image_url": gen_url}
+        storyboard = {**storyboard, "panels": sb_panels}
+        await self._tm.update_episode_safe(ep_id, storyboard_json=storyboard)
+
         return (
-            f"manga_render_panel for episode={args.get('episode_id')!r} "
-            f"panel={args.get('panel_index')!r} — not yet wired (Phase 3)"
+            f"rendered panel {panel_index} of episode {ep_id} "
+            f"(backend={backend}, style={style_id}, ratio={ratio}) "
+            f"→ {gen_url}"
         )
 
     async def _tool_cost_preview(self, args: dict[str, Any]) -> str:
