@@ -1,4 +1,4 @@
-"""Aliyun OSS uploader for avatar-studio.
+"""Aliyun OSS uploader for manga-studio.
 
 Why this exists
 ---------------
@@ -6,7 +6,7 @@ Why this exists
 DashScope's video-generation models (wan2.2-s2v / wan2.2-animate-mix /
 videoretalk / wan2.2-s2v-detect) all consume **publicly fetchable** URLs
 for the input image / video / audio.  The plugin's local
-``/api/plugins/avatar-studio/uploads/...`` route is a relative path with
+``/api/plugins/manga-studio/uploads/...`` route is a relative path with
 no host and is unreachable from DashScope's servers.
 
 Aliyun OSS is the path Pixelle / official samples use:
@@ -25,7 +25,7 @@ Settings shape
   "oss_bucket": "my-bucket",
   "oss_access_key_id": "LTAI…",
   "oss_access_key_secret": "…",
-  "oss_path_prefix": "avatar-studio"  // optional, default "avatar-studio"
+  "oss_path_prefix": "manga-studio"  // optional, default "manga-studio"
 }
 ```
 
@@ -64,7 +64,7 @@ DEFAULT_SIGN_TTL_SEC = 6 * 3600
 #   "oss-cn-beijing.aliyuncs.com"          (host only)
 #   "https://oss-cn-beijing.aliyuncs.com"  (with scheme)
 # and normalise internally.
-_DEFAULT_PREFIX = "avatar-studio"
+_DEFAULT_PREFIX = "manga-studio"
 
 
 class OssNotConfigured(Exception):
@@ -163,7 +163,7 @@ class OssUploader:
         # Used by ``dep_bootstrap.ensure_importable`` to first look in
         # ``<plugin_dir>/deps/`` (host-managed, populated by
         # ``install_pip_deps`` from ``requires.pip``) before falling back
-        # to ``~/.openakita/modules/avatar-studio/site-packages/``.
+        # to ``~/.openakita/modules/manga-studio/site-packages/``.
         self._plugin_dir = plugin_dir
 
     # ── lifecycle ─────────────────────────────────────────────────────
