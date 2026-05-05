@@ -1251,7 +1251,38 @@ class Plugin(PluginBase):
             ok = await self._tm.delete_episode(ep_id)
             if not ok:
                 raise HTTPException(status_code=404, detail="episode not found")
-            return {"ok": True}
+            # Also reclaim the disk slot. The pipeline writes
+            # ``data/episodes/<ep_id>/`` (final.mp4 + per-panel mp4s +
+            # storyboard.json + audio); without this every episode the
+            # user deletes still costs them MBs forever, and the
+            # ``/storage`` panel keeps showing phantom usage. Errors
+            # here are non-fatal — the DB row is already gone, surface
+            # the warning but still return success.
+            ep_dir = self._data_dir / "episodes" / ep_id
+            removed_bytes: int | None = None
+            cleanup_warning: str | None = None
+            if ep_dir.exists():
+                try:
+                    import shutil  # noqa: PLC0415
+
+                    removed_bytes = sum(
+                        f.stat().st_size
+                        for f in ep_dir.rglob("*")
+                        if f.is_file()
+                    )
+                    shutil.rmtree(ep_dir)
+                except OSError as exc:
+                    cleanup_warning = f"disk cleanup failed: {exc}"
+                    self._api.log(
+                        f"manga-studio: delete_episode {ep_id} disk cleanup failed: {exc!r}",
+                        "warning",
+                    )
+            payload: dict[str, Any] = {"ok": True}
+            if removed_bytes is not None:
+                payload["removed_bytes"] = removed_bytes
+            if cleanup_warning is not None:
+                payload["cleanup_warning"] = cleanup_warning
+            return payload
 
         # ── Tasks ───────────────────────────────────────────────────
         # Lightweight read-only surface so the UI can poll a running

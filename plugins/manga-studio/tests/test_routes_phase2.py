@@ -330,6 +330,41 @@ async def test_delete_episode_removes_row(client, monkeypatch) -> None:
     assert r3.status_code == 404
 
 
+async def test_delete_episode_also_removes_disk_artefacts(client, monkeypatch) -> None:
+    """P1-4 regression: deleting an episode used to leave its
+    ``data/episodes/<ep_id>/`` directory orphaned forever — which
+    blocked the storage panel from ever shrinking and made delete
+    feel half-broken. The route now reclaims the directory and
+    reports the freed bytes."""
+    tc, p = client
+
+    async def fake_run(*, episode_id: str, task_id: str, config: Any) -> None:
+        await p._tm.update_task_safe(task_id, status="succeeded", progress=100)
+
+    monkeypatch.setattr(p, "_run_pipeline", fake_run)
+
+    r = tc.post(
+        "/episodes",
+        json={"story": "x", "n_panels": 1, "seconds_per_panel": 3},
+    )
+    ep_id = r.json()["episode_id"]
+
+    ep_dir = p._data_dir / "episodes" / ep_id
+    ep_dir.mkdir(parents=True, exist_ok=True)
+    (ep_dir / "panels").mkdir(exist_ok=True)
+    (ep_dir / "final.mp4").write_bytes(b"x" * 1024)
+    (ep_dir / "panels" / "panel_000.png").write_bytes(b"y" * 256)
+    assert ep_dir.exists()
+
+    r2 = tc.delete(f"/episodes/{ep_id}")
+    assert r2.status_code == 200, r2.text
+    body = r2.json()
+    assert body["ok"] is True
+    assert body["removed_bytes"] == 1024 + 256
+    assert "cleanup_warning" not in body
+    assert not ep_dir.exists()
+
+
 # ─── Tool dispatch ────────────────────────────────────────────────────────
 
 
