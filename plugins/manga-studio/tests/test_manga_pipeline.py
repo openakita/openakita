@@ -335,6 +335,7 @@ def _build_pipeline(tmp_path: Path, monkeypatch):
         writer: _FakeWriter | None = None,
         tm: _FakeTaskManager | None = None,
         comfy: Any | None = None,
+        build_video_url: Any | None = None,
     ) -> tuple[MangaPipeline, dict[str, Any]]:
         wx = wanxiang or _FakeWanxiang()
         ar = ark or _FakeArk()
@@ -370,6 +371,7 @@ def _build_pipeline(tmp_path: Path, monkeypatch):
             task_manager=tm_,  # type: ignore[arg-type]
             working_dir=tmp_path / "manga",
             comfy_client=comfy,
+            build_video_url=build_video_url,
         )
         return pipe, {
             "wx": wx,
@@ -506,6 +508,65 @@ async def test_panel_image_url_is_piped_back_to_storyboard_for_i2v(_build_pipeli
     # The crux: I2V received the URL the wanxiang client produced,
     # not the empty LLM-suggested string.
     assert fakes["ar"].i2v_calls[0]["image_url"] == "https://oss/wan2.7-generated.png"
+
+
+# ─── P0-2 regression: episode row gets a fetchable final_video_url ────────
+
+
+async def test_final_video_url_is_written_when_builder_provided(_build_pipeline) -> None:
+    """The pipeline now persists a server-relative URL pointing at the
+    file the FastAPI ``/episode-files/`` route serves. Without this the
+    UI had a filesystem path it couldn't render and the Studio tab was
+    silently broken."""
+    captured: list[tuple[str, str]] = []
+
+    def url_builder(ep_id: str, filename: str) -> str:
+        captured.append((ep_id, filename))
+        return f"/api/plugins/manga-studio/episode-files/{ep_id}/{filename}"
+
+    pipe, fakes = _build_pipeline(build_video_url=url_builder)
+
+    await pipe.run_episode(
+        episode_id="ep_url",
+        config=MangaPipelineConfig(
+            story="x", n_panels=1, bound_character_ids=["c1"], burn_subtitles=False
+        ),
+        task_id="task_url",
+    )
+
+    # Builder was invoked exactly once with the canonical name.
+    assert captured == [("ep_url", "final.mp4")]
+
+    # Episode row update bundle includes both fields.
+    final_ep_update = next(
+        upd for ep_id, upd in fakes["tm"].episode_updates if ep_id == "ep_url"
+        and "final_video_path" in upd
+    )
+    assert final_ep_update["final_video_url"] == (
+        "/api/plugins/manga-studio/episode-files/ep_url/final.mp4"
+    )
+    assert final_ep_update["final_video_path"].endswith("final.mp4")
+
+
+async def test_final_video_url_omitted_when_builder_absent(_build_pipeline) -> None:
+    """Backwards-compat: ``build_video_url=None`` keeps the legacy
+    behaviour (write final_video_path only). Tests that don't care
+    about URLs shouldn't be forced to provide a builder."""
+    pipe, fakes = _build_pipeline()
+
+    await pipe.run_episode(
+        episode_id="ep_legacy",
+        config=MangaPipelineConfig(
+            story="x", n_panels=1, bound_character_ids=["c1"], burn_subtitles=False
+        ),
+        task_id="task_legacy",
+    )
+
+    final_ep_update = next(
+        upd for ep_id, upd in fakes["tm"].episode_updates if ep_id == "ep_legacy"
+        and "final_video_path" in upd
+    )
+    assert "final_video_url" not in final_ep_update
 
 
 # ─── Per-panel image fail (soft error) ───────────────────────────────────

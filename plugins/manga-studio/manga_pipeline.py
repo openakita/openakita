@@ -57,6 +57,7 @@ from __future__ import annotations
 import logging
 import shutil
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -238,6 +239,7 @@ class MangaPipeline:
         task_manager: MangaTaskManager,
         working_dir: Path,
         comfy_client: Any | None = None,
+        build_video_url: Callable[[str, str], str] | None = None,
     ) -> None:
         self._wanxiang = wanxiang_client
         self._ark = ark_client
@@ -251,6 +253,13 @@ class MangaPipeline:
         # Direct-only environments (no comfykit installed) leave this
         # None and ``backend="direct"`` keeps everything working.
         self._comfy = comfy_client
+        # P0-2 fix — optional URL builder used to populate
+        # ``episodes.final_video_url`` once ``final.mp4`` exists.
+        # Signature: ``(episode_id, filename) -> "/api/.../<ep>/final.mp4"``.
+        # Plugin layer wires this to the ``add_upload_preview_route``
+        # rooted at the episodes dir; tests pass ``None`` to skip URL
+        # construction.
+        self._build_video_url = build_video_url
 
     # ─── Top-level orchestration ─────────────────────────────────
 
@@ -369,11 +378,22 @@ class MangaPipeline:
 
         # ── persist final
         total_duration = sum(p.duration_sec for p in panels)
-        await self._tm.update_episode_safe(
-            episode_id,
-            final_video_path=str(final_path),
-            duration_sec=total_duration,
-        )
+        ep_updates: dict[str, Any] = {
+            "final_video_path": str(final_path),
+            "duration_sec": total_duration,
+        }
+        # P0-2: write a fetchable URL too so the UI can render
+        # ``<video src=…>`` directly. Without this the row only had a
+        # server-side filesystem path and the Studio tab silently
+        # rendered nothing.
+        if self._build_video_url is not None:
+            try:
+                ep_updates["final_video_url"] = self._build_video_url(
+                    episode_id, final_path.name
+                )
+            except Exception:  # pragma: no cover — URL builder must not break the pipeline
+                logger.warning("build_video_url failed for episode %s", episode_id)
+        await self._tm.update_episode_safe(episode_id, **ep_updates)
         await self._set_task(
             task_id,
             current_step="done",

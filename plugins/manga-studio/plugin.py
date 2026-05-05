@@ -290,6 +290,7 @@ class Plugin(PluginBase):
                 task_manager=self._tm,
                 working_dir=self._data_dir / "episodes",
                 comfy_client=self._comfy_client,
+                build_video_url=self._build_episode_video_url,
             )
         except Exception as exc:  # noqa: BLE001
             self._api.log(f"manga-studio: client wire-up failed: {exc!r}", "error")
@@ -357,6 +358,17 @@ class Plugin(PluginBase):
         edit API keys in Settings without reloading the plugin.
         """
         return self._load_settings()
+
+    def _build_episode_video_url(self, episode_id: str, filename: str) -> str:
+        """Build the ``<video src=...>``-friendly URL for an episode artefact.
+
+        Mirrors :func:`manga_inline.upload_preview.build_preview_url` but
+        targets the ``/episode-files/`` route mounted on the episodes dir
+        (see ``_register_routes``). Used by ``MangaPipeline`` to populate
+        ``episodes.final_video_url`` once ``final.mp4`` is on disk.
+        """
+        rel = f"{episode_id}/{filename}".replace("\\", "/").lstrip("/")
+        return f"/api/plugins/{PLUGIN_ID}/episode-files/{rel}"
 
     # ── Tools ────────────────────────────────────────────────────────────
 
@@ -1269,6 +1281,23 @@ class Plugin(PluginBase):
             router,
             base_dir=uploads_dir,
             allowed_extensions=DEFAULT_PREVIEW_EXTENSIONS,
+        )
+
+        # P0-2 fix — episode artefacts (final.mp4 + per-panel mp4s) live
+        # outside ``uploads_dir`` so the upload route above can't reach
+        # them. Mount a *second* sandboxed FileResponse route rooted at
+        # the episodes dir under ``/episode-files/{rel}`` so the UI can
+        # render ``<video src=…>`` for any final / panel video the
+        # pipeline produced. The 200 MiB cap accommodates 60-second
+        # 1080p episodes; bump if you need longer.
+        episodes_dir = self._data_dir / "episodes"
+        episodes_dir.mkdir(parents=True, exist_ok=True)
+        add_upload_preview_route(
+            router,
+            base_dir=episodes_dir,
+            route_path="/episode-files/{rel_path:path}",
+            allowed_extensions=DEFAULT_PREVIEW_EXTENSIONS,
+            max_bytes=200 * 1024 * 1024,
         )
 
         _UPLOAD_KINDS: tuple[str, ...] = (
