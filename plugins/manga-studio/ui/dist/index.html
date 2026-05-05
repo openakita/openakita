@@ -286,7 +286,11 @@
       color: var(--text); line-height: 1.4;
       white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto;
     }
-    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .init-error-banner {
+      margin-bottom: 16px; padding: 10px 14px; border-radius: 8px;
+      background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.32);
+      color: var(--danger); font-size: 13px; line-height: 1.5;
+    }
     .status-chip {
       font-size: 10px; padding: 2px 8px; border-radius: 999px;
       font-weight: 500; flex-shrink: 0;
@@ -928,6 +932,8 @@ const I18N = {
     "common.empty": "暂无数据",
     "common.copy": "复制",
     "common.copied": "已复制",
+    "init.error.title": "插件初始化失败",
+    "init.error.hint": "请查看后端日志或重启 OpenAkita。如反复出现，可清空 data/manga.db 触发重建。",
   },
   en: {
     "app.title": "Manga Studio",
@@ -1134,6 +1140,8 @@ const I18N = {
     "common.empty": "Nothing to show",
     "common.copy": "Copy",
     "common.copied": "Copied",
+    "init.error.title": "Plugin failed to initialise",
+    "init.error.hint": "Check the host logs or restart OpenAkita. If it keeps failing, you can wipe data/manga.db to trigger a rebuild.",
   },
 };
 
@@ -1181,6 +1189,7 @@ function App() {
   });
   const [catalog, setCatalog] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [health, setHealth] = useState(null);
   const toaster = useToasts();
   const toast = toaster.push;
 
@@ -1195,13 +1204,16 @@ function App() {
     setTheme(next);
   }
 
-  // Pull catalog + settings on mount.
+  // Pull catalog + settings + healthz on mount.
   useEffect(function() {
     pluginApi("GET", "/catalog").then(function(r) {
       if (r && r.ok && r.body && r.body.catalog) setCatalog(r.body.catalog);
     });
     pluginApi("GET", "/settings").then(function(r) {
       if (r && r.ok && r.body && r.body.settings) setSettings(r.body.settings);
+    });
+    pluginApi("GET", "/healthz").then(function(r) {
+      if (r && r.ok && r.body) setHealth(r.body);
     });
   }, []);
 
@@ -1254,6 +1266,17 @@ function App() {
         })}
       </nav>
       <main className="content">
+        {health && health.init_error ? (
+          <div className="init-error-banner">
+            <strong>{t("init.error.title")}</strong>
+            <span style={{ marginLeft: 8 }}>
+              {health.init_error.phase} · {health.init_error.type}: {health.init_error.message}
+            </span>
+            <div style={{ fontSize: 11, marginTop: 4, color: "var(--text-muted)" }}>
+              {t("init.error.hint")}
+            </div>
+          </div>
+        ) : null}
         {tab === "studio" && (
           <Studio t={t} catalog={catalog} settings={settings} toast={toast} />
         )}

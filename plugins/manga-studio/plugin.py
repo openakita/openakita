@@ -246,6 +246,11 @@ class Plugin(PluginBase):
         self._pipeline: MangaPipeline | None = None
         self._comfy_client: MangaComfyClient | None = None
         self._oss: Any | None = None
+        # P3-14 — populated by ``_async_init`` if either DB schema setup
+        # or client construction blew up. ``/healthz`` surfaces it so
+        # the UI can show a red banner instead of silently leaving the
+        # plugin in a half-loaded state.
+        self._init_error: dict[str, Any] | None = None
 
         # Background task registry — populated when the pipeline kicks
         # off via POST /episodes. ``on_unload`` cancels everything in
@@ -264,11 +269,21 @@ class Plugin(PluginBase):
         Each client is constructed with a ``read_settings`` callable —
         none of them touch the network at construction time, so a missing
         API key only fails the FIRST request, not plugin load.
+
+        Failures are *captured* into ``self._init_error`` so ``/healthz``
+        can surface them to the UI; we still return cleanly (the host
+        must never see ``on_load`` raise).
         """
+        self._init_error = None
         try:
             await self._tm.init()
         except Exception as exc:  # noqa: BLE001 - never crash on_load
             self._api.log(f"manga-studio: task manager init failed: {exc!r}", "error")
+            self._init_error = {
+                "phase": "task_manager",
+                "type": type(exc).__name__,
+                "message": str(exc) or repr(exc),
+            }
             return
 
         # Construct the Phase-2 clients. ``read_settings`` is a fresh
@@ -294,6 +309,11 @@ class Plugin(PluginBase):
             )
         except Exception as exc:  # noqa: BLE001
             self._api.log(f"manga-studio: client wire-up failed: {exc!r}", "error")
+            self._init_error = {
+                "phase": "clients",
+                "type": type(exc).__name__,
+                "message": str(exc) or repr(exc),
+            }
 
     async def on_unload(self) -> None:
         """Cancel any background polling task and close the DB cleanly."""
@@ -947,7 +967,11 @@ class Plugin(PluginBase):
         @router.get("/healthz")
         async def healthz() -> dict[str, Any]:
             return {
-                "ok": True,
+                # ``ok`` reflects whether ``_async_init`` finished cleanly.
+                # The route itself can still serve when init failed (e.g.
+                # for the user to inspect the error); the UI keys off
+                # this flag to decide whether to show the failure banner.
+                "ok": self._init_error is None,
                 "plugin": PLUGIN_ID,
                 "phase": 2,
                 "backends_ready": {
@@ -962,6 +986,7 @@ class Plugin(PluginBase):
                     "comfy": self._comfy_client is not None,
                     "oss": self._oss is not None,
                 },
+                "init_error": self._init_error,
             }
 
         _SECRET_KEYS = (

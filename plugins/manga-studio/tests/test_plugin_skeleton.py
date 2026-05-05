@@ -238,6 +238,63 @@ async def test_render_panel_tool_calls_pipeline_image_step(tmp_path: Path) -> No
     await p.on_unload()
 
 
+async def test_async_init_failure_surfaces_through_healthz(tmp_path: Path, monkeypatch) -> None:
+    """P3-14 regression: when ``_async_init`` blows up (most realistic
+    cause: corrupt SQLite file from a prior crash), the user should
+    see *something*. Before the fix this was a silent log line — UI
+    had no signal whatsoever and the plugin appeared to load."""
+    import importlib
+
+    import plugin as plugin_module
+
+    importlib.reload(plugin_module)
+    api = _StubAPI(tmp_path)
+    p = plugin_module.Plugin()
+
+    # Force the task manager init to raise — same shape as a corrupted
+    # WAL or a permissions error.
+    async def boom() -> None:
+        raise RuntimeError("simulated DB corruption")
+
+    p_orig_load = p.on_load
+    def patched_load(api):
+        p_orig_load(api)
+        # Replace the task manager init AFTER on_load registered the
+        # spawn_task; the swapped coroutine is what _async_init awaits.
+        from manga_task_manager import MangaTaskManager  # noqa: PLC0415
+
+        async def init_fail(self) -> None:
+            raise RuntimeError("simulated DB corruption")
+        monkeypatch.setattr(MangaTaskManager, "init", init_fail, raising=True)
+
+    # Easier — patch BEFORE on_load.
+    from manga_task_manager import MangaTaskManager  # noqa: PLC0415
+
+    async def init_fail(self) -> None:  # noqa: ARG001
+        raise RuntimeError("simulated DB corruption")
+
+    monkeypatch.setattr(MangaTaskManager, "init", init_fail, raising=True)
+
+    p.on_load(api)
+    for t in list(api.spawned):
+        try:
+            await t
+        except Exception:  # noqa: BLE001
+            pass
+
+    assert p._init_error is not None  # type: ignore[attr-defined]
+    assert p._init_error["phase"] == "task_manager"  # type: ignore[attr-defined]
+    assert "simulated DB corruption" in p._init_error["message"]  # type: ignore[attr-defined]
+
+    # And the /healthz route reports ``ok=False`` so the UI can react.
+    routes = api.routers[0].routes
+    healthz_route = next(r for r in routes if r.path == "/healthz")
+    response = await healthz_route.endpoint()
+    assert response["ok"] is False
+    assert response["init_error"]["phase"] == "task_manager"
+    assert "simulated DB corruption" in response["init_error"]["message"]
+
+
 async def test_render_panel_tool_rejects_bad_args(tmp_path: Path) -> None:
     """Sanity: missing/invalid args yield a clean ``error:`` string."""
     _, p, api = await _fresh_plugin_with_init(tmp_path)
