@@ -220,14 +220,11 @@ class _FakeWriter:
             data={
                 "episode_title": "E2E Test Episode",
                 "summary": "Automated E2E walk-through",
-                # NB: ``image_url`` is pre-populated even though the
-                # pipeline regenerates the actual image bytes via
-                # ``_gen_panel_image``. The current pipeline design
-                # uses storyboard-level URLs as the I2V source — see
-                # the comment in ``manga_pipeline._gen_panel_video_i2v``
-                # ("upload to OSS before I2V"). We mirror what the
-                # unit-level happy-path test does so this E2E walks
-                # through the same code path production would.
+                # ``image_url`` is left empty here on purpose — a real
+                # LLM almost never invents OSS URLs. After the P0-1 fix
+                # the pipeline writes the wanxiang-returned URL back
+                # onto the storyboard inside ``_panel_loop`` so I2V
+                # has a vendor-fetchable URL.
                 "panels": [
                     {
                         "idx": 0,
@@ -238,7 +235,7 @@ class _FakeWriter:
                         "action": "走入",
                         "mood": "calm",
                         "background": "教室",
-                        "image_url": "https://oss/p0.png",
+                        "image_url": "",
                     },
                     {
                         "idx": 1,
@@ -249,7 +246,7 @@ class _FakeWriter:
                         "action": "举手",
                         "mood": "focus",
                         "background": "黑板",
-                        "image_url": "https://oss/p1.png",
+                        "image_url": "",
                     },
                 ],
             },

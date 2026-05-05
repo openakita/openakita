@@ -445,6 +445,69 @@ async def test_run_episode_happy_path(_build_pipeline) -> None:
     assert last_task[1]["progress"] == 100
 
 
+# ─── P0-1 regression: image URL flows from gen → I2V ─────────────────────
+
+
+async def test_panel_image_url_is_piped_back_to_storyboard_for_i2v(_build_pipeline) -> None:
+    """Reproduces the production bug Phase-4 review surfaced.
+
+    Before the fix, ``_gen_panel_image`` downloaded the wanxiang URL
+    to disk and *threw the URL away*; ``_gen_panel_video_i2v`` then
+    read ``sb_panel["image_url"]`` (an LLM-written field that's
+    almost always empty) → every real run died with
+    ``image_url missing``. We now write the wanxiang URL back onto
+    the storyboard, so this test starts with an *empty* image_url
+    and asserts I2V got the wanxiang URL.
+    """
+    # Storyboard with empty image_url — what a real LLM produces.
+    writer = _FakeWriter(
+        storyboard={
+            "episode_title": "X",
+            "summary": "x",
+            "panels": [
+                {
+                    "idx": 0,
+                    "narration": "p0",
+                    "dialogue": [],
+                    "characters_in_scene": ["李雷"],
+                    "camera": "中景",
+                    "action": "走入",
+                    "mood": "calm",
+                    "background": "教室",
+                    "image_url": "",
+                },
+            ],
+        }
+    )
+    # Wanxiang returns a known URL — we want to see this URL flow
+    # all the way to ark.submit_seedance_i2v.
+    wx = _FakeWanxiang(
+        poll_returns={
+            "task_id": "tid",
+            "status": "SUCCEEDED",
+            "is_done": True,
+            "is_ok": True,
+            "output_url": "https://oss/wan2.7-generated.png",
+            "output_kind": "image",
+        }
+    )
+    pipe, fakes = _build_pipeline(writer=writer, wanxiang=wx)
+
+    res = await pipe.run_episode(
+        episode_id="ep_url_flow",
+        config=MangaPipelineConfig(
+            story="x", n_panels=1, bound_character_ids=["c1"], burn_subtitles=False
+        ),
+        task_id="task_url_flow",
+    )
+
+    assert res.errors == [], f"unexpected soft errors: {res.errors}"
+    assert len(fakes["ar"].i2v_calls) == 1, "I2V must have been called"
+    # The crux: I2V received the URL the wanxiang client produced,
+    # not the empty LLM-suggested string.
+    assert fakes["ar"].i2v_calls[0]["image_url"] == "https://oss/wan2.7-generated.png"
+
+
 # ─── Per-panel image fail (soft error) ───────────────────────────────────
 
 

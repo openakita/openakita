@@ -469,7 +469,7 @@ class MangaPipeline:
                     panel_index=idx,
                 )
                 img_path = ep_dir / "panels" / f"panel_{idx:03d}.png"
-                await self._gen_panel_image(
+                gen_url = await self._gen_panel_image(
                     prompt=img_prompt.prompt,
                     negative_prompt=img_prompt.negative_prompt,
                     ref_urls=img_prompt.reference_image_urls,
@@ -478,6 +478,15 @@ class MangaPipeline:
                     backend=config.backend,
                 )
                 panel.image_path = img_path
+                # Pipe the generated public URL back onto the
+                # storyboard so step 4's I2V has a vendor-fetchable
+                # URL. The LLM that wrote the storyboard never sees
+                # the future OSS URL, so it leaves ``image_url`` blank;
+                # we fill it in here. wan2.7-image / RunningHub URLs
+                # are valid for 24h which is more than enough for the
+                # rest of the pipeline.
+                if gen_url:
+                    sb_panel["image_url"] = gen_url
             except VendorError as exc:
                 # Hard vendor failure on the FIRST panel → abort. We
                 # don't want to spend more quota retrying every panel
@@ -672,7 +681,7 @@ class MangaPipeline:
         ratio: str,
         output_path: Path,
         backend: str = "direct",
-    ) -> None:
+    ) -> str:
         """Generate one panel image, downloading to ``output_path``.
 
         Branches on ``backend``:
@@ -681,8 +690,13 @@ class MangaPipeline:
         - ``runninghub`` / ``comfyui_local``: ``MangaComfyClient.generate_image``
           which runs the user's image workflow synchronously.
 
-        In either case the call returns a public URL and we stream it
-        into ``output_path``.
+        Returns the *remote* URL the vendor produced (DashScope OSS or
+        the ComfyUI / RunningHub output). The caller writes that URL
+        back onto the storyboard panel so the I2V step has a public
+        URL the vendor can fetch — wan2.7's URL is short-lived (24h)
+        but that's plenty for the rest of the pipeline. We also
+        download bytes to ``output_path`` for local artefact storage
+        and (eventually) for re-uploads if the URL expires.
         """
         size = _ratio_to_size(ratio)
         if backend in ("runninghub", "comfyui_local"):
@@ -700,6 +714,7 @@ class MangaPipeline:
                 size=size,
             )
         await self._download_to(url, output_path)
+        return url
 
     async def _gen_panel_image_via_direct(
         self,
