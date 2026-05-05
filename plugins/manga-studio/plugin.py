@@ -156,6 +156,53 @@ class _EpisodeCreate(BaseModel):
     confirm_over_threshold: bool = False
 
 
+class _TestConnectionRequest(BaseModel):
+    """POST /test-connection body — probe one of the direct vendors.
+
+    The user can pass an *override* api_key in the body so we test what
+    they just typed (but haven't saved yet); when omitted we fall back
+    to the persisted key. This avoids the "type → save → realise it's
+    wrong → re-edit → save" loop entirely.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    vendor: str = Field("dashscope", pattern="^(ark|dashscope)$")
+    api_key: str | None = None
+
+
+class _TestBackendRequest(BaseModel):
+    """POST /test-backend body — probe the workflow backend.
+
+    The user can pass override fields just like /test-connection so the
+    test button works before the user clicks 保存."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: str = Field("runninghub", pattern="^(runninghub|comfyui_local)$")
+    runninghub_api_key: str | None = None
+    runninghub_instance_type: str | None = None
+    comfyui_local_url: str | None = None
+    comfyui_local_api_key: str | None = None
+
+
+class _CleanupRequest(BaseModel):
+    """POST /cleanup body — remove tasks older than ``retention_days``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    retention_days: int = Field(30, ge=1, le=3650)
+
+
+class _OpenFolderRequest(BaseModel):
+    """POST /storage/open-folder body — resolve key OR path then xdg-open."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str | None = None  # one of {data_dir, episodes, uploads, tasks}
+    path: str | None = None
+
+
 class _CostPreviewRequest(BaseModel):
     """POST /cost-preview body — pure estimation, no DB writes."""
 
@@ -176,40 +223,121 @@ PLUGIN_ID = "manga-studio"
 SETTINGS_KEY = "manga_studio_settings"
 PLUGIN_DIR = Path(__file__).resolve().parent
 
+
+# ── Optional Python dependencies ────────────────────────────────────────
+#
+# These are runtime extras the plugin can self-install on demand via the
+# in-app installer (mirrors avatar-studio's pattern). The user can also
+# pip-install them by hand, or skip them entirely if they don't use the
+# corresponding feature (e.g. no OSS uploads → no need for ``oss2``).
+#
+# The installer routes (`/system/python-deps*`) probe each entry's
+# ``import_name``; if it imports, the UI shows a green check, otherwise
+# it offers a one-click install. ``preinstall_async`` in ``on_load``
+# warms the most-likely-needed ones in the background so the user's
+# first OSS upload / TTS job doesn't pay the install latency.
+PYTHON_DEPS: dict[str, dict[str, str]] = {
+    "oss2": {
+        "id": "oss2",
+        "display_name": "阿里云 OSS SDK",
+        "description": "上传图片 / 视频 / 音频到 OSS，给 DashScope/RunningHub 提供公网 URL。",
+        "import_name": "oss2",
+        "pip_spec": "oss2>=2.18.0",
+    },
+    "mutagen": {
+        "id": "mutagen",
+        "display_name": "Mutagen",
+        "description": "读取 TTS 音频时长，避免漫剧画面被错误地固定为 5 秒一镜。",
+        "import_name": "mutagen",
+        "pip_spec": "mutagen>=1.47.0",
+    },
+    "edge_tts": {
+        "id": "edge_tts",
+        "display_name": "Edge TTS",
+        "description": "本地免费的微软 Edge 语音合成，无需 API Key。",
+        "import_name": "edge_tts",
+        "pip_spec": "edge-tts>=6.1.0",
+    },
+    "dashscope": {
+        "id": "dashscope",
+        "display_name": "DashScope SDK",
+        "description": "使用通义千问 / 万相 / CosyVoice 时的官方 Python SDK 兜底通道。",
+        "import_name": "dashscope",
+        "pip_spec": "dashscope>=1.20.0",
+    },
+    "comfykit": {
+        "id": "comfykit",
+        "display_name": "ComfyKit",
+        "description": "调用 RunningHub 云端工作流和本地 ComfyUI 的官方客户端。",
+        "import_name": "comfykit",
+        "pip_spec": "comfykit>=0.3.0",
+    },
+}
+
+
+class _PythonDepInstallBody(BaseModel):
+    """POST /system/python-deps/{dep_id}/install body."""
+
+    model_config = ConfigDict(extra="forbid")
+    force: bool = False
+
+
 # Default settings persisted to ``data/config.json``. Keys mirror what the
 # Settings tab will write back via PUT /settings; concrete clients in
 # Phase 2 / Phase 3 read this dict via the ``read_settings`` callable
 # (Pixelle A10 — hot reload without plugin reload).
 DEFAULT_SETTINGS: dict[str, Any] = {
-    # Direct backend (Phase 2)
+    # ── Direct backend (Phase 2) — Ark Seedance + DashScope wan2.7 + TTS
     "ark_api_key": "",
     "ark_endpoint_id": "",
     "dashscope_api_key": "",
     "dashscope_region": "beijing",
     "tts_engine": "edge",  # "edge" | "cosyvoice"
-    # Workflow backend (Phase 3) — picked when ``backend != "direct"``
-    # on a generation request. ``comfy_backend`` selects between
-    # RunningHub (cloud) and a self-hosted ComfyUI install. The three
-    # ``*_workflow_*`` keys map workflow modes to either RunningHub
-    # workflow IDs (numeric strings RH gives you on the dashboard) or
-    # local-file paths to exported workflow JSONs.
+    "tts_voice_edge": "zh-CN-XiaoxiaoNeural",  # default Edge voice picker
+
+    # ── Default generation preferences (apply to new episodes) ──────
+    # ``default_generation_backend`` is the *fallback* for a new series /
+    # ad-hoc render request when neither the series nor the request
+    # itself pinned a backend. Per-series ``backend_pref`` and per-task
+    # ``backend`` still override this.
+    "default_generation_backend": "direct",  # direct | runninghub | comfyui_local
+    "default_resolution": "480P",  # "480P" | "720P"
+    "default_image_model": "wan2.7-image",  # wan2.7-image | wan2.7-image-pro
+    "default_video_model": "seedance-1.0-lite-i2v",
+
+    # ── Workflow backend (Phase 3) — RunningHub (cloud) or local ComfyUI
     "comfy_backend": "runninghub",  # "runninghub" | "comfyui_local"
     "runninghub_api_key": "",
+    "runninghub_instance_type": "plus",  # "standard" | "plus"
     "runninghub_workflow_image": "",
     "runninghub_workflow_animate": "",
     "runninghub_workflow_t2v": "",
     "comfyui_local_url": "",
+    "comfyui_local_api_key": "",
     "comfyui_workflow_image": "",
     "comfyui_workflow_animate": "",
     "comfyui_workflow_t2v": "",
-    # OSS — used by both backends to host reference images / panel images
-    # / final videos so vendors can fetch via signed URL.
+
+    # ── Aliyun OSS — required for any vendor that fetches via signed URL.
+    # All four fields must be set together; partial config is rejected at
+    # use-time with a "请到设置 → OSS 完成配置" hint.
     "oss_endpoint": "",
     "oss_bucket": "",
     "oss_access_key_id": "",
     "oss_access_key_secret": "",
-    "oss_url_prefix": "",
-    # Cost guard — pipeline pauses for confirmation when the estimate
+    "oss_path_prefix": "manga-studio",  # default object path prefix
+
+    # ── Storage & cleanup (mirror avatar-studio for parity) ─────────
+    "custom_data_dir": "",  # blank → host-managed data dir
+    "output_subdir_mode": "task",  # task | date | mode | date_mode | flat
+    "output_naming_rule": "{filename}",
+    "retention_days": 30,  # auto-cleanup window for completed tasks
+
+    # ── Advanced HTTP knobs (per-vendor request) ────────────────────
+    "timeout_sec": 60,
+    "max_retries": 2,
+
+    # ── Cost guard — pipeline pauses for confirmation when the estimate
     # exceeds this. ``0`` disables the guard entirely.
     "cost_threshold_cny": 5.0,
 }
@@ -256,6 +384,50 @@ class Plugin(PluginBase):
         # off via POST /episodes. ``on_unload`` cancels everything in
         # here, mirroring avatar-studio's pattern.
         self._poll_tasks: dict[str, asyncio.Task[Any]] = {}
+
+        # Kick off a background pre-install of the most-likely-needed
+        # optional Python deps (oss2 / mutagen / edge_tts) BEFORE
+        # registering routes. Same trick avatar-studio uses — by the
+        # time the user clicks 上传 / 渲染, the pip work is usually
+        # already finished, so the first job doesn't pay the install
+        # latency. Failures here are silently swallowed: the synchronous
+        # path in oss_uploader._bucket / tts_client will surface a
+        # proper UI error later if anything's still missing.
+        #
+        # NOTE: pytest sets ``PYTEST_CURRENT_TEST`` automatically, and CI
+        # / smoke harnesses can opt out via ``OPENAKITA_DISABLE_DEP_BOOT``.
+        # That keeps the test suite from spawning a real ``pip install``
+        # subprocess (which once stalled the whole pytest run because pip
+        # was reaching out to mirror.aliyun.com on a sandboxed runner).
+        import os as _os
+
+        _disable_boot = bool(
+            _os.environ.get("PYTEST_CURRENT_TEST")
+            or _os.environ.get("OPENAKITA_DISABLE_DEP_BOOT")
+        )
+        if not _disable_boot:
+            try:
+                import importlib
+                import sys
+
+                sys.modules.pop("manga_inline.dep_bootstrap", None)
+                importlib.invalidate_caches()
+                from manga_inline.dep_bootstrap import preinstall_async
+
+                preinstall_async(
+                    [
+                        ("oss2", "oss2>=2.18.0"),
+                        ("mutagen", "mutagen>=1.47.0"),
+                        ("edge_tts", "edge-tts>=6.1.0"),
+                    ],
+                    plugin_dir=PLUGIN_DIR,
+                )
+            except Exception as exc:  # noqa: BLE001 - don't fail plugin load
+                api.log(
+                    f"manga-studio: dep preinstall skipped ({exc!r}); "
+                    "first OSS upload / Edge TTS job will install on demand",
+                    "warning",
+                )
 
         self._register_routes(api)
         self._register_tools(api)
@@ -343,6 +515,59 @@ class Plugin(PluginBase):
                 if k in DEFAULT_SETTINGS:
                     merged[k] = v
         return merged
+
+    def _enriched_settings(self) -> dict[str, Any]:
+        """Single source of truth for the Settings GET / PUT response shape.
+
+        The UI keys off boolean flags like ``oss_configured`` to render
+        "已配置 ✓" badges and the top-of-page banner. Computing them here
+        means GET and PUT can't drift apart (mirrors avatar-studio's
+        ``_enriched_settings`` helper)."""
+        cfg = self._load_settings()
+
+        # Per-secret "is this set" booleans — the UI uses these for the
+        # green 「已保存」 chip and to decide whether to render
+        # 「重新输入将覆盖」 placeholder text. We deliberately echo the
+        # raw value back as-is (host already requires plugin token), so
+        # the user can verify what was saved and toggle visibility with
+        # the eye icon.
+        cfg["has_ark_key"] = bool(str(cfg.get("ark_api_key") or "").strip())
+        cfg["has_dashscope_key"] = bool(str(cfg.get("dashscope_api_key") or "").strip())
+        cfg["has_runninghub_key"] = bool(str(cfg.get("runninghub_api_key") or "").strip())
+        cfg["has_comfyui_url"] = bool(str(cfg.get("comfyui_local_url") or "").strip())
+
+        # OSS — all four fields must be set together for any task to run;
+        # surface a single ``oss_configured`` flag plus a status message
+        # the banner can show inline.
+        oss_keys = (
+            "oss_endpoint",
+            "oss_bucket",
+            "oss_access_key_id",
+            "oss_access_key_secret",
+        )
+        cfg["oss_configured"] = all(str(cfg.get(k) or "").strip() for k in oss_keys)
+        cfg["oss_secret_set"] = bool(str(cfg.get("oss_access_key_secret") or "").strip())
+        any_filled = any(str(cfg.get(k) or "").strip() for k in oss_keys)
+        if cfg["oss_configured"]:
+            cfg["oss_status_message"] = ""
+        elif any_filled:
+            missing = [k for k in oss_keys if not str(cfg.get(k) or "").strip()]
+            cfg["oss_status_message"] = f"OSS 部分字段未填: {', '.join(missing)}"
+        else:
+            cfg["oss_status_message"] = ""
+
+        # Per-backend "configured" rollups so the UI tabs can decorate
+        # the backend selector / settings header with a single chip.
+        cfg["runninghub_configured"] = cfg["has_runninghub_key"]
+        cfg["comfyui_configured"] = cfg["has_comfyui_url"]
+        cfg["direct_configured"] = cfg["has_ark_key"] or cfg["has_dashscope_key"]
+
+        # Effective on-disk data dir (custom_data_dir, falling back to
+        # the host-issued path). UI shows this under the "数据目录" input
+        # so the user always knows where their files live, even when the
+        # input is blank.
+        cfg["data_dir_active"] = str(self._data_dir)
+        return cfg
 
     def _save_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         """Merge ``updates`` into the stored settings dict and persist.
@@ -989,41 +1214,36 @@ class Plugin(PluginBase):
                 "init_error": self._init_error,
             }
 
-        _SECRET_KEYS = (
-            "ark_api_key",
-            "dashscope_api_key",
-            "runninghub_api_key",
-            "oss_access_key_secret",
-        )
-
-        def _redact(s: dict[str, Any]) -> dict[str, Any]:
-            """Return a copy with secret keys reduced to a length hint.
-
-            UI never receives the raw secret — it only ever needs to
-            know "is this set" and "what's the prefix" so the user can
-            tell two keys apart. avatar-studio uses the same pattern.
-            """
-            out = dict(s)
-            for k in _SECRET_KEYS:
-                v = out.get(k) or ""
-                if isinstance(v, str) and v:
-                    out[k] = (
-                        v[:4] + "•" * max(0, len(v) - 8) + v[-4:] if len(v) > 8 else "•" * len(v)
-                    )
-            return out
+        # NOTE — 2026-05 refactor: stop redacting secrets in the GET
+        # response. The host already gates this route behind the plugin
+        # token, so masking here only broke the "click 保存 then field
+        # empties" UX without adding real defense-in-depth (mirrors
+        # avatar-studio's stance). The UI gates visibility behind a 显示
+        # toggle that defaults to masked, and uses the ``has_*_key``
+        # booleans returned by ``_enriched_settings`` to render the
+        # 「已保存」 chip without reading the raw value.
 
         @router.get("/settings")
         async def get_settings() -> dict[str, Any]:
-            return {"settings": _redact(self._load_settings())}
+            # Echo the api_key back as-is. The Settings tab needs to be able
+            # to display it (gated behind a 显示 toggle that defaults to
+            # masked) so the user can both verify what was saved and copy it
+            # out if they're rotating keys. Anyone who can call this endpoint
+            # already has the host-issued plugin token.
+            return {"ok": True, "settings": self._enriched_settings()}
 
         @router.put("/settings")
         async def put_settings(payload: _SettingsUpdate) -> dict[str, Any]:
+            # ``exclude_unset`` means only the fields the UI actually
+            # touched on this call are persisted — patch save semantics,
+            # which lets each <input> commit its own value onBlur without
+            # accidentally clobbering a sibling that's mid-edit.
             updates = payload.model_dump(exclude_unset=True)
             try:
-                merged = self._save_settings(updates)
+                self._save_settings(updates)
             except Exception as exc:  # noqa: BLE001 - surface a 400, not 500
                 raise HTTPException(400, f"failed to update settings: {exc!r}") from exc
-            return {"ok": True, "settings": _redact(merged)}
+            return {"ok": True, "settings": self._enriched_settings()}
 
         # ── Characters ───────────────────────────────────────────────
         # Reusable character cards. The single most-shared entity across
@@ -1503,14 +1723,64 @@ class Plugin(PluginBase):
                 "oss_error": "OSS not configured (Phase 2 wiring pending)",
             }
 
-        # ── Storage stats ────────────────────────────────────────────
-        # The Settings tab's storage panel polls this — knowing how much
-        # disk the plugin has burned is a real concern for users running
-        # locally on a small SSD; the helper caps the walk at 5000 files
-        # and runs off the loop so a deep tree can't stall a request.
+        # ── Storage management — per-folder rollups + folder-open helper.
+        #     Mirrors plugins/avatar-studio so the UI can render the same
+        #     "数据目录 + 子目录" stats grid and the 「打开文件夹」 affordance.
+        #     Four well-known *keys* map to the directories we write to:
+        #       data_dir → effective root (custom_data_dir or default)
+        #       episodes → final.mp4 + per-panel artefacts
+        #       uploads  → user-imported assets pre-OSS push
+        #       tasks    → per-task scratch (intermediate downloads)
+
+        def _storage_dirs() -> dict[str, Path]:
+            base = self._data_dir
+            return {
+                "data_dir": base,
+                "episodes": base / "episodes",
+                "uploads": base / "uploads",
+                "tasks": base / "tasks",
+            }
+
+        @router.get("/storage/stats")
+        async def storage_stats_per_folder() -> dict[str, Any]:
+            """Per-folder rollup. Walk is bounded — 50k files is comfortably
+            past 「I made hundreds of episodes」 territory without risking
+            a UI stall on a pathological filesystem."""
+            MAX_FILES = 50000
+            stats: dict[str, dict[str, Any]] = {}
+            truncated_any = False
+            for key, d in _storage_dirs().items():
+                total_bytes = 0
+                file_count = 0
+                truncated = False
+                if d.is_dir():
+                    try:
+                        for p in d.rglob("*"):
+                            try:
+                                if p.is_file():
+                                    total_bytes += p.stat().st_size
+                                    file_count += 1
+                                    if file_count >= MAX_FILES:
+                                        truncated = True
+                                        break
+                            except OSError:
+                                continue
+                    except OSError:
+                        pass
+                truncated_any = truncated_any or truncated
+                stats[key] = {
+                    "path": str(d),
+                    "size_bytes": total_bytes,
+                    "size_mb": round(total_bytes / 1048576, 1),
+                    "file_count": file_count,
+                    "truncated": truncated,
+                }
+            return {"ok": True, "stats": stats, "truncated": truncated_any}
 
         @router.get("/storage")
-        async def storage_stats() -> dict[str, Any]:
+        async def storage_legacy() -> dict[str, Any]:
+            """Back-compat for the legacy single-folder rollup. Preferred
+            new code path is GET /storage/stats."""
             stats = await collect_storage_stats(
                 self._data_dir,
                 max_files=5000,
@@ -1522,6 +1792,244 @@ class Plugin(PluginBase):
                 "data_dir": str(self._data_dir),
                 "stats": stats.to_dict(),
             }
+
+        @router.post("/storage/open-folder")
+        async def open_folder(body: _OpenFolderRequest) -> dict[str, Any]:
+            """Resolve the requested folder and reveal it in the OS file
+            manager. Mirrors avatar-studio so the UI 「打开」 button works
+            on Windows / macOS / Linux without any host bridge."""
+            raw_path = (body.path or "").strip()
+            key = (body.key or "").strip()
+            if not raw_path and not key:
+                raise HTTPException(status_code=400, detail="Missing path or key")
+            if raw_path:
+                target = Path(raw_path).expanduser()
+            else:
+                defaults = _storage_dirs()
+                if key not in defaults:
+                    raise HTTPException(status_code=400, detail=f"Unknown key: {key}")
+                target = defaults[key]
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=500, detail=f"Cannot create folder: {exc}"
+                ) from exc
+            import subprocess
+            import sys
+
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", str(target)])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(target)])
+                else:
+                    subprocess.Popen(["xdg-open", str(target)])
+            except (OSError, FileNotFoundError) as exc:
+                raise HTTPException(
+                    status_code=500, detail=f"Cannot open folder: {exc}"
+                ) from exc
+            return {"ok": True, "path": str(target)}
+
+        @router.post("/cleanup")
+        async def cleanup(body: _CleanupRequest) -> dict[str, Any]:
+            """Remove DB rows + on-disk artefacts for tasks older than
+            ``retention_days`` days. Returns the number of tasks pruned.
+
+            We do the disk scrub *before* the SQL DELETE so a partial
+            failure (e.g. a task dir that's still being written to)
+            doesn't strand orphan files on disk. The DB row is the
+            authoritative "did this task exist?" record."""
+            import shutil
+            import time as _time
+
+            cutoff_epoch = _time.time() - max(0, int(body.retention_days)) * 86400
+            scrubbed_dirs = 0
+            for sub in ("tasks", "episodes"):
+                base = self._data_dir / sub
+                if not base.is_dir():
+                    continue
+                for entry in base.iterdir():
+                    try:
+                        if not entry.is_dir():
+                            continue
+                        if entry.stat().st_mtime > cutoff_epoch:
+                            continue
+                        shutil.rmtree(entry)
+                        scrubbed_dirs += 1
+                    except OSError as exc:
+                        self._api.log(
+                            f"manga-studio: cleanup rmtree {entry} failed: {exc!r}",
+                            "warning",
+                        )
+            try:
+                removed = await self._tm.cleanup_expired_tasks(
+                    retention_days=body.retention_days,
+                )
+            except Exception as exc:  # noqa: BLE001 - never 500 a cleanup
+                self._api.log(
+                    f"manga-studio: cleanup DB sweep failed: {exc!r}",
+                    "warning",
+                )
+                removed = 0
+            return {
+                "ok": True,
+                "removed": int(removed or 0),
+                "scrubbed_dirs": scrubbed_dirs,
+                "retention_days": body.retention_days,
+            }
+
+        # ── Connection probes — cheap "did the user type the right key?"
+        #     buttons that round-trip a single non-billable endpoint.
+
+        @router.post("/test-connection")
+        async def test_connection(body: _TestConnectionRequest) -> dict[str, Any]:
+            """Probe one of the direct vendor APIs to verify a key is valid.
+
+            Body fields:
+              vendor   : "ark" or "dashscope" (selects the endpoint).
+              api_key  : (optional) the key to test — falls back to the
+                         persisted one when omitted.
+            """
+            import httpx
+
+            vendor = body.vendor
+            override_key = (body.api_key or "").strip() or None
+            cfg = self._load_settings()
+            if vendor == "ark":
+                key = override_key or str(cfg.get("ark_api_key") or "").strip()
+                # Volcano Ark exposes an OpenAI-style /v1/models endpoint
+                # under the same base URL the inference client uses.
+                url = "https://ark.cn-beijing.volces.com/api/v3/models"
+                label = "Ark (Volcano Engine)"
+            else:
+                key = override_key or str(cfg.get("dashscope_api_key") or "").strip()
+                # DashScope's billable-free probe — returns 401 on bad key,
+                # 200 on good one. International region keys also work
+                # against the bj host so we don't need a region split here.
+                url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+                label = "DashScope (阿里云百炼)"
+            if not key:
+                return {
+                    "ok": False,
+                    "vendor": vendor,
+                    "label": label,
+                    "message": f"{label} 的 API Key 未填写",
+                }
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    if vendor == "ark":
+                        # GET /models — needs nothing in the body.
+                        resp = await client.get(
+                            url, headers={"Authorization": f"Bearer {key}"}
+                        )
+                    else:
+                        # DashScope — issue an empty POST; the server returns
+                        # 400/401 fast without consuming any tokens.
+                        resp = await client.post(
+                            url,
+                            headers={"Authorization": f"Bearer {key}"},
+                            json={"input": {}, "model": ""},
+                        )
+            except httpx.HTTPError as exc:
+                return {
+                    "ok": False,
+                    "vendor": vendor,
+                    "label": label,
+                    "message": f"网络异常: {exc}",
+                }
+            ok = resp.status_code in (200, 400)
+            # 400 with a body explaining "model required" still proves the
+            # key authenticated; only 401/403 mean the key is bad.
+            if resp.status_code in (401, 403):
+                ok = False
+                message = "鉴权失败 (401/403) — API Key 无效或已过期"
+            elif ok:
+                message = f"连接成功 (HTTP {resp.status_code})"
+            else:
+                message = f"未预期的状态码 (HTTP {resp.status_code})"
+            return {
+                "ok": ok,
+                "vendor": vendor,
+                "label": label,
+                "status": resp.status_code,
+                "message": message,
+            }
+
+        @router.post("/test-backend")
+        async def test_backend(body: _TestBackendRequest) -> dict[str, Any]:
+            """Probe the chosen workflow backend (RunningHub or local
+            ComfyUI). Reuses ``MangaComfyClient.probe_backend`` so the
+            probe semantics stay aligned with what the pipeline checks
+            on a real generation request."""
+            override = {
+                "comfy_backend": body.backend,
+                "runninghub_api_key": (body.runninghub_api_key or "").strip(),
+                "runninghub_instance_type": (body.runninghub_instance_type or "").strip(),
+                "comfyui_local_url": (body.comfyui_local_url or "").strip(),
+                "comfyui_local_api_key": (body.comfyui_local_api_key or "").strip(),
+            }
+            base = self._load_settings()
+            merged = {**base, **{k: v for k, v in override.items() if v}}
+            tmp_client = MangaComfyClient(read_settings=lambda: merged)
+            result = await tmp_client.probe_backend()
+            return result
+
+        # ── Python dependency installer ──────────────────────────────
+        # Mirrors avatar-studio's installer surface so the UI (Settings →
+        # 「依赖检测」) can list all optional Python packages, show
+        # ✓ 已就绪 / ⚠ 未安装, and trigger a one-click install in a
+        # background thread without blocking the FastAPI worker.
+
+        def _python_dep_spec(dep_id: str) -> dict[str, str]:
+            spec = PYTHON_DEPS.get(dep_id)
+            if spec is None:
+                raise HTTPException(404, f"Unknown Python dependency: {dep_id}")
+            return spec
+
+        def _python_dep_status(dep_id: str) -> dict[str, Any]:
+            spec = _python_dep_spec(dep_id)
+            from manga_inline.dep_bootstrap import probe_dependency
+
+            status = probe_dependency(
+                dep_id,
+                spec["import_name"],
+                plugin_dir=PLUGIN_DIR,
+            )
+            return {**spec, **status}
+
+        @router.get("/system/python-deps")
+        async def list_python_deps() -> dict[str, Any]:
+            return {
+                "ok": True,
+                "components": [_python_dep_status(dep_id) for dep_id in PYTHON_DEPS],
+            }
+
+        @router.get("/system/python-deps/{dep_id}/status")
+        async def python_dep_status(dep_id: str) -> dict[str, Any]:
+            return {"ok": True, "component": _python_dep_status(dep_id)}
+
+        @router.post("/system/python-deps/{dep_id}/install")
+        async def install_python_dep(
+            dep_id: str,
+            body: _PythonDepInstallBody | None = None,
+        ) -> dict[str, Any]:
+            spec = _python_dep_spec(dep_id)
+            from manga_inline.dep_bootstrap import start_install
+
+            if body and body.force:
+                self._api.log(
+                    f"manga-studio: force reinstall requested for {dep_id}",
+                    "info",
+                )
+            component = start_install(
+                dep_id,
+                spec["import_name"],
+                spec["pip_spec"],
+                plugin_dir=PLUGIN_DIR,
+                friendly_name=spec["display_name"],
+            )
+            return {"ok": True, "component": {**spec, **component}}
 
         api.register_api_routes(router)
         # Hold a reference for Phase 2's pipeline routes to extend.

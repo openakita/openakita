@@ -390,13 +390,27 @@ async def test_healthz_returns_phase_and_backend_map(loaded_plugin) -> None:
     }.issubset(set(body["backends_ready"]))
 
 
-def test_redact_obscures_long_secrets(loaded_plugin) -> None:
-    """Eyeballing _redact's invariant via a settings round-trip."""
+def test_settings_get_echoes_raw_secrets(loaded_plugin) -> None:
+    """Settings GET echoes the raw API keys back as-is.
+
+    The 2026-05 refactor dropped server-side redaction so the UI can
+    re-populate <input value=...> after a save. The host already gates
+    this route behind the plugin token, so masking here added no real
+    defense-in-depth — it only broke the 「click 保存 then field empties」
+    UX (mirrors avatar-studio's stance). Instead the response now
+    surfaces *boolean* flags (``has_ark_key`` etc.) that the UI uses to
+    render the green 「已保存」 chip without ever needing to inspect the
+    raw value.
+    """
     _, p = loaded_plugin
     p._save_settings(  # type: ignore[attr-defined]
         {
             "ark_api_key": "sk-abcd1234efgh5678",
-            "dashscope_api_key": "ds-1",  # short — masked entirely
+            "dashscope_api_key": "ds-1",
+            "oss_endpoint": "https://oss-cn-beijing.aliyuncs.com",
+            "oss_bucket": "my-manga-assets",
+            "oss_access_key_id": "LTAI0123456789",
+            "oss_access_key_secret": "0" * 30,
         }
     )
     router = p._router  # type: ignore[attr-defined]
@@ -406,8 +420,43 @@ def test_redact_obscures_long_secrets(loaded_plugin) -> None:
         body = asyncio_loop.run_until_complete(settings_route.endpoint())
     finally:
         asyncio_loop.close()
-    redacted = body["settings"]
-    assert redacted["ark_api_key"].startswith("sk-a")
-    assert redacted["ark_api_key"].endswith("5678")
-    assert "•" in redacted["ark_api_key"]
-    assert redacted["dashscope_api_key"] == "•" * len("ds-1")
+    cfg = body["settings"]
+    # Raw values are echoed back — the UI renders behind a 「显示」 toggle.
+    assert cfg["ark_api_key"] == "sk-abcd1234efgh5678"
+    assert cfg["dashscope_api_key"] == "ds-1"
+    assert "•" not in cfg["ark_api_key"]
+    # Enriched booleans drive the green 「已保存」 chips.
+    assert cfg["has_ark_key"] is True
+    assert cfg["has_dashscope_key"] is True
+    assert cfg["oss_configured"] is True
+    assert cfg["oss_secret_set"] is True
+    # ``data_dir_active`` lets the Storage tab show the effective path
+    # even when ``custom_data_dir`` is blank (host-managed default).
+    assert cfg["data_dir_active"]
+
+
+def test_settings_get_flags_unconfigured_oss(loaded_plugin) -> None:
+    """When OSS is partially set, ``oss_status_message`` lists the gaps.
+
+    Mirrors avatar-studio's ``oss_status_message`` so the banner can
+    explain *which* fields are missing instead of a generic 「未配置」."""
+    _, p = loaded_plugin
+    p._save_settings(  # type: ignore[attr-defined]
+        {
+            "oss_endpoint": "https://oss-cn-beijing.aliyuncs.com",
+            "oss_bucket": "my-manga-assets",
+            "oss_access_key_id": "",  # missing
+            "oss_access_key_secret": "",  # missing
+        }
+    )
+    router = p._router  # type: ignore[attr-defined]
+    settings_route = next(r for r in router.routes if r.path == "/settings" and "GET" in r.methods)
+    asyncio_loop = asyncio.new_event_loop()
+    try:
+        body = asyncio_loop.run_until_complete(settings_route.endpoint())
+    finally:
+        asyncio_loop.close()
+    cfg = body["settings"]
+    assert cfg["oss_configured"] is False
+    assert "oss_access_key_id" in cfg["oss_status_message"]
+    assert "oss_access_key_secret" in cfg["oss_status_message"]

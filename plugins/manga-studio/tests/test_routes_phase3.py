@@ -167,7 +167,7 @@ def test_workflows_probe_unknown_backend_does_not_500(client) -> None:
 
 def test_put_settings_persists_phase35_workflow_keys(client) -> None:
     """All nine Phase-3.5 workflow-config keys are in DEFAULT_SETTINGS so
-    PUT /settings round-trips them. The Workflows tab UI relies on this
+    PUT /settings round-trips them. The Settings tab UI relies on this
     behaviour to save backend + 3 image/animate/t2v workflow IDs in one
     PUT call without touching the unrelated Phase-2 API-key fields."""
     tc, _ = client
@@ -192,36 +192,32 @@ def test_put_settings_persists_phase35_workflow_keys(client) -> None:
     assert s["comfyui_workflow_image"] == "/wf/img.json"
     assert s["comfyui_workflow_animate"] == "/wf/anim.json"
     assert s["comfyui_workflow_t2v"] == "/wf/t2v.json"
-    # rh_api_key is redacted (8 char string → all bullets), but the
-    # plain workflow IDs come back as-is.
-    assert "•" in s["runninghub_api_key"]
+    # 2026-05 refactor — secrets are echoed back as-is so the Settings
+    # tab can repopulate <input value=...> behind a 「显示」 toggle.
+    # The boolean flag the UI keys off is ``has_runninghub_key``; the
+    # raw value comes through unmodified.
+    assert s["runninghub_api_key"] == "rhk-mock"
+    assert s["has_runninghub_key"] is True
+    assert s["runninghub_configured"] is True
     assert s["runninghub_workflow_image"] == "1234"
     assert s["runninghub_workflow_animate"] == "5678"
     assert s["runninghub_workflow_t2v"] == "9012"
 
 
-def test_put_settings_redacted_api_key_is_not_persisted_back(client) -> None:
-    """If the UI sends the redacted dot-mask back unchanged (because the
-    user didn't edit the api_key field), the Workflows tab UI's
-    saveDraft helper must skip it. This test confirms the *backend*
-    behaviour: writing the redacted mask DOES overwrite the real key
-    with garbage, which is why the UI strips it client-side. We verify
-    that on round-trip 2 (where UI sends back redacted), the new value
-    is what the UI actually sent.
-    """
+def test_put_settings_round_trips_secret_unchanged(client) -> None:
+    """Secrets round-trip exactly — the 2026-05 refactor dropped the
+    server-side bullet redaction. The Settings tab now relies on this
+    so a "save → refresh" flow keeps the input populated."""
     tc, _ = client
     tc.put("/settings", json={"runninghub_api_key": "real-key-1234567890"})
-    r = tc.get("/settings")
-    redacted = r.json()["settings"]["runninghub_api_key"]
-    assert "•" in redacted
-    # Send the redacted value back — the backend has no way to tell it
-    # apart from a real key, so it overwrites. This is the bug the
-    # Workflows tab guards against client-side via `isRedacted(...)`.
-    tc.put("/settings", json={"runninghub_api_key": redacted})
+    r1 = tc.get("/settings")
+    s1 = r1.json()["settings"]
+    assert s1["runninghub_api_key"] == "real-key-1234567890"
+    assert "•" not in s1["runninghub_api_key"]
+    # Sending the same value back is a no-op (idempotent save).
+    tc.put("/settings", json={"runninghub_api_key": s1["runninghub_api_key"]})
     r2 = tc.get("/settings")
-    # The new "value" is the redacted mask (re-redacted, but not the
-    # original real key).
-    assert r2.json()["settings"]["runninghub_api_key"].count("•") > 0
+    assert r2.json()["settings"]["runninghub_api_key"] == "real-key-1234567890"
 
 
 # ─── manga_workflow_test tool ───────────────────────────────────────────
@@ -273,3 +269,96 @@ def test_healthz_phase_unchanged_by_phase3_wiring(client) -> None:
     tc, _ = client
     r = tc.get("/healthz")
     assert r.json()["phase"] >= 2
+
+
+# ─── Python dependency installer routes (mirrors avatar-studio) ──────
+
+
+def test_list_python_deps_returns_all_known_packages(client) -> None:
+    """GET /system/python-deps returns the static PYTHON_DEPS catalog
+    enriched with live ``ok`` / ``version`` flags from the bootstrap
+    probe. Each entry must carry the four spec fields the UI renders
+    plus the ``ok`` boolean."""
+    tc, _ = client
+    r = tc.get("/system/python-deps")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    components = body["components"]
+    by_id = {c["id"]: c for c in components}
+    assert {"oss2", "mutagen", "edge_tts", "dashscope", "comfykit"} <= set(by_id)
+    sample = by_id["oss2"]
+    for k in ("display_name", "description", "import_name", "pip_spec", "ok"):
+        assert k in sample, f"missing {k} in {sample}"
+
+
+def test_python_dep_status_unknown_returns_404(client) -> None:
+    tc, _ = client
+    r = tc.get("/system/python-deps/no-such-package/status")
+    assert r.status_code == 404
+
+
+def test_python_dep_install_starts_install_thread(client, monkeypatch) -> None:
+    """POST /install kicks off a background install via dep_bootstrap.
+    We monkeypatch ``start_install`` so the test never spawns a real
+    ``pip install`` subprocess (which would hit the network)."""
+    tc, _ = client
+    captured: dict[str, Any] = {}
+
+    def fake_start_install(
+        dep_id: str,
+        import_name: str,
+        pip_spec: str,
+        *,
+        plugin_dir: Any,
+        friendly_name: str,
+    ) -> dict[str, Any]:
+        captured.update(
+            dep_id=dep_id,
+            import_name=import_name,
+            pip_spec=pip_spec,
+            friendly_name=friendly_name,
+        )
+        return {
+            "id": dep_id,
+            "import_name": import_name,
+            "ok": False,
+            "busy": True,
+            "version": "",
+            "error": "",
+            "target": "/tmp/fake",
+            "candidate_dirs": [],
+            "log_tail": [],
+            "last_error": "",
+            "last_started_at": 0.0,
+            "last_finished_at": 0.0,
+            "last_success": False,
+        }
+
+    import manga_inline.dep_bootstrap as boot
+
+    monkeypatch.setattr(boot, "start_install", fake_start_install)
+
+    r = tc.post("/system/python-deps/oss2/install", json={"force": False})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["component"]["id"] == "oss2"
+    assert body["component"]["busy"] is True
+    assert captured["dep_id"] == "oss2"
+    assert captured["pip_spec"].startswith("oss2")
+    assert captured["import_name"] == "oss2"
+
+
+def test_default_generation_backend_round_trips(client) -> None:
+    """The new ``default_generation_backend`` settings key flows through
+    PUT /settings → GET /settings unmodified, mirroring the avatar
+    pattern. UI Settings → 「默认生成后端」 binds straight to this key."""
+    tc, _ = client
+    r = tc.put("/settings", json={"default_generation_backend": "runninghub"})
+    assert r.status_code == 200
+    cfg = r.json()["settings"]
+    assert cfg["default_generation_backend"] == "runninghub"
+
+    r2 = tc.get("/settings")
+    assert r2.json()["settings"]["default_generation_backend"] == "runninghub"
