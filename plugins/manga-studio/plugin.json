@@ -4,12 +4,12 @@
   "version": "1.0.0",
   "type": "python",
   "entry": "plugin.py",
-  "description": "AI manga drama studio — story to script to panels to animated video with character consistency, supporting both direct Seedance API and ComfyUI/RunningHub workflow backends.",
+  "description": "AI manga drama studio with character cards, series management and direct/ComfyUI/RunningHub backends.",
   "display_name_zh": "漫剧工作室",
   "display_name_en": "Manga Studio",
   "description_i18n": {
-    "zh": "AI 漫剧工作室 — 故事 → 剧本 → 分镜 → 漫画动画视频，自带角色卡与剧集管理；支持直接 Seedance 和 ComfyUI 工作流双后端。",
-    "en": "AI manga drama studio — story → script → panels → animated video, with character cards and series management; supports both direct Seedance and ComfyUI workflows."
+    "zh": "AI 漫剧工作室，自带角色卡与剧集管理，支持 Seedance 直连、ComfyUI 与 RunningHub 工作流多后端出片。",
+    "en": "AI manga drama studio with character cards, series management and direct/ComfyUI/RunningHub backends."
   },
   "icon": "icon.svg",
   "author": "OpenAkita",

@@ -1,36 +1,120 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Manga Studio">
   <title>Manga Studio</title>
-  <desc>App icon  manga panel grid with a speech bubble, evoking comic-drama storytelling.</desc>
+  <desc>App icon — chibi manga heroine: brown twin-tail hair, big eyes,
+        rose-red collar bow, on a soft pink-to-purple gradient. Built
+        from solid filled paths so it stays legible at 32 px.</desc>
   <defs>
-    <linearGradient id="manga-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#F472B6"/>
-      <stop offset="0.55" stop-color="#A855F7"/>
-      <stop offset="1" stop-color="#6D28D9"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFE4E6"/>
+      <stop offset="0.55" stop-color="#FBCFE8"/>
+      <stop offset="1" stop-color="#E9D5FF"/>
     </linearGradient>
-    <linearGradient id="manga-paper" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#FCE7F3"/>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#B26B3D"/>
+      <stop offset="1" stop-color="#7C3F12"/>
     </linearGradient>
-    <filter id="manga-shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="2" stdDeviation="1.2" flood-color="#4C1D95" flood-opacity="0.32"/>
-    </filter>
+    <linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFEFD5"/>
+      <stop offset="1" stop-color="#FBD8B5"/>
+    </linearGradient>
+    <linearGradient id="collar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FB7185"/>
+      <stop offset="1" stop-color="#BE123C"/>
+    </linearGradient>
+    <radialGradient id="cheek" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FB7185" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#FB7185" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="round-mask">
+      <rect width="64" height="64" rx="14"/>
+    </clipPath>
   </defs>
-  <rect width="64" height="64" rx="17" fill="url(#manga-bg)"/>
-  <circle cx="50" cy="13" r="18" fill="#FBCFE8" opacity="0.28"/>
-  <circle cx="14" cy="52" r="19" fill="#DDD6FE" opacity="0.28"/>
-  <rect x="6" y="6" width="52" height="52" rx="15" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.28)" stroke-width="1.5"/>
-  <g filter="url(#manga-shadow)">
-    <rect x="13" y="14" width="16" height="14" rx="2.5" fill="url(#manga-paper)" stroke="#1F2937" stroke-width="1.4"/>
-    <rect x="31" y="14" width="20" height="14" rx="2.5" fill="url(#manga-paper)" stroke="#1F2937" stroke-width="1.4"/>
-    <rect x="13" y="30" width="20" height="20" rx="2.5" fill="url(#manga-paper)" stroke="#1F2937" stroke-width="1.4"/>
-    <rect x="35" y="30" width="16" height="20" rx="2.5" fill="url(#manga-paper)" stroke="#1F2937" stroke-width="1.4"/>
-    <line x1="16" y1="19" x2="26" y2="19" stroke="#9333EA" stroke-width="1.2" stroke-linecap="round"/>
-    <line x1="16" y1="22" x2="22" y2="22" stroke="#9333EA" stroke-width="1.2" stroke-linecap="round"/>
-    <circle cx="41" cy="21" r="2.3" fill="#F472B6"/>
-    <path d="M37.5 36 q4 -5 9 -2 q4 2 1 6 l1 4 l-4 -2 q-4 1 -7 -2 q-2 -3 0 -4 z" fill="#FFFFFF" stroke="#1F2937" stroke-width="1.4" stroke-linejoin="round"/>
-    <circle cx="40.5" cy="38" r="0.9" fill="#1F2937"/>
-    <circle cx="43.5" cy="38" r="0.9" fill="#1F2937"/>
-    <circle cx="46.5" cy="38" r="0.9" fill="#1F2937"/>
-    <path d="M19 38 l3 -2 l3 4 l3 -3" fill="none" stroke="#9333EA" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- ── Background tile ──────────────────────────────────── -->
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <!-- soft highlights so the corners aren't flat -->
+  <circle cx="50" cy="13" r="11" fill="#FFFFFF" opacity="0.42"/>
+  <circle cx="13" cy="52" r="13" fill="#A78BFA" opacity="0.18"/>
+
+  <!-- ── Heroine portrait ────────────────────────────────── -->
+  <g clip-path="url(#round-mask)" stroke-linecap="round" stroke-linejoin="round">
+
+    <!-- left twin-tail (back) -->
+    <path d="M16 30 C10 32, 6 40, 7 52 L18 50 L18 36 Z"
+          fill="url(#hair)" stroke="#3F1D08" stroke-width="2"/>
+    <!-- right twin-tail (back) -->
+    <path d="M48 30 C54 32, 58 40, 57 52 L46 50 L46 36 Z"
+          fill="url(#hair)" stroke="#3F1D08" stroke-width="2"/>
+
+    <!-- crown of hair (the back of the head) -->
+    <ellipse cx="32" cy="29" rx="17" ry="18"
+             fill="url(#hair)" stroke="#3F1D08" stroke-width="2"/>
+
+    <!-- face -->
+    <ellipse cx="32" cy="35" rx="11.5" ry="12.5"
+             fill="url(#skin)" stroke="#3F1D08" stroke-width="2"/>
+
+    <!-- bangs (front fringe — three soft tufts overlapping the face) -->
+    <path d="M21 28
+             Q22 23, 26 22
+             L28 27 L31 23 L34 27 L37 23 L40 27
+             Q43 23, 43.5 28
+             Q44 32, 42 33
+             L40 30 L37 28 L34 30 L32 28 L29 30 L26 28 L23 30 Z"
+          fill="url(#hair)" stroke="#3F1D08" stroke-width="2"/>
+
+    <!-- side locks (small tufts beside the cheeks) -->
+    <path d="M21.5 32 L20 42 L23.5 39 Z"
+          fill="url(#hair)" stroke="#3F1D08" stroke-width="1.6"/>
+    <path d="M42.5 32 L44 42 L40.5 39 Z"
+          fill="url(#hair)" stroke="#3F1D08" stroke-width="1.6"/>
+
+    <!-- eyebrows -->
+    <path d="M24.7 31 Q26.5 30, 28.3 31"
+          stroke="#3F1D08" stroke-width="1.7" fill="none"/>
+    <path d="M35.7 31 Q37.5 30, 39.3 31"
+          stroke="#3F1D08" stroke-width="1.7" fill="none"/>
+
+    <!-- eyes — solid dark irises with a bright catch-light -->
+    <ellipse cx="27" cy="34.7" rx="2.6" ry="3.4"
+             fill="#1F1238" stroke="#3F1D08" stroke-width="0.7"/>
+    <ellipse cx="37" cy="34.7" rx="2.6" ry="3.4"
+             fill="#1F1238" stroke="#3F1D08" stroke-width="0.7"/>
+    <ellipse cx="27" cy="35.5" rx="2" ry="2.4" fill="#9F1239"/>
+    <ellipse cx="37" cy="35.5" rx="2" ry="2.4" fill="#9F1239"/>
+    <circle cx="27.7" cy="33.6" r="1" fill="#FFFFFF"/>
+    <circle cx="37.7" cy="33.6" r="1" fill="#FFFFFF"/>
+    <circle cx="26.4" cy="35.6" r="0.4" fill="#FFFFFF" opacity="0.7"/>
+    <circle cx="36.4" cy="35.6" r="0.4" fill="#FFFFFF" opacity="0.7"/>
+
+    <!-- cheeks (soft radial blush) -->
+    <ellipse cx="23.5" cy="39.3" rx="2.6" ry="1.5" fill="url(#cheek)"/>
+    <ellipse cx="40.5" cy="39.3" rx="2.6" ry="1.5" fill="url(#cheek)"/>
+
+    <!-- mouth — a tiny happy curve -->
+    <path d="M30.2 41.6 Q32 43.6, 33.8 41.6"
+          stroke="#831843" stroke-width="1.7" fill="none"/>
+
+    <!-- shoulders + V-neck collar (rose to crimson) -->
+    <path d="M10 52
+             L24 58 L32 54 L40 58 L54 52
+             L54 68 L10 68 Z"
+          fill="url(#collar)" stroke="#831843" stroke-width="2"/>
+    <!-- inner V (a peek of skin under the collar) -->
+    <path d="M27 52 L32 57 L37 52 L37 56 Q32 58, 27 56 Z"
+          fill="url(#skin)" stroke="#831843" stroke-width="1.5"/>
+
+    <!-- a tiny hair ribbon on the right side (theme accent) -->
+    <path d="M44 24
+             L48 22 L48 26 Z
+             M44 24 L40 22 L40 26 Z"
+          fill="#E11D48" stroke="#831843" stroke-width="1.4"/>
+    <circle cx="44" cy="24" r="1.3" fill="#FECACA" stroke="#831843" stroke-width="1.2"/>
+
   </g>
+
+  <!-- subtle inner stroke so the icon has a definitive edge against
+       light backgrounds in the IM channel sidebar -->
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" fill="none"
+        stroke="rgba(159,18,57,0.20)" stroke-width="1"/>
 </svg>
