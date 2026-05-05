@@ -21,6 +21,7 @@
   <style>
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+      --bg-deep: #eef2f6;
       --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
       --primary: #ec4899; --primary-hover: #db2777;
       --accent: #6366f1; --accent-hover: #4f46e5;
@@ -29,12 +30,14 @@
     }
     [data-theme="dark"] {
       --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+      --bg-deep: #0a1224;
       --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
       --border: #334155;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
         --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+        --bg-deep: #0a1224;
         --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
         --border: #334155;
       }
@@ -314,13 +317,16 @@
       padding: 3px 10px; border-radius: 999px; font-size: 11px;
       background: rgba(99,102,241,.15); color: var(--accent); font-weight: 500;
     }
-    /* Characters tab (Phase 3.4) */
-    .char-tab-header {
+    /* Generic tab header (used by Studio/Series/Characters/Workflows/Settings).
+       Phase 3.4 introduced this under the ``char-tab-header`` name; the
+       audit (P2-8) renamed it to ``tab-header`` so every tab can pick
+       it up with one class. The aliases below preserve old call sites. */
+    .tab-header, .char-tab-header {
       display: flex; justify-content: space-between; align-items: flex-end;
       margin-bottom: 16px; gap: 12px; flex-wrap: wrap;
     }
-    .char-tab-header__title { font-size: 18px; font-weight: 600; color: var(--text); }
-    .char-tab-header__sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .tab-header__title, .char-tab-header__title { font-size: 18px; font-weight: 600; color: var(--text); }
+    .tab-header__sub, .char-tab-header__sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
     .char-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -759,6 +765,9 @@ const I18N = {
     "stub.title": "{label} · 即将上线",
     "stub.desc": "本页将在 Phase 3 / Phase 4 中陆续上线，对应后端能力当前已完成或在路上。",
     "stub.phase": "Phase {n}",
+    "studio.tab.title": "工作室",
+    "studio.tab.subtitle": "故事 → 分镜 → 出片 一站式流水线",
+    "settings.subtitle": "API Key · 成本阈值 · OSS · 存储",
     "char.title": "角色卡",
     "char.subtitle": "复用角色 · 参考图驱动一致性 · IP-Adapter / DashScope 多参",
     "char.btn.new": "新建角色",
@@ -949,6 +958,9 @@ const I18N = {
     "stub.title": "{label} · Coming soon",
     "stub.desc": "This tab lights up in Phase 3 / Phase 4 — the backend capability is either ready or on the way.",
     "stub.phase": "Phase {n}",
+    "studio.tab.title": "Studio",
+    "studio.tab.subtitle": "Story → storyboard → episode in one pipeline",
+    "settings.subtitle": "API keys · cost guard · OSS · storage",
     "char.title": "Characters",
     "char.subtitle": "Reusable characters · Reference-image driven consistency · IP-Adapter / DashScope multi-ref",
     "char.btn.new": "New Character",
@@ -1442,6 +1454,13 @@ function Studio({ t, catalog, settings, toast }) {
   }
 
   return (
+    <div>
+      <div className="tab-header">
+        <div>
+          <div className="tab-header__title">🎬 {t("studio.tab.title")}</div>
+          <div className="tab-header__sub">{t("studio.tab.subtitle")}</div>
+        </div>
+      </div>
     <div className="split-layout">
       <div className="split-left">
         {/* Phase 4.2 — series picker. Optional. Empty value means
@@ -1711,6 +1730,7 @@ function Studio({ t, catalog, settings, toast }) {
         </div>
       )}
     </div>
+    </div>
   );
 }
 
@@ -1828,10 +1848,10 @@ function Characters({ t, catalog, toast }) {
 
   return (
     <div>
-      <div className="char-tab-header">
+      <div className="tab-header">
         <div>
-          <div className="char-tab-header__title">{t("char.title")}</div>
-          <div className="char-tab-header__sub">{t("char.subtitle")}</div>
+          <div className="tab-header__title">🎭 {t("char.title")}</div>
+          <div className="tab-header__sub">{t("char.subtitle")}</div>
         </div>
         <button className="btn btn-primary" onClick={function() { setEditing("new"); }}>
           {t("char.btn.new")}
@@ -2267,10 +2287,10 @@ function Workflows({ t, settings, setSettings, toast }) {
 
   return (
     <div>
-      <div className="char-tab-header">
+      <div className="tab-header">
         <div>
-          <div className="char-tab-header__title">{t("wf.title")}</div>
-          <div className="char-tab-header__sub">{t("wf.subtitle")}</div>
+          <div className="tab-header__title">🔌 {t("wf.title")}</div>
+          <div className="tab-header__sub">{t("wf.subtitle")}</div>
         </div>
       </div>
 
@@ -2435,10 +2455,10 @@ function Series({ t, catalog, toast }) {
 
   return (
     <div>
-      <div className="char-tab-header">
+      <div className="tab-header">
         <div>
-          <div className="char-tab-header__title">{t("series.title")}</div>
-          <div className="char-tab-header__sub">{t("series.subtitle")}</div>
+          <div className="tab-header__title">📺 {t("series.title")}</div>
+          <div className="tab-header__sub">{t("series.subtitle")}</div>
         </div>
         <button className="btn btn-primary" onClick={function() { setEditing("new"); }}>
           {t("series.btn.new")}
@@ -2790,6 +2810,12 @@ function Settings({ t, settings, setSettings, toast }) {
 
   return (
     <div style={{ maxWidth: 720 }}>
+      <div className="tab-header">
+        <div>
+          <div className="tab-header__title">⚙️ {t("settings.title")}</div>
+          <div className="tab-header__sub">{t("settings.subtitle")}</div>
+        </div>
+      </div>
       <div className="card">
         <div className="card-title">🔑 {t("settings.section.api")}</div>
         <div className="form-row">
@@ -2930,7 +2956,7 @@ function StorageCard({ t, toast }) {
         </button>
       </div>
       {err ? (
-        <div className="text-muted" style={{ color: "var(--err, #d33)" }}>
+        <div className="text-muted" style={{ color: "var(--danger)" }}>
           {t("settings.storage.failed", { msg: err })}
         </div>
       ) : !data ? (
