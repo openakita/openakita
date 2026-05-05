@@ -269,6 +269,24 @@
       background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25);
       font-size: 11px; color: var(--danger); line-height: 1.4;
     }
+    .task-card__detail {
+      margin-top: 10px; padding: 8px; border-radius: 6px;
+      background: var(--bg-deep); border: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .task-card__detail-block { display: flex; flex-direction: column; gap: 4px; }
+    .task-card__detail-label {
+      font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .task-card__detail-pre {
+      margin: 0; padding: 6px 8px; border-radius: 4px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      font-family: 'Consolas', 'Monaco', monospace; font-size: 11px;
+      color: var(--text); line-height: 1.4;
+      white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto;
+    }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
     .status-chip {
       font-size: 10px; padding: 2px 8px; border-radius: 999px;
       font-weight: 500; flex-shrink: 0;
@@ -762,6 +780,12 @@ const I18N = {
     "tasks.step.assemble": "拼接音视频",
     "tasks.cancel": "取消",
     "tasks.delete": "删除",
+    "tasks.detail.show": "查看详情",
+    "tasks.detail.hide": "收起",
+    "tasks.detail.params": "请求参数",
+    "tasks.detail.cost": "成本明细",
+    "tasks.detail.hints": "排错提示",
+    "tasks.detail.empty": "无可显示的详情。",
     "stub.title": "{label} · 即将上线",
     "stub.desc": "本页将在 Phase 3 / Phase 4 中陆续上线，对应后端能力当前已完成或在路上。",
     "stub.phase": "Phase {n}",
@@ -866,6 +890,9 @@ const I18N = {
     "series.card.chars_count": "{n} 个角色",
     "series.section.episodes": "本剧集已出片",
     "series.episodes.empty": "还没有 episode，去 Studio 选择「绑定剧集」生成一集吧。",
+    "series.episodes.delete": "删除该集（连同 final.mp4）",
+    "series.episodes.confirm_delete": "确定删除「{title}」？该集的视频与中间产物会一并清理，不可恢复。",
+    "series.episodes.delete_failed": "删除失败：{msg}",
     "settings.title": "设置",
     "settings.section.api": "直接后端 · API Keys",
     "settings.label.ark": "火山方舟 API Key (Seedance 视频)",
@@ -955,6 +982,12 @@ const I18N = {
     "tasks.step.assemble": "Assembling video",
     "tasks.cancel": "Cancel",
     "tasks.delete": "Delete",
+    "tasks.detail.show": "Details",
+    "tasks.detail.hide": "Hide",
+    "tasks.detail.params": "Request Params",
+    "tasks.detail.cost": "Cost Breakdown",
+    "tasks.detail.hints": "Error Hints",
+    "tasks.detail.empty": "No additional detail available.",
     "stub.title": "{label} · Coming soon",
     "stub.desc": "This tab lights up in Phase 3 / Phase 4 — the backend capability is either ready or on the way.",
     "stub.phase": "Phase {n}",
@@ -1059,6 +1092,9 @@ const I18N = {
     "series.card.chars_count": "{n} character(s)",
     "series.section.episodes": "Episodes in this series",
     "series.episodes.empty": "No episodes yet. Open Studio, select \"Bind to series\" and generate one.",
+    "series.episodes.delete": "Delete this episode (and its final.mp4)",
+    "series.episodes.confirm_delete": "Delete \"{title}\"? Its final video and intermediate files will be wiped — this can't be undone.",
+    "series.episodes.delete_failed": "Delete failed: {msg}",
     "settings.title": "Settings",
     "settings.section.api": "Direct Backend · API Keys",
     "settings.label.ark": "Volcengine Ark API Key (Seedance video)",
@@ -1761,19 +1797,35 @@ function CostBreakdown({ cost, t, lang }) {
 }
 
 function TaskCard({ task, t, onCancel }) {
+  var [expanded, setExpanded] = useState(false);
   var status = task.status || "pending";
   var step = task.current_step || "queued";
   var stepKey = STEP_KEYS[step] || ("tasks.step." + step);
   var progress = Math.max(0, Math.min(100, Number(task.progress) || 0));
   var isActive = status === "running" || status === "pending";
   var error = task.error_message;
-  var hint = null;
+  var hints = null;
   if (task.error_hints_json) {
     try {
-      var h = typeof task.error_hints_json === "string" ? JSON.parse(task.error_hints_json) : task.error_hints_json;
-      hint = h && (h.hint_zh || h.hint_en);
+      hints = typeof task.error_hints_json === "string" ? JSON.parse(task.error_hints_json) : task.error_hints_json;
     } catch (_) {}
   }
+  var hintLine = hints && (hints.hint_zh || hints.hint_en);
+
+  // Decode params + cost breakdown lazily so the card renders fast.
+  var params = null;
+  if (task.params_json) {
+    try {
+      params = typeof task.params_json === "string" ? JSON.parse(task.params_json) : task.params_json;
+    } catch (_) {}
+  }
+  var cost = null;
+  if (task.cost_breakdown_json) {
+    try {
+      cost = typeof task.cost_breakdown_json === "string" ? JSON.parse(task.cost_breakdown_json) : task.cost_breakdown_json;
+    } catch (_) {}
+  }
+
   return (
     <div className="task-card">
       <div className="task-card__head">
@@ -1783,6 +1835,7 @@ function TaskCard({ task, t, onCancel }) {
       <div className="task-card__meta">
         {task.episode_id && <span>ep · {task.episode_id}</span>}
         {task.backend && <span>backend · {task.backend}</span>}
+        {cost && cost.formatted_total && <span>cost · {cost.formatted_total}</span>}
       </div>
       <div className="task-card__progress">
         <div className="task-card__progress-fill" style={{ width: progress + "%" }} />
@@ -1792,14 +1845,45 @@ function TaskCard({ task, t, onCancel }) {
       </div>
       {error && (
         <div className="task-card__error">
-          {hint || error}
+          {hintLine || error}
         </div>
       )}
-      {isActive && (
-        <div className="mt-2">
+      <div className="mt-2" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {isActive && (
           <button className="btn btn-sm btn-danger" onClick={onCancel}>
             {t("tasks.cancel")}
           </button>
+        )}
+        <button
+          className="btn btn-sm"
+          onClick={function() { setExpanded(function(v) { return !v; }); }}
+        >
+          {expanded ? t("tasks.detail.hide") : t("tasks.detail.show")}
+        </button>
+      </div>
+      {expanded && (
+        <div className="task-card__detail">
+          {params && (
+            <div className="task-card__detail-block">
+              <div className="task-card__detail-label">{t("tasks.detail.params")}</div>
+              <pre className="task-card__detail-pre">{JSON.stringify(params, null, 2)}</pre>
+            </div>
+          )}
+          {cost && cost.items && cost.items.length > 0 && (
+            <div className="task-card__detail-block">
+              <div className="task-card__detail-label">{t("tasks.detail.cost")}</div>
+              <pre className="task-card__detail-pre">{JSON.stringify(cost, null, 2)}</pre>
+            </div>
+          )}
+          {hints && (
+            <div className="task-card__detail-block">
+              <div className="task-card__detail-label">{t("tasks.detail.hints")}</div>
+              <pre className="task-card__detail-pre">{JSON.stringify(hints, null, 2)}</pre>
+            </div>
+          )}
+          {!params && !cost && !hints && (
+            <div className="text-muted" style={{ fontSize: 12 }}>{t("tasks.detail.empty")}</div>
+          )}
         </div>
       )}
     </div>
@@ -2727,6 +2811,25 @@ function SeriesEditor({ t, catalog, toast, initial, onCancel, onSaved }) {
                         style={{ flexShrink: 0, padding: "4px 10px", fontSize: 12 }}
                       >▶</a>
                     ) : null}
+                    <button
+                      className="btn btn-danger"
+                      style={{ flexShrink: 0, padding: "4px 10px", fontSize: 12 }}
+                      title={t("series.episodes.delete")}
+                      onClick={async function() {
+                        if (!window.confirm(t("series.episodes.confirm_delete", { title: ep.title || ep.id }))) {
+                          return;
+                        }
+                        var dr = await pluginApi("DELETE", "/episodes/" + encodeURIComponent(ep.id));
+                        if (dr && dr.ok) {
+                          setEpisodes(function(prev) {
+                            return (prev || []).filter(function(x) { return x.id !== ep.id; });
+                          });
+                        } else {
+                          var detail = (dr && dr.body && dr.body.detail) || ("HTTP " + (dr && dr.status));
+                          if (typeof toast === "function") toast(t("series.episodes.delete_failed", { msg: detail }), "error");
+                        }
+                      }}
+                    >🗑</button>
                   </div>
                 );
               })}
