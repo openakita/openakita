@@ -519,3 +519,183 @@ async def test_e2e_episode_listed_under_series(app_client) -> None:
     assert any(e["id"] == episode_id for e in eps), (
         f"episode {episode_id} not in listing for series {series_id}: {eps}"
     )
+
+
+# ─── P3-13 — workflow backend (RunningHub / ComfyUI) E2E ────────────────
+
+
+class _FakeComfy:
+    """Mirror of the ``MangaComfyClient`` surface the pipeline calls.
+
+    Real workflow runs return ``{image_url, raw}`` / ``{video_url, raw}``
+    dicts; the fakes return the same shape so we hit the same code
+    paths the production pipeline does, just without the network.
+    """
+
+    def __init__(self) -> None:
+        self.image_calls: list[dict[str, Any]] = []
+        self.i2v_calls: list[dict[str, Any]] = []
+        self.t2v_calls: list[dict[str, Any]] = []
+
+    async def generate_image(self, **kwargs: Any) -> dict[str, Any]:
+        i = len(self.image_calls)
+        self.image_calls.append(kwargs)
+        return {"image_url": f"https://wf/img_{i}.png", "raw": {}}
+
+    async def generate_i2v(self, **kwargs: Any) -> dict[str, Any]:
+        i = len(self.i2v_calls)
+        self.i2v_calls.append(kwargs)
+        return {"video_url": f"https://wf/clip_{i}.mp4", "raw": {}}
+
+    async def generate_t2v(self, **kwargs: Any) -> dict[str, Any]:
+        i = len(self.t2v_calls)
+        self.t2v_calls.append(kwargs)
+        return {"video_url": f"https://wf/t2v_{i}.mp4", "raw": {}}
+
+
+@pytest.fixture
+async def workflow_app_client(tmp_path: Path, monkeypatch):
+    """Same shape as ``app_client`` but uses ``_FakeComfy`` as the
+    workflow backend so we can exercise the runninghub code path
+    without DashScope / Ark ever being touched."""
+    import importlib
+
+    import plugin as plugin_module
+
+    importlib.reload(plugin_module)
+
+    from manga_pipeline import MangaPipeline  # noqa: PLC0415
+
+    api = _StubAPI(tmp_path)
+    p = plugin_module.Plugin()
+    p.on_load(api)
+    for spawned in list(api.spawned):
+        if not spawned.done():
+            spawned.cancel()
+            try:
+                await spawned
+            except (asyncio.CancelledError, Exception):
+                pass
+    await p._tm.init()  # type: ignore[attr-defined]
+
+    fakes = {
+        "wanxiang": _FakeWanxiang(),
+        "ark": _FakeArk(),
+        "tts": _FakeTTS(),
+        "ffmpeg": _FakeFFmpeg(),
+        "writer": _FakeWriter(),
+        "comfy": _FakeComfy(),
+    }
+    p._direct_wan = fakes["wanxiang"]  # type: ignore[attr-defined]
+    p._direct_ark = fakes["ark"]  # type: ignore[attr-defined]
+    p._tts = fakes["tts"]  # type: ignore[attr-defined]
+    p._ffmpeg = fakes["ffmpeg"]  # type: ignore[attr-defined]
+    p._writer = fakes["writer"]  # type: ignore[attr-defined]
+    p._comfy_client = fakes["comfy"]  # type: ignore[attr-defined]
+
+    async def fake_download_to(self: Any, url: str, output_path: Path) -> None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"FAKEBIN_" + url.encode("utf-8")[-32:])
+
+    monkeypatch.setattr(MangaPipeline, "_download_to", fake_download_to)
+
+    p._pipeline = MangaPipeline(  # type: ignore[attr-defined]
+        wanxiang_client=fakes["wanxiang"],
+        ark_client=fakes["ark"],
+        tts_client=fakes["tts"],
+        ffmpeg=fakes["ffmpeg"],
+        script_writer=fakes["writer"],
+        task_manager=p._tm,  # type: ignore[attr-defined]
+        working_dir=tmp_path / "episodes",
+        comfy_client=fakes["comfy"],
+        build_video_url=p._build_episode_video_url,  # type: ignore[attr-defined]
+    )
+
+    app = FastAPI()
+    app.include_router(p._router)  # type: ignore[attr-defined]
+    transport = httpx.ASGITransport(app=app)
+    tc = httpx.AsyncClient(transport=transport, base_url="http://testserver")
+    try:
+        yield tc, p, fakes
+    finally:
+        await tc.aclose()
+        for _tid, bg in list(p._poll_tasks.items()):  # type: ignore[attr-defined]
+            if not bg.done():
+                bg.cancel()
+                try:
+                    await bg
+                except (asyncio.CancelledError, Exception):
+                    pass
+        await p.on_unload()
+
+
+async def test_e2e_workflow_backend_routes_through_comfy(workflow_app_client) -> None:
+    """When the request specifies ``backend="runninghub"`` the pipeline
+    must route both image gen and I2V through the comfy client and
+    *skip* the direct DashScope / Ark calls entirely. Also asserts
+    `final_video_url` is populated (P0-2) using the new
+    ``/episode-files/<ep>/final.mp4`` route."""
+    tc, p, fakes = workflow_app_client
+
+    # Use the same character name (李雷) the ``_FakeWriter`` storyboard
+    # references in ``characters_in_scene`` — otherwise prompt assembly
+    # silently drops the binding and ref images don't reach the
+    # workflow client (we'd see "unknown character ref" warnings).
+    cr = await tc.post(
+        "/characters",
+        json={
+            "name": "李雷",
+            "role_type": "main",
+            "default_voice_id": "zh-CN-YunjianNeural",
+            "ref_images": [{"url": "https://example.com/lilei.png"}],
+        },
+    )
+    char_id = cr.json()["character_id"]
+
+    er = await tc.post(
+        "/episodes",
+        json={
+            "story": "短篇 — 李雷参加机器人比赛",
+            "n_panels": 2,
+            "seconds_per_panel": 3,
+            "visual_style": "shonen",
+            "ratio": "9:16",
+            "backend": "runninghub",
+            "burn_subtitles": False,
+            "bound_character_ids": [char_id],
+        },
+    )
+    assert er.status_code == 200, er.text
+    body = er.json()
+    episode_id = body["episode_id"]
+    task_id = body["task_id"]
+
+    row = await _wait_task(p, task_id, timeout_sec=10.0)
+    assert row["status"] == "succeeded", f"task did not succeed: {row}"
+    assert row["progress"] == 100
+
+    # Workflow path was used end-to-end — comfy client got the calls,
+    # the direct backends never did.
+    assert len(fakes["comfy"].image_calls) == 2, "image gen must go through comfy"
+    assert len(fakes["comfy"].i2v_calls) == 2, "i2v must go through comfy"
+    assert len(fakes["wanxiang"].submit_calls) == 0, (
+        "wanxiang must NOT be called when backend=runninghub"
+    )
+    assert len(fakes["ark"].i2v_calls) == 0, (
+        "ark.i2v must NOT be called when backend=runninghub"
+    )
+
+    # P0-2 cross-check: the final video URL was persisted by the
+    # pipeline using the URL builder we threaded through the fixture.
+    ep_row = await p._tm.get_episode(episode_id)
+    assert ep_row is not None
+    assert ep_row.get("final_video_url"), f"final_video_url empty: {ep_row}"
+    assert ep_row["final_video_url"].endswith(f"/episode-files/{episode_id}/final.mp4")
+
+    # Reference image was forwarded to the workflow image step (this is
+    # how the user's IP-Adapter / face-lock workflow gets the actor).
+    image_call0 = fakes["comfy"].image_calls[0]
+    refs = image_call0.get("ref_image_urls") or image_call0.get("reference_image_urls") or []
+    assert any("lilei.png" in u for u in refs), (
+        f"expected ref image forwarded to comfy.generate_image, got {refs}"
+    )
