@@ -741,6 +741,10 @@ const I18N = {
     "studio.label.series": "选择剧集",
     "studio.option.no_series": "（独立单集，不绑定剧集）",
     "studio.series.applied": "已套用「{title}」的默认风格 / 比例 / 后端 / 角色",
+    "studio.hint.ratio_inherited": "已继承本系列的画面比例。",
+    "studio.hint.ratio_override": "已覆盖系列默认比例 {def}（仅本集生效）。",
+    "studio.hint.style_override": "已覆盖系列默认风格 {def}（仅本集生效）。",
+    "studio.hint.backend_override": "已覆盖系列默认后端 {def}（仅本集生效）。",
     "studio.section.characters": "出演角色（来自所选剧集）",
     "studio.characters.empty": "未绑定角色（可在「角色」标签页创建后回到「剧集」绑定）",
     "studio.section.story": "剧情输入",
@@ -943,6 +947,10 @@ const I18N = {
     "studio.label.series": "Series",
     "studio.option.no_series": "(Standalone — no series binding)",
     "studio.series.applied": "Applied defaults from \"{title}\" — style / ratio / backend / characters",
+    "studio.hint.ratio_inherited": "Inherited from this series.",
+    "studio.hint.ratio_override": "Overrides series default {def} (this episode only).",
+    "studio.hint.style_override": "Overrides series default style {def} (this episode only).",
+    "studio.hint.backend_override": "Overrides series default backend {def} (this episode only).",
     "studio.section.characters": "Cast (from selected series)",
     "studio.characters.empty": "No characters bound (create some on the Characters tab and bind them on the Series tab).",
     "studio.section.story": "Story Input",
@@ -1309,6 +1317,10 @@ function Studio({ t, catalog, settings, toast }) {
   const [seriesList, setSeriesList] = useState([]);
   const [seriesId, setSeriesId] = useState("");
   const [boundChars, setBoundChars] = useState([]);
+  // P3-12 — remember the series defaults so we can show
+  // "你已覆盖系列默认 9:16" style hints when the user nudges
+  // ratio/style/backend after picking a series.
+  const [seriesDefaults, setSeriesDefaults] = useState(null);
   const [allChars, setAllChars] = useState([]);
   // Phase 4.4 — story templates. Modal opens only on demand so we
   // don't pay the GET on every Studio mount; once loaded, the list is
@@ -1344,6 +1356,7 @@ function Studio({ t, catalog, settings, toast }) {
     setSeriesId(sid);
     if (!sid) {
       setBoundChars([]);
+      setSeriesDefaults(null);
       return;
     }
     var r = await pluginApi("GET", "/series/" + encodeURIComponent(sid));
@@ -1355,6 +1368,11 @@ function Studio({ t, catalog, settings, toast }) {
     if (s.visual_style) setStyle(s.visual_style);
     if (s.ratio) setRatio(s.ratio);
     if (s.backend_pref) setBackend(s.backend_pref);
+    setSeriesDefaults({
+      visual_style: s.visual_style || "",
+      ratio: s.ratio || "",
+      backend: s.backend_pref || "",
+    });
     var ids = s.default_characters_json || s.default_characters || [];
     var resolved = ids.map(function(cid) {
       var hit = (allChars || []).filter(function(c) { return c.id === cid; })[0];
@@ -1597,6 +1615,11 @@ function Studio({ t, catalog, settings, toast }) {
               <div className="text-xs text-dim">{t("common.loading")}</div>
             )}
           </div>
+          {seriesDefaults && seriesDefaults.visual_style && seriesDefaults.visual_style !== style ? (
+            <div className="text-xs text-muted mt-2">
+              {t("studio.hint.style_override", { def: seriesDefaults.visual_style })}
+            </div>
+          ) : null}
         </div>
 
         <div className="card">
@@ -1614,6 +1637,15 @@ function Studio({ t, catalog, settings, toast }) {
                 );
               })}
             </div>
+            {seriesDefaults && seriesDefaults.ratio && seriesDefaults.ratio !== ratio ? (
+              <div className="text-xs text-muted mt-2">
+                {t("studio.hint.ratio_override", { def: seriesDefaults.ratio })}
+              </div>
+            ) : seriesDefaults && seriesDefaults.ratio ? (
+              <div className="text-xs text-muted mt-2">
+                {t("studio.hint.ratio_inherited")}
+              </div>
+            ) : null}
           </div>
           <div className="grid-2">
             <div className="form-row">
@@ -1654,6 +1686,11 @@ function Studio({ t, catalog, settings, toast }) {
               <option value="runninghub" disabled>{t("studio.backend.runninghub")} (Phase 3)</option>
               <option value="comfyui_local" disabled>{t("studio.backend.comfyui_local")} (Phase 3)</option>
             </select>
+            {seriesDefaults && seriesDefaults.backend && seriesDefaults.backend !== backend ? (
+              <div className="text-xs text-muted mt-2">
+                {t("studio.hint.backend_override", { def: seriesDefaults.backend })}
+              </div>
+            ) : null}
           </div>
           <div
             className="toggle-row"
