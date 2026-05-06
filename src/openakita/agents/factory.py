@@ -445,15 +445,28 @@ class AgentFactory:
 
 
 class _PoolEntry:
-    __slots__ = ("agent", "profile_id", "session_id", "created_at", "last_used", "skills_version")
+    __slots__ = (
+        "agent",
+        "profile_id",
+        "session_id",
+        "created_at",
+        "last_used",
+        "runtime_config_version",
+    )
 
-    def __init__(self, agent: Agent, profile_id: str, session_id: str, skills_version: int = 0):
+    def __init__(
+        self,
+        agent: Agent,
+        profile_id: str,
+        session_id: str,
+        runtime_config_version: int = 0,
+    ):
         self.agent = agent
         self.profile_id = profile_id
         self.session_id = session_id
         self.created_at = time.monotonic()
         self.last_used = time.monotonic()
-        self.skills_version = skills_version
+        self.runtime_config_version = runtime_config_version
 
     def touch(self) -> None:
         self.last_used = time.monotonic()
@@ -491,7 +504,7 @@ class AgentInstancePool:
         # Per-composite-key locks for concurrent creation
         self._create_locks: dict[str, asyncio.Lock] = {}
         self._reaper_task: asyncio.Task | None = None
-        self._skills_version: int = 0
+        self._runtime_config_version: int = 0
 
     @staticmethod
     def _make_key(session_id: str, profile_id: str) -> str:
@@ -525,9 +538,23 @@ class AgentInstancePool:
         logger.info("AgentInstancePool stopped")
 
     def notify_skills_changed(self) -> None:
-        """全局技能变更通知 — 递增版本号使池中已有 Agent 在下次使用时重建。"""
-        self._skills_version += 1
-        logger.info(f"Pool skills version bumped to {self._skills_version}")
+        """全局技能变更通知 — 使池中已有 Agent 在下次使用时重建。"""
+        self.notify_runtime_config_changed("skills")
+
+    def notify_runtime_config_changed(self, reason: str = "runtime_config") -> None:
+        """Mark pooled Agent instances stale after runtime-affecting config changes.
+
+        Agent instances own Brain/LLMClient/tool catalogs.  Reusing an old
+        instance after changing skills or LLM endpoints keeps stale runtime
+        state alive until process restart, so the pool tracks a single runtime
+        version and recreates entries lazily on the next request.
+        """
+        self._runtime_config_version += 1
+        logger.info(
+            "Pool runtime config version bumped to %s (reason=%s)",
+            self._runtime_config_version,
+            reason,
+        )
 
     def invalidate_profile(self, profile_id: str) -> int:
         """Drop all pooled Agent instances bound to *profile_id*."""
@@ -561,20 +588,24 @@ class AgentInstancePool:
         All dict operations are safe under asyncio's single-threaded event loop;
         only the async create_lock is needed to serialize factory.create() calls.
 
-        当全局技能版本变更时，旧的 Agent 会被丢弃并重建，
-        确保技能安装/卸载/启禁用等操作能同步到所有池 Agent。
+        当全局运行时配置版本变更时，旧的 Agent 会被丢弃并重建，
+        确保技能、LLM 端点等会影响 Agent/Brain 构造的配置同步到所有池 Agent。
         """
         key = self._make_key(session_id, profile.id)
-        current_version = self._skills_version
+        current_version = self._runtime_config_version
 
         entry = self._pool.get(key)
         if entry:
-            if entry.skills_version >= current_version:
+            if entry.runtime_config_version >= current_version:
                 entry.touch()
                 return entry.agent
             logger.info(
-                f"Pool agent stale (skills_version {entry.skills_version} < {current_version}), "
-                f"recreating: session={session_id}, profile={profile.id}"
+                "Pool agent stale (runtime_config_version %s < %s), recreating: "
+                "session=%s, profile=%s",
+                entry.runtime_config_version,
+                current_version,
+                session_id,
+                profile.id,
             )
             self._pool.pop(key, None)
             self._schedule_shutdown(entry.agent)
@@ -585,7 +616,7 @@ class AgentInstancePool:
 
         async with create_lock:
             entry = self._pool.get(key)
-            if entry and entry.skills_version >= current_version:
+            if entry and entry.runtime_config_version >= current_version:
                 entry.touch()
                 return entry.agent
 
@@ -594,6 +625,7 @@ class AgentInstancePool:
                 e
                 for e in self._pool.values()
                 if e.session_id == session_id and hasattr(e.agent, "brain")
+                and e.runtime_config_version >= current_version
             ]
             if session_entries:
                 # Prefer default/system profiles, then earliest created
