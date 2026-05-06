@@ -543,24 +543,59 @@ function sanitizeDownloadFilename(name) {
 }
 
 // ── Standard SDK: downloadFile ──
+//
+// Strategy:
+//   1) Prefer bridge:download → Tauri's reqwest → user's Downloads folder.
+//      This gives the best UX (absolute path toast + "reveal in folder").
+//   2) On *any* bridge failure (timeout, host-side reqwest error, packaged
+//      Windows builds where Defender/AV/system-proxy blocks the Rust process
+//      from reaching 127.0.0.1 even though the iframe's fetch() to the same
+//      origin works fine), fall back to in-iframe `fetch` + Blob URL +
+//      `<a download>`. The iframe is loaded from the same origin as the
+//      backend, so this path bypasses the host's HTTP stack entirely.
+//
+// Without (2) the user sees "Download failed: error sending request for url"
+// and has no way to grab the file at all.
 function downloadFile(url, filename, localPath) {
   var resolvedUrl = url.startsWith("http") ? url : _detectApiBase() + url;
   var fname = sanitizeDownloadFilename(filename || "download");
+
+  function fallbackToBlob(hostErr) {
+    fetch(resolvedUrl).then(function(r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.blob();
+    }).then(function(blob) {
+      var objUrl = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = objUrl;
+      a.download = fname;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function() {
+        try { document.body.removeChild(a); } catch (_) {}
+        URL.revokeObjectURL(objUrl);
+      }, 3000);
+      showToast(_bt("bridge.download.started", null, "Download started"), "success");
+    }).catch(function(err) {
+      var msg = (hostErr ? hostErr + " | " : "")
+              + String((err && err.message) || err
+              || _bt("bridge.unknownError", null, "Unknown error"));
+      showToast(_bt("bridge.download.fail", { msg: msg }, "Download failed: {msg}"), "error");
+    });
+  }
 
   if (_inIframe && _bridgeConnected) {
     var id = uid();
     _pending[id] = {
       resolve: function(payload) {
-        if (payload && payload.ok) {
-          var path = payload.path || _bt("bridge.download.okFolder", null, "Saved to Downloads folder");
-          showToast(payload.path
-            ? _bt("bridge.download.ok", { path: path }, "Saved to: {path}")
-            : path, "success");
-        } else {
-          showToast(_bt("bridge.download.fail", { msg: (payload && payload.error) || _bt("bridge.unknownError", null, "Unknown error") }, "Download failed: {msg}"), "error");
+        if (payload && payload.ok && payload.path && /[\\/]/.test(String(payload.path))) {
+          showToast(_bt("bridge.download.ok", { path: payload.path }, "Saved to: {path}"), "success");
+          return;
         }
+        fallbackToBlob(payload && payload.error);
       },
-      reject: function(err) { showToast(_bt("bridge.download.fail", { msg: err }, "Download failed: {msg}"), "error"); },
+      reject: function(err) { fallbackToBlob(String(err)); },
     };
     var payload = { url: resolvedUrl, filename: fname };
     if (localPath) payload.localPath = localPath;
@@ -577,7 +612,7 @@ function downloadFile(url, filename, localPath) {
     }
     window.__TAURI_INTERNALS__.invoke("download_file", { url: resolvedUrl, filename: fname })
       .then(function(path) { showToast(_bt("bridge.download.ok", { path: path }, "Saved to: {path}"), "success"); })
-      .catch(function(err) { showToast(_bt("bridge.download.fail", { msg: err }, "Download failed: {msg}"), "error"); });
+      .catch(function(err) { fallbackToBlob(String(err)); });
     return;
   }
 

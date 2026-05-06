@@ -167,7 +167,7 @@ class MemoryHandler:
         from ...memory.types import Memory, MemoryPriority, MemoryType
 
         content = params["content"]
-        mem_type_str = params["type"]
+        mem_type_str = params.get("type", "fact")
         importance = params.get("importance", 0.5)
 
         content_key = content.strip()[:100].lower()

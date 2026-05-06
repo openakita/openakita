@@ -42,11 +42,12 @@ MEMORY_TOOLS = [
 - 记录错误教训
 
 **记忆类型**：
-- fact: 事实信息
+- fact: 事实信息（默认）
 - preference: 用户偏好
 - skill: 技能知识
 - error: 错误教训
 - rule: 规则约定
+- experience: 可复用经验
 
 **重要性**：0-1 的数值，越高越重要""",
         "input_schema": {
@@ -55,12 +56,13 @@ MEMORY_TOOLS = [
                 "content": {"type": "string", "description": "要记住的内容"},
                 "type": {
                     "type": "string",
-                    "enum": ["fact", "preference", "skill", "error", "rule"],
-                    "description": "记忆类型",
+                    "enum": ["fact", "preference", "skill", "error", "rule", "experience"],
+                    "description": "记忆类型（默认 fact）",
+                    "default": "fact",
                 },
                 "importance": {"type": "number", "description": "重要性（0-1）", "default": 0.5},
             },
-            "required": ["content", "type"],
+            "required": ["content"],
         },
     },
     {

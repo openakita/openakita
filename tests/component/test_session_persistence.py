@@ -291,6 +291,26 @@ class TestGetChatHistoryFallback:
 
 class TestSearchMemorySemantic:
 
+    def test_add_memory_defaults_to_fact_when_type_missing(self):
+        from openakita.memory.types import MemoryType
+        from openakita.tools.handlers.memory import MemoryHandler
+
+        mm = MagicMock()
+        mm.store.search_semantic.return_value = []
+        mm.add_memory.return_value = "mem-1"
+
+        agent = MagicMock()
+        agent.memory_manager = mm
+        agent.profile_manager = None
+
+        handler = MemoryHandler(agent)
+        result = handler._add_memory({"content": "用户喜欢简洁回答"})
+
+        assert "已记住: [fact]" in result
+        saved_memory = mm.add_memory.call_args.args[0]
+        assert saved_memory.type == MemoryType.FACT
+        assert saved_memory.content == "用户喜欢简洁回答"
+
     def test_uses_retrieval_engine_when_available(self):
         from openakita.tools.handlers.memory import MemoryHandler
         from openakita.memory.retrieval import RetrievalCandidate
