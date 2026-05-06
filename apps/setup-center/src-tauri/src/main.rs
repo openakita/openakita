@@ -3672,6 +3672,7 @@ fn main() {
             backend_fetch,
             read_file_base64,
             download_file,
+            copy_file_to_downloads,
             show_item_in_folder,
             open_file_with_default,
             export_env_backup,
@@ -6704,34 +6705,70 @@ async fn read_file_base64(path: String) -> Result<String, String> {
     Ok(format!("data:{};base64,{}", mime, b64))
 }
 
-/// Download a file from a URL and save it to the user's Downloads folder.
-/// Returns the saved file path on success.
-#[tauri::command]
-async fn download_file(url: String, filename: String) -> Result<String, String> {
-    // Determine downloads directory
+fn sanitize_download_filename(candidate: &str) -> String {
+    let leaf = std::path::Path::new(candidate)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(candidate);
+    let sanitized: String = leaf
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            ch if ch.is_control() => '_',
+            ch => ch,
+        })
+        .collect();
+    let trimmed = sanitized.trim_matches(|ch| ch == ' ' || ch == '.');
+    let name = if trimmed.is_empty() { "download" } else { trimmed };
+    let stem = std::path::Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name);
+    let reserved = matches!(
+        stem.to_ascii_uppercase().as_str(),
+        "CON" | "PRN" | "AUX" | "NUL"
+            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
+            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+    );
+    if reserved {
+        format!("_{name}")
+    } else {
+        name.to_string()
+    }
+}
+
+fn unique_download_path(filename: &str) -> Result<std::path::PathBuf, String> {
     let downloads_dir = dirs_next::download_dir()
         .or_else(|| dirs_next::home_dir().map(|h| h.join("Downloads")))
         .ok_or_else(|| "Cannot determine Downloads directory".to_string())?;
     std::fs::create_dir_all(&downloads_dir)
         .map_err(|e| format!("Cannot create Downloads dir: {e}"))?;
 
-    // Avoid overwriting: if file exists, append (1), (2), etc.
-    let stem = std::path::Path::new(&filename)
+    let safe_filename = sanitize_download_filename(filename);
+    let stem = std::path::Path::new(&safe_filename)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("download")
         .to_string();
-    let ext = std::path::Path::new(&filename)
+    let ext = std::path::Path::new(&safe_filename)
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| format!(".{s}"))
         .unwrap_or_default();
-    let mut dest = downloads_dir.join(&filename);
+    let mut dest = downloads_dir.join(&safe_filename);
     let mut counter = 1u32;
     while dest.exists() {
         dest = downloads_dir.join(format!("{stem} ({counter}){ext}"));
         counter += 1;
     }
+    Ok(dest)
+}
+
+/// Download a file from a URL and save it to the user's Downloads folder.
+/// Returns the saved file path on success.
+#[tauri::command]
+async fn download_file(url: String, filename: String) -> Result<String, String> {
+    let dest = unique_download_path(&filename)?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -6752,6 +6789,34 @@ async fn download_file(url: String, filename: String) -> Result<String, String> 
         .map_err(|e| format!("Failed to read response body: {e}"))?;
     std::fs::write(&dest, &bytes)
         .map_err(|e| format!("Failed to write file: {e}"))?;
+
+    Ok(dest.to_string_lossy().to_string())
+}
+
+/// Copy an existing local file to the user's Downloads folder.
+/// Returns the saved file path on success.
+#[tauri::command]
+fn copy_file_to_downloads(path: String, filename: Option<String>) -> Result<String, String> {
+    let source = std::path::Path::new(&path);
+    if !source.is_file() {
+        return Err(format!("Source file does not exist: {path}"));
+    }
+
+    let source_name = source
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("download");
+    let requested_name = filename
+        .as_deref()
+        .and_then(|name| std::path::Path::new(name).file_name())
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(source_name);
+    let dest = unique_download_path(requested_name)?;
+
+    std::fs::copy(source, &dest)
+        .map_err(|e| format!("Failed to copy file: {e}"))?;
 
     Ok(dest.to_string_lossy().to_string())
 }

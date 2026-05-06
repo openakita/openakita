@@ -8,13 +8,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-import shutil
 import time
 from pathlib import Path
 from typing import Any
 
 from ark_client import ArkClient
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from long_video import (
     ChainGenerator,
     concat_videos,
@@ -22,19 +21,11 @@ from long_video import (
     ffmpeg_available,
 )
 from models import (
-    MODELS_BY_ID,
     RESOLUTION_PIXEL_MAP,
     SEEDANCE_MODELS,
     get_model,
     model_to_dict,
 )
-from seedance_inline.storage_stats import collect_storage_stats
-from seedance_inline.system_deps import SystemDepsManager
-from seedance_inline.upload_preview import (
-    add_upload_preview_route,
-    build_preview_url,
-)
-from seedance_inline.vendor_client import VendorError
 from prompt_optimizer import (
     ATMOSPHERE_KEYWORDS,
     CAMERA_KEYWORDS,
@@ -44,6 +35,13 @@ from prompt_optimizer import (
     optimize_prompt,
 )
 from pydantic import BaseModel, Field
+from seedance_inline.storage_stats import collect_storage_stats
+from seedance_inline.system_deps import SystemDepsManager
+from seedance_inline.upload_preview import (
+    add_upload_preview_route,
+    build_preview_url,
+)
+from seedance_inline.vendor_client import VendorError
 from task_manager import TaskManager
 
 from openakita.plugins.api import PluginAPI, PluginBase
@@ -582,7 +580,10 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=404, detail="No video available")
 
             prompt_prefix = (task.get("prompt", "") or "video")[:30].strip() or "video"
-            fname = f"seedance_{prompt_prefix}.mp4"
+            safe_prefix = "".join(
+                c if c.isalnum() or c in "-_ " else "_" for c in prompt_prefix
+            ).strip(" .") or "video"
+            fname = f"seedance_{safe_prefix}.mp4"
 
             return self._api.create_file_response(
                 source,

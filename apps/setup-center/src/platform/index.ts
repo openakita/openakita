@@ -125,6 +125,16 @@ export async function downloadFile(
   return filename;
 }
 
+/** Copy an existing local file to the user's Downloads folder. Tauri only. */
+export async function copyFileToDownloads(
+  path: string,
+  filename?: string,
+): Promise<string> {
+  if (!IS_TAURI) throw new Error("copyFileToDownloads is only available in Tauri");
+  const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+  return tauriInvoke<string>("copy_file_to_downloads", { path, filename });
+}
+
 /** Show a file in the OS file manager. No-op on web. */
 export async function showInFolder(path: string): Promise<void> {
   if (!IS_TAURI) return;

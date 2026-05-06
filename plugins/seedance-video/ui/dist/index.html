@@ -533,10 +533,19 @@ function _bt(key, vars, fallback) {
   return fallback;
 }
 
+function sanitizeDownloadFilename(name) {
+  var leaf = String(name || "download").split(/[\\/]/).pop() || "download";
+  leaf = leaf.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").replace(/[ .]+$/g, "");
+  if (!leaf) leaf = "download";
+  var stem = leaf.split(".")[0].toUpperCase();
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(stem)) leaf = "_" + leaf;
+  return leaf;
+}
+
 // ── Standard SDK: downloadFile ──
-function downloadFile(url, filename) {
+function downloadFile(url, filename, localPath) {
   var resolvedUrl = url.startsWith("http") ? url : _detectApiBase() + url;
-  var fname = filename || "download";
+  var fname = sanitizeDownloadFilename(filename || "download");
 
   if (_inIframe && _bridgeConnected) {
     var id = uid();
@@ -553,11 +562,19 @@ function downloadFile(url, filename) {
       },
       reject: function(err) { showToast(_bt("bridge.download.fail", { msg: err }, "Download failed: {msg}"), "error"); },
     };
-    post({ type: "bridge:download", requestId: id, payload: { url: resolvedUrl, filename: fname } });
+    var payload = { url: resolvedUrl, filename: fname };
+    if (localPath) payload.localPath = localPath;
+    post({ type: "bridge:download", requestId: id, payload: payload });
     return;
   }
 
   if (window.__TAURI_INTERNALS__) {
+    if (localPath) {
+      window.__TAURI_INTERNALS__.invoke("copy_file_to_downloads", { path: localPath, filename: fname })
+        .then(function(path) { showToast(_bt("bridge.download.ok", { path: path }, "Saved to: {path}"), "success"); })
+        .catch(function(err) { showToast(_bt("bridge.download.fail", { msg: err }, "Download failed: {msg}"), "error"); });
+      return;
+    }
     window.__TAURI_INTERNALS__.invoke("download_file", { url: resolvedUrl, filename: fname })
       .then(function(path) { showToast(_bt("bridge.download.ok", { path: path }, "Saved to: {path}"), "success"); })
       .catch(function(err) { showToast(_bt("bridge.download.fail", { msg: err }, "Download failed: {msg}"), "error"); });
@@ -2126,7 +2143,7 @@ function CreateTab({ models, onGoToTasks }) {
           <VideoPlayer task={activeTask} />
           {activeTask && (
             <div className="flex gap-2" style={{marginTop:12, justifyContent:"center"}}>
-              <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${activeTask.id}?download=1`, `seedance_${activeTask.prompt?.slice(0,20) || activeTask.id}.mp4`)}><Ico name="download"/> {t("preview.btn.download")}</button>
+              <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${activeTask.id}?download=1`, `seedance_${activeTask.prompt?.slice(0,20) || activeTask.id}.mp4`, activeTask.local_video_path)}><Ico name="download"/> {t("preview.btn.download")}</button>
               <button className="btn btn-sm" onClick={() => { setActiveTask(null); }}><Ico name="refresh"/> {t("preview.btn.new")}</button>
             </div>
           )}
@@ -2306,7 +2323,8 @@ function TaskListTab() {
                   {selected.status === "succeeded" && (
                     <button className="btn btn-sm"
                             onClick={() => downloadFile(`${apiBase}/videos/${selected.id}?download=1`,
-                                                        `seedance_${(selected.prompt||selected.id).slice(0,20)}.mp4`)}>
+                                                        `seedance_${(selected.prompt||selected.id).slice(0,20)}.mp4`,
+                                                        selected.local_video_path)}>
                       <Ico name="download"/> {t("preview.btn.download")}
                     </button>
                   )}

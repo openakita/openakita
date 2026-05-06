@@ -188,25 +188,30 @@ export class PluginBridgeHost {
    * Falls back to <a download> for web mode.
    */
   private async handleDownload(msg: BridgeMessage) {
-    const { url: rawUrl, filename } = (msg.payload || {}) as {
+    const { url: rawUrl, filename, localPath } = (msg.payload || {}) as {
       url?: string;
       filename?: string;
+      localPath?: string;
     };
-    if (!rawUrl) {
+    if (!rawUrl && !localPath) {
       this.post({
         type: "bridge:download-ack",
         requestId: msg.requestId,
-        payload: { ok: false, error: "Missing url" },
+        payload: { ok: false, error: "Missing url or localPath" },
       });
       return;
     }
 
-    const resolvedUrl = rawUrl.startsWith("http") ? rawUrl : `${this.apiBase}${rawUrl}`;
     const fname = filename || "download";
 
     try {
-      const { downloadFile } = await import("../platform");
-      const savedPath = await downloadFile(resolvedUrl, fname);
+      const platform = await import("../platform");
+      const savedPath = localPath
+        ? await platform.copyFileToDownloads(localPath, fname)
+        : await (async () => {
+            const resolvedUrl = rawUrl!.startsWith("http") ? rawUrl! : `${this.apiBase}${rawUrl}`;
+            return platform.downloadFile(resolvedUrl, fname);
+          })();
       this.post({
         type: "bridge:download-ack",
         requestId: msg.requestId,
