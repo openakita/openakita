@@ -86,6 +86,7 @@ export type StreamEvent =
   | { type: "death_switch"; active: boolean; reason?: string }
   | { type: "ui_preference"; theme?: string; language?: string }
   | { type: "endpoint_notice"; reason_code?: string; notice_type?: string; endpoint?: string }
+  | { type: "budget_warning"; dimension?: string; level?: string; usage_ratio?: number; renewed?: boolean; message?: string }
   | { type: "error"; message: string }
   | { type: "done"; reason?: string; usage?: {
       input_tokens: number;
