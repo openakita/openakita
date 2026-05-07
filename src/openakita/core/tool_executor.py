@@ -407,6 +407,10 @@ class ToolExecutor:
         if perm_block:
             return perm_block
 
+        grounding_block = self._check_current_turn_grounding(tool_name, tool_input)
+        if grounding_block:
+            return grounding_block
+
         return await self._execute_tool_impl(tool_name, tool_input)
 
     async def _dispatch_hook(self, hook_name: str, **kwargs) -> None:
@@ -484,6 +488,7 @@ class ToolExecutor:
 
                 # ★ 通用截断守卫：工具自身未做截断时的安全网
                 result = self._guard_truncate(tool_name, result)
+                self._observe_current_turn_tool_result(tool_name, tool_input, result)
 
                 span.set_attribute("result_length", len(result))
 
@@ -606,6 +611,10 @@ class ToolExecutor:
         todo_block = self._check_todo_required(tool_name, session_id)
         if todo_block:
             return todo_block
+
+        grounding_block = self._check_current_turn_grounding(tool_name, tool_input)
+        if grounding_block:
+            return grounding_block
 
         if getattr(policy_result, "metadata", {}).get("needs_checkpoint"):
             try:
@@ -1021,6 +1030,34 @@ class ToolExecutor:
             f"overflow saved to {overflow_path}"
         )
         return truncated + hint
+
+    def _check_current_turn_grounding(self, tool_name: str, tool_input: dict) -> str | None:
+        """Prevent latest-turn objects from being confused with historical ones."""
+        agent = self._agent_ref
+        current_turn = getattr(agent, "_current_turn_input", None) if agent is not None else None
+        if current_turn is None or not hasattr(current_turn, "validate_tool_call"):
+            return None
+        try:
+            return current_turn.validate_tool_call(tool_name, tool_input or {})
+        except Exception as exc:
+            logger.debug("[CurrentTurn] grounding check skipped: %s", exc)
+            return None
+
+    def _observe_current_turn_tool_result(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        result: Any,
+    ) -> None:
+        """Update current-turn grounding state after stateful tool calls."""
+        agent = self._agent_ref
+        current_turn = getattr(agent, "_current_turn_input", None) if agent is not None else None
+        if current_turn is None or not hasattr(current_turn, "observe_tool_result"):
+            return
+        try:
+            current_turn.observe_tool_result(tool_name, tool_input or {}, result)
+        except Exception as exc:
+            logger.debug("[CurrentTurn] result observation skipped: %s", exc)
 
     def _check_todo_required(self, tool_name: str, session_id: str | None) -> str | None:
         """

@@ -4028,6 +4028,17 @@ class Agent:
         pending_videos = session.get_metadata("pending_videos") if session else None
         pending_audio = session.get_metadata("pending_audio") if session else None
         pending_files = session.get_metadata("pending_files") if session else None
+        from .current_turn import CurrentTurnInput
+
+        current_turn = CurrentTurnInput.from_inputs(
+            compiled_message,
+            pending_images=pending_images,
+            pending_videos=pending_videos,
+            pending_audio=pending_audio,
+            pending_files=pending_files,
+            attachments=attachments,
+        )
+        self._current_turn_input = current_turn
 
         # 处理 PDF/文档文件 — 如果 LLM 支持 PDF 则构建 DocumentBlock，否则降级提取文本
         document_blocks = []
@@ -4135,6 +4146,9 @@ class Agent:
 
         if _has_history and compiled_message and isinstance(compiled_message, str):
             compiled_message = f"[最新消息]\n{compiled_message}"
+
+        if isinstance(compiled_message, str):
+            compiled_message = current_turn.inject_into_message(compiled_message)
 
         # === 角色交替保护 ===
         # 如果历史末尾是 user 消息（通常由上下文边界标记产生），
