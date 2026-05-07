@@ -393,6 +393,7 @@ class ChainGenerator:
                 content.append({
                     "type": "image_url",
                     "image_url": {"url": frame_url},
+                    "role": "first_frame",
                 })
                 logger.info(
                     "Chain: using last_frame from segment %s as first_frame",

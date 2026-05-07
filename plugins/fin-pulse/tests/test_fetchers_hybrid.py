@@ -111,6 +111,73 @@ class TestNewsNowUnified:
         assert len(items) >= 1
         assert all(i.source_id != "wallstreetcn" for i in items)
 
+    def test_fanout_timeout_returns_partial_results(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A slow NewsNow channel must not discard completed channels.
+
+        This pins the reliability fix for "拉取全部": the public
+        aggregator can stall on one platform, but the drawer should still
+        show the sources that completed plus per-channel timeout rows.
+        """
+
+        async def slow_fetch(**kwargs: Any) -> list[NormalizedItem]:
+            sid = kwargs["source_id"]
+            if sid == "cls":
+                await asyncio.sleep(4)
+            return _make_items(sid, 1)
+
+        import finpulse_fetchers.newsnow as nn_mod
+        monkeypatch.setattr(newsnow_base, "fetch_from_newsnow", slow_fetch)
+        monkeypatch.setattr(nn_mod, "fetch_from_newsnow", slow_fetch)
+        monkeypatch.setattr(nn_mod, "jittered_sleep", lambda *a, **k: asyncio.sleep(0))
+
+        cfg = {
+            "newsnow.mode": "public",
+            "newsnow.api_url": "https://x.example/api/s",
+            "_newsnow.only_sources": "wallstreetcn,cls",
+            "newsnow.channel_concurrency": "2",
+            "newsnow.total_budget_sec": "3",
+        }
+        fetcher = NewsNowFetcher(config=cfg)
+        items = _run(fetcher.fetch())
+
+        assert {item.source_id for item in items} == {"wallstreetcn"}
+        reports = {row["source_id"]: row for row in fetcher._channel_reports}
+        assert reports["wallstreetcn"]["count"] == 1
+        assert reports["wallstreetcn"]["error"] is None
+        assert reports["cls"]["count"] == 0
+        assert reports["cls"]["error"] == "timeout"
+
+    def test_successful_empty_channel_carries_empty_reason(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def empty_fetch(**kwargs: Any) -> list[NormalizedItem]:
+            return []
+
+        import finpulse_fetchers.newsnow as nn_mod
+        monkeypatch.setattr(newsnow_base, "fetch_from_newsnow", empty_fetch)
+        monkeypatch.setattr(nn_mod, "fetch_from_newsnow", empty_fetch)
+        monkeypatch.setattr(nn_mod, "jittered_sleep", lambda *a, **k: asyncio.sleep(0))
+
+        cfg = {
+            "newsnow.mode": "public",
+            "newsnow.api_url": "https://x.example/api/s",
+            "_newsnow.only_sources": "fastbull",
+        }
+        fetcher = NewsNowFetcher(config=cfg)
+        items = _run(fetcher.fetch())
+
+        assert items == []
+        assert fetcher._channel_reports == [
+            {
+                "source_id": "fastbull",
+                "count": 0,
+                "error": None,
+                "empty_reason": "newsnow:empty_payload",
+            }
+        ]
+
     def test_off_mode_returns_empty(self) -> None:
         cfg = {"newsnow.mode": "off"}
         items = _run(NewsNowFetcher(config=cfg).fetch())

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from openakita.channels.gateway import MessageGateway
 from openakita.channels.types import (
     MediaFile,
     MediaStatus,
@@ -92,4 +93,53 @@ class TestMessageTypes:
         assert mc.voices == []
         assert mc.files == []
         assert mc.videos == []
+
+
+class TestMessageGatewayBroadcast:
+    @pytest.mark.asyncio
+    async def test_send_rejects_non_text_payload(self):
+        session_manager = MagicMock()
+        gateway = MessageGateway(session_manager=session_manager)
+        adapter = MagicMock()
+        adapter.send_text = AsyncMock(return_value="msg-1")
+        gateway._adapters["wechat:test"] = adapter
+
+        result = await gateway.send("wechat:test", "chat-1", {"type": "plugin:event"})  # type: ignore[arg-type]
+
+        assert result is None
+        adapter.send_text.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_rejects_non_text_payload_before_listing_sessions(self):
+        session_manager = MagicMock()
+        session_manager.list_sessions = MagicMock(return_value=[])
+        gateway = MessageGateway(session_manager=session_manager)
+
+        result = await gateway.broadcast({"type": "plugin:event", "data": {}})  # type: ignore[arg-type]
+
+        assert result == {}
+        session_manager.list_sessions.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_sends_normal_text(self):
+        session = MagicMock()
+        session.id = "session-1"
+        session.channel = "wechat:test"
+        session.chat_id = "chat-1"
+        session.user_id = "user-1"
+        session.thread_id = None
+
+        session_manager = MagicMock()
+        session_manager.list_sessions = MagicMock(return_value=[session])
+        session_manager.mark_dirty = MagicMock()
+
+        gateway = MessageGateway(session_manager=session_manager)
+        adapter = MagicMock()
+        adapter.send_text = AsyncMock(return_value="msg-1")
+        gateway._adapters["wechat:test"] = adapter
+
+        result = await gateway.broadcast("任务已完成")
+
+        assert result == {"wechat:test": 1}
+        adapter.send_text.assert_awaited_once()
 

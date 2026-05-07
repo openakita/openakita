@@ -9,6 +9,7 @@ import asyncio
 import base64
 import hashlib
 import logging
+import mimetypes
 import time
 import uuid
 from pathlib import Path
@@ -70,6 +71,7 @@ class CreateTaskBody(BaseModel):
     service_tier: str = "default"
     callback_url: str | None = None
     execution_expires_after: int | None = None
+    client_request_id: str = ""
     content: list[dict] | None = None
 
 class DraftConfirmBody(BaseModel):
@@ -139,6 +141,11 @@ class Plugin(PluginBase):
         # same storyboard within a single process and (b) let the UI poll
         # progress via ``/long-video/active-chains`` after a tab refresh.
         self._active_chains: dict[str, dict[str, Any]] = {}
+        # In-process idempotency guard for CreateTab submissions. Without
+        # this, a slow POST /tasks plus a retry/double-click can create two
+        # identical Ark jobs (and therefore charge twice). Keyed by the
+        # browser-supplied client_request_id.
+        self._pending_create_requests: dict[str, asyncio.Future] = {}
 
         router = APIRouter()
         self._register_routes(router)
@@ -212,6 +219,10 @@ class Plugin(PluginBase):
                         "seedance-video chain %s drain error: %s", gid, exc,
                     )
         self._active_chains.clear()
+        for fut in list(self._pending_create_requests.values()):
+            if not fut.done():
+                fut.cancel()
+        self._pending_create_requests.clear()
         if self._ark is not None:
             try:
                 await self._ark.close()
@@ -321,135 +332,241 @@ class Plugin(PluginBase):
                 detail="尚未配置 API Key — 请到「设置 → API Key」填写火山引擎 Ark 密钥",
             )
 
-        model_info = get_model(params.get("model", "2.0"))
-        if not model_info:
-            raise HTTPException(
-                status_code=400,
-                detail=f"未知模型 {params.get('model')!r} — 请在创建页重新选择",
-            )
+        client_request_id = (params.get("client_request_id") or "").strip()
+        create_future: asyncio.Future | None = None
+        create_future_owner = False
+        if client_request_id:
+            # Post-reload / late retry safety net: if the first request
+            # already made it into SQLite, return that task instead of
+            # spending money on a second Ark job.
+            finder = getattr(self._tm, "get_task_by_client_request_id", None)
+            if finder is not None:
+                existing = await finder(client_request_id)
+                if existing:
+                    logger.info(
+                        "create_task deduped by persisted client_request_id=%s task=%s",
+                        client_request_id, existing.get("id"),
+                    )
+                    return existing
 
-        mode = params.get("mode", "t2v")
-        if mode not in model_info.modes:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"模型 {model_info.name} 不支持 {mode} 模式，"
-                    f"仅支持: {', '.join(model_info.modes)}"
-                ),
+            # In-flight guard: two concurrent HTTP requests with the same
+            # client id (bridge fallback, double-click, flaky browser retry)
+            # must share the first Ark submission result.
+            existing_future = self._pending_create_requests.get(client_request_id)
+            if existing_future is not None:
+                logger.info("create_task awaiting in-flight duplicate %s", client_request_id)
+                return await existing_future
+            create_future = asyncio.get_running_loop().create_future()
+            create_future.add_done_callback(
+                lambda fut: fut.exception() if fut.done() and not fut.cancelled() else None
             )
-
-        content = params.get("content") or [{"type": "text", "text": params.get("prompt", "")}]
-
-        # ── Mode validation (Sprint 8 / V1) ──
-        # User-reported bug: "i2v / multimodal / edit / extend 都生不了任务".
-        # Root cause was the UI never wired uploaded assets into the create
-        # body, so backend always saw text-only content and Volcengine
-        # silently mis-handled it.  These guards raise 400 with a Chinese
-        # hint *before* spending money on the Ark call so the user sees a
-        # clear "需要先上传 XX" message in the UI's error banner.
-        if not isinstance(content, list) or not content:
-            raise HTTPException(status_code=400, detail="content 不能为空")
-
-        def _has(content_type: str) -> bool:
-            return any(
-                isinstance(c, dict) and c.get("type") == content_type
-                for c in content
-            )
-
-        def _image_with_role(role: str) -> bool:
-            for c in content:
-                if not isinstance(c, dict) or c.get("type") != "image_url":
-                    continue
-                img = c.get("image_url") or {}
-                if isinstance(img, dict) and img.get("role") == role:
-                    return True
-            return False
-
-        if mode == "i2v" and not _has("image_url"):
-            raise HTTPException(
-                status_code=400,
-                detail="图生视频模式需要先上传首帧图片",
-            )
-        if mode == "i2v_end":
-            # Either the UI sends two image_url with explicit first/last
-            # roles (preferred) or two un-tagged image_urls — accept both
-            # as long as we get at least 2 images.
-            image_count = sum(
-                1 for c in content
-                if isinstance(c, dict) and c.get("type") == "image_url"
-            )
-            has_explicit_pair = (
-                _image_with_role("first_frame")
-                and _image_with_role("last_frame")
-            )
-            if not has_explicit_pair and image_count < 2:
-                raise HTTPException(
-                    status_code=400,
-                    detail="首尾帧模式需要分别上传首帧和尾帧两张图片",
-                )
-        if mode == "multimodal":
-            media_count = sum(
-                1 for c in content
-                if isinstance(c, dict) and c.get("type") in ("image_url", "video_url")
-            )
-            if media_count < 1:
-                raise HTTPException(
-                    status_code=400,
-                    detail="多模态模式至少上传 1 个参考素材（图片/视频/音频）",
-                )
-        if mode in ("edit", "extend") and not _has("video_url"):
-            label = "视频编辑" if mode == "edit" else "视频续写"
-            raise HTTPException(
-                status_code=400,
-                detail=f"{label}模式需要先上传源视频",
-            )
-
-        config = await self._tm.get_all_config()
-        service_tier = params.get("service_tier", config.get("service_tier_default", "default"))
-        callback_url = params.get("callback_url") or config.get("callback_url") or None
-        expires = params.get("execution_expires_after")
-        if service_tier == "flex" and not expires:
-            expires = 172800
+            self._pending_create_requests[client_request_id] = create_future
+            create_future_owner = True
 
         try:
-            result = await self._ark.create_task(
-                model=model_info.model_id,
-                content=content,
-                ratio=params.get("ratio", "16:9"),
-                duration=params.get("duration", 5),
-                resolution=params.get("resolution", "720p"),
-                n=params.get("n", 1),
-                generate_audio=params.get("generate_audio", True),
-                seed=params.get("seed", -1),
-                watermark=params.get("watermark", False),
-                camera_fixed=params.get("camera_fixed", False),
-                draft=params.get("draft", False),
-                return_last_frame=params.get("return_last_frame", False),
-                tools=[{"type": "web_search"}] if params.get("web_search") else None,
-                service_tier=service_tier,
-                callback_url=callback_url,
-                execution_expires_after=expires,
-            )
-        except VendorError as e:
-            logger.error("Ark API error: %s (kind=%s)", e, e.kind)
-            raise HTTPException(status_code=502, detail=f"Ark API error: {e}")
-        except Exception as e:
-            logger.error("Ark API unexpected error: %s", e)
-            raise HTTPException(status_code=502, detail=f"Ark API error: {e}")
+            model_info = get_model(params.get("model", "2.0"))
+            if not model_info:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"未知模型 {params.get('model')!r} — 请在创建页重新选择",
+                )
 
-        ark_task_id = result.get("id", "")
-        task = await self._tm.create_task(
-            ark_task_id=ark_task_id,
-            status="running",
-            prompt=params.get("prompt", ""),
-            mode=params.get("mode", "t2v"),
-            model=params.get("model", "2.0"),
-            params=params,
-            service_tier=service_tier,
-            is_draft=params.get("draft", False),
-            callback_url=callback_url,
-        )
-        return task
+            mode = params.get("mode", "t2v")
+            if mode not in model_info.modes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"模型 {model_info.name} 不支持 {mode} 模式，"
+                        f"仅支持: {', '.join(model_info.modes)}"
+                    ),
+                )
+
+            content = params.get("content") or [{"type": "text", "text": params.get("prompt", "")}]
+
+            # ── Mode validation (Sprint 8 / V1) ──
+            # User-reported bug: "i2v / multimodal / edit / extend 都生不了任务".
+            # Root cause was the UI never wired uploaded assets into the create
+            # body, so backend always saw text-only content and Volcengine
+            # silently mis-handled it.  These guards raise 400 with a Chinese
+            # hint *before* spending money on the Ark call so the user sees a
+            # clear "需要先上传 XX" message in the UI's error banner.
+            if not isinstance(content, list) or not content:
+                raise HTTPException(status_code=400, detail="content 不能为空")
+
+            def _has(content_type: str) -> bool:
+                return any(
+                    isinstance(c, dict) and c.get("type") == content_type
+                    for c in content
+                )
+
+            def _image_with_role(role: str) -> bool:
+                for c in content:
+                    if not isinstance(c, dict) or c.get("type") != "image_url":
+                        continue
+                    img = c.get("image_url") or {}
+                    item_role = c.get("role")
+                    nested_role = img.get("role") if isinstance(img, dict) else None
+                    if item_role == role or nested_role == role:
+                        return True
+                return False
+
+            if mode == "i2v" and not _has("image_url"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="首帧模式需要先上传首帧图片",
+                )
+            if mode == "i2v_end":
+                # Either the UI sends two image_url with explicit first/last
+                # roles (preferred) or two un-tagged image_urls — accept both
+                # as long as we get at least 2 images.
+                image_count = sum(
+                    1 for c in content
+                    if isinstance(c, dict) and c.get("type") == "image_url"
+                )
+                has_explicit_pair = (
+                    _image_with_role("first_frame")
+                    and _image_with_role("last_frame")
+                )
+                if not has_explicit_pair and image_count < 2:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="首尾帧模式需要分别上传首帧和尾帧两张图片",
+                    )
+            if mode == "multimodal":
+                media_count = sum(
+                    1 for c in content
+                    if isinstance(c, dict) and c.get("type") in ("image_url", "video_url")
+                )
+                if media_count < 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="多模态模式至少上传 1 个参考素材（图片/视频/音频）",
+                    )
+            if mode in ("edit", "extend") and not _has("video_url"):
+                label = "编辑" if mode == "edit" else "延长"
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{label}模式需要先上传源视频",
+                )
+
+            def _normalize_content_roles(items: list[dict]) -> list[dict]:
+                """Move media roles to Ark's expected top-level field.
+
+                Older UI builds put ``role`` under ``image_url``. Ark ignores
+                that and returns: "role must be specified for image contents".
+                Video reference modes likewise require top-level
+                ``role=reference_video``; older UI builds sent ``role=edit``.
+                Normalize here so existing browser caches / tool calls do not
+                create failing requests.
+                """
+                image_idx = 0
+                normalized: list[dict] = []
+                for item in items:
+                    if not isinstance(item, dict) or item.get("type") not in ("image_url", "video_url"):
+                        normalized.append(item)
+                        continue
+                    copied = dict(item)
+                    media_key = "image_url" if copied.get("type") == "image_url" else "video_url"
+                    media_payload = copied.get(media_key)
+                    if isinstance(media_payload, dict):
+                        media_payload = dict(media_payload)
+                        nested_role = media_payload.pop("role", None)
+                        copied[media_key] = media_payload
+                    else:
+                        nested_role = None
+
+                    role = copied.get("role") or nested_role
+                    if copied.get("type") == "video_url":
+                        if role in (None, "", "edit", "extend", mode):
+                            role = "reference_video"
+                    elif not role:
+                        if mode == "i2v":
+                            role = "first_frame"
+                        elif mode == "i2v_end":
+                            role = "first_frame" if image_idx == 0 else "last_frame"
+                        else:
+                            role = "reference_image"
+                    copied["role"] = role
+                    if copied.get("type") == "image_url":
+                        image_idx += 1
+                    normalized.append(copied)
+                return normalized
+
+            content = _normalize_content_roles(content)
+
+            for item in content:
+                if not isinstance(item, dict) or item.get("type") != "video_url":
+                    continue
+                if item.get("role") != "reference_video":
+                    continue
+                video_payload = item.get("video_url") or {}
+                url = video_payload.get("url", "") if isinstance(video_payload, dict) else ""
+                if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
+                    label = "编辑/延长" if mode in ("edit", "extend") else "视频参考"
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"{label}模式的视频参考必须使用公网 http(s) 视频 URL，"
+                            "不能使用本地上传文件或 base64。请使用任务详情里的云端视频 URL，"
+                            "或先把视频上传到 Ark 可访问的公网地址后再提交。"
+                        ),
+                    )
+
+            config = await self._tm.get_all_config()
+            service_tier = params.get("service_tier", config.get("service_tier_default", "default"))
+            callback_url = params.get("callback_url") or config.get("callback_url") or None
+            expires = params.get("execution_expires_after")
+            if service_tier == "flex" and not expires:
+                expires = 172800
+
+            try:
+                result = await self._ark.create_task(
+                    model=model_info.model_id,
+                    content=content,
+                    ratio=params.get("ratio", "16:9"),
+                    duration=params.get("duration", 5),
+                    resolution=params.get("resolution", "720p"),
+                    n=params.get("n", 1),
+                    generate_audio=params.get("generate_audio", True),
+                    seed=params.get("seed", -1),
+                    watermark=params.get("watermark", False),
+                    camera_fixed=params.get("camera_fixed", False),
+                    draft=params.get("draft", False),
+                    return_last_frame=params.get("return_last_frame", False),
+                    tools=[{"type": "web_search"}] if params.get("web_search") else None,
+                    service_tier=service_tier,
+                    callback_url=callback_url,
+                    execution_expires_after=expires,
+                )
+            except VendorError as e:
+                logger.error("Ark API error: %s (kind=%s)", e, e.kind)
+                raise HTTPException(status_code=502, detail=f"Ark API error: {e}")
+            except Exception as e:
+                logger.error("Ark API unexpected error: %s", e)
+                raise HTTPException(status_code=502, detail=f"Ark API error: {e}")
+
+            ark_task_id = result.get("id", "")
+            task = await self._tm.create_task(
+                ark_task_id=ark_task_id,
+                status="running",
+                prompt=params.get("prompt", ""),
+                mode=params.get("mode", "t2v"),
+                model=params.get("model", "2.0"),
+                params=params,
+                service_tier=service_tier,
+                is_draft=params.get("draft", False),
+                callback_url=callback_url,
+            )
+            if create_future_owner and create_future is not None and not create_future.done():
+                create_future.set_result(task)
+            return task
+        except Exception as exc:
+            if create_future_owner and create_future is not None and not create_future.done():
+                create_future.set_exception(exc)
+            raise
+        finally:
+            if create_future_owner and client_request_id:
+                self._pending_create_requests.pop(client_request_id, None)
 
     # ── Polling ──
 
@@ -976,7 +1093,55 @@ class Plugin(PluginBase):
             assets, total = await self._tm.list_assets(
                 asset_type=type, offset=offset, limit=limit
             )
+            uploads_dir = (self._api.get_data_dir() / "uploads").resolve()
+            for asset in assets:
+                file_path = Path(asset.get("file_path") or "")
+                try:
+                    rel_path = file_path.resolve().relative_to(uploads_dir)
+                    asset["preview_url"] = build_preview_url("seedance-video", rel_path)
+                except (OSError, ValueError):
+                    # Legacy rows may point outside the plugin upload dir.
+                    # Keep the row visible, but don't expose arbitrary local
+                    # paths to the browser.
+                    asset["preview_url"] = ""
             return {"ok": True, "assets": assets, "total": total}
+
+        @router.get("/assets/{asset_id}/payload")
+        async def get_asset_payload(asset_id: str) -> dict:
+            asset = await self._tm.get_asset(asset_id)
+            if not asset:
+                raise HTTPException(status_code=404, detail="Asset not found")
+
+            uploads_dir = (self._api.get_data_dir() / "uploads").resolve()
+            file_path = Path(asset.get("file_path") or "")
+            try:
+                resolved = file_path.resolve()
+                rel_path = resolved.relative_to(uploads_dir)
+            except (OSError, ValueError) as e:
+                raise HTTPException(status_code=403, detail="Asset is not reusable") from e
+
+            if not resolved.is_file():
+                raise HTTPException(status_code=404, detail="Asset file not found")
+
+            size_bytes = resolved.stat().st_size
+            max_bytes = 50 * 1024 * 1024
+            if size_bytes > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail="素材文件超过 50 MB，无法作为 base64 发送给 Ark",
+                )
+
+            mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+            b64 = base64.b64encode(resolved.read_bytes()).decode("ascii")
+            return {
+                "ok": True,
+                "asset": asset,
+                "kind": asset.get("type") or "file",
+                "original_name": asset.get("original_name") or resolved.name,
+                "size_bytes": size_bytes,
+                "preview_url": build_preview_url("seedance-video", rel_path),
+                "base64": f"data:{mime};base64,{b64}",
+            }
 
         @router.delete("/assets/{asset_id}")
         async def delete_asset(asset_id: str) -> dict:

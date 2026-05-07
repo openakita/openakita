@@ -18,9 +18,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import HTTPException
-
 from _plugin_loader import load_seedance_plugin
+from fastapi import HTTPException
 
 Plugin = load_seedance_plugin().Plugin
 
@@ -34,7 +33,9 @@ def _make_plugin() -> Plugin:
     p._ark.create_task = AsyncMock(return_value={"id": "ark-stub"})
     p._tm = AsyncMock()
     p._tm.get_all_config = AsyncMock(return_value={})
+    p._tm.get_task_by_client_request_id = AsyncMock(return_value=None)
     p._tm.create_task = AsyncMock(side_effect=lambda **kw: {"id": "t-1", **kw})
+    p._pending_create_requests = {}
     return p
 
 
@@ -75,7 +76,7 @@ async def test_i2v_with_image_passes() -> None:
         "prompt": "hello",
         "content": [
             {"type": "text", "text": "hello"},
-            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,xxx", "role": "first_frame"}},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,xxx"}, "role": "first_frame"},
         ],
     })
     assert p._ark.create_task.await_count == 1
@@ -107,11 +108,62 @@ async def test_i2v_end_with_two_images_passes() -> None:
         "prompt": "hello",
         "content": [
             {"type": "text", "text": "hello"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,a"}, "role": "first_frame"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,b"}, "role": "last_frame"},
+        ],
+    })
+    assert p._ark.create_task.await_count == 1
+    sent_content = p._ark.create_task.await_args.kwargs["content"]
+    assert sent_content[1]["role"] == "first_frame"
+    assert sent_content[1]["image_url"] == {"url": "data:image/jpeg;base64,a"}
+    assert sent_content[2]["role"] == "last_frame"
+    assert sent_content[2]["image_url"] == {"url": "data:image/jpeg;base64,b"}
+
+
+@pytest.mark.asyncio
+async def test_i2v_end_normalizes_legacy_nested_image_roles() -> None:
+    p = _make_plugin()
+    await p._create_task_internal({
+        "mode": "i2v_end",
+        "model": "2.0",
+        "prompt": "hello",
+        "content": [
+            {"type": "text", "text": "hello"},
             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,a", "role": "first_frame"}},
             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,b", "role": "last_frame"}},
         ],
     })
-    assert p._ark.create_task.await_count == 1
+
+    sent_content = p._ark.create_task.await_args.kwargs["content"]
+    assert sent_content[1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64,a"},
+        "role": "first_frame",
+    }
+    assert sent_content[2] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64,b"},
+        "role": "last_frame",
+    }
+
+
+@pytest.mark.asyncio
+async def test_i2v_end_infers_roles_for_two_untagged_images() -> None:
+    p = _make_plugin()
+    await p._create_task_internal({
+        "mode": "i2v_end",
+        "model": "2.0",
+        "prompt": "hello",
+        "content": [
+            {"type": "text", "text": "hello"},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,a"}},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,b"}},
+        ],
+    })
+
+    sent_content = p._ark.create_task.await_args.kwargs["content"]
+    assert sent_content[1]["role"] == "first_frame"
+    assert sent_content[2]["role"] == "last_frame"
 
 
 @pytest.mark.asyncio
@@ -138,7 +190,7 @@ async def test_edit_without_video_returns_400() -> None:
             "prompt": "hello",
         })
     assert excinfo.value.status_code == 400
-    assert "视频编辑" in excinfo.value.detail
+    assert "编辑" in excinfo.value.detail
 
 
 @pytest.mark.asyncio
@@ -151,7 +203,7 @@ async def test_extend_without_video_returns_400() -> None:
             "prompt": "hello",
         })
     assert excinfo.value.status_code == 400
-    assert "视频续写" in excinfo.value.detail
+    assert "延长" in excinfo.value.detail
 
 
 @pytest.mark.asyncio
@@ -163,10 +215,67 @@ async def test_edit_with_video_passes() -> None:
         "prompt": "hello",
         "content": [
             {"type": "text", "text": "hello"},
-            {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,xxx", "role": "edit"}},
+            {"type": "video_url", "video_url": {"url": "https://example.com/source.mp4", "role": "edit"}},
         ],
     })
     assert p._ark.create_task.await_count == 1
+    sent_content = p._ark.create_task.await_args.kwargs["content"]
+    assert sent_content[1] == {
+        "type": "video_url",
+        "video_url": {"url": "https://example.com/source.mp4"},
+        "role": "reference_video",
+    }
+
+
+@pytest.mark.asyncio
+async def test_extend_video_role_is_reference_video() -> None:
+    p = _make_plugin()
+    await p._create_task_internal({
+        "mode": "extend",
+        "model": "2.0",
+        "prompt": "hello",
+        "content": [
+            {"type": "text", "text": "hello"},
+            {"type": "video_url", "video_url": {"url": "https://example.com/source.mp4"}, "role": "extend"},
+        ],
+    })
+    sent_content = p._ark.create_task.await_args.kwargs["content"]
+    assert sent_content[1]["role"] == "reference_video"
+
+
+@pytest.mark.asyncio
+async def test_multimodal_video_without_role_gets_reference_video() -> None:
+    p = _make_plugin()
+    await p._create_task_internal({
+        "mode": "multimodal",
+        "model": "2.0",
+        "prompt": "hello",
+        "content": [
+            {"type": "text", "text": "hello"},
+            {"type": "video_url", "video_url": {"url": "https://example.com/source.mp4"}},
+        ],
+    })
+    sent_content = p._ark.create_task.await_args.kwargs["content"]
+    assert sent_content[1]["role"] == "reference_video"
+
+
+@pytest.mark.asyncio
+async def test_reference_video_rejects_base64_before_ark_call() -> None:
+    p = _make_plugin()
+    with pytest.raises(HTTPException) as excinfo:
+        await p._create_task_internal({
+            "mode": "edit",
+            "model": "2.0",
+            "prompt": "hello",
+            "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "video_url", "video_url": {"url": "data:video/mp4;base64,xxx"}, "role": "edit"},
+            ],
+        })
+
+    assert excinfo.value.status_code == 400
+    assert "公网" in excinfo.value.detail
+    assert p._ark.create_task.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -195,3 +304,37 @@ async def test_mode_unsupported_by_model_returns_400() -> None:
         })
     assert excinfo.value.status_code == 400
     assert "不支持" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_client_request_id_returns_persisted_task_without_ark_call() -> None:
+    """A late retry with the same client_request_id must return the
+    already-created task instead of charging for another Ark job."""
+    p = _make_plugin()
+    existing = {"id": "already-created", "params": {"client_request_id": "req-1"}}
+    p._tm.get_task_by_client_request_id = AsyncMock(return_value=existing)
+
+    result = await p._create_task_internal({
+        "mode": "t2v",
+        "model": "2.0",
+        "prompt": "hello",
+        "client_request_id": "req-1",
+    })
+
+    assert result == existing
+    assert p._ark.create_task.await_count == 0
+    assert p._tm.create_task.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_client_request_id_is_stored_in_task_params() -> None:
+    p = _make_plugin()
+    await p._create_task_internal({
+        "mode": "t2v",
+        "model": "2.0",
+        "prompt": "hello",
+        "client_request_id": "req-2",
+    })
+
+    kwargs = p._tm.create_task.await_args.kwargs
+    assert kwargs["params"]["client_request_id"] == "req-2"

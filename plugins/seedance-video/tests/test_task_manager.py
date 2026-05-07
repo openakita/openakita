@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from task_manager import DEFAULT_CONFIG, TaskManager
 
 
@@ -137,6 +136,17 @@ async def test_create_task_explicit_id(tm):
 @pytest.mark.asyncio
 async def test_get_task_missing_returns_none(tm):
     assert await tm.get_task("does-not-exist") is None
+
+
+@pytest.mark.asyncio
+async def test_get_task_by_client_request_id(tm):
+    await tm.create_task(prompt="old", params={"client_request_id": "req-a"})
+    latest = await tm.create_task(prompt="latest", params={"client_request_id": "req-b"})
+
+    found = await tm.get_task_by_client_request_id("req-b")
+    assert found is not None
+    assert found["id"] == latest["id"]
+    assert await tm.get_task_by_client_request_id("missing") is None
 
 
 @pytest.mark.asyncio
@@ -353,7 +363,7 @@ async def test_update_task_whitelist_covers_all_existing_callsites(tm):
 @pytest.mark.asyncio
 async def test_update_task_json_keys_subset(tm):
     """``_JSON_ENCODED_KEYS`` must be a subset of ``_UPDATABLE_COLUMNS``."""
-    assert TaskManager._JSON_ENCODED_KEYS <= set(TaskManager._UPDATABLE_COLUMNS)
+    assert set(TaskManager._UPDATABLE_COLUMNS) >= TaskManager._JSON_ENCODED_KEYS
 
 
 @pytest.mark.asyncio

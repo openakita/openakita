@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 _MAX_TOTAL_ITEMS = 2000
 _DEFAULT_CHANNEL_CONCURRENCY = 4
 _MAX_CHANNEL_CONCURRENCY = 12
+_DEFAULT_TOTAL_BUDGET_SEC = 55.0
+_DEFAULT_CHANNEL_TIMEOUT_SEC = 8.0
 
 
 class NewsNowFetcher(BaseFetcher):
@@ -51,6 +53,8 @@ class NewsNowFetcher(BaseFetcher):
             return []
 
         concurrency = _resolve_channel_concurrency(self._config, len(channels))
+        total_budget_sec = _resolve_total_budget(self._config)
+        channel_timeout_sec = _resolve_channel_timeout(self._config, self._timeout_sec)
         sem = asyncio.Semaphore(concurrency)
 
         async def _one(
@@ -68,7 +72,7 @@ class NewsNowFetcher(BaseFetcher):
                         platform_id=newsnow_id,
                         source_id=sid,
                         config=self._config,
-                        timeout_sec=self._timeout_sec,
+                        timeout_sec=channel_timeout_sec,
                     )
                     logger.info(
                         "newsnow channel %s (%s): %d items",
@@ -88,10 +92,51 @@ class NewsNowFetcher(BaseFetcher):
                     )
                     return sid, newsnow_id, [], str(exc)[:120]
 
-        results = await asyncio.gather(
-            *[_one(sid, nid) for sid, nid in channels],
-            return_exceptions=False,
+        # Do not let one slow public aggregator fan-out invalidate the
+        # whole batch. ``asyncio.wait`` lets us keep completed channels
+        # and mark the rest as per-channel timeouts; the outer pipeline
+        # can then persist partial results instead of collapsing the
+        # entire NewsNow source to ``TimeoutError``.
+        task_map = {
+            asyncio.create_task(_one(sid, nid)): (sid, nid)
+            for sid, nid in channels
+        }
+        done, pending = await asyncio.wait(
+            task_map.keys(),
+            timeout=total_budget_sec,
         )
+        for task in pending:
+            task.cancel()
+        if pending:
+            logger.warning(
+                "newsnow fan-out budget %.1fs exhausted; %d/%d channels timed out",
+                total_budget_sec,
+                len(pending),
+                len(channels),
+            )
+
+        result_by_sid: dict[str, tuple[str, str, list[NormalizedItem], str | None]] = {}
+        for task in done:
+            sid, nid = task_map[task]
+            try:
+                result_by_sid[sid] = task.result()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "newsnow channel %s (%s) unexpected task failure: %s",
+                    sid,
+                    nid,
+                    exc,
+                )
+                result_by_sid[sid] = (sid, nid, [], str(exc)[:120])
+        for task in pending:
+            sid, nid = task_map[task]
+            result_by_sid[sid] = (sid, nid, [], "timeout")
+
+        results = [
+            result_by_sid[sid]
+            for sid, _nid in channels
+            if sid in result_by_sid
+        ]
 
         # Preserve the original channel order in `_channel_reports` so
         # the UI's per-source drawer renders in the same priority the
@@ -106,7 +151,16 @@ class NewsNowFetcher(BaseFetcher):
                     remaining = _MAX_TOTAL_ITEMS - len(out)
                     out.extend(items[:remaining])
             self._channel_reports.append(
-                {"source_id": sid, "count": len(items), "error": error}
+                {
+                    "source_id": sid,
+                    "count": len(items),
+                    "error": error,
+                    "empty_reason": (
+                        "newsnow:empty_payload"
+                        if not error and not items
+                        else None
+                    ),
+                }
             )
 
         return out
@@ -131,6 +185,41 @@ def _resolve_channel_concurrency(config: dict[str, str], n_channels: int) -> int
     # Never spin up more workers than channels — otherwise the semaphore
     # is just dead weight.
     return max(1, min(value, n_channels))
+
+
+def _resolve_total_budget(config: dict[str, str]) -> float:
+    """Maximum wall time for the whole NewsNow fan-out.
+
+    The pipeline also has an outer fetcher budget. Keeping this slightly
+    below that default means ``NewsNowFetcher`` can return partial
+    channel reports instead of being killed by the outer ``wait_for``.
+    """
+    raw = (config.get("newsnow.total_budget_sec") or "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = _DEFAULT_TOTAL_BUDGET_SEC
+    else:
+        value = _DEFAULT_TOTAL_BUDGET_SEC
+    if value <= 0:
+        value = _DEFAULT_TOTAL_BUDGET_SEC
+    return max(3.0, min(value, 120.0))
+
+
+def _resolve_channel_timeout(config: dict[str, str], fallback: float) -> float:
+    """Per-channel HTTP timeout used inside the NewsNow fan-out."""
+    raw = (config.get("newsnow.channel_timeout_sec") or "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = _DEFAULT_CHANNEL_TIMEOUT_SEC
+    else:
+        value = min(float(fallback), _DEFAULT_CHANNEL_TIMEOUT_SEC)
+    if value <= 0:
+        value = _DEFAULT_CHANNEL_TIMEOUT_SEC
+    return max(2.0, min(value, 30.0))
 
 
 def _resolve_channels(config: dict[str, str]) -> list[tuple[str, str]]:

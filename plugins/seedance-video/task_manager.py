@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -181,6 +180,26 @@ class TaskManager:
         if not rows:
             return None
         return self._row_to_task(rows[0])
+
+    async def get_task_by_client_request_id(self, client_request_id: str) -> dict | None:
+        """Return the latest task created by a browser request id.
+
+        SQLite JSON1 availability varies by Python/OS build, so avoid
+        ``json_extract`` and scan a small recent window.  This is only a
+        post-reload/retry safety net; the live in-process guard in
+        ``Plugin._pending_create_requests`` catches the concurrent case.
+        """
+        assert self._db
+        if not client_request_id:
+            return None
+        rows = await self._db.execute_fetchall(
+            "SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200"
+        )
+        for row in rows:
+            task = self._row_to_task(row)
+            if task.get("params", {}).get("client_request_id") == client_request_id:
+                return task
+        return None
 
     async def list_tasks(
         self,

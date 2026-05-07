@@ -299,15 +299,15 @@ async def ingest(
 
     # ``fetch_overall_budget_sec`` bounds the wall time per fetcher so a
     # single slow source (most often the NewsNow aggregator hitting a
-    # cold-start upstream) cannot hold the whole pipeline past the host
-    # bridge's 30s timeout. Default = 25s, honouring the bridge ceiling
-    # while leaving a small margin for the pipeline's own bookkeeping.
+    # cold-start upstream) cannot hold the whole pipeline forever. Ingest
+    # now runs as a background task and the iframe polls `/tasks/{id}`, so
+    # we can favour completeness over the old 30s bridge ceiling.
     try:
-        overall_budget_sec = float(cfg.get("fetch_overall_budget_sec", "25") or "25")
+        overall_budget_sec = float(cfg.get("fetch_overall_budget_sec", "60") or "60")
     except ValueError:
-        overall_budget_sec = 25.0
+        overall_budget_sec = 60.0
     if overall_budget_sec <= 0:
-        overall_budget_sec = 25.0
+        overall_budget_sec = 60.0
     overall_budget_sec = max(timeout_sec, overall_budget_sec)
 
     # NewsNow rate-limit: quietly drop the newsnow source from this run
@@ -363,11 +363,14 @@ async def ingest(
                     continue
                 channel_items = [item for item in report.items if item.source_id == sid]
                 channel_error = channel.get("error")
+                channel_empty_reason = channel.get("empty_reason")
                 entry = {
                     "fetched": len(channel_items),
                     "duration_ms": round(report.duration_ms, 2),
                     "via": "newsnow",
                 }
+                if channel_empty_reason:
+                    entry["via_reason"] = str(channel_empty_reason)
                 if channel_error:
                     entry["error_kind"] = str(channel_error)
                     entry["error"] = str(channel_error)

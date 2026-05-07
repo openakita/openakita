@@ -214,6 +214,13 @@ class GenericRSSFetcher(BaseFetcher):
 
     source_id = "rss_generic"
 
+    def __init__(
+        self, *, config: dict[str, str] | None = None, timeout_sec: float = 15.0
+    ) -> None:
+        super().__init__(config=config, timeout_sec=timeout_sec)
+        self._last_via = "none"
+        self._last_via_reason: str | None = None
+
     def _resolve_feeds(self) -> list[dict[str, str]]:
         raw_json = (self._config.get("rss_generic.feeds_json") or "").strip()
         feeds: list[dict[str, str]] = []
@@ -245,6 +252,8 @@ class GenericRSSFetcher(BaseFetcher):
     async def fetch(self, **_: Any) -> list[NormalizedItem]:
         feeds = self._resolve_feeds()
         if not feeds:
+            self._last_via = "none"
+            self._last_via_reason = "rss:not_configured"
             return []
         out: list[NormalizedItem] = []
         async with make_client(timeout=self._timeout_sec) as client:
@@ -266,6 +275,8 @@ class GenericRSSFetcher(BaseFetcher):
                     item.extra.setdefault("feed_url", feed_url)
                     item.extra.setdefault("feed_name", feed.get("name") or feed_url)
                 out.extend(items)
+        self._last_via = "direct" if out else "none"
+        self._last_via_reason = None if out else "rss:no_items"
         return out
 
 

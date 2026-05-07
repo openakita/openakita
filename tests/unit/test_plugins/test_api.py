@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -219,6 +220,30 @@ class TestGetBrain:
         granted = list(BASIC_PERMISSIONS) + ["brain.access"]
         api = _make_api(tmp_path, granted=granted, host_refs={"brain": fake_brain})
         assert api.get_brain() is fake_brain
+
+
+# ---------- UI events ----------
+
+
+class TestBroadcastUiEvent:
+    @pytest.mark.asyncio
+    async def test_uses_websocket_broadcast_not_im_gateway(self, tmp_path):
+        mock_gateway = MagicMock()
+        mock_gateway.broadcast = AsyncMock()
+        api = _make_api(tmp_path, host_refs={"gateway": mock_gateway})
+
+        with patch(
+            "openakita.api.routes.websocket.broadcast_event",
+            new_callable=AsyncMock,
+        ) as mock_broadcast_event:
+            api.broadcast_ui_event("task_update", {"task_id": "t1", "status": "succeeded"})
+            await asyncio.sleep(0)
+
+        mock_broadcast_event.assert_awaited_once_with(
+            "plugin:test-plugin:task_update",
+            {"task_id": "t1", "status": "succeeded"},
+        )
+        mock_gateway.broadcast.assert_not_called()
 
 
 # ---------- Permission check ----------

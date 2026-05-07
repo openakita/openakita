@@ -62,6 +62,8 @@
     .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
     .content { flex: 1; min-height: 0; overflow: hidden; padding: 20px; position: relative; }
     .content > div { max-height: 100%; overflow-y: auto; }
+    .tab-pane { display: none; height: 100%; min-height: 0; }
+    .tab-pane.active { display: block; }
     .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
     .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
     .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
@@ -106,8 +108,153 @@
     .switch.on { background: var(--primary); }
     .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .2s; }
     .switch.on::after { left: 18px; }
-    .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
-    .upload-zone:hover { border-color: var(--primary); background: rgba(59,130,246,.04); }
+    .upload-stack { display: flex; flex-direction: column; gap: 10px; }
+    .upload-zone {
+      position: relative; overflow: hidden;
+      border: 1.5px dashed rgba(59,130,246,.30);
+      border-radius: 12px;
+      padding: 18px;
+      min-height: 112px;
+      display: flex; align-items: center; justify-content: center;
+      text-align: center; cursor: pointer; transition: .18s ease;
+      color: var(--text-muted);
+      background:
+        radial-gradient(circle at top left, rgba(59,130,246,.10), transparent 36%),
+        linear-gradient(135deg, rgba(59,130,246,.035), rgba(99,102,241,.025));
+    }
+    .upload-zone::before {
+      content: ""; position: absolute; inset: 6px;
+      border: 1px solid rgba(59,130,246,.06);
+      border-radius: 9px; pointer-events: none;
+    }
+    .upload-zone:hover,
+    .upload-zone.drag-over {
+      border-color: var(--primary);
+      background:
+        radial-gradient(circle at top left, rgba(59,130,246,.16), transparent 38%),
+        linear-gradient(135deg, rgba(59,130,246,.08), rgba(99,102,241,.05));
+      box-shadow: 0 8px 22px rgba(59,130,246,.10);
+      transform: translateY(-1px);
+    }
+    .upload-zone.is-filled {
+      min-height: 86px;
+      border-style: solid;
+      border-color: rgba(59,130,246,.22);
+      background: var(--bg-card);
+    }
+    .upload-zone__body { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; }
+    .upload-zone__icon {
+      width: 42px; height: 42px; border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--primary);
+      background: rgba(59,130,246,.12);
+      box-shadow: inset 0 0 0 1px rgba(59,130,246,.12);
+      flex-shrink: 0; font-weight: 700;
+    }
+    .upload-zone__text { min-width: 0; text-align: left; }
+    .upload-zone__title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+    .upload-zone__hint { font-size: 11px; color: var(--text-dim); line-height: 1.45; }
+    .upload-zone__action { font-size: 11px; color: var(--primary); margin-top: 5px; font-weight: 500; }
+    .upload-list { display: flex; flex-direction: column; gap: 8px; }
+    .upload-asset {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px; border-radius: 12px;
+      border: 1px solid rgba(34,197,94,.26);
+      background:
+        linear-gradient(135deg, rgba(34,197,94,.11), rgba(34,197,94,.035)),
+        var(--bg-card);
+      box-shadow: 0 1px 2px rgba(15,23,42,.04);
+    }
+    .upload-asset__thumb {
+      width: 56px; height: 46px; border-radius: 10px;
+      overflow: hidden; flex-shrink: 0;
+      background: rgba(59,130,246,.10);
+      color: var(--primary);
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid rgba(59,130,246,.12);
+      font-size: 12px; font-weight: 700;
+    }
+    .upload-asset__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .upload-asset__main { min-width: 0; flex: 1; }
+    .upload-asset__name { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 12px; font-weight: 600; color: var(--text); }
+    .upload-asset__name-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .upload-asset__meta { margin-top: 3px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); }
+    .upload-pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 999px; background: rgba(59,130,246,.10); color: var(--primary); font-weight: 500; }
+    .upload-asset__remove { flex-shrink: 0; padding: 4px 9px; }
+    .upload-error {
+      display: flex; align-items: flex-start; gap: 6px;
+      padding: 8px 10px; border-radius: 8px;
+      background: rgba(239,68,68,.08);
+      color: var(--danger); font-size: 12px;
+      border: 1px solid rgba(239,68,68,.22);
+    }
+    .assets-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+    .assets-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+      gap: 14px;
+    }
+    .asset-card {
+      overflow: hidden; padding: 0; border-radius: 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 2px rgba(15,23,42,.04);
+      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+    }
+    .asset-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(59,130,246,.35);
+      box-shadow: 0 12px 28px rgba(15,23,42,.10);
+    }
+    .asset-preview {
+      position: relative;
+      width: 100%; aspect-ratio: 4 / 3;
+      background:
+        linear-gradient(135deg, rgba(59,130,246,.08), rgba(99,102,241,.04)),
+        var(--bg);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-dim);
+      overflow: hidden;
+    }
+    .asset-preview img,
+    .asset-preview video {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+    }
+    .asset-preview audio { width: calc(100% - 18px); }
+    .asset-preview__fallback {
+      width: 46px; height: 46px; border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(59,130,246,.12);
+      color: var(--primary);
+      font-size: 22px;
+    }
+    .asset-type-badge {
+      position: absolute; top: 8px; left: 8px;
+      padding: 2px 8px; border-radius: 999px;
+      font-size: 11px; font-weight: 600;
+      color: #fff; background: rgba(15,23,42,.58);
+      backdrop-filter: blur(8px);
+    }
+    .asset-body { padding: 10px; }
+    .asset-name {
+      font-size: 12px; font-weight: 600; color: var(--text);
+      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+    .asset-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); }
+    .asset-actions { display: flex; gap: 6px; margin-top: 10px; }
+    .asset-actions .btn { flex: 1; justify-content: center; }
+    .asset-picker { width: min(820px, 96vw); max-width: min(820px, 96vw); max-height: 82vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+    .asset-picker__head { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .asset-picker__title { font-size: 15px; font-weight: 650; color: var(--text); }
+    .asset-picker__hint { margin-top: 4px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+    .asset-picker__body { padding: 16px 20px; overflow-y: auto; min-height: 260px; }
+    .asset-picker__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+    .asset-picker__item { text-align: left; cursor: pointer; }
+    .asset-picker__item.is-disabled { cursor: not-allowed; opacity: .58; }
+    .asset-picker__item .asset-preview { pointer-events: none; }
+    .asset-picker__footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+    .upload-zone-actions { display: flex; justify-content: flex-end; }
     .split-layout { display: flex; gap: 20px; height: 100%; overflow: hidden; }
     .split-left { width: 42%; min-width: 320px; overflow-y: auto; flex-shrink: 0; }
     .split-right { flex: 1; min-width: 0; overflow-y: auto; }
@@ -398,7 +545,106 @@
     .storyboard-seg-thumb { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 12px; transition: .15s; display: flex; align-items: center; gap: 8px; }
     .storyboard-seg-thumb:hover { border-color: var(--primary); background: rgba(59,130,246,.04); }
     .storyboard-seg-thumb.active { border-color: var(--primary); background: rgba(59,130,246,.08); }
+    .storyboard-workspace { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+    .storyboard-hero {
+      flex-shrink: 0;
+      display: flex; justify-content: space-between; gap: 16px; align-items: center;
+      padding: 14px 16px; border-radius: 16px;
+      background:
+        radial-gradient(circle at top left, rgba(99,102,241,.16), transparent 34%),
+        linear-gradient(135deg, rgba(59,130,246,.08), rgba(255,255,255,.02)),
+        var(--bg-card);
+      border: 1px solid rgba(99,102,241,.18);
+      box-shadow: 0 10px 30px rgba(15,23,42,.06);
+    }
+    .storyboard-hero__title { font-size: 16px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px; }
+    .storyboard-hero__hint { margin-top: 3px; font-size: 12px; color: var(--text-muted); }
+    .storyboard-steps { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .story-step {
+      display: flex; align-items: center; gap: 7px;
+      border: 1px solid var(--border); background: var(--bg-card);
+      color: var(--text-muted); border-radius: 999px;
+      padding: 7px 11px; font-size: 12px; cursor: pointer;
+      transition: all .16s ease;
+    }
+    .story-step:hover { color: var(--primary); border-color: rgba(99,102,241,.35); transform: translateY(-1px); }
+    .story-step.active { color: #fff; background: linear-gradient(135deg, var(--primary), #6366f1); border-color: transparent; box-shadow: 0 8px 18px rgba(99,102,241,.24); }
+    .story-step__num { width: 18px; height: 18px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: rgba(99,102,241,.12); font-size: 11px; font-weight: 700; }
+    .story-step.active .story-step__num { background: rgba(255,255,255,.22); }
+    .story-empty-panel {
+      min-height: 260px; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; text-align: center; gap: 10px;
+      border: 1px dashed rgba(99,102,241,.32); border-radius: 16px;
+      background: linear-gradient(180deg, rgba(99,102,241,.06), rgba(59,130,246,.025));
+      padding: 28px;
+    }
+    .story-empty-panel__icon {
+      width: 48px; height: 48px; border-radius: 18px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(99,102,241,.12); color: var(--primary); font-size: 24px;
+    }
+    .story-empty-panel__title { font-size: 15px; font-weight: 700; color: var(--text); }
+    .story-empty-panel__hint { max-width: 440px; font-size: 12px; color: var(--text-muted); line-height: 1.7; }
+    .story-card-soft {
+      border-radius: 14px;
+      border: 1px solid rgba(99,102,241,.14);
+      box-shadow: 0 6px 20px rgba(15,23,42,.045);
+    }
+    .story-segment-card {
+      position: relative; cursor: pointer; overflow: hidden;
+      border-radius: 14px; transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease;
+    }
+    .story-segment-card:hover { transform: translateY(-1px); border-color: rgba(99,102,241,.35); box-shadow: 0 8px 22px rgba(15,23,42,.06); }
+    .story-segment-card.active { border-left: 4px solid var(--primary); }
+    .storyboard-body { flex: 1; min-height: 0; overflow: hidden; }
+    .story-progress-card {
+      position: relative; overflow: hidden;
+      padding: 18px; border-radius: 18px;
+      background:
+        radial-gradient(circle at top right, rgba(59,130,246,.16), transparent 30%),
+        linear-gradient(180deg, rgba(99,102,241,.07), rgba(255,255,255,.02)),
+        var(--bg-card);
+      border: 1px solid rgba(99,102,241,.16);
+      box-shadow: 0 12px 32px rgba(15,23,42,.07);
+    }
+    .story-progress-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .story-progress-orb {
+      width: 46px; height: 46px; border-radius: 18px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(99,102,241,.12); color: var(--primary);
+      box-shadow: inset 0 0 0 1px rgba(99,102,241,.18);
+    }
+    .story-progress-title { font-size: 17px; font-weight: 700; color: var(--text); }
+    .story-progress-subtitle { margin-top: 2px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+    .story-progress-bar { height: 9px; border-radius: 999px; overflow: hidden; background: rgba(99,102,241,.10); margin: 14px 0; }
+    .story-progress-bar__fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary), #22c55e); transition: width .25s ease; }
+    .story-progress-stats { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; margin: 12px 0; }
+    .story-progress-stat { padding: 10px; border-radius: 12px; background: rgba(255,255,255,.55); border: 1px solid rgba(99,102,241,.12); }
+    .story-progress-stat__num { font-size: 18px; font-weight: 800; color: var(--text); line-height: 1.1; }
+    .story-progress-stat__label { margin-top: 3px; font-size: 11px; color: var(--text-muted); }
+    .story-progress-actions { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-top: 12px; flex-wrap: wrap; }
+    .story-progress-safe { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+    .story-queue { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+    .story-queue-item {
+      display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center;
+      padding: 10px 12px; border-radius: 12px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      transition: border-color .16s ease, background .16s ease;
+    }
+    .story-queue-item.is-running { border-color: rgba(59,130,246,.35); background: rgba(59,130,246,.045); }
+    .story-queue-item.is-succeeded { border-color: rgba(34,197,94,.32); background: rgba(34,197,94,.045); }
+    .story-queue-item.is-failed { border-color: rgba(239,68,68,.32); background: rgba(239,68,68,.045); }
+    .story-queue-index { width: 26px; height: 26px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: rgba(99,102,241,.10); color: var(--primary); font-size: 12px; font-weight: 700; }
+    .story-queue-title { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .story-queue-meta { margin-top: 2px; font-size: 11px; color: var(--text-muted); }
+    .story-queue-status { font-size: 11px; padding: 3px 8px; border-radius: 999px; color: var(--text-muted); background: rgba(99,102,241,.08); }
+    .story-queue-status.running { color: var(--primary); background: rgba(59,130,246,.10); }
+    .story-queue-status.succeeded { color: var(--success); background: rgba(34,197,94,.10); }
+    .story-queue-status.failed { color: var(--danger); background: rgba(239,68,68,.10); }
+    .story-side-panel { padding: 14px; border-radius: 14px; background: var(--bg-card); border: 1px solid var(--border); margin-top: 10px; }
     @media (max-width: 860px) {
+      .storyboard-hero { align-items: stretch; flex-direction: column; }
+      .storyboard-steps { justify-content: flex-start; }
       .storyboard-split { flex-direction: column; overflow-y: auto; }
       .storyboard-split__left { width: 100%; min-width: unset; flex-shrink: 0; }
       .storyboard-split__right { flex: none; min-height: 280px; }
@@ -444,12 +690,23 @@ function apiCall(method, path, body) {
     var id = uid();
     _pending[id] = { resolve: resolve, reject: reject };
     post({ type: "bridge:api-request", requestId: id, payload: { method: method, path: path, body: body } });
-    setTimeout(function() {
-      if (_pending[id]) {
-        delete _pending[id];
-        directFetch(method, path, body).then(resolve).catch(reject);
-      }
-    }, 5000);
+    // The old bridge fallback re-sent *every* request via direct fetch after
+    // 5s. That is safe-ish for GET, but disastrous for non-idempotent POSTs:
+    // a slow /tasks create would be submitted once through the bridge and a
+    // second time through directFetch, creating two identical Ark jobs.
+    //
+    // Only retry safe reads. For mutating requests, keep waiting for the
+    // original bridge response; the form-level progress modal tells users the
+    // request is still being submitted instead of looking frozen.
+    var safeToRetry = method === "GET" || method === "HEAD";
+    if (safeToRetry) {
+      setTimeout(function() {
+        if (_pending[id]) {
+          delete _pending[id];
+          directFetch(method, path, body).then(resolve).catch(reject);
+        }
+      }, 5000);
+    }
   });
 }
 
@@ -741,6 +998,12 @@ const I18N_DICT = {
     "create.upload.editLabel": "拖拽或点击上传待编辑的视频",
     "create.upload.extendLabel": "拖拽或点击上传待延长的视频",
     "create.upload.videoHint": "支持 mp4/mov/webp 格式",
+    "create.assetPicker.choose": "从素材库选择",
+    "create.assetPicker.chooseImage": "从素材库选择图片",
+    "create.assetPicker.chooseMedia": "从素材库选择图片/音频",
+    "create.videoUrl.label": "云端视频 URL（必填）",
+    "create.videoUrl.placeholder": "粘贴 https://...mp4，例如任务详情里的云端视频 URL",
+    "create.videoUrl.hint": "Ark 编辑/延长模式要求 reference_video 是公网 http(s) URL。本地上传的视频只能在插件内预览，云端无法访问。",
     "create.upload.uploading": "上传中: {name}",
     "create.upload.uploaded": "已上传: {name}",
     "create.tip.t2v": "文生视频随机性较大，适合激发灵感。如有明确预期，建议先生图再图生视频",
@@ -757,6 +1020,7 @@ const I18N_DICT = {
     "preview.waiting": "等待结果...",
     "preview.revised": "修改后提示词: {text}",
     "preview.btn.download": "下载",
+    "preview.btn.copyVideoUrl": "复制云端视频 URL",
     "preview.btn.new": "新建",
     "preview.ctrl.stepBack": "逐帧后退",
     "preview.ctrl.stepFwd": "逐帧前进",
@@ -767,6 +1031,12 @@ const I18N_DICT = {
     "modal.taskStarted.online": "视频正在云端异步生成，通常需要 1~3 分钟。可前往任务列表查看生成进度。",
     "modal.taskStarted.continue": "继续创建",
     "modal.taskStarted.goTasks": "前往任务列表",
+    "modal.createProgress.title": "正在提交任务",
+    "modal.createProgress.validating": "正在校验素材和参数…",
+    "modal.createProgress.submitting": "正在提交到 Ark 云端…",
+    "modal.createProgress.waiting": "正在等待任务号返回…",
+    "modal.createProgress.detail": "大图片或视频素材需要更久，请不要重复点击；系统会防止重复提交。",
+    "modal.createProgress.safe": "提示：这一步只是提交生成任务，真正的视频会在任务列表中异步生成。",
     "tasks.filter.status": "状态",
     "tasks.filter.type": "类型",
     "tasks.filter.all": "全部",
@@ -813,7 +1083,20 @@ const I18N_DICT = {
     "assets.empty.title": "暂无素材",
     "assets.empty.hint": "在创建面板上传素材后会自动显示在这里",
     "assets.count": "{n} 个素材",
+    "assets.intro": "这里保存创建页上传过的素材，可在创建页回选图片/音频素材。",
+    "assets.videoLimit": "本地视频仅支持预览/删除；编辑和延长模式仍需公网视频 URL。",
     "assets.btn.delete": "删除",
+    "assets.confirmDelete": "确定要删除这个素材吗？此操作会同时删除本地文件。",
+    "assets.preview.open": "打开预览",
+    "assets.preview.noPreview": "暂无预览",
+    "assetPicker.title": "从素材库选择",
+    "assetPicker.hint": "选择后会读取本地文件并转成 Ark 需要的 base64，用于本次创建。",
+    "assetPicker.loading": "正在加载素材…",
+    "assetPicker.empty": "暂无可选择素材。请先在创建页上传一次。",
+    "assetPicker.use": "使用此素材",
+    "assetPicker.videoDisabled": "本地视频不能作为 Ark 参考视频复用，请使用公网 http(s) 视频 URL。",
+    "assetPicker.loadFail": "读取素材失败: {msg}",
+    "assetPicker.cancel": "取消",
     "guide.search.placeholder": "搜索模板或关键词...",
     "guide.section.templates": "模板库（点击查看 / 套用）",
     "guide.section.cameras": "镜头语言速查",
@@ -829,6 +1112,32 @@ const I18N_DICT = {
     "story.section.input": "故事输入",
     "story.section.usage": "使用说明",
     "story.section.params": "生成参数",
+    "story.workspace.title": "分镜工作台",
+    "story.workspace.hint": "可自由跳转任一阶段：输入故事、编辑分镜、查看生成进度或处理结果。",
+    "story.step.input": "输入故事",
+    "story.step.edit": "编辑分镜",
+    "story.step.generating": "生成进度",
+    "story.step.results": "结果拼接",
+    "story.empty.edit.title": "还没有分镜段落",
+    "story.empty.edit.hint": "你可以先让 AI 拆解故事，也可以直接添加空白分镜后手动编写提示词。",
+    "story.empty.generate.title": "暂无可生成的分镜",
+    "story.empty.generate.hint": "进入编辑分镜页面，添加或拆解出至少 1 段分镜后再开始生成。",
+    "story.empty.results.title": "还没有生成结果",
+    "story.empty.results.hint": "分镜生成完成后，会在这里预览每段视频并拼接成长视频。",
+    "story.btn.goInput": "去输入故事",
+    "story.btn.goEdit": "去编辑分镜",
+    "story.progress.overview": "生成总览",
+    "story.progress.queue": "分镜队列",
+    "story.progress.previewHint": "生成完成后，点击左侧分镜可在这里预览视频结果。",
+    "story.progress.waitingId": "正在提交任务并等待云端任务 ID…",
+    "story.progress.percent": "整体进度 {percent}%",
+    "story.progress.pending": "待提交",
+    "story.progress.running": "生成中",
+    "story.progress.other": "其他",
+    "story.progress.status.pending": "等待",
+    "story.progress.status.running": "生成中",
+    "story.progress.status.succeeded": "完成",
+    "story.progress.status.failed": "失败",
     "story.label.story": "故事 / 脚本内容",
     "story.label.totalDuration": "目标总时长 (秒)",
     "story.label.segDuration": "每段时长 (秒)",
@@ -1035,11 +1344,21 @@ const I18N_DICT = {
     "toast.modeNeedBothFrames": "首尾帧模式需要分别上传首帧和尾帧两张图片",
     "toast.modeNeedMultimodal": "多模态模式至少上传 1 个参考素材（图片/视频/音频）",
     "toast.modeNeedSourceVideo": "{label} 模式需要先上传源视频",
+    "toast.modeNeedPublicVideoUrl": "{label} 模式需要公网 http(s) 视频 URL，不能使用本地上传视频。请复制任务详情里的云端视频 URL 后再提交。",
+    "toast.modeNeedValidVideoUrl": "视频 URL 必须以 http:// 或 https:// 开头",
+    "toast.videoReferenceNeedsUrl": "视频参考必须使用公网 http(s) URL，不能使用本地上传视频或 base64",
     "toast.chainInProgress": "已有相同分镜在生成，正在为你恢复进度…",
     "toast.dedupedSegments": "AI 输出有 {n} 段重复，已自动合并",
     "create.upload.ready": "已就绪 {name}（{size}）",
     "create.upload.remove": "移除",
     "create.upload.replace": "点击或拖拽以替换",
+    "create.upload.addMore": "继续添加素材",
+    "create.upload.dropAction": "点击选择，或拖拽文件到这里",
+    "create.upload.replaceAction": "点击或拖拽替换当前素材",
+    "create.upload.type.image": "图片",
+    "create.upload.type.video": "视频",
+    "create.upload.type.audio": "音频",
+    "create.upload.type.file": "文件",
     "story.cancelConfirm": "确定要取消此次生成吗？已提交到火山的分镜会继续在云端跑完，但前端不再轮询。",
     "story.btn.cancel": "取消生成",
     "story.progress.submitted": "已提交",
@@ -1112,6 +1431,12 @@ const I18N_DICT = {
     "create.upload.editLabel": "Drag or click to upload the video to edit",
     "create.upload.extendLabel": "Drag or click to upload the video to extend",
     "create.upload.videoHint": "mp4 / mov / webm",
+    "create.assetPicker.choose": "Choose from Assets",
+    "create.assetPicker.chooseImage": "Choose image from Assets",
+    "create.assetPicker.chooseMedia": "Choose image/audio from Assets",
+    "create.videoUrl.label": "Cloud video URL (required)",
+    "create.videoUrl.placeholder": "Paste https://...mp4, e.g. the cloud URL from task details",
+    "create.videoUrl.hint": "Ark edit/extend requires reference_video to be a public http(s) URL. Local uploads are only previewable inside the plugin; Ark cannot fetch them.",
     "create.upload.uploading": "Uploading: {name}",
     "create.upload.uploaded": "Uploaded: {name}",
     "create.tip.t2v": "Text-to-video is exploratory. For predictable results, generate an image first then image-to-video.",
@@ -1128,6 +1453,7 @@ const I18N_DICT = {
     "preview.waiting": "Waiting for result…",
     "preview.revised": "Revised prompt: {text}",
     "preview.btn.download": "Download",
+    "preview.btn.copyVideoUrl": "Copy cloud video URL",
     "preview.btn.new": "New",
     "preview.ctrl.stepBack": "Step back",
     "preview.ctrl.stepFwd": "Step forward",
@@ -1138,6 +1464,12 @@ const I18N_DICT = {
     "modal.taskStarted.online": "Video is generating in the cloud (~1–3 min). Check Tasks for progress.",
     "modal.taskStarted.continue": "Keep creating",
     "modal.taskStarted.goTasks": "Open Tasks",
+    "modal.createProgress.title": "Submitting task",
+    "modal.createProgress.validating": "Validating assets and parameters…",
+    "modal.createProgress.submitting": "Submitting to Ark cloud…",
+    "modal.createProgress.waiting": "Waiting for task id…",
+    "modal.createProgress.detail": "Large images or videos can take longer. Please do not click again; duplicate submissions are guarded.",
+    "modal.createProgress.safe": "Tip: this step only submits the job. The actual video is generated asynchronously in Tasks.",
     "tasks.filter.status": "Status",
     "tasks.filter.type": "Type",
     "tasks.filter.all": "All",
@@ -1184,7 +1516,20 @@ const I18N_DICT = {
     "assets.empty.title": "No assets",
     "assets.empty.hint": "Files you upload from Create show up here.",
     "assets.count": "{n} assets",
+    "assets.intro": "Assets uploaded from Create are saved here and can be reused for images/audio in Create.",
+    "assets.videoLimit": "Local videos are preview/delete only; edit and extend still require a public video URL.",
     "assets.btn.delete": "Delete",
+    "assets.confirmDelete": "Delete this asset and its local file?",
+    "assets.preview.open": "Open preview",
+    "assets.preview.noPreview": "No preview",
+    "assetPicker.title": "Choose from Assets",
+    "assetPicker.hint": "Selecting an asset reads the local file and converts it to the base64 payload Ark needs.",
+    "assetPicker.loading": "Loading assets…",
+    "assetPicker.empty": "No reusable assets yet. Upload one from Create first.",
+    "assetPicker.use": "Use this asset",
+    "assetPicker.videoDisabled": "Local videos cannot be reused as Ark reference videos. Use a public http(s) video URL.",
+    "assetPicker.loadFail": "Could not load asset: {msg}",
+    "assetPicker.cancel": "Cancel",
     "guide.search.placeholder": "Search templates or keywords…",
     "guide.section.templates": "Templates (click to view / apply)",
     "guide.section.cameras": "Camera language",
@@ -1200,6 +1545,32 @@ const I18N_DICT = {
     "story.section.input": "Story",
     "story.section.usage": "How to use",
     "story.section.params": "Generation parameters",
+    "story.workspace.title": "Storyboard Workbench",
+    "story.workspace.hint": "Jump freely between stages: write story, edit segments, watch progress, or handle results.",
+    "story.step.input": "Story",
+    "story.step.edit": "Edit",
+    "story.step.generating": "Progress",
+    "story.step.results": "Results",
+    "story.empty.edit.title": "No storyboard segments yet",
+    "story.empty.edit.hint": "Ask AI to decompose a story first, or add a blank segment and write prompts manually.",
+    "story.empty.generate.title": "No segments to generate",
+    "story.empty.generate.hint": "Open the editor and add or decompose at least one segment before generation.",
+    "story.empty.results.title": "No results yet",
+    "story.empty.results.hint": "Generated segment videos will appear here for preview and long-video stitching.",
+    "story.btn.goInput": "Write story",
+    "story.btn.goEdit": "Edit segments",
+    "story.progress.overview": "Generation overview",
+    "story.progress.queue": "Segment queue",
+    "story.progress.previewHint": "When a segment completes, click it on the left to preview the result here.",
+    "story.progress.waitingId": "Submitting and waiting for cloud task id…",
+    "story.progress.percent": "{percent}% overall",
+    "story.progress.pending": "Pending",
+    "story.progress.running": "Running",
+    "story.progress.other": "Other",
+    "story.progress.status.pending": "Waiting",
+    "story.progress.status.running": "Running",
+    "story.progress.status.succeeded": "Done",
+    "story.progress.status.failed": "Failed",
     "story.label.story": "Story / script",
     "story.label.totalDuration": "Total duration (seconds)",
     "story.label.segDuration": "Per-segment duration",
@@ -1406,11 +1777,21 @@ const I18N_DICT = {
     "toast.modeNeedBothFrames": "First+Last frame mode needs both a first and a last frame",
     "toast.modeNeedMultimodal": "Multimodal mode needs at least 1 reference asset (image / video / audio)",
     "toast.modeNeedSourceVideo": "{label} mode needs a source video — please upload one",
+    "toast.modeNeedPublicVideoUrl": "{label} mode needs a public http(s) video URL, not a local upload. Copy the cloud video URL from task details and retry.",
+    "toast.modeNeedValidVideoUrl": "Video URL must start with http:// or https://",
+    "toast.videoReferenceNeedsUrl": "Video references must use a public http(s) URL, not a local upload or base64",
     "toast.chainInProgress": "An identical chain is already running — resuming its progress…",
     "toast.dedupedSegments": "AI returned {n} duplicate segments — they have been merged",
     "create.upload.ready": "Ready: {name} ({size})",
     "create.upload.remove": "Remove",
     "create.upload.replace": "Click or drop to replace",
+    "create.upload.addMore": "Add more assets",
+    "create.upload.dropAction": "Click to choose, or drop a file here",
+    "create.upload.replaceAction": "Click or drop to replace the current asset",
+    "create.upload.type.image": "Image",
+    "create.upload.type.video": "Video",
+    "create.upload.type.audio": "Audio",
+    "create.upload.type.file": "File",
     "story.cancelConfirm": "Cancel this run? Already-submitted segments keep running on Volcengine; we just stop polling.",
     "story.btn.cancel": "Cancel run",
     "story.progress.submitted": "Submitted",
@@ -1554,6 +1935,151 @@ function TaskStartedModal({ open, onClose, onGoToTasks, title, desc }) {
           <button className="btn btn-primary" onClick={() => { onClose(); onGoToTasks && onGoToTasks(); }}>
             {t("modal.taskStarted.goTasks")}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreateProgressModal({ open, stage, detail }) {
+  const t = useT();
+  if (!open) return null;
+  return (
+    <div className="modal-mask">
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-icon">
+          <span className="spinner" style={{width:22,height:22}} />
+        </div>
+        <div className="modal-title">{t("modal.createProgress.title")}</div>
+        <div className="modal-desc">
+          <div style={{fontWeight:600, color:"var(--text)", marginBottom:6}}>
+            {stage || t("modal.createProgress.submitting")}
+          </div>
+          <div>{detail || t("modal.createProgress.detail")}</div>
+        </div>
+        <div style={{marginTop:14, fontSize:12, color:"var(--text-muted)"}}>
+          {t("modal.createProgress.safe")}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssetPickerModal({ open, allowedKinds = ["image"], disabledKinds = [], onCancel, onSelect }) {
+  const t = useT();
+  const [assets, setAssets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectingId, setSelectingId] = useState("");
+  const disabledSet = new Set(disabledKinds);
+
+  const load = useCallback(async () => {
+    if (!open) return;
+    setLoading(true);
+    try {
+      const responses = await Promise.all(allowedKinds.map(kind => pluginApi("GET", `/assets?type=${encodeURIComponent(kind)}`)));
+      const merged = [];
+      responses.forEach(r => {
+        if (Array.isArray(r.body?.assets)) merged.push(...r.body.assets);
+      });
+      const seen = new Set();
+      setAssets(merged.filter(a => {
+        if (!a.id || seen.has(a.id)) return false;
+        seen.add(a.id);
+        return true;
+      }));
+    } catch (e) {
+      showToast(_tr("assetPicker.loadFail", { msg: e?.message || String(e) }), "error");
+      setAssets([]);
+    }
+    setLoading(false);
+  }, [open, allowedKinds.join("|")]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const renderPreview = (a) => {
+    const url = a.preview_url || "";
+    if (url && a.type === "image") return <img src={url} alt={a.original_name || a.id} loading="lazy" />;
+    if (url && a.type === "video") return <video src={url} muted preload="metadata" />;
+    if (url && a.type === "audio") return <audio src={url} controls preload="metadata" />;
+    return (
+      <div className="asset-preview__fallback" title={t("assets.preview.noPreview")}>
+        {{image:<Ico name="image"/>,video:<Ico name="film"/>,audio:<Ico name="music"/>}[a.type] || <Ico name="folder"/>}
+      </div>
+    );
+  };
+
+  const handleSelect = async (a) => {
+    if (disabledSet.has(a.type)) {
+      showToast(t("assetPicker.videoDisabled"), "warning");
+      return;
+    }
+    setSelectingId(a.id);
+    try {
+      const r = await pluginApi("GET", `/assets/${encodeURIComponent(a.id)}/payload`);
+      if (!r.ok || !r.body?.ok || !r.body?.base64) {
+        throw new Error(r.body?.detail || r.body?.error || `HTTP ${r.status || "?"}`);
+      }
+      onSelect({
+        name: r.body.original_name || a.original_name || a.id,
+        base64: r.body.base64,
+        asset: r.body.asset || a,
+        size: r.body.size_bytes || a.size_bytes,
+        kind: r.body.kind || a.type,
+      });
+    } catch (e) {
+      showToast(_tr("assetPicker.loadFail", { msg: e?.message || String(e) }), "error");
+    }
+    setSelectingId("");
+  };
+
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onCancel}>
+      <div className="modal-card asset-picker" onClick={e => e.stopPropagation()}>
+        <div className="asset-picker__head">
+          <div>
+            <div className="asset-picker__title">{t("assetPicker.title")}</div>
+            <div className="asset-picker__hint">{t("assetPicker.hint")}</div>
+          </div>
+          <button type="button" className="btn btn-sm" onClick={onCancel}>{t("assetPicker.cancel")}</button>
+        </div>
+        <div className="asset-picker__body">
+          {loading ? (
+            <div className="empty-state"><p>{t("assetPicker.loading")}</p></div>
+          ) : assets.length === 0 ? (
+            <div className="empty-state"><p>{t("assetPicker.empty")}</p></div>
+          ) : (
+            <div className="asset-picker__grid">
+              {assets.map(a => {
+                const disabled = disabledSet.has(a.type);
+                return (
+                  <button key={a.id} type="button" className={"asset-card asset-picker__item" + (disabled ? " is-disabled" : "")}
+                    disabled={!!selectingId}
+                    title={disabled ? t("assetPicker.videoDisabled") : (a.original_name || a.id)}
+                    onClick={() => handleSelect(a)}>
+                    <div className="asset-preview">
+                      {renderPreview(a)}
+                      <span className="asset-type-badge">{_assetKindLabel(a.type || "file")}</span>
+                    </div>
+                    <div className="asset-body">
+                      <div className="asset-name">{a.original_name || a.id}</div>
+                      <div className="asset-meta">
+                        <span>{a.size_bytes ? _formatSize(a.size_bytes) : "?"}</span>
+                        {disabled && <span>{t("assetPicker.videoDisabled")}</span>}
+                      </div>
+                      {!disabled && (
+                        <div className="asset-actions">
+                          <span className="btn btn-sm btn-primary">
+                            {selectingId === a.id ? t("picker.loading") : t("assetPicker.use")}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1822,13 +2348,26 @@ function _formatSize(n) {
   return (n / 1024 / 1024).toFixed(1) + " MB";
 }
 
+function _assetKind(asset) {
+  const kind = (asset?.kind || "").toLowerCase();
+  const name = (asset?.name || "").toLowerCase();
+  if (kind.includes("image") || /\.(png|jpe?g|webp|gif|bmp)$/i.test(name)) return "image";
+  if (kind.includes("video") || /\.(mp4|mov|webm|mkv)$/i.test(name)) return "video";
+  if (kind.includes("audio") || /\.(mp3|wav|m4a|aac|ogg)$/i.test(name)) return "audio";
+  return "file";
+}
+
+function _assetKindLabel(kind) {
+  return _tr("create.upload.type." + kind, null, kind);
+}
+
 // Sprint 8 / V1 — `value` (single asset summary or array for multiple
 // mode) and `onRemove(index?)` let the parent component own the actual
 // upload state.  Without this, CreateTab couldn't remember WHICH file
 // the user just uploaded, and modes like i2v/edit/extend silently
 // submitted with no `content[].image_url` — the bug report's "其他功能
 // 都用不了".
-function FileUploadZone({ id, accept, multiple, onUpload, label, hint, value, onRemove }) {
+function FileUploadZone({ id, accept, multiple, onUpload, label, hint, value, onRemove, onPickFromLibrary, libraryLabel }) {
   const t = useT();
   const [uploading, setUploading] = useState(false);
   const [pendingName, setPendingName] = useState("");
@@ -1859,73 +2398,86 @@ function FileUploadZone({ id, accept, multiple, onUpload, label, hint, value, on
     return Array.isArray(value) ? value : [value];
   })();
 
+  const filled = summarized.length > 0;
+  const uploadTitle = uploading
+    ? t("create.upload.uploading", { name: pendingName })
+    : filled && !multiple
+      ? _tr("create.upload.replace", null, "Click or drop to replace")
+      : multiple && filled
+        ? _tr("create.upload.addMore", null, "Add more assets")
+        : label;
+  const uploadHint = filled && !multiple
+    ? _tr("create.upload.replaceAction", null, "Click or drop to replace the current asset")
+    : hint || _tr("create.upload.dropAction", null, "Click to choose, or drop a file here");
+
   return (
-    <div>
-      {/* Already-uploaded chip(s) — shown ABOVE the dropzone so the
-          user has a clear "this is what we'll send to Ark" signal. */}
+    <div className="upload-stack">
       {summarized.length > 0 && (
-        <div className="flex flex-col" style={{gap:6, marginBottom:8}}>
-          {summarized.map((v, i) => (
-            <div key={i} style={{
-              display:"flex", alignItems:"center", justifyContent:"space-between",
-              gap:8, padding:"8px 10px", background:"rgba(34,197,94,.08)",
-              border:"1px solid rgba(34,197,94,.4)", borderRadius:6,
-              fontSize:12,
-            }}>
-              <span style={{
-                display:"flex", alignItems:"center", gap:6,
-                overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis",
-              }}>
-                <Ico name="check" />
-                <span style={{color:"var(--success)", fontWeight:500}}>
-                  {_tr("create.upload.ready", { name: v.name, size: _formatSize(v.size) },
-                    "Ready: {name} ({size})")}
-                </span>
-              </span>
-              {onRemove && (
-                <button type="button" className="btn btn-sm"
-                  style={{padding:"2px 8px", fontSize:11}}
-                  onClick={(e) => { e.stopPropagation(); onRemove(multiple ? i : undefined); }}>
-                  {_tr("create.upload.remove", null, "Remove")}
-                </button>
-              )}
-            </div>
-          ))}
+        <div className="upload-list">
+          {summarized.map((v, i) => {
+            const kind = _assetKind(v);
+            const canPreview = kind === "image" && v.base64;
+            return (
+              <div key={i} className="upload-asset">
+                <div className="upload-asset__thumb">
+                  {canPreview
+                    ? <img src={v.base64} alt="" />
+                    : <span>{kind === "video" ? "VID" : kind === "audio" ? "AUD" : "FILE"}</span>}
+                </div>
+                <div className="upload-asset__main">
+                  <div className="upload-asset__name">
+                    <Ico name="check" style={{color:"var(--success)"}} />
+                    <span className="upload-asset__name-text">{v.name}</span>
+                  </div>
+                  <div className="upload-asset__meta">
+                    <span className="upload-pill">{_assetKindLabel(kind)}</span>
+                    <span>{_formatSize(v.size)}</span>
+                    {v.asset?.id && <span>ID: {v.asset.id}</span>}
+                  </div>
+                </div>
+                {onRemove && (
+                  <button type="button" className="btn btn-sm upload-asset__remove"
+                    onClick={(e) => { e.stopPropagation(); onRemove(multiple ? i : undefined); }}>
+                    {_tr("create.upload.remove", null, "Remove")}
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* The dropzone itself — for `multiple` modes it stays so users
-          can keep adding refs; for single modes it's still useful as a
-          "replace" affordance. */}
-      <div className={`upload-zone${dragOver ? " drag-over" : ""}`}
-        style={dragOver ? {borderColor:"var(--primary)",background:"rgba(59,130,246,.08)"} : {}}
+      {onPickFromLibrary && (
+        <div className="upload-zone-actions">
+          <button type="button" className="btn btn-sm" onClick={onPickFromLibrary}>
+            <Ico name="images"/> {libraryLabel || _tr("create.assetPicker.choose", null, "Choose from Assets")}
+          </button>
+        </div>
+      )}
+
+      <div className={`upload-zone${dragOver ? " drag-over" : ""}${filled ? " is-filled" : ""}`}
         onClick={() => !uploading && document.getElementById(id)?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}>
         <input id={id} type="file" accept={accept} multiple={multiple} hidden
           onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
-        {uploading ? (
-          <div className="flex items-center gap-2" style={{justifyContent:"center"}}>
-            <div className="spinner" style={{width:16,height:16}} />
-            <span className="text-sm">{t("create.upload.uploading", { name: pendingName })}</span>
+        <div className="upload-zone__body">
+          <div className="upload-zone__icon">
+            {uploading ? <span className="spinner" style={{width:18,height:18}} /> : <span>{multiple ? "+" : filled ? "↻" : "↑"}</span>}
           </div>
-        ) : (
-          <>
-            <p style={{fontSize:13}}>
-              {summarized.length > 0 && !multiple
-                ? _tr("create.upload.replace", null, "Click or drop to replace")
-                : label}
-            </p>
-            {hint && <p className="text-xs text-dim" style={{marginTop:4}}>{hint}</p>}
-          </>
-        )}
+          <div className="upload-zone__text">
+            <div className="upload-zone__title">{uploadTitle}</div>
+            <div className="upload-zone__hint">{uploadHint}</div>
+            {!uploading && <div className="upload-zone__action">{_tr("create.upload.dropAction", null, "Click to choose, or drop a file here")}</div>}
+          </div>
+        </div>
       </div>
 
       {localError && (
-        <p className="text-xs" style={{color:"var(--danger)", marginTop:6}}>
+        <div className="upload-error">
           <Ico name="warn" /> {localError}
-        </p>
+        </div>
       )}
     </div>
   );
@@ -2051,6 +2603,7 @@ function CreateTab({ models, onGoToTasks }) {
   const [endFrame, setEndFrame] = useState(null);
   const [multimodalAssets, setMultimodalAssets] = useState([]);
   const [sourceVideo, setSourceVideo] = useState(null);
+  const [sourceVideoUrl, setSourceVideoUrl] = useState("");
 
   useEffect(() => {
     if (!activeTask || (activeTask.status !== "running" && activeTask.status !== "pending")) return;
@@ -2082,10 +2635,10 @@ function CreateTab({ models, onGoToTasks }) {
   // Otherwise an image uploaded for i2v could leak into a later edit
   // submission as ghost reference data.
   useEffect(() => {
-    if (mode === "t2v") { setFirstFrame(null); setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); }
-    else if (mode === "i2v") { setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); }
-    else if (mode === "i2v_end") { setMultimodalAssets([]); setSourceVideo(null); }
-    else if (mode === "multimodal") { setFirstFrame(null); setEndFrame(null); setSourceVideo(null); }
+    if (mode === "t2v") { setFirstFrame(null); setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); setSourceVideoUrl(""); }
+    else if (mode === "i2v") { setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); setSourceVideoUrl(""); }
+    else if (mode === "i2v_end") { setMultimodalAssets([]); setSourceVideo(null); setSourceVideoUrl(""); }
+    else if (mode === "multimodal") { setFirstFrame(null); setEndFrame(null); setSourceVideo(null); setSourceVideoUrl(""); }
     else if (mode === "edit" || mode === "extend") { setFirstFrame(null); setEndFrame(null); setMultimodalAssets([]); }
   }, [mode]);
 
@@ -2095,6 +2648,9 @@ function CreateTab({ models, onGoToTasks }) {
   const [createError, setCreateError] = useState("");
   const [taskStartedOpen, setTaskStartedOpen] = useState(false);
   const [taskStartedDesc, setTaskStartedDesc] = useState("");
+  const [createProgressOpen, setCreateProgressOpen] = useState(false);
+  const [createProgressStage, setCreateProgressStage] = useState("");
+  const [assetPicker, setAssetPicker] = useState(null);
 
   // Generic upload helper used by every FileUploadZone in the form.
   // Returns null on success (FileUploadZone treats falsy as success);
@@ -2128,59 +2684,101 @@ function CreateTab({ models, onGoToTasks }) {
     return null;
   };
 
+  const openAssetPicker = (target) => {
+    if (target === "multimodal") {
+      setAssetPicker({
+        target,
+        allowedKinds: ["image", "audio", "video"],
+        disabledKinds: ["video"],
+      });
+    } else {
+      setAssetPicker({
+        target,
+        allowedKinds: ["image"],
+        disabledKinds: [],
+      });
+    }
+  };
+
+  const handlePickedAsset = (asset) => {
+    if (!assetPicker) return;
+    if (assetPicker.target === "first") setFirstFrame(asset);
+    else if (assetPicker.target === "end") setEndFrame(asset);
+    else if (assetPicker.target === "multimodal") setMultimodalAssets(prev => [...prev, asset]);
+    setAssetPicker(null);
+  };
+
   // Build the Ark `content` array from prompt + uploaded assets, applying
   // local validation so we surface "请先上传首帧图片" as a red banner
   // *before* hitting the network instead of after a 400 round trip.
   const buildContent = () => {
     const c = [{ type: "text", text: prompt }];
+    const isPublicHttpUrl = (v) => /^https?:\/\//i.test((v || "").trim());
     if (mode === "i2v") {
       if (!firstFrame) throw new Error(_tr("toast.modeNeedFirstFrame", null, "请先上传首帧图片"));
-      c.push({ type: "image_url", image_url: { url: firstFrame.base64, role: "first_frame" } });
+      c.push({ type: "image_url", image_url: { url: firstFrame.base64 }, role: "first_frame" });
     } else if (mode === "i2v_end") {
       if (!firstFrame || !endFrame) throw new Error(_tr("toast.modeNeedBothFrames", null, "请分别上传首帧和尾帧图片"));
-      c.push({ type: "image_url", image_url: { url: firstFrame.base64, role: "first_frame" } });
-      c.push({ type: "image_url", image_url: { url: endFrame.base64,   role: "last_frame"  } });
+      c.push({ type: "image_url", image_url: { url: firstFrame.base64 }, role: "first_frame" });
+      c.push({ type: "image_url", image_url: { url: endFrame.base64 }, role: "last_frame" });
     } else if (mode === "multimodal") {
       if (multimodalAssets.length === 0) throw new Error(_tr("toast.modeNeedMultimodal", null, "多模态模式至少上传 1 个参考素材"));
       multimodalAssets.forEach(a => {
         if (a.kind === "video") {
-          c.push({ type: "video_url", video_url: { url: a.base64 } });
+          throw new Error(_tr("toast.videoReferenceNeedsUrl", null, "视频参考必须使用公网 http(s) URL，不能使用本地上传视频或 base64"));
         } else if (a.kind === "audio") {
           c.push({ type: "audio_url", audio_url: { url: a.base64 } });
         } else {
-          c.push({ type: "image_url", image_url: { url: a.base64, role: "reference_image" } });
+          c.push({ type: "image_url", image_url: { url: a.base64 }, role: "reference_image" });
         }
       });
     } else if (mode === "edit" || mode === "extend") {
-      if (!sourceVideo) {
-        const lbl = mode === "edit"
-          ? _tr("modes.edit", null, "Edit")
-          : _tr("modes.extend", null, "Extend");
-        throw new Error(_tr("toast.modeNeedSourceVideo", { label: lbl }, "{label} 模式需要先上传源视频"));
+      const lbl = mode === "edit"
+        ? _tr("modes.edit", null, "Edit")
+        : _tr("modes.extend", null, "Extend");
+      const publicUrl = sourceVideoUrl.trim();
+      if (!publicUrl) {
+        throw new Error(_tr("toast.modeNeedPublicVideoUrl", { label: lbl }, "{label} 模式需要公网 http(s) 视频 URL"));
       }
-      c.push({ type: "video_url", video_url: { url: sourceVideo.base64, role: mode } });
+      if (!isPublicHttpUrl(publicUrl)) {
+        throw new Error(_tr("toast.modeNeedValidVideoUrl", null, "视频 URL 必须以 http:// 或 https:// 开头"));
+      }
+      c.push({ type: "video_url", video_url: { url: publicUrl }, role: "reference_video" });
     }
     return c;
   };
 
   const handleCreate = async () => {
+    if (loading) return;
     setLoading(true);
     setCreateError("");
+    setCreateProgressOpen(true);
+    setCreateProgressStage(t("modal.createProgress.validating"));
     let content;
     try {
       content = buildContent();
     } catch (e) {
       setCreateError(e.message);
       setLoading(false);
+      setCreateProgressOpen(false);
       return;
     }
+    let slowSubmitTimer = null;
     try {
+      setCreateProgressStage(t("modal.createProgress.submitting"));
+      const clientRequestId = uid();
+      slowSubmitTimer = setTimeout(
+        () => setCreateProgressStage(t("modal.createProgress.waiting")),
+        2000
+      );
       const r = await pluginApi("POST", draft ? "/tasks/draft" : "/tasks", {
         prompt, mode, model, ratio, duration, resolution, n: 1,
         generate_audio: audio, seed, watermark, return_last_frame: returnLastFrame,
         web_search: webSearch && canWebSearch, service_tier: serviceTier,
+        client_request_id: clientRequestId,
         content,
       });
+      clearTimeout(slowSubmitTimer);
       if (r.ok && r.body?.task) {
         setActiveTask(r.body.task);
         setTaskStartedDesc(
@@ -2190,12 +2788,18 @@ function CreateTab({ models, onGoToTasks }) {
               ? t("modal.taskStarted.flex")
               : t("modal.taskStarted.online")
         );
+        setCreateProgressOpen(false);
         setTaskStartedOpen(true);
       } else {
         var msg = r.body?.detail || r.body?.error || _tr("toast.requestFail", { msg: "HTTP " + r.status }, "Request failed: {msg}");
         setCreateError(msg);
+        setCreateProgressOpen(false);
       }
-    } catch (e) { setCreateError(_tr("toast.networkError", { msg: e.message }, "Network error: {msg}")); }
+    } catch (e) {
+      if (slowSubmitTimer) clearTimeout(slowSubmitTimer);
+      setCreateError(_tr("toast.networkError", { msg: e.message }, "Network error: {msg}"));
+      setCreateProgressOpen(false);
+    }
     setLoading(false);
   };
 
@@ -2248,6 +2852,8 @@ function CreateTab({ models, onGoToTasks }) {
               onUpload={(file) => doUpload(file, setFirstFrame)}
               value={firstFrame}
               onRemove={() => setFirstFrame(null)}
+              onPickFromLibrary={() => openAssetPicker("first")}
+              libraryLabel={t("create.assetPicker.chooseImage")}
               label={t("create.upload.firstHint")}
               hint={t("create.upload.firstSubHint")} />
           </div>
@@ -2261,11 +2867,15 @@ function CreateTab({ models, onGoToTasks }) {
                 onUpload={(file) => doUpload(file, setFirstFrame)}
                 value={firstFrame}
                 onRemove={() => setFirstFrame(null)}
+                onPickFromLibrary={() => openAssetPicker("first")}
+                libraryLabel={t("create.assetPicker.chooseImage")}
                 label={t("create.upload.startFrame")} hint={t("create.upload.startFrameHint")} />
               <FileUploadZone id="upload-end-frame" accept="image/*"
                 onUpload={(file) => doUpload(file, setEndFrame)}
                 value={endFrame}
                 onRemove={() => setEndFrame(null)}
+                onPickFromLibrary={() => openAssetPicker("end")}
+                libraryLabel={t("create.assetPicker.chooseImage")}
                 label={t("create.upload.endFrame")} hint={t("create.upload.endFrameHint")} />
             </div>
             <p className="text-xs text-dim" style={{marginTop:6}}>{t("create.upload.endFrameTip")}</p>
@@ -2279,6 +2889,8 @@ function CreateTab({ models, onGoToTasks }) {
               onUpload={(file) => doUpload(file, (asset) => setMultimodalAssets(prev => [...prev, asset]))}
               value={multimodalAssets}
               onRemove={(idx) => setMultimodalAssets(prev => prev.filter((_, i) => i !== idx))}
+              onPickFromLibrary={() => openAssetPicker("multimodal")}
+              libraryLabel={t("create.assetPicker.chooseMedia")}
               label={t("create.upload.multimodal")}
               hint={t("create.upload.multimodalHint")} />
             <div className="tip-bar" style={{marginTop:8}}>
@@ -2290,6 +2902,16 @@ function CreateTab({ models, onGoToTasks }) {
         {(mode === "edit" || mode === "extend") && (
           <div className="card">
             <div className="oa-section-label">{mode === "edit" ? t("create.section.editVideo") : t("create.section.extendVideo")}</div>
+            <div className="form-row">
+              <label className="label">{t("create.videoUrl.label")}</label>
+              <input className="input"
+                value={sourceVideoUrl}
+                onChange={e => setSourceVideoUrl(e.target.value)}
+                placeholder={t("create.videoUrl.placeholder")} />
+              <p className="text-xs text-dim" style={{marginTop:6,lineHeight:1.6}}>
+                {t("create.videoUrl.hint")}
+              </p>
+            </div>
             <FileUploadZone id="upload-source-video" accept="video/*"
               onUpload={(file) => doUpload(file, setSourceVideo)}
               value={sourceVideo}
@@ -2424,16 +3046,32 @@ function CreateTab({ models, onGoToTasks }) {
       onGoToTasks={onGoToTasks}
       desc={taskStartedDesc}
     />
+    <CreateProgressModal
+      open={createProgressOpen}
+      stage={createProgressStage}
+      detail={t("modal.createProgress.detail")}
+    />
+    <AssetPickerModal
+      open={!!assetPicker}
+      allowedKinds={assetPicker?.allowedKinds || ["image"]}
+      disabledKinds={assetPicker?.disabledKinds || []}
+      onCancel={() => setAssetPicker(null)}
+      onSelect={handlePickedAsset}
+    />
     </>
   );
 }
 
-function TaskListTab() {
+function TaskListTab({ isActive = true }) {
   const t = useT();
   const { tasks, total, reload } = useTasks();
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [selected, setSelected] = useState(null);
+
+  useEffect(() => {
+    if (isActive) reload();
+  }, [isActive]);
 
   const STATUS_FILTERS = [
     { v: "all",       k: "tasks.filter.all",       icon: null      },
@@ -2596,6 +3234,12 @@ function TaskListTab() {
                       <Ico name="download"/> {t("preview.btn.download")}
                     </button>
                   )}
+                  {selected.status === "succeeded" && selected.video_url && (
+                    <button className="btn btn-sm"
+                            onClick={() => copyToClipboard(selected.video_url)}>
+                      <Ico name="copy"/> {t("preview.btn.copyVideoUrl")}
+                    </button>
+                  )}
                   {selected.status === "failed" && (
                     <button className="btn btn-sm" onClick={() => handleRetry(selected.id)}>
                       <Ico name="refresh"/> {t("tasks.btn.retry")}
@@ -2689,7 +3333,7 @@ function TaskListTab() {
   );
 }
 
-function AssetsTab() {
+function AssetsTab({ isActive = true }) {
   const t = useT();
   const [assets, setAssets] = useState([]);
   const [filter, setFilter] = useState(null);
@@ -2700,7 +3344,9 @@ function AssetsTab() {
       setAssets(list);
     }).catch(() => {});
   };
-  useEffect(load, [filter]);
+  useEffect(() => {
+    if (isActive) load();
+  }, [filter, isActive]);
 
   const FILTERS = [
     { v: null,    k: "assets.filter.all" },
@@ -2709,9 +3355,37 @@ function AssetsTab() {
     { v: "audio", k: "assets.filter.audio" },
   ];
 
+  const renderPreview = (a) => {
+    const url = a.preview_url || "";
+    if (url && a.type === "image") {
+      return <img src={url} alt={a.original_name || a.id} loading="lazy" />;
+    }
+    if (url && a.type === "video") {
+      return <video src={url} muted preload="metadata" />;
+    }
+    if (url && a.type === "audio") {
+      return <audio src={url} controls preload="metadata" />;
+    }
+    return (
+      <div className="asset-preview__fallback" title={t("assets.preview.noPreview")}>
+        {{image:<Ico name="image"/>,video:<Ico name="film"/>,audio:<Ico name="music"/>}[a.type] || <Ico name="folder"/>}
+      </div>
+    );
+  };
+
+  const deleteAsset = async (assetId) => {
+    if (!window.confirm(t("assets.confirmDelete"))) return;
+    await pluginApi("DELETE", `/assets/${assetId}`);
+    load();
+  };
+
   return (
     <div>
-      <div className="flex gap-2 items-center" style={{marginBottom:16}}>
+      <div className="tip-bar" style={{marginBottom:12}}>
+        <Ico name="images"/> {t("assets.intro")}
+        <span style={{marginLeft:8}}>{t("assets.videoLimit")}</span>
+      </div>
+      <div className="assets-toolbar">
         {FILTERS.map(f => (
           <button key={String(f.v)} className={`mode-btn ${filter===f.v?"active":""}`} onClick={() => setFilter(f.v)}>
             {t(f.k)}
@@ -2722,17 +3396,32 @@ function AssetsTab() {
       {assets.length === 0 ? (
         <div className="empty-state"><p>{t("assets.empty.title")}</p><p className="text-xs text-dim">{t("assets.empty.hint")}</p></div>
       ) : (
-        <div className="grid-3" style={{gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))"}}>
+        <div className="assets-grid">
           {assets.map(a => (
-            <div key={a.id} className="card" style={{padding:8,textAlign:"center"}}>
-              <div style={{width:"100%",aspectRatio:"1",background:"var(--bg)",borderRadius:4,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>
-                {{image:<Ico name="image"/>,video:<Ico name="film"/>,audio:<Ico name="music"/>}[a.type] || <Ico name="folder"/>}
+            <div key={a.id} className="asset-card">
+              <div className="asset-preview">
+                {renderPreview(a)}
+                <span className="asset-type-badge">
+                  {_assetKindLabel(a.type || "file")}
+                </span>
               </div>
-              <div className="text-xs" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.original_name || a.id}</div>
-              <div className="text-xs text-dim">{a.type} · {a.size_bytes ? Math.round(a.size_bytes/1024)+"KB" : "?"}</div>
-              <button className="btn btn-sm btn-danger" style={{marginTop:6,width:"100%"}} onClick={async () => {
-                await pluginApi("DELETE", `/assets/${a.id}`); load();
-              }}>{t("assets.btn.delete")}</button>
+              <div className="asset-body">
+                <div className="asset-name" title={a.original_name || a.id}>
+                  {a.original_name || a.id}
+                </div>
+                <div className="asset-meta">
+                  <span>{a.size_bytes ? _formatSize(a.size_bytes) : "?"}</span>
+                  {a.id && <span>ID: {a.id}</span>}
+                </div>
+                <div className="asset-actions">
+                  {a.preview_url && (
+                    <button className="btn btn-sm" onClick={() => window.open(a.preview_url, "_blank")}>
+                      {t("assets.preview.open")}
+                    </button>
+                  )}
+                  <button className="btn btn-sm btn-danger" onClick={() => deleteAsset(a.id)}>{t("assets.btn.delete")}</button>
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -3149,6 +3838,51 @@ function StoryboardTab({ onGoToSettings }) {
     setConcatenating(false);
   };
 
+  const jumpToStep = (target) => {
+    if (target === "results") {
+      setStep(genResults.length > 0 || concatPath ? "results" : "results");
+      return;
+    }
+    setStep(target);
+  };
+
+  const WorkflowHeader = () => {
+    const activeKey = step === "done" ? "results" : step;
+    const items = [
+      { key: "input", label: t("story.step.input") },
+      { key: "edit", label: t("story.step.edit") },
+      { key: "generating", label: t("story.step.generating") },
+      { key: "results", label: t("story.step.results") },
+    ];
+    return (
+      <div className="storyboard-hero">
+        <div>
+          <div className="storyboard-hero__title"><Ico name="layoutGrid"/> {t("story.workspace.title")}</div>
+          <div className="storyboard-hero__hint">{t("story.workspace.hint")}</div>
+        </div>
+        <div className="storyboard-steps">
+          {items.map((it, i) => (
+            <button key={it.key} type="button"
+              className={`story-step ${activeKey === it.key ? "active" : ""}`}
+              onClick={() => jumpToStep(it.key)}>
+              <span className="story-step__num">{i + 1}</span>
+              <span>{it.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const StoryEmpty = ({ icon = "layoutGrid", title, hint, action }) => (
+    <div className="story-empty-panel">
+      <div className="story-empty-panel__icon"><Ico name={icon}/></div>
+      <div className="story-empty-panel__title">{title}</div>
+      <div className="story-empty-panel__hint">{hint}</div>
+      {action}
+    </div>
+  );
+
   const segCountEst = Math.max(1, Math.round(totalDuration / segDuration));
 
   if (step === "input") {
@@ -3156,9 +3890,11 @@ function StoryboardTab({ onGoToSettings }) {
       ? window.OpenAkitaMD.render(t("story.usage.body") + "\n\n" + t("story.usage.warn"))
       : null;
     return (
-      <div className="storyboard-split">
+      <div className="storyboard-workspace">
+        <WorkflowHeader />
+        <div className="storyboard-body storyboard-split">
         <div className="storyboard-split__left">
-          <div className="card">
+          <div className="card story-card-soft">
             <div className="oa-section-label"><Ico name="book"/> {t("story.section.input")}</div>
             <div className="form-row">
               <label className="label">{t("story.label.story")}</label>
@@ -3212,7 +3948,7 @@ function StoryboardTab({ onGoToSettings }) {
             </div>
           </div>
 
-          <div className="card">
+          <div className="card story-card-soft">
             <div className="oa-section-label"><Ico name="lightbulb"/> {t("story.section.usage")}</div>
             {usageHtml
               ? <div className="oa-md-content" dangerouslySetInnerHTML={{ __html: usageHtml }} />
@@ -3231,6 +3967,7 @@ function StoryboardTab({ onGoToSettings }) {
             </div>
           </div>
         </div>
+        </div>
       </div>
     );
   }
@@ -3238,7 +3975,9 @@ function StoryboardTab({ onGoToSettings }) {
   if (step === "edit") {
     const previewSeg = previewIdx >= 0 && previewIdx < segments.length ? segments[previewIdx] : null;
     return (
-      <div className="storyboard-split">
+      <div className="storyboard-workspace">
+        <WorkflowHeader />
+        <div className="storyboard-body storyboard-split">
         <div className="storyboard-split__left">
           <div className="flex justify-between items-center" style={{marginBottom:14}}>
             <div>
@@ -3251,7 +3990,7 @@ function StoryboardTab({ onGoToSettings }) {
             </div>
           </div>
 
-          <div className="card" style={{marginBottom:14}}>
+          <div className="card story-card-soft" style={{marginBottom:14}}>
             <div className="oa-section-label"><Ico name="settings"/> {t("story.section.params")}</div>
             <div className="grid-2">
               <div className="form-row">
@@ -3291,8 +4030,20 @@ function StoryboardTab({ onGoToSettings }) {
             </div>
           </div>
 
-          {segments.map((seg, idx) => (
-            <div key={idx} className="card" style={{position:"relative",borderLeft: editIdx===idx?"3px solid var(--primary)":"3px solid transparent",cursor:"pointer"}}
+          {segments.length === 0 ? (
+            <StoryEmpty
+              icon="plus"
+              title={t("story.empty.edit.title")}
+              hint={t("story.empty.edit.hint")}
+              action={
+                <div className="flex gap-2">
+                  <button className="btn btn-sm" onClick={() => setStep("input")}>{t("story.btn.goInput")}</button>
+                  <button className="btn btn-sm btn-primary" onClick={addSeg}><Ico name="plus"/> {t("story.btn.addSeg")}</button>
+                </div>
+              }
+            />
+          ) : segments.map((seg, idx) => (
+            <div key={idx} className={`card story-segment-card ${editIdx===idx?"active":""}`}
               onClick={() => { setPreviewIdx(idx); if (editIdx !== idx) setEditIdx(idx); }}>
               <div className="flex justify-between items-center" onClick={e => { e.stopPropagation(); setEditIdx(editIdx === idx ? -1 : idx); setPreviewIdx(idx); }}>
                 <div className="flex gap-2 items-center">
@@ -3408,6 +4159,7 @@ function StoryboardTab({ onGoToSettings }) {
             ))}
           </div>
         </div>
+        </div>
       </div>
     );
   }
@@ -3417,6 +4169,21 @@ function StoryboardTab({ onGoToSettings }) {
     const minRange = genMode === "serial" ? (totalEst * 2 + "-" + totalEst * 5) : "2-5";
     const submitted = chainProgress.total - chainProgress.pending;
     const finished = chainProgress.succeeded + chainProgress.failed;
+    const progressPercent = totalEst > 0 ? Math.min(100, Math.round((finished / totalEst) * 100)) : 0;
+    const queueRows = (segments.length ? segments : genResults).map((seg, idx) => {
+      const task = genResults[idx] || {};
+      let status = task.status || "pending";
+      if (!task.status && idx < submitted) status = "running";
+      if (task.error) status = "failed";
+      const promptText = task.prompt || seg.prompt || "";
+      return { idx, task, status, promptText, duration: seg.duration || task.params?.duration || segDuration };
+    });
+    const statusText = (status) => {
+      if (status === "succeeded") return t("story.progress.status.succeeded");
+      if (status === "failed") return t("story.progress.status.failed");
+      if (status === "running") return t("story.progress.status.running");
+      return t("story.progress.status.pending");
+    };
     const handleCancel = async () => {
       if (!chainGroupId) return;
       if (!confirm(_tr("story.cancelConfirm", null,
@@ -3430,35 +4197,82 @@ function StoryboardTab({ onGoToSettings }) {
       setStep("edit");
     };
     return (
-      <div className="storyboard-split">
+      <div className="storyboard-workspace">
+        <WorkflowHeader />
+        <div className="storyboard-body storyboard-split">
         <div className="storyboard-split__left">
-          <div className="card" style={{textAlign:"center",padding:40}}>
-            <div className="spinner" style={{margin:"0 auto 16px"}} />
-            <p style={{fontSize:16,fontWeight:500}}>{t("story.gen.title", { n: totalEst })}</p>
-            <p className="text-sm text-dim" style={{marginTop:8}}>
-              {genMode === "serial" ? t("story.gen.serialDesc") : t("story.gen.parallelDesc")}
-            </p>
-            <p className="text-sm text-dim" style={{marginTop:4}}>
-              {t("story.gen.estimate", { min: minRange })}
-            </p>
-            {chainGroupId && (
-              <div style={{marginTop:14, padding:"10px 12px", background:"var(--bg)", borderRadius:6, fontSize:13}}>
-                <div className="flex gap-4 justify-center" style={{marginBottom:4}}>
-                  <span>{_tr("story.progress.submitted", null, "已提交")}: <strong>{submitted}/{totalEst}</strong></span>
-                  <span style={{color:"var(--success)"}}>{_tr("story.progress.succeeded", null, "已完成")}: <strong>{chainProgress.succeeded}</strong></span>
-                  {chainProgress.failed > 0 && (
-                    <span style={{color:"var(--danger)"}}>{_tr("story.progress.failed", null, "失败")}: <strong>{chainProgress.failed}</strong></span>
+          <div className="story-progress-card">
+            {segments.length === 0 && !chainGroupId ? (
+              <StoryEmpty
+                icon="rocket"
+                title={t("story.empty.generate.title")}
+                hint={t("story.empty.generate.hint")}
+                action={<button className="btn btn-primary" onClick={() => setStep("edit")}>{t("story.btn.goEdit")}</button>}
+              />
+            ) : <>
+              <div className="story-progress-head">
+                <div className="story-progress-orb"><span className="spinner-sm" /></div>
+                <div>
+                  <div className="story-progress-title">{t("story.gen.title", { n: totalEst })}</div>
+                  <div className="story-progress-subtitle">
+                    {chainGroupId
+                      ? (genMode === "serial" ? t("story.gen.serialDesc") : t("story.gen.parallelDesc"))
+                      : t("story.progress.waitingId")}
+                    {" "}{t("story.gen.estimate", { min: minRange })}
+                  </div>
+                </div>
+              </div>
+              <div className="story-progress-bar">
+                <div className="story-progress-bar__fill" style={{width: `${progressPercent}%`}} />
+              </div>
+              <div className="story-progress-stats">
+                <div className="story-progress-stat">
+                  <div className="story-progress-stat__num">{progressPercent}%</div>
+                  <div className="story-progress-stat__label">{t("story.progress.overview")}</div>
+                </div>
+                <div className="story-progress-stat">
+                  <div className="story-progress-stat__num">{submitted}/{totalEst}</div>
+                  <div className="story-progress-stat__label">{_tr("story.progress.submitted", null, "已提交")}</div>
+                </div>
+                <div className="story-progress-stat">
+                  <div className="story-progress-stat__num">{chainProgress.succeeded}</div>
+                  <div className="story-progress-stat__label">{_tr("story.progress.succeeded", null, "已完成")}</div>
+                </div>
+                <div className="story-progress-stat">
+                  <div className="story-progress-stat__num">{chainProgress.failed}</div>
+                  <div className="story-progress-stat__label">{_tr("story.progress.failed", null, "失败")}</div>
+                </div>
+              </div>
+              <div className="story-progress-actions">
+                <div className="story-progress-safe">
+                  <Ico name="check"/> {_tr("story.progress.safe", null, "可以安全切换 Tab 或刷新页面 — 进度会自动恢复")}
+                </div>
+                <div className="flex gap-2">
+                  <button className="btn btn-sm" onClick={() => setStep("edit")}>{t("story.btn.backEdit")}</button>
+                  {chainGroupId && (
+                    <button className="btn btn-sm" onClick={handleCancel}>
+                      {_tr("story.btn.cancel", null, "取消生成")}
+                    </button>
                   )}
                 </div>
-                <p className="text-xs text-dim" style={{marginTop:8}}>
-                  {_tr("story.progress.safe", null,
-                    "可以安全切换 Tab 或刷新页面 — 进度会自动恢复")}
-                </p>
-                <button className="btn btn-sm" style={{marginTop:10}} onClick={handleCancel}>
-                  {_tr("story.btn.cancel", null, "取消生成")}
-                </button>
               </div>
-            )}
+            </>}
+          </div>
+          <div className="card story-card-soft" style={{marginTop:12}}>
+            <div className="oa-section-label"><Ico name="listTodo"/> {t("story.progress.queue")}</div>
+            <div className="story-queue">
+              {queueRows.map(row => (
+                <div key={row.idx} className={`story-queue-item is-${row.status}`}
+                  onClick={() => setPreviewIdx(row.idx)}>
+                  <div className="story-queue-index">{row.idx + 1}</div>
+                  <div style={{minWidth:0}}>
+                    <div className="story-queue-title">{row.promptText || t("tasks.noPrompt")}</div>
+                    <div className="story-queue-meta">{row.duration}s · {row.task.id || _tr("story.progress.status.pending", null, "等待")}</div>
+                  </div>
+                  <span className={`story-queue-status ${row.status}`}>{statusText(row.status)}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
         <div className="storyboard-split__right">
@@ -3471,6 +4285,21 @@ function StoryboardTab({ onGoToSettings }) {
               <span>{t("story.preview.generating")}</span>
             </div>
           </div>
+          <div className="story-side-panel">
+            <div className="oa-section-label"><Ico name="eye"/> {t("story.preview.title")}</div>
+            <p className="text-xs text-dim" style={{lineHeight:1.7}}>{t("story.progress.previewHint")}</p>
+            <div className="storyboard-seg-list">
+              {queueRows.map(row => (
+                <div key={row.idx} className={`storyboard-seg-thumb ${previewIdx === row.idx ? "active" : ""}`}
+                  onClick={() => setPreviewIdx(row.idx)}>
+                  <span className="badge badge-info" style={{minWidth:22,textAlign:"center",fontSize:11}}>{row.idx + 1}</span>
+                  <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.promptText || t("tasks.noPrompt")}</span>
+                  <span className={`story-queue-status ${row.status}`}>{statusText(row.status)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
         </div>
       </div>
     );
@@ -3482,7 +4311,9 @@ function StoryboardTab({ onGoToSettings }) {
     const previewResult = previewIdx >= 0 && previewIdx < genResults.length ? genResults[previewIdx] : null;
 
     return (
-      <div className="storyboard-split">
+      <div className="storyboard-workspace">
+        <WorkflowHeader />
+        <div className="storyboard-body storyboard-split">
         <div className="storyboard-split__left">
           <div className="flex justify-between items-center" style={{marginBottom:14}}>
             <h3 style={{fontSize:16,fontWeight:600}}>
@@ -3501,7 +4332,7 @@ function StoryboardTab({ onGoToSettings }) {
             </div>
           </div>
 
-          <div className="card">
+          <div className="card story-card-soft">
             <div className="flex gap-4" style={{fontSize:13}}>
               <span>{t("story.statTotal")} <strong>{genResults.length}</strong></span>
               <span style={{color:"var(--success)"}}>{t("story.statSuccess")} <strong>{succCount}</strong></span>
@@ -3509,8 +4340,15 @@ function StoryboardTab({ onGoToSettings }) {
             </div>
           </div>
 
-          {genResults.map((r, idx) => (
-            <div key={idx} className="card" style={{borderLeft:`3px solid ${r.status==="succeeded"?"var(--success)":r.error||r.status==="failed"?"var(--danger)":"var(--warning)"}`,cursor:"pointer"}}
+          {genResults.length === 0 ? (
+            <StoryEmpty
+              icon="film"
+              title={t("story.empty.results.title")}
+              hint={t("story.empty.results.hint")}
+              action={<button className="btn btn-primary" onClick={() => setStep(segments.length ? "generating" : "edit")}>{segments.length ? t("story.step.generating") : t("story.btn.goEdit")}</button>}
+            />
+          ) : genResults.map((r, idx) => (
+            <div key={idx} className="card story-segment-card" style={{borderLeft:`3px solid ${r.status==="succeeded"?"var(--success)":r.error||r.status==="failed"?"var(--danger)":"var(--warning)"}`}}
               onClick={() => setPreviewIdx(idx)}>
               <div className="flex justify-between items-center">
                 <div className="flex gap-2 items-center">
@@ -3590,6 +4428,7 @@ function StoryboardTab({ onGoToSettings }) {
               {previewResult.error && <p style={{color:"var(--danger)",marginTop:4}}>{previewResult.error}</p>}
             </div>
           )}
+        </div>
         </div>
       </div>
     );
@@ -4457,18 +5296,28 @@ function App() {
         </div>
       )}
       <div className="content">
-        {activeTab === 0 && <CreateTab models={models} onGoToTasks={() => setActiveTab(2)} />}
-        {activeTab === 1 && <StoryboardTab onGoToSettings={() => setActiveTab(settingsIdx)} />}
-        {activeTab === 2 && <TaskListTab />}
-        {activeTab === 3 && <AssetsTab />}
-        {activeTab === 4 && <PromptGuideTab />}
-        {activeTab === settingsIdx && (
+        <div className={`tab-pane ${activeTab === 0 ? "active" : ""}`}>
+          <CreateTab models={models} onGoToTasks={() => setActiveTab(2)} />
+        </div>
+        <div className={`tab-pane ${activeTab === 1 ? "active" : ""}`}>
+          <StoryboardTab onGoToSettings={() => setActiveTab(settingsIdx)} />
+        </div>
+        <div className={`tab-pane ${activeTab === 2 ? "active" : ""}`}>
+          <TaskListTab isActive={activeTab === 2} />
+        </div>
+        <div className={`tab-pane ${activeTab === 3 ? "active" : ""}`}>
+          <AssetsTab isActive={activeTab === 3} />
+        </div>
+        <div className={`tab-pane ${activeTab === 4 ? "active" : ""}`}>
+          <PromptGuideTab />
+        </div>
+        <div className={`tab-pane ${activeTab === settingsIdx ? "active" : ""}`}>
           <SettingsTab
             onKeyChange={k => setKeyStatus(k)}
             permsStatus={permsStatus}
             onPermsRefresh={refreshPerms}
           />
-        )}
+        </div>
       </div>
     </div>
   );

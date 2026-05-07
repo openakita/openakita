@@ -83,6 +83,14 @@ def test_index_html_exists_and_nonempty() -> None:
     assert len(html) > 1024, "index.html is suspiciously short"
 
 
+def test_rate_limited_renders_as_cooldown_not_error() -> None:
+    """NewsNow public cooldown is a retryable wait state, not a failure."""
+    html = INDEX_HTML.read_text("utf-8")
+    assert 'row.error_kind === "rate_limited") return "fp-pill fp-pill--cooldown"' in html
+    assert '"today.drawer.status.cooldown": "冷却中 · {s}s 后可重试"' in html
+    assert 'const hasError = !!(row.error || row.error_kind) && !isCooldown;' in html
+
+
 def test_ui_hard_contracts() -> None:
     """Every required token from §11 must appear; every forbidden must not."""
     html = INDEX_HTML.read_text("utf-8")

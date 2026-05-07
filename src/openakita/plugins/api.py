@@ -748,18 +748,13 @@ class PluginAPI:
         """Push an event to the plugin UI via the WebSocket bridge."""
         import asyncio
 
-        gateway = self._host.get("gateway")
-        if gateway is None:
-            return
-
-        event_payload = {
-            "type": f"plugin:{self._plugin_id}:{event_type}",
-            "data": data,
-        }
+        event_name = f"plugin:{self._plugin_id}:{event_type}"
 
         async def _push() -> None:
             try:
-                await gateway.broadcast(event_payload)
+                from ..api.routes.websocket import broadcast_event
+
+                await broadcast_event(event_name, data)
             except Exception as e:
                 self.log(f"broadcast_ui_event failed: {e}", "warning")
 

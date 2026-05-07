@@ -202,6 +202,48 @@ class TestIngestVia:
         assert summary["totals"]["sources_total"] == 2
         assert summary["totals"]["sources_ok"] == 2
 
+    def test_newsnow_empty_channel_reason_reaches_summary(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tm = FinpulseTaskManager(tmp_path / "pipe.db")
+        _run(tm.init())
+        overrides = _disable_all_sources()
+        overrides["source.fastbull.enabled"] = "true"
+        overrides["newsnow.mode"] = "public"
+        overrides["newsnow.min_interval_s"] = "0"
+        _run(tm.set_configs(overrides))
+
+        class _NewsNowEmptyStub(_DirectStub):
+            async def fetch(self, **_: Any) -> list[NormalizedItem]:
+                self._channel_reports = [
+                    {
+                        "source_id": "fastbull",
+                        "count": 0,
+                        "error": None,
+                        "empty_reason": "newsnow:empty_payload",
+                    },
+                ]
+                return []
+
+        def fake_get_fetcher(
+            source_id: str, *, config: dict[str, str] | None = None
+        ) -> Any:
+            if source_id == "newsnow":
+                return _NewsNowEmptyStub(source_id="newsnow", items=[], via="newsnow")
+            return None
+
+        monkeypatch.setattr(pipeline_mod, "get_fetcher", fake_get_fetcher)
+
+        summary = _run(ingest(tm, sources=["newsnow"], since_hours=24))
+
+        assert summary["by_source"]["fastbull"]["fetched"] == 0
+        assert (
+            summary["by_source"]["fastbull"]["via_reason"]
+            == "newsnow:empty_payload"
+        )
+
     def test_explicit_direct_source_does_not_pull_newsnow(
         self,
         tmp_path: Path,

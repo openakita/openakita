@@ -265,17 +265,37 @@
     .fp-spin { animation: fp-spin 1s linear infinite; transform-origin: 50% 50%; display: inline-block; }
     /* ── Indeterminate progress bar ── */
     @keyframes fp-shimmer {
-      0%   { background-position: -200px 0; }
-      100% { background-position: 400px 0; }
+      0%   { transform: translateX(-55%); }
+      100% { transform: translateX(155%); }
+    }
+    @keyframes fp-ingest-pulse {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(255,255,255,.18), 0 6px 16px rgba(211,47,47,.20); }
+      50% { box-shadow: 0 0 0 1px rgba(255,255,255,.24), 0 0 0 5px rgba(211,47,47,.10), 0 8px 22px rgba(211,47,47,.30); }
     }
     .fp-progress {
-      height: 3px; border-radius: 2px; overflow: hidden;
+      position: relative;
+      height: 6px; border-radius: 999px; overflow: hidden;
+      margin: 2px 0 8px;
+      background: rgba(211,47,47,.12);
+      box-shadow: inset 0 0 0 1px rgba(211,47,47,.18), 0 4px 12px rgba(211,47,47,.12);
+    }
+    .fp-progress::before {
+      content: ""; position: absolute; inset: 0; width: 58%;
+      border-radius: inherit;
       background: linear-gradient(90deg,
-        rgba(211,47,47,.08) 0%,
-        rgba(211,47,47,.32) 50%,
-        rgba(211,47,47,.08) 100%);
-      background-size: 400px 100%;
-      animation: fp-shimmer 1.4s linear infinite;
+        transparent 0%,
+        rgba(248,113,113,.78) 16%,
+        #D32F2F 48%,
+        #FF3B30 68%,
+        transparent 100%);
+      filter: drop-shadow(0 0 7px rgba(211,47,47,.58));
+      animation: fp-shimmer 1.05s cubic-bezier(.4,0,.2,1) infinite;
+    }
+    .ingest-split.is-busy {
+      filter: drop-shadow(0 6px 14px rgba(211,47,47,.24));
+    }
+    .ingest-split.is-busy .btn-primary {
+      animation: fp-ingest-pulse 1.2s ease-in-out infinite;
     }
     /* ── Ingest result drawer ── */
     .fp-drawer {
@@ -305,6 +325,8 @@
                        border-color: rgba(34,197,94,.28); }
     .fp-pill--empty { background: rgba(245,158,11,.10); color: #B45309;
                        border-color: rgba(245,158,11,.30); }
+    .fp-pill--cooldown { background: rgba(245,158,11,.12); color: #B45309;
+                         border-color: rgba(245,158,11,.36); }
     .fp-pill--error { background: rgba(239,68,68,.10);  color: #B91C1C;
                        border-color: rgba(239,68,68,.32); }
     .fp-pill__via   { font-size: 10px; padding: 1px 6px; border-radius: 6px;
@@ -1012,6 +1034,7 @@ const I18N_DICT = {
     "today.drawer.status.ok": "抓取 {fetched} · 新增 {inserted} · 更新 {updated}",
     "today.drawer.status.fetchedOnly": "抓取 {fetched} · 无新增",
     "today.drawer.status.empty": "本次未返回",
+    "today.drawer.status.cooldown": "冷却中 · {s}s 后可重试",
     "today.drawer.status.error": "失败",
     "today.drawer.source_single": "只抓取：{source}",
     "today.drawer.show_error": "错误详情",
@@ -1020,6 +1043,9 @@ const I18N_DICT = {
     "today.drawer.via_reason.newsnow_invalid_source_id": "NewsNow 不支持此来源，已回退到直连",
     "today.drawer.via_reason.newsnow_http": "NewsNow 返回异常状态，已回退到直连",
     "today.drawer.via_reason.newsnow_error": "NewsNow 请求失败，已回退到直连",
+    "today.drawer.via_reason.newsnow_empty_payload": "NewsNow 本次返回空列表",
+    "today.drawer.via_reason.rss_not_configured": "自定义 RSS 未配置",
+    "today.drawer.via_reason.rss_no_items": "RSS 未解析到条目",
     "today.filters.keyword": "关键词",
     "today.filters.keyword.placeholder": "搜索标题或摘要…",
     "today.filters.ai": "AI 筛选",
@@ -1326,6 +1352,7 @@ const I18N_DICT = {
     "today.drawer.status.ok": "fetched {fetched} · +{inserted} new · {updated} updated",
     "today.drawer.status.fetchedOnly": "fetched {fetched} · no new items",
     "today.drawer.status.empty": "no items returned",
+    "today.drawer.status.cooldown": "cooling down · retry in {s}s",
     "today.drawer.status.error": "failed",
     "today.drawer.source_single": "Single source: {source}",
     "today.drawer.show_error": "Error detail",
@@ -1334,6 +1361,9 @@ const I18N_DICT = {
     "today.drawer.via_reason.newsnow_invalid_source_id": "NewsNow does not host this source — fell back to direct",
     "today.drawer.via_reason.newsnow_http": "NewsNow returned an unexpected HTTP status — fell back to direct",
     "today.drawer.via_reason.newsnow_error": "NewsNow request failed — fell back to direct",
+    "today.drawer.via_reason.newsnow_empty_payload": "NewsNow returned an empty list",
+    "today.drawer.via_reason.rss_not_configured": "custom RSS is not configured",
+    "today.drawer.via_reason.rss_no_items": "RSS returned no parsed entries",
     "today.filters.keyword": "Keyword",
     "today.filters.keyword.placeholder": "Search title or summary…",
     "today.filters.ai": "AI Filter",
@@ -2179,6 +2209,7 @@ function _countNonEmpty(bySource) {
   return n;
 }
 function _pillClass(row) {
+  if (row.error_kind === "rate_limited") return "fp-pill fp-pill--cooldown";
   if (row.error || row.error_kind) return "fp-pill fp-pill--error";
   if (Number(row.fetched || 0) > 0) return "fp-pill fp-pill--ok";
   return "fp-pill fp-pill--empty";
@@ -2201,10 +2232,18 @@ function _viaReasonLabel(t, raw) {
   const parts = s.split(":");
   const head = (parts[0] || "").toLowerCase();
   const tail = (parts[1] || "").toLowerCase();
+  if (head === "rss") {
+    const rssKinds = {
+      "not_configured": "today.drawer.via_reason.rss_not_configured",
+      "no_items": "today.drawer.via_reason.rss_no_items",
+    };
+    return rssKinds[tail] ? t(rssKinds[tail]) : s;
+  }
   if (head !== "newsnow") return s;
   const knownKinds = {
     "cloudflare_blocked": "today.drawer.via_reason.newsnow_cloudflare_blocked",
     "invalid_source_id": "today.drawer.via_reason.newsnow_invalid_source_id",
+    "empty_payload": "today.drawer.via_reason.newsnow_empty_payload",
   };
   if (knownKinds[tail]) return t(knownKinds[tail]);
   if (tail.indexOf("http_") === 0) return t("today.drawer.via_reason.newsnow_http");
@@ -2256,8 +2295,11 @@ function IngestDrawer(props) {
           const ins = Number(row.inserted || 0);
           const upd = Number(row.updated || 0);
           const fetched = Number(row.fetched || 0);
+          const isCooldown = row.error_kind === "rate_limited";
           let statusText = "";
-          if (row.error || row.error_kind) {
+          if (isCooldown) {
+            statusText = tfmt(t("today.drawer.status.cooldown"), {s: Number(row.retry_after_s || 0)});
+          } else if (row.error || row.error_kind) {
             statusText = t("today.drawer.status.error");
           } else if (ins + upd > 0) {
             statusText = tfmt(t("today.drawer.status.ok"),
@@ -2268,7 +2310,7 @@ function IngestDrawer(props) {
             statusText = t("today.drawer.status.empty");
           }
           const expanded = expandedId === id;
-          const hasError = !!(row.error || row.error_kind);
+          const hasError = !!(row.error || row.error_kind) && !isCooldown;
           const viaReason = _viaReasonLabel(t, row.via_reason);
           return (
             <span key={id} className={cls} title={label}>
@@ -3323,7 +3365,7 @@ function TodayTab() {
           <button className="btn btn-sm" type="button" onClick={function () { setExportOpen(true); }} title={t("today.export.title")}>
             <Ico name="download"/> {t("today.export")}
           </button>
-          <span className={"ingest-split " + (menuOpen ? "is-open" : "")}>
+          <span className={"ingest-split " + (menuOpen ? "is-open " : "") + (ingesting ? "is-busy" : "")}>
             <button className="btn btn-primary" type="button"
                     disabled={ingesting || cooldown > 0}
                     aria-busy={ingesting ? "true" : "false"}

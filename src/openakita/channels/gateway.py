@@ -4236,6 +4236,16 @@ class MessageGateway:
         Returns:
             消息 ID 或 None
         """
+        if not isinstance(text, str):
+            logger.warning(
+                "[Gateway] Refusing to send non-text payload to IM channel "
+                "%s/%s: %s",
+                channel,
+                chat_id,
+                type(text).__name__,
+            )
+            return None
+
         adapter = self._adapters.get(channel)
         if not adapter:
             if (channel or "").lower() in _NOOP_CHANNELS:
@@ -4286,6 +4296,14 @@ class MessageGateway:
         """
         发送消息到会话
         """
+        if not isinstance(text, str):
+            logger.warning(
+                "[Gateway] Refusing to send non-text payload to session %s: %s",
+                getattr(session, "id", "<unknown>"),
+                type(text).__name__,
+            )
+            return None
+
         # 话题感知：session 关联了话题且调用者未显式指定 reply_to 时，
         # 自动使用 thread_id 使消息留在话题内（飞书等平台需要 reply 才能定位到话题）
         if session.thread_id and "reply_to" not in kwargs:
@@ -4686,6 +4704,13 @@ class MessageGateway:
         Returns:
             {channel: sent_count}
         """
+        if not isinstance(text, str):
+            logger.warning(
+                "[Gateway] Refusing to broadcast non-text payload: %s",
+                type(text).__name__,
+            )
+            return {}
+
         results = {}
 
         # 获取目标会话

@@ -361,8 +361,12 @@ class TestFedFOMCCalendarGate:
 
 class TestGenericRSSFetcher:
     def test_no_feeds_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        items = _run(GenericRSSFetcher(config={"rss_generic.feeds": ""}).fetch())
+        fetcher = GenericRSSFetcher(config={"rss_generic.feeds": ""})
+        items = _run(fetcher.fetch())
+
         assert items == []
+        assert fetcher._last_via == "none"
+        assert fetcher._last_via_reason == "rss:not_configured"
 
     @pytest.mark.skipif(
         not FEEDPARSER_AVAILABLE, reason="feedparser not installed"

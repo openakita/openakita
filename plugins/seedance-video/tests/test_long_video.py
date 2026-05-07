@@ -18,13 +18,12 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from _plugin_loader import load_seedance_plugin
 from long_video import (
     ChainGenerator,
     decompose_storyboard,
     ffmpeg_available,
 )
-
-from _plugin_loader import load_seedance_plugin
 
 # ── decompose_storyboard / parse_llm_json_object (C5) ─────────────────
 
@@ -246,6 +245,7 @@ async def test_chain_serial_chains_last_frame_into_next_first_frame() -> None:
     image_parts = [p for p in content if p.get("type") == "image_url"]
     assert len(image_parts) == 1
     assert image_parts[0]["image_url"]["url"] == "https://cdn/last.png"
+    assert image_parts[0]["role"] == "first_frame"
 
 
 # ── chain_group plumbing (Sprint 8 / V2) ──────────────────────────────
