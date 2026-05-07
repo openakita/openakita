@@ -46,7 +46,7 @@ from .response_handler import (
     request_expects_artifact,
     strip_thinking_tags,
 )
-from .supervisor import RuntimeSupervisor, TOKEN_ANOMALY_THRESHOLD
+from .supervisor import TOKEN_ANOMALY_THRESHOLD, RuntimeSupervisor
 
 # 不产出"最终交付物"的管理类工具集合 —— 用于：
 #   1) ``tools_executed_in_task`` 标记（仅这些工具被调用 → 视为本轮无实质执行）
@@ -114,6 +114,61 @@ def _is_readonly_exploration_round(tool_calls: list[dict]) -> bool:
         return False
     names = {str(tc.get("name", "")) for tc in tool_calls if isinstance(tc, dict)}
     return bool(names) and names.issubset(_READONLY_EXPLORATION_TOOLS)
+
+
+def _build_task_checkpoint_event(
+    *,
+    session: Any,
+    conversation_id: str | None,
+    task_id: str,
+    iteration: int,
+    exit_reason: str,
+    summary: str = "",
+    next_step_hint: str = "",
+    artifacts: list[str] | None = None,
+) -> dict:
+    """构造一个 task_checkpoint SSE event payload，并尽力写入 session.context。
+
+    设计要点（与 sessions.TaskCheckpoint 对齐）：
+    * summary / next_step_hint 单行截断到 200 字符，避免 SSE 包过大；
+    * 容错：session 缺失或老版本未实现 append_task_checkpoint 时，仅返回 SSE event；
+    * 不抛异常 — 检查点是观测特性，不能影响主推理路径。
+    """
+    from ..sessions.session import TaskCheckpoint  # 局部导入，避免顶层循环依赖
+
+    def _trim(text: str, limit: int = 200) -> str:
+        text = (text or "").strip().replace("\n", " ")
+        return text if len(text) <= limit else text[: limit - 1] + "…"
+
+    messages_offset = 0
+    ctx = getattr(session, "context", None) if session is not None else None
+    if ctx is not None:
+        try:
+            messages_offset = len(getattr(ctx, "messages", []) or [])
+        except Exception:
+            messages_offset = 0
+
+    checkpoint = TaskCheckpoint(
+        checkpoint_id=uuid.uuid4().hex[:12],
+        task_id=task_id or "",
+        conversation_id=conversation_id or "",
+        iteration=int(iteration or 0),
+        created_at=time.time(),
+        summary=_trim(summary),
+        next_step_hint=_trim(next_step_hint),
+        exit_reason=exit_reason or "running",
+        artifacts=list(artifacts or []),
+        messages_offset=messages_offset,
+    )
+
+    written: dict | None = None
+    if ctx is not None and hasattr(ctx, "append_task_checkpoint"):
+        try:
+            written = ctx.append_task_checkpoint(checkpoint)
+        except Exception:
+            logger.debug("append_task_checkpoint failed", exc_info=True)
+
+    return {"type": "task_checkpoint", **(written or checkpoint.to_dict())}
 
 
 def _format_budget_pause_message(status: Any) -> str:
@@ -597,6 +652,12 @@ class ReasoningEngine:
 
         # 暂存最近一次推理结束时的 working_messages，供 token 统计读取
         self._last_working_messages: list[dict] = []
+
+        # 暂存最近一轮的上下文压力快照（messages/system/tools tokens、soft/hard limit、
+        # context_safe），由 calculate_context_pressure 调用点同步更新；
+        # api/routes/chat.py 在组装 done event 时读取并塞进 usage.context_pressure，
+        # 给前端"上下文健康度"展示用，避免重新计算。
+        self._last_context_pressure: dict | None = None
 
         # 上一次推理的退出原因：normal / ask_user / loop_terminated / max_iterations / verify_incomplete
         # _finalize_session 据此决定是否自动关闭 Plan；OrgRuntime 据此区分
@@ -2450,6 +2511,7 @@ class ReasoningEngine:
                         "input_tokens": _in_tokens,
                         "output_tokens": _out_tokens,
                     }
+                    self._last_context_pressure = _iter_trace["context_pressure"]
                     _budget_decision = _loop_budget_guard.check_token_growth(
                         _in_tokens,
                         _out_tokens,
@@ -3040,6 +3102,15 @@ class ReasoningEngine:
                     self._save_react_trace(
                         react_trace, conversation_id, session_type, "cancelled", _trace_started_at
                     )
+                    yield _build_task_checkpoint_event(
+                        session=session,
+                        conversation_id=conversation_id,
+                        task_id=state.task_id,
+                        iteration=_iteration,
+                        exit_reason="user_cancelled",
+                        summary=str(state.cancel_reason or "用户主动停止"),
+                        next_step_hint="如需重启，发送新的指令或回复\"继续\"",
+                    )
                     yield {"type": "text_delta", "content": "✅ 任务已停止。"}
                     yield {"type": "done"}
                     return
@@ -3065,6 +3136,15 @@ class ReasoningEngine:
                         task_id=state.task_id,
                     )
                     msg = _format_budget_pause_message(budget_status)
+                    yield _build_task_checkpoint_event(
+                        session=session,
+                        conversation_id=conversation_id,
+                        task_id=state.task_id,
+                        iteration=_iteration,
+                        exit_reason="budget_paused",
+                        summary=str(budget_status.message or "预算耗尽，任务暂停"),
+                        next_step_hint="回复\"继续\"即可让系统接力完成；或在配置中调高任务预算",
+                    )
                     yield {"type": "text_delta", "content": msg}
                     yield {"type": "done"}
                     return
@@ -3643,6 +3723,16 @@ class ReasoningEngine:
                                 yield {"type": "text_delta", "content": result[i : i + chunk_size]}
                                 await asyncio.sleep(0.01)
                         await broadcast_event("pet-status-update", {"status": "success"})
+                        # 终态检查点：summary 取最终回答前 200 字，便于"任务时间线"
+                        # 直接显示"已完成什么"。
+                        yield _build_task_checkpoint_event(
+                            session=session,
+                            conversation_id=conversation_id,
+                            task_id=state.task_id,
+                            iteration=_iteration,
+                            exit_reason="completed",
+                            summary=str(result or ""),
+                        )
                         yield {"type": "done"}
                         return
                     else:
@@ -4701,6 +4791,7 @@ class ReasoningEngine:
                             "input_tokens": _in_tokens,
                             "output_tokens": _out_tokens,
                         }
+                        self._last_context_pressure = _iter_trace["context_pressure"]
                         _budget_decision = _loop_budget_guard.check_token_growth(
                             _in_tokens,
                             _out_tokens,

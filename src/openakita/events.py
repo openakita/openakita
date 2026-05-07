@@ -35,9 +35,15 @@ class StreamEventType(StrEnum):
     # ── Tool execution ──
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_END = "tool_call_end"
+    SOURCE_USED = "source_used"
+    MCP_CALL = "mcp_call"
 
     # ── Context management ──
     CONTEXT_COMPRESSED = "context_compressed"
+
+    # ── Resource budget (soft warning + hard limit) ──
+    BUDGET_WARNING = "budget_warning"
+    BUDGET_EXCEEDED = "budget_exceeded"
 
     # ── Security / Interaction ──
     SECURITY_CONFIRM = "security_confirm"
@@ -51,6 +57,9 @@ class StreamEventType(StrEnum):
     TODO_CANCELLED = "todo_cancelled"
     PLAN_READY_FOR_APPROVAL = "plan_ready_for_approval"
 
+    # ── Task continuity (checkpoint for resume / timeline) ──
+    TASK_CHECKPOINT = "task_checkpoint"
+
     # ── Agent orchestration ──
     AGENT_HANDOFF = "agent_handoff"
     AGENT_SWITCH = "agent_switch"
@@ -60,6 +69,7 @@ class StreamEventType(StrEnum):
     # ── UI enrichment (injected by API layer) ──
     ARTIFACT = "artifact"
     UI_PREFERENCE = "ui_preference"
+    ENDPOINT_NOTICE = "endpoint_notice"
 
 
 def normalize_stream_event(event: dict | None) -> dict:
@@ -71,6 +81,26 @@ def normalize_stream_event(event: dict | None) -> dict:
     if event_type in (StreamEventType.TOOL_CALL_START.value, StreamEventType.TOOL_CALL_END.value):
         payload.setdefault("tool_name", payload.get("tool", ""))
         payload.setdefault("call_id", payload.get("id", ""))
+
+    if event_type == StreamEventType.SOURCE_USED.value:
+        payload.setdefault("tool_name", payload.get("tool", payload.get("tool_name", "")))
+        payload.setdefault("tool_use_id", payload.get("id", payload.get("call_id", "")))
+        payload.setdefault("requested_url", "")
+        payload.setdefault("final_url", payload.get("requested_url", ""))
+        payload.setdefault("hostname", "")
+        payload.setdefault("redirected", False)
+        payload.setdefault("from_cache", False)
+        payload.setdefault("status", "ok")
+        payload.setdefault("hint", "")
+
+    if event_type == StreamEventType.MCP_CALL.value:
+        payload.setdefault("tool_use_id", payload.get("id", payload.get("call_id", "")))
+        payload.setdefault("server", "")
+        payload.setdefault("tool", payload.get("mcp_tool", ""))
+        payload.setdefault("status", "ok")
+        payload.setdefault("auto_connected", False)
+        payload.setdefault("reconnected", False)
+        payload.setdefault("error", "")
 
     if event_type == StreamEventType.SECURITY_CONFIRM.value:
         payload.setdefault("tool_name", payload.get("tool", ""))

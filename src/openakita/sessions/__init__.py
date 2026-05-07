@@ -8,7 +8,7 @@
 """
 
 from .manager import SessionManager
-from .session import Session, SessionConfig, SessionContext, SessionState
+from .session import Session, SessionConfig, SessionContext, SessionState, TaskCheckpoint
 from .user import User, UserManager
 
 __all__ = [
@@ -17,6 +17,7 @@ __all__ = [
     "SessionContext",
     "SessionConfig",
     "SessionManager",
+    "TaskCheckpoint",
     "User",
     "UserManager",
 ]

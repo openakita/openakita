@@ -26,6 +26,8 @@ import type {
   ChatAskQuestion,
   ChatAttachment,
   ChatArtifact,
+  ChatSource,
+  ChatMcpCall,
   SlashCommand,
   EndpointSummary,
   ChainGroup,
@@ -2121,6 +2123,8 @@ export function ChatView({
       let currentAsk: ChatAskUser | null = null;
       let currentAgent: string | null = null;
       let currentArtifacts: ChatArtifact[] = [];
+      let currentSources: ChatSource[] = [];
+      let currentMcpCalls: ChatMcpCall[] = [];
       let currentError: ChatErrorInfo | null = null;
       let gracefulDone = false; // SSE 正常发送了 "done" 事件
 
@@ -2605,6 +2609,30 @@ export function ChatView({
                   size: event.size,
                 }];
                 break;
+              case "source_used":
+                currentSources = [...currentSources, {
+                  tool_name: event.tool_name,
+                  tool_use_id: event.tool_use_id,
+                  requested_url: event.requested_url,
+                  final_url: event.final_url,
+                  hostname: event.hostname,
+                  redirected: event.redirected,
+                  from_cache: event.from_cache,
+                  status: event.status,
+                  hint: event.hint,
+                }];
+                break;
+              case "mcp_call":
+                currentMcpCalls = [...currentMcpCalls, {
+                  tool_use_id: event.tool_use_id,
+                  server: event.server,
+                  tool: event.tool,
+                  status: event.status,
+                  auto_connected: event.auto_connected,
+                  reconnected: event.reconnected,
+                  error: event.error,
+                }];
+                break;
               case "agent_handoff": {
                 updateSubAgents((prev) => {
                   const exists = prev.find((s) => s.agentId === event.to_agent);
@@ -2632,6 +2660,8 @@ export function ChatView({
                     askUser: currentAsk,
                     errorInfo: currentError,
                     artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
+                    sources: currentSources.length > 0 ? [...currentSources] : null,
+                    mcpCalls: currentMcpCalls.length > 0 ? [...currentMcpCalls] : null,
                     thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
                     streaming: true,
                   }];
@@ -2663,6 +2693,31 @@ export function ChatView({
                     timestamp: Date.now(),
                   },
                 ]);
+                continue;
+              }
+              case "task_checkpoint": {
+                // 任务节点检查点：在 cancelled / budget_pause / completed 时由后端 emit。
+                // 设计原则：避免与 budget_warning / done / error 文案重复，因此：
+                //   - cancelled  → 主动渲染"任务已暂停 + next_step_hint"系统消息（用户中断后看不到 done）
+                //   - 其他状态   → 静默累积，未来由 /api/chat/checkpoints 走任务时间线 UI
+                const exitReason = String((event as any).exit_reason || "");
+                if (exitReason === "cancelled") {
+                  const summary = String((event as any).summary || "").trim();
+                  const hint = String((event as any).next_step_hint || "").trim();
+                  const lines = ["⏸️ 任务已停止"];
+                  if (summary) lines.push(`已完成：${summary}`);
+                  if (hint) lines.push(`继续提示：${hint}`);
+                  else lines.push("如需继续，回复\"继续\"即可让我接力。");
+                  updateMessages((prev) => [
+                    ...prev,
+                    {
+                      id: genId(),
+                      role: "system" as const,
+                      content: lines.join("\n"),
+                      timestamp: Date.now(),
+                    },
+                  ]);
+                }
                 continue;
               }
               case "budget_warning": {
@@ -2766,6 +2821,8 @@ export function ChatView({
                     askUser: currentAsk,
                     errorInfo: currentError,
                     artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
+                    sources: currentSources.length > 0 ? [...currentSources] : null,
+                    mcpCalls: currentMcpCalls.length > 0 ? [...currentMcpCalls] : null,
                     thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
                     usage: assistantMsg.usage ?? m.usage,
                     streaming: event.type !== "done",
@@ -3991,6 +4048,14 @@ export function ChatView({
             apiBaseUrl={apiBaseUrl}
             mdModules={mdModules}
             isStreaming={isCurrentConvStreaming}
+            conversationId={activeConvId || undefined}
+            httpApiBase={() => apiBaseUrl}
+            onPlanStepAction={(action, stepIdx, description) => {
+              const msg = action === "skip"
+                ? `请跳过当前步骤（第 ${stepIdx + 1} 步：${description}），直接进入下一步。`
+                : `请重试这一步（第 ${stepIdx + 1} 步：${description}）。`;
+              setInputValue(msg);
+            }}
             onAtBottomChange={(atBottom) => { isMessageListAtBottomRef.current = atBottom; }}
             onAskAnswer={handleAskAnswer}
             onRetry={handleRegenerate}

@@ -10,6 +10,8 @@ import type {
   ChatAskQuestion,
   ChatAttachment,
   ChatArtifact,
+  ChatSource,
+  ChatMcpCall,
   ChatErrorInfo,
   ChatConversation,
   ChatDisplayMode,
@@ -31,6 +33,8 @@ export type {
   ChatAskQuestion,
   ChatAttachment,
   ChatArtifact,
+  ChatSource,
+  ChatMcpCall,
   ChatErrorInfo,
   ChatConversation,
   ChatDisplayMode,
@@ -71,6 +75,8 @@ export type StreamEvent =
   | { type: "text_replace"; content: string }
   | { type: "tool_call_start"; tool: string; tool_name?: string; args: Record<string, unknown>; id?: string; call_id?: string; protocol_version?: number }
   | { type: "tool_call_end"; tool: string; tool_name?: string; result: string; id?: string; call_id?: string; is_error?: boolean; skipped?: boolean; protocol_version?: number }
+  | { type: "source_used"; tool_name?: string; tool_use_id?: string; requested_url: string; final_url: string; hostname?: string; redirected?: boolean; from_cache?: boolean; status?: string; hint?: string; protocol_version?: number }
+  | { type: "mcp_call"; tool_use_id?: string; server: string; tool: string; status?: "ok" | "error" | string; auto_connected?: boolean; reconnected?: boolean; error?: string; protocol_version?: number }
   | { type: "todo_created"; plan: ChatTodo; restored?: boolean }
   | { type: "todo_step_updated"; stepId?: string; step_id?: string; stepIdx?: number; status: string; protocol_version?: number }
   | { type: "todo_completed" }
@@ -87,6 +93,21 @@ export type StreamEvent =
   | { type: "ui_preference"; theme?: string; language?: string }
   | { type: "endpoint_notice"; reason_code?: string; notice_type?: string; endpoint?: string }
   | { type: "budget_warning"; dimension?: string; level?: string; usage_ratio?: number; renewed?: boolean; message?: string }
+  | { type: "budget_exceeded"; message?: string }
+  | {
+      type: "task_checkpoint";
+      checkpoint_id: string;
+      task_id: string;
+      conversation_id: string;
+      iteration: number;
+      created_at: number;
+      summary: string;
+      next_step_hint: string;
+      exit_reason: string;
+      artifacts: string[];
+      messages_offset: number;
+      protocol_version?: number;
+    }
   | { type: "error"; message: string }
   | { type: "done"; reason?: string; usage?: {
       input_tokens: number;
@@ -99,6 +120,20 @@ export type StreamEvent =
       billable_input_tokens?: number;
       billable_output_tokens?: number;
       billable_total_tokens?: number;
+      // ContextPressure 快照：来自 ReasoningEngine.calculate_context_pressure，
+      // 给"上下文健康度" UI 用。所有字段都是 token 数。
+      context_pressure?: {
+        messages_tokens: number;
+        system_tokens: number;
+        tools_tokens: number;
+        soft_limit: number;
+        hard_limit: number;
+        trigger_tokens: number;
+        max_tokens: number;
+        context_safe: boolean;
+        input_tokens?: number;
+        output_tokens?: number;
+      };
     } };
 
 /** Sub-agent delegation entry for handoff display */

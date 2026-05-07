@@ -1,9 +1,16 @@
 """L1 Unit Tests: Session state machine, message management."""
 
-import pytest
 from datetime import datetime, timedelta
 
-from openakita.sessions.session import Session, SessionConfig, SessionContext, SessionState
+import pytest
+
+from openakita.sessions.session import (
+    Session,
+    SessionConfig,
+    SessionContext,
+    SessionState,
+    TaskCheckpoint,
+)
 
 
 class TestSessionCreation:
@@ -208,4 +215,85 @@ class TestSessionTimestamps:
     def test_last_active_set(self):
         s = Session(id="s1", channel="cli", chat_id="c1", user_id="u1")
         assert s.last_active is not None
+
+
+class TestTaskCheckpoint:
+    """task_checkpoints — 借鉴 claude-code 的任务连续性。"""
+
+    def _ckpt(self, **overrides) -> TaskCheckpoint:
+        base = {
+            "checkpoint_id": "ckpt-001",
+            "task_id": "task-1",
+            "conversation_id": "conv-1",
+            "iteration": 2,
+            "created_at": 1234567890.0,
+            "summary": "已读取 8 个文件",
+            "next_step_hint": "运行测试验证",
+            "exit_reason": "iteration_complete",
+            "artifacts": ["a.py"],
+            "messages_offset": 12,
+        }
+        base.update(overrides)
+        return TaskCheckpoint(**base)
+
+    def test_to_from_dict_roundtrip(self):
+        original = self._ckpt()
+        restored = TaskCheckpoint.from_dict(original.to_dict())
+        assert restored.to_dict() == original.to_dict()
+
+    def test_from_dict_handles_missing_fields(self):
+        ckpt = TaskCheckpoint.from_dict({"checkpoint_id": "x"})
+        assert ckpt.checkpoint_id == "x"
+        assert ckpt.iteration == 0
+        assert ckpt.exit_reason == "running"
+        assert ckpt.artifacts == []
+
+    def test_append_writes_to_context(self):
+        ctx = SessionContext()
+        result = ctx.append_task_checkpoint(self._ckpt())
+        assert ctx.task_checkpoints == [result]
+        assert result["task_id"] == "task-1"
+        assert result["exit_reason"] == "iteration_complete"
+
+    def test_append_accepts_dict(self):
+        ctx = SessionContext()
+        ctx.append_task_checkpoint({
+            "checkpoint_id": "raw",
+            "task_id": "t",
+            "conversation_id": "c",
+            "iteration": 1,
+            "created_at": 1.0,
+            "exit_reason": "completed",
+        })
+        assert len(ctx.task_checkpoints) == 1
+        assert ctx.task_checkpoints[0]["checkpoint_id"] == "raw"
+
+    def test_append_rejects_invalid_type(self):
+        ctx = SessionContext()
+        with pytest.raises(TypeError):
+            ctx.append_task_checkpoint("not-a-checkpoint")  # type: ignore[arg-type]
+
+    def test_append_caps_at_max_keep(self):
+        ctx = SessionContext()
+        for i in range(60):
+            ctx.append_task_checkpoint(self._ckpt(checkpoint_id=f"c{i}"), max_keep=50)
+        assert len(ctx.task_checkpoints) == 50
+        assert ctx.task_checkpoints[0]["checkpoint_id"] == "c10"
+        assert ctx.task_checkpoints[-1]["checkpoint_id"] == "c59"
+
+    def test_latest_filters_by_task(self):
+        ctx = SessionContext()
+        ctx.append_task_checkpoint(self._ckpt(checkpoint_id="a", task_id="X"))
+        ctx.append_task_checkpoint(self._ckpt(checkpoint_id="b", task_id="Y"))
+        ctx.append_task_checkpoint(self._ckpt(checkpoint_id="c", task_id="X"))
+        assert ctx.latest_task_checkpoint()["checkpoint_id"] == "c"
+        assert ctx.latest_task_checkpoint("X")["checkpoint_id"] == "c"
+        assert ctx.latest_task_checkpoint("Y")["checkpoint_id"] == "b"
+        assert ctx.latest_task_checkpoint("Z") is None
+
+    def test_serialization_roundtrip_via_session_context(self):
+        ctx = SessionContext()
+        ctx.append_task_checkpoint(self._ckpt())
+        restored = SessionContext.from_dict(ctx.to_dict())
+        assert restored.task_checkpoints == ctx.task_checkpoints
 

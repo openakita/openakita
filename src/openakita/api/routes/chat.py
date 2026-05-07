@@ -375,6 +375,69 @@ async def _broadcast_chat_event(event: str, data: dict) -> None:
         pass
 
 
+def _extract_source_used(event: dict) -> dict | None:
+    """Extract OpenAkita source provenance from tool results.
+
+    Tool handlers prefix result text with ``[OPENAKITA_SOURCE] {json}`` so the
+    API can emit a small, stable UI event without parsing the full tool output.
+    """
+    if event.get("type") != "tool_call_end":
+        return None
+    source = event.get("source")
+    if isinstance(source, dict):
+        payload = dict(source)
+    else:
+        result = str(event.get("result", ""))
+        marker = "[OPENAKITA_SOURCE]"
+        if marker not in result:
+            return None
+        line = result[result.index(marker) + len(marker):].strip().splitlines()[0].strip()
+        try:
+            payload = json.loads(line)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+    payload.setdefault("tool_name", event.get("tool_name") or event.get("tool", ""))
+    payload.setdefault("tool_use_id", event.get("call_id") or event.get("id", ""))
+    payload.setdefault("requested_url", "")
+    payload.setdefault("final_url", payload.get("requested_url", ""))
+    payload.setdefault("hostname", "")
+    payload.setdefault("redirected", False)
+    payload.setdefault("from_cache", False)
+    payload.setdefault("status", "ok")
+    payload.setdefault("hint", "")
+    return payload
+
+
+def _extract_mcp_call(event: dict) -> dict | None:
+    """Extract a structured MCP call summary from a tool result.
+
+    Mirrors :func:`_extract_source_used`: ``call_mcp_tool`` results carry a
+    ``[OPENAKITA_MCP] {json}`` marker so the chat route can emit a stable
+    ``mcp_call`` SSE event without scraping prose.
+    """
+    if event.get("type") != "tool_call_end":
+        return None
+    if (event.get("tool_name") or event.get("tool", "")) != "call_mcp_tool":
+        return None
+    result = str(event.get("result", ""))
+    marker = "[OPENAKITA_MCP]"
+    if marker not in result:
+        return None
+    try:
+        line = result[result.index(marker) + len(marker):].strip().splitlines()[0].strip()
+        payload = json.loads(line)
+    except (json.JSONDecodeError, TypeError, ValueError, IndexError):
+        return None
+    payload.setdefault("tool_use_id", event.get("call_id") or event.get("id", ""))
+    payload.setdefault("server", "")
+    payload.setdefault("tool", "")
+    payload.setdefault("status", "ok")
+    payload.setdefault("auto_connected", False)
+    payload.setdefault("reconnected", False)
+    payload.setdefault("error", "")
+    return payload
+
+
 def _resolve_agent(agent: object):
     """Resolve the actual Agent instance."""
     from openakita.core.agent import Agent
@@ -789,6 +852,20 @@ async def _stream_chat(
             else:
                 continue
 
+            _source_used = _extract_source_used(event)
+            if _source_used:
+                try:
+                    setattr(actual_agent, "_last_link_diagnostic", dict(_source_used))
+                    if http_request is not None:
+                        setattr(http_request.app.state, "last_link_diagnostic", dict(_source_used))
+                except Exception:
+                    pass
+                yield _sse("source_used", _source_used)
+
+            _mcp_call = _extract_mcp_call(event)
+            if _mcp_call:
+                yield _sse("mcp_call", _mcp_call)
+
             # deliver_artifacts / send_sticker 都可能返回带 receipts 的 JSON
             _artifact_tools = ("deliver_artifacts", "send_sticker")
             if event_type == "tool_call_end" and event.get("tool") in _artifact_tools:
@@ -997,6 +1074,14 @@ async def _stream_chat(
                     _usage_data["context_limit"] = _max_ctx
                     _usage_data["history_context_tokens"] = _cur_ctx
                     _usage_data["history_context_limit"] = _max_ctx
+                # 透出 ContextPressure 摘要 — 供前端"上下文健康度"展示。
+                # 已由 reasoning_engine 在每轮 token 异常检测时同步刷新，
+                # 此处直接读取，零额外计算。
+                _last_pressure = getattr(re, "_last_context_pressure", None)
+                if _last_pressure:
+                    if _usage_data is None:
+                        _usage_data = {}
+                    _usage_data["context_pressure"] = dict(_last_pressure)
         except Exception:
             pass
 
@@ -1506,6 +1591,50 @@ async def get_sub_agent_records(request: Request, conversation_id: str = ""):
     except Exception as e:
         logger.warning(f"[Chat API] sub-records query error: {e}")
     return []
+
+
+@router.get("/api/chat/checkpoints")
+async def get_task_checkpoints(
+    request: Request,
+    conversation_id: str = "",
+    task_id: str = "",
+    limit: int = 20,
+):
+    """Return persisted task checkpoints for a conversation.
+
+    用途：让前端能基于上一次任务的 exit_reason / next_step_hint
+    给用户展示"继续此任务"提示，无需重新跑 LLM —— 用户只要在
+    输入框发"继续"等指令，现有 reason_stream 就会按现有机制接力。
+
+    Args:
+        conversation_id: 会话 ID（必填）。
+        task_id: 可选，仅返回该任务的检查点。
+        limit: 最多返回 N 条最新检查点，默认 20，硬上限 100。
+    """
+    if not conversation_id:
+        return {"checkpoints": [], "latest": None}
+    session_manager = getattr(request.app.state, "session_manager", None)
+    if session_manager is None:
+        return {"checkpoints": [], "latest": None}
+    try:
+        session = session_manager.get_session(
+            "desktop",
+            conversation_id,
+            "desktop_user",
+            create_if_missing=False,
+        )
+        if not session or not hasattr(session, "context"):
+            return {"checkpoints": [], "latest": None}
+        all_ckpts = list(getattr(session.context, "task_checkpoints", []) or [])
+        if task_id:
+            all_ckpts = [c for c in all_ckpts if c.get("task_id") == task_id]
+        capped = max(1, min(int(limit or 20), 100))
+        recent = all_ckpts[-capped:]
+        latest = recent[-1] if recent else None
+        return {"checkpoints": recent, "latest": latest}
+    except Exception as e:
+        logger.warning(f"[Chat API] task-checkpoints query error: {e}")
+        return {"checkpoints": [], "latest": None}
 
 
 @router.post("/api/plan/dismiss")

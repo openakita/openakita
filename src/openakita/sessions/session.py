@@ -58,6 +58,70 @@ class SessionConfig:
 
 
 @dataclass
+class TaskCheckpoint:
+    """任务检查点 — 借鉴 claude-code 的"任务连续性"思路。
+
+    每条代表推理流式循环里的一次节点状态，用于：
+    1) 前端"任务时间线"展示（已完成什么、下一步打算）；
+    2) 流式中断 / 预算暂停后从特定 messages_offset 续跑。
+
+    实际持久化形式为 dict（嵌入 SessionContext.task_checkpoints），
+    本 dataclass 只是构造与字段校验的帮手，与 handoff_events 等同风格。
+    """
+
+    checkpoint_id: str
+    task_id: str
+    conversation_id: str
+    iteration: int
+    created_at: float
+    summary: str = ""
+    next_step_hint: str = ""
+    exit_reason: str = "running"
+    artifacts: list[str] = field(default_factory=list)
+    messages_offset: int = 0
+
+    # 合法 exit_reason 取值（仅供调用方对照，未做严格枚举校验以保持向前兼容）
+    EXIT_REASONS = (
+        "running",
+        "iteration_complete",
+        "budget_paused",
+        "user_cancelled",
+        "network_error",
+        "completed",
+        "failed",
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "checkpoint_id": self.checkpoint_id,
+            "task_id": self.task_id,
+            "conversation_id": self.conversation_id,
+            "iteration": self.iteration,
+            "created_at": self.created_at,
+            "summary": self.summary,
+            "next_step_hint": self.next_step_hint,
+            "exit_reason": self.exit_reason,
+            "artifacts": list(self.artifacts),
+            "messages_offset": self.messages_offset,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TaskCheckpoint":
+        return cls(
+            checkpoint_id=str(data.get("checkpoint_id", "")),
+            task_id=str(data.get("task_id", "")),
+            conversation_id=str(data.get("conversation_id", "")),
+            iteration=int(data.get("iteration", 0) or 0),
+            created_at=float(data.get("created_at", 0.0) or 0.0),
+            summary=str(data.get("summary", "")),
+            next_step_hint=str(data.get("next_step_hint", "")),
+            exit_reason=str(data.get("exit_reason", "running")),
+            artifacts=list(data.get("artifacts") or []),
+            messages_offset=int(data.get("messages_offset", 0) or 0),
+        )
+
+
+@dataclass
 class SessionContext:
     """
     会话上下文
@@ -82,6 +146,9 @@ class SessionContext:
     delegation_chain: list[dict] = field(default_factory=list)
     # Sub-agent work records — persisted traces of delegated tasks
     sub_agent_records: list[dict] = field(default_factory=list)
+    # Task checkpoints — emitted by reasoning_engine.reason_stream for resume / timeline
+    # 上限由 append_task_checkpoint 控制，避免长会话无限增长。
+    task_checkpoints: list[dict] = field(default_factory=list)
     _msg_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     _DEDUP_TIME_WINDOW_SECONDS = 30
@@ -168,6 +235,44 @@ class SessionContext:
             self.current_topic_start = 0
             self.variables["_context_reset_at"] = datetime.now().isoformat()
 
+    def append_task_checkpoint(
+        self,
+        checkpoint: "TaskCheckpoint | dict",
+        *,
+        max_keep: int = 50,
+    ) -> dict:
+        """追加任务检查点，超出 max_keep 时仅保留最近若干条。
+
+        Args:
+            checkpoint: TaskCheckpoint 实例或等价 dict。
+            max_keep: 单会话内保留的检查点上限，默认 50。
+
+        Returns:
+            落到 task_checkpoints 中的 dict（也用于 SSE emit）。
+        """
+        if isinstance(checkpoint, TaskCheckpoint):
+            data = checkpoint.to_dict()
+        elif isinstance(checkpoint, dict):
+            data = TaskCheckpoint.from_dict(checkpoint).to_dict()
+        else:
+            raise TypeError(
+                f"checkpoint must be TaskCheckpoint or dict, got {type(checkpoint).__name__}"
+            )
+
+        with self._msg_lock:
+            self.task_checkpoints.append(data)
+            if len(self.task_checkpoints) > max_keep:
+                self.task_checkpoints = self.task_checkpoints[-max_keep:]
+        return data
+
+    def latest_task_checkpoint(self, task_id: str | None = None) -> dict | None:
+        """返回最近一条检查点；若给出 task_id，则限定该任务。"""
+        with self._msg_lock:
+            for ckpt in reversed(self.task_checkpoints):
+                if task_id is None or ckpt.get("task_id") == task_id:
+                    return ckpt
+        return None
+
     def to_dict(self) -> dict:
         """序列化"""
         return {
@@ -185,6 +290,7 @@ class SessionContext:
             "active_agents": self.active_agents,
             "delegation_chain": self.delegation_chain,
             "sub_agent_records": self.sub_agent_records,
+            "task_checkpoints": self.task_checkpoints,
         }
 
     @classmethod
@@ -205,6 +311,7 @@ class SessionContext:
             active_agents=data.get("active_agents", []),
             delegation_chain=data.get("delegation_chain", []),
             sub_agent_records=data.get("sub_agent_records", []),
+            task_checkpoints=data.get("task_checkpoints", []),
         )
 
 
