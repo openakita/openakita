@@ -512,6 +512,7 @@ class SaveEndpointRequest(BaseModel):
     api_key: str | None = None
     endpoint_type: str = "endpoints"
     expected_version: str | None = None
+    original_name: str | None = None
 
 
 class DeleteEndpointRequest(BaseModel):
@@ -550,6 +551,7 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
             api_key=api_key,
             endpoint_type=body.endpoint_type,
             expected_version=body.expected_version,
+            original_name=body.original_name,
         )
     except ConflictError as e:
         return {"status": "conflict", "error": str(e), "current_version": e.current_version}
@@ -1190,7 +1192,7 @@ async def write_security_config(body: SecurityConfigUpdate):
 @router.get("/api/config/security/zones")
 async def read_security_zones():
     """Read zone path configuration."""
-    from openakita.core.policy import _default_protected_paths, _default_forbidden_paths
+    from openakita.core.policy import _default_forbidden_paths, _default_protected_paths
 
     data = _read_policies_yaml() or {}
     sec = data.get("security", {})
@@ -1345,8 +1347,7 @@ async def write_permission_mode(body: _PermissionModeBody):
     if mode not in ("cautious", "smart", "yolo"):
         return {"status": "error", "message": f"无效的安全模式: {mode}"}
     try:
-        from openakita.core.policy import get_policy_engine
-        from openakita.core.policy import reset_policy_engine
+        from openakita.core.policy import get_policy_engine, reset_policy_engine
 
         # Persist to YAML
         data = _read_policies_yaml()
@@ -1431,6 +1432,8 @@ async def reset_death_switch():
     try:
         from openakita.core.security_actions import (
             maybe_broadcast_death_switch_reset,
+        )
+        from openakita.core.security_actions import (
             reset_death_switch as reset_death_switch_action,
         )
 

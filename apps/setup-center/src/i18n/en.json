@@ -1236,6 +1236,8 @@
     "noEndpoints": "No endpoints yet. Click above to add one.",
     "primary": "Primary",
     "setPrimary": "Set primary",
+    "moveUp": "Move up",
+    "reorderSaved": "Endpoint order saved",
     "edit": "Edit",
     "disabled": "Disabled",
     "enable": "Enable",
@@ -1557,6 +1559,20 @@
       "done": "✓ All setup complete!",
       "error": "Setup error: {{error}}",
       "working": "Working..."
+    },
+    "backendStartup": {
+      "title": "Backend is starting",
+      "desc": "OpenAkita is starting the backend service in the background. You can continue setup while it starts.",
+      "preparing": "Preparing the default workspace...",
+      "checking": "Checking the local backend environment...",
+      "starting": "Starting the backend service. This may take a few dozen seconds.",
+      "waiting": "Backend process started. Waiting for the HTTP service to become ready...",
+      "waitingDetail": "Waited {{seconds}} seconds, still checking service readiness...",
+      "ready": "Backend service is ready",
+      "error": "Backend startup has not completed",
+      "timeout": "Timed out waiting for the backend HTTP service. You can start or refresh it later from the Status page.",
+      "elapsed": "{{seconds}} seconds elapsed.",
+      "buttonStarting": "Starting backend..."
     },
     "done": {
       "title": "Setup Complete!",

@@ -474,6 +474,25 @@ function MainApp() {
   const [obDetectedService, setObDetectedService] = useState<{
     version: string; pid: number | null;
   } | null>(null);
+  type OnboardingBackendStartupPhase = "idle" | "checking" | "starting" | "waiting" | "ready" | "error";
+  const [obBackendStartup, setObBackendStartup] = useState<{
+    phase: OnboardingBackendStartupPhase;
+    startedAt: number | null;
+    elapsedSec: number;
+    detail?: string;
+  }>({ phase: "idle", startedAt: null, elapsedSec: 0 });
+
+  useEffect(() => {
+    if (!["checking", "starting", "waiting"].includes(obBackendStartup.phase) || !obBackendStartup.startedAt) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setObBackendStartup((prev) => prev.startedAt
+        ? { ...prev, elapsedSec: Math.max(0, Math.floor((Date.now() - prev.startedAt) / 1000)) }
+        : prev);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [obBackendStartup.phase, obBackendStartup.startedAt]);
 
   // CLI 命令注册状态
   const [obCliOpenakita, setObCliOpenakita] = useState(true);
@@ -3989,6 +4008,18 @@ function MainApp() {
   function addDetailLog(msg: string) {
     setObDetailLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   }
+  function setObBackendStartupPhase(phase: OnboardingBackendStartupPhase, detail?: string) {
+    setObBackendStartup((prev) => {
+      const active = ["checking", "starting", "waiting"].includes(phase);
+      const wasActive = ["checking", "starting", "waiting"].includes(prev.phase);
+      return {
+        phase,
+        detail,
+        startedAt: active ? (wasActive ? prev.startedAt : Date.now()) : prev.startedAt,
+        elapsedSec: active ? (wasActive ? prev.elapsedSec : 0) : prev.elapsedSec,
+      };
+    });
+  }
 
   async function obRunSetup() {
     if (!IS_TAURI) return;
@@ -4178,10 +4209,12 @@ function MainApp() {
       const effectiveVenv = venvDir || (info ? joinPath(info.openakitaRootDir, "venv") : "");
       let httpReady = false;
       try {
+        setObBackendStartupPhase("checking", t("onboarding.backendStartup.checking"));
         const earlyProbe = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) }).then(r => r.ok).catch(() => false);
         if (earlyProbe) {
           log("[OK] 后端已在运行（由 ob-welcome 提前启动）");
           setServiceStatus({ running: true, pid: null, pidFile: "" });
+          setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
           httpReady = true;
           updateTask("service-start", { status: "done", detail: "已在运行" });
           logTask("启动后端服务", "done", "已在运行");
@@ -4189,45 +4222,54 @@ function MainApp() {
           logTask("等待 HTTP 服务就绪", "done", "已就绪");
         } else {
           log(t("onboarding.progress.startingService"));
-        await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
-        log(t("onboarding.progress.serviceStarted"));
-        updateTask("service-start", { status: "done" });
-        logTask("启动后端服务", "done");
+          setObBackendStartupPhase("starting", t("onboarding.backendStartup.starting"));
+          await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
+          log(t("onboarding.progress.serviceStarted"));
+          updateTask("service-start", { status: "done" });
+          logTask("启动后端服务", "done");
 
-        // ── STEP: http-wait ──
-        let httpReady = false;
-        updateTask("http-wait", { status: "running" });
-        logTask("等待 HTTP 服务就绪", "running");
-        log("等待 HTTP 服务就绪...");
-        for (let i = 0; i < 20; i++) {
-          await new Promise(r => setTimeout(r, 2000));
-          updateTask("http-wait", { detail: `已等待 ${(i + 1) * 2}s...` });
-          if (i > 0 && obLogPath) {
-            const now = new Date();
-            const ts = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
-            invoke("append_onboarding_log", { logPath: obLogPath, line: `[${ts}] [任务] 等待 HTTP 服务就绪: 已等待 ${(i + 1) * 2}s...` }).catch(() => {});
-          }
-          try {
-            const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
-            if (res.ok) {
-              log("[OK] HTTP 服务已就绪");
-              setServiceStatus({ running: true, pid: null, pidFile: "" });
-              httpReady = true;
-              updateTask("http-wait", { status: "done", detail: `${(i + 1) * 2}s` });
-              logTask("等待 HTTP 服务就绪", "done", `${(i + 1) * 2}s`);
-              break;
+          // ── STEP: http-wait ──
+          updateTask("http-wait", { status: "running" });
+          logTask("等待 HTTP 服务就绪", "running");
+          log("等待 HTTP 服务就绪...");
+          setObBackendStartupPhase("waiting", t("onboarding.backendStartup.waiting"));
+          for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            updateTask("http-wait", { detail: `已等待 ${(i + 1) * 2}s...` });
+            setObBackendStartup((prev) => ({
+              ...prev,
+              phase: "waiting",
+              detail: t("onboarding.backendStartup.waitingDetail", { seconds: (i + 1) * 2 }),
+            }));
+            if (i > 0 && obLogPath) {
+              const now = new Date();
+              const ts = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+              invoke("append_onboarding_log", { logPath: obLogPath, line: `[${ts}] [任务] 等待 HTTP 服务就绪: 已等待 ${(i + 1) * 2}s...` }).catch(() => {});
             }
-          } catch { /* not ready yet */ }
-          if (i % 5 === 4) log(`仍在等待 HTTP 服务启动... (${(i + 1) * 2}s)`);
-        }
-        if (!httpReady) {
-          log("[!] HTTP 服务尚未就绪，可进入主页面后手动刷新");
-          updateTask("http-wait", { status: "error", detail: "超时" });
-          logTask("等待 HTTP 服务就绪", "error", "超时");
+            try {
+              const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
+              if (res.ok) {
+                log("[OK] HTTP 服务已就绪");
+                setServiceStatus({ running: true, pid: null, pidFile: "" });
+                setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
+                httpReady = true;
+                updateTask("http-wait", { status: "done", detail: `${(i + 1) * 2}s` });
+                logTask("等待 HTTP 服务就绪", "done", `${(i + 1) * 2}s`);
+                break;
+              }
+            } catch { /* not ready yet */ }
+            if (i % 5 === 4) log(`仍在等待 HTTP 服务启动... (${(i + 1) * 2}s)`);
+          }
+          if (!httpReady) {
+            log("[!] HTTP 服务尚未就绪，可进入主页面后手动刷新");
+            setObBackendStartupPhase("error", t("onboarding.backendStartup.timeout"));
+            updateTask("http-wait", { status: "error", detail: "超时" });
+            logTask("等待 HTTP 服务就绪", "error", "超时");
           }
         }
       } catch (e) {
         const errStr = String(e);
+        setObBackendStartupPhase("error", errStr.slice(0, 160));
         log(t("onboarding.progress.serviceStartFailed", { error: errStr }));
         updateTask("service-start", { status: "error", detail: errStr.slice(0, 120) });
         logTask("启动后端服务", "error", errStr.slice(0, 200));
@@ -4398,6 +4440,37 @@ function MainApp() {
         </div>
       </div>
     );
+    const backendStartupVisible = obBackendStartup.phase !== "idle" && obStep !== "ob-progress" && obStep !== "ob-done";
+    const backendStartupNotice = backendStartupVisible ? (
+      <Card className={`w-full border text-left text-[13px] ${
+        obBackendStartup.phase === "error"
+          ? "border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-950/30"
+          : obBackendStartup.phase === "ready"
+            ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-500/40 dark:bg-emerald-950/30"
+            : "border-blue-300 bg-blue-50/60 dark:border-blue-500/40 dark:bg-blue-950/30"
+      }`}>
+        <CardContent className="py-3 px-4 space-y-1.5">
+          <div className="flex items-center gap-2 font-semibold">
+            {["checking", "starting", "waiting"].includes(obBackendStartup.phase)
+              ? <Loader2 className="size-4 text-blue-500 shrink-0 animate-spin" />
+              : obBackendStartup.phase === "ready"
+                ? <CheckCircle2 className="size-4 text-emerald-500 shrink-0" />
+                : <AlertTriangle className="size-4 text-amber-500 shrink-0" />}
+            {obBackendStartup.phase === "ready"
+              ? t("onboarding.backendStartup.ready")
+              : obBackendStartup.phase === "error"
+                ? t("onboarding.backendStartup.error")
+                : t("onboarding.backendStartup.title")}
+          </div>
+          <p className="text-muted-foreground">
+            {obBackendStartup.detail || t("onboarding.backendStartup.desc")}
+            {["checking", "starting", "waiting"].includes(obBackendStartup.phase) && obBackendStartup.elapsedSec > 0
+              ? ` ${t("onboarding.backendStartup.elapsed", { seconds: obBackendStartup.elapsedSec })}`
+              : ""}
+          </p>
+        </CardContent>
+      </Card>
+    ) : null;
 
     switch (obStep) {
       case "ob-welcome":
@@ -4463,6 +4536,7 @@ function MainApp() {
                   </CardContent>
                 </Card>
               )}
+              {backendStartupNotice}
 
               <div className="w-full max-w-[460px] mt-1">
                 <Button
@@ -4568,8 +4642,10 @@ function MainApp() {
               <Button
                 size="lg"
                 className="mt-2 px-10 rounded-xl text-[15px]"
+                disabled={["checking", "starting", "waiting"].includes(obBackendStartup.phase)}
                 onClick={async () => {
                   let earlyStartWsId = currentWorkspaceId || "";
+                  setObBackendStartupPhase("checking", t("onboarding.backendStartup.preparing"));
                   try {
                     const wsList = await invoke<WorkspaceSummary[]>("list_workspaces");
                     if (!wsList.length) {
@@ -4597,23 +4673,41 @@ function MainApp() {
                     const effectiveVenv = venvDir || (info ? joinPath(info.openakitaRootDir, "venv") : "");
                     (async () => {
                       try {
+                        setObBackendStartupPhase("checking", t("onboarding.backendStartup.checking"));
                         const backendInfo = await invoke<{
                           bundled: boolean; venvReady: boolean; exePath: string;
                           bundledChecked: string; venvChecked: string;
                         }>("check_backend_availability", { venvDir: effectiveVenv });
-                        if (!backendInfo.bundled && !backendInfo.venvReady) return;
+                        if (!backendInfo.bundled && !backendInfo.venvReady) {
+                          setObBackendStartupPhase("idle");
+                          return;
+                        }
+                        setObBackendStartupPhase("starting", t("onboarding.backendStartup.starting"));
                         await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: wsId });
+                        setObBackendStartupPhase("waiting", t("onboarding.backendStartup.waiting"));
+                        let earlyHttpReady = false;
                         for (let i = 0; i < 15; i++) {
                           await new Promise(r => setTimeout(r, 2000));
+                          setObBackendStartup((prev) => ({
+                            ...prev,
+                            phase: "waiting",
+                            detail: t("onboarding.backendStartup.waitingDetail", { seconds: (i + 1) * 2 }),
+                          }));
                           try {
                             const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
                             if (res.ok) {
                               setServiceStatus({ running: true, pid: null, pidFile: "" });
+                              setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
+                              earlyHttpReady = true;
                               break;
                             }
                           } catch { /* not ready yet */ }
                         }
+                        if (!earlyHttpReady) {
+                          setObBackendStartupPhase("error", t("onboarding.backendStartup.timeout"));
+                        }
                       } catch (e) {
+                        setObBackendStartupPhase("error", String(e).slice(0, 160));
                         logger.warn("App", "ob: early backend start failed, will retry in ob-progress", { error: String(e) });
                       }
                     })();
@@ -4622,7 +4716,9 @@ function MainApp() {
                   setObStep("ob-agreement");
                 }}
               >
-                {t("onboarding.welcome.start")}
+                {["checking", "starting", "waiting"].includes(obBackendStartup.phase)
+                  ? <><Loader2 className="size-4 animate-spin mr-2" />{t("onboarding.backendStartup.buttonStarting")}</>
+                  : t("onboarding.welcome.start")}
               </Button>
             </div>
             {stepIndicator}
@@ -4635,6 +4731,7 @@ function MainApp() {
             <div className="obContent">
               <h2 className="obStepTitle">{t("onboarding.agreement.title")}</h2>
               <p className="obStepDesc">{t("onboarding.agreement.subtitle")}</p>
+              {backendStartupNotice}
               <Card className="text-left">
                 <CardContent className="py-5 px-5 space-y-4">
                   <div className="whitespace-pre-wrap text-[13px] leading-[1.7] max-h-[240px] overflow-y-auto rounded-lg border bg-muted/40 p-4 text-foreground">
@@ -4692,6 +4789,7 @@ function MainApp() {
             <div className="obContent">
               <h2 className="obStepTitle">{t("onboarding.llm.title")}</h2>
               <p className="obStepDesc">{t("onboarding.llm.desc")}</p>
+              {backendStartupNotice}
               <div className="obFormArea">{renderLLM()}</div>
               <p className="obSkipHint">{t("onboarding.skipHint")}</p>
             </div>
@@ -4715,6 +4813,7 @@ function MainApp() {
             <div className="obContent">
               <h2 className="obStepTitle">{t("onboarding.im.title")}</h2>
               <p className="obStepDesc">{t("onboarding.im.desc")}</p>
+              {backendStartupNotice}
               <div className="obFormArea">{renderIM(true)}</div>
               <p className="obSkipHint">{t("onboarding.skipHint")}</p>
             </div>
@@ -4736,6 +4835,7 @@ function MainApp() {
               <p className="obStepDesc">
                 {t("onboarding.system.desc")}
               </p>
+              {backendStartupNotice}
 
               <div className="flex flex-col gap-2">
                 <label className="obModuleItem" data-checked={obCliOpenakita || undefined}>

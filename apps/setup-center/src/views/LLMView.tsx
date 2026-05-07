@@ -1,6 +1,6 @@
 import { useMemo, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, IS_TAURI, IS_WEB, logger, openExternalUrl } from "../platform";
+import { invoke, IS_WEB, logger, openExternalUrl } from "../platform";
 import {
   isLocalProvider, localProviderPlaceholderKey, friendlyFetchError,
   fetchModelsDirectly, safeFetch,
@@ -31,8 +31,18 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { SearchSelect } from "../components/SearchSelect";
 import { ProviderSearchSelect } from "../components/ProviderSearchSelect";
-import { ProviderIcon } from "../components/ProviderIcon";
 import type { EnvMap, ProviderInfo, ListedModel, EndpointDraft } from "../types";
+
+function friendlyConfigError(e: unknown): string {
+  const msg = String((e as any)?.message || e);
+  if (msg.includes("Failed to fetch") || msg.includes("NetworkError")
+    || msg.includes("AbortError") || msg.includes("signal timed out")) {
+    return "后端服务不可达，无法保存配置。请检查服务是否正在运行，或尝试重启应用后再试。";
+  }
+  return msg;
+}
+
+type EndpointType = "endpoints" | "compiler_endpoints" | "stt_endpoints";
 
 export interface LLMViewProps {
   savedEndpoints: EndpointDraft[];
@@ -64,13 +74,11 @@ export interface LLMViewProps {
 export function LLMView(props: LLMViewProps) {
   const {
     savedEndpoints, savedCompilerEndpoints, savedSttEndpoints,
-    setSavedEndpoints, setSavedCompilerEndpoints, setSavedSttEndpoints,
     envDraft, setEnvDraft,
     secretShown, setSecretShown,
     busy, currentWorkspaceId, dataMode,
     shouldUseHttpApi, httpApiBase, askConfirm,
     providers, doLoadProviders, loadSavedEndpoints,
-    readWorkspaceFile, writeWorkspaceFile,
     venvDir, ensureEnvLoaded, serviceRunning,
   } = props;
 
@@ -91,7 +99,6 @@ export function LLMView(props: LLMViewProps) {
   const [capSelected, setCapSelected] = useState<string[]>([]);
   const [capTouched, setCapTouched] = useState(false);
   const [endpointName, setEndpointName] = useState<string>("");
-  const [endpointPriority, setEndpointPriority] = useState<number>(1);
   const [endpointNameTouched, setEndpointNameTouched] = useState(false);
   const [baseUrlTouched, setBaseUrlTouched] = useState(false);
   const [baseUrlExpanded, setBaseUrlExpanded] = useState(false);
@@ -191,13 +198,20 @@ export function LLMView(props: LLMViewProps) {
     }
   }
 
-  function normalizePriority(n: any, fallback: number) {
-    const x = Number(n);
-    if (!Number.isFinite(x) || x <= 0) return fallback;
-    return Math.floor(x);
+  const providerApplyUrl = useMemo(() => getProviderApplyUrl(selectedProvider?.slug || ""), [selectedProvider?.slug]);
+  const endpointConfigApiReady = shouldUseHttpApi();
+  const endpointConfigDisabled = !!busy || !endpointConfigApiReady;
+  const endpointConfigUnavailableMessage = "后端服务尚未就绪，暂时无法保存或修改 LLM 端点。请等待后端启动完成后再试。";
+
+  function ensureEndpointConfigApiReady(): boolean {
+    if (shouldUseHttpApi()) return true;
+    notifyError(endpointConfigUnavailableMessage);
+    return false;
   }
 
-  const providerApplyUrl = useMemo(() => getProviderApplyUrl(selectedProvider?.slug || ""), [selectedProvider?.slug]);
+  async function syncEndpointConfigChange(_endpointType: EndpointType): Promise<void> {
+    await loadSavedEndpoints();
+  }
 
   // ── Effects ──
 
@@ -276,12 +290,6 @@ export function LLMView(props: LLMViewProps) {
     setCapSelected(list.length ? list : ["text"]);
   }, [selectedModelId, models, capTouched]);
 
-  useEffect(() => {
-    if (isEditingEndpoint) return;
-    const maxP = savedEndpoints.reduce((m, e) => Math.max(m, Number.isFinite(e.priority) ? e.priority : 0), 0);
-    setEndpointPriority(savedEndpoints.length === 0 ? 1 : maxP + 1);
-  }, [savedEndpoints, isEditingEndpoint]);
-
   // ── Async functions ──
 
   async function fetchModelListUnified(params: {
@@ -329,120 +337,34 @@ export function LLMView(props: LLMViewProps) {
     return fetchModelsDirectly(params);
   }
 
-  type EndpointListKey = "endpoints" | "compiler_endpoints" | "stt_endpoints";
-
-  function endpointLists(config: Record<string, any>): EndpointListKey[] {
-    for (const key of ["endpoints", "compiler_endpoints", "stt_endpoints"] as EndpointListKey[]) {
-      if (!Array.isArray(config[key])) config[key] = [];
+  async function saveEndpointConfig(params: {
+    endpoint: Record<string, unknown>;
+    apiKey?: string | null;
+    endpointType: EndpointType;
+    originalName?: string | null;
+  }): Promise<any> {
+    if (!shouldUseHttpApi()) {
+      throw new Error(endpointConfigUnavailableMessage);
     }
-    return ["endpoints", "compiler_endpoints", "stt_endpoints"];
-  }
-
-  function allocateEndpointEnv(endpoint: Record<string, unknown>, config: Record<string, any>): string {
-    const used = new Set<string>();
-    for (const listKey of endpointLists(config)) {
-      for (const ep of config[listKey]) {
-        if (ep?.api_key_env) used.add(String(ep.api_key_env));
-      }
-    }
-
-    const provider = String(endpoint.provider || "custom").toUpperCase().replace(/-/g, "_");
-    const baseName = `${provider}_API_KEY`;
-    if (!used.has(baseName)) return baseName;
-    for (let i = 2; i < 100; i += 1) {
-      const candidate = `${baseName}_${i}`;
-      if (!used.has(candidate)) return candidate;
-    }
-    return `${baseName}_${Math.random().toString(16).slice(2, 8)}`;
-  }
-
-  async function saveEndpointLocal(
-    endpoint: Record<string, unknown>,
-    apiKey: string | null,
-    endpointType: EndpointListKey,
-  ): Promise<{ status: string; endpoint: any; error?: string }> {
-    if (!IS_TAURI || !currentWorkspaceId || dataMode === "remote") {
-      throw new Error("本地保存不可用：服务未连接，且当前不是桌面本地工作区");
-    }
-
-    const raw = await readWorkspaceFile("data/llm_endpoints.json").catch(() => "{}");
-    const config = raw ? JSON.parse(raw) : {};
-    endpointLists(config);
-    const list = config[endpointType] as Record<string, unknown>[];
-    const name = String(endpoint.name || "").trim();
-    if (!name) return { status: "error", endpoint, error: "Endpoint must have a name" };
-
-    const existing = list.find((ep) => String(ep?.name || "") === name);
-    const savedEndpoint: Record<string, unknown> = { ...(existing || {}), ...endpoint };
-    let envVar = String((existing as any)?.api_key_env || savedEndpoint.api_key_env || "");
-
-    if (apiKey !== null) {
-      if (!envVar) envVar = allocateEndpointEnv(savedEndpoint, config);
-      savedEndpoint.api_key_env = envVar;
-      await invoke("workspace_update_env", {
-        workspaceId: currentWorkspaceId,
-        entries: [{ key: envVar, value: apiKey }],
-      });
-      setEnvDraft((e) => envSet(e, envVar, apiKey));
-    } else {
-      savedEndpoint.api_key_env = envVar;
-    }
-
-    const nextList = existing
-      ? list.map((ep) => (String(ep?.name || "") === name ? savedEndpoint : ep))
-      : [...list, savedEndpoint];
-    nextList.sort((a, b) => {
-      const pa = normalizePriority((a as any).priority, 999);
-      const pb = normalizePriority((b as any).priority, 999);
-      if (pa !== pb) return pa - pb;
-      return String(a.name || "").localeCompare(String(b.name || ""));
+    const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: params.endpoint,
+        api_key: params.apiKey ?? null,
+        endpoint_type: params.endpointType,
+        original_name: params.originalName ?? null,
+      }),
     });
-    config[endpointType] = nextList;
-    await writeWorkspaceFile("data/llm_endpoints.json", `${JSON.stringify(config, null, 2)}\n`);
-    return { status: "ok", endpoint: savedEndpoint };
-  }
-
-  async function saveEndpointConfig(
-    endpoint: Record<string, unknown>,
-    apiKey: string | null,
-    endpointType: EndpointListKey,
-  ): Promise<{ status: string; endpoint?: any; error?: string }> {
-    if (shouldUseHttpApi()) {
-      try {
-        const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ endpoint, api_key: apiKey, endpoint_type: endpointType }),
-        });
-        return await res.json();
-      } catch (e) {
-        if (dataMode === "remote" || !IS_TAURI) throw e;
-        logger.warn("LLMView", "saveEndpointConfig: HTTP failed, falling back to local file", { error: String(e) });
-      }
+    const data = await res.json();
+    if (data.status === "conflict" || data.status === "error") {
+      throw new Error(data.error || "保存失败");
     }
-    return saveEndpointLocal(endpoint, apiKey, endpointType);
-  }
-
-  async function deleteEndpointConfig(name: string, endpointType: EndpointListKey): Promise<void> {
-    if (shouldUseHttpApi()) {
-      try {
-        await safeFetch(
-          `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(name)}?endpoint_type=${endpointType}`,
-          { method: "DELETE" },
-        );
-        return;
-      } catch (e) {
-        if (dataMode === "remote" || !IS_TAURI) throw e;
-        logger.warn("LLMView", "deleteEndpointConfig: HTTP failed, falling back to local file", { error: String(e) });
-      }
+    const normalizedKey = (params.apiKey ?? "").trim();
+    if (normalizedKey && data.endpoint?.api_key_env) {
+      setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, normalizedKey));
     }
-    if (!IS_TAURI || !currentWorkspaceId) throw new Error("本地删除不可用：未选择工作区");
-    const raw = await readWorkspaceFile("data/llm_endpoints.json").catch(() => "{}");
-    const config = raw ? JSON.parse(raw) : {};
-    endpointLists(config);
-    config[endpointType] = (config[endpointType] as Record<string, unknown>[])
-      .filter((ep) => String(ep?.name || "") !== name);
-    await writeWorkspaceFile("data/llm_endpoints.json", `${JSON.stringify(config, null, 2)}\n`);
+    return data.endpoint;
   }
 
   async function doFetchModels() {
@@ -613,6 +535,7 @@ export function LLMView(props: LLMViewProps) {
       notifyError("请先创建/选择一个当前工作区");
       return false;
     }
+    if (!ensureEndpointConfigApiReady()) return false;
     if (!compilerModel.trim()) {
       notifyError("请填写编译模型名称");
       return false;
@@ -648,40 +571,22 @@ export function LLMView(props: LLMViewProps) {
         capabilities: ["text"],
       };
 
-      const data = await saveEndpointConfig(endpoint, effectiveCompApiKeyValue || null, "compiler_endpoints");
-      if (data.status === "error" || data.status === "conflict") {
-        notifyError(data.error || "保存失败");
-        return false;
-      }
-      if (effectiveCompApiKeyValue && data.endpoint?.api_key_env) {
-        setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, effectiveCompApiKeyValue));
-      }
+      await saveEndpointConfig({
+        endpoint,
+        apiKey: effectiveCompApiKeyValue || null,
+        endpointType: "compiler_endpoints",
+      });
 
       setCompilerModel("");
       setCompilerApiKeyValue("");
       setCompilerEndpointName("");
       setCompilerBaseUrl("");
+      await syncEndpointConfigChange("compiler_endpoints");
       notifySuccess(`编译端点 ${epName} 已保存`);
-      await loadSavedEndpoints();
       return true;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
       return false;
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doDeleteCompilerEndpoint(epName: string) {
-    if (!currentWorkspaceId && dataMode !== "remote") return;
-    const _busyId = notifyLoading("删除编译端点...");
-    try {
-      await deleteEndpointConfig(epName, "compiler_endpoints");
-      setSavedCompilerEndpoints((prev) => prev.filter((e) => e.name !== epName));
-      notifySuccess(`编译端点 ${epName} 已删除`);
-      loadSavedEndpoints().catch(() => {});
-    } catch (e) {
-      notifyError(String(e));
     } finally {
       dismissLoading(_busyId);
     }
@@ -692,6 +597,7 @@ export function LLMView(props: LLMViewProps) {
       notifyError("请先创建/选择一个当前工作区");
       return false;
     }
+    if (!ensureEndpointConfigApiReady()) return false;
     if (!sttModel.trim()) {
       notifyError("请填写 STT 模型名称");
       return false;
@@ -727,59 +633,42 @@ export function LLMView(props: LLMViewProps) {
         capabilities: ["text"],
       };
 
-      const data = await saveEndpointConfig(endpoint, effectiveSttApiKeyValue || null, "stt_endpoints");
-      if (data.status === "error" || data.status === "conflict") {
-        notifyError(data.error || "保存失败");
-        return false;
-      }
-      if (effectiveSttApiKeyValue && data.endpoint?.api_key_env) {
-        setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, effectiveSttApiKeyValue));
-      }
+      await saveEndpointConfig({
+        endpoint,
+        apiKey: effectiveSttApiKeyValue || null,
+        endpointType: "stt_endpoints",
+      });
 
       setSttModel("");
       setSttApiKeyValue("");
       setSttEndpointName("");
       setSttBaseUrl("");
       setSttModels([]);
+      await syncEndpointConfigChange("stt_endpoints");
       notifySuccess(`STT 端点 ${epName} 已保存`);
-      await loadSavedEndpoints();
       return true;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
       return false;
     } finally {
       dismissLoading(_busyId);
     }
   }
 
-  async function doDeleteSttEndpoint(epName: string) {
+  async function doReorderByNames(orderedNames: string[], endpointType: EndpointType = "endpoints") {
     if (!currentWorkspaceId && dataMode !== "remote") return;
-    const _busyId = notifyLoading("删除 STT 端点...");
-    try {
-      await deleteEndpointConfig(epName, "stt_endpoints");
-      setSavedSttEndpoints((prev) => prev.filter((e) => e.name !== epName));
-      notifySuccess(`STT 端点 ${epName} 已删除`);
-      loadSavedEndpoints().catch(() => {});
-    } catch (e) {
-      notifyError(String(e));
-    } finally {
-      dismissLoading(_busyId);
-    }
-  }
-
-  async function doReorderByNames(orderedNames: string[]) {
-    if (!currentWorkspaceId && dataMode !== "remote") return;
+    if (!ensureEndpointConfigApiReady()) return;
     const _busyId = notifyLoading("保存排序...");
     try {
       const res = await safeFetch(`${httpApiBase()}/api/config/reorder-endpoints`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ordered_names: orderedNames, endpoint_type: "endpoints" }),
+        body: JSON.stringify({ ordered_names: orderedNames, endpoint_type: endpointType }),
       });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.error || "reorder failed");
-      notifySuccess("已保存端点顺序（priority 已更新）");
-      await loadSavedEndpoints();
+      await syncEndpointConfigChange(endpointType);
+      notifySuccess(t("llm.reorderSaved"));
     } catch (e) {
       notifyError(String(e));
     } finally {
@@ -787,12 +676,12 @@ export function LLMView(props: LLMViewProps) {
     }
   }
 
-  async function doSetPrimaryEndpoint(name: string) {
-    const names = savedEndpoints.map((e) => e.name);
+  function doMoveUp(name: string, endpoints: EndpointDraft[], endpointType: EndpointType = "endpoints") {
+    const names = endpoints.map((e) => e.name);
     const idx = names.indexOf(name);
-    if (idx < 0) return;
-    const next = [name, ...names.filter((n) => n !== name)];
-    await doReorderByNames(next);
+    if (idx <= 0) return;
+    [names[idx - 1], names[idx]] = [names[idx], names[idx - 1]];
+    doReorderByNames(names, endpointType);
   }
 
   async function doStartEditEndpoint(name: string) {
@@ -807,7 +696,7 @@ export function LLMView(props: LLMViewProps) {
     setEditingOriginalName(name);
     setEditDraft({
       name: ep.name,
-      priority: normalizePriority(ep.priority, 1),
+      priority: Number.isFinite(ep.priority) ? ep.priority : 1,
       providerSlug: ep.provider || "",
       apiType: (ep.api_type as any) || "openai",
       streamOnly: !!(ep as any).stream_only,
@@ -946,6 +835,7 @@ export function LLMView(props: LLMViewProps) {
       notifyError("请先创建/选择一个当前工作区");
       return;
     }
+    if (!ensureEndpointConfigApiReady()) return;
     if (!editDraft || !editingOriginalName) return;
     if (!editDraft.name.trim()) {
       notifyError("端点名称不能为空");
@@ -983,7 +873,9 @@ export function LLMView(props: LLMViewProps) {
         const validTiers = (editDraft.pricingTiers || []).filter(
           (tier) => tier.input_price > 0 || tier.output_price > 0
         );
-        endpoint.priority = normalizePriority(editDraft.priority, 1);
+        endpoint.priority = Number.isFinite(editDraft.priority) && editDraft.priority > 0
+          ? Math.floor(editDraft.priority)
+          : 1;
         endpoint.max_tokens = editDraft.maxTokens ?? 0;
         endpoint.context_window = editDraft.contextWindow ?? 200000;
         endpoint.timeout = editDraft.timeout ?? 180;
@@ -1006,28 +898,23 @@ export function LLMView(props: LLMViewProps) {
       }
       if (editDraft.streamOnly) endpoint.stream_only = true;
 
-      if (nameChanged) {
-        await deleteEndpointConfig(editingOriginalName, epType);
-      }
       // Only send the API key when the user actually edited the input
       // (apiKeyDirty). Otherwise the prefilled masked value (sk-d****ab53)
       // would be echoed back and overwrite the real key on disk.
       // See v1.26.x commit 8ab550fa.
       const keyToSave = editDraft.apiKeyDirty ? (editDraft.apiKeyValue.trim() || null) : null;
-      const data = await saveEndpointConfig(endpoint, keyToSave, epType);
-      if (data.status === "conflict" || data.status === "error") {
-        notifyError(data.error || "保存失败");
-        return;
-      }
-      if (keyToSave && data.endpoint?.api_key_env) {
-        setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, keyToSave));
-      }
+      await saveEndpointConfig({
+        endpoint,
+        apiKey: keyToSave,
+        endpointType: epType,
+        originalName: editingOriginalName,
+      });
 
       notifySuccess("端点已更新");
       setEditModalOpen(false);
-      await loadSavedEndpoints();
+      await syncEndpointConfigChange(epType);
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
     } finally {
       dismissLoading(_busyId);
     }
@@ -1038,6 +925,7 @@ export function LLMView(props: LLMViewProps) {
       notifyError("请先创建/选择一个当前工作区");
       return false;
     }
+    if (!ensureEndpointConfigApiReady()) return false;
     if (!selectedModelId) {
       notifyError("请先选择模型");
       return false;
@@ -1068,7 +956,7 @@ export function LLMView(props: LLMViewProps) {
         api_type: apiType,
         base_url: baseUrl.trim(),
         model: selectedModelId,
-        priority: normalizePriority(endpointPriority, 1),
+        priority: (savedEndpoints.reduce((m, e) => Math.max(m, Number(e.priority) || 0), 0) || 0) + 10,
         max_tokens: addEpMaxTokens,
         context_window: addEpContextWindow,
         timeout: addEpTimeout,
@@ -1080,18 +968,12 @@ export function LLMView(props: LLMViewProps) {
         endpoint.extra_params = { enable_thinking: true };
       }
 
-      const data = await saveEndpointConfig(endpoint, effectiveApiKeyValue || null, "endpoints");
-      if (data.status === "conflict") {
-        notifyError(data.error || t("llm.configConflict"));
-        return false;
-      }
-      if (data.status === "error") {
-        notifyError(data.error || "保存失败");
-        return false;
-      }
-      if (effectiveApiKeyValue && data.endpoint?.api_key_env) {
-        setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, effectiveApiKeyValue));
-      }
+      await saveEndpointConfig({
+        endpoint,
+        apiKey: effectiveApiKeyValue || null,
+        endpointType: "endpoints",
+        originalName: isEditingEndpoint ? editingOriginalName : null,
+      });
 
       notifySuccess(
         isEditingEndpoint
@@ -1099,26 +981,29 @@ export function LLMView(props: LLMViewProps) {
           : "端点已保存（同时已写入 API Key 到 .env）。你可以继续添加备份端点。",
       );
       if (isEditingEndpoint) resetEndpointEditor();
-      await loadSavedEndpoints();
+      await syncEndpointConfigChange("endpoints");
       return true;
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
       return false;
     } finally {
       dismissLoading(_busyId);
     }
   }
 
-  async function doDeleteEndpoint(name: string) {
+  async function doDeleteEndpoint(name: string, endpointType: EndpointType = "endpoints") {
     if (!currentWorkspaceId && dataMode !== "remote") return;
+    if (!ensureEndpointConfigApiReady()) return;
     const _busyId = notifyLoading("删除端点...");
     try {
-      await deleteEndpointConfig(name, "endpoints");
-      setSavedEndpoints((prev) => prev.filter((e) => e.name !== name));
+      await safeFetch(
+        `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(name)}?endpoint_type=${endpointType}`,
+        { method: "DELETE" },
+      );
+      await syncEndpointConfigChange(endpointType);
       notifySuccess(`已删除端点：${name}`);
-      loadSavedEndpoints().catch(() => {});
     } catch (e) {
-      notifyError(String(e));
+      notifyError(friendlyConfigError(e));
     } finally {
       dismissLoading(_busyId);
     }
@@ -1126,6 +1011,7 @@ export function LLMView(props: LLMViewProps) {
 
   async function doToggleEndpointEnabled(name: string, endpointType: "endpoints" | "compiler_endpoints" | "stt_endpoints" = "endpoints") {
     if (!currentWorkspaceId && dataMode !== "remote") return;
+    if (!ensureEndpointConfigApiReady()) return;
     try {
       const res = await safeFetch(`${httpApiBase()}/api/config/toggle-endpoint`, {
         method: "POST",
@@ -1155,7 +1041,6 @@ export function LLMView(props: LLMViewProps) {
     setEndpointNameTouched(false);
     setCapSelected([]);
     setCapTouched(false);
-    setEndpointPriority(1);
     setCodingPlanMode(false);
     setAddEpMaxTokens(0);
     setAddEpContextWindow(200000);
@@ -1174,10 +1059,17 @@ export function LLMView(props: LLMViewProps) {
             <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.title")}</div>
             <div className="cardHint">{t("llm.subtitle")}</div>
           </div>
-          <Button size="sm" onClick={openAddEpDialog} disabled={!!busy}>
+          <Button size="sm" onClick={openAddEpDialog} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>
             + {t("llm.addEndpoint")}
           </Button>
         </div>
+
+        {!endpointConfigApiReady && (
+          <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50/70 px-3 py-2 text-[12px] text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-100">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <span>{endpointConfigUnavailableMessage}</span>
+          </div>
+        )}
 
         {savedEndpoints.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
@@ -1188,33 +1080,30 @@ export function LLMView(props: LLMViewProps) {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
+                <TableHead className="w-[34px]"></TableHead>
                 <TableHead>{t("status.endpoint")}</TableHead>
                 <TableHead>{t("status.model")}</TableHead>
-                <TableHead className="w-[50px]">Key</TableHead>
-                <TableHead className="w-[80px]">Priority</TableHead>
                 <TableHead className="w-[140px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {savedEndpoints.map((e) => (
                 <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
+                  <TableCell className="align-middle">
+                    {(envDraft[e.api_key_env] || "").trim() ? <DotGreen /> : <DotGray />}
+                  </TableCell>
                   <TableCell className="font-semibold">
-                    <span className="inline-flex items-center gap-2 align-middle">
-                      <ProviderIcon slug={e.provider} size={18} title={e.provider} />
-                      <span>{e.name}</span>
-                    </span>
+                    <span>{e.name}</span>
                     {savedEndpoints[0]?.name === e.name && e.enabled !== false && <span className="ml-1.5 text-[10px] font-extrabold text-primary">{t("llm.primary")}</span>}
                     {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{e.model}</TableCell>
-                  <TableCell>{(envDraft[e.api_key_env] || "").trim() ? <DotGreen /> : <DotGray />}</TableCell>
-                  <TableCell>{e.priority}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doSetPrimaryEndpoint(e.name)} disabled={!!busy} title={t("llm.setPrimary")}><IconChevronUp size={14} /></Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name)} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditEndpoint(e.name)} disabled={!!busy} title={t("llm.edit")}><IconEdit size={14} /></Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doMoveUp(e.name, savedEndpoints)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.moveUp")}><IconChevronUp size={14} /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditEndpoint(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.edit")}><IconEdit size={14} /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name))} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("common.delete")}><IconTrash size={14} /></Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -1231,7 +1120,7 @@ export function LLMView(props: LLMViewProps) {
             <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.compiler")}</div>
             <div className="cardHint">{t("llm.compilerHint")}</div>
           </div>
-          <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setCompilerProviderSlug(""); setCompilerApiType("openai"); setCompilerBaseUrl(""); setCompilerApiKeyValue(""); setCompilerModel(""); setCompilerEndpointName(""); setCompilerCodingPlan(false); setCompilerModels([]); setAddCompDialogOpen(true); }} disabled={!!busy}>
+          <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setCompilerProviderSlug(""); setCompilerApiType("openai"); setCompilerBaseUrl(""); setCompilerApiKeyValue(""); setCompilerModel(""); setCompilerEndpointName(""); setCompilerCodingPlan(false); setCompilerModels([]); setAddCompDialogOpen(true); }} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>
             + {t("llm.addEndpoint")}
           </Button>
         </div>
@@ -1246,25 +1135,23 @@ export function LLMView(props: LLMViewProps) {
               <TableRow className="hover:bg-transparent">
                 <TableHead>{t("status.endpoint")}</TableHead>
                 <TableHead>{t("status.model")}</TableHead>
-                <TableHead className="w-[110px]"></TableHead>
+                <TableHead className="w-[140px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {savedCompilerEndpoints.map((e) => (
                 <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
                   <TableCell className="font-semibold">
-                    <span className="inline-flex items-center gap-2 align-middle">
-                      <ProviderIcon slug={e.provider} size={18} title={e.provider} />
-                      <span>{e.name}</span>
-                    </span>
+                    <span>{e.name}</span>
                     {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{e.model}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "compiler_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditCompilerEndpoint(e.name)} disabled={!!busy} title={t("llm.edit")}><IconEdit size={14} /></Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteCompilerEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedCompilerEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doMoveUp(e.name, savedCompilerEndpoints, "compiler_endpoints")} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.moveUp")}><IconChevronUp size={14} /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "compiler_endpoints")} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditCompilerEndpoint(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.edit")}><IconEdit size={14} /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name, "compiler_endpoints"))} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("common.delete")}><IconTrash size={14} /></Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -1281,7 +1168,7 @@ export function LLMView(props: LLMViewProps) {
             <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.stt")}</div>
             <div className="cardHint">{t("llm.sttHint")}</div>
           </div>
-          <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setSttProviderSlug(""); setSttApiType("openai"); setSttBaseUrl(""); setSttApiKeyValue(""); setSttModel(""); setSttEndpointName(""); setSttModels([]); setAddSttDialogOpen(true); }} disabled={!!busy}>
+          <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setSttProviderSlug(""); setSttApiType("openai"); setSttBaseUrl(""); setSttApiKeyValue(""); setSttModel(""); setSttEndpointName(""); setSttModels([]); setAddSttDialogOpen(true); }} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>
             + {t("llm.addEndpoint")}
           </Button>
         </div>
@@ -1296,25 +1183,23 @@ export function LLMView(props: LLMViewProps) {
               <TableRow className="hover:bg-transparent">
                 <TableHead>{t("status.endpoint")}</TableHead>
                 <TableHead>{t("status.model")}</TableHead>
-                <TableHead className="w-[110px]"></TableHead>
+                <TableHead className="w-[140px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {savedSttEndpoints.map((e) => (
                 <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
                   <TableCell className="font-semibold">
-                    <span className="inline-flex items-center gap-2 align-middle">
-                      <ProviderIcon slug={e.provider} size={18} title={e.provider} />
-                      <span>{e.name}</span>
-                    </span>
+                    <span>{e.name}</span>
                     {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{e.model}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "stt_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditSttEndpoint(e.name)} disabled={!!busy} title={t("llm.edit")}><IconEdit size={14} /></Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteSttEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedSttEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doMoveUp(e.name, savedSttEndpoints, "stt_endpoints")} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.moveUp")}><IconChevronUp size={14} /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "stt_endpoints")} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditSttEndpoint(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.edit")}><IconEdit size={14} /></Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name, "stt_endpoints"))} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("common.delete")}><IconTrash size={14} /></Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -1433,22 +1318,16 @@ export function LLMView(props: LLMViewProps) {
                 {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
               </summary>
               <div className="border-t border-border px-4 py-3 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advApiType")}</Label>
-                    <Select value={apiType} onValueChange={(v) => setApiType(v as any)}>
-                      <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="openai">openai</SelectItem>
-                        <SelectItem value="openai_responses">openai_responses</SelectItem>
-                        <SelectItem value="anthropic">anthropic</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>{t("llm.advPriority")}</Label>
-                    <Input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} />
-                  </div>
+                <div className="space-y-1.5">
+                  <Label>{t("llm.advApiType")}</Label>
+                  <Select value={apiType} onValueChange={(v) => setApiType(v as any)}>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="openai">openai</SelectItem>
+                      <SelectItem value="openai_responses">openai_responses</SelectItem>
+                      <SelectItem value="anthropic">anthropic</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="flex items-center justify-between">
                   <Label className="flex items-center gap-1.5">Stream Only <span className="text-[11px] font-normal text-muted-foreground/70">强制使用流式传输</span></Label>
@@ -1507,9 +1386,9 @@ export function LLMView(props: LLMViewProps) {
                   if (!_isLocal && !apiKeyValue.trim()) missing.push("API Key");
                   if (!selectedModelId.trim()) missing.push(t("status.model"));
                   if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "工作区");
-                  const btnDisabled = missing.length > 0 || !!busy;
+                  const btnDisabled = missing.length > 0 || endpointConfigDisabled;
                   return (
-                    <Button onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled}>
+                    <Button onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>
                       {isEditingEndpoint ? t("common.save") : t("llm.addEndpoint")}
                     </Button>
                   );
@@ -1778,7 +1657,7 @@ export function LLMView(props: LLMViewProps) {
               >
                 {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
               </Button>
-              <Button onClick={async () => { await doSaveEditedEndpoint(); }} disabled={!!busy}>{t("common.save")}</Button>
+              <Button onClick={async () => { await doSaveEditedEndpoint(); }} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>{t("common.save")}</Button>
             </div>
           </DialogFooter>
         </DialogContent>
@@ -1912,9 +1791,9 @@ export function LLMView(props: LLMViewProps) {
                   if (!compilerModel.trim()) cMissing.push(t("status.model"));
                   if (!_isCompLocal && !compilerApiKeyValue.trim()) cMissing.push("API Key");
                   if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "工作区");
-                  const cBtnDisabled = cMissing.length > 0 || !!busy;
+                  const cBtnDisabled = cMissing.length > 0 || endpointConfigDisabled;
                   return (
-                    <Button onClick={async () => { const ok = await doSaveCompilerEndpoint(); if (ok) { setAddCompDialogOpen(false); setConnTestResult(null); } }} disabled={cBtnDisabled}>
+                    <Button onClick={async () => { const ok = await doSaveCompilerEndpoint(); if (ok) { setAddCompDialogOpen(false); setConnTestResult(null); } }} disabled={cBtnDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>
                       {t("llm.addEndpoint")}
                     </Button>
                   );
@@ -2065,9 +1944,9 @@ export function LLMView(props: LLMViewProps) {
                   if (!sttModel.trim()) sMissing.push(t("status.model"));
                   if (!_isSttLocal && !sttApiKeyValue.trim()) sMissing.push("API Key");
                   if (!currentWorkspaceId && dataMode !== "remote") sMissing.push(t("workspace.title") || "工作区");
-                  const sBtnDisabled = sMissing.length > 0 || !!busy;
+                  const sBtnDisabled = sMissing.length > 0 || endpointConfigDisabled;
                   return (
-                    <Button onClick={async () => { const ok = await doSaveSttEndpoint(); if (ok) { setAddSttDialogOpen(false); setConnTestResult(null); } }} disabled={sBtnDisabled}>
+                    <Button onClick={async () => { const ok = await doSaveSttEndpoint(); if (ok) { setAddSttDialogOpen(false); setConnTestResult(null); } }} disabled={sBtnDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>
                       {t("llm.addStt")}
                     </Button>
                   );

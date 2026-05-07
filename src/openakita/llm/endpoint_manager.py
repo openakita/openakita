@@ -159,6 +159,7 @@ class EndpointManager:
         api_key: str | None = None,
         endpoint_type: str = "endpoints",
         expected_version: str | None = None,
+        original_name: str | None = None,
     ) -> dict:
         """Save or update an endpoint atomically.
 
@@ -171,6 +172,8 @@ class EndpointManager:
         name = endpoint.get("name", "").strip()
         if not name:
             raise ValueError("Endpoint must have a name")
+        endpoint["name"] = name
+        lookup_name = (original_name or name).strip()
 
         with self._lock:
             config, version = self._read_json_versioned()
@@ -182,7 +185,9 @@ class EndpointManager:
                 )
 
             ep_list = config.get(endpoint_type, [])
-            existing = next((e for e in ep_list if e.get("name") == name), None)
+            existing = next((e for e in ep_list if e.get("name") == lookup_name), None)
+            if lookup_name != name and any(e.get("name") == name for e in ep_list):
+                raise ValueError(f"Endpoint with name '{name}' already exists")
 
             # Resolve api_key_env
             if api_key is not None:
@@ -191,7 +196,11 @@ class EndpointManager:
                 # If this env_var is shared with other endpoints and the key
                 # value is DIFFERENT, allocate a new unique env_var for this
                 # endpoint to avoid overwriting others.
-                other_users = self._find_endpoints_using_env_var(config, env_var, exclude_name=name)
+                other_users = self._find_endpoints_using_env_var(
+                    config,
+                    env_var,
+                    exclude_name=lookup_name,
+                )
                 if other_users:
                     env = _parse_env(_read_text_robust(self._env_path))
                     old_val = env.get(env_var, "")

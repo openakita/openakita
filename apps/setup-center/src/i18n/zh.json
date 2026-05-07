@@ -1236,6 +1236,8 @@
     "noEndpoints": "暂无端点，点击上方按钮添加",
     "primary": "主",
     "setPrimary": "设为主",
+    "moveUp": "上移",
+    "reorderSaved": "已保存端点顺序",
     "edit": "编辑",
     "disabled": "已停用",
     "enable": "启用",
@@ -1557,6 +1559,20 @@
       "done": "✓ 全部配置完成!",
       "error": "配置过程出错: {{error}}",
       "working": "处理中..."
+    },
+    "backendStartup": {
+      "title": "后端正在启动",
+      "desc": "OpenAkita 正在后台启动后端服务，页面仍可继续配置。",
+      "preparing": "正在准备默认工作区...",
+      "checking": "正在检查本地后端环境...",
+      "starting": "正在启动后端服务，这一步可能需要几十秒。",
+      "waiting": "后端进程已启动，正在等待 HTTP 服务就绪...",
+      "waitingDetail": "已等待 {{seconds}} 秒，仍在检测服务是否就绪...",
+      "ready": "后端服务已就绪",
+      "error": "后端启动暂未完成",
+      "timeout": "等待后端 HTTP 服务就绪超时，可稍后在状态页手动启动或刷新。",
+      "elapsed": "已用时 {{seconds}} 秒。",
+      "buttonStarting": "正在启动后端..."
     },
     "done": {
       "title": "配置完成！",
