@@ -4028,7 +4028,7 @@ class Agent:
         pending_videos = session.get_metadata("pending_videos") if session else None
         pending_audio = session.get_metadata("pending_audio") if session else None
         pending_files = session.get_metadata("pending_files") if session else None
-        from .current_turn import CurrentTurnInput
+        from .current_turn import CurrentTurnInput, SessionObjectRegistry
 
         current_turn = CurrentTurnInput.from_inputs(
             compiled_message,
@@ -4038,6 +4038,27 @@ class Agent:
             pending_files=pending_files,
             attachments=attachments,
         )
+        object_registry = (
+            session.get_metadata("_session_object_registry") if session is not None else None
+        )
+        if not isinstance(object_registry, SessionObjectRegistry):
+            registry_state = (
+                session.get_metadata("session_object_registry") if session is not None else None
+            )
+            if session is None:
+                object_registry = getattr(self, "_session_object_registry", None)
+            if not isinstance(object_registry, SessionObjectRegistry):
+                object_registry = SessionObjectRegistry.from_dict(registry_state)
+        if not isinstance(object_registry, SessionObjectRegistry):
+            object_registry = SessionObjectRegistry()
+
+        current_turn.with_recent_objects(object_registry.resolve_for_turn(current_turn))
+        object_registry.register_turn(current_turn)
+        self._session_object_registry = object_registry
+        if session is not None:
+            with contextlib.suppress(Exception):
+                session.set_metadata("_session_object_registry", object_registry)
+                session.set_metadata("session_object_registry", object_registry.to_dict())
         self._current_turn_input = current_turn
 
         # 处理 PDF/文档文件 — 如果 LLM 支持 PDF 则构建 DocumentBlock，否则降级提取文本

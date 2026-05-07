@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from openakita.core.current_turn import CurrentTurnInput
+from openakita.core.current_turn import CurrentTurnInput, SessionObjectRegistry
 from openakita.core.tool_executor import ToolExecutor
 from openakita.tools.handlers import SystemHandlerRegistry
 
@@ -12,7 +12,7 @@ def test_current_turn_url_blocks_historical_web_fetch():
     blocked = turn.validate_tool_call("web_fetch", {"url": "https://example.com/old"})
 
     assert blocked is not None
-    assert "本轮 URL" in blocked
+    assert "应使用的 URL" in blocked
     assert "https://example.com/new" in blocked
 
 
@@ -69,7 +69,7 @@ def test_current_turn_image_blocks_historical_view_image(tmp_path: Path):
     blocked = turn.validate_tool_call("view_image", {"path": str(old)})
 
     assert blocked is not None
-    assert "本轮图片" in blocked
+    assert "应使用的图片" in blocked
 
 
 def test_current_turn_file_blocks_implicit_historical_read(tmp_path: Path):
@@ -83,7 +83,7 @@ def test_current_turn_file_blocks_implicit_historical_read(tmp_path: Path):
     blocked = turn.validate_tool_call("read_file", {"path": str(old)})
 
     assert blocked is not None
-    assert "本轮文件" in blocked
+    assert "应使用的文件" in blocked
 
 
 def test_current_turn_file_allows_explicit_path_comparison(tmp_path: Path):
@@ -121,6 +121,97 @@ def test_inject_preserves_latest_message_marker():
     assert injected.startswith("[最新消息]\n[当前轮输入对象]")
 
 
+def test_registry_resolves_recent_url_for_followup_without_new_object():
+    registry = SessionObjectRegistry()
+    first_turn = CurrentTurnInput.from_inputs("看看这个链接 https://example.com/current")
+    registry.register_turn(first_turn)
+
+    followup = CurrentTurnInput.from_inputs("继续分析这个链接")
+    followup.with_recent_objects(registry.resolve_for_turn(followup))
+
+    assert followup.reference_urls
+    assert followup.reference_urls[0].value == "https://example.com/current"
+    prompt = followup.prompt_block()
+    assert "最近可引用对象" in prompt
+    assert "https://example.com/current" in prompt
+
+
+def test_recent_url_guard_blocks_unrelated_url_until_recent_url_is_grounded():
+    registry = SessionObjectRegistry()
+    registry.register_turn(CurrentTurnInput.from_inputs("读这个 https://example.com/current"))
+    followup = CurrentTurnInput.from_inputs("继续分析这个链接")
+    followup.with_recent_objects(registry.resolve_for_turn(followup))
+
+    blocked = followup.validate_tool_call("web_fetch", {"url": "https://example.com/old"})
+
+    assert blocked is not None
+    assert "应使用的 URL" in blocked
+
+
+def test_recent_image_guard_blocks_unrelated_image(tmp_path: Path):
+    current = tmp_path / "current.png"
+    old = tmp_path / "old.png"
+    registry = SessionObjectRegistry()
+    registry.register_turn(
+        CurrentTurnInput.from_inputs(
+            "看这张图",
+            pending_images=[{"local_path": str(current), "filename": "current.png"}],
+        )
+    )
+    followup = CurrentTurnInput.from_inputs("继续分析这张图")
+    followup.with_recent_objects(registry.resolve_for_turn(followup))
+
+    blocked = followup.validate_tool_call("view_image", {"path": str(old)})
+
+    assert blocked is not None
+    assert "应使用的图片" in blocked
+
+
+def test_recent_file_guard_blocks_unrelated_file(tmp_path: Path):
+    current = tmp_path / "current.pdf"
+    old = tmp_path / "old.pdf"
+    registry = SessionObjectRegistry()
+    registry.register_turn(
+        CurrentTurnInput.from_inputs(
+            "看这个文件",
+            pending_files=[{"local_path": str(current), "filename": "current.pdf"}],
+        )
+    )
+    followup = CurrentTurnInput.from_inputs("继续总结这个文件")
+    followup.with_recent_objects(registry.resolve_for_turn(followup))
+
+    blocked = followup.validate_tool_call("read_file", {"path": str(old)})
+
+    assert blocked is not None
+    assert "应使用的文件" in blocked
+
+
+def test_registry_injects_recent_object_when_current_turn_mentions_history():
+    registry = SessionObjectRegistry()
+    registry.register_turn(CurrentTurnInput.from_inputs("先看这个 https://example.com/old"))
+
+    turn = CurrentTurnInput.from_inputs("把上次那个链接和 https://example.com/new 对比")
+    turn.with_recent_objects(registry.resolve_for_turn(turn))
+
+    prompt = turn.prompt_block()
+    assert "当前轮输入对象" in prompt
+    assert "最近可引用对象" in prompt
+    assert "https://example.com/old" in prompt
+    assert "https://example.com/new" in prompt
+
+
+def test_registry_round_trips_serializable_state():
+    registry = SessionObjectRegistry()
+    registry.register_turn(CurrentTurnInput.from_inputs("看看 https://example.com/a"))
+
+    restored = SessionObjectRegistry.from_dict(registry.to_dict())
+    followup = CurrentTurnInput.from_inputs("继续看这个链接")
+    followup.with_recent_objects(restored.resolve_for_turn(followup))
+
+    assert followup.reference_urls
+    assert followup.reference_urls[0].value == "https://example.com/a"
+
+
 async def _fake_web_handler(tool_name: str, params: dict) -> str:
     return f"handled {tool_name}: {params.get('url', '')}"
 
@@ -135,7 +226,7 @@ async def test_tool_executor_applies_current_turn_guard_before_handler():
 
     result = await executor.execute_tool("web_fetch", {"url": "https://example.com/old"})
 
-    assert "正在使用非本轮 URL" in result
+    assert "正在使用其它 URL" in result
     assert "handled" not in result
 
 
@@ -153,5 +244,5 @@ async def test_tool_executor_policy_path_applies_current_turn_guard():
         SimpleNamespace(metadata={}),
     )
 
-    assert "正在使用非本轮 URL" in result
+    assert "正在使用其它 URL" in result
     assert "handled" not in result

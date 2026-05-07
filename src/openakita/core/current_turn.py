@@ -20,12 +20,17 @@ _HISTORY_REF_RE = re.compile(
 )
 _IMPLICIT_REF_RE = re.compile(
     r"(这个|这个链接|这条链接|这个文件|这个附件|这张图|这张图片|这份文档|刚发|刚发送|"
-    r"刚上传|附件|图片|文件|链接|文档|它|其内容)"
+    r"刚上传|附件|图片|文件|链接|文档|它|其内容|上面|前面|继续|接着|刚才)"
 )
 _PATH_LIKE_RE = re.compile(
     r"(?:(?:[A-Za-z]:[\\/]|/|\.{1,2}[\\/])?[^\s，。！？；;:'\"`]+[\\/]"
     r"[^\s，。！？；;:'\"`]+|\b[\w.-]+\.(?:py|ts|tsx|js|jsx|md|json|yaml|yml|txt|pdf|png|jpg|jpeg|webp|gif)\b)"
 )
+_URL_REF_RE = re.compile(r"(链接|网址|URL|url|网页|网站|页面)")
+_IMAGE_REF_RE = re.compile(r"(图|图片|截图|照片|画面|image|img)", re.IGNORECASE)
+_FILE_REF_RE = re.compile(r"(文件|文档|附件|PDF|pdf|表格|报告|file|document)", re.IGNORECASE)
+_VIDEO_REF_RE = re.compile(r"(视频|录像|video)", re.IGNORECASE)
+_AUDIO_REF_RE = re.compile(r"(音频|语音|录音|audio)", re.IGNORECASE)
 
 _URL_TOOLS = {"web_fetch", "browser_navigate", "browser_new_tab"}
 _BROWSER_CURRENT_PAGE_TOOLS = {
@@ -47,6 +52,119 @@ class TurnObject:
     value: str
     label: str = ""
     mime_type: str = ""
+    source_turn: int = 0
+
+
+@dataclass
+class SessionObjectRegistry:
+    """Session-scoped index of user-provided objects.
+
+    This is runtime state, intentionally separate from transcript text.  The
+    registry gives follow-up turns a structured "recent object" to bind to when
+    the user says "continue with that image/link/file" without resending it.
+    """
+
+    objects: list[TurnObject] = field(default_factory=list)
+    turn_index: int = 0
+    max_objects: int = 80
+
+    def resolve_for_turn(self, turn: CurrentTurnInput) -> tuple[TurnObject, ...]:
+        """Resolve likely historical objects for a follow-up turn."""
+        if not self.objects:
+            return ()
+        if turn.has_objects and not turn.allows_history_reference:
+            return ()
+        if not turn.has_objects and not (turn.has_implicit_reference or turn.allows_history_reference):
+            return ()
+
+        kinds = _requested_kinds(turn.text)
+        if not kinds:
+            kinds = ("url", "image", "file", "video", "audio")
+
+        resolved: list[TurnObject] = []
+        for kind in kinds:
+            latest = self.latest(kind)
+            if latest is not None:
+                resolved.append(latest)
+        return tuple(resolved)
+
+    def register_turn(self, turn: CurrentTurnInput) -> None:
+        """Record concrete objects from the current user turn."""
+        if not turn.has_objects:
+            return
+
+        self.turn_index += 1
+        for obj in turn.iter_current_objects():
+            stamped = TurnObject(
+                kind=obj.kind,
+                value=obj.value,
+                label=obj.label,
+                mime_type=obj.mime_type,
+                source_turn=self.turn_index,
+            )
+            self._append(stamped)
+
+        if len(self.objects) > self.max_objects:
+            self.objects = self.objects[-self.max_objects :]
+
+    def latest(self, kind: str) -> TurnObject | None:
+        for obj in reversed(self.objects):
+            if obj.kind == kind:
+                return obj
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "turn_index": self.turn_index,
+            "max_objects": self.max_objects,
+            "objects": [
+                {
+                    "kind": obj.kind,
+                    "value": obj.value,
+                    "label": obj.label,
+                    "mime_type": obj.mime_type,
+                    "source_turn": obj.source_turn,
+                }
+                for obj in self.objects[-self.max_objects :]
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> SessionObjectRegistry:
+        if not isinstance(data, dict):
+            return cls()
+        registry = cls(
+            turn_index=_safe_int(data.get("turn_index")),
+            max_objects=max(1, _safe_int(data.get("max_objects"), 80)),
+        )
+        objects: list[TurnObject] = []
+        for raw in data.get("objects") or []:
+            if not isinstance(raw, dict):
+                continue
+            value = str(raw.get("value") or "")
+            kind = str(raw.get("kind") or "")
+            if not value or not kind:
+                continue
+            objects.append(
+                TurnObject(
+                    kind=kind,
+                    value=value,
+                    label=str(raw.get("label") or ""),
+                    mime_type=str(raw.get("mime_type") or ""),
+                    source_turn=_safe_int(raw.get("source_turn")),
+                )
+            )
+        registry.objects = objects[-registry.max_objects :]
+        return registry
+
+    def _append(self, obj: TurnObject) -> None:
+        normalized = _normalize_ref(obj.value)
+        self.objects = [
+            existing
+            for existing in self.objects
+            if not (existing.kind == obj.kind and _normalize_ref(existing.value) == normalized)
+        ]
+        self.objects.append(obj)
 
 
 @dataclass
@@ -59,6 +177,7 @@ class CurrentTurnInput:
     files: tuple[TurnObject, ...] = ()
     videos: tuple[TurnObject, ...] = ()
     audio: tuple[TurnObject, ...] = ()
+    recent_objects: tuple[TurnObject, ...] = ()
     browser_current_url: str = ""
     urls_grounded: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -140,6 +259,30 @@ class CurrentTurnInput:
         return bool(self.urls or self.images or self.files or self.videos or self.audio)
 
     @property
+    def has_resolved_references(self) -> bool:
+        return bool(self.recent_objects)
+
+    @property
+    def reference_urls(self) -> tuple[TurnObject, ...]:
+        return tuple(obj for obj in self.recent_objects if obj.kind == "url")
+
+    @property
+    def reference_images(self) -> tuple[TurnObject, ...]:
+        return tuple(obj for obj in self.recent_objects if obj.kind == "image")
+
+    @property
+    def reference_files(self) -> tuple[TurnObject, ...]:
+        return tuple(obj for obj in self.recent_objects if obj.kind == "file")
+
+    @property
+    def reference_videos(self) -> tuple[TurnObject, ...]:
+        return tuple(obj for obj in self.recent_objects if obj.kind == "video")
+
+    @property
+    def reference_audio(self) -> tuple[TurnObject, ...]:
+        return tuple(obj for obj in self.recent_objects if obj.kind == "audio")
+
+    @property
     def allows_history_reference(self) -> bool:
         return bool(_HISTORY_REF_RE.search(self.text or ""))
 
@@ -155,28 +298,52 @@ class CurrentTurnInput:
 
     def prompt_block(self) -> str:
         """Render a compact, model-visible description of current-turn objects."""
-        if not self.has_objects:
+        if not self.has_objects and not self.has_resolved_references:
             return ""
 
-        lines = ["[当前轮输入对象]"]
-        if self.urls:
-            lines.append("- 本轮 URL: " + "; ".join(obj.label or obj.value for obj in self.urls))
-        if self.images:
-            lines.append("- 本轮图片: " + "; ".join(_display_obj(obj) for obj in self.images))
-        if self.files:
-            lines.append("- 本轮文件/文档: " + "; ".join(_display_obj(obj) for obj in self.files))
-        if self.videos:
-            lines.append("- 本轮视频: " + "; ".join(_display_obj(obj) for obj in self.videos))
-        if self.audio:
-            lines.append("- 本轮音频: " + "; ".join(_display_obj(obj) for obj in self.audio))
-        lines.append(
-            "- 规则：用户说“这个/它/刚发的/附件/图片/文件/链接”时，默认指向本轮对象；"
-            "只有用户明确说“上次/之前/历史里的”才使用历史对象。"
-        )
-        lines.append(
-            "- 状态型工具（浏览器/桌面等）不能直接复用旧状态；如本轮有明确 URL 或附件，"
-            "先切换/导航/读取到本轮对象再分析。"
-        )
+        lines: list[str] = []
+        if self.has_objects:
+            lines.append("[当前轮输入对象]")
+            self._append_object_lines(lines, prefix="本轮")
+            lines.append(
+                "- 规则：用户说“这个/它/刚发的/附件/图片/文件/链接”时，默认指向本轮对象；"
+                "只有用户明确说“上次/之前/历史里的”才使用历史对象。"
+            )
+            lines.append(
+                "- 状态型工具（浏览器/桌面等）不能直接复用旧状态；如本轮有明确 URL 或附件，"
+                "先切换/导航/读取到本轮对象再分析。"
+            )
+
+        if self.has_resolved_references:
+            if lines:
+                lines.append("")
+            lines.append("[最近可引用对象]")
+            if self.reference_urls:
+                lines.append(
+                    "- 最近 URL: "
+                    + "; ".join(obj.label or obj.value for obj in self.reference_urls)
+                )
+            if self.reference_images:
+                lines.append(
+                    "- 最近图片: " + "; ".join(_display_obj(obj) for obj in self.reference_images)
+                )
+            if self.reference_files:
+                lines.append(
+                    "- 最近文件/文档: "
+                    + "; ".join(_display_obj(obj) for obj in self.reference_files)
+                )
+            if self.reference_videos:
+                lines.append(
+                    "- 最近视频: " + "; ".join(_display_obj(obj) for obj in self.reference_videos)
+                )
+            if self.reference_audio:
+                lines.append(
+                    "- 最近音频: " + "; ".join(_display_obj(obj) for obj in self.reference_audio)
+                )
+            lines.append(
+                "- 规则：本轮没有新对象时，用户说“继续/上面/刚才/那个/它”默认指向这些最近对象；"
+                "如需更早历史对象，应让用户明确指出。"
+            )
         return "\n".join(lines)
 
     def inject_into_message(self, message: str) -> str:
@@ -190,8 +357,14 @@ class CurrentTurnInput:
 
     def validate_tool_call(self, tool_name: str, tool_input: dict[str, Any]) -> str | None:
         """Return an instructional block if a tool call is grounded to stale objects."""
-        if not self.has_objects or self.allows_history_reference:
+        if not self.has_objects and not self.has_resolved_references:
             return None
+        if self.has_objects and self.allows_history_reference:
+            return None
+
+        active_urls = self.urls or self.reference_urls
+        active_images = self.images or self.reference_images
+        active_files = self.files or self.reference_files
 
         if tool_name in _URL_TOOLS:
             requested_url = str(
@@ -201,37 +374,37 @@ class CurrentTurnInput:
                 or ""
             ).strip()
             if requested_url:
-                return self._validate_url_tool(tool_name, requested_url)
+                return self._validate_url_tool(tool_name, requested_url, active_urls)
 
-        if tool_name in _BROWSER_CURRENT_PAGE_TOOLS and self.urls:
-            if not self.urls_grounded and not self._matches_current_url(self.browser_current_url):
+        if tool_name in _BROWSER_CURRENT_PAGE_TOOLS and active_urls:
+            if not self.urls_grounded and not self._matches_url(self.browser_current_url, active_urls):
                 return (
-                    "⚠️ 当前轮有明确 URL，但浏览器当前页尚未确认是本轮 URL。\n"
-                    f"本轮 URL: {self._url_list_text()}\n"
-                    "请先调用 browser_navigate 导航到本轮 URL，再读取页面内容或操作页面。"
+                    "⚠️ 当前对话有明确引用 URL，但浏览器当前页尚未确认是该 URL。\n"
+                    f"应使用的 URL: {self._url_list_text(active_urls)}\n"
+                    "请先调用 browser_navigate 导航到该 URL，再读取页面内容或操作页面。"
                 )
 
-        if tool_name == "view_image" and self.images:
+        if tool_name == "view_image" and active_images:
             image_ref = str(tool_input.get("path") or tool_input.get("url") or "").strip()
-            if image_ref and not self._matches_ref(image_ref, self.images):
+            if image_ref and not self._matches_ref(image_ref, active_images):
                 return (
-                    "⚠️ 当前轮用户发送了图片，但 view_image 正在读取非本轮图片。\n"
-                    f"本轮图片: {self._object_list_text(self.images)}\n"
-                    "请改用本轮图片路径/URL；只有用户明确要求历史图片时才读取旧图片。"
+                    "⚠️ 用户当前引用了明确图片，但 view_image 正在读取其它图片。\n"
+                    f"应使用的图片: {self._object_list_text(active_images)}\n"
+                    "请改用该图片路径/URL；只有用户明确要求其它历史图片时才读取旧图片。"
                 )
 
         if (
             tool_name == "read_file"
-            and self.files
+            and active_files
             and self.has_implicit_reference
             and not self.has_explicit_path_like_text
         ):
             path = str(tool_input.get("path") or tool_input.get("file_path") or "").strip()
-            if path and not self._matches_ref(path, self.files):
+            if path and not self._matches_ref(path, active_files):
                 return (
-                    "⚠️ 当前轮用户发送了文件/文档，但 read_file 正在读取非本轮文件。\n"
-                    f"本轮文件: {self._object_list_text(self.files)}\n"
-                    "请优先读取本轮文件；只有用户明确要求历史文件或其它路径时才读取旧文件。"
+                    "⚠️ 用户当前引用了明确文件/文档，但 read_file 正在读取其它文件。\n"
+                    f"应使用的文件: {self._object_list_text(active_files)}\n"
+                    "请优先读取该文件；只有用户明确要求其它路径时才读取旧文件。"
                 )
 
         return None
@@ -250,33 +423,63 @@ class CurrentTurnInput:
             if not url:
                 return
             normalized = _normalize_url(url)
-            if self._matches_current_url(url):
+            active_urls = self.urls or self.reference_urls
+            if self._matches_url(url, active_urls):
                 self.urls_grounded = True
             if tool_name in {"browser_navigate", "browser_new_tab"}:
                 self.browser_current_url = normalized
 
-    def _validate_url_tool(self, tool_name: str, requested_url: str) -> str | None:
-        if self._matches_current_url(requested_url):
+    def with_recent_objects(self, objects: tuple[TurnObject, ...]) -> CurrentTurnInput:
+        self.recent_objects = objects
+        return self
+
+    def iter_current_objects(self) -> tuple[TurnObject, ...]:
+        return self.urls + self.images + self.files + self.videos + self.audio
+
+    def _append_object_lines(self, lines: list[str], *, prefix: str) -> None:
+        if self.urls:
+            lines.append(f"- {prefix} URL: " + "; ".join(obj.label or obj.value for obj in self.urls))
+        if self.images:
+            lines.append(f"- {prefix}图片: " + "; ".join(_display_obj(obj) for obj in self.images))
+        if self.files:
+            lines.append(f"- {prefix}文件/文档: " + "; ".join(_display_obj(obj) for obj in self.files))
+        if self.videos:
+            lines.append(f"- {prefix}视频: " + "; ".join(_display_obj(obj) for obj in self.videos))
+        if self.audio:
+            lines.append(f"- {prefix}音频: " + "; ".join(_display_obj(obj) for obj in self.audio))
+
+    def _validate_url_tool(
+        self,
+        tool_name: str,
+        requested_url: str,
+        active_urls: tuple[TurnObject, ...],
+    ) -> str | None:
+        if not active_urls:
+            return None
+        if self._matches_url(requested_url, active_urls):
             return None
         if self.urls_grounded:
             return None
         return (
-            f"⚠️ 当前轮用户发送了明确 URL，但 {tool_name} 正在使用非本轮 URL。\n"
-            f"本轮 URL: {self._url_list_text()}\n"
+            f"⚠️ 用户当前引用了明确 URL，但 {tool_name} 正在使用其它 URL。\n"
+            f"应使用的 URL: {self._url_list_text(active_urls)}\n"
             f"工具参数 URL: {requested_url}\n"
-            "请改用本轮 URL；只有用户明确要求“上次/之前/历史里的链接”时才使用旧链接。"
+            "请改用该 URL；只有用户明确要求其它历史链接时才使用旧链接。"
         )
 
     def _matches_current_url(self, url: str) -> bool:
+        return self._matches_url(url, self.urls)
+
+    def _matches_url(self, url: str, candidates: tuple[TurnObject, ...]) -> bool:
         normalized = _normalize_url(url)
-        return any(_normalize_url(obj.value) == normalized for obj in self.urls)
+        return any(_normalize_url(obj.value) == normalized for obj in candidates)
 
     def _matches_ref(self, value: str, candidates: tuple[TurnObject, ...]) -> bool:
         normalized = _normalize_ref(value)
         return any(_normalize_ref(obj.value) == normalized for obj in candidates)
 
-    def _url_list_text(self) -> str:
-        return "; ".join(obj.label or obj.value for obj in self.urls)
+    def _url_list_text(self, urls: tuple[TurnObject, ...]) -> str:
+        return "; ".join(obj.label or obj.value for obj in urls)
 
     @staticmethod
     def _object_list_text(objects: tuple[TurnObject, ...]) -> str:
@@ -331,6 +534,28 @@ def _dedupe_objects(items: tuple[TurnObject, ...] | list[TurnObject]) -> list[Tu
         seen.add(key)
         result.append(item)
     return result
+
+
+def _requested_kinds(text: str) -> tuple[str, ...]:
+    value = text or ""
+    kinds: list[str] = []
+    for kind, pattern in (
+        ("url", _URL_REF_RE),
+        ("image", _IMAGE_REF_RE),
+        ("file", _FILE_REF_RE),
+        ("video", _VIDEO_REF_RE),
+        ("audio", _AUDIO_REF_RE),
+    ):
+        if pattern.search(value):
+            kinds.append(kind)
+    return tuple(kinds)
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _normalize_url(url: str) -> str:
