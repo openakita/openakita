@@ -4529,6 +4529,18 @@ class ReasoningEngine:
                             _trace_started_at,
                         )
                         self._last_exit_reason = "loop_terminated"
+                        # P5.3: surface a checkpoint with the loop-budget reason so
+                        # the chat UI can render a failure card instead of going
+                        # silent after the text_delta.
+                        yield _build_task_checkpoint_event(
+                            session=session,
+                            conversation_id=conversation_id,
+                            task_id=state.task_id,
+                            iteration=_iteration,
+                            exit_reason="loop_terminated",
+                            summary=str(_budget_decision.exit_reason or "loop budget exhausted"),
+                            next_step_hint="如需继续，请换一个查询目标或基于已有摘要给出结论",
+                        )
                         yield {"type": "text_delta", "content": msg}
                         yield {"type": "done"}
                         return
@@ -4629,6 +4641,17 @@ class ReasoningEngine:
                             _trace_started_at,
                         )
                         self._last_exit_reason = "loop_terminated"
+                        # P5.3: see comment above — emit checkpoint so UI can
+                        # render a failure-attribution card.
+                        yield _build_task_checkpoint_event(
+                            session=session,
+                            conversation_id=conversation_id,
+                            task_id=state.task_id,
+                            iteration=_iteration,
+                            exit_reason="loop_terminated",
+                            summary=str(_budget_decision.exit_reason or "loop budget exhausted"),
+                            next_step_hint="任务被工具调用预算守卫切断；可调高 LOOP_BUDGET 或换种问法重试",
+                        )
                         yield {"type": "text_delta", "content": msg}
                         yield {"type": "done"}
                         return
@@ -4864,6 +4887,18 @@ class ReasoningEngine:
                                 _trace_started_at,
                             )
                             self._last_exit_reason = "loop_terminated"
+                            # P5.3: token-anomaly termination — surface a checkpoint
+                            # so the chat UI can render a failure card instead of
+                            # leaving the user staring at the truncated text_delta.
+                            yield _build_task_checkpoint_event(
+                                session=session,
+                                conversation_id=conversation_id,
+                                task_id=state.task_id,
+                                iteration=_iteration,
+                                exit_reason="loop_terminated",
+                                summary="工具响应膨胀触发上下文硬限位，任务自动止损",
+                                next_step_hint="缩小工具结果范围或拆分子问题后重试，必要时清空会话",
+                            )
                             yield {"type": "text_delta", "content": msg}
                             yield {"type": "done"}
                             return
@@ -4988,6 +5023,23 @@ class ReasoningEngine:
                                 )
                             )
                             self._last_exit_reason = "loop_terminated"
+                            # P5.3: supervisor termination — emit a checkpoint with
+                            # the actual loop-pattern as summary so the failure card
+                            # tells the user *why* we stopped.
+                            _pattern_label = (
+                                "同一工具参数反复调用"
+                                if intervention.pattern.value == "signature_repeat"
+                                else f"工具调用陷入死循环（{intervention.pattern.value}）"
+                            )
+                            yield _build_task_checkpoint_event(
+                                session=session,
+                                conversation_id=conversation_id,
+                                task_id=state.task_id,
+                                iteration=_iteration,
+                                exit_reason="loop_terminated",
+                                summary=_pattern_label,
+                                next_step_hint="基于本轮已获取的摘要给结论，或换种问法/工具重试",
+                            )
                             yield {"type": "text_delta", "content": msg}
                             yield {"type": "done"}
                             return
@@ -5046,6 +5098,22 @@ class ReasoningEngine:
             else:
                 hint = "\n\n（已达到最大迭代次数，请基于当前进展重新描述需求或缩小任务范围后继续。）"
             self._last_exit_reason = "max_iterations"
+            # P5.3: max-iterations termination — surface a checkpoint with the
+            # iteration cap and a config-adjustment hint so the failure card has
+            # actionable guidance.
+            yield _build_task_checkpoint_event(
+                session=session,
+                conversation_id=conversation_id,
+                task_id=state.task_id,
+                iteration=max_iterations,
+                exit_reason="max_iterations",
+                summary=f"已达到最大迭代次数 {max_iterations}",
+                next_step_hint=(
+                    "调高 MAX_ITERATIONS（建议 100~300）"
+                    if max_iterations < 30
+                    else "缩小任务范围或基于当前进展重新描述需求"
+                ),
+            )
             yield {"type": "text_delta", "content": hint}
             yield {"type": "done"}
 

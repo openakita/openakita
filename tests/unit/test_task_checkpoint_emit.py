@@ -118,3 +118,55 @@ def test_emit_with_real_session_object():
     assert ev["type"] == "task_checkpoint"
     assert ev["exit_reason"] == "budget_paused"
     assert sess.context.task_checkpoints[-1]["task_id"] == "t-real"
+
+
+# P5.3: failure-attribution exit reasons must round-trip cleanly so the
+# frontend ChatView can render the right card variant.
+def test_emit_loop_terminated_exit_reason():
+    sess = _FakeSession()
+    ev = _build_task_checkpoint_event(
+        session=sess,
+        conversation_id="c",
+        task_id="t-loop",
+        iteration=7,
+        exit_reason="loop_terminated",
+        summary="同一工具参数反复调用",
+        next_step_hint="基于已获取摘要给出结论或换种问法重试",
+    )
+    assert ev["exit_reason"] == "loop_terminated"
+    assert ev["summary"] == "同一工具参数反复调用"
+    assert ev["next_step_hint"].startswith("基于已获取摘要")
+    assert sess.context.task_checkpoints[-1]["exit_reason"] == "loop_terminated"
+
+
+def test_emit_max_iterations_exit_reason():
+    sess = _FakeSession()
+    ev = _build_task_checkpoint_event(
+        session=sess,
+        conversation_id="c",
+        task_id="t-max",
+        iteration=120,
+        exit_reason="max_iterations",
+        summary="已达到最大迭代次数 120",
+        next_step_hint="缩小任务范围或调高 MAX_ITERATIONS",
+    )
+    assert ev["exit_reason"] == "max_iterations"
+    assert ev["iteration"] == 120
+    assert sess.context.task_checkpoints[-1]["exit_reason"] == "max_iterations"
+
+
+def test_emit_user_cancelled_alias_round_trip():
+    """The cancelled card path also accepts the longer 'user_cancelled' alias
+    that reasoning_engine emits — both should reach the UI unchanged."""
+    sess = _FakeSession()
+    ev = _build_task_checkpoint_event(
+        session=sess,
+        conversation_id="c",
+        task_id="t-cancel",
+        iteration=4,
+        exit_reason="user_cancelled",
+        summary="用户主动停止",
+        next_step_hint="如需重启，发送新的指令或回复\"继续\"",
+    )
+    assert ev["exit_reason"] == "user_cancelled"
+    assert "用户主动停止" in ev["summary"]

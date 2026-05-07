@@ -2739,18 +2739,18 @@ export function ChatView({
                 continue;
               }
               case "task_checkpoint": {
-                // 任务节点检查点：在 cancelled / budget_pause / completed 时由后端 emit。
-                // 设计原则：避免与 budget_warning / done / error 文案重复，因此：
-                //   - cancelled  → 主动渲染"任务已暂停 + next_step_hint"系统消息（用户中断后看不到 done）
-                //   - 其他状态   → 静默累积，未来由 /api/chat/checkpoints 走任务时间线 UI
+                // 任务节点检查点：在 cancelled / budget_paused / completed /
+                // user_cancelled / loop_terminated / max_iterations 时由后端 emit。
+                //
+                // 渲染策略（避免与 budget_warning / done / error 文案重复）：
+                //   - user_cancelled                 → "已停止 + 继续提示"
+                //   - loop_terminated / max_iterations → 失败原因卡片（P5.3）
+                //   - budget_paused / completed      → 静默（已被 budget_warning / done 覆盖）
+                //   - 其他未知 exit_reason            → 静默累积，未来时间线 UI 使用
                 const exitReason = String((event as any).exit_reason || "");
-                if (exitReason === "cancelled") {
-                  const summary = String((event as any).summary || "").trim();
-                  const hint = String((event as any).next_step_hint || "").trim();
-                  const lines = ["⏸️ 任务已停止"];
-                  if (summary) lines.push(`已完成：${summary}`);
-                  if (hint) lines.push(`继续提示：${hint}`);
-                  else lines.push("如需继续，回复\"继续\"即可让我接力。");
+                const summary = String((event as any).summary || "").trim();
+                const hint = String((event as any).next_step_hint || "").trim();
+                const renderSystemMessage = (lines: string[]) => {
                   updateMessages((prev) => [
                     ...prev,
                     {
@@ -2760,6 +2760,26 @@ export function ChatView({
                       timestamp: Date.now(),
                     },
                   ]);
+                };
+                if (exitReason === "user_cancelled" || exitReason === "cancelled") {
+                  const lines = ["⏸️ 任务已停止"];
+                  if (summary) lines.push(`已完成：${summary}`);
+                  if (hint) lines.push(`继续提示：${hint}`);
+                  else lines.push("如需继续，回复\"继续\"即可让我接力。");
+                  renderSystemMessage(lines);
+                } else if (exitReason === "loop_terminated") {
+                  // P5.3 失败原因卡片：循环检测 / 工具预算 / token 异常等异常终止。
+                  // 与 ErrorCard 区分 — ErrorCard 处理 LLM 调用层错误，这里是
+                  // 任务级"为什么停下来"的归因。
+                  const lines = ["⚠️ 任务异常终止"];
+                  if (summary) lines.push(`原因：${summary}`);
+                  if (hint) lines.push(`建议：${hint}`);
+                  renderSystemMessage(lines);
+                } else if (exitReason === "max_iterations") {
+                  const lines = ["⚠️ 已达迭代上限"];
+                  if (summary) lines.push(`原因：${summary}`);
+                  if (hint) lines.push(`建议：${hint}`);
+                  renderSystemMessage(lines);
                 }
                 continue;
               }
