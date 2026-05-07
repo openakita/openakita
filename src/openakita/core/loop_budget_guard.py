@@ -30,9 +30,14 @@ class LoopBudgetDecision:
 
 @dataclass
 class LoopBudgetGuard:
-    max_total_tool_calls: int = 30
-    readonly_stagnation_limit: int = 3
-    readonly_stagnation_hard_limit: int = 6
+    # 默认对齐 Claude Code 哲学：CLI/IM 真人场景下不强加业务护栏。
+    # 0 / 负值 = 禁用对应检测。仅在用户主动收紧时启用：
+    # - max_total_tool_calls <= 0：不限工具调用总数
+    # - readonly_stagnation_limit <= 0：不做只读探索软提醒
+    # - readonly_stagnation_hard_limit <= 0：不做只读探索硬终止
+    max_total_tool_calls: int = 0
+    readonly_stagnation_limit: int = 0
+    readonly_stagnation_hard_limit: int = 0
     token_anomaly_threshold: int = 40_000
     # Default 0.98 → only force termination when prompt is essentially at the
     # model context window. Set lower for stricter safety, higher (up to 0.99)
@@ -45,8 +50,10 @@ class LoopBudgetGuard:
     readonly_stagnation_rounds: int = 0
 
     def record_tool_calls(self, tool_calls: list[dict]) -> LoopBudgetDecision:
+        # 累计仍在做（token_anomaly 检测用得到 total_tool_calls_seen），
+        # 但仅在 max_total_tool_calls > 0 时才执行上限检测。
         self.total_tool_calls_seen += len(tool_calls or [])
-        if self.total_tool_calls_seen > self.max_total_tool_calls:
+        if self.max_total_tool_calls > 0 and self.total_tool_calls_seen > self.max_total_tool_calls:
             return LoopBudgetDecision(
                 True,
                 "tool_budget_exceeded",
@@ -61,6 +68,9 @@ class LoopBudgetGuard:
         tool_calls: list[dict],
         tool_results: list[dict],
     ) -> LoopBudgetDecision:
+        # 当软/硬限制都未启用时，跳过整段只读停滞检测。
+        if self.readonly_stagnation_limit <= 0 and self.readonly_stagnation_hard_limit <= 0:
+            return LoopBudgetDecision(False)
         if self._is_readonly_exploration_round(tool_calls):
             fingerprint = self._tool_result_fingerprint(tool_results)
             if not fingerprint or fingerprint in self.readonly_seen_fingerprints:
@@ -68,14 +78,20 @@ class LoopBudgetGuard:
             else:
                 self.readonly_seen_fingerprints.add(fingerprint)
                 self.readonly_stagnation_rounds = 0
-            if self.readonly_stagnation_rounds >= self.readonly_stagnation_hard_limit:
+            if (
+                self.readonly_stagnation_hard_limit > 0
+                and self.readonly_stagnation_rounds >= self.readonly_stagnation_hard_limit
+            ):
                 return LoopBudgetDecision(
                     True,
                     "readonly_stagnation",
                     "⚠️ 只读探索已经连续多轮没有获得新信息，任务已自动终止。"
                     "请基于已经读取到的内容总结结论，或提供更具体的文件/关键词继续。",
                 )
-            if self.readonly_stagnation_rounds >= self.readonly_stagnation_limit:
+            if (
+                self.readonly_stagnation_limit > 0
+                and self.readonly_stagnation_rounds >= self.readonly_stagnation_limit
+            ):
                 return LoopBudgetDecision(
                     False,
                     "readonly_stagnation_warning",

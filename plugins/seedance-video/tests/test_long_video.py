@@ -18,13 +18,13 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-
 from long_video import (
     ChainGenerator,
     decompose_storyboard,
     ffmpeg_available,
 )
 
+from _plugin_loader import load_seedance_plugin
 
 # ── decompose_storyboard / parse_llm_json_object (C5) ─────────────────
 
@@ -246,6 +246,106 @@ async def test_chain_serial_chains_last_frame_into_next_first_frame() -> None:
     image_parts = [p for p in content if p.get("type") == "image_url"]
     assert len(image_parts) == 1
     assert image_parts[0]["image_url"]["url"] == "https://cdn/last.png"
+
+
+# ── chain_group plumbing (Sprint 8 / V2) ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chain_serial_writes_chain_group_into_params() -> None:
+    """Every per-segment task row must carry params.chain_group so
+    ``GET /long-video/tasks/<group_id>`` can recover the chain after a
+    page refresh — this is the core fix for "分镜出现两次/生成两次"."""
+    cg, ark, tm = _make_chain_gen()
+    out = await cg.generate_chain(
+        segments=[_seg(1), _seg(2)],
+        model_id="m",
+        mode="serial",
+        chain_group="abcd1234",
+    )
+    assert len(out) == 2
+    # Inspect the kwargs every create_task call received: params should
+    # always include chain_group + segment_index.
+    calls = tm.create_task.await_args_list
+    assert len(calls) == 2
+    for call in calls:
+        params = call.kwargs.get("params") or {}
+        assert params.get("chain_group") == "abcd1234"
+        assert "segment_index" in params
+        assert params.get("chain_mode") == "serial"
+
+
+@pytest.mark.asyncio
+async def test_chain_parallel_writes_chain_group_into_params() -> None:
+    """Same invariant for the parallel branch."""
+    cg, ark, tm = _make_chain_gen()
+    await cg.generate_chain(
+        segments=[_seg(1), _seg(2), _seg(3)],
+        model_id="m",
+        mode="parallel",
+        max_parallel=2,
+        chain_group="grp-xyz",
+    )
+    calls = tm.create_task.await_args_list
+    assert len(calls) == 3
+    for call in calls:
+        params = call.kwargs.get("params") or {}
+        assert params.get("chain_group") == "grp-xyz"
+        assert params.get("chain_mode") == "parallel"
+
+
+@pytest.mark.asyncio
+async def test_chain_without_group_keeps_params_empty() -> None:
+    """When the caller omits chain_group (e.g. legacy callers), we
+    must NOT pollute params with stray keys."""
+    cg, ark, tm = _make_chain_gen()
+    await cg.generate_chain(
+        segments=[_seg(1)],
+        model_id="m",
+        mode="serial",
+    )
+    params = tm.create_task.await_args_list[0].kwargs.get("params") or {}
+    assert params == {}
+
+
+# ── chain_signature dedupe (Sprint 8 / V2) ────────────────────────────
+
+
+def test_chain_signature_is_stable_for_identical_storyboards() -> None:
+    """Same prompts in the same order should hash the same — that's
+    what makes the "duplicate submission" guard in /long-video/generate
+    refuse a second click."""
+    Plugin = load_seedance_plugin().Plugin
+    s = [
+        {"index": 1, "duration": 5, "prompt": "深夜，年轻人躺在床上"},
+        {"index": 2, "duration": 5, "prompt": "傍晚，年轻人坐在书桌前"},
+    ]
+    a = Plugin._chain_signature(s)
+    b = Plugin._chain_signature(s)
+    assert a == b
+    assert isinstance(a, str) and len(a) == 40  # sha1 hex
+
+
+def test_chain_signature_differs_when_prompts_change() -> None:
+    """Reordering or rewording must change the signature so the
+    dedupe guard does not block legitimate re-submissions of an
+    EDITED storyboard."""
+    Plugin = load_seedance_plugin().Plugin
+    s1 = [{"index": 1, "duration": 5, "prompt": "A"}]
+    s2 = [{"index": 1, "duration": 5, "prompt": "B"}]
+    s3 = [{"index": 1, "duration": 6, "prompt": "A"}]  # duration change
+    s4 = [
+        {"index": 1, "duration": 5, "prompt": "A"},
+        {"index": 2, "duration": 5, "prompt": "C"},
+    ]
+    sigs = {
+        Plugin._chain_signature(s1),
+        Plugin._chain_signature(s2),
+        Plugin._chain_signature(s3),
+        Plugin._chain_signature(s4),
+    }
+    # Four different storyboards must yield four different signatures.
+    assert len(sigs) == 4
 
 
 # ── ffmpeg availability probe (no binary required) ────────────────────

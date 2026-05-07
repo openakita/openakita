@@ -277,6 +277,17 @@ class FinpulseTaskManager:
             await self._db.close()
             self._db = None
 
+    def is_ready(self) -> bool:
+        """Return ``True`` once :meth:`init` has opened the connection.
+
+        Routes call this before touching the DB so that early HTTP
+        requests (e.g. the Today tab clicking 拉取 right after the
+        plugin loads) get a clear ``503 init_in_progress`` instead of
+        the bare ``AssertionError`` that would otherwise surface as
+        an opaque ``http_500`` in the iframe toast.
+        """
+        return self._db is not None
+
     async def _init_default_config(self) -> None:
         assert self._db is not None
         now = time.time()

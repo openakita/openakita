@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -131,6 +133,12 @@ class Plugin(PluginBase):
         # In-plugin replacement for the retired SDK 0.6.x DependencyGate —
         # see seedance_inline/system_deps.py module docstring for rationale.
         self._sysdeps = SystemDepsManager()
+        # Active long-video chains (Sprint 8 / V2). Keyed by ``group_id``,
+        # each value is ``{signature, started_at, segments_total, task,
+        # mode, model}``. Used to (a) prevent duplicate submissions of the
+        # same storyboard within a single process and (b) let the UI poll
+        # progress via ``/long-video/active-chains`` after a tab refresh.
+        self._active_chains: dict[str, dict[str, Any]] = {}
 
         router = APIRouter()
         self._register_routes(router)
@@ -189,6 +197,21 @@ class Plugin(PluginBase):
                 pass
             except Exception as exc:
                 logger.warning("seedance-video poll task drain error: %s", exc)
+        # Cancel any in-flight chain workers so unload doesn't leak running
+        # background coroutines into the next plugin load.
+        for gid, info in list(self._active_chains.items()):
+            task = info.get("task")
+            if isinstance(task, asyncio.Task) and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "seedance-video chain %s drain error: %s", gid, exc,
+                    )
+        self._active_chains.clear()
         if self._ark is not None:
             try:
                 await self._ark.close()
@@ -222,17 +245,164 @@ class Plugin(PluginBase):
             return "\n".join(lines)
         return f"Unknown tool: {tool_name}"
 
+    # ── Long-video chain bookkeeping (Sprint 8 / V2) ──
+
+    @staticmethod
+    def _chain_signature(segments: list[dict]) -> str:
+        """Stable fingerprint of a storyboard so we can detect duplicate
+        submissions of the same chain across tab switches / reloads.
+
+        We hash ``index|prompt|duration`` for each segment.  Two payloads
+        with identical prompts in the same order produce the same hash —
+        the user reported "同一段分镜出现两次 / 生成两次" exactly because
+        nothing was de-duplicating these.
+        """
+        parts: list[str] = []
+        for seg in segments:
+            parts.append(
+                f"{seg.get('index', 0)}|"
+                f"{(seg.get('prompt') or '').strip()}|"
+                f"{seg.get('duration', 0)}"
+            )
+        return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
+
+    async def _run_chain_bg(
+        self,
+        group_id: str,
+        body: LongVideoCreateBody,
+    ) -> None:
+        """Background worker for ``/long-video/generate`` (fire-and-forget).
+
+        We can no longer rely on the request to remain open while the
+        chain runs — chain generation can take several minutes per
+        segment, which routinely exceeded HTTP timeouts and led to users
+        re-clicking "开始生成" and producing the duplicate task rows the
+        bug report cites.  Running detached, with progress queryable via
+        ``GET /long-video/tasks/{group_id}``, is the durable fix.
+        """
+        try:
+            if not self._ark:
+                logger.warning("Chain %s aborted: API Key not configured", group_id)
+                return
+            chain = ChainGenerator(self._ark, self._tm)
+            model = get_model(body.model)
+            model_id = model.model_id if model else body.model
+            await chain.generate_chain(
+                segments=body.segments,
+                model_id=model_id,
+                ratio=body.ratio,
+                resolution=body.resolution,
+                mode=body.mode,
+                chain_group=group_id,
+            )
+        except asyncio.CancelledError:
+            logger.info("Chain %s cancelled", group_id)
+            raise
+        except Exception as exc:
+            logger.exception("Chain %s crashed: %s", group_id, exc)
+        finally:
+            # Always pop on completion so the user can re-submit the same
+            # storyboard later (e.g. after editing one segment).
+            self._active_chains.pop(group_id, None)
+            try:
+                self._api.broadcast_ui_event(
+                    "chain_update",
+                    {"group_id": group_id, "status": "finished"},
+                )
+            except Exception as exc:
+                logger.warning("chain_update broadcast failed: %s", exc)
+
     # ── Internal task creation ──
 
     async def _create_task_internal(self, params: dict) -> dict:
         if not self._ark:
-            raise HTTPException(status_code=400, detail="API Key not configured")
+            raise HTTPException(
+                status_code=400,
+                detail="尚未配置 API Key — 请到「设置 → API Key」填写火山引擎 Ark 密钥",
+            )
 
         model_info = get_model(params.get("model", "2.0"))
         if not model_info:
-            raise HTTPException(status_code=400, detail=f"Unknown model: {params.get('model')}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知模型 {params.get('model')!r} — 请在创建页重新选择",
+            )
+
+        mode = params.get("mode", "t2v")
+        if mode not in model_info.modes:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"模型 {model_info.name} 不支持 {mode} 模式，"
+                    f"仅支持: {', '.join(model_info.modes)}"
+                ),
+            )
 
         content = params.get("content") or [{"type": "text", "text": params.get("prompt", "")}]
+
+        # ── Mode validation (Sprint 8 / V1) ──
+        # User-reported bug: "i2v / multimodal / edit / extend 都生不了任务".
+        # Root cause was the UI never wired uploaded assets into the create
+        # body, so backend always saw text-only content and Volcengine
+        # silently mis-handled it.  These guards raise 400 with a Chinese
+        # hint *before* spending money on the Ark call so the user sees a
+        # clear "需要先上传 XX" message in the UI's error banner.
+        if not isinstance(content, list) or not content:
+            raise HTTPException(status_code=400, detail="content 不能为空")
+
+        def _has(content_type: str) -> bool:
+            return any(
+                isinstance(c, dict) and c.get("type") == content_type
+                for c in content
+            )
+
+        def _image_with_role(role: str) -> bool:
+            for c in content:
+                if not isinstance(c, dict) or c.get("type") != "image_url":
+                    continue
+                img = c.get("image_url") or {}
+                if isinstance(img, dict) and img.get("role") == role:
+                    return True
+            return False
+
+        if mode == "i2v" and not _has("image_url"):
+            raise HTTPException(
+                status_code=400,
+                detail="图生视频模式需要先上传首帧图片",
+            )
+        if mode == "i2v_end":
+            # Either the UI sends two image_url with explicit first/last
+            # roles (preferred) or two un-tagged image_urls — accept both
+            # as long as we get at least 2 images.
+            image_count = sum(
+                1 for c in content
+                if isinstance(c, dict) and c.get("type") == "image_url"
+            )
+            has_explicit_pair = (
+                _image_with_role("first_frame")
+                and _image_with_role("last_frame")
+            )
+            if not has_explicit_pair and image_count < 2:
+                raise HTTPException(
+                    status_code=400,
+                    detail="首尾帧模式需要分别上传首帧和尾帧两张图片",
+                )
+        if mode == "multimodal":
+            media_count = sum(
+                1 for c in content
+                if isinstance(c, dict) and c.get("type") in ("image_url", "video_url")
+            )
+            if media_count < 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="多模态模式至少上传 1 个参考素材（图片/视频/音频）",
+                )
+        if mode in ("edit", "extend") and not _has("video_url"):
+            label = "视频编辑" if mode == "edit" else "视频续写"
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label}模式需要先上传源视频",
+            )
 
         config = await self._tm.get_all_config()
         service_tier = params.get("service_tier", config.get("service_tier_default", "default"))
@@ -523,23 +693,71 @@ class Plugin(PluginBase):
             # preview GET route above can serve them back without exposing
             # the user's home directory.  Old files in legacy assets_dir
             # remain accessible by absolute path (asset table stores it).
-            uploads_dir = self._api.get_data_dir() / "uploads"
+            #
+            # Sprint 8 / V1 (issue: i2v/edit/extend/multimodal modes never
+            # made it to Ark) — the ONLY way the UI can pass an uploaded
+            # asset to the Ark API today is via a base64 data URI in
+            # content[].image_url.url / video_url.url, because Volcengine
+            # cannot reach our local /api/plugins/.../uploads/<x>.  So we
+            # MUST keep the base64 attached to the response for files up
+            # to MAX_UPLOAD_BYTES (50 MB).  Anything larger is rejected
+            # outright with a friendly hint instead of silently dropping
+            # the base64 (which used to surface as "i2v doesn't generate"
+            # because the FE thought the upload succeeded but had no
+            # payload to send).
+            MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+            IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".gif", ".heic", ".heif"}
+            VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv"}
+            AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".ogg", ".flac"}
+
             content = await file.read()
+            size_bytes = len(content)
             ext = Path(file.filename or "file").suffix.lower()
 
-            if ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".gif", ".heic", ".heif"):
+            if size_bytes > MAX_UPLOAD_BYTES:
+                size_mb = round(size_bytes / 1024 / 1024, 1)
+                # Don't write to disk, don't insert into asset table —
+                # an oversize file is a hard failure the UI surfaces as a
+                # red badge under the upload zone.
+                return {
+                    "ok": False,
+                    "error": "file_too_large",
+                    "size_mb": size_mb,
+                    "max_mb": 50,
+                    "message": (
+                        f"文件 {size_mb} MB 超过 50 MB 上限 — "
+                        f"火山 Ark API 通过 base64 接收上传，过大会被拒。"
+                        f"请先压缩或裁剪后再试。"
+                    ),
+                }
+
+            if ext in IMAGE_EXTS:
                 subdir = "images"
                 atype = "image"
-            elif ext in (".mp4", ".mov"):
+            elif ext in VIDEO_EXTS:
                 subdir = "videos"
                 atype = "video"
-            elif ext in (".wav", ".mp3"):
+            elif ext in AUDIO_EXTS:
                 subdir = "audios"
                 atype = "audio"
             else:
-                subdir = "other"
-                atype = "file"
+                # Reject unknown extensions so the UI can show a clear hint
+                # ("we only accept these formats") instead of letting the
+                # user upload junk that Ark would later reject anyway.
+                allowed = sorted(IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS)
+                return {
+                    "ok": False,
+                    "error": "unsupported_type",
+                    "ext": ext or "(none)",
+                    "message": (
+                        f"不支持的文件类型 {ext or '(无扩展名)'} — "
+                        f"仅支持图片（jpg/png/webp/gif…）、视频（mp4/mov/webm…）、"
+                        f"音频（wav/mp3/m4a…）"
+                    ),
+                    "allowed": allowed,
+                }
 
+            uploads_dir = self._api.get_data_dir() / "uploads"
             dest_dir = uploads_dir / subdir
             dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -550,21 +768,28 @@ class Plugin(PluginBase):
             rel_path = f"{subdir}/{filename}"
 
             b64 = base64.b64encode(content).decode("ascii")
+            mime = file.content_type or {
+                "image": "image/jpeg",
+                "video": "video/mp4",
+                "audio": "audio/mpeg",
+            }.get(atype, "application/octet-stream")
+            data_uri = f"data:{mime};base64,{b64}"
+
             asset = await self._tm.create_asset(
                 type=atype,
                 file_path=str(filepath),
                 original_name=file.filename,
-                size_bytes=len(content),
+                size_bytes=size_bytes,
             )
             return {
                 "ok": True,
                 "asset": asset,
+                "kind": atype,
+                "size_bytes": size_bytes,
                 "url": build_preview_url("seedance-video", rel_path),
-                "base64": (
-                    f"data:{file.content_type};base64,{b64}"
-                    if len(content) < 10_000_000
-                    else None
-                ),
+                # base64 is required by Ark because Volcengine cannot reach
+                # the local preview URL — never strip it within the cap.
+                "base64": data_uri,
             }
 
         @router.get("/videos/{task_id}")
@@ -614,14 +839,51 @@ class Plugin(PluginBase):
 
         @router.put("/settings")
         async def update_settings(body: ConfigUpdateBody) -> dict:
-            await self._tm.set_configs(body.updates)
-            if "ark_api_key" in body.updates and body.updates["ark_api_key"]:
-                key = body.updates["ark_api_key"]
+            # ── Pre-flight validation ────────────────────────────────────
+            # Trim every value so a key like "  sk-xxx  " (a common
+            # copy-paste mishap) does not silently get stored with the
+            # surrounding whitespace and then make Ark calls fail with
+            # an opaque "invalid api key" later.
+            cleaned: dict[str, str] = {k: (v or "").strip() for k, v in body.updates.items()}
+
+            if "ark_api_key" in cleaned and not cleaned["ark_api_key"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="ARK API Key 不能为空白 — 请粘贴有效的密钥（前往 console.volcengine.com/ark 获取）",
+                )
+
+            await self._tm.set_configs(cleaned)
+
+            # ── Read-back verify: catch silent storage failures early ────
+            # If the DB write succeeded but the value isn't readable
+            # afterwards (corrupt sqlite, race, etc.), tell the UI
+            # straight away instead of letting it pretend to succeed.
+            saved = await self._tm.get_all_config()
+            for k, expected in cleaned.items():
+                if saved.get(k, "") != expected:
+                    logger.error(
+                        "settings.update mismatch key=%s expected_len=%d got_len=%d",
+                        k, len(expected), len(saved.get(k, "") or ""),
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"保存失败 — 配置项 {k} 写入后回读不一致，请检查插件数据目录权限",
+                    )
+
+            if "ark_api_key" in cleaned and cleaned["ark_api_key"]:
+                key = cleaned["ark_api_key"]
+                # Log only length + redacted prefix so secrets do not
+                # land in plaintext logs but operators can verify "yes,
+                # the key the user thinks they saved is actually saved".
+                logger.info(
+                    "settings.update ark_api_key saved (len=%d, prefix=%s***)",
+                    len(key), key[:4],
+                )
                 if self._ark:
                     self._ark.update_api_key(key)
                 else:
                     self._ark = ArkClient(key)
-            saved = await self._tm.get_all_config()
+
             return {"ok": True, "config": saved}
 
         @router.get("/models")
@@ -1058,17 +1320,103 @@ class Plugin(PluginBase):
 
         @router.post("/long-video/generate")
         async def generate_long_video(body: LongVideoCreateBody) -> dict:
+            """Fire-and-forget chain submission.
+
+            Returns immediately with a ``group_id``; the UI then polls
+            ``GET /long-video/tasks/{group_id}`` for progress.  This
+            replaces the old synchronous behaviour where the HTTP call
+            blocked for minutes and routinely timed out — leading to
+            users retrying and producing duplicate DB rows for the same
+            storyboard segment (the bug report's image 1).
+            """
             if not self._ark:
-                raise HTTPException(status_code=400, detail="API Key not configured")
-            chain = ChainGenerator(self._ark, self._tm)
-            results = await chain.generate_chain(
-                segments=body.segments,
-                model_id=get_model(body.model).model_id if get_model(body.model) else body.model,
-                ratio=body.ratio,
-                resolution=body.resolution,
-                mode=body.mode,
+                raise HTTPException(
+                    status_code=400,
+                    detail="尚未配置 API Key — 请到「设置 → API Key」填写火山引擎 Ark 密钥",
+                )
+            if not body.segments:
+                raise HTTPException(
+                    status_code=400,
+                    detail="分镜列表为空 — 请先在编辑页确认至少 1 段分镜",
+                )
+
+            signature = self._chain_signature(body.segments)
+            for gid, info in self._active_chains.items():
+                if info.get("signature") == signature:
+                    return {
+                        "ok": False,
+                        "error": "chain_in_progress",
+                        "group_id": gid,
+                        "message": (
+                            "相同分镜的生成任务正在进行中 — "
+                            "请等待完成或在「任务列表」查看进度，请勿重复提交。"
+                        ),
+                        "started_at": info.get("started_at"),
+                        "segments_total": info.get("segments_total"),
+                    }
+
+            group_id = uuid.uuid4().hex[:12]
+            chain_task = self._api.spawn_task(
+                self._run_chain_bg(group_id, body),
+                name=f"seedance-video:chain:{group_id}",
             )
-            return {"ok": True, "results": results}
+            self._active_chains[group_id] = {
+                "signature": signature,
+                "started_at": time.time(),
+                "segments_total": len(body.segments),
+                "mode": body.mode,
+                "model": body.model,
+                "task": chain_task,
+            }
+            return {
+                "ok": True,
+                "group_id": group_id,
+                "status": "started",
+                "segments_total": len(body.segments),
+                "message": (
+                    f"已开始生成 {len(body.segments)} 段视频，"
+                    f"前端将自动轮询进度，可安全切换 Tab 或刷新页面。"
+                ),
+            }
+
+        @router.get("/long-video/active-chains")
+        async def list_active_chains() -> dict:
+            """Snapshot of every running chain.
+
+            Used by the StoryboardTab on mount to recover an in-progress
+            run after a page refresh / tab switch (the localStorage
+            ``chainGroupId`` is cross-checked against this list to drop
+            stale IDs).
+            """
+            now = time.time()
+            chains = []
+            for gid, info in self._active_chains.items():
+                task = info.get("task")
+                done = isinstance(task, asyncio.Task) and task.done()
+                chains.append({
+                    "group_id": gid,
+                    "started_at": info.get("started_at"),
+                    "elapsed_sec": round(now - (info.get("started_at") or now), 1),
+                    "segments_total": info.get("segments_total"),
+                    "mode": info.get("mode"),
+                    "model": info.get("model"),
+                    "done": done,
+                })
+            return {"ok": True, "chains": chains}
+
+        @router.post("/long-video/cancel/{group_id}")
+        async def cancel_chain(group_id: str) -> dict:
+            info = self._active_chains.get(group_id)
+            if not info:
+                raise HTTPException(
+                    status_code=404,
+                    detail="找不到该分镜任务 — 可能已完成或已取消",
+                )
+            task = info.get("task")
+            if isinstance(task, asyncio.Task) and not task.done():
+                task.cancel()
+            self._active_chains.pop(group_id, None)
+            return {"ok": True, "group_id": group_id, "cancelled": True}
 
         @router.post("/long-video/concat")
         async def concat_task_videos(body: ConcatBody) -> dict:
@@ -1118,11 +1466,44 @@ class Plugin(PluginBase):
 
         @router.get("/long-video/tasks/{group_id}")
         async def get_chain_tasks(group_id: str) -> dict:
-            """List all segment tasks belonging to a chain generation group."""
-            tasks, _ = await self._tm.list_tasks(limit=100)
+            """List all segment tasks belonging to a chain generation group,
+            with an aggregated ``progress`` block the UI uses to decide
+            when polling can stop and the results page can render.
+            """
+            # Pull a generous window so a long chain (e.g. 12 segments)
+            # is fully visible.  We could narrow with a JSON query later
+            # if perf becomes a concern.
+            tasks, _ = await self._tm.list_tasks(limit=500)
             chain = [
                 t for t in tasks
-                if t.get("params", {}).get("chain_group") == group_id
+                if isinstance(t.get("params"), dict)
+                and t["params"].get("chain_group") == group_id
             ]
             chain.sort(key=lambda t: t.get("params", {}).get("segment_index", 0))
-            return {"ok": True, "tasks": chain}
+
+            # Progress aggregation — UI stops polling once
+            # pending + running == 0 *and* we know the chain background
+            # task itself is no longer active.
+            buckets = {"pending": 0, "running": 0, "succeeded": 0, "failed": 0, "other": 0}
+            for t in chain:
+                key = t.get("status") or "other"
+                if key not in buckets:
+                    key = "other"
+                buckets[key] += 1
+            buckets["total"] = len(chain)
+
+            info = self._active_chains.get(group_id) or {}
+            chain_task = info.get("task")
+            chain_done = (
+                not info
+                or (isinstance(chain_task, asyncio.Task) and chain_task.done())
+            )
+            return {
+                "ok": True,
+                "group_id": group_id,
+                "tasks": chain,
+                "progress": buckets,
+                "chain_active": bool(info) and not chain_done,
+                "segments_total": info.get("segments_total") or len(chain),
+                "started_at": info.get("started_at"),
+            }

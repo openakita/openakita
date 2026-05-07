@@ -54,16 +54,17 @@ class Settings(BaseSettings):
     )
 
     # === 任务超时策略 ===
-    # 目标：避免“卡死”而不是限制长任务。推荐使用“无进展超时”。
-    # - progress_timeout_seconds: 若连续超过该时间没有任何进展（LLM返回/工具完成/迭代推进），视为卡死。
-    # - hard_timeout_seconds: 可选硬上限（默认关闭=0）。仅作为最终兜底，避免无限任务。
+    # 默认对齐 Claude Code 哲学：CLI/IM 真人对话场景不做"agent 自检自杀"，
+    # 卡死由用户主动按"停止"/Esc 中断。仅在程序化场景（CI/SDK 批跑）需要兜底时打开。
+    # - progress_timeout_seconds: 若连续超过该时间没有任何进展（LLM返回/工具完成/迭代推进），视为卡死。0=禁用。
+    # - hard_timeout_seconds: 任务硬上限（仅在确定要限制总时长时启用）。0=禁用。
     progress_timeout_seconds: int = Field(
-        default=1200,
-        description="无进展超时阈值（秒）。超过该时间无进展则触发超时处理（默认 1200）",
+        default=0,
+        description="无进展超时阈值（秒），0=禁用（默认）。建议值 1200（20 分钟）",
     )
     hard_timeout_seconds: int = Field(
         default=0,
-        description="硬超时上限（秒，0=禁用）。仅作为最终兜底，避免无限任务",
+        description="硬超时上限（秒），0=禁用（默认）。仅作为最终兜底，避免无限任务",
     )
 
     # === ForceToolCall（工具护栏）===
@@ -563,38 +564,41 @@ class Settings(BaseSettings):
         description="发送给 LLM API 的 tools schema 估算 token 预算，超出后动态 defer 非核心工具",
     )
     same_tool_call_limit: int = Field(
-        default=10,
-        ge=1,
-        description="同一工具同参数在单任务内允许执行的最大次数；默认按长任务宽松模式取 10",
+        default=0,
+        ge=0,
+        description="同一工具同参数在单任务内允许执行的最大次数，0=不限（默认）。建议值 8~12",
     )
     readonly_stagnation_limit: int = Field(
-        default=3,
-        ge=1,
-        description="只读探索连续无新信息的软提醒轮数",
+        default=0,
+        ge=0,
+        description="只读探索连续无新信息的软提醒轮数，0=禁用（默认）。建议值 3",
     )
     readonly_stagnation_hard_limit: int = Field(
-        default=12,
-        ge=1,
-        description="只读探索连续无新信息的硬终止轮数；默认按长任务宽松模式取 12",
+        default=0,
+        ge=0,
+        description="只读探索连续无新信息的硬终止轮数，0=禁用（默认）。建议值 10~15",
     )
 
     # === Harness 配置 ===
+    # 默认全部关闭/不限，对齐 Claude Code 风格（CLI 真人场景不强加业务护栏）。
+    # 仅在程序化场景（CI/SDK 批跑、定时任务、组织看门狗等）需要兜底时打开。
     supervisor_enabled: bool = Field(
-        default=True, description="是否启用运行时监督器 (RuntimeSupervisor)"
+        default=False,
+        description="是否启用运行时监督器 (RuntimeSupervisor)，默认关闭。开启后会在工具抖动/编辑抖动/推理死循环等模式被检测到时主动干预",
     )
-    task_budget_tokens: int = Field(default=0, description="单次任务最大 token 消耗 (0=不限制)")
-    task_budget_cost: float = Field(default=0.0, description="单次任务最大成本 USD (0=不限制)")
+    task_budget_tokens: int = Field(default=0, description="单次任务最大 token 消耗，0=不限（默认）")
+    task_budget_cost: float = Field(default=0.0, description="单次任务最大成本 USD，0=不限（默认）")
     task_budget_duration: int = Field(
         default=0,
-        description="单次任务最大时长秒 (0=不限制；默认启用长任务宽松模式，不限制时长)",
+        description="单次任务最大时长（秒），0=不限（默认）。建议值 600~3600",
     )
     task_budget_iterations: int = Field(
-        default=300,
-        description="单次任务最大迭代次数 (0=不限制；默认按长任务宽松模式取 300)",
+        default=0,
+        description="单次任务最大迭代次数，0=不限（默认）。max_iterations 仍是 ReAct 循环硬上限",
     )
     task_budget_tool_calls: int = Field(
-        default=200,
-        description="单次任务最大工具调用次数 (0=不限制；默认按长任务宽松模式取 200)",
+        default=0,
+        description="单次任务最大工具调用次数，0=不限（默认）。建议值 100~300",
     )
 
     # === 追踪配置 ===
@@ -681,17 +685,19 @@ class Settings(BaseSettings):
     # 仅用于看门狗：防止组织真正卡死（LLM 挂起、死锁）时命令无限挂起。
     # 任一进度信号（token / 工具完成 / 节点状态切换 / chain 事件）到达
     # 都会让 warn/autostop 计时器归零，因此长时但持续产出的任务不会被误停。
+    # 默认全部关闭：CLI/IM 真人协作场景下，多 Agent 死锁由用户在指挥台手动按【强制终止】处理。
+    # 仅在程序化/无人值守场景需要兜底时，在【组织设置 → 任务看门狗】中打开。
     org_command_stuck_warn_secs: int = Field(
-        default=300,
-        description="无进度多久（秒）向前端发出 stuck_warning 提示（不终止命令，默认 300=5 分钟）",
+        default=0,
+        description="无进度多久（秒）向前端发出 stuck_warning 提示，0=禁用（默认）。建议值 600",
     )
     org_command_stuck_autostop_secs: int = Field(
-        default=1800,
-        description="无进度多久（秒）兜底 soft_stop 组织（默认 1800=30 分钟）",
+        default=0,
+        description="无进度多久（秒）兜底 soft_stop 组织，0=禁用（默认）。建议值 3600",
     )
     org_command_timeout_secs: int = Field(
-        default=10800,
-        description="单条命令最长运行时间（秒）硬上限，0 或负数表示不限时（默认 10800=3 小时）",
+        default=0,
+        description="单条命令最长运行时间（秒）硬上限，0=不限时（默认）。建议值 10800",
     )
 
     @model_validator(mode="after")

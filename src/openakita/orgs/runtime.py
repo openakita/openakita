@@ -3900,13 +3900,28 @@ class OrgRuntime:
                 v = default
             return v
 
-        warn_secs = max(30, _cfg("org_command_stuck_warn_secs", 300))
-        autostop_secs = max(
-            warn_secs + 60, _cfg("org_command_stuck_autostop_secs", 1800)
-        )
-        hard_cap = _cfg("org_command_timeout_secs", 10800)
+        # 默认全部 0 = 所有看门狗判定关闭，对齐 Claude Code 哲学：CLI/IM 真人协作场景
+        # 由用户在指挥台手动按【强制终止】处理死锁。仅当用户在【组织设置 → 任务看门狗】
+        # 主动配置非零值时才启用对应检测。
+        # 注意：即使全部阈值为 0，watchdog 协程仍保留 while 循环并等待 tracker.completed，
+        # 只是循环体内所有判定都 no-op。这样可以保持原有异步调度时序，避免回归测试因
+        # task 立即 return 而出现微妙的 _create_node_agent 计数差异。
+        warn_secs = _cfg("org_command_stuck_warn_secs", 0)
+        autostop_secs = _cfg("org_command_stuck_autostop_secs", 0)
+        hard_cap = _cfg("org_command_timeout_secs", 0)
 
-        poll_interval = max(5.0, min(15.0, warn_secs / 3.0))
+        # 启用时仍维持合理下限与顺序约束（避免用户配出反直觉的极小值）
+        if warn_secs > 0:
+            warn_secs = max(30, warn_secs)
+        if autostop_secs > 0:
+            autostop_secs = max(
+                (warn_secs + 60) if warn_secs > 0 else 60, autostop_secs
+            )
+
+        active = [t for t in (warn_secs, autostop_secs, hard_cap) if t > 0]
+        poll_interval = (
+            max(5.0, min(30.0, min(active) / 3.0)) if active else 30.0
+        )
 
         try:
             while not tracker.completed.is_set():
@@ -3924,7 +3939,11 @@ class OrgRuntime:
                 now = time.monotonic()
                 idle = now - tracker.last_progress_at
 
-                if idle >= warn_secs and not tracker.warned_stuck:
+                if (
+                    warn_secs > 0
+                    and idle >= warn_secs
+                    and not tracker.warned_stuck
+                ):
                     tracker.warned_stuck = True
                     try:
                         await self._broadcast_ws("org:command_stuck_warning", {
@@ -3944,7 +3963,7 @@ class OrgRuntime:
                         tracker.org_id, tracker.root_node_id, int(idle),
                     )
 
-                should_autostop = idle >= autostop_secs
+                should_autostop = autostop_secs > 0 and idle >= autostop_secs
                 if (
                     not should_autostop
                     and hard_cap > 0

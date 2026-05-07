@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
-from finpulse_fetchers._http import fetch_text, make_client
+from finpulse_fetchers._http import fetch_json, fetch_text, make_client
 from finpulse_fetchers.base import BaseFetcher, NormalizedItem
 
 try:  # pragma: no cover — prefer bs4 when available, stdlib regex works otherwise
@@ -40,6 +41,7 @@ except ImportError:
 # since 2023; the ``.html`` pagination suffix (``_2``, ``_3``, …) gives
 # us more history if we ever need it.
 _ENTRY = "https://finance.eastmoney.com/a/czqyw.html"
+_API = "https://np-listapi.eastmoney.com/comm/web/getNewsByColumns"
 
 # Items in the list look roughly like:
 #   <p class="title"><a href="//finance.eastmoney.com/a/202604241234567890.html"
@@ -126,12 +128,84 @@ class EastmoneyFetcher(BaseFetcher):
         return direct
 
     async def _fetch_direct(self) -> list[NormalizedItem]:
+        try:
+            items = await self._fetch_api()
+            if items:
+                return items
+        except Exception as exc:  # noqa: BLE001
+            logger.info("eastmoney api fetch failed, falling back to html: %s", exc)
+
         async with make_client(timeout=self._timeout_sec) as client:
             body = await fetch_text(client, _ENTRY)
         items = self._parse(body)
         # Hard cap — the rolling page loads ~80 items per render; we
         # keep the fresh 30 to stay consistent with the other CN sources.
         return items[:30]
+
+    async def _fetch_api(self) -> list[NormalizedItem]:
+        """Fetch EastMoney's current dynamic list API.
+
+        The public page now renders ``#newsListContent`` empty and lets
+        ``newslistbefore.js`` call this endpoint. Scraping the static HTML
+        therefore returns zero rows even though the site has fresh news.
+        """
+        params = {
+            "client": "web",
+            "biz": "web_news_col",
+            "column": "353",
+            "order": "1",
+            "needInteractData": "0",
+            "page_index": "1",
+            "page_size": "30",
+            "req_trace": str(int(time.time() * 1000)),
+            "fields": "code,showTime,title,mediaName,summary,image,url,uniqueUrl,Np_dst",
+            "types": "1,20",
+        }
+        async with make_client(timeout=self._timeout_sec) as client:
+            data = await fetch_json(client, _API, params=params)
+        return self._parse_api(data)
+
+    @staticmethod
+    def _parse_api(data: Any) -> list[NormalizedItem]:
+        if not isinstance(data, dict):
+            return []
+        payload = data.get("data")
+        if not isinstance(payload, dict):
+            return []
+        rows = payload.get("list")
+        if not isinstance(rows, list):
+            return []
+
+        out: list[NormalizedItem] = []
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("title") or "").strip()
+            url = str(row.get("uniqueUrl") or row.get("url") or "").strip()
+            if not title or len(title) < 6 or not url:
+                continue
+            if url.startswith("//"):
+                url = "https:" + url
+            if url in seen:
+                continue
+            seen.add(url)
+            pub = _parse_eastmoney_time(row.get("showTime"))
+            out.append(
+                NormalizedItem(
+                    source_id="eastmoney",
+                    title=title,
+                    url=url,
+                    summary=str(row.get("summary") or "").strip()[:500] or None,
+                    published_at=pub,
+                    extra={
+                        "parser": "eastmoney_api",
+                        "media": row.get("mediaName"),
+                        "image": row.get("image"),
+                    },
+                )
+            )
+        return out
 
     @staticmethod
     def _parse(html: str) -> list[NormalizedItem]:
@@ -195,6 +269,19 @@ class EastmoneyFetcher(BaseFetcher):
                 )
             )
         return out
+
+
+def _parse_eastmoney_time(raw: Any) -> str | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            dt = datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            continue
+    return text
 
 
 __all__ = ["EastmoneyFetcher"]

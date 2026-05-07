@@ -115,7 +115,7 @@ def _default_radar_plan() -> dict[str, Any]:
         "chat_id": "",
         "chat_name": "",
         "rules_text": "",
-        "force_refresh": False,
+        "force_refresh": True,
         "locked": False,
         "enabled": False,
     }
@@ -284,6 +284,67 @@ class Plugin(PluginBase):
         api.log(
             f"fin-pulse plugin loaded (v{PLUGIN_VERSION}, "
             f"{len(self._tool_definitions())} tools)"
+        )
+
+    async def _await_init(self, *, timeout: float = 5.0) -> tuple[bool, str | None]:
+        """Wait briefly for ``_async_init`` to finish opening the DB.
+
+        Returns ``(ready, error_message)``:
+        * ``(True, None)`` once :class:`FinpulseTaskManager` has its
+          SQLite connection open.
+        * ``(False, "init_in_progress")`` if the bootstrap is still
+          running after ``timeout`` — caller should surface this as a
+          retryable 503 so the UI keeps the cooldown and tells the
+          user to retry in a moment.
+        * ``(False, "<actual error>")`` if ``_async_init`` already
+          finished with an exception (DB locked, schema migration
+          failed, etc.), so the operator sees the real cause instead
+          of a bare ``http_500``.
+        """
+        if self._tm is None:
+            return False, "task_manager_unavailable"
+        if self._tm.is_ready():
+            return True, None
+        task = self._init_task
+        if task is None:
+            return False, "init_not_started"
+        if task.done():
+            exc = task.exception() if not task.cancelled() else None
+            if exc is not None:
+                return False, f"init_failed: {exc}"
+            return self._tm.is_ready(), None if self._tm.is_ready() else "init_finished_but_db_missing"
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except asyncio.TimeoutError:
+            return False, "init_in_progress"
+        except Exception as exc:  # noqa: BLE001
+            return False, f"init_failed: {exc}"
+        return self._tm.is_ready(), None if self._tm.is_ready() else "init_incomplete"
+
+    async def _require_pipeline_ready(self, *, timeout: float = 5.0) -> None:
+        """Raise a useful ``HTTPException`` if the plugin is not ready.
+
+        Centralises the "tm/pipeline missing or still initialising"
+        check so every DB-touching route can return a structured
+        ``detail`` string the iframe can render — instead of letting
+        the underlying ``assert self._db is not None`` bubble up as a
+        bare ``500`` with no body.
+        """
+        if self._tm is None or self._pipeline is None:
+            raise HTTPException(status_code=503, detail="pipeline_unavailable")
+        ready, err = await self._await_init(timeout=timeout)
+        if ready:
+            return
+        if err == "init_in_progress":
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "fin-pulse 正在初始化数据库，请稍后再试（通常 1-3 秒后即可恢复）。"
+                ),
+            )
+        raise HTTPException(
+            status_code=503,
+            detail=f"fin-pulse 初始化失败：{err or 'unknown'}",
         )
 
     async def _run_ingest_background(
@@ -461,7 +522,7 @@ class Plugin(PluginBase):
             "chat_id": str(plan.get("chat_id") or ""),
             "chat_name": str(plan.get("chat_name") or ""),
             "rules_text": str(plan.get("rules_text") or ""),
-            "force_refresh": bool(plan.get("force_refresh", False)),
+            "force_refresh": bool(plan.get("force_refresh", True)),
             "locked": bool(plan.get("locked", True)),
             "enabled": bool(plan.get("enabled", True)),
             "last_run_key": str(plan.get("last_run_key") or ""),
@@ -493,7 +554,7 @@ class Plugin(PluginBase):
             "chat_name": str(plan.get("chat_name") or ""),
             "locked": bool(plan.get("locked", True)),
             "enabled": bool(plan.get("enabled", True)),
-            "preIngest": bool(plan.get("preIngest", False)),
+            "preIngest": bool(plan.get("preIngest", True)),
             "last_run_key": str(plan.get("last_run_key") or ""),
             "last_result": plan.get("last_result") if isinstance(plan.get("last_result"), dict) else {},
             "updated_at": str(plan.get("updated_at") or _utcnow_iso()),
@@ -1195,15 +1256,22 @@ class Plugin(PluginBase):
             ``status`` is ``succeeded`` / ``skipped`` / ``failed`` and
             read the summary from ``result_json``.
             """
-            if self._tm is None or self._pipeline is None:
-                raise HTTPException(status_code=503, detail="pipeline_unavailable")
+            await self._require_pipeline_ready()
+            assert self._tm is not None and self._pipeline is not None
             sources = payload.get("sources") if isinstance(payload, dict) else None
             since_hours = payload.get("since_hours") if isinstance(payload, dict) else 24
-            task = await self._tm.create_task(
-                mode="ingest",
-                params={"sources": sources, "since_hours": since_hours},
-                status="running",
-            )
+            try:
+                task = await self._tm.create_task(
+                    mode="ingest",
+                    params={"sources": sources, "since_hours": since_hours},
+                    status="running",
+                )
+            except Exception as exc:  # noqa: BLE001 — surface the real cause
+                logger.exception("fin-pulse: create_task failed at /ingest")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"create_task_failed: {exc}",
+                ) from exc
             if wait:
                 try:
                     summary = await self._pipeline.ingest(
@@ -1218,14 +1286,22 @@ class Plugin(PluginBase):
 
                     _kind, msg, _hints = map_exception(exc)
                     raise HTTPException(status_code=500, detail=msg) from exc
-            self._api.spawn_task(
-                self._run_ingest_background(
-                    task_id=task["id"],
-                    sources=sources,
-                    since_hours=int(since_hours) if since_hours is not None else 24,
-                ),
-                name=f"{PLUGIN_ID}:ingest:{task['id']}",
-            )
+            try:
+                self._api.spawn_task(
+                    self._run_ingest_background(
+                        task_id=task["id"],
+                        sources=sources,
+                        since_hours=int(since_hours) if since_hours is not None else 24,
+                    ),
+                    name=f"{PLUGIN_ID}:ingest:{task['id']}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("fin-pulse: spawn_task failed at /ingest")
+                await self._mark_task_failed(task["id"], exc)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"spawn_task_failed: {exc}",
+                ) from exc
             return {
                 "ok": True,
                 "task_id": task["id"],
@@ -1242,13 +1318,23 @@ class Plugin(PluginBase):
             contract as ``POST /ingest`` — see that route's docstring
             for the polling protocol.
             """
-            if self._tm is None or self._pipeline is None:
-                raise HTTPException(status_code=503, detail="pipeline_unavailable")
-            task = await self._tm.create_task(
-                mode="ingest",
-                params={"sources": [source_id], "since_hours": 24},
-                status="running",
-            )
+            await self._require_pipeline_ready()
+            assert self._tm is not None and self._pipeline is not None
+            try:
+                task = await self._tm.create_task(
+                    mode="ingest",
+                    params={"sources": [source_id], "since_hours": 24},
+                    status="running",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "fin-pulse: create_task failed at /ingest/source/%s",
+                    source_id,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"create_task_failed: {exc}",
+                ) from exc
             if wait:
                 try:
                     summary = await self._pipeline.ingest(
@@ -1261,14 +1347,25 @@ class Plugin(PluginBase):
 
                     _kind, msg, _hints = map_exception(exc)
                     raise HTTPException(status_code=500, detail=msg) from exc
-            self._api.spawn_task(
-                self._run_ingest_background(
-                    task_id=task["id"],
-                    sources=[source_id],
-                    since_hours=24,
-                ),
-                name=f"{PLUGIN_ID}:ingest:{source_id}:{task['id']}",
-            )
+            try:
+                self._api.spawn_task(
+                    self._run_ingest_background(
+                        task_id=task["id"],
+                        sources=[source_id],
+                        since_hours=24,
+                    ),
+                    name=f"{PLUGIN_ID}:ingest:{source_id}:{task['id']}",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(
+                    "fin-pulse: spawn_task failed at /ingest/source/%s",
+                    source_id,
+                )
+                await self._mark_task_failed(task["id"], exc)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"spawn_task_failed: {exc}",
+                ) from exc
             return {
                 "ok": True,
                 "task_id": task["id"],

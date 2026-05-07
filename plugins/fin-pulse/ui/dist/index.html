@@ -504,6 +504,37 @@
     .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
     .btn-sm { padding: 5px 10px; font-size: 12px; }
     .btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+    /* Create-CTA — used by the "新增/创建 xxx 计划" buttons in the
+       Digest workbench. The default ghost/.btn-primary look read as
+       a regular row-action and confused users; this style is a wide,
+       dashed, centred affordance that telegraphs "tap to create a
+       new item" without competing with primary save/run buttons. */
+    .btn-create {
+      width: 100%; justify-content: center;
+      padding: 10px 16px; font-size: 13px; font-weight: 600;
+      border: 1.5px dashed var(--primary);
+      background: rgba(220, 38, 38, .04);
+      color: var(--primary);
+      border-radius: var(--radius);
+      transition: background .15s, border-style .15s, border-color .15s, color .15s, transform .08s;
+    }
+    .btn-create .oa-icon { width: 16px; height: 16px; flex: none; }
+    .btn-create:hover {
+      background: var(--primary); color: #fff;
+      border-style: solid; border-color: var(--primary);
+    }
+    .btn-create:active { transform: translateY(1px); }
+    .btn-create:disabled,
+    .btn-create[aria-disabled="true"] {
+      cursor: not-allowed; opacity: .55;
+      background: transparent; color: var(--text-secondary);
+      border-color: var(--border);
+    }
+    .btn-create:disabled:hover,
+    .btn-create[aria-disabled="true"]:hover {
+      background: transparent; color: var(--text-secondary);
+      border-color: var(--border);
+    }
     /* ── API pill (source status) ── */
     .api-pill {
       display: inline-flex; align-items: center; gap: 4px;
@@ -980,7 +1011,7 @@ const I18N_DICT = {
     "today.drawer.via.none": "无结果",
     "today.drawer.status.ok": "抓取 {fetched} · 新增 {inserted} · 更新 {updated}",
     "today.drawer.status.fetchedOnly": "抓取 {fetched} · 无新增",
-    "today.drawer.status.empty": "无新文章",
+    "today.drawer.status.empty": "本次未返回",
     "today.drawer.status.error": "失败",
     "today.drawer.source_single": "只抓取：{source}",
     "today.drawer.show_error": "错误详情",
@@ -1294,7 +1325,7 @@ const I18N_DICT = {
     "today.drawer.via.none": "No data",
     "today.drawer.status.ok": "fetched {fetched} · +{inserted} new · {updated} updated",
     "today.drawer.status.fetchedOnly": "fetched {fetched} · no new items",
-    "today.drawer.status.empty": "empty",
+    "today.drawer.status.empty": "no items returned",
     "today.drawer.status.error": "failed",
     "today.drawer.source_single": "Single source: {source}",
     "today.drawer.show_error": "Error detail",
@@ -1616,7 +1647,10 @@ const ICONIFY_SVG = {
   search: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9.5 3a6.5 6.5 0 0 1 5.16 10.45l4.45 4.44a.86.86 0 0 1-1.22 1.22l-4.44-4.45A6.5 6.5 0 1 1 9.5 3Zm0 1.75a4.75 4.75 0 1 0 0 9.5 4.75 4.75 0 0 0 0-9.5Z"/></svg>',
   filter: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" opacity=".35" d="M3 5.5C3 4.67 3.67 4 4.5 4h15c.83 0 1.5.67 1.5 1.5 0 .38-.14.74-.4 1.02L15 12.68V18a1.5 1.5 0 0 1-.66 1.24l-3 2A1.5 1.5 0 0 1 9 20V12.68L3.4 6.52A1.5 1.5 0 0 1 3 5.5Z"/><path fill="currentColor" d="M7 4h10l-5 5.55L7 4Z"/></svg>',
   download: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" opacity=".35" d="M3 7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7Z"/><path fill="currentColor" d="M11 6.75a1 1 0 1 1 2 0v6.08l2.04-2.04a1 1 0 1 1 1.42 1.42l-3.75 3.75a1 1 0 0 1-1.42 0l-3.75-3.75a1 1 0 1 1 1.42-1.42L11 12.83V6.75Z"/></svg>',
-  magic: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" opacity=".35" d="m14.2 4.3 5.5 5.5a2 2 0 0 1 0 2.83L9.63 22.7a2 2 0 0 1-2.83 0L1.3 17.2a2 2 0 0 1 0-2.83L11.37 4.3a2 2 0 0 1 2.83 0Z"/><path fill="currentColor" d="m12.8 5.7 5.5 5.5-2.12 2.12-5.5-5.5L12.8 5.7ZM19 2l.58 1.42L21 4l-1.42.58L19 6l-.58-1.42L17 4l1.42-.58L19 2ZM5 3l.8 1.95L7.75 5.75 5.8 6.55 5 8.5l-.8-1.95-1.95-.8 1.95-.8L5 3Z"/></svg>'
+  magic: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" opacity=".35" d="m14.2 4.3 5.5 5.5a2 2 0 0 1 0 2.83L9.63 22.7a2 2 0 0 1-2.83 0L1.3 17.2a2 2 0 0 1 0-2.83L11.37 4.3a2 2 0 0 1 2.83 0Z"/><path fill="currentColor" d="m12.8 5.7 5.5 5.5-2.12 2.12-5.5-5.5L12.8 5.7ZM19 2l.58 1.42L21 4l-1.42.58L19 6l-.58-1.42L17 4l1.42-.58L19 2ZM5 3l.8 1.95L7.75 5.75 5.8 6.55 5 8.5l-.8-1.95-1.95-.8 1.95-.8L5 3Z"/></svg>',
+  /* Real "+" glyph — overrides the historical alias to arrowRight which
+     made every "添加 / 新增" CTA misleadingly read as a navigation arrow. */
+  plusIcon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z"/></svg>'
 };
 function Ico(props) {
   const name = props.name || "";
@@ -3420,12 +3454,12 @@ function DigestsTab() {
   const [sources, setSources] = useState([]);
   const [customOpen, setCustomOpen] = useState(true);
   const [reportConfigs, setReportConfigs] = useState({
-    morning: {id: "morning", kind: "builtin", label: "早报", session: "morning", time: "08:00", repeat: "daily", since_hours: 12, top_k: 20, source_ids: [], channel: "", chat_id: "", locked: false, preIngest: false},
-    noon: {id: "noon", kind: "builtin", label: "午报", session: "noon", time: "12:30", repeat: "daily", since_hours: 6, top_k: 15, source_ids: [], channel: "", chat_id: "", locked: false, preIngest: false},
-    evening: {id: "evening", kind: "builtin", label: "晚报", session: "evening", time: "19:00", repeat: "daily", since_hours: 12, top_k: 20, source_ids: [], channel: "", chat_id: "", locked: false, preIngest: false},
+    morning: {id: "morning", kind: "builtin", label: "早报", session: "morning", time: "08:00", repeat: "daily", since_hours: 12, top_k: 20, source_ids: [], channel: "", chat_id: "", locked: false, preIngest: true},
+    noon: {id: "noon", kind: "builtin", label: "午报", session: "noon", time: "12:30", repeat: "daily", since_hours: 6, top_k: 15, source_ids: [], channel: "", chat_id: "", locked: false, preIngest: true},
+    evening: {id: "evening", kind: "builtin", label: "晚报", session: "evening", time: "19:00", repeat: "daily", since_hours: 12, top_k: 20, source_ids: [], channel: "", chat_id: "", locked: false, preIngest: true},
   });
   const [customReports, setCustomReports] = useState([]);
-  const [customDraft, setCustomDraft] = useState({title: "自定义财经报表", time: "09:30", repeat: "daily", since_hours: 24, top_k: 20, source_ids: [], channel: "", chat_id: "", preIngest: false});
+  const [customDraft, setCustomDraft] = useState({title: "自定义财经报表", time: "09:30", repeat: "daily", since_hours: 24, top_k: 20, source_ids: [], channel: "", chat_id: "", preIngest: true});
 
   const load = useCallback(async function () {
     setLoading(true);
@@ -3725,7 +3759,14 @@ function DigestsTab() {
     var channelLabel = cfg.channel ? formatChannelLabel({channel_id: cfg.channel, chat_id: cfg.chat_id, chat_name: cfg.chat_name}) : "未配置通道";
     var lastResult = cfg.last_result || {};
     var dispatch = lastResult.dispatch || {};
-    var dispatchText = dispatch.ok ? ("推送成功 · " + (dispatch.content_kind || lastResult.content_kind || "text")) : (dispatch.errors && dispatch.errors.length ? ("推送失败 · " + dispatch.errors[0]) : "");
+    var dispatchErrors = (dispatch.errors && dispatch.errors.length) ? dispatch.errors : [];
+    var primaryError = dispatchErrors.length ? String(dispatchErrors[0]) : "";
+    if (primaryError.indexOf("hint:") === 0 && dispatchErrors.length > 1) {
+      primaryError = String(dispatchErrors[1]);
+    }
+    var dispatchText = dispatch.ok ? ("推送成功 · " + (dispatch.content_kind || lastResult.content_kind || "text")) : (primaryError ? ("推送失败 · " + primaryError) : "");
+    var permanentFailure = dispatchErrors.some(function (e) { var s = String(e || ""); return s.indexOf("ret=-2") >= 0 || s.indexOf("ret=-14") >= 0 || s.indexOf("hint:") === 0; });
+    var dispatchTooltip = dispatchErrors.length ? dispatchErrors.map(function (e) { return String(e); }).join("\n") : "";
     return (
       <div key={session} className={"card report-plan-card" + (locked ? " report-plan-card--locked" : "")}
            style={{margin: 0, borderColor: active ? "rgba(211,47,47,.42)" : "var(--border)", background: active ? "linear-gradient(180deg,#fff,rgba(255,247,247,.72))" : "var(--bg-card)"}}
@@ -3743,7 +3784,13 @@ function DigestsTab() {
           <span className="kw-tag">{sourceSummary}</span>
           <span className="kw-tag">{channelLabel}</span>
           {latest ? <span className="kw-tag">最新 {fmtDate(latest.generated_at)}</span> : <span className="kw-tag">待生成</span>}
-          {dispatchText ? <span className="kw-tag">{dispatchText}</span> : null}
+          {dispatchText ? (
+            <span
+              className="kw-tag"
+              title={dispatchTooltip}
+              style={permanentFailure ? {background: "rgba(211,47,47,.14)", color: "var(--primary)", borderColor: "rgba(211,47,47,.36)"} : undefined}
+            >{dispatchText}</span>
+          ) : null}
         </div>
         <div className="card-body" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "10px 0 0"}}>
           {custom && (
@@ -3863,8 +3910,14 @@ function DigestsTab() {
             </label>
             {renderSourcePicker(customDraft, function (patch) { setCustomDraft(Object.assign({}, customDraft, patch)); })}
             {renderChannelSelect(customDraft, function (patch) { setCustomDraft(Object.assign({}, customDraft, patch)); })}
-            <button className="btn btn-sm btn-primary" type="button" style={{gridColumn: "1 / -1"}} onClick={addCustomReport}>
-              <Ico name="plus"/> 创建自定义报表计划
+            <button
+              className="btn btn-create"
+              type="button"
+              style={{gridColumn: "1 / -1", marginTop: 4}}
+              disabled={!String(customDraft.title || "").trim()}
+              title={!String(customDraft.title || "").trim() ? "请先填写报表名称" : "添加一个自定义报表计划"}
+              onClick={addCustomReport}>
+              <Ico name="plusIcon"/> 创建自定义报表计划
             </button>
           </div>
           <div className={"coll" + (customOpen ? " coll--open" : "")} style={{marginTop: 10}}>
@@ -3973,7 +4026,7 @@ function RadarTab() {
   const [channels, setChannels] = useState([]);
   const [sources, setSources] = useState([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState([]);
-  const [forceRefresh, setForceRefresh] = useState(false);
+  const [forceRefresh, setForceRefresh] = useState(true);
   const [radarRepeat, setRadarRepeat] = useState("every15");
   const [radarTime, setRadarTime] = useState("09:00");
   const [radarLocked, setRadarLocked] = useState(false);

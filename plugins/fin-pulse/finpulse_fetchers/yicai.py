@@ -47,7 +47,13 @@ def _parse_latest(data: Any) -> list[NormalizedItem]:
     for item in data:
         if not isinstance(item, dict):
             continue
-        title = (item.get("title") or item.get("indexTitle") or "").strip()
+        title = (
+            item.get("title")
+            or item.get("indexTitle")
+            or item.get("NewsTitle")
+            or item.get("Title")
+            or ""
+        ).strip()
         if not title:
             continue
         relative_url = item.get("url") or ""
@@ -58,7 +64,12 @@ def _parse_latest(data: Any) -> list[NormalizedItem]:
         if not article_url:
             continue
 
-        summary = (item.get("NewsContent") or item.get("newcontent") or "").strip()
+        summary = (
+            item.get("NewsContent")
+            or item.get("newcontent")
+            or item.get("NewsNotes")
+            or ""
+        ).strip()
         pub = _parse_yicai_date(item)
 
         out.append(
@@ -75,7 +86,7 @@ def _parse_latest(data: Any) -> list[NormalizedItem]:
 
 
 def _parse_yicai_date(item: dict) -> str | None:
-    raw = item.get("CreatedDate") or item.get("date") or ""
+    raw = item.get("CreatedDate") or item.get("CreateDate") or item.get("date") or ""
     if not raw:
         datekey = item.get("datekey") or ""
         hm = item.get("hm") or ""

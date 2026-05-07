@@ -107,6 +107,29 @@ class TestYicaiFetcher:
         assert "yicai.com" in items[0].url
         assert items[0].title == "央行开展逆回购操作"
 
+    def test_parses_current_news_title_fields(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payload = [
+            {
+                "NewsTitle": "第一财经当前接口标题",
+                "url": "/news/103167815.html",
+                "CreateDate": "2026-05-07T10:56:10",
+                "NewsNotes": "当前接口摘要",
+            }
+        ]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=payload)
+
+        _patch_transport(monkeypatch, handler)
+        items = _run(YicaiFetcher(config={}).fetch())
+
+        assert len(items) == 1
+        assert items[0].title == "第一财经当前接口标题"
+        assert items[0].published_at == "2026-05-07T10:56:10"
+        assert items[0].summary == "当前接口摘要"
+
 
 # ── NBD (每日经济新闻) ──────────────────────────────────────────────────
 
@@ -155,6 +178,28 @@ class TestSTCNFetcher:
         assert len(items) >= 1
         assert items[0].title == "证券市场要闻"
 
+    def test_parses_current_relative_article_links(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        html = (
+            '<html><body><li class="no-pr"><div class="tt">'
+            '<a href="/article/detail/3897513.html" target="_blank">\n'
+            "  4月300城宅地成交平均溢价率8.9%  "
+            "</a></div>"
+            '<span>2026-05-07 10:30</span>'
+            "</li></body></html>"
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text=html)
+
+        _patch_transport(monkeypatch, handler)
+        items = _run(STCNFetcher(config={}).fetch())
+
+        assert len(items) == 1
+        assert items[0].url == "https://www.stcn.com/article/detail/3897513.html"
+        assert items[0].title == "4月300城宅地成交平均溢价率8.9%"
+
 
 # ── EastMoney ────────────────────────────────────────────────────────────
 
@@ -197,6 +242,39 @@ class TestEastMoneyFetcher:
         # Protocol-relative URLs get upgraded to https.
         url_lookup = {it.title: it.url for it in items}
         assert url_lookup["A股三大指数低开高走"].startswith("https://")
+
+    def test_uses_current_dynamic_json_api(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payload = {
+            "code": "1",
+            "message": "success",
+            "data": {
+                "list": [
+                    {
+                        "title": "首批科创债ETF上市首日成交活跃",
+                        "uniqueUrl": "http://finance.eastmoney.com/a/202605073729522834.html",
+                        "showTime": "2026-05-07 09:07:49",
+                        "summary": "东方财富接口摘要",
+                        "mediaName": "东方财富研究中心",
+                    }
+                ]
+            },
+        }
+        seen_urls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_urls.append(str(request.url))
+            return httpx.Response(200, json=payload)
+
+        _patch_transport(monkeypatch, handler)
+        items = _run(EastmoneyFetcher(config={}).fetch())
+
+        assert len(items) == 1
+        assert "getNewsByColumns" in seen_urls[0]
+        assert items[0].title == "首批科创债ETF上市首日成交活跃"
+        assert items[0].published_at == "2026-05-07T09:07:49Z"
+        assert items[0].extra["parser"] == "eastmoney_api"
 
 
 # ── NewsNow ──────────────────────────────────────────────────────────────

@@ -222,6 +222,16 @@ def test_ui_tabs_are_hydrated() -> None:
     assert 'srcDoc={previewHtml' in html
     assert 'api("DELETE", "/digests/"' in html
     assert '强制先抓取最新资讯' in html
+    # Built-in morning / noon / evening report cards must default to
+    # pre-ingest = on so a fresh install never publishes a stale brief.
+    assert 'preIngest: true' in html, (
+        "default reportConfigs / customDraft must opt into preIngest"
+    )
+    # Radar tab: forceRefresh useState must default to true so the
+    # first run after install pulls fresh hot-list articles.
+    assert 'useState(true)' in html, (
+        "RadarTab.forceRefresh initial state must default to true"
+    )
     assert '自定义报表工作台' in html
     assert '自定义报表计划' in html
     assert 'api("GET", "/report-plans"' in html

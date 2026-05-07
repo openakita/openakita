@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 _ENTRY_URL = "https://www.stcn.com/article/list/yw.html"
 
 _ITEM_RE = re.compile(
-    r'<a[^>]+href="(?P<url>(?:https?://)?(?:www\.)?stcn\.com/article/detail/[^"]+)"'
-    r'[^>]*>(?:\s*<[^>]+>)*\s*(?P<title>[^<]+)',
+    r'<a[^>]+href="(?P<url>(?:(?:https?:)?//(?:www\.)?stcn\.com)?'
+    r'/article/detail/[^"]+)"[^>]*>\s*(?:<[^>]+>\s*)*(?P<title>[^<]+?)\s*</a>',
     re.IGNORECASE,
 )
 

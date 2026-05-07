@@ -949,6 +949,7 @@ const I18N_DICT = {
     "settings.api.show": "显示",
     "settings.api.hide": "隐藏",
     "settings.api.save": "保存",
+    "settings.api.saving": "保存中…",
     "settings.api.required": "必填项",
     "settings.api.help": "获取方式: 前往 console.volcengine.com/ark 创建 API Key",
     "settings.label.tier": "默认推理模式",
@@ -983,8 +984,13 @@ const I18N_DICT = {
     "settings.callback.placeholder": "https://...",
     "settings.callback.help": "配置后任务状态变化时自动通知，减少轮询",
     "settings.toast.saved": "设置已保存",
-    "settings.toast.keyError": "API Key 保存异常，请重试",
+    "settings.toast.keyError": "服务端回读的 API Key 与你填的不一致，可能未保存成功，请检查后端日志或重试",
     "settings.toast.saveFailed": "保存失败: {msg}",
+    "settings.toast.saveFailedHttp": "保存失败 (HTTP {status})：{detail}",
+    "settings.toast.saveFailedNet": "无法连接后端：{detail} — 请确认 OpenAkita 服务是否运行",
+    "settings.toast.saveNoConfig": "服务端未返回配置，可能存储异常，请重试或查看后端日志",
+    "settings.toast.keyEmpty": "API Key 不能为空白，请粘贴有效的密钥",
+    "settings.toast.valueMismatch": "保存失败：{key} 服务端回读为 {actual}，与你设置的 {expected} 不一致 — 配置可能未真正落库，请检查后端日志",
     "settings.pickOutput": "选择视频输出目录",
     "settings.pickAssets": "选择素材文件夹",
     "settings.folder.opened": "已在文件管理器中打开 {path}",
@@ -1022,6 +1028,24 @@ const I18N_DICT = {
     "toast.concatNeed2": "至少需要 2 个成功的视频片段",
     "toast.concatFail": "拼接失败: {msg}",
     "toast.unknownErr": "未知错误",
+    "toast.uploadFail": "上传失败",
+    "toast.uploadNoBase64": "服务端未返回 base64 — 无法发送给火山 Ark",
+    "toast.uploadTooBig": "文件 {size}MB 超过上限 50MB，请先压缩或裁剪",
+    "toast.modeNeedFirstFrame": "图生视频模式需要先上传首帧图片",
+    "toast.modeNeedBothFrames": "首尾帧模式需要分别上传首帧和尾帧两张图片",
+    "toast.modeNeedMultimodal": "多模态模式至少上传 1 个参考素材（图片/视频/音频）",
+    "toast.modeNeedSourceVideo": "{label} 模式需要先上传源视频",
+    "toast.chainInProgress": "已有相同分镜在生成，正在为你恢复进度…",
+    "toast.dedupedSegments": "AI 输出有 {n} 段重复，已自动合并",
+    "create.upload.ready": "已就绪 {name}（{size}）",
+    "create.upload.remove": "移除",
+    "create.upload.replace": "点击或拖拽以替换",
+    "story.cancelConfirm": "确定要取消此次生成吗？已提交到火山的分镜会继续在云端跑完，但前端不再轮询。",
+    "story.btn.cancel": "取消生成",
+    "story.progress.submitted": "已提交",
+    "story.progress.succeeded": "已完成",
+    "story.progress.failed": "失败",
+    "story.progress.safe": "可以安全切换 Tab 或刷新页面 — 进度会自动恢复",
     "err.title": "插件 UI 渲染出错",
     "err.retry": "重试渲染",
     "err.stackLabel": "错误堆栈详情",
@@ -1296,6 +1320,7 @@ const I18N_DICT = {
     "settings.api.show": "Show",
     "settings.api.hide": "Hide",
     "settings.api.save": "Save",
+    "settings.api.saving": "Saving…",
     "settings.api.required": "Required",
     "settings.api.help": "Get one at console.volcengine.com/ark",
     "settings.label.tier": "Default inference",
@@ -1330,8 +1355,13 @@ const I18N_DICT = {
     "settings.callback.placeholder": "https://…",
     "settings.callback.help": "Push status changes instead of polling.",
     "settings.toast.saved": "Settings saved",
-    "settings.toast.keyError": "API Key did not save correctly — try again",
+    "settings.toast.keyError": "Server returned a different key than the one you sent — save likely failed. Check backend logs and retry.",
     "settings.toast.saveFailed": "Save failed: {msg}",
+    "settings.toast.saveFailedHttp": "Save failed (HTTP {status}): {detail}",
+    "settings.toast.saveFailedNet": "Cannot reach backend: {detail} — make sure OpenAkita is running.",
+    "settings.toast.saveNoConfig": "Server didn't return the saved config — storage may be broken. Retry or check backend logs.",
+    "settings.toast.keyEmpty": "API Key cannot be blank — paste a valid key.",
+    "settings.toast.valueMismatch": "Save failed: server returned {actual} for {key} but you set {expected} — the value may not have actually been persisted. Check backend logs.",
     "settings.pickOutput": "Pick video output folder",
     "settings.pickAssets": "Pick assets folder",
     "settings.folder.opened": "Opened {path} in file manager",
@@ -1369,6 +1399,24 @@ const I18N_DICT = {
     "toast.concatNeed2": "Need at least 2 successful segments to concat",
     "toast.concatFail": "Concat failed: {msg}",
     "toast.unknownErr": "Unknown error",
+    "toast.uploadFail": "Upload failed",
+    "toast.uploadNoBase64": "Server returned no base64 — cannot forward to Ark",
+    "toast.uploadTooBig": "File is {size} MB, over the 50 MB limit — compress or trim first",
+    "toast.modeNeedFirstFrame": "Image-to-video mode needs a first-frame image — please upload one",
+    "toast.modeNeedBothFrames": "First+Last frame mode needs both a first and a last frame",
+    "toast.modeNeedMultimodal": "Multimodal mode needs at least 1 reference asset (image / video / audio)",
+    "toast.modeNeedSourceVideo": "{label} mode needs a source video — please upload one",
+    "toast.chainInProgress": "An identical chain is already running — resuming its progress…",
+    "toast.dedupedSegments": "AI returned {n} duplicate segments — they have been merged",
+    "create.upload.ready": "Ready: {name} ({size})",
+    "create.upload.remove": "Remove",
+    "create.upload.replace": "Click or drop to replace",
+    "story.cancelConfirm": "Cancel this run? Already-submitted segments keep running on Volcengine; we just stop polling.",
+    "story.btn.cancel": "Cancel run",
+    "story.progress.submitted": "Submitted",
+    "story.progress.succeeded": "Done",
+    "story.progress.failed": "Failed",
+    "story.progress.safe": "Safe to switch tabs or refresh — progress will be restored",
     "err.title": "Plugin UI render error",
     "err.retry": "Retry render",
     "err.stackLabel": "Error stack trace",
@@ -1767,42 +1815,117 @@ function useTasks() {
 
 // ── Components ──
 
-function FileUploadZone({ id, accept, multiple, onUpload, label, hint }) {
+function _formatSize(n) {
+  if (!n && n !== 0) return "";
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
+// Sprint 8 / V1 — `value` (single asset summary or array for multiple
+// mode) and `onRemove(index?)` let the parent component own the actual
+// upload state.  Without this, CreateTab couldn't remember WHICH file
+// the user just uploaded, and modes like i2v/edit/extend silently
+// submitted with no `content[].image_url` — the bug report's "其他功能
+// 都用不了".
+function FileUploadZone({ id, accept, multiple, onUpload, label, hint, value, onRemove }) {
   const t = useT();
   const [uploading, setUploading] = useState(false);
-  const [fileName, setFileName] = useState("");
+  const [pendingName, setPendingName] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [localError, setLocalError] = useState("");
 
   const handleFiles = async (files) => {
     if (!files || files.length === 0) return;
     setUploading(true);
+    setLocalError("");
     for (const file of files) {
-      setFileName(file.name);
-      await onUpload(file);
+      setPendingName(file.name);
+      try {
+        const err = await onUpload(file);
+        // Convention: onUpload may return a string error message (handled
+        // by the dropzone here) or null/undefined on success.
+        if (typeof err === "string" && err) setLocalError(err);
+      } catch (e) {
+        setLocalError(e?.message || _tr("toast.uploadFail", null, "Upload failed"));
+      }
     }
     setUploading(false);
+    setPendingName("");
   };
 
+  const summarized = (() => {
+    if (!value) return [];
+    return Array.isArray(value) ? value : [value];
+  })();
+
   return (
-    <div className={`upload-zone${dragOver ? " drag-over" : ""}`}
-      style={dragOver ? {borderColor:"var(--primary)",background:"rgba(59,130,246,.08)"} : {}}
-      onClick={() => !uploading && document.getElementById(id)?.click()}
-      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}>
-      <input id={id} type="file" accept={accept} multiple={multiple} hidden
-        onChange={(e) => handleFiles(e.target.files)} />
-      {uploading ? (
-        <div className="flex items-center gap-2" style={{justifyContent:"center"}}>
-          <div className="spinner" style={{width:16,height:16}} />
-          <span className="text-sm">{t("create.upload.uploading", { name: fileName })}</span>
+    <div>
+      {/* Already-uploaded chip(s) — shown ABOVE the dropzone so the
+          user has a clear "this is what we'll send to Ark" signal. */}
+      {summarized.length > 0 && (
+        <div className="flex flex-col" style={{gap:6, marginBottom:8}}>
+          {summarized.map((v, i) => (
+            <div key={i} style={{
+              display:"flex", alignItems:"center", justifyContent:"space-between",
+              gap:8, padding:"8px 10px", background:"rgba(34,197,94,.08)",
+              border:"1px solid rgba(34,197,94,.4)", borderRadius:6,
+              fontSize:12,
+            }}>
+              <span style={{
+                display:"flex", alignItems:"center", gap:6,
+                overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis",
+              }}>
+                <Ico name="check" />
+                <span style={{color:"var(--success)", fontWeight:500}}>
+                  {_tr("create.upload.ready", { name: v.name, size: _formatSize(v.size) },
+                    "Ready: {name} ({size})")}
+                </span>
+              </span>
+              {onRemove && (
+                <button type="button" className="btn btn-sm"
+                  style={{padding:"2px 8px", fontSize:11}}
+                  onClick={(e) => { e.stopPropagation(); onRemove(multiple ? i : undefined); }}>
+                  {_tr("create.upload.remove", null, "Remove")}
+                </button>
+              )}
+            </div>
+          ))}
         </div>
-      ) : (
-        <>
-          <p style={{fontSize:13}}>{label}</p>
-          {hint && <p className="text-xs text-dim" style={{marginTop:4}}>{hint}</p>}
-          {fileName && <p className="text-xs text-success" style={{marginTop:4}}><Ico name="check"/> {t("create.upload.uploaded", { name: fileName })}</p>}
-        </>
+      )}
+
+      {/* The dropzone itself — for `multiple` modes it stays so users
+          can keep adding refs; for single modes it's still useful as a
+          "replace" affordance. */}
+      <div className={`upload-zone${dragOver ? " drag-over" : ""}`}
+        style={dragOver ? {borderColor:"var(--primary)",background:"rgba(59,130,246,.08)"} : {}}
+        onClick={() => !uploading && document.getElementById(id)?.click()}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}>
+        <input id={id} type="file" accept={accept} multiple={multiple} hidden
+          onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
+        {uploading ? (
+          <div className="flex items-center gap-2" style={{justifyContent:"center"}}>
+            <div className="spinner" style={{width:16,height:16}} />
+            <span className="text-sm">{t("create.upload.uploading", { name: pendingName })}</span>
+          </div>
+        ) : (
+          <>
+            <p style={{fontSize:13}}>
+              {summarized.length > 0 && !multiple
+                ? _tr("create.upload.replace", null, "Click or drop to replace")
+                : label}
+            </p>
+            {hint && <p className="text-xs text-dim" style={{marginTop:4}}>{hint}</p>}
+          </>
+        )}
+      </div>
+
+      {localError && (
+        <p className="text-xs" style={{color:"var(--danger)", marginTop:6}}>
+          <Ico name="warn" /> {localError}
+        </p>
       )}
     </div>
   );
@@ -1920,6 +2043,15 @@ function CreateTab({ models, onGoToTasks }) {
   const [activeTask, setActiveTask] = useState(null);
   const [optimizing, setOptimizing] = useState(false);
 
+  // Sprint 8 / V1 — uploaded asset state.  Without these, the UI never
+  // remembered what the user uploaded and we silently submitted text-
+  // only content for i2v / i2v_end / multimodal / edit / extend.  Each
+  // entry: {name, base64 (data URI), asset, size, kind}.
+  const [firstFrame, setFirstFrame] = useState(null);
+  const [endFrame, setEndFrame] = useState(null);
+  const [multimodalAssets, setMultimodalAssets] = useState([]);
+  const [sourceVideo, setSourceVideo] = useState(null);
+
   useEffect(() => {
     if (!activeTask || (activeTask.status !== "running" && activeTask.status !== "pending")) return;
     var timer = setInterval(() => {
@@ -1946,17 +2078,108 @@ function CreateTab({ models, onGoToTasks }) {
     if (duration > maxDur) setDuration(maxDur);
   }, [model]);
 
+  // Drop assets that are no longer relevant when the user switches modes.
+  // Otherwise an image uploaded for i2v could leak into a later edit
+  // submission as ghost reference data.
+  useEffect(() => {
+    if (mode === "t2v") { setFirstFrame(null); setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); }
+    else if (mode === "i2v") { setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); }
+    else if (mode === "i2v_end") { setMultimodalAssets([]); setSourceVideo(null); }
+    else if (mode === "multimodal") { setFirstFrame(null); setEndFrame(null); setSourceVideo(null); }
+    else if (mode === "edit" || mode === "extend") { setFirstFrame(null); setEndFrame(null); setMultimodalAssets([]); }
+  }, [mode]);
+
+  // Auto-disable web_search when leaving t2v (Ark only allows it there).
+  useEffect(() => { if (mode !== "t2v" && webSearch) setWebSearch(false); }, [mode]);
+
   const [createError, setCreateError] = useState("");
   const [taskStartedOpen, setTaskStartedOpen] = useState(false);
   const [taskStartedDesc, setTaskStartedDesc] = useState("");
+
+  // Generic upload helper used by every FileUploadZone in the form.
+  // Returns null on success (FileUploadZone treats falsy as success);
+  // otherwise returns a Chinese error message that the dropzone prints
+  // under itself.
+  const doUpload = async (file, onAsset) => {
+    setCreateError("");
+    let r;
+    try {
+      r = await uploadFile(file);
+    } catch (e) {
+      return _tr("toast.networkError", { msg: e.message }, "Network error: {msg}");
+    }
+    if (!r || !r.ok) {
+      return r?.message || r?.error || _tr("toast.uploadFail", null, "Upload failed");
+    }
+    if (!r.base64) {
+      // Defensive — server omitted base64 but said ok.  Should not
+      // happen with the new 50 MB-cap upload route, but if it does we
+      // refuse rather than submit a useless content array to Ark.
+      return _tr("toast.uploadNoBase64", null,
+        "Upload OK but no base64 returned — cannot send to Ark");
+    }
+    onAsset({
+      name: file.name,
+      base64: r.base64,
+      asset: r.asset,
+      size: r.size_bytes || file.size,
+      kind: r.kind,
+    });
+    return null;
+  };
+
+  // Build the Ark `content` array from prompt + uploaded assets, applying
+  // local validation so we surface "请先上传首帧图片" as a red banner
+  // *before* hitting the network instead of after a 400 round trip.
+  const buildContent = () => {
+    const c = [{ type: "text", text: prompt }];
+    if (mode === "i2v") {
+      if (!firstFrame) throw new Error(_tr("toast.modeNeedFirstFrame", null, "请先上传首帧图片"));
+      c.push({ type: "image_url", image_url: { url: firstFrame.base64, role: "first_frame" } });
+    } else if (mode === "i2v_end") {
+      if (!firstFrame || !endFrame) throw new Error(_tr("toast.modeNeedBothFrames", null, "请分别上传首帧和尾帧图片"));
+      c.push({ type: "image_url", image_url: { url: firstFrame.base64, role: "first_frame" } });
+      c.push({ type: "image_url", image_url: { url: endFrame.base64,   role: "last_frame"  } });
+    } else if (mode === "multimodal") {
+      if (multimodalAssets.length === 0) throw new Error(_tr("toast.modeNeedMultimodal", null, "多模态模式至少上传 1 个参考素材"));
+      multimodalAssets.forEach(a => {
+        if (a.kind === "video") {
+          c.push({ type: "video_url", video_url: { url: a.base64 } });
+        } else if (a.kind === "audio") {
+          c.push({ type: "audio_url", audio_url: { url: a.base64 } });
+        } else {
+          c.push({ type: "image_url", image_url: { url: a.base64, role: "reference_image" } });
+        }
+      });
+    } else if (mode === "edit" || mode === "extend") {
+      if (!sourceVideo) {
+        const lbl = mode === "edit"
+          ? _tr("modes.edit", null, "Edit")
+          : _tr("modes.extend", null, "Extend");
+        throw new Error(_tr("toast.modeNeedSourceVideo", { label: lbl }, "{label} 模式需要先上传源视频"));
+      }
+      c.push({ type: "video_url", video_url: { url: sourceVideo.base64, role: mode } });
+    }
+    return c;
+  };
+
   const handleCreate = async () => {
     setLoading(true);
     setCreateError("");
+    let content;
+    try {
+      content = buildContent();
+    } catch (e) {
+      setCreateError(e.message);
+      setLoading(false);
+      return;
+    }
     try {
       const r = await pluginApi("POST", draft ? "/tasks/draft" : "/tasks", {
         prompt, mode, model, ratio, duration, resolution, n: 1,
         generate_audio: audio, seed, watermark, return_last_frame: returnLastFrame,
         web_search: webSearch && canWebSearch, service_tier: serviceTier,
+        content,
       });
       if (r.ok && r.body?.task) {
         setActiveTask(r.body.task);
@@ -2022,7 +2245,9 @@ function CreateTab({ models, onGoToTasks }) {
           <div className="card">
             <div className="oa-section-label">{t("create.section.firstFrame")}</div>
             <FileUploadZone id="upload-first-frame" accept="image/*"
-              onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+              onUpload={(file) => doUpload(file, setFirstFrame)}
+              value={firstFrame}
+              onRemove={() => setFirstFrame(null)}
               label={t("create.upload.firstHint")}
               hint={t("create.upload.firstSubHint")} />
           </div>
@@ -2033,10 +2258,14 @@ function CreateTab({ models, onGoToTasks }) {
             <div className="oa-section-label">{t("create.section.firstLastFrame")}</div>
             <div className="grid-2">
               <FileUploadZone id="upload-start-frame" accept="image/*"
-                onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+                onUpload={(file) => doUpload(file, setFirstFrame)}
+                value={firstFrame}
+                onRemove={() => setFirstFrame(null)}
                 label={t("create.upload.startFrame")} hint={t("create.upload.startFrameHint")} />
               <FileUploadZone id="upload-end-frame" accept="image/*"
-                onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+                onUpload={(file) => doUpload(file, setEndFrame)}
+                value={endFrame}
+                onRemove={() => setEndFrame(null)}
                 label={t("create.upload.endFrame")} hint={t("create.upload.endFrameHint")} />
             </div>
             <p className="text-xs text-dim" style={{marginTop:6}}>{t("create.upload.endFrameTip")}</p>
@@ -2047,7 +2276,9 @@ function CreateTab({ models, onGoToTasks }) {
           <div className="card">
             <div className="oa-section-label">{t("create.section.multimodal")}</div>
             <FileUploadZone id="upload-multimodal" accept="image/*,video/*,audio/*" multiple
-              onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+              onUpload={(file) => doUpload(file, (asset) => setMultimodalAssets(prev => [...prev, asset]))}
+              value={multimodalAssets}
+              onRemove={(idx) => setMultimodalAssets(prev => prev.filter((_, i) => i !== idx))}
               label={t("create.upload.multimodal")}
               hint={t("create.upload.multimodalHint")} />
             <div className="tip-bar" style={{marginTop:8}}>
@@ -2060,7 +2291,9 @@ function CreateTab({ models, onGoToTasks }) {
           <div className="card">
             <div className="oa-section-label">{mode === "edit" ? t("create.section.editVideo") : t("create.section.extendVideo")}</div>
             <FileUploadZone id="upload-source-video" accept="video/*"
-              onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+              onUpload={(file) => doUpload(file, setSourceVideo)}
+              value={sourceVideo}
+              onRemove={() => setSourceVideo(null)}
               label={mode === "edit" ? t("create.upload.editLabel") : t("create.upload.extendLabel")}
               hint={t("create.upload.videoHint")} />
           </div>
@@ -2678,11 +2911,111 @@ function StoryboardTab({ onGoToSettings }) {
   const [editIdx, setEditIdx] = useState(-1);
   const [previewIdx, setPreviewIdx] = useState(-1);
 
+  // Sprint 8 / V2 — chain_group state.  We persist the most recent
+  // group_id in localStorage so a tab refresh / window close mid-chain
+  // can be recovered automatically: the user reported "分镜出现两次 /
+  // 生成两次" precisely because they were forced to re-click 开始生成
+  // after losing the in-memory React state, doubling the DB rows.
+  const LS_KEY = "seedance.chainGroupId";
+  const [chainGroupId, setChainGroupId] = useState(() => {
+    try { return localStorage.getItem(LS_KEY) || ""; } catch { return ""; }
+  });
+  const [chainProgress, setChainProgress] = useState({
+    pending: 0, running: 0, succeeded: 0, failed: 0, other: 0, total: 0,
+  });
+
   useEffect(() => {
     pluginApi("GET", "/long-video/ffmpeg-check").then(r => {
       setFfmpegOk(r.body?.available ?? false);
     }).catch(() => setFfmpegOk(false));
   }, []);
+
+  // Recovery on mount — if a previous session left a chainGroupId in
+  // localStorage, query the backend to see if it's still progressing or
+  // has results to display.  We do NOT touch step/segments if there's
+  // no recoverable group; the user just sees the normal `input` view.
+  useEffect(() => {
+    if (!chainGroupId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await pluginApi("GET", `/long-video/tasks/${chainGroupId}`);
+        if (cancelled) return;
+        const tasks = r.body?.tasks || [];
+        const progress = r.body?.progress || {};
+        if (!tasks.length && !r.body?.chain_active) {
+          // Stale localStorage entry — chain finished long ago and
+          // its tasks may have been deleted.  Drop it silently.
+          try { localStorage.removeItem(LS_KEY); } catch {}
+          setChainGroupId("");
+          return;
+        }
+        setGenResults(tasks);
+        setChainProgress({
+          pending:   progress.pending   || 0,
+          running:   progress.running   || 0,
+          succeeded: progress.succeeded || 0,
+          failed:    progress.failed    || 0,
+          other:     progress.other     || 0,
+          total:     progress.total     || tasks.length,
+        });
+        const stillRunning = (progress.pending || 0) + (progress.running || 0) > 0
+                            || r.body?.chain_active;
+        setStep(stillRunning ? "generating" : "results");
+        if (!stillRunning) {
+          try { localStorage.removeItem(LS_KEY); } catch {}
+          setChainGroupId("");
+        } else {
+          setGenerating(true);
+        }
+      } catch (e) {
+        // Backend unreachable — keep the LS entry, the next mount will
+        // try again.  Don't bother the user.
+        console.warn("[seedance] chain recovery failed:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Polling effect — runs while we know about an active chain.  Fires
+  // every 5 s, stops when progress.{pending,running} both hit zero.
+  useEffect(() => {
+    if (!chainGroupId) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await pluginApi("GET", `/long-video/tasks/${chainGroupId}`);
+        if (cancelled) return;
+        const tasks = r.body?.tasks || [];
+        const progress = r.body?.progress || {};
+        setGenResults(tasks);
+        setChainProgress({
+          pending:   progress.pending   || 0,
+          running:   progress.running   || 0,
+          succeeded: progress.succeeded || 0,
+          failed:    progress.failed    || 0,
+          other:     progress.other     || 0,
+          total:     progress.total     || tasks.length,
+        });
+        const remaining = (progress.pending || 0) + (progress.running || 0);
+        if (remaining === 0 && !r.body?.chain_active) {
+          // Done — flip to results, clear the LS so the next chain run
+          // starts cleanly.
+          try { localStorage.removeItem(LS_KEY); } catch {}
+          setChainGroupId("");
+          setGenerating(false);
+          setStep("results");
+        }
+      } catch (e) {
+        console.warn("[seedance] chain poll failed:", e);
+      }
+    };
+    const timer = setInterval(tick, 5000);
+    // Kick once immediately so the first tick doesn't have to wait 5 s
+    tick();
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [chainGroupId]);
 
   const [decomposeProgress, setDecomposeProgress] = useState("");
   const decompose = async () => {
@@ -2697,9 +3030,30 @@ function StoryboardTab({ onGoToSettings }) {
         story, total_duration: totalDuration, segment_duration: segDuration, ratio, style,
       });
       if (r.body?.ok && r.body.storyboard?.segments) {
-        setSegments(r.body.storyboard.segments);
+        // Sprint 8 / V2 — LLM occasionally returns identical segments
+        // (especially for short stories asked to be split into many
+        // shots).  The bug report's "出现一个分镜头出现两次" matched
+        // exactly this pattern, so we deduplicate by trimmed prompt
+        // before the user can submit them for generation.
+        const raw = r.body.storyboard.segments;
+        const seen = new Map();
+        const dedup = [];
+        for (const s of raw) {
+          const key = (s.prompt || "").trim().toLowerCase();
+          if (!key) { dedup.push(s); continue; }
+          if (seen.has(key)) continue;
+          seen.set(key, true);
+          dedup.push(s);
+        }
+        const merged = dedup.map((s, i) => ({ ...s, index: i + 1 }));
+        setSegments(merged);
         setStep("edit");
-        showToast(_tr("toast.decomposeOk", { n: r.body.storyboard.segments.length }));
+        if (merged.length < raw.length) {
+          showToast(_tr("toast.dedupedSegments",
+            { n: raw.length - merged.length },
+            "AI 输出有 {n} 段重复，已自动合并"), "warning");
+        }
+        showToast(_tr("toast.decomposeOk", { n: merged.length }));
       } else {
         showToast(_tr("toast.decomposeFail", { msg: r.body?.error || _tr("toast.unknownErr") }), "error");
       }
@@ -2737,23 +3091,38 @@ function StoryboardTab({ onGoToSettings }) {
     if (segments.length === 0) return;
     setGenerating(true);
     setGenResults([]);
+    setChainProgress({ pending:0, running:0, succeeded:0, failed:0, other:0, total: segments.length });
     setStep("generating");
     try {
+      // Fire-and-forget: backend immediately returns a group_id and runs
+      // the chain in the background.  The polling effect above takes
+      // over from here.
       const r = await pluginApi("POST", "/long-video/generate", {
         segments, model, ratio, resolution, mode: genMode, transition, fade_duration: fadeDur,
       });
-      if (r.body?.ok) {
-        setGenResults(r.body.results || []);
-        setStep("results");
+      if (r.body?.ok && r.body?.group_id) {
+        try { localStorage.setItem(LS_KEY, r.body.group_id); } catch {}
+        setChainGroupId(r.body.group_id);
+      } else if (r.body?.error === "chain_in_progress" && r.body?.group_id) {
+        // Friendly path: server says "you already have an identical
+        // chain in flight".  Pick up that group_id and resume polling
+        // instead of duplicating the run.
+        try { localStorage.setItem(LS_KEY, r.body.group_id); } catch {}
+        setChainGroupId(r.body.group_id);
+        showToast(r.body.message
+          || _tr("toast.chainInProgress", null,
+            "已有相同分镜在生成，正在为你恢复进度…"), "warning");
       } else {
-        showToast(_tr("toast.genFail", { msg: r.body?.error || "" }), "error");
+        const detail = r.body?.detail || r.body?.error || "";
+        showToast(_tr("toast.genFail", { msg: detail }), "error");
         setStep("edit");
+        setGenerating(false);
       }
     } catch (e) {
       showToast(_tr("toast.requestFail", { msg: e.message }), "error");
       setStep("edit");
+      setGenerating(false);
     }
-    setGenerating(false);
   };
 
   const doConcat = async () => {
@@ -3044,19 +3413,52 @@ function StoryboardTab({ onGoToSettings }) {
   }
 
   if (step === "generating") {
-    const minRange = genMode === "serial" ? (segments.length * 2 + "-" + segments.length * 5) : "2-5";
+    const totalEst = chainProgress.total || segments.length;
+    const minRange = genMode === "serial" ? (totalEst * 2 + "-" + totalEst * 5) : "2-5";
+    const submitted = chainProgress.total - chainProgress.pending;
+    const finished = chainProgress.succeeded + chainProgress.failed;
+    const handleCancel = async () => {
+      if (!chainGroupId) return;
+      if (!confirm(_tr("story.cancelConfirm", null,
+        "确定要取消此次生成吗？已提交的分镜会继续在火山服务端跑完，但不再接受新的轮询。"))) return;
+      try {
+        await pluginApi("POST", `/long-video/cancel/${chainGroupId}`);
+      } catch (e) { console.warn("cancel failed", e); }
+      try { localStorage.removeItem(LS_KEY); } catch {}
+      setChainGroupId("");
+      setGenerating(false);
+      setStep("edit");
+    };
     return (
       <div className="storyboard-split">
         <div className="storyboard-split__left">
           <div className="card" style={{textAlign:"center",padding:40}}>
             <div className="spinner" style={{margin:"0 auto 16px"}} />
-            <p style={{fontSize:16,fontWeight:500}}>{t("story.gen.title", { n: segments.length })}</p>
+            <p style={{fontSize:16,fontWeight:500}}>{t("story.gen.title", { n: totalEst })}</p>
             <p className="text-sm text-dim" style={{marginTop:8}}>
               {genMode === "serial" ? t("story.gen.serialDesc") : t("story.gen.parallelDesc")}
             </p>
             <p className="text-sm text-dim" style={{marginTop:4}}>
               {t("story.gen.estimate", { min: minRange })}
             </p>
+            {chainGroupId && (
+              <div style={{marginTop:14, padding:"10px 12px", background:"var(--bg)", borderRadius:6, fontSize:13}}>
+                <div className="flex gap-4 justify-center" style={{marginBottom:4}}>
+                  <span>{_tr("story.progress.submitted", null, "已提交")}: <strong>{submitted}/{totalEst}</strong></span>
+                  <span style={{color:"var(--success)"}}>{_tr("story.progress.succeeded", null, "已完成")}: <strong>{chainProgress.succeeded}</strong></span>
+                  {chainProgress.failed > 0 && (
+                    <span style={{color:"var(--danger)"}}>{_tr("story.progress.failed", null, "失败")}: <strong>{chainProgress.failed}</strong></span>
+                  )}
+                </div>
+                <p className="text-xs text-dim" style={{marginTop:8}}>
+                  {_tr("story.progress.safe", null,
+                    "可以安全切换 Tab 或刷新页面 — 进度会自动恢复")}
+                </p>
+                <button className="btn btn-sm" style={{marginTop:10}} onClick={handleCancel}>
+                  {_tr("story.btn.cancel", null, "取消生成")}
+                </button>
+              </div>
+            )}
           </div>
         </div>
         <div className="storyboard-split__right">
@@ -3087,7 +3489,12 @@ function StoryboardTab({ onGoToSettings }) {
               {step === "done" ? <><Ico name="check"/> {t("story.results.done")}</> : t("story.results.title")}
             </h3>
             <div className="flex gap-2">
-              <button className="btn btn-sm" onClick={() => { setStep("input"); setSegments([]); setGenResults([]); setConcatPath(""); setPreviewIdx(-1); }}>
+              <button className="btn btn-sm" onClick={() => {
+                setStep("input"); setSegments([]); setGenResults([]); setConcatPath(""); setPreviewIdx(-1);
+                try { localStorage.removeItem(LS_KEY); } catch {}
+                setChainGroupId(""); setGenerating(false);
+                setChainProgress({ pending:0, running:0, succeeded:0, failed:0, other:0, total:0 });
+              }}>
                 {t("story.btn.newProject")}
               </button>
               <button className="btn btn-sm" onClick={() => setStep("edit")}>{t("story.btn.backEdit")}</button>
@@ -3652,21 +4059,88 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
     setSaving(true);
     try {
       var r = await pluginApi("PUT", "/settings", { updates });
-      if (r.body?.config) {
-        setConfig(r.body.config);
-        if (updates.ark_api_key && r.body.config.ark_api_key !== updates.ark_api_key) {
-          showToast(_tr("settings.toast.keyError"), "error");
-          setSaving(false);
-          return;
+
+      // ── Step 1: HTTP-level failure (4xx / 5xx / network) ────────────
+      // The bridge layer always returns { ok, status, body? }. On HTTP
+      // failure, `body` may be FastAPI's {detail: "..."} or absent
+      // entirely (network error). Surface both clearly instead of
+      // pretending the save succeeded.
+      if (!r || r.ok === false) {
+        var status = r ? r.status : 0;
+        var detail = "";
+        if (r && r.body) {
+          if (typeof r.body === "string") detail = r.body;
+          else if (r.body.detail) {
+            detail = typeof r.body.detail === "string"
+              ? r.body.detail
+              : JSON.stringify(r.body.detail);
+          } else if (r.body.message) detail = r.body.message;
+        }
+        if (!detail && r && r.error) detail = r.error;
+        var msg = status
+          ? _tr("settings.toast.saveFailedHttp", { status: status, detail: detail || "" })
+          : _tr("settings.toast.saveFailedNet", { detail: detail || "network" });
+        showToast(msg, "error");
+        setSaving(false);
+        return;
+      }
+
+      // ── Step 2: Server returned 200 but missing config payload ──────
+      if (!r.body || !r.body.config) {
+        showToast(_tr("settings.toast.saveNoConfig"), "error");
+        setSaving(false);
+        return;
+      }
+
+      var serverConfig = r.body.config;
+      setConfig(serverConfig);
+
+      // ── Step 3: Round-trip verify EVERY key the user just sent ──────
+      // Not only ark_api_key — the user reported ALL settings showed
+      // "saved" but values reverted (e.g. they switched 默认推理模式 to
+      // flex but the dropdown stayed on "default"). That means the
+      // server-side persistence quietly dropped non-key updates too.
+      // We compare each sent value against the server's read-back so a
+      // dropped write surfaces a real error instead of a fake success.
+      var keysToVerify = Object.keys(updates);
+      var mismatches = [];
+      for (var i = 0; i < keysToVerify.length; i++) {
+        var k = keysToVerify[i];
+        var expected = (updates[k] == null ? "" : String(updates[k])).trim();
+        var actual = (serverConfig[k] == null ? "" : String(serverConfig[k]));
+        if (actual !== expected) {
+          mismatches.push({ key: k, expected: expected, actual: actual });
         }
       }
+      if (mismatches.length > 0) {
+        // Special-case ark_api_key so the dedicated "回读不一致" toast
+        // and "保留输入框内容" UX still apply.
+        if (updates.ark_api_key && mismatches.some(function(m) { return m.key === "ark_api_key"; })) {
+          showToast(_tr("settings.toast.keyError"), "error");
+        } else {
+          var first = mismatches[0];
+          showToast(
+            _tr("settings.toast.valueMismatch", {
+              key: first.key,
+              expected: first.expected,
+              actual: first.actual || "(空)",
+            }),
+            "error"
+          );
+        }
+        setSaving(false);
+        return;
+      }
+
+      // ── Step 4: All keys round-tripped → safe to do the post-save UX ─
       if (updates.ark_api_key) {
         setApiKey("");
-        if (onKeyChange && r.body?.config?.ark_api_key) onKeyChange(r.body.config.ark_api_key);
+        if (onKeyChange) onKeyChange(serverConfig.ark_api_key || "");
       }
+
       showToast(_tr("settings.toast.saved"));
     } catch (e) {
-      showToast(_tr("settings.toast.saveFailed", { msg: e.message }), "error");
+      showToast(_tr("settings.toast.saveFailed", { msg: e.message || String(e) }), "error");
     }
     setSaving(false);
   };
@@ -3731,7 +4205,14 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
               value={apiKey !== "" ? apiKey : (config.ark_api_key || "")} onChange={e => setApiKey(e.target.value)}
               placeholder={t("settings.api.placeholder")} />
             <button className="btn btn-sm" onClick={() => setShowKey(!showKey)}>{showKey ? t("settings.api.hide") : t("settings.api.show")}</button>
-            <button className="btn btn-sm btn-primary" disabled={!apiKey} onClick={() => save({ark_api_key: apiKey})}>{t("settings.api.save")}</button>
+            <button className="btn btn-sm btn-primary" disabled={!apiKey || saving} onClick={() => {
+              var trimmed = (apiKey || "").trim();
+              if (!trimmed) {
+                showToast(_tr("settings.toast.keyEmpty"), "error");
+                return;
+              }
+              save({ark_api_key: trimmed});
+            }}>{saving ? t("settings.api.saving") : t("settings.api.save")}</button>
           </div>
           <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.api.help")}</p>
         </div>

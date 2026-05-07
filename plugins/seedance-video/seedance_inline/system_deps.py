@@ -274,7 +274,17 @@ _FFMPEG = DepSpec(
         InstallMethod(
             platform="windows",
             strategy="winget",
-            command=("winget", "uninstall", "--id", "Gyan.FFmpeg", "-e", "--silent"),
+            # ``--accept-source-agreements`` mirrors the install command:
+            # without it, winget on a freshly-onboarded box can return
+            # exit code 0 without actually uninstalling anything (it
+            # silently aborts on the EULA prompt because ``--silent``
+            # suppresses output but does not auto-accept agreements).
+            # User then sees "卸载失败：已安装" because our detect()
+            # still finds the binary.
+            command=(
+                "winget", "uninstall", "--id", "Gyan.FFmpeg",
+                "-e", "--silent", "--accept-source-agreements",
+            ),
             description="Uninstall FFmpeg via Windows Package Manager (winget).",
             requires_sudo=False,
             estimated_seconds=30,
@@ -676,10 +686,45 @@ class SystemDepsManager:
                         _refresh_process_path_windows()
                     except Exception as exc:
                         logger.debug("post-%s PATH refresh failed: %s", op_kind, exc)
-                try:
-                    self.detect(dep_id, force=True)
-                except Exception as exc:
-                    logger.debug("post-%s re-detect failed: %s", op_kind, exc)
+
+                # ── Post-op detect with bounded retry ─────────────────
+                # Two real-world races we have to absorb:
+                #
+                # 1) Post-INSTALL on Windows: winget exits rc=0 the
+                #    moment the MSI/portable extract finishes, but the
+                #    registry PATH update is sometimes still propagating
+                #    when our finally block runs.  A single detect() call
+                #    then misses the binary and the UI reports
+                #    "install failed" even though it actually succeeded.
+                #
+                # 2) Post-UNINSTALL on Windows: winget unlinks files
+                #    asynchronously; an immediate detect() can still
+                #    glob a half-deleted package directory and report
+                #    "uninstall failed: still installed".
+                #
+                # We retry detect a few times with short backoff.  Total
+                # wait is capped at ~2.5s so the UI does not stall.
+                expected_found = (op_kind == "install")
+                for attempt in range(5):
+                    try:
+                        self.detect(dep_id, force=True)
+                    except Exception as exc:
+                        logger.debug(
+                            "post-%s detect attempt %d failed: %s",
+                            op_kind, attempt, exc,
+                        )
+                        break
+                    if st.found == expected_found:
+                        break
+                    # On uninstall, also wipe the cached location so the
+                    # next detect cannot trust a stale glob hit.
+                    if op_kind == "uninstall":
+                        st.location = ""
+                    await asyncio.sleep(0.5)
+                logger.info(
+                    "post-%s detect: found=%s version=%s location=%s rc=%s",
+                    op_kind, st.found, st.version, st.location, st.return_code,
+                )
 
     # ── Status ─────────────────────────────────────────────────────────
 

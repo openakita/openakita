@@ -253,6 +253,7 @@ class ChainGenerator:
         resolution: str = "720p",
         mode: str = "serial",
         max_parallel: int = 3,
+        chain_group: str | None = None,
     ) -> list[dict]:
         """Generate all segments with chaining.
 
@@ -262,8 +263,23 @@ class ChainGenerator:
         ``max_parallel`` (parallel mode only) — bounded concurrency for the
         ``run_parallel`` worker that submits the per-segment Ark calls.
         Always returns a result for every input (no silent skip — N1.1).
+
+        ``chain_group`` (Sprint 8 / V2) — opaque ID stamped onto every
+        DB-side ``params.chain_group`` so ``GET /long-video/tasks/<id>``
+        can recover progress for a fire-and-forget run, and so the UI can
+        prevent duplicate submissions across tab switches / page reloads.
         """
         results: list[dict] = []
+
+        # Helper: build the params dict every create_task() call passes
+        # so /long-video/tasks/<group_id> can join and aggregate later.
+        def _seg_params(seg: dict) -> dict:
+            base: dict = {}
+            if chain_group:
+                base["chain_group"] = chain_group
+                base["segment_index"] = seg.get("index", 0)
+                base["chain_mode"] = mode
+            return base
 
         if mode == "serial":
             prev_task = None
@@ -312,6 +328,7 @@ class ChainGenerator:
                     prompt=seg.get("prompt", ""),
                     mode="i2v" if has_frame else "t2v",
                     model=model_id,
+                    params=_seg_params(seg),
                 )
                 results.append(task)
 
@@ -335,6 +352,7 @@ class ChainGenerator:
                     prompt=seg.get("prompt", ""),
                     mode="t2v",
                     model=model_id,
+                    params=_seg_params(seg),
                 )
 
             # N1.1 防御：run_parallel 保证每个 input 都有 ParallelResult，

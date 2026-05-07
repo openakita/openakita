@@ -21,8 +21,10 @@ import sys
 from pathlib import Path
 
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent
-if str(_PLUGIN_DIR) not in sys.path:
-    sys.path.insert(0, str(_PLUGIN_DIR))
+_PLUGIN_DIR_STR = str(_PLUGIN_DIR)
+while _PLUGIN_DIR_STR in sys.path:
+    sys.path.remove(_PLUGIN_DIR_STR)
+sys.path.insert(0, _PLUGIN_DIR_STR)
 
 # Names colliding with other plugins / SDK modules.  ``ark_client`` /
 # ``long_video`` / ``models`` / ``prompt_optimizer`` are unique to this plugin

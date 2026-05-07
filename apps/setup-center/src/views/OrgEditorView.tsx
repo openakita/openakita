@@ -707,6 +707,52 @@ export function OrgEditorView({
   // Org settings panel collapse
   const [personaCollapsed, setPersonaCollapsed] = useState(false);
   const [bizCollapsed, setBizCollapsed] = useState(false);
+  const [watchdogCollapsed, setWatchdogCollapsed] = useState(true);
+  // 看门狗本地草稿（默认 0=禁用），保存后才写入 .env
+  const [watchdogDraft, setWatchdogDraft] = useState<{ warn: string; autostop: string; timeout: string }>({
+    warn: "",
+    autostop: "",
+    timeout: "",
+  });
+  const [watchdogLoaded, setWatchdogLoaded] = useState(false);
+  const [watchdogSaving, setWatchdogSaving] = useState(false);
+
+  const loadWatchdogConfig = useCallback(async () => {
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/config/env`);
+      const data = await res.json();
+      const env = (data?.env || {}) as Record<string, string>;
+      setWatchdogDraft({
+        warn: env.ORG_COMMAND_STUCK_WARN_SECS || "",
+        autostop: env.ORG_COMMAND_STUCK_AUTOSTOP_SECS || "",
+        timeout: env.ORG_COMMAND_TIMEOUT_SECS || "",
+      });
+      setWatchdogLoaded(true);
+    } catch {
+      setWatchdogLoaded(true);
+    }
+  }, [apiBaseUrl]);
+
+  const saveWatchdogConfig = useCallback(async () => {
+    setWatchdogSaving(true);
+    try {
+      const entries: Record<string, string> = {
+        ORG_COMMAND_STUCK_WARN_SECS: watchdogDraft.warn.trim() || "0",
+        ORG_COMMAND_STUCK_AUTOSTOP_SECS: watchdogDraft.autostop.trim() || "0",
+        ORG_COMMAND_TIMEOUT_SECS: watchdogDraft.timeout.trim() || "0",
+      };
+      await safeFetch(`${apiBaseUrl}/api/config/env`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries }),
+      });
+      showToast(t("org.editor.watchdogSaved"), "ok");
+    } catch {
+      showToast(t("org.editor.watchdogSaveFailed"), "error");
+    } finally {
+      setWatchdogSaving(false);
+    }
+  }, [apiBaseUrl, watchdogDraft, showToast, t]);
 
   // New node form
   const [newNodeTitle, setNewNodeTitle] = useState("");
@@ -4527,6 +4573,104 @@ export function OrgEditorView({
             )}
           </div>
           )}
+
+          {/* ── 任务看门狗（高级，全局配置；默认全部关闭） ── */}
+          <div className="card" style={{ padding: 10, marginBottom: 10 }}>
+            <div
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+              onClick={() => {
+                const next = !watchdogCollapsed;
+                setWatchdogCollapsed(next);
+                if (!next && !watchdogLoaded) void loadWatchdogConfig();
+              }}
+            >
+              <div style={{ fontWeight: 600, fontSize: 13 }}>
+                {t("org.editor.watchdogTitle")}
+                {watchdogCollapsed && (watchdogDraft.warn || watchdogDraft.autostop || watchdogDraft.timeout) && (
+                  Number(watchdogDraft.warn || 0) > 0 ||
+                  Number(watchdogDraft.autostop || 0) > 0 ||
+                  Number(watchdogDraft.timeout || 0) > 0
+                ) && (
+                  <span style={{ fontWeight: 400, fontSize: 11, color: "var(--ok)", marginLeft: 6 }}>
+                    {t("org.editor.watchdogActive")}
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>{watchdogCollapsed ? "▸" : "▾"}</span>
+            </div>
+            {!watchdogCollapsed && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8, lineHeight: 1.5 }}>
+                  {t("org.editor.watchdogHint")}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
+                      {t("org.editor.watchdogWarnLabel")}
+                    </label>
+                    <input
+                      className="input"
+                      style={{ width: "100%", fontSize: 12 }}
+                      placeholder="0"
+                      value={watchdogDraft.warn}
+                      onChange={(e) => setWatchdogDraft({ ...watchdogDraft, warn: e.target.value })}
+                    />
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                      {t("org.editor.watchdogWarnHelp")}
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
+                      {t("org.editor.watchdogAutostopLabel")}
+                    </label>
+                    <input
+                      className="input"
+                      style={{ width: "100%", fontSize: 12 }}
+                      placeholder="0"
+                      value={watchdogDraft.autostop}
+                      onChange={(e) => setWatchdogDraft({ ...watchdogDraft, autostop: e.target.value })}
+                    />
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                      {t("org.editor.watchdogAutostopHelp")}
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
+                      {t("org.editor.watchdogTimeoutLabel")}
+                    </label>
+                    <input
+                      className="input"
+                      style={{ width: "100%", fontSize: 12 }}
+                      placeholder="0"
+                      value={watchdogDraft.timeout}
+                      onChange={(e) => setWatchdogDraft({ ...watchdogDraft, timeout: e.target.value })}
+                    />
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                      {t("org.editor.watchdogTimeoutHelp")}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 10, display: "flex", gap: 6 }}>
+                  <button
+                    className="btnSmall"
+                    style={{ fontSize: 11, padding: "4px 10px" }}
+                    disabled={watchdogSaving}
+                    onClick={() => void saveWatchdogConfig()}
+                  >
+                    {watchdogSaving ? t("org.editor.watchdogSaving") : t("org.editor.watchdogSave")}
+                  </button>
+                  <button
+                    className="btnSmall"
+                    style={{ fontSize: 11, padding: "4px 10px" }}
+                    disabled={watchdogSaving}
+                    onClick={() => setWatchdogDraft({ warn: "", autostop: "", timeout: "" })}
+                  >
+                    {t("org.editor.watchdogClear")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* ── 用户身份 ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>

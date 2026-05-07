@@ -418,7 +418,7 @@ export function AdvancedView(props: AdvancedViewProps) {
         <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("config.ctxLongTaskTitle")}</h3>
         <p className="text-xs text-muted-foreground mb-2">{t("config.ctxLongTaskHint")}</p>
 
-        <div className="mb-2">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -426,22 +426,47 @@ export function AdvancedView(props: AdvancedViewProps) {
             onClick={() => {
               setEnvDraft((prev) => {
                 let next = prev;
-                next = envSet(next, "CONTEXT_HARD_TERMINATE_RATIO", "0.98");
-                next = envSet(next, "CONTEXT_TOKEN_ANOMALY_THRESHOLD", "80000");
-                next = envSet(next, "CONTEXT_TOKEN_ANOMALY_MAX_RECOVERIES", "3");
-                next = envSet(next, "TASK_BUDGET_TOOL_CALLS", "200");
                 next = envSet(next, "TASK_BUDGET_DURATION", "0");
-                next = envSet(next, "TASK_BUDGET_ITERATIONS", "300");
-                next = envSet(next, "SAME_TOOL_CALL_LIMIT", "10");
-                next = envSet(next, "READONLY_STAGNATION_HARD_LIMIT", "12");
-                next = envSet(next, "CONTEXT_COMPRESSION_THRESHOLD", "0.85");
+                next = envSet(next, "TASK_BUDGET_ITERATIONS", "0");
+                next = envSet(next, "TASK_BUDGET_TOOL_CALLS", "0");
+                next = envSet(next, "TASK_BUDGET_TOKENS", "0");
+                next = envSet(next, "TASK_BUDGET_COST", "0");
+                next = envSet(next, "SAME_TOOL_CALL_LIMIT", "0");
+                next = envSet(next, "READONLY_STAGNATION_LIMIT", "0");
+                next = envSet(next, "READONLY_STAGNATION_HARD_LIMIT", "0");
+                next = envSet(next, "SUPERVISOR_ENABLED", "false");
+                next = envSet(next, "PROGRESS_TIMEOUT_SECONDS", "0");
+                next = envSet(next, "HARD_TIMEOUT_SECONDS", "0");
                 return next;
               });
-              notifySuccess(t("config.ctxLongTaskPresetSaved"));
+              notifySuccess(t("config.unrestrictedPresetSaved"));
             }}
           >
-            {t("config.ctxLongTaskPresetBtn")}
+            {t("config.unrestrictedPresetBtn")}
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!!busy}
+            onClick={() => {
+              setEnvDraft((prev) => {
+                let next = prev;
+                next = envSet(next, "TASK_BUDGET_DURATION", "600");
+                next = envSet(next, "TASK_BUDGET_ITERATIONS", "100");
+                next = envSet(next, "TASK_BUDGET_TOOL_CALLS", "100");
+                next = envSet(next, "SAME_TOOL_CALL_LIMIT", "8");
+                next = envSet(next, "READONLY_STAGNATION_LIMIT", "3");
+                next = envSet(next, "READONLY_STAGNATION_HARD_LIMIT", "10");
+                next = envSet(next, "SUPERVISOR_ENABLED", "true");
+                next = envSet(next, "PROGRESS_TIMEOUT_SECONDS", "1200");
+                return next;
+              });
+              notifySuccess(t("config.strictPresetSaved"));
+            }}
+          >
+            {t("config.strictPresetBtn")}
+          </Button>
+          <span className="text-xs text-muted-foreground">{t("config.presetHint")}</span>
         </div>
 
         <Section title={t("config.ctxMgmtTitle")}>
@@ -464,15 +489,20 @@ export function AdvancedView(props: AdvancedViewProps) {
           </div>
         </Section>
 
-        <Section title={t("config.ctxTaskBudgetTitle")} className="mt-2">
+        <Section title={t("config.ctxTaskBudgetTitle")} subtitle={t("config.ctxTaskBudgetHint")} className="mt-2">
           <div className="grid3">
-            {FT({ k: "TASK_BUDGET_TOOL_CALLS", label: t("config.ctxTaskBudgetToolCalls"), placeholder: "200", help: t("config.ctxTaskBudgetToolCallsHelp") })}
-            {FT({ k: "SAME_TOOL_CALL_LIMIT", label: t("config.ctxSameToolLimit"), placeholder: "10", help: t("config.ctxSameToolLimitHelp") })}
-            {FT({ k: "READONLY_STAGNATION_HARD_LIMIT", label: t("config.ctxReadonlyHardLimit"), placeholder: "12", help: t("config.ctxReadonlyHardLimitHelp") })}
+            {FT({ k: "TASK_BUDGET_TOOL_CALLS", label: t("config.ctxTaskBudgetToolCalls"), placeholder: "0", help: t("config.ctxTaskBudgetToolCallsHelp") })}
+            {FT({ k: "SAME_TOOL_CALL_LIMIT", label: t("config.ctxSameToolLimit"), placeholder: "0", help: t("config.ctxSameToolLimitHelp") })}
+            {FT({ k: "READONLY_STAGNATION_HARD_LIMIT", label: t("config.ctxReadonlyHardLimit"), placeholder: "0", help: t("config.ctxReadonlyHardLimitHelp") })}
           </div>
           <div className="grid2 mt-2">
             {FT({ k: "TASK_BUDGET_DURATION", label: t("config.ctxTaskBudgetDuration"), placeholder: "0", help: t("config.ctxTaskBudgetDurationHelp") })}
-            {FT({ k: "TASK_BUDGET_ITERATIONS", label: t("config.ctxTaskBudgetIterations"), placeholder: "300", help: t("config.ctxTaskBudgetIterationsHelp") })}
+            {FT({ k: "TASK_BUDGET_ITERATIONS", label: t("config.ctxTaskBudgetIterations"), placeholder: "0", help: t("config.ctxTaskBudgetIterationsHelp") })}
+          </div>
+          <div className="grid3 mt-2">
+            {FT({ k: "PROGRESS_TIMEOUT_SECONDS", label: t("config.ctxProgressTimeout"), placeholder: "0", help: t("config.ctxProgressTimeoutHelp") })}
+            {FT({ k: "HARD_TIMEOUT_SECONDS", label: t("config.ctxHardTimeout"), placeholder: "0", help: t("config.ctxHardTimeoutHelp") })}
+            {FB({ k: "SUPERVISOR_ENABLED", label: t("config.ctxSupervisorEnabled"), help: t("config.ctxSupervisorEnabledHelp") })}
           </div>
         </Section>
 
@@ -488,7 +518,7 @@ export function AdvancedView(props: AdvancedViewProps) {
             {FT({ k: "API_TOOLS_SCHEMA_BUDGET_TOKENS", label: t("config.apiToolsSchemaBudget"), placeholder: "12000", help: t("config.apiToolsSchemaBudgetHelp") })}
           </div>
           <div className="grid3 mt-2">
-            {FT({ k: "READONLY_STAGNATION_LIMIT", label: t("config.ctxReadonlySoftLimit"), placeholder: "3", help: t("config.ctxReadonlySoftLimitHelp") })}
+            {FT({ k: "READONLY_STAGNATION_LIMIT", label: t("config.ctxReadonlySoftLimit"), placeholder: "0", help: t("config.ctxReadonlySoftLimitHelp") })}
             {FT({ k: "TASK_BUDGET_TOKENS", label: t("config.ctxTaskBudgetTokens"), placeholder: "0", help: t("config.ctxTaskBudgetTokensHelp") })}
             {FT({ k: "TASK_BUDGET_COST", label: t("config.ctxTaskBudgetCost"), placeholder: "0", help: t("config.ctxTaskBudgetCostHelp") })}
           </div>

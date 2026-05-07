@@ -104,6 +104,13 @@ RETRY_DELAY_S = 2.0
 SESSION_PAUSE_DURATION_S = 3600  # 1 hour
 SESSION_EXPIRED_ERRCODE = -14
 
+# Permanent / non-retryable iLink Bot return codes. Re-trying these
+# only buys ~75s of delay (4 attempts × exponential 5+10+20+40 backoff)
+# without any chance of success — the server has already rejected the
+# request for a non-transient reason (e.g. chat_id unreachable, no
+# friend relationship, no fresh context_token, malformed param).
+NON_RETRYABLE_RET_CODES: frozenset[int] = frozenset({-2, SESSION_EXPIRED_ERRCODE})
+
 UPLOAD_MAX_RETRIES = 3
 CONFIG_CACHE_TTL_S = 86400  # 24h
 CONFIG_CACHE_INITIAL_RETRY_S = 2.0
@@ -1198,14 +1205,17 @@ class WeChatAdapter(ChannelAdapter):
                 "context_token": ctx_token or None,
             }
         }
+        token_hint = " (no context_token cached for this chat)" if not ctx_token else ""
         for attempt in range(1, SEND_RATE_LIMIT_RETRIES + 1):
             await self._rate_limit_wait(to)
             resp = await self._api_post("ilink/bot/sendmessage", body)
             try:
                 self._check_send_response(resp, action="sendmessage(text)")
                 break
-            except RuntimeError:
-                if resp.get("ret") == SESSION_EXPIRED_ERRCODE:
+            except RuntimeError as exc:
+                if resp.get("ret") in NON_RETRYABLE_RET_CODES:
+                    if token_hint and token_hint not in str(exc):
+                        raise RuntimeError(str(exc) + token_hint) from exc
                     raise
                 if attempt < SEND_RATE_LIMIT_RETRIES:
                     delay = SEND_RATE_LIMIT_BASE_DELAY_S * (2 ** (attempt - 1))
@@ -1216,6 +1226,8 @@ class WeChatAdapter(ChannelAdapter):
                     await asyncio.sleep(delay)
                     body["msg"]["client_id"] = f"openakita-wechat-{uuid.uuid4().hex[:12]}"
                 else:
+                    if token_hint and token_hint not in str(exc):
+                        raise RuntimeError(str(exc) + token_hint) from exc
                     raise
         self._send_count += 1
         logger.info(f"{self.channel_name}: text sent to={_redact_id(to)}, len={len(text)}")
@@ -1313,7 +1325,7 @@ class WeChatAdapter(ChannelAdapter):
                 self._check_send_response(resp, action="sendmessage(media)")
                 break
             except RuntimeError:
-                if resp.get("ret") == SESSION_EXPIRED_ERRCODE:
+                if resp.get("ret") in NON_RETRYABLE_RET_CODES:
                     raise
                 if attempt < SEND_RATE_LIMIT_RETRIES:
                     delay = SEND_RATE_LIMIT_BASE_DELAY_S * (2 ** (attempt - 1))

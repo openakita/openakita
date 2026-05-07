@@ -76,8 +76,9 @@ _VALID_TRANSITIONS: dict[SubAgentStatus, frozenset[SubAgentStatus]] = {
 MAX_DELEGATION_DEPTH = 5
 CHECK_INTERVAL = 3.0  # how often to poll progress (matches frontend polling)
 
-# Defaults — overridden at runtime by settings when available
-_DEFAULT_IDLE_TIMEOUT = 1200.0
+# Defaults — overridden at runtime by settings when available.
+# 默认全部 0 = 不做"agent 自检自杀"，对齐 Claude Code 哲学；卡死由用户主动停止。
+_DEFAULT_IDLE_TIMEOUT = 0  # 0 = 禁用无进展超时检测
 _DEFAULT_HARD_TIMEOUT = 0  # 0 = disabled
 
 _BUDGET_GUIDE = (
@@ -109,7 +110,7 @@ def _with_budget_guide(text: str, exit_reason: str = "") -> str:
 
 
 def _delegation_notice_title(exit_reason: str) -> str:
-    if exit_reason == "budget_exceeded":
+    if exit_reason in {"budget_exceeded", "budget_paused"}:
         return "任务暂停通知"
     if exit_reason in {"error", "timeout", "cancelled", "loop_terminated", "max_turns"}:
         return "任务结束通知"
@@ -149,6 +150,23 @@ class AgentHealth:
         return self.total_latency_ms / max(self.successful, 1)
 
 
+# IM 通知头中 exit_reason 的中文展示映射；让用户在通知里直接看懂状态。
+_EXIT_REASON_DISPLAY: dict[str, str] = {
+    "completed": "已完成",
+    "normal": "已完成",
+    "max_turns": "迭代上限",
+    "max_iterations": "迭代上限",
+    "timeout": "超时",
+    "error": "异常",
+    "cancelled": "已取消",
+    "loop_terminated": "循环防护中止",
+    "ask_user": "等待用户回复",
+    "verify_incomplete": "验证未完成",
+    # 预算暂停场景：用户对话历史和已有进展都已保留，回复"继续"即可让系统接力完成
+    "budget_paused": "预算暂停（可回复\"继续\"接力）",
+}
+
+
 @dataclass
 class DelegationResult:
     """Structured result from a sub-agent delegation."""
@@ -159,7 +177,8 @@ class DelegationResult:
     tools_used: list[str] = field(default_factory=list)
     artifacts: list[dict] = field(default_factory=list)
     elapsed_s: float = 0.0
-    exit_reason: str = "completed"  # "completed" | "max_turns" | "timeout" | "error" | "cancelled"
+    exit_reason: str = "completed"
+    # 取值参考 _EXIT_REASON_DISPLAY 的 key；未列出的会原样显示
 
     def to_tool_response(self) -> str:
         """Serialize for tool response with structured metadata header.
@@ -170,9 +189,10 @@ class DelegationResult:
         sentinel format is unchanged for backward compatibility.
         """
         notice_title = _delegation_notice_title(self.exit_reason)
+        status_display = _EXIT_REASON_DISPLAY.get(self.exit_reason, self.exit_reason)
         header = (
             f"[{notice_title}] Agent: {self.agent_id}"
-            f" | 状态: {self.exit_reason}"
+            f" | 状态: {status_display}"
             f" | 耗时: {self.elapsed_s}s"
         )
         if self.tools_used:
@@ -625,9 +645,9 @@ class AgentOrchestrator:
         """
         from openakita.config import settings
 
-        idle_timeout = float(
-            getattr(settings, "progress_timeout_seconds", 0) or _DEFAULT_IDLE_TIMEOUT
-        )
+        # 默认 0 = 不做"无进展超时"自检自杀（Claude Code 风格）。
+        # 仅在用户在【设置中心 → 高级设置】把 PROGRESS_TIMEOUT_SECONDS 设为非零时才生效。
+        idle_timeout = float(getattr(settings, "progress_timeout_seconds", 0) or 0)
         hard_timeout = float(getattr(settings, "hard_timeout_seconds", 0) or _DEFAULT_HARD_TIMEOUT)
 
         if self._profile_store is None or self._pool is None:
@@ -768,7 +788,7 @@ class AgentOrchestrator:
                     state_key, "running", self._sub_agent_states[state_key]
                 )
 
-                if idle_s >= idle_timeout:
+                if idle_timeout > 0 and idle_s >= idle_timeout:
                     logger.warning(
                         f"[Orchestrator] Agent {agent_profile_id} idle for "
                         f"{idle_s:.0f}s with no progress "

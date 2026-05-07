@@ -1244,15 +1244,14 @@ class ReasoningEngine:
         tools_executed_in_task = False
         _supervisor_intervened = False
         _tool_call_counter: dict[str, int] = {}
-        _MAX_SAME_TOOL_PER_TASK = int(getattr(settings, "same_tool_call_limit", 5) or 5)
+        # same_tool_call_limit=0（默认）= 不限同工具同参数重复，调用处需先判 > 0
+        _MAX_SAME_TOOL_PER_TASK = max(0, int(getattr(settings, "same_tool_call_limit", 0) or 0))
+        # 0=不限/禁用对应检测；LoopBudgetGuard 内部已处理 0 短路
         _loop_budget_guard = LoopBudgetGuard(
-            max_total_tool_calls=max(1, int(getattr(settings, "task_budget_tool_calls", 30) or 30)),
-            readonly_stagnation_limit=int(
-                getattr(settings, "readonly_stagnation_limit", _READONLY_STAGNATION_LIMIT)
-                or _READONLY_STAGNATION_LIMIT
-            ),
-            readonly_stagnation_hard_limit=int(
-                getattr(settings, "readonly_stagnation_hard_limit", 6) or 6
+            max_total_tool_calls=max(0, int(getattr(settings, "task_budget_tool_calls", 0) or 0)),
+            readonly_stagnation_limit=max(0, int(getattr(settings, "readonly_stagnation_limit", 0) or 0)),
+            readonly_stagnation_hard_limit=max(
+                0, int(getattr(settings, "readonly_stagnation_hard_limit", 0) or 0)
             ),
             token_anomaly_threshold=int(
                 getattr(settings, "context_token_anomaly_threshold", TOKEN_ANOMALY_THRESHOLD)
@@ -1373,6 +1372,8 @@ class ReasoningEngine:
                     task_description=task_description,
                     task_id=state.task_id,
                 )
+                # 让 DelegationResult.exit_reason 反映"预算暂停"而不是误显示成 completed
+                self._last_exit_reason = "budget_paused"
                 return _format_budget_pause_message(budget_status)
             elif budget_status.action in (BudgetAction.WARNING, BudgetAction.DOWNGRADE):
                 # 非流式路径无事件通道，仅 log；下次进入流式或前端轮询时
@@ -2084,7 +2085,10 @@ class ReasoningEngine:
                     _tc_args = tc.get("input", tc.get("arguments", {}))
                     _tc_key = _tool_rate_limit_key(_tc_name, _tc_args)
                     _tool_call_counter[_tc_key] = _tool_call_counter.get(_tc_key, 0) + 1
-                    if _tool_call_counter[_tc_key] > _MAX_SAME_TOOL_PER_TASK:
+                    if (
+                        _MAX_SAME_TOOL_PER_TASK > 0
+                        and _tool_call_counter[_tc_key] > _MAX_SAME_TOOL_PER_TASK
+                    ):
                         logger.warning(
                             f"[RateLimit] Tool invocation '{_tc_key}' called "
                             f"{_tool_call_counter[_tc_key]} times "
@@ -2939,15 +2943,14 @@ class ReasoningEngine:
             tools_executed_in_task = False
             _supervisor_intervened = False
             _tool_call_counter: dict[str, int] = {}
-            _MAX_SAME_TOOL_PER_TASK = int(getattr(settings, "same_tool_call_limit", 5) or 5)
+            # same_tool_call_limit=0（默认）= 不限同工具同参数重复，调用处需先判 > 0
+            _MAX_SAME_TOOL_PER_TASK = max(0, int(getattr(settings, "same_tool_call_limit", 0) or 0))
+            # 0=不限/禁用对应检测；LoopBudgetGuard 内部已处理 0 短路
             _loop_budget_guard = LoopBudgetGuard(
-                max_total_tool_calls=max(1, int(getattr(settings, "task_budget_tool_calls", 30) or 30)),
-                readonly_stagnation_limit=int(
-                    getattr(settings, "readonly_stagnation_limit", _READONLY_STAGNATION_LIMIT)
-                    or _READONLY_STAGNATION_LIMIT
-                ),
-                readonly_stagnation_hard_limit=int(
-                    getattr(settings, "readonly_stagnation_hard_limit", 6) or 6
+                max_total_tool_calls=max(0, int(getattr(settings, "task_budget_tool_calls", 0) or 0)),
+                readonly_stagnation_limit=max(0, int(getattr(settings, "readonly_stagnation_limit", 0) or 0)),
+                readonly_stagnation_hard_limit=max(
+                    0, int(getattr(settings, "readonly_stagnation_hard_limit", 0) or 0)
                 ),
                 token_anomaly_threshold=int(
                     getattr(settings, "context_token_anomaly_threshold", TOKEN_ANOMALY_THRESHOLD)
@@ -3046,7 +3049,8 @@ class ReasoningEngine:
                 budget_status = self._budget.check()
                 if budget_status.action == BudgetAction.PAUSE:
                     logger.warning(f"[Budget-Stream] PAUSE: {budget_status.message}")
-                    self._last_exit_reason = "budget_exceeded"
+                    # 让 DelegationResult.exit_reason 反映"预算暂停"而非误显示 completed
+                    self._last_exit_reason = "budget_paused"
                     self._save_react_trace(
                         react_trace,
                         conversation_id,
@@ -3948,7 +3952,10 @@ class ReasoningEngine:
                         # arguments is valid progress, especially for todo step updates.
                         _tool_key = _tool_rate_limit_key(tool_name, tool_args)
                         _tool_call_counter[_tool_key] = _tool_call_counter.get(_tool_key, 0) + 1
-                        if _tool_call_counter[_tool_key] > _MAX_SAME_TOOL_PER_TASK:
+                        if (
+                            _MAX_SAME_TOOL_PER_TASK > 0
+                            and _tool_call_counter[_tool_key] > _MAX_SAME_TOOL_PER_TASK
+                        ):
                             logger.warning(
                                 f"[RateLimit] Tool invocation '{_tool_key}' called "
                                 f"{_tool_call_counter[_tool_key]} times "
