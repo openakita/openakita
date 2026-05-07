@@ -402,6 +402,29 @@ export function ChatView({
   const [displayActiveSubAgents, setDisplayActiveSubAgents] = useState<SubAgentEntry[]>([]);
   const [displaySubAgentTasks, setDisplaySubAgentTasks] = useState<SubAgentTask[]>([]);
 
+  // P5.1: agent_id → parent_agent_id map, populated client-side from
+  // agent_handoff / delegate_to_agent / delegate_parallel events.  Used by
+  // SubAgentCards to render delegation chains as a tree.  We keep it in a
+  // ref (not state) because SubAgentTask.parent_agent_id snapshots the value
+  // at the time we apply the next sub_agent_state / agents:sub_state patch.
+  const parentAgentMapRef = useRef<Map<string, string>>(new Map());
+
+  // Enrich sub-agent tasks with parent_agent_id inferred from the map.
+  // Used at every place that hydrates ctx.subAgentTasks (WS patch, REST
+  // polling fallback, refresh handlers) so the tree view stays consistent.
+  const enrichTasksWithParents = useCallback((tasks: SubAgentTask[]): SubAgentTask[] => {
+    if (!tasks?.length) return tasks;
+    let mutated = false;
+    const next = tasks.map((t) => {
+      if (t.parent_agent_id) return t;
+      const p = parentAgentMapRef.current.get(t.agent_id);
+      if (!p) return t;
+      mutated = true;
+      return { ...t, parent_agent_id: p };
+    });
+    return mutated ? next : tasks;
+  }, []);
+
   // ── Per-session streaming context (supports concurrent streams) ──
   const streamContexts = useRef<Map<string, StreamContext>>(new Map());
   const activeConvIdRef = useRef(activeConvId);
@@ -1112,13 +1135,21 @@ export function ChatView({
       const ctx = streamContexts.current.get(convId);
       if (!ctx) return;
 
-      const idx = ctx.subAgentTasks.findIndex((t) => t.agent_id === patch.agent_id);
+      // P5.1: enrich with the inferred parent so SubAgentCards can build the
+      // delegation tree.  We only set when known so a missing parent never
+      // overwrites a previously-known one.
+      const inferredParent = parentAgentMapRef.current.get(patch.agent_id);
+      const enrichedPatch: SubAgentTask = inferredParent
+        ? { ...patch, parent_agent_id: patch.parent_agent_id || inferredParent }
+        : patch;
+
+      const idx = ctx.subAgentTasks.findIndex((t) => t.agent_id === enrichedPatch.agent_id);
       if (idx >= 0) {
         ctx.subAgentTasks = ctx.subAgentTasks.map((t, i) =>
-          i === idx ? { ...t, ...patch } : t,
+          i === idx ? { ...t, ...enrichedPatch } : t,
         );
-      } else if (patch.status === "starting" || patch.status === "running") {
-        ctx.subAgentTasks = [...ctx.subAgentTasks, patch];
+      } else if (enrichedPatch.status === "starting" || enrichedPatch.status === "running") {
+        ctx.subAgentTasks = [...ctx.subAgentTasks, enrichedPatch];
       }
       if (activeConvIdRef.current === convId) {
         setDisplaySubAgentTasks([...ctx.subAgentTasks]);
@@ -2297,6 +2328,8 @@ export function ChatView({
                 const callId = event.call_id || event.id;
                 if (toolName === "delegate_to_agent" && event.args?.agent_id) {
                   const targetId = String(event.args.agent_id);
+                  // P5.1: the agent currently driving this stream is the parent.
+                  if (currentAgent) parentAgentMapRef.current.set(targetId, currentAgent);
                   updateSubAgents((prev) => {
                     const exists = prev.find((s) => s.agentId === targetId);
                     if (exists) return prev.map((s) => s.agentId === targetId ? { ...s, status: "delegating", startTime: Date.now() } : s);
@@ -2309,6 +2342,8 @@ export function ChatView({
                     for (const task of event.args.tasks as Array<{ agent_id?: string; reason?: string }>) {
                       if (!task.agent_id) continue;
                       const targetId = String(task.agent_id);
+                      // P5.1: same parent inference as delegate_to_agent.
+                      if (currentAgent) parentAgentMapRef.current.set(targetId, currentAgent);
                       const exists = updated.find((s) => s.agentId === targetId);
                       if (exists) {
                         updated = updated.map((s) => s.agentId === targetId ? { ...s, status: "delegating" as const, startTime: Date.now() } : s);
@@ -2352,8 +2387,9 @@ export function ChatView({
                   const doFetch = () => {
                     safeFetch(`${apiBase}/api/agents/sub-tasks?conversation_id=${encodeURIComponent(thisConvId)}`)
                       .then((r) => r.json())
-                      .then((data: SubAgentTask[]) => {
-                        if (!Array.isArray(data)) return;
+                      .then((rawData: SubAgentTask[]) => {
+                        if (!Array.isArray(rawData)) return;
+                        const data = enrichTasksWithParents(rawData);
                         const c = streamContexts.current.get(thisConvId);
                         if (c) c.subAgentTasks = data;
                         if (activeConvIdRef.current === thisConvId) setDisplaySubAgentTasks(data);
@@ -2406,8 +2442,9 @@ export function ChatView({
                   if (sctx.pollingTimer) { clearInterval(sctx.pollingTimer); sctx.pollingTimer = null; }
                   safeFetch(`${apiBase}/api/agents/sub-tasks?conversation_id=${encodeURIComponent(thisConvId)}`)
                     .then((r) => r.json())
-                    .then((data: SubAgentTask[]) => {
-                      if (!Array.isArray(data)) return;
+                    .then((rawData: SubAgentTask[]) => {
+                      if (!Array.isArray(rawData)) return;
+                      const data = enrichTasksWithParents(rawData);
                       const c = streamContexts.current.get(thisConvId);
                       if (c) c.subAgentTasks = data;
                       if (activeConvIdRef.current === thisConvId) setDisplaySubAgentTasks(data);
@@ -2634,6 +2671,12 @@ export function ChatView({
                 }];
                 break;
               case "agent_handoff": {
+                // P5.1: capture delegation parentage so SubAgentCards can render
+                // a tree.  We only record when the from_agent is non-empty,
+                // letting unknown roots fall through as top-level nodes.
+                if (event.from_agent && event.to_agent) {
+                  parentAgentMapRef.current.set(String(event.to_agent), String(event.from_agent));
+                }
                 updateSubAgents((prev) => {
                   const exists = prev.find((s) => s.agentId === event.to_agent);
                   if (exists) return prev.map((s) => s.agentId === event.to_agent ? { ...s, status: "delegating", startTime: Date.now() } : s);
@@ -2947,8 +2990,9 @@ export function ChatView({
           const doFetch = () => {
             safeFetch(`${apiBase}/api/agents/sub-tasks?conversation_id=${encodeURIComponent(thisConvId)}`)
               .then((r) => r.json())
-              .then((data: SubAgentTask[]) => {
-                if (!Array.isArray(data)) return;
+              .then((rawData: SubAgentTask[]) => {
+                if (!Array.isArray(rawData)) return;
+                const data = enrichTasksWithParents(rawData);
                 if (activeConvIdRef.current === thisConvId) setDisplaySubAgentTasks(data);
                 const allDone = data.length > 0 && data.every(
                   (t) => t.status === "completed" || t.status === "error" || t.status === "timeout" || t.status === "cancelled"

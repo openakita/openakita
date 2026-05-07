@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubAgentTask } from "../utils/chatTypes";
 import { SVG_PATHS } from "../utils/chatHelpers";
@@ -18,17 +18,58 @@ export function RenderIcon({ icon, size = 14 }: { icon: string; size?: number })
 }
 
 const FADE_DELAY_MS = 30_000;
+const MAX_DEPTH = 4; // P5.1: render guard against pathological cycles
+const INDENT_PX = 18;
+
+/**
+ * P5.1: cap of nesting visible per page.  We keep the same page size for the
+ * top-level rows; children always render with their parent in the same page
+ * to avoid splitting a delegation chain.
+ */
+const PAGE_SIZE = 4;
+
+type TaskNode = {
+  task: SubAgentTask;
+  children: TaskNode[];
+};
+
+/**
+ * Build the parent → children forest from a flat task list.
+ *
+ * Edge cases handled:
+ *   - parent_agent_id pointing to an unknown agent → treated as a top-level
+ *     root so the chain is still visible (just without its real ancestor).
+ *   - simple cycles (a → b → a) are broken by the depth-budget walker below.
+ */
+function buildForest(tasks: SubAgentTask[]): TaskNode[] {
+  if (!tasks.length) return [];
+  const byId = new Map<string, TaskNode>();
+  for (const task of tasks) {
+    byId.set(task.agent_id, { task, children: [] });
+  }
+  const roots: TaskNode[] = [];
+  for (const task of tasks) {
+    const node = byId.get(task.agent_id)!;
+    const parentId = task.parent_agent_id;
+    if (parentId && byId.has(parentId) && parentId !== task.agent_id) {
+      byId.get(parentId)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  return roots;
+}
 
 export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
   const [fadedIds, setFadedIds] = useState<Set<string>>(new Set());
   const fadedIdsRef = useRef(fadedIds);
   fadedIdsRef.current = fadedIds;
   const fadeTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const PAGE_SIZE = 4;
 
   useEffect(() => {
     const timers = fadeTimersRef.current;
@@ -57,13 +98,27 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
     };
   }, []);
 
-  const visibleTasks = tasks.filter((t) => !fadedIds.has(t.agent_id));
-  const totalPages = Math.max(1, Math.ceil(visibleTasks.length / PAGE_SIZE));
+  const visibleTasks = useMemo(
+    () => tasks.filter((tk) => !fadedIds.has(tk.agent_id)),
+    [tasks, fadedIds],
+  );
+
+  const forest = useMemo(() => buildForest(visibleTasks), [visibleTasks]);
+  const totalPages = Math.max(1, Math.ceil(forest.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
-  const visible = visibleTasks.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const visibleRoots = forest.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
+  }, []);
+
+  const toggleCollapse = useCallback((id: string) => {
+    setCollapsedParents((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }, []);
 
   const restoreFaded = useCallback(() => {
@@ -106,6 +161,105 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
     return String(n);
   };
 
+  const renderCard = (node: TaskNode, depth: number): JSX.Element => {
+    const task = node.task;
+    const isExpanded = expandedId === task.agent_id;
+    const childCount = node.children.length;
+    const collapsed = collapsedParents.has(task.agent_id);
+    const indent = Math.min(depth, MAX_DEPTH) * INDENT_PX;
+    return (
+      <div key={task.agent_id} style={{ marginLeft: indent }}>
+        <div
+          className={`sacCard ${task.status === "running" || task.status === "starting" ? "sacCardActive" : ""}`}
+          onClick={() => toggleExpand(task.agent_id)}
+          style={{ cursor: "pointer" }}
+        >
+          <div className="sacCardTop">
+            {childCount > 0 && (
+              <button
+                className="sacPageBtn"
+                onClick={(e) => { e.stopPropagation(); toggleCollapse(task.agent_id); }}
+                title={collapsed ? t("chat.expand", "展开") : t("chat.collapse", "折叠")}
+                style={{ padding: "0 6px", minWidth: 18, lineHeight: 1 }}
+              >
+                {collapsed ? "▸" : "▾"}
+              </button>
+            )}
+            <span className="sacIcon"><RenderIcon icon={task.icon} size={16} /></span>
+            <span className="sacName">
+              {task.name}
+              {childCount > 0 && (
+                <span className="sacDot" style={{ marginLeft: 6, opacity: 0.65 }}>
+                  · {t("chat.subAgentChildren", "子任务")} ×{childCount}
+                </span>
+              )}
+            </span>
+            <span className={`sacBadge ${statusClass(task.status)}`}>
+              {(task.status === "running" || task.status === "starting") && <span className="sacPulse" />}
+              {statusLabel(task.status)}
+            </span>
+          </div>
+          <div className="sacCardMeta">
+            <span>{t("chat.subAgentIter", "迭代")} {task.iteration}</span>
+            <span className="sacDot">·</span>
+            <span>{formatElapsed(task.elapsed_s)}</span>
+            <span className="sacDot">·</span>
+            <span>{t("chat.subAgentTools", "工具")} ×{task.tools_total}</span>
+            {formatTokens(task.tokens_used) && (
+              <>
+                <span className="sacDot">·</span>
+                <span>{formatTokens(task.tokens_used)} tokens</span>
+              </>
+            )}
+            {task.queue_count != null && task.queue_count > 0 && (
+              <>
+                <span className="sacDot">·</span>
+                <span>{t("chat.subAgentQueue", "排队")} {task.queue_count}</span>
+              </>
+            )}
+          </div>
+          {task.current_tool_summary && (
+            <div className="sacToolSummary">
+              {task.current_tool_summary}
+            </div>
+          )}
+          <div className="sacToolList">
+            {(task.tools_executed ?? []).length === 0 && (
+              <div className="sacToolItem sacToolWaiting">…</div>
+            )}
+            {(isExpanded ? (task.tools_executed ?? []) : (task.tools_executed ?? []).slice(-3)).map((tool, idx) => {
+              const tools = task.tools_executed ?? [];
+              const actualIdx = isExpanded || tools.length <= 3 ? idx : tools.length - 3 + idx;
+              const isCurrent = actualIdx === tools.length - 1 && (task.status === "running" || task.status === "starting");
+              return (
+                <div key={`${tool}-${actualIdx}`} className={`sacToolItem ${isCurrent ? "sacToolCurrent" : ""}`}>
+                  <span className="sacToolArrow">{isCurrent ? "▸" : "▹"}</span>
+                  <span className="sacToolName">{tool}</span>
+                  {isCurrent && <span className="sacToolBlink" />}
+                </div>
+              );
+            })}
+            {!isExpanded && (task.tools_executed ?? []).length > 3 && (
+              <div className="sacToolItem" style={{ opacity: 0.5, fontSize: 11 }}>
+                ... {(task.tools_executed ?? []).length - 3} {t("chat.more", "更多")}
+              </div>
+            )}
+          </div>
+        </div>
+        {!collapsed && childCount > 0 && depth < MAX_DEPTH && (
+          <div>
+            {node.children.map((child) => renderCard(child, depth + 1))}
+          </div>
+        )}
+        {!collapsed && childCount > 0 && depth >= MAX_DEPTH && (
+          <div className="sacToolItem" style={{ marginLeft: INDENT_PX, opacity: 0.6, fontSize: 11 }}>
+            … {childCount} {t("chat.subAgentChildren", "子任务")}（{t("chat.depthLimit", "嵌套层级已达上限")}）
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="sacContainer">
       <div className="sacHeader">
@@ -126,72 +280,7 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
         </div>
       </div>
       <div className="sacGrid" ref={scrollRef}>
-        {visible.map((task) => {
-          const isExpanded = expandedId === task.agent_id;
-          return (
-            <div
-              key={task.agent_id}
-              className={`sacCard ${task.status === "running" || task.status === "starting" ? "sacCardActive" : ""}`}
-              onClick={() => toggleExpand(task.agent_id)}
-              style={{ cursor: "pointer" }}
-            >
-              <div className="sacCardTop">
-                <span className="sacIcon"><RenderIcon icon={task.icon} size={16} /></span>
-                <span className="sacName">{task.name}</span>
-                <span className={`sacBadge ${statusClass(task.status)}`}>
-                  {(task.status === "running" || task.status === "starting") && <span className="sacPulse" />}
-                  {statusLabel(task.status)}
-                </span>
-              </div>
-              <div className="sacCardMeta">
-                <span>{t("chat.subAgentIter", "迭代")} {task.iteration}</span>
-                <span className="sacDot">·</span>
-                <span>{formatElapsed(task.elapsed_s)}</span>
-                <span className="sacDot">·</span>
-                <span>{t("chat.subAgentTools", "工具")} ×{task.tools_total}</span>
-                {formatTokens(task.tokens_used) && (
-                  <>
-                    <span className="sacDot">·</span>
-                    <span>{formatTokens(task.tokens_used)} tokens</span>
-                  </>
-                )}
-                {task.queue_count != null && task.queue_count > 0 && (
-                  <>
-                    <span className="sacDot">·</span>
-                    <span>{t("chat.subAgentQueue", "排队")} {task.queue_count}</span>
-                  </>
-                )}
-              </div>
-              {task.current_tool_summary && (
-                <div className="sacToolSummary">
-                  {task.current_tool_summary}
-                </div>
-              )}
-              <div className="sacToolList">
-                {(task.tools_executed ?? []).length === 0 && (
-                  <div className="sacToolItem sacToolWaiting">…</div>
-                )}
-                {(isExpanded ? (task.tools_executed ?? []) : (task.tools_executed ?? []).slice(-3)).map((tool, idx) => {
-                  const tools = task.tools_executed ?? [];
-                  const actualIdx = isExpanded || tools.length <= 3 ? idx : tools.length - 3 + idx;
-                  const isCurrent = actualIdx === tools.length - 1 && (task.status === "running" || task.status === "starting");
-                  return (
-                    <div key={`${tool}-${actualIdx}`} className={`sacToolItem ${isCurrent ? "sacToolCurrent" : ""}`}>
-                      <span className="sacToolArrow">{isCurrent ? "▸" : "▹"}</span>
-                      <span className="sacToolName">{tool}</span>
-                      {isCurrent && <span className="sacToolBlink" />}
-                    </div>
-                  );
-                })}
-                {!isExpanded && (task.tools_executed ?? []).length > 3 && (
-                  <div className="sacToolItem" style={{ opacity: 0.5, fontSize: 11 }}>
-                    ... {(task.tools_executed ?? []).length - 3} {t("chat.more", "更多")}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
+        {visibleRoots.map((node) => renderCard(node, 0))}
       </div>
     </div>
   );

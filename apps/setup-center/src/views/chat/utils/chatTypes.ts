@@ -161,6 +161,10 @@ export type SubAgentTask = {
   tokens_used?: number;
   current_tool_summary?: string;
   queue_count?: number;
+  // P5.1: agent_id of the agent that delegated this task (root tasks omit it).
+  // Inferred client-side from agent_handoff / delegate_to_agent / delegate_parallel
+  // events — the backend protocol stays untouched.
+  parent_agent_id?: string;
 };
 
 /** Per-session streaming context (supports concurrent streams across conversations) */
