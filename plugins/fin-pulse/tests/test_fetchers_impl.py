@@ -327,7 +327,9 @@ class TestFedFOMCCalendarGate:
             pytest.fail("fed_fomc must not hit the network on non-release days")
 
         _patch_transport(monkeypatch, handler)
-        items = _run(FedFOMCFetcher(config={}).fetch())
+        items = _run(
+            FedFOMCFetcher(config={"fed_fomc.use_calendar_gate": "true"}).fetch()
+        )
         assert items == []
 
     def test_empty_calendar_allows_scrape(
