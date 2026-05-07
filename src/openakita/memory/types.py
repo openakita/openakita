@@ -80,6 +80,12 @@ def _short_uuid() -> str:
 MEMORY_MD_MAX_CHARS = 1500
 """MEMORY.md 统一大小上限（字符），写入端和读取端共用。"""
 
+# 借鉴 claude-code 的 memdir.MAX_ENTRYPOINT_LINES / MAX_ENTRYPOINT_BYTES：
+# 仅字符上限不能防止"行数少、单行极长"的索引膨胀，也不能对应供应商常用的字节限制。
+# 三档同时存在时，任意一档触顶都会触发截断 + 用户可见 WARNING。
+MEMORY_MD_MAX_LINES = 200
+MEMORY_MD_MAX_BYTES = 25_000
+
 _RULE_SECTION_KEYWORDS = frozenset({"重要规则", "规则", "rules", "行为规则", "用户规则"})
 
 
@@ -138,6 +144,108 @@ def truncate_memory_md(content: str, max_chars: int = MEMORY_MD_MAX_CHARS) -> st
             current_len += len(section) + 2
 
     return "\n\n".join(result_parts)
+
+
+def _format_byte_size(n: int) -> str:
+    if n < 1024:
+        return f"{n}B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f}KB"
+    return f"{n / (1024 * 1024):.2f}MB"
+
+
+def truncate_memory_md_with_status(
+    content: str,
+    *,
+    max_chars: int = MEMORY_MD_MAX_CHARS,
+    max_lines: int | None = MEMORY_MD_MAX_LINES,
+    max_bytes: int | None = MEMORY_MD_MAX_BYTES,
+) -> tuple[str, dict]:
+    """对 MEMORY.md 应用三档上限（字符 / 行 / 字节），返回 (截断后内容, 状态字典)。
+
+    与既有 ``truncate_memory_md`` 并行存在 — 不修改后者签名，避免影响
+    consolidator / identity / ralph 等多个写入侧调用方。
+
+    状态字典字段：
+        original_chars / original_lines / original_bytes  原始尺寸
+        truncated  bool                                   是否触发截断
+        triggers   list[str]                              命中的上限：chars / lines / bytes
+        warning    str                                    可直接拼到 prompt 的可读 WARNING（未触发时为 ""）
+    """
+    if not content:
+        return content, {
+            "original_chars": 0,
+            "original_lines": 0,
+            "original_bytes": 0,
+            "truncated": False,
+            "triggers": [],
+            "warning": "",
+        }
+
+    original_chars = len(content)
+    original_lines = content.count("\n") + 1
+    original_bytes = len(content.encode("utf-8"))
+
+    triggers: list[str] = []
+    if original_chars > max_chars:
+        triggers.append("chars")
+    if max_lines is not None and original_lines > max_lines:
+        triggers.append("lines")
+    if max_bytes is not None and original_bytes > max_bytes:
+        triggers.append("bytes")
+
+    if not triggers:
+        return content, {
+            "original_chars": original_chars,
+            "original_lines": original_lines,
+            "original_bytes": original_bytes,
+            "truncated": False,
+            "triggers": [],
+            "warning": "",
+        }
+
+    # 1) 字符截断（按段落优先级，规则段保留）
+    truncated = truncate_memory_md(content, max_chars)
+
+    # 2) 行截断
+    if max_lines is not None:
+        lines = truncated.splitlines()
+        if len(lines) > max_lines:
+            truncated = "\n".join(lines[:max_lines])
+
+    # 3) 字节截断（避开切在 UTF-8 多字节字符中间，并尽量截在最后一个换行处）
+    if max_bytes is not None:
+        encoded = truncated.encode("utf-8")
+        if len(encoded) > max_bytes:
+            truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+            last_nl = truncated.rfind("\n")
+            if 0 < last_nl >= len(truncated) // 2:
+                truncated = truncated[:last_nl]
+
+    parts: list[str] = []
+    if "chars" in triggers:
+        parts.append(f"{original_chars} 字符（上限 {max_chars}）")
+    if "lines" in triggers:
+        parts.append(f"{original_lines} 行（上限 {max_lines}）")
+    if "bytes" in triggers:
+        parts.append(
+            f"{_format_byte_size(original_bytes)}（上限 {_format_byte_size(max_bytes)}）"
+        )
+    warning = (
+        "> ⚠️ MEMORY.md 当前 "
+        + "、".join(parts)
+        + " — 已仅加载部分内容。建议每条索引控制在一行 ~200 字符以内，"
+        "详情移到子文件后再用 @link 引用。"
+    )
+
+    return truncated, {
+        "original_chars": original_chars,
+        "original_lines": original_lines,
+        "original_bytes": original_bytes,
+        "truncated": True,
+        "triggers": triggers,
+        "warning": warning,
+    }
 
 
 # ---------------------------------------------------------------------------

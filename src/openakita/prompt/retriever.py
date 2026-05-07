@@ -73,7 +73,16 @@ def retrieve_memory(
 
 
 def _get_core_memory(memory_manager: "MemoryManager", max_chars: int = 800) -> str:
-    from openakita.memory.types import MEMORY_MD_MAX_CHARS, truncate_memory_md
+    """读取 MEMORY.md 作为 Core Memory 注入 prompt。
+
+    使用 ``truncate_memory_md_with_status`` 同时检查字符 / 行 / 字节三档上限，
+    任一触顶时把 WARNING 文案拼到内容末尾，给模型自我纠偏的机会
+    （借鉴 claude-code memdir 入口文件 truncation + 可读告警的设计）。
+    """
+    from openakita.memory.types import (
+        MEMORY_MD_MAX_CHARS,
+        truncate_memory_md_with_status,
+    )
 
     max_chars = min(max_chars, MEMORY_MD_MAX_CHARS)
     memory_path = getattr(memory_manager, "memory_md_path", None)
@@ -83,7 +92,10 @@ def _get_core_memory(memory_manager: "MemoryManager", max_chars: int = 800) -> s
         content = memory_path.read_text(encoding="utf-8").strip()
         if not content:
             return ""
-        return truncate_memory_md(content, max_chars)
+        truncated, status = truncate_memory_md_with_status(content, max_chars=max_chars)
+        if status.get("truncated") and status.get("warning"):
+            return f"{truncated}\n\n{status['warning']}"
+        return truncated
     except Exception as e:
         logger.warning(f"Failed to read MEMORY.md: {e}")
         return ""
@@ -159,8 +171,11 @@ def retrieve_memory_simple(
     memory_md_path: Path,
     max_chars: int = 800,
 ) -> str:
-    """直接读取 MEMORY.md (不使用向量搜索)"""
-    from openakita.memory.types import MEMORY_MD_MAX_CHARS, truncate_memory_md
+    """直接读取 MEMORY.md (不使用向量搜索)，触顶时附带 WARNING 文案。"""
+    from openakita.memory.types import (
+        MEMORY_MD_MAX_CHARS,
+        truncate_memory_md_with_status,
+    )
 
     max_chars = min(max_chars, MEMORY_MD_MAX_CHARS)
     if not memory_md_path.exists():
@@ -169,7 +184,10 @@ def retrieve_memory_simple(
         content = memory_md_path.read_text(encoding="utf-8").strip()
         if not content:
             return ""
-        return truncate_memory_md(content, max_chars)
+        truncated, status = truncate_memory_md_with_status(content, max_chars=max_chars)
+        if status.get("truncated") and status.get("warning"):
+            return f"{truncated}\n\n{status['warning']}"
+        return truncated
     except Exception as e:
         logger.warning(f"Failed to read {memory_md_path}: {e}")
         return ""
