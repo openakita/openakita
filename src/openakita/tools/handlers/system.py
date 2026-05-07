@@ -105,8 +105,10 @@ class SystemHandler:
         ht = int(params.get("hard_timeout_seconds") or 0)
         reason = params.get("reason", "")
 
-        if pt <= 0:
-            return "❌ progress_timeout_seconds 必须为正整数（秒）"
+        if pt < 0:
+            return "❌ progress_timeout_seconds 不能为负数（0=禁用）"
+        if 0 < pt < 60:
+            return "❌ progress_timeout_seconds 非 0 时最小为 60 秒；设为 0 表示禁用"
         if ht < 0:
             return "❌ hard_timeout_seconds 不能为负数"
 
@@ -117,7 +119,9 @@ class SystemHandler:
         monitor.timeout_seconds = pt
         monitor.hard_timeout_seconds = ht
         logger.info(f"[TaskTimeout] Updated by LLM: progress={pt}s hard={ht}s reason={reason}")
-        return f"✅ 已更新当前任务超时策略：无进展超时={pt}s，硬超时={ht if ht else 0}s（0=禁用）。原因：{reason}"
+        progress_desc = "禁用" if pt == 0 else f"{pt}s"
+        hard_desc = "禁用" if ht == 0 else f"{ht}s"
+        return f"✅ 已更新当前任务超时策略：无进展超时={progress_desc}，硬超时={hard_desc}。原因：{reason}"
 
     def _get_workspace_map(self) -> str:
         """返回工作区目录结构和关键路径说明"""

@@ -574,7 +574,7 @@ class ReasoningEngine:
 
         # Agent Harness: Runtime Supervisor + Resource Budget
         self._supervisor = RuntimeSupervisor(
-            enabled=getattr(settings, "supervisor_enabled", True),
+            enabled=getattr(settings, "supervisor_enabled", False),
             token_anomaly_threshold=int(
                 getattr(settings, "context_token_anomaly_threshold", TOKEN_ANOMALY_THRESHOLD)
                 or TOKEN_ANOMALY_THRESHOLD

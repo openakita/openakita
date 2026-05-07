@@ -542,7 +542,7 @@ class ConfigHandler:
 
     _INT_CONSTRAINTS: dict[str, tuple[int | None, int | None, str]] = {
         "max_iterations": (15, 10000, "最大迭代次数范围 15~10000，推荐 100~300"),
-        "progress_timeout_seconds": (60, None, "无进展超时最小 60 秒"),
+        "progress_timeout_seconds": (0, None, "无进展超时可设 0=禁用；非 0 时建议至少 60 秒"),
         "tool_max_parallel": (1, 32, "并行工具数范围 1~32"),
     }
 
@@ -551,6 +551,8 @@ class ConfigHandler:
         if not spec:
             return None
         lo, hi, msg = spec
+        if field_name == "progress_timeout_seconds" and 0 < value < 60:
+            return f"值 {value} 过小。{msg}"
         if lo is not None and value < lo:
             return f"值 {value} 过小。{msg}"
         if hi is not None and value > hi:

@@ -195,8 +195,13 @@ class TaskMonitor:
         # 每次进入新迭代视为有进展（至少系统仍在推进循环）
         self._touch_progress()
 
-        # 检查是否“无进展超时”（避免长任务被硬切）
-        if self.progress_idle_seconds > self.timeout_seconds and not self._timeout_triggered:
+        # 检查是否“无进展超时”（避免长任务被硬切）。
+        # timeout_seconds <= 0 表示禁用该机制；否则默认 0 会在每轮迭代被误判超时。
+        if (
+            self.timeout_seconds > 0
+            and self.progress_idle_seconds > self.timeout_seconds
+            and not self._timeout_triggered
+        ):
             self._handle_timeout()
 
         # 可选硬超时兜底（默认关闭）
@@ -368,6 +373,8 @@ class TaskMonitor:
     @property
     def should_retry_timeout(self) -> bool:
         """是否应该重试超时（而不是切换模型）"""
+        if self.timeout_seconds <= 0:
+            return False
         return self._timeout_retry_count < self.retry_before_switch
 
     @property
@@ -382,6 +389,9 @@ class TaskMonitor:
         使用独立的超时重试计数器（不受 LLM 成功调用影响）。
         只有在超时重试次数用尽后才会真正切换模型。
         """
+        if self.timeout_seconds <= 0:
+            return
+
         self._phase = TaskPhase.TIMEOUT
 
         # 增加超时重试计数（独立于 LLM 错误重试）
@@ -451,10 +461,13 @@ class TaskMonitor:
         是否应该切换模型
 
         只有在以下条件都满足时才切换：
-        1. 已超时
-        2. 超时重试次数已用尽
-        3. 尚未触发切换
+        1. 无进展超时机制已启用
+        2. 已超时
+        3. 超时重试次数已用尽
+        4. 尚未触发切换
         """
+        if self.timeout_seconds <= 0:
+            return False
         if self._timeout_triggered:
             return False
         if self.progress_idle_seconds <= self.timeout_seconds:

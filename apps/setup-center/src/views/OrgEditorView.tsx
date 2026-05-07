@@ -707,6 +707,7 @@ export function OrgEditorView({
   // Org settings panel collapse
   const [personaCollapsed, setPersonaCollapsed] = useState(false);
   const [bizCollapsed, setBizCollapsed] = useState(false);
+  const [orgWatchdogCollapsed, setOrgWatchdogCollapsed] = useState(true);
   const [watchdogCollapsed, setWatchdogCollapsed] = useState(true);
   // 看门狗本地草稿（默认 0=禁用），保存后才写入 .env
   const [watchdogDraft, setWatchdogDraft] = useState<{ warn: string; autostop: string; timeout: string }>({
@@ -1141,6 +1142,10 @@ export function OrgEditorView({
       workspace_dir: (currentOrg as any).workspace_dir || "",
       auto_persist_final_answer:
         (currentOrg as any).auto_persist_final_answer !== false,
+      watchdog_enabled: (currentOrg as any).watchdog_enabled === true,
+      watchdog_interval_s: Number((currentOrg as any).watchdog_interval_s || 30),
+      watchdog_stuck_threshold_s: Number((currentOrg as any).watchdog_stuck_threshold_s || 1800),
+      watchdog_silence_threshold_s: Number((currentOrg as any).watchdog_silence_threshold_s || 1800),
       heartbeat_enabled: currentOrg.heartbeat_enabled,
       heartbeat_interval_s: currentOrg.heartbeat_interval_s,
       standup_enabled: currentOrg.standup_enabled,
@@ -4574,7 +4579,87 @@ export function OrgEditorView({
           </div>
           )}
 
-          {/* ── 任务看门狗（高级，全局配置；默认全部关闭） ── */}
+          {/* ── 组织运行看门狗（per-org，默认关闭） ── */}
+          <div className="card" style={{ padding: 10, marginBottom: 10 }}>
+            <div
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+              onClick={() => setOrgWatchdogCollapsed(!orgWatchdogCollapsed)}
+            >
+              <div style={{ fontWeight: 600, fontSize: 13 }}>
+                {t("org.editor.orgWatchdogTitle")}
+                {orgWatchdogCollapsed && (currentOrg as any).watchdog_enabled === true && (
+                  <span style={{ fontWeight: 400, fontSize: 11, color: "var(--ok)", marginLeft: 6 }}>
+                    {t("org.editor.watchdogActive")}
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>{orgWatchdogCollapsed ? "▸" : "▾"}</span>
+            </div>
+            {!orgWatchdogCollapsed && (
+              <div style={{ marginTop: 8 }}>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 8 }}>
+                  <input
+                    type="checkbox"
+                    style={{ marginTop: 3 }}
+                    checked={(currentOrg as any).watchdog_enabled === true}
+                    onChange={(e) => setCurrentOrg({ ...currentOrg, watchdog_enabled: e.target.checked } as any)}
+                  />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 12 }}>{t("org.editor.orgWatchdogEnable")}</span>
+                    <span style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
+                      {t("org.editor.orgWatchdogHint")}
+                    </span>
+                  </div>
+                </label>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, opacity: (currentOrg as any).watchdog_enabled === true ? 1 : 0.65 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
+                      {t("org.editor.orgWatchdogIntervalLabel")}
+                    </label>
+                    <input
+                      className="input"
+                      style={{ width: "100%", fontSize: 12 }}
+                      placeholder="30"
+                      value={(currentOrg as any).watchdog_interval_s ?? 30}
+                      onChange={(e) => setCurrentOrg({ ...currentOrg, watchdog_interval_s: Number(e.target.value || 30) } as any)}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
+                      {t("org.editor.orgWatchdogStuckLabel")}
+                    </label>
+                    <input
+                      className="input"
+                      style={{ width: "100%", fontSize: 12 }}
+                      placeholder="1800"
+                      value={(currentOrg as any).watchdog_stuck_threshold_s ?? 1800}
+                      onChange={(e) => setCurrentOrg({ ...currentOrg, watchdog_stuck_threshold_s: Number(e.target.value || 1800) } as any)}
+                    />
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                      {t("org.editor.orgWatchdogStuckHelp")}
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
+                      {t("org.editor.orgWatchdogSilenceLabel")}
+                    </label>
+                    <input
+                      className="input"
+                      style={{ width: "100%", fontSize: 12 }}
+                      placeholder="1800"
+                      value={(currentOrg as any).watchdog_silence_threshold_s ?? 1800}
+                      onChange={(e) => setCurrentOrg({ ...currentOrg, watchdog_silence_threshold_s: Number(e.target.value || 1800) } as any)}
+                    />
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                      {t("org.editor.orgWatchdogSilenceHelp")}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── 命令生命周期看门狗（高级，全局配置；默认全部关闭） ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
             <div
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}

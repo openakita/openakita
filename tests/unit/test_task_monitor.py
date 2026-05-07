@@ -87,6 +87,25 @@ class TestTimeout:
         tm.start(model="gpt-4")
         assert isinstance(tm.is_timeout, bool)
 
+    def test_zero_timeout_disables_progress_timeout(self):
+        tm = TaskMonitor(
+            task_id="t9-zero",
+            description="Zero timeout means disabled",
+            timeout_seconds=0,
+            fallback_model="backup-model",
+            retry_before_switch=1,
+        )
+        tm.start(model="primary-model")
+
+        # Simulate an old progress timestamp; timeout_seconds=0 must still be disabled.
+        tm._last_progress_time = time.time() - 3600
+        tm.begin_iteration(1, model="primary-model")
+
+        assert tm.timeout_retry_count == 0
+        assert tm.is_timeout is False
+        assert tm.should_switch_model is False
+        assert tm.current_model == "primary-model"
+
 
 class TestRetry:
     def test_record_error_and_retry(self):

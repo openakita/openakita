@@ -34,9 +34,9 @@ class Settings(BaseSettings):
     # Agent 配置
     agent_name: str = Field(default="OpenAkita", description="Agent 名称")
     max_iterations: int = Field(
-        default=100,
+        default=300,
         ge=5,
-        description="Ralph/ReAct 循环最大迭代次数（最终防死循环硬上限；推荐 50~150）",
+        description="Ralph/ReAct 循环最大迭代次数（最终防死循环硬上限；默认 300，复杂任务可调到 500+）",
     )
 
     # Plan 模式建议阈值（ComplexitySignal.score 达到此值时建议用户使用 Plan 模式）

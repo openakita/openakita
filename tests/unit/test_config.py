@@ -2,6 +2,7 @@
 
 import json
 import os
+from types import SimpleNamespace
 
 from openakita.llm.config import (
     create_default_config,
@@ -204,4 +205,37 @@ class TestValidateConfig:
         config_file.write_text("not json", encoding="utf-8")
         errors = validate_config(config_file)
         assert any("Invalid JSON" in e for e in errors)
+
+
+class TestRuntimeConfigConstraints:
+    def test_progress_timeout_allows_zero_to_disable(self):
+        from openakita.tools.handlers.config import ConfigHandler
+
+        handler = ConfigHandler(agent=None)
+        assert handler._check_int_constraints("progress_timeout_seconds", 0) is None
+
+    def test_progress_timeout_rejects_small_nonzero(self):
+        from openakita.tools.handlers.config import ConfigHandler
+
+        handler = ConfigHandler(agent=None)
+        err = handler._check_int_constraints("progress_timeout_seconds", 30)
+        assert err is not None
+        assert "0=禁用" in err
+
+    def test_set_task_timeout_allows_zero_to_disable(self):
+        from openakita.tools.handlers.system import SystemHandler
+
+        monitor = SimpleNamespace(timeout_seconds=120, hard_timeout_seconds=60)
+        agent = SimpleNamespace(_current_task_monitor=monitor)
+        handler = SystemHandler(agent)
+
+        result = handler._set_task_timeout({
+            "progress_timeout_seconds": 0,
+            "hard_timeout_seconds": 0,
+            "reason": "disable for long task",
+        })
+
+        assert "✅" in result
+        assert monitor.timeout_seconds == 0
+        assert monitor.hard_timeout_seconds == 0
 

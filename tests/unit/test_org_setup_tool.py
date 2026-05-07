@@ -20,6 +20,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+def test_organization_watchdog_disabled_by_default():
+    from openakita.orgs.models import Organization
+
+    org = Organization(name="default watchdog")
+    assert org.watchdog_enabled is False
+    assert org.to_dict()["watchdog_enabled"] is False
+
+
 @pytest.fixture
 def handler():
     """Create an OrgSetupHandler with a mocked agent."""
