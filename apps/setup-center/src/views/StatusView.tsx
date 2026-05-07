@@ -17,6 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { TroubleshootPanel } from "../components/TroubleshootPanel";
+import { LinkDiagnosticsPanel } from "../components/LinkDiagnosticsPanel";
+import { SkillConflictsPanel } from "../components/SkillConflictsPanel";
 import { ProviderIcon } from "../components/ProviderIcon";
 import type { EnvMap, WorkspaceSummary, ViewId } from "../types";
 import type { UpdateInfo } from "../platform";
@@ -264,6 +266,12 @@ export function StatusView(props: StatusViewProps) {
         {(heartbeatState === "dead" && !serviceStatus?.running) && (
           <TroubleshootPanel t={t} />
         )}
+
+        {/* Link diagnostics + per-session cache reset */}
+        <LinkDiagnosticsPanel httpApiBase={httpApiBase} />
+
+        {/* Skill registration conflicts (multi-source same name detection) */}
+        <SkillConflictsPanel httpApiBase={httpApiBase} />
 
         {/* Auto-update row — desktop only */}
         {IS_TAURI && (

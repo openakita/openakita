@@ -244,17 +244,35 @@
     .asset-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--text-muted); }
     .asset-actions { display: flex; gap: 6px; margin-top: 10px; }
     .asset-actions .btn { flex: 1; justify-content: center; }
-    .asset-picker { width: min(820px, 96vw); max-width: min(820px, 96vw); max-height: 82vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-    .asset-picker__head { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .asset-picker { width: min(960px, 96vw) !important; max-width: min(960px, 96vw) !important; max-height: 86vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+    .asset-picker__head { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .asset-picker__title { font-size: 15px; font-weight: 650; color: var(--text); }
     .asset-picker__hint { margin-top: 4px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
-    .asset-picker__body { padding: 16px 20px; overflow-y: auto; min-height: 260px; }
-    .asset-picker__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+    .asset-picker__body { padding: 14px 18px 18px; overflow-y: auto; min-height: 320px; }
+    .asset-picker__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
     .asset-picker__item { text-align: left; cursor: pointer; }
     .asset-picker__item.is-disabled { cursor: not-allowed; opacity: .58; }
-    .asset-picker__item .asset-preview { pointer-events: none; }
+    .asset-picker__item .asset-preview { pointer-events: none; aspect-ratio: 16 / 10; }
+    .asset-picker__item .asset-body { padding: 8px; }
+    .asset-picker__item .asset-actions { margin-top: 8px; }
     .asset-picker__footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
-    .upload-zone-actions { display: flex; justify-content: flex-end; }
+    .upload-zone__library {
+      position: absolute; top: 10px; right: 10px; z-index: 2;
+      padding: 6px 10px; border-radius: 999px;
+      background: rgba(255,255,255,.88); backdrop-filter: blur(8px);
+      box-shadow: 0 1px 4px rgba(15,23,42,.08);
+    }
+    .upload-zone.has-library .upload-zone__body { padding-right: 148px; }
+    [data-theme="dark"] .upload-zone__library { background: rgba(15,23,42,.78); }
+    .asset-preview-modal { width: min(900px, 96vw) !important; max-width: min(900px, 96vw) !important; max-height: 88vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+    .asset-preview-modal__head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+    .asset-preview-modal__title { min-width: 0; font-size: 14px; font-weight: 650; color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .asset-preview-modal__body { min-height: 320px; max-height: 70vh; padding: 16px; display: flex; align-items: center; justify-content: center; background: var(--bg); overflow: auto; }
+    .asset-preview-modal__body img,
+    .asset-preview-modal__body video { max-width: 100%; max-height: 68vh; object-fit: contain; border-radius: 10px; }
+    .asset-preview-modal__body audio { width: min(620px, 90%); }
+    .delete-confirm { width: min(460px, 92vw) !important; max-width: min(460px, 92vw) !important; }
+    .delete-confirm__detail { padding: 10px 12px; border-radius: 8px; background: var(--bg); font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-top: 10px; }
     .split-layout { display: flex; gap: 20px; height: 100%; overflow: hidden; }
     .split-left { width: 42%; min-width: 320px; overflow-y: auto; flex-shrink: 0; }
     .split-right { flex: 1; min-width: 0; overflow-y: auto; }
@@ -1086,8 +1104,14 @@ const I18N_DICT = {
     "assets.intro": "这里保存创建页上传过的素材，可在创建页回选图片/音频素材。",
     "assets.videoLimit": "本地视频仅支持预览/删除；编辑和延长模式仍需公网视频 URL。",
     "assets.btn.delete": "删除",
-    "assets.confirmDelete": "确定要删除这个素材吗？此操作会同时删除本地文件。",
+    "assets.btn.cancel": "取消",
+    "assets.confirm.title": "删除素材",
+    "assets.confirm.body": "将删除素材库中的记录，并同时删除插件上传目录里的本地文件。已生成的视频任务不会被删除。",
+    "assets.confirm.file": "素材: {name}",
+    "assets.confirm.confirm": "确认删除",
+    "assets.deleteFail": "删除失败: {msg}",
     "assets.preview.open": "打开预览",
+    "assets.preview.close": "关闭",
     "assets.preview.noPreview": "暂无预览",
     "assetPicker.title": "从素材库选择",
     "assetPicker.hint": "选择后会读取本地文件并转成 Ark 需要的 base64，用于本次创建。",
@@ -1095,6 +1119,7 @@ const I18N_DICT = {
     "assetPicker.empty": "暂无可选择素材。请先在创建页上传一次。",
     "assetPicker.use": "使用此素材",
     "assetPicker.videoDisabled": "本地视频不能作为 Ark 参考视频复用，请使用公网 http(s) 视频 URL。",
+    "assetPicker.videoDisabledShort": "仅预览/删除",
     "assetPicker.loadFail": "读取素材失败: {msg}",
     "assetPicker.cancel": "取消",
     "guide.search.placeholder": "搜索模板或关键词...",
@@ -1519,8 +1544,14 @@ const I18N_DICT = {
     "assets.intro": "Assets uploaded from Create are saved here and can be reused for images/audio in Create.",
     "assets.videoLimit": "Local videos are preview/delete only; edit and extend still require a public video URL.",
     "assets.btn.delete": "Delete",
-    "assets.confirmDelete": "Delete this asset and its local file?",
+    "assets.btn.cancel": "Cancel",
+    "assets.confirm.title": "Delete asset",
+    "assets.confirm.body": "This deletes the asset record and the local file in the plugin uploads folder. Generated video tasks are not deleted.",
+    "assets.confirm.file": "Asset: {name}",
+    "assets.confirm.confirm": "Delete",
+    "assets.deleteFail": "Delete failed: {msg}",
     "assets.preview.open": "Open preview",
+    "assets.preview.close": "Close",
     "assets.preview.noPreview": "No preview",
     "assetPicker.title": "Choose from Assets",
     "assetPicker.hint": "Selecting an asset reads the local file and converts it to the base64 payload Ark needs.",
@@ -1528,6 +1559,7 @@ const I18N_DICT = {
     "assetPicker.empty": "No reusable assets yet. Upload one from Create first.",
     "assetPicker.use": "Use this asset",
     "assetPicker.videoDisabled": "Local videos cannot be reused as Ark reference videos. Use a public http(s) video URL.",
+    "assetPicker.videoDisabledShort": "Preview/delete only",
     "assetPicker.loadFail": "Could not load asset: {msg}",
     "assetPicker.cancel": "Cancel",
     "guide.search.placeholder": "Search templates or keywords…",
@@ -2065,7 +2097,7 @@ function AssetPickerModal({ open, allowedKinds = ["image"], disabledKinds = [], 
                       <div className="asset-name">{a.original_name || a.id}</div>
                       <div className="asset-meta">
                         <span>{a.size_bytes ? _formatSize(a.size_bytes) : "?"}</span>
-                        {disabled && <span>{t("assetPicker.videoDisabled")}</span>}
+                        {disabled && <span>{t("assetPicker.videoDisabledShort")}</span>}
                       </div>
                       {!disabled && (
                         <div className="asset-actions">
@@ -2080,6 +2112,65 @@ function AssetPickerModal({ open, allowedKinds = ["image"], disabledKinds = [], 
               })}
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssetPreviewModal({ asset, onClose }) {
+  const t = useT();
+  if (!asset) return null;
+  const url = asset.preview_url || "";
+  const name = asset.original_name || asset.id || "";
+  const renderBody = () => {
+    if (!url) return <div className="empty-state"><p>{t("assets.preview.noPreview")}</p></div>;
+    if (asset.type === "image") return <img src={url} alt={name} />;
+    if (asset.type === "video") return <video src={url} controls autoPlay />;
+    if (asset.type === "audio") return <audio src={url} controls autoPlay />;
+    return <div className="empty-state"><p>{t("assets.preview.noPreview")}</p></div>;
+  };
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal-card asset-preview-modal" onClick={e => e.stopPropagation()}>
+        <div className="asset-preview-modal__head">
+          <div>
+            <div className="asset-preview-modal__title" title={name}>{name}</div>
+            <div className="asset-meta" style={{marginTop:4}}>
+              <span>{_assetKindLabel(asset.type || "file")}</span>
+              <span>{asset.size_bytes ? _formatSize(asset.size_bytes) : "?"}</span>
+            </div>
+          </div>
+          <button type="button" className="btn btn-sm" onClick={onClose}>{t("assets.preview.close")}</button>
+        </div>
+        <div className="asset-preview-modal__body">
+          {renderBody()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteAssetConfirmModal({ asset, onCancel, onConfirm }) {
+  const t = useT();
+  if (!asset) return null;
+  const name = asset.original_name || asset.id || "";
+  return (
+    <div className="modal-mask" onClick={onCancel}>
+      <div className="modal-card delete-confirm" onClick={e => e.stopPropagation()}>
+        <div className="modal-icon" style={{background:"rgba(239,68,68,.10)", color:"var(--danger)"}}>
+          <Ico name="trash"/>
+        </div>
+        <div className="modal-title">{t("assets.confirm.title")}</div>
+        <div className="modal-desc">
+          {t("assets.confirm.body")}
+          <div className="delete-confirm__detail">
+            {t("assets.confirm.file", { name })}
+          </div>
+        </div>
+        <div className="modal-actions">
+          <button className="btn" onClick={onCancel}>{t("assets.btn.cancel")}</button>
+          <button className="btn btn-danger" onClick={() => onConfirm(asset)}>{t("assets.confirm.confirm")}</button>
         </div>
       </div>
     </div>
@@ -2447,19 +2538,17 @@ function FileUploadZone({ id, accept, multiple, onUpload, label, hint, value, on
         </div>
       )}
 
-      {onPickFromLibrary && (
-        <div className="upload-zone-actions">
-          <button type="button" className="btn btn-sm" onClick={onPickFromLibrary}>
-            <Ico name="images"/> {libraryLabel || _tr("create.assetPicker.choose", null, "Choose from Assets")}
-          </button>
-        </div>
-      )}
-
-      <div className={`upload-zone${dragOver ? " drag-over" : ""}${filled ? " is-filled" : ""}`}
+      <div className={`upload-zone${dragOver ? " drag-over" : ""}${filled ? " is-filled" : ""}${onPickFromLibrary ? " has-library" : ""}`}
         onClick={() => !uploading && document.getElementById(id)?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}>
+        {onPickFromLibrary && (
+          <button type="button" className="btn btn-sm upload-zone__library"
+            onClick={(e) => { e.stopPropagation(); onPickFromLibrary(); }}>
+            <Ico name="images"/> {libraryLabel || _tr("create.assetPicker.choose", null, "Choose from Assets")}
+          </button>
+        )}
         <input id={id} type="file" accept={accept} multiple={multiple} hidden
           onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
         <div className="upload-zone__body">
@@ -3337,6 +3426,8 @@ function AssetsTab({ isActive = true }) {
   const t = useT();
   const [assets, setAssets] = useState([]);
   const [filter, setFilter] = useState(null);
+  const [previewAsset, setPreviewAsset] = useState(null);
+  const [deleteCandidate, setDeleteCandidate] = useState(null);
   const load = () => {
     const q = filter ? `?type=${filter}` : "";
     pluginApi("GET", `/assets${q}`).then(r => {
@@ -3373,10 +3464,16 @@ function AssetsTab({ isActive = true }) {
     );
   };
 
-  const deleteAsset = async (assetId) => {
-    if (!window.confirm(t("assets.confirmDelete"))) return;
-    await pluginApi("DELETE", `/assets/${assetId}`);
-    load();
+  const deleteAsset = async (asset) => {
+    try {
+      const r = await pluginApi("DELETE", `/assets/${asset.id}`);
+      if (!r.ok) throw new Error(r.body?.detail || r.body?.error || `HTTP ${r.status || "?"}`);
+      setDeleteCandidate(null);
+      if (previewAsset?.id === asset.id) setPreviewAsset(null);
+      load();
+    } catch (e) {
+      showToast(t("assets.deleteFail", { msg: e?.message || String(e) }), "error");
+    }
   };
 
   return (
@@ -3415,17 +3512,23 @@ function AssetsTab({ isActive = true }) {
                 </div>
                 <div className="asset-actions">
                   {a.preview_url && (
-                    <button className="btn btn-sm" onClick={() => window.open(a.preview_url, "_blank")}>
+                    <button className="btn btn-sm" onClick={() => setPreviewAsset(a)}>
                       {t("assets.preview.open")}
                     </button>
                   )}
-                  <button className="btn btn-sm btn-danger" onClick={() => deleteAsset(a.id)}>{t("assets.btn.delete")}</button>
+                  <button className="btn btn-sm btn-danger" onClick={() => setDeleteCandidate(a)}>{t("assets.btn.delete")}</button>
                 </div>
               </div>
             </div>
           ))}
         </div>
       )}
+      <AssetPreviewModal asset={previewAsset} onClose={() => setPreviewAsset(null)} />
+      <DeleteAssetConfirmModal
+        asset={deleteCandidate}
+        onCancel={() => setDeleteCandidate(null)}
+        onConfirm={deleteAsset}
+      />
     </div>
   );
 }

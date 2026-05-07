@@ -26,6 +26,9 @@ export interface MessageListProps {
   mdModules?: MdModules | null;
   isStreaming: boolean;
   searchHighlight?: string;
+  conversationId?: string;
+  httpApiBase?: () => string;
+  onPlanStepAction?: (action: "skip" | "retry", stepIdx: number, description: string) => void;
   onAskAnswer?: (msgId: string, answer: string) => void;
   onRetry?: (msgId: string) => void;
   onEdit?: (msgId: string) => void;
@@ -81,6 +84,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     onSkipStep,
     onImagePreview,
     onAtBottomChange,
+    conversationId,
+    httpApiBase,
+    onPlanStepAction,
   },
   ref,
 ) {
@@ -231,12 +237,16 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
           onRewind={onRewind}
           onSkipStep={onSkipStep}
           onImagePreview={onImagePreview}
+          conversationId={conversationId}
+          httpApiBase={httpApiBase}
+          onPlanStepAction={onPlanStepAction}
         />
       </div>
     );
   }, [
     messages.length, displayMode, apiBaseUrl, showChain, mdModules,
     onAskAnswer, onRetry, onEdit, onRegenerate, onRewind, onSkipStep, onImagePreview,
+    conversationId, httpApiBase, onPlanStepAction,
   ]);
 
   const Footer = useCallback(() => <div style={{ height: 32 }} />, []);

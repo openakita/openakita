@@ -242,6 +242,15 @@ async def delete_session(
     removed = session_manager.close_session(session_key)
     if removed:
         logger.info(f"[Sessions] Deleted session via API: {session_key}")
+        try:
+            from ...core.session_caches import clear_session_caches
+            from .chat import _get_existing_agent, _resolve_agent
+
+            agent = _get_existing_agent(request, conversation_id)
+            actual_agent = _resolve_agent(agent) if agent else None
+            clear_session_caches(actual_agent)
+        except Exception as exc:
+            logger.debug(f"[Sessions] clear_session_caches skipped: {exc}")
         await _broadcast_session_event(
             "chat:conversation_deleted",
             {

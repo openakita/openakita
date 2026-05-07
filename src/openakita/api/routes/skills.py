@@ -418,6 +418,33 @@ async def uninstall_skill(request: Request):
     return {"status": "ok", "skill_id": skill_id}
 
 
+@router.get("/api/skills/conflicts")
+async def list_skill_conflicts(request: Request):
+    """Return skill registration conflicts logged by SkillRegistry.
+
+    Each entry has ``skill_id`` / ``name`` / ``action`` (``rejected`` |
+    ``overridden``) plus the winner and shadowed source metadata. The frontend
+    Skill panel uses this to warn users that two sources tried to register
+    the same skill and which one is being used.
+    """
+    actual_agent = _resolve_agent(request)
+    registry = getattr(actual_agent, "skill_registry", None) if actual_agent else None
+    if registry is None or not hasattr(registry, "get_conflicts"):
+        return {"conflicts": []}
+    return {"conflicts": registry.get_conflicts()}
+
+
+@router.post("/api/skills/conflicts/clear")
+async def clear_skill_conflicts(request: Request):
+    """Reset the in-memory conflict log (audit only — does not change registrations)."""
+    actual_agent = _resolve_agent(request)
+    registry = getattr(actual_agent, "skill_registry", None) if actual_agent else None
+    if registry is None or not hasattr(registry, "clear_conflicts"):
+        return {"ok": False, "error": "skill_registry unavailable"}
+    registry.clear_conflicts()
+    return {"ok": True}
+
+
 @router.post("/api/skills/reload")
 async def reload_skills(request: Request):
     """热重载技能（安装新技能后、修改 SKILL.md 后、切换启用/禁用后调用）。

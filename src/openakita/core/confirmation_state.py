@@ -99,13 +99,30 @@ class PendingRiskConfirmationStore:
         return None
 
 
+_CONFIRM_WORDS = {
+    "confirm_continue", "确认继续", "继续", "确认", "继续吧", "继续执行",
+    "好", "好的", "好滴", "好啊", "嗯", "嗯嗯",
+    "是", "是的", "对", "对的",
+    "行", "可以", "中", "ok", "okay", "yes", "y", "go", "gogogo",
+    "同意", "批准", "通过", "执行", "开始", "开始吧", "做",
+}
+_INSPECT_WORDS = {
+    "inspect_only", "只查看", "仅查看", "查看", "看看",
+    "read_only", "inspect", "只读",
+}
+_CANCEL_WORDS = {
+    "cancel", "取消", "停止", "停", "否", "不", "不要", "不用",
+    "no", "n", "nope", "abort", "skip", "跳过", "算了",
+}
+
+
 def normalize_confirmation_answer(answer: str) -> ConfirmationDecision:
     normalized = (answer or "").strip().lower()
-    if normalized in {"confirm_continue", "确认继续", "继续", "确认", "yes", "y"}:
+    if normalized in _CONFIRM_WORDS:
         return ConfirmationDecision.CONFIRM
-    if normalized in {"inspect_only", "只查看", "仅查看", "查看", "read_only", "inspect"}:
+    if normalized in _INSPECT_WORDS:
         return ConfirmationDecision.INSPECT_ONLY
-    if normalized in {"cancel", "取消", "停止", "否", "no", "n"}:
+    if normalized in _CANCEL_WORDS:
         return ConfirmationDecision.CANCEL
     return ConfirmationDecision.UNKNOWN
 

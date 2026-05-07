@@ -91,8 +91,9 @@ def test_destructive_intent_question_requires_confirmation():
     result = _classify_risk_intent(None, "删除 security user_allowlist 第 0 条")
     question = _build_destructive_intent_question("删除 security user_allowlist 第 0 条", result)
 
-    assert "确认继续" in question
+    assert "继续" in question
     assert "只查看" in question
+    assert "取消" in question
 
 
 def test_pending_confirmation_consumes_known_answers():

@@ -13,8 +13,10 @@
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from ..tracing.tracer import get_tracer
 from .context_utils import DEFAULT_MAX_CONTEXT_TOKENS
@@ -70,7 +72,7 @@ class ContextManager:
         self._cancel_event = cancel_event
         self._token_cache: dict[int, int] = {}
         self._tools_tokens_cache: int | None = None
-        self._previous_summary: str = ""
+        self._previous_summaries: dict[str, str] = {}
 
     def set_cancel_event(self, event: asyncio.Event | None) -> None:
         """更新 cancel_event（每次任务开始时由 Agent 设置）"""
@@ -567,11 +569,15 @@ class ContextManager:
         # Step 3: LLM 分块摘要早期对话（支持迭代式更新）
         early_tokens = self.estimate_messages_tokens(early_messages)
         target_summary_tokens = max(int(early_tokens * _settings.context_compression_ratio), 200)
+        _summary_key = conversation_id or "__default__"
         summary = await self._summarize_messages_chunked(
-            early_messages, target_summary_tokens, previous_summary=self._previous_summary,
+            early_messages,
+            target_summary_tokens,
+            previous_summary=self._previous_summaries.get(_summary_key, ""),
+            url_facts=self._extract_urls_from_messages(early_messages),
         )
         if summary:
-            self._previous_summary = summary
+            self._previous_summaries[_summary_key] = summary
 
         if summary and memory_manager is not None:
             try:
@@ -950,12 +956,14 @@ class ContextManager:
         messages: list[dict],
         target_tokens: int,
         previous_summary: str = "",
+        url_facts: list[dict[str, str]] | None = None,
     ) -> str:
         """分块 LLM 摘要消息列表。支持迭代式更新：当存在 previous_summary 时
         走「更新摘要」路径而非从零开始，避免多次压缩后早期信息逐渐稀释。"""
         if not messages:
             return ""
 
+        url_guard = self._format_url_facts_for_prompt(url_facts or [])
         chunks: list[str] = []
         current_chunk = ""
         current_chunk_tokens = 0
@@ -1005,6 +1013,7 @@ class ContextManager:
                     )
                     _content = (
                         f"上次摘要:\n{previous_summary}\n\n"
+                        f"{url_guard}"
                         f"新增对话（第 {i + 1}/{len(chunks)} 块，"
                         f"约 {chunk_tokens} tokens）:\n\n{chunk}\n\n"
                         f"请更新摘要，压缩到 {chunk_target * CHARS_PER_TOKEN} 字以内。"
@@ -1012,6 +1021,7 @@ class ContextManager:
                 else:
                     _system = get_compact_prompt()
                     _content = (
+                        f"{url_guard}"
                         f"请将以下对话片段（第 {i + 1}/{len(chunks)} 块，"
                         f"约 {chunk_tokens} tokens）压缩到 "
                         f"{chunk_target * CHARS_PER_TOKEN} 字以内:\n\n{chunk}"
@@ -1094,7 +1104,83 @@ class ContextManager:
                 combined, target_tokens, context_type="conversation"
             )
 
+        if url_guard and "原始链接清单" not in combined:
+            combined = f"{url_guard.strip()}\n\n{combined}"
         return combined
+
+    @staticmethod
+    def _flatten_message_text(msg: dict) -> str:
+        """Best-effort plain-text view of a message for URL scanning.
+
+        Static and dependency-free so it can be used outside the instance
+        (tests, future helpers) without touching ``_extract_message_text``.
+        """
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    parts.append(str(block))
+                    continue
+                if block.get("type") == "text":
+                    parts.append(str(block.get("text", "")))
+                elif block.get("type") == "tool_result":
+                    inner = block.get("content")
+                    if isinstance(inner, str):
+                        parts.append(inner)
+                    elif isinstance(inner, list):
+                        for sub in inner:
+                            if isinstance(sub, dict) and sub.get("type") == "text":
+                                parts.append(str(sub.get("text", "")))
+                else:
+                    text_field = block.get("text")
+                    if isinstance(text_field, str):
+                        parts.append(text_field)
+            return "\n".join(parts)
+        if content is None:
+            return ""
+        return str(content)
+
+    @staticmethod
+    def _extract_urls_from_messages(messages: list[dict]) -> list[dict[str, str]]:
+        """Extract exact URLs before LLM compression so summaries cannot rewrite them."""
+        facts: list[dict[str, str]] = []
+        seen: set[str] = set()
+        url_re = re.compile(r"https?://[^\s<>'\"，。；、)）\]}]+", re.IGNORECASE)
+        for index, msg in enumerate(messages):
+            text = ContextManager._flatten_message_text(msg)
+            for match in url_re.finditer(text):
+                url = match.group(0).rstrip(".,;:")
+                if url in seen:
+                    continue
+                seen.add(url)
+                parsed = urlparse(url)
+                facts.append(
+                    {
+                        "message_index": str(index),
+                        "role": str(msg.get("role", "")),
+                        "url": url,
+                        "hostname": parsed.hostname or "",
+                    }
+                )
+        return facts
+
+    @staticmethod
+    def _format_url_facts_for_prompt(url_facts: list[dict[str, str]]) -> str:
+        if not url_facts:
+            return ""
+        lines = [
+            "[原始链接清单 - 必须逐字保留]",
+            "下面 URL 来自被压缩的原始对话。摘要中不得改写、猜测、合并或省略这些 URL；如果后续用户说“刚才那个链接”，优先参考本清单。",
+        ]
+        for fact in url_facts:
+            lines.append(
+                f"- msg#{fact.get('message_index', '')} role={fact.get('role', '')} "
+                f"host={fact.get('hostname', '')}: {fact.get('url', '')}"
+            )
+        return "\n".join(lines) + "\n\n"
 
     async def _compress_further(self, messages: list[dict], max_tokens: int) -> list[dict]:
         """递归压缩：减少保留的最近组数量"""
@@ -1119,7 +1205,11 @@ class ContextManager:
         from ..config import settings as _settings
 
         target = max(int(early_tokens * _settings.context_compression_ratio), 100)
-        summary = await self._summarize_messages_chunked(early_messages, target)
+        summary = await self._summarize_messages_chunked(
+            early_messages,
+            target,
+            url_facts=self._extract_urls_from_messages(early_messages),
+        )
 
         compressed = self._inject_summary_into_recent(summary, recent_messages)
 

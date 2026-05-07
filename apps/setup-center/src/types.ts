@@ -163,6 +163,28 @@ export type ChatArtifact = {
   size?: number;
 };
 
+export type ChatSource = {
+  tool_name?: string;
+  tool_use_id?: string;
+  requested_url: string;
+  final_url: string;
+  hostname?: string;
+  redirected?: boolean;
+  from_cache?: boolean;
+  status?: string;
+  hint?: string;
+};
+
+export type ChatMcpCall = {
+  tool_use_id?: string;
+  server: string;
+  tool: string;
+  status?: "ok" | "error" | string;
+  auto_connected?: boolean;
+  reconnected?: boolean;
+  error?: string;
+};
+
 export type ChatErrorInfo = {
   message: string;
   category: "auth" | "quota" | "timeout" | "content_filter" | "network" | "server" | "unknown";
@@ -180,6 +202,8 @@ export type ChatMessage = {
   askUser?: ChatAskUser | null;
   attachments?: ChatAttachment[] | null;
   artifacts?: ChatArtifact[] | null;
+  sources?: ChatSource[] | null;
+  mcpCalls?: ChatMcpCall[] | null;
   thinkingChain?: ChainGroup[] | null;
   errorInfo?: ChatErrorInfo | null;
   usage?: { input_tokens: number; output_tokens: number; total_tokens?: number } | null;

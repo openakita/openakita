@@ -349,14 +349,11 @@ def _build_destructive_intent_question(message: str, classification: RiskIntentR
     target = (message or "").strip()
     if len(target) > 240:
         target = target[:240] + "..."
-    target_kind = classification.target_kind.value if classification else "unknown"
-    operation_kind = classification.operation_kind.value if classification else "unknown"
     return (
-        "这个请求可能会删除、覆盖或修改安全/权限相关配置。"
-        "为避免误操作，我需要先确认，不会直接进入工具搜索或执行命令。\n\n"
-        f"风险分类：target={target_kind}, operation={operation_kind}\n"
-        f"请确认是否继续执行这项高风险操作：{target}\n\n"
-        "回复“确认继续”才会继续；如果只是想查看当前配置，请回复“只查看”。"
+        f"想跟你确认下：你是要 **{target}**？\n\n"
+        "这个动作可能会改动文件 / 配置 / 权限，做完不一定能撤回，所以我先停一下。\n"
+        "回复 **继续**（或 好 / 是 / yes）就开始执行；\n"
+        "回复 **只查看** 我就只读不改；回复 **取消** 就跳过。"
     )
 
 # Prompt Compiler 系统提示词（两段式 Prompt 第一阶段）
@@ -5162,7 +5159,7 @@ class Agent:
                     "confirmation_id": pending.confirmation_id,
                     "risk_intent": _risk_intent.to_dict(),
                     "options": [
-                        {"id": "confirm_continue", "label": "确认继续"},
+                        {"id": "confirm_continue", "label": "继续"},
                         {"id": "inspect_only", "label": "只查看"},
                         {"id": "cancel", "label": "取消"},
                     ],

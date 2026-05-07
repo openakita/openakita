@@ -147,6 +147,7 @@ async def health(request: Request):
         "all_ips": _get_all_lan_ips(),
         "api_host": os.environ.get("API_HOST", "127.0.0.1"),
         "api_port": _safe_int(os.environ.get("API_PORT", "18900"), 18900),
+        "last_link_diagnostic": getattr(request.app.state, "last_link_diagnostic", None),
     }
 
 
@@ -156,6 +157,65 @@ async def logs_health_summary():
     from openakita.core.log_health import get_log_health_registry
 
     return get_log_health_registry().summary()
+
+
+@router.get("/api/diagnostics/last-link")
+async def last_link_diagnostic(request: Request):
+    """Return the last web_fetch / browser link diagnostic for the Status panel."""
+    return getattr(request.app.state, "last_link_diagnostic", None) or {}
+
+
+@router.post("/api/diagnostics/clear-session-caches")
+async def clear_session_caches_endpoint(request: Request, conversation_id: str | None = None):
+    """User-triggered, non-destructive cache clear for the active session.
+
+    Clears: WebFetch URL cache, ReasoningEngine read-only tool cache, browser
+    navigation memory, last link diagnostic, per-conversation compression
+    summaries.
+    """
+    from openakita.core.session_caches import clear_session_caches
+
+    actual_agent = None
+    try:
+        from .chat import _get_existing_agent, _resolve_agent
+
+        agent = _get_existing_agent(request, conversation_id or "") or getattr(
+            request.app.state, "agent", None
+        )
+        actual_agent = _resolve_agent(agent) if agent else None
+    except Exception:
+        pass
+
+    cleared = clear_session_caches(actual_agent)
+    return {"ok": True, "cleared": cleared}
+
+
+@router.get("/api/diagnostics/domain-rules")
+async def domain_rules(conversation_id: str = ""):
+    """Return blocked / approved hosts for a conversation."""
+    from openakita.core.domain_allowlist import get_domain_allowlist
+
+    return {"conversation_id": conversation_id, **get_domain_allowlist().list_for(conversation_id)}
+
+
+@router.post("/api/diagnostics/domain-block")
+async def domain_block(conversation_id: str, host: str):
+    from openakita.core.domain_allowlist import get_domain_allowlist
+
+    if not conversation_id or not host:
+        return {"ok": False, "error": "conversation_id and host are required"}
+    added = get_domain_allowlist().block(conversation_id, host)
+    return {"ok": True, "changed": added, **get_domain_allowlist().list_for(conversation_id)}
+
+
+@router.post("/api/diagnostics/domain-unblock")
+async def domain_unblock(conversation_id: str, host: str):
+    from openakita.core.domain_allowlist import get_domain_allowlist
+
+    if not conversation_id or not host:
+        return {"ok": False, "error": "conversation_id and host are required"}
+    removed = get_domain_allowlist().unblock(conversation_id, host)
+    return {"ok": True, "changed": removed, **get_domain_allowlist().list_for(conversation_id)}
 
 
 def _get_llm_client(agent: object):

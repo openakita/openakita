@@ -9,6 +9,9 @@ import { AskUserBlock } from "./AskUser";
 import { ErrorCard } from "./ErrorCard";
 import { AttachmentPreview } from "./AttachmentPreview";
 import { SpinnerTipDisplay } from "./SpinnerTipDisplay";
+import { SourceStrip } from "./SourceStrip";
+import { PlanCard } from "./PlanCard";
+import { MCPCallStrip } from "./MCPCallStrip";
 import { IconClipboard, IconEdit, IconRefresh, IconRewind } from "../../../icons";
 
 export const FlatMessageItem = memo(function FlatMessageItem({
@@ -24,6 +27,9 @@ export const FlatMessageItem = memo(function FlatMessageItem({
   onSkipStep,
   onImagePreview,
   mdModules,
+  conversationId,
+  httpApiBase,
+  onPlanStepAction,
 }: {
   msg: ChatMessage;
   onAskAnswer?: (msgId: string, answer: string) => void;
@@ -37,6 +43,9 @@ export const FlatMessageItem = memo(function FlatMessageItem({
   onSkipStep?: () => void;
   onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
   mdModules?: MdModules | null;
+  conversationId?: string;
+  httpApiBase?: () => string;
+  onPlanStepAction?: (action: "skip" | "retry", stepIdx: number, description: string) => void;
 }) {
   const { t } = useTranslation();
   const isUser = msg.role === "user";
@@ -88,6 +97,13 @@ export const FlatMessageItem = memo(function FlatMessageItem({
 
           {msg.thinking && (!msg.thinkingChain || msg.thinkingChain.length === 0) && (
             <ThinkingBlock content={msg.thinking} />
+          )}
+
+          <SourceStrip sources={msg.sources} conversationId={conversationId} httpApiBase={httpApiBase} />
+          <MCPCallStrip calls={msg.mcpCalls} />
+
+          {msg.todo && msg.todo.steps?.length > 0 && (
+            <PlanCard plan={msg.todo} onStepAction={onPlanStepAction} />
           )}
 
           {msg.streaming && !msg.content && (

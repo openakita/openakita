@@ -450,6 +450,11 @@ class SkillRegistry:
 
     def __init__(self):
         self._skills: dict[str, SkillEntry] = {}  # key = skill_id
+        # Conflict log: each entry records that a *new* registration shadowed
+        # or was rejected against an *existing* one. The UI's Skill panel uses
+        # this to surface "winner" vs "shadowed" without scraping log files.
+        self._conflicts: list[dict] = []
+        self._conflicts_max = 100
 
     def _resolve(self, key: str) -> SkillEntry | None:
         """按 skill_id 查找，未命中时回退到 name 匹配（向后兼容）。"""
@@ -521,11 +526,57 @@ class SkillRegistry:
                 existing.plugin_source or "none",
                 plugin_source or "none",
             )
+            self._record_conflict(
+                action="rejected", winner=existing, loser=entry
+            )
             return False
+
+        if existing is not None and force:
+            self._record_conflict(
+                action="overridden", winner=entry, loser=existing
+            )
 
         self._skills[entry.skill_id] = entry
         logger.info(f"Registered skill: {entry.skill_id} (name={entry.name})")
         return True
+
+    def _record_conflict(
+        self, *, action: str, winner: "SkillEntry", loser: "SkillEntry"
+    ) -> None:
+        """Append a structured conflict record (capped at ``_conflicts_max``)."""
+
+        def _origin(entry: SkillEntry) -> str:
+            origin = getattr(entry, "origin", None)
+            if origin is None:
+                return "unknown"
+            value = getattr(origin, "value", None)
+            return str(value) if value is not None else str(origin)
+
+        record = {
+            "skill_id": winner.skill_id,
+            "name": winner.name,
+            "action": action,
+            "winner": {
+                "origin": _origin(winner),
+                "plugin_source": winner.plugin_source or "",
+                "path": str(getattr(winner, "skill_path", "") or ""),
+            },
+            "shadowed": {
+                "origin": _origin(loser),
+                "plugin_source": loser.plugin_source or "",
+                "path": str(getattr(loser, "skill_path", "") or ""),
+            },
+        }
+        self._conflicts.append(record)
+        if len(self._conflicts) > self._conflicts_max:
+            self._conflicts = self._conflicts[-self._conflicts_max :]
+
+    def get_conflicts(self) -> list[dict]:
+        """Return a snapshot of recent skill registration conflicts."""
+        return list(self._conflicts)
+
+    def clear_conflicts(self) -> None:
+        self._conflicts.clear()
 
     def unregister(self, key: str) -> bool:
         """

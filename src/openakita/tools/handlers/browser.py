@@ -37,9 +37,9 @@ _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 _browser_lock_manager = LockManager()
 _BROWSER_LOCK_TIMEOUT = 300.0  # seconds
 
-# Operations that mutate page state or are long-running.
-# Read-only helpers (get_content, screenshot, status, list_tabs, wait) are
-# intentionally excluded to avoid blocking during page-mutating operations.
+# Operations that depend on the shared current page.
+# get_content/screenshot are read-only, but they must not overlap with
+# navigation; otherwise one agent can read another agent's current tab.
 _LOCKED_BROWSER_OPS = frozenset(
     {
         "browser_navigate",
@@ -47,6 +47,8 @@ _LOCKED_BROWSER_OPS = frozenset(
         "browser_type",
         "browser_scroll",
         "browser_execute_js",
+        "browser_get_content",
+        "browser_screenshot",
         "browser_new_tab",
         "browser_switch_tab",
         "browser_close",
@@ -115,7 +117,9 @@ class BrowserHandler:
 
         result = await self._dispatch_with_lock(actual_tool_name, params)
 
-        if result.get("success"):
+        if actual_tool_name == "browser_get_content" and result.get("success"):
+            output = self._format_get_content_result(result, params)
+        elif result.get("success"):
             output = f"✅ {result.get('result', 'OK')}"
         else:
             output = f"❌ {result.get('error', '未知错误')}"
@@ -169,17 +173,37 @@ class BrowserHandler:
                 await manager.stop()
                 return {"success": True, "result": "Browser closed"}
             elif tool_name == "browser_navigate":
-                return await pw.navigate(params.get("url", ""))
+                result = await pw.navigate(params.get("url", ""))
+                if result.get("success"):
+                    setattr(self.agent, "_last_browser_navigate_url", params.get("url", ""))
+                return result
             elif tool_name == "browser_screenshot":
-                return await pw.screenshot(
+                result = await pw.screenshot(
                     full_page=params.get("full_page", False),
                     path=params.get("path"),
                 )
+                if result.get("success"):
+                    result["source"] = await self._capture_page_source(manager)
+                return result
             elif tool_name == "browser_get_content":
-                return await pw.get_content(
+                result = await pw.get_content(
                     selector=params.get("selector"),
                     format=params.get("format", "text"),
                 )
+                if result.get("success"):
+                    source = await self._capture_page_source(manager)
+                    expected_url = params.get("expected_url") or getattr(
+                        self.agent, "_last_browser_navigate_url", ""
+                    )
+                    if expected_url and source.get("current_url") != expected_url:
+                        source["warning"] = (
+                            "当前浏览器页面与预期 URL 不一致，可能是页面跳转或其他任务改变了当前页。"
+                        )
+                        source["expected_url"] = expected_url
+                    result["source"] = source
+                    result["selector"] = params.get("selector")
+                    result["format"] = params.get("format", "text")
+                return result
             elif tool_name == "browser_click":
                 return await pw.click(
                     selector=params.get("selector"),
@@ -228,6 +252,68 @@ class BrowserHandler:
                 }
 
             return {"success": False, "error": error_str}
+
+    @staticmethod
+    async def _capture_page_source(manager: Any) -> dict[str, Any]:
+        """Return the actual page URL/title for provenance display."""
+        source: dict[str, Any] = {"current_url": "", "title": ""}
+        page = getattr(manager, "page", None)
+        if not page:
+            return source
+        try:
+            source["current_url"] = getattr(page, "url", "") or ""
+        except Exception:
+            source["current_url"] = ""
+        try:
+            source["title"] = await page.title()
+        except Exception:
+            source["title"] = ""
+        return source
+
+    @staticmethod
+    def _format_get_content_result(result: dict[str, Any], params: dict[str, Any]) -> str:
+        source = result.get("source") if isinstance(result.get("source"), dict) else {}
+        current_url = source.get("current_url", "")
+        title = source.get("title", "")
+        expected_url = source.get("expected_url", "")
+        warning = source.get("warning", "")
+        selector = result.get("selector", params.get("selector"))
+        fmt = result.get("format", params.get("format", "text"))
+        content = result.get("result", "OK")
+        source_payload = {
+            "tool_name": "browser_get_content",
+            "requested_url": expected_url or current_url,
+            "final_url": current_url,
+            "hostname": "",
+            "redirected": bool(expected_url and current_url and expected_url != current_url),
+            "from_cache": False,
+            "status": "ok",
+            "hint": warning,
+        }
+        try:
+            from urllib.parse import urlparse
+
+            source_payload["hostname"] = urlparse(current_url or expected_url).hostname or ""
+        except Exception:
+            pass
+
+        import json
+
+        lines = [
+            f"[OPENAKITA_SOURCE] {json.dumps(source_payload, ensure_ascii=False, sort_keys=True)}",
+            "✅ Browser content read",
+            f"Current URL: {current_url or 'unknown'}",
+            f"Title: {title or 'unknown'}",
+            f"Selector: {selector or 'document'}",
+            f"Format: {fmt}",
+        ]
+        if expected_url:
+            lines.append(f"Expected URL: {expected_url}")
+        if warning:
+            lines.append(f"Warning: {warning}")
+        lines.append("")
+        lines.append(str(content))
+        return "\n".join(lines)
 
     async def _handle_open(self, manager: Any, params: dict) -> dict:
         """处理 browser_open（合并了状态查询功能）。"""

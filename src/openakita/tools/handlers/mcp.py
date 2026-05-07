@@ -12,6 +12,7 @@ MCP 处理器
 - reload_mcp_servers: 重新加载所有配置
 """
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -109,9 +110,24 @@ class MCPHandler:
             from ...utils.credential_redact import redact_credentials
 
             safe_data = redact_credentials(str(result.data)) if result.data else ""
-            return f"✅ MCP 工具调用成功:\n{safe_data}"
+            envelope = _build_mcp_envelope(
+                status="ok",
+                server=server,
+                tool=mcp_tool_name,
+                auto_connected=auto_connected,
+                reconnected=bool(getattr(result, "reconnected", False)),
+            )
+            return f"✅ MCP 工具调用成功:\n{safe_data}\n\n{envelope}"
         else:
-            return f"❌ MCP 工具调用失败: {result.error}"
+            envelope = _build_mcp_envelope(
+                status="error",
+                server=server,
+                tool=mcp_tool_name,
+                auto_connected=auto_connected,
+                reconnected=bool(getattr(result, "reconnected", False)),
+                error=str(result.error or ""),
+            )
+            return f"❌ MCP 工具调用失败: {result.error}\n\n{envelope}"
 
     async def _list_servers(self, params: dict) -> str:
         """列出 MCP 服务器及其工具"""
@@ -332,6 +348,34 @@ class MCPHandler:
             f"  之前已连接的 {counts['previously_connected']} 个服务器已断开\n\n"
             f"使用 `connect_mcp_server(server)` 重新连接"
         )
+
+
+def _build_mcp_envelope(
+    *,
+    status: str,
+    server: str,
+    tool: str,
+    auto_connected: bool = False,
+    reconnected: bool = False,
+    error: str = "",
+) -> str:
+    """Render a stable provenance envelope for downstream parsers.
+
+    Mirrors the ``[OPENAKITA_SOURCE]`` pattern used by web_fetch / browser:
+    a single line ``[OPENAKITA_MCP] {json}`` carrying server, tool, status
+    and connection lifecycle hints. Frontend / chat route can lift this into
+    structured `mcp_call` events without scraping the natural-language reply.
+    """
+    payload: dict[str, Any] = {
+        "status": status,
+        "server": server,
+        "tool": tool,
+        "auto_connected": auto_connected,
+        "reconnected": reconnected,
+    }
+    if error:
+        payload["error"] = error[:400]
+    return f"[OPENAKITA_MCP] {json.dumps(payload, ensure_ascii=False)}"
 
 
 def create_handler(agent: "Agent"):

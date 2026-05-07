@@ -47,9 +47,23 @@ class PlanHandler:
         self.agent = agent
         self.current_todo: dict | None = None
         self._todos_by_session: dict[str, dict] = {}
-        self.plan_dir = Path("data/plans")
+        self.plan_dir = self._resolve_plan_dir()
         self.plan_dir.mkdir(parents=True, exist_ok=True)
         self._store = TodoStore(self.plan_dir / "todo_store.json")
+
+    @staticmethod
+    def _resolve_plan_dir() -> Path:
+        """Resolve the plan storage directory under the configured data_dir.
+
+        Falls back to ``./data/plans`` if settings cannot be imported (early
+        import order during tests / CLI bootstrap).
+        """
+        try:
+            from ...config import settings
+
+            return Path(settings.data_dir) / "plans"
+        except Exception:
+            return Path("data/plans")
 
     def _get_conversation_id(self) -> str:
         return (
