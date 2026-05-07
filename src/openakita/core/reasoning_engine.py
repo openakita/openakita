@@ -126,16 +126,13 @@ def _format_budget_pause_message(status: Any) -> str:
     """
     dim = getattr(status, "dimension", "") or "unknown"
     pct = getattr(status, "usage_ratio", 0.0) or 0.0
-    if dim == "duration":
-        suffix = "（近 60s 无新工具调用或 token 产出，可能已陷入循环）"
-    else:
-        suffix = ""
+    suffix = "（近 60s 无新工具调用或 token 产出，可能已陷入循环）" if dim == "duration" else ""
     return (
         f"⚠️ 任务暂停（{dim}: {pct:.0%}{suffix}）\n\n"
         f"▸ 直接回复\"继续\"即可让我接力完成（系统会以新任务接力，"
         f"对话历史和已有进展都已保留）\n"
-        f"▸ 如果你预期任务时间确实较长，到【设置中心 → 高级设置 → 任务预算】"
-        f"把对应预算调高（TASK_BUDGET_DURATION 设为 0 = 不限时长，"
+        f"▸ 如果你预期任务时间确实较长，到【配置 → 高级配置 → 长任务与上下文保护 → 任务预算】"
+        f"把对应预算调高并保存（TASK_BUDGET_DURATION 设为 0 = 不限时长，"
         f"系统会在没有工具调用进展时才暂停）"
     )
 
@@ -1359,6 +1356,7 @@ class ReasoningEngine:
             budget_status = self._budget.check()
             if budget_status.action == BudgetAction.PAUSE:
                 logger.warning(f"[Budget] PAUSE: {budget_status.message}")
+                self._last_exit_reason = "budget_exceeded"
                 self._save_react_trace(
                     react_trace, conversation_id, session_type, "budget_exceeded", _trace_started_at
                 )
@@ -3048,6 +3046,7 @@ class ReasoningEngine:
                 budget_status = self._budget.check()
                 if budget_status.action == BudgetAction.PAUSE:
                     logger.warning(f"[Budget-Stream] PAUSE: {budget_status.message}")
+                    self._last_exit_reason = "budget_exceeded"
                     self._save_react_trace(
                         react_trace,
                         conversation_id,

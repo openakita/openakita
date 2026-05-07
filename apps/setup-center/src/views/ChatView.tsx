@@ -2685,7 +2685,7 @@ export function ChatView({
                   noticeText =
                     `${dimLabel}已超出预算（${pct}%），但任务仍在持续产出工具调用 / token，` +
                     `已自动续期。如需停止任务，可点击下方"停止"按钮。` +
-                    `（如想取消时长限制：设置中心 → 高级设置 → 任务预算 → 把 TASK_BUDGET_DURATION 设为 0）`;
+                    `（如想取消时长限制：配置 → 高级配置 → 长任务与上下文保护 → 任务预算 → 把 TASK_BUDGET_DURATION 设为 0 并保存）`;
                 } else if (level === "downgrade") {
                   noticeText =
                     `${dimLabel}已用至 ${pct}%，接近上限。任务仍在继续，但可能即将触达 PAUSE。` +

@@ -80,6 +80,41 @@ CHECK_INTERVAL = 3.0  # how often to poll progress (matches frontend polling)
 _DEFAULT_IDLE_TIMEOUT = 1200.0
 _DEFAULT_HARD_TIMEOUT = 0  # 0 = disabled
 
+_BUDGET_GUIDE = (
+    "\n\n提示：可以在 OpenAkita「配置 → 高级配置 → 长任务与上下文保护 → 任务预算」"
+    "里调整这些限制；如果想取消时长限制，把 TASK_BUDGET_DURATION 设为 0。"
+)
+_BUDGET_PAUSE_MARKERS = (
+    "任务资源预算已用尽",
+    "任务暂停（",
+)
+
+
+def _with_budget_guide(text: str, exit_reason: str = "") -> str:
+    """Append a settings path to budget-pause messages once.
+
+    Prefer the structured exit_reason; text markers only keep old budget-pause
+    payloads readable if they came from an older or non-standard path.
+    """
+    if not text:
+        return text
+    if "TASK_BUDGET_DURATION" in text or ("任务预算" in text and "高级配置" in text):
+        return text
+    is_budget_pause = exit_reason == "budget_exceeded" or any(
+        marker in text for marker in _BUDGET_PAUSE_MARKERS
+    )
+    if is_budget_pause:
+        return text.rstrip() + _BUDGET_GUIDE
+    return text
+
+
+def _delegation_notice_title(exit_reason: str) -> str:
+    if exit_reason == "budget_exceeded":
+        return "任务暂停通知"
+    if exit_reason in {"error", "timeout", "cancelled", "loop_terminated", "max_turns"}:
+        return "任务结束通知"
+    return "任务完成通知"
+
 
 @dataclass
 class DelegationRequest:
@@ -134,8 +169,9 @@ class DelegationResult:
         can make informed follow-up decisions.  The ``__ARTIFACT_RECEIPTS__``
         sentinel format is unchanged for backward compatibility.
         """
+        notice_title = _delegation_notice_title(self.exit_reason)
         header = (
-            f"[任务完成通知] Agent: {self.agent_id}"
+            f"[{notice_title}] Agent: {self.agent_id}"
             f" | 状态: {self.exit_reason}"
             f" | 耗时: {self.elapsed_s}s"
         )
@@ -147,7 +183,7 @@ class DelegationResult:
         else:
             tools_line = "工具调用: 0 次"
 
-        parts = [header, tools_line, "", self.text]
+        parts = [header, tools_line, "", _with_budget_guide(self.text, self.exit_reason)]
         if self.artifacts:
             parts.append(
                 f"\n__ARTIFACT_RECEIPTS__{json.dumps(self.artifacts)}__ARTIFACT_RECEIPTS__"

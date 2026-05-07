@@ -563,9 +563,9 @@ class Settings(BaseSettings):
         description="发送给 LLM API 的 tools schema 估算 token 预算，超出后动态 defer 非核心工具",
     )
     same_tool_call_limit: int = Field(
-        default=8,
+        default=10,
         ge=1,
-        description="同一工具同参数在单任务内允许执行的最大次数；长任务建议 8~12",
+        description="同一工具同参数在单任务内允许执行的最大次数；默认按长任务宽松模式取 10",
     )
     readonly_stagnation_limit: int = Field(
         default=3,
@@ -573,9 +573,9 @@ class Settings(BaseSettings):
         description="只读探索连续无新信息的软提醒轮数",
     )
     readonly_stagnation_hard_limit: int = Field(
-        default=10,
+        default=12,
         ge=1,
-        description="只读探索连续无新信息的硬终止轮数；长任务建议 10~15",
+        description="只读探索连续无新信息的硬终止轮数；默认按长任务宽松模式取 12",
     )
 
     # === Harness 配置 ===
@@ -585,14 +585,16 @@ class Settings(BaseSettings):
     task_budget_tokens: int = Field(default=0, description="单次任务最大 token 消耗 (0=不限制)")
     task_budget_cost: float = Field(default=0.0, description="单次任务最大成本 USD (0=不限制)")
     task_budget_duration: int = Field(
-        default=600, description="单次任务最大时长秒 (0=不限制，默认 600=10分钟)"
+        default=0,
+        description="单次任务最大时长秒 (0=不限制；默认启用长任务宽松模式，不限制时长)",
     )
     task_budget_iterations: int = Field(
-        default=100, description="单次任务最大迭代次数 (0=不限制，默认 100；与 max_iterations 对齐)"
+        default=300,
+        description="单次任务最大迭代次数 (0=不限制；默认按长任务宽松模式取 300)",
     )
     task_budget_tool_calls: int = Field(
-        default=100,
-        description="单次任务最大工具调用次数 (0=不限制，默认 100；长任务/复杂工作流可设 0 或 200+)",
+        default=200,
+        description="单次任务最大工具调用次数 (0=不限制；默认按长任务宽松模式取 200)",
     )
 
     # === 追踪配置 ===

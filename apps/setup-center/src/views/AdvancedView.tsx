@@ -466,13 +466,13 @@ export function AdvancedView(props: AdvancedViewProps) {
 
         <Section title={t("config.ctxTaskBudgetTitle")} className="mt-2">
           <div className="grid3">
-            {FT({ k: "TASK_BUDGET_TOOL_CALLS", label: t("config.ctxTaskBudgetToolCalls"), placeholder: "100", help: t("config.ctxTaskBudgetToolCallsHelp") })}
-            {FT({ k: "SAME_TOOL_CALL_LIMIT", label: t("config.ctxSameToolLimit"), placeholder: "8", help: t("config.ctxSameToolLimitHelp") })}
-            {FT({ k: "READONLY_STAGNATION_HARD_LIMIT", label: t("config.ctxReadonlyHardLimit"), placeholder: "10", help: t("config.ctxReadonlyHardLimitHelp") })}
+            {FT({ k: "TASK_BUDGET_TOOL_CALLS", label: t("config.ctxTaskBudgetToolCalls"), placeholder: "200", help: t("config.ctxTaskBudgetToolCallsHelp") })}
+            {FT({ k: "SAME_TOOL_CALL_LIMIT", label: t("config.ctxSameToolLimit"), placeholder: "10", help: t("config.ctxSameToolLimitHelp") })}
+            {FT({ k: "READONLY_STAGNATION_HARD_LIMIT", label: t("config.ctxReadonlyHardLimit"), placeholder: "12", help: t("config.ctxReadonlyHardLimitHelp") })}
           </div>
           <div className="grid2 mt-2">
-            {FT({ k: "TASK_BUDGET_DURATION", label: t("config.ctxTaskBudgetDuration"), placeholder: "600", help: t("config.ctxTaskBudgetDurationHelp") })}
-            {FT({ k: "TASK_BUDGET_ITERATIONS", label: t("config.ctxTaskBudgetIterations"), placeholder: "100", help: t("config.ctxTaskBudgetIterationsHelp") })}
+            {FT({ k: "TASK_BUDGET_DURATION", label: t("config.ctxTaskBudgetDuration"), placeholder: "0", help: t("config.ctxTaskBudgetDurationHelp") })}
+            {FT({ k: "TASK_BUDGET_ITERATIONS", label: t("config.ctxTaskBudgetIterations"), placeholder: "300", help: t("config.ctxTaskBudgetIterationsHelp") })}
           </div>
         </Section>
 
