@@ -29,6 +29,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _chat_endpoint_names() -> set[str]:
+    """Return configured main-chat endpoint names.
+
+    Compiler/STT endpoints are intentionally excluded here: they can validate
+    API keys or support prompt compilation, but they cannot serve chat turns.
+    """
+    try:
+        from openakita.api.routes.config import _get_endpoint_manager
+
+        mgr = _get_endpoint_manager()
+        return {
+            str(ep.get("name"))
+            for ep in (mgr.list_endpoints("endpoints") or [])
+            if ep.get("name") and ep.get("enabled", True)
+        }
+    except Exception as exc:
+        logger.warning("[Chat API] Failed to inspect chat endpoints: %s", exc)
+        return set()
+
+
 def _format_controlled_action_result(
     decision: ConfirmationDecision,
     result: dict,
@@ -688,6 +708,8 @@ async def _stream_chat(
     _agent_done = asyncio.Event()
     _agent_queue: asyncio.Queue = asyncio.Queue()
     _save_done = False
+    session = None
+    conversation_id = chat_request.conversation_id or ""
 
     try:
         actual_agent = _resolve_agent(agent)
@@ -711,7 +733,6 @@ async def _stream_chat(
 
         conversation_id = chat_request.conversation_id or f"api_{_uuid.uuid4().hex[:12]}"
         turn_id = f"{conversation_id}:{request_id or _uuid.uuid4().hex[:12]}"
-        session = None
         session_messages_history: list[dict] = []
 
         if session_manager and conversation_id:
@@ -1279,6 +1300,31 @@ async def chat(request: Request, body: ChatRequest):
     elif pending_response is not None:
         return pending_response
 
+    chat_endpoint_names = _chat_endpoint_names()
+    if not chat_endpoint_names:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "no_chat_endpoints_configured",
+                "message": (
+                    "尚未配置主聊天 LLM 端点。请在设置中心的「LLM 端点」中添加"
+                    "主聊天端点；编译端点只用于提示词编译/摘要，不能用于聊天。"
+                ),
+            },
+        )
+    if body.endpoint and body.endpoint not in chat_endpoint_names:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "unknown_chat_endpoint",
+                "endpoint": body.endpoint,
+                "message": (
+                    f"未知的聊天端点: {body.endpoint}。请在主聊天端点列表中选择，不要使用"
+                    "编译端点或语音端点。"
+                ),
+            },
+        )
+
     # ── Busy-lock check (via lifecycle manager) ──
     lifecycle = get_lifecycle_manager()
     busy_gen = 0
@@ -1314,30 +1360,6 @@ async def chat(request: Request, body: ChatRequest):
                     "error": "unknown_agent_profile_id",
                     "agent_profile_id": body.agent_profile_id,
                     "message": f"未知的 agent_profile_id: {body.agent_profile_id}",
-                },
-            )
-
-    if body.endpoint:
-        try:
-            from openakita.api.routes.config import _get_endpoint_manager
-            _mgr = _get_endpoint_manager()
-            _names: set[str] = set()
-            for _et in ("endpoints", "compiler_endpoints", "stt_endpoints"):
-                for _ep in _mgr.list_endpoints(_et) or []:
-                    _n = _ep.get("name")
-                    if _n:
-                        _names.add(_n)
-        except Exception:
-            _names = set()
-        if _names and body.endpoint not in _names:
-            if client_id:
-                await lifecycle.finish(conversation_id, generation=busy_gen)
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": "unknown_endpoint",
-                    "endpoint": body.endpoint,
-                    "message": f"未知的 endpoint: {body.endpoint}",
                 },
             )
 

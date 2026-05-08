@@ -180,6 +180,7 @@
     "slashHint": "输入 / 查看可用命令",
     "errorPrefix": "错误",
     "noEndpoints": "未配置 LLM 端点",
+    "noChatEndpointConfigured": "尚未配置主聊天 LLM 端点。请先在设置中心的“LLM 端点”中添加主聊天端点；编译端点只用于提示词编译/摘要，不能用于聊天。",
     "stopGeneration": "停止生成",
     "toolCallLabel": "工具调用：",
     "collapse": "收起",

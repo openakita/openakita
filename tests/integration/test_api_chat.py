@@ -1,7 +1,6 @@
 """L3 Integration Tests: FastAPI /api/chat SSE endpoint and control routes."""
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -32,7 +31,10 @@ def mock_agent():
 
 
 @pytest.fixture
-def app(mock_agent):
+def app(mock_agent, monkeypatch):
+    from openakita.api.routes import chat as chat_routes
+
+    monkeypatch.setattr(chat_routes, "_chat_endpoint_names", lambda: {"mock-main"})
     return create_app(
         agent=mock_agent,
         shutdown_event=asyncio.Event(),
@@ -74,7 +76,36 @@ class TestChatEndpoint:
             "/api/chat",
             json={"message": "", "conversation_id": "test-conv-1"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "empty_message"
+
+    async def test_chat_requires_main_endpoint(self, client, monkeypatch):
+        from openakita.api.routes import chat as chat_routes
+
+        monkeypatch.setattr(chat_routes, "_chat_endpoint_names", lambda: set())
+
+        resp = await client.post(
+            "/api/chat",
+            json={"message": "Hello", "conversation_id": "test-conv-1"},
+        )
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["error"] == "no_chat_endpoints_configured"
+        assert "\u4e3b\u804a\u5929" in data["message"]
+
+    async def test_chat_rejects_non_chat_endpoint(self, client):
+        resp = await client.post(
+            "/api/chat",
+            json={
+                "message": "Hello",
+                "conversation_id": "test-conv-1",
+                "endpoint": "compiler-only",
+            },
+        )
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["error"] == "unknown_chat_endpoint"
+        assert data["endpoint"] == "compiler-only"
 
 
 class TestChatControlEndpoints:

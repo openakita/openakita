@@ -180,6 +180,7 @@
     "slashHint": "Type / for available commands",
     "errorPrefix": "Error",
     "noEndpoints": "No LLM endpoints configured",
+    "noChatEndpointConfigured": "No main chat LLM endpoint is configured yet. Add a main chat endpoint in Setup Center > LLM Endpoints first; compiler endpoints are only for prompt compilation/summaries and cannot serve chat.",
     "stopGeneration": "Stop Generation",
     "toolCallLabel": "Tool Call: ",
     "collapse": "Collapse",
