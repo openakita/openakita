@@ -114,6 +114,11 @@ def _humanize_upstream_error(status: int, body: str) -> str:
         )
     ):
         return "云端模型未能访问到您发送的图片（图片需可公网访问或采用内嵌方式），请稍后重试或更换更小的图片"
+    if "appidnoautherror" in body_l or "code\":11200" in body_l or "code\":\"11200" in body_l:
+        return (
+            "讯飞模型授权或额度异常 (xfyun_auth_or_quota, AppIdNoAuthError/code 11200)。"
+            "请检查 Coding Plan 订阅、模型权限和当日用量。"
+        )
     if status == 401 or "authenticationerror" in body_l or "invalid api key" in body_l:
         return "API Key 无效或已过期，请到设置中心检查模型端点凭据"
     if status == 429 or "rate limit" in body_l:
@@ -392,15 +397,20 @@ class OpenAIProvider(LLMProvider):
                 )
                 if response.status_code == 401:
                     raise AuthenticationError(
-                        _humanize_upstream_error(401, body), status_code=401
+                        _humanize_upstream_error(401, body),
+                        status_code=401,
+                        raw_body=body,
                     )
                 if response.status_code == 429:
                     raise RateLimitError(
-                        _humanize_upstream_error(429, body), status_code=429
+                        _humanize_upstream_error(429, body),
+                        status_code=429,
+                        raw_body=body,
                     )
                 raise LLMError(
                     _humanize_upstream_error(response.status_code, body),
                     status_code=response.status_code,
+                    raw_body=body,
                 )
 
             try:
@@ -497,15 +507,18 @@ class OpenAIProvider(LLMProvider):
                         raise AuthenticationError(
                             _humanize_upstream_error(401, error_text),
                             status_code=401,
+                            raw_body=error_text,
                         )
                     if response.status_code == 429:
                         raise RateLimitError(
                             _humanize_upstream_error(429, error_text),
                             status_code=429,
+                            raw_body=error_text,
                         )
                     raise LLMError(
                         _humanize_upstream_error(response.status_code, error_text),
                         status_code=response.status_code,
+                        raw_body=error_text,
                     )
 
                 has_content = False
@@ -747,6 +760,8 @@ class OpenAIProvider(LLMProvider):
         headers: dict[str, str] = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
+            # 避免部分打包环境缺少可用 zstd 解码器时，httpx 在业务错误分类前失败。
+            "Accept-Encoding": "gzip, deflate",
         }
 
         if "openrouter" in self.base_url.lower():
@@ -1150,10 +1165,7 @@ class OpenAIProvider(LLMProvider):
         # 收集 content 数组中的 thinking 块到 reasoning_content (#415)
         if _thinking_from_content:
             _joined = "\n".join(_thinking_from_content)
-            if reasoning_content:
-                reasoning_content = reasoning_content + "\n" + _joined
-            else:
-                reasoning_content = _joined
+            reasoning_content = reasoning_content + "\n" + _joined if reasoning_content else _joined
             logger.info(
                 f"[PARSE] Extracted {len(_thinking_from_content)} thinking block(s) "
                 f"({len(_joined)} chars) from content array into reasoning_content"
@@ -1259,7 +1271,7 @@ class OpenAIProvider(LLMProvider):
 
             # 5. 仍然为空 → 记录详细诊断信息（帮助定位代理格式变化）
             if not content_blocks and _out_tokens > 0:
-                msg_keys = sorted(k for k in message.keys() if k != "role")
+                msg_keys = sorted(k for k in message if k != "role")
                 msg_preview = {
                     k: (str(v)[:200] if isinstance(v, str)
                         else f"[{type(v).__name__}, len={len(v)}]" if isinstance(v, (list, dict))
@@ -1267,11 +1279,11 @@ class OpenAIProvider(LLMProvider):
                     for k, v in message.items() if k != "role"
                 }
                 _extra_keys = sorted(
-                    k for k in data.keys()
+                    k for k in data
                     if k not in ("id", "object", "created", "model", "choices", "usage", "system_fingerprint")
                 )
                 _choice_keys = sorted(
-                    k for k in choice.keys() if k not in ("message", "index", "finish_reason", "logprobs")
+                    k for k in choice if k not in ("message", "index", "finish_reason", "logprobs")
                 )
                 _token_details = usage_data.get("completion_tokens_details")
                 logger.error(

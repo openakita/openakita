@@ -123,6 +123,15 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
     return " ".join(hints)
 
 
+def _classification_error_text(exc: Exception) -> str:
+    """Return display error plus raw upstream body for robust internal classification."""
+    text = str(exc)
+    raw_body = getattr(exc, "raw_body", None)
+    if raw_body:
+        return f"{text}\n{raw_body}"
+    return text
+
+
 # ==================== 动态切换相关数据结构 ====================
 
 
@@ -337,7 +346,7 @@ class LLMClient:
                         f"Permanently disabled until config reload."
                     )
                 results[name] = "auth_failed"
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 results[name] = "error: timeout (15s)"
                 logger.warning(f"[HealthCheck] endpoint={name} timed out (15s)")
             except Exception as e:
@@ -793,7 +802,7 @@ class LLMClient:
                                 reason="用户请求停止",
                                 source="llm_stream_backoff",
                             )
-                        except (asyncio.TimeoutError, TimeoutError):
+                        except TimeoutError:
                             pass
                     else:
                         await asyncio.sleep(delay)
@@ -966,7 +975,7 @@ class LLMClient:
                                     reason="用户请求停止",
                                     source="llm_cooldown_wait",
                                 )
-                            except (asyncio.TimeoutError, TimeoutError):
+                            except TimeoutError:
                                 pass
                         else:
                             await asyncio.sleep(wait_seconds)
@@ -1344,7 +1353,7 @@ class LLMClient:
                                 reason="用户请求停止",
                                 source="llm_retry_backoff",
                             )
-                        except (asyncio.TimeoutError, TimeoutError):
+                        except TimeoutError:
                             pass
                     else:
                         await asyncio.sleep(delay)
@@ -1545,7 +1554,7 @@ class LLMClient:
                 continue
 
             except AuthenticationError as e:
-                error_str = str(e)
+                error_str = _classification_error_text(e)
                 from .providers.base import LLMProvider as _BaseProvider
 
                 error_cat = _BaseProvider._classify_error(error_str)
@@ -1565,7 +1574,7 @@ class LLMClient:
                 failed_providers.append(provider)
 
             except LLMError as e:
-                error_str = str(e)
+                error_str = _classification_error_text(e)
                 logger.warning(f"[LLM] endpoint={provider.name} action=error error={e}")
                 errors.append(f"{provider.name}: {e}")
 

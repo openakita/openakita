@@ -250,7 +250,7 @@ class ConfigHandler:
             elif action == "set":
                 return self._set_config(params)
             elif action == "add_endpoint":
-                return self._add_endpoint(params)
+                return await self._add_endpoint(params)
             elif action == "remove_endpoint":
                 return self._remove_endpoint(params)
             elif action == "test_endpoint":
@@ -627,7 +627,7 @@ class ConfigHandler:
     # ------------------------------------------------------------------
     # add_endpoint: 添加 LLM 端点
     # ------------------------------------------------------------------
-    def _add_endpoint(self, params: dict) -> str:
+    async def _add_endpoint(self, params: dict) -> str:
         endpoint_data = params.get("endpoint")
         if not endpoint_data or not isinstance(endpoint_data, dict):
             return "❌ 缺少 endpoint 参数"
@@ -672,10 +672,23 @@ class ConfigHandler:
             "context_window": int(endpoint_data.get("context_window", 200000)),
             "timeout": int(endpoint_data.get("timeout", 180)),
         }
+        if "enabled" in endpoint_data:
+            ep_dict["enabled"] = bool(endpoint_data.get("enabled"))
         if endpoint_data.get("capabilities"):
             ep_dict["capabilities"] = endpoint_data["capabilities"]
         if endpoint_data.get("api_key_env"):
             ep_dict["api_key_env"] = endpoint_data["api_key_env"]
+
+        validation_note = ""
+        validation = await self._probe_endpoint_before_enable(ep_dict, api_key)
+        if validation["disable"]:
+            ep_dict["enabled"] = False
+            validation_note = (
+                "\n- 预检: 发现明确的授权/额度问题，已先保存为禁用，"
+                "请修正套餐、模型权限或 API Key 后再启用。"
+            )
+        elif validation["message"]:
+            validation_note = f"\n- 预检: {validation['message']}"
 
         from ...config import settings
         from ...llm.config import get_default_config_path
@@ -703,6 +716,8 @@ class ConfigHandler:
             f"- 模型: {model} | 优先级: {ep_dict['priority']}\n"
             f"- {key_info}\n"
             f"- 目标: {target}\n"
+            f"- 状态: {'禁用（待修复配置）' if result.get('enabled') is False else '启用'}"
+            f"{validation_note}\n"
             f"- {reload_info}"
         )
 
@@ -769,12 +784,14 @@ class ConfigHandler:
         # 尝试 list models 请求
         from openakita.llm.types import normalize_base_url
 
-        headers = {"Authorization": f"Bearer {api_key}"}
+        headers = {"Authorization": f"Bearer {api_key}", "Accept-Encoding": "gzip, deflate"}
         _base = normalize_base_url(target_ep.base_url)
         if target_ep.api_type == "anthropic":
             headers = {
                 "x-api-key": api_key,
+                "Authorization": f"Bearer {api_key}",
                 "anthropic-version": "2023-06-01",
+                "Accept-Encoding": "gzip, deflate",
             }
             test_url = _base + "/v1/models"
         else:
@@ -807,6 +824,60 @@ class ConfigHandler:
             return f'❌ 端点 "{endpoint_name}" 请求超时 (15s)'
         except Exception as e:
             return f'❌ 端点 "{endpoint_name}" 测试失败: {type(e).__name__}: {e}'
+
+    async def _probe_endpoint_before_enable(self, endpoint: dict, api_key: str) -> dict:
+        """新增端点后的轻量预检。
+
+        仅对明确的认证/授权/额度问题自动禁用；网络波动、超时或 /models
+        不支持只给提示，避免把可用但不支持模型列表的中转站误伤。
+        """
+        if not api_key:
+            return {"disable": False, "message": ""}
+
+        import httpx
+
+        from openakita.llm.providers.base import LLMProvider
+        from openakita.llm.types import normalize_base_url
+
+        base_url = normalize_base_url(str(endpoint.get("base_url") or ""))
+        api_type = str(endpoint.get("api_type") or "openai")
+        if not base_url:
+            return {"disable": False, "message": ""}
+
+        if api_type == "anthropic":
+            test_url = base_url + "/v1/models"
+            headers = {
+                "x-api-key": api_key,
+                "Authorization": f"Bearer {api_key}",
+                "anthropic-version": "2023-06-01",
+                "Accept-Encoding": "gzip, deflate",
+            }
+        else:
+            test_url = base_url + "/models"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Accept-Encoding": "gzip, deflate",
+            }
+
+        try:
+            async with httpx.AsyncClient(timeout=8, follow_redirects=True, trust_env=False) as client:
+                resp = await client.get(test_url, headers=headers)
+        except httpx.TimeoutException:
+            return {"disable": False, "message": "连通性预检超时，已保留启用状态，后续调用会自动故障切换。"}
+        except httpx.RequestError:
+            return {"disable": False, "message": "暂时无法连接到该地址，已保留启用状态，后续调用会自动故障切换。"}
+
+        if resp.status_code < 400:
+            return {"disable": False, "message": "连通正常。"}
+
+        body = (resp.text or "")[:1000]
+        category = LLMProvider._classify_error(f"HTTP {resp.status_code}\n{body}")
+        if category in ("auth", "quota"):
+            return {"disable": True, "message": body[:240]}
+        return {
+            "disable": False,
+            "message": f"/models 返回 {resp.status_code}，可能是服务商不支持模型列表；已保留启用状态。",
+        }
 
     # ------------------------------------------------------------------
     # set_ui: 设置 UI 偏好

@@ -187,11 +187,21 @@ class AnthropicProvider(LLMProvider):
             if response.status_code >= 400:
                 body = (response.text or "")[:500]
                 if response.status_code == 401:
-                    raise AuthenticationError(f"Authentication failed: {body}", status_code=401)
+                    raise AuthenticationError(
+                        f"Authentication failed: {body}",
+                        status_code=401,
+                        raw_body=body,
+                    )
                 if response.status_code == 429:
-                    raise RateLimitError(f"Rate limit exceeded: {body}", status_code=429)
+                    raise RateLimitError(
+                        f"Rate limit exceeded: {body}",
+                        status_code=429,
+                        raw_body=body,
+                    )
                 raise LLMError(
-                    f"API error ({response.status_code}): {body}", status_code=response.status_code
+                    f"API error ({response.status_code}): {body}",
+                    status_code=response.status_code,
+                    raw_body=body,
                 )
 
             data = response.json()
@@ -236,13 +246,20 @@ class AnthropicProvider(LLMProvider):
                 error_text = error_body.decode(errors="replace")[:500]
                 if response.status_code == 401:
                     raise AuthenticationError(
-                        f"Authentication failed: {error_text}", status_code=401
+                        f"Authentication failed: {error_text}",
+                        status_code=401,
+                        raw_body=error_text,
                     )
                 if response.status_code == 429:
-                    raise RateLimitError(f"Rate limit exceeded: {error_text}", status_code=429)
+                    raise RateLimitError(
+                        f"Rate limit exceeded: {error_text}",
+                        status_code=429,
+                        raw_body=error_text,
+                    )
                 raise LLMError(
                     f"API error ({response.status_code}): {error_text}",
                     status_code=response.status_code,
+                    raw_body=error_text,
                 )
 
             # 使用符合 SSE 规范的解析器
@@ -268,6 +285,8 @@ class AnthropicProvider(LLMProvider):
         key = (self.api_key or "").strip()
         return {
             "Content-Type": "application/json",
+            # 避免打包环境缺少可用 zstd 解码器导致响应解析前失败。
+            "Accept-Encoding": "gzip, deflate",
             "x-api-key": key,
             # 部分 Anthropic 兼容网关仅识别 Bearer，保留 x-api-key 以兼容官方 Anthropic。
             "Authorization": f"Bearer {key}",

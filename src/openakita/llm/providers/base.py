@@ -375,6 +375,8 @@ class LLMProvider(ABC):
                 "free tier",
                 "free_tier",
                 "quota",
+                "tokens.total",
+                "business.total",
                 "exceeded your current",
                 "api error (402)",
                 "http 402",
@@ -392,6 +394,9 @@ class LLMProvider(ABC):
             kw in err_lower
             for kw in [
                 "auth",
+                "appidnoautherror",
+                "noauth",
+                "unauthorized",
                 "401",
                 "403",
                 "api_key",
