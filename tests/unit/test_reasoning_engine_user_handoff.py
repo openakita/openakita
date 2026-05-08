@@ -181,3 +181,36 @@ async def test_plain_long_reply_without_tools_is_still_accepted():
     )
 
     assert result == reply
+
+
+@pytest.mark.asyncio
+async def test_tool_evidence_required_exhausts_to_unverified_without_repeated_prompts():
+    engine = ReasoningEngine(
+        brain=None,
+        tool_executor=None,
+        context_manager=None,
+        response_handler=AsyncMock(),
+        agent_state=AgentState(),
+    )
+
+    result = await engine._handle_final_answer(
+        decision=Decision(type=DecisionType.FINAL_ANSWER, text_content="这是未经工具验证的分析。"),
+        working_messages=[],
+        original_messages=[{"role": "user", "content": "分析这个 GitHub issue 是否仍存在"}],
+        tools_executed_in_task=False,
+        executed_tool_names=[],
+        delivery_receipts=[],
+        all_tool_results=[],
+        no_tool_call_count=1,
+        verify_incomplete_count=0,
+        no_confirmation_text_count=0,
+        max_no_tool_retries=1,
+        max_verify_retries=1,
+        max_confirmation_text_retries=1,
+        base_force_retries=1,
+        conversation_id="c1",
+        tool_evidence_required=True,
+    )
+
+    assert result == "未执行任何工具，无法验证该结论。请允许我读取、搜索或调用相关工具后再继续核对。"
+    assert engine._last_exit_reason == "tool_evidence_missing"

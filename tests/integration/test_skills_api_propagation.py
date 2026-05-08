@@ -15,6 +15,7 @@ parser / shutil）都被 monkeypatch 屏蔽，保证测试不依赖网络与真�
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -155,6 +156,61 @@ class TestInstallRoute:
         assert data["error_code"] == "skill_residual_cleanup_failed"
         assert "无法清理残留技能目录" in data["error"]
         agent.propagate_skill_change.assert_not_called()
+
+
+class TestHubSkillInstallRoute:
+    async def test_store_install_updates_allowlist_and_uses_unified_propagation(
+        self, app_with_fake_agent, client, monkeypatch, tmp_path: Path
+    ):
+        """Store install must not bypass allowlist + runtime propagation."""
+        _, agent = app_with_fake_agent
+        skills_json = tmp_path / "data" / "skills.json"
+        skills_json.write_text(
+            json.dumps({"version": 1, "external_allowlist": ["existing"]}),
+            encoding="utf-8",
+        )
+        skill_dir = tmp_path / "workspaces" / "default" / "skills" / "store-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: store-skill\ndescription: test\n---\n# body",
+            encoding="utf-8",
+        )
+
+        class FakeSkillClient:
+            async def get_detail(self, skill_id: str):
+                return {
+                    "skill": {
+                        "id": skill_id,
+                        "name": "Store Skill",
+                        "installUrl": "owner/repo@store-skill",
+                        "trustLevel": "community",
+                    }
+                }
+
+            async def install_skill(self, install_url: str, *, skill_id: str):
+                assert install_url == "owner/repo@store-skill"
+                assert skill_id == "store-skill"
+                return skill_dir
+
+            async def close(self):
+                return None
+
+        monkeypatch.setattr(
+            "openakita.api.routes.hub._get_skill_client",
+            lambda: FakeSkillClient(),
+        )
+
+        resp = await client.post("/api/hub/skills/store-skill/install")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["skill_dir"] == str(skill_dir)
+        saved = json.loads(skills_json.read_text(encoding="utf-8"))
+        assert saved["external_allowlist"] == ["existing", "store-skill"]
+        agent.propagate_skill_change.assert_called_once()
+        call_args = agent.propagate_skill_change.call_args
+        assert getattr(call_args.args[0], "value", call_args.args[0]) == "store_install"
+        assert call_args.kwargs.get("rescan", True) is True
 
 # ---------------------------------------------------------------------------
 # /api/skills/uninstall

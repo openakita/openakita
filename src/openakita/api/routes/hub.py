@@ -92,6 +92,25 @@ def _reload_skills(request) -> None:
         logger.warning(f"Skill reload after platform install failed (non-blocking): {e}")
 
 
+async def _propagate_store_skill_install(request: Request, skill_dir: Path) -> None:
+    """Apply the same post-install consistency path as /api/skills/install."""
+    from openakita.skills.allowlist_io import upsert_skill_ids
+    from openakita.skills.events import SkillEvent
+
+    skill_id = skill_dir.name
+    try:
+        upsert_skill_ids({skill_id})
+    except Exception as e:
+        logger.warning("Failed to upsert store skill %s into skills.json: %s", skill_id, e)
+
+    try:
+        from openakita.api.routes.skills import _propagate
+
+        await _propagate(request, SkillEvent.STORE_INSTALL)
+    except Exception as e:
+        logger.warning("Store skill propagate failed (non-blocking): %s", e)
+
+
 class ExportRequest(BaseModel):
     profile_id: str
     author_name: str = ""
@@ -613,7 +632,7 @@ async def hub_install_skill(request: Request, skill_id: str):
     finally:
         await client.close()
 
-    _reload_skills(request)
+    await _propagate_store_skill_install(request, skill_dir)
 
     return {
         "message": "Skill installed from Store",

@@ -1,3 +1,4 @@
+from openakita.core.agent import _resolve_force_tool_policy
 from openakita.core.intent_analyzer import (
     IntentResult,
     IntentType,
@@ -7,7 +8,6 @@ from openakita.core.intent_analyzer import (
     _parse_intent_output,
     _try_fast_query_shortcut,
 )
-from openakita.core.agent import _resolve_force_tool_policy
 
 
 def test_parse_prompt_contract_minimal_query():
@@ -36,6 +36,7 @@ suggest_plan: false
     assert result.prompt_depth == PromptDepth.MINIMAL
     assert result.memory_scope == MemoryScope.PINNED_ONLY
     assert result.requires_tools is False
+    assert result.evidence_required is False
     assert result.force_tool is False
 
 
@@ -58,6 +59,7 @@ requires_project_context: false
     assert result.prompt_depth == PromptDepth.MINIMAL
     assert result.memory_scope == MemoryScope.PINNED_ONLY
     assert result.force_tool is False
+    assert result.evidence_required is False
 
 
 def test_default_intent_is_minimal_non_tool_query():
@@ -67,6 +69,7 @@ def test_default_intent_is_minimal_non_tool_query():
     assert result.prompt_depth == PromptDepth.MINIMAL
     assert result.memory_scope == MemoryScope.PINNED_ONLY
     assert result.requires_tools is False
+    assert result.evidence_required is False
     assert result.force_tool is False
 
 
@@ -78,6 +81,7 @@ def test_log_investigation_query_is_guarded_as_tool_task():
     assert result is not None
     assert result.intent == IntentType.TASK
     assert result.requires_tools is True
+    assert result.evidence_required is True
     assert result.force_tool is True
     assert result.fast_reply is False
 
@@ -102,6 +106,7 @@ suggest_plan: false
 
     assert result.intent == IntentType.TASK
     assert result.requires_tools is True
+    assert result.evidence_required is True
     assert result.force_tool is True
 
 
@@ -111,6 +116,7 @@ def test_plain_concept_query_is_not_over_guarded():
     assert result is not None
     assert result.intent == IntentType.QUERY
     assert result.requires_tools is False
+    assert result.evidence_required is False
     assert result.force_tool is False
 
 
@@ -134,6 +140,7 @@ suggest_plan: false
 
     assert result.intent == IntentType.TASK
     assert result.requires_tools is True
+    assert result.evidence_required is True
     assert result.force_tool is True
 
 
@@ -147,7 +154,46 @@ def test_tool_required_query_keeps_force_tool_guard():
 
     force_retries, evidence_required = _resolve_force_tool_policy(result)
 
-    assert force_retries is None
+    assert force_retries == 1
+    assert evidence_required is True
+
+
+def test_external_evidence_overrides_llm_false_without_changing_user_flow_to_hard_policy():
+    result = _parse_intent_output(
+        """
+intent: query
+task_type: analysis
+goal: 分析 GitHub issue
+tool_hints: []
+memory_keywords: []
+requires_tools: false
+evidence_required: false
+requires_project_context: false
+risk_level_hint: none
+destructive: false
+scope: narrow
+suggest_plan: false
+""",
+        "https://github.com/openakita/openakita/issues/532 帮我分析这个 issue 当前是否仍存在",
+    )
+
+    assert result.requires_tools is True
+    assert result.evidence_required is True
+    assert "Web Search" in result.tool_hints
+
+
+def test_evidence_required_query_gets_only_one_soft_nudge():
+    result = IntentResult(
+        intent=IntentType.QUERY,
+        task_type="analysis",
+        requires_tools=False,
+        evidence_required=True,
+        force_tool=False,
+    )
+
+    force_retries, evidence_required = _resolve_force_tool_policy(result)
+
+    assert force_retries == 1
     assert evidence_required is True
 
 
@@ -156,6 +202,7 @@ def test_plain_query_still_disables_force_tool_guard():
         intent=IntentType.QUERY,
         task_type="question",
         requires_tools=False,
+        evidence_required=False,
         force_tool=False,
     )
 

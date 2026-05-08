@@ -154,9 +154,9 @@ logger = logging.getLogger(__name__)
 def _resolve_force_tool_policy(intent: Any) -> tuple[int | None, bool]:
     """Return ForceToolCall override and whether a final answer needs tool evidence.
 
-    Plain chat/knowledge queries should stay lightweight.  Queries that the
-    intent analyzer has marked as requiring tools still need at least one real
-    evidence-gathering tool call before a text answer can be accepted.
+    Plain chat/knowledge queries stay lightweight. Evidence-sensitive requests
+    get one soft nudge to gather tool evidence, avoiding repeated prompts or
+    broad default loop limits.
     """
     if not intent:
         return None, False
@@ -165,13 +165,15 @@ def _resolve_force_tool_policy(intent: Any) -> tuple[int | None, bool]:
 
     requires_tools = bool(getattr(intent, "requires_tools", False))
     force_tool = bool(getattr(intent, "force_tool", False))
-    evidence_required = requires_tools or force_tool
+    evidence_required = (
+        bool(getattr(intent, "evidence_required", False)) or requires_tools or force_tool
+    )
 
     if intent.intent in (_IT.CHAT, _IT.QUERY):
-        return (None, True) if evidence_required else (0, False)
+        return (1, True) if evidence_required else (0, False)
 
     if evidence_required:
-        return None, True
+        return 1, True
 
     return max(0, int(getattr(settings, "force_tool_call_max_retries", 2)) - 1), False
 

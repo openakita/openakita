@@ -116,6 +116,7 @@ class IntentResult:
     memory_scope: MemoryScope = MemoryScope.RELEVANT
     catalog_scope: list[str] = field(default_factory=list)
     requires_tools: bool = False
+    evidence_required: bool = False
     requires_project_context: bool = False
     risk_level_hint: RiskLevelHint = RiskLevelHint.NONE
 
@@ -128,6 +129,7 @@ _DEFAULT_RESULT = IntentResult(
     prompt_depth=PromptDepth.MINIMAL,
     memory_scope=MemoryScope.PINNED_ONLY,
     requires_tools=False,
+    evidence_required=False,
 )
 
 INTENT_ANALYZER_SYSTEM = """\
@@ -161,6 +163,7 @@ prompt_depth: <fast|minimal|standard|full>
 memory_scope: <none|pinned_only|relevant|full>
 catalog_scope: [tools|skills|plugins|mcp|memory|project]
 requires_tools: <true/false>
+evidence_required: <true/false>
 requires_project_context: <true/false>
 risk_level_hint: <none|low|medium|high>
 destructive: <true/false>
@@ -183,6 +186,7 @@ suggest_plan: <true/false>
 - 不确定时，如果不需要工具就能回答，选 query
 - destructive 判断要基于语义分析，理解操作的实际后果，而不是简单匹配关键词
 - prompt_depth 只表示需要注入多少系统上下文；简单问答用 minimal，真实项目/文件/插件任务才用 standard/full
+- 只要回答需要核对外部事实（GitHub/issue/网页/技能仓库/日志/当前代码/配置/API 状态/下载/排查/验证），evidence_required 必须为 true；这不是限制任务，而是防止无证据结论
 - add/remove/delete 等词只有在语义上要求修改外部系统时才表示风险；算术、事实修正、假设性安全讨论不是风险任务
 
 重要：你必须分析用户的实际消息内容来判断意图，不要复制上面的示例。"""
@@ -318,6 +322,30 @@ _TOOL_TARGET_RE = re.compile(
     r"skill|技能|配置|环境|数据库|截图|任务|命令|脚本)"
 )
 
+_STRONG_EVIDENCE_RE = re.compile(
+    r"(?:https?://|github\.com|GitHub|issue\s*#?\d+|日志|log|报错|警告|错误|"
+    r"当前代码|代码中|本仓库|这个仓库|技能市场|SkillHub|Skill Store|skill\s*store|"
+    r"技能仓库|诊断包|反馈包|下载日志|API\s*状态|接口状态)",
+    re.IGNORECASE,
+)
+
+_EVIDENCE_ACTION_RE = re.compile(r"(?:分析|排查|检查|验证|复现|下载|查看|看看|定位)")
+
+
+def _requires_external_evidence(message: str) -> bool:
+    """Whether the answer should be backed by current external/project evidence.
+
+    This guard intentionally does not add timeouts or hard loop limits. It only
+    prevents evidence-sensitive questions from being accepted as pure memory
+    answers.
+    """
+    stripped = message.strip()
+    if not stripped:
+        return False
+    if _STRONG_EVIDENCE_RE.search(stripped):
+        return True
+    return bool(_EVIDENCE_ACTION_RE.search(stripped) and _TOOL_TARGET_RE.search(stripped))
+
 
 def _looks_like_tool_action_request(message: str) -> bool:
     """Return True for requests that clearly require operating on external state."""
@@ -372,6 +400,7 @@ def _make_tool_action_result(message: str, *, follow_up: bool = False) -> Intent
         prompt_depth=PromptDepth.STANDARD,
         memory_scope=MemoryScope.RELEVANT,
         requires_tools=True,
+        evidence_required=True,
         requires_project_context=requires_project_context,
         risk_level_hint=RiskLevelHint.NONE,
     )
@@ -403,6 +432,7 @@ def _try_fast_query_shortcut(message: str) -> IntentResult | None:
             prompt_depth=PromptDepth.FAST,
             memory_scope=MemoryScope.PINNED_ONLY,
             requires_tools=False,
+            evidence_required=False,
             risk_level_hint=RiskLevelHint.NONE,
         )
     return None
@@ -445,6 +475,7 @@ def _try_fast_chat_shortcut(message: str, has_history: bool = False) -> IntentRe
             prompt_depth=PromptDepth.FAST,
             memory_scope=MemoryScope.PINNED_ONLY,
             requires_tools=False,
+            evidence_required=False,
             risk_level_hint=RiskLevelHint.NONE,
         )
 
@@ -468,6 +499,7 @@ def _try_fast_chat_shortcut(message: str, has_history: bool = False) -> IntentRe
             prompt_depth=PromptDepth.FAST,
             memory_scope=MemoryScope.PINNED_ONLY,
             requires_tools=False,
+            evidence_required=False,
             risk_level_hint=RiskLevelHint.NONE,
         )
 
@@ -514,22 +546,27 @@ class IntentAnalyzer:
 
 def _make_default(message: str) -> IntentResult:
     """Fallback: behaves like the old flow (TASK + full tools + ForceToolCall)."""
+    evidence_required = _requires_external_evidence(message)
+    tool_hints, requires_project_context = (
+        _infer_tool_action_hints(message) if evidence_required else ([], False)
+    )
     return IntentResult(
         intent=IntentType.QUERY,
         confidence=0.0,
         task_definition=message[:600],
         task_type="question",
-        tool_hints=[],
+        tool_hints=tool_hints,
         memory_keywords=[],
-        force_tool=False,
+        force_tool=evidence_required,
         todo_required=False,
         raw_output="",
         prompt_depth=PromptDepth.MINIMAL,
         memory_scope=MemoryScope.PINNED_ONLY,
         capability_scope=[],
         catalog_scope=[],
-        requires_tools=False,
-        requires_project_context=False,
+        requires_tools=evidence_required,
+        evidence_required=evidence_required,
+        requires_project_context=requires_project_context,
         risk_level_hint=RiskLevelHint.NONE,
     )
 
@@ -559,6 +596,7 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
             "memory_scope",
             "catalog_scope",
             "requires_tools",
+            "evidence_required",
             "requires_project_context",
             "risk_level_hint",
             "constraints",
@@ -626,9 +664,26 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
         extracted.get("requires_tools", ""),
         default=intent == IntentType.TASK and bool(tool_hints or capability_scope),
     )
+    llm_evidence_required = _parse_bool(
+        extracted.get("evidence_required", ""),
+        default=False,
+    )
+    evidence_required = llm_evidence_required or _requires_external_evidence(message)
+    if evidence_required:
+        requires_tools = True
+        inferred_hints, inferred_project_context = _infer_tool_action_hints(message)
+        for hint in inferred_hints:
+            if hint not in tool_hints:
+                tool_hints.append(hint)
+    else:
+        inferred_project_context = False
     requires_project_context = _parse_bool(
         extracted.get("requires_project_context", ""),
-        default=CapabilityScope.CODE in capability_scope or "project" in catalog_scope,
+        default=(
+            inferred_project_context
+            or CapabilityScope.CODE in capability_scope
+            or "project" in catalog_scope
+        ),
     )
     risk_level_hint = _parse_enum(
         extracted.get("risk_level_hint", ""),
@@ -656,6 +711,7 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
         memory_scope=memory_scope,
         catalog_scope=catalog_scope,
         requires_tools=requires_tools,
+        evidence_required=evidence_required,
         requires_project_context=requires_project_context,
         risk_level_hint=risk_level_hint,
     )
