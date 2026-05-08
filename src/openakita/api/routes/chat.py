@@ -29,6 +29,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _chat_startup_error_response(
+    exc: Exception,
+    *,
+    conversation_id: str,
+    request_id: str,
+    stage: str,
+) -> JSONResponse:
+    """Return a structured pre-stream error instead of FastAPI's bare 500 page."""
+    logger.exception(
+        "[Chat API] Pre-stream startup failed stage=%s conv=%s request=%s",
+        stage,
+        conversation_id,
+        request_id,
+    )
+    detail = str(exc)[:300] if str(exc) else type(exc).__name__
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "chat_startup_failed",
+            "stage": stage,
+            "conversation_id": conversation_id,
+            "request_id": request_id,
+            "retryable": True,
+            "message": "聊天服务启动本轮回复时遇到临时异常，消息没有丢失。请稍后重试，或切换一个可用的模型端点。",
+            "hint": "如果后端健康但仍反复出现，请检查模型端点网络、API Key 或当前端点是否可用。",
+            "detail": detail,
+        },
+    )
+
+
 def _chat_endpoint_names() -> set[str]:
     """Return configured main-chat endpoint names.
 
@@ -809,7 +839,7 @@ async def _stream_chat(
                                     timeout=DISCONNECT_GRACE_SECONDS,
                                 )
                                 logger.info("[Chat API] Agent task 在宽限期内完成")
-                            except (asyncio.TimeoutError, TimeoutError):
+                            except TimeoutError:
                                 logger.warning(
                                     "[Chat API] 宽限期超时（%ds），取消任务",
                                     DISCONNECT_GRACE_SECONDS,
@@ -835,7 +865,7 @@ async def _stream_chat(
         while True:
             try:
                 event = await asyncio.wait_for(_agent_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 if not _client_disconnected and not await _check_disconnected():
                     yield _sse("heartbeat", {"ts": time.time()})
                 continue
@@ -876,9 +906,9 @@ async def _stream_chat(
             _source_used = _extract_source_used(event)
             if _source_used:
                 try:
-                    setattr(actual_agent, "_last_link_diagnostic", dict(_source_used))
+                    actual_agent._last_link_diagnostic = dict(_source_used)
                     if http_request is not None:
-                        setattr(http_request.app.state, "last_link_diagnostic", dict(_source_used))
+                        http_request.app.state.last_link_diagnostic = dict(_source_used)
                 except Exception:
                     pass
                 yield _sse("source_used", _source_used)
@@ -1286,12 +1316,20 @@ async def chat(request: Request, body: ChatRequest):
             content={"error": "empty_message", "message": "消息内容不能为空"},
         )
 
-    pending_response = await _handle_pending_risk_answer(
-        request=request,
-        conversation_id=conversation_id,
-        answer=body.message or "",
-        as_stream=True,
-    )
+    try:
+        pending_response = await _handle_pending_risk_answer(
+            request=request,
+            conversation_id=conversation_id,
+            answer=body.message or "",
+            as_stream=True,
+        )
+    except Exception as exc:
+        return _chat_startup_error_response(
+            exc,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            stage="pending_risk_answer",
+        )
     if isinstance(pending_response, _RiskAuthorizedReplay):
         # 用户已对上一轮高风险请求授权，且无受控执行入口 — 用原始 message
         # 替换当前的"确认继续"，让 LLM 重新规划工具调用。后续 risk gate
@@ -1319,11 +1357,19 @@ async def chat(request: Request, body: ChatRequest):
         )
         body.endpoint = None
 
-    # ?? Busy-lock check (via lifecycle manager) ??
+    # ── Busy-lock check (via lifecycle manager) ──
     lifecycle = get_lifecycle_manager()
     busy_gen = 0
     if client_id:
-        conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
+        try:
+            conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
+        except Exception as exc:
+            return _chat_startup_error_response(
+                exc,
+                conversation_id=conversation_id,
+                request_id=request_id,
+                stage="conversation_lifecycle",
+            )
         if conflict is not None:
             return JSONResponse(
                 status_code=409,
@@ -1360,10 +1406,15 @@ async def chat(request: Request, body: ChatRequest):
     try:
         agent = await _get_agent_for_session(request, conversation_id, body.agent_profile_id)
         session_manager = getattr(request.app.state, "session_manager", None)
-    except Exception:
+    except Exception as exc:
         if client_id:
             await lifecycle.finish(conversation_id, generation=busy_gen)
-        raise
+        return _chat_startup_error_response(
+            exc,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            stage="agent_init",
+        )
 
     # Resolve effective mode: backward compat plan_mode=true -> mode="plan"
     effective_mode = body.mode
