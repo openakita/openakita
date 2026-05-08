@@ -171,23 +171,29 @@ def get_model_capabilities(model: str) -> ModelCapabilities:
 
     查找顺序: 自定义注册 → 精确匹配 → 前缀匹配 → 默认值
     """
+    caps, _ = _lookup_model_capabilities(model)
+    return caps
+
+
+def _lookup_model_capabilities(model: str) -> tuple[ModelCapabilities, bool]:
+    """Return capabilities and whether they came from a concrete registry match."""
     if not model:
-        return _DEFAULT
+        return _DEFAULT, False
 
     model_lower = model.lower()
 
     # 1. Custom registry (exact)
     if model in _CUSTOM_REGISTRY:
-        return _CUSTOM_REGISTRY[model]
+        return _CUSTOM_REGISTRY[model], True
 
     # 2. Built-in exact match
     if model in _REGISTRY:
-        return _REGISTRY[model]
+        return _REGISTRY[model], True
 
     # 3. Case-insensitive exact
     for key, caps in _REGISTRY.items():
         if key.lower() == model_lower:
-            return caps
+            return caps, True
 
     # 4. Prefix match (longest wins)
     best_match: str | None = None
@@ -198,10 +204,40 @@ def get_model_capabilities(model: str) -> ModelCapabilities:
             best_len = len(key)
 
     if best_match:
-        return _REGISTRY[best_match]
+        return _REGISTRY[best_match], True
 
     # 5. Default
-    return _DEFAULT
+    return _DEFAULT, False
+
+
+def is_model_registered(model: str) -> bool:
+    """Return True when model capabilities come from a concrete registry entry."""
+    _, known = _lookup_model_capabilities(model)
+    return known
+
+
+def resolve_output_token_budget(
+    model: str,
+    *,
+    request_max_tokens: int = 0,
+    endpoint_max_tokens: int = 0,
+    unknown_model_fallback: int = 16_384,
+) -> int:
+    """Resolve provider-safe output token budget without over-restricting unknown models.
+
+    Priority is request override -> endpoint config -> model default -> historical fallback.
+    Concrete registry matches are capped to the model's known maximum. Unknown models keep
+    the historical fallback so proxy/custom models are not accidentally constrained.
+    """
+    caps, known = _lookup_model_capabilities(model)
+    candidates = (request_max_tokens, endpoint_max_tokens)
+    for value in candidates:
+        if isinstance(value, int) and value > 0:
+            return min(value, caps.max_output_tokens) if known else value
+
+    if known:
+        return min(caps.default_output_tokens, caps.max_output_tokens)
+    return unknown_model_fallback
 
 
 def register_model(model: str, capabilities: ModelCapabilities) -> None:

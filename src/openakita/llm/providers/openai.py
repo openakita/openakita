@@ -26,7 +26,7 @@ from ..converters.tools import (
     has_text_tool_calls,
     parse_text_tool_calls,
 )
-from ..model_registry import get_model_capabilities
+from ..model_registry import get_model_capabilities, resolve_output_token_budget
 from ..types import (
     AuthenticationError,
     EndpointConfig,
@@ -866,10 +866,9 @@ class OpenAIProvider(LLMProvider):
         }
 
         # max_tokens 处理策略：
-        # 理想情况下不传 max_tokens 可让 API 使用模型默认上限，但实际上部分 OpenAI 兼容
-        # API（如 NVIDIA NIM）默认 max_tokens 极低（~200），开启 thinking 后所有输出预算
-        # 被思考内容耗尽，导致无可见文本返回。
-        # 因此：调用方传了 max_tokens > 0 时直接使用，否则用端点配置值或兜底 16384。
+        # - 调用方/端点显式给值时尽量尊重，但已知模型不能超过其真实输出上限；
+        # - 未显式给值时用模型默认输出预算；
+        # - 未知模型保留历史 16k 兜底，避免对中转/自定义模型过度限制。
         #
         # 特殊情况 — OpenAI o1/o3/o4 推理模型：
         # 这些模型拒绝 max_tokens 参数，要求使用 max_completion_tokens。
@@ -880,12 +879,11 @@ class OpenAIProvider(LLMProvider):
         )
         _token_key = "max_completion_tokens" if _is_openai_reasoning else "max_tokens"
 
-        _max_tokens = request.max_tokens
-        if _max_tokens and _max_tokens > 0:
-            body[_token_key] = _max_tokens
-        else:
-            _fallback = self.config.max_tokens or 16384
-            body[_token_key] = _fallback
+        body[_token_key] = resolve_output_token_budget(
+            self.config.model,
+            request_max_tokens=request.max_tokens,
+            endpoint_max_tokens=self.config.max_tokens,
+        )
 
         # 工具
         if request.tools:

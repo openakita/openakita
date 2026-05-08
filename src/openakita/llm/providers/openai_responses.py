@@ -23,6 +23,7 @@ from ..converters.tools import (
     has_text_tool_calls,
     parse_text_tool_calls,
 )
+from ..model_registry import resolve_output_token_budget
 from ..types import (
     AuthenticationError,
     EndpointConfig,
@@ -209,12 +210,11 @@ class OpenAIResponsesProvider(OpenAIProvider):
             body["instructions"] = instructions
 
         # max_tokens → max_output_tokens (Responses API 字段名)
-        _max_tokens = request.max_tokens
-        if _max_tokens and _max_tokens > 0:
-            body["max_output_tokens"] = _max_tokens
-        else:
-            _fallback = self.config.max_tokens or 16384
-            body["max_output_tokens"] = _fallback
+        body["max_output_tokens"] = resolve_output_token_budget(
+            self.config.model,
+            request_max_tokens=request.max_tokens,
+            endpoint_max_tokens=self.config.max_tokens,
+        )
 
         # 工具
         if request.tools:

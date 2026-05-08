@@ -445,7 +445,7 @@ class LLMClient:
             max_tokens: 最大输出 token
             temperature: 温度
             enable_thinking: 是否启用思考模式
-            thinking_depth: 思考深度 ('low'/'medium'/'high')
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/'max')
             **kwargs: 额外参数
 
         Returns:
@@ -607,7 +607,7 @@ class LLMClient:
             max_tokens: 最大输出 token
             temperature: 温度
             enable_thinking: 是否启用思考模式
-            thinking_depth: 思考深度 ('low'/'medium'/'high')
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/'max')
             conversation_id: 对话 ID
             cancel_event: 取消事件（与 chat() 签名一致）
             **kwargs: 额外参数
@@ -693,6 +693,7 @@ class LLMClient:
             )
 
         _413_retried = False
+        _token_range_retried = False
         last_error: Exception | None = None
         for i, provider in enumerate(eligible):
             if cancel_event and cancel_event.is_set():
@@ -772,6 +773,38 @@ class LLMClient:
                     ) from e
 
                 sc = e.status_code
+
+                if (
+                    sc == 400
+                    and not _token_range_retried
+                    and self._apply_output_token_range_feedback(
+                        request,
+                        e,
+                        log_prefix="[LLM-Stream]",
+                        endpoint_name=provider.name,
+                    )
+                ):
+                    _token_range_retried = True
+                    try:
+                        async for event in provider.chat_stream(request):
+                            if cancel_event and cancel_event.is_set():
+                                raise UserCancelledError(
+                                    reason="用户请求停止",
+                                    source="llm_stream_token_range_retry",
+                                )
+                            yielded = True
+                            yield event
+                        async with self._endpoint_lock:
+                            self._last_success_endpoint = provider.name
+                        return
+                    except (UserCancelledError, asyncio.CancelledError):
+                        raise
+                    except LLMError as retry_e:
+                        last_error = retry_e
+                        logger.warning(
+                            f"[LLM-Stream] endpoint={provider.name} "
+                            f"max_tokens range retry also failed: {retry_e}"
+                        )
 
                 # 413 auto-recovery: reduce max_tokens and retry same provider
                 if sc == 413 and not _413_retried:
@@ -1295,6 +1328,31 @@ class LLMClient:
                         pass
             raise
 
+    def _apply_output_token_range_feedback(
+        self,
+        request: LLMRequest,
+        error: LLMError,
+        *,
+        log_prefix: str,
+        endpoint_name: str,
+    ) -> bool:
+        """Apply upstream-declared output token limits to the next retry."""
+        from .retry import extract_output_token_upper_bound
+
+        suggested_max = extract_output_token_upper_bound(error)
+        if not suggested_max:
+            return False
+        if request.max_tokens > 0 and request.max_tokens <= suggested_max:
+            return False
+
+        current = request.max_tokens or 0
+        request.max_tokens = suggested_max
+        logger.info(
+            f"{log_prefix} endpoint={endpoint_name} max_tokens range rejected, "
+            f"adjusting {current or 'auto'} → {request.max_tokens} and retrying"
+        )
+        return True
+
     async def _try_with_retry(
         self,
         operation,
@@ -1318,6 +1376,7 @@ class LLMClient:
         from .retry import should_retry as _legacy_should_retry
 
         _413_retried = False
+        _token_range_retried = False
         last_error: Exception | None = None
 
         for attempt in range(1, max_attempts + 1):
@@ -1337,6 +1396,20 @@ class LLMClient:
             except LLMError as e:
                 last_error = e
                 sc = e.status_code
+
+                if (
+                    sc == 400
+                    and request
+                    and not _token_range_retried
+                    and self._apply_output_token_range_feedback(
+                        request,
+                        e,
+                        log_prefix="[LLM]",
+                        endpoint_name=provider_name,
+                    )
+                ):
+                    _token_range_retried = True
+                    continue
 
                 # 413 Payload Too Large → 自动缩减 max_tokens 50%，仅一次
                 if sc == 413 and request and not _413_retried:

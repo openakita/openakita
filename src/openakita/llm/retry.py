@@ -198,6 +198,32 @@ def is_context_overflow_error(error: Exception) -> int | None:
     return None
 
 
+def extract_output_token_upper_bound(error: Exception) -> int | None:
+    """Extract an upstream-declared output token upper bound from a request error."""
+    import re
+
+    raw_body = getattr(error, "raw_body", None)
+    error_str = "\n".join(part for part in (str(error), str(raw_body or "")) if part).lower()
+    if not any(key in error_str for key in ("max_tokens", "max_completion_tokens", "max_output_tokens")):
+        return None
+
+    patterns = [
+        r"valid\s+range\s+of\s+(?:max_tokens|max_completion_tokens|max_output_tokens)\s+is\s+\[\s*\d+\s*,\s*(\d+)\s*\]",
+        r"(?:max_tokens|max_completion_tokens|max_output_tokens).*?\[\s*\d+\s*,\s*(\d+)\s*\]",
+        r"(?:max_tokens|max_completion_tokens|max_output_tokens).*?(?:less than or equal to|at most|maximum)\s+(\d+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, error_str)
+        if match:
+            try:
+                upper = int(match.group(1))
+            except ValueError:
+                continue
+            if upper > 0:
+                return upper
+    return None
+
+
 async def retry_with_backoff(
     fn,
     *,
