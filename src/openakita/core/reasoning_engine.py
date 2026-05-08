@@ -441,33 +441,43 @@ class Checkpoint:
 
 
 def _get_action_claim_re() -> "re.Pattern[str]":
-    """Compiled regex that detects Chinese action-claim phrases.
-
-    Matches patterns like "已帮你保存", "已完成", "成功发送", "已经删除" — these
-    indicate the LLM is *claiming* it performed an operation rather than merely
-    analysing or describing content.  Used by the implicit-REPLY heuristic to
-    avoid accepting hallucinated action descriptions.
-    """
+    """Compiled regex for claims that an external action has already happened."""
     import re as _re
 
-    pat = getattr(_get_action_claim_re, "_cached", None)
-    if pat is not None:
-        return pat
+    cached = getattr(_get_action_claim_re, "_cached", None)
+    if cached is not None:
+        return cached
     verbs = (
         "保存|发送|创建|删除|修改|上传|下载|执行|生成|导出|复制|移动|"
         "写入|添加|设置|配置|安装|部署|打包|编译|构建|启动|重启|停止|关闭|"
-        "记住|记录|存入|保存到记忆"
+        "记住|记录|存入|保存到记忆|调用|读取"
     )
     pat = _re.compile(
+        rf"(?:"
         rf"(?:已[经]?|成功|顺利|我已经|我已)(?:帮你?|为你|给你)?(?:{verbs})"
+        rf"|已通过.{{0,30}}(?:验证|读取|检查)"
+        rf"|工具已.{{0,10}}(?:调用|执行)"
+        rf"|(?:write_file|edit_file|read_file|run_shell|run_powershell)"
+        rf".{{0,30}}(?:已调用|已执行|已验证|验证完成)"
+        rf")"
     )
     _get_action_claim_re._cached = pat  # type: ignore[attr-defined]
     return pat
 
 
-# 动词 → 候选工具名片段（小写子串匹配）。
-# 当 LLM 文本里说"已删除/已发送..."时，必须有匹配片段的工具在本轮"成功"
-# 执行过；否则按幻觉降级处理。映射只覆盖最常被滥用的高风险动词，避免
+_CLAIMED_TOOL_TO_FRAGMENTS: dict[str, tuple[str, ...]] = {
+    "write_file": ("write_file",),
+    "edit_file": ("edit_file",),
+    "read_file": ("read_file",),
+    "run_shell": ("run_shell",),
+    "run_powershell": ("run_powershell",),
+    "deliver_artifacts": ("deliver_artifacts",),
+    "schedule_task": ("schedule_task",),
+    "add_memory": ("add_memory",),
+    "delete_file": ("delete_file",),
+}
+
+
 # 误拦低风险描述（如"已分析/已生成"等）。
 _VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
     "删除": ("delete_file", "delete_memory", "remove", "cancel_scheduled_task"),
@@ -487,7 +497,8 @@ _VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
     "调度": ("schedule_task",),
     "提醒": ("schedule_task",),
     "安装": ("install_skill",),
-    "卸载": ("uninstall_skill",),
+    "卸载": ("uninstall_skill",),    "读取": ("read_file", "run_shell", "run_powershell"),
+
 }
 
 
@@ -522,6 +533,25 @@ def _extract_unbacked_verbs(
 
     prefix_pat = _re.compile(r"(?:已[经]?|成功|顺利|我已经|我已)(?:帮你?|为你|给你)?")
     unbacked: list[str] = []
+
+    for tool_name, fragments in _CLAIMED_TOOL_TO_FRAGMENTS.items():
+        # Detect the issue #424 shape: the model writes a Markdown table saying
+        # "write_file/read_file 已调用" even though no matching tool receipt exists.
+        tool_claim_pat = _re.compile(
+            rf"{_re.escape(tool_name)}.{{0,40}}"
+            r"(?:已调用|已执行|已验证|验证完成|实际调用|执行完成|✅)",
+            _re.IGNORECASE,
+        )
+        reverse_claim_pat = _re.compile(
+            r"(?:已通过|通过|验证|读取|检查|调用|执行).{0,40}"
+            rf"{_re.escape(tool_name)}",
+            _re.IGNORECASE,
+        )
+        if not (tool_claim_pat.search(text) or reverse_claim_pat.search(text)):
+            continue
+        if any(any(frag in t for frag in fragments) for t in successful_tools):
+            continue
+        unbacked.append(f"{tool_name}调用")
     for verb, fragments in _VERB_TO_TOOL_FRAGMENTS.items():
         # Must appear right after an action-claim prefix to count as a real claim
         # (avoids matching plain narrative like "我会创建..." or "需要修改...").

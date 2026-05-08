@@ -86,6 +86,41 @@ def test_log_investigation_query_is_guarded_as_tool_task():
     assert result.fast_reply is False
 
 
+def test_daily_record_content_is_guarded_as_tool_task():
+    result = _try_fast_query_shortcut("3月18日工作：邹总问了下是否有交付确认邮件")
+
+    assert result is not None
+    assert result.intent == IntentType.TASK
+    assert result.requires_tools is True
+    assert result.evidence_required is True
+    assert result.force_tool is True
+
+
+def test_write_confirmation_followup_requires_evidence_without_overprompting():
+    result = _parse_intent_output(
+        """
+intent: chat
+task_type: other
+goal: 用户询问写入是否成功
+tool_hints: []
+memory_keywords: []
+requires_tools: false
+evidence_required: false
+requires_project_context: false
+risk_level_hint: none
+destructive: false
+scope: narrow
+suggest_plan: false
+""",
+        "写入成功了吗",
+    )
+
+    assert result.intent == IntentType.TASK
+    assert result.requires_tools is True
+    assert result.evidence_required is True
+    assert result.force_tool is True
+
+
 def test_llm_query_misclassification_is_coerced_for_external_action():
     result = _parse_intent_output(
         """

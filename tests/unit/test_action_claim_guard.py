@@ -11,6 +11,12 @@ def test_action_claim_regex_matches_memory_claims():
     assert _get_action_claim_re().search("已保存到记忆")
 
 
+def test_action_claim_regex_matches_fake_tool_receipts_from_issue_424():
+    assert _get_action_claim_re().search("✅ 工具已实际调用！")
+    assert _get_action_claim_re().search("write_file ✅ 已调用")
+    assert _get_action_claim_re().search("已通过 read_file 工具验证")
+
+
 def test_unbacked_memory_claim_is_downgraded():
     guarded = _guard_unbacked_action_claim("我已经帮你保存到记忆了", [])
 
@@ -22,6 +28,35 @@ def test_backed_action_claim_is_kept():
     text = "已帮你创建文件。"
 
     assert _guard_unbacked_action_claim(text, ["write_file"]) == text
+
+
+def test_unbacked_fake_tool_receipt_without_tools_is_downgraded():
+    text = (
+        "✅ 工具已实际调用！\n\n"
+        "| 步骤 | 工具 | 状态 |\n"
+        "| 写入文件 | write_file | ✅ 已调用 |\n"
+        "| 验证写入 | read_file | ✅ 已调用 |"
+    )
+
+    guarded = _guard_unbacked_action_claim(text, [])
+
+    assert "没有检测到实际工具执行凭证" in guarded
+    assert "write_file" not in guarded
+
+
+def test_unbacked_named_tool_receipt_with_unrelated_tool_is_warned():
+    text = "读取文件 | read_file | ✅ 已调用"
+
+    guarded = _guard_unbacked_action_claim(text, ["write_file"])
+
+    assert "一致性提示" in guarded
+    assert "read_file调用" in guarded
+
+
+def test_backed_named_tool_receipt_is_kept():
+    text = "读取文件 | read_file | ✅ 已调用"
+
+    assert _guard_unbacked_action_claim(text, ["read_file"]) == text
 
 
 def test_unbacked_delete_claim_with_unrelated_tool_is_warned():

@@ -319,7 +319,7 @@ _ACTION_VERB_RE = re.compile(
 
 _TOOL_TARGET_RE = re.compile(
     r"(?:日志|报错|警告|错误|文件|目录|项目|代码|仓库|网页|浏览器|GitHub|issue|"
-    r"skill|技能|配置|环境|数据库|截图|任务|命令|脚本)"
+    r"skill|技能|配置|环境|数据库|截图|任务|命令|脚本|记录|待办|记忆|进度)"
 )
 
 _STRONG_EVIDENCE_RE = re.compile(
@@ -337,6 +337,20 @@ _EXECUTION_FOLLOWUP_RE = re.compile(
     r"(?:\s*(?:任务|这个|它|上面|刚才的|之前的|不要停|别停|下去|吧|。|！|!))?$"
 )
 
+_RECORD_CONTENT_RE = re.compile(
+    r"^(?:(?:\d{4}-\d{1,2}-\d{1,2})|(?:\d{1,2}|[一二三四五六七八九十]+)月"
+    r"(?:\d{1,2}|[一二三四五六七八九十]+)日)?"
+    r".{0,12}(?:工作|日常|记录|进度|待办)[:：]",
+    re.IGNORECASE,
+)
+
+_WRITE_CONFIRMATION_RE = re.compile(
+    r"(?:写入|保存|记录|读取|验证|文件|内容).{0,12}"
+    r"(?:成功|了吗|没有|没看到|看不到|不同|不一致|确认|确定)"
+    r"|(?:还是)?没有写入成功|(?:系统中)?没看到(?:该)?文件|和你显示不同",
+    re.IGNORECASE,
+)
+
 
 def _requires_external_evidence(message: str) -> bool:
     """Whether the answer should be backed by current external/project evidence.
@@ -348,6 +362,8 @@ def _requires_external_evidence(message: str) -> bool:
     stripped = message.strip()
     if not stripped:
         return False
+    if _RECORD_CONTENT_RE.search(stripped) or _WRITE_CONFIRMATION_RE.search(stripped):
+        return True
     if _STRONG_EVIDENCE_RE.search(stripped):
         return True
     if _EXECUTION_FOLLOWUP_RE.search(stripped):
@@ -360,6 +376,9 @@ def _looks_like_tool_action_request(message: str) -> bool:
     stripped = message.strip()
     if not stripped:
         return False
+
+    if _RECORD_CONTENT_RE.search(stripped) or _WRITE_CONFIRMATION_RE.search(stripped):
+        return True
 
     # Continuation commands are only treated as tool actions when they explicitly
     # refer to an execution/task, avoiding ordinary acknowledgements like "继续说".
