@@ -25,23 +25,24 @@ BROWSER_TOOLS = [
     {
         "name": "browser_open",
         "category": "Browser",
-        "description": "Launch browser OR check browser status. Always returns current state (is_open, url, title, tab_count). If browser is already running, returns status without restarting. If not running, starts it. Call this before any browser operation to ensure browser is ready. Browser state resets on service restart.",
+        "description": "Launch browser OR check browser automation status. Always returns current state (is_open, automation_ready, headed, url, title, tab_count). If browser is already running, returns status without restarting. If not running, starts it. `headed/visible` means non-headless automation; it does not prove the OS desktop window is foreground-visible to the user.",
         "detail": build_detail(
-            summary="启动浏览器或检查浏览器状态。始终返回当前状态（是否打开、URL、标题、tab 数）。",
+            summary="启动浏览器或检查浏览器自动化状态。始终返回当前状态（是否打开、URL、标题、tab 数）。",
             scenarios=[
                 "开始 Web 自动化任务前确认浏览器状态",
                 "启动浏览器",
                 "检查浏览器是否正常运行",
             ],
             params_desc={
-                "visible": "True=显示浏览器窗口（用户可见），False=后台运行（不可见）",
+                "visible": "True=有界面/headed 自动化模式，False=后台/headless 模式；True 不等于已验证窗口在桌面前台",
                 "user_confirmed": "当浏览器之前被用户关闭后，只有用户明确确认继续时才传 True 重新打开前台浏览器",
             },
             notes=[
                 "⚠️ 每次浏览器任务前建议调用此工具确认状态",
                 "如果浏览器已在运行，直接返回当前状态，不会重复启动",
                 "服务重启后浏览器会关闭，不能假设已打开",
-                "默认显示浏览器窗口",
+                "默认使用有界面/headed 模式，但工具结果不代表窗口已在用户桌面前台",
+                "如果用户说看不到浏览器，必须使用桌面截图/窗口工具验证并切换；不要只根据 browser_open 的 headed/visible 断言已在前台",
                 "如果工具提示浏览器可能被用户关闭，不要自动重开；先询问用户，得到明确确认后传 user_confirmed=True",
             ],
         ),
@@ -84,7 +85,7 @@ BROWSER_TOOLS = [
             "properties": {
                 "visible": {
                     "type": "boolean",
-                    "description": "True=显示浏览器窗口, False=后台运行。默认 True",
+                    "description": "True=有界面/headed 自动化模式, False=后台/headless 模式。True 不保证桌面前台可见。默认 True",
                     "default": True,
                 },
                 "user_confirmed": {

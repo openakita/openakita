@@ -344,18 +344,16 @@ class BrowserHandler:
                     logger.info(f"Browser mode change requested: visible={visible}, restarting...")
                     await manager.stop()
                 else:
+                    result_data = self._build_open_status_result(
+                        status="already_running",
+                        manager=manager,
+                        tab_count=len(all_pages),
+                        current_url=current_url,
+                        current_title=current_title,
+                    )
                     return {
                         "success": True,
-                        "result": {
-                            "is_open": True,
-                            "status": "already_running",
-                            "visible": manager.visible,
-                            "tab_count": len(all_pages),
-                            "current_tab": {"url": current_url, "title": current_title},
-                            "using_user_chrome": manager.using_user_chrome,
-                            "message": f"浏览器已在{'可见' if manager.visible else '后台'}模式运行，"
-                            f"共 {len(all_pages)} 个标签页",
-                        },
+                        "result": result_data,
                     }
             except Exception as e:
                 logger.warning(f"[Browser] Browser connection lost: {e}, resetting state")
@@ -391,15 +389,13 @@ class BrowserHandler:
             except Exception:
                 pass
 
-            result_data: dict[str, Any] = {
-                "is_open": True,
-                "status": "started",
-                "visible": manager.visible,
-                "tab_count": tab_count,
-                "current_tab": {"url": current_url, "title": current_title},
-                "using_user_chrome": manager.using_user_chrome,
-                "message": f"浏览器已启动 ({'可见模式' if manager.visible else '后台模式'})",
-            }
+            result_data = self._build_open_status_result(
+                status="started",
+                manager=manager,
+                tab_count=tab_count,
+                current_url=current_url,
+                current_title=current_title,
+            )
 
             try:
                 from ..browser.chrome_finder import detect_chrome_devtools_mcp
@@ -468,6 +464,48 @@ class BrowserHandler:
                 "result": {"is_open": False, "status": "failed"},
                 "error": error_msg,
             }
+
+    @staticmethod
+    def _build_open_status_result(
+        *,
+        status: str,
+        manager: Any,
+        tab_count: int,
+        current_url: str | None,
+        current_title: str | None,
+    ) -> dict[str, Any]:
+        """Build a precise browser-open status without claiming desktop foreground.
+
+        ``manager.visible`` means the Playwright session is headed (not headless).
+        It does not prove that an OS desktop window is visible or focused to the
+        user, which was the root cause of #470.
+        """
+        headed = bool(getattr(manager, "visible", False))
+        mode = "有界面自动化模式" if headed else "后台自动化模式"
+        action = "已连接" if status == "already_running" else "已启动"
+        visibility_note = (
+            "`visible/headed` 仅表示浏览器自动化不是 headless；"
+            "尚未验证系统桌面窗口是否可见或处于前台。"
+        )
+
+        return {
+            "is_open": True,
+            "automation_ready": True,
+            "status": status,
+            # Keep existing key for compatibility; new callers should prefer `headed`.
+            "visible": headed,
+            "headed": headed,
+            "desktop_window_visible": None,
+            "foreground_verified": None,
+            "tab_count": tab_count,
+            "current_tab": {"url": current_url, "title": current_title},
+            "using_user_chrome": getattr(manager, "using_user_chrome", False),
+            "visibility_note": visibility_note,
+            "message": (
+                f"浏览器自动化会话{action}（{mode}），共 {tab_count} 个标签页。"
+                "如用户看不到窗口，请使用桌面窗口/截图工具验证并切换到前台。"
+            ),
+        }
 
     def _maybe_truncate(self, output: str, params: dict) -> str:
         """browser_get_content 的智能截断。"""

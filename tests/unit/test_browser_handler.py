@@ -69,6 +69,15 @@ class _StartableBrowserManager:
         return True
 
 
+class _ReadyBrowserManager(_StartableBrowserManager):
+    def __init__(self) -> None:
+        super().__init__()
+        self.is_ready = True
+        self.visible = True
+        self.context = SimpleNamespace(pages=[_FakePage(), _FakePage()])
+        self.page = self.context.pages[0]
+
+
 class _ReadyClosedBrowserManager(_StartableBrowserManager):
     def __init__(self) -> None:
         super().__init__()
@@ -159,6 +168,27 @@ async def test_user_confirmed_browser_open_clears_closed_gate():
     assert "status" in result
     assert manager.started is True
     assert agent._browser_user_closed is False
+
+
+@pytest.mark.asyncio
+async def test_browser_open_does_not_claim_desktop_foreground_for_headed_session():
+    manager = _ReadyBrowserManager()
+    agent = SimpleNamespace(
+        name="tester",
+        browser_manager=manager,
+        pw_tools=_FakePlaywrightTools(),
+    )
+    handler = BrowserHandler(agent)
+
+    result = await handler.handle("browser_open", {"visible": True})
+
+    assert "automation_ready" in result
+    assert "'headed': True" in result
+    assert "'desktop_window_visible': None" in result
+    assert "'foreground_verified': None" in result
+    assert "尚未验证系统桌面窗口是否可见或处于前台" in result
+    assert "已在可见模式运行" not in result
+    assert "现在已经在前台" not in result
 
 
 @pytest.mark.asyncio
