@@ -5,13 +5,15 @@ LLM Provider 基类
 """
 
 import asyncio
+import hashlib
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import AsyncIterator
 
-from ..types import EndpointConfig, LLMRequest, LLMResponse
+from ..types import EndpointConfig, LLMRequest, LLMResponse, normalize_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ class RPMRateLimiter:
     当请求速率超过限制时，自动等待直到窗口内有空余配额。
     """
 
-    __slots__ = ("_rpm", "_window", "_timestamps", "_lock", "_lock_loop_id")
+    __slots__ = ("_rpm", "_window", "_timestamps", "_lock", "_lock_loop_id", "_blocked_until")
 
     def __init__(self, rpm: int):
         self._rpm = rpm
@@ -31,6 +33,26 @@ class RPMRateLimiter:
         self._timestamps: deque[float] = deque()
         self._lock: asyncio.Lock | None = None
         self._lock_loop_id: int | None = None
+        self._blocked_until: float = 0.0
+
+    def configure(self, rpm: int) -> None:
+        """更新 RPM 配置，保留已有窗口状态以避免 reload 瞬间绕过限流。"""
+        self._rpm = max(0, int(rpm or 0))
+
+    def penalize(self, seconds: float, endpoint_name: str = "") -> None:
+        """记录上游 429 后的短暂退避。
+
+        这不是常规限流额度，只在服务商已经明确返回 rate limit 后生效，
+        用来阻止多 Agent/多 LLMClient 实例继续立刻打同一个上游端点。
+        """
+        if seconds <= 0:
+            return
+        seconds = min(max(seconds, 1.0), 300.0)
+        until = time.monotonic() + seconds
+        if until > self._blocked_until:
+            self._blocked_until = until
+            tag = f" endpoint={endpoint_name}" if endpoint_name else ""
+            logger.warning(f"[RPM]{tag} upstream rate limit backoff {seconds:.1f}s")
 
     def _get_lock(self) -> asyncio.Lock:
         """获取或创建 asyncio.Lock（绑定到当前事件循环）。"""
@@ -45,27 +67,35 @@ class RPMRateLimiter:
 
     async def acquire(self, endpoint_name: str = "") -> None:
         """获取一个请求配额，必要时等待。"""
-        if self._rpm <= 0:
-            return
-
         lock = self._get_lock()
         while True:
             async with lock:
                 now = time.monotonic()
-                while self._timestamps and self._timestamps[0] <= now - self._window:
-                    self._timestamps.popleft()
-
-                if len(self._timestamps) < self._rpm:
-                    self._timestamps.append(now)
+                if self._blocked_until > now:
+                    wait_time = self._blocked_until - now
+                elif self._rpm <= 0:
                     return
+                else:
+                    wait_time = 0
 
-                oldest = self._timestamps[0]
-                wait_time = oldest + self._window - now
+                if wait_time <= 0:
+                    while self._timestamps and self._timestamps[0] <= now - self._window:
+                        self._timestamps.popleft()
+
+                    if len(self._timestamps) < self._rpm:
+                        self._timestamps.append(now)
+                        return
+
+                    oldest = self._timestamps[0]
+                    wait_time = oldest + self._window - now
 
             tag = f" endpoint={endpoint_name}" if endpoint_name else ""
-            logger.info(
-                f"[RPM]{tag} rate limit reached ({self._rpm} rpm), waiting {wait_time:.1f}s"
-            )
+            if self._blocked_until > time.monotonic():
+                logger.info(f"[RPM]{tag} upstream backoff active, waiting {wait_time:.1f}s")
+            else:
+                logger.info(
+                    f"[RPM]{tag} rate limit reached ({self._rpm} rpm), waiting {wait_time:.1f}s"
+                )
             await asyncio.sleep(max(wait_time, 0.1))
 
 
@@ -91,6 +121,8 @@ COOLDOWN_SECONDS = COOLDOWN_DEFAULT
 class LLMProvider(ABC):
     """LLM Provider 基类"""
 
+    _shared_rate_limiters: dict[str, RPMRateLimiter] = {}
+
     def __init__(self, config: EndpointConfig):
         self.config = config
         self._healthy = True
@@ -100,7 +132,32 @@ class LLMProvider(ABC):
         self._consecutive_cooldowns: int = 0  # 连续进入冷静期次数（无成功请求间隔）
         self._is_extended_cooldown: bool = False  # 是否处于升级冷静期
         _rpm = config.rpm_limit if isinstance(config.rpm_limit, int) else 0
-        self._rate_limiter: RPMRateLimiter | None = RPMRateLimiter(_rpm) if _rpm > 0 else None
+        self._rate_limiter: RPMRateLimiter = self._get_shared_rate_limiter(_rpm)
+
+    def _get_shared_rate_limiter(self, rpm: int) -> RPMRateLimiter:
+        """按真实上游身份共享限速器，避免多 Agent/多客户端实例绕过 RPM。"""
+        key = self._rate_limit_key()
+        limiter = self._shared_rate_limiters.get(key)
+        if limiter is None:
+            limiter = RPMRateLimiter(max(0, int(rpm or 0)))
+            self._shared_rate_limiters[key] = limiter
+        else:
+            limiter.configure(max(0, int(rpm or 0)))
+        return limiter
+
+    def _rate_limit_key(self) -> str:
+        api_key = self.config.get_api_key() or ""
+        key_fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16] if api_key else ""
+        base_url = normalize_base_url(self.config.base_url or "")
+        return "|".join(
+            [
+                self.config.api_type or "",
+                base_url,
+                self.config.model or "",
+                self.config.api_key_env or "",
+                key_fingerprint,
+            ]
+        )
 
     @property
     def name(self) -> str:
@@ -290,8 +347,31 @@ class LLMProvider(ABC):
 
     async def acquire_rate_limit(self):
         """获取 RPM 限流配额，必要时等待。无限流配置时立即返回。"""
-        if self._rate_limiter:
-            await self._rate_limiter.acquire(endpoint_name=self.name)
+        await self._rate_limiter.acquire(endpoint_name=self.name)
+
+    def report_upstream_rate_limit(self, error: str) -> None:
+        """上游明确返回 429 后，给同一上游身份设置短暂共享退避。"""
+        retry_after = self._parse_retry_after_seconds(error)
+        self._rate_limiter.penalize(retry_after or 60.0, endpoint_name=self.name)
+
+    @staticmethod
+    def _parse_retry_after_seconds(error: str) -> float | None:
+        """从常见 429 文本中提取 retry-after/reset 秒数，缺失时由调用方兜底。"""
+        err = error or ""
+        patterns = [
+            r"retry-after[\"'\s:=]+(\d+(?:\.\d+)?)",
+            r"retry_after[\"'\s:=]+(\d+(?:\.\d+)?)",
+            r"retry in\s+(\d+(?:\.\d+)?)\s*s",
+            r"try again in\s+(\d+(?:\.\d+)?)\s*s",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, err, flags=re.IGNORECASE)
+            if match:
+                try:
+                    return float(match.group(1))
+                except ValueError:
+                    return None
+        return None
 
     def reset_cooldown(self):
         """重置冷静期，允许端点立即被重新尝试

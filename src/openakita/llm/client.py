@@ -1550,12 +1550,13 @@ class LLMClient:
             except RateLimitError as e:
                 # 429 限速：短冷静期，立即切换到下一端点（重试同一端点无意义）#324
                 # 所有端点都限速时 _resolve 的 transient 等待路径会处理
-                error_str = str(e)
+                error_str = _classification_error_text(e)
                 logger.warning(
                     f"[LLM] endpoint={provider.name} rate_limited, "
                     f"switching to next endpoint. Error: {error_str[:200]}"
                 )
                 errors.append(f"{provider.name}: {e}")
+                provider.report_upstream_rate_limit(error_str)
                 provider.mark_unhealthy(error_str, category="transient")
                 failed_providers.append(provider)
                 continue

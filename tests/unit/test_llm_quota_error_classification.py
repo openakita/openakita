@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from openakita.llm.client import _friendly_error_hint
 from openakita.llm.error_types import FailoverReason
-from openakita.llm.providers.base import LLMProvider
+from openakita.llm.providers.base import LLMProvider, RPMRateLimiter
 from openakita.llm.providers.openai import OpenAIProvider, _humanize_upstream_error
 from openakita.llm.types import EndpointConfig, LLMError
 
@@ -91,3 +91,51 @@ def test_openai_provider_avoids_zstd_accept_encoding():
     headers = provider._build_headers()
 
     assert headers["Accept-Encoding"] == "gzip, deflate"
+
+
+def test_same_upstream_identity_shares_rpm_limiter():
+    LLMProvider._shared_rate_limiters.clear()
+    cfg = EndpointConfig(
+        name="nvidia-a",
+        provider="nvidia_nim",
+        api_type="openai",
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key="sk-same",
+        model="minimaxai/minimax-m2.7",
+        rpm_limit=40,
+    )
+
+    provider_a = OpenAIProvider(cfg)
+    provider_b = OpenAIProvider(
+        EndpointConfig(
+            name="nvidia-b",
+            provider="nvidia_nim",
+            api_type="openai",
+            base_url="https://integrate.api.nvidia.com/v1/",
+            api_key="sk-same",
+            model="minimaxai/minimax-m2.7",
+            rpm_limit=40,
+        )
+    )
+
+    assert provider_a._rate_limiter is provider_b._rate_limiter
+
+
+def test_upstream_429_sets_shared_backoff_without_second_config_path():
+    LLMProvider._shared_rate_limiters.clear()
+    provider = OpenAIProvider(
+        EndpointConfig(
+            name="nvidia",
+            provider="nvidia_nim",
+            api_type="openai",
+            base_url="https://integrate.api.nvidia.com/v1",
+            api_key="sk-test",
+            model="minimaxai/minimax-m2.7",
+            rpm_limit=0,
+        )
+    )
+
+    provider.report_upstream_rate_limit('{"status":429,"retry_after":12}')
+
+    assert isinstance(provider._rate_limiter, RPMRateLimiter)
+    assert provider._rate_limiter._blocked_until > 0

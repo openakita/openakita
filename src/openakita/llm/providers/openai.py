@@ -402,10 +402,12 @@ class OpenAIProvider(LLMProvider):
                         raw_body=body,
                     )
                 if response.status_code == 429:
+                    retry_after = response.headers.get("retry-after")
+                    raw_body = f"{body}\nretry-after: {retry_after}" if retry_after else body
                     raise RateLimitError(
                         _humanize_upstream_error(429, body),
                         status_code=429,
-                        raw_body=body,
+                        raw_body=raw_body,
                     )
                 raise LLMError(
                     _humanize_upstream_error(response.status_code, body),
@@ -510,10 +512,16 @@ class OpenAIProvider(LLMProvider):
                             raw_body=error_text,
                         )
                     if response.status_code == 429:
+                        retry_after = response.headers.get("retry-after")
+                        raw_body = (
+                            f"{error_text}\nretry-after: {retry_after}"
+                            if retry_after
+                            else error_text
+                        )
                         raise RateLimitError(
                             _humanize_upstream_error(429, error_text),
                             status_code=429,
-                            raw_body=error_text,
+                            raw_body=raw_body,
                         )
                     raise LLMError(
                         _humanize_upstream_error(response.status_code, error_text),

@@ -125,7 +125,13 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 if response.status_code == 401:
                     raise AuthenticationError(f"Authentication failed: {body}", status_code=401)
                 if response.status_code == 429:
-                    raise RateLimitError(f"Rate limit exceeded: {body}", status_code=429)
+                    retry_after = response.headers.get("retry-after")
+                    raw_body = f"{body}\nretry-after: {retry_after}" if retry_after else body
+                    raise RateLimitError(
+                        f"Rate limit exceeded: {body}",
+                        status_code=429,
+                        raw_body=raw_body,
+                    )
                 raise LLMError(
                     f"API error ({response.status_code}): {body}", status_code=response.status_code
                 )
@@ -430,7 +436,17 @@ class OpenAIResponsesProvider(OpenAIProvider):
                             f"Authentication failed: {error_text}", status_code=401
                         )
                     if response.status_code == 429:
-                        raise RateLimitError(f"Rate limit exceeded: {error_text}", status_code=429)
+                        retry_after = response.headers.get("retry-after")
+                        raw_body = (
+                            f"{error_text}\nretry-after: {retry_after}"
+                            if retry_after
+                            else error_text
+                        )
+                        raise RateLimitError(
+                            f"Rate limit exceeded: {error_text}",
+                            status_code=429,
+                            raw_body=raw_body,
+                        )
                     raise LLMError(
                         f"API error ({response.status_code}): {error_text}",
                         status_code=response.status_code,
