@@ -1,10 +1,12 @@
 """L3 Integration Tests: MessageGateway message routing and processing."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import openakita.channels.gateway as gateway_module
 from openakita.channels.gateway import MessageGateway
 from openakita.channels.types import (
     MediaFile,
@@ -176,4 +178,96 @@ class TestMessageGatewayAgentBinding:
         assert session.get_metadata("_bot_default_agent") == "writer-agent"
         assert session.context.agent_profile_id == "reviewer-agent"
         session_manager.mark_dirty.assert_not_called()
+
+
+class TestMessageGatewayAgentTimeout:
+    @pytest.mark.asyncio
+    async def test_call_agent_has_no_default_wall_clock_timeout(self, monkeypatch):
+        monkeypatch.delenv("AGENT_HANDLER_TIMEOUT", raising=False)
+
+        async def fail_wait_for(*args, **kwargs):
+            raise AssertionError("default IM agent handling must not use wait_for")
+
+        monkeypatch.setattr(gateway_module.asyncio, "wait_for", fail_wait_for)
+
+        async def agent_handler(session, text):
+            return f"handled: {text}"
+
+        gateway = MessageGateway(session_manager=MagicMock(), agent_handler=agent_handler)
+        session = create_test_session(channel="feishu:writer", chat_id="chat-1", user_id="user-1")
+        message = create_channel_message(
+            channel="feishu:writer",
+            chat_id="chat-1",
+            user_id="user-1",
+            text="写一篇长文章",
+        )
+
+        response, streamed_ok = await gateway._call_agent(session, message)
+
+        assert response == "handled: 写一篇长文章"
+        assert streamed_ok is False
+
+    @pytest.mark.asyncio
+    async def test_call_agent_respects_explicit_wall_clock_timeout(self, monkeypatch):
+        monkeypatch.setenv("AGENT_HANDLER_TIMEOUT", "0.01")
+
+        async def agent_handler(session, text):
+            await asyncio.sleep(1)
+            return "too late"
+
+        gateway = MessageGateway(session_manager=MagicMock(), agent_handler=agent_handler)
+        session = create_test_session(channel="feishu:writer", chat_id="chat-1", user_id="user-1")
+        message = create_channel_message(
+            channel="feishu:writer",
+            chat_id="chat-1",
+            user_id="user-1",
+            text="写一篇长文章",
+        )
+
+        response, streamed_ok = await gateway._call_agent(session, message)
+
+        assert streamed_ok is False
+        assert "超过配置的处理时长上限" in response
+        assert "AGENT_HANDLER_TIMEOUT" in response
+
+    @pytest.mark.asyncio
+    async def test_streaming_agent_has_no_default_wall_clock_timeout(self, monkeypatch):
+        monkeypatch.delenv("AGENT_HANDLER_TIMEOUT", raising=False)
+
+        async def fail_wait_for(*args, **kwargs):
+            raise AssertionError("default IM streaming must not use wait_for")
+
+        monkeypatch.setattr(gateway_module.asyncio, "wait_for", fail_wait_for)
+
+        async def agent_handler_stream(session, text):
+            yield {"type": "text_delta", "content": "长任务结果"}
+            yield {"type": "done"}
+
+        gateway = MessageGateway(session_manager=MagicMock())
+        gateway.agent_handler_stream = agent_handler_stream
+        session = create_test_session(channel="feishu:writer", chat_id="chat-1", user_id="user-1")
+        message = create_channel_message(
+            channel="feishu:writer",
+            chat_id="chat-1",
+            user_id="user-1",
+            text="写一篇长文章",
+        )
+        adapter = SimpleNamespace(
+            stream_token=AsyncMock(),
+            finalize_stream=AsyncMock(return_value=True),
+            _make_session_key=lambda chat_id, thread_id: chat_id,
+            _streaming_buffers={},
+        )
+
+        response, streamed_ok = await gateway._call_agent_streaming(
+            session,
+            "写一篇长文章",
+            message,
+            adapter,
+        )
+
+        assert response == "长任务结果"
+        assert streamed_ok is True
+        adapter.stream_token.assert_awaited_once()
+        adapter.finalize_stream.assert_awaited_once()
 
