@@ -22,6 +22,11 @@ HOOK_NAMES = frozenset(
         "on_tool_result",
         "on_session_start",
         "on_session_end",
+        "before_agent_run",
+        "after_agent_run",
+        # Compatibility aliases used by OpenClaw-style memory plugins.
+        "before_agent_start",
+        "agent_end",
         "on_prompt_build",
         "on_schedule",
         "on_before_tool_use",
@@ -162,7 +167,7 @@ class HookRegistry:
                         asyncio.to_thread(callback, **kwargs),
                         timeout=timeout,
                     )
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 logger.warning(
                     "Hook '%s' callback from plugin '%s' timed out (%.1fs), skipped",
                     hook_name,

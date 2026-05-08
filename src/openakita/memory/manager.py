@@ -319,11 +319,15 @@ class MemoryManager:
                 f"[Memory] start_session({session_id}): resuming at turn_offset={self._turn_offset}"
             )
 
-        replace = self._get_replace_backend()
-        if replace is not None:
+        backends = self._iter_memory_backends()
+        if backends:
             with contextlib.suppress(Exception):
-                asyncio.get_event_loop().create_task(replace.start_session(session_id))
-        else:
+                loop = asyncio.get_event_loop()
+                for backend in backends:
+                    start = getattr(backend, "start_session", None)
+                    if start:
+                        loop.create_task(start(session_id))
+        if self._get_replace_backend() is None:
             logger.debug(f"[Memory] start_session({session_id}): fresh session (offset=0)")
 
     def record_turn(
@@ -343,10 +347,14 @@ class MemoryManager:
         """
         content = coerce_text(content)
 
-        replace = self._get_replace_backend()
-        if replace is not None:
+        backends = self._iter_memory_backends()
+        if backends:
             with contextlib.suppress(Exception):
-                asyncio.get_event_loop().create_task(replace.record_turn(role, content))
+                loop = asyncio.get_event_loop()
+                for backend in backends:
+                    record = getattr(backend, "record_turn", None)
+                    if record:
+                        loop.create_task(record(role, content))
 
         turn = ConversationTurn(
             role=role,
@@ -675,10 +683,14 @@ class MemoryManager:
         if not self._current_session_id:
             return
 
-        replace = self._get_replace_backend()
-        if replace is not None:
+        backends = self._iter_memory_backends()
+        if backends:
             with contextlib.suppress(Exception):
-                asyncio.get_event_loop().create_task(replace.end_session())
+                loop_for_backends = asyncio.get_event_loop()
+                for backend in backends:
+                    end = getattr(backend, "end_session", None)
+                    if end:
+                        loop_for_backends.create_task(end())
 
         session_id = self._current_session_id
         turns = list(self._session_turns)
@@ -1076,10 +1088,14 @@ class MemoryManager:
             skip_dedup=True,
         )
 
-        replace = self._get_replace_backend()
-        if replace is not None:
+        backends = self._iter_memory_backends()
+        if backends:
             with contextlib.suppress(Exception):
-                asyncio.get_event_loop().create_task(replace.store(sem.to_dict()))
+                loop = asyncio.get_event_loop()
+                for backend in backends:
+                    store = getattr(backend, "store", None)
+                    if store:
+                        loop.create_task(store(sem.to_dict()))
 
         # MDRM 同步：高重要性事实立即上图，避免只有等到下一次 quick_encode/
         # consolidate 时才能被关系召回（小白用户的"再问一次"路径会走这里）。
@@ -1181,6 +1197,19 @@ class MemoryManager:
             if isinstance(entry, dict) and entry.get("replace"):
                 return entry.get("backend")
         return None
+
+    def _iter_memory_backends(self) -> list:
+        """Return all plugin-provided memory backends, replace and augment alike."""
+        backends = getattr(self, "_plugin_backends", None)
+        if not backends:
+            return []
+        result = []
+        for entry in backends.values():
+            if isinstance(entry, dict):
+                backend = entry.get("backend")
+                if backend is not None:
+                    result.append(backend)
+        return result
 
     # ==================== Injection (v1 compat) ====================
 

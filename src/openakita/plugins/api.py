@@ -308,6 +308,10 @@ class PluginAPI:
             "on_message_sending",
             "on_session_start",
             "on_session_end",
+            "before_agent_run",
+            "after_agent_run",
+            "before_agent_start",
+            "agent_end",
         }
         retrieve_hooks = {
             "on_retrieve",
@@ -697,6 +701,7 @@ class PluginAPI:
             A FileResponse or StreamingResponse ready to return from a route.
         """
         from urllib.parse import quote
+
         from fastapi.responses import FileResponse, StreamingResponse
 
         headers: dict[str, str] = {}
@@ -714,10 +719,12 @@ class PluginAPI:
             import httpx
 
             async def _stream():
-                async with httpx.AsyncClient(timeout=120.0) as client:
-                    async with client.stream("GET", source_str) as resp:
-                        async for chunk in resp.aiter_bytes(8192):
-                            yield chunk
+                async with (
+                    httpx.AsyncClient(timeout=120.0) as client,
+                    client.stream("GET", source_str) as resp,
+                ):
+                    async for chunk in resp.aiter_bytes(8192):
+                        yield chunk
 
             return StreamingResponse(_stream(), media_type=media_type, headers=headers)
 

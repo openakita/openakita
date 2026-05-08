@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from openakita.plugins.api import PluginAPI, PluginPermissionError
+from openakita.plugins.api import PluginAPI
 from openakita.plugins.hooks import HookRegistry
 from openakita.plugins.manifest import BASIC_PERMISSIONS, PluginManifest
 from openakita.plugins.sandbox import PluginErrorTracker
@@ -341,6 +341,15 @@ class TestEdgeCases:
         api = _make_api(tmp_path, granted=list(BASIC_PERMISSIONS), hook_registry=hr)
         api.register_hook("on_init", "not_a_function")  # type: ignore[arg-type]
         assert len(hr.get_hooks("on_init")) == 0
+
+    def test_register_agent_lifecycle_alias_hooks_with_message_permission(self, tmp_path):
+        """OpenClaw-style aliases use the same permission tier as message hooks."""
+        hr = HookRegistry()
+        api = _make_api(tmp_path, granted=["hooks.message"], hook_registry=hr)
+        api.register_hook("before_agent_start", lambda **kw: None)
+        api.register_hook("agent_end", lambda **kw: None)
+        assert len(hr.get_hooks("before_agent_start")) == 1
+        assert len(hr.get_hooks("agent_end")) == 1
 
     def test_register_llm_provider_rejects_non_class(self, tmp_path):
         """Passing an instance instead of a class must not crash."""

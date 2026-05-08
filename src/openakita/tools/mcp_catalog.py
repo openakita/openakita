@@ -63,6 +63,7 @@ class MCPServerInfo:
     enabled: bool = True  # per-server 启用/禁用，默认启用（向后兼容）
     config_dir: str = ""  # 配置文件所在目录（用作 stdio 的 cwd 回退）
     config_schema: list[MCPConfigField] = field(default_factory=list)
+    memory_provider: dict = field(default_factory=dict)
 
 
 _ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
@@ -310,6 +311,11 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
             headers = _resolve_headers(metadata.get("headers") or {}, env_values)
             auto_connect = metadata.get("autoConnect", False)
             enabled = metadata.get("enabled", True)
+            memory_provider = metadata.get("memoryProvider") or {}
+            if memory_provider is True:
+                memory_provider = {"enabled": True}
+            if not isinstance(memory_provider, dict):
+                memory_provider = {}
 
             # 加载工具
             tools = []
@@ -343,6 +349,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
                 enabled=enabled,
                 config_dir=str(server_dir),
                 config_schema=config_schema,
+                memory_provider=memory_provider,
             )
 
         except Exception as e:

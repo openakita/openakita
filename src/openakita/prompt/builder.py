@@ -1951,9 +1951,11 @@ def _build_memory_section(
         if experience_text:
             parts.append(experience_text)
 
-    # Layer 4: Active Retrieval (driven by IntentAnalyzer memory_keywords)
-    if memory_keywords:
-        retrieved = _retrieve_by_keywords(memory_manager, memory_keywords, max_tokens=500)
+    # Layer 4: Active Retrieval. Always use the current task as a query so
+    # external providers can recall context before every agent run.
+    retrieval_query = " ".join(memory_keywords or []) or task_description
+    if retrieval_query:
+        retrieved = _retrieve_by_query(memory_manager, retrieval_query, max_tokens=500)
         if retrieved:
             parts.append(f"## 相关记忆（自动检索）\n\n{retrieved}")
 
@@ -1966,28 +1968,20 @@ def _build_memory_section(
     return "\n\n".join(parts)
 
 
-def _retrieve_by_keywords(
+def _retrieve_by_query(
     memory_manager: Optional["MemoryManager"],
-    keywords: list[str],
+    query: str,
     max_tokens: int = 500,
 ) -> str:
-    """Use IntentAnalyzer-extracted keywords to actively retrieve relevant memories."""
-    if not memory_manager or not keywords:
+    """Retrieve relevant memories for the current turn, including external providers."""
+    if not memory_manager or not query:
         return ""
 
     try:
-        retrieval_engine = getattr(memory_manager, "retrieval_engine", None)
-        if retrieval_engine is None:
+        get_context = getattr(memory_manager, "get_injection_context", None)
+        if get_context is None:
             return ""
-
-        query = " ".join(keywords)
-        recent_messages = getattr(memory_manager, "_recent_messages", [])
-
-        result = retrieval_engine.retrieve(
-            query=query,
-            recent_messages=recent_messages,
-            max_tokens=max_tokens,
-        )
+        result = get_context(task_description=query, max_related=5)
         return result if result else ""
     except Exception as e:
         logger.debug(f"[MemoryRetrieval] Active retrieval failed: {e}")
