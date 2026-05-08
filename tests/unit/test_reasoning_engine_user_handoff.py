@@ -71,6 +71,51 @@ async def test_user_handoff_reply_skips_completion_verify():
 
 
 @pytest.mark.asyncio
+async def test_recoverable_tool_error_does_not_become_user_handoff():
+    response_handler = AsyncMock()
+    response_handler.verify_task_completion = AsyncMock(return_value=False)
+    engine = ReasoningEngine(
+        brain=None,
+        tool_executor=None,
+        context_manager=None,
+        response_handler=response_handler,
+        agent_state=AgentState(),
+    )
+    working_messages = []
+    reply = "?????????????????????"
+
+    result = await engine._handle_final_answer(
+        decision=Decision(type=DecisionType.FINAL_ANSWER, text_content=reply),
+        working_messages=working_messages,
+        original_messages=[{"role": "user", "content": "??????????"}],
+        tools_executed_in_task=True,
+        executed_tool_names=["browser_fill"],
+        delivery_receipts=[],
+        all_tool_results=[
+            {
+                "type": "tool_result",
+                "tool_use_id": "t1",
+                "content": "? ????: browser_fill???????: browser_type?",
+                "is_error": True,
+            }
+        ],
+        no_tool_call_count=0,
+        verify_incomplete_count=0,
+        no_confirmation_text_count=0,
+        max_no_tool_retries=1,
+        max_verify_retries=2,
+        max_confirmation_text_retries=1,
+        base_force_retries=1,
+        conversation_id="c1",
+    )
+
+    assert isinstance(result, tuple)
+    assert engine._last_exit_reason != "waiting_user"
+    response_handler.verify_task_completion.assert_awaited_once()
+    assert working_messages[-1]["role"] == "user"
+
+
+@pytest.mark.asyncio
 async def test_verify_incomplete_exhaustion_is_marked_non_normal():
     response_handler = AsyncMock()
     response_handler.verify_task_completion = AsyncMock(return_value=False)

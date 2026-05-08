@@ -647,6 +647,25 @@ _USER_BLOCKED_ACTIONS = (
     "等待",
 )
 
+_RECOVERABLE_TOOL_ERROR_MARKERS = (
+    "????",
+    "unknown_tool",
+    "No handler mapped for tool",
+    "is deferred",
+    "must first call tool_search",
+    "selector and text is required",
+    "selector or text is required",
+)
+
+_HARD_USER_BLOCKER_TOOL_MARKERS = (
+    "????????",
+    "?????????",
+    "????????",
+    "???",
+    "??????",
+    "????",
+)
+
 
 def _looks_like_waiting_for_user_response(text: str) -> bool:
     """Whether a post-tool final answer is a real user handoff, not a task promise.
@@ -712,6 +731,20 @@ def _looks_like_waiting_for_user_response(text: str) -> bool:
         )
     )
     return has_blocker and asks_user
+
+
+def _has_recoverable_tool_issue(tool_results: list[dict] | None) -> bool:
+    """Whether the latest blocker is a tool-call shape issue the model can repair."""
+    for result in tool_results or []:
+        content = str(result.get("content") or "")
+        if not content:
+            continue
+        if any(marker in content for marker in _HARD_USER_BLOCKER_TOOL_MARKERS):
+            return False
+        is_error = result.get("is_error")
+        if is_error and any(marker in content for marker in _RECOVERABLE_TOOL_ERROR_MARKERS):
+            return True
+    return False
 
 
 class ReasoningEngine:
@@ -6424,7 +6457,9 @@ class ReasoningEngine:
                     cleaned_text, executed_tool_names, all_tool_results
                 )
                 last_user_request = ResponseHandler.get_last_user_request(original_messages)
-                if _looks_like_waiting_for_user_response(cleaned_text):
+                if _looks_like_waiting_for_user_response(
+                    cleaned_text
+                ) and not _has_recoverable_tool_issue(all_tool_results):
                     logger.info(
                         "[TaskVerify] Skipping completion verify because response "
                         "hands control back to user."

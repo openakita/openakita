@@ -63,6 +63,67 @@ class TestExecuteTool:
         assert isinstance(captured["params"]["steps"], list)
         assert captured["params"]["steps"][0]["id"] == "step_1"
 
+    async def test_execute_tool_canonicalizes_browser_hyphen_alias(self):
+        registry = MagicMock()
+        captured = {}
+
+        async def _execute_by_tool(tool_name, params):
+            captured["tool_name"] = tool_name
+            captured["params"] = params
+            return "ok"
+
+        registry.has_tool.side_effect = lambda name: name in {"browser_click"}
+        registry.execute_by_tool.side_effect = _execute_by_tool
+        registry.get_handler_name_for_tool.return_value = "browser"
+        registry.get_permission_check.return_value = None
+        executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+
+        await executor.execute_tool("browser-click", {"text": "??"})
+
+        assert captured["tool_name"] == "browser_click"
+        assert captured["params"]["text"] == "??"
+
+    async def test_execute_tool_normalizes_browser_fill_alias_to_type(self):
+        registry = MagicMock()
+        captured = {}
+
+        async def _execute_by_tool(tool_name, params):
+            captured["tool_name"] = tool_name
+            captured["params"] = params
+            return "ok"
+
+        registry.has_tool.side_effect = lambda name: name in {"browser_type"}
+        registry.execute_by_tool.side_effect = _execute_by_tool
+        registry.get_handler_name_for_tool.return_value = "browser"
+        registry.get_permission_check.return_value = None
+        executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+
+        await executor.execute_tool("browser_fill", {"field": "password", "value": "root"})
+
+        assert captured["tool_name"] == "browser_type"
+        assert captured["params"]["text"] == "root"
+        assert "luci_password" in captured["params"]["selector"]
+
+    async def test_execute_tool_normalizes_browser_login_click_action(self):
+        registry = MagicMock()
+        captured = {}
+
+        async def _execute_by_tool(tool_name, params):
+            captured["tool_name"] = tool_name
+            captured["params"] = params
+            return "ok"
+
+        registry.has_tool.side_effect = lambda name: name in {"browser_click"}
+        registry.execute_by_tool.side_effect = _execute_by_tool
+        registry.get_handler_name_for_tool.return_value = "browser"
+        registry.get_permission_check.return_value = None
+        executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+
+        await executor.execute_tool("browser_click", {"action": "login"})
+
+        assert captured["tool_name"] == "browser_click"
+        assert 'button[type="submit"]' in captured["params"]["selector"]
+
 
 class TestGuardTruncate:
     def test_short_result_unchanged(self):
@@ -132,7 +193,7 @@ async def test_tool_hard_timeout_marks_tool_result_as_error():
 
     registry.execute_by_tool = AsyncMock(side_effect=_slow_tool)
     executor = ToolExecutor(handler_registry=registry, max_parallel=1)
-    executor._LONG_RUNNING_TOOLS = {**executor._LONG_RUNNING_TOOLS, "slow_tool": 0.01}
+    executor._hard_timeout_for_tool = lambda _tool_name: 0.01
 
     tool_results, executed, _ = await executor.execute_batch(
         [{"id": "u1", "name": "slow_tool", "input": {}}]
