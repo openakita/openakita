@@ -379,7 +379,66 @@ def _collect_sanitized_config() -> dict:
         except Exception:
             pass
 
+    endpoint_summary = _collect_endpoint_summary()
+    if endpoint_summary:
+        sanitized["_endpoint_summary"] = endpoint_summary
+
     return sanitized
+
+
+def _collect_endpoint_summary() -> dict:
+    """Collect a redacted LLM endpoint overview for configuration diagnostics."""
+    from urllib.parse import urlparse
+
+    try:
+        from openakita.llm.config import get_default_config_path, read_workspace_env_values
+        from openakita.utils.atomic_io import read_json_safe
+
+        config_path = get_default_config_path()
+        data = read_json_safe(config_path) or {}
+        env_values = read_workspace_env_values(config_path)
+    except Exception as e:
+        return {"error": str(e)}
+
+    def _host(value: str) -> str:
+        parsed = urlparse(value or "")
+        if parsed.hostname:
+            return parsed.hostname
+        return ""
+
+    def _summarize_list(key: str) -> list[dict]:
+        items = data.get(key, [])
+        if not isinstance(items, list):
+            return []
+        out = []
+        for ep in items:
+            if not isinstance(ep, dict):
+                continue
+            env_var = str(ep.get("api_key_env") or "")
+            out.append(
+                {
+                    "name": str(ep.get("name") or ""),
+                    "provider": str(ep.get("provider") or ""),
+                    "api_type": str(ep.get("api_type") or ""),
+                    "base_url_host": _host(str(ep.get("base_url") or "")),
+                    "model": str(ep.get("model") or ""),
+                    "enabled": ep.get("enabled", True),
+                    "has_api_key_env": bool(env_var),
+                    "key_present": bool(env_var and env_values.get(env_var, "").strip()),
+                    "context_window": ep.get("context_window"),
+                    "timeout": ep.get("timeout"),
+                    "capabilities": ep.get("capabilities") if isinstance(ep.get("capabilities"), list) else [],
+                }
+            )
+        return out
+
+    summary = {
+        "endpoints": _summarize_list("endpoints"),
+        "compiler_endpoints": _summarize_list("compiler_endpoints"),
+        "stt_endpoints": _summarize_list("stt_endpoints"),
+    }
+    summary["counts"] = {key: len(value) for key, value in summary.items()}
+    return summary
 
 
 @router.get("/api/system-info")

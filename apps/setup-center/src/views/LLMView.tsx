@@ -44,6 +44,12 @@ function friendlyConfigError(e: unknown): string {
 
 type EndpointType = "endpoints" | "compiler_endpoints" | "stt_endpoints";
 
+type SaveEndpointConfigResult = {
+  endpoint: any;
+  warning?: string;
+  reload?: Record<string, unknown>;
+};
+
 export interface LLMViewProps {
   savedEndpoints: EndpointDraft[];
   savedCompilerEndpoints: EndpointDraft[];
@@ -342,7 +348,7 @@ export function LLMView(props: LLMViewProps) {
     apiKey?: string | null;
     endpointType: EndpointType;
     originalName?: string | null;
-  }): Promise<any> {
+  }): Promise<SaveEndpointConfigResult> {
     if (!shouldUseHttpApi()) {
       throw new Error(endpointConfigUnavailableMessage);
     }
@@ -364,7 +370,16 @@ export function LLMView(props: LLMViewProps) {
     if (normalizedKey && data.endpoint?.api_key_env) {
       setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, normalizedKey));
     }
-    return data.endpoint;
+    return {
+      endpoint: data.endpoint,
+      warning: typeof data.warning === "string" ? data.warning : undefined,
+      reload: data.reload,
+    };
+  }
+
+  function appendReloadWarning(message: string, saveResult?: SaveEndpointConfigResult): string {
+    if (!saveResult?.warning) return message;
+    return `${message} 当前运行中的服务暂未加载新配置，重启服务或稍后再试即可。`;
   }
 
   async function doFetchModels() {
@@ -571,7 +586,7 @@ export function LLMView(props: LLMViewProps) {
         capabilities: ["text"],
       };
 
-      await saveEndpointConfig({
+      const saveResult = await saveEndpointConfig({
         endpoint,
         apiKey: effectiveCompApiKeyValue || null,
         endpointType: "compiler_endpoints",
@@ -582,7 +597,7 @@ export function LLMView(props: LLMViewProps) {
       setCompilerEndpointName("");
       setCompilerBaseUrl("");
       await syncEndpointConfigChange("compiler_endpoints");
-      notifySuccess(`编译端点 ${epName} 已保存`);
+      notifySuccess(appendReloadWarning(`编译端点 ${epName} 已保存`, saveResult));
       return true;
     } catch (e) {
       notifyError(friendlyConfigError(e));
@@ -633,7 +648,7 @@ export function LLMView(props: LLMViewProps) {
         capabilities: ["text"],
       };
 
-      await saveEndpointConfig({
+      const saveResult = await saveEndpointConfig({
         endpoint,
         apiKey: effectiveSttApiKeyValue || null,
         endpointType: "stt_endpoints",
@@ -645,7 +660,7 @@ export function LLMView(props: LLMViewProps) {
       setSttBaseUrl("");
       setSttModels([]);
       await syncEndpointConfigChange("stt_endpoints");
-      notifySuccess(`STT 端点 ${epName} 已保存`);
+      notifySuccess(appendReloadWarning(`STT 端点 ${epName} 已保存`, saveResult));
       return true;
     } catch (e) {
       notifyError(friendlyConfigError(e));
@@ -903,14 +918,14 @@ export function LLMView(props: LLMViewProps) {
       // would be echoed back and overwrite the real key on disk.
       // See v1.26.x commit 8ab550fa.
       const keyToSave = editDraft.apiKeyDirty ? (editDraft.apiKeyValue.trim() || null) : null;
-      await saveEndpointConfig({
+      const saveResult = await saveEndpointConfig({
         endpoint,
         apiKey: keyToSave,
         endpointType: epType,
         originalName: editingOriginalName,
       });
 
-      notifySuccess("端点已更新");
+      notifySuccess(appendReloadWarning("端点已更新", saveResult));
       setEditModalOpen(false);
       await syncEndpointConfigChange(epType);
     } catch (e) {
@@ -968,7 +983,7 @@ export function LLMView(props: LLMViewProps) {
         endpoint.extra_params = { enable_thinking: true };
       }
 
-      await saveEndpointConfig({
+      const saveResult = await saveEndpointConfig({
         endpoint,
         apiKey: effectiveApiKeyValue || null,
         endpointType: "endpoints",
@@ -976,9 +991,12 @@ export function LLMView(props: LLMViewProps) {
       });
 
       notifySuccess(
-        isEditingEndpoint
-          ? "端点已更新（同时已写入 API Key 到 .env）。"
-          : "端点已保存（同时已写入 API Key 到 .env）。你可以继续添加备份端点。",
+        appendReloadWarning(
+          isEditingEndpoint
+            ? "端点已更新（同时已写入 API Key 到 .env）。"
+            : "端点已保存（同时已写入 API Key 到 .env）。你可以继续添加备份端点。",
+          saveResult,
+        ),
       );
       if (isEditingEndpoint) resetEndpointEditor();
       await syncEndpointConfigChange("endpoints");

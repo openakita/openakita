@@ -697,14 +697,24 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
         logger.error("[Config API] save-endpoint failed: %s", e, exc_info=True)
         return {"status": "error", "error": str(e)}
 
-    # Auto-reload running clients
-    _trigger_reload(request)
+    # Auto-reload running clients. Saving is authoritative; reload is a
+    # runtime follow-up and should be reported separately instead of turning a
+    # successful write into a generic "model config failed" error.
+    reload_result = _trigger_reload(request)
 
-    return {
+    response = {
         "status": "ok",
+        "saved": True,
         "endpoint": result,
         "version": mgr.get_version(),
+        "reload": reload_result,
     }
+    if reload_result.get("status") != "ok":
+        response["warning"] = (
+            "配置已保存，但当前运行中的服务暂未加载新配置。"
+            "可以继续配置；如果马上要使用新模型，请重启服务或稍后再试。"
+        )
+    return response
 
 
 @router.delete("/api/config/endpoint/{name:path}")
@@ -783,12 +793,20 @@ async def update_endpoint_settings(body: UpdateSettingsRequest, request: Request
     return {"status": "ok", "settings": updated, "version": mgr.get_version()}
 
 
-def _trigger_reload(request: Request) -> bool:
-    """Trigger hot-reload of LLM clients after config change."""
+def _trigger_reload(request: Request) -> dict[str, Any]:
+    """Trigger hot-reload of LLM clients after config change.
+
+    Returns a structured result so callers can distinguish "config saved" from
+    "running service did not pick it up yet".
+    """
     agent = getattr(request.app.state, "agent", None)
     if agent is None:
         _notify_runtime_config_changed(request, "llm_config")
-        return False
+        return {
+            "status": "skipped",
+            "reloaded": False,
+            "reason": "agent_not_initialized",
+        }
     brain = getattr(agent, "brain", None) or getattr(agent, "_local_agent", None)
     if brain and hasattr(brain, "brain"):
         brain = brain.brain
@@ -797,27 +815,55 @@ def _trigger_reload(request: Request) -> bool:
         llm_client = getattr(agent, "_llm_client", None)
     if llm_client is None:
         _notify_runtime_config_changed(request, "llm_config")
-        return False
+        return {
+            "status": "skipped",
+            "reloaded": False,
+            "reason": "llm_client_not_found",
+        }
     try:
         canonical = _endpoints_config_path()
         if llm_client._config_path is not None and llm_client._config_path != canonical:
             llm_client._config_path = canonical
-        success = llm_client.reload()
+        success = bool(llm_client.reload())
+        compiler_reloaded = False
+        stt_reloaded = False
+        warnings: list[str] = []
         if brain and hasattr(brain, "reload_compiler_client"):
-            brain.reload_compiler_client()
+            try:
+                compiler_reloaded = bool(brain.reload_compiler_client())
+            except Exception as compiler_err:
+                warnings.append(f"compiler_reload_failed: {compiler_err}")
+                logger.warning("[Config API] Compiler reload failed: %s", compiler_err)
         gateway = getattr(request.app.state, "gateway", None)
         if gateway and hasattr(gateway, "stt_client") and gateway.stt_client:
-            from openakita.llm.config import load_endpoints_config
+            try:
+                from openakita.llm.config import load_endpoints_config
 
-            _, _, stt_eps, _ = load_endpoints_config()
-            gateway.stt_client.reload(stt_eps)
+                _, _, stt_eps, _ = load_endpoints_config()
+                gateway.stt_client.reload(stt_eps)
+                stt_reloaded = True
+            except Exception as stt_err:
+                warnings.append(f"stt_reload_failed: {stt_err}")
+                logger.warning("[Config API] STT reload failed: %s", stt_err)
         if success:
             _notify_runtime_config_changed(request, "llm_config")
         logger.info("[Config API] Hot-reload triggered after config change")
-        return success
+        status = "ok" if success and not warnings else "partial" if success else "failed"
+        return {
+            "status": status,
+            "reloaded": success,
+            "main_reloaded": success,
+            "compiler_reloaded": compiler_reloaded,
+            "stt_reloaded": stt_reloaded,
+            "warnings": warnings,
+        }
     except Exception as e:
         logger.error("[Config API] Hot-reload failed: %s", e, exc_info=True)
-        return False
+        return {
+            "status": "failed",
+            "reloaded": False,
+            "reason": str(e),
+        }
 
 
 def _notify_runtime_config_changed(request: Request, reason: str) -> None:
