@@ -16,10 +16,12 @@ import openakita._ensure_utf8  # noqa: F401  # isort: skip
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import re
 import sys
+import time
 import zipfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
@@ -29,6 +31,15 @@ from typing import Any
 def _json_print(obj: Any) -> None:
     sys.stdout.write(json.dumps(obj, ensure_ascii=False))
     sys.stdout.write("\n")
+
+
+class SkillInstallError(RuntimeError):
+    """Structured install failure for Setup Center API responses."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 def _to_dict(obj: Any) -> Any:
@@ -1374,11 +1385,50 @@ def _validate_zip_members(zf: zipfile.ZipFile) -> None:
             raise RuntimeError(f"Zip Slip detected: dangerous member '{name}'")
 
 
+_PROXY_ENV_KEYS: tuple[str, ...] = (
+    "ALL_PROXY",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "all_proxy",
+    "https_proxy",
+    "http_proxy",
+)
+
+
+def _validate_git_proxy_environment(env: dict[str, str]) -> None:
+    """Fail early when Git would inherit a malformed proxy URL."""
+    from urllib.parse import urlparse
+
+    for key in _PROXY_ENV_KEYS:
+        value = (env.get(key) or "").strip()
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if "：" in value or parsed.scheme not in {"http", "https", "socks4", "socks5", "socks5h"}:
+            raise SkillInstallError(
+                "git_proxy_invalid",
+                (
+                    f"代理配置格式错误：{key}={value!r}。"
+                    "请在设置中心修正为类似 http://127.0.0.1:7890，或清空该代理配置后重试。"
+                ),
+            )
+        if not parsed.hostname:
+            raise SkillInstallError(
+                "git_proxy_invalid",
+                (
+                    f"代理配置缺少主机名：{key}={value!r}。"
+                    "请检查代理地址，或清空该代理配置后重试。"
+                ),
+            )
+
+
 def _git_clone(args: list[str]) -> None:
-    """执行 git clone，git 不可用时抛出友好错误。"""
+    """执行 git clone，git 不可用或代理错误时抛出友好错误。"""
     import subprocess
 
     try:
+        env = os.environ.copy()
+        _validate_git_proxy_environment(env)
         extra: dict = {}
         if sys.platform == "win32":
             extra["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -1389,12 +1439,28 @@ def _git_clone(args: list[str]) -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=env,
             **extra,
         )
     except FileNotFoundError:
         raise FileNotFoundError(
             "未找到 git 命令。请安装 Git (https://git-scm.com) 或使用 GitHub 简写格式安装技能"
         )
+    except subprocess.CalledProcessError as e:
+        output = f"{e.stdout or ''}\n{e.stderr or ''}".strip()
+        lower = output.lower()
+        if "invalid proxy" in lower or "proxy url" in lower:
+            raise SkillInstallError(
+                "git_proxy_invalid",
+                (
+                    "Git 代理配置无效，导致无法下载技能。"
+                    f"请检查 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 配置。\n\nGit 输出：{output[-1200:]}"
+                ),
+            ) from e
+        raise SkillInstallError(
+            "git_clone_failed",
+            f"Git 下载技能失败，请检查仓库地址、网络或权限。\n\nGit 输出：{output[-1200:]}",
+        ) from e
 
 
 def _parse_github_url(url: str) -> tuple[str, str, str | None] | None:
@@ -1472,11 +1538,64 @@ def _read_skill_source(d: Path) -> str:
         return ""
 
 
-def _cleanup_broken_skill_dir(d: Path) -> None:
-    """清理残留的无效技能目录（无 SKILL.md）。清理失败则抛出异常。"""
+def _make_path_writable(path: str) -> None:
+    """Best-effort chmod used before deleting Git pack files on Windows."""
+    import os
+    import stat
+
+    with contextlib.suppress(Exception):
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+
+
+def _remove_tree(d: Path, *, retries: int = 3) -> None:
+    """Remove a directory with small Windows-friendly retries."""
     import shutil
 
-    shutil.rmtree(d)
+    def onerror(func, path, exc_info):
+        _make_path_writable(path)
+        func(path)
+
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            shutil.rmtree(d, onerror=onerror)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries - 1:
+                time.sleep(0.15 * (attempt + 1))
+    if last_exc is not None:
+        raise last_exc
+
+
+def _quarantine_broken_skill_dir(d: Path) -> Path:
+    """Move an undeletable partial install aside so a clean install can continue."""
+    quarantine_root = d.parent / ".openakita-broken"
+    quarantine_root.mkdir(parents=True, exist_ok=True)
+    target = quarantine_root / f"{d.name}-{int(time.time())}"
+    d.rename(target)
+    return target
+
+
+def _cleanup_broken_skill_dir(d: Path) -> None:
+    """清理残留的无效技能目录（无 SKILL.md）。清理失败则抛出异常。"""
+    try:
+        _remove_tree(d)
+    except Exception as remove_err:
+        try:
+            quarantined = _quarantine_broken_skill_dir(d)
+        except Exception as quarantine_err:
+            raise SkillInstallError(
+                "skill_residual_cleanup_failed",
+                (
+                    f"无法清理残留技能目录：{d}。"
+                    "该目录可能被 Git、杀毒软件或文件管理器占用。"
+                    "请关闭相关程序后重试，或手动删除该目录。"
+                ),
+            ) from quarantine_err
+        sys.stderr.write(
+            f"[install_skill] 残留目录无法直接删除，已隔离到 {quarantined}: {remove_err}\n"
+        )
 
 
 def _ensure_target_available(target: Path, url: str) -> None:
@@ -1490,14 +1609,53 @@ def _ensure_target_available(target: Path, url: str) -> None:
     if not target.exists():
         return
     if not _is_valid_skill_dir(target):
-        try:
-            _cleanup_broken_skill_dir(target)
-        except Exception:
-            raise ValueError(f"无法清理残留目录，请手动删除: {target}")
+        _cleanup_broken_skill_dir(target)
         return
     if _read_skill_source(target) == url:
         raise ValueError(f"该技能已安装: {target}")
     raise ValueError(f"技能目录名称冲突: {target}")
+
+
+def _copy_skill_tree(source_dir: Path, target: Path) -> None:
+    """Copy a validated skill tree to the final directory without Git metadata."""
+    import shutil
+
+    shutil.copytree(
+        str(source_dir),
+        str(target),
+        ignore=shutil.ignore_patterns(".git", ".git/*"),
+    )
+
+
+def _install_repo_tree_to_target(
+    *,
+    repo_url: str,
+    target: Path,
+    subdir: str | None = None,
+    zip_downloader: Any | None = None,
+) -> None:
+    """Clone/download a repo into temp storage, then copy only the skill tree."""
+    import shutil
+    import tempfile
+
+    tmp_parent = Path(tempfile.mkdtemp(prefix="openakita_skill_"))
+    tmp_dir = tmp_parent / "repo"
+    try:
+        if _has_git():
+            _git_clone(["git", "clone", "--depth", "1", repo_url, str(tmp_dir)])
+        elif zip_downloader is not None:
+            zip_downloader(tmp_dir)
+        else:
+            raise FileNotFoundError(
+                "未找到 git 命令。请安装 Git (https://git-scm.com) 后重试"
+            )
+
+        source_dir = tmp_dir / subdir if subdir else tmp_dir
+        if not source_dir.is_dir():
+            raise ValueError(f"仓库中未找到技能目录: {subdir}")
+        _copy_skill_tree(source_dir, target)
+    finally:
+        shutil.rmtree(str(tmp_parent), ignore_errors=True)
 
 
 # 通用 CLI 命令前缀清洗：用户经常直接复制类似
@@ -1622,15 +1780,18 @@ def install_skill(
             raise ValueError(f"无效的 GitHub URL: {url}")
         owner, repo = parts[0], parts[1]
         skill_name = parts[-1] if len(parts) > 2 else repo
+        gh_subdir = "/".join(parts[2:]) if len(parts) > 2 else None
         target = skills_dir / skill_name
 
         _ensure_target_available(target, url)
 
-        if _has_git():
-            git_url = f"https://github.com/{owner}/{repo}.git"
-            _git_clone(["git", "clone", "--depth", "1", git_url, str(target)])
-        else:
-            _download_github_zip(owner, repo, target)
+        git_url = f"https://github.com/{owner}/{repo}.git"
+        _install_repo_tree_to_target(
+            repo_url=git_url,
+            target=target,
+            subdir=gh_subdir,
+            zip_downloader=lambda dest: _download_github_zip(owner, repo, dest),
+        )
 
     elif url.startswith("http://") or url.startswith("https://"):
         gh = _parse_github_url(url)
@@ -1644,44 +1805,27 @@ def install_skill(
             target = skills_dir / skill_name
             _ensure_target_available(target, url)
 
-            if gh_subdir:
-                # 有子路径：克隆到临时目录，再提取子目录
-                import shutil
-                import tempfile
-
-                tmp_parent = Path(tempfile.mkdtemp(prefix="openakita_gh_"))
-                tmp_dir = tmp_parent / "repo"
-                try:
-                    repo_url = f"https://github.com/{owner}/{repo}.git"
-                    if _has_git():
-                        _git_clone(["git", "clone", "--depth", "1", repo_url, str(tmp_dir)])
-                    else:
-                        _download_github_zip(owner, repo, tmp_dir)
-                    source_dir = tmp_dir / gh_subdir
-                    if not source_dir.is_dir():
-                        raise ValueError(f"仓库 {owner}/{repo} 中未找到子目录: {gh_subdir}")
-                    shutil.copytree(str(source_dir), str(target))
-                finally:
-                    shutil.rmtree(str(tmp_parent), ignore_errors=True)
-            else:
-                if _has_git():
-                    repo_url = f"https://github.com/{owner}/{repo}.git"
-                    _git_clone(["git", "clone", "--depth", "1", repo_url, str(target)])
-                else:
-                    _download_github_zip(owner, repo, target)
+            repo_url = f"https://github.com/{owner}/{repo}.git"
+            _install_repo_tree_to_target(
+                repo_url=repo_url,
+                target=target,
+                subdir=gh_subdir,
+                zip_downloader=lambda dest: _download_github_zip(owner, repo, dest),
+            )
         elif ge:
             skill_name = url.rstrip("/").split("/")[-1].replace(".git", "")
             target = skills_dir / skill_name
             _ensure_target_available(target, url)
-            if _has_git():
-                _git_clone(["git", "clone", "--depth", "1", url, str(target)])
-            else:
-                _download_gitee_zip(ge[0], ge[1], target)
+            _install_repo_tree_to_target(
+                repo_url=url,
+                target=target,
+                zip_downloader=lambda dest: _download_gitee_zip(ge[0], ge[1], dest),
+            )
         else:
             skill_name = url.rstrip("/").split("/")[-1].replace(".git", "")
             target = skills_dir / skill_name
             _ensure_target_available(target, url)
-            _git_clone(["git", "clone", "--depth", "1", url, str(target)])
+            _install_repo_tree_to_target(repo_url=url, target=target)
 
     elif _looks_like_github_shorthand(url):
         # GitHub 简写格式: "owner/repo@skill-name" 或 "owner/repo"
@@ -1719,6 +1863,8 @@ def install_skill(
                 pass
             _json_print({"status": "ok", "skill_dir": str(target), "source": "platform-cache"})
             return
+        # Cache downloads may leave a partial directory if interrupted or locked.
+        _ensure_target_available(target, url)
 
         # Strategy 2: git clone / ZIP download
         tmp_parent = Path(tempfile.mkdtemp(prefix="openakita_skill_"))
@@ -1757,12 +1903,7 @@ def install_skill(
 
             # 若未命中子目录，则按“整个仓库就是一个技能”处理
             source_dir = source_dir or tmp_dir
-            shutil.copytree(str(source_dir), str(target))
-            if source_dir == tmp_dir:
-                # 清理克隆产生的 .git 目录
-                git_dir = target / ".git"
-                if git_dir.exists():
-                    shutil.rmtree(str(git_dir), ignore_errors=True)
+            _copy_skill_tree(source_dir, target)
         finally:
             shutil.rmtree(str(tmp_parent), ignore_errors=True)
     else:
@@ -1772,11 +1913,10 @@ def install_skill(
             raise ValueError(f"源路径不存在: {url}")
         if not src.is_dir():
             raise ValueError(f"源路径不是目录: {url}")
-        import shutil
 
         target = skills_dir / src.name
         _ensure_target_available(target, url)
-        shutil.copytree(str(src), str(target))
+        _copy_skill_tree(src, target)
 
     # Record install origin for marketplace matching (Issue #15)
     try:

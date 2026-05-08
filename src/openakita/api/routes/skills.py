@@ -272,10 +272,14 @@ async def install_skill(request: Request):
     except Exception:
         workspace_dir = str(Path.cwd())
 
-    try:
-        from openakita.setup_center.bridge import install_skill as _install_skill
+    from openakita.setup_center.bridge import SkillInstallError
+    from openakita.setup_center.bridge import install_skill as _install_skill
 
+    try:
         await asyncio.to_thread(_install_skill, workspace_dir, url, category=category)
+    except SkillInstallError as e:
+        logger.error("Skill install failed (%s): %s", e.code, e.message, exc_info=True)
+        return {"error": e.message, "error_code": e.code}
     except FileNotFoundError as e:
         missing = getattr(e, "filename", None) or "外部命令"
         logger.error("Skill install missing dependency: %s", e, exc_info=True)

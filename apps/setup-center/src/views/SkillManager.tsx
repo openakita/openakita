@@ -52,6 +52,9 @@ function friendlyError(e: unknown, t: (key: string) => string, context: ErrorCon
   if (/\b50[0-9]\b|Internal Server Error/i.test(raw)) {
     return t("skills.errorServer");
   }
+  if (context === "install" && raw && raw !== "[object Object]") {
+    return raw.replace(/^Error:\s*/i, "");
+  }
 
   const contextMap: Record<ErrorContext, string> = {
     load: "skills.errorLoadFailed",

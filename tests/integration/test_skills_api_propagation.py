@@ -24,7 +24,6 @@ import pytest
 
 from openakita.api.server import create_app
 
-
 # ---------------------------------------------------------------------------
 # FakeAgent：只提供路由实际触达的属性
 # ---------------------------------------------------------------------------
@@ -134,6 +133,28 @@ class TestInstallRoute:
         assert "error" in resp.json()
         agent.propagate_skill_change.assert_not_called()
 
+    async def test_install_structured_error_keeps_specific_message(
+        self, app_with_fake_agent, client, monkeypatch
+    ):
+        from openakita.setup_center.bridge import SkillInstallError
+
+        _, agent = app_with_fake_agent
+        monkeypatch.setattr(
+            "openakita.setup_center.bridge.install_skill",
+            MagicMock(
+                side_effect=SkillInstallError(
+                    "skill_residual_cleanup_failed",
+                    "无法清理残留技能目录：C:/x/skills/demo",
+                )
+            ),
+        )
+
+        resp = await client.post("/api/skills/install", json={"url": "github:x/demo"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["error_code"] == "skill_residual_cleanup_failed"
+        assert "无法清理残留技能目录" in data["error"]
+        agent.propagate_skill_change.assert_not_called()
 
 # ---------------------------------------------------------------------------
 # /api/skills/uninstall
