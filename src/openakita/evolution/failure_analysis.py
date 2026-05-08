@@ -21,6 +21,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from ..core.tool_signatures import ToolSignatureBuilder, tool_call_target_summary
+
 logger = logging.getLogger(__name__)
 
 
@@ -277,10 +279,17 @@ class FailureAnalyzer:
         evidence.append(f"Total iterations: {len(react_trace)}")
 
         # 最后几轮的工具调用
+        signature_builder = ToolSignatureBuilder()
         for trace in react_trace[-3:]:
-            tools = [tc.get("name", "?") for tc in trace.get("tool_calls", [])]
+            tool_calls = [tc for tc in trace.get("tool_calls", []) if isinstance(tc, dict)]
+            tools = [tc.get("name", "?") for tc in tool_calls]
             if tools:
-                evidence.append(f"Iter {trace.get('iteration', '?')}: tools={tools}")
+                targets = [tool_call_target_summary(tc) for tc in tool_calls]
+                signatures = [signature_builder.signature_for_call(tc) for tc in tool_calls]
+                evidence.append(
+                    f"Iter {trace.get('iteration', '?')}: "
+                    f"tools={tools} targets={targets} signatures={signatures}"
+                )
 
         # Supervisor 事件
         for event in supervisor_events[-3:]:

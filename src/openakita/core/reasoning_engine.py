@@ -6708,7 +6708,11 @@ class ReasoningEngine:
                 max_no_tool_retries,
             )
 
-        # 追问次数用尽
+        # 追问次数用尽。证据敏感任务不继续反复提示，也不把无工具结论包装成已验证结果。
+        if tool_evidence_required and not tools_executed_in_task:
+            self._last_exit_reason = "tool_evidence_missing"
+            return "未执行任何工具，无法验证该结论。请允许我读取、搜索或调用相关工具后再继续核对。"
+
         cleaned_text = clean_llm_response(stripped_text)
         return cleaned_text or (
             "⚠️ 大模型返回异常：未产生可用输出。任务已中断。请重试、或更换端点/模型后再执行。"

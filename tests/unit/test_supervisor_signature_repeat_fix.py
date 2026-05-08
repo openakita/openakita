@@ -22,13 +22,14 @@ These tests pin the new behaviour so future refactors do not reopen the bug.
 from __future__ import annotations
 
 from openakita.core.supervisor import (
-    InterventionLevel,
-    RuntimeSupervisor,
     SIGNATURE_REPEAT_STRATEGY_SWITCH,
     SIGNATURE_REPEAT_TERMINATE,
     UNPRODUCTIVE_ADMIN_TOOLS,
+    InterventionLevel,
+    RuntimeSupervisor,
 )
-
+from openakita.core.tool_signatures import ToolSignatureBuilder
+from openakita.evolution.failure_analysis import FailureAnalyzer
 
 # ---------------------------------------------------------------------------
 # A. Tool name repeats with VARYING parameters must NOT TERMINATE
@@ -62,6 +63,35 @@ class TestVaryingParamsDoNotTerminate:
             sup.record_tool_signature(f"write_file(path_hash_{i})")
         out = sup._check_signature_repeat(iteration=8)
         assert out is None
+
+    def test_real_batch_write_file_calls_generate_distinct_signatures(self):
+        """Issue #473 的真实形态：批量写不同 markdown 文件，不应被当作死循环。"""
+        builder = ToolSignatureBuilder()
+        sup = RuntimeSupervisor(enabled=True)
+
+        file_names = (
+            "ai_trend.md",
+            "ev_market.md",
+            "semiconductor.md",
+            "quantum.md",
+            "low_altitude.md",
+        )
+        signatures = []
+        for name in file_names:
+            signature = builder.signature_for_call(
+                {
+                    "name": "write_file",
+                    "input": {
+                        "path": f"D:/reports/{name}",
+                        "content": f"# {name}\n\nsummary",
+                    },
+                }
+            )
+            signatures.append(signature)
+            sup.record_tool_signature(signature)
+
+        assert len(set(signatures)) == len(file_names)
+        assert sup._check_signature_repeat(iteration=len(file_names)) is None
 
     def test_update_todo_step_with_distinct_steps_does_not_terminate(self):
         """The original symptom: plan推进每步 in_progress + completed 两次
@@ -267,4 +297,48 @@ class TestNudgesDoNotInjectPrompt:
         assert out.level == InterventionLevel.NUDGE
         assert out.should_inject_prompt is False
         assert out.prompt_injection == ""
+
+
+class TestFailureAnalysisEvidence:
+    def test_loop_evidence_includes_targets_and_signatures(self, tmp_path):
+        analyzer = FailureAnalyzer(output_dir=tmp_path)
+
+        result = analyzer.analyze_task(
+            task_id="task-1",
+            exit_reason="loop_terminated",
+            react_trace=[
+                {
+                    "iteration": 9,
+                    "tool_calls": [
+                        {
+                            "name": "write_file",
+                            "input": {
+                                "path": "D:/reports/ai_trend.md",
+                                "content": "# AI trend",
+                            },
+                        }
+                    ],
+                },
+                {
+                    "iteration": 10,
+                    "tool_calls": [
+                        {
+                            "name": "write_file",
+                            "input": {
+                                "path": "D:/reports/ev_market.md",
+                                "content": "# EV market",
+                            },
+                        }
+                    ],
+                },
+            ],
+            supervisor_events=[
+                {"pattern": "signature_repeat", "level": "TERMINATE"},
+            ],
+        )
+
+        joined = "\n".join(result.evidence)
+        assert "targets=['write_file:path=D:/reports/ai_trend.md']" in joined
+        assert "targets=['write_file:path=D:/reports/ev_market.md']" in joined
+        assert "signatures=['write_file(" in joined
 
