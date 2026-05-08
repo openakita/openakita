@@ -21,7 +21,95 @@ def normalize_tool_input(
     tool_schema = schema if isinstance(schema, dict) else get_tool_input_schema(tool_name)
     if not tool_schema:
         return params
-    return _normalize_value(params, tool_schema, path=tool_name)
+    normalized = _normalize_value(params, tool_schema, path=tool_name)
+    return _normalize_browser_tool_input(tool_name, normalized)
+
+
+def _normalize_browser_tool_input(tool_name: str, params: Any) -> Any:
+    if not isinstance(params, dict):
+        return params
+    if tool_name == "browser_type":
+        return _normalize_browser_type_input(params)
+    if tool_name == "browser_click":
+        return _normalize_browser_click_input(params)
+    return params
+
+
+def _normalize_browser_type_input(params: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(params)
+
+    if not normalized.get("text"):
+        text = _first_present(
+            normalized,
+            "value",
+            "input",
+            "content",
+            "typed_text",
+            "text_to_type",
+        )
+        if text is not None:
+            normalized["text"] = text
+
+    if not normalized.get("selector"):
+        selector = _first_present(normalized, "locator", "css", "query", "target_selector")
+        if selector is None:
+            selector = _selector_for_field(_first_present(normalized, "field", "name", "target", "label"))
+        if selector is not None:
+            normalized["selector"] = selector
+
+    if isinstance(normalized.get("clear"), str):
+        normalized["clear"] = normalized["clear"].strip().lower() not in {"false", "0", "no"}
+
+    return normalized
+
+
+def _normalize_browser_click_input(params: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(params)
+
+    if not normalized.get("selector"):
+        selector = _first_present(normalized, "locator", "css", "query", "target_selector")
+        if selector is not None:
+            normalized["selector"] = selector
+
+    if not normalized.get("selector") and not normalized.get("text"):
+        target = _first_present(normalized, "target", "label", "name")
+        if isinstance(target, str) and target.strip():
+            normalized["text"] = target
+
+    if not normalized.get("selector") and not normalized.get("text"):
+        action = str(normalized.get("action") or "").strip().lower()
+        if action in {"submit", "login", "sign_in", "signin"}:
+            normalized["selector"] = (
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("??"), button:has-text("Login")'
+            )
+
+    return normalized
+
+
+def _first_present(params: dict[str, Any], *keys: str) -> Any | None:
+    for key in keys:
+        value = params.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _selector_for_field(field: Any) -> str | None:
+    value = str(field or "").strip().lower()
+    if not value:
+        return None
+    if value in {"username", "user", "account", "login", "???", "??", "??"}:
+        return (
+            'input[name="username"], input[name="luci_username"], '
+            'input[name="user"], #username, #luci_username, input[type="text"]'
+        )
+    if value in {"password", "pass", "pwd", "??"}:
+        return (
+            'input[type="password"], input[name="password"], '
+            'input[name="luci_password"], #password, #luci_password'
+        )
+    return None
 
 
 def _normalize_value(value: Any, schema: dict | None, *, path: str) -> Any:

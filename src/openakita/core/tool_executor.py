@@ -137,6 +137,17 @@ class ToolExecutor:
         "schedule-task": "schedule_task",
         "schedule_task_create": "schedule_task",
         "list-scheduled-tasks": "list_scheduled_tasks",
+        "browser-open": "browser_open",
+        "browser-navigate": "browser_navigate",
+        "browser-click": "browser_click",
+        "browser-type": "browser_type",
+        "browser-input": "browser_type",
+        "browser-input-text": "browser_type",
+        "browser-fill": "browser_type",
+        "browser_fill": "browser_type",
+        "browser-get-content": "browser_get_content",
+        "browser-screenshot": "browser_screenshot",
+        "browser-execute-js": "browser_execute_js",
     }
 
     def __init__(
@@ -204,13 +215,24 @@ class ToolExecutor:
             return None
 
     def _canonicalize_tool_name(self, tool_name: str) -> str:
-        canonical = self._TOOL_ALIASES.get(tool_name)
-        if canonical is None and "-" in tool_name:
-            canonical = self._TOOL_ALIASES.get(tool_name.replace("-", "_"))
+        normalized = (tool_name or "").strip()
+        canonical = self._TOOL_ALIASES.get(normalized)
+        if canonical is None:
+            lowered = normalized.lower()
+            canonical = self._TOOL_ALIASES.get(lowered)
+        if canonical is None and "-" in normalized:
+            canonical = self._TOOL_ALIASES.get(normalized.replace("-", "_"))
+        if canonical is None and "-" in normalized:
+            candidate = normalized.lower().replace("-", "_")
+            try:
+                if self._handler_registry.has_tool(candidate) is True:
+                    canonical = candidate
+            except Exception:
+                pass
         if canonical:
-            logger.info(f"[ToolExecutor] Alias corrected: '{tool_name}' -> '{canonical}'")
+            logger.info(f"[ToolExecutor] Alias corrected: '{normalized}' -> '{canonical}'")
             return canonical
-        return tool_name
+        return normalized
 
     def canonicalize_tool_name(self, tool_name: str) -> str:
         return self._canonicalize_tool_name(tool_name)
