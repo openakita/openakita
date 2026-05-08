@@ -392,6 +392,9 @@ class Organization:
     # Core business mission — drives proactive operations
     core_business: str = ""
 
+    # Canvas layout
+    layout_locked: bool = False
+
     # Token budget (reserved, not enforced initially)
     token_budget: int | None = None  # TODO: not yet enforced
     token_budget_period: str | None = None  # TODO: not yet enforced
@@ -463,6 +466,7 @@ class Organization:
             "total_tokens_used": self.total_tokens_used,
             "user_persona": self.user_persona.to_dict(),
             "core_business": self.core_business,
+            "layout_locked": self.layout_locked,
             "token_budget": self.token_budget,
             "token_budget_period": self.token_budget_period,
             "operation_mode": self.operation_mode,
@@ -566,7 +570,7 @@ class Organization:
     # directly and surface the candidate list in their error messages.
     def resolve_reference(
         self, query: str
-    ) -> tuple["OrgNode | None", list["OrgNode"], str]:
+    ) -> tuple[OrgNode | None, list[OrgNode], str]:
         if not query:
             return None, [], "not_found"
 

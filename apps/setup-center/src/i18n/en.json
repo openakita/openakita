@@ -2904,7 +2904,7 @@
       "close": "Close",
       "addNode": "Add node",
       "autoLayout": "Auto layout",
-      "unlockDrag": "Unlock drag",
+      "unlockDrag": "Unlock layout",
       "lockLayout": "Lock layout",
       "deleteSelected": "Delete selected node",
       "orgBlackboard": "Org Blackboard",

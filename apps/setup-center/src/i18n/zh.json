@@ -2904,7 +2904,7 @@
       "close": "关闭",
       "addNode": "添加节点",
       "autoLayout": "自动布局",
-      "unlockDrag": "解锁拖拽",
+      "unlockDrag": "解锁布局",
       "lockLayout": "锁定布局",
       "deleteSelected": "删除选中节点",
       "orgBlackboard": "组织黑板",

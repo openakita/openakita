@@ -424,6 +424,7 @@ export interface OrgFull {
   status: string;
   nodes: OrgNodeData[];
   edges: OrgEdgeData[];
+  layout_locked?: boolean;
   user_persona?: UserPersona;
   [key: string]: any;
 }
