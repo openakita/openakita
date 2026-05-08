@@ -15,6 +15,7 @@ from openakita.channels.types import (
     MessageType,
     OutgoingMessage,
 )
+from openakita.sessions import SessionManager
 from tests.fixtures.factories import create_channel_message, create_test_session
 
 
@@ -178,6 +179,52 @@ class TestMessageGatewayAgentBinding:
         assert session.get_metadata("_bot_default_agent") == "writer-agent"
         assert session.context.agent_profile_id == "reviewer-agent"
         session_manager.mark_dirty.assert_not_called()
+
+
+class TestMessageGatewayDesktopMirror:
+    def test_mirrors_im_turns_into_desktop_conversation(self, tmp_path):
+        session_manager = SessionManager(storage_path=tmp_path / "sessions")
+        gateway = MessageGateway(session_manager=session_manager)
+        im_session = session_manager.get_session(
+            "feishu:writer",
+            "chat-1",
+            "user-1",
+            chat_type="private",
+            display_name="用户甲",
+            chat_name="飞书私聊",
+        )
+        im_session.context.agent_profile_id = "writer-agent"
+
+        gateway._mirror_im_message_to_desktop(
+            im_session,
+            role="user",
+            content="帮我检查服务器",
+            source_message_id="om-1",
+        )
+        gateway._mirror_im_message_to_desktop(
+            im_session,
+            role="assistant",
+            content="已完成检查",
+            chain_summary=[{"iteration": 1, "tools": []}],
+            tool_summary="checked",
+        )
+
+        mirror_id = gateway._desktop_mirror_id_for_im(im_session)
+        mirror = session_manager.get_session(
+            "desktop",
+            mirror_id,
+            "desktop_user",
+            create_if_missing=False,
+        )
+
+        assert mirror is not None
+        assert mirror.context.agent_profile_id == "writer-agent"
+        assert mirror.get_metadata("source_channel") == "feishu:writer"
+        assert mirror.context.messages[0]["role"] == "user"
+        assert mirror.context.messages[0]["content"].startswith("[来自飞书")
+        assert "帮我检查服务器" in mirror.context.messages[0]["content"]
+        assert mirror.context.messages[1]["role"] == "assistant"
+        assert mirror.context.messages[1]["tool_summary"] == "checked"
 
 
 class TestMessageGatewayAgentTimeout:

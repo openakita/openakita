@@ -154,6 +154,8 @@ async def list_sessions(request: Request, channel: str = "desktop"):
         if first_user:
             content = first_user.get("content", "")
             title = content[:30] if isinstance(content, str) else ""
+        if getattr(s, "channel", "") == "desktop" and s.get_metadata("source_channel"):
+            title = getattr(s, "chat_name", "") or getattr(s, "display_name", "") or title
 
         last_msg_content = ""
         if visible_msgs:

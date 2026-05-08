@@ -14,9 +14,11 @@ import asyncio
 import base64
 import collections
 import contextlib
+import hashlib
 import logging
 import os
 import random
+import re
 import time as _time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -1320,6 +1322,105 @@ class MessageGateway:
             session.context.agent_profile_id = bot_agent
             self.session_manager.mark_dirty()
             logger.info(f"[IM] Applied bot default agent: {bot_agent} for {session.session_key}")
+
+    def _desktop_mirror_id_for_im(self, session: Session) -> str:
+        """Return a stable desktop conversation id for an IM chat."""
+        raw_key = f"{session.channel}:{session.chat_id}:{session.user_id}"
+        digest = hashlib.sha1(raw_key.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        platform = re.sub(r"[^A-Za-z0-9_-]+", "_", session.channel.split(":", 1)[0])[:20]
+        return f"im_{platform}_{digest}"
+
+    def _format_im_mirror_label(self, session: Session) -> str:
+        platform = (session.channel or "im").split(":", 1)[0]
+        platform_label = {
+            "feishu": "飞书",
+            "lark": "飞书",
+            "wechat": "微信",
+            "wework": "企微",
+            "wework_ws": "企微",
+            "telegram": "Telegram",
+            "dingtalk": "钉钉",
+            "qqbot": "QQ",
+            "onebot": "OneBot",
+            "onebot_reverse": "OneBot",
+            "whatsapp": "WhatsApp",
+        }.get(platform.lower(), platform)
+        chat_label = session.chat_name or session.display_name or session.chat_id or "会话"
+        chat_type = "群聊" if session.chat_type == "group" else "私聊"
+        return f"{platform_label} · {chat_type} · {chat_label}"
+
+    def _mirror_im_message_to_desktop(
+        self,
+        session: Session,
+        *,
+        role: str,
+        content: str,
+        source_message_id: str | None = None,
+        chain_summary: list | None = None,
+        tool_summary: str | None = None,
+    ) -> None:
+        """Mirror IM turns into the normal desktop chat list.
+
+        This only improves visibility and continuity. The IM adapter still owns
+        inbound/outbound delivery, and the Agent execution path is unchanged.
+        """
+        if not content or not content.strip():
+            return
+        if session.channel in _NOOP_CHANNELS:
+            return
+
+        mirror_id = self._desktop_mirror_id_for_im(session)
+        label = self._format_im_mirror_label(session)
+        mirror = self.session_manager.get_session(
+            channel="desktop",
+            chat_id=mirror_id,
+            user_id="desktop_user",
+            create_if_missing=True,
+            chat_type="private",
+            display_name=label,
+            chat_name=label,
+        )
+        mirror.context.agent_profile_id = session.context.agent_profile_id
+        mirror.set_metadata("source_channel", session.channel)
+        mirror.set_metadata("source_chat_id", session.chat_id)
+        mirror.set_metadata("source_user_id", session.user_id)
+        mirror.set_metadata("source_session_key", session.session_key)
+
+        if role == "user":
+            mirrored_content = f"[来自{label}]\n{content}"
+        elif role == "assistant":
+            mirrored_content = f"[回复到{label}]\n{content}"
+        else:
+            mirrored_content = content
+
+        meta: dict = {
+            "source": "im_mirror",
+            "source_channel": session.channel,
+            "source_session_key": session.session_key,
+        }
+        if source_message_id:
+            meta["source_message_id"] = source_message_id
+        if chain_summary:
+            meta["chain_summary"] = chain_summary
+        if tool_summary:
+            meta["tool_summary"] = tool_summary
+
+        added = mirror.add_message(role=role, content=mirrored_content, **meta)
+        if not added:
+            return
+        self.session_manager.mark_dirty()
+        _notify_im_event(
+            "chat:message_update",
+            {
+                "conversation_id": mirror_id,
+                "title": label,
+                "last_message_preview": mirrored_content[:100],
+                "timestamp": _time.time(),
+                "source": "im_mirror",
+                "source_channel": session.channel,
+                "source_session_id": session.session_key,
+            },
+        )
 
     # ==================== 自然语言意图检测 ====================
 
@@ -2877,6 +2978,12 @@ class MessageGateway:
                 message_id=message.id,
                 channel_message_id=message.channel_message_id,
             )
+            self._mirror_im_message_to_desktop(
+                session,
+                role="user",
+                content=message.plain_text,
+                source_message_id=message.channel_message_id or message.id,
+            )
             self.session_manager.mark_dirty()  # 触发保存
             _notify_im_event(
                 "im:new_message",
@@ -2933,6 +3040,13 @@ class MessageGateway:
             if _tool_summary:
                 _msg_meta["tool_summary"] = _tool_summary
             session.add_message(role="assistant", content=response_text, **_msg_meta)
+            self._mirror_im_message_to_desktop(
+                session,
+                role="assistant",
+                content=response_text,
+                chain_summary=_chain_summary,
+                tool_summary=_tool_summary,
+            )
             self.session_manager.persist()
             _notify_im_event(
                 "im:new_message",

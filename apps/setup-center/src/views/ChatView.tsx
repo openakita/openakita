@@ -1150,16 +1150,20 @@ export function ChatView({
             .catch(() => {});
         }
         const preview = (d.last_message_preview as string) || "";
+        const title = (d.title as string) || "";
         const ts = ((d.timestamp as number) || 0) * 1000 || Date.now();
         setConversations((prev) => {
           const idx = prev.findIndex(c => c.id === convId);
           if (idx >= 0) {
             const updated = [...prev];
-            updated[idx] = { ...updated[idx], lastMessage: preview || updated[idx].lastMessage, timestamp: Math.max(updated[idx].timestamp || 0, ts), messageCount: (updated[idx].messageCount || 0) + 1 };
+            updated[idx] = { ...updated[idx], title: title || updated[idx].title, lastMessage: preview || updated[idx].lastMessage, timestamp: Math.max(updated[idx].timestamp || 0, ts), messageCount: (updated[idx].messageCount || 0) + 1 };
             return updated;
           }
-          return [{ id: convId, title: preview.slice(0, 20) || "对话", lastMessage: preview, timestamp: ts, messageCount: 1 }, ...prev];
+          return [{ id: convId, title: title || preview.slice(0, 20) || "对话", lastMessage: preview, timestamp: ts, messageCount: 1 }, ...prev];
         });
+        if (!activeConvIdRef.current) {
+          setActiveConvId(convId);
+        }
       } else if (event === "chat:conversation_deleted") {
         setConversations((prev) => {
           const filtered = prev.filter(c => c.id !== convId);
