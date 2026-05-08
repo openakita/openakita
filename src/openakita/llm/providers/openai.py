@@ -51,6 +51,60 @@ from .proxy_utils import (
 logger = logging.getLogger(__name__)
 
 
+_THINKING_BUDGET_BY_DEPTH = {
+    "low": 1024,
+    "medium": 4096,
+    "high": 16384,
+    # "max" currently maps to the largest broadly-supported token budget for
+    # budget-based providers; provider-specific max efforts are handled below.
+    "max": 16384,
+    "xhigh": 16384,
+}
+
+
+def _normalize_thinking_depth(depth: str | None) -> str | None:
+    """Normalize user-facing thinking depth aliases."""
+    value = (depth or "").strip().lower()
+    if value == "xhigh":
+        return "max"
+    if value in {"low", "medium", "high", "max"}:
+        return value
+    return None
+
+
+def _thinking_budget_for_depth(depth: str | None) -> int | None:
+    """Return a conservative thinking_budget for providers using token budgets."""
+    normalized = _normalize_thinking_depth(depth)
+    return _THINKING_BUDGET_BY_DEPTH.get(normalized or "")
+
+
+def _supports_max_reasoning_effort(provider: str, base_url: str, model: str) -> bool:
+    """Whether this OpenAI-compatible endpoint documents reasoning_effort=max."""
+    provider_l = (provider or "").lower()
+    base_l = (base_url or "").lower()
+    model_l = (model or "").lower()
+    return (
+        model_l == "deepseek-v4-pro"
+        and (provider_l == "deepseek" or "api.deepseek.com" in base_l)
+    )
+
+
+def _reasoning_effort_for_depth(
+    *,
+    provider: str,
+    base_url: str,
+    model: str,
+    depth: str | None,
+) -> str | None:
+    """Map OpenAkita thinking depth to provider-safe reasoning_effort."""
+    normalized = _normalize_thinking_depth(depth)
+    if not normalized:
+        return None
+    if normalized == "max":
+        return "max" if _supports_max_reasoning_effort(provider, base_url, model) else "high"
+    return "high" if _supports_max_reasoning_effort(provider, base_url, model) else normalized
+
+
 def _is_stream_only_error(error: str) -> bool:
     """检测错误是否表明端点仅支持流式请求（stream-only relay/中转站）。"""
     err_lower = error.lower()
@@ -865,8 +919,7 @@ class OpenAIProvider(LLMProvider):
                 ds_thinking = True
             body["enable_thinking"] = ds_thinking
             if ds_thinking and request.thinking_depth:
-                budget_map = {"low": 1024, "medium": 4096, "high": 16384}
-                budget = budget_map.get(request.thinking_depth)
+                budget = _thinking_budget_for_depth(request.thinking_depth)
                 if budget:
                     body["thinking_budget"] = budget
             elif not ds_thinking:
@@ -902,8 +955,7 @@ class OpenAIProvider(LLMProvider):
                 # 必须清理 extra_params 可能泄漏的 enable_thinking
                 body.pop("enable_thinking", None)
                 if request.thinking_depth:
-                    budget_map = {"low": 1024, "medium": 4096, "high": 16384}
-                    budget = budget_map.get(request.thinking_depth)
+                    budget = _thinking_budget_for_depth(request.thinking_depth)
                     if budget:
                         body["thinking_budget"] = budget
             else:
@@ -911,8 +963,7 @@ class OpenAIProvider(LLMProvider):
                 body["enable_thinking"] = bool(request.enable_thinking)
                 if request.enable_thinking:
                     if request.thinking_depth:
-                        budget_map = {"low": 1024, "medium": 4096, "high": 16384}
-                        budget = budget_map.get(request.thinking_depth)
+                        budget = _thinking_budget_for_depth(request.thinking_depth)
                         if budget:
                             body["thinking_budget"] = budget
                 else:
@@ -944,8 +995,9 @@ class OpenAIProvider(LLMProvider):
             body.pop("reasoning_effort", None)
 
             if request.enable_thinking or is_always_thinking:
-                depth_map = {"low": "low", "medium": "medium", "high": "high"}
-                effort = depth_map.get(request.thinking_depth or "medium", "medium")
+                depth_map = {"low": "low", "medium": "medium", "high": "high", "max": "high"}
+                depth = _normalize_thinking_depth(request.thinking_depth or "medium")
+                effort = depth_map.get(depth or "medium", "medium")
                 body["reasoning"] = {"effort": effort}
             else:
                 body.pop("reasoning", None)
@@ -967,8 +1019,12 @@ class OpenAIProvider(LLMProvider):
                 if "thinking" not in body:
                     body["thinking"] = {"type": "enabled"}
                 if request.thinking_depth:
-                    depth_map = {"low": "low", "medium": "medium", "high": "high"}
-                    effort = depth_map.get(request.thinking_depth)
+                    effort = _reasoning_effort_for_depth(
+                        provider=self.config.provider,
+                        base_url=self.base_url,
+                        model=self.config.model,
+                        depth=request.thinking_depth,
+                    )
                     if effort:
                         body["reasoning_effort"] = effort
             else:

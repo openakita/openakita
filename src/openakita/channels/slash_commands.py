@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +74,7 @@ COMMAND_REGISTRY: list[SlashCommand] = [
     SlashCommand(
         name="/thinking_depth",
         aliases=[],
-        description="设置思考深度 [low|medium|high]",
+        description="设置思考深度 [low|medium|high|max]",
         category="thinking",
     ),
     SlashCommand(
@@ -133,9 +132,7 @@ def get_commands_for_scope(scope: str) -> list[SlashCommand]:
     """Get all commands available for a given scope (cli/im)."""
     result = []
     for cmd in COMMAND_REGISTRY:
-        if cmd.scope == CommandScope.BOTH:
-            result.append(cmd)
-        elif cmd.scope.value == scope:
+        if cmd.scope == CommandScope.BOTH or cmd.scope.value == scope:
             result.append(cmd)
     return result
 

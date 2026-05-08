@@ -30,6 +30,9 @@ from .base import ChannelAdapter
 from .group_response import GroupResponseMode, SmartModeThrottle
 from .types import MediaStatus, OutgoingMessage, UnifiedMessage
 
+if TYPE_CHECKING:
+    from .dm_pairing import DMPairingManager
+
 
 def _notify_im_event(event: str, data: dict | None = None) -> None:
     """Fire-and-forget WS broadcast for IM events."""
@@ -487,19 +490,20 @@ class ThinkingCommandHandler:
 
     支持的命令:
     - /thinking [on|off|auto]: 切换思考模式
-    - /thinking_depth [low|medium|high]: 设置思考深度
+    - /thinking_depth [low|medium|high|max]: 设置思考深度
     - /chain [on|off]: 开关思维链进度推送（默认关闭）
     """
 
     THINKING_COMMANDS = {"/thinking", "/thinking_depth", "/chain"}
 
     VALID_MODES = {"on", "off", "auto"}
-    VALID_DEPTHS = {"low", "medium", "high"}
+    VALID_DEPTHS = {"low", "medium", "high", "max", "xhigh"}
 
     DEPTH_LABELS = {
         "low": "低（快速响应）",
         "medium": "中（平衡）",
         "high": "高（深度推理）",
+        "max": "最大（最高推理强度）",
     }
 
     def __init__(self, session_manager: "SessionManager"):
@@ -563,8 +567,10 @@ class ThinkingCommandHandler:
             depth = text_lower.split(None, 1)[1].strip()
             if depth not in self.VALID_DEPTHS:
                 return (
-                    f"❌ 无效的思考深度: `{depth}`\n可选: `low`（低）| `medium`（中）| `high`（高）"
+                    f"❌ 无效的思考深度: `{depth}`\n可选: `low`（低）| `medium`（中）| `high`（高）| `max`（最大）"
                 )
+            if depth == "xhigh":
+                depth = "max"
             session.set_metadata("thinking_depth", depth)
             return f"✅ 思考深度已设置为: **{self.DEPTH_LABELS[depth]}**"
 
@@ -615,7 +621,7 @@ class ThinkingCommandHandler:
             "`/thinking on` — 强制开启深度思考",
             "`/thinking off` — 关闭深度思考",
             "`/thinking auto` — 自动决定（默认）",
-            "`/thinking_depth low|medium|high` — 设置思考深度",
+            "`/thinking_depth low|medium|high|max` — 设置思考深度",
         ]
         return "\n".join(lines)
 
@@ -631,7 +637,7 @@ class ThinkingCommandHandler:
         for key, label in self.DEPTH_LABELS.items():
             marker = " ⬅️" if key == (current_depth or "medium") else ""
             lines.append(f"• `{key}` — {label}{marker}")
-        lines.append("\n用法: `/thinking_depth low|medium|high`")
+        lines.append("\n用法: `/thinking_depth low|medium|high|max`")
         return "\n".join(lines)
 
 
@@ -934,7 +940,7 @@ class MessageGateway:
         ] = {}  # session_key -> accumulated progress lines (for card PATCH)
 
         # ==================== DM Pairing 配对授权 ====================
-        self._dm_pairing: "DMPairingManager | None" = None
+        self._dm_pairing: DMPairingManager | None = None
 
         # ==================== 群聊响应策略 ====================
         self._smart_throttle = SmartModeThrottle()
@@ -1022,10 +1028,14 @@ class MessageGateway:
 
         async def _run_background():
             try:
+                from ..config import settings
                 from ..scheduler.executor import TaskExecutor
                 from ..scheduler.task import ScheduledTask, TaskType, TriggerType
 
-                executor = TaskExecutor(gateway=self, timeout_seconds=1200)
+                executor = TaskExecutor(
+                    gateway=self,
+                    timeout_seconds=settings.scheduler_task_timeout,
+                )
 
                 task = ScheduledTask(
                     id=bg_id,
@@ -1213,7 +1223,6 @@ class MessageGateway:
 
     def _format_system_help(self) -> str:
         """格式化全局 /help 输出（所有模式可用）——基于统一命令注册表"""
-        from ..config import settings
         from .slash_commands import format_help
 
         lines = [
@@ -2494,7 +2503,7 @@ class MessageGateway:
                     task = asyncio.create_task(self._session_dispatch(message))
                     self._session_tasks[session_key] = task
 
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
@@ -3610,7 +3619,6 @@ class MessageGateway:
             # === 流式 / 非流式分支 ===
             adapter = self._adapters.get(message.channel)
             is_group = message.chat_type == "group"
-            from ..config import settings as _cfg
 
             use_streaming = (
                 allow_streaming
@@ -3636,15 +3644,21 @@ class MessageGateway:
                 # 不再套 wait_for 墙钟超时，避免活跃任务被误杀
                 response = await self.agent_handler(session, input_text)
             else:
-                _AGENT_TIMEOUT = float(os.environ.get("AGENT_HANDLER_TIMEOUT", "1200"))
-                try:
-                    response = await asyncio.wait_for(
-                        self.agent_handler(session, input_text),
-                        timeout=_AGENT_TIMEOUT,
-                    )
-                except (asyncio.TimeoutError, TimeoutError):
-                    logger.error(f"[Gateway] Agent handler timed out after {_AGENT_TIMEOUT}s")
-                    response = f"⚠️ 处理超时（{int(_AGENT_TIMEOUT)}秒），请稍后重试或简化您的问题。"
+                _agent_timeout = self._get_agent_handler_timeout()
+                if _agent_timeout is None:
+                    response = await self.agent_handler(session, input_text)
+                else:
+                    try:
+                        response = await asyncio.wait_for(
+                            self.agent_handler(session, input_text),
+                            timeout=_agent_timeout,
+                        )
+                    except TimeoutError:
+                        logger.error(
+                            "[Gateway] Agent handler timed out after %ss",
+                            _agent_timeout,
+                        )
+                        response = self._format_agent_timeout_message(_agent_timeout)
 
             return (response, streamed_ok)
 
@@ -3685,8 +3699,6 @@ class MessageGateway:
         if hasattr(adapter, "_streaming_buffers") and hasattr(adapter, "_make_session_key"):
             _sk = adapter._make_session_key(message.chat_id, message.thread_id)
             adapter._streaming_buffers.setdefault(_sk, "")
-
-        _STREAM_TIMEOUT = float(os.environ.get("AGENT_HANDLER_TIMEOUT", "1200"))
 
         async def _consume_stream():
             nonlocal reply_text, _thinking_buf
@@ -3763,11 +3775,15 @@ class MessageGateway:
                     pass
 
         try:
-            await asyncio.wait_for(_consume_stream(), timeout=_STREAM_TIMEOUT)
-        except (asyncio.TimeoutError, TimeoutError):
-            logger.error(f"[IM] Streaming agent timed out after {_STREAM_TIMEOUT}s")
+            _stream_timeout = self._get_agent_handler_timeout()
+            if _stream_timeout is None:
+                await _consume_stream()
+            else:
+                await asyncio.wait_for(_consume_stream(), timeout=_stream_timeout)
+        except TimeoutError:
+            logger.error("[IM] Streaming agent timed out after %ss", _stream_timeout)
             if not reply_text:
-                reply_text = f"⚠️ 处理超时（{int(_STREAM_TIMEOUT)}秒），请稍后重试或简化您的问题。"
+                reply_text = self._format_agent_timeout_message(_stream_timeout)
         except Exception as e:
             logger.error(f"[IM] Streaming agent error: {e}", exc_info=True)
             if not reply_text:
@@ -3813,6 +3829,42 @@ class MessageGateway:
         "wechat": 4000,
     }
     _DEFAULT_MAX_LENGTH = 4000
+
+    @staticmethod
+    def _get_agent_handler_timeout() -> float | None:
+        """Return an explicitly configured IM wall-clock timeout, if any.
+
+        Long IM tasks are user-driven conversations. By default, they should keep
+        running until completion or an explicit user stop/skip instead of being
+        killed by a hidden 20-minute wall-clock limit.
+        """
+        raw = os.environ.get("AGENT_HANDLER_TIMEOUT", "").strip()
+        if not raw:
+            return None
+        try:
+            timeout = float(raw)
+        except ValueError:
+            logger.warning(
+                "Invalid AGENT_HANDLER_TIMEOUT=%r; IM agent wall-clock timeout disabled",
+                raw,
+            )
+            return None
+        if timeout <= 0:
+            return None
+        return timeout
+
+    @staticmethod
+    def _format_agent_timeout_message(timeout_seconds: float) -> str:
+        if timeout_seconds >= 60 and timeout_seconds % 60 == 0:
+            timeout_display = f"{int(timeout_seconds // 60)}分钟"
+        elif timeout_seconds >= 1:
+            timeout_display = f"{int(timeout_seconds)}秒"
+        else:
+            timeout_display = f"{timeout_seconds:g}秒"
+        return (
+            f"⚠️ 当前任务超过配置的处理时长上限（{timeout_display}），已停止本轮处理。"
+            "可以回复“继续”让我接着做；如这是预期的长任务，可调高或关闭 AGENT_HANDLER_TIMEOUT。"
+        )
 
     # 分片间发送间隔（秒），避免触发平台限流
     _SPLIT_SEND_INTERVAL: dict[str, float] = {

@@ -58,7 +58,7 @@ export function inferCapabilities(modelName: string, _providerSlug?: string | nu
 
   if (["vl", "vision", "visual", "image", "-v-", "4v"].some(kw => m.includes(kw))) caps.vision = true;
   if (["kimi", "gemini"].some(kw => m.includes(kw))) caps.video = true;
-  if (["thinking", "r1", "qwq", "qvq", "o1"].some(kw => m.includes(kw))) caps.thinking = true;
+  if (["thinking", "r1", "qwq", "qvq", "o1", "deepseek-v4-pro"].some(kw => m.includes(kw))) caps.thinking = true;
   if (["qwen", "gpt", "claude", "deepseek", "kimi", "glm", "gemini", "moonshot", "minimax", "doubao"].some(kw => m.includes(kw))) caps.tools = true;
   if (m.includes("minimax") && m.includes("m2")) caps.thinking = true;
 

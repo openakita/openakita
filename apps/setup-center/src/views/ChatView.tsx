@@ -489,8 +489,12 @@ export function ChatView({
     try { const v = localStorage.getItem("chat_thinkingMode"); return (v === "on" || v === "off") ? v : "auto"; }
     catch { return "auto"; }
   });
-  const [thinkingDepth, setThinkingDepth] = useState<"low" | "medium" | "high">(() => {
-    try { const v = localStorage.getItem("chat_thinkingDepth"); return (v === "low" || v === "medium" || v === "high") ? v : "medium"; }
+  const [thinkingDepth, setThinkingDepth] = useState<"low" | "medium" | "high" | "max">(() => {
+    try {
+      const v = localStorage.getItem("chat_thinkingDepth");
+      if (v === "xhigh") return "max";
+      return (v === "low" || v === "medium" || v === "high" || v === "max") ? v : "medium";
+    }
     catch { return "medium"; }
   });
   const [thinkingModeTipOpen, setThinkingModeTipOpen] = useState(false);
@@ -1516,15 +1520,16 @@ export function ChatView({
         setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考模式: ${currentLabel}\n用法: /thinking on|off|auto`, timestamp: Date.now() }]);
       }
     }},
-    { id: "thinking_depth", label: "思考程度", description: "设置思考程度 (low/medium/high)", action: (args) => {
+    { id: "thinking_depth", label: "思考程度", description: "设置思考程度 (low/medium/high/max)", action: (args) => {
       const depth = args?.toLowerCase().trim();
-      if (depth === "low" || depth === "medium" || depth === "high") {
-        setThinkingDepth(depth);
-        const label = { low: "低", medium: "中", high: "高" }[depth];
+      const normalizedDepth = depth === "xhigh" ? "max" : depth;
+      if (normalizedDepth === "low" || normalizedDepth === "medium" || normalizedDepth === "high" || normalizedDepth === "max") {
+        setThinkingDepth(normalizedDepth);
+        const label = { low: "低", medium: "中", high: "高", max: "最大" }[normalizedDepth];
         setMessages((prev) => [...prev, { id: genId(), role: "system", content: `思考程度已设置为: ${label}`, timestamp: Date.now() }]);
       } else {
-        const currentLabel = { low: "低", medium: "中", high: "高" }[thinkingDepth];
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考程度: ${currentLabel}\n用法: /thinking_depth low|medium|high`, timestamp: Date.now() }]);
+        const currentLabel = { low: "低", medium: "中", high: "高", max: "最大" }[thinkingDepth];
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考程度: ${currentLabel}\n用法: /thinking_depth low|medium|high|max`, timestamp: Date.now() }]);
       }
     }},
     { id: "export", label: t("chat.exportLabel", "导出会话"), description: t("chat.exportDesc", "导出当前对话 (md/json)"), action: (args) => {
@@ -1719,6 +1724,11 @@ export function ChatView({
         setSlashOpen(false);
         return;
       }
+    }
+
+    if (endpoints.length === 0) {
+      notifyError(t("chat.noChatEndpointConfigured"));
+      return;
     }
 
     // @org: 前缀或组织模式 — 路由到组织 API
@@ -3174,7 +3184,7 @@ export function ChatView({
         return updated;
       });
     }
-  }, [pendingAttachments, isCurrentConvStreaming, activeConvId, chatMode, selectedEndpoint, apiBase, slashCommands, thinkingMode, thinkingDepth, t, setInputValue]);
+  }, [pendingAttachments, isCurrentConvStreaming, activeConvId, chatMode, selectedEndpoint, apiBase, slashCommands, endpoints.length, thinkingMode, thinkingDepth, t, setInputValue]);
 
   // ── 处理用户回答 (ask_user) ──
   const handleAskAnswer = useCallback((msgId: string, answer: string) => {
@@ -4880,20 +4890,21 @@ export function ChatView({
                         onMouseEnter={() => setThinkingDepthTipOpen(true)}
                         onMouseLeave={() => setThinkingDepthTipOpen(false)}
                         onClick={() => {
-                          setThinkingDepth((d) => d === "low" ? "medium" : d === "medium" ? "high" : "low");
+                          setThinkingDepth((d) => d === "low" ? "medium" : d === "medium" ? "high" : d === "high" ? "max" : "low");
                         }}
                         className="chatInputIconBtn"
                       >
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0 }}>
-                          <rect x="1" y="9" width="3" height="4" rx="0.5" fill="currentColor" opacity={thinkingDepth === "low" || thinkingDepth === "medium" || thinkingDepth === "high" ? 1 : 0.25} />
-                          <rect x="5.5" y="5.5" width="3" height="7.5" rx="0.5" fill="currentColor" opacity={thinkingDepth === "medium" || thinkingDepth === "high" ? 1 : 0.25} />
-                          <rect x="10" y="2" width="3" height="11" rx="0.5" fill="currentColor" opacity={thinkingDepth === "high" ? 1 : 0.25} />
+                        <svg width="18" height="14" viewBox="0 0 18 14" fill="none" style={{ flexShrink: 0 }}>
+                          <rect x="1" y="9" width="3" height="4" rx="0.5" fill="currentColor" opacity={thinkingDepth === "low" || thinkingDepth === "medium" || thinkingDepth === "high" || thinkingDepth === "max" ? 1 : 0.25} />
+                          <rect x="5.5" y="5.5" width="3" height="7.5" rx="0.5" fill="currentColor" opacity={thinkingDepth === "medium" || thinkingDepth === "high" || thinkingDepth === "max" ? 1 : 0.25} />
+                          <rect x="10" y="2" width="3" height="11" rx="0.5" fill="currentColor" opacity={thinkingDepth === "high" || thinkingDepth === "max" ? 1 : 0.25} />
+                          <rect x="14.5" y="0.5" width="2.5" height="12.5" rx="0.5" fill="currentColor" opacity={thinkingDepth === "max" ? 1 : 0.25} />
                         </svg>
-                        <span style={{ fontSize: 10 }}>{{ low: t("chat.depthLow"), medium: t("chat.depthMedium"), high: t("chat.depthHigh") }[thinkingDepth]}</span>
+                        <span style={{ fontSize: 10 }}>{{ low: t("chat.depthLow"), medium: t("chat.depthMedium"), high: t("chat.depthHigh"), max: t("chat.depthMax") }[thinkingDepth]}</span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="text-xs" onPointerDownOutside={(e) => e.preventDefault()}>
-                      {{ low: t("chat.depthTipLow"), medium: t("chat.depthTipMedium"), high: t("chat.depthTipHigh") }[thinkingDepth]}
+                      {{ low: t("chat.depthTipLow"), medium: t("chat.depthTipMedium"), high: t("chat.depthTipHigh"), max: t("chat.depthTipMax") }[thinkingDepth]}
                       <span className="block text-[10px] opacity-60 mt-0.5">{t("chat.depthClickToSwitch")}</span>
                     </TooltipContent>
                   </Tooltip>

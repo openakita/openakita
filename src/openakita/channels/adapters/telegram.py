@@ -481,7 +481,7 @@ class TelegramAdapter(ChannelAdapter):
                 BotCommand("priority", "调整模型优先级"),
                 BotCommand("restore", "恢复默认模型"),
                 BotCommand("thinking", "深度思考模式 (on/off/auto)"),
-                BotCommand("thinking_depth", "思考深度 (low/medium/high)"),
+                BotCommand("thinking_depth", "思考深度 (low/medium/high/max)"),
                 BotCommand("chain", "思维链进度推送 (on/off)"),
                 BotCommand("cancel", "取消当前操作"),
                 BotCommand("restart", "终极重启服务"),

@@ -216,7 +216,7 @@ const CMD_CATEGORIES: CmdCategory[] = [
     labelKey: "imCmdCatThinking", icon: <IconBrain size={14} />,
     entries: [
       { cmd: "/thinking [on|off|auto]", desc: "imCmdThinking" },
-      { cmd: "/thinking_depth [low|medium|high]", desc: "imCmdThinkingDepth" },
+      { cmd: "/thinking_depth [low|medium|high|max]", desc: "imCmdThinkingDepth" },
       { cmd: "/chain [on|off]", desc: "imCmdChain" },
     ],
   },

@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from openakita.channels.gateway import MessageGateway, ThinkingCommandHandler
-from openakita.sessions.session import Session, SessionConfig, SessionContext
 from tests.fixtures.factories import create_test_session
 
 
@@ -158,4 +157,16 @@ class TestChainCommand:
     async def test_chain_invalid_arg(self, handler, session):
         result = await handler.handle_command("ignored", "/chain maybe", session)
         assert "无效" in result
+
+    async def test_thinking_depth_max(self, handler, session):
+        result = await handler.handle_command("ignored", "/thinking_depth max", session)
+
+        assert "最大" in result
+        assert session.get_metadata("thinking_depth") == "max"
+
+    async def test_thinking_depth_xhigh_alias(self, handler, session):
+        result = await handler.handle_command("ignored", "/thinking_depth xhigh", session)
+
+        assert "最大" in result
+        assert session.get_metadata("thinking_depth") == "max"
 

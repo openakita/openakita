@@ -56,6 +56,7 @@ class DeepSeekRegistry(ProviderRegistry):
         preset = [
             "deepseek-chat",
             "deepseek-coder",
+            "deepseek-v4-pro",
             "deepseek-v3",
             "deepseek-r1",
         ]

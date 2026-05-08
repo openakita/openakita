@@ -147,6 +147,13 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": False,
         },
+        "deepseek-v4-pro": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+        },
         "deepseek-v3": {
             "text": True,
             "vision": False,
@@ -1057,7 +1064,10 @@ def infer_capabilities(
         caps["pdf"] = True
 
     # Thinking 推断
-    if any(kw in model_lower for kw in ["thinking", "r1", "qwq", "qvq", "o1", "reasoner"]):
+    if any(
+        kw in model_lower
+        for kw in ["thinking", "r1", "qwq", "qvq", "o1", "reasoner", "deepseek-v4-pro"]
+    ):
         caps["thinking"] = True
         # 天然思考模型：名称含 -Thinking 后缀、R1、QwQ、Reasoner 等，始终处于思考模式
         # 这些模型不支持通过 API 参数切换思考开关（如 SiliconFlow 的 enable_thinking）
