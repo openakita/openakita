@@ -10,6 +10,7 @@
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -362,7 +363,7 @@ class TaskExecutor:
         im_context_set = False
         try:
             # 1. 创建 Agent
-            agent = await self._create_agent()
+            agent = await self._create_agent(task.agent_profile_id)
 
             # 1.5. 防递归：禁止任务内再创建定时任务
             if task.no_schedule_tools:
@@ -540,16 +541,45 @@ class TaskExecutor:
         except Exception as e:
             logger.warning(f"Failed to cleanup IM context: {e}")
 
-    async def _create_agent(self) -> Any:
+    async def _create_agent(self, agent_profile_id: str = "default") -> Any:
         """创建 Agent 实例（不启动 scheduler，避免重复执行任务）"""
         if self.agent_factory:
+            try:
+                params = inspect.signature(self.agent_factory).parameters
+                if params:
+                    return self.agent_factory(agent_profile_id)
+            except (TypeError, ValueError):
+                pass
             return self.agent_factory()
+
+        profile_id = agent_profile_id or "default"
+        if profile_id != "default":
+            profile = self._resolve_agent_profile(profile_id)
+            if profile is not None:
+                from ..agents.factory import AgentFactory
+
+                return await AgentFactory().create(profile)
+            logger.warning("Unknown scheduled task agent_profile_id=%r, using default", profile_id)
 
         from ..core.agent import Agent
 
         agent = Agent()
         await agent.initialize(start_scheduler=False)
         return agent
+
+    def _resolve_agent_profile(self, profile_id: str) -> Any | None:
+        """Resolve an AgentProfile for scheduled task execution."""
+        from ..agents.presets import SYSTEM_PRESETS
+        from ..agents.profile import get_profile_store
+
+        for preset in SYSTEM_PRESETS:
+            if preset.id == profile_id:
+                return preset
+        try:
+            return get_profile_store().get(profile_id)
+        except Exception:
+            logger.debug("Failed to load agent profile %r", profile_id, exc_info=True)
+            return None
 
     async def _run_agent(self, agent: Any, prompt: str) -> str:
         """

@@ -44,6 +44,16 @@ class ScheduledHandler:
 
         return get_active_scheduler()
 
+    def _current_agent_profile_id(self) -> str:
+        """Best-effort profile id for chat-created scheduled tasks."""
+        session = getattr(self.agent, "_current_session", None)
+        context = getattr(session, "context", None)
+        if context is not None:
+            profile_id = getattr(context, "agent_profile_id", None)
+            if profile_id:
+                return profile_id
+        return getattr(self.agent, "_agent_profile_id", "default") or "default"
+
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """处理工具调用"""
         scheduler = self._get_scheduler()
@@ -149,6 +159,7 @@ class ScheduledHandler:
             user_id=user_id,
             channel_id=channel_id,
             chat_id=chat_id,
+            agent_profile_id=self._current_agent_profile_id(),
             task_source=TaskSource.CHAT,
         )
         task.silent = bool(params.get("silent", False))

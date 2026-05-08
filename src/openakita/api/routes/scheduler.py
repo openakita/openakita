@@ -53,6 +53,27 @@ from openakita.scheduler._naming import (
 from openakita.scheduler._naming import validate_task_name as _validate_task_name  # noqa: E402
 
 
+def _agent_profile_exists(agent_profile_id: str) -> bool:
+    """Return whether an AgentProfile id is known to the system."""
+    from openakita.agents.presets import SYSTEM_PRESETS
+    from openakita.agents.profile import get_profile_store
+
+    if any(p.id == agent_profile_id for p in SYSTEM_PRESETS):
+        return True
+    try:
+        return get_profile_store().get(agent_profile_id) is not None
+    except Exception:
+        logger.debug("Failed to validate agent profile %r", agent_profile_id, exc_info=True)
+        return False
+
+
+def _normalize_agent_profile_id(agent_profile_id: str | None) -> str:
+    profile_id = (agent_profile_id or "default").strip() or "default"
+    if _agent_profile_exists(profile_id):
+        return profile_id
+    raise ValueError(f"Unknown agent_profile_id: {profile_id}")
+
+
 class TaskCreateRequest(BaseModel):
     name: str
     task_type: str = "reminder"  # reminder | task
@@ -62,6 +83,7 @@ class TaskCreateRequest(BaseModel):
     prompt: str = ""
     channel_id: str | None = None
     chat_id: str | None = None
+    agent_profile_id: str | None = None
     enabled: bool = True
 
 
@@ -74,6 +96,7 @@ class TaskUpdateRequest(BaseModel):
     prompt: str | None = None
     channel_id: str | None = None
     chat_id: str | None = None
+    agent_profile_id: str | None = None
     enabled: bool | None = None
 
 
@@ -143,6 +166,11 @@ async def create_task(request: Request, body: TaskCreateRequest):
             status_code=422, content={"error": f"Invalid task_type: {body.task_type}"}
         )
 
+    try:
+        agent_profile_id = _normalize_agent_profile_id(body.agent_profile_id)
+    except ValueError as e:
+        return JSONResponse(status_code=422, content={"error": str(e)})
+
     description = body.reminder_message or body.prompt or body.name
     task = ScheduledTask.create(
         name=body.name,
@@ -156,6 +184,7 @@ async def create_task(request: Request, body: TaskCreateRequest):
     task.task_source = TaskSource.MANUAL
     task.channel_id = body.channel_id or None
     task.chat_id = body.chat_id or None
+    task.agent_profile_id = agent_profile_id
     task.enabled = body.enabled
 
     try:
@@ -192,6 +221,11 @@ async def update_task(request: Request, task_id: str, body: TaskUpdateRequest):
         updates["channel_id"] = body.channel_id or None
     if body.chat_id is not None:
         updates["chat_id"] = body.chat_id or None
+    if body.agent_profile_id is not None:
+        try:
+            updates["agent_profile_id"] = _normalize_agent_profile_id(body.agent_profile_id)
+        except ValueError as e:
+            return JSONResponse(status_code=422, content={"error": str(e)})
 
     if body.task_type is not None:
         from openakita.scheduler.task import TaskType
@@ -215,6 +249,13 @@ async def update_task(request: Request, task_id: str, body: TaskUpdateRequest):
 
     if body.trigger_config is not None:
         updates["trigger_config"] = body.trigger_config
+
+    if task_id == "system_daily_memory" and (
+        "trigger_type" in updates or "trigger_config" in updates
+    ):
+        metadata = dict(task.metadata or {})
+        metadata["user_custom_trigger"] = True
+        updates["metadata"] = metadata
 
     if updates.get("name") or updates.get("reminder_message") or updates.get("prompt"):
         updates["description"] = (

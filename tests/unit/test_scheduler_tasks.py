@@ -2,9 +2,10 @@
 
 import asyncio
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from openakita.scheduler.executor import TaskExecutor
-from openakita.scheduler.task import ScheduledTask, TaskStatus, TriggerType
+from openakita.scheduler.task import ScheduledTask, TaskStatus, TaskType, TriggerType
 from openakita.scheduler.triggers import CronTrigger, IntervalTrigger, OnceTrigger, Trigger
 
 
@@ -123,6 +124,122 @@ class TestSystemTaskTimeouts:
 
         assert success is True
         assert "下次" in message
+
+
+class TestTaskAgentProfiles:
+    async def test_executor_creates_selected_agent_profile(self, monkeypatch):
+        selected = SimpleNamespace(id="code-assistant")
+        created = SimpleNamespace(name="profile-agent")
+        seen: dict[str, object] = {}
+
+        async def fake_create(self, profile):
+            seen["profile"] = profile
+            return created
+
+        monkeypatch.setattr(
+            TaskExecutor,
+            "_resolve_agent_profile",
+            lambda self, profile_id: selected if profile_id == "code-assistant" else None,
+        )
+        monkeypatch.setattr("openakita.agents.factory.AgentFactory.create", fake_create)
+
+        executor = TaskExecutor()
+        agent = await executor._create_agent("code-assistant")
+
+        assert agent is created
+        assert seen["profile"] is selected
+
+    async def test_chat_created_task_inherits_current_agent_profile(self):
+        from openakita.tools.handlers.scheduled import ScheduledHandler
+
+        captured: dict[str, ScheduledTask] = {}
+
+        class FakeScheduler:
+            async def add_task(self, task):
+                captured["task"] = task
+                return task.id
+
+        agent = SimpleNamespace(
+            task_scheduler=FakeScheduler(),
+            _current_session=SimpleNamespace(
+                context=SimpleNamespace(agent_profile_id="researcher")
+            ),
+            _agent_profile_id="default",
+        )
+        handler = ScheduledHandler(agent)
+
+        result = await handler._schedule_task(
+            {
+                "name": "research-task",
+                "description": "research",
+                "task_type": "task",
+                "trigger_type": "interval",
+                "trigger_config": {"interval_minutes": 60},
+                "prompt": "do research",
+            }
+        )
+
+        assert "已创建" in result
+        assert captured["task"].agent_profile_id == "researcher"
+
+
+class TestSystemTaskRegistration:
+    async def test_memory_task_keeps_user_custom_trigger(self, monkeypatch):
+        from openakita.core.agent import Agent
+
+        task = ScheduledTask(
+            id="system_daily_memory",
+            name="记忆整理",
+            trigger_type=TriggerType.INTERVAL,
+            trigger_config={"interval_minutes": 720},
+            action="system:daily_memory",
+            prompt="",
+            description="custom",
+            task_type=TaskType.TASK,
+            deletable=False,
+            metadata={"user_custom_trigger": True},
+        )
+
+        class FakeTracker:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def is_onboarding(self, _days):
+                return False
+
+        class FakeScheduler:
+            def __init__(self):
+                self.updates: list[tuple[str, dict]] = []
+                self.saved = False
+
+            def list_tasks(self):
+                return [task]
+
+            def get_task(self, task_id):
+                return task if task_id == "system_daily_memory" else None
+
+            async def update_task(self, task_id, updates):
+                self.updates.append((task_id, updates))
+                return True
+
+            async def save(self):
+                self.saved = True
+
+            async def add_task(self, _task):
+                return _task.id
+
+        monkeypatch.setattr(
+            "openakita.scheduler.consolidation_tracker.ConsolidationTracker",
+            FakeTracker,
+        )
+        scheduler = FakeScheduler()
+        agent = SimpleNamespace(task_scheduler=scheduler)
+
+        await Agent._register_system_tasks(agent)
+
+        assert scheduler.updates == []
+        assert task.trigger_type == TriggerType.INTERVAL
+        assert task.trigger_config == {"interval_minutes": 720}
 
 
 class TestTaskSerialization:

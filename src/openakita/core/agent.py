@@ -2233,7 +2233,10 @@ class Agent:
                     existing_memory_task.action = "system:daily_memory"
                     changed = True
                 # 适应期 ↔ 正常期切换时，更新触发器
-                if existing_memory_task.trigger_type != desired_trigger:
+                user_custom_trigger = bool(
+                    (existing_memory_task.metadata or {}).get("user_custom_trigger")
+                )
+                if existing_memory_task.trigger_type != desired_trigger and not user_custom_trigger:
                     await self.task_scheduler.update_task(
                         memory_task_id,
                         {
@@ -2246,6 +2249,8 @@ class Agent:
                     logger.info(
                         f"Switched memory task trigger to {desired_trigger.value}: {desired_desc}"
                     )
+                elif user_custom_trigger:
+                    logger.info("Keeping user-customized memory task trigger")
                 if changed:
                     await self.task_scheduler.save()
 

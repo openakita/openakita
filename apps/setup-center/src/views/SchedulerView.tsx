@@ -33,6 +33,7 @@ type ScheduledTask = {
   prompt: string;
   channel_id: string | null;
   chat_id: string | null;
+  agent_profile_id: string;
   enabled: boolean;
   status: string;
   deletable: boolean;
@@ -68,6 +69,13 @@ type IMChannel = {
   bot_display_name?: string;
 };
 
+type AgentProfile = {
+  id: string;
+  name?: string;
+  description?: string;
+  icon?: string;
+};
+
 // Frontend-only schedule mode; maps to backend trigger_type (once/interval/cron)
 type ScheduleMode = "once" | "interval" | "daily" | "weekly" | "monthly" | "custom";
 
@@ -92,6 +100,7 @@ type TaskForm = {
   prompt: string;
   channel_id: string;
   chat_id: string;
+  agent_profile_id: string;
   enabled: boolean;
 };
 
@@ -113,6 +122,7 @@ const defaultForm: TaskForm = {
   prompt: "",
   channel_id: "",
   chat_id: "",
+  agent_profile_id: "default",
   enabled: true,
 };
 
@@ -225,6 +235,7 @@ function taskToForm(task: ScheduledTask): TaskForm {
   f.prompt = task.prompt || "";
   f.channel_id = task.channel_id || "";
   f.chat_id = task.chat_id || "";
+  f.agent_profile_id = task.agent_profile_id || "default";
   f.enabled = task.enabled;
 
   if (mode === "once") {
@@ -346,6 +357,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
   const [busy, setBusy] = useState(false);
   
   const [channels, setChannels] = useState<IMChannel[]>([]);
+  const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
   const [activeTab, setActiveTab] = useState<TaskTab>("active");
   const [searchQuery, setSearchQuery] = useState("");
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
@@ -391,7 +403,18 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
     }
   }, [serviceRunning, t]);
 
-  useEffect(() => { fetchTasks(); fetchChannels(); }, [fetchTasks, fetchChannels]);
+  const fetchAgentProfiles = useCallback(async () => {
+    if (!serviceRunning) return;
+    try {
+      const res = await safeFetch(`${API_BASE}/api/agents/profiles`);
+      const data = await res.json();
+      setAgentProfiles(data.profiles || []);
+    } catch {
+      setAgentProfiles([]);
+    }
+  }, [serviceRunning, API_BASE]);
+
+  useEffect(() => { fetchTasks(); fetchChannels(); fetchAgentProfiles(); }, [fetchTasks, fetchChannels, fetchAgentProfiles]);
 
   useEffect(() => {
     if (!serviceRunning) return;
@@ -458,6 +481,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
         prompt: form.task_type === "task" ? form.prompt : "",
         channel_id: form.channel_id || "",
         chat_id: form.chat_id || "",
+        agent_profile_id: form.task_type === "task" ? form.agent_profile_id || "default" : "default",
         enabled: form.enabled,
       };
 
@@ -921,6 +945,40 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                 </Select>
               </div>
             </div>
+
+            {form.task_type === "task" && (
+              <div className="space-y-1.5">
+                <Label>{t("scheduler.agentProfile")}</Label>
+                <Select
+                  value={form.agent_profile_id || "default"}
+                  onValueChange={v => setForm(f => ({ ...f, agent_profile_id: v }))}
+                >
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent position="popper" className="max-h-[300px]">
+                    {agentProfiles.length === 0 && (
+                      <SelectItem value="default">{t("scheduler.agentDefault")}</SelectItem>
+                    )}
+                    {agentProfiles.map(profile => (
+                      <SelectItem key={profile.id} value={profile.id}>
+                        <span className="flex items-center gap-1.5">
+                          {profile.icon && <span>{profile.icon}</span>}
+                          <span>{profile.name || profile.id}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                    {form.agent_profile_id
+                      && !agentProfiles.some(profile => profile.id === form.agent_profile_id) && (
+                      <SelectItem value={form.agent_profile_id}>
+                        {form.agent_profile_id}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {t("scheduler.agentProfileHint")}
+                </p>
+              </div>
+            )}
 
             {renderTriggerFields()}
 
