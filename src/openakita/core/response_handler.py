@@ -43,6 +43,15 @@ def strip_thinking_tags(text: str) -> str:
         flags=re.DOTALL | re.IGNORECASE,
     )
     cleaned = re.sub(
+        r"<?minimax:tool_call>?\s+[a-zA-Z_][\w.]*(?::\d+)?\s*"
+        r"<\|tool_call_argument_begin\|>.*?"
+        r"(?:<\|tool_call_end\|>\s*)?"
+        r"(?:<\|tool_calls_section_end\|>|</minimax:tool_call>|$)\s*",
+        "",
+        cleaned,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    cleaned = re.sub(
         r"<<\|tool_calls_section_begin\|>>.*?<<\|tool_calls_section_end\|>>\s*",
         "",
         cleaned,

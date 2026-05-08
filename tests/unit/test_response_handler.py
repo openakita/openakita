@@ -3,11 +3,11 @@
 import pytest
 
 from openakita.core.response_handler import (
+    ResponseHandler,
+    clean_llm_response,
+    request_expects_artifact,
     strip_thinking_tags,
     strip_tool_simulation_text,
-    clean_llm_response,
-    ResponseHandler,
-    request_expects_artifact,
 )
 
 
@@ -44,6 +44,14 @@ class TestCleanLLMResponse:
         text = "<thinking>plan</thinking>Here is the answer."
         result = clean_llm_response(text)
         assert "Here is the answer" in result
+
+    def test_clean_minimax_kimi_hybrid_tool_call_leak(self):
+        text = (
+            '<minimax:tool_call> browser_open:3 <|tool_call_argument_begin|> {"visible": true} '
+            "<|tool_call_end|> <|tool_calls_section_end|>"
+        )
+        result = clean_llm_response(text)
+        assert result == ""
 
 
 class TestResponseHandlerStaticMethods:

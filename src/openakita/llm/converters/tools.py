@@ -351,6 +351,81 @@ def _make_invoke_wrapper_parser(
     return parser
 
 
+# ── MiniMax / Kimi 混合格式 ─────────────────────────────
+
+
+_MINIMAX_INVOKE_PARSER = _make_invoke_wrapper_parser(
+    "<minimax:tool_call>",
+    "</minimax:tool_call>",
+)
+_MINIMAX_KIMI_CALL_RE = re.compile(
+    r"<?minimax:tool_call>?\s+"
+    r"(?P<tool_id>[a-zA-Z_][\w.]*(?::\d+)?)\s*"
+    r"<\|tool_call_argument_begin\|>\s*"
+    r"(?P<arguments>.*?)\s*"
+    r"<\|tool_call_end\|>\s*"
+    r"(?:<\|tool_calls_section_end\|>|</minimax:tool_call>)?",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _tool_name_from_text_id(tool_id: str) -> str:
+    """从 `functions.name:0` / `name:0` 这类文本 ID 中取工具名。"""
+    base = tool_id.split(":", 1)[0].strip()
+    return base.rsplit(".", 1)[-1]
+
+
+def _parse_minimax_tool_call(text: str) -> tuple[str, list[ToolUseBlock]]:
+    """解析 MiniMax 文本工具调用。
+
+    MiniMax 兼容端点会出现两类输出：
+    1. XML invoke 结构：<minimax:tool_call><invoke name="...">...</invoke></minimax:tool_call>
+    2. Kimi 风格混合结构：<minimax:tool_call> browser_open:3
+       <|tool_call_argument_begin|>{"visible": true}<|tool_call_end|>
+
+    第二种正是 #417 反馈里的泄漏格式，需要直接转成真实工具调用，而不是继续
+    暴露给用户。
+    """
+    clean, invoke_calls = _MINIMAX_INVOKE_PARSER(text)
+    if invoke_calls:
+        return clean, invoke_calls
+
+    tool_calls: list[ToolUseBlock] = []
+    spans_to_remove: list[tuple[int, int]] = []
+    for match in _MINIMAX_KIMI_CALL_RE.finditer(text):
+        tool_id = match.group("tool_id")
+        tool_name = _tool_name_from_text_id(tool_id)
+        arguments_str = match.group("arguments").strip()
+        try:
+            arguments = json.loads(arguments_str) if arguments_str else {}
+        except json.JSONDecodeError:
+            arguments = {"raw": arguments_str}
+
+        tool_calls.append(
+            ToolUseBlock(
+                id=f"minimax_call_{tool_id.replace('.', '_').replace(':', '_')}",
+                name=tool_name,
+                input=arguments,
+            )
+        )
+        spans_to_remove.append((match.start(), match.end()))
+        logger.info(
+            f"[MINIMAX_TOOL_PARSE] Extracted tool call: {tool_name} "
+            f"with args: {list(arguments.keys())}"
+        )
+
+    if not tool_calls:
+        return text, []
+
+    parts: list[str] = []
+    prev = 0
+    for start, end in spans_to_remove:
+        parts.append(text[prev:start])
+        prev = end
+    parts.append(text[prev:])
+    return "".join(parts).strip(), tool_calls
+
+
 # ── Kimi K2 格式 ──────────────────────────────────────
 
 
@@ -1199,8 +1274,8 @@ _TEXT_TOOL_FORMATS: list[_TextToolFormat] = [
     ),
     _TextToolFormat(
         "minimax",
-        re.compile(r"<minimax:tool_call>", re.IGNORECASE),
-        _make_invoke_wrapper_parser("<minimax:tool_call>", "</minimax:tool_call>"),
+        re.compile(r"<?minimax:tool_call>?", re.IGNORECASE),
+        _parse_minimax_tool_call,
     ),
     _TextToolFormat(
         "kimi_k2",
