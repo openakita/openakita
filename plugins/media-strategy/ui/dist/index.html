@@ -72,7 +72,27 @@
     .empty { text-align:center; color:var(--text-muted); padding:28px 12px; font-size:13px; }
     .report { max-height:520px; overflow:auto; color:var(--text); }
     .report h1 { font-size:20px; }.report h2 { font-size:16px; margin-top:18px; }.report p,.report li { font-size:13px; }
+    .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .metric { padding:10px 12px; border:1px solid var(--border); border-radius:9px; background:var(--bg-card); }
+    .metric strong { display:block; font-size:18px; color:var(--primary); }
+    .metric span { font-size:12px; color:var(--text-muted); }
+    .source-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
+    .source-card { border:1px solid var(--border); border-radius:9px; padding:10px; background:var(--bg-card); }
+    .source-card.off { opacity:.62; }
+    .source-card__head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
+    .source-card__title { font-size:13px; font-weight:650; }
+    .source-card__url { margin-top:6px; font-size:11px; color:var(--text-dim); word-break:break-all; }
+    .package-row { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
+    .package-card { border:1px solid var(--border); border-radius:9px; padding:10px; background:var(--bg-card); cursor:pointer; }
+    .package-card.active { border-color:var(--primary); background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); box-shadow:0 0 0 1px rgba(15,118,110,.16) inset; }
+    .package-card strong { display:block; font-size:13px; }
+    .package-card span { color:var(--text-muted); font-size:12px; }
+    .task-list { display:grid; gap:8px; }
+    .task-row { display:flex; justify-content:space-between; gap:10px; border:1px solid var(--border); border-radius:8px; padding:9px 10px; font-size:12px; }
+    .status-done { color:var(--success); }.status-failed { color:var(--danger); }.status-running { color:var(--warning); }
     @media (max-width: 900px) { .grid { grid-template-columns:1fr; } .header { align-items:flex-start; gap:10px; flex-direction:column; } }
+    @media (max-width: 700px) { .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   </style>
 </head>
 <body>
@@ -97,13 +117,23 @@
         <select id="package" class="input">
           <option value="">全部套餐</option><option value="taiwan">台海观察</option><option value="policy">时政政策</option><option value="economy">经济财经</option><option value="world">国际局势</option><option value="tech">科技产业</option><option value="platform">平台热点</option>
         </select>
+        <select id="hours" class="input"><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="72">72 小时</option><option value="168">7 天</option></select>
         <input id="query" class="input" placeholder="关键词，例如 台海 / 政策 / 关税">
-        <button id="ingest" class="btn">拉取 RSS</button>
+        <button id="ingest" class="btn">拉取已启用源</button>
         <button id="radar" class="btn btn-primary">生成热点雷达</button>
+      </div>
+      <div class="summary-grid" id="metrics">
+        <div class="metric"><strong>-</strong><span>热点数</span></div>
+        <div class="metric"><strong>-</strong><span>已启用源</span></div>
+        <div class="metric"><strong>-</strong><span>最近新增</span></div>
+        <div class="metric"><strong>-</strong><span>失败源</span></div>
       </div>
       <div class="grid">
         <div class="card grow"><h2 class="oa-section-title">热点榜</h2><div id="items" class="empty">暂无数据，先拉取 RSS 或调整时间窗。</div></div>
-        <div class="card"><h2 class="oa-section-title">信源复核</h2><div class="oa-hint">所有热点都保留原文链接。对高风险内容，请先复核再进入采编。</div><button id="verify" class="btn btn-primary">为选中热点生成复核清单</button><div id="verifyOut" class="report"></div></div>
+        <div class="stack-layout">
+          <div class="card"><h2 class="oa-section-title">信源复核</h2><div class="oa-hint">所有热点都保留原文链接。对高风险内容，请先复核再进入采编。</div><button id="verify" class="btn btn-primary">为选中热点生成复核清单</button><div id="verifyOut" class="report"></div></div>
+          <div class="card"><h2 class="oa-section-title">最近任务</h2><div id="tasks" class="task-list"></div></div>
+        </div>
       </div>
     </section>
     <section id="tab-brief" class="stack-layout" hidden>
@@ -113,13 +143,28 @@
       <div class="card"><h2 class="oa-section-title">策研采编计划</h2><div class="oa-hint">复刻只复用角度、结构和制作方法，不照搬原文。</div><input id="topic" class="input" placeholder="主题，可留空按选中热点生成"><button id="plan" class="btn btn-primary">生成采访/拍摄/脚本计划</button><div id="planOut" class="report"></div></div>
     </section>
     <section id="tab-settings" class="stack-layout" hidden>
-      <div class="card"><h2 class="oa-section-title">订阅与存储</h2><div id="settingsOut" class="report">加载中</div></div>
+      <div class="card"><h2 class="oa-section-title">套餐订阅</h2><div id="packagesOut" class="package-row">加载中</div></div>
+      <div class="card">
+        <h2 class="oa-section-title">添加 RSS 源</h2>
+        <div class="toolbar">
+          <input id="feedName" class="input" placeholder="源名称">
+          <input id="feedUrl" class="input" style="min-width:320px" placeholder="https://example.com/feed.xml">
+          <select id="feedPackage" class="input"><option value="taiwan">台海观察</option><option value="policy">时政政策</option><option value="economy">经济财经</option><option value="world">国际局势</option><option value="tech">科技产业</option><option value="platform">平台热点</option></select>
+          <button id="addFeed" class="btn btn-primary">添加并校验</button>
+          <button id="syncSources" class="btn">同步内置源</button>
+        </div>
+        <div class="oa-hint">自定义 RSS 会经过 URL 安全校验，避免访问本机或内网地址。</div>
+      </div>
+      <div class="card"><h2 class="oa-section-title">信源管理</h2><div id="sourcesOut" class="source-grid">加载中</div></div>
+      <div class="card"><h2 class="oa-section-title">存储与健康</h2><div id="settingsOut" class="report">加载中</div></div>
     </section>
   </main>
 </div>
 <script>
 const API = window.OpenAkitaPlugin.apiBase;
 let selected = [];
+let lastItems = [];
+let lastHealth = null;
 async function api(path, opts={}) {
   const res = await fetch(API + path, {headers:{'Content-Type':'application/json'}, ...opts});
   const body = await res.json().catch(()=>({}));
@@ -127,29 +172,114 @@ async function api(path, opts={}) {
   return body;
 }
 function showHealth(ok, text){ const el=document.getElementById('health'); el.textContent=text; el.className='api-pill ' + (ok?'ok':''); }
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function statusClass(s){ return s === 'done' ? 'status-done' : s === 'failed' ? 'status-failed' : s === 'running' ? 'status-running' : ''; }
 function renderItems(items){
+  lastItems = items || [];
   selected = items.slice(0, 3).map(x=>x.id);
   const el=document.getElementById('items');
   if(!items.length){ el.className='empty'; el.textContent='暂无热点，先拉取 RSS 或扩大范围。'; return; }
   el.className='';
   el.innerHTML = items.map((it,i)=>`<article class="item">
-    <h3><label><input type="checkbox" data-id="${it.id}" ${i<3?'checked':''}> <a href="${it.url}" target="_blank" rel="noreferrer">${it.title}</a></label></h3>
-    <div class="meta"><span class="pill score">score ${it.hot_score||0}</span><span class="pill ${it.risk_level||'medium'}">risk ${it.risk_level||'medium'}</span><span>${it.source_id||''}</span><span>${it.published_at||it.fetched_at||''}</span></div>
-    <p>${it.ai_summary || it.summary || '无摘要'}</p>
+    <h3><label><input type="checkbox" data-id="${esc(it.id)}" ${i<3?'checked':''}> <a href="${esc(it.url)}" target="_blank" rel="noreferrer">${esc(it.title)}</a></label></h3>
+    <div class="meta"><span class="pill score">score ${esc(it.hot_score||0)}</span><span class="pill ${esc(it.risk_level||'medium')}">risk ${esc(it.risk_level||'medium')}</span><span>${esc(it.source_id||'')}</span><span>${esc(it.published_at||it.fetched_at||'')}</span></div>
+    <p>${esc(it.ai_summary || it.summary || '无摘要')}</p>
   </article>`).join('');
   el.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener('change',()=>{ selected=[...el.querySelectorAll('input:checked')].map(x=>x.dataset.id); }));
 }
-async function refreshHealth(){ try{ const h=await api('/healthz'); showHealth(true, `运行中 · ${h.version}`); }catch(e){ showHealth(false, '健康检查失败'); } }
-async function runRadar(){ const pkg=document.getElementById('package').value; const q=document.getElementById('query').value.trim(); const data=q?await api(`/articles?q=${encodeURIComponent(q)}&package_id=${pkg}`):await api('/tasks',{method:'POST',body:JSON.stringify({mode:'hot_radar',params:{package_id:pkg,since_hours:24,limit:30}})}); renderItems(data.items || data.result?.items || []); }
-async function runTask(mode, params, outId){ const out=document.getElementById(outId); out.innerHTML='<p>生成中...</p>'; const data=await api('/tasks',{method:'POST',body:JSON.stringify({mode,params})}); const md=data.result?.report?.markdown || JSON.stringify(data.result,null,2); out.innerHTML=window.MarkdownMini.render(md); }
+function renderMetrics(radarStats={}, ingestStats=null){
+  const enabled = lastHealth?.sources_enabled ?? '-';
+  const failed = ingestStats?.failed ?? lastHealth?.sources_failed ?? '-';
+  document.getElementById('metrics').innerHTML = `
+    <div class="metric"><strong>${esc(radarStats.total ?? lastItems.length ?? 0)}</strong><span>热点数</span></div>
+    <div class="metric"><strong>${esc(enabled)}</strong><span>已启用源</span></div>
+    <div class="metric"><strong>${esc(ingestStats?.inserted ?? '-')}</strong><span>最近新增</span></div>
+    <div class="metric"><strong>${esc(failed)}</strong><span>失败源</span></div>`;
+}
+async function refreshHealth(){
+  try{
+    const h=await api('/healthz');
+    lastHealth = h;
+    showHealth(true, `运行中 · ${h.version} · ${h.sources_enabled || 0} 源`);
+    renderMetrics();
+  }catch(e){ showHealth(false, '健康检查失败'); }
+}
+async function runRadar(){
+  const pkg=document.getElementById('package').value;
+  const q=document.getElementById('query').value.trim();
+  const hours=document.getElementById('hours').value;
+  const data=await api(`/radar?q=${encodeURIComponent(q)}&package_id=${encodeURIComponent(pkg)}&since_hours=${hours}&limit=50`);
+  renderItems(data.items || []);
+  renderMetrics(data.stats || {});
+}
+async function runTask(mode, params, outId){
+  const out=document.getElementById(outId);
+  out.innerHTML='<p>生成中...</p>';
+  const data=await api('/tasks',{method:'POST',body:JSON.stringify({mode,params})});
+  const md=data.result?.report?.markdown || JSON.stringify(data.result,null,2);
+  out.innerHTML=window.MarkdownMini.render(md);
+  await loadTasks();
+  return data;
+}
 document.querySelectorAll('.tab').forEach(btn=>btn.onclick=()=>{ document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); document.querySelectorAll('main section').forEach(s=>s.hidden=true); document.getElementById('tab-'+btn.dataset.tab).hidden=false; });
-document.getElementById('ingest').onclick=async()=>{ await runTask('ingest',{package_ids:[document.getElementById('package').value].filter(Boolean)},'verifyOut'); await runRadar(); };
+document.getElementById('ingest').onclick=async()=>{
+  const pkg=document.getElementById('package').value;
+  const data=await api('/ingest',{method:'POST',body:JSON.stringify({package_ids:[pkg].filter(Boolean)})});
+  document.getElementById('verifyOut').innerHTML = `<p>拉取完成：新增 ${esc(data.result?.inserted ?? 0)}，失败源 ${esc(data.result?.failed ?? 0)}。</p>`;
+  renderMetrics({}, data.result || {});
+  await refreshHealth(); await loadSources(); await loadTasks(); await runRadar();
+};
 document.getElementById('radar').onclick=runRadar;
 document.getElementById('brief').onclick=()=>runTask('daily_brief',{session:'morning',since_hours:24,limit:20},'briefOut');
 document.getElementById('verify').onclick=()=>runTask('verify_pack',{article_ids:selected},'verifyOut');
 document.getElementById('plan').onclick=()=>runTask('replicate_plan',{article_ids:selected,topic:document.getElementById('topic').value,target_format:'short_video',tone:'稳健客观'},'planOut');
-async function loadSettings(){ const s=await api('/settings'); const pk=await api('/packages'); document.getElementById('settingsOut').innerHTML = `<p>数据目录：${s.host_config.custom_data_dir || '宿主管理目录'}</p>` + Object.values(pk.packages).map(p=>`<p><span class="pill">${p.enabled?'已启用':'未启用'}</span> ${p.label_zh} · ${p.description}</p>`).join(''); }
-refreshHealth(); loadSettings().catch(()=>{}); runRadar().catch(()=>{});
+async function loadPackages(){
+  const pk=await api('/packages');
+  document.getElementById('packagesOut').innerHTML = Object.values(pk.packages).map(p=>`
+    <div class="package-card ${p.enabled?'active':''}" data-package="${esc(p.id)}">
+      <strong>${esc(p.label_zh)}</strong><span>${esc(p.description)}</span>
+    </div>`).join('');
+  document.querySelectorAll('.package-card').forEach(card=>card.onclick=async()=>{
+    const id=card.dataset.package;
+    const enabled=!card.classList.contains('active');
+    await api('/packages/subscribe',{method:'POST',body:JSON.stringify({package_id:id,enabled})});
+    await loadPackages(); await runRadar();
+  });
+}
+async function loadSources(){
+  const data=await api('/sources');
+  document.getElementById('sourcesOut').innerHTML = data.sources.map(s=>`
+    <div class="source-card ${s.enabled?'':'off'}">
+      <div class="source-card__head"><div><div class="source-card__title">${esc(s.label_zh)}</div><span class="pill">${esc((s.package_ids||[]).join(' / '))}</span></div>
+      <button class="btn" data-source="${esc(s.id)}" data-enabled="${s.enabled?'1':'0'}">${s.enabled?'停用':'启用'}</button></div>
+      <div class="meta"><span>权重 ${esc(s.authority)}</span><span>${esc(s.last_status || '未拉取')}</span>${s.last_error?`<span class="pill high">失败</span>`:''}</div>
+      <div class="source-card__url">${esc(s.url)}</div>
+    </div>`).join('');
+  document.querySelectorAll('[data-source]').forEach(btn=>btn.onclick=async()=>{
+    await api(`/sources/${encodeURIComponent(btn.dataset.source)}/enabled`,{method:'POST',body:JSON.stringify({enabled:btn.dataset.enabled!=='1'})});
+    await loadSources(); await refreshHealth();
+  });
+}
+async function loadTasks(){
+  const data=await api('/tasks?limit=8');
+  document.getElementById('tasks').innerHTML = (data.tasks||[]).map(t=>`
+    <div class="task-row"><span>${esc(t.mode)} · <b class="${statusClass(t.status)}">${esc(t.status)}</b></span><span>${esc(t.id)}</span></div>`).join('') || '<div class="empty">暂无任务</div>';
+}
+async function loadSettings(){
+  const s=await api('/settings');
+  const h=lastHealth || await api('/healthz');
+  document.getElementById('settingsOut').innerHTML = `
+    <p><b>数据目录</b>：${esc(s.host_config.custom_data_dir || h.data_dir || '宿主管理目录')}</p>
+    <p><b>Brain</b>：${h.brain_available?'可用':'不可用，将使用规则降级'}</p>
+    <p><b>依赖</b>：${Object.entries(h.deps || {}).map(([k,v])=>`${esc(k)}=${v.last_success?'ok':'pending'}`).join('，') || '无状态'}</p>`;
+}
+document.getElementById('addFeed').onclick=async()=>{
+  await api('/feeds',{method:'POST',body:JSON.stringify({name:document.getElementById('feedName').value,url:document.getElementById('feedUrl').value,package_ids:[document.getElementById('feedPackage').value],enabled:true})});
+  document.getElementById('feedName').value=''; document.getElementById('feedUrl').value='';
+  await loadSources(); await refreshHealth();
+};
+document.getElementById('syncSources').onclick=async()=>{ await api('/sources/sync',{method:'POST'}); await loadSources(); await refreshHealth(); };
+refreshHealth(); loadPackages().catch(()=>{}); loadSources().catch(()=>{}); loadSettings().catch(()=>{}); loadTasks().catch(()=>{}); runRadar().catch(()=>{});
 </script>
 </body>
 </html>

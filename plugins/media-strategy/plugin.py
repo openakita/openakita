@@ -18,7 +18,7 @@ try:
 except Exception:
     pass
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from media_fetchers.rss import validate_feed_url
 from media_models import BRAND, DISPLAY_NAME_ZH, PLUGIN_ID, PLUGIN_VERSION, SLOGAN, TOOL_NAMES
 from media_pipeline import MediaPipeline
@@ -57,6 +57,10 @@ class AddFeedBody(_StrictBase):
     name: str
     url: str
     package_ids: list[str] = Field(default_factory=list)
+    enabled: bool = True
+
+
+class ToggleSourceBody(_StrictBase):
     enabled: bool = True
 
 
@@ -161,6 +165,9 @@ class Plugin(PluginBase):
             assert self._tm is not None
             from media_inline.dep_bootstrap import get_dep_state
 
+            sources = await self._tm.list_sources()
+            enabled_count = sum(1 for source in sources if source.get("enabled"))
+            failed_count = sum(1 for source in sources if source.get("last_status") == "failed")
             return {
                 "ok": True,
                 "plugin_id": PLUGIN_ID,
@@ -171,6 +178,9 @@ class Plugin(PluginBase):
                 "data_dir": str(self._data_dir),
                 "db_ready": self._tm.ready,
                 "brain_available": self._api.get_brain() is not None if self._api else False,
+                "sources_total": len(sources),
+                "sources_enabled": enabled_count,
+                "sources_failed": failed_count,
                 "deps": get_dep_state(),
                 "timestamp": time.time(),
             }
@@ -216,6 +226,23 @@ class Plugin(PluginBase):
             assert self._tm is not None
             return {"sources": await self._tm.list_sources()}
 
+        @router.post("/sources/sync")
+        async def sync_sources() -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            stats = await self._tm.sync_builtin_sources()
+            return {"ok": True, "stats": stats, "sources": await self._tm.list_sources()}
+
+        @router.post("/sources/{source_id}/enabled")
+        async def toggle_source(source_id: str, body: ToggleSourceBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            try:
+                source = await self._tm.set_source_enabled(source_id, body.enabled)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"unknown source: {source_id}") from exc
+            return {"ok": True, "source": source}
+
         @router.post("/feeds")
         async def add_feed(body: AddFeedBody) -> dict[str, Any]:
             await self._ensure_ready()
@@ -236,6 +263,28 @@ class Plugin(PluginBase):
         async def create_task(body: CreateTaskBody) -> dict[str, Any]:
             await self._ensure_ready()
             return await self._create_and_run_task(body.mode, body.params)
+
+        @router.post("/ingest")
+        async def ingest_now(params: dict[str, Any] | None = Body(default=None)) -> dict[str, Any]:
+            await self._ensure_ready()
+            return await self._create_and_run_task("ingest", params or {})
+
+        @router.get("/radar")
+        async def radar(
+            package_id: str = "",
+            q: str = "",
+            since_hours: int = Query(default=24, ge=1, le=168),
+            limit: int = Query(default=30, ge=1, le=100),
+        ) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._pipeline is not None
+            if q.strip():
+                return await self._pipeline.search_news(
+                    {"q": q, "package_id": package_id, "limit": limit}
+                )
+            return await self._pipeline.hot_radar(
+                {"package_id": package_id, "since_hours": since_hours, "limit": limit}
+            )
 
         @router.get("/tasks")
         async def list_tasks(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:

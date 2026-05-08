@@ -36,9 +36,28 @@ def test_ui_assets_and_iconify_tokens_exist() -> None:
     assert "/api/plugins/_sdk/" not in html
     assert "solar:radar-linear" in html
     assert "#0F766E" in html
+    for token in ("/radar", "/ingest", "/sources/sync", "/packages/subscribe"):
+        assert token in html
     for icon in (PLUGIN_DIR / "icon.svg", ui / "icon.svg", ui / "media-strategy-brand.svg"):
         blob = icon.read_text("utf-8")
         assert "<svg" in blob and "Iconify source: solar:radar-linear" in blob
+
+
+def test_builtin_source_catalog_is_rich() -> None:
+    from media_models import SOURCE_DEFS
+
+    assert len(SOURCE_DEFS) >= 18
+    for required in (
+        "cctv-domestic",
+        "cctv-hk-tw",
+        "bbc-zh",
+        "zaobao-china",
+        "taiwan-info",
+        "diplomat-china-power",
+    ):
+        assert required in SOURCE_DEFS
+    packages = {pkg for source in SOURCE_DEFS.values() for pkg in source["packages"]}
+    assert {"policy", "taiwan", "economy", "world", "tech", "platform"}.issubset(packages)
 
 
 def test_feed_parser_stdlib_fallback() -> None:
@@ -76,6 +95,10 @@ async def test_task_manager_seeds_and_upserts_article(tmp_path: Path) -> None:
     try:
         packages = await tm.list_packages()
         assert packages["taiwan"]["enabled"] is True
+        sources = await tm.list_sources()
+        assert len(sources) >= 18
+        toggled = await tm.set_source_enabled("cctv-domestic", False)
+        assert toggled["enabled"] is False
         source = await tm.add_custom_source(
             name="Demo",
             url="https://example.com/rss.xml",

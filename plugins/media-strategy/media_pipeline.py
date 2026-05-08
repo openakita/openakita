@@ -35,13 +35,14 @@ class MediaPipeline:
         packages = await self.tm.list_packages()
         enabled_packages = {pid for pid, meta in packages.items() if meta.get("enabled")}
         package_filter = set(params.get("package_ids") or [])
-        if package_filter:
-            enabled_packages &= package_filter
+        active_packages = package_filter if package_filter else enabled_packages
         sources = await self.tm.list_sources(enabled_only=True)
-        if enabled_packages:
+        if active_packages:
             sources = [
-                s for s in sources if set(s.get("package_ids") or []).intersection(enabled_packages)
+                s for s in sources if set(s.get("package_ids") or []).intersection(active_packages)
             ]
+        else:
+            sources = []
         timeout = float(params.get("timeout_sec") or settings.get("fetch_timeout_sec") or 15)
         user_agent = str(settings.get("user_agent") or "OpenAkita-MediaStrategy/0.1")
         limit_sources = int(params.get("limit_sources") or 0)

@@ -202,6 +202,7 @@ class MediaTaskManager:
         await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.executescript(SCHEMA_SQL)
         await self._seed_defaults()
+        await self.sync_builtin_sources()
         await self._db.commit()
 
     async def close(self) -> None:
@@ -256,6 +257,62 @@ class MediaTaskManager:
                 ),
             )
 
+    async def sync_builtin_sources(self) -> dict[str, int]:
+        """Add newly shipped builtin feeds and refresh immutable metadata.
+
+        Existing users may already have a SQLite database. New plugin
+        versions should add fresh builtin sources without resetting the
+        user's enabled/disabled choices.
+        """
+
+        db = self._require()
+        inserted = 0
+        updated = 0
+        now = time.time()
+        for source_id, meta in SOURCE_DEFS.items():
+            row = await _fetchone(db, "SELECT id, custom FROM sources WHERE id=?", (source_id,))
+            if row is None:
+                await db.execute(
+                    """
+                    INSERT INTO sources(
+                        id, kind, package_ids_json, label_zh, label_en, url, enabled,
+                        authority, custom, created_at, updated_at
+                    ) VALUES (?, 'rss', ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    """,
+                    (
+                        source_id,
+                        json.dumps(meta["packages"], ensure_ascii=False),
+                        meta["label_zh"],
+                        meta["label_en"],
+                        meta["url"],
+                        1 if meta["default_enabled"] else 0,
+                        float(meta["authority"]),
+                        now,
+                        now,
+                    ),
+                )
+                inserted += 1
+            elif not bool(row["custom"]):
+                await db.execute(
+                    """
+                    UPDATE sources
+                    SET package_ids_json=?, label_zh=?, label_en=?, url=?, authority=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    (
+                        json.dumps(meta["packages"], ensure_ascii=False),
+                        meta["label_zh"],
+                        meta["label_en"],
+                        meta["url"],
+                        float(meta["authority"]),
+                        now,
+                        source_id,
+                    ),
+                )
+                updated += 1
+        await db.commit()
+        return {"inserted": inserted, "updated": updated}
+
     async def get_settings(self) -> dict[str, Any]:
         db = self._require()
         rows = await db.execute_fetchall("SELECT key, value FROM config")
@@ -302,13 +359,25 @@ class MediaTaskManager:
             for pid, meta in PACKAGE_DEFS.items()
         }
 
+    async def set_source_enabled(self, source_id: str, enabled: bool) -> dict[str, Any]:
+        db = self._require()
+        cursor = await db.execute(
+            "UPDATE sources SET enabled=?, updated_at=? WHERE id=?",
+            (1 if enabled else 0, time.time(), source_id),
+        )
+        await db.commit()
+        if cursor.rowcount <= 0:
+            raise KeyError(source_id)
+        row = await _fetchone(db, "SELECT * FROM sources WHERE id=?", (source_id,))
+        return _row_to_dict(row) or {}
+
     async def list_sources(self, *, enabled_only: bool = False) -> list[dict[str, Any]]:
         db = self._require()
         sql = "SELECT * FROM sources"
         params: list[Any] = []
         if enabled_only:
             sql += " WHERE enabled=1"
-        sql += " ORDER BY custom ASC, id ASC"
+        sql += " ORDER BY custom ASC, enabled DESC, authority DESC, id ASC"
         rows = await db.execute_fetchall(sql, params)
         return [_row_to_dict(row) or {} for row in rows]
 
