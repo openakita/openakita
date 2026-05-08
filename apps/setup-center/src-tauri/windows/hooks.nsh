@@ -144,8 +144,21 @@ Var LegacyMigrated
   FileWrite $R8 "        $$roots += $$cr$\r$\n"
   FileWrite $R8 "    }$\r$\n"
   FileWrite $R8 "}$\r$\n"
+  FileWrite $R8 "function Test-OASafeRoot([string]$$Root) {$\r$\n"
+  FileWrite $R8 "    if (-not $$Root -or -not (Test-Path -LiteralPath $$Root)) { return $$false }$\r$\n"
+  FileWrite $R8 "    try { $$full = [System.IO.Path]::GetFullPath($$Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) } catch { return $$false }$\r$\n"
+  FileWrite $R8 "    $$drive = [System.IO.Path]::GetPathRoot($$full)$\r$\n"
+  FileWrite $R8 "    if ($$drive) { $$drive = $$drive.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) }$\r$\n"
+  FileWrite $R8 "    if ($$drive -and $$full -ieq $$drive) { return $$false }$\r$\n"
+  FileWrite $R8 "    $$home = [System.IO.Path]::GetFullPath($$env:USERPROFILE).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)$\r$\n"
+  FileWrite $R8 "    if ($$full -ieq $$home) { return $$false }$\r$\n"
+  FileWrite $R8 "    $$defFull = [System.IO.Path]::GetFullPath($$defaultRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)$\r$\n"
+  FileWrite $R8 "    if ($$full -ieq $$defFull) { return $$true }$\r$\n"
+  FileWrite $R8 "    return (Test-Path -LiteralPath (Join-Path $$full '.openakita-root'))$\r$\n"
+  FileWrite $R8 "}$\r$\n"
   ; ── Clean each root ──
-  FileWrite $R8 "foreach ($$Root in $$roots) {$\r$\n"
+  FileWrite $R8 "foreach ($$Root in ($$roots | Select-Object -Unique)) {$\r$\n"
+  FileWrite $R8 "    if (-not (Test-OASafeRoot $$Root)) { continue }$\r$\n"
   FileWrite $R8 "    foreach ($$d in @('run','venv','runtime','modules','python','embedded_python')) {$\r$\n"
   FileWrite $R8 "        $$p = Join-Path $$Root $$d$\r$\n"
   FileWrite $R8 "        if (Test-Path $$p) {$\r$\n"
@@ -426,7 +439,7 @@ Var LegacyMigrated
   ; 无需再以用户身份单独启动应用执行 --clean-env。
 !macroend
 
-; Generates a PowerShell script that resolves BOTH data roots and force-removes them.
+; Generates a PowerShell script that resolves BOTH data roots and removes only OpenAkita-owned entries.
 ; Used by NSIS_HOOK_POSTUNINSTALL — same self-resolving pattern as _oa_cleanup.ps1.
 !macro _OpenAkita_WriteUninstDataScript
   InitPluginsDir
@@ -439,10 +452,30 @@ Var LegacyMigrated
   FileWrite $R8 "    try { $$cr = [System.IO.File]::ReadAllText($$crf).Trim() } catch { $$cr = '' }$\r$\n"
   FileWrite $R8 "    if ($$cr -and $$cr -ne $$def) { $$roots += $$cr }$\r$\n"
   FileWrite $R8 "}$\r$\n"
-  FileWrite $R8 "foreach ($$r in $$roots) {$\r$\n"
-  FileWrite $R8 "    if (Test-Path $$r) {$\r$\n"
-  FileWrite $R8 '        Remove-Item -LiteralPath $$r -Recurse -Force -EA $$EA$\r$\n'
-  FileWrite $R8 '        if (Test-Path $$r) { cmd /c rd /s /q "$$r" 2>$$null }$\r$\n'
+  FileWrite $R8 "function Test-OASafeRoot([string]$$Root) {$\r$\n"
+  FileWrite $R8 "    if (-not $$Root -or -not (Test-Path -LiteralPath $$Root)) { return $$false }$\r$\n"
+  FileWrite $R8 "    try { $$full = [System.IO.Path]::GetFullPath($$Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) } catch { return $$false }$\r$\n"
+  FileWrite $R8 "    $$drive = [System.IO.Path]::GetPathRoot($$full)$\r$\n"
+  FileWrite $R8 "    if ($$drive) { $$drive = $$drive.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) }$\r$\n"
+  FileWrite $R8 "    if ($$drive -and $$full -ieq $$drive) { return $$false }$\r$\n"
+  FileWrite $R8 "    $$home = [System.IO.Path]::GetFullPath($$env:USERPROFILE).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)$\r$\n"
+  FileWrite $R8 "    if ($$full -ieq $$home) { return $$false }$\r$\n"
+  FileWrite $R8 "    $$defFull = [System.IO.Path]::GetFullPath($$def).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)$\r$\n"
+  FileWrite $R8 "    if ($$full -ieq $$defFull) { return $$true }$\r$\n"
+  FileWrite $R8 "    return (Test-Path -LiteralPath (Join-Path $$full '.openakita-root'))$\r$\n"
+  FileWrite $R8 "}$\r$\n"
+  FileWrite $R8 "foreach ($$r in ($$roots | Select-Object -Unique)) {$\r$\n"
+  FileWrite $R8 "    if (-not (Test-OASafeRoot $$r)) { continue }$\r$\n"
+  FileWrite $R8 "    foreach ($$d in @('workspaces','venv','runtime','run','logs','modules','bin','data','uploads','python','embedded_python')) {$\r$\n"
+  FileWrite $R8 "        $$p = Join-Path $$r $$d$\r$\n"
+  FileWrite $R8 '        if (Test-Path -LiteralPath $$p) { Remove-Item -LiteralPath $$p -Recurse -Force -EA $$EA }$\r$\n'
+  FileWrite $R8 '        if (Test-Path -LiteralPath $$p) { cmd /c rd /s /q "$$p" 2>$$null }$\r$\n'
+  FileWrite $R8 "    }$\r$\n"
+  FileWrite $R8 "    foreach ($$f in @('state.json','config.json','.env','cli.json','root_config.json','custom_root.txt','.openakita-root')) {$\r$\n"
+  FileWrite $R8 "        Remove-Item -LiteralPath (Join-Path $$r $$f) -Force -EA $$EA$\r$\n"
+  FileWrite $R8 "    }$\r$\n"
+  FileWrite $R8 "    if ((Get-ChildItem -LiteralPath $$r -Force -EA $$EA | Measure-Object).Count -eq 0) {$\r$\n"
+  FileWrite $R8 "        Remove-Item -LiteralPath $$r -Force -EA $$EA$\r$\n"
   FileWrite $R8 "    }$\r$\n"
   FileWrite $R8 "}$\r$\n"
   FileClose $R8

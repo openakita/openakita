@@ -1,4 +1,7 @@
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 mod migrations;
 
@@ -6,6 +9,7 @@ use base64::Engine as _;
 use dirs_next::home_dir;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -13,7 +17,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::collections::HashMap;
 use tauri::Emitter;
 use tauri::Manager;
 #[cfg(desktop)]
@@ -48,6 +51,7 @@ const AUTO_START_TIMEOUT_MS: u64 = 90_000;
 const SERVICE_START_DEDUPE_MS: u64 = 3_000;
 static SERVICE_START_LAST_AT: Lazy<Mutex<HashMap<String, u64>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+const OPENAKITA_ROOT_MARKER: &str = ".openakita-root";
 
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -123,7 +127,8 @@ fn try_self_heal_relaunch(panic_msg: &str) {
         }
         match cmd.spawn() {
             Ok(_) => log_to_file(&format!(
-                "[self-heal] relaunched {} after tao panic", exe.display()
+                "[self-heal] relaunched {} after tao panic",
+                exe.display()
             )),
             Err(e) => log_to_file(&format!("[self-heal] relaunch FAILED: {e}")),
         }
@@ -220,6 +225,69 @@ fn default_root_dir() -> PathBuf {
         .join(".openakita")
 }
 
+fn comparable_path(path: &Path) -> String {
+    let mut text = path.to_string_lossy().replace('/', "\\");
+    while text.len() > 1 && text.ends_with('\\') {
+        text.pop();
+    }
+    if cfg!(windows) {
+        text.to_ascii_lowercase()
+    } else {
+        text
+    }
+}
+
+fn is_path_root(path: &Path) -> bool {
+    path.parent().is_none() || path.file_name().is_none()
+}
+
+fn is_safe_openakita_data_root(path: &Path) -> bool {
+    if !path.is_absolute() || is_path_root(path) {
+        return false;
+    }
+
+    let target = comparable_path(path);
+    if let Some(home) = home_dir() {
+        if target == comparable_path(&home) {
+            return false;
+        }
+    }
+
+    for protected in [
+        dirs_next::desktop_dir(),
+        dirs_next::download_dir(),
+        dirs_next::document_dir(),
+        dirs_next::data_dir(),
+        dirs_next::data_local_dir(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if target == comparable_path(&protected) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn ensure_safe_openakita_data_root(path: &Path) -> Result<(), String> {
+    if is_safe_openakita_data_root(path) {
+        Ok(())
+    } else {
+        Err("数据目录不能设置为磁盘根目录、用户主目录或系统常用目录。请使用专用目录，例如 D:\\OpenAkitaData\\.openakita".into())
+    }
+}
+
+fn write_root_marker(root: &Path) -> Result<(), String> {
+    fs::create_dir_all(root).map_err(|e| format!("无法创建数据目录: {e}"))?;
+    fs::write(
+        root.join(OPENAKITA_ROOT_MARKER),
+        b"OpenAkita data root\nDo not delete this file unless you no longer use this directory for OpenAkita.\n",
+    )
+    .map_err(|e| format!("write root marker failed: {e}"))
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct RootConfig {
     #[serde(default)]
@@ -238,7 +306,10 @@ fn read_root_config() -> RootConfig {
     match serde_json::from_str(&content) {
         Ok(cfg) => cfg,
         Err(e) => {
-            eprintln!("warning: failed to parse {}: {e}, using defaults", p.display());
+            eprintln!(
+                "warning: failed to parse {}: {e}, using defaults",
+                p.display()
+            );
             RootConfig::default()
         }
     }
@@ -247,9 +318,11 @@ fn read_root_config() -> RootConfig {
 fn write_root_config(config: &RootConfig) -> Result<(), String> {
     let default_dir = default_root_dir();
     fs::create_dir_all(&default_dir).map_err(|e| format!("create default root dir failed: {e}"))?;
+    write_root_marker(&default_dir)?;
 
     let p = root_config_path();
-    let data = serde_json::to_string_pretty(config).map_err(|e| format!("serialize root config failed: {e}"))?;
+    let data = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("serialize root config failed: {e}"))?;
     atomic_write_with_backup(&p, data.as_bytes())?;
 
     // 同步写入纯文本文件，供 NSIS 安装脚本简单读取（无需解析 JSON）
@@ -264,7 +337,8 @@ fn write_root_config(config: &RootConfig) -> Result<(), String> {
             for code_unit in trimmed.encode_utf16() {
                 bytes.extend_from_slice(&code_unit.to_le_bytes());
             }
-            fs::write(&txt_path, bytes).map_err(|e| format!("write custom_root.txt failed: {e}"))?;
+            fs::write(&txt_path, bytes)
+                .map_err(|e| format!("write custom_root.txt failed: {e}"))?;
         }
         _ => {
             let _ = fs::remove_file(&txt_path);
@@ -283,6 +357,13 @@ fn openakita_root_dir() -> PathBuf {
     if let Some(ref custom) = config.custom_root {
         if !custom.is_empty() {
             let p = PathBuf::from(custom);
+            if !is_safe_openakita_data_root(&p) {
+                eprintln!(
+                    "WARNING: custom root dir '{}' is unsafe, falling back to default",
+                    custom
+                );
+                return default_root_dir();
+            }
             // 如果自定义路径所在的父目录都不可访问（如磁盘断开），回退到默认路径
             if p.exists() || p.parent().map(|parent| parent.exists()).unwrap_or(false) {
                 return p;
@@ -329,10 +410,22 @@ fn start_onboarding_log(date_label: String) -> Result<String, String> {
     fs::create_dir_all(&log_dir).map_err(|e| format!("create logs dir failed: {e}"))?;
     let safe_label = date_label
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     let name = if safe_label.is_empty() {
-        format!("onboarding-{}.log", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+        format!(
+            "onboarding-{}.log",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        )
     } else {
         format!("onboarding-{}.log", safe_label)
     };
@@ -417,7 +510,11 @@ fn maybe_rotate_frontend_log(path: &Path) {
     }
     drop(f);
     // Skip to next newline to avoid partial line
-    let offset = tail.iter().position(|&b| b == b'\n').map(|i| i + 1).unwrap_or(0);
+    let offset = tail
+        .iter()
+        .position(|&b| b == b'\n')
+        .map(|i| i + 1)
+        .unwrap_or(0);
     let _ = fs::write(path, &tail[offset..]);
 }
 
@@ -451,8 +548,7 @@ fn save_log_export(filename: String, content: String) -> Result<String, String> 
         .unwrap_or_else(|| openakita_root_dir().join("logs"));
     fs::create_dir_all(&downloads).ok();
     let path = downloads.join(&filename);
-    fs::write(&path, content.as_bytes())
-        .map_err(|e| format!("save log export failed: {e}"))?;
+    fs::write(&path, content.as_bytes()).map_err(|e| format!("save log export failed: {e}"))?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -518,12 +614,14 @@ fn bundled_backend_dir() -> PathBuf {
         // deb 常见布局: /usr/lib/<app-name>/resources/openakita-server/
         if let Some(ref name) = exe_name {
             candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/openakita-server", name
+                "/usr/lib/{}/resources/openakita-server",
+                name
             )));
         }
         for app_name in static_names {
             candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/openakita-server", app_name
+                "/usr/lib/{}/resources/openakita-server",
+                app_name
             )));
         }
 
@@ -531,8 +629,11 @@ fn bundled_backend_dir() -> PathBuf {
         if let Some(usr_dir) = exe_dir.parent() {
             if let Some(ref name) = exe_name {
                 candidates.push(
-                    usr_dir.join("lib").join(name)
-                        .join("resources").join("openakita-server"),
+                    usr_dir
+                        .join("lib")
+                        .join(name)
+                        .join("resources")
+                        .join("openakita-server"),
                 );
             }
             for app_name in static_names {
@@ -551,8 +652,11 @@ fn bundled_backend_dir() -> PathBuf {
         if let Some(mount_root) = exe_dir.parent().and_then(|p| p.parent()) {
             if let Some(ref name) = exe_name {
                 candidates.push(
-                    mount_root.join("lib").join(name)
-                        .join("resources").join("openakita-server"),
+                    mount_root
+                        .join("lib")
+                        .join(name)
+                        .join("resources")
+                        .join("openakita-server"),
                 );
             }
             for app_name in static_names {
@@ -569,7 +673,10 @@ fn bundled_backend_dir() -> PathBuf {
 
         for c in &candidates {
             if c.exists() {
-                eprintln!("[bundled_backend_dir] found at Linux fallback: {}", c.display());
+                eprintln!(
+                    "[bundled_backend_dir] found at Linux fallback: {}",
+                    c.display()
+                );
                 return c.clone();
             }
         }
@@ -626,14 +733,26 @@ fn bootstrap_resource_dir() -> PathBuf {
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
         let mut candidates: Vec<PathBuf> = vec![];
         if let Some(ref name) = exe_name {
-            candidates.push(PathBuf::from(format!("/usr/lib/{}/resources/bootstrap", name)));
+            candidates.push(PathBuf::from(format!(
+                "/usr/lib/{}/resources/bootstrap",
+                name
+            )));
         }
         for app_name in static_names {
-            candidates.push(PathBuf::from(format!("/usr/lib/{}/resources/bootstrap", app_name)));
+            candidates.push(PathBuf::from(format!(
+                "/usr/lib/{}/resources/bootstrap",
+                app_name
+            )));
         }
         if let Some(usr_dir) = exe_dir.parent() {
             if let Some(ref name) = exe_name {
-                candidates.push(usr_dir.join("lib").join(name).join("resources").join("bootstrap"));
+                candidates.push(
+                    usr_dir
+                        .join("lib")
+                        .join(name)
+                        .join("resources")
+                        .join("bootstrap"),
+                );
             }
             for app_name in static_names {
                 candidates.push(
@@ -790,7 +909,12 @@ fn runtime_venv_backend_args(venv_dir: &Path) -> Vec<String> {
             return vec!["-u".into(), "-c".into(), code, "serve".into()];
         }
     }
-    vec!["-u".into(), "-m".into(), "openakita.main".into(), "serve".into()]
+    vec![
+        "-u".into(),
+        "-m".into(),
+        "openakita.main".into(),
+        "serve".into(),
+    ]
 }
 
 fn runtime_venv_backend_python_path(venv_dir: &Path) -> PathBuf {
@@ -822,7 +946,8 @@ fn ensure_runtime_layout() -> Result<(), String> {
         runtime_cache_dir().join("uv"),
         runtime_cache_dir().join("python"),
     ] {
-        fs::create_dir_all(&dir).map_err(|e| format!("create runtime dir {} failed: {e}", dir.display()))?;
+        fs::create_dir_all(&dir)
+            .map_err(|e| format!("create runtime dir {} failed: {e}", dir.display()))?;
     }
     Ok(())
 }
@@ -865,8 +990,8 @@ fn resolve_runtime_pip_index() -> RuntimePipIndex {
     }
     if let Ok(url) = std::env::var("PIP_INDEX_URL") {
         if !url.trim().is_empty() {
-            let trusted_host = std::env::var("PIP_TRUSTED_HOST")
-                .unwrap_or_else(|_| trusted_host_for_url(&url));
+            let trusted_host =
+                std::env::var("PIP_TRUSTED_HOST").unwrap_or_else(|_| trusted_host_for_url(&url));
             return RuntimePipIndex {
                 id: "env-pip".into(),
                 url,
@@ -928,7 +1053,11 @@ fn health_check_python(py: &Path, code: &str, log_path: &Path) -> bool {
     match cmd.output() {
         Ok(output) if output.status.success() => true,
         Ok(output) => {
-            let mut log = OpenOptions::new().create(true).append(true).open(log_path).ok();
+            let mut log = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+                .ok();
             if let Some(ref mut log) = log {
                 let _ = writeln!(log, "health check failed for {}", py.display());
                 let _ = log.write_all(&output.stdout);
@@ -957,7 +1086,10 @@ fn ensure_venv(venv_dir: &Path, python_version: &str, log_path: &Path) -> Result
     if health_check_python(&py, "import pip", log_path) {
         Ok(py)
     } else {
-        Err(format!("venv health check failed after creation: {}", py.display()))
+        Err(format!(
+            "venv health check failed after creation: {}",
+            py.display()
+        ))
     }
 }
 
@@ -982,7 +1114,10 @@ fn ensure_app_venv(
     let app_py = ensure_venv(&app_venv_dir(), &bootstrap.python_version, &log_path)?;
     let wheel_path = bootstrap_resource_dir().join(&bootstrap.wheel.name);
     if !wheel_path.exists() {
-        return Err(format!("bootstrap wheel not found: {}", wheel_path.display()));
+        return Err(format!(
+            "bootstrap wheel not found: {}",
+            wheel_path.display()
+        ));
     }
     let wheel_arg = format!("{}[desktop]", wheel_path.display());
     let mut cmd = Command::new(bootstrap_uv_path());
@@ -1101,9 +1236,18 @@ fn apply_dual_runtime_env(cmd: &mut Command) {
     let pip_index = resolve_runtime_pip_index();
     cmd.env("PYTHONNOUSERSITE", "1");
     cmd.env("OPENAKITA_RUNTIME_ROOT", runtime_root_dir());
-    cmd.env("OPENAKITA_APP_PYTHON", runtime_venv_python_path(&app_venv_dir()));
-    cmd.env("OPENAKITA_AGENT_PYTHON", runtime_venv_python_path(&agent_venv_dir()));
-    cmd.env("OPENAKITA_AGENT_BIN", runtime_venv_bin_dir(&agent_venv_dir()));
+    cmd.env(
+        "OPENAKITA_APP_PYTHON",
+        runtime_venv_python_path(&app_venv_dir()),
+    );
+    cmd.env(
+        "OPENAKITA_AGENT_PYTHON",
+        runtime_venv_python_path(&agent_venv_dir()),
+    );
+    cmd.env(
+        "OPENAKITA_AGENT_BIN",
+        runtime_venv_bin_dir(&agent_venv_dir()),
+    );
     cmd.env("PIP_INDEX_URL", &pip_index.url);
     cmd.env("UV_INDEX_URL", &pip_index.url);
     if !pip_index.trusted_host.trim().is_empty() {
@@ -1157,13 +1301,12 @@ fn get_backend_executable(venv_dir: &str) -> (PathBuf, Vec<String>) {
                 backend_python.display(),
                 runtime.agent_python.display()
             ));
-            return (
-                backend_python,
-                runtime_venv_backend_args(&runtime.app_venv),
-            );
+            return (backend_python, runtime_venv_backend_args(&runtime.app_venv));
         }
         Err(e) => {
-            log_to_file(&format!("[runtime] dual venv unavailable, fallback to legacy: {e}"));
+            log_to_file(&format!(
+                "[runtime] dual venv unavailable, fallback to legacy: {e}"
+            ));
             mark_legacy_runtime_mode(&e);
         }
     }
@@ -1184,11 +1327,16 @@ fn get_backend_executable(venv_dir: &str) -> (PathBuf, Vec<String>) {
          [backend] current_exe: {:?}\n\
          [backend] falling back to venv python in: {}",
         bundled_exe.display(),
-        std::env::current_exe().ok().map(|p| p.display().to_string()),
+        std::env::current_exe()
+            .ok()
+            .map(|p| p.display().to_string()),
         venv_dir,
     );
     let py = venv_pythonw_path(venv_dir);
-    (py, vec!["-m".into(), "openakita.main".into(), "serve".into()])
+    (
+        py,
+        vec!["-m".into(), "openakita.main".into(), "serve".into()],
+    )
 }
 
 /// 构建可选模块路径字符串（自动从 module_definitions 获取模块列表）
@@ -1244,7 +1392,14 @@ fn check_python_for_pip() -> Result<String, String> {
 
 // ── 模块定义（供 build_modules_pythonpath 使用） ──
 
-fn module_definitions() -> Vec<(&'static str, &'static str, &'static str, &'static [&'static str], u32, &'static str)> {
+fn module_definitions() -> Vec<(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    u32,
+    &'static str,
+)> {
     // (id, name, description, pip_packages, estimated_size_mb, category)
     //
     // 仅体积大(>50MB)或有特殊二进制依赖的包才需要模块化安装。
@@ -1254,7 +1409,6 @@ fn module_definitions() -> Vec<(&'static str, &'static str, &'static str, &'stat
         ("vector-memory", "向量记忆增强", "让 Akita 拥有长期记忆，能根据语义搜索历史对话。体积较大（约 2.5GB，含 PyTorch），安装耗时较长", &["sentence-transformers", "chromadb", "regex>=2023.6.3"], 2500, "core"),
     ]
 }
-
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -1275,18 +1429,26 @@ fn get_root_dir_info() -> RootDirInfo {
 
 #[tauri::command]
 fn set_custom_root_dir(path: Option<String>, migrate: bool) -> Result<RootDirInfo, String> {
-    let _lock = ROOT_CONFIG_LOCK.lock().map_err(|e| format!("lock failed: {e}"))?;
-    let clean_path = path.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(String::from);
+    let _lock = ROOT_CONFIG_LOCK
+        .lock()
+        .map_err(|e| format!("lock failed: {e}"))?;
+    let clean_path = path
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(String::from);
 
     if let Some(ref p) = clean_path {
         let target = PathBuf::from(p);
         if !target.is_absolute() {
             return Err("请使用绝对路径（如 D:\\MyData\\.openakita 或 /data/openakita）".into());
         }
+        ensure_safe_openakita_data_root(&target)?;
         if target.exists() && !target.is_dir() {
             return Err("指定的路径已存在但不是目录".into());
         }
         fs::create_dir_all(&target).map_err(|e| format!("无法创建目标目录: {e}"))?;
+        write_root_marker(&target)?;
         // 验证目录可写
         let test_file = target.join(".openakita_write_test");
         fs::write(&test_file, "test").map_err(|e| format!("目标目录无写入权限: {e}"))?;
@@ -1302,8 +1464,7 @@ fn set_custom_root_dir(path: Option<String>, migrate: bool) -> Result<RootDirInf
 
         if old_root != new_root_path && old_root.exists() {
             if !new_root_path.exists() {
-                fs::create_dir_all(&new_root_path)
-                    .map_err(|e| format!("无法创建目标目录: {e}"))?;
+                fs::create_dir_all(&new_root_path).map_err(|e| format!("无法创建目标目录: {e}"))?;
             }
 
             let critical_dirs = ["workspaces"];
@@ -1339,11 +1500,16 @@ fn set_custom_root_dir(path: Option<String>, migrate: bool) -> Result<RootDirInf
                 }
             }
             if !errors.is_empty() {
-                eprintln!("migration completed with {} non-critical errors", errors.len());
+                eprintln!(
+                    "migration completed with {} non-critical errors",
+                    errors.len()
+                );
             }
 
             if !new_root_path.exists() || !new_root_path.is_dir() {
-                return Err("迁移完成后目标目录不可访问，未更改配置。请检查磁盘连接后重试。".into());
+                return Err(
+                    "迁移完成后目标目录不可访问，未更改配置。请检查磁盘连接后重试。".into(),
+                );
             }
             Some(old_root)
         } else {
@@ -1353,26 +1519,40 @@ fn set_custom_root_dir(path: Option<String>, migrate: bool) -> Result<RootDirInf
         None
     };
 
-    let config = RootConfig { custom_root: clean_path };
+    let config = RootConfig {
+        custom_root: clean_path,
+    };
     write_root_config(&config)?;
 
     // Config updated successfully — clean up migrated entries from old root
     if let Some(ref old_root) = migrate_old_root {
-        let dir_names = ["workspaces", "venv", "runtime", "run", "logs", "modules", "bin"];
-        let file_names = ["state.json", "cli.json"];
-        for name in &dir_names {
-            let p = old_root.join(name);
-            if p.exists() && p.is_dir() {
-                if let Err(e) = fs::remove_dir_all(&p) {
-                    eprintln!("cleanup old {}: {e}", p.display());
+        if is_safe_openakita_data_root(old_root) {
+            let dir_names = [
+                "workspaces",
+                "venv",
+                "runtime",
+                "run",
+                "logs",
+                "modules",
+                "bin",
+            ];
+            let file_names = ["state.json", "cli.json"];
+            for name in &dir_names {
+                let p = old_root.join(name);
+                if p.exists() && p.is_dir() {
+                    if let Err(e) = fs::remove_dir_all(&p) {
+                        eprintln!("cleanup old {}: {e}", p.display());
+                    }
                 }
             }
-        }
-        for name in &file_names {
-            let p = old_root.join(name);
-            if p.exists() && p.is_file() {
-                let _ = fs::remove_file(&p);
+            for name in &file_names {
+                let p = old_root.join(name);
+                if p.exists() && p.is_file() {
+                    let _ = fs::remove_file(&p);
+                }
             }
+        } else {
+            eprintln!("skip cleanup for unsafe old root {}", old_root.display());
         }
     }
 
@@ -1401,7 +1581,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else if ft.is_file() {
             if let Err(e) = fs::copy(&src_path, &dst_path) {
-                eprintln!("copy file {} -> {}: {e}", src_path.display(), dst_path.display());
+                eprintln!(
+                    "copy file {} -> {}: {e}",
+                    src_path.display(),
+                    dst_path.display()
+                );
             }
         }
     }
@@ -1434,9 +1618,12 @@ struct MigratePreflightInfo {
 fn available_space_mb(path: &Path) -> f64 {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::ffi::OsStrExt;
         use std::ffi::OsStr;
-        let fallback = path.ancestors().last().map(|r| r.to_string_lossy().to_string())
+        use std::os::windows::ffi::OsStrExt;
+        let fallback = path
+            .ancestors()
+            .last()
+            .map(|r| r.to_string_lossy().to_string())
             .unwrap_or_else(|| "C:\\".to_string());
         let wide: Vec<u16> = OsStr::new(path.to_str().unwrap_or(&fallback))
             .encode_wide()
@@ -1453,7 +1640,12 @@ fn available_space_mb(path: &Path) -> f64 {
                     lpTotalNumberOfFreeBytes: *mut u64,
                 ) -> i32;
             }
-            GetDiskFreeSpaceExW(wide.as_ptr(), &mut free_bytes, std::ptr::null_mut(), std::ptr::null_mut());
+            GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_bytes,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
         }
         free_bytes as f64 / 1024.0 / 1024.0
     }
@@ -1478,6 +1670,7 @@ fn preflight_migrate_root(target_path: String) -> Result<MigratePreflightInfo, S
     if !target.is_absolute() {
         return Err("请使用绝对路径".into());
     }
+    ensure_safe_openakita_data_root(&target)?;
 
     let source = openakita_root_dir();
     if source == target {
@@ -1492,7 +1685,15 @@ fn preflight_migrate_root(target_path: String) -> Result<MigratePreflightInfo, S
         });
     }
 
-    let dir_names: &[&str] = &["workspaces", "venv", "runtime", "run", "logs", "modules", "bin"];
+    let dir_names: &[&str] = &[
+        "workspaces",
+        "venv",
+        "runtime",
+        "run",
+        "logs",
+        "modules",
+        "bin",
+    ];
     let file_names: &[&str] = &["state.json", "cli.json"];
 
     let mut entries = Vec::new();
@@ -1528,7 +1729,10 @@ fn preflight_migrate_root(target_path: String) -> Result<MigratePreflightInfo, S
     let free_space_path = if target.exists() {
         target.clone()
     } else {
-        target.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| target.clone())
+        target
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| target.clone())
     };
     let target_free_mb = available_space_mb(&free_space_path);
     let source_size_mb = total_size as f64 / 1024.0 / 1024.0;
@@ -1539,7 +1743,14 @@ fn preflight_migrate_root(target_path: String) -> Result<MigratePreflightInfo, S
     let (can_migrate, reason) = if entries.is_empty() {
         (false, "当前数据目录为空，无需迁移".into())
     } else if !enough_space {
-        (false, format!("目标磁盘空间不足（需要 {:.0} MB，可用 {:.0} MB）", source_size_mb * 1.1, target_free_mb))
+        (
+            false,
+            format!(
+                "目标磁盘空间不足（需要 {:.0} MB，可用 {:.0} MB）",
+                source_size_mb * 1.1,
+                target_free_mb
+            ),
+        )
     } else if has_conflicts {
         (true, "目标路径已存在部分数据，已有数据将被跳过".into())
     } else {
@@ -1603,15 +1814,21 @@ fn check_environment() -> EnvironmentCheck {
     let root = openakita_root_dir();
     // 只有目录存在且非空才算有旧残留
     let has_old_venv = root.join("venv").exists()
-        && root.join("venv").read_dir()
+        && root
+            .join("venv")
+            .read_dir()
             .map(|mut d| d.next().is_some())
             .unwrap_or(false);
     let has_old_runtime = root.join("runtime").exists()
-        && root.join("runtime").read_dir()
+        && root
+            .join("runtime")
+            .read_dir()
             .map(|mut d| d.next().is_some())
             .unwrap_or(false);
     let has_old_workspaces = root.join("workspaces").exists()
-        && root.join("workspaces").read_dir()
+        && root
+            .join("workspaces")
+            .read_dir()
             .map(|mut d| d.next().is_some())
             .unwrap_or(false);
 
@@ -1626,7 +1843,8 @@ fn check_environment() -> EnvironmentCheck {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("pid") {
-                let ws_id = path.file_stem()
+                let ws_id = path
+                    .file_stem()
                     .and_then(|s| s.to_str())
                     .and_then(|s| s.strip_prefix("openakita-"))
                     .unwrap_or("unknown");
@@ -1650,7 +1868,10 @@ fn check_environment() -> EnvironmentCheck {
 
     let mut conflicts = Vec::new();
     if !running.is_empty() {
-        conflicts.push(format!("检测到 {} 个正在运行的 OpenAkita 进程", running.len()));
+        conflicts.push(format!(
+            "检测到 {} 个正在运行的 OpenAkita 进程",
+            running.len()
+        ));
     }
 
     EnvironmentCheck {
@@ -1696,7 +1917,10 @@ fn check_backend_availability(venv_dir: String) -> BackendAvailability {
     };
     eprintln!(
         "[backend-check] bundled={} ({}) venv={} ({})",
-        bundled, bundled_exe.display(), venv_ready, venv_py.display()
+        bundled,
+        bundled_exe.display(),
+        venv_ready,
+        venv_py.display()
     );
     BackendAvailability {
         bundled,
@@ -1726,7 +1950,8 @@ fn force_remove_dir(path: &std::path::Path) -> Result<(), String> {
         let mut rd_cmd = std::process::Command::new("cmd");
         rd_cmd.args(["/c", "rd", "/s", "/q"]).arg(path);
         apply_no_window(&mut rd_cmd);
-        let status = rd_cmd.status()
+        let status = rd_cmd
+            .status()
             .map_err(|e| format!("执行 rd 命令失败: {e}"))?;
         if status.success() || !path.exists() {
             return Ok(());
@@ -1735,7 +1960,10 @@ fn force_remove_dir(path: &std::path::Path) -> Result<(), String> {
     #[cfg(not(windows))]
     {
         let _ = Command::new("chmod").args(["-R", "u+w"]).arg(path).status();
-        let status = Command::new("rm").args(["-rf"]).arg(path).status()
+        let status = Command::new("rm")
+            .args(["-rf"])
+            .arg(path)
+            .status()
             .map_err(|e| format!("rm -rf failed: {e}"))?;
         if status.success() || !path.exists() {
             return Ok(());
@@ -1760,22 +1988,24 @@ fn cleanup_old_environment(clean_venv: bool, clean_runtime: bool) -> Result<Stri
             // 检查是否有已安装的外置模块依赖此 venv
             let modules_base = root.join("modules");
             let has_installed_modules = modules_base.exists()
-                && modules_base.read_dir()
+                && modules_base
+                    .read_dir()
                     .map(|mut d| d.any(|e| e.map(|e| e.path().is_dir()).unwrap_or(false)))
                     .unwrap_or(false);
             if has_installed_modules {
-                warnings.push("注意: 清理 venv 后已安装的外置模块（vector-memory 等）可能需要重新安装".to_string());
+                warnings.push(
+                    "注意: 清理 venv 后已安装的外置模块（vector-memory 等）可能需要重新安装"
+                        .to_string(),
+                );
             }
-            force_remove_dir(&venv_path)
-                .map_err(|e| format!("清理 venv 失败: {e}"))?;
+            force_remove_dir(&venv_path).map_err(|e| format!("清理 venv 失败: {e}"))?;
             cleaned.push("venv");
         }
     }
     if clean_runtime {
         let runtime_path = root.join("runtime");
         if runtime_path.exists() {
-            force_remove_dir(&runtime_path)
-                .map_err(|e| format!("清理 runtime 失败: {e}"))?;
+            force_remove_dir(&runtime_path).map_err(|e| format!("清理 runtime 失败: {e}"))?;
             cleaned.push("runtime");
         }
     }
@@ -1801,7 +2031,16 @@ fn factory_reset() -> Result<String, String> {
 
     // 2. Determine root and build list of paths to remove
     let root = openakita_root_dir();
-    let dirs_to_remove = ["workspaces", "venv", "runtime", "run", "logs", "modules", "bin", "data"];
+    let dirs_to_remove = [
+        "workspaces",
+        "venv",
+        "runtime",
+        "run",
+        "logs",
+        "modules",
+        "bin",
+        "data",
+    ];
     let files_to_remove = ["state.json", "cli.json"];
 
     let mut removed = Vec::new();
@@ -1831,7 +2070,11 @@ fn factory_reset() -> Result<String, String> {
         return Err(format!(
             "部分重置失败: {}{}",
             errors.join("; "),
-            if !removed.is_empty() { format!(" (已清理: {})", removed.join(", ")) } else { String::new() }
+            if !removed.is_empty() {
+                format!(" (已清理: {})", removed.join(", "))
+            } else {
+                String::new()
+            }
         ));
     }
 
@@ -1871,7 +2114,7 @@ struct PidFileData {
     #[serde(default = "default_started_by")]
     started_by: String, // "tauri" | "external"
     #[serde(default)]
-    started_at: u64,    // unix epoch seconds
+    started_at: u64, // unix epoch seconds
 }
 
 fn default_started_by() -> String {
@@ -1968,16 +2211,18 @@ fn list_service_pids() -> Vec<ServicePidEntry> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct HeartbeatData {
     pid: u32,
-    timestamp: f64,  // unix epoch seconds (float for sub-second precision)
+    timestamp: f64, // unix epoch seconds (float for sub-second precision)
     #[serde(default)]
-    phase: String,    // "starting" | "initializing" | "running" | "restarting" | "stopping"
+    phase: String, // "starting" | "initializing" | "running" | "restarting" | "stopping"
     #[serde(default)]
     http_ready: bool, // HTTP API 是否就绪
 }
 
 /// 心跳文件路径：{workspace_dir}/data/backend.heartbeat
 fn service_heartbeat_file(workspace_id: &str) -> PathBuf {
-    workspace_dir(workspace_id).join("data").join("backend.heartbeat")
+    workspace_dir(workspace_id)
+        .join("data")
+        .join("backend.heartbeat")
 }
 
 /// 读取心跳文件
@@ -2069,7 +2314,10 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
     }
 
     if is_pid_running(pid) {
-        Err(format!("pid {} still running after graceful + forced stop", pid))
+        Err(format!(
+            "pid {} still running after graceful + forced stop",
+            pid
+        ))
     } else {
         Ok(())
     }
@@ -2238,14 +2486,9 @@ mod win {
         pub fn TerminateProcess(hProcess: *mut std::ffi::c_void, uExitCode: u32) -> i32;
         pub fn CloseHandle(hObject: *mut std::ffi::c_void) -> i32;
         pub fn CreateToolhelp32Snapshot(dwFlags: u32, th32ProcessID: u32) -> *mut std::ffi::c_void;
-        pub fn Process32FirstW(
-            hSnapshot: *mut std::ffi::c_void,
-            lppe: *mut PROCESSENTRY32W,
-        ) -> i32;
-        pub fn Process32NextW(
-            hSnapshot: *mut std::ffi::c_void,
-            lppe: *mut PROCESSENTRY32W,
-        ) -> i32;
+        pub fn Process32FirstW(hSnapshot: *mut std::ffi::c_void, lppe: *mut PROCESSENTRY32W)
+            -> i32;
+        pub fn Process32NextW(hSnapshot: *mut std::ffi::c_void, lppe: *mut PROCESSENTRY32W) -> i32;
     }
     pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
     pub const PROCESS_TERMINATE: u32 = 0x0001;
@@ -2274,8 +2517,7 @@ fn is_pid_running(pid: u32) -> bool {
     #[cfg(windows)]
     {
         // 直接用 Windows API 检查——最可靠，无 GBK 编码问题。
-        let handle =
-            unsafe { win::OpenProcess(win::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        let handle = unsafe { win::OpenProcess(win::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if handle.is_null() {
             return false;
         }
@@ -2286,9 +2528,7 @@ fn is_pid_running(pid: u32) -> bool {
     }
     #[cfg(not(windows))]
     {
-        let status = Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status();
+        let status = Command::new("kill").args(["-0", &pid.to_string()]).status();
         status.map(|s| s.success()).unwrap_or(false)
     }
 }
@@ -2318,7 +2558,10 @@ fn kill_pid(pid: u32) -> Result<(), String> {
             if !is_pid_running(pid) {
                 return Ok(());
             }
-            return Err(format!("TerminateProcess \u{5931}\u{8d25}\u{ff08}pid={}\u{ff09}", pid));
+            return Err(format!(
+                "TerminateProcess \u{5931}\u{8d25}\u{ff08}pid={}\u{ff09}",
+                pid
+            ));
         }
         return Ok(());
     }
@@ -2327,9 +2570,7 @@ fn kill_pid(pid: u32) -> Result<(), String> {
         let pid_str = pid.to_string();
 
         // SIGTERM: 允许进程优雅退出
-        let _ = Command::new("kill")
-            .args(["-TERM", &pid_str])
-            .status();
+        let _ = Command::new("kill").args(["-TERM", &pid_str]).status();
 
         // 等待最多 2 秒确认退出
         for _ in 0..10 {
@@ -2372,11 +2613,8 @@ fn is_openakita_process(pid: u32) -> bool {
             loop {
                 if pe.th32_process_id == pid {
                     exe_name = String::from_utf16_lossy(
-                        &pe.sz_exe_file[..pe
-                            .sz_exe_file
-                            .iter()
-                            .position(|&c| c == 0)
-                            .unwrap_or(260)],
+                        &pe.sz_exe_file
+                            [..pe.sz_exe_file.iter().position(|&c| c == 0).unwrap_or(260)],
                     )
                     .to_ascii_lowercase();
                     break;
@@ -2464,11 +2702,7 @@ fn kill_openakita_orphans() -> Vec<u32> {
         if unsafe { win::Process32FirstW(snap, &mut pe) } != 0 {
             loop {
                 let name = String::from_utf16_lossy(
-                    &pe.sz_exe_file[..pe
-                        .sz_exe_file
-                        .iter()
-                        .position(|&c| c == 0)
-                        .unwrap_or(260)],
+                    &pe.sz_exe_file[..pe.sz_exe_file.iter().position(|&c| c == 0).unwrap_or(260)],
                 );
                 let name_lower = name.to_ascii_lowercase();
                 if name_lower.contains("python") {
@@ -2530,14 +2764,14 @@ fn kill_openakita_orphans() -> Vec<u32> {
         ];
         let mut pids_to_kill: Vec<u32> = Vec::new();
         for pattern in &patterns {
-            if let Ok(out) = Command::new("sh")
-                .args(["-c", pattern])
-                .output()
-            {
+            if let Ok(out) = Command::new("sh").args(["-c", pattern]).output() {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 for line in stdout.lines() {
                     if let Ok(pid) = line.trim().parse::<u32>() {
-                        if is_pid_running(pid) && !killed.contains(&pid) && !pids_to_kill.contains(&pid) {
+                        if is_pid_running(pid)
+                            && !killed.contains(&pid)
+                            && !pids_to_kill.contains(&pid)
+                        {
                             pids_to_kill.push(pid);
                         }
                     }
@@ -2596,11 +2830,7 @@ fn openakita_list_processes() -> Vec<OpenAkitaProcess> {
         if unsafe { win::Process32FirstW(snap, &mut pe) } != 0 {
             loop {
                 let name = String::from_utf16_lossy(
-                    &pe.sz_exe_file[..pe
-                        .sz_exe_file
-                        .iter()
-                        .position(|&c| c == 0)
-                        .unwrap_or(260)],
+                    &pe.sz_exe_file[..pe.sz_exe_file.iter().position(|&c| c == 0).unwrap_or(260)],
                 );
                 let name_lower = name.to_ascii_lowercase();
                 if name_lower.contains("python") {
@@ -2634,7 +2864,9 @@ fn openakita_list_processes() -> Vec<OpenAkitaProcess> {
                 let s = String::from_utf8_lossy(&cmd_out.stdout).to_string();
                 let s_lower = s.to_lowercase();
                 // 精确匹配模块调用签名，避免 venv 路径中 .openakita 误报
-                if s_lower.contains("openakita.main") && (s_lower.contains(" serve") || s_lower.ends_with("serve")) {
+                if s_lower.contains("openakita.main")
+                    && (s_lower.contains(" serve") || s_lower.ends_with("serve"))
+                {
                     if is_pid_running(ppid) {
                         matched.push((ppid, parent_pid, s.trim().to_string()));
                     }
@@ -2768,7 +3000,9 @@ fn rebuild_state_from_disk(partial: Option<AppStateFile>) -> AppStateFile {
     }
     if state.current_workspace_id.is_none() && !state.workspaces.is_empty() {
         // Prefer "default" if it exists, otherwise pick the first one
-        let preferred = state.workspaces.iter()
+        let preferred = state
+            .workspaces
+            .iter()
             .find(|w| w.id == "default")
             .unwrap_or(&state.workspaces[0]);
         state.current_workspace_id = Some(preferred.id.clone());
@@ -2781,8 +3015,7 @@ fn write_state_file(state: &AppStateFile) -> Result<(), String> {
     if let Some(parent) = p.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create_dir_all failed: {e}"))?;
     }
-    let data = serde_json::to_string_pretty(state)
-        .map_err(|e| format!("serialize failed: {e}"))?;
+    let data = serde_json::to_string_pretty(state).map_err(|e| format!("serialize failed: {e}"))?;
     atomic_write_with_backup(&p, data.as_bytes())
 }
 
@@ -2806,7 +3039,9 @@ fn atomic_write_with_backup(path: &Path, content: &[u8]) -> Result<(), String> {
                 if attempt < 2 {
                     std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1)));
                 } else {
-                    eprintln!("atomic rename failed after 3 retries ({e}), falling back to direct write");
+                    eprintln!(
+                        "atomic rename failed after 3 retries ({e}), falling back to direct write"
+                    );
                     if let Err(e2) = fs::write(path, content) {
                         let _ = fs::remove_file(&tmp);
                         return Err(format!("write failed: {e2}"));
@@ -2822,7 +3057,8 @@ fn atomic_write_with_backup(path: &Path, content: &[u8]) -> Result<(), String> {
 
 fn ensure_workspace_scaffold(dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dir.join("data")).map_err(|e| format!("create data dir failed: {e}"))?;
-    fs::create_dir_all(dir.join("identity")).map_err(|e| format!("create identity dir failed: {e}"))?;
+    fs::create_dir_all(dir.join("identity"))
+        .map_err(|e| format!("create identity dir failed: {e}"))?;
 
     // Only ASCII comments in .env to avoid encoding issues on non-UTF-8 Windows systems.
     let env_path = dir.join(".env");
@@ -2847,19 +3083,23 @@ fn ensure_workspace_scaffold(dir: &Path) -> Result<(), String> {
 
     let soul = dir.join("identity").join("SOUL.md");
     if !soul.exists() {
-        fs::write(&soul, DEFAULT_SOUL).map_err(|e| format!("write identity/SOUL.md failed: {e}"))?;
+        fs::write(&soul, DEFAULT_SOUL)
+            .map_err(|e| format!("write identity/SOUL.md failed: {e}"))?;
     }
     let agent_md = dir.join("identity").join("AGENT.md");
     if !agent_md.exists() {
-        fs::write(&agent_md, DEFAULT_AGENT).map_err(|e| format!("write identity/AGENT.md failed: {e}"))?;
+        fs::write(&agent_md, DEFAULT_AGENT)
+            .map_err(|e| format!("write identity/AGENT.md failed: {e}"))?;
     }
     let user_md = dir.join("identity").join("USER.md");
     if !user_md.exists() {
-        fs::write(&user_md, DEFAULT_USER).map_err(|e| format!("write identity/USER.md failed: {e}"))?;
+        fs::write(&user_md, DEFAULT_USER)
+            .map_err(|e| format!("write identity/USER.md failed: {e}"))?;
     }
     let memory_md = dir.join("identity").join("MEMORY.md");
     if !memory_md.exists() {
-        fs::write(&memory_md, DEFAULT_MEMORY).map_err(|e| format!("write identity/MEMORY.md failed: {e}"))?;
+        fs::write(&memory_md, DEFAULT_MEMORY)
+            .map_err(|e| format!("write identity/MEMORY.md failed: {e}"))?;
     }
 
     // 人格预设文件：8 个标配预设 + user_custom 模板
@@ -2867,13 +3107,16 @@ fn ensure_workspace_scaffold(dir: &Path) -> Result<(), String> {
     {
         const PERSONA_DEFAULT: &str = include_str!("../../../../identity/personas/default.md");
         const PERSONA_BUSINESS: &str = include_str!("../../../../identity/personas/business.md");
-        const PERSONA_TECH_EXPERT: &str = include_str!("../../../../identity/personas/tech_expert.md");
+        const PERSONA_TECH_EXPERT: &str =
+            include_str!("../../../../identity/personas/tech_expert.md");
         const PERSONA_BUTLER: &str = include_str!("../../../../identity/personas/butler.md");
-        const PERSONA_GIRLFRIEND: &str = include_str!("../../../../identity/personas/girlfriend.md");
+        const PERSONA_GIRLFRIEND: &str =
+            include_str!("../../../../identity/personas/girlfriend.md");
         const PERSONA_BOYFRIEND: &str = include_str!("../../../../identity/personas/boyfriend.md");
         const PERSONA_FAMILY: &str = include_str!("../../../../identity/personas/family.md");
         const PERSONA_JARVIS: &str = include_str!("../../../../identity/personas/jarvis.md");
-        const PERSONA_USER_CUSTOM: &str = include_str!("../../../../identity/personas/user_custom.md.example");
+        const PERSONA_USER_CUSTOM: &str =
+            include_str!("../../../../identity/personas/user_custom.md.example");
 
         let personas_dir = dir.join("identity").join("personas");
         fs::create_dir_all(&personas_dir)
@@ -2939,7 +3182,8 @@ fn ensure_workspace_scaffold(dir: &Path) -> Result<(), String> {
     // 默认 llm_endpoints.json：用仓库内的 data/llm_endpoints.json.example 作为初始模板
     let llm = dir.join("data").join("llm_endpoints.json");
     if !llm.exists() {
-        const DEFAULT_LLM_ENDPOINTS: &str = include_str!("../../../../data/llm_endpoints.json.example");
+        const DEFAULT_LLM_ENDPOINTS: &str =
+            include_str!("../../../../data/llm_endpoints.json.example");
         fs::write(&llm, DEFAULT_LLM_ENDPOINTS)
             .map_err(|e| format!("write data/llm_endpoints.json failed: {e}"))?;
     }
@@ -2951,7 +3195,8 @@ fn ensure_workspace_scaffold(dir: &Path) -> Result<(), String> {
 fn list_workspaces() -> Result<Vec<WorkspaceSummary>, String> {
     let root = openakita_root_dir();
     fs::create_dir_all(&root).map_err(|e| format!("create root failed: {e}"))?;
-    fs::create_dir_all(workspaces_dir()).map_err(|e| format!("create workspaces dir failed: {e}"))?;
+    fs::create_dir_all(workspaces_dir())
+        .map_err(|e| format!("create workspaces dir failed: {e}"))?;
 
     let state = read_state_file();
     let current = state.current_workspace_id.clone();
@@ -2978,16 +3223,18 @@ fn validate_workspace_id(id: &str) -> Result<(), String> {
     if id.len() > 64 {
         return Err("workspace id too long (max 64 chars)".into());
     }
-    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
         return Err("workspace id can only contain a-z, A-Z, 0-9, _ and -".into());
     }
     if !id.chars().any(|c| c.is_ascii_alphanumeric()) {
         return Err("workspace id must contain at least one letter or digit".into());
     }
     const RESERVED: &[&str] = &[
-        "con", "prn", "aux", "nul",
-        "com1","com2","com3","com4","com5","com6","com7","com8","com9",
-        "lpt1","lpt2","lpt3","lpt4","lpt5","lpt6","lpt7","lpt8","lpt9",
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
     ];
     if RESERVED.contains(&id.to_ascii_lowercase().as_str()) {
         return Err("workspace id conflicts with a reserved system name".into());
@@ -2996,15 +3243,22 @@ fn validate_workspace_id(id: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn create_workspace(id: String, name: String, set_current: bool) -> Result<WorkspaceSummary, String> {
+fn create_workspace(
+    id: String,
+    name: String,
+    set_current: bool,
+) -> Result<WorkspaceSummary, String> {
     validate_workspace_id(&id)?;
     if name.trim().is_empty() {
         return Err("workspace name is empty".into());
     }
 
-    fs::create_dir_all(workspaces_dir()).map_err(|e| format!("create workspaces dir failed: {e}"))?;
+    fs::create_dir_all(workspaces_dir())
+        .map_err(|e| format!("create workspaces dir failed: {e}"))?;
 
-    let _lock = STATE_FILE_LOCK.lock().map_err(|e| format!("state lock failed: {e}"))?;
+    let _lock = STATE_FILE_LOCK
+        .lock()
+        .map_err(|e| format!("state lock failed: {e}"))?;
     let mut state = read_state_file();
     if state.workspaces.iter().any(|w| w.id == id) {
         return Err("workspace id already exists".into());
@@ -3033,14 +3287,19 @@ fn create_workspace(id: String, name: String, set_current: bool) -> Result<Works
 
 #[tauri::command]
 fn set_current_workspace(id: String) -> Result<(), String> {
-    let _lock = STATE_FILE_LOCK.lock().map_err(|e| format!("state lock failed: {e}"))?;
+    let _lock = STATE_FILE_LOCK
+        .lock()
+        .map_err(|e| format!("state lock failed: {e}"))?;
     let mut state = read_state_file();
     if !state.workspaces.iter().any(|w| w.id == id) {
         return Err("workspace id not found".into());
     }
     let dir = workspace_dir(&id);
     if !dir.exists() {
-        eprintln!("workspace dir missing, recreating scaffold: {}", dir.display());
+        eprintln!(
+            "workspace dir missing, recreating scaffold: {}",
+            dir.display()
+        );
         ensure_workspace_scaffold(&dir)?;
     }
     state.current_workspace_id = Some(id);
@@ -3077,7 +3336,9 @@ fn runtime_wheel_hash_matches_bootstrap() -> bool {
     let bootstrap_hash = match read_bootstrap_manifest() {
         Ok(b) => b.wheel.sha256,
         Err(e) => {
-            log_to_file(&format!("[version_check] bootstrap manifest unavailable: {e}"));
+            log_to_file(&format!(
+                "[version_check] bootstrap manifest unavailable: {e}"
+            ));
             return true;
         }
     };
@@ -3108,7 +3369,10 @@ fn stop_backend_for_restart(pid: u32, port: u16) -> VersionCheckResult {
         }
     }
 
-    eprintln!("Old backend (pid={}) stopped. New backend will be started automatically.", pid);
+    eprintln!(
+        "Old backend (pid={}) stopped. New backend will be started automatically.",
+        pid
+    );
     VersionCheckResult::Upgraded
 }
 
@@ -3161,7 +3425,10 @@ fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
     {
         Ok(r) if r.status().is_success() => r,
         Ok(r) => {
-            log_to_file(&format!("[version_check] health check non-success: {}", r.status()));
+            log_to_file(&format!(
+                "[version_check] health check non-success: {}",
+                r.status()
+            ));
             return VersionCheckResult::NotRunning;
         }
         Err(e) => {
@@ -3224,7 +3491,11 @@ fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
     eprintln!(
         "Version mismatch: running={} bundled={} desktop={}. Stopping old backend for upgrade...",
         backend_version,
-        if bundled_v.is_empty() { "?" } else { &bundled_v },
+        if bundled_v.is_empty() {
+            "?"
+        } else {
+            &bundled_v
+        },
         desktop_version
     );
 
@@ -3233,7 +3504,9 @@ fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
     let pid = match json.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32) {
         Some(p) => p,
         None => {
-            eprintln!("Cannot determine backend PID from health response; keeping current backend.");
+            eprintln!(
+                "Cannot determine backend PID from health response; keeping current backend."
+            );
             return VersionCheckResult::RunningOk;
         }
     };
@@ -3306,9 +3579,7 @@ fn write_crash_log(message: &str, show_dialog: bool) -> PathBuf {
     let home = home_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "<None>".to_string());
-    let entry = format!(
-        "[{timestamp}] exe={exe} cwd={cwd} home={home}\n{message}\n---\n"
-    );
+    let entry = format!("[{timestamp}] exe={exe} cwd={cwd} home={home}\n{message}\n---\n");
 
     let _ = OpenOptions::new()
         .create(true)
@@ -3320,8 +3591,8 @@ fn write_crash_log(message: &str, show_dialog: bool) -> PathBuf {
         #[cfg(windows)]
         {
             use std::ffi::OsStr;
-            use std::os::windows::ffi::OsStrExt;
             use std::iter::once;
+            use std::os::windows::ffi::OsStrExt;
 
             extern "system" {
                 fn MessageBoxW(
@@ -3712,7 +3983,11 @@ fn main() {
 
     app.run(|_app_handle, event| {
         #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Reopen { has_visible_windows, .. } = &event {
+        if let tauri::RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } = &event
+        {
             if !has_visible_windows {
                 if let Some(win) = _app_handle.get_webview_window("main") {
                     let _ = win.show();
@@ -3764,15 +4039,21 @@ struct ServiceStatus {
 }
 
 /// 构造 ServiceStatus，自动填充心跳信息
-fn build_service_status(workspace_id: &str, running: bool, pid: Option<u32>, pid_file_str: String) -> ServiceStatus {
-    let (heartbeat_phase, heartbeat_stale, heartbeat_age_secs) = if let Some(hb) = read_heartbeat_file(workspace_id) {
-        let now = now_epoch_secs() as f64;
-        let age = now - hb.timestamp;
-        let stale = age > 30.0; // 超过 30 秒无心跳视为过期
-        (hb.phase, Some(stale), Some(age))
-    } else {
-        (String::new(), None, None)
-    };
+fn build_service_status(
+    workspace_id: &str,
+    running: bool,
+    pid: Option<u32>,
+    pid_file_str: String,
+) -> ServiceStatus {
+    let (heartbeat_phase, heartbeat_stale, heartbeat_age_secs) =
+        if let Some(hb) = read_heartbeat_file(workspace_id) {
+            let now = now_epoch_secs() as f64;
+            let age = now - hb.timestamp;
+            let stale = age > 30.0; // 超过 30 秒无心跳视为过期
+            (hb.phase, Some(stale), Some(age))
+        } else {
+            (String::new(), None, None)
+        };
     ServiceStatus {
         running,
         pid,
@@ -3822,7 +4103,12 @@ fn openakita_service_status(workspace_id: String) -> Result<ServiceStatus, Strin
         if is_pid_file_valid(&data) {
             // PID 文件有效，但如果心跳超过 60 秒没更新，进程可能卡死
             // 此时仍报告 running（让前端根据心跳状态决定是否提示用户）
-            return Ok(build_service_status(&workspace_id, true, Some(data.pid), pf));
+            return Ok(build_service_status(
+                &workspace_id,
+                true,
+                Some(data.pid),
+                pf,
+            ));
         } else {
             // Stale PID，清理 PID 文件和心跳文件
             let _ = fs::remove_file(&pid_file);
@@ -4106,8 +4392,14 @@ fn read_env_kv(path: &Path) -> Vec<(String, String)> {
 }
 
 #[tauri::command]
-fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<ServiceStatus, String> {
-    log_to_file(&format!("[service_start] called: ws={}, venv={}", workspace_id, venv_dir));
+fn openakita_service_start(
+    venv_dir: String,
+    workspace_id: String,
+) -> Result<ServiceStatus, String> {
+    log_to_file(&format!(
+        "[service_start] called: ws={}, venv={}",
+        workspace_id, venv_dir
+    ));
     // ── 进程级互斥：同一 workspace 在 SERVICE_START_DEDUPE_MS 窗口内拒绝重复 spawn。
     // 解决 autostart.log 里 27s 内 5 次 spawn pid 的现场表现：前端在 health
     // check 还没响应时反复 invoke，下游 try_acquire_start_lock 的文件锁有
@@ -4129,9 +4421,7 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
                 let running = read_pid_file(&workspace_id)
                     .map(|d| is_pid_file_valid(&d))
                     .unwrap_or(false);
-                return Ok(build_service_status(
-                    &workspace_id, running, pid_opt, pf,
-                ));
+                return Ok(build_service_status(&workspace_id, running, pid_opt, pf));
             }
         }
         last_map.insert(workspace_id.clone(), now);
@@ -4157,7 +4447,9 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
                     Ok(None) => {
                         return Ok(build_service_status(&workspace_id, true, Some(mp.pid), pf));
                     }
-                    _ => { *guard = None; }
+                    _ => {
+                        *guard = None;
+                    }
                 }
             }
         }
@@ -4172,7 +4464,12 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
                 let _ = fs::remove_file(&pid_file);
                 remove_heartbeat_file(&workspace_id);
             } else {
-                return Ok(build_service_status(&workspace_id, true, Some(data.pid), pf));
+                return Ok(build_service_status(
+                    &workspace_id,
+                    true,
+                    Some(data.pid),
+                    pf,
+                ));
             }
         } else {
             let _ = fs::remove_file(&pid_file);
@@ -4186,7 +4483,9 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
     }
     struct LockGuard(String);
     impl Drop for LockGuard {
-        fn drop(&mut self) { release_start_lock(&self.0); }
+        fn drop(&mut self) {
+            release_start_lock(&self.0);
+        }
     }
     let _lock_guard = LockGuard(workspace_id.clone());
 
@@ -4211,10 +4510,18 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
 
     // 优先使用内嵌 PyInstaller 后端，降级到 venv python
     let (backend_exe, backend_args) = get_backend_executable(&venv_dir);
-    log_to_file(&format!("[service_start] exe={}, exists={}", backend_exe.display(), backend_exe.exists()));
+    log_to_file(&format!(
+        "[service_start] exe={}, exists={}",
+        backend_exe.display(),
+        backend_exe.exists()
+    ));
     if !backend_exe.exists() {
         let bundled_dir = bundled_backend_dir();
-        let bundled_name = if cfg!(windows) { "openakita-server.exe" } else { "openakita-server" };
+        let bundled_name = if cfg!(windows) {
+            "openakita-server.exe"
+        } else {
+            "openakita-server"
+        };
         return Err(format!(
             "后端可执行文件不存在: {}\n\
              已检查路径:\n  - bundled: {}/{}\n  - venv: {}\n\
@@ -4255,8 +4562,14 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
     // .env 由 Python 端的 load_dotenv(override=True) 自行加载，
     // 不再由 Rust 注入，避免编码/BOM 问题导致 Key 丢失或损坏值抢占。
     // Rust 只注入 Python 自己无法确定的路径类环境变量。
-    cmd.env("LLM_ENDPOINTS_CONFIG", ws_dir.join("data").join("llm_endpoints.json"));
-    cmd.env("OPENAKITA_ROOT", openakita_root_dir().to_string_lossy().to_string());
+    cmd.env(
+        "LLM_ENDPOINTS_CONFIG",
+        ws_dir.join("data").join("llm_endpoints.json"),
+    );
+    cmd.env(
+        "OPENAKITA_ROOT",
+        openakita_root_dir().to_string_lossy().to_string(),
+    );
 
     // 设置可选模块路径（已安装的可选模块 site-packages）
     // 重要：不能使用 PYTHONPATH！Python 启动时 PYTHONPATH 会被插入到 sys.path
@@ -4279,7 +4592,11 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
 
     // detach + redirect io
     cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::from(log_file.try_clone().map_err(|e| format!("clone log failed: {e}"))?))
+        .stdout(std::process::Stdio::from(
+            log_file
+                .try_clone()
+                .map_err(|e| format!("clone log failed: {e}"))?,
+        ))
         .stderr(std::process::Stdio::from(log_file));
 
     #[cfg(windows)]
@@ -4317,7 +4634,9 @@ fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<Ser
         {
             let mut guard = MANAGED_CHILD.lock().unwrap();
             if let Some(ref mp) = *guard {
-                if mp.pid == pid { *guard = None; }
+                if mp.pid == pid {
+                    *guard = None;
+                }
             }
         }
         let _ = fs::remove_file(&pid_file);
@@ -4361,7 +4680,12 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
                 // 等待端口释放（最多 10 秒），确保后续重启不会遇到端口冲突
                 let _ = wait_for_port_free(effective_port, 10_000);
                 remove_heartbeat_file(&workspace_id);
-                return Ok(build_service_status(&workspace_id, false, None, pid_file.to_string_lossy().to_string()));
+                return Ok(build_service_status(
+                    &workspace_id,
+                    false,
+                    None,
+                    pid_file.to_string_lossy().to_string(),
+                ));
             } else {
                 *guard = Some(mp);
             }
@@ -4378,11 +4702,19 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
     remove_heartbeat_file(&workspace_id);
     // 等待端口释放（最多 10 秒），确保后续重启不会遇到端口冲突
     let _ = wait_for_port_free(effective_port, 10_000);
-    Ok(build_service_status(&workspace_id, false, None, pid_file.to_string_lossy().to_string()))
+    Ok(build_service_status(
+        &workspace_id,
+        false,
+        None,
+        pid_file.to_string_lossy().to_string(),
+    ))
 }
 
 #[tauri::command]
-fn openakita_service_log(workspace_id: String, tail_bytes: Option<u64>) -> Result<ServiceLogChunk, String> {
+fn openakita_service_log(
+    workspace_id: String,
+    tail_bytes: Option<u64>,
+) -> Result<ServiceLogChunk, String> {
     let ws_dir = workspace_dir(&workspace_id);
     let log_path = ws_dir.join("logs").join("openakita-serve.log");
     let path_str = log_path.to_string_lossy().to_string();
@@ -4397,13 +4729,17 @@ fn openakita_service_log(workspace_id: String, tail_bytes: Option<u64>) -> Resul
     }
 
     let mut f = std::fs::File::open(&log_path).map_err(|e| format!("open log failed: {e}"))?;
-    let len = f.metadata().map_err(|e| format!("stat log failed: {e}"))?.len();
+    let len = f
+        .metadata()
+        .map_err(|e| format!("stat log failed: {e}"))?
+        .len();
     let start = len.saturating_sub(tail);
     let truncated = start > 0;
     f.seek(SeekFrom::Start(start))
         .map_err(|e| format!("seek log failed: {e}"))?;
     let mut buf = Vec::new();
-    f.read_to_end(&mut buf).map_err(|e| format!("read log failed: {e}"))?;
+    f.read_to_end(&mut buf)
+        .map_err(|e| format!("read log failed: {e}"))?;
     let content = String::from_utf8_lossy(&buf).to_string();
 
     Ok(ServiceLogChunk {
@@ -4418,7 +4754,9 @@ fn autostart_is_enabled(app: tauri::AppHandle) -> Result<bool, String> {
     #[cfg(desktop)]
     {
         let mgr = app.autolaunch();
-        return mgr.is_enabled().map_err(|e| format!("autostart is_enabled failed: {e}"));
+        return mgr
+            .is_enabled()
+            .map_err(|e| format!("autostart is_enabled failed: {e}"));
     }
     #[cfg(not(desktop))]
     {
@@ -4433,9 +4771,11 @@ fn autostart_set_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
     {
         let mgr = app.autolaunch();
         if enabled {
-            mgr.enable().map_err(|e| format!("autostart enable failed: {e}"))?;
+            mgr.enable()
+                .map_err(|e| format!("autostart enable failed: {e}"))?;
         } else {
-            mgr.disable().map_err(|e| format!("autostart disable failed: {e}"))?;
+            mgr.disable()
+                .map_err(|e| format!("autostart disable failed: {e}"))?;
         }
         // 同步持久化到 state file，用于下次启动时的自修复检查
         let mut state = read_state_file();
@@ -4505,7 +4845,11 @@ fn set_auto_update(enabled: bool) -> Result<(), String> {
 /// status: "alive" | "degraded" | "dead"
 /// im_summary: 可选的 IM 通道状态摘要（如 "TG:✓ FS:✓ WX:✗"）
 #[tauri::command]
-fn set_tray_backend_status(app: tauri::AppHandle, status: String, im_summary: Option<String>) -> Result<(), String> {
+fn set_tray_backend_status(
+    app: tauri::AppHandle,
+    status: String,
+    im_summary: Option<String>,
+) -> Result<(), String> {
     let base = match status.as_str() {
         "alive" => "OpenAkita - Running",
         "degraded" => "OpenAkita - Backend Unresponsive",
@@ -4557,7 +4901,10 @@ fn set_tray_backend_status(app: tauri::AppHandle, status: String, im_summary: Op
         {
             // macOS: use osascript
             let _ = Command::new("osascript")
-                .args(["-e", "display notification \"Backend service has stopped\" with title \"OpenAkita\""])
+                .args([
+                    "-e",
+                    "display notification \"Backend service has stopped\" with title \"OpenAkita\"",
+                ])
                 .spawn();
         }
     }
@@ -4853,10 +5200,7 @@ fn export_workspace_backup(
     api_port: u16,
 ) -> Result<serde_json::Value, String> {
     // Try the Python backend API first (preferred: consistent logic)
-    let url = format!(
-        "http://127.0.0.1:{}/api/workspace/export",
-        api_port
-    );
+    let url = format!("http://127.0.0.1:{}/api/workspace/export", api_port);
     let body = serde_json::json!({
         "output_dir": output_dir,
         "include_userdata": include_userdata,
@@ -4880,7 +5224,12 @@ fn export_workspace_backup(
         }
         Err(_) => {
             // Fallback: create a basic zip using Rust zip crate
-            export_workspace_backup_native(&workspace_id, &output_dir, include_userdata, include_media)
+            export_workspace_backup_native(
+                &workspace_id,
+                &output_dir,
+                include_userdata,
+                include_media,
+            )
         }
     }
 }
@@ -4909,50 +5258,97 @@ fn export_workspace_backup_native(
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
-    let always_dirs = ["identity", "data/agents", "data/sessions", "data/scheduler",
-                       "data/mcp", "data/telegram", "skills", "mcps"];
-    let always_files = [".env", "data/llm_endpoints.json", "data/skills.json",
-                        "data/disabled_views.json", "data/runtime_state.json",
-                        "data/proactive_feedback.json", "data/sub_agent_states.json"];
-    let userdata_dirs = ["data/memory", "data/retrospects", "data/plans",
-                         "data/docs", "data/reports", "data/research"];
+    let always_dirs = [
+        "identity",
+        "data/agents",
+        "data/sessions",
+        "data/scheduler",
+        "data/mcp",
+        "data/telegram",
+        "skills",
+        "mcps",
+    ];
+    let always_files = [
+        ".env",
+        "data/llm_endpoints.json",
+        "data/skills.json",
+        "data/disabled_views.json",
+        "data/runtime_state.json",
+        "data/proactive_feedback.json",
+        "data/sub_agent_states.json",
+    ];
+    let userdata_dirs = [
+        "data/memory",
+        "data/retrospects",
+        "data/plans",
+        "data/docs",
+        "data/reports",
+        "data/research",
+    ];
     let userdata_files = ["data/agent.db"];
-    let media_dirs = ["data/generated_images", "data/sticker", "data/media",
-                      "data/output", "data/screenshots"];
-    let exclude_dirs = ["logs", "data/llm_debug", "data/delegation_logs",
-                        "data/traces", "data/react_traces", "data/temp",
-                        "data/tool_overflow", "data/selfcheck", "data/openakita_docs",
-                        "identity/runtime", "node_modules", "Lib", "__pycache__"];
+    let media_dirs = [
+        "data/generated_images",
+        "data/sticker",
+        "data/media",
+        "data/output",
+        "data/screenshots",
+    ];
+    let exclude_dirs = [
+        "logs",
+        "data/llm_debug",
+        "data/delegation_logs",
+        "data/traces",
+        "data/react_traces",
+        "data/temp",
+        "data/tool_overflow",
+        "data/selfcheck",
+        "data/openakita_docs",
+        "identity/runtime",
+        "node_modules",
+        "Lib",
+        "__pycache__",
+    ];
 
     let mut file_count: u64 = 0;
 
     for entry in walkdir(&ws) {
         let full = entry.path();
-        if !full.is_file() { continue; }
+        if !full.is_file() {
+            continue;
+        }
         let rel = match full.strip_prefix(&ws) {
             Ok(r) => r.to_string_lossy().replace('\\', "/"),
             Err(_) => continue,
         };
 
         // Exclude
-        if exclude_dirs.iter().any(|d| rel == *d || rel.starts_with(&format!("{d}/"))) {
+        if exclude_dirs
+            .iter()
+            .any(|d| rel == *d || rel.starts_with(&format!("{d}/")))
+        {
             continue;
         }
         if rel == "data/backend.heartbeat" || rel == "package.json" || rel == "package-lock.json" {
             continue;
         }
 
-        let included =
-            always_files.contains(&rel.as_str()) ||
-            always_dirs.iter().any(|d| rel == *d || rel.starts_with(&format!("{d}/"))) ||
-            (include_userdata && (
-                userdata_files.contains(&rel.as_str()) ||
-                userdata_dirs.iter().any(|d| rel == *d || rel.starts_with(&format!("{d}/")))
-            )) ||
-            (include_media &&
-                media_dirs.iter().any(|d| rel == *d || rel.starts_with(&format!("{d}/"))));
+        let included = always_files.contains(&rel.as_str())
+            || always_dirs
+                .iter()
+                .any(|d| rel == *d || rel.starts_with(&format!("{d}/")))
+            || (include_userdata
+                && (userdata_files.contains(&rel.as_str())
+                    || userdata_dirs
+                        .iter()
+                        .any(|d| rel == *d || rel.starts_with(&format!("{d}/")))))
+            || (include_media
+                && media_dirs
+                    .iter()
+                    .any(|d| rel == *d || rel.starts_with(&format!("{d}/"))));
 
-        if !included { continue; }
+        if !included {
+            continue;
+        }
 
         if let Ok(mut f) = fs::File::open(full) {
             let _ = zw.start_file(&rel, options);
@@ -4974,7 +5370,11 @@ fn export_workspace_backup_native(
         "file_count": file_count,
     });
     let _ = zw.start_file("manifest.json", options);
-    let _ = zw.write_all(serde_json::to_string_pretty(&manifest).unwrap_or_default().as_bytes());
+    let _ = zw.write_all(
+        serde_json::to_string_pretty(&manifest)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
     zw.finish().map_err(|e| format!("finalize zip: {e}"))?;
 
     let size = fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
@@ -5037,11 +5437,16 @@ fn import_workspace_backup_native(
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| format!("zip entry: {e}"))?;
         let name = entry.name().to_string();
-        if name == "manifest.json" { continue; }
+        if name == "manifest.json" {
+            continue;
+        }
 
         // Safety: reject path traversal
         let norm = PathBuf::from(&name);
-        if norm.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        if norm
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
             continue;
         }
 
@@ -5087,9 +5492,13 @@ fn walkdir_recurse(dir: &Path, out: &mut Vec<walkdir_entry::Entry>) {
 
 mod walkdir_entry {
     use std::path::{Path, PathBuf};
-    pub struct Entry { pub path: PathBuf }
+    pub struct Entry {
+        pub path: PathBuf,
+    }
     impl Entry {
-        pub fn path(&self) -> &Path { &self.path }
+        pub fn path(&self) -> &Path {
+            &self.path
+        }
     }
 }
 
@@ -5179,7 +5588,9 @@ fn run_capture(cmd: &[String]) -> Result<String, String> {
         c.args(&cmd[1..]);
     }
     apply_no_window(&mut c);
-    let out = c.output().map_err(|e| format!("failed to run {:?}: {e}", cmd))?;
+    let out = c
+        .output()
+        .map_err(|e| format!("failed to run {:?}: {e}", cmd))?;
     let mut s = String::new();
     if !out.stdout.is_empty() {
         s.push_str(&String::from_utf8_lossy(&out.stdout));
@@ -5193,7 +5604,9 @@ fn run_capture(cmd: &[String]) -> Result<String, String> {
 fn python_version_ok(version_text: &str) -> bool {
     // very small parser: "Python 3.11.9"
     let lower = version_text.to_lowercase();
-    let Some(idx) = lower.find("python") else { return false; };
+    let Some(idx) = lower.find("python") else {
+        return false;
+    };
     let ver = version_text[idx..].split_whitespace().nth(1).unwrap_or("");
     let parts: Vec<_> = ver.split('.').collect();
     if parts.len() < 2 {
@@ -5220,7 +5633,11 @@ fn detect_python() -> Vec<PythonCandidate> {
         cmd.push("--version".into());
         let version_text = run_capture(&cmd).unwrap_or_else(|e| e);
         let is_usable = python_version_ok(&version_text);
-        out.push(PythonCandidate { command: c, version_text, is_usable });
+        out.push(PythonCandidate {
+            command: c,
+            version_text,
+            is_usable,
+        });
     }
 
     if let Some(bundled_py) = bundled_internal_python_path() {
@@ -5229,7 +5646,11 @@ fn detect_python() -> Vec<PythonCandidate> {
         cmd.push("--version".into());
         let version_text = run_capture(&cmd).unwrap_or_else(|e| e);
         let is_usable = python_version_ok(&version_text);
-        out.push(PythonCandidate { command: c, version_text, is_usable });
+        out.push(PythonCandidate {
+            command: c,
+            version_text,
+            is_usable,
+        });
     }
 
     if out.is_empty() {
@@ -5307,7 +5728,8 @@ fn diagnose_python_env(venv_dir: String) -> PythonDiagnostic {
     let ws_id = state.current_workspace_id.clone();
 
     // Determine the API port of the current workspace's backend.
-    let port = ws_id.as_deref()
+    let port = ws_id
+        .as_deref()
         .and_then(read_workspace_api_port)
         .unwrap_or(18900);
 
@@ -5315,10 +5737,13 @@ fn diagnose_python_env(venv_dir: String) -> PythonDiagnostic {
     let heartbeat = ws_id.as_deref().and_then(read_heartbeat_file);
     let backend_phase = heartbeat.as_ref().map(|hb| hb.phase.as_str()).unwrap_or("");
     let http_ready = heartbeat.as_ref().map(|hb| hb.http_ready).unwrap_or(false);
-    let hb_fresh = heartbeat.as_ref().map(|hb| {
-        let age = now_epoch_secs() as f64 - hb.timestamp;
-        age <= 30.0
-    }).unwrap_or(false);
+    let hb_fresh = heartbeat
+        .as_ref()
+        .map(|hb| {
+            let age = now_epoch_secs() as f64 - hb.timestamp;
+            age <= 30.0
+        })
+        .unwrap_or(false);
 
     // Backend process is alive with fresh heartbeat but HTTP not yet ready
     // → it's still initializing; skip the API call (would just time out).
@@ -5347,7 +5772,7 @@ fn diagnose_python_env(venv_dir: String) -> PythonDiagnostic {
     let bundled_dir = bundled_backend_dir();
     let bundled_exe = if cfg!(windows) {
         bundled_dir.join("openakita-server.exe")
-        } else {
+    } else {
         bundled_dir.join("openakita-server")
     };
     let internal_dir = bundled_dir.join("_internal");
@@ -5393,11 +5818,14 @@ fn diagnose_python_env(venv_dir: String) -> PythonDiagnostic {
         fix_hint: Some("启动后端服务后可获得完整诊断信息".into()),
     });
 
-    let failing: Vec<&PythonContractResult> = contracts
-        .iter()
-        .filter(|c| c.status == "fail")
-        .collect();
-    let summary = if failing.is_empty() { "healthy" } else { "broken" }.to_string();
+    let failing: Vec<&PythonContractResult> =
+        contracts.iter().filter(|c| c.status == "fail").collect();
+    let summary = if failing.is_empty() {
+        "healthy"
+    } else {
+        "broken"
+    }
+    .to_string();
 
     PythonDiagnostic {
         summary,
@@ -5444,7 +5872,10 @@ fn make_backend_api_unreachable_diagnostic(trace_id: String, port: u16) -> Pytho
             title: "后端服务".into(),
             status: "warn".into(),
             code: "BACKEND_API_UNREACHABLE".into(),
-            evidence: vec![format!("heartbeat ok, port {} API unreachable — retrying may help", port)],
+            evidence: vec![format!(
+                "heartbeat ok, port {} API unreachable — retrying may help",
+                port
+            )],
             auto_fix: false,
             fix_hint: Some("后端进程正在运行但 API 暂时不可达，请稍后重试".into()),
         }],
@@ -5469,10 +5900,9 @@ fn diagnose_via_backend_api(port: u16) -> Option<PythonDiagnostic> {
     {
         use std::net::TcpStream;
         let addr = format!("127.0.0.1:{}", port);
-        if TcpStream::connect_timeout(
-            &addr.parse().ok()?,
-            std::time::Duration::from_secs(2),
-        ).is_err() {
+        if TcpStream::connect_timeout(&addr.parse().ok()?, std::time::Duration::from_secs(2))
+            .is_err()
+        {
             return None;
         }
     }
@@ -5492,13 +5922,17 @@ fn diagnose_via_backend_api(port: u16) -> Option<PythonDiagnostic> {
             std::thread::sleep(std::time::Duration::from_millis(1500));
         }
         match client.get(&url).send() {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.json::<serde_json::Value>() {
-                    Ok(json) => return parse_diagnostics_json(&json),
-                    Err(e) => { last_err = format!("json parse: {e}"); continue; }
+            Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+                Ok(json) => return parse_diagnostics_json(&json),
+                Err(e) => {
+                    last_err = format!("json parse: {e}");
+                    continue;
                 }
+            },
+            Ok(resp) => {
+                last_err = format!("HTTP {}", resp.status());
+                continue;
             }
-            Ok(resp) => { last_err = format!("HTTP {}", resp.status()); continue; }
             Err(e) => {
                 let msg = format!("{e}");
                 // Connection refused → nothing is listening, don't retry.
@@ -5517,8 +5951,8 @@ fn diagnose_via_backend_api(port: u16) -> Option<PythonDiagnostic> {
 }
 
 fn parse_diagnostics_json(json: &serde_json::Value) -> Option<PythonDiagnostic> {
-
-    let summary = json.get("summary")
+    let summary = json
+        .get("summary")
         .and_then(|v| v.as_str())
         .unwrap_or("healthy")
         .to_string();
@@ -5529,11 +5963,20 @@ fn parse_diagnostics_json(json: &serde_json::Value) -> Option<PythonDiagnostic> 
             contracts.push(PythonContractResult {
                 id: c.get("id").and_then(|v| v.as_str()).unwrap_or("").into(),
                 title: c.get("title").and_then(|v| v.as_str()).unwrap_or("").into(),
-                status: c.get("status").and_then(|v| v.as_str()).unwrap_or("pass").into(),
+                status: c
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("pass")
+                    .into(),
                 code: c.get("code").and_then(|v| v.as_str()).unwrap_or("").into(),
-                evidence: c.get("evidence")
+                evidence: c
+                    .get("evidence")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 auto_fix: c.get("autoFix").and_then(|v| v.as_bool()).unwrap_or(false),
                 fix_hint: c.get("fixHint").and_then(|v| v.as_str()).map(String::from),
@@ -5644,7 +6087,8 @@ fn resolve_python(venv_dir: &str) -> Result<(PathBuf, Option<String>), String> {
         return Ok((venv_py, None));
     }
     let py = find_pip_python().ok_or_else(|| {
-        "未找到可用 Python 解释器（venv/bundled）。请重新安装 OpenAkita 以恢复内置 Python。".to_string()
+        "未找到可用 Python 解释器（venv/bundled）。请重新安装 OpenAkita 以恢复内置 Python。"
+            .to_string()
     })?;
     let bundled = bundled_backend_dir();
     let internal_dir = bundled.join("_internal");
@@ -5954,11 +6398,16 @@ fn run_python_module_json(
     for (k, v) in extra_env {
         c.env(k, v);
     }
-    let out = c.output().map_err(|e| format!("failed to run python: {e}"))?;
+    let out = c
+        .output()
+        .map_err(|e| format!("failed to run python: {e}"))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).to_string();
         let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-        return Err(format!("python failed: {}\nstdout:\n{}\nstderr:\n{}", out.status, stdout, stderr));
+        return Err(format!(
+            "python failed: {}\nstdout:\n{}\nstderr:\n{}",
+            out.status, stdout, stderr
+        ));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -5966,7 +6415,12 @@ fn run_python_module_json(
 #[tauri::command]
 async fn openakita_list_providers(venv_dir: String) -> Result<String, String> {
     spawn_blocking_result(move || {
-        run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &["list-providers"], &[])
+        run_python_module_json(
+            &venv_dir,
+            "openakita.setup_center.bridge",
+            &["list-providers"],
+            &[],
+        )
     })
     .await
 }
@@ -5995,7 +6449,13 @@ async fn openakita_list_models(
     api_key: String,
 ) -> Result<String, String> {
     spawn_blocking_result(move || {
-        let mut args = vec!["list-models", "--api-type", api_type.as_str(), "--base-url", base_url.as_str()];
+        let mut args = vec![
+            "list-models",
+            "--api-type",
+            api_type.as_str(),
+            "--base-url",
+            base_url.as_str(),
+        ];
         if let Some(slug) = provider_slug.as_deref() {
             args.push("--provider-slug");
             args.push(slug);
@@ -6016,7 +6476,10 @@ async fn openakita_version(venv_dir: String) -> Result<String, String> {
     spawn_blocking_result(move || {
         // 1. 尝试从打包后端读取 _bundled_version.txt（最快且无需 Python）
         let bundled = bundled_backend_dir();
-        let version_file = bundled.join("_internal").join("openakita").join("_bundled_version.txt");
+        let version_file = bundled
+            .join("_internal")
+            .join("openakita")
+            .join("_bundled_version.txt");
         if version_file.exists() {
             if let Ok(v) = fs::read_to_string(&version_file) {
                 let v = v.trim().to_string();
@@ -6040,11 +6503,16 @@ async fn openakita_version(venv_dir: String) -> Result<String, String> {
             "-c",
             "import openakita; print(getattr(openakita,'__version__',''))",
         ]);
-        let out = c.output().map_err(|e| format!("get openakita version failed: {e}"))?;
+        let out = c
+            .output()
+            .map_err(|e| format!("get openakita version failed: {e}"))?;
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr).to_string();
             let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            return Err(format!("python failed: {}\nstdout:\n{}\nstderr:\n{}", out.status, stdout, stderr));
+            return Err(format!(
+                "python failed: {}\nstdout:\n{}\nstderr:\n{}",
+                out.status, stdout, stderr
+            ));
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     })
@@ -6062,11 +6530,7 @@ async fn openakita_health_check_endpoint(
     spawn_blocking_result(move || {
         let wd = workspace_dir(&workspace_id);
         let wd_str = wd.to_string_lossy().to_string();
-        let mut args = vec![
-            "health-check-endpoint",
-            "--workspace-dir",
-            &wd_str,
-        ];
+        let mut args = vec!["health-check-endpoint", "--workspace-dir", &wd_str];
         let ep_name_str;
         if let Some(ref name) = endpoint_name {
             ep_name_str = name.clone();
@@ -6089,11 +6553,7 @@ async fn openakita_health_check_im(
     spawn_blocking_result(move || {
         let wd = workspace_dir(&workspace_id);
         let wd_str = wd.to_string_lossy().to_string();
-        let mut args = vec![
-            "health-check-im",
-            "--workspace-dir",
-            &wd_str,
-        ];
+        let mut args = vec!["health-check-im", "--workspace-dir", &wd_str];
         let ch_str;
         if let Some(ref ch) = channel {
             ch_str = ch.clone();
@@ -6115,11 +6575,7 @@ async fn openakita_ensure_channel_deps(
     spawn_blocking_result(move || {
         let wd = workspace_dir(&workspace_id);
         let wd_str = wd.to_string_lossy().to_string();
-        let args = vec![
-            "ensure-channel-deps",
-            "--workspace-dir",
-            &wd_str,
-        ];
+        let args = vec!["ensure-channel-deps", "--workspace-dir", &wd_str];
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
     })
     .await
@@ -6135,13 +6591,7 @@ async fn openakita_install_skill(
     spawn_blocking_result(move || {
         let wd = workspace_dir(&workspace_id);
         let wd_str = wd.to_string_lossy().to_string();
-        let args = vec![
-            "install-skill",
-            "--workspace-dir",
-            &wd_str,
-            "--url",
-            &url,
-        ];
+        let args = vec!["install-skill", "--workspace-dir", &wd_str, "--url", &url];
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
     })
     .await
@@ -6171,9 +6621,7 @@ async fn openakita_uninstall_skill(
 
 /// List marketplace skills.
 #[tauri::command]
-async fn openakita_list_marketplace(
-    venv_dir: String,
-) -> Result<String, String> {
+async fn openakita_list_marketplace(venv_dir: String) -> Result<String, String> {
     spawn_blocking_result(move || {
         let args = vec!["list-marketplace"];
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
@@ -6206,9 +6654,7 @@ async fn openakita_get_skill_config(
 /// Start WeCom QR code onboarding (generate QR).
 /// Returns JSON with qr_url + qr_id.
 #[tauri::command]
-async fn openakita_wecom_onboard_start(
-    venv_dir: String,
-) -> Result<String, String> {
+async fn openakita_wecom_onboard_start(venv_dir: String) -> Result<String, String> {
     spawn_blocking_result(move || {
         let args = vec!["wecom-onboard-start"];
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
@@ -6219,16 +6665,9 @@ async fn openakita_wecom_onboard_start(
 /// Poll WeCom QR code scan result.
 /// Returns JSON with bot_id + secret on success.
 #[tauri::command]
-async fn openakita_wecom_onboard_poll(
-    venv_dir: String,
-    scode: String,
-) -> Result<String, String> {
+async fn openakita_wecom_onboard_poll(venv_dir: String, scode: String) -> Result<String, String> {
     spawn_blocking_result(move || {
-        let args = vec![
-            "wecom-onboard-poll",
-            "--scode",
-            &scode,
-        ];
+        let args = vec!["wecom-onboard-poll", "--scode", &scode];
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
     })
     .await
@@ -6340,11 +6779,7 @@ async fn openakita_qqbot_onboard_poll_and_create(
     session_id: String,
 ) -> Result<String, String> {
     spawn_blocking_result(move || {
-        let args = vec![
-            "qqbot-onboard-poll-and-create",
-            "--session-id",
-            &session_id,
-        ];
+        let args = vec!["qqbot-onboard-poll-and-create", "--session-id", &session_id];
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
     })
     .await
@@ -6385,10 +6820,7 @@ async fn openakita_wechat_onboard_start(venv_dir: String) -> Result<String, Stri
 /// Poll WeChat QR code login status (long-poll).
 /// Returns JSON with status (wait/scaned/confirmed/expired) + token.
 #[tauri::command]
-async fn openakita_wechat_onboard_poll(
-    venv_dir: String,
-    qrcode: String,
-) -> Result<String, String> {
+async fn openakita_wechat_onboard_poll(venv_dir: String, qrcode: String) -> Result<String, String> {
     spawn_blocking_result(move || {
         let args = vec!["wechat-onboard-poll", "--qrcode", &qrcode];
         run_python_module_json(&venv_dir, "openakita.setup_center.bridge", &args, &[])
@@ -6434,10 +6866,17 @@ async fn fetch_pypi_versions(package: String, index_url: Option<String>) -> Resu
         for url in &urls {
             match client.get(url).send() {
                 Ok(r) => match r.error_for_status() {
-                    Ok(r) => { resp_ok = Some(r); break; }
-                    Err(e) => { last_err = format!("fetch PyPI versions failed ({}): {}", url, e); }
+                    Ok(r) => {
+                        resp_ok = Some(r);
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = format!("fetch PyPI versions failed ({}): {}", url, e);
+                    }
                 },
-                Err(e) => { last_err = format!("fetch PyPI versions failed ({}): {}", url, e); }
+                Err(e) => {
+                    last_err = format!("fetch PyPI versions failed ({}): {}", url, e);
+                }
             }
         }
         let resp = resp_ok.ok_or(last_err)?;
@@ -6470,7 +6909,8 @@ async fn fetch_pypi_versions(package: String, index_url: Option<String>) -> Resu
                 s.split('.')
                     .map(|p| {
                         // strip pre-release suffixes for sorting: "1a0" -> 1
-                        let numeric: String = p.chars().take_while(|c| c.is_ascii_digit()).collect();
+                        let numeric: String =
+                            p.chars().take_while(|c| c.is_ascii_digit()).collect();
                         numeric.parse::<i64>().unwrap_or(0)
                     })
                     .collect()
@@ -6646,10 +7086,7 @@ async fn backend_fetch(
             match response.chunk().await {
                 Ok(Some(chunk)) => {
                     let text = String::from_utf8_lossy(&chunk).to_string();
-                    if on_event
-                        .send(BackendFetchEvent::Chunk { text })
-                        .is_err()
-                    {
+                    if on_event.send(BackendFetchEvent::Chunk { text }).is_err() {
                         break;
                     }
                 }
@@ -6719,16 +7156,39 @@ fn sanitize_download_filename(candidate: &str) -> String {
         })
         .collect();
     let trimmed = sanitized.trim_matches(|ch| ch == ' ' || ch == '.');
-    let name = if trimmed.is_empty() { "download" } else { trimmed };
+    let name = if trimmed.is_empty() {
+        "download"
+    } else {
+        trimmed
+    };
     let stem = std::path::Path::new(name)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(name);
     let reserved = matches!(
         stem.to_ascii_uppercase().as_str(),
-        "CON" | "PRN" | "AUX" | "NUL"
-            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
-            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
     );
     if reserved {
         format!("_{name}")
@@ -6787,8 +7247,7 @@ async fn download_file(url: String, filename: String) -> Result<String, String> 
         .bytes()
         .await
         .map_err(|e| format!("Failed to read response body: {e}"))?;
-    std::fs::write(&dest, &bytes)
-        .map_err(|e| format!("Failed to write file: {e}"))?;
+    std::fs::write(&dest, &bytes).map_err(|e| format!("Failed to write file: {e}"))?;
 
     Ok(dest.to_string_lossy().to_string())
 }
@@ -6815,8 +7274,7 @@ fn copy_file_to_downloads(path: String, filename: Option<String>) -> Result<Stri
         .unwrap_or(source_name);
     let dest = unique_download_path(requested_name)?;
 
-    std::fs::copy(source, &dest)
-        .map_err(|e| format!("Failed to copy file: {e}"))?;
+    std::fs::copy(source, &dest).map_err(|e| format!("Failed to copy file: {e}"))?;
 
     Ok(dest.to_string_lossy().to_string())
 }
@@ -6833,7 +7291,8 @@ fn show_item_in_folder(path: String) -> Result<(), String> {
         let mut c = std::process::Command::new("explorer");
         c.args(["/select,", &path]);
         apply_no_window(&mut c);
-        c.spawn().map_err(|e| format!("Failed to open explorer: {e}"))?;
+        c.spawn()
+            .map_err(|e| format!("Failed to open explorer: {e}"))?;
     }
     #[cfg(target_os = "macos")]
     {
@@ -6910,12 +7369,10 @@ fn export_env_backup(workspace_id: String, dest_path: Option<String>) -> Result<
     };
 
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Cannot create directory: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Cannot create directory: {e}"))?;
     }
 
-    fs::copy(&env_path, &dest)
-        .map_err(|e| format!("Failed to copy .env: {e}"))?;
+    fs::copy(&env_path, &dest).map_err(|e| format!("Failed to copy .env: {e}"))?;
 
     Ok(dest.to_string_lossy().to_string())
 }
@@ -6948,12 +7405,10 @@ fn export_diagnostic_bundle(
     };
 
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Cannot create directory: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Cannot create directory: {e}"))?;
     }
 
-    let file = fs::File::create(&dest)
-        .map_err(|e| format!("Failed to create zip file: {e}"))?;
+    let file = fs::File::create(&dest).map_err(|e| format!("Failed to create zip file: {e}"))?;
     let mut zip_writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -7057,31 +7512,124 @@ fn export_diagnostic_bundle(
     add_dir_to_zip(&mut zip_writer, &logs_dir, "logs", options)?;
 
     // -- LLM debug data --
-    add_dir_to_zip_capped(&mut zip_writer, &llm_debug_dir, "llm_debug", options, 10 * 1024 * 1024)?;
+    add_dir_to_zip_capped(
+        &mut zip_writer,
+        &llm_debug_dir,
+        "llm_debug",
+        options,
+        10 * 1024 * 1024,
+    )?;
 
     // -- Debug data directories (capped per-dir) --
     let data_dir = ws_dir.join("data");
-    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("delegation_logs"), "delegation_logs", options, 2 * 1024 * 1024)?;
-    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("react_traces"), "react_traces", options, 5 * 1024 * 1024)?;
-    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("traces"), "traces", options, 2 * 1024 * 1024)?;
-    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("orgs"), "orgs", options, 2 * 1024 * 1024)?;
-    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("tool_overflow"), "tool_overflow", options, 2 * 1024 * 1024)?;
-    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("failure_analysis"), "failure_analysis", options, 1 * 1024 * 1024)?;
-    add_dir_to_zip_capped(&mut zip_writer, &data_dir.join("retrospects"), "retrospects", options, 1 * 1024 * 1024)?;
+    add_dir_to_zip_capped(
+        &mut zip_writer,
+        &data_dir.join("delegation_logs"),
+        "delegation_logs",
+        options,
+        2 * 1024 * 1024,
+    )?;
+    add_dir_to_zip_capped(
+        &mut zip_writer,
+        &data_dir.join("react_traces"),
+        "react_traces",
+        options,
+        5 * 1024 * 1024,
+    )?;
+    add_dir_to_zip_capped(
+        &mut zip_writer,
+        &data_dir.join("traces"),
+        "traces",
+        options,
+        2 * 1024 * 1024,
+    )?;
+    add_dir_to_zip_capped(
+        &mut zip_writer,
+        &data_dir.join("orgs"),
+        "orgs",
+        options,
+        2 * 1024 * 1024,
+    )?;
+    add_dir_to_zip_capped(
+        &mut zip_writer,
+        &data_dir.join("tool_overflow"),
+        "tool_overflow",
+        options,
+        2 * 1024 * 1024,
+    )?;
+    add_dir_to_zip_capped(
+        &mut zip_writer,
+        &data_dir.join("failure_analysis"),
+        "failure_analysis",
+        options,
+        1 * 1024 * 1024,
+    )?;
+    add_dir_to_zip_capped(
+        &mut zip_writer,
+        &data_dir.join("retrospects"),
+        "retrospects",
+        options,
+        1 * 1024 * 1024,
+    )?;
 
     // -- Small state files --
-    add_file_to_zip(&mut zip_writer, &data_dir.join("runtime_state.json"), "state/runtime_state.json", options)?;
-    add_file_to_zip(&mut zip_writer, &data_dir.join("sub_agent_states.json"), "state/sub_agent_states.json", options)?;
-    add_file_to_zip(&mut zip_writer, &data_dir.join("backend.heartbeat"), "state/backend.heartbeat", options)?;
-    add_file_to_zip(&mut zip_writer, &data_dir.join("sessions").join("sessions.json"), "state/sessions.json", options)?;
-    add_file_to_zip(&mut zip_writer, &data_dir.join("sessions").join("channel_registry.json"), "state/channel_registry.json", options)?;
-    add_file_to_zip(&mut zip_writer, &data_dir.join("scheduler").join("tasks.json"), "state/scheduler_tasks.json", options)?;
-    add_file_to_zip(&mut zip_writer, &data_dir.join("scheduler").join("executions.json"), "state/scheduler_executions.json", options)?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &data_dir.join("runtime_state.json"),
+        "state/runtime_state.json",
+        options,
+    )?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &data_dir.join("sub_agent_states.json"),
+        "state/sub_agent_states.json",
+        options,
+    )?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &data_dir.join("backend.heartbeat"),
+        "state/backend.heartbeat",
+        options,
+    )?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &data_dir.join("sessions").join("sessions.json"),
+        "state/sessions.json",
+        options,
+    )?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &data_dir.join("sessions").join("channel_registry.json"),
+        "state/channel_registry.json",
+        options,
+    )?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &data_dir.join("scheduler").join("tasks.json"),
+        "state/scheduler_tasks.json",
+        options,
+    )?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &data_dir.join("scheduler").join("executions.json"),
+        "state/scheduler_executions.json",
+        options,
+    )?;
 
     // -- Global logs (frontend.log, crash.log, onboarding) --
     let global_logs = setup_logs_dir();
-    add_file_to_zip(&mut zip_writer, &global_logs.join("frontend.log"), "global_logs/frontend.log", options)?;
-    add_file_to_zip(&mut zip_writer, &global_logs.join("crash.log"), "global_logs/crash.log", options)?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &global_logs.join("frontend.log"),
+        "global_logs/frontend.log",
+        options,
+    )?;
+    add_file_to_zip(
+        &mut zip_writer,
+        &global_logs.join("crash.log"),
+        "global_logs/crash.log",
+        options,
+    )?;
     for entry in fs::read_dir(&global_logs).into_iter().flatten().flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
@@ -7143,7 +7691,11 @@ fn read_feedback_endpoint(workspace_id: &str) -> String {
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("bug_report_endpoint:") {
-                let val = trimmed.trim_start_matches("bug_report_endpoint:").trim().trim_matches('"').trim_matches('\'');
+                let val = trimmed
+                    .trim_start_matches("bug_report_endpoint:")
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
                 if !val.is_empty() {
                     return val.to_string();
                 }
@@ -7189,7 +7741,9 @@ fn build_feedback_zip(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let secs = d % 60; let mins = (d / 60) % 60; let hrs = (d / 3600) % 24;
+        let secs = d % 60;
+        let mins = (d / 60) % 60;
+        let hrs = (d / 3600) % 24;
         let days = d / 86400;
         let (y, m, day) = civil_from_days(days as i64);
         format!("{y:04}-{m:02}-{day:02}T{hrs:02}:{mins:02}:{secs:02}Z")
@@ -7208,9 +7762,14 @@ fn build_feedback_zip(
             "arch": std::env::consts::ARCH,
         }
     });
-    zw.start_file("metadata.json", opts).map_err(|e| format!("zip: {e}"))?;
-    zw.write_all(serde_json::to_string_pretty(&metadata).unwrap_or_default().as_bytes())
-        .map_err(|e| format!("zip write: {e}"))?;
+    zw.start_file("metadata.json", opts)
+        .map_err(|e| format!("zip: {e}"))?;
+    zw.write_all(
+        serde_json::to_string_pretty(&metadata)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+    .map_err(|e| format!("zip write: {e}"))?;
 
     // --- images ---
     if let Some(imgs) = images {
@@ -7221,7 +7780,8 @@ fn build_feedback_zip(
                 } else {
                     format!("images/{}", img.filename)
                 };
-                zw.start_file(&name, opts).map_err(|e| format!("zip: {e}"))?;
+                zw.start_file(&name, opts)
+                    .map_err(|e| format!("zip: {e}"))?;
                 let _ = zw.write_all(&bytes);
             }
         }
@@ -7233,15 +7793,24 @@ fn build_feedback_zip(
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let p = entry.path();
-                if p.is_dir() { result.extend(collect_files_recursive(&p)); }
-                else { result.push(p); }
+                if p.is_dir() {
+                    result.extend(collect_files_recursive(&p));
+                } else {
+                    result.push(p);
+                }
             }
         }
         result
     }
-    fn zip_add_dir(zw: &mut zip::ZipWriter<fs::File>, dir: &Path, prefix: &str,
-                   opts: zip::write::SimpleFileOptions) {
-        if !dir.exists() { return; }
+    fn zip_add_dir(
+        zw: &mut zip::ZipWriter<fs::File>,
+        dir: &Path,
+        prefix: &str,
+        opts: zip::write::SimpleFileOptions,
+    ) {
+        if !dir.exists() {
+            return;
+        }
         for fp in collect_files_recursive(dir) {
             if let Ok(rel) = fp.strip_prefix(dir) {
                 let name = format!("{}/{}", prefix, rel.to_string_lossy().replace('\\', "/"));
@@ -7251,9 +7820,16 @@ fn build_feedback_zip(
             }
         }
     }
-    fn zip_add_dir_capped(zw: &mut zip::ZipWriter<fs::File>, dir: &Path, prefix: &str,
-                          opts: zip::write::SimpleFileOptions, max_bytes: u64) {
-        if !dir.exists() { return; }
+    fn zip_add_dir_capped(
+        zw: &mut zip::ZipWriter<fs::File>,
+        dir: &Path,
+        prefix: &str,
+        opts: zip::write::SimpleFileOptions,
+        max_bytes: u64,
+    ) {
+        if !dir.exists() {
+            return;
+        }
         let mut files = collect_files_recursive(dir);
         files.sort_by(|a, b| {
             let ma = fs::metadata(a).and_then(|m| m.modified()).ok();
@@ -7263,7 +7839,9 @@ fn build_feedback_zip(
         let mut total: u64 = 0;
         for fp in files {
             let sz = fs::metadata(&fp).map(|m| m.len()).unwrap_or(0);
-            if total + sz > max_bytes { continue; }
+            if total + sz > max_bytes {
+                continue;
+            }
             if let Ok(rel) = fp.strip_prefix(dir) {
                 let name = format!("{}/{}", prefix, rel.to_string_lossy().replace('\\', "/"));
                 if zw.start_file(&name, opts).is_ok() {
@@ -7273,9 +7851,15 @@ fn build_feedback_zip(
             }
         }
     }
-    fn zip_add_file(zw: &mut zip::ZipWriter<fs::File>, path: &Path, zip_name: &str,
-                    opts: zip::write::SimpleFileOptions) {
-        if !path.exists() || !path.is_file() { return; }
+    fn zip_add_file(
+        zw: &mut zip::ZipWriter<fs::File>,
+        path: &Path,
+        zip_name: &str,
+        opts: zip::write::SimpleFileOptions,
+    ) {
+        if !path.exists() || !path.is_file() {
+            return;
+        }
         if zw.start_file(zip_name, opts).is_ok() {
             let _ = zw.write_all(&fs::read(path).unwrap_or_default());
         }
@@ -7287,30 +7871,122 @@ fn build_feedback_zip(
 
     zip_add_dir(&mut zw, &logs_dir, "logs", opts);
     zip_add_dir_capped(&mut zw, &llm_debug_dir, "llm_debug", opts, 10 * 1024 * 1024);
-    zip_add_dir_capped(&mut zw, &data_dir.join("delegation_logs"), "delegation_logs", opts, 2 * 1024 * 1024);
-    zip_add_dir_capped(&mut zw, &data_dir.join("react_traces"), "react_traces", opts, 5 * 1024 * 1024);
-    zip_add_dir_capped(&mut zw, &data_dir.join("traces"), "traces", opts, 2 * 1024 * 1024);
-    zip_add_dir_capped(&mut zw, &data_dir.join("orgs"), "orgs", opts, 2 * 1024 * 1024);
-    zip_add_dir_capped(&mut zw, &data_dir.join("tool_overflow"), "tool_overflow", opts, 2 * 1024 * 1024);
-    zip_add_dir_capped(&mut zw, &data_dir.join("failure_analysis"), "failure_analysis", opts, 1 * 1024 * 1024);
-    zip_add_dir_capped(&mut zw, &data_dir.join("retrospects"), "retrospects", opts, 1 * 1024 * 1024);
+    zip_add_dir_capped(
+        &mut zw,
+        &data_dir.join("delegation_logs"),
+        "delegation_logs",
+        opts,
+        2 * 1024 * 1024,
+    );
+    zip_add_dir_capped(
+        &mut zw,
+        &data_dir.join("react_traces"),
+        "react_traces",
+        opts,
+        5 * 1024 * 1024,
+    );
+    zip_add_dir_capped(
+        &mut zw,
+        &data_dir.join("traces"),
+        "traces",
+        opts,
+        2 * 1024 * 1024,
+    );
+    zip_add_dir_capped(
+        &mut zw,
+        &data_dir.join("orgs"),
+        "orgs",
+        opts,
+        2 * 1024 * 1024,
+    );
+    zip_add_dir_capped(
+        &mut zw,
+        &data_dir.join("tool_overflow"),
+        "tool_overflow",
+        opts,
+        2 * 1024 * 1024,
+    );
+    zip_add_dir_capped(
+        &mut zw,
+        &data_dir.join("failure_analysis"),
+        "failure_analysis",
+        opts,
+        1 * 1024 * 1024,
+    );
+    zip_add_dir_capped(
+        &mut zw,
+        &data_dir.join("retrospects"),
+        "retrospects",
+        opts,
+        1 * 1024 * 1024,
+    );
 
-    zip_add_file(&mut zw, &data_dir.join("runtime_state.json"), "state/runtime_state.json", opts);
-    zip_add_file(&mut zw, &data_dir.join("sub_agent_states.json"), "state/sub_agent_states.json", opts);
-    zip_add_file(&mut zw, &data_dir.join("backend.heartbeat"), "state/backend.heartbeat", opts);
-    zip_add_file(&mut zw, &data_dir.join("sessions").join("sessions.json"), "state/sessions.json", opts);
-    zip_add_file(&mut zw, &data_dir.join("sessions").join("channel_registry.json"), "state/channel_registry.json", opts);
-    zip_add_file(&mut zw, &data_dir.join("scheduler").join("tasks.json"), "state/scheduler_tasks.json", opts);
-    zip_add_file(&mut zw, &data_dir.join("scheduler").join("executions.json"), "state/scheduler_executions.json", opts);
+    zip_add_file(
+        &mut zw,
+        &data_dir.join("runtime_state.json"),
+        "state/runtime_state.json",
+        opts,
+    );
+    zip_add_file(
+        &mut zw,
+        &data_dir.join("sub_agent_states.json"),
+        "state/sub_agent_states.json",
+        opts,
+    );
+    zip_add_file(
+        &mut zw,
+        &data_dir.join("backend.heartbeat"),
+        "state/backend.heartbeat",
+        opts,
+    );
+    zip_add_file(
+        &mut zw,
+        &data_dir.join("sessions").join("sessions.json"),
+        "state/sessions.json",
+        opts,
+    );
+    zip_add_file(
+        &mut zw,
+        &data_dir.join("sessions").join("channel_registry.json"),
+        "state/channel_registry.json",
+        opts,
+    );
+    zip_add_file(
+        &mut zw,
+        &data_dir.join("scheduler").join("tasks.json"),
+        "state/scheduler_tasks.json",
+        opts,
+    );
+    zip_add_file(
+        &mut zw,
+        &data_dir.join("scheduler").join("executions.json"),
+        "state/scheduler_executions.json",
+        opts,
+    );
 
     let global_logs = setup_logs_dir();
-    zip_add_file(&mut zw, &global_logs.join("frontend.log"), "global_logs/frontend.log", opts);
-    zip_add_file(&mut zw, &global_logs.join("crash.log"), "global_logs/crash.log", opts);
+    zip_add_file(
+        &mut zw,
+        &global_logs.join("frontend.log"),
+        "global_logs/frontend.log",
+        opts,
+    );
+    zip_add_file(
+        &mut zw,
+        &global_logs.join("crash.log"),
+        "global_logs/crash.log",
+        opts,
+    );
     for entry in fs::read_dir(&global_logs).into_iter().flatten().flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         if name_str.starts_with("onboarding-") && name_str.ends_with(".log") {
-            zip_add_file(&mut zw, &entry.path(), &format!("global_logs/{name_str}"), opts);
+            zip_add_file(
+                &mut zw,
+                &entry.path(),
+                &format!("global_logs/{name_str}"),
+                opts,
+            );
         }
     }
 
@@ -7353,7 +8029,10 @@ fn upload_feedback_to_cloud(
     let zip_bytes = fs::read(&zip_path).map_err(|e| format!("read zip: {e}"))?;
     let _ = fs::remove_file(&zip_path);
     if zip_bytes.len() > 30 * 1024 * 1024 {
-        return Err(format!("ZIP too large: {:.1} MB (max 30 MB)", zip_bytes.len() as f64 / 1048576.0));
+        return Err(format!(
+            "ZIP too large: {:.1} MB (max 30 MB)",
+            zip_bytes.len() as f64 / 1048576.0
+        ));
     }
 
     let client = reqwest::blocking::Client::builder()
@@ -7371,7 +8050,8 @@ fn upload_feedback_to_cloud(
     }
 
     // Phase 1: prepare
-    let prepare_resp = client.post(format!("{base}/prepare"))
+    let prepare_resp = client
+        .post(format!("{base}/prepare"))
         .json(&serde_json::json!({
             "report_id": report_id,
             "title": truncate_chars(&title, 200),
@@ -7385,19 +8065,28 @@ fn upload_feedback_to_cloud(
         .send()
         .map_err(|e| format!("prepare failed: {e}"))?;
 
-    if prepare_resp.status().as_u16() == 429 { return Err("Rate limit, please try later".into()); }
-    if prepare_resp.status().as_u16() == 403 { return Err("CAPTCHA verification failed".into()); }
+    if prepare_resp.status().as_u16() == 429 {
+        return Err("Rate limit, please try later".into());
+    }
+    if prepare_resp.status().as_u16() == 403 {
+        return Err("CAPTCHA verification failed".into());
+    }
     if prepare_resp.status().is_client_error() || prepare_resp.status().is_server_error() {
         let text = prepare_resp.text().unwrap_or_default();
         return Err(format!("Cloud error: {}", &text[..text.len().min(200)]));
     }
 
-    let prepare_data: serde_json::Value = prepare_resp.json().map_err(|e| format!("parse prepare: {e}"))?;
-    let upload_url = prepare_data["upload_url"].as_str().ok_or("missing upload_url")?;
+    let prepare_data: serde_json::Value = prepare_resp
+        .json()
+        .map_err(|e| format!("parse prepare: {e}"))?;
+    let upload_url = prepare_data["upload_url"]
+        .as_str()
+        .ok_or("missing upload_url")?;
     let report_date = prepare_data["report_date"].as_str().unwrap_or("");
 
     // Phase 2: OSS upload
-    let oss_resp = client.put(upload_url)
+    let oss_resp = client
+        .put(upload_url)
         .header("Content-Length", zip_bytes.len().to_string())
         .body(zip_bytes)
         .send()
@@ -7408,7 +8097,8 @@ fn upload_feedback_to_cloud(
     }
 
     // Phase 3: complete
-    let complete_resp = client.post(format!("{base}/complete/{report_id}"))
+    let complete_resp = client
+        .post(format!("{base}/complete/{report_id}"))
         .json(&serde_json::json!({ "report_date": report_date }))
         .timeout(std::time::Duration::from_secs(30))
         .send()
@@ -7443,8 +8133,11 @@ fn save_pending_feedback(record: PendingFeedbackRecord) -> Result<(), String> {
     records.push(record);
 
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, serde_json::to_string_pretty(&records).unwrap_or_else(|_| "[]".into()))
-        .map_err(|e| format!("write pending: {e}"))?;
+    fs::write(
+        &tmp,
+        serde_json::to_string_pretty(&records).unwrap_or_else(|_| "[]".into()),
+    )
+    .map_err(|e| format!("write pending: {e}"))?;
     fs::rename(&tmp, &path).map_err(|e| format!("rename pending: {e}"))?;
     Ok(())
 }
@@ -7459,12 +8152,24 @@ fn get_feedback_config_offline(workspace_id: String) -> serde_json::Value {
         for line in content.lines() {
             let t = line.trim();
             if t.starts_with("captcha_scene_id:") {
-                let v = t.trim_start_matches("captcha_scene_id:").trim().trim_matches('"').trim_matches('\'');
-                if !v.is_empty() { scene_id = v.to_string(); }
+                let v = t
+                    .trim_start_matches("captcha_scene_id:")
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
+                if !v.is_empty() {
+                    scene_id = v.to_string();
+                }
             }
             if t.starts_with("captcha_prefix:") {
-                let v = t.trim_start_matches("captcha_prefix:").trim().trim_matches('"').trim_matches('\'');
-                if !v.is_empty() { prefix = v.to_string(); }
+                let v = t
+                    .trim_start_matches("captcha_prefix:")
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
+                if !v.is_empty() {
+                    prefix = v.to_string();
+                }
             }
         }
     }
@@ -7557,7 +8262,11 @@ fn cli_backend_exe_path() -> Result<PathBuf, String> {
         venv_base.join("Scripts").join("python.exe")
     } else {
         let py3 = venv_base.join("bin").join("python3");
-        if py3.exists() { py3 } else { venv_base.join("bin").join("python") }
+        if py3.exists() {
+            py3
+        } else {
+            venv_base.join("bin").join("python")
+        }
     };
     if venv_py.exists() {
         return Ok(venv_py);
@@ -7588,10 +8297,9 @@ fn read_cli_config() -> Option<CliConfig> {
 /// 写入 CLI 配置文件
 fn write_cli_config(config: &CliConfig) -> Result<(), String> {
     let path = openakita_root_dir().join("cli.json");
-    let content = serde_json::to_string_pretty(config)
-        .map_err(|e| format!("序列化 CLI 配置失败: {e}"))?;
-    std::fs::write(&path, content)
-        .map_err(|e| format!("写入 cli.json 失败: {e}"))?;
+    let content =
+        serde_json::to_string_pretty(config).map_err(|e| format!("序列化 CLI 配置失败: {e}"))?;
+    std::fs::write(&path, content).map_err(|e| format!("写入 cli.json 失败: {e}"))?;
     Ok(())
 }
 
@@ -7600,7 +8308,9 @@ fn generate_wrapper_content(backend_exe: &Path) -> String {
     #[cfg(target_os = "windows")]
     {
         let _ = backend_exe; // Windows 使用相对路径，不需要绝对路径
-        format!("@echo off\r\n\"%~dp0..\\resources\\openakita-server\\openakita-server.exe\" %*\r\n")
+        format!(
+            "@echo off\r\n\"%~dp0..\\resources\\openakita-server\\openakita-server.exe\" %*\r\n"
+        )
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -7656,10 +8366,10 @@ fn windows_add_to_path(bin_dir: &Path) -> Result<(), String> {
     let bin_str = bin_dir.to_string_lossy().to_string();
     let bin_norm = bin_str.trim_end_matches('\\');
 
-            let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let key = hkcu
-                .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
-                .map_err(|e| format!("无法打开用户环境变量注册表: {e}"))?;
+        .open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)
+        .map_err(|e| format!("无法打开用户环境变量注册表: {e}"))?;
 
     let current_path = read_path_value(&key)?;
 
@@ -7695,7 +8405,10 @@ fn windows_remove_from_path(bin_dir: &Path) -> Result<(), String> {
     let mut modified = false;
 
     for (hive_predef, subkey_path) in [
-        (HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
         (HKEY_CURRENT_USER, "Environment"),
     ] {
         let hive = RegKey::predef(hive_predef);
@@ -7706,10 +8419,7 @@ fn windows_remove_from_path(bin_dir: &Path) -> Result<(), String> {
             }
             let new_paths: Vec<&str> = current_path
                 .split(';')
-                .filter(|p| {
-                    !p.trim_end_matches('\\')
-                        .eq_ignore_ascii_case(bin_norm)
-                })
+                .filter(|p| !p.trim_end_matches('\\').eq_ignore_ascii_case(bin_norm))
                 .collect();
             let new_path = new_paths.join(";");
             if new_path != current_path {
@@ -7720,7 +8430,7 @@ fn windows_remove_from_path(bin_dir: &Path) -> Result<(), String> {
     }
 
     if modified {
-    windows_broadcast_env_change();
+        windows_broadcast_env_change();
     }
     Ok(())
 }
@@ -7734,17 +8444,20 @@ fn windows_is_in_path(bin_dir: &Path) -> bool {
     let bin_norm = bin_str.trim_end_matches('\\');
 
     for (hive_predef, subkey_path) in [
-        (HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
         (HKEY_CURRENT_USER, "Environment"),
     ] {
         let hive = RegKey::predef(hive_predef);
         if let Ok(key) = hive.open_subkey_with_flags(subkey_path, KEY_READ) {
             if let Ok(current_path) = read_path_value(&key) {
-            if current_path
-                .split(';')
+                if current_path
+                    .split(';')
                     .any(|p| p.trim_end_matches('\\').eq_ignore_ascii_case(bin_norm))
-            {
-                return true;
+                {
+                    return true;
                 }
             }
         }
@@ -8003,14 +8716,16 @@ fn register_cli(commands: Vec<String>, add_to_path: bool) -> Result<String, Stri
 
     // 验证命令名仅包含合法字符
     for cmd in &commands {
-        if !cmd.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        if !cmd
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
             return Err(format!("命令名 '{}' 包含非法字符", cmd));
         }
     }
 
     let bin_dir = cli_bin_dir();
-    std::fs::create_dir_all(&bin_dir)
-        .map_err(|e| format!("创建 bin 目录失败: {e}"))?;
+    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("创建 bin 目录失败: {e}"))?;
 
     // 获取后端可执行文件路径
     let backend_exe = cli_backend_exe_path()?;
@@ -8047,7 +8762,11 @@ fn register_cli(commands: Vec<String>, add_to_path: bool) -> Result<String, Stri
     Ok(format!(
         "CLI 命令已注册: {}{}",
         commands.join(", "),
-        if add_to_path { " (已添加到 PATH)" } else { "" }
+        if add_to_path {
+            " (已添加到 PATH)"
+        } else {
+            ""
+        }
     ))
 }
 
@@ -8101,9 +8820,13 @@ fn get_cli_status() -> Result<CliStatus, String> {
 
         let in_path = {
             #[cfg(target_os = "windows")]
-            { windows_is_in_path(&PathBuf::from(&config.bin_dir)) }
+            {
+                windows_is_in_path(&PathBuf::from(&config.bin_dir))
+            }
             #[cfg(not(target_os = "windows"))]
-            { unix_is_in_path(&PathBuf::from(&config.bin_dir)) }
+            {
+                unix_is_in_path(&PathBuf::from(&config.bin_dir))
+            }
         };
 
         Ok(CliStatus {
@@ -8223,6 +8946,36 @@ mod tests {
             "root dir should contain '.openakita' or OPENAKITA_ROOT should be set: {}",
             root_str
         );
+    }
+
+    #[test]
+    fn test_data_root_rejects_drive_or_filesystem_root() {
+        let root = if cfg!(windows) {
+            PathBuf::from(r"D:\")
+        } else {
+            PathBuf::from("/")
+        };
+        assert!(!is_safe_openakita_data_root(&root));
+        assert!(ensure_safe_openakita_data_root(&root).is_err());
+    }
+
+    #[test]
+    fn test_data_root_rejects_home_directory() {
+        if let Some(home) = home_dir() {
+            assert!(!is_safe_openakita_data_root(&home));
+            assert!(ensure_safe_openakita_data_root(&home).is_err());
+        }
+    }
+
+    #[test]
+    fn test_data_root_allows_dedicated_directory() {
+        let dedicated = if cfg!(windows) {
+            PathBuf::from(r"D:\OpenAkitaData\.openakita")
+        } else {
+            PathBuf::from("/tmp/openakita-data/.openakita")
+        };
+        assert!(is_safe_openakita_data_root(&dedicated));
+        assert!(ensure_safe_openakita_data_root(&dedicated).is_ok());
     }
 
     #[test]
