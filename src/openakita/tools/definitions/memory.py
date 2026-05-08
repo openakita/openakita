@@ -33,13 +33,18 @@ MEMORY_TOOLS = [
     {
         "name": "add_memory",
         "category": "Memory",
-        "description": "Record important information to long-term memory for learning user preferences, successful patterns, and error lessons. When you need to: (1) Remember user preferences, (2) Save successful patterns, (3) Record lessons from errors. NOTE: For structured user profile fields (name, work_field, os, etc.), use update_user_profile instead. Use add_memory for free-form, unstructured information that doesn't fit profile fields.",
+        "description": "Record durable information for future conversations: user preferences, persistent rules, reusable patterns, and error lessons. Do not use for one-off task requests, normal task completion reports, temporary file outputs, or current-task parameters. NOTE: For structured user profile fields (name, work_field, os, etc.), use update_user_profile instead. Use add_memory for free-form, unstructured information that doesn't fit profile fields.",
         "detail": """记录重要信息到长期记忆。
 
 **适用场景**：
 - 学习用户偏好
 - 保存成功模式
 - 记录错误教训
+
+**不要记录**：
+- 一次性任务请求（下载/搜索/整理/生成某个东西）
+- 普通完成报告、交付文件路径、临时参数
+- 当前任务流水账；这些由会话和情节记录承载
 
 **记忆类型**：
 - fact: 事实信息（默认）

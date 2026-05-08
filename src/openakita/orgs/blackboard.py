@@ -24,6 +24,14 @@ def _safe_float(v: object, default: float = 0.0) -> float:
         return default
 
 
+def _safe_int(v: object, default: int) -> int:
+    try:
+        value = int(float(v))  # accept model-emitted strings like "10" or "10.0"
+    except (ValueError, TypeError):
+        return default
+    return value if value > 0 else default
+
+
 MAX_ORG_MEMORIES = 200
 MAX_DEPT_MEMORIES = 100
 MAX_NODE_MEMORIES = 50
@@ -53,6 +61,7 @@ class OrgBlackboard:
     # ------------------------------------------------------------------
 
     def read_org(self, limit: int = 20, tag: str | None = None) -> list[OrgMemoryEntry]:
+        limit = _safe_int(limit, 20)
         return self._read_scope(
             self._memory_dir / "blackboard.jsonl", limit=limit, tag=tag
         )
@@ -60,12 +69,14 @@ class OrgBlackboard:
     def read_department(
         self, dept_name: str, limit: int = 20, tag: str | None = None
     ) -> list[OrgMemoryEntry]:
+        limit = _safe_int(limit, 20)
         p = self._memory_dir / "departments" / f"{dept_name}.jsonl"
         return self._read_scope(p, limit=limit, tag=tag)
 
     def read_node(
         self, node_id: str, limit: int = 20, tag: str | None = None
     ) -> list[OrgMemoryEntry]:
+        limit = _safe_int(limit, 20)
         p = self._memory_dir / "nodes" / f"{node_id}.jsonl"
         return self._read_scope(p, limit=limit, tag=tag)
 
@@ -210,6 +221,7 @@ class OrgBlackboard:
         limit: int = 50,
     ) -> list[OrgMemoryEntry]:
         """Query across all memory scopes with optional filters."""
+        limit = _safe_int(limit, 50)
         all_entries: list[OrgMemoryEntry] = []
 
         if scope is None or scope == MemoryScope.ORG:
@@ -290,6 +302,7 @@ class OrgBlackboard:
     def _read_scope(
         self, path: Path, limit: int = 20, tag: str | None = None
     ) -> list[OrgMemoryEntry]:
+        limit = _safe_int(limit, 20)
         if not path.is_file():
             return []
         entries: list[OrgMemoryEntry] = []
@@ -306,7 +319,7 @@ class OrgBlackboard:
         except Exception as exc:
             logger.warning(f"Failed to read memory {path}: {exc}")
         entries.sort(key=lambda e: _safe_float(e.importance), reverse=True)
-        return entries[:int(limit)]
+        return entries[:limit]
 
     @staticmethod
     def _is_duplicate(path: Path, content: str, prefix_len: int = 100) -> bool:

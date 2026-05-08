@@ -41,6 +41,36 @@ def as_clean_str(value: Any, default: str = "") -> str:
     return text if text else default
 
 
+def coerce_tool_names(value: Any) -> list[str]:
+    """Normalize loosely shaped tool lists into display-safe tool names.
+
+    Historical session and episode records may contain strings, dicts from
+    tool-call receipts, or even malformed nested objects. Keep the data usable
+    instead of rejecting the whole memory response.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes, dict)) or not isinstance(value, Iterable):
+        items = [value]
+    else:
+        items = list(value)
+
+    names: list[str] = []
+    for item in items:
+        raw_name: Any = item
+        if isinstance(item, dict):
+            raw_name = item.get("name") or item.get("tool_name")
+            function = item.get("function")
+            if not raw_name and isinstance(function, dict):
+                raw_name = function.get("name")
+            if not raw_name:
+                raw_name = item
+        name = as_clean_str(raw_name)
+        if name:
+            names.append(name)
+    return names
+
+
 def extract_json_array(text: str) -> str | None:
     """Extract the first JSON array-like block from LLM output."""
     return _extract_json_block(text, "[", "]")

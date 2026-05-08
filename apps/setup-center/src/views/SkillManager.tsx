@@ -1619,6 +1619,7 @@ export function SkillManager({
             setRefreshing(true);
             setError(null);
             try {
+              let skippedCount = 0;
               if (serviceRunning) {
                 const res = await safeFetch(`${apiBaseUrl}/api/skills/reload`, {
                   method: "POST",
@@ -1628,9 +1629,16 @@ export function SkillManager({
                 });
                 const data = await res.json();
                 if (data.error) { setError(friendlyError(data.error, t, "reload")); return; }
+                skippedCount = Number(data.skipped_count || 0);
               }
               const ok = await loadSkills();
-              if (ok) toast.success(t("skills.refreshed"));
+              if (ok) {
+                if (skippedCount > 0) {
+                  toast.warning(t("skills.refreshedPartial", { count: skippedCount }));
+                } else {
+                  toast.success(t("skills.refreshed"));
+                }
+              }
             } catch (e) {
               setError(friendlyError(e, t, "reload"));
             } finally {

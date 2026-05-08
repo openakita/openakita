@@ -97,6 +97,10 @@ function conversationReducer(state: ChatConversation[], action: ConversationActi
           timestamp: Math.max(local.timestamp || 0, b.timestamp || 0),
           messageCount: Math.max(local.messageCount || 0, b.messageCount || 0),
           agentProfileId: b.agentProfileId || local.agentProfileId,
+          endpointId: b.endpointId || local.endpointId,
+          orgMode: b.orgMode ?? local.orgMode,
+          orgId: b.orgId || local.orgId,
+          orgNodeId: b.orgNodeId || local.orgNodeId,
         };
       });
       const backendIds = new Set(action.backendConvs.map(c => c.id));

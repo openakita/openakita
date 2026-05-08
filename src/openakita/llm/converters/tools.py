@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ..types import Tool, ToolUseBlock
 
@@ -524,10 +525,64 @@ _FUNC_PARAM_RE = re.compile(
     r"<parameter=([^>]+)>(.*?)</parameter>",
     re.DOTALL | re.IGNORECASE,
 )
+_FUNC_TAG_OPEN_RE = re.compile(r"<function=([^>]+)>", re.IGNORECASE)
+_FUNC_TAG_CLOSE_RE = re.compile(r"</function>", re.IGNORECASE)
+
+
+def _parse_xmlish_value(value: str) -> Any:
+    value = value.strip()
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, ValueError):
+        return value
+
+
+def _iter_legacy_function_blocks(body: str) -> list[tuple[str, str]]:
+    """Return top-level <function=name>...</function> blocks.
+
+    Some older model outputs used nested ``function`` tags for arguments:
+    ``<function=read_file><function=file_path>...</function></function>``.
+    A single regex cannot parse that reliably because the first inner close tag
+    would terminate the outer match, so this small stack parser only extracts
+    complete top-level blocks and leaves malformed content for other parsers.
+    """
+    blocks: list[tuple[str, str]] = []
+    pos = 0
+    while True:
+        start = _FUNC_TAG_OPEN_RE.search(body, pos)
+        if not start:
+            break
+        name = start.group(1).strip()
+        cursor = start.end()
+        depth = 1
+        while depth > 0:
+            next_open = _FUNC_TAG_OPEN_RE.search(body, cursor)
+            next_close = _FUNC_TAG_CLOSE_RE.search(body, cursor)
+            if not next_close:
+                return blocks
+            if next_open and next_open.start() < next_close.start():
+                depth += 1
+                cursor = next_open.end()
+                continue
+            depth -= 1
+            if depth == 0:
+                blocks.append((name, body[start.end() : next_close.start()]))
+                pos = next_close.end()
+                break
+            cursor = next_close.end()
+    return blocks
+
+
+def _parse_legacy_function_params(func_body: str) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    for key, value in _iter_legacy_function_blocks(func_body):
+        if key:
+            params[key] = _parse_xmlish_value(value)
+    return params
 
 
 def _parse_function_param(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """解析 <tool_call><function=name><parameter=key>value</parameter></function></tool_call> 格式。"""
+    """解析 <tool_call><function=name>...</function></tool_call> 格式。"""
     blocks = _FUNC_PARAM_COMPLETE_RE.findall(text) or _FUNC_PARAM_INCOMPLETE_RE.findall(text)
     if not blocks:
         return text, []
@@ -538,31 +593,45 @@ def _parse_function_param(text: str) -> tuple[str, list[ToolUseBlock]]:
 
     tool_calls: list[ToolUseBlock] = []
     for body in blocks:
-        fn_match = _FUNC_NAME_RE.search(body)
-        if not fn_match:
-            continue
-        tool_name = fn_match.group(1).strip()
+        legacy_blocks = _iter_legacy_function_blocks(body)
+        if legacy_blocks:
+            candidate_calls = [
+                (name, _parse_legacy_function_params(func_body), func_body)
+                for name, func_body in legacy_blocks
+            ]
+        else:
+            fn_match = _FUNC_NAME_RE.search(body)
+            if not fn_match:
+                continue
+            tool_name = fn_match.group(1).strip()
+            params: dict[str, Any] = {}
+            for pm in _FUNC_PARAM_RE.finditer(body):
+                key = pm.group(1).strip()
+                val = pm.group(2).strip()
+                params[key] = _parse_xmlish_value(val)
+            candidate_calls = [(tool_name, params, body)]
 
-        params: dict = {}
-        for pm in _FUNC_PARAM_RE.finditer(body):
-            key = pm.group(1).strip()
-            val = pm.group(2).strip()
-            try:
-                params[key] = json.loads(val)
-            except (json.JSONDecodeError, ValueError):
-                params[key] = val
-
-        tool_calls.append(
-            ToolUseBlock(
-                id=f"func_param_{uuid.uuid4().hex[:8]}",
-                name=tool_name,
-                input=params,
+        for tool_name, params, raw_body in candidate_calls:
+            if not tool_name:
+                continue
+            if _KNOWN_TOOL_NAMES and tool_name not in _KNOWN_TOOL_NAMES:
+                continue
+            if not params and (_FUNC_PARAM_RE.search(raw_body) or raw_body.strip()):
+                continue
+            tool_calls.append(
+                ToolUseBlock(
+                    id=f"func_param_{uuid.uuid4().hex[:8]}",
+                    name=tool_name,
+                    input=params,
+                )
             )
-        )
-        logger.info(
-            f"[FUNC_PARAM_PARSE] Extracted tool call: {tool_name} "
-            f"with params: {list(params.keys())}"
-        )
+            logger.info(
+                f"[FUNC_PARAM_PARSE] Extracted tool call: {tool_name} "
+                f"with params: {list(params.keys())}"
+            )
+
+    if not tool_calls:
+        return text, []
 
     clean = _FUNC_PARAM_COMPLETE_RE.sub("", text).strip()
     clean = _FUNC_PARAM_INCOMPLETE_RE.sub("", clean).strip()
@@ -614,6 +683,8 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
 
         if name_match:
             tool_name = name_match.group(1)
+            if _KNOWN_TOOL_NAMES and tool_name not in _KNOWN_TOOL_NAMES:
+                continue
             params: dict = {}
             for kv in _GLM_KV_RE.finditer(content):
                 key, val = kv.group(1).strip(), kv.group(2).strip()
@@ -638,6 +709,8 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
             continue
         tool_name = func_match.group(1)
         func_body = func_match.group(2)
+        if _KNOWN_TOOL_NAMES and tool_name not in _KNOWN_TOOL_NAMES:
+            continue
         params = {}
         for pm in _LLAMA_PARAM_RE.finditer(func_body):
             key, val = pm.group(1).strip(), pm.group(2).strip()
@@ -645,6 +718,8 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
                 params[key] = json.loads(val)
             except json.JSONDecodeError:
                 params[key] = val
+        if not params and func_body.strip():
+            continue
         tool_calls.append(
             ToolUseBlock(
                 id=f"glm_call_{uuid.uuid4().hex[:8]}",
@@ -657,7 +732,10 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
             f"with params: {list(params.keys())}"
         )
 
-    # 即使未提取到工具也清理标签，防止原始标签泄漏到用户界面
+    if not tool_calls:
+        return text, []
+
+    # 已提取到工具时清理标签，防止原始标签泄漏到用户界面
     clean = _GLM_COMPLETE_RE.sub("", text).strip()
     clean = _GLM_INCOMPLETE_RE.sub("", clean).strip()
     return clean, tool_calls
@@ -729,15 +807,28 @@ def _find_matching_brace(text: str, start: int) -> int:
     return -1
 
 
+def _coerce_tool_args(value: object) -> dict:
+    """将常见工具参数载体归一化为 dict。"""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _extract_tool_from_obj(obj: dict) -> tuple[str, dict] | None:
     """从已解析的 dict 中提取工具名和参数。"""
     name = obj.get("tool") or obj.get("name") or obj.get("function")
     if not name or not isinstance(name, str):
         return None
-    args = (
-        obj.get("args") or obj.get("arguments") or obj.get("parameters") or obj.get("input") or {}
-    )
-    return name, args if isinstance(args, dict) else {}
+    for key in ("params", "args", "arguments", "parameters", "input"):
+        if key in obj:
+            return name, _coerce_tool_args(obj[key])
+    return name, {}
 
 
 def _normalize_tag_body(body: str) -> str:
@@ -845,9 +936,12 @@ def _parse_tool_call_tags(text: str) -> tuple[str, list[ToolUseBlock]]:
 # 写入文本响应，而非走结构化 tool_use。典型格式：
 #   {{"name": "browser_open", "arguments": {"visible": true}}}
 #   {"name": "web_search", "arguments": {"query": "test"}}
+#   {"tool": "glob", "params": {"pattern": "data/output/Agents/*.md"}}
 
 _JSON_TOOL_CALL_HEADER_RE = re.compile(
-    r'\{+\s*"name"\s*:\s*"([a-z_][a-z0-9_]*)"\s*,\s*"arguments"\s*:\s*',
+    r'\{+\s*"(?P<name_key>tool|name|function)"\s*:\s*'
+    r'"(?P<tool_name>[a-z_][a-z0-9_]*)"\s*,\s*'
+    r'"(?P<args_key>params|args|arguments|parameters|input)"\s*:\s*',
 )
 
 
@@ -883,7 +977,8 @@ def _extract_balanced_braces(text: str, start: int) -> str | None:
 def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
     """从文本中提取 JSON 格式工具调用。
 
-    匹配 {"name": "xxx", "arguments": {...}} 或双花括号变体。
+    匹配 {"name": "xxx", "arguments": {...}}、{"tool": "xxx", "params": {...}}
+    或双花括号变体。
     使用括号计数法正确处理深度嵌套的参数 JSON。
     返回 (清理后文本, 工具调用列表)。
     """
@@ -891,7 +986,9 @@ def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
     spans_to_remove: list[tuple[int, int]] = []
 
     for m in _JSON_TOOL_CALL_HEADER_RE.finditer(text):
-        tool_name = m.group(1)
+        tool_name = m.group("tool_name")
+        if _KNOWN_TOOL_NAMES and tool_name not in _KNOWN_TOOL_NAMES:
+            continue
         args_start = m.end()
 
         args_str = _extract_balanced_braces(text, args_start)
@@ -962,6 +1059,8 @@ def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
             prev = e
         parts.append(text[prev:])
         clean_text = "".join(parts).strip()
+        clean_text = re.sub(r"(?im)(?:(?<=^)|(?<=\s))json(?=\s|$)", " ", clean_text)
+        clean_text = re.sub(r"[ \t]{2,}", " ", clean_text).strip()
     else:
         clean_text = text
 
@@ -1168,13 +1267,18 @@ def _parse_bracket_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
 #   {"function": "xxx", "params": {"key": "value"}}
 #   ```
 #
+# 变体 3（自然 JSON 风格）:
+#   ```json
+#   {"tool": "glob", "params": {"pattern": "data/output/Agents/*.md"}}
+#   ```
+#
 # 安全保障：
 # - 必须在围栏代码块内
-# - JSON 必须包含特征字段组合（type+function_call / function+params）
+# - JSON 必须包含特征字段组合（type+function_call / function+params / tool+params）
 # - 工具名必须在 _KNOWN_TOOL_NAMES 中
 
 _FENCED_FUNC_DETECT_RE = re.compile(
-    r"```(?:json)?\s*\n\s*\{.*?\"(?:function_call|function)\"\s*:",
+    r"```(?:json)?\s*\n\s*\{.*?\"(?:function_call|function|tool)\"\s*:",
     re.DOTALL,
 )
 _FENCED_CODE_BLOCK_RE = re.compile(
@@ -1232,6 +1336,12 @@ def _parse_fenced_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
                 arguments = params
             else:
                 arguments = {}
+
+        # 变体 3: {"tool": "xxx", "params": {...}}，也兼容 name/function + args/input 等别名
+        if tool_name is None:
+            extracted = _extract_tool_from_obj(obj)
+            if extracted:
+                tool_name, arguments = extracted
 
         if not tool_name or tool_name not in _KNOWN_TOOL_NAMES or arguments is None:
             continue

@@ -1286,6 +1286,7 @@ export function OrgEditorView({
         skills: [],
         skills_mode: "all",
         preferred_endpoint: null,
+        endpoint_policy: "prefer",
         max_concurrent_tasks: 1,
         timeout_s: 300,
         can_delegate: true,
@@ -1573,7 +1574,7 @@ export function OrgEditorView({
       id: newId, role_title: t("org.editor.newNode"), role_goal: "", role_backstory: "",
       agent_source: "local", agent_profile_id: null, position: pos, level: 0,
       department: "", custom_prompt: "", identity_dir: null, mcp_servers: [], skills: [],
-      skills_mode: "all", preferred_endpoint: null, max_concurrent_tasks: 1, timeout_s: 0,
+      skills_mode: "all", preferred_endpoint: null, endpoint_policy: "prefer", max_concurrent_tasks: 1, timeout_s: 0,
       can_delegate: true, can_escalate: true, can_request_scaling: true, is_clone: false,
       clone_source: null, external_tools: [], enable_file_tools: true, ephemeral: false, frozen_by: null,
       frozen_reason: null, frozen_at: null, avatar: null, status: "idle",
@@ -4215,13 +4216,32 @@ export function OrgEditorView({
                       {t("org.editor.llmEndpointDesc")}
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="px-4 pb-4">
+                  <CardContent className="space-y-3 px-4 pb-4">
                     <ShadInput
                       value={selectedNode.preferred_endpoint || ""}
-                      onChange={(e) => updateNodeData("preferred_endpoint", e.target.value || null)}
+                      onChange={(e) => {
+                        const value = e.target.value || null;
+                        updateNodeData("preferred_endpoint", value);
+                        if (!value) updateNodeData("endpoint_policy", "prefer");
+                      }}
                       placeholder={t("org.editor.llmEndpointPlaceholder")}
                       className="h-8 text-xs"
                     />
+                    <div className="space-y-1.5">
+                      <ShadLabel className="text-xs opacity-70">{t("org.editor.llmEndpointPolicy")}</ShadLabel>
+                      <select
+                        value={selectedNode.endpoint_policy || "prefer"}
+                        onChange={(e) => updateNodeData("endpoint_policy", e.target.value)}
+                        className="h-8 w-full rounded-md border border-input bg-background px-3 text-xs"
+                        disabled={!selectedNode.preferred_endpoint}
+                      >
+                        <option value="prefer">{t("org.editor.llmEndpointPolicyPrefer")}</option>
+                        <option value="require">{t("org.editor.llmEndpointPolicyRequire")}</option>
+                      </select>
+                      <p className="text-[11px] text-muted-foreground">
+                        {t("org.editor.llmEndpointPolicyHint")}
+                      </p>
+                    </div>
                   </CardContent>
                 </Card>
                 </fieldset>

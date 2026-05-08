@@ -82,12 +82,12 @@ async def test_recoverable_tool_error_does_not_become_user_handoff():
         agent_state=AgentState(),
     )
     working_messages = []
-    reply = "?????????????????????"
+    reply = "浏览器自动化失败，请你手动登录后截图给我。"
 
     result = await engine._handle_final_answer(
         decision=Decision(type=DecisionType.FINAL_ANSWER, text_content=reply),
         working_messages=working_messages,
-        original_messages=[{"role": "user", "content": "??????????"}],
+        original_messages=[{"role": "user", "content": "打开路由器后台并登录"}],
         tools_executed_in_task=True,
         executed_tool_names=["browser_fill"],
         delivery_receipts=[],
@@ -95,7 +95,7 @@ async def test_recoverable_tool_error_does_not_become_user_handoff():
             {
                 "type": "tool_result",
                 "tool_use_id": "t1",
-                "content": "? ????: browser_fill???????: browser_type?",
+                "content": "❌ 未知工具: browser_fill。你是否想使用: browser_type？",
                 "is_error": True,
             }
         ],
@@ -276,12 +276,12 @@ async def test_plain_short_analysis_without_tools_is_accepted():
         agent_state=AgentState(),
     )
     working_messages = []
-    reply = "??????????????????????????????"
+    reply = "好人赢得直接，是因为狼人连续暴露站边，关键票型很快形成闭环。"
 
     result = await engine._handle_final_answer(
         decision=Decision(type=DecisionType.FINAL_ANSWER, text_content=reply),
         working_messages=working_messages,
-        original_messages=[{"role": "user", "content": "?????????????"}],
+        original_messages=[{"role": "user", "content": "分析一下为什么这么直接获胜"}],
         tools_executed_in_task=False,
         executed_tool_names=[],
         delivery_receipts=[],

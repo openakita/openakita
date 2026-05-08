@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, StrEnum
 
+from .json_utils import coerce_tool_names
+
 
 def normalize_tags(val: object) -> list[str]:
     """Ensure *val* is always ``list[str]``.
@@ -442,7 +444,7 @@ class Episode:
             "ended_at": self.ended_at.isoformat(),
             "action_nodes": [n.to_dict() for n in self.action_nodes],
             "entities": self.entities,
-            "tools_used": self.tools_used,
+            "tools_used": coerce_tool_names(self.tools_used),
             "linked_memory_ids": self.linked_memory_ids,
             "tags": self.tags,
             "importance_score": self.importance_score,
@@ -468,7 +470,7 @@ class Episode:
             else datetime.now(),
             action_nodes=nodes,
             entities=data.get("entities", []),
-            tools_used=data.get("tools_used", []),
+            tools_used=coerce_tool_names(data.get("tools_used", [])),
             linked_memory_ids=data.get("linked_memory_ids", []),
             tags=data.get("tags", []),
             importance_score=data.get("importance_score", 0.5),
@@ -484,8 +486,9 @@ class Episode:
         ]
         if self.summary:
             lines.append(f"- 摘要: {self.summary}")
-        if self.tools_used:
-            lines.append(f"- 使用工具: {', '.join(self.tools_used)}")
+        tool_names = coerce_tool_names(self.tools_used)
+        if tool_names:
+            lines.append(f"- 使用工具: {', '.join(tool_names)}")
         if self.entities:
             lines.append(f"- 相关实体: {', '.join(self.entities[:5])}")
         return "\n".join(lines)

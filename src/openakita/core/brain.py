@@ -510,7 +510,7 @@ class Brain:
 
         Args:
             use_thinking: 是否使用 thinking 模式
-            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/'max'/None)
             **kwargs: Anthropic 格式参数 (messages, system, tools, max_tokens)
 
         Returns:
@@ -1214,7 +1214,7 @@ class Brain:
             system: 系统提示词
             tools: 可用工具列表
             max_tokens: 最大输出 token（不传则使用 self.max_tokens）
-            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/'max'/None)
 
         Returns:
             Response 对象
@@ -1663,6 +1663,7 @@ class Brain:
         hours: float = 12,
         reason: str = "",
         conversation_id: str | None = None,
+        policy: str = "prefer",
     ) -> tuple[bool, str]:
         """
         临时切换到指定模型
@@ -1676,7 +1677,7 @@ class Brain:
             (成功, 消息)
         """
         return self._llm_client.switch_model(
-            endpoint_name, hours, reason, conversation_id=conversation_id
+            endpoint_name, hours, reason, conversation_id=conversation_id, policy=policy
         )
 
     def get_fallback_model(self, conversation_id: str | None = None) -> str:

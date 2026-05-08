@@ -199,6 +199,11 @@ class OpenAIResponsesProvider(OpenAIProvider):
             request.system,
             provider=self.config.provider,
             enable_thinking=request.enable_thinking,
+            vision_available=self.config.has_capability("vision") and not getattr(
+                self,
+                "_vision_payload_unsupported",
+                False,
+            ),
         )
 
         body: dict = {

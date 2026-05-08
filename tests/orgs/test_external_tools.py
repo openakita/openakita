@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from openakita.orgs.models import Organization, OrgNode
 from openakita.orgs.tool_categories import (
-    TOOL_CATEGORIES,
     ROLE_TOOL_PRESETS,
+    TOOL_CATEGORIES,
     expand_tool_categories,
     get_preset_for_role,
     list_categories,
 )
-from openakita.orgs.models import OrgNode, Organization, OrgEdge, EdgeType
 from openakita.orgs.tool_handler import OrgToolHandler
-
 
 # ---------------------------------------------------------------------------
 # tool_categories module
@@ -37,7 +35,7 @@ class TestToolCategories:
 
     def test_expand_single_category(self):
         result = expand_tool_categories(["research"])
-        assert result == {"web_search", "news_search"}
+        assert result == {"web_search", "news_search", "web_fetch"}
 
     def test_expand_multiple_categories(self):
         result = expand_tool_categories(["research", "planning"])
@@ -48,6 +46,7 @@ class TestToolCategories:
         result = expand_tool_categories(["research", "run_shell"])
         assert "web_search" in result
         assert "news_search" in result
+        assert "web_fetch" in result
         assert "run_shell" in result
 
     def test_expand_raw_tool_name(self):
@@ -124,7 +123,7 @@ class TestOrgNodeExternalTools:
 
 @pytest.fixture()
 def org_with_tools():
-    from tests.orgs.conftest import make_node, make_edge
+    from tests.orgs.conftest import make_edge, make_node
     nodes = [
         make_node("ceo", "CEO", 0, "管理层", external_tools=["research", "planning"]),
         make_node("cto", "CTO", 1, "技术部"),
@@ -140,8 +139,8 @@ def org_with_tools():
 @pytest.fixture()
 def tool_handler_with_org(org_with_tools, tmp_path):
     from openakita.orgs.event_store import OrgEventStore
-    from openakita.orgs.messenger import OrgMessenger
     from openakita.orgs.manager import OrgManager
+    from openakita.orgs.messenger import OrgMessenger
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()

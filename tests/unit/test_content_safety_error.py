@@ -78,6 +78,13 @@ class TestClassifyError:
             == FailoverReason.STRUCTURAL
         )
 
+    def test_invalid_function_response_is_structural(self):
+        err = (
+            "API error (400): Invalid function response: "
+            "✅ 计划已创建：plan_20260408_190537_3c9850"
+        )
+        assert LLMProvider._classify_error(err) == FailoverReason.STRUCTURAL
+
 
 class TestFriendlyErrorHint:
     def test_hint_from_last_error_keyword(self):
@@ -95,6 +102,14 @@ class TestFriendlyErrorHint:
         )
         assert "内容安全审核" not in hint
         assert "API Key" in hint or "网络" in hint or "余额" in hint
+
+    def test_invalid_function_response_hint_is_specific(self):
+        hint = _friendly_error_hint(
+            failed_providers=None,
+            last_error="API error (400): Invalid function response: ok",
+        )
+        assert "工具返回格式" in hint
+        assert "API Key" not in hint
 
 
 class TestUtilsErrors:

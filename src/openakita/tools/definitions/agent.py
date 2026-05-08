@@ -305,6 +305,10 @@ AGENT_TOOLS = [
             "- 创建的 Agent 默认是临时的（ephemeral），任务结束后自动销毁\n"
             "- 不会污染系统 Agent 列表\n"
             "- 设置 persistent=true 可永久保存（仅在用户明确要求时使用）\n\n"
+            "**记忆与身份**：\n"
+            "- 默认共享身份与记忆，适合一次性或通用任务\n"
+            "- 当用户要长期保存某个专业 Agent，或该 Agent 需要形成独立偏好/经验时，可设置 memory_mode=\"isolated\"\n"
+            "- memory_inherit_global=true 表示独立记忆也能参考全局记忆，通常保持默认即可\n\n"
             "**限制**：\n"
             "- 每个会话最多创建 5 个动态 Agent\n"
             "- 动态 Agent 不能再创建新 Agent\n"
@@ -333,6 +337,20 @@ AGENT_TOOLS = [
                 "persistent": {
                     "type": "boolean",
                     "description": "是否永久保存此 Agent（默认 false = 临时，任务结束后自动清理）",
+                },
+                "identity_mode": {
+                    "type": "string",
+                    "enum": ["shared", "custom"],
+                    "description": "身份模式：shared 共享全局身份；custom 使用独立身份（默认 shared）",
+                },
+                "memory_mode": {
+                    "type": "string",
+                    "enum": ["shared", "isolated"],
+                    "description": "记忆模式：shared 共享全局记忆；isolated 使用独立记忆（默认 shared）",
+                },
+                "memory_inherit_global": {
+                    "type": "boolean",
+                    "description": "独立记忆是否同时参考全局记忆（默认 true）",
                 },
                 "force": {
                     "type": "boolean",

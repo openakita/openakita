@@ -682,6 +682,58 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def get_token_usage_records(
+        self,
+        start_time: str | datetime,
+        end_time: str | datetime,
+        limit: int = 100,
+        offset: int = 0,
+        endpoint_name: str | None = None,
+        operation_type: str | None = None,
+    ) -> list[dict]:
+        """Return recent token usage records with attribution details."""
+        where = ["timestamp >= ?", "timestamp <= ?"]
+        params: list[Any] = [
+            start_time if isinstance(start_time, str) else start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            end_time if isinstance(end_time, str) else end_time.strftime("%Y-%m-%d %H:%M:%S"),
+        ]
+        if endpoint_name:
+            where.append("endpoint_name = ?")
+            params.append(endpoint_name)
+        if operation_type:
+            where.append("operation_type = ?")
+            params.append(operation_type)
+
+        sql = f"""
+            SELECT timestamp,
+                   session_id,
+                   request_id,
+                   turn_id,
+                   endpoint_name,
+                   model,
+                   operation_type,
+                   operation_detail,
+                   input_tokens,
+                   output_tokens,
+                   input_tokens + output_tokens AS total_tokens,
+                   cache_creation_tokens,
+                   cache_read_tokens,
+                   context_tokens,
+                   iteration,
+                   channel,
+                   user_id,
+                   agent_profile_id,
+                   COALESCE(estimated_cost, 0) AS estimated_cost
+            FROM token_usage
+            WHERE {" AND ".join(where)}
+            ORDER BY timestamp DESC, id DESC
+            LIMIT ? OFFSET ?
+        """
+        params.extend([limit, offset])
+        cursor = await self._connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
     async def get_token_usage_total(
         self,
         start_time: str | datetime,

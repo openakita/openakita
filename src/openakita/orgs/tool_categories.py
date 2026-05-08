@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 TOOL_CATEGORIES: dict[str, list[str]] = {
-    "research": ["web_search", "news_search"],
+    "research": ["web_search", "news_search", "web_fetch"],
     "planning": [
         "create_plan", "update_plan_step",
         "get_plan_status", "complete_plan",
@@ -52,7 +52,7 @@ def expand_tool_categories(entries: list[str] | None) -> set[str]:
     """Expand a mixed list of category names and tool names into a flat set of tool names.
 
     >>> sorted(expand_tool_categories(["research", "create_plan"]))
-    ['create_plan', 'news_search', 'web_search']
+    ['create_plan', 'news_search', 'web_fetch', 'web_search']
     """
     if not entries:
         return set()

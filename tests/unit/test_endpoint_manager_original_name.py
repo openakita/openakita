@@ -51,3 +51,23 @@ def test_save_endpoint_rename_rejects_existing_name(tmp_path):
             {"name": "taken", "provider": "openai", "model": "c", "priority": 10},
             original_name="old",
         )
+
+
+def test_save_endpoints_batch_shares_one_api_key_env(tmp_path):
+    manager = EndpointManager(tmp_path, config_path=tmp_path / "data" / "llm_endpoints.json")
+
+    saved = manager.save_endpoints(
+        [
+            {"name": "openai-gpt-4o", "provider": "openai", "model": "gpt-4o", "priority": 10},
+            {"name": "openai-gpt-4o-mini", "provider": "openai", "model": "gpt-4o-mini", "priority": 20},
+        ],
+        api_key="sk-batch",
+    )
+
+    config = json.loads((tmp_path / "data" / "llm_endpoints.json").read_text(encoding="utf-8"))
+    endpoints = config["endpoints"]
+
+    assert [ep["name"] for ep in endpoints] == ["openai-gpt-4o", "openai-gpt-4o-mini"]
+    assert len({ep["api_key_env"] for ep in saved}) == 1
+    assert len({ep["api_key_env"] for ep in endpoints}) == 1
+    assert "OPENAI_API_KEY=sk-batch" in (tmp_path / ".env").read_text(encoding="utf-8")

@@ -4,15 +4,15 @@ Tests the FileTool methods and FilesystemHandler dispatch for the new/enhanced
 filesystem tools introduced to match Cursor-like capabilities.
 """
 
-import os
+import json
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import aiofiles
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
-from openakita.tools.file import FileTool, DEFAULT_IGNORE_DIRS
+from openakita.tools.file import DEFAULT_IGNORE_DIRS, FileTool
 from openakita.tools.handlers.filesystem import FilesystemHandler
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -179,6 +179,31 @@ class TestGrep:
         results = await file_tool.grep("findme", path=str(tmp_path))
         assert len(results) == 0
 
+    async def test_grep_skips_directories_that_disappear_mid_scan(
+        self,
+        file_tool,
+        tmp_path,
+        monkeypatch,
+    ):
+        (tmp_path / "ok.txt").write_text("target\n", encoding="utf-8")
+        volatile = tmp_path / "volatile"
+        volatile.mkdir()
+        (volatile / "lost.txt").write_text("target\n", encoding="utf-8")
+
+        original_iterdir = Path.iterdir
+
+        def flaky_iterdir(path):
+            if path == volatile:
+                raise FileNotFoundError(path)
+            return original_iterdir(path)
+
+        monkeypatch.setattr(Path, "iterdir", flaky_iterdir)
+
+        results = await file_tool.grep("target", path=str(tmp_path))
+
+        assert [r["file"] for r in results] == ["ok.txt"]
+        assert file_tool.last_traversal_skipped == 1
+
     async def test_invalid_regex(self, file_tool, tmp_path):
         with pytest.raises(ValueError, match="Invalid regex"):
             await file_tool.grep("[bad", path=str(tmp_path))
@@ -235,6 +260,32 @@ class TestGlob:
         assert "app.js" in result
         assert "node_modules" not in result
 
+    async def test_glob_skips_directories_that_disappear_mid_scan(
+        self,
+        handler,
+        tmp_path,
+        monkeypatch,
+    ):
+        (tmp_path / "app.js").write_text("y", encoding="utf-8")
+        volatile = tmp_path / "volatile"
+        volatile.mkdir()
+        (volatile / "lost.js").write_text("x", encoding="utf-8")
+
+        original_iterdir = Path.iterdir
+
+        def flaky_iterdir(path):
+            if path == volatile:
+                raise FileNotFoundError(path)
+            return original_iterdir(path)
+
+        monkeypatch.setattr(Path, "iterdir", flaky_iterdir)
+
+        result = await handler.handle("glob", {"pattern": "*.js", "path": str(tmp_path)})
+
+        assert "app.js" in result
+        assert "lost.js" not in result
+        assert "已跳过 1 个" in result
+
     async def test_no_match(self, handler, tmp_path):
         result = await handler.handle("glob", {"pattern": "*.zzz", "path": str(tmp_path)})
         assert "未找到" in result
@@ -247,7 +298,7 @@ class TestGlob:
         (tmp_path / "new.py").write_text("y", encoding="utf-8")
         result = await handler.handle("glob", {"pattern": "*.py", "path": str(tmp_path)})
         lines = result.strip().split("\n")
-        file_lines = [l for l in lines if l.endswith(".py")]
+        file_lines = [line for line in lines if line.endswith(".py")]
         assert file_lines[0] == "new.py"
 
 
@@ -322,6 +373,34 @@ class TestListDirectoryEnhanced:
         })
         assert "deep.py" in result
 
+    async def test_recursive_list_directory_skips_unstable_subdirs(
+        self,
+        handler,
+        tmp_path,
+        monkeypatch,
+    ):
+        (tmp_path / "top.py").write_text("x", encoding="utf-8")
+        volatile = tmp_path / "volatile"
+        volatile.mkdir()
+        (volatile / "lost.py").write_text("z", encoding="utf-8")
+
+        original_iterdir = Path.iterdir
+
+        def flaky_iterdir(path):
+            if path == volatile:
+                raise FileNotFoundError(path)
+            return original_iterdir(path)
+
+        monkeypatch.setattr(Path, "iterdir", flaky_iterdir)
+
+        result = await handler.handle("list_directory", {
+            "path": str(tmp_path), "recursive": True, "pattern": "*.py",
+        })
+
+        assert "top.py" in result
+        assert "lost.py" not in result
+        assert "已跳过 1 个" in result
+
     async def test_non_recursive_no_deep(self, handler, tmp_path):
         sub = tmp_path / "sub"
         sub.mkdir()
@@ -335,6 +414,61 @@ class TestListDirectoryEnhanced:
 
 
 # ===========================================================================
+# read_file / write_file safety
+# ===========================================================================
+
+class TestFileReadWriteSafety:
+    """Regression tests for paginated reads and truncated-preview write guards."""
+
+    async def test_read_file_pagination_says_original_file_is_not_truncated(
+        self,
+        handler,
+        tmp_path,
+    ):
+        target = tmp_path / "large.txt"
+        target.write_text("\n".join(f"line-{i}" for i in range(1, 6)), encoding="utf-8")
+
+        result = await handler.handle("read_file", {
+            "path": str(target),
+            "limit": 2,
+        })
+
+        assert "[PAGE_HAS_MORE]" in result
+        assert "原文件未截断" in result
+        assert "[OUTPUT_TRUNCATED]" not in result
+        assert "offset=3, limit=2" in result
+
+    async def test_write_file_rejects_paginated_read_preview(self, handler, tmp_path):
+        target = tmp_path / "safe.txt"
+        target.write_text("original", encoding="utf-8")
+        preview = (
+            "文件内容 (第 1-2 行，共 5 行):\nline-1\nline-2\n\n"
+            "[PAGE_HAS_MORE] 这是分页读取结果，原文件未截断。"
+            "文件共 5 行，当前仅显示第 1-2 行，剩余 3 行。"
+        )
+
+        result = await handler.handle("write_file", {
+            "path": str(target),
+            "content": preview,
+        })
+
+        assert "已拒绝写入" in result
+        assert target.read_text(encoding="utf-8") == "original"
+
+    async def test_write_file_allows_normal_long_content(self, handler, tmp_path):
+        target = tmp_path / "normal.txt"
+        content = "\n".join(f"line-{i}" for i in range(500))
+
+        result = await handler.handle("write_file", {
+            "path": str(target),
+            "content": content,
+        })
+
+        assert "文件已写入" in result
+        assert target.read_text(encoding="utf-8") == content
+
+
+# ===========================================================================
 # Tool definition integrity
 # ===========================================================================
 
@@ -343,7 +477,17 @@ class TestToolDefinitions:
 
     def test_filesystem_tools_count(self):
         from openakita.tools.definitions.filesystem import FILESYSTEM_TOOLS
-        assert len(FILESYSTEM_TOOLS) == 8
+        assert {tool["name"] for tool in FILESYSTEM_TOOLS} == {
+            "run_shell",
+            "write_file",
+            "read_file",
+            "edit_file",
+            "list_directory",
+            "grep",
+            "glob",
+            "move_file",
+            "delete_file",
+        }
 
     def test_all_in_base_tools(self):
         from openakita.tools.definitions import BASE_TOOLS
@@ -369,11 +513,20 @@ class TestToolDefinitions:
     def test_handler_tools_match_definitions(self):
         from openakita.tools.definitions.filesystem import FILESYSTEM_TOOLS
         def_names = [t["name"] for t in FILESYSTEM_TOOLS]
-        assert FilesystemHandler.TOOLS == def_names
+        assert def_names == FilesystemHandler.TOOLS
+
+    def test_run_shell_guides_local_web_server_verification(self):
+        from openakita.tools.definitions.filesystem import FILESYSTEM_TOOLS
+
+        run_shell = next(tool for tool in FILESYSTEM_TOOLS if tool["name"] == "run_shell")
+
+        assert "Flask/FastAPI/Vite" in run_shell["description"]
+        assert "HTTP health/API requests" in run_shell["description"]
+        assert "timeout as failure" in run_shell["description"]
 
     def test_all_definitions_valid_schema(self):
         from openakita.tools.definitions.filesystem import FILESYSTEM_TOOLS
-        import json
+
         for tool in FILESYSTEM_TOOLS:
             assert tool["category"] == "File System"
             schema = tool["input_schema"]

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
-from openakita.orgs.blackboard import OrgBlackboard, MAX_ORG_MEMORIES
+from openakita.orgs.blackboard import MAX_ORG_MEMORIES, OrgBlackboard
 from openakita.orgs.models import MemoryScope, MemoryType
 
 
@@ -41,6 +42,58 @@ class TestWriteRead:
         assert blackboard.read_org() == []
         assert blackboard.read_department("不存在") == []
         assert blackboard.read_node("不存在") == []
+
+    def test_read_org_handles_legacy_string_importance_and_limit(
+        self,
+        blackboard: OrgBlackboard,
+    ):
+        bb_path = blackboard._memory_dir / "blackboard.jsonl"
+        rows = [
+            {
+                "org_id": blackboard._org_id,
+                "scope": "org",
+                "scope_owner": blackboard._org_id,
+                "memory_type": "fact",
+                "content": "字符串重要性",
+                "source_node": "node_a",
+                "importance": "0.5",
+            },
+            {
+                "org_id": blackboard._org_id,
+                "scope": "org",
+                "scope_owner": blackboard._org_id,
+                "memory_type": "fact",
+                "content": "浮点重要性",
+                "source_node": "node_b",
+                "importance": 0.9,
+            },
+            {
+                "org_id": blackboard._org_id,
+                "scope": "org",
+                "scope_owner": blackboard._org_id,
+                "memory_type": "fact",
+                "content": "异常重要性",
+                "source_node": "node_c",
+                "importance": "bad",
+            },
+        ]
+        bb_path.write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+            encoding="utf-8",
+        )
+
+        entries = blackboard.read_org(limit="2")
+
+        assert [entry.content for entry in entries] == ["浮点重要性", "字符串重要性"]
+        assert all(isinstance(entry.importance, float) for entry in entries)
+
+    def test_read_org_uses_default_for_invalid_limit(self, blackboard: OrgBlackboard):
+        for i in range(25):
+            blackboard.write_org(f"mem_{i}", "node_ceo", importance=0.5)
+
+        entries = blackboard.read_org(limit="bad")
+
+        assert len(entries) == 20
 
 
 class TestTagFilter:
@@ -94,6 +147,15 @@ class TestQuery:
         results = blackboard.query(memory_type=MemoryType.DECISION)
         assert len(results) == 1
         assert results[0].content == "decision1"
+
+    def test_query_accepts_string_limit(self, blackboard: OrgBlackboard):
+        blackboard.write_org("A", "n1")
+        blackboard.write_org("B", "n1")
+        blackboard.write_org("C", "n1")
+
+        results = blackboard.query(limit="2.0")
+
+        assert len(results) == 2
 
 
 class TestDeleteEntry:

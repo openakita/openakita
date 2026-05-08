@@ -21,6 +21,7 @@ from datetime import datetime
 from .json_utils import (
     as_clean_str,
     coerce_text,
+    coerce_tool_names,
     extract_json_array,
     extract_json_object,
     loads_llm_json,
@@ -292,9 +293,10 @@ duration 参考:
 ## 完整对话
 {conversation}
 
-### 核心原则：主动记录事实
+### 核心原则：记录稳定信息，普通任务留在会话里
 
-你的职责是**主动发现并保存**对话中出现的有价值信息。宁可多记也不要漏记。
+你的职责是发现对未来确实有帮助的信息，但不要把当前任务流水账写成长期记忆。
+长期记忆宁可少而准；不确定是否长期有用时，不要输出该条，让会话/情节记录承载它。
 
 ### 必须记录的（遇到就记）
 - 用户身份：名字、称呼、职业、公司、时区
@@ -303,7 +305,7 @@ duration 参考:
 - 技术环境：常用技术栈、开发工具、OS、运行环境
 - **账号和配置**：邮箱地址、API endpoint、端口号、认证方式、服务商（不含密码/密钥原文）
 - **验证有效的技术方案**：经过测试确认可用的配置、参数组合、代码模式
-- **创建的文件/Skill/工具**：文件路径、skill 名称、用途、关键参数
+- **创建的可复用 Skill/工具**：skill 名称、用途、关键参数（一次性文件产物不记录）
 - **重要的事实发现**：调试过程中发现的环境特性、兼容性、限制条件
 
 ### 不要记录的
@@ -325,7 +327,7 @@ duration 参考:
 如果确实没有任何有价值的信息，输出: NONE
 
 注意:
-- 最多输出 8 条记忆
+- 最多输出 5 条记忆
 - 对话中多次提到同一信息只提取一次
 - content 必须包含具体值（端口号、路径、参数等），不要用模糊描述"""
 
@@ -334,9 +336,10 @@ duration 参考:
 ## 完整对话
 {conversation}
 
-### 核心原则：完整记录做了什么、结果如何、怎么做成的
+### 核心原则：只记录可复用经验，不记录普通流水账
 
-你必须把对话中发生的关键事件和结论记录下来。下次遇到类似任务时，这些记录能让你直接复用成功方案、避开已知错误。
+只记录下次遇到同类任务时能直接复用的成功方法、关键配置或踩坑教训。
+普通执行过程、一次性产物和“已完成”类汇报不要写成长期经验。
 
 ### 必须记录的
 - **成功的操作和方法**：什么操作最终成功了？用了什么配置/参数/步骤？（必须记录具体值）
@@ -345,7 +348,7 @@ duration 参考:
 - **环境和配置发现**：调试过程中发现的系统特性、版本兼容性、端口、路径等
 - **工具/Skill 使用经验**：用了哪个工具、怎么调用的、效果如何
 - **Skill 封装经验**：创建了什么 skill、放在哪里、核心逻辑是什么、注意事项
-- **最终产物**：最终生成了什么文件、部署在哪里、怎么使用
+- **可复用产物模式**：只有当产物模板/脚本/Skill 可长期复用时才记录，普通文件交付不记录
 
 ### 不要记录的
 - 打招呼、寒暄、感谢
@@ -366,8 +369,8 @@ duration 参考:
 如果对话中确实没有任何操作或经验，输出: NONE
 
 注意:
-- 最多输出 8 条
-- **宁可多记也不要漏记**——漏掉一条成功经验，下次就要重新踩一遍坑
+- 最多输出 5 条
+- 宁可少记普通过程，也不要把一次性任务污染成长期记忆
 - content 必须足够具体，让下次看到这条记忆就能直接操作"""
 
     CITATION_SCORING_SECTION = """
@@ -634,7 +637,7 @@ duration 参考:
             started_at=turns[0].timestamp,
             ended_at=turns[-1].timestamp,
             action_nodes=action_nodes,
-            tools_used=list({n.tool_name for n in action_nodes}),
+            tools_used=coerce_tool_names({n.tool_name for n in action_nodes}),
             source=source,
         )
 
@@ -660,10 +663,7 @@ duration 参考:
                         if (entity_text := as_clean_str(entity))
                     ]
                     if data.get("tools_used"):
-                        raw_tools = data["tools_used"]
-                        if not isinstance(raw_tools, list):
-                            raw_tools = [raw_tools]
-                        tools_used = [as_clean_str(tool) for tool in raw_tools]
+                        tools_used = coerce_tool_names(data["tools_used"])
                         episode.tools_used = list(set(episode.tools_used + tools_used))
             except Exception as e:
                 logger.warning(f"[Extractor] Episode LLM generation failed: {e}")

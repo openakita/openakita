@@ -64,7 +64,7 @@ export type QueuedMessage = {
 
 /** SSE stream event union — synced with Python openakita.events / src/streamEvents.ts */
 export type StreamEvent =
-  | { type: "heartbeat" }
+  | { type: "heartbeat"; ts?: number }
   | { type: "iteration_start"; iteration: number }
   | { type: "context_compressed"; before_tokens: number; after_tokens: number }
   | { type: "thinking_start" }
@@ -193,4 +193,5 @@ export type AgentProfile = {
   name_i18n?: Record<string, string>;
   description_i18n?: Record<string, string>;
   preferred_endpoint?: string | null;
+  endpoint_policy?: "prefer" | "require";
 };

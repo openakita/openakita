@@ -79,6 +79,8 @@ let _seq = 0;
 function genId() { return `orgchat-${Date.now()}-${++_seq}`; }
 
 const LS_PREFIX = "orgchat_msgs_";
+const ORG_HISTORY_PAGE_LIMIT = 80;
+const ORG_STORED_MESSAGE_WINDOW = 120;
 
 // Survives component unmount so command results aren't lost when navigating away
 interface PendingCmd {
@@ -94,7 +96,10 @@ const _pendingCmds = new Map<string, PendingCmd>();
 
 function saveToLocalStorage(cid: string, msgs: ChatMsg[]): void {
   try {
-    const slim = msgs
+    const windowed = msgs.length > ORG_STORED_MESSAGE_WINDOW
+      ? msgs.slice(-ORG_STORED_MESSAGE_WINDOW)
+      : msgs;
+    const slim = windowed
       .filter(m => !m.streaming)
       .map(({ id, role, content, timestamp, attachments }) => {
         const o: Record<string, unknown> = { id, role, content, timestamp };
@@ -108,7 +113,8 @@ function saveToLocalStorage(cid: string, msgs: ChatMsg[]): void {
 function loadFromLocalStorage(cid: string): ChatMsg[] {
   try {
     const raw = localStorage.getItem(LS_PREFIX + cid);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.slice(-ORG_STORED_MESSAGE_WINDOW) : [];
   } catch { return []; }
 }
 
@@ -144,7 +150,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   useEffect(() => {
     let cancelled = false;
     setLoaded(false);
-    const url = `${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history`;
+    const url = `${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history?limit=${ORG_HISTORY_PAGE_LIMIT}`;
     (async () => {
       try {
         const res = await safeFetch(url);

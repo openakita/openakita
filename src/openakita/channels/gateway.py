@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Optional
 from ..sessions import Session, SessionManager
 from .base import ChannelAdapter
 from .group_response import GroupResponseMode, SmartModeThrottle
-from .types import MediaStatus, OutgoingMessage, UnifiedMessage
+from .types import MediaStatus, MessageContent, OutgoingMessage, UnifiedMessage
 
 if TYPE_CHECKING:
     from .dm_pairing import DMPairingManager
@@ -4029,7 +4029,7 @@ class MessageGateway:
             chunks.append(current.rstrip())
         return chunks
 
-    async def _send_response(self, original: UnifiedMessage, response: str) -> None:
+    async def _send_response(self, original: UnifiedMessage, response: str) -> bool:
         """
         发送响应（带重试、按渠道分割长消息、分片间限流保护）
 
@@ -4066,7 +4066,7 @@ class MessageGateway:
                 )
             else:
                 logger.error(f"No adapter for channel: {original.channel}")
-            return
+            return False
 
         # 解析文本中的媒体引用
         media_result = parse_media_from_text(response)
@@ -4121,13 +4121,20 @@ class MessageGateway:
             from .retry import async_with_retry
 
             try:
-                await async_with_retry(
+                send_result = await async_with_retry(
                     adapter.send_message,
                     outgoing,
                     max_retries=2,
                     base_delay=1.0,
                     operation_name=f"send_response[{i + 1}/{len(messages)}]",
                 )
+                if not self._is_im_send_delivered(send_result):
+                    logger.warning(
+                        f"Response part {i + 1}/{len(messages)} was not immediately delivered "
+                        f"(channel={original.channel}, chat_id={original.chat_id})"
+                    )
+                    failed_at = i
+                    break
             except Exception as e:
                 logger.error(
                     f"Failed to send response part {i + 1}/{len(messages)} after retries: {e}"
@@ -4137,7 +4144,7 @@ class MessageGateway:
 
         if failed_at < 0:
             await self._send_extracted_media(adapter, original, media_result, outgoing_meta)
-            return
+            return True
 
         # 分片发送失败 → 仅将失败及后续分片以纯文本重发，避免已送达的部分重复
         remaining = messages[failed_at:]
@@ -4157,7 +4164,9 @@ class MessageGateway:
                 metadata=outgoing_meta,
             )
             try:
-                await adapter.send_message(plain_out)
+                plain_result = await adapter.send_message(plain_out)
+                if not self._is_im_send_delivered(plain_result):
+                    raise RuntimeError("adapter did not confirm immediate delivery")
             except Exception as e2:
                 logger.error(f"Plain-text fallback also failed for part {failed_at + j + 1}: {e2}")
                 _sent_count = failed_at + j
@@ -4174,9 +4183,10 @@ class MessageGateway:
                         thread_id=original.thread_id,
                         metadata=outgoing_meta,
                     )
-                return
+                return False
 
         await self._send_extracted_media(adapter, original, media_result, outgoing_meta)
+        return True
 
     async def _send_extracted_media(
         self,
@@ -4379,6 +4389,67 @@ class MessageGateway:
                 logger.error(f"Failed to deliver pending selfcheck report for {report_date}: {e}")
 
     # ==================== 主动发送 ====================
+
+    @staticmethod
+    def _is_im_send_delivered(result: object) -> bool:
+        """Return True only when an adapter reports an immediate delivery.
+
+        QQ official group bots return an empty string when a proactive message is
+        queued for the next user interaction. That queue is useful, but it is not
+        an immediate notification and should not make scheduler delivery look
+        successful.
+        """
+        if isinstance(result, str):
+            return bool(result)
+        return result is not None
+
+    async def send_text_reliably(
+        self,
+        channel: str,
+        chat_id: str,
+        text: str,
+        record_to_session: bool = True,
+        user_id: str = "system",
+        thread_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> bool:
+        """Send final text through the same chunking/retry path as normal replies."""
+        if not isinstance(text, str):
+            logger.warning(
+                "[Gateway] Refusing to send non-text reliable payload to IM channel "
+                "%s/%s: %s",
+                channel,
+                chat_id,
+                type(text).__name__,
+            )
+            return False
+
+        message = UnifiedMessage.create(
+            channel=channel,
+            channel_message_id="",
+            user_id=user_id,
+            channel_user_id=user_id,
+            chat_id=chat_id,
+            thread_id=thread_id,
+            content=MessageContent.text_only(text),
+            metadata=dict(metadata or {}),
+        )
+        delivered = await self._send_response(message, text)
+
+        if delivered and record_to_session and self.session_manager:
+            try:
+                self.session_manager.add_message(
+                    channel=channel,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    role="system",
+                    content=text,
+                    source="gateway.send_text_reliably",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to record reliable message to session: {e}")
+
+        return delivered
 
     async def send(
         self,

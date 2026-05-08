@@ -64,6 +64,27 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
 
     from openakita.llm.capabilities import infer_capabilities
 
+    def _is_openrouter_provider() -> bool:
+        slug = (provider_slug or "").strip().lower()
+        b = (base_url or "").strip().lower()
+        return slug == "openrouter" or "openrouter.ai" in b
+
+    def _openrouter_router_models() -> list[dict]:
+        return [
+            {
+                "id": "openrouter/auto",
+                "name": "OpenRouter Auto Router",
+                "capabilities": infer_capabilities("openrouter/auto", provider_slug="openrouter")
+                | {"tools": True},
+            },
+            {
+                "id": "openrouter/free",
+                "name": "OpenRouter Free Models Router",
+                "capabilities": infer_capabilities("openrouter/free", provider_slug="openrouter")
+                | {"tools": True},
+            },
+        ]
+
     def _is_minimax_provider() -> bool:
         slug = (provider_slug or "").strip().lower()
         b = (base_url or "").strip().lower()
@@ -252,11 +273,13 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
         except httpx.HTTPStatusError:
             raise
 
-    out: list[dict] = []
+    out: list[dict] = _openrouter_router_models() if _is_openrouter_provider() else []
+    seen = {str(m.get("id") or "") for m in out}
     for m in data.get("data", []):
         mid = str(m.get("id", "")).strip()
-        if not mid:
+        if not mid or mid in seen:
             continue
+        seen.add(mid)
         out.append(
             {
                 "id": mid,
@@ -1415,10 +1438,7 @@ def _validate_git_proxy_environment(env: dict[str, str]) -> None:
         if not parsed.hostname:
             raise SkillInstallError(
                 "git_proxy_invalid",
-                (
-                    f"代理配置缺少主机名：{key}={value!r}。"
-                    "请检查代理地址，或清空该代理配置后重试。"
-                ),
+                (f"代理配置缺少主机名：{key}={value!r}。请检查代理地址，或清空该代理配置后重试。"),
             )
 
 
@@ -1646,9 +1666,7 @@ def _install_repo_tree_to_target(
         elif zip_downloader is not None:
             zip_downloader(tmp_dir)
         else:
-            raise FileNotFoundError(
-                "未找到 git 命令。请安装 Git (https://git-scm.com) 后重试"
-            )
+            raise FileNotFoundError("未找到 git 命令。请安装 Git (https://git-scm.com) 后重试")
 
         source_dir = tmp_dir / subdir if subdir else tmp_dir
         if not source_dir.is_dir():
@@ -1735,9 +1753,7 @@ def _extract_skill_signal(raw: str) -> str:
     return ""
 
 
-def install_skill(
-    workspace_dir: str, url: str, *, category: str | None = None
-) -> None:
+def install_skill(workspace_dir: str, url: str, *, category: str | None = None) -> None:
     """安装技能（从 Git URL、GitHub 简写或本地目录）。
 
     Args:
@@ -1764,13 +1780,9 @@ def install_skill(
                 skills_dir = root_skills_dir / category
                 skills_dir.mkdir(parents=True, exist_ok=True)
             else:
-                sys.stderr.write(
-                    f"[install_skill] 分类名 {category!r} 非法，已忽略并安装到顶层\n"
-                )
+                sys.stderr.write(f"[install_skill] 分类名 {category!r} 非法，已忽略并安装到顶层\n")
         except Exception as ce:
-            sys.stderr.write(
-                f"[install_skill] 分类校验异常 {category!r}: {ce}，已安装到顶层\n"
-            )
+            sys.stderr.write(f"[install_skill] 分类校验异常 {category!r}: {ce}，已安装到顶层\n")
             skills_dir = root_skills_dir
 
     if url.startswith("github:"):
@@ -2231,4 +2243,3 @@ if __name__ == "__main__":
         sys.stderr.write(str(e))
         sys.stderr.write("\n")
         raise
-

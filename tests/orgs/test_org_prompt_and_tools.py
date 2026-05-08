@@ -11,14 +11,14 @@ Validates:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
-from openakita.orgs.identity import OrgIdentity, ResolvedIdentity
-from openakita.orgs.models import Organization, OrgNode
-from openakita.orgs.tool_categories import expand_tool_categories, TOOL_CATEGORIES
-from .conftest import make_org, make_node, make_edge
+from openakita.orgs.identity import OrgIdentity
+from openakita.orgs.runtime import OrgRuntime
+from openakita.orgs.tool_categories import TOOL_CATEGORIES, expand_tool_categories
+
+from .conftest import make_edge, make_node, make_org
 
 
 @pytest.fixture()
@@ -203,13 +203,14 @@ class TestToolCarryingRules:
         assert "spawn_agent" not in allowed
         assert "web_search" in allowed
         assert "news_search" in allowed
+        assert "web_fetch" in allowed
 
     def test_keep_tools_are_minimal(self):
         """_KEEP set should be small and focused on planning/discovery."""
-        assert _KEEP_TOOLS == {
+        assert {
             "get_tool_info", "create_todo", "update_todo_step",
             "get_todo_status", "complete_todo",
-        }
+        } == _KEEP_TOOLS
 
     def test_no_external_tools_means_empty_allowed(self):
         """Node with no external_tools should get no extra tools."""
@@ -228,6 +229,7 @@ class TestToolCarryingRules:
         entries = ["research", "filesystem", "my_custom_mcp_tool"]
         result = expand_tool_categories(entries) - _ORG_CONFLICT_TOOLS
         assert "web_search" in result
+        assert "web_fetch" in result
         assert "read_file" in result
         assert "my_custom_mcp_tool" in result
 
@@ -304,6 +306,39 @@ class TestPromptSections:
         prompt = identity.build_org_context_prompt(node, persisted_org, resolved)
         assert "AI 效率意识" in prompt
         assert "分钟" in prompt
+
+    def test_runtime_org_prompt_guides_short_answers_to_converge(self, tmp_path: Path):
+        class _Context:
+            system = ""
+
+        class _Agent:
+            def __init__(self) -> None:
+                self._context = _Context()
+                self._tools = [
+                    {
+                        "name": "org_get_org_status",
+                        "description": "查看组织状态",
+                        "input_schema": {"properties": {}, "required": []},
+                    },
+                    {
+                        "name": "read_file",
+                        "description": "读取文件",
+                        "input_schema": {"properties": {"path": {}}, "required": ["path"]},
+                    },
+                ]
+
+        agent = _Agent()
+
+        OrgRuntime._override_system_prompt_for_org(
+            agent,
+            "ORG_CONTEXT",
+            tmp_path,
+            is_root=True,
+        )
+
+        assert "轻量直答与收敛" in agent._context.system
+        assert "不要创建计划、不要委派、不要查制度" in agent._context.system
+        assert "真实任务状态、文件、日志" in agent._context.system
 
 
 # ---------------------------------------------------------------------------

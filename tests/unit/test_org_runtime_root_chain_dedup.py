@@ -16,6 +16,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from openakita.agents.profile import AgentProfile
+from openakita.orgs.models import OrgNode
 from openakita.orgs.runtime import OrgRuntime
 
 
@@ -334,3 +336,29 @@ class TestRootProcessedChainsInitialState:
         assert isinstance(runtime._root_processed_chains, dict)
         assert runtime._root_processed_chains == {}
         assert runtime._root_processed_chain_max_per_org == 512
+
+
+class TestNodeProfileIsolationInheritance:
+    def test_node_profile_inherits_base_memory_isolation(self, runtime: OrgRuntime):
+        base = AgentProfile(
+            id="isolated-specialist",
+            name="Isolated Specialist",
+            memory_mode="isolated",
+            memory_inherit_global=False,
+            runtime_env_mode="agent",
+            runtime_env_dependencies=["requests"],
+        )
+        runtime._get_shared_profile = MagicMock(return_value=base)
+        node = OrgNode(
+            id="node_a",
+            role_title="Researcher",
+            agent_profile_id="isolated-specialist",
+        )
+
+        profile = runtime._build_profile_for_node(node, "node prompt")
+
+        assert profile.id == "org_node_node_a"
+        assert profile.memory_mode == "isolated"
+        assert profile.memory_inherit_global is False
+        assert profile.runtime_env_mode == "agent"
+        assert profile.runtime_env_dependencies == ["requests"]

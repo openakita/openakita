@@ -27,6 +27,8 @@ export function AttachmentPreview({ att, onRemove }: { att: ChatAttachment; onRe
   }
   const icon = att.type === "voice" ? <IconMic size={14} /> : att.type === "video" ? <IconPlay size={14} /> : att.type === "image" ? <IconImage size={14} /> : <IconPaperclip size={14} />;
   const sizeStr = att.size ? `${(att.size / 1024).toFixed(1)} KB` : "";
+  const statusText = att.uploadStatus === "uploading" ? "上传中" : att.uploadStatus === "failed" ? "上传失败" : "";
+  const statusColor = att.uploadStatus === "failed" ? "var(--danger)" : "var(--muted)";
   return (
     <div style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 28px 6px 10px", borderRadius: 10, border: "1px solid var(--line)", fontSize: 12 }}>
       {onRemove && (
@@ -46,6 +48,7 @@ export function AttachmentPreview({ att, onRemove }: { att: ChatAttachment; onRe
       <span style={{ display: "inline-flex", alignItems: "center" }}>{icon}</span>
       <span style={{ fontWeight: 600 }}>{att.name}</span>
       {sizeStr && <span style={{ opacity: 0.5 }}>{sizeStr}</span>}
+      {statusText && <span style={{ color: statusColor, fontSize: 11 }}>{statusText}</span>}
     </div>
   );
 }

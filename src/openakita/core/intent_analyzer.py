@@ -303,6 +303,20 @@ _QUERY_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Direct short-answer requests are still knowledge/chat style questions.  They
+# should not enter the full ReAct loop just because they contain words like
+# "回答" or "介绍".
+_DIRECT_SHORT_ANSWER_RE = re.compile(
+    r"^(?:请)?(?:只)?(?:用)?一[句段]话(?:回答|说明|解释|介绍)?[，,:：\s]*"
+    r"(?:你(?:的)?(?:职责|角色)(?:是什么)?|你是谁|介绍(?:一下)?你自己|"
+    r"解释\s*\S{1,30}|说明\s*\S{1,30}|介绍\s*\S{1,30})$"
+    r"|^(?:你(?:的)?(?:职责|角色)(?:是什么)?|你是谁|介绍(?:一下)?你自己)$"
+    r"|^(?:请)?(?:简洁|简单|直接)(?:回答|说明|解释|介绍)[，,:：\s]*"
+    r"(?:你(?:的)?(?:职责|角色)(?:是什么)?|你是谁|介绍(?:一下)?你自己|"
+    r"\S{1,30}(?:是什么|怎么理解))$",
+    re.IGNORECASE,
+)
+
 # Context-dependent markers: when present the user is referencing prior
 # conversation turns, so the fast (history-free) path MUST be skipped.
 _CONTEXT_DEPENDENT_RE = re.compile(
@@ -445,7 +459,7 @@ def _try_fast_query_shortcut(message: str) -> IntentResult | None:
         return None
     if _looks_like_tool_action_request(stripped):
         return _make_tool_action_result(stripped)
-    if _QUERY_PATTERNS.match(stripped):
+    if _QUERY_PATTERNS.match(stripped) or _DIRECT_SHORT_ANSWER_RE.match(stripped):
         logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' matched as QUERY (rule-based)")
         return IntentResult(
             intent=IntentType.QUERY,
@@ -553,6 +567,14 @@ class IntentAnalyzer:
         query_result = _try_fast_query_shortcut(message)
         if query_result is not None:
             return query_result
+
+        # Rule-based fast-path for greetings and other unambiguous casual chat.
+        # This avoids sending a full prompt/tool context to small local models for
+        # messages like "你好", while still letting ambiguous follow-ups with
+        # history go through the normal analyzer.
+        chat_result = _try_fast_chat_shortcut(message, has_history=has_history)
+        if chat_result is not None:
+            return chat_result
 
         try:
             response = await self.brain.compiler_think(

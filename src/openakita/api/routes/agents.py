@@ -116,6 +116,7 @@ class ProfileCreateRequest(BaseModel):
     custom_prompt: str = Field("", max_length=5000)
     category: str = Field("", max_length=30)
     preferred_endpoint: str | None = Field(None, max_length=200)
+    endpoint_policy: Literal["prefer", "require"] = "prefer"
     identity_mode: Literal["shared", "custom"] = "shared"
     memory_mode: Literal["shared", "isolated"] = "shared"
     memory_inherit_global: bool = True
@@ -140,6 +141,7 @@ class ProfileUpdateRequest(BaseModel):
     custom_prompt: str | None = Field(None, max_length=5000)
     category: str | None = Field(None, max_length=30)
     preferred_endpoint: str | None = Field(None, max_length=200)
+    endpoint_policy: Literal["prefer", "require"] | None = None
     identity_mode: Literal["shared", "custom"] | None = None
     memory_mode: Literal["shared", "isolated"] | None = None
     memory_inherit_global: bool | None = None
@@ -495,6 +497,7 @@ async def create_agent_profile(body: ProfileCreateRequest):
         color=body.color,
         category=body.category,
         preferred_endpoint=body.preferred_endpoint,
+        endpoint_policy=body.endpoint_policy,
         identity_mode=body.identity_mode,
         memory_mode=body.memory_mode,
         memory_inherit_global=body.memory_inherit_global,

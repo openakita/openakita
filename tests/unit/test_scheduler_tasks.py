@@ -125,6 +125,60 @@ class TestSystemTaskTimeouts:
         assert success is True
         assert "下次" in message
 
+    async def test_daily_selfcheck_timeout_is_safe_pause_not_failure(self, monkeypatch):
+        async def fake_wait_for(_coro, timeout):
+            if hasattr(_coro, "close"):
+                _coro.close()
+            raise TimeoutError
+
+        monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+        task = ScheduledTask.create(
+            name="daily selfcheck",
+            description="daily selfcheck",
+            trigger_type=TriggerType.CRON,
+            trigger_config={"cron": "0 4 * * *"},
+            prompt="",
+            action="system:daily_selfcheck",
+            deletable=False,
+        )
+        executor = TaskExecutor()
+
+        success, message = await executor._execute_system_task(task)
+
+        assert success is True
+        assert "下次继续" in message
+
+    async def test_system_task_sets_and_resets_background_token_budget(self, monkeypatch):
+        from openakita.core.token_tracking import get_token_budget, record_usage
+
+        task = ScheduledTask.create(
+            name="daily memory",
+            description="daily memory",
+            trigger_type=TriggerType.INTERVAL,
+            trigger_config={"interval_minutes": 60},
+            prompt="",
+            action="system:daily_memory",
+            deletable=False,
+        )
+        executor = TaskExecutor()
+
+        async def fake_daily_memory():
+            assert get_token_budget() is not None
+            record_usage(input_tokens=10, output_tokens=5)
+            return True, "done"
+
+        monkeypatch.setattr(
+            "openakita.config.settings.scheduler_background_token_budget",
+            20,
+        )
+        monkeypatch.setattr(executor, "_system_daily_memory", fake_daily_memory)
+
+        success, message = await executor._execute_system_task(task)
+
+        assert success is True
+        assert message == "done"
+        assert get_token_budget() is None
+
 
 class TestTaskAgentProfiles:
     async def test_executor_creates_selected_agent_profile(self, monkeypatch):

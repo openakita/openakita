@@ -967,6 +967,20 @@ URL_TO_PROVIDER = {
 }
 
 
+_IMAGE_GENERATION_MODEL_PREFIXES = (
+    "qwen-image",
+    "wanx-",
+    "dall-e",
+    "gpt-image",
+)
+
+
+def is_image_generation_model(model_name: str) -> bool:
+    """Return True for models that use image-generation APIs, not chat APIs."""
+    model_lower = (model_name or "").strip().lower()
+    return any(model_lower.startswith(prefix) for prefix in _IMAGE_GENERATION_MODEL_PREFIXES)
+
+
 def infer_capabilities(
     model_name: str, provider_slug: str | None = None, user_config: dict | None = None
 ) -> dict:
@@ -979,7 +993,8 @@ def infer_capabilities(
         user_config: 用户在配置中声明的能力（可选）
 
     Returns:
-        {"text": bool, "vision": bool, "video": bool, "tools": bool, "thinking": bool, "audio": bool, "pdf": bool}
+        {"text": bool, "vision": bool, "video": bool, "tools": bool, "thinking": bool,
+         "audio": bool, "pdf": bool, "image_generation": bool}
 
     ⚠ 维护提示：前端有此函数的简化版 (apps/setup-center/src/App.tsx → inferCapabilities)，
     用于打包模式下前端直连服务商 API 拉取模型列表时的 capability 推断。
@@ -995,6 +1010,7 @@ def infer_capabilities(
         "thinking": False,
         "audio": False,
         "pdf": False,
+        "image_generation": False,
     }
 
     def _normalize(caps: dict) -> dict:
@@ -1007,6 +1023,11 @@ def infer_capabilities(
         return _normalize(user_config)
 
     model_lower = model_name.lower()
+
+    # Text-to-image models (for example Qwen-Image) use dedicated generation
+    # APIs and cannot serve as OpenAI-compatible chat/vision endpoints.
+    if is_image_generation_model(model_name):
+        return _normalize({"image_generation": True})
 
     # 2. 按服务商+模型名精确匹配
     if provider_slug and provider_slug in MODEL_CAPABILITIES:

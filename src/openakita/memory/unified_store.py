@@ -236,13 +236,23 @@ class UnifiedStore:
         避免向量索引尚未补全/异步未刷新时新写入的记忆被静默漏掉。按 id 去重后
         取最高分，FTS5 结果保留原始分数（FTS5 backend 输出已落在 [0,1]）。
         """
-        primary = self.search.search(query, limit=limit * 3, filter_type=filter_type)
+        primary = self.search.search(
+            query,
+            limit=limit * 3,
+            filter_type=filter_type,
+            scope=scope,
+            scope_owner=scope_owner,
+        )
         merged: dict[str, float] = {mid: float(s) for mid, s in primary}
 
         if self._fts5_fallback is not None:
             try:
                 fts_results = self._fts5_fallback.search(
-                    query, limit=limit * 3, filter_type=filter_type
+                    query,
+                    limit=limit * 3,
+                    filter_type=filter_type,
+                    scope=scope,
+                    scope_owner=scope_owner,
                 )
                 for mid, s in fts_results:
                     prev = merged.get(mid)

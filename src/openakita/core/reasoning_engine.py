@@ -70,11 +70,10 @@ _ADMIN_TOOL_NAMES = frozenset({
 def _tool_rate_limit_key(tool_name: str, tool_args: Any) -> str:
     """Key repeated-tool throttling by the actual invocation, not just tool name."""
     try:
-        param_str = json.dumps(tool_args, sort_keys=True, ensure_ascii=False, default=str)
+        param_str = json.dumps(tool_args or {}, sort_keys=True, ensure_ascii=False, default=str)
     except Exception:
         param_str = str(tool_args)
-    param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
-    return f"{tool_name}({param_hash})"
+    return f"{tool_name}:{hashlib.md5(param_str.encode()).hexdigest()}"
 
 
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
@@ -441,12 +440,18 @@ class Checkpoint:
 
 
 def _get_action_claim_re() -> "re.Pattern[str]":
-    """Compiled regex for claims that an external action has already happened."""
+    """Compiled regex that detects Chinese action-claim phrases.
+
+    Matches patterns like "已帮你保存", "已完成", "成功发送", "已经删除" — these
+    indicate the LLM is *claiming* it performed an operation rather than merely
+    analysing or describing content.  Used by the implicit-REPLY heuristic to
+    avoid accepting hallucinated action descriptions.
+    """
     import re as _re
 
-    cached = getattr(_get_action_claim_re, "_cached", None)
-    if cached is not None:
-        return cached
+    pat = getattr(_get_action_claim_re, "_cached", None)
+    if pat is not None:
+        return pat
     verbs = (
         "保存|发送|创建|删除|修改|上传|下载|执行|生成|导出|复制|移动|"
         "写入|添加|设置|配置|安装|部署|打包|编译|构建|启动|重启|停止|关闭|"
@@ -479,6 +484,9 @@ _CLAIMED_TOOL_TO_FRAGMENTS: dict[str, tuple[str, ...]] = {
 }
 
 
+# 动词 → 候选工具名片段（小写子串匹配）。
+# 当 LLM 文本里说"已删除/已发送..."时，必须有匹配片段的工具在本轮"成功"
+# 执行过；否则按幻觉降级处理。映射只覆盖最常被滥用的高风险动词，避免
 # 误拦低风险描述（如"已分析/已生成"等）。
 _VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
     "删除": ("delete_file", "delete_memory", "remove", "cancel_scheduled_task"),
@@ -493,17 +501,17 @@ _VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
     "记录": ("add_memory", "create_todo"),
     "存入": ("add_memory", "update_user_profile", "write_file"),
     "创建": ("write_file", "create_todo", "schedule_task", "create_agent"),
+    "添加": ("add_memory", "create_todo", "schedule_task", "edit_file"),
     "移动": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
     "移至": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
     "重命名": ("move_file", "run_shell", "run_powershell"),
     "复制": ("write_file", "run_shell", "run_powershell"),
-    "添加": ("add_memory", "create_todo", "schedule_task", "edit_file"),
     "发送": ("deliver_artifacts", "send_to_chat", "smtp_email_sender", "send_message"),
     "调度": ("schedule_task",),
     "提醒": ("schedule_task",),
     "安装": ("install_skill",),
-    "卸载": ("uninstall_skill",),    "读取": ("read_file", "run_shell", "run_powershell"),
-
+    "卸载": ("uninstall_skill",),
+    "读取": ("read_file", "run_shell", "run_powershell"),
 }
 
 
@@ -516,17 +524,22 @@ def _successful_tool_names(
         return set()
     if not tool_results:
         return set(executed_tool_names)
-    failed: set[str] = set()
+    executed = set(executed_tool_names)
+    seen: set[str] = set()
+    succeeded: set[str] = set()
     for tr in tool_results:
         if not isinstance(tr, dict):
             continue
-        if tr.get("is_error"):
-            tn = tr.get("tool_name") or tr.get("name") or ""
-            if tn:
-                failed.add(tn)
-    # Note: same tool may have multiple calls; if any succeeded, treat as success.
-    succeeded = set(executed_tool_names) - failed
-    return succeeded
+        tn = tr.get("tool_name") or tr.get("name") or ""
+        if not tn:
+            continue
+        seen.add(tn)
+        if not tr.get("is_error"):
+            succeeded.add(tn)
+    # Same tool may fail first and then succeed on retry. Treat any successful
+    # receipt as backing evidence, while tools without result entries keep the
+    # historical optimistic behavior.
+    return {name for name in executed if name not in seen or name in succeeded}
 
 
 def _extract_unbacked_verbs(
@@ -557,6 +570,7 @@ def _extract_unbacked_verbs(
         if any(any(frag in t for frag in fragments) for t in successful_tools):
             continue
         unbacked.append(f"{tool_name}调用")
+
     for verb, fragments in _VERB_TO_TOOL_FRAGMENTS.items():
         # Must appear right after an action-claim prefix to count as a real claim
         # (avoids matching plain narrative like "我会创建..." or "需要修改...").
@@ -653,7 +667,7 @@ _USER_BLOCKED_ACTIONS = (
 )
 
 _RECOVERABLE_TOOL_ERROR_MARKERS = (
-    "????",
+    "未知工具",
     "unknown_tool",
     "No handler mapped for tool",
     "is deferred",
@@ -663,12 +677,12 @@ _RECOVERABLE_TOOL_ERROR_MARKERS = (
 )
 
 _HARD_USER_BLOCKER_TOOL_MARKERS = (
-    "????????",
-    "?????????",
-    "????????",
-    "???",
-    "??????",
-    "????",
+    "浏览器连接已断开",
+    "浏览器已被用户关闭",
+    "浏览器被用户关闭",
+    "验证码",
+    "需要用户确认",
+    "权限不足",
 )
 
 
@@ -1309,6 +1323,7 @@ class ReasoningEngine:
         *,
         conversation_id: str | None,
         reason: str,
+        endpoint_policy: str = "prefer",
     ) -> bool:
         """Apply an endpoint preference without making it a hard blocker."""
         if not endpoint_override:
@@ -1327,6 +1342,7 @@ class ReasoningEngine:
             hours=0.05,
             reason=reason,
             conversation_id=conversation_id,
+            policy=endpoint_policy,
         )
         if ok:
             logger.info(
@@ -1360,6 +1376,7 @@ class ReasoningEngine:
         progress_callback: Any = None,
         agent_profile_id: str = "default",
         endpoint_override: str | None = None,
+        endpoint_policy: str = "prefer",
         force_tool_retries: int | None = None,
         tool_evidence_required: bool = False,
         is_sub_agent: bool = False,
@@ -1379,7 +1396,7 @@ class ReasoningEngine:
             interrupt_check_fn: 中断检查函数
             conversation_id: 对话 ID
             thinking_mode: 思考模式覆盖 ('auto'/'on'/'off'/None)
-            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/'max'/None)
             progress_callback: 进度回调 async fn(str) -> None，用于 IM 实时输出思维链
             endpoint_override: 端点覆盖（来自 Agent profile 或 API 请求）
             force_tool_retries: Intent-driven override for max ForceToolCall retries
@@ -1455,21 +1472,25 @@ class ReasoningEngine:
         state.original_user_messages = [msg for msg in messages if self._is_human_user_message(msg)]
 
         working_messages = list(messages)
-        current_model = self._brain.model
+        current_model = getattr(self._brain, "model", "")
 
         # === 端点覆盖 ===
         if endpoint_override:
             if not conversation_id:
                 conversation_id = f"_run_{uuid.uuid4().hex[:12]}"
-            if self._apply_endpoint_override(
+            self._apply_endpoint_override(
                 endpoint_override,
                 conversation_id=conversation_id,
                 reason=f"agent profile endpoint override: {endpoint_override}",
-            ):
-                llm_client = getattr(self._brain, "_llm_client", None)
-                _provider = getattr(llm_client, "_providers", {}).get(endpoint_override)
-                if _provider:
-                    current_model = _provider.model
+                endpoint_policy=endpoint_policy,
+            )
+
+        try:
+            current_info = self._brain.get_current_model_info(conversation_id=conversation_id)
+            if isinstance(current_info, dict) and current_info.get("model"):
+                current_model = str(current_info["model"])
+        except Exception:
+            pass
 
         # ForceToolCall 配置
         im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 2)))
@@ -3002,6 +3023,7 @@ class ReasoningEngine:
         plan_mode: bool = False,
         mode: str = "agent",
         endpoint_override: str | None = None,
+        endpoint_policy: str = "prefer",
         conversation_id: str | None = None,
         thinking_mode: str | None = None,
         thinking_depth: str | None = None,
@@ -3140,23 +3162,23 @@ class ReasoningEngine:
                     _agent_ref._last_tool_policy_source = "reason_stream_mode_filter"
 
             # === 端点覆盖 ===
-            _endpoint_switched = False
             if endpoint_override:
                 if not conversation_id:
                     conversation_id = f"_stream_{uuid.uuid4().hex[:12]}"
-                _endpoint_switched = self._apply_endpoint_override(
+                self._apply_endpoint_override(
                     endpoint_override,
                     conversation_id=conversation_id,
                     reason=f"chat endpoint override: {endpoint_override}",
+                    endpoint_policy=endpoint_policy,
                 )
 
-            current_model = self._brain.model
-            if _endpoint_switched and endpoint_override:
-                llm_client = getattr(self._brain, "_llm_client", None)
-                if llm_client:
-                    _provider = llm_client._providers.get(endpoint_override)
-                    if _provider:
-                        current_model = _provider.model
+            current_model = getattr(self._brain, "model", "")
+            try:
+                current_info = self._brain.get_current_model_info(conversation_id=conversation_id)
+                if isinstance(current_info, dict) and current_info.get("model"):
+                    current_model = str(current_info["model"])
+            except Exception:
+                pass
 
             # === 与 run() 一致的循环控制变量 ===
             state.original_user_messages = [
@@ -3535,6 +3557,14 @@ class ReasoningEngine:
                         elif _evt_type == "endpoint_meta":
                             # 由 LLMClient 注入的端点元信息（vision_degraded 等）
                             # 转换成前端协议一致的 endpoint_notice。
+                            if stream_event.get("failover_from"):
+                                yield {
+                                    "type": "endpoint_notice",
+                                    "notice_type": "failover",
+                                    "endpoint": stream_event.get("endpoint_name", ""),
+                                    "from_endpoint": stream_event.get("failover_from", ""),
+                                    "reason_code": "endpoint_failover",
+                                }
                             if stream_event.get("vision_degraded") and not _vision_notice_emitted:
                                 _vision_notice_emitted = True
                                 yield {
@@ -5399,6 +5429,7 @@ class ReasoningEngine:
         session_type: str = "desktop",
         mode: str = "agent",
         endpoint_override: str | None = None,
+        endpoint_policy: str = "prefer",
         conversation_id: str | None = None,
         thinking_mode: str | None = None,
         thinking_depth: str | None = None,
@@ -5447,6 +5478,7 @@ class ReasoningEngine:
             session_type=session_type,
             mode=mode,
             endpoint_override=endpoint_override,
+            endpoint_policy=endpoint_policy,
             conversation_id=conversation_id,
             thinking_mode=thinking_mode,
             thinking_depth=thinking_depth,
@@ -6730,7 +6762,7 @@ class ReasoningEngine:
 
         # No intent tag but visible text is a genuine analysis / knowledge /
         # writing response. Accept it as implicit REPLY as long as it does not
-        # look like an action-claim hallucination (e.g. "?????/??/???"
+        # look like an action-claim hallucination (e.g. "已帮你保存/删除/发送…"
         # without any actual tool calls). This keeps tools available without
         # forcing them into pure explanation or creative-writing turns.
         _ACTION_CLAIM_RE = _get_action_claim_re()
@@ -6744,7 +6776,7 @@ class ReasoningEngine:
             logger.info(
                 f"[IntentTag] No intent tag but visible text "
                 f"({len(_txt)} chars), "
-                f"no action-claim detected ? accepting as implicit REPLY"
+                f"no action-claim detected — accepting as implicit REPLY"
             )
             return clean_llm_response(stripped_text)
 
@@ -6946,7 +6978,8 @@ class ReasoningEngine:
         """
         _PLACEHOLDER = (
             "[工具返回内容已移除：内容触发了平台安全审核，无法发送给模型。"
-            "请忽略此工具的结果，直接基于已有信息回答用户。]"
+            "不要基于被移除的内容下结论。请换用更具体的查询词、web_fetch、浏览器或权威来源继续获取证据；"
+            "如果当前确实无法验证，请简要说明无法联网验证，不要编造结果。]"
         )
         stripped = False
         result = list(messages)

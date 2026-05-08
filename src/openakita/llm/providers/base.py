@@ -147,7 +147,9 @@ class LLMProvider(ABC):
 
     def _rate_limit_key(self) -> str:
         api_key = self.config.get_api_key() or ""
-        key_fingerprint = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16] if api_key else ""
+        key_fingerprint = (
+            hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16] if api_key else ""
+        )
         base_url = normalize_base_url(self.config.base_url or "")
         return "|".join(
             [
@@ -507,6 +509,7 @@ class LLMProvider(ABC):
             for kw in [
                 "invalid_request",
                 "invalid_parameter",
+                "invalid function response",
                 "messages with role",
                 "must be a response",
                 "does not support",
@@ -590,7 +593,16 @@ class LLMProvider(ABC):
                 messages=[Message(role="user", content="Hi")],
                 max_tokens=10,
             )
-            await self.chat(request)
+            response = await self.chat(request)
+            if response.usage.output_tokens > 0 and not response.content:
+                error = (
+                    "Endpoint returned output tokens but no visible content. "
+                    "The API proxy may be stripping model output."
+                )
+                if dry_run:
+                    raise RuntimeError(error)
+                self.mark_unhealthy(error, category="structural")
+                return False
             if not dry_run:
                 self.mark_healthy()
             return True

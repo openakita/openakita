@@ -88,6 +88,56 @@ def test_successful_delete_call_backs_claim():
     assert _guard_unbacked_action_claim(text, ["delete_file"], tool_results) == text
 
 
+def test_failed_write_file_with_unrelated_success_does_not_back_save_claim():
+    """#382: write_file 被策略拒绝后，list_directory 成功不能背书“已保存”。"""
+    text = "报告已成功保存！文件位置：D:/Akita/workspaces/default/资本论文本深度分析报告.md"
+    tool_results = [
+        {
+            "tool_name": "write_file",
+            "is_error": True,
+            "content": "⚠️ 策略拒绝: 操作被拒绝: create 在 protected 区域",
+        },
+        {
+            "tool_name": "list_directory",
+            "is_error": False,
+            "content": "目录内容: data, logs",
+        },
+    ]
+
+    guarded = _guard_unbacked_action_claim(
+        text,
+        ["list_directory"],
+        tool_results,
+    )
+
+    assert text in guarded
+    assert "一致性提示" in guarded
+    assert "保存" in guarded
+    assert "list_directory" in guarded
+    assert "write_file" not in guarded.partition("本轮成功执行的工具是 ")[2]
+
+
+def test_successful_retry_backs_save_claim_after_earlier_write_failure():
+    """同一工具先失败后成功时，成功回执应避免过度一致性提示。"""
+    text = "报告已成功保存！文件位置：D:/Akita/workspaces/default/report.md"
+    tool_results = [
+        {
+            "tool_name": "write_file",
+            "is_error": True,
+            "content": "⚠️ 策略拒绝: 操作被拒绝",
+        },
+        {
+            "tool_name": "write_file",
+            "is_error": False,
+            "content": "文件已写入: D:/Akita/workspaces/default/report.md (1024 bytes)",
+        },
+    ]
+
+    guarded = _guard_unbacked_action_claim(text, ["write_file"], tool_results)
+
+    assert guarded == text
+
+
 def test_unbacked_send_claim_with_unrelated_tools_is_warned():
     """LLM 说已发送但本轮没有任何 deliver_artifacts/send_* 工具调用。"""
     text = "已发送结果到群里。"
@@ -140,6 +190,18 @@ def test_successful_tool_names_filter_failures():
     assert "edit_file" in succeeded
     assert "read_file" in succeeded  # no result entry → assumed ok
     assert "delete_file" not in succeeded
+
+
+def test_successful_tool_names_keep_tool_with_later_success():
+    succeeded = _successful_tool_names(
+        ["write_file"],
+        [
+            {"tool_name": "write_file", "is_error": True},
+            {"tool_name": "write_file", "is_error": False},
+        ],
+    )
+
+    assert succeeded == {"write_file"}
 
 
 def test_extract_unbacked_verbs_only_after_prefix():

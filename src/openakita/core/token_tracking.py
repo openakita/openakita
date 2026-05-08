@@ -37,8 +37,34 @@ class TokenTrackingContext:
     agent_profile_id: str = "default"
 
 
+@dataclass
+class TokenBudgetState:
+    """Mutable token budget shared by nested background LLM calls."""
+
+    name: str
+    max_tokens: int
+    used_tokens: int = 0
+    exceeded: bool = False
+
+    def record(self, tokens: int) -> None:
+        if self.max_tokens <= 0 or tokens <= 0:
+            return
+        self.used_tokens += tokens
+        if self.used_tokens >= self.max_tokens:
+            self.exceeded = True
+
+    @property
+    def remaining_tokens(self) -> int:
+        if self.max_tokens <= 0:
+            return 0
+        return max(0, self.max_tokens - self.used_tokens)
+
+
 _tracking_ctx: contextvars.ContextVar[TokenTrackingContext | None] = contextvars.ContextVar(
     "token_tracking_ctx", default=None
+)
+_token_budget_ctx: contextvars.ContextVar[TokenBudgetState | None] = contextvars.ContextVar(
+    "token_budget_ctx", default=None
 )
 
 
@@ -52,6 +78,37 @@ def get_tracking_context() -> TokenTrackingContext | None:
 
 def reset_tracking_context(token: contextvars.Token) -> None:
     _tracking_ctx.reset(token)
+
+
+def set_token_budget(state: TokenBudgetState | None) -> contextvars.Token:
+    return _token_budget_ctx.set(state)
+
+
+def get_token_budget() -> TokenBudgetState | None:
+    return _token_budget_ctx.get()
+
+
+def reset_token_budget(token: contextvars.Token) -> None:
+    _token_budget_ctx.reset(token)
+
+
+def token_budget_exceeded() -> bool:
+    state = _token_budget_ctx.get()
+    return bool(state and state.exceeded)
+
+
+def token_budget_status() -> dict:
+    state = _token_budget_ctx.get()
+    if not state:
+        return {"enabled": False, "name": "", "used_tokens": 0, "max_tokens": 0, "exceeded": False}
+    return {
+        "enabled": state.max_tokens > 0,
+        "name": state.name,
+        "used_tokens": state.used_tokens,
+        "max_tokens": state.max_tokens,
+        "remaining_tokens": state.remaining_tokens,
+        "exceeded": state.exceeded,
+    }
 
 
 # ──────────────────────── 写入队列 & 后台线程 ────────────────────────
@@ -88,6 +145,18 @@ def record_usage(
     estimated_cost: float = 0.0,
 ) -> None:
     """将一次 LLM 调用的 token 用量投递到写入队列（非阻塞）。"""
+    budget = _token_budget_ctx.get()
+    if budget:
+        budget.record(
+            input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
+        )
+        if budget.exceeded:
+            logger.info(
+                "[TokenBudget] %s reached budget: used=%s max=%s",
+                budget.name,
+                budget.used_tokens,
+                budget.max_tokens,
+            )
     if not _initialized:
         return
     ctx = _tracking_ctx.get()

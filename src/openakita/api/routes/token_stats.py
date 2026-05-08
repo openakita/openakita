@@ -4,6 +4,7 @@ Token usage statistics API endpoints.
 GET  /api/stats/tokens/summary   — aggregated stats by dimension
 GET  /api/stats/tokens/timeline  — time series for charts
 GET  /api/stats/tokens/sessions  — per-session breakdown
+GET  /api/stats/tokens/records   — recent attributed requests
 GET  /api/stats/tokens/total     — grand total
 GET  /api/stats/tokens/context   — current context size + limit
 """
@@ -220,6 +221,38 @@ async def sessions(
         )
     except Exception as e:
         logger.error(f"[TokenStats] sessions query failed: {e}")
+        await _reset_db()
+        return {"error": "query failed, connection reset"}
+    return {"start": start_str, "end": end_str, "data": rows}
+
+
+@router.get("/records")
+async def records(
+    request: Request,
+    period: str | None = Query(None),
+    start: str | None = Query(None),
+    end: str | None = Query(None),
+    hours: int | None = Query(None, ge=1, le=8760),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    endpoint_name: str | None = Query(None),
+    operation_type: str | None = Query(None),
+):
+    db = await _get_db()
+    if db is None:
+        return _db_unavailable_payload()
+    start_str, end_str = _parse_range(start, end, period, hours=hours)
+    try:
+        rows = await db.get_token_usage_records(
+            start_time=start_str,
+            end_time=end_str,
+            limit=limit,
+            offset=offset,
+            endpoint_name=endpoint_name,
+            operation_type=operation_type,
+        )
+    except Exception as e:
+        logger.error(f"[TokenStats] records query failed: {e}")
         await _reset_db()
         return {"error": "query failed, connection reset"}
     return {"start": start_str, "end": end_str, "data": rows}

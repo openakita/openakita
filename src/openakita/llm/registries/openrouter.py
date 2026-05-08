@@ -6,6 +6,31 @@ OpenRouter 的 API 返回完整的能力信息，是最理想的情况。
 
 from .base import ModelInfo, ProviderInfo, ProviderRegistry, create_registry_client
 
+_ROUTER_MODELS = (
+    ModelInfo(
+        id="openrouter/auto",
+        name="OpenRouter Auto Router",
+        capabilities={
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": False,
+        },
+    ),
+    ModelInfo(
+        id="openrouter/free",
+        name="OpenRouter Free Models Router",
+        capabilities={
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": False,
+        },
+    ),
+)
+
 
 class OpenRouterRegistry(ProviderRegistry):
     """OpenRouter 注册表"""
@@ -31,9 +56,13 @@ class OpenRouterRegistry(ProviderRegistry):
                 resp.raise_for_status()
                 data = resp.json()
 
-            models = []
+            models = list(_ROUTER_MODELS)
+            seen = {m.id for m in models}
             for m in data.get("data", []):
                 model_id = m.get("id", "")
+                if not model_id or model_id in seen:
+                    continue
+                seen.add(model_id)
                 architecture = m.get("architecture", {})
                 models.append(
                     ModelInfo(
@@ -48,7 +77,7 @@ class OpenRouterRegistry(ProviderRegistry):
             return sorted(models, key=lambda x: x.name)
 
         except Exception:
-            return []
+            return list(_ROUTER_MODELS)
 
     def _parse_capabilities(self, architecture: dict, model_id: str) -> dict:
         """从 OpenRouter 架构信息解析能力"""

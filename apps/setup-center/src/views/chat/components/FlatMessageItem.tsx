@@ -100,6 +100,10 @@ export const FlatMessageItem = memo(function FlatMessageItem({
             <ThinkingChain chain={msg.thinkingChain} streaming={!!msg.streaming} showChain={showChain} onSkipStep={onSkipStep} />
           )}
 
+          {msg.streaming && !msg.content && msg.streamStatus && msg.thinkingChain && msg.thinkingChain.length > 0 && (
+            <SpinnerTipDisplay statusText={msg.streamStatus} />
+          )}
+
           {msg.thinking && (!msg.thinkingChain || msg.thinkingChain.length === 0) && (
             <ThinkingBlock content={msg.thinking} />
           )}
@@ -111,14 +115,14 @@ export const FlatMessageItem = memo(function FlatMessageItem({
             <PlanCard plan={msg.todo} onStepAction={onPlanStepAction} />
           )}
 
-          {msg.streaming && !msg.content && (
+          {msg.streaming && !msg.content && (!msg.thinkingChain || msg.thinkingChain.length === 0) && (
             <div style={{ padding: "4px 0" }}>
               <div style={{ display: "flex", gap: 4 }}>
                 <span className="dotBounce" style={{ animationDelay: "0s" }} />
                 <span className="dotBounce" style={{ animationDelay: "0.15s" }} />
                 <span className="dotBounce" style={{ animationDelay: "0.3s" }} />
               </div>
-              <SpinnerTipDisplay />
+              <SpinnerTipDisplay statusText={msg.streamStatus} />
             </div>
           )}
 

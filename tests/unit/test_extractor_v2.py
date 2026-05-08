@@ -263,6 +263,31 @@ class TestGenerateEpisode:
         assert result.session_id == "sess-1"
         assert "write_file" in result.tools_used
 
+    async def test_generate_episode_normalizes_malformed_tools_used(self, extractor, mock_brain_simple):
+        mock_brain_simple.preset(json.dumps({
+            "summary": "用户查看近期任务",
+            "goal": "查看任务",
+            "outcome": "success",
+            "entities": [],
+            "tools_used": [{"name": {"bad": "shape"}}, {"function": {"name": "search_memory"}}],
+        }, ensure_ascii=False))
+
+        turns = [
+            ConversationTurn(role="user", content="查看最近任务"),
+            ConversationTurn(
+                role="assistant",
+                content="正在查看",
+                tool_calls=[{"name": "list_recent_tasks", "input": {}, "id": "t1"}],
+            ),
+        ]
+
+        result = await extractor.generate_episode(turns, "sess-tools")
+
+        assert result is not None
+        assert '{"bad": "shape"}' in result.tools_used
+        assert "search_memory" in result.tools_used
+        assert all(isinstance(tool, str) for tool in result.tools_used)
+
     async def test_fallback_without_brain(self, extractor_no_brain):
         turns = [
             ConversationTurn(role="user", content="帮我写一个排序算法"),

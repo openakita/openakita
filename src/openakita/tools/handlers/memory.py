@@ -12,9 +12,13 @@
 
 import json
 import logging
+import math
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from ...memory.json_utils import coerce_tool_names
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -97,6 +101,168 @@ class MemoryHandler:
         if limit is not None:
             return text[:limit]
         return text
+
+    @staticmethod
+    def _importance_value(value: Any, default: float = 0.5) -> float:
+        """Coerce model-provided importance into the supported 0.0-1.0 range."""
+        if isinstance(value, bool):
+            return default
+        try:
+            importance = float(value)
+        except (TypeError, ValueError):
+            importance = default
+        if not math.isfinite(importance):
+            importance = default
+        return max(0.0, min(1.0, importance))
+
+    _ONE_OFF_TASK_RE = re.compile(
+        r"用户(?:当前|这次|希望|想要|需要|要求|让我|要).{0,24}"
+        r"(?:下载|搜索|查找|查询|整理|生成|制作|安装|启动|创建|发送|打开|访问|截图|导出|上传|配置)"
+    )
+    _TASK_REPORT_RE = re.compile(
+        r"(?:任务执行|执行摘要|已交付文件|文件已生成|成功完成|搞定|完成项|工具调用)"
+    )
+    _STABLE_FACT_RE = re.compile(
+        r"(?:用户(?:是|为|叫|称呼|使用|偏好|喜欢|习惯|从事|负责)|"
+        r"职业|公司|行业|时区|操作系统|常用工具|长期|以后|每次|总是|始终)"
+    )
+    _SUPERSEDE_RE = re.compile(r"(?:取消|不要了|不再|改用|改成|替代|更新为|撤销)")
+
+    @staticmethod
+    def _current_scope(memory_manager: Any) -> tuple[str, str]:
+        """Return the active write scope if the manager exposes one."""
+        scope_getter = getattr(memory_manager, "_current_write_scope", None)
+        if callable(scope_getter):
+            try:
+                value = scope_getter()
+                if (
+                    isinstance(value, tuple)
+                    and len(value) == 2
+                    and isinstance(value[0], str)
+                    and isinstance(value[1], str)
+                ):
+                    return value
+            except Exception:
+                pass
+        return "global", ""
+
+    @classmethod
+    def _memory_scope_for_manual_add(
+        cls,
+        content: str,
+        mem_type_str: str,
+        memory_manager: Any,
+    ) -> tuple[str, str, list[str], str | None]:
+        """Choose where a manual memory should live without blocking useful learning.
+
+        Stable user preferences/rules/skills remain global. Ambiguous one-off
+        task facts are still kept, but only in the current session when possible
+        so they can help the ongoing conversation without polluting future ones.
+        """
+        current_scope, current_owner = cls._current_scope(memory_manager)
+        tags: list[str] = ["manual"]
+        content = content.strip()
+        mem_type = (mem_type_str or "fact").lower()
+
+        if mem_type in {"preference", "rule", "skill", "error", "experience"}:
+            if cls._SUPERSEDE_RE.search(content):
+                tags.append("supersedes-prior-memory")
+            return "global", "", tags, None
+
+        if cls._STABLE_FACT_RE.search(content):
+            return "global", "", tags, None
+
+        if cls._ONE_OFF_TASK_RE.search(content) or cls._TASK_REPORT_RE.search(content):
+            tags.append("session-only")
+            if current_scope == "session" and current_owner:
+                return (
+                    current_scope,
+                    current_owner,
+                    tags,
+                    "这更像当前任务上下文，已仅保存在本会话，避免污染长期记忆。",
+                )
+            return (
+                "global",
+                "",
+                tags,
+                "这更像一次性任务记录，已按低优先级短期记忆保存。",
+            )
+
+        if current_scope == "session" and current_owner:
+            tags.append("session-only")
+            return (
+                current_scope,
+                current_owner,
+                tags,
+                "这条事实暂未判断为长期偏好，已先保存在当前会话。",
+            )
+
+        return "global", "", tags, None
+
+    def _supersede_related_memories(
+        self,
+        new_memory_id: str,
+        content: str,
+        mem_type_str: str,
+        scope: str,
+        scope_owner: str,
+    ) -> int:
+        """Mark older, related active rules/preferences as superseded by the new memory."""
+        if not new_memory_id or not self._SUPERSEDE_RE.search(content):
+            return 0
+        if (mem_type_str or "").lower() not in {"rule", "preference", "fact"}:
+            return 0
+
+        store = getattr(getattr(self.agent, "memory_manager", None), "store", None)
+        if store is None:
+            return 0
+
+        try:
+            hits = store.search_semantic(
+                content,
+                limit=10,
+                scope=scope,
+                scope_owner=scope_owner,
+            )
+        except Exception:
+            return 0
+
+        updated = 0
+        for hit in hits:
+            if not hit.id or hit.id == new_memory_id or hit.superseded_by:
+                continue
+            if hit.type.value not in {"rule", "preference", "fact"}:
+                continue
+            if not self._has_meaningful_overlap(content, hit.content):
+                continue
+            if store.update_semantic(hit.id, {"superseded_by": new_memory_id}):
+                updated += 1
+        return updated
+
+    @staticmethod
+    def _has_meaningful_overlap(left: str, right: str) -> bool:
+        terms_left = {
+            t.lower()
+            for t in re.findall(r"[A-Za-z0-9_\-\u4e00-\u9fff]{2,}", left or "")
+            if t not in {"取消", "不要", "不再", "改用", "改成", "规则", "偏好"}
+        }
+        terms_right = {
+            t.lower()
+            for t in re.findall(r"[A-Za-z0-9_\-\u4e00-\u9fff]{2,}", right or "")
+        }
+        if terms_left and terms_left.intersection(terms_right):
+            return True
+
+        def cjk_bigrams(text: str) -> set[str]:
+            chars = "".join(re.findall(r"[\u4e00-\u9fff]", text or ""))
+            return {chars[i : i + 2] for i in range(max(0, len(chars) - 1))}
+
+        left_bigrams = cjk_bigrams(left)
+        right_bigrams = cjk_bigrams(right)
+        if not left_bigrams or not right_bigrams:
+            return False
+        overlap = len(left_bigrams & right_bigrams) / len(left_bigrams | right_bigrams)
+        return overlap >= 0.12
 
     def __init__(self, agent: "Agent"):
         self.agent = agent
@@ -185,9 +351,16 @@ class MemoryHandler:
         """添加记忆（含内容去重保护）"""
         from ...memory.types import Memory, MemoryPriority, MemoryType
 
-        content = params["content"]
+        content = params["content"].strip()
+        if not content:
+            return "未记录：记忆内容为空。"
         mem_type_str = params.get("type", "fact")
-        importance = params.get("importance", 0.5)
+        importance = self._importance_value(params.get("importance", 0.5))
+        scope, scope_owner, tags, scope_note = self._memory_scope_for_manual_add(
+            content,
+            mem_type_str,
+            self.agent.memory_manager,
+        )
 
         content_key = content.strip()[:100].lower()
         if content_key in self._recent_add_contents:
@@ -247,14 +420,33 @@ class MemoryHandler:
             content=content,
             source="manual",
             importance_score=importance,
+            tags=tags,
         )
 
-        memory_id = self.agent.memory_manager.add_memory(memory)
+        memory_id = self.agent.memory_manager.add_memory(
+            memory,
+            scope=scope,
+            scope_owner=scope_owner,
+        )
         if memory_id:
+            superseded = self._supersede_related_memories(
+                memory_id,
+                content,
+                mem_type_str,
+                scope,
+                scope_owner,
+            )
             if len(self._recent_add_contents) >= 50:
                 self._recent_add_contents.pop(0)
             self._recent_add_contents.append(content_key)
-            return f"✅ 已记住: [{mem_type_str}] {content}\nID: {memory_id}"
+            lines = [f"✅ 已记住: [{mem_type_str}] {content}", f"ID: {memory_id}"]
+            if scope != "global":
+                lines.append(f"范围: 当前会话 ({scope_owner})")
+            if superseded:
+                lines.append(f"已替代旧记忆: {superseded} 条")
+            if scope_note:
+                lines.append(scope_note)
+            return "\n".join(lines)
         else:
             return "记忆已存在（语义相似），无需重复记录。"
 
@@ -278,6 +470,9 @@ class MemoryHandler:
             retrieval_engine = getattr(mm, "retrieval_engine", None)
             if retrieval_engine:
                 try:
+                    scope_setter = getattr(mm, "_set_retrieval_scope_context", None)
+                    if scope_setter:
+                        scope_setter()
                     candidates = retrieval_engine.retrieve_candidates(
                         query=query,
                         recent_messages=getattr(mm, "_recent_messages", None),
@@ -312,7 +507,11 @@ class MemoryHandler:
         store = getattr(mm, "store", None)
         if store:
             try:
-                memories = store.search_semantic(query, limit=10, filter_type=type_filter)
+                search_visible = getattr(mm, "search_visible_semantic", None)
+                if search_visible:
+                    memories = search_visible(query, limit=10, filter_type=type_filter)
+                else:
+                    memories = store.search_semantic(query, limit=10, filter_type=type_filter)
                 memories = [m for m in memories if not m.expires_at or m.expires_at >= now]
                 if memories:
                     logger.info(
@@ -344,7 +543,14 @@ class MemoryHandler:
             }
             mem_type = type_map.get(type_filter)
 
-        memories = mm.search_memories(query=query, memory_type=mem_type, limit=10)
+        current_scope = getattr(mm, "_current_write_scope", lambda: ("global", ""))()
+        memories = mm.search_memories(
+            query=query,
+            memory_type=mem_type,
+            limit=10,
+            scope=current_scope[0],
+            scope_owner=current_scope[1],
+        )
         memories = [m for m in memories if not m.expires_at or m.expires_at >= now]
 
         if not memories:
@@ -402,7 +608,8 @@ class MemoryHandler:
         for i, ep in enumerate(episodes, 1):
             goal = ep.goal or "(未记录目标)"
             outcome = ep.outcome or "completed"
-            tools = ", ".join(ep.tools_used[:5]) if ep.tools_used else "无工具调用"
+            tool_names = coerce_tool_names(ep.tools_used)
+            tools = ", ".join(tool_names[:5]) if tool_names else "无工具调用"
             sa = ep.started_at
             started = sa.strftime("%Y-%m-%d %H:%M") if hasattr(sa, "strftime") else str(sa)[:16]
             mem_count = len(ep.linked_memory_ids) if ep.linked_memory_ids else 0
@@ -556,8 +763,9 @@ class MemoryHandler:
         sa = ep.started_at
         started = sa.strftime("%Y-%m-%d %H:%M") if hasattr(sa, "strftime") else str(sa)[:16]
         lines.append(f"- 时间: {started}")
-        if ep.tools_used:
-            lines.append(f"- 工具: {', '.join(ep.tools_used[:8])}")
+        tool_names = coerce_tool_names(ep.tools_used)
+        if tool_names:
+            lines.append(f"- 工具: {', '.join(tool_names[:8])}")
 
         turns = store.get_session_turns(ep.session_id)
         if turns:
@@ -589,8 +797,9 @@ class MemoryHandler:
         sa = ep.started_at
         started = sa.strftime("%Y-%m-%d %H:%M") if hasattr(sa, "strftime") else str(sa)[:16]
         lines.append(f"- 时间: {started}")
-        if ep.tools_used:
-            lines.append(f"- 工具: {', '.join(ep.tools_used[:8])}")
+        tool_names = coerce_tool_names(ep.tools_used)
+        if tool_names:
+            lines.append(f"- 工具: {', '.join(tool_names[:8])}")
 
         if ep.linked_memory_ids:
             lines.append(f"\n## 关联记忆（{len(ep.linked_memory_ids)} 条）\n")
@@ -832,6 +1041,15 @@ class MemoryHandler:
             parts.append(f"- 通道: {getattr(session, 'channel', 'unknown')}")
             msg_count = len(ctx.messages) if ctx and hasattr(ctx, "messages") else 0
             parts.append(f"- 消息数: {msg_count}")
+            effective_model = {}
+            try:
+                effective_model = session.get_metadata("effective_model") or {}
+            except Exception:
+                effective_model = {}
+            if isinstance(effective_model, dict) and effective_model.get("effective_model"):
+                parts.append(f"- 当前模型: {effective_model.get('effective_model')}")
+                if effective_model.get("effective_endpoint"):
+                    parts.append(f"- 当前端点: {effective_model.get('effective_endpoint')}")
             sub_records = getattr(ctx, "sub_agent_records", None) or []
             parts.append(f"- 子Agent记录: {len(sub_records)} 条")
 
@@ -849,17 +1067,7 @@ class MemoryHandler:
                     elapsed = r.get("elapsed_s", "")
                     if elapsed not in (None, ""):
                         parts.append(f"- 耗时: {self._context_text(elapsed)}s")
-                    tools_raw = r.get("tools_used") or []
-                    if isinstance(tools_raw, (str, bytes)) or not hasattr(tools_raw, "__iter__"):
-                        tools_raw = [tools_raw]
-                    tools = [
-                        self._context_text(
-                            t if isinstance(t, str)
-                            else (t.get("name") if isinstance(t, dict) and t.get("name") else t)
-                        )
-                        for t in tools_raw
-                    ]
-                    tools = [t for t in tools if t]
+                    tools = coerce_tool_names(r.get("tools_used") or [])
                     if tools:
                         parts.append(f"- 工具: {', '.join(tools[:10])}")
                     preview = self._context_text(r.get("result_preview", ""), 1000)

@@ -5,7 +5,7 @@
 - discover: 内省 Settings.model_fields 动态发现可配置项
 - get: 查看当前配置
 - set: 修改配置 (.env + 热重载)
-- add_endpoint / remove_endpoint / test_endpoint: LLM 端点管理
+- add_endpoint / remove_endpoint / select_endpoint / test_endpoint: LLM 端点管理
 - set_ui: UI 偏好 (主题/语言)
 """
 
@@ -255,6 +255,8 @@ class ConfigHandler:
                 return self._remove_endpoint(params)
             elif action == "toggle_endpoint":
                 return self._toggle_endpoint(params)
+            elif action == "select_endpoint":
+                return self._select_endpoint(params)
             elif action == "test_endpoint":
                 return await self._test_endpoint(params)
             elif action == "set_ui":
@@ -266,8 +268,8 @@ class ConfigHandler:
             else:
                 return (
                     f"未知的 action: {action}。支持: discover, get, set, "
-                    "add_endpoint, remove_endpoint, toggle_endpoint, test_endpoint, set_ui, "
-                    "manage_provider, extensions"
+                    "add_endpoint, remove_endpoint, toggle_endpoint, select_endpoint, "
+                    "test_endpoint, set_ui, manage_provider, extensions"
                 )
         except Exception as e:
             logger.error(f"[ConfigHandler] action={action} failed: {e}", exc_info=True)
@@ -505,6 +507,7 @@ class ConfigHandler:
         # 写入 .env（原子写入 + 备份）
         if env_entries:
             from openakita.utils.atomic_io import safe_write
+
             existing = ""
             if env_path.exists():
                 existing = env_path.read_text(encoding="utf-8", errors="replace")
@@ -544,8 +547,10 @@ class ConfigHandler:
                 if hasattr(self.agent, "_invalidate_system_prompt_cache"):
                     self.agent._invalidate_system_prompt_cache("persona config changed")
                 ctx = getattr(self.agent, "_context", None)
-                if ctx is not None and getattr(ctx, "system", None) and hasattr(
-                    self.agent, "_build_system_prompt"
+                if (
+                    ctx is not None
+                    and getattr(ctx, "system", None)
+                    and hasattr(self.agent, "_build_system_prompt")
                 ):
                     ctx.system = self.agent._build_system_prompt()
             except Exception as e:
@@ -645,13 +650,13 @@ class ConfigHandler:
         api_type = endpoint_data.get("api_type", "")
         base_url = endpoint_data.get("base_url", "")
 
+        provider_defaults = self._get_provider_defaults(provider) or {}
         if not api_type or not base_url:
-            defaults = self._get_provider_defaults(provider)
-            if defaults:
+            if provider_defaults:
                 if not api_type:
-                    api_type = defaults.get("api_type", "openai")
+                    api_type = provider_defaults.get("api_type", "openai")
                 if not base_url:
-                    base_url = defaults.get("base_url", "")
+                    base_url = provider_defaults.get("base_url", "")
 
         if not api_type:
             api_type = "openai"
@@ -684,8 +689,15 @@ class ConfigHandler:
             ep_dict["enabled"] = bool(endpoint_data.get("enabled"))
         if endpoint_data.get("capabilities"):
             ep_dict["capabilities"] = endpoint_data["capabilities"]
-        if endpoint_data.get("api_key_env"):
-            ep_dict["api_key_env"] = endpoint_data["api_key_env"]
+        api_key_env = endpoint_data.get("api_key_env") or provider_defaults.get("api_key_env")
+        if api_key_env:
+            ep_dict["api_key_env"] = api_key_env
+
+        from ...llm.endpoint_validation import validate_endpoint_api_key
+
+        key_error = validate_endpoint_api_key(ep_dict, api_key=api_key)
+        if key_error:
+            return f"❌ {key_error}"
 
         validation_note = ""
         validation = await self._probe_endpoint_before_enable(ep_dict, api_key)
@@ -785,6 +797,87 @@ class ConfigHandler:
         reload_info = self._reload_llm_client()
         state = "启用" if updated.get("enabled", True) else "停用"
         return f'✅ 已{state}端点 "{endpoint_name}" ({target})。{reload_info}'
+
+    def _resolve_current_conversation_id(self, params: dict) -> str | None:
+        """Resolve the conversation key used by LLM endpoint overrides."""
+        explicit = str(params.get("conversation_id") or "").strip()
+        if explicit:
+            return explicit
+
+        session = getattr(self.agent, "_current_session", None)
+        session_id = getattr(self.agent, "_current_session_id", None)
+        resolver = getattr(self.agent, "_resolve_model_lookup_id", None)
+        if callable(resolver):
+            try:
+                return resolver(session=session, conversation_id=None, session_id=session_id)
+            except Exception as e:
+                logger.debug("[ConfigHandler] conversation resolver failed: %s", e)
+
+        if session is not None:
+            chat_id = getattr(session, "chat_id", "")
+            if chat_id:
+                return str(chat_id)
+            sid = getattr(session, "id", "")
+            if sid:
+                return str(sid)
+        if session_id:
+            return str(session_id)
+        return None
+
+    def _available_main_endpoint_names(self) -> str:
+        try:
+            from ...llm.config import load_endpoints_config
+
+            endpoints, _, _, _ = load_endpoints_config()
+            names = [ep.name for ep in endpoints if getattr(ep, "enabled", True)]
+        except Exception:
+            names = []
+        return ", ".join(names) or "(无)"
+
+    def _select_endpoint(self, params: dict) -> str:
+        """Select a main LLM endpoint for the current conversation.
+
+        This intentionally does not edit ``llm_endpoints.json``. Endpoint
+        creation/removal remains in add/remove/toggle actions; this action only
+        records the user's current model choice.
+        """
+        raw_name = str(params.get("endpoint_name") or "").strip()
+        if not raw_name:
+            available = self._available_main_endpoint_names()
+            return f"❌ 缺少 endpoint_name 参数。可用主端点: {available}"
+
+        brain = getattr(self.agent, "brain", None)
+        if brain is None:
+            return "❌ 当前 Agent 未初始化模型管理能力，无法切换端点"
+
+        conversation_id = self._resolve_current_conversation_id(params)
+
+        if raw_name.lower() in {"auto", "default", "默认", "自动"}:
+            restore = getattr(brain, "restore_default_model", None)
+            if not callable(restore):
+                return "❌ 当前模型客户端不支持恢复默认端点"
+            ok, msg = restore(conversation_id=conversation_id)
+            if ok:
+                scope = "当前会话" if conversation_id else "全局临时设置"
+                return f"✅ 已恢复默认模型（{scope}）。{msg}"
+            return f"ℹ️ {msg}"
+
+        switch = getattr(brain, "switch_model", None)
+        if not callable(switch):
+            return "❌ 当前模型客户端不支持切换端点"
+
+        ok, msg = switch(
+            raw_name,
+            hours=12,
+            reason="system_config:select_endpoint",
+            conversation_id=conversation_id,
+        )
+        if not ok:
+            available = self._available_main_endpoint_names()
+            return f'❌ 无法切换到端点 "{raw_name}": {msg}\n可用主端点: {available}'
+
+        scope = "当前会话" if conversation_id else "全局临时设置"
+        return f'✅ 已切换到端点 "{raw_name}"（{scope}，临时生效）。{msg}'
 
     # ------------------------------------------------------------------
     # test_endpoint: 测试连通性
@@ -897,7 +990,9 @@ class ConfigHandler:
             }
 
         try:
-            async with httpx.AsyncClient(timeout=8, follow_redirects=True, trust_env=False) as client:
+            async with httpx.AsyncClient(
+                timeout=8, follow_redirects=True, trust_env=False
+            ) as client:
                 resp = await client.get(test_url, headers=headers)
         except httpx.TimeoutException:
             return {

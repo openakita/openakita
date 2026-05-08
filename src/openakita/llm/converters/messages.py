@@ -4,6 +4,8 @@
 负责在内部格式（Anthropic-like）和 OpenAI 格式之间转换消息。
 """
 
+import json
+
 from ..types import (
     AudioBlock,
     AudioContent,
@@ -46,12 +48,114 @@ def _needs_reasoning_content(provider: str) -> bool:
     return provider in _REASONING_CONTENT_PROVIDERS or provider.startswith("kimi")
 
 
+def _needs_structured_tool_response(provider: str, model: str = "") -> bool:
+    """Some Gemini/Gemma OpenAI-compatible endpoints reject bare string tool outputs."""
+    provider_l = (provider or "").lower()
+    model_l = (model or "").lower()
+    if provider_l == "google" or provider_l.startswith("google-"):
+        return True
+    return "gemini" in model_l or "gemma" in model_l
+
+
+def _prepare_tool_result_content_for_openai(
+    content: str | list,
+    *,
+    vision_available: bool = True,
+) -> str | list:
+    """Prepare tool result payloads before provider-specific formatting.
+
+    Tool handlers may return multimodal content (for example browser screenshots
+    or ``view_image`` results). Keep those media blocks only when the selected
+    endpoint can actually consume images; otherwise replace them with one short
+    notice so the request can continue without triggering upstream 400 errors.
+    """
+    if not isinstance(content, list):
+        return content
+
+    prepared: list = []
+    hidden_images = 0
+    for part in content:
+        if not isinstance(part, dict):
+            prepared.append({"type": "text", "text": str(part)})
+            continue
+
+        part_type = part.get("type", "")
+        if part_type == "image_url":
+            if vision_available:
+                prepared.append(part)
+            else:
+                hidden_images += 1
+            continue
+
+        if part_type == "image":
+            if vision_available:
+                source = part.get("source") or {}
+                if source.get("type") == "base64" and source.get("data"):
+                    media_type = source.get("media_type", "image/png")
+                    prepared.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{media_type};base64,{source.get('data', '')}",
+                            },
+                        }
+                    )
+            else:
+                hidden_images += 1
+            continue
+
+        prepared.append(part)
+
+    if hidden_images:
+        prepared.append(
+            {
+                "type": "text",
+                "text": f"[图片：当前模型不支持视觉，已隐藏 {hidden_images} 张图片]",
+            }
+        )
+
+    if len(prepared) == 1 and isinstance(prepared[0], dict) and prepared[0].get("type") == "text":
+        return prepared[0].get("text", "")
+    return prepared
+
+
+def _format_tool_result_content_for_openai(
+    content: str | list,
+    *,
+    provider: str = "openai",
+    model: str = "",
+) -> str | list:
+    """Format tool result content for Chat Completions.
+
+    OpenAI accepts a plain string in ``role: tool`` messages. Google/Gemini/Gemma
+    OpenAI-compatible gateways may map that message back to a Gemini function
+    response, where the response must be a JSON object. Preserve normal OpenAI
+    behavior and only wrap for those endpoints.
+    """
+    if not _needs_structured_tool_response(provider, model):
+        return content
+
+    if isinstance(content, str):
+        stripped = content.strip()
+        if stripped:
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                return stripped
+        return json.dumps({"result": content}, ensure_ascii=False)
+
+    return json.dumps({"result": content}, ensure_ascii=False)
+
+
 def convert_messages_to_openai(
     messages: list[Message],
     system: str = "",
     provider: str = "openai",
     enable_thinking: bool = False,
     *,
+    model: str = "",
     vision_available: bool = True,
 ) -> list[dict]:
     """
@@ -67,6 +171,8 @@ def convert_messages_to_openai(
         system: 系统提示
         provider: 服务商标识（用于多媒体处理，如 moonshot 支持视频）
         enable_thinking: 是否启用思考模式
+        model: 模型名。部分 OpenAI-compatible Gemini/Gemma 端点要求
+            function response 是 JSON object，而不是裸字符串。
         vision_available: 当前选中端点是否具备 vision 能力。False 时图片块
             会被替换为 "[图片：因当前模型不支持视觉，已隐藏 N 张图片]" 占位文本。
     """
@@ -85,6 +191,7 @@ def convert_messages_to_openai(
             msg,
             provider=provider,
             enable_thinking=enable_thinking,
+            model=model,
             vision_available=vision_available,
         )
         if converted:
@@ -93,7 +200,91 @@ def convert_messages_to_openai(
             else:
                 result.append(converted)
 
-    return result
+    return _repair_openai_tool_message_sequence(result)
+
+
+def _repair_openai_tool_message_sequence(messages: list[dict]) -> list[dict]:
+    """Keep Chat Completions tool messages structurally valid.
+
+    OpenAI-compatible APIs require ``role=tool`` messages to immediately answer
+    the preceding assistant ``tool_calls``. When old conversation compression or
+    delegation failure leaves stale tool results behind, preserve the information
+    as ordinary user context instead of sending an invalid request.
+    """
+    repaired: list[dict] = []
+    pending_tool_ids: set[str] = set()
+    pending_assistant_index: int | None = None
+
+    for msg in messages:
+        role = msg.get("role")
+
+        if role == "tool":
+            tool_call_id = str(msg.get("tool_call_id") or "")
+            if pending_tool_ids and tool_call_id in pending_tool_ids:
+                repaired.append(msg)
+                pending_tool_ids.remove(tool_call_id)
+                if not pending_tool_ids:
+                    pending_assistant_index = None
+                continue
+
+            repaired.append(_tool_message_as_user_context(msg))
+            continue
+
+        if pending_tool_ids:
+            _downgrade_pending_assistant_tool_calls(repaired, pending_assistant_index)
+            pending_tool_ids.clear()
+            pending_assistant_index = None
+
+        repaired.append(msg)
+
+        if role == "assistant":
+            tool_calls = msg.get("tool_calls") or []
+            pending_tool_ids = {
+                str(tc.get("id") or "")
+                for tc in tool_calls
+                if isinstance(tc, dict) and tc.get("id")
+            }
+            pending_assistant_index = len(repaired) - 1 if pending_tool_ids else None
+
+    return repaired
+
+
+def _downgrade_pending_assistant_tool_calls(
+    messages: list[dict],
+    assistant_index: int | None,
+) -> None:
+    """Remove unanswered tool_calls so later messages remain valid."""
+    if assistant_index is None or not (0 <= assistant_index < len(messages)):
+        return
+
+    assistant = messages[assistant_index]
+    tool_calls = assistant.pop("tool_calls", None) or []
+    if not tool_calls:
+        return
+
+    existing = assistant.get("content") or ""
+    call_names = []
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        function = tc.get("function") or {}
+        name = function.get("name") or tc.get("id") or "unknown"
+        call_names.append(str(name))
+    note = f"[工具调用记录已转为普通上下文: {', '.join(call_names)}]"
+    assistant["content"] = f"{existing}\n\n{note}".strip() if existing else note
+
+
+def _tool_message_as_user_context(msg: dict) -> dict:
+    """Convert an orphaned tool message to harmless user-visible context."""
+    content = msg.get("content", "")
+    if not isinstance(content, str):
+        content = json.dumps(content, ensure_ascii=False, default=str)
+
+    tool_call_id = msg.get("tool_call_id") or "unknown"
+    return {
+        "role": "user",
+        "content": f"[工具结果记录: {tool_call_id}]\n{content}",
+    }
 
 
 def _convert_single_message_to_openai(
@@ -101,6 +292,7 @@ def _convert_single_message_to_openai(
     provider: str = "openai",
     enable_thinking: bool = False,
     *,
+    model: str = "",
     vision_available: bool = True,
 ) -> dict | list[dict] | None:
     """转换单条消息"""
@@ -147,11 +339,14 @@ def _convert_single_message_to_openai(
             "role": "tool",
             "tool_call_id": tr.tool_use_id,
         }
-        if isinstance(tr.content, list):
-            # 多模态 tool result（文本 + 图片等），直接透传
-            tool_msg["content"] = tr.content
-        else:
-            tool_msg["content"] = tr.content
+        tool_msg["content"] = _format_tool_result_content_for_openai(
+            _prepare_tool_result_content_for_openai(
+                tr.content,
+                vision_available=vision_available,
+            ),
+            provider=provider,
+            model=model,
+        )
         result.append(tool_msg)
 
     # 处理其他内容块
@@ -444,7 +639,12 @@ def _convert_single_message_to_responses(
 
     # tool_result → function_call_output items
     for tr in tool_results:
-        content = tr.content if isinstance(tr.content, str) else str(tr.content)
+        content = _prepare_tool_result_content_for_openai(
+            tr.content,
+            vision_available=vision_available,
+        )
+        if not isinstance(content, str):
+            content = json.dumps(content, ensure_ascii=False, default=str)
         result.append(convert_tool_result_to_responses(tr.tool_use_id, content))
 
     if other_blocks:
@@ -459,8 +659,6 @@ def _convert_single_message_to_responses(
                 result.append({"role": "assistant", "content": text_content})
 
             # tool_use → function_call items
-            import json
-
             for tu in tool_uses:
                 result.append(
                     {

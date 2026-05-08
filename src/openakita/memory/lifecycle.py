@@ -162,6 +162,13 @@ class LifecycleManager:
         }
 
         def has_budget(reserve_seconds: int = 30) -> bool:
+            try:
+                from ..core.token_tracking import token_budget_exceeded
+
+                if token_budget_exceeded():
+                    return False
+            except Exception:
+                pass
             if not time_budget_seconds:
                 return True
             return (time.monotonic() - started_at) < max(1, time_budget_seconds - reserve_seconds)
@@ -350,6 +357,17 @@ class LifecycleManager:
         total = 0
 
         def pause_if_needed() -> dict | None:
+            try:
+                from ..core.token_tracking import token_budget_exceeded
+
+                if token_budget_exceeded():
+                    return {
+                        "processed": total,
+                        "partial": True,
+                        "reason": "本轮后台 token 预算已用完，已保存对话提取进度，下次继续。",
+                    }
+            except Exception:
+                pass
             if deadline_monotonic is None:
                 return None
             if time.monotonic() >= deadline_monotonic - 30:
@@ -821,6 +839,13 @@ class LifecycleManager:
             checkpoint_callback(state)
 
         def should_pause() -> str | None:
+            try:
+                from ..core.token_tracking import token_budget_exceeded
+
+                if token_budget_exceeded():
+                    return "本轮后台 token 预算已用完，已保存进度，下次继续。"
+            except Exception:
+                pass
             if cancel_event and cancel_event.is_set():
                 return "记忆审查已收到取消信号，已保存当前进度。"
             if max_batches is not None and processed_this_run >= max_batches:

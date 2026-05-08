@@ -13,29 +13,28 @@ Tests all core components:
 from __future__ import annotations
 
 import asyncio
-import time
 import threading
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from openakita.agents.fallback import _AUTO_DEGRADE_THRESHOLD, FallbackResolver
+from openakita.agents.orchestrator import (
+    MAX_DELEGATION_DEPTH,
+    AgentHealth,
+    AgentMailbox,
+    AgentOrchestrator,
+    DelegationRequest,
+)
 from openakita.agents.profile import (
     AgentProfile,
     AgentType,
     ProfileStore,
     SkillsMode,
 )
-from openakita.agents.fallback import FallbackResolver, _AUTO_DEGRADE_THRESHOLD
-from openakita.agents.orchestrator import (
-    AgentHealth,
-    AgentMailbox,
-    AgentOrchestrator,
-    DelegationRequest,
-    MAX_DELEGATION_DEPTH,
-)
 from openakita.sessions.session import Session, SessionConfig, SessionContext
-
 
 # ================================================================
 # Helpers
@@ -156,6 +155,42 @@ class TestAgentProfile:
         assert restored.identity_mode == "custom"
         assert restored.memory_mode == "isolated"
         assert restored.memory_inherit_global is False
+
+    def test_isolation_fields_are_normalized(self):
+        p = _make_profile(
+            identity_mode=" Custom ",
+            memory_mode=" Isolated ",
+            memory_inherit_global="false",
+        )
+        assert p.identity_mode == "custom"
+        assert p.memory_mode == "isolated"
+        assert p.memory_inherit_global is False
+
+    def test_derive_preserves_isolation_fields(self):
+        base = _make_profile(
+            "base",
+            "Base",
+            identity_mode="custom",
+            memory_mode="isolated",
+            memory_inherit_global=False,
+            runtime_env_mode="agent",
+            runtime_env_dependencies=["requests"],
+        )
+
+        derived = base.derive(
+            id="ephemeral_base_1",
+            name="Base Clone",
+            created_by="test",
+            ephemeral=True,
+            inherit_from="base",
+        )
+
+        assert derived.id == "ephemeral_base_1"
+        assert derived.identity_mode == "custom"
+        assert derived.memory_mode == "isolated"
+        assert derived.memory_inherit_global is False
+        assert derived.runtime_env_mode == "agent"
+        assert derived.runtime_env_dependencies == ["requests"]
 
 
 # ================================================================
@@ -1488,10 +1523,26 @@ class TestEdgeCasesAndBugs:
         from openakita.tools.handlers.agent import AgentToolHandler
 
         store = ProfileStore(tmp_path / "agents")
-        store.save(_make_profile("browser-agent", "Browser Agent"))
+        store.save(
+            _make_profile(
+                "browser-agent",
+                "Browser Agent",
+                memory_mode="isolated",
+                memory_inherit_global=False,
+            )
+        )
+        captured: list[AgentProfile] = []
+        original_save = store.save
+
+        def capture_save(profile: AgentProfile) -> None:
+            captured.append(profile)
+            original_save(profile)
+
+        store.save = capture_save
 
         agent = MagicMock()
         agent._is_sub_agent_call = False
+        agent.browser_manager = None
         session = _make_session()
         session.context.agent_profile_id = "default"
         agent._current_session = session
@@ -1519,6 +1570,84 @@ class TestEdgeCasesAndBugs:
             ephemeral_profiles = store.list_all(include_ephemeral=True)
             eph_count = sum(1 for p in ephemeral_profiles if p.ephemeral)
             assert eph_count == 0
+            clones = [p for p in captured if p.id.startswith("ephemeral_browser-agent_")]
+            assert len(clones) == 2
+            assert all(p.memory_mode == "isolated" for p in clones)
+            assert all(p.memory_inherit_global is False for p in clones)
+
+    @pytest.mark.asyncio
+    async def test_create_agent_can_enable_isolated_memory(self, tmp_path):
+        """BUG CHECK: create_agent should let the model create a long-lived
+        specialist with isolated memory when the user asks for one.
+        """
+        from openakita.tools.handlers.agent import AgentToolHandler
+
+        store = ProfileStore(tmp_path / "agents")
+        agent = MagicMock()
+        agent._is_sub_agent_call = False
+        agent._current_session = _make_session(session_id="sess-create")
+        handler = AgentToolHandler(agent)
+
+        with patch.object(handler, "_get_profile_store", return_value=store):
+            result = await handler.handle(
+                "create_agent",
+                {
+                    "name": "Personal Memory Agent",
+                    "description": "Long-lived specialist that should learn separately",
+                    "persistent": True,
+                    "memory_mode": "isolated",
+                    "memory_inherit_global": False,
+                    "force": True,
+                },
+            )
+
+        assert "Agent created" in result
+        [profile] = store.list_all(include_ephemeral=True)
+        assert profile.memory_mode == "isolated"
+        assert profile.memory_inherit_global is False
+
+    @pytest.mark.asyncio
+    async def test_spawn_agent_inherits_isolated_memory(self, tmp_path):
+        """BUG CHECK: spawn_agent should preserve the base profile's memory
+        isolation instead of silently falling back to shared memory.
+        """
+        from openakita.tools.handlers.agent import AgentToolHandler
+
+        store = ProfileStore(tmp_path / "agents")
+        store.save(
+            _make_profile(
+                "base",
+                "Base",
+                memory_mode="isolated",
+                memory_inherit_global=False,
+                skills=["read_file"],
+            )
+        )
+        agent = MagicMock()
+        agent._is_sub_agent_call = False
+        agent._current_session = _make_session(session_id="sess-spawn")
+        handler = AgentToolHandler(agent)
+        mock_orch = MagicMock()
+        mock_orch.delegate = AsyncMock(return_value="ok")
+
+        with patch.object(handler, "_get_profile_store", return_value=store), \
+             patch.object(handler, "_get_orchestrator", return_value=mock_orch):
+            result = await handler.handle(
+                "spawn_agent",
+                {
+                    "inherit_from": "base",
+                    "message": "do work",
+                    "extra_skills": ["write_file"],
+                },
+            )
+
+        assert result == "ok"
+        spawned_id = mock_orch.delegate.await_args.kwargs["to_agent"]
+        spawned = store.get(spawned_id)
+        assert spawned is not None
+        assert spawned.memory_mode == "isolated"
+        assert spawned.memory_inherit_global is False
+        assert spawned.skills == ["read_file", "write_file"]
 
     def test_session_context_multi_agent_serialization(self):
         """BUG CHECK: Multi-agent fields should survive serialization roundtrip."""

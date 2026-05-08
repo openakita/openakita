@@ -186,6 +186,8 @@ class PlanValidator(BaseValidator):
 class ArtifactValidator(BaseValidator):
     """交付物完整性验证"""
 
+    _SUCCESS_STATUSES = {"delivered", "skipped", "relayed"}
+
     @property
     def name(self) -> str:
         return "ArtifactValidator"
@@ -198,8 +200,14 @@ class ArtifactValidator(BaseValidator):
                 reason="No deliver_artifacts call",
             )
 
-        delivered = [r for r in context.delivery_receipts if r.get("status") == "delivered"]
-        failed = [r for r in context.delivery_receipts if r.get("status") == "failed"]
+        delivered = [
+            r for r in context.delivery_receipts if r.get("status") in self._SUCCESS_STATUSES
+        ]
+        failed = [
+            r
+            for r in context.delivery_receipts
+            if r.get("status") not in self._SUCCESS_STATUSES
+        ]
 
         if failed:
             return ValidatorOutput(
@@ -218,7 +226,7 @@ class ArtifactValidator(BaseValidator):
         return ValidatorOutput(
             name=self.name,
             result=ValidationResult.FAIL,
-            reason="deliver_artifacts called but no delivery receipts",
+            reason="deliver_artifacts called but no successful delivery receipts",
         )
 
 

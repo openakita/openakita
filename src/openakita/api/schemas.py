@@ -28,6 +28,12 @@ class ChatRequest(BaseModel):
         False, description="Deprecated: use mode='plan' instead. Kept for backward compatibility."
     )
     endpoint: str | None = Field(None, description="Specific endpoint name (null=auto)")
+    endpoint_policy: Literal["prefer", "require"] = Field(
+        "prefer",
+        description=(
+            "Endpoint selection policy: prefer allows failover, require only uses the selected endpoint."
+        ),
+    )
     attachments: list[AttachmentInfo] | None = Field(None, description="Attached files/images")
     thinking_mode: Literal["auto", "on", "off"] | None = Field(
         None,
@@ -41,6 +47,20 @@ class ChatRequest(BaseModel):
         None,
         description="Agent profile to use for this message.",
     )
+    org_mode: bool | None = Field(
+        None,
+        description="Whether this conversation is currently bound to an organization.",
+    )
+    org_id: str | None = Field(
+        None,
+        description="Selected organization ID for this conversation.",
+        max_length=128,
+    )
+    org_node_id: str | None = Field(
+        None,
+        description="Selected organization node ID for this conversation.",
+        max_length=128,
+    )
     client_id: str | None = Field(
         None,
         description="Unique client/tab identifier for multi-device busy-lock coordination.",
@@ -53,6 +73,9 @@ class AttachmentInfo(BaseModel):
     type: str = Field(..., description="image | file | voice")
     name: str = Field(..., description="Filename")
     url: str | None = Field(None, description="URL or data URI")
+    local_path: str | None = Field(None, description="Server-side local path for uploaded files")
+    upload_id: str | None = Field(None, description="Upload identifier returned by /api/upload")
+    size: int | None = Field(None, description="Attachment size in bytes")
     mime_type: str | None = Field(None, description="MIME type")
 
 

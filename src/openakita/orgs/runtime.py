@@ -2182,7 +2182,7 @@ class OrgRuntime:
         if hasattr(agent, "reasoning_engine"):
             from ..config import settings as _settings
             agent.reasoning_engine._force_tool_override = max(
-                1, int(getattr(_settings, "force_tool_call_max_retries", 2))
+                0, int(getattr(_settings, "force_tool_call_max_retries", 0))
             )
 
         self._register_org_tool_handler(agent, org.id, node.id)
@@ -2317,6 +2317,14 @@ class OrgRuntime:
                 "7. **缺少工具时申请**。如果任务需要你没有的工具，用 org_request_tools 向上级申请。"
             )
 
+        parts.append(
+            "## 轻量直答与收敛\n"
+            "- 用户只是要求一句话/简洁说明你的职责、身份或角色时，直接用 1-2 句话回答；"
+            "不要创建计划、不要委派、不要查制度。\n"
+            "- 已经有足够事实可回答时立即收敛；只有涉及真实任务状态、文件、日志、"
+            "交付验收或外部证据时，才调用对应工具。"
+        )
+
         # Core policy guardrails
         parts.append(
             "## 核心策略红线\n"
@@ -2333,20 +2341,26 @@ class OrgRuntime:
 
     def _build_profile_for_node(self, node: OrgNode, org_prompt: str) -> Any:
         """Build an AgentProfile-like object for factory.create()."""
-        from openakita.agents.profile import AgentProfile, SkillsMode
+        from openakita.agents.profile import AgentProfile, AgentType, SkillsMode
 
         if node.agent_profile_id:
             try:
                 base = self._get_shared_profile(node.agent_profile_id)
                 if base:
-                    profile = AgentProfile(
+                    preferred_endpoint = node.preferred_endpoint or base.preferred_endpoint
+                    endpoint_policy = node.endpoint_policy if node.preferred_endpoint else base.endpoint_policy
+                    profile = base.derive(
                         id=f"org_node_{node.id}",
                         name=node.role_title,
-                        icon=base.icon,
+                        type=AgentType.DYNAMIC,
                         custom_prompt=org_prompt,
                         skills=node.skills if node.skills else base.skills,
                         skills_mode=SkillsMode(node.skills_mode) if node.skills_mode != "all" else base.skills_mode,
-                        preferred_endpoint=node.preferred_endpoint or base.preferred_endpoint,
+                        preferred_endpoint=preferred_endpoint,
+                        endpoint_policy=endpoint_policy,
+                        created_by="org_runtime",
+                        ephemeral=True,
+                        inherit_from=node.agent_profile_id,
                     )
                     return profile
             except Exception as e:
@@ -2359,6 +2373,7 @@ class OrgRuntime:
             skills=node.skills,
             skills_mode=SkillsMode(node.skills_mode) if node.skills_mode != "all" else SkillsMode.ALL,
             preferred_endpoint=node.preferred_endpoint,
+            endpoint_policy=node.endpoint_policy,
         )
 
     def _get_shared_profile(self, profile_id: str) -> Any:
@@ -2701,6 +2716,15 @@ class OrgRuntime:
     def get_org(self, org_id: str) -> Organization | None:
         return self._active_orgs.get(org_id) or self._manager.get(org_id)
 
+    def get_org_snapshot(self, org_id: str) -> Organization | None:
+        """Return the authoritative organization snapshot for status readers.
+
+        Running organizations keep live node status in ``_active_orgs``.  API
+        and org-awareness tools should read that object first so dashboards do
+        not drift behind task execution events.
+        """
+        return self._active_orgs.get(org_id) or self._manager.get(org_id)
+
     def get_messenger(self, org_id: str) -> OrgMessenger | None:
         return self._messengers.get(org_id)
 
@@ -2855,6 +2879,30 @@ class OrgRuntime:
         self._touch_trackers_for_org(org.id)
         if new_status == NodeStatus.IDLE:
             self._maybe_finalize_trackers_for_org(org.id)
+
+    async def set_node_status(
+        self,
+        org: Organization,
+        node: OrgNode,
+        new_status: NodeStatus,
+        reason: str = "",
+        *,
+        current_task: str | None = "",
+    ) -> None:
+        """Set, persist and broadcast one node status change.
+
+        This is the single public helper for externally triggered node status
+        updates (for example freeze/unfreeze tools).  It keeps REST snapshots,
+        org tools and the live dashboard on the same state source.
+        """
+        self._set_node_status(org, node, new_status, reason)
+        await self._save_org(org)
+        await self._broadcast_ws("org:node_status", {
+            "org_id": org.id,
+            "node_id": node.id,
+            "status": new_status.value,
+            "current_task": current_task,
+        })
 
     # ------------------------------------------------------------------
     # Internal

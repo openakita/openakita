@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...core.tool_executor import MAX_TOOL_RESULT_CHARS, OVERFLOW_MARKER, save_overflow
+from ...skills.catalog import SKILL_INSTRUCTION_ADVISORY
 from ...skills.events import SkillEvent
 from ...skills.exposure import build_skill_exposure
 
@@ -325,6 +326,7 @@ class SkillsHandler:
             output += f"**处理器**: {skill.handler}\n"
         else:
             output += "**类型**: 外部技能\n"
+            output += f"**使用原则**: {SKILL_INSTRUCTION_ADVISORY}\n"
         if exposed.instruction_only:
             output += "**脚本**: instruction-only (no executable scripts)\n"
         else:

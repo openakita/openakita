@@ -851,12 +851,17 @@ class OpenAIProvider(LLMProvider):
             if is_always_thinking:
                 thinking_enabled = True
 
-        _vision_available = self.config.has_capability("vision")
+        _vision_available = self.config.has_capability("vision") and not getattr(
+            self,
+            "_vision_payload_unsupported",
+            False,
+        )
         messages = convert_messages_to_openai(
             request.messages,
             request.system,
             provider=self.config.provider,
             enable_thinking=thinking_enabled,
+            model=self.config.model,
             vision_available=_vision_available,
         )
 
@@ -1108,6 +1113,62 @@ class OpenAIProvider(LLMProvider):
                 texts.append(item.get("text", ""))
         return "".join(texts)
 
+    @staticmethod
+    def _extract_text_value(value: object) -> str:
+        """Best-effort text extraction from non-standard OpenAI-compatible fields."""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, list):
+            return "".join(
+                OpenAIProvider._extract_text_value(item) for item in value
+            ).strip()
+        if isinstance(value, dict):
+            for key in (
+                "text",
+                "output_text",
+                "content",
+                "value",
+                "message",
+                "response",
+                "refusal",
+                "thinking",
+            ):
+                if key in value:
+                    recovered = OpenAIProvider._extract_text_value(value.get(key))
+                    if recovered:
+                        return recovered
+        return ""
+
+    def _recover_empty_content_text(self, message: dict, choice: dict, data: dict) -> tuple[str, str]:
+        """Recover visible text from compatibility gateways with empty message.content."""
+        for source, value in (
+            ("message.output", message.get("output")),
+            ("message.text", message.get("text")),
+            ("message.thinking", message.get("thinking")),
+            ("message.refusal", message.get("refusal")),
+            ("choice.text", choice.get("text")),
+        ):
+            recovered = self._extract_text_value(value)
+            if recovered:
+                return source, recovered
+
+        output = data.get("output")
+        if isinstance(output, list) and output:
+            recovered = self._extract_from_responses_output(output)
+            if recovered:
+                return "data.output", recovered.strip()
+
+        for source, value in (
+            ("data.text", data.get("text")),
+            ("data.output_text", data.get("output_text")),
+            ("data.response", data.get("response")),
+        ):
+            recovered = self._extract_text_value(value)
+            if recovered:
+                return source, recovered
+
+        return "", ""
+
     def _parse_responses_api(self, data: dict, output: list) -> LLMResponse:
         """解析 OpenAI Responses API 格式的响应。"""
         text = self._extract_from_responses_output(output)
@@ -1296,77 +1357,71 @@ class OpenAIProvider(LLMProvider):
                     f"({len(text_content)} chars) as visible text fallback from {self.name}"
                 )
 
-            # 2. 检查 message 中其他可能的文本字段
-            if not content_blocks and _out_tokens > 0:
-                for alt_key in ("reasoning", "output", "text", "thinking", "refusal"):
-                    alt_val = message.get(alt_key)
-                    if alt_val and isinstance(alt_val, str) and alt_val.strip():
-                        logger.warning(
-                            f"[PARSE] Recovered {len(alt_val)} chars from message.{alt_key} "
-                            f"(content was empty, {_out_tokens} output tokens) from {self.name}"
-                        )
-                        text_content = alt_val.strip()
-                        content_blocks.insert(0, TextBlock(text=text_content))
-                        break
-
-            # 3. Responses API 兼容 — 部分代理将内容放在 data.output 中
-            if not content_blocks and _out_tokens > 0:
-                _output = data.get("output")
-                if isinstance(_output, list) and _output:
-                    _recovered = self._extract_from_responses_output(_output)
-                    if _recovered:
-                        content_blocks.insert(0, TextBlock(text=_recovered))
-                        logger.info(
-                            f"[PARSE] Recovered {len(_recovered)} chars from data.output "
-                            f"(Responses API format) from {self.name}"
-                        )
-
-            # 4. choice.text 兼容（旧式 Completions API 格式）
-            if not content_blocks and _out_tokens > 0:
-                _choice_text = choice.get("text")
-                if _choice_text and isinstance(_choice_text, str) and _choice_text.strip():
-                    content_blocks.insert(0, TextBlock(text=_choice_text.strip()))
-                    logger.info(
-                        f"[PARSE] Recovered {len(_choice_text)} chars from choice.text "
-                        f"(legacy Completions format) from {self.name}"
-                    )
-
-            # 5. 仍然为空 → 记录详细诊断信息（帮助定位代理格式变化）
-            if not content_blocks and _out_tokens > 0:
-                msg_keys = sorted(k for k in message if k != "role")
-                msg_preview = {
-                    k: (str(v)[:200] if isinstance(v, str)
-                        else f"[{type(v).__name__}, len={len(v)}]" if isinstance(v, (list, dict))
-                        else str(v)[:100])
-                    for k, v in message.items() if k != "role"
-                }
-                _extra_keys = sorted(
-                    k for k in data
-                    if k not in ("id", "object", "created", "model", "choices", "usage", "system_fingerprint")
+        # 非标准 OpenAI-compatible 代理容错：有 token 但 message.content 为空时，
+        # 不要求一定存在 reasoning_content，尽量从其他常见字段恢复可见文本。
+        if not text_content and not has_tool_calls and not content_blocks and _out_tokens > 0:
+            recovered_source, recovered_text = self._recover_empty_content_text(
+                message, choice, data
+            )
+            if recovered_text:
+                text_content = recovered_text
+                content_blocks.insert(0, TextBlock(text=text_content))
+                logger.warning(
+                    f"[PARSE] Recovered {len(recovered_text)} chars from {recovered_source} "
+                    f"(content was empty, {_out_tokens} output tokens) from {self.name}"
                 )
-                _choice_keys = sorted(
-                    k for k in choice if k not in ("message", "index", "finish_reason", "logprobs")
+
+        # 仍然为空 → 记录详细诊断信息（帮助定位代理格式变化）
+        if not content_blocks and _out_tokens > 0:
+            msg_keys = sorted(k for k in message if k != "role")
+            msg_preview = {
+                k: (
+                    str(v)[:200]
+                    if isinstance(v, str)
+                    else f"[{type(v).__name__}, len={len(v)}]"
+                    if isinstance(v, (list, dict))
+                    else str(v)[:100]
                 )
-                _token_details = usage_data.get("completion_tokens_details")
-                logger.error(
-                    f"[PARSE] ⚠️ CONTENT LOST: {_out_tokens} output tokens but content_blocks "
-                    f"is empty from {self.name}. message keys={msg_keys}, "
-                    f"preview={msg_preview}, "
-                    f"extra_data_keys={_extra_keys}, extra_choice_keys={_choice_keys}, "
-                    f"token_details={_token_details}"
+                for k, v in message.items()
+                if k != "role"
+            }
+            _extra_keys = sorted(
+                k
+                for k in data
+                if k
+                not in (
+                    "id",
+                    "object",
+                    "created",
+                    "model",
+                    "choices",
+                    "usage",
+                    "system_fingerprint",
                 )
-                # 附加原始响应摘要供 llm_debug 保存
-                self._last_raw_diagnostic = {
-                    "endpoint": self.name,
-                    "data_keys": sorted(data.keys()),
-                    "choice_keys": sorted(choice.keys()),
-                    "message_keys": msg_keys,
-                    "message_preview": msg_preview,
-                    "extra_data_keys": _extra_keys,
-                    "extra_choice_keys": _choice_keys,
-                    "token_details": _token_details,
-                    "usage": usage_data,
-                }
+            )
+            _choice_keys = sorted(
+                k for k in choice if k not in ("message", "index", "finish_reason", "logprobs")
+            )
+            _token_details = usage_data.get("completion_tokens_details")
+            logger.error(
+                f"[PARSE] ⚠️ CONTENT LOST: {_out_tokens} output tokens but content_blocks "
+                f"is empty from {self.name}. message keys={msg_keys}, "
+                f"preview={msg_preview}, "
+                f"extra_data_keys={_extra_keys}, extra_choice_keys={_choice_keys}, "
+                f"token_details={_token_details}"
+            )
+            # 附加原始响应摘要供 llm_debug 保存
+            self._last_raw_diagnostic = {
+                "endpoint": self.name,
+                "data_keys": sorted(data.keys()),
+                "choice_keys": sorted(choice.keys()),
+                "message_keys": msg_keys,
+                "message_preview": msg_preview,
+                "extra_data_keys": _extra_keys,
+                "extra_choice_keys": _choice_keys,
+                "token_details": _token_details,
+                "usage": usage_data,
+            }
 
         # 添加文本内容
         if text_content and not any(

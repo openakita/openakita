@@ -113,6 +113,40 @@ class TestMessageGatewayBroadcast:
         adapter.send_text.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_send_text_reliably_uses_response_chunking_path(self):
+        session_manager = MagicMock()
+        session_manager.add_message = MagicMock()
+        gateway = MessageGateway(session_manager=session_manager)
+        adapter = MagicMock()
+        adapter.format_final_footer = MagicMock(return_value=None)
+        adapter.send_message = AsyncMock(return_value="msg-1")
+        gateway._adapters["wechat:test"] = adapter
+
+        long_report = "## Report\n\n" + ("- important result\n" * 350)
+
+        delivered = await gateway.send_text_reliably("wechat:test", "chat-1", long_report)
+
+        assert delivered is True
+        assert adapter.send_message.await_count > 1
+        session_manager.add_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_text_reliably_treats_empty_message_id_as_not_delivered(self):
+        session_manager = MagicMock()
+        session_manager.add_message = MagicMock()
+        gateway = MessageGateway(session_manager=session_manager)
+        adapter = MagicMock()
+        adapter.format_final_footer = MagicMock(return_value=None)
+        adapter.send_message = AsyncMock(return_value="")
+        adapter.send_text = AsyncMock(return_value="")
+        gateway._adapters["qqbot:test"] = adapter
+
+        delivered = await gateway.send_text_reliably("qqbot:test", "chat-1", "queued")
+
+        assert delivered is False
+        session_manager.add_message.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_broadcast_rejects_non_text_payload_before_listing_sessions(self):
         session_manager = MagicMock()
         session_manager.list_sessions = MagicMock(return_value=[])

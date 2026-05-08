@@ -623,6 +623,8 @@ def _schedule_background_save(
                 et = ev.get("type", "")
                 if et == "text_delta" and "content" in ev:
                     bg_reply += ev["content"]
+                elif et == "text_replace" and "content" in ev:
+                    bg_reply = ev["content"]
         except Exception:
             pass
 
@@ -776,6 +778,16 @@ async def _stream_chat(
                 if session:
                     if chat_request.agent_profile_id:
                         _apply_agent_profile(session, chat_request.agent_profile_id)
+                    session.set_metadata("selected_endpoint", chat_request.endpoint or "")
+                    session.set_metadata("endpoint_policy", chat_request.endpoint_policy or "prefer")
+                    session.set_metadata(
+                        "ui_org_state",
+                        {
+                            "orgMode": bool(chat_request.org_mode and chat_request.org_id),
+                            "orgId": chat_request.org_id or "",
+                            "orgNodeId": chat_request.org_node_id or "",
+                        },
+                    )
 
                     if chat_request.message:
                         session.add_message("user", chat_request.message)
@@ -798,6 +810,7 @@ async def _stream_chat(
                     plan_mode=chat_request.plan_mode,
                     mode=chat_request.mode,
                     endpoint_override=chat_request.endpoint,
+                    endpoint_policy=chat_request.endpoint_policy,
                     attachments=chat_request.attachments,
                     thinking_mode=chat_request.thinking_mode,
                     thinking_depth=chat_request.thinking_depth,
@@ -1356,6 +1369,7 @@ async def chat(request: Request, body: ChatRequest):
             body.endpoint,
         )
         body.endpoint = None
+        body.endpoint_policy = "prefer"
 
     # ── Busy-lock check (via lifecycle manager) ──
     lifecycle = get_lifecycle_manager()
@@ -1445,6 +1459,7 @@ async def chat(request: Request, body: ChatRequest):
         f'[Chat API] 收到消息: "{msg_preview}"'
         + (f" (+{att_count}个附件)" if att_count else "")
         + (f" | endpoint={body.endpoint}" if body.endpoint else "")
+        + (f" | endpoint_policy={body.endpoint_policy}" if body.endpoint else "")
         + (f" | mode={effective_mode}" if effective_mode != "agent" else "")
         + (f" | thinking={body.thinking_mode}" if body.thinking_mode else "")
         + (f" | depth={body.thinking_depth}" if body.thinking_depth else "")

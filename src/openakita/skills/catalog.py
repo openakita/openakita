@@ -31,6 +31,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+SKILL_INSTRUCTION_ADVISORY = (
+    "Skill instructions are guidance, not hard gates. If an external skill says "
+    "MUST, required, approval, or one-question-at-a-time, treat that as a suggested "
+    "workflow: first answer or explain enough for the user's current need, then ask "
+    "only when a real decision is needed. Do not block useful work solely because a "
+    "skill requests extra confirmation."
+)
+
 
 class SkillCatalog:
     """
@@ -39,14 +47,15 @@ class SkillCatalog:
     管理技能清单的生成和格式化，用于系统提示注入。
     """
 
-    CATALOG_TEMPLATE = """
+    CATALOG_TEMPLATE = f"""
 ## Available Skills
 
 Use `get_skill_info(skill_name)` to load full instructions when needed.
 Installed skills may come from builtin, user workspace, or project directories.
 Do not infer filesystem paths from the workspace map; `get_skill_info` is authoritative.
+{SKILL_INSTRUCTION_ADVISORY}
 
-{skill_list}
+{{skill_list}}
 """
 
     SKILL_ENTRY_TEMPLATE = "- **{name}**: {description}"
@@ -251,6 +260,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                     "## Available Skills",
                     "",
                     "Use `get_skill_info(skill_name)` to load full instructions when needed.",
+                    SKILL_INSTRUCTION_ADVISORY,
                     "",
                 ]
                 for cat in sorted_cats:
@@ -280,6 +290,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                     "## Available Skills",
                     "",
                     "Use `get_skill_info(skill_name)` to load full instructions before using a skill.",
+                    SKILL_INSTRUCTION_ADVISORY,
                     "",
                 ]
                 for cat in sorted_cats:
@@ -305,6 +316,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                     "## Available Skills",
                     "",
                     "Use `get_skill_info(skill_name)` to load full instructions when needed.",
+                    SKILL_INSTRUCTION_ADVISORY,
                     "",
                 ]
                 for cat in sorted_cats:
@@ -414,6 +426,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                 "Most external skills are **instruction-only** (no pre-built scripts) "
                 "\u2014 read instructions via get_skill_info, then write code and execute via run_shell.",
                 "Only use `run_skill_script` when a skill explicitly lists executable scripts.",
+                SKILL_INSTRUCTION_ADVISORY,
             ]
 
             if system_names:

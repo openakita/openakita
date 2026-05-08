@@ -26,6 +26,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..skills.catalog import SKILL_INSTRUCTION_ADVISORY
 from .budget import BudgetConfig, apply_budget, estimate_tokens
 from .compiler import check_compiled_outdated, compile_all, get_compiled_content
 from .retriever import retrieve_memory
@@ -181,7 +182,7 @@ _ALWAYS_ON_RULES = """\
 
 以下场景**必须**调用 `ask_user` 工具提问：
 1. 用户意图模糊，有多种理解方式
-2. 操作不可逆或影响范围大，需要确认方向
+2. 操作不可逆、有外部副作用或会修改用户未明确授权的范围
 3. 需要用户提供无法推断的信息（密钥、账号、偏好选择等）
 
 提问原则：先做能做的工作（读文件、查目录、搜索），然后针对阻塞点精准提问一个问题，\
@@ -198,13 +199,13 @@ _ALWAYS_ON_RULES = """\
 - 写入/编辑用户明确要求的内容
 - 在临时目录中创建工作文件
 
-**需要先确认再执行**的操作（难撤销、影响范围大）：
+**需要先确认再执行**的操作（难撤销、有外部副作用）：
 - 破坏性操作：删除文件或数据、覆盖未保存的内容、终止进程
 - 难以撤销的操作：修改系统配置、更改权限、降级或删除依赖
 - 对外可见的操作：发送消息（群聊、邮件、Slack）、调用外部 API 产生副作用
 
 **行为准则**：
-- 暂停确认的成本很低，误操作的成本可能很高
+- 用户已经明确要求执行的低风险读写、查询、生成和验证步骤应直接推进，不要用确认打断
 - 用户批准一次操作不代表所有场景都已授权——授权仅适用于指定的范围
 - 遇到障碍时，不要用破坏性操作走捷径来消除障碍
 
@@ -226,8 +227,8 @@ _ALWAYS_ON_RULES = """\
 _EXTENDED_RULES = """\
 ## 任务管理
 
-多步骤任务（3 步以上）时，使用任务管理工具追踪进度：
-- 收到新指令后，立即将需求拆解为 todo 项
+多步骤任务（3 步以上）时，使用任务管理工具追踪进度，但不要让计划本身阻断执行：
+- 先做低风险的必要探查（读取、查询、列目录、获取状态），再按实际情况拆解 todo
 - 同一时刻只标记一项为 in_progress
 - 完成一项立即标记完成，不要攒到最后
 - 发现新的后续任务时追加新 todo 项
@@ -674,7 +675,8 @@ def build_system_prompt(
             pass
 
     # 9.6 Working facts 层：当前会话短期事实，优先于长期记忆。
-    if prompt_mode == PromptMode.FULL and session_context:
+    # 即使 MINIMAL prompt 也保留这块很小的会话状态，避免轻量问答丢失刚刚确认的事实。
+    if prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL) and session_context:
         try:
             from ..core.working_facts import format_working_facts
 
@@ -699,8 +701,8 @@ def build_system_prompt(
         except Exception as e:
             logger.debug("Failed to build failure hint section: %s", e)
 
-    # 10. Memory 层（仅 FULL 模式）
-    if _memory_scope in {"relevant", "full"} and prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL):
+    # 10. Memory 层。pinned_only 是轻量记忆，不应等同于完全不注入记忆。
+    if _memory_scope in {"pinned_only", "relevant", "full"} and prompt_mode in (PromptMode.FULL, PromptMode.MINIMAL):
         if precomputed_memory is not None:
             memory_section = precomputed_memory
         else:
@@ -1223,6 +1225,7 @@ def _build_runtime_section_uncached() -> str:
 - `run_shell`、`pip install`、打开带窗口的程序、浏览器自动化等：**全部发生在当前 OpenAkita 进程所在的主机及其图形会话/无头环境中**。
 - **默认不等于**用户发消息时所用的设备：IM/手机、另一台电脑、飞书/钉钉客户端所在环境与此**不是同一执行域**；图形窗口**不会**自动出现在用户屏幕上，软件也**不会**自动装到用户个人电脑上。
 - 若用户要的是「在我这台电脑上看到窗口 / 本机安装 / 游戏内 overlay」等**用户侧可观测效果**：须通过 **可交付产物**（如脚本、`deliver_artifacts`）、**用户在本机可复制执行的命令/步骤**，或说明需要 **本地运行的 OpenAkita / 远程桌面到同一台机器** 等产品能力；**禁止**仅因宿主侧命令退出码为 0 就声称用户已在其设备上看到效果。
+- 若生成或修复需要手机/局域网/远程访问的 Web 应用：前端 API 地址**不要硬编码** `localhost` / `127.0.0.1`，应优先使用相对路径（如 `/api/...`）或基于 `window.location` 动态推导同源地址；服务端需监听可被目标设备访问的地址（通常是 `0.0.0.0`），并用局域网 URL 验证页面与关键 API 均可访问。若仍失败，简短提示同一 WiFi、防火墙、监听地址或端口占用等常见原因，不要堆叠冗长排查步骤。
 
 ## 工具可用性
 {tool_status_text}
@@ -1720,6 +1723,11 @@ def _build_catalogs_section(
                     priority_categories=_priority_cats or None,
                 )
 
+            advisory_rule = (
+                ""
+                if SKILL_INSTRUCTION_ADVISORY in skills_grouped
+                else f"- {SKILL_INSTRUCTION_ADVISORY}\n"
+            )
             skills_rule = (
                 "### 技能使用规则\n"
                 "- 执行**具体操作任务**前先检查已有技能清单，有匹配的技能时优先使用\n"
@@ -1728,6 +1736,7 @@ def _build_catalogs_section(
                 "- 同类操作重复出现时，建议封装为永久技能\n"
                 "- Shell 命令仅用于一次性简单操作\n"
                 "- 根据技能的 `when_to_use` 描述判断是否匹配当前任务\n"
+                f"{advisory_rule}"
                 "- **重要**：当前日期时间已写在「运行环境」里，禁止为了查日期而调用技能脚本\n"
             )
 
@@ -2018,6 +2027,15 @@ def _retrieve_relational(
             nodes = store.search_like(query, limit=5)
         if not nodes:
             return ""
+        visible_sessions = {
+            owner
+            for scope, owner in getattr(memory_manager, "_visible_scope_pairs", lambda: [])()
+            if scope == "session" and owner
+        }
+        if visible_sessions:
+            nodes = [n for n in nodes if not n.session_id or n.session_id in visible_sessions]
+        if not nodes:
+            return ""
 
         parts: list[str] = []
         for i, n in enumerate(nodes, 1):
@@ -2068,7 +2086,11 @@ def _build_pinned_rules_section(
     if store is None:
         return ""
     try:
-        rules = store.query_semantic(memory_type="rule", limit=20)
+        query_visible = getattr(memory_manager, "query_visible_semantic", None)
+        if query_visible:
+            rules = query_visible(memory_type="rule", limit=20)
+        else:
+            rules = store.query_semantic(memory_type="rule", scope="global", limit=20)
         if not rules:
             return ""
 
@@ -2141,19 +2163,31 @@ def _should_inject_rule(rule: object, query_terms: set[str]) -> tuple[bool, str]
     if query_terms and terms.intersection(query_terms):
         return True, "entity-match"
 
-    general_rule_markers = (
+    behavior_rule_markers = (
         "回复",
+        "回答",
         "语言",
         "称呼",
-        "不要",
-        "必须",
+        "提问",
+        "确认",
+        "验证",
+        "工具",
+        "执行",
         "始终",
-        "always",
-        "never",
         "format",
         "style",
+        "诚实",
+        "编造",
+        "撒谎",
+        "ai",
+        "agent",
+        "助手",
     )
-    if any(marker in content for marker in general_rule_markers):
+    command_markers = ("不要", "必须", "始终", "always", "never")
+    if any(marker in content for marker in behavior_rule_markers) and (
+        any(marker in content for marker in command_markers)
+        or any(marker in content for marker in ("回复", "回答", "语言", "称呼", "format", "style"))
+    ):
         return True, "general-behavior"
 
     return False, "unrelated"
@@ -2212,10 +2246,10 @@ def _build_experience_section(
         top: list = []
 
         if task_description and task_description.strip():
-            top = _retrieve_relevant_experiences(store, task_description, max_items)
+            top = _retrieve_relevant_experiences(memory_manager, task_description, max_items)
 
         if not top:
-            top = _retrieve_top_experiences(store, max_items)
+            top = _retrieve_top_experiences(memory_manager, max_items)
 
         if not top:
             return ""
@@ -2237,16 +2271,21 @@ def _build_experience_section(
         return ""
 
 
-def _retrieve_relevant_experiences(
-    store: Any, task_description: str, max_items: int
-) -> list:
+def _retrieve_relevant_experiences(memory_manager: Any, task_description: str, max_items: int) -> list:
     """Semantic search for experiences relevant to the current task."""
     try:
-        scored = store.search_semantic_scored(
-            task_description,
-            limit=max_items * 2,
-            scope="global",
-        )
+        search_visible = getattr(memory_manager, "search_visible_semantic_scored", None)
+        store = getattr(memory_manager, "store", None)
+        if search_visible:
+            scored = search_visible(task_description, limit=max_items * 2)
+        elif store is not None:
+            scored = store.search_semantic_scored(
+                task_description,
+                limit=max_items * 2,
+                scope="global",
+            )
+        else:
+            return []
         results = []
         for mem, _score in scored:
             if mem.type.value not in ("experience", "skill", "error"):
@@ -2263,13 +2302,20 @@ def _retrieve_relevant_experiences(
         return []
 
 
-def _retrieve_top_experiences(store: Any, max_items: int) -> list:
+def _retrieve_top_experiences(memory_manager: Any, max_items: int) -> list:
     """Fallback: global top-N by importance (no task context available)."""
     exp_types = ("experience", "skill", "error")
     all_exp = []
+    store = getattr(memory_manager, "store", None)
     for t in exp_types:
         try:
-            results = store.query_semantic(memory_type=t, scope="global", limit=10)
+            query_visible = getattr(memory_manager, "query_visible_semantic", None)
+            if query_visible:
+                results = query_visible(memory_type=t, limit=10)
+            elif store is not None:
+                results = store.query_semantic(memory_type=t, scope="global", limit=10)
+            else:
+                results = []
             all_exp.extend(results)
         except Exception:
             continue

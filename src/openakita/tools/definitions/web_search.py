@@ -45,6 +45,7 @@ WEB_SEARCH_TOOLS = [
 - max_results: 最大结果数（1-20，默认 5）
 - region: 地区代码（默认 wt-wt 全球，cn-zh 中国）
 - safesearch: 安全搜索级别（on/moderate/off）
+- timeout_seconds: 单次外部搜索等待上限，0 表示不限；超时只跳过本次搜索源，不代表任务失败
 
 **示例**：
 - 搜索信息：web_search(query="Python asyncio 教程", max_results=5)
@@ -68,6 +69,10 @@ WEB_SEARCH_TOOLS = [
                     "description": "安全搜索级别（on/moderate/off）",
                     "default": "moderate",
                 },
+                "timeout_seconds": {
+                    "type": "number",
+                    "description": "单次外部搜索等待上限（秒），0=不限；超时后请换源或基于已获取信息继续",
+                },
             },
             "required": ["query"],
         },
@@ -89,6 +94,7 @@ WEB_SEARCH_TOOLS = [
 - region: 地区代码
 - safesearch: 安全搜索级别
 - timelimit: 时间范围（d=一天, w=一周, m=一月）
+- timeout_seconds: 单次外部搜索等待上限，0 表示不限；超时只跳过本次搜索源，不代表任务失败
 
 **示例**：
 - 搜索新闻：news_search(query="AI 最新进展", max_results=5)
@@ -115,6 +121,10 @@ WEB_SEARCH_TOOLS = [
                 "timelimit": {
                     "type": "string",
                     "description": "时间范围（d=一天, w=一周, m=一月，默认不限）",
+                },
+                "timeout_seconds": {
+                    "type": "number",
+                    "description": "单次外部搜索等待上限（秒），0=不限；超时后请换源或基于已获取信息继续",
                 },
             },
             "required": ["query"],

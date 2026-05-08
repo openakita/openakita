@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef, useState } from "react";
+import { Fragment, useMemo, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, IS_WEB, logger, openExternalUrl } from "../platform";
 import {
@@ -6,6 +6,7 @@ import {
   fetchModelsDirectly, safeFetch,
   isMiniMaxProvider, isVolcCodingPlanProvider, isDashScopeCodingPlanProvider,
   isQianFanCodingPlanProvider, isLongCatProvider, isXfyunCodingPlanProvider,
+  isImageGenerationModel,
   miniMaxFallbackModels, volcCodingPlanFallbackModels,
   dashScopeCodingPlanFallbackModels, qianFanCodingPlanFallbackModels,
   longCatFallbackModels, xfyunCodingPlanFallbackModels,
@@ -28,6 +29,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { SearchSelect } from "../components/SearchSelect";
 import { ProviderSearchSelect } from "../components/ProviderSearchSelect";
@@ -49,6 +51,20 @@ type SaveEndpointConfigResult = {
   warning?: string;
   reload?: Record<string, unknown>;
 };
+
+type SaveEndpointConfigsResult = {
+  endpoints: any[];
+  warning?: string;
+  reload?: Record<string, unknown>;
+};
+
+function imageGenerationEndpointError(modelId: string): string {
+  const m = modelId.trim().toLowerCase();
+  const nextStep = m.startsWith("qwen-image") || m.startsWith("wanx-")
+    ? "请配置 DASHSCOPE_API_KEY 后，在对话中使用内置 generate_image 工具生成图片。"
+    : "请使用该服务商的专用图片生成配置或图片生成工具，不要把它作为主聊天模型保存。";
+  return `「${modelId}」是图片生成模型，不是聊天模型端点。${nextStep}`;
+}
 
 export interface LLMViewProps {
   savedEndpoints: EndpointDraft[];
@@ -102,6 +118,7 @@ export function LLMView(props: LLMViewProps) {
   const [apiKeyValue, setApiKeyValue] = useState<string>("");
   const [models, setModels] = useState<ListedModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string>("");
+  const [selectedBatchModelIds, setSelectedBatchModelIds] = useState<string[]>([]);
   const [capSelected, setCapSelected] = useState<string[]>([]);
   const [capTouched, setCapTouched] = useState(false);
   const [endpointName, setEndpointName] = useState<string>("");
@@ -296,6 +313,11 @@ export function LLMView(props: LLMViewProps) {
     setCapSelected(list.length ? list : ["text"]);
   }, [selectedModelId, models, capTouched]);
 
+  useEffect(() => {
+    const available = new Set(models.map((m) => m.id));
+    setSelectedBatchModelIds((prev) => prev.filter((id) => available.has(id)));
+  }, [models]);
+
   // ── Async functions ──
 
   async function fetchModelListUnified(params: {
@@ -377,7 +399,45 @@ export function LLMView(props: LLMViewProps) {
     };
   }
 
+  async function saveEndpointConfigs(params: {
+    endpoints: Record<string, unknown>[];
+    apiKey?: string | null;
+    endpointType: EndpointType;
+  }): Promise<SaveEndpointConfigsResult> {
+    if (!shouldUseHttpApi()) {
+      throw new Error(endpointConfigUnavailableMessage);
+    }
+    const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoints`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoints: params.endpoints,
+        api_key: params.apiKey ?? null,
+        endpoint_type: params.endpointType,
+      }),
+    });
+    const data = await res.json();
+    if (data.status === "conflict" || data.status === "error") {
+      throw new Error(data.error || "保存失败");
+    }
+    const normalizedKey = (params.apiKey ?? "").trim();
+    const keyEnv = Array.isArray(data.endpoints) ? data.endpoints[0]?.api_key_env : "";
+    if (normalizedKey && keyEnv) {
+      setEnvDraft((e) => envSet(e, keyEnv, normalizedKey));
+    }
+    return {
+      endpoints: Array.isArray(data.endpoints) ? data.endpoints : [],
+      warning: typeof data.warning === "string" ? data.warning : undefined,
+      reload: data.reload,
+    };
+  }
+
   function appendReloadWarning(message: string, saveResult?: SaveEndpointConfigResult): string {
+    if (!saveResult?.warning) return message;
+    return `${message} 当前运行中的服务暂未加载新配置，重启服务或稍后再试即可。`;
+  }
+
+  function appendBatchReloadWarning(message: string, saveResult?: SaveEndpointConfigsResult): string {
     if (!saveResult?.warning) return message;
     return `${message} 当前运行中的服务暂未加载新配置，重启服务或稍后再试即可。`;
   }
@@ -385,6 +445,7 @@ export function LLMView(props: LLMViewProps) {
   async function doFetchModels() {
     setModels([]);
     setSelectedModelId("");
+    setSelectedBatchModelIds([]);
     const _busyId = notifyLoading(t("llm.fetchingModels"));
     try {
       const effectiveKey = apiKeyValue.trim() || (isLocalProvider(selectedProvider) ? localProviderPlaceholderKey(selectedProvider) : "");
@@ -397,6 +458,7 @@ export function LLMView(props: LLMViewProps) {
       });
       setModels(parsed);
       setSelectedModelId("");
+      setSelectedBatchModelIds(parsed.map((m) => m.id));
       if (parsed.length > 0) {
         notifySuccess(t("llm.fetchSuccess", { count: parsed.length }));
       } else {
@@ -860,6 +922,10 @@ export function LLMView(props: LLMViewProps) {
       notifyError("模型不能为空");
       return;
     }
+    if (editEndpointType !== "stt_endpoints" && isImageGenerationModel(editDraft.modelId)) {
+      notifyError(imageGenerationEndpointError(editDraft.modelId.trim()));
+      return;
+    }
     if (!editDraft.baseUrl.trim()) {
       notifyError("请填写 Base URL");
       return;
@@ -935,6 +1001,95 @@ export function LLMView(props: LLMViewProps) {
     }
   }
 
+  function buildMainEndpointForModel(
+    modelId: string,
+    priority: number,
+    useFormCapabilities = false,
+  ): Record<string, unknown> {
+    const modelCaps = models.find((m) => m.id === modelId)?.capabilities ?? {};
+    const inferredCaps = Object.entries(modelCaps)
+      .filter(([, value]) => value)
+      .map(([key]) => key);
+    const capList = useFormCapabilities && Array.isArray(capSelected) && capSelected.length
+      ? capSelected
+      : inferredCaps.length ? inferredCaps : ["text"];
+    const endpoint: Record<string, unknown> = {
+      name: suggestEndpointName(providerSlug || selectedProvider?.slug || "provider", modelId).slice(0, 64),
+      provider: providerSlug || (selectedProvider?.slug ?? "custom"),
+      api_type: apiType,
+      base_url: baseUrl.trim(),
+      model: modelId,
+      priority,
+      max_tokens: addEpMaxTokens,
+      context_window: addEpContextWindow,
+      timeout: addEpTimeout,
+      rpm_limit: addEpRpmLimit,
+      capabilities: capList,
+    };
+    if (streamOnly) endpoint.stream_only = true;
+    if (capList.includes("thinking") && (providerSlug || selectedProvider?.slug) === "dashscope") {
+      endpoint.extra_params = { enable_thinking: true };
+    }
+    return endpoint;
+  }
+
+  async function doSaveSelectedModels(): Promise<boolean> {
+    if (!currentWorkspaceId && dataMode !== "remote") {
+      notifyError("请先创建/选择一个当前工作区");
+      return false;
+    }
+    if (!ensureEndpointConfigApiReady()) return false;
+    const ids = selectedBatchModelIds.filter((id) => models.some((m) => m.id === id));
+    if (ids.length === 0) {
+      notifyError("请先勾选要导入的模型");
+      return false;
+    }
+    const chatModelIds = ids.filter((id) => !isImageGenerationModel(id));
+    if (chatModelIds.length === 0) {
+      notifyError("所选模型都是图片生成模型，不能作为聊天端点导入。");
+      return false;
+    }
+    if (!baseUrl.trim()) {
+      notifyError("请填写 Base URL");
+      return false;
+    }
+    if (!/^https?:\/\//i.test(baseUrl.trim())) {
+      notifyError("Base URL 必须以 http:// 或 https:// 开头");
+      return false;
+    }
+    const isLocal = isLocalProvider(selectedProvider);
+    const effectiveApiKeyValue = apiKeyValue.trim() || (isLocal ? localProviderPlaceholderKey(selectedProvider) : "");
+    if (!isLocal && !effectiveApiKeyValue) {
+      notifyError("请填写 API Key 值（会写入工作区 .env）");
+      return false;
+    }
+
+    const _busyId = notifyLoading(`正在导入 ${chatModelIds.length} 个模型端点...`);
+    try {
+      const basePriority = savedEndpoints.reduce((m, e) => Math.max(m, Number(e.priority) || 0), 0) || 0;
+      const endpoints = chatModelIds.map((modelId, index) =>
+        buildMainEndpointForModel(modelId, basePriority + (index + 1) * 10)
+      );
+      const saveResult = await saveEndpointConfigs({
+        endpoints,
+        apiKey: effectiveApiKeyValue || null,
+        endpointType: "endpoints",
+      });
+      await syncEndpointConfigChange("endpoints");
+      const skipped = ids.length - chatModelIds.length;
+      const message = skipped > 0
+        ? `已导入 ${saveResult.endpoints.length} 个聊天模型端点，跳过 ${skipped} 个图片生成模型。`
+        : `已导入 ${saveResult.endpoints.length} 个模型端点。`;
+      notifySuccess(appendBatchReloadWarning(message, saveResult));
+      return true;
+    } catch (e) {
+      notifyError(friendlyConfigError(e));
+      return false;
+    } finally {
+      dismissLoading(_busyId);
+    }
+  }
+
   async function doSaveEndpoint(): Promise<boolean> {
     if (!currentWorkspaceId && dataMode !== "remote") {
       notifyError("请先创建/选择一个当前工作区");
@@ -943,6 +1098,10 @@ export function LLMView(props: LLMViewProps) {
     if (!ensureEndpointConfigApiReady()) return false;
     if (!selectedModelId) {
       notifyError("请先选择模型");
+      return false;
+    }
+    if (isImageGenerationModel(selectedModelId)) {
+      notifyError(imageGenerationEndpointError(selectedModelId));
       return false;
     }
     if (!baseUrl.trim()) {
@@ -962,26 +1121,10 @@ export function LLMView(props: LLMViewProps) {
     const _busyId = notifyLoading(isEditingEndpoint ? t("llm.updatingEndpoint") : t("llm.savingEndpoint"));
 
     try {
-      const capList = Array.isArray(capSelected) && capSelected.length ? capSelected : ["text"];
       const epName = (endpointName.trim() || `${providerSlug || selectedProvider?.slug || "provider"}-${selectedModelId}`).slice(0, 64);
-
-      const endpoint: Record<string, unknown> = {
-        name: isEditingEndpoint ? (editingOriginalName || epName) : epName,
-        provider: providerSlug || (selectedProvider?.slug ?? "custom"),
-        api_type: apiType,
-        base_url: baseUrl.trim(),
-        model: selectedModelId,
-        priority: (savedEndpoints.reduce((m, e) => Math.max(m, Number(e.priority) || 0), 0) || 0) + 10,
-        max_tokens: addEpMaxTokens,
-        context_window: addEpContextWindow,
-        timeout: addEpTimeout,
-        rpm_limit: addEpRpmLimit,
-        capabilities: capList,
-      };
-      if (streamOnly) endpoint.stream_only = true;
-      if (capList.includes("thinking") && (providerSlug || selectedProvider?.slug) === "dashscope") {
-        endpoint.extra_params = { enable_thinking: true };
-      }
+      const priority = (savedEndpoints.reduce((m, e) => Math.max(m, Number(e.priority) || 0), 0) || 0) + 10;
+      const endpoint = buildMainEndpointForModel(selectedModelId, priority, true);
+      endpoint.name = isEditingEndpoint ? (editingOriginalName || epName) : epName;
 
       const saveResult = await saveEndpointConfig({
         endpoint,
@@ -1058,6 +1201,7 @@ export function LLMView(props: LLMViewProps) {
     setApiKeyValue("");
     setModels([]);
     setSelectedModelId("");
+    setSelectedBatchModelIds([]);
     setEndpointName("");
     setEndpointNameTouched(false);
     setCapSelected([]);
@@ -1070,6 +1214,27 @@ export function LLMView(props: LLMViewProps) {
     if (providers.length === 0) doLoadProviders();
     setAddEpDialogOpen(true);
   }
+
+  const groupedEndpointSections = useMemo(() => {
+    const providerNames = new Map(providers.map((p) => [p.slug, p.name]));
+    const sections: { key: string; label: string; endpoints: EndpointDraft[] }[] = [];
+    const byProvider = new Map<string, { key: string; label: string; endpoints: EndpointDraft[] }>();
+    for (const endpoint of savedEndpoints) {
+      const key = endpoint.provider || "custom";
+      let section = byProvider.get(key);
+      if (!section) {
+        section = {
+          key,
+          label: providerNames.get(key) || key || "custom",
+          endpoints: [],
+        };
+        byProvider.set(key, section);
+        sections.push(section);
+      }
+      section.endpoints.push(endpoint);
+    }
+    return sections;
+  }, [providers, savedEndpoints]);
 
   return (
     <>
@@ -1108,26 +1273,35 @@ export function LLMView(props: LLMViewProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {savedEndpoints.map((e) => (
-                <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
-                  <TableCell className="align-middle">
-                    {(envDraft[e.api_key_env] || "").trim() ? <DotGreen /> : <DotGray />}
-                  </TableCell>
-                  <TableCell className="font-semibold">
-                    <span>{e.name}</span>
-                    {savedEndpoints[0]?.name === e.name && e.enabled !== false && <span className="ml-1.5 text-[10px] font-extrabold text-primary">{t("llm.primary")}</span>}
-                    {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{e.model}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doMoveUp(e.name, savedEndpoints)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.moveUp")}><IconChevronUp size={14} /></Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditEndpoint(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.edit")}><IconEdit size={14} /></Button>
-                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name))} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("common.delete")}><IconTrash size={14} /></Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
+              {groupedEndpointSections.map((section) => (
+                <Fragment key={section.key}>
+                  <TableRow key={`${section.key}-group`} className="hover:bg-transparent">
+                    <TableCell colSpan={4} className="bg-muted/35 py-2 text-xs font-semibold text-muted-foreground">
+                      {section.label} <span className="font-normal opacity-70">({section.endpoints.length})</span>
+                    </TableCell>
+                  </TableRow>
+                  {section.endpoints.map((e) => (
+                    <TableRow key={e.name} className={e.enabled === false ? "opacity-45" : undefined}>
+                      <TableCell className="align-middle">
+                        {(envDraft[e.api_key_env] || "").trim() ? <DotGreen /> : <DotGray />}
+                      </TableCell>
+                      <TableCell className="font-semibold">
+                        <span>{e.name}</span>
+                        {savedEndpoints[0]?.name === e.name && e.enabled !== false && <span className="ml-1.5 text-[10px] font-extrabold text-primary">{t("llm.primary")}</span>}
+                        {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{e.model}</TableCell>
+                      <TableCell>
+                        <div className="flex gap-1 justify-end">
+                          <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doMoveUp(e.name, savedEndpoints)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.moveUp")}><IconChevronUp size={14} /></Button>
+                          <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
+                          <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditEndpoint(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.edit")}><IconEdit size={14} /></Button>
+                          <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name))} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("common.delete")}><IconTrash size={14} /></Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
@@ -1297,6 +1471,44 @@ export function LLMView(props: LLMViewProps) {
                 placeholder={models.length > 0 ? t("llm.searchModel") : t("llm.modelPlaceholder")}
                 disabled={!!busy}
               />
+              {models.length > 0 && !isEditingEndpoint && (
+                <div className="rounded-lg border border-border/70 bg-muted/20 p-2 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-muted-foreground">
+                      批量导入已拉取的模型，默认全选；也可以只勾选需要的模型。
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button type="button" variant="ghost" size="xs" className="h-6 px-2 text-[11px]" onClick={() => setSelectedBatchModelIds(models.map((m) => m.id))}>
+                        全选
+                      </Button>
+                      <Button type="button" variant="ghost" size="xs" className="h-6 px-2 text-[11px]" onClick={() => setSelectedBatchModelIds([])}>
+                        清空
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="max-h-32 overflow-y-auto pr-1 space-y-1" style={{ scrollbarWidth: "thin" }}>
+                    {models.map((m) => {
+                      const checked = selectedBatchModelIds.includes(m.id);
+                      return (
+                        <label key={m.id} className="flex items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-accent/60 cursor-pointer">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(v) => {
+                              setSelectedBatchModelIds((prev) => {
+                                const next = new Set(prev);
+                                if (v) next.add(m.id);
+                                else next.delete(m.id);
+                                return Array.from(next);
+                              });
+                            }}
+                          />
+                          <span className="truncate">{m.id}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Endpoint Name */}
@@ -1400,6 +1612,19 @@ export function LLMView(props: LLMViewProps) {
                 >
                   {connTesting ? t("llm.testTesting") : t("llm.testConnection")}
                 </Button>
+                {!isEditingEndpoint && models.length > 0 && (
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      const ok = await doSaveSelectedModels();
+                      if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); }
+                    }}
+                    disabled={selectedBatchModelIds.length === 0 || endpointConfigDisabled}
+                    title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}
+                  >
+                    导入所选模型({selectedBatchModelIds.length})
+                  </Button>
+                )}
                 {(() => {
                   const _isLocal = isLocalProvider(selectedProvider);
                   const missing: string[] = [];

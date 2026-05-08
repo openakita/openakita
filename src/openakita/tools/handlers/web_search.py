@@ -6,10 +6,41 @@ Web Search 处理器
 
 import asyncio
 import logging
+import re
 import traceback
 from typing import Any
 
+from ...config import settings
+
 logger = logging.getLogger(__name__)
+
+
+_UNSAFE_SEARCH_KEYWORDS = (
+    "色情",
+    "情色",
+    "裸聊",
+    "裸露",
+    "约炮",
+    "女优",
+    "网黄",
+    "无码视频",
+    "无码",
+    "强奸",
+    "自慰",
+    "阴茎",
+    "阳具",
+    "必撸",
+    "porn",
+    "xxx",
+    "xvideo",
+    "onlyfans",
+)
+_UNSAFE_DOMAIN_RE = re.compile(
+    r"(?:^|\.)("
+    r"porn|xvideos|xnxx|xhamster|onlyfans|jav|sex|adult|noduown"
+    r")\.",
+    re.IGNORECASE,
+)
 
 
 def _sync_web_search(
@@ -50,6 +81,64 @@ def _sync_news_search(
         )
 
 
+def _result_text(result: dict[str, Any]) -> str:
+    return " ".join(
+        str(result.get(key, "") or "")
+        for key in ("title", "href", "link", "url", "body", "snippet", "excerpt", "source")
+    )
+
+
+def _is_unsafe_search_result(result: dict[str, Any]) -> bool:
+    """Return True only for obviously unsafe/spammy snippets.
+
+    Keep this intentionally narrow: the goal is to prevent polluted search output
+    from tripping upstream content filters, not to decide what users may search.
+    """
+    text = _result_text(result).lower()
+    if not text:
+        return False
+    if _UNSAFE_DOMAIN_RE.search(text):
+        return True
+    return any(keyword in text for keyword in _UNSAFE_SEARCH_KEYWORDS)
+
+
+def _filter_search_results(results: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    filtered = [r for r in results if not _is_unsafe_search_result(r)]
+    return filtered, len(results) - len(filtered)
+
+
+def _resolve_attempt_timeout(params: dict[str, Any]) -> float:
+    """Return the per-attempt wait budget for a search source.
+
+    This is intentionally a soft wait budget, not a task-level failure policy:
+    if the upstream search source is slow, the tool returns guidance so the
+    model can continue with other sources or partial evidence.
+    """
+    raw = params.get("timeout_seconds", settings.web_search_attempt_timeout_seconds)
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return max(0.0, float(settings.web_search_attempt_timeout_seconds or 0))
+
+
+async def _run_search_attempt(func, *, timeout_seconds: float, **kwargs) -> list[dict[str, Any]]:
+    task = asyncio.to_thread(func, **kwargs)
+    if timeout_seconds <= 0:
+        return await task
+    return await asyncio.wait_for(task, timeout=timeout_seconds)
+
+
+def _format_search_timeout(kind: str, timeout_seconds: float) -> str:
+    label = "新闻搜索" if kind == "news" else "网页搜索"
+    timeout_display = f"{timeout_seconds:g}"
+    return (
+        f"{label}本次等待超过 {timeout_display} 秒，已先跳过这个外部搜索源。"
+        "这不代表任务失败：请优先基于已获得的信息继续完成用户目标；"
+        "如果证据不足，可以换更具体的关键词、改用 web_fetch/browser 访问权威来源，"
+        "或在结果中标注哪些内容尚未联网验证。不要反复用完全相同的查询空转。"
+    )
+
+
 class WebSearchHandler:
     """Web Search 处理器"""
 
@@ -84,14 +173,19 @@ class WebSearchHandler:
             return f"错误：{import_or_hint('ddgs')}"
 
         try:
-            results = await asyncio.to_thread(
+            timeout_seconds = _resolve_attempt_timeout(params)
+            results = await _run_search_attempt(
                 _sync_web_search,
+                timeout_seconds=timeout_seconds,
                 query=query,
                 max_results=max_results,
                 region=region,
                 safesearch=safesearch,
             )
             return self._format_web_results(results)
+        except TimeoutError:
+            logger.warning("Web search attempt timed out after %ss: %s", timeout_seconds, query)
+            return _format_search_timeout("web", timeout_seconds)
         except Exception as e:
             tb = traceback.format_exc()
             logger.error(f"Web search failed: {type(e).__name__}: {e}\n{tb}")
@@ -120,8 +214,10 @@ class WebSearchHandler:
             return f"错误：{import_or_hint('ddgs')}"
 
         try:
-            results = await asyncio.to_thread(
+            timeout_seconds = _resolve_attempt_timeout(params)
+            results = await _run_search_attempt(
                 _sync_news_search,
+                timeout_seconds=timeout_seconds,
                 query=query,
                 max_results=max_results,
                 region=region,
@@ -129,6 +225,9 @@ class WebSearchHandler:
                 timelimit=timelimit,
             )
             return self._format_news_results(results)
+        except TimeoutError:
+            logger.warning("News search attempt timed out after %ss: %s", timeout_seconds, query)
+            return _format_search_timeout("news", timeout_seconds)
         except Exception as e:
             tb = traceback.format_exc()
             logger.error(f"News search failed: {type(e).__name__}: {e}\n{tb}")
@@ -144,8 +243,21 @@ class WebSearchHandler:
         if not results:
             return "未找到相关结果"
 
+        safe_results, hidden_count = _filter_search_results(results)
+        if not safe_results:
+            return (
+                f"搜索返回了 {len(results)} 条结果，但结果内容质量不可靠或可能触发平台安全审核，"
+                "已隐藏。请换用更具体关键词、web_fetch、浏览器或权威来源继续获取证据；"
+                "如果当前确实没有可验证信息，请明确说明无法联网验证，不要编造结果。"
+            )
+
         output = []
-        for i, r in enumerate(results, 1):
+        if hidden_count:
+            output.append(
+                f"[系统提示] 已隐藏 {hidden_count} 条明显垃圾或可能触发平台安全审核的搜索结果。"
+                "如果剩余结果不够相关，请换关键词或改用 web_fetch/browser 访问权威来源继续验证。"
+            )
+        for i, r in enumerate(safe_results, 1):
             title = r.get("title", "无标题")
             url = r.get("href", r.get("link", ""))
             body = r.get("body", r.get("snippet", ""))
@@ -159,8 +271,21 @@ class WebSearchHandler:
         if not results:
             return "未找到相关新闻"
 
+        safe_results, hidden_count = _filter_search_results(results)
+        if not safe_results:
+            return (
+                f"新闻搜索返回了 {len(results)} 条结果，但结果内容质量不可靠或可能触发平台安全审核，"
+                "已隐藏。请换用更具体关键词、web_fetch、浏览器或权威来源继续获取证据；"
+                "如果当前确实没有可验证信息，请明确说明无法联网验证，不要编造结果。"
+            )
+
         output = []
-        for i, r in enumerate(results, 1):
+        if hidden_count:
+            output.append(
+                f"[系统提示] 已隐藏 {hidden_count} 条明显垃圾或可能触发平台安全审核的新闻搜索结果。"
+                "如果剩余结果不够相关，请换关键词或改用 web_fetch/browser 访问权威来源继续验证。"
+            )
+        for i, r in enumerate(safe_results, 1):
             title = r.get("title", "无标题")
             url = r.get("url", r.get("link", ""))
             body = r.get("body", r.get("excerpt", ""))

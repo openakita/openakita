@@ -2,7 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from openakita.core.agent import Agent
+from openakita.core.agent import (
+    Agent,
+    _looks_like_progress_only_task_text,
+    _prefer_task_final_response,
+)
 from openakita.core.ralph import TaskResult
 from openakita.llm.types import AllEndpointsFailedError
 
@@ -43,3 +47,22 @@ async def test_execute_task_from_message_returns_task_result_on_llm_failure():
     assert result.success is False
     assert result.error is not None
     assert "All endpoints failed" in result.error
+
+
+def test_task_final_response_prefers_substantive_report_over_meta_summary():
+    full_report = """## 晚间资讯报告
+
+- 中东局势升级，油价波动加剧
+- A 股收盘回落，避险资产走强
+
+### 明日关注
+继续关注能源价格和政策发布。"""
+    meta_summary = "已完成今日晚间资讯播报任务。晚报已整理完毕，系统会自动推送。"
+
+    assert _prefer_task_final_response(full_report, "") is True
+    assert _prefer_task_final_response(meta_summary, full_report) is False
+
+
+def test_task_progress_text_gets_one_gentle_continue_chance():
+    assert _looks_like_progress_only_task_text("我来执行今日资讯播报任务，先访问凤凰网。")
+    assert not _looks_like_progress_only_task_text("## 今日资讯\n\n- 已整理三条关键新闻")

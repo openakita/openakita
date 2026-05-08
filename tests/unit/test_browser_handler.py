@@ -171,6 +171,30 @@ async def test_user_confirmed_browser_open_clears_closed_gate():
 
 
 @pytest.mark.asyncio
+async def test_view_image_reports_actionable_fallback_without_vision_endpoint(monkeypatch):
+    handler = BrowserHandler(_agent())
+    monkeypatch.setattr(
+        BrowserHandler,
+        "_vision_endpoint_available",
+        staticmethod(lambda: False),
+    )
+
+    result = await handler._build_view_image_result(
+        "screen.png",
+        "ZmFrZQ==",
+        "image/png",
+        1,
+        1,
+        "读取界面错误",
+    )
+
+    assert isinstance(result, str)
+    assert "图片分析未完成" in result
+    assert "desktop_window" in result
+    assert "vision" in result
+
+
+@pytest.mark.asyncio
 async def test_browser_open_does_not_claim_desktop_foreground_for_headed_session():
     manager = _ReadyBrowserManager()
     agent = SimpleNamespace(

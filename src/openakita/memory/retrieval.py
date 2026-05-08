@@ -77,6 +77,18 @@ class RetrievalEngine:
         self._decompose_cache: dict[str, dict] = {}
         self._external_sources: list = []
         self._plugin_hooks = None
+        self._scope_pairs: list[tuple[str, str]] = [("global", "")]
+
+    def set_scope_context(self, scope_pairs: list[tuple[str, str]] | None = None) -> None:
+        """Set the visible memory scopes for this retrieval engine."""
+        pairs = []
+        for scope, owner in scope_pairs or [("global", "")]:
+            norm_scope = (scope or "global").strip() or "global"
+            norm_owner = (owner or "").strip()
+            pair = (norm_scope, norm_owner)
+            if pair not in pairs:
+                pairs.append(pair)
+        self._scope_pairs = pairs or [("global", "")]
 
     def retrieve(
         self,
@@ -228,35 +240,55 @@ class RetrievalEngine:
     # ==================================================================
 
     def _search_semantic(self, query: str, limit: int = 15) -> list[RetrievalCandidate]:
-        scored_results = self.store.search_semantic_scored(query, limit=limit)
         now = datetime.now()
         candidates = []
-        for mem, raw_score in scored_results:
-            if mem.expires_at and mem.expires_at < now:
-                continue
-            relevance = max(0.0, min(1.0, raw_score))
-            candidates.append(
-                RetrievalCandidate(
-                    memory_id=mem.id,
-                    content=mem.to_markdown(),
-                    memory_type=mem.type.value,
-                    source_type="semantic",
-                    relevance=relevance,
-                    recency_score=self._compute_recency(mem.updated_at),
-                    importance_score=mem.importance_score,
-                    access_frequency_score=self._compute_access_score(mem.access_count),
-                    raw_data=mem.to_dict(),
-                )
+        seen: set[str] = set()
+        for scope, scope_owner in self._scope_pairs:
+            scored_results = self.store.search_semantic_scored(
+                query,
+                limit=limit,
+                scope=scope,
+                scope_owner=scope_owner,
             )
+            for mem, raw_score in scored_results:
+                if mem.id in seen:
+                    continue
+                if mem.expires_at and mem.expires_at < now:
+                    continue
+                seen.add(mem.id)
+                relevance = max(0.0, min(1.0, raw_score))
+                candidates.append(
+                    RetrievalCandidate(
+                        memory_id=mem.id,
+                        content=mem.to_markdown(),
+                        memory_type=mem.type.value,
+                        source_type=f"semantic:{scope}",
+                        relevance=relevance,
+                        recency_score=self._compute_recency(mem.updated_at),
+                        importance_score=mem.importance_score,
+                        access_frequency_score=self._compute_access_score(mem.access_count),
+                        raw_data=mem.to_dict(),
+                    )
+                )
         return candidates
 
     def _search_episodes(self, query: str, limit: int = 5) -> list[RetrievalCandidate]:
         entities = self._extract_query_entities(query)
         episodes: list[Episode] = []
+        session_ids = [owner for scope, owner in self._scope_pairs if scope == "session" and owner]
 
         for entity in entities[:3]:
-            found = self.store.search_episodes(entity=entity, limit=3)
-            episodes.extend(found)
+            if session_ids:
+                for session_id in session_ids:
+                    found = self.store.search_episodes(
+                        entity=entity,
+                        session_id=session_id,
+                        limit=3,
+                    )
+                    episodes.extend(found)
+            else:
+                found = self.store.search_episodes(entity=entity, limit=3)
+                episodes.extend(found)
 
         candidates = []
         for ep in episodes[:limit]:
@@ -281,36 +313,46 @@ class RetrievalEngine:
         limit: int = 5,
         query: str = "",
     ) -> list[RetrievalCandidate]:
-        memories = self.store.query_semantic(min_importance=0.6, limit=limit)
         now = datetime.now()
         query_tokens = set(query.lower().split()) if query else set()
         candidates = []
-        for mem in memories:
-            if mem.expires_at and mem.expires_at < now:
-                continue
-            recency = self._compute_recency(mem.updated_at)
-            if recency < 0.3:
-                continue
-
-            relevance = 0.5
-            if query_tokens:
-                content_lower = mem.content.lower()
-                overlap = sum(1 for t in query_tokens if t in content_lower)
-                relevance = 0.2 if overlap == 0 else min(0.7, 0.3 + 0.1 * overlap)
-
-            candidates.append(
-                RetrievalCandidate(
-                    memory_id=mem.id,
-                    content=mem.to_markdown(),
-                    memory_type=mem.type.value,
-                    source_type="recent",
-                    relevance=relevance,
-                    recency_score=recency,
-                    importance_score=mem.importance_score,
-                    access_frequency_score=self._compute_access_score(mem.access_count),
-                    raw_data=mem.to_dict(),
-                )
+        seen: set[str] = set()
+        for scope, scope_owner in self._scope_pairs:
+            memories = self.store.query_semantic(
+                min_importance=0.6,
+                scope=scope,
+                scope_owner=scope_owner,
+                limit=limit,
             )
+            for mem in memories:
+                if mem.id in seen:
+                    continue
+                if mem.expires_at and mem.expires_at < now:
+                    continue
+                recency = self._compute_recency(mem.updated_at)
+                if recency < 0.3:
+                    continue
+
+                relevance = 0.5
+                if query_tokens:
+                    content_lower = mem.content.lower()
+                    overlap = sum(1 for t in query_tokens if t in content_lower)
+                    relevance = 0.2 if overlap == 0 else min(0.7, 0.3 + 0.1 * overlap)
+
+                seen.add(mem.id)
+                candidates.append(
+                    RetrievalCandidate(
+                        memory_id=mem.id,
+                        content=mem.to_markdown(),
+                        memory_type=mem.type.value,
+                        source_type=f"recent:{scope}",
+                        relevance=relevance,
+                        recency_score=recency,
+                        importance_score=mem.importance_score,
+                        access_frequency_score=self._compute_access_score(mem.access_count),
+                        raw_data=mem.to_dict(),
+                    )
+                )
         return candidates
 
     _MEDIA_KEYWORDS = (
@@ -361,9 +403,19 @@ class RetrievalEngine:
         seen: dict[str, Attachment] = {}
 
         search_terms = self._get_attachment_search_terms(raw_query, search_keywords)
+        session_id = ""
+        for scope, owner in self._scope_pairs:
+            if scope == "session" and owner:
+                session_id = owner
+                break
+
         for term in search_terms:
             try:
-                results = self.store.search_attachments(query=term, limit=limit)
+                results = self.store.search_attachments(
+                    query=term,
+                    session_id=session_id or None,
+                    limit=limit,
+                )
                 for att in results:
                     if att.id not in seen:
                         seen[att.id] = att

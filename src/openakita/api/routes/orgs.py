@@ -271,7 +271,8 @@ async def import_org(request: Request, file: UploadFile = File(...)):
 @router.get("/{org_id}")
 async def get_org(request: Request, org_id: str):
     mgr = _get_manager(request)
-    org = mgr.get(org_id)
+    rt = getattr(request.app.state, "org_runtime", None)
+    org = rt.get_org_snapshot(org_id) if rt and hasattr(rt, "get_org_snapshot") else mgr.get(org_id)
     if org is None:
         raise HTTPException(404, f"Organization not found: {org_id}")
     return org.to_dict()

@@ -62,3 +62,67 @@ def test_history_strips_non_ui_system_summaries(tmp_path):
 
     assert body["total"] == 1
     assert [m["content"] for m in body["messages"]] == ["visible"]
+
+
+def test_session_list_returns_conversation_ui_state(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    manager = SessionManager(storage_path=tmp_path)
+    session = manager.get_session("desktop", "conv1", "desktop_user")
+    session.add_message("user", "hello")
+    session.set_metadata("selected_endpoint", "deepseek")
+    session.set_metadata(
+        "ui_org_state",
+        {"orgMode": True, "orgId": "org_company", "orgNodeId": "pm"},
+    )
+    app.state.session_manager = manager
+
+    body = TestClient(app).get("/api/sessions").json()
+
+    assert body["sessions"][0]["endpointId"] == "deepseek"
+    assert body["sessions"][0]["orgMode"] is True
+    assert body["sessions"][0]["orgId"] == "org_company"
+    assert body["sessions"][0]["orgNodeId"] == "pm"
+
+
+def test_update_session_ui_state_persists_conversation_selection(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    manager = SessionManager(storage_path=tmp_path)
+    session = manager.get_session("desktop", "conv1", "desktop_user")
+    session.add_message("user", "hello")
+    app.state.session_manager = manager
+
+    resp = TestClient(app).post(
+        "/api/sessions/conv1/ui-state",
+        json={
+            "endpointId": "minimax",
+            "orgMode": True,
+            "orgId": "org_ops",
+            "orgNodeId": None,
+        },
+    )
+
+    assert resp.status_code == 200
+    assert session.get_metadata("selected_endpoint") == "minimax"
+    assert session.get_metadata("ui_org_state") == {
+        "orgMode": True,
+        "orgId": "org_ops",
+        "orgNodeId": "",
+    }
+
+
+def test_update_session_ui_state_does_not_create_empty_session(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    manager = SessionManager(storage_path=tmp_path)
+    app.state.session_manager = manager
+
+    resp = TestClient(app).post(
+        "/api/sessions/missing/ui-state",
+        json={"endpointId": "minimax", "orgMode": False},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": False, "reason": "session_not_found"}
+    assert manager.get_session("desktop", "missing", "desktop_user", create_if_missing=False) is None

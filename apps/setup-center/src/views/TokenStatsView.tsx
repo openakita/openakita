@@ -56,6 +56,23 @@ type SessionRow = {
   total_cost: number;
 };
 
+type UsageRecordRow = {
+  timestamp: string;
+  session_id: string;
+  request_id: string;
+  endpoint_name: string;
+  model: string;
+  operation_type: string;
+  operation_detail: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  channel: string;
+  user_id: string;
+  agent_profile_id: string;
+  estimated_cost: number;
+};
+
 const PERIOD_KEYS: PeriodKey[] = ["1d", "3d", "1w", "1m", "6m", "1y"];
 const PERIOD_I18N: Record<PeriodKey, string> = {
   "1d": "tokenStats.period1d",
@@ -105,6 +122,16 @@ function fmtPct(value: number, total: number): string {
   return pct >= 10 ? `${pct.toFixed(0)}%` : `${pct.toFixed(1)}%`;
 }
 
+function sourceLabel(row: Pick<UsageRecordRow, "operation_type" | "operation_detail" | "channel">): string {
+  const op = row.operation_type || "unknown";
+  if (op === "chat") return "聊天";
+  if (op === "background") return row.operation_detail || "后台任务";
+  if (op === "retrospect") return "复盘";
+  if (op === "farewell") return "停止收尾";
+  if (op === "context") return "上下文整理";
+  return row.operation_detail || row.channel || op;
+}
+
 const STAT_COLORS = ["hsl(var(--primary))", "#3b82f6", "#10b981", "#8b5cf6", "#f59e0b"];
 
 export function TokenStatsView({
@@ -125,6 +152,7 @@ export function TokenStatsView({
   const [byOp, setByOp] = useState<SummaryRow[]>([]);
   const [timeline, setTimeline] = useState<TimelineRow[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [records, setRecords] = useState<UsageRecordRow[]>([]);
   const [loading, setLoading] = useState(false);
 
   const [fetchError, setFetchError] = useState(false);
@@ -140,6 +168,7 @@ export function TokenStatsView({
         safeFetch(`${base}/summary?period=${period}&group_by=operation_type`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()),
         safeFetch(`${base}/timeline?period=${period}&interval=${period === "1d" ? "hour" : "day"}`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()),
         safeFetch(`${base}/sessions?period=${period}&limit=20`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()),
+        safeFetch(`${base}/records?period=${period}&limit=40`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()),
       ]);
       const val = (i: number) => results[i].status === "fulfilled" ? (results[i] as PromiseFulfilledResult<any>).value : null;
       setTotal(val(0)?.data || null);
@@ -147,6 +176,7 @@ export function TokenStatsView({
       setByOp(val(2)?.data || []);
       setTimeline(val(3)?.data || []);
       setSessions(val(4)?.data || []);
+      setRecords(val(5)?.data || []);
       if (results.every(r => r.status === "rejected")) setFetchError(true);
     } catch {
       setFetchError(true);
@@ -353,6 +383,54 @@ export function TokenStatsView({
               </CardContent>
             </Card>
           </div>
+
+          {/* ── Recent records ledger ── */}
+          {records.length > 0 && (
+            <Card className="p-0 gap-0 border-border/50 shadow-sm overflow-hidden">
+              <div className="px-5 py-3 border-b border-border/50">
+                <div className="text-sm font-semibold">{t("tokenStats.records", "最近请求来源")}</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {t("tokenStats.recordsHint", "用于核对每次模型请求来自聊天、后台任务还是系统流程。")}
+                </div>
+              </div>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader className="bg-muted/30">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="text-xs h-10 px-5 font-medium">Time</TableHead>
+                      <TableHead className="text-xs h-10 px-4 font-medium">Source</TableHead>
+                      <TableHead className="text-xs h-10 px-4 font-medium">Endpoint</TableHead>
+                      <TableHead className="text-xs h-10 px-4 font-medium">Model</TableHead>
+                      <TableHead className="text-xs h-10 px-4 text-right font-medium">Tokens</TableHead>
+                      <TableHead className="text-xs h-10 px-5 font-medium">Session</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {records.map((r, idx) => {
+                      const source = sourceLabel(r);
+                      return (
+                        <TableRow key={`${r.timestamp}-${r.request_id || idx}`} className="border-b-border/50 transition-colors hover:bg-muted/20">
+                          <TableCell className="px-5 py-3 text-xs text-muted-foreground whitespace-nowrap">{utcToLocal(r.timestamp || "")}</TableCell>
+                          <TableCell className="px-4 py-3 text-xs">
+                            <Badge variant={r.operation_type === "background" ? "secondary" : "outline"} className="text-[10px] px-1.5 py-0">
+                              {source}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="px-4 py-3 text-xs text-muted-foreground max-w-[160px] truncate" title={r.endpoint_name}>{r.endpoint_name || "(unknown)"}</TableCell>
+                          <TableCell className="px-4 py-3 text-xs text-muted-foreground max-w-[160px] truncate" title={r.model}>{r.model || "-"}</TableCell>
+                          <TableCell className="px-4 py-3 text-xs text-right font-mono">
+                            {fmtNum(r.total_tokens || ((r.input_tokens || 0) + (r.output_tokens || 0)))}
+                            {r.estimated_cost > 0 && <span className="ml-2 text-amber-500">{fmtCost(r.estimated_cost)}</span>}
+                          </TableCell>
+                          <TableCell className="px-5 py-3 font-mono text-xs max-w-[180px] truncate text-muted-foreground" title={r.session_id}>{r.session_id || "-"}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
 
           {/* ── Sessions table ── */}
           {sessions.length > 0 && (

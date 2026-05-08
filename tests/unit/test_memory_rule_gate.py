@@ -20,7 +20,7 @@ class FakeStore:
     def __init__(self, rules):
         self.rules = rules
 
-    def query_semantic(self, memory_type: str, limit: int = 20):
+    def query_semantic(self, memory_type: str, limit: int = 20, **_kwargs):
         assert memory_type == "rule"
         return self.rules[:limit]
 
@@ -49,3 +49,13 @@ def test_pinned_rules_keep_general_behavior_rules():
 
     assert "始终使用简体中文回复" in section
     assert "general-behavior" in section
+
+
+def test_pinned_rules_do_not_inject_unrelated_business_must_rules():
+    memory = FakeMemoryManager([
+        FakeRule("报备时必须提供：客户姓名、电话、来源、主诉"),
+    ])
+
+    section = _build_pinned_rules_section(memory, task_description="介绍 Python 虚拟环境")
+
+    assert section == ""

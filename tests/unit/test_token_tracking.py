@@ -3,11 +3,18 @@
 import sqlite3
 
 from openakita.core.token_tracking import (
+    TokenBudgetState,
     TokenTrackingContext,
     ensure_token_usage_schema_sync,
+    get_token_budget,
     get_tracking_context,
+    record_usage,
+    reset_token_budget,
     reset_tracking_context,
+    set_token_budget,
     set_tracking_context,
+    token_budget_exceeded,
+    token_budget_status,
 )
 
 
@@ -65,6 +72,25 @@ class TestContextVars:
         reset_tracking_context(t2)
         assert get_tracking_context().session_id == "outer"
         reset_tracking_context(t1)
+
+
+class TestTokenBudget:
+    def test_record_usage_updates_active_budget_without_db_writer(self):
+        token = set_token_budget(TokenBudgetState(name="background", max_tokens=100))
+        try:
+            record_usage(input_tokens=40, output_tokens=30)
+
+            status = token_budget_status()
+            assert status["used_tokens"] == 70
+            assert status["remaining_tokens"] == 30
+            assert token_budget_exceeded() is False
+
+            record_usage(input_tokens=31)
+
+            assert token_budget_exceeded() is True
+            assert get_token_budget().used_tokens == 101
+        finally:
+            reset_token_budget(token)
 
 
 class TestTokenUsageSchemaMigration:

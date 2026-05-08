@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import Any
 
 from .definitions import get_tool_input_schema
@@ -81,7 +82,7 @@ def _normalize_browser_click_input(params: dict[str, Any]) -> dict[str, Any]:
         if action in {"submit", "login", "sign_in", "signin"}:
             normalized["selector"] = (
                 'button[type="submit"], input[type="submit"], '
-                'button:has-text("??"), button:has-text("Login")'
+                'button:has-text("登录"), button:has-text("Login")'
             )
 
     return normalized
@@ -99,12 +100,12 @@ def _selector_for_field(field: Any) -> str | None:
     value = str(field or "").strip().lower()
     if not value:
         return None
-    if value in {"username", "user", "account", "login", "???", "??", "??"}:
+    if value in {"username", "user", "account", "login", "用户名", "账号", "账户"}:
         return (
             'input[name="username"], input[name="luci_username"], '
             'input[name="user"], #username, #luci_username, input[type="text"]'
         )
-    if value in {"password", "pass", "pwd", "??"}:
+    if value in {"password", "pass", "pwd", "密码"}:
         return (
             'input[type="password"], input[name="password"], '
             'input[name="luci_password"], #password, #luci_password'
@@ -121,7 +122,7 @@ def _normalize_value(value: Any, schema: dict | None, *, path: str) -> Any:
         return _normalize_object(value, schema, path=path)
     if schema_type == "array":
         return _normalize_array(value, schema, path=path)
-    return value
+    return _normalize_scalar(value, schema_type, path=path)
 
 
 def _normalize_object(value: Any, schema: dict, *, path: str) -> Any:
@@ -185,6 +186,76 @@ def _maybe_parse_structured_string(value: Any, *, expected_type: str, path: str)
     return value
 
 
+def _normalize_scalar(value: Any, schema_type: str | None, *, path: str) -> Any:
+    if schema_type == "number":
+        return _coerce_number(value, path=path)
+    if schema_type == "integer":
+        return _coerce_integer(value, path=path)
+    if schema_type == "boolean":
+        return _coerce_boolean(value, path=path)
+    return value
+
+
+def _coerce_number(value: Any, *, path: str) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    raw = value.strip()
+    if not raw:
+        return value
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return value
+    if not math.isfinite(parsed):
+        return value
+    logger.debug("[ToolInput] Parsed stringified number at %s", path)
+    return parsed
+
+
+def _coerce_integer(value: Any, *, path: str) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    if not isinstance(value, str):
+        return value
+
+    raw = value.strip()
+    if not raw:
+        return value
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return value
+    if not math.isfinite(parsed) or not parsed.is_integer():
+        return value
+    logger.debug("[ToolInput] Parsed stringified integer at %s", path)
+    return int(parsed)
+
+
+def _coerce_boolean(value: Any, *, path: str) -> Any:
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    raw = value.strip().lower()
+    if raw in {"true", "1", "yes", "y", "on"}:
+        logger.debug("[ToolInput] Parsed stringified boolean at %s", path)
+        return True
+    if raw in {"false", "0", "no", "n", "off"}:
+        logger.debug("[ToolInput] Parsed stringified boolean at %s", path)
+        return False
+    return value
+
+
 def _infer_schema_type(schema: dict) -> str | None:
     schema_type = schema.get("type")
     if isinstance(schema_type, list):
@@ -192,6 +263,9 @@ def _infer_schema_type(schema: dict) -> str | None:
             return "object"
         if "array" in schema_type:
             return "array"
+        for scalar_type in ("integer", "number", "boolean", "string"):
+            if scalar_type in schema_type:
+                return scalar_type
         return None
     if isinstance(schema_type, str):
         return schema_type

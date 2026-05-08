@@ -95,6 +95,8 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
         or "额度已用尽" in err_l
     ):
         categories.add(FailoverReason.QUOTA)
+    if "invalid function response" in err_l:
+        categories.add(FailoverReason.STRUCTURAL)
 
     if FailoverReason.CONTENT_SAFETY in categories:
         hints.append(
@@ -120,6 +122,8 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
     if FailoverReason.STRUCTURAL in categories:
         if "tool names must be unique" in err_l:
             hints.append("⚙️ 检测到内部工具定义重复，请升级到修复版本后重试。")
+        elif "invalid function response" in err_l or "messages with role 'tool'" in err_l:
+            hints.append("⚙️ 工具调用上下文格式异常，OpenAkita 会清理工具历史后重试。")
         elif (
             "exceed_context_size" in err_l
             or "exceeds the available context" in err_l
@@ -133,7 +137,7 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
                 "或切换到上下文更大的模型。"
             )
         else:
-            hints.append("⚙️ 检测到请求格式错误，这通常是模型兼容性问题，请尝试切换其他模型。")
+            hints.append("⚙️ 检测到请求格式异常，OpenAkita 会优先尝试兼容模式继续执行。")
 
     if not hints:
         # 无法分类时的通用提示
@@ -162,6 +166,7 @@ class EndpointOverride:
     expires_at: datetime  # 过期时间
     created_at: datetime = field(default_factory=datetime.now)
     reason: str = ""  # 切换原因（可选）
+    policy: str = "prefer"  # prefer=优先使用，require=必须使用且不自动切换
 
     @property
     def is_expired(self) -> bool:
@@ -183,6 +188,7 @@ class EndpointOverride:
             "expires_at": self.expires_at.isoformat(),
             "created_at": self.created_at.isoformat(),
             "reason": self.reason,
+            "policy": self.policy,
         }
 
     @classmethod
@@ -193,6 +199,7 @@ class EndpointOverride:
             expires_at=datetime.fromisoformat(data["expires_at"]),
             created_at=datetime.fromisoformat(data["created_at"]),
             reason=data.get("reason", ""),
+            policy=data.get("policy", "prefer") or "prefer",
         )
 
 
@@ -353,7 +360,11 @@ class LLMClient:
                     system="Respond with 'ok'",
                     max_tokens=1,
                 )
-                await asyncio.wait_for(provider.chat(request), timeout=15.0)
+                response = await asyncio.wait_for(provider.chat(request), timeout=15.0)
+                if response.usage.output_tokens > 0 and not response.content:
+                    raise RuntimeError(
+                        "endpoint returned output tokens but no visible content"
+                    )
                 results[name] = "ok"
                 logger.info(f"[HealthCheck] endpoint={name} status=ok")
             except AuthenticationError as e:
@@ -701,10 +712,22 @@ class LLMClient:
 
             yielded = False
             try:
+                if request.enable_thinking and not provider.config.has_capability("thinking"):
+                    request.enable_thinking = False
+                    logger.info(
+                        f"[LLM-Stream] endpoint={provider.name} thinking soft-disabled "
+                        f"(endpoint lacks thinking capability)"
+                    )
                 logger.info(
                     f"[LLM-Stream] endpoint={provider.name} model={provider.model} "
                     f"action=stream_request"
                 )
+                if i > 0 and eligible:
+                    yield {
+                        "type": "endpoint_meta",
+                        "endpoint_name": provider.name,
+                        "failover_from": eligible[0].name,
+                    }
                 # 发射一次端点元信息：vision 降级时让上层（reasoning_engine）能
                 # 转换为 endpoint_notice 给前端显示系统气泡。
                 try:
@@ -926,6 +949,50 @@ class LLMClient:
             按优先级排序的端点列表（至少包含一个端点）
         """
         providers_sorted = sorted(self._providers.values(), key=lambda p: p.config.priority)
+        effective_override = None
+        if conversation_id and conversation_id in self._conversation_overrides:
+            effective_override = self._conversation_overrides.get(conversation_id)
+        elif self._endpoint_override:
+            effective_override = self._endpoint_override
+
+        if effective_override and effective_override.policy == "require":
+            endpoint_name = effective_override.endpoint_name
+            provider = self._providers.get(endpoint_name)
+            if provider is None:
+                raise AllEndpointsFailedError(
+                    f"Required endpoint '{endpoint_name}' is no longer configured. "
+                    "Please choose another model endpoint."
+                )
+
+            missing = self._missing_required_capabilities(
+                provider,
+                require_tools=require_tools,
+                require_vision=require_vision,
+                require_video=require_video,
+                require_audio=require_audio,
+                require_pdf=require_pdf,
+            )
+            if missing:
+                raise AllEndpointsFailedError(
+                    f"Required endpoint '{endpoint_name}' does not support this request "
+                    f"capability: {', '.join(missing)}. "
+                    "Please choose a compatible endpoint or switch the model policy to prefer."
+                )
+
+            if require_thinking and not provider.config.has_capability("thinking"):
+                logger.info(
+                    f"[LLM] Required endpoint {endpoint_name} has no thinking capability; "
+                    "disabling thinking instead of falling back."
+                )
+                request.enable_thinking = False
+
+            if not provider.is_healthy:
+                logger.warning(
+                    f"[LLM] Required endpoint {endpoint_name} is unhealthy. "
+                    "Bypassing cooldown and trying only this endpoint."
+                )
+                provider.reset_cooldown()
+            return [provider]
 
         # ── 降级 1: thinking 软降级 ──
         # thinking 不同于 tools/vision/video：没有它请求仍能正常工作
@@ -1183,6 +1250,32 @@ class LLMClient:
             override_name = effective_override.endpoint_name
             if override_name in self._providers:
                 provider = self._providers[override_name]
+                if effective_override.policy == "require":
+                    missing = self._missing_required_capabilities(
+                        provider,
+                        require_tools=require_tools,
+                        require_vision=require_vision,
+                        require_video=require_video,
+                        require_audio=require_audio,
+                        require_pdf=require_pdf,
+                    )
+                    if missing:
+                        logger.warning(
+                            f"[LLM] Required endpoint {override_name} lacks capability: "
+                            f"{', '.join(missing)}. Not falling back to other endpoints."
+                        )
+                        return []
+                    if require_thinking and not provider.config.has_capability("thinking"):
+                        logger.info(
+                            f"[LLM] Required endpoint {override_name} lacks thinking capability; "
+                            "thinking will be disabled for this request."
+                        )
+                    if not provider.is_healthy:
+                        logger.warning(
+                            f"[LLM] Required endpoint {override_name} is unhealthy; "
+                            "trying it anyway and not falling back."
+                        )
+                    return [provider]
                 if provider.is_healthy:
                     override_provider = provider
                     logger.info(f"[LLM] Using user-selected endpoint: {override_name}")
@@ -1285,6 +1378,35 @@ class LLMClient:
                 )
 
         return eligible
+
+    @staticmethod
+    def _missing_required_capabilities(
+        provider: LLMProvider,
+        *,
+        require_tools: bool = False,
+        require_vision: bool = False,
+        require_video: bool = False,
+        require_audio: bool = False,
+        require_pdf: bool = False,
+    ) -> list[str]:
+        """Return hard capabilities missing from a provider.
+
+        Thinking is intentionally excluded because it can be disabled per request
+        without preventing the user's actual task from running.
+        """
+        config = provider.config
+        missing = []
+        if require_tools and not config.has_capability("tools"):
+            missing.append("tools")
+        if require_vision and not config.has_capability("vision"):
+            missing.append("vision")
+        if require_video and not config.has_capability("video"):
+            missing.append("video")
+        if require_audio and not config.has_capability("audio"):
+            missing.append("audio")
+        if require_pdf and not config.has_capability("pdf"):
+            missing.append("pdf")
+        return missing
 
     @staticmethod
     async def _race_with_cancel(
@@ -1716,6 +1838,7 @@ class LLMClient:
                     _err_lower = error_str.lower()
                     non_retryable_patterns = [
                         "invalid_request_error",
+                        "invalid function response",
                         "invalid_parameter",
                         "messages with role",
                         "must be a response to a preceeding message",
@@ -1834,7 +1957,54 @@ class LLMClient:
         修改 request 原地属性，返回 True 表示已修复、应重试。
         每种自愈类型仅触发一次（通过 request 上的标记位防循环）。
         """
-        error_str = str(error).lower()
+        error_str = _classification_error_text(error).lower()
+
+        # ── 自愈: 端点实际不接受 image_url ──
+        # 模型能力表和用户配置只是先验；中转站/自定义模型常会到运行时才
+        # 返回 "image_url not supported"。此时不让整轮任务失败，也不永久
+        # 改写配置，只在当前 provider 上标记并重建请求体，让转换器把图片
+        # 降级为短文本占位后重试一次。
+        _vision_reject_patterns = (
+            "image_url",
+            "image input",
+            "image content",
+            "vision",
+        )
+        _unsupported_patterns = (
+            "not supported",
+            "does not support",
+            "unsupported",
+            "message type",
+        )
+        if any(p in error_str for p in _vision_reject_patterns) and any(
+            p in error_str for p in _unsupported_patterns
+        ):
+            if not getattr(request, "_vision_payload_stripped", False):
+                request._vision_payload_stripped = True  # type: ignore[attr-defined]
+                provider._vision_payload_unsupported = True  # type: ignore[attr-defined]
+                logger.info(
+                    f"[LLM] endpoint={provider.name} rejected image payload, "
+                    "self-healing: degrading images to text for this endpoint"
+                )
+                return True
+
+        # ── 自愈 0: OpenAI-compatible 工具消息链错序 ──
+        _tool_sequence_patterns = [
+            "messages with role 'tool'",
+            "messages with role \"tool\"",
+            "must be a response to a preceding message with 'tool_calls'",
+            "must be a response to a preceeding message with 'tool_calls'",
+            "tool_call_id",
+        ]
+        if any(p in error_str for p in _tool_sequence_patterns):
+            if not getattr(request, "_tool_sequence_healed", False):
+                request._tool_sequence_healed = True  # type: ignore[attr-defined]
+                request.messages = self._downgrade_tool_protocol_messages(request.messages)
+                logger.info(
+                    f"[LLM] endpoint={provider.name} tool message sequence error, "
+                    "self-healing: downgraded tool protocol history to text context"
+                )
+                return True
 
         # ── 自愈 1: reasoning_content 缺失 ──
         _reasoning_patterns = [
@@ -1875,6 +2045,57 @@ class LLMClient:
                 return True
 
         return False
+
+    @staticmethod
+    def _downgrade_tool_protocol_messages(messages: list[Message]) -> list[Message]:
+        """Convert tool protocol blocks to plain context for one retry.
+
+        This is only used after an upstream API rejects the tool message chain.
+        It preserves useful evidence for the model without sending ``role=tool``
+        messages or assistant ``tool_calls`` again.
+        """
+        downgraded: list[Message] = []
+        for msg in messages:
+            if isinstance(msg.content, str):
+                downgraded.append(msg)
+                continue
+
+            rebuilt: list[ContentBlock] = []
+            tool_call_names: list[str] = []
+            for block in msg.content:
+                if isinstance(block, ToolUseBlock):
+                    tool_call_names.append(block.name or block.id or "unknown")
+                    continue
+                if isinstance(block, ToolResultBlock):
+                    content = block.content
+                    if not isinstance(content, str):
+                        content = str(content)
+                    rebuilt.append(
+                        TextBlock(text=f"[工具结果记录: {block.tool_use_id}]\n{content}")
+                    )
+                    continue
+                rebuilt.append(block)
+
+            if tool_call_names:
+                rebuilt.append(
+                    TextBlock(
+                        text=(
+                            "[工具调用记录已转为普通上下文: "
+                            f"{', '.join(tool_call_names)}]"
+                        )
+                    )
+                )
+
+            if rebuilt:
+                downgraded.append(
+                    Message(
+                        role=msg.role,
+                        content=rebuilt,
+                        reasoning_content=msg.reasoning_content,
+                    )
+                )
+
+        return downgraded
 
     def _normalize_messages(self, messages: list[Message]) -> list[Message]:
         """消息规范化管线：发送前统一格式。
@@ -2101,6 +2322,7 @@ class LLMClient:
         hours: float = DEFAULT_OVERRIDE_HOURS,
         reason: str = "",
         conversation_id: str | None = None,
+        policy: str = "prefer",
     ) -> tuple[bool, str]:
         """
         临时切换到指定模型
@@ -2130,12 +2352,17 @@ class LLMClient:
             )
             provider.reset_cooldown()
 
+        normalized_policy = (policy or "prefer").strip().lower()
+        if normalized_policy not in {"prefer", "require"}:
+            normalized_policy = "prefer"
+
         # 创建覆盖配置
         expires_at = datetime.now() + timedelta(hours=hours)
         override = EndpointOverride(
             endpoint_name=endpoint_name,
             expires_at=expires_at,
             reason=reason,
+            policy=normalized_policy,
         )
         if conversation_id:
             self._conversation_overrides[conversation_id] = override
@@ -2144,7 +2371,10 @@ class LLMClient:
 
         model = provider.config.model
         expires_str = expires_at.strftime("%Y-%m-%d %H:%M:%S")
-        logger.info(f"[LLM] Model switched to {endpoint_name} ({model}), expires at {expires_str}")
+        logger.info(
+            f"[LLM] Model switched to {endpoint_name} ({model}), "
+            f"policy={normalized_policy}, expires at {expires_str}"
+        )
 
         return True, f"已切换到模型: {model}\n有效期至: {expires_str}"
 

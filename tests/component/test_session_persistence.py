@@ -439,7 +439,6 @@ class TestGetSessionContextFormatting:
         assert "1. {\"name\": \"get_session_context\"} ([\"ok\"])" in result
         assert "[1735689600] {\"kind\": \"user\"}: {\"text\": \"hello\"}" in result
 
-
 # ===========================================================================
 # Fix-5: Session backfill from SQLite
 # ===========================================================================

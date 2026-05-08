@@ -9,6 +9,7 @@ import logging
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.log_health import record_health_event
@@ -23,6 +24,22 @@ from .registry import SkillRegistry
 _CURRENT_PLATFORM = sys.platform  # "win32", "darwin", "linux"
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SkillLoadIssue:
+    """A non-fatal skill loading problem from the most recent scan."""
+
+    skill_id: str
+    path: str
+    error: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "skill_id": self.skill_id,
+            "path": self.path,
+            "error": self.error,
+        }
 
 
 def _resolve_user_workspace_skills() -> Path:
@@ -198,6 +215,25 @@ class SkillLoader:
             category_registry if category_registry is not None else CategoryRegistry()
         )
         self._loaded_skills: dict[str, ParsedSkill] = {}
+        self._last_load_issues: list[SkillLoadIssue] = []
+
+    @property
+    def last_load_issues(self) -> list[dict[str, str]]:
+        """Non-fatal skill load issues from the most recent full scan."""
+        return [issue.to_dict() for issue in self._last_load_issues]
+
+    def _remember_load_issue(self, skill_dir: Path, error: str) -> None:
+        """Record why a skill was skipped without failing the whole refresh."""
+        issue = SkillLoadIssue(
+            skill_id=skill_dir.name,
+            path=str(skill_dir),
+            error=error.strip()[:500],
+        )
+        for index, existing in enumerate(self._last_load_issues):
+            if existing.path == issue.path:
+                self._last_load_issues[index] = issue
+                return
+        self._last_load_issues.append(issue)
 
     def discover_skill_directories(self, base_path: Path | None = None) -> list[Path]:
         """
@@ -244,6 +280,7 @@ class SkillLoader:
             加载的技能数量
         """
         # 每次 load_all 都重置分类注册表，避免被删除的分类残留
+        self._last_load_issues = []
         try:
             self.category_registry.clear()
         except Exception:
@@ -399,6 +436,7 @@ class SkillLoader:
                             except Exception:
                                 pass
                 except Exception as e:
+                    self._remember_load_issue(item, str(e))
                     if record_health_event(
                         "skill",
                         f"{item.name}:load",
@@ -506,6 +544,10 @@ class SkillLoader:
                 ):
                     logger.warning(f"Skill validation warning: {w}")
             if hard_errors:
+                self._remember_load_issue(
+                    skill_dir,
+                    "; ".join(e.removeprefix("ERROR:").strip() for e in hard_errors),
+                )
                 for e in hard_errors:
                     if record_health_event(
                         "skill",
@@ -542,6 +584,7 @@ class SkillLoader:
             return skill
 
         except Exception as e:
+            self._remember_load_issue(skill_dir, str(e))
             if record_health_event(
                 "skill",
                 f"{skill_dir.name}:load",

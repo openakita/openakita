@@ -2267,6 +2267,27 @@ fn wait_for_port_free(port: u16, timeout_ms: u64) -> bool {
     false
 }
 
+fn is_backend_http_healthy(port: Option<u16>) -> bool {
+    let effective_port = port.unwrap_or(18900);
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .no_proxy()
+        .build()
+        .ok()
+        .and_then(|client| {
+            client
+                .get(format!("http://127.0.0.1:{}/api/health", effective_port))
+                .send()
+                .ok()
+        })
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+fn should_cleanup_stale_heartbeat(heartbeat_stale: Option<bool>, http_healthy: bool) -> bool {
+    matches!(heartbeat_stale, Some(true)) && !http_healthy
+}
+
 /// 尝试通过 HTTP API 优雅关闭 Python 服务（POST /api/shutdown），
 /// 然后等待进程退出。如果 API 调用失败或超时则回退到 kill。
 /// `port`: 可选端口号，默认 18900
@@ -3542,11 +3563,14 @@ fn startup_reconcile() {
                 let _ = fs::remove_file(service_pid_file(&ent.workspace_id));
                 remove_heartbeat_file(&ent.workspace_id);
             } else if let Some(true) = is_heartbeat_stale(&ent.workspace_id, 60) {
-                // PID 文件有效但心跳超时（进程可能卡死），强制清理
+                // PID 文件有效但心跳超时。先用 HTTP health 复核，避免因心跳文件
+                // 写入异常误杀仍可响应的后端进程。
                 let port = read_workspace_api_port(&ent.workspace_id);
-                let _ = graceful_stop_pid(data.pid, port);
-                let _ = fs::remove_file(service_pid_file(&ent.workspace_id));
-                remove_heartbeat_file(&ent.workspace_id);
+                if should_cleanup_stale_heartbeat(Some(true), is_backend_http_healthy(port)) {
+                    let _ = graceful_stop_pid(data.pid, port);
+                    let _ = fs::remove_file(service_pid_file(&ent.workspace_id));
+                    remove_heartbeat_file(&ent.workspace_id);
+                }
             }
         }
     }
@@ -4157,13 +4181,15 @@ fn openakita_check_pid_alive(workspace_id: String) -> Result<bool, String> {
         // 进程身份已确认，但检查心跳是否严重过期（> 60 秒）
         // 心跳过期意味着进程虽然存活但可能已经卡死
         if let Some(true) = is_heartbeat_stale(&workspace_id, 60) {
-            // 心跳严重过期，进程很可能已卡死。
-            // 主动尝试清理：先 kill 进程，再清理 PID 和心跳文件。
+            // 心跳严重过期时先复核 HTTP health；只在 API 也不可达时才清理，
+            // 防止心跳文件写入异常造成“后端仍可用却被误杀”。
             let port = read_workspace_api_port(&workspace_id);
-            let _ = graceful_stop_pid(data.pid, port);
-            let _ = fs::remove_file(service_pid_file(&workspace_id));
-            remove_heartbeat_file(&workspace_id);
-            return Ok(false);
+            if should_cleanup_stale_heartbeat(Some(true), is_backend_http_healthy(port)) {
+                let _ = graceful_stop_pid(data.pid, port);
+                let _ = fs::remove_file(service_pid_file(&workspace_id));
+                remove_heartbeat_file(&workspace_id);
+                return Ok(false);
+            }
         }
         return Ok(true);
     }
@@ -4458,11 +4484,21 @@ fn openakita_service_start(
         if is_pid_file_valid(&data) {
             // 进程已在运行，但检查心跳是否严重过期（可能卡死）
             if let Some(true) = is_heartbeat_stale(&workspace_id, 60) {
-                // 心跳严重过期，进程可能卡死，先尝试清理再启动
+                // 心跳严重过期时先复核 HTTP health；如果 API 仍正常，
+                // 继续复用现有进程，不启动第二个后端。
                 let port = read_workspace_api_port(&workspace_id);
-                let _ = graceful_stop_pid(data.pid, port);
-                let _ = fs::remove_file(&pid_file);
-                remove_heartbeat_file(&workspace_id);
+                if should_cleanup_stale_heartbeat(Some(true), is_backend_http_healthy(port)) {
+                    let _ = graceful_stop_pid(data.pid, port);
+                    let _ = fs::remove_file(&pid_file);
+                    remove_heartbeat_file(&workspace_id);
+                } else {
+                    return Ok(build_service_status(
+                        &workspace_id,
+                        true,
+                        Some(data.pid),
+                        pf,
+                    ));
+                }
             } else {
                 return Ok(build_service_status(
                     &workspace_id,
@@ -8182,10 +8218,17 @@ fn get_feedback_config_offline(workspace_id: String) -> serde_json::Value {
 /// Open an external URL in the OS default browser.
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("URL is empty".to_string());
+    }
+
     #[cfg(target_os = "windows")]
     {
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/C", "start", "", &url]);
+        // Avoid `cmd /C start`: URLs from WeChat articles often contain `&`,
+        // which cmd.exe treats as a command separator and truncates the link.
+        let mut c = std::process::Command::new("rundll32");
+        c.args(["url.dll,FileProtocolHandler", url]);
         apply_no_window(&mut c);
         c.spawn().map_err(|e| format!("Failed to open URL: {e}"))?;
     }
@@ -8926,6 +8969,14 @@ mod tests {
         assert!(!result.venv_ready);
         assert!(!result.venv_checked.is_empty());
         assert!(!result.bundled_checked.is_empty());
+    }
+
+    #[test]
+    fn test_stale_heartbeat_cleanup_requires_http_failure() {
+        assert!(!should_cleanup_stale_heartbeat(Some(true), true));
+        assert!(should_cleanup_stale_heartbeat(Some(true), false));
+        assert!(!should_cleanup_stale_heartbeat(Some(false), false));
+        assert!(!should_cleanup_stale_heartbeat(None, false));
     }
 
     #[test]

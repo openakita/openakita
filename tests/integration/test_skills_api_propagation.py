@@ -257,6 +257,29 @@ class TestReloadRoute:
         assert call.args[0] == "reload"
         assert call.kwargs.get("rescan") is True
 
+    async def test_reload_all_reports_partial_success_for_skipped_skills(
+        self, app_with_fake_agent, client
+    ):
+        _, agent = app_with_fake_agent
+        agent.skill_loader.last_load_issues = [
+            {
+                "skill_id": "bad-skill",
+                "path": "D:/OpenAkita/workspaces/default/skills/bad-skill",
+                "error": "name must be lowercase alphanumeric with hyphens",
+            }
+        ]
+
+        resp = await client.post("/api/skills/reload", json={})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["partial"] is True
+        assert data["skipped_count"] == 1
+        assert data["skipped_skills"][0]["skill_id"] == "bad-skill"
+        assert "error" not in data
+        agent.propagate_skill_change.assert_called_once()
+
     async def test_reload_single_uses_rescan_false(self, app_with_fake_agent, client):
         _, agent = app_with_fake_agent
         agent.skill_loader.reload_skill.return_value = True

@@ -310,6 +310,7 @@ class MemoryManager:
         self._session_turns = []
         self._recent_messages = []
         self._session_cited_memories = []
+        self._set_retrieval_scope_context()
         try:
             self._turn_offset = self.store.get_max_turn_index(session_id)
         except Exception:
@@ -329,6 +330,93 @@ class MemoryManager:
                         loop.create_task(start(session_id))
         if self._get_replace_backend() is None:
             logger.debug(f"[Memory] start_session({session_id}): fresh session (offset=0)")
+
+    def _visible_scope_pairs(self) -> list[tuple[str, str]]:
+        """Return scopes visible to the current turn, ordered from private to shared.
+
+        会话记忆优先，全局记忆只作为明确共享的长期偏好/经验补充。
+        """
+        current = (self._current_session_id or "").strip()
+        if current:
+            return [("session", current), ("global", "")]
+        return [("global", "")]
+
+    def _set_retrieval_scope_context(self) -> None:
+        retrieval_engine = getattr(self, "retrieval_engine", None)
+        setter = getattr(retrieval_engine, "set_scope_context", None)
+        if setter:
+            setter(self._visible_scope_pairs())
+
+    def _current_write_scope(self) -> tuple[str, str]:
+        current = (self._current_session_id or "").strip()
+        if current:
+            return "session", current
+        return "global", ""
+
+    def query_visible_semantic(self, **kwargs) -> list[SemanticMemory]:
+        """Query memories visible to the current turn without leaking other sessions."""
+        limit = int(kwargs.pop("limit", 50) or 50)
+        merged: list[SemanticMemory] = []
+        seen: set[str] = set()
+        per_scope_limit = max(limit, 1)
+        for scope, scope_owner in self._visible_scope_pairs():
+            results = self.store.query_semantic(
+                **kwargs,
+                scope=scope,
+                scope_owner=scope_owner,
+                limit=per_scope_limit,
+            )
+            for mem in results:
+                if mem.id in seen:
+                    continue
+                seen.add(mem.id)
+                merged.append(mem)
+                if len(merged) >= limit:
+                    return merged
+        return merged
+
+    def search_visible_semantic_scored(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        filter_type: str | None = None,
+    ) -> list[tuple[SemanticMemory, float]]:
+        """Search current-session memories first, then explicitly global memories."""
+        merged: list[tuple[SemanticMemory, float]] = []
+        seen: set[str] = set()
+        for scope, scope_owner in self._visible_scope_pairs():
+            scored = self.store.search_semantic_scored(
+                query,
+                limit=limit,
+                filter_type=filter_type,
+                scope=scope,
+                scope_owner=scope_owner,
+            )
+            for mem, score in scored:
+                if mem.id in seen:
+                    continue
+                seen.add(mem.id)
+                merged.append((mem, score))
+                if len(merged) >= limit:
+                    return merged
+        return merged
+
+    def search_visible_semantic(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        filter_type: str | None = None,
+    ) -> list[SemanticMemory]:
+        return [
+            mem
+            for mem, _score in self.search_visible_semantic_scored(
+                query,
+                limit=limit,
+                filter_type=filter_type,
+            )
+        ]
 
     def record_turn(
         self,
@@ -505,11 +593,18 @@ class MemoryManager:
         else:
             priority = MemoryPriority.SHORT_TERM
 
+        write_scope, write_owner = self._current_write_scope()
+
         # Dedup layer 1: exact subject+predicate match → evolve existing
         subject = item.get("subject", "")
         predicate = item.get("predicate", "")
         if subject and predicate:
-            existing = self.store.find_similar(subject, predicate)
+            existing = self.store.find_similar(
+                subject,
+                predicate,
+                scope=write_scope,
+                scope_owner=write_owner,
+            )
             if existing:
                 self._evolve_memory(existing, content, importance)
                 logger.debug(f"[Memory] Dedup L1: evolved {existing.id[:8]} (subject+predicate)")
@@ -518,7 +613,12 @@ class MemoryManager:
         # Dedup layer 2: content similarity search
         if content and len(content) >= 10:
             try:
-                similar = self.store.search_semantic(content, limit=5)
+                similar = self.store.search_semantic(
+                    content,
+                    limit=5,
+                    scope=write_scope,
+                    scope_owner=write_owner,
+                )
                 for s in similar:
                     existing_content = (s.content or "").strip()
                     dup_level = self._fast_dedup_check(content, existing_content)
@@ -551,7 +651,11 @@ class MemoryManager:
             tags=[item.get("type", "fact").lower()],
         )
         _apply_retention(mem, item.get("duration"))
-        saved_id = self.store.save_semantic(self._stamp_agent_id(mem))
+        saved_id = self.store.save_semantic(
+            self._stamp_agent_id(mem),
+            scope=write_scope,
+            scope_owner=write_owner,
+        )
 
         if saved_id == mem.id:
             with self._memories_lock:
@@ -842,6 +946,7 @@ class MemoryManager:
         logger.info(f"Ended session {session_id}: finalization scheduled")
         self._current_session_id = None
         self._session_turns = []
+        self._set_retrieval_scope_context()
 
     def _enqueue_session_turns_for_extraction(
         self, session_id: str, turns: list[ConversationTurn]
@@ -1022,12 +1127,21 @@ class MemoryManager:
 
     def add_memory(self, memory: Memory, scope: str = "global", scope_owner: str = "") -> str:
         """添加记忆 (v1 compat: writes to both v1 and v2 stores)"""
+        memory.scope = scope
+        memory.scope_owner = scope_owner
         with self._memories_lock:
-            existing = list(self._memories.values())
+            existing = [
+                m
+                for m in self._memories.values()
+                if (getattr(m, "scope", "global") or "global") == scope
+                and (getattr(m, "scope_owner", "") or "") == scope_owner
+            ]
             unique = self.extractor.deduplicate([memory], existing)
             if not unique:
                 return ""
             memory = unique[0]
+            memory.scope = scope
+            memory.scope_owner = scope_owner
 
             if (
                 self.vector_store is not None
@@ -1040,6 +1154,11 @@ class MemoryManager:
                     if distance < self.DUPLICATE_DISTANCE_THRESHOLD:
                         existing_mem = self._memories.get(mid)
                         if existing_mem:
+                            if (
+                                (getattr(existing_mem, "scope", "global") or "global") != scope
+                                or (getattr(existing_mem, "scope_owner", "") or "") != scope_owner
+                            ):
+                                continue
                             existing_core = self._strip_common_prefix(existing_mem.content)
                             if core_content != existing_core:
                                 continue
@@ -1047,7 +1166,12 @@ class MemoryManager:
             elif len(self._memories) > 0:
                 try:
                     core_content = self._strip_common_prefix(memory.content)
-                    fts_hits = self.store.search_semantic(core_content, limit=5)
+                    fts_hits = self.store.search_semantic(
+                        core_content,
+                        limit=5,
+                        scope=scope,
+                        scope_owner=scope_owner,
+                    )
                     core_lower = core_content.strip()[:80].lower()
                     for hit in fts_hits:
                         if hit.content and core_lower in hit.content.lower():
@@ -1156,11 +1280,10 @@ class MemoryManager:
                     continue
                 if memory.expires_at and memory.expires_at < now:
                     continue
-                if scope != "global" or scope_owner:
-                    mem_scope = getattr(memory, "scope", "global") or "global"
-                    mem_owner = getattr(memory, "scope_owner", "") or ""
-                    if mem_scope != scope or mem_owner != scope_owner:
-                        continue
+                mem_scope = getattr(memory, "scope", "global") or "global"
+                mem_owner = getattr(memory, "scope_owner", "") or ""
+                if mem_scope != scope or mem_owner != scope_owner:
+                    continue
                 if memory_type and memory.type != memory_type:
                     continue
                 if tags and not any(tag in memory.tags for tag in tags):

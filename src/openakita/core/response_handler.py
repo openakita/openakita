@@ -437,6 +437,16 @@ class ResponseHandler:
             tool_results_list = tool_results or []
             org_submit_ok = "org_submit_deliverable" in executed_set
             deliver_artifacts_ok = "deliver_artifacts" in executed_set
+            successful_receipts = [
+                r
+                for r in delivery_receipts
+                if r.get("status") in {"delivered", "skipped", "relayed"}
+            ]
+            failed_receipts = [
+                r
+                for r in delivery_receipts
+                if r.get("status") not in {"delivered", "skipped", "relayed"}
+            ]
 
             if org_submit_ok or deliver_artifacts_ok:
                 # 找出 submit_deliverable 工具调用对应的成功结果
@@ -462,12 +472,15 @@ class ResponseHandler:
                         if isinstance(files, list):
                             attachments_count = max(attachments_count, len(files))
 
+                if successful_receipts:
+                    attachments_count = max(attachments_count, len(successful_receipts))
+
                 # 兜底：tool_results 里拿不到详细参数（旧调用路径），退一步只看
                 # 工具是否被执行 + delivery_receipts 是否非空（说明附件已发送）
                 if not submit_ok_run and (org_submit_ok or deliver_artifacts_ok):
                     submit_ok_run = True
-                    if delivery_receipts:
-                        attachments_count = max(attachments_count, len(delivery_receipts))
+                    if successful_receipts:
+                        attachments_count = max(attachments_count, len(successful_receipts))
 
                 # 阈值分两档：
                 #   - expects_artifact=True：必须 attachments_count >= 1，纯文本不算
@@ -480,6 +493,11 @@ class ResponseHandler:
                         deliverable_len >= 200 or attachments_count >= 1
                     )
 
+                if expects_artifact and deliver_artifacts_ok and failed_receipts:
+                    logger.info(
+                        "[TaskVerify] artifact delivery returned failed receipts, INCOMPLETE"
+                    )
+                    return False
                 if pass_ok:
                     logger.info(
                         "[TaskVerify] trust-but-verify PASS: "
@@ -488,6 +506,12 @@ class ResponseHandler:
                         deliverable_len, attachments_count, expects_artifact,
                     )
                     return True
+                if expects_artifact and deliver_artifacts_ok and delivery_receipts:
+                    logger.info(
+                        "[TaskVerify] artifact delivery attempted but no successful receipt, "
+                        "INCOMPLETE"
+                    )
+                    return False
                 if submit_ok_run:
                     logger.info(
                         "[TaskVerify] trust-but-verify INSUFFICIENT: "

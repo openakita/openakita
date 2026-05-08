@@ -179,15 +179,15 @@ def _looks_like_explicit_no_tool_request(message: str) -> bool:
     return any(
         marker in text
         for marker in (
-            "??????",
-            "?????",
-            "?????",
-            "??????",
-            "???????",
-            "??????",
-            "?????",
-            "????",
-            "?????",
+            "不要调用工具",
+            "不要用工具",
+            "不调用工具",
+            "无需调用工具",
+            "不需要调用工具",
+            "直接用纯文本",
+            "直接纯文本",
+            "直接回复",
+            "纯文本回复",
             "no tools",
             "without tools",
             "do not use tools",
@@ -195,6 +195,183 @@ def _looks_like_explicit_no_tool_request(message: str) -> bool:
             "plain text",
         )
     )
+
+
+_TASK_RESULT_META_MARKERS = (
+    "任务已完成",
+    "已完成任务",
+    "执行完成",
+    "已整理完毕",
+    "呈现如上",
+    "输出如上",
+    "系统会自动",
+    "自动推送",
+    "无需额外操作",
+    "如需调整",
+    "如需其他",
+    "随时告诉我",
+    "the task is complete",
+    "shown above",
+    "already presented",
+    "automatically send",
+)
+
+_TASK_PROGRESS_ONLY_MARKERS = (
+    "我来执行",
+    "我将执行",
+    "我先",
+    "先访问",
+    "先查询",
+    "正在处理",
+    "请稍候",
+    "让我先",
+    "let me ",
+    "i will ",
+    "i'll ",
+)
+
+
+def _task_response_quality(text: str) -> int:
+    """Score how useful a task response is as the user-visible final result.
+
+    The score is only used to choose between candidate final answers. It should
+    not reject model output outright; the runtime should stay permissive and
+    preserve the most useful text the model already produced.
+    """
+    normalized = (text or "").strip()
+    if not normalized:
+        return -10_000
+
+    lower = normalized.lower()
+    lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    score = min(len(normalized), 6000) // 20
+
+    # Structure usually means this is the actual deliverable, not just a status.
+    score += sum(1 for line in lines if line.startswith(("#", "##", "###"))) * 18
+    score += sum(1 for line in lines if line.startswith(("-", "*", "1.", "2.", "3."))) * 8
+    score += sum(1 for line in lines if "|" in line) * 5
+
+    meta_hits = sum(1 for marker in _TASK_RESULT_META_MARKERS if marker in lower)
+    if meta_hits:
+        score -= meta_hits * (45 if len(normalized) < 1200 else 15)
+
+    return score
+
+
+def _prefer_task_final_response(candidate: str, current: str) -> bool:
+    """Return True if candidate is a better task final answer than current."""
+    candidate = (candidate or "").strip()
+    current = (current or "").strip()
+    if not candidate:
+        return False
+    if not current:
+        return True
+
+    cand_lower = candidate.lower()
+    cand_meta = any(marker in cand_lower for marker in _TASK_RESULT_META_MARKERS)
+    if cand_meta and len(candidate) < len(current) * 0.7:
+        return False
+
+    return _task_response_quality(candidate) > _task_response_quality(current)
+
+
+def _looks_like_progress_only_task_text(text: str) -> bool:
+    """Detect short transition text that should get one gentle chance to continue."""
+    normalized = (text or "").strip()
+    if not normalized or len(normalized) > 320:
+        return False
+    lower = normalized.lower()
+    has_progress_marker = any(marker in lower for marker in _TASK_PROGRESS_ONLY_MARKERS)
+    has_result_structure = any(
+        line.strip().startswith(("#", "-", "*", "1.", "2.", "3."))
+        for line in normalized.splitlines()
+    )
+    return has_progress_marker and not has_result_structure
+
+
+_REPLAY_REQUEST_MARKERS = (
+    "展示全",
+    "展示完全",
+    "显示全",
+    "显示完全",
+    "没有展示全",
+    "没展示全",
+    "没有展示完全",
+    "没显示全",
+    "没有显示全",
+    "没显示完",
+    "没有显示完",
+    "被截断",
+    "截断了",
+    "补全",
+    "完整报告",
+    "完整结论",
+    "完整内容",
+    "全文",
+    "全部内容",
+)
+
+_REPLAY_CONTEXT_MARKERS = (
+    "你的",
+    "上面",
+    "刚才",
+    "之前",
+    "上一轮",
+    "报告",
+    "结论",
+    "结果",
+    "内容",
+    "回答",
+)
+
+_REANALYZE_MARKERS = (
+    "重新分析",
+    "重新排查",
+    "重新调查",
+    "重新检索",
+    "重新读取",
+    "从头分析",
+    "从头排查",
+    "再分析",
+    "再排查",
+)
+
+_PREVIOUS_ANSWER_REPLAY_HINT = (
+    "[系统提示] 用户当前是在要求继续展示或完整重放上一轮已经生成的结果。"
+    "请优先复用上文最近的 assistant 回复、已交付附件或历史中保存的结论，"
+    "直接从缺失处继续或完整重放；不要重新调用工具、重新检索或重新分析，"
+    "除非用户明确要求重新分析。"
+)
+
+
+def _looks_like_previous_answer_replay_request(message: str, history_messages: list[dict]) -> bool:
+    """Whether a follow-up asks to show the previous answer fully, not redo the task."""
+    text = (message or "").strip()
+    if not text or not any(msg.get("role") == "assistant" for msg in history_messages):
+        return False
+
+    normalized = re.sub(r"\s+", "", text).lower()
+    if any(marker in normalized for marker in _REANALYZE_MARKERS):
+        return False
+
+    has_replay_marker = any(marker in normalized for marker in _REPLAY_REQUEST_MARKERS)
+    has_context_marker = any(marker in normalized for marker in _REPLAY_CONTEXT_MARKERS)
+    asks_to_show_again = (
+        ("重新展示" in normalized or "重新显示" in normalized or "再发" in normalized)
+        and has_context_marker
+    )
+    asks_to_continue_previous = (
+        ("继续" in normalized or "接着" in normalized)
+        and ("展示" in normalized or "显示" in normalized or "输出" in normalized)
+        and has_context_marker
+    )
+    return (has_replay_marker and has_context_marker) or asks_to_show_again or asks_to_continue_previous
+
+
+def _apply_previous_answer_replay_hint(message: str) -> str:
+    if not message or message.startswith(_PREVIOUS_ANSWER_REPLAY_HINT):
+        return message
+    return f"{_PREVIOUS_ANSWER_REPLAY_HINT}\n\n{message}"
 
 
 def _looks_like_external_tool_request(message: str) -> bool:
@@ -212,21 +389,21 @@ def _looks_like_external_tool_request(message: str) -> bool:
     return any(
         marker in text
         for marker in (
-            "??",
-            "???",
-            "????",
-            "??",
-            "??",
-            "??",
-            "??",
-            "??",
-            "??",
-            "????",
-            "????",
-            "??",
-            "??",
-            "????",
-            "????",
+            "读取",
+            "读文件",
+            "查看文件",
+            "搜索",
+            "联网",
+            "网页",
+            "下载",
+            "保存",
+            "写入",
+            "创建文件",
+            "生成文件",
+            "附件",
+            "运行",
+            "执行命令",
+            "调用工具",
             "api",
             "mcp",
             "read file",
@@ -250,6 +427,12 @@ _LOCAL_UPLOAD_RE = re.compile(
     re.IGNORECASE,
 )
 _INLINE_IMAGE_MAX_BYTES = 5 * 1024 * 1024  # 5 MB，超出走文本降级
+
+
+_DATA_URI_RE = re.compile(
+    r"^data:(?P<mime>[^;,]+)?(?P<params>(?:;[^,]*)*),(?P<data>.*)$",
+    re.DOTALL,
+)
 
 
 def _maybe_inline_local_image(att_url: str, att_mime: str) -> str | None:
@@ -289,6 +472,136 @@ def _maybe_inline_local_image(att_url: str, att_mime: str) -> str | None:
     except Exception as exc:
         logger.warning("[InlineImage] failed to inline %s: %s", att_url, exc)
         return None
+
+
+def _safe_attachment_stem(filename: str) -> str:
+    stem = Path(filename or "attachment").stem or "attachment"
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")
+    return stem[:80] or "attachment"
+
+
+def _save_data_uri_attachment(
+    att_url: str,
+    *,
+    att_name: str,
+    att_mime: str,
+) -> dict[str, Any] | None:
+    """Persist non-media data URI attachments and return a short local reference.
+
+    Desktop/API clients should normally upload files through /api/upload. This
+    fallback prevents old clients from replaying large base64 payloads into the
+    LLM prompt while still preserving the file for tools to inspect.
+    """
+    match = _DATA_URI_RE.match((att_url or "").strip())
+    if not match:
+        return None
+
+    try:
+        import mimetypes
+        from urllib.parse import unquote_to_bytes
+
+        from ..api.routes.upload import (
+            BLOCKED_EXTENSIONS,
+            MAX_UPLOAD_SIZE,
+            get_upload_dir,
+        )
+
+        mime = (att_mime or match.group("mime") or "application/octet-stream").strip()
+        payload = match.group("data") or ""
+        params = (match.group("params") or "").lower()
+        if ";base64" in params:
+            raw = base64.b64decode(payload, validate=False)
+        else:
+            raw = unquote_to_bytes(payload)
+
+        if len(raw) > MAX_UPLOAD_SIZE:
+            logger.warning(
+                "[DesktopAttachment] data URI attachment %s exceeds upload limit: %.1f MB",
+                att_name,
+                len(raw) / 1024 / 1024,
+            )
+            return None
+
+        original = Path(att_name or "attachment")
+        suffix = original.suffix.lower()
+        if suffix in BLOCKED_EXTENSIONS:
+            suffix = ".bin"
+        if not suffix:
+            suffix = mimetypes.guess_extension(mime) or ".bin"
+
+        filename = (
+            f"{int(time.time())}_{uuid.uuid4().hex[:8]}_"
+            f"{_safe_attachment_stem(att_name)}{suffix}"
+        )
+        filepath = get_upload_dir() / filename
+        filepath.write_bytes(raw)
+        return {
+            "url": f"/api/uploads/{filename}",
+            "local_path": str(filepath),
+            "mime_type": mime,
+            "size": len(raw),
+        }
+    except Exception as exc:
+        logger.warning(
+            "[DesktopAttachment] failed to persist data URI attachment %s: %s",
+            att_name,
+            exc,
+        )
+        return None
+
+
+def _format_desktop_attachment_reference(
+    *,
+    att_type: str,
+    att_name: str,
+    att_mime: str,
+    att_url: str,
+    att_local_path: str | None = None,
+    att_size: int | None = None,
+) -> str:
+    """Return a prompt-safe text reference for non-image/video attachments."""
+    if (att_url or "").strip().startswith("data:"):
+        saved = _save_data_uri_attachment(att_url, att_name=att_name, att_mime=att_mime)
+        if saved:
+            return (
+                f"[附件: {att_name} ({saved['mime_type']})，"
+                f"已保存到本地路径: {saved['local_path']}，"
+                f"URL: {saved['url']}，大小: {saved['size']} bytes。"
+                "如需读取内容，请使用文件或数据处理工具打开该本地路径。]"
+            )
+        return (
+            f"[附件: {att_name} ({att_mime or att_type}) 是内联 data URI，"
+            "为避免超大 base64 内容进入模型上下文，已隐藏原始内容。"
+            "请使用上传文件 URL 或重新上传附件后继续处理。]"
+        )
+
+    local_path = att_local_path
+    if not local_path and att_url:
+        try:
+            from ..api.routes.upload import resolve_upload_path
+
+            resolved = resolve_upload_path(att_url)
+            if resolved:
+                local_path = str(resolved)
+                att_size = resolved.stat().st_size
+        except Exception as exc:
+            logger.debug("[DesktopAttachment] failed to resolve upload path %s: %s", att_url, exc)
+
+    if att_type == "document":
+        label = "文档"
+    elif att_type == "voice" or (att_mime or "").startswith("audio/"):
+        label = "音频"
+    else:
+        label = "附件"
+
+    size_text = f"，大小: {att_size} bytes" if att_size is not None else ""
+    if local_path:
+        return (
+            f"[{label}: {att_name} ({att_mime or att_type})，"
+            f"已保存到本地路径: {local_path}，URL: {att_url or '无'}{size_text}。"
+            "如需读取、转写或分析，请直接使用文件/音频处理工具打开该本地路径。]"
+        )
+    return f"[{label}: {att_name} ({att_mime or att_type})] URL: {att_url}"
 
 
 # 上下文管理常量（部分迁移至 context_manager.py，压缩相关仍需就地定义）
@@ -878,6 +1191,7 @@ class Agent:
         self._execution_env_spec = None
         self._custom_prompt_suffix: str = ""
         self._preferred_endpoint: str | None = None
+        self._endpoint_policy: str = "prefer"
 
         # Plan mode exit pending — keyed by conversation_id
         # Set by exit_plan_mode tool, consumed by chat_with_session_stream
@@ -1020,6 +1334,10 @@ class Agent:
         cron_disabled = getattr(self, "_cron_disabled_tools", None)
         if cron_disabled:
             tools = [t for t in tools if t.get("name") not in cron_disabled]
+
+        selfcheck_allowed = getattr(self, "_selfcheck_allowed_tools", None)
+        if selfcheck_allowed:
+            tools = [t for t in tools if t.get("name") in selfcheck_allowed]
 
         intent = getattr(self, "_current_intent", None)
         intent_hints = set(intent.tool_hints) if intent and intent.tool_hints else set()
@@ -2607,6 +2925,139 @@ class Agent:
             "- 运行 skill 预置 Python 脚本时，优先使用 skill 声明的 Python 环境和依赖。"
         )
 
+    def _resolve_model_lookup_id(
+        self,
+        *,
+        session: "Session | None" = None,
+        conversation_id: str | None = None,
+        session_id: str | None = None,
+    ) -> str | None:
+        """Return the key used by per-conversation LLM endpoint overrides."""
+        if conversation_id:
+            return conversation_id
+        if session is not None:
+            chat_id = getattr(session, "chat_id", "")
+            if chat_id:
+                return str(chat_id)
+        if session_id:
+            return session_id
+        if session is not None:
+            sid = getattr(session, "id", "")
+            if sid:
+                return str(sid)
+        return None
+
+    def _current_model_info_for_turn(
+        self,
+        *,
+        session: "Session | None" = None,
+        conversation_id: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        lookup_id = self._resolve_model_lookup_id(
+            session=session,
+            conversation_id=conversation_id,
+            session_id=session_id,
+        )
+        try:
+            info = self.brain.get_current_model_info(conversation_id=lookup_id)
+        except Exception as exc:
+            logger.debug("[ModelSwitch] Failed to resolve effective model: %s", exc)
+            return {}
+        return dict(info) if isinstance(info, dict) else {}
+
+    def _record_effective_model_metadata(
+        self,
+        *,
+        session: "Session | None",
+        selected_endpoint: str | None,
+        endpoint_policy: str = "prefer",
+        model_info: dict[str, Any],
+    ) -> None:
+        if session is None or not model_info:
+            return
+        effective = {
+            "selected_endpoint": selected_endpoint or "",
+            "effective_endpoint": str(model_info.get("name", "") or ""),
+            "effective_model": str(model_info.get("model", "") or ""),
+            "effective_provider": str(model_info.get("provider", "") or ""),
+            "endpoint_policy": endpoint_policy or "prefer",
+            "is_override": bool(model_info.get("is_override")),
+            "is_fallback": bool(
+                selected_endpoint
+                and model_info.get("name")
+                and model_info.get("name") != selected_endpoint
+            ),
+        }
+        try:
+            session.set_metadata("selected_endpoint", selected_endpoint or "")
+            session.set_metadata("endpoint_policy", endpoint_policy or "prefer")
+            session.set_metadata("effective_model", effective)
+        except Exception as exc:
+            logger.debug("[ModelSwitch] Failed to persist effective model metadata: %s", exc)
+
+    def _apply_endpoint_override_for_turn(
+        self,
+        *,
+        endpoint_override: str | None,
+        endpoint_policy: str = "prefer",
+        session: "Session | None",
+        conversation_id: str | None,
+        session_id: str | None,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Apply the UI-selected endpoint before prompt construction.
+
+        This keeps the system prompt, session metadata, trace model and actual
+        LLM request aligned. Invalid endpoints remain soft: we log and continue
+        with normal fallback selection instead of blocking the user.
+        """
+        lookup_id = self._resolve_model_lookup_id(
+            session=session,
+            conversation_id=conversation_id,
+            session_id=session_id,
+        )
+        if endpoint_override:
+            llm_client = getattr(self.brain, "_llm_client", None)
+            if llm_client and hasattr(llm_client, "switch_model"):
+                ok, msg = llm_client.switch_model(
+                    endpoint_name=endpoint_override,
+                    hours=0.05,
+                    reason=reason,
+                    conversation_id=lookup_id,
+                    policy=endpoint_policy,
+                )
+                if ok:
+                    logger.info(
+                        "[ModelSwitch] Applied endpoint %s before prompt build (conversation=%s)",
+                        endpoint_override,
+                        lookup_id or "",
+                    )
+                else:
+                    logger.warning(
+                        "[ModelSwitch] Endpoint %s unavailable before prompt build: %s",
+                        endpoint_override,
+                        msg,
+                    )
+            else:
+                logger.warning(
+                    "[ModelSwitch] Ignoring endpoint %s because no switch-capable client exists",
+                    endpoint_override,
+                )
+
+        model_info = self._current_model_info_for_turn(
+            session=session,
+            conversation_id=lookup_id,
+            session_id=session_id,
+        )
+        self._record_effective_model_metadata(
+            session=session,
+            selected_endpoint=endpoint_override,
+            endpoint_policy=endpoint_policy,
+            model_info=model_info,
+        )
+        return model_info
+
     async def _build_system_prompt_compiled(
         self,
         task_description: str = "",
@@ -2614,6 +3065,7 @@ class Agent:
         tools_enabled: bool = True,
         session: "Session | None" = None,
         mode: str | None = None,
+        conversation_id: str | None = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2)
@@ -2639,10 +3091,14 @@ class Agent:
         intent = getattr(self, "_current_intent", None)
         _mem_keywords = intent.memory_keywords if intent else None
 
+        model_lookup_id = self._resolve_model_lookup_id(
+            session=session,
+            conversation_id=conversation_id,
+        )
+        model_info: dict[str, Any] = {}
         model_display = ""
         try:
-            conv_id = session.id if session else None
-            model_info = self.brain.get_current_model_info(conversation_id=conv_id)
+            model_info = self.brain.get_current_model_info(conversation_id=model_lookup_id)
             if isinstance(model_info, dict) and "model" in model_info:
                 model_display = model_info["model"]
         except Exception:
@@ -2659,6 +3115,7 @@ class Agent:
                     "chat_type": getattr(session, "chat_type", "private"),
                     "message_count": len(session.context.messages) if session.context else 0,
                     "working_facts": getattr(session.context, "working_facts", {}) if session.context else {},
+                    "effective_model": session.get_metadata("effective_model", {}),
                     "has_sub_agents": bool(sub_records),
                     "sub_agent_count": len(sub_records),
                     "language": getattr(session_config, "language", "zh")
@@ -2669,7 +3126,7 @@ class Agent:
                 pass
 
         _effective_mode = mode or getattr(self.tool_executor, "_current_mode", "agent")
-        _model_id = getattr(self.brain, "model", "")
+        _model_id = model_display or getattr(self.brain, "model", "")
         _has_image_atts = getattr(self, "_has_pending_image_attachments", False)
 
         from ..prompt.budget import estimate_tokens
@@ -2690,7 +3147,7 @@ class Agent:
         # Session-level system prompt cache: reuse when the structural
         # parameters (mode, catalogs, profile) haven't changed.  Memory
         # keywords and intent tool hints vary per turn so the cache key includes them.
-        _conv_id = session.id if session else ""
+        _conv_id = model_lookup_id or (session.id if session else "")
         try:
             _working_facts_cache_key = json.dumps(
                 (session_context or {}).get("working_facts", {}),
@@ -2710,6 +3167,10 @@ class Agent:
             _strategy.memory_scope,
             tuple(sorted(_strategy.catalog_scope)),
             _strategy.include_project_guidelines,
+            model_info.get("name", "") if isinstance(model_info, dict) else "",
+            model_display,
+            model_info.get("provider", "") if isinstance(model_info, dict) else "",
+            bool(model_info.get("is_override")) if isinstance(model_info, dict) else False,
             tuple(sorted(_intent_tool_hints)),
             tuple(sorted(_mem_keywords)) if _mem_keywords else (),
             _working_facts_cache_key,
@@ -3977,7 +4438,7 @@ class Agent:
             except Exception as e:
                 logger.debug(f"[TraitMiner] Mining failed (non-critical): {e}")
 
-        # 7. IntentAnalyzer (unified intent analysis ? all messages go through LLM)
+        # 7. IntentAnalyzer (unified intent analysis — all messages go through LLM)
         #    Sub-agents skip the full analyzer for latency, but they are not
         #    automatically forced into tools: many delegated jobs are pure writing
         #    or analysis tasks where a direct text answer is the correct output.
@@ -4283,6 +4744,16 @@ class Agent:
             f"{len(messages)} history msgs, has_history={_has_history}"
         )
 
+        if (
+            isinstance(compiled_message, str)
+            and _looks_like_previous_answer_replay_request(message, messages)
+        ):
+            compiled_message = _apply_previous_answer_replay_hint(compiled_message)
+            logger.info(
+                "[Session:%s] Previous-answer replay hint applied for follow-up request",
+                session_id,
+            )
+
         # 当前用户消息（支持多模态）
         pending_images = session.get_metadata("pending_images") if session else None
         pending_videos = session.get_metadata("pending_videos") if session else None
@@ -4462,6 +4933,8 @@ class Agent:
                 att_url = getattr(att, "url", None) or ""
                 att_name = getattr(att, "name", None) or "file"
                 att_mime = getattr(att, "mime_type", None) or att_type
+                att_local_path = getattr(att, "local_path", None) or None
+                att_size = getattr(att, "size", None) or None
 
                 is_image = (
                     att_type == "image"
@@ -4498,18 +4971,18 @@ class Agent:
                         _degraded_notices.append(
                             f"[用户发送了视频 {att_name}，当前模型不支持视频输入]"
                         )
-                elif att_type == "document" and att_url:
-                    content_blocks.append(
-                        {
-                            "type": "text",
-                            "text": f"[文档: {att_name} ({att_mime})] URL: {att_url}",
-                        }
-                    )
                 elif att_url:
                     content_blocks.append(
                         {
                             "type": "text",
-                            "text": f"[附件: {att_name} ({att_mime})] URL: {att_url}",
+                            "text": _format_desktop_attachment_reference(
+                                att_type=att_type,
+                                att_name=att_name,
+                                att_mime=att_mime,
+                                att_url=att_url,
+                                att_local_path=att_local_path,
+                                att_size=att_size,
+                            ),
                         }
                     )
 
@@ -4887,9 +5360,6 @@ class Agent:
             except Exception as e:
                 logger.debug(f"[Session:{session_id}] memory end_session failed: {e}")
 
-        # 5. Cleanup（总是执行，放在 finally 中由调用方保证）
-        # 注意：此方法不做 cleanup，cleanup 统一在 _cleanup_session_state() 中
-
         await self._finish_agent_run_lifecycle_once(
             session_id=session_id,
             conversation_id=getattr(self, "_current_conversation_id", None),
@@ -4897,6 +5367,9 @@ class Agent:
             success=True,
             status="completed",
         )
+
+        # 5. Cleanup（总是执行，放在 finally 中由调用方保证）
+        # 注意：此方法不做 cleanup，cleanup 统一在 _cleanup_session_state() 中
 
     def _cleanup_session_state(self, im_tokens: Any) -> None:
         """
@@ -4982,6 +5455,7 @@ class Agent:
         *,
         mode: str = "agent",
         endpoint_override: str | None = None,
+        endpoint_policy: str | None = None,
         thinking_mode: str | None = None,
         thinking_depth: str | None = None,
     ) -> str:
@@ -4999,8 +5473,9 @@ class Agent:
             gateway: MessageGateway 对象
             mode: 交互模式 (ask/plan/agent)，默认 agent
             endpoint_override: 端点覆盖（为 None 时使用 _preferred_endpoint）
+            endpoint_policy: 端点策略，prefer=优先使用并允许故障切换，require=严格只用该端点
             thinking_mode: 思考模式覆盖 ('auto'/'on'/'off'/None)
-            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/'max'/None)
 
         Returns:
             Agent 响应
@@ -5008,7 +5483,18 @@ class Agent:
         if not self._initialized:
             await self.initialize()
 
+        explicit_endpoint = endpoint_override
         endpoint_override = endpoint_override or self._preferred_endpoint
+        if endpoint_override:
+            endpoint_policy = (
+                endpoint_policy
+                if explicit_endpoint
+                else self._endpoint_policy if endpoint_override == self._preferred_endpoint else "prefer"
+            )
+        else:
+            endpoint_policy = "prefer"
+        if endpoint_policy not in {"prefer", "require"}:
+            endpoint_policy = "prefer"
 
         # === 停止指令检测 ===
         message_lower = message.strip().lower()
@@ -5131,6 +5617,7 @@ class Agent:
             _intent = getattr(self, "_current_intent", None)
             _fast_usage = None
             _fast_handled = False
+            _allow_lightweight_fast_reply = not endpoint_override
 
             _risk_intent = _classify_risk_intent(_intent, message) if _intent else None
             _risk_pre_authorized = _consume_risk_authorization(session, message)
@@ -5178,7 +5665,12 @@ class Agent:
                     pass
                 _fast_handled = True
 
-            if _intent and _intent.intent == _IT.CHAT and getattr(_intent, "fast_reply", False):
+            if (
+                _allow_lightweight_fast_reply
+                and _intent
+                and _intent.intent == _IT.CHAT
+                and getattr(_intent, "fast_reply", False)
+            ):
                 # Ultra-fast path: rule-based greeting only, use lightweight model
                 try:
                     _identity_snippet = ""
@@ -5208,7 +5700,12 @@ class Agent:
                     response_text = "你好！有什么我可以帮你的吗？"
                     _fast_handled = True
 
-            elif _intent and _intent.intent == _IT.QUERY and getattr(_intent, "fast_reply", False):
+            elif (
+                _allow_lightweight_fast_reply
+                and _intent
+                and _intent.intent == _IT.QUERY
+                and getattr(_intent, "fast_reply", False)
+            ):
                 # Fast-path for simple factual queries (math, date, definitions)
                 # No tools passed → LLM answers directly
                 try:
@@ -5261,6 +5758,7 @@ class Agent:
                     progress_callback=_progress_cb,
                     session=session,
                     endpoint_override=endpoint_override,
+                    endpoint_policy=endpoint_policy,
                     intent_result=_intent,
                     mode=mode,
                 )
@@ -5316,6 +5814,7 @@ class Agent:
         plan_mode: bool = False,
         mode: str = "agent",
         endpoint_override: str | None = None,
+        endpoint_policy: str | None = None,
         attachments: list | None = None,
         thinking_mode: str | None = None,
         thinking_depth: str | None = None,
@@ -5339,9 +5838,10 @@ class Agent:
             plan_mode: 是否启用 Plan 模式 (deprecated, use mode)
             mode: 交互模式 (ask/plan/agent)
             endpoint_override: 端点覆盖
+            endpoint_policy: 端点策略，prefer=优先使用并允许故障切换，require=严格只用该端点
             attachments: Desktop Chat 附件列表
             thinking_mode: 思考模式覆盖 ('auto'/'on'/'off'/None)
-            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/'max'/None)
 
         Yields:
             SSE 事件字典 {"type": "...", ...}
@@ -5349,7 +5849,18 @@ class Agent:
         if not self._initialized:
             await self.initialize()
 
+        explicit_endpoint = endpoint_override
         endpoint_override = endpoint_override or self._preferred_endpoint
+        if endpoint_override:
+            endpoint_policy = (
+                endpoint_policy
+                if explicit_endpoint
+                else self._endpoint_policy if endpoint_override == self._preferred_endpoint else "prefer"
+            )
+        else:
+            endpoint_policy = "prefer"
+        if endpoint_policy not in {"prefer", "require"}:
+            endpoint_policy = "prefer"
 
         # === 停止指令检测 ===
         message_lower = message.strip().lower()
@@ -5466,11 +5977,35 @@ class Agent:
             if not task_description:
                 task_description = self._get_last_user_request(messages).strip()
 
+            _endpoint_override_for_engine = endpoint_override
+            if endpoint_override:
+                self._apply_endpoint_override_for_turn(
+                    endpoint_override=endpoint_override,
+                    endpoint_policy=endpoint_policy,
+                    session=session,
+                    conversation_id=conversation_id,
+                    session_id=session_id,
+                    reason=f"chat endpoint override: {endpoint_override}",
+                )
+                # Already applied before prompt construction; avoid re-applying
+                # the same override in ReasoningEngine for this Agent path.
+                _endpoint_override_for_engine = None
+            else:
+                self._apply_endpoint_override_for_turn(
+                    endpoint_override=None,
+                    endpoint_policy="prefer",
+                    session=session,
+                    conversation_id=conversation_id,
+                    session_id=session_id,
+                    reason="chat endpoint auto",
+                )
+
             system_prompt = await self._build_system_prompt_compiled(
                 task_description=task_description,
                 session_type=session_type,
                 session=session,
                 mode=mode,
+                conversation_id=conversation_id,
             )
 
             # 注入 TaskDefinition
@@ -5596,8 +6131,14 @@ class Agent:
             _fast_usage = None
             _request_id = request_id or f"{conversation_id}:stream"
             _turn_id = turn_id or f"{conversation_id}:{int(time.time() * 1000)}"
+            _allow_lightweight_fast_reply = not endpoint_override
 
-            if _intent and _intent.intent == _IT.CHAT and getattr(_intent, "fast_reply", False):
+            if (
+                _allow_lightweight_fast_reply
+                and _intent
+                and _intent.intent == _IT.CHAT
+                and getattr(_intent, "fast_reply", False)
+            ):
                 # Ultra-fast path: rule-based greeting only, use lightweight model
                 try:
                     _identity_snippet = ""
@@ -5650,7 +6191,12 @@ class Agent:
                     }
                 return
 
-            if _intent and _intent.intent == _IT.QUERY and getattr(_intent, "fast_reply", False):
+            if (
+                _allow_lightweight_fast_reply
+                and _intent
+                and _intent.intent == _IT.QUERY
+                and getattr(_intent, "fast_reply", False)
+            ):
                 # Fast-path for simple factual queries (math, date, definitions)
                 # No tools passed → LLM answers directly; empty response falls through
                 # to full agent path below.
@@ -5754,7 +6300,7 @@ class Agent:
                 session_type=session_type,
                 plan_mode=plan_mode,
                 mode=mode,
-                endpoint_override=endpoint_override,
+                endpoint_override=_endpoint_override_for_engine,
                 conversation_id=conversation_id,
                 thinking_mode=_thinking_mode,
                 thinking_depth=_thinking_depth,
@@ -6679,6 +7225,7 @@ class Agent:
         progress_callback: Any = None,
         session: Any = None,
         endpoint_override: str | None = None,
+        endpoint_policy: str = "prefer",
         intent_result: Any = None,
         mode: str = "agent",
     ) -> str:
@@ -6694,7 +7241,7 @@ class Agent:
             task_monitor: 任务监控器
             session_type: 会话类型 ("cli" 或 "im")
             thinking_mode: 思考模式覆盖 ('auto'/'on'/'off'/None)
-            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/'max'/None)
             progress_callback: 进度回调 async fn(str) -> None，IM 实时思维链
             endpoint_override: 端点覆盖
             intent_result: IntentResult from IntentAnalyzer (drives ForceToolCall policy)
@@ -6707,12 +7254,37 @@ class Agent:
         if not task_description:
             task_description = (getattr(self, "_current_task_query", "") or "").strip()
 
+        conversation_id = getattr(self, "_current_conversation_id", None) or getattr(
+            self, "_current_session_id", None
+        )
+        _endpoint_override_for_engine = endpoint_override
+        if endpoint_override:
+            self._apply_endpoint_override_for_turn(
+                endpoint_override=endpoint_override,
+                endpoint_policy=endpoint_policy,
+                session=session or self._current_session,
+                conversation_id=conversation_id,
+                session_id=getattr(self, "_current_session_id", None),
+                reason=f"chat endpoint override: {endpoint_override}",
+            )
+            _endpoint_override_for_engine = None
+        else:
+            self._apply_endpoint_override_for_turn(
+                endpoint_override=None,
+                endpoint_policy="prefer",
+                session=session or self._current_session,
+                conversation_id=conversation_id,
+                session_id=getattr(self, "_current_session_id", None),
+                reason="chat endpoint auto",
+            )
+
         if use_session_prompt:
             system_prompt = await self._build_system_prompt_compiled(
                 task_description=task_description,
                 session_type=session_type,
                 session=session or self._current_session,
                 mode=mode,
+                conversation_id=conversation_id,
             )
         else:
             system_prompt = self._context.system
@@ -6723,9 +7295,6 @@ class Agent:
             system_prompt += f"\n\n## Developer: TaskDefinition\n{task_def}\n"
 
         base_system_prompt = system_prompt
-        conversation_id = getattr(self, "_current_conversation_id", None) or getattr(
-            self, "_current_session_id", None
-        )
         _agent_profile_id = "default"
         if session and hasattr(session, "context"):
             _agent_profile_id = getattr(session.context, "agent_profile_id", "default") or "default"
@@ -6747,7 +7316,7 @@ class Agent:
             thinking_depth=thinking_depth,
             progress_callback=progress_callback,
             agent_profile_id=_agent_profile_id,
-            endpoint_override=endpoint_override,
+            endpoint_override=_endpoint_override_for_engine,
             force_tool_retries=force_tool_retries,
             tool_evidence_required=tool_evidence_required,
             is_sub_agent=getattr(self, "_is_sub_agent_call", False),
@@ -7192,39 +7761,6 @@ class Agent:
         )
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
-        # ============================================
-        # Todo 强制检查（仅 Agent 模式；plan/ask 模式跳过）
-        # ============================================
-        _effective_mode = getattr(self.tool_executor, "_current_mode", "agent")
-        if _effective_mode not in ("plan", "ask"):
-            _todo_exempt = (
-                "create_todo",
-                "create_plan_file",
-                "exit_plan_mode",
-                "get_todo_status",
-                "ask_user",
-            )
-            if tool_name not in _todo_exempt:
-                from ..tools.handlers.plan import has_active_todo, is_todo_required
-
-                session_id = getattr(self, "_current_session_id", None)
-                if session_id and is_todo_required(session_id) and not has_active_todo(session_id):
-                    return (
-                        "⚠️ **这是一个多步骤任务，建议先创建 Todo！**\n\n"
-                        "请先调用 `create_todo` 工具创建任务计划，然后再执行具体操作。\n\n"
-                        "示例：\n"
-                        "```\n"
-                        "create_todo(\n"
-                        "  task_summary='写脚本获取时间并显示',\n"
-                        "  steps=[\n"
-                        "    {id: 'step1', description: '创建Python脚本', tool: 'write_file'},\n"
-                        "    {id: 'step2', description: '执行脚本', tool: 'run_shell'},\n"
-                        "    {id: 'step3', description: '读取结果', tool: 'read_file'}\n"
-                        "  ]\n"
-                        ")\n"
-                        "```"
-                    )
-
         # 导入日志缓存
         from ..logging import get_session_log_buffer
 
@@ -7354,6 +7890,7 @@ class Agent:
         max_tool_iterations = settings.max_iterations  # Ralph Wiggum 模式：永不放弃
         iteration = 0
         final_response = ""
+        has_executed_tools = False
         current_model = self.brain.model
         conversation_id = task.session_id or f"task:{task.id}"
 
@@ -7669,22 +8206,40 @@ class Agent:
                 # 任务监控：结束迭代
                 task_monitor.end_iteration(text_content if text_content else "")
 
+                cleaned_text = ""
+                candidate_is_progress_only = False
                 # 如果有文本响应，保存（过滤 thinking 标签和工具调用模拟文本）
                 if text_content:
                     cleaned_text = clean_llm_response(text_content)
-                    # 只有在没有工具调用时才保存文本作为最终响应
-                    # 如果有工具调用，这个文本可能是 LLM 的思考过程
-                    if not tool_calls and cleaned_text:
+                    candidate_is_progress_only = (
+                        not has_executed_tools
+                        and not tool_calls
+                        and _looks_like_progress_only_task_text(cleaned_text)
+                    )
+                    # 只有无工具调用的可见文本才作为候选最终响应；短进度句不保存，
+                    # 避免最终兜底前把“我来执行...”误当成结果。
+                    if (
+                        not tool_calls
+                        and cleaned_text
+                        and not candidate_is_progress_only
+                        and _prefer_task_final_response(cleaned_text, final_response)
+                    ):
                         final_response = cleaned_text
 
                 # 如果没有工具调用，检查是否需要强制要求调用工具
                 if not tool_calls:
                     no_tool_call_count += 1
 
-                    # 如果还有追问次数，强制要求调用工具
-                    if no_tool_call_count <= max_no_tool_retries:
+                    # 如果模型只给了短进度句，给一次温和机会继续；一旦已有可见结果，
+                    # 直接收束，避免后续短元总结覆盖完整正文。
+                    should_nudge_for_result = (
+                        candidate_is_progress_only
+                        and no_tool_call_count <= min(max_no_tool_retries, 1)
+                    )
+                    if should_nudge_for_result:
                         logger.warning(
-                            f"[ForceToolCall] Task LLM returned text without tool calls (attempt {no_tool_call_count}/{max_no_tool_retries})"
+                            f"[ForceToolCall] Task LLM returned progress text without tool calls "
+                            f"(attempt {no_tool_call_count}/{max_no_tool_retries})"
                         )
 
                         # 将 LLM 的响应加入历史
@@ -7700,7 +8255,10 @@ class Agent:
                         messages.append(
                             {
                                 "role": "user",
-                                "content": "[系统] 若确实需要工具，请调用相应工具；若不需要工具（纯对话/问答），请直接回答，不要复述系统规则。",
+                                "content": (
+                                    "[系统] 请继续完成任务，并在完成时把用户需要看到的最终结果完整写在回复正文中。"
+                                    "如确实需要工具，请调用合适工具；如不需要工具，请直接给出最终结果。"
+                                ),
                             }
                         )
                         continue  # 继续循环，让 LLM 调用工具
@@ -7767,6 +8325,8 @@ class Agent:
                     allow_interrupt_checks=False,
                     capture_delivery_receipts=False,
                 )
+                if executed_names:
+                    has_executed_tools = True
 
                 messages.append({"role": "user", "content": tool_results})
 

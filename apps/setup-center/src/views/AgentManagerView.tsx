@@ -26,6 +26,7 @@ type AgentProfile = {
   skills_mode: string;
   custom_prompt: string;
   preferred_endpoint?: string | null;
+  endpoint_policy?: "prefer" | "require";
   category?: string;
   hidden?: boolean;
   user_customized?: boolean;
@@ -62,6 +63,7 @@ const EMPTY_PROFILE: AgentProfile = {
   skills_mode: "all",
   custom_prompt: "",
   preferred_endpoint: null,
+  endpoint_policy: "prefer",
   category: "",
   hidden: false,
   identity_mode: "shared",
@@ -491,6 +493,7 @@ export function AgentManagerView({
         skills_mode: editingProfile.skills_mode,
         custom_prompt: editingProfile.custom_prompt,
         preferred_endpoint: editingProfile.preferred_endpoint || null,
+        endpoint_policy: editingProfile.endpoint_policy || "prefer",
         category: editingProfile.category || "",
         identity_mode: editingProfile.identity_mode || "shared",
         memory_mode: editingProfile.memory_mode || "shared",
@@ -1262,7 +1265,11 @@ export function AgentManagerView({
               <Label className="text-xs opacity-70">{t("agentManager.preferredEndpoint")}</Label>
               <Select
                 value={editingProfile.preferred_endpoint || "_auto_"}
-                onValueChange={(v) => setEditingProfile((p) => ({ ...p, preferred_endpoint: v === "_auto_" ? null : v }))}
+                onValueChange={(v) => setEditingProfile((p) => ({
+                  ...p,
+                  preferred_endpoint: v === "_auto_" ? null : v,
+                  endpoint_policy: v === "_auto_" ? "prefer" : (p.endpoint_policy || "prefer"),
+                }))}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -1277,6 +1284,22 @@ export function AgentManagerView({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs opacity-70">{t("agentManager.endpointPolicy")}</Label>
+              <Select
+                value={editingProfile.endpoint_policy || "prefer"}
+                onValueChange={(v) => setEditingProfile((p) => ({ ...p, endpoint_policy: v as "prefer" | "require" }))}
+                disabled={!editingProfile.preferred_endpoint}
+              >
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="prefer">{t("agentManager.endpointPolicyPrefer")}</SelectItem>
+                  <SelectItem value="require">{t("agentManager.endpointPolicyRequire")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">{t("agentManager.endpointPolicyHint")}</p>
             </div>
 
             {/* Custom Prompt */}

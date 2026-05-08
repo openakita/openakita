@@ -169,11 +169,43 @@ class EndpointManager:
         if endpoint_type not in _ENDPOINT_LISTS:
             raise ValueError(f"Invalid endpoint_type: {endpoint_type}")
 
-        name = endpoint.get("name", "").strip()
-        if not name:
-            raise ValueError("Endpoint must have a name")
-        endpoint["name"] = name
-        lookup_name = (original_name or name).strip()
+        with self._lock:
+            config, version = self._read_json_versioned()
+
+            if expected_version and expected_version != version:
+                raise ConflictError(
+                    "配置已被其他会话修改，请刷新后重试",
+                    current_version=version,
+                )
+
+            saved = self._save_endpoint_locked(
+                config=config,
+                endpoint=endpoint,
+                api_key=api_key,
+                endpoint_type=endpoint_type,
+                original_name=original_name,
+            )
+            self._write_json(config)
+
+            return saved
+
+    def save_endpoints(
+        self,
+        endpoints: list[dict],
+        api_key: str | None = None,
+        endpoint_type: str = "endpoints",
+        expected_version: str | None = None,
+    ) -> list[dict]:
+        """Save multiple endpoints in one coordinated write.
+
+        Batch imports share one API key environment variable by default.  This
+        keeps "import models from one provider" as a single configuration action
+        instead of creating one env var per model.
+        """
+        if endpoint_type not in _ENDPOINT_LISTS:
+            raise ValueError(f"Invalid endpoint_type: {endpoint_type}")
+        if not endpoints:
+            raise ValueError("No endpoints to save")
 
         with self._lock:
             config, version = self._read_json_versioned()
@@ -184,51 +216,101 @@ class EndpointManager:
                     current_version=version,
                 )
 
-            ep_list = config.get(endpoint_type, [])
-            existing = next((e for e in ep_list if e.get("name") == lookup_name), None)
-            if lookup_name != name and any(e.get("name") == name for e in ep_list):
-                raise ValueError(f"Endpoint with name '{name}' already exists")
-
-            # Resolve api_key_env
+            shared_env_var = None
             if api_key is not None:
-                env_var = self._resolve_env_var(endpoint, existing, config)
-
-                # If this env_var is shared with other endpoints and the key
-                # value is DIFFERENT, allocate a new unique env_var for this
-                # endpoint to avoid overwriting others.
+                first = dict(endpoints[0])
+                first_name = str(first.get("name") or "").strip()
+                existing = next(
+                    (
+                        e
+                        for e in config.get(endpoint_type, [])
+                        if e.get("name") == first_name
+                    ),
+                    None,
+                )
+                shared_env_var = self._resolve_env_var(first, existing, config)
                 other_users = self._find_endpoints_using_env_var(
                     config,
-                    env_var,
-                    exclude_name=lookup_name,
+                    shared_env_var,
+                    exclude_name=first_name,
                 )
                 if other_users:
                     env = _parse_env(_read_text_robust(self._env_path))
-                    old_val = env.get(env_var, "")
+                    old_val = env.get(shared_env_var, "")
                     if old_val and old_val != api_key:
-                        env_var = self._allocate_unique_env_var(endpoint, config)
+                        shared_env_var = self._allocate_unique_env_var(first, config)
+                self._write_env_key(shared_env_var, api_key)
+                os.environ[shared_env_var] = api_key
 
-                # Write .env first (prefer losing an orphan key over losing endpoint data)
-                self._write_env_key(env_var, api_key)
-                os.environ[env_var] = api_key
-            else:
-                env_var = (
-                    existing.get("api_key_env", "") if existing else endpoint.get("api_key_env", "")
+            saved: list[dict] = []
+            for endpoint in endpoints:
+                item = dict(endpoint)
+                if shared_env_var:
+                    item["api_key_env"] = shared_env_var
+                saved.append(
+                    self._save_endpoint_locked(
+                        config=config,
+                        endpoint=item,
+                        api_key=None,
+                        endpoint_type=endpoint_type,
+                    )
                 )
 
-            endpoint["api_key_env"] = env_var
-
-            # Upsert into endpoint list
-            if existing:
-                idx = ep_list.index(existing)
-                ep_list[idx] = {**existing, **endpoint}
-            else:
-                ep_list.append(endpoint)
-
-            ep_list.sort(key=lambda e: (int(e.get("priority", 999)), e.get("name", "")))
-            config[endpoint_type] = ep_list
             self._write_json(config)
+            return saved
 
-            return endpoint
+    def _save_endpoint_locked(
+        self,
+        *,
+        config: dict,
+        endpoint: dict,
+        api_key: str | None,
+        endpoint_type: str,
+        original_name: str | None = None,
+    ) -> dict:
+        """Upsert one endpoint into an already locked, mutable config dict."""
+        name = str(endpoint.get("name") or "").strip()
+        if not name:
+            raise ValueError("Endpoint must have a name")
+        endpoint["name"] = name
+        lookup_name = (original_name or name).strip()
+
+        ep_list = config.get(endpoint_type, [])
+        existing = next((e for e in ep_list if e.get("name") == lookup_name), None)
+        if lookup_name != name and any(e.get("name") == name for e in ep_list):
+            raise ValueError(f"Endpoint with name '{name}' already exists")
+
+        if api_key is not None:
+            env_var = self._resolve_env_var(endpoint, existing, config)
+            other_users = self._find_endpoints_using_env_var(
+                config,
+                env_var,
+                exclude_name=lookup_name,
+            )
+            if other_users:
+                env = _parse_env(_read_text_robust(self._env_path))
+                old_val = env.get(env_var, "")
+                if old_val and old_val != api_key:
+                    env_var = self._allocate_unique_env_var(endpoint, config)
+
+            self._write_env_key(env_var, api_key)
+            os.environ[env_var] = api_key
+        else:
+            env_var = existing.get("api_key_env", "") if existing else endpoint.get("api_key_env", "")
+
+        endpoint["api_key_env"] = env_var
+
+        if existing:
+            idx = ep_list.index(existing)
+            saved = {**existing, **endpoint}
+            ep_list[idx] = saved
+        else:
+            saved = endpoint
+            ep_list.append(saved)
+
+        ep_list.sort(key=lambda e: (int(e.get("priority", 999)), e.get("name", "")))
+        config[endpoint_type] = ep_list
+        return saved
 
     def delete_endpoint(
         self,

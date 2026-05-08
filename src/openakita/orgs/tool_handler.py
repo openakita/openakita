@@ -358,8 +358,8 @@ class OrgToolHandler:
         ``deliverables`` folder so that a malicious / careless LLM-supplied
         title cannot escape via path-traversal.
         """
-        from pathlib import Path
         from datetime import datetime
+        from pathlib import Path
 
         try:
             base_ws = Path(workspace).resolve()
@@ -1206,8 +1206,8 @@ class OrgToolHandler:
                 )
 
         try:
-            from openakita.orgs.project_store import ProjectStore
             from openakita.orgs.models import TaskStatus as _TS
+            from openakita.orgs.project_store import ProjectStore
             _store = ProjectStore(self._runtime._manager._org_dir(org_id))
             _existing = _store.find_task_by_chain(chain_id)
             if (_existing
@@ -1639,7 +1639,7 @@ class OrgToolHandler:
             mt = MemoryType(raw_mt)
         except ValueError:
             mt = MemoryType.FACT
-        entry = bb.write_node(
+        bb.write_node(
             node_id,
             content=args["content"],
             memory_type=mt,
@@ -1723,11 +1723,12 @@ class OrgToolHandler:
             roots = org.get_root_nodes()
             if caller.level >= target.level and (not roots or node_id != roots[0].id):
                 return "只能冻结比你层级低的节点"
-        target.status = NodeStatus.FROZEN
         target.frozen_by = node_id
         target.frozen_reason = args.get("reason", "")
         target.frozen_at = _now_iso()
-        await self._runtime._save_org(org)
+        await self._runtime.set_node_status(
+            org, target, NodeStatus.FROZEN, "freeze", current_task="",
+        )
         messenger = self._runtime.get_messenger(org_id)
         if messenger:
             messenger.freeze_mailbox(target.id)
@@ -1749,12 +1750,13 @@ class OrgToolHandler:
             return f"节点未找到: {target_id}"
         if target.status != NodeStatus.FROZEN:
             return f"{target.role_title} 未处于冻结状态"
-        target.status = NodeStatus.IDLE
         target.frozen_by = None
         target.frozen_reason = None
         target.frozen_at = None
         self._runtime._node_consecutive_failures.pop(f"{org_id}:{target_id}", None)
-        await self._runtime._save_org(org)
+        await self._runtime.set_node_status(
+            org, target, NodeStatus.IDLE, "unfreeze", current_task="",
+        )
         messenger = self._runtime.get_messenger(org_id)
         if messenger:
             messenger.unfreeze_mailbox(target.id)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import os
 import time
 import uuid
 from pathlib import Path
@@ -37,7 +38,70 @@ def get_upload_dir() -> Path:
 
 
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
+MAX_AUDIO_UPLOAD_SIZE = 512 * 1024 * 1024  # 512 MB
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+_AUDIO_EXTENSIONS = {
+    ".aac",
+    ".aiff",
+    ".amr",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".ogg",
+    ".opus",
+    ".wav",
+    ".weba",
+    ".webm",
+    ".wma",
+}
 BLOCKED_EXTENSIONS = {".exe", ".bat", ".cmd", ".com", ".scr", ".pif", ".msi", ".sh", ".ps1"}
+
+
+def _configured_size(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(float(raw) * 1024 * 1024))
+    except ValueError:
+        logger.warning("Invalid %s=%r, using default", name, raw)
+        return default
+
+
+def _is_audio_upload(filename: str | None, content_type: str | None) -> bool:
+    if (content_type or "").lower().startswith("audio/"):
+        return True
+    return Path(filename or "").suffix.lower() in _AUDIO_EXTENSIONS
+
+
+def _upload_limit_for(filename: str | None, content_type: str | None) -> int:
+    if _is_audio_upload(filename, content_type):
+        return _configured_size("OPENAKITA_MAX_AUDIO_UPLOAD_MB", MAX_AUDIO_UPLOAD_SIZE)
+    return _configured_size("OPENAKITA_MAX_UPLOAD_MB", MAX_UPLOAD_SIZE)
+
+
+def resolve_upload_path(url_or_filename: str) -> Path | None:
+    """Return the local path for an uploaded file URL or filename.
+
+    Desktop attachments are served through /api/uploads/*, but tools need a
+    filesystem path. Keep this resolver in the upload module so all callers use
+    the same path traversal checks as the download route.
+    """
+    value = (url_or_filename or "").strip()
+    if not value:
+        return None
+    filename = value.rsplit("/", 1)[-1].split("?", 1)[0]
+    if not filename:
+        return None
+    upload_dir = get_upload_dir().resolve()
+    filepath = (upload_dir / filename).resolve()
+    try:
+        filepath.relative_to(upload_dir)
+    except ValueError:
+        return None
+    if not filepath.is_file():
+        return None
+    return filepath
 
 
 @router.post("/api/upload")
@@ -57,22 +121,46 @@ async def upload_file(file: UploadFile = File(...)):  # noqa: B008
     unique_name = f"{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}"
     filepath = upload_dir / unique_name
 
-    # Save file（带大小限制）
-    content = await file.read()
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"文件过大: {len(content) / 1024 / 1024:.1f} MB（最大 {MAX_UPLOAD_SIZE // 1024 // 1024} MB）",
-        )
-    filepath.write_bytes(content)
+    # Save file in chunks so large voice notes do not have to fit in memory.
+    max_size = _upload_limit_for(file.filename, file.content_type)
+    size = 0
+    try:
+        with filepath.open("wb") as out:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_size:
+                    out.close()
+                    filepath.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"文件过大: {size / 1024 / 1024:.1f} MB"
+                            f"（当前类型最大 {max_size // 1024 // 1024} MB）"
+                        ),
+                    )
+                out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception:
+        filepath.unlink(missing_ok=True)
+        logger.exception("Failed to save upload: %s", file.filename)
+        raise HTTPException(status_code=500, detail="文件上传失败，请稍后重试。")
+
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0]
 
     return {
         "status": "ok",
+        "upload_id": unique_name,
         "filename": unique_name,
         "original_name": file.filename,
-        "size": len(content),
-        "content_type": file.content_type,
+        "size": size,
+        "content_type": content_type,
+        "mime_type": content_type,
         "url": f"/api/uploads/{unique_name}",
+        "local_path": str(filepath),
     }
 
 

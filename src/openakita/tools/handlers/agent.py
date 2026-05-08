@@ -188,24 +188,17 @@ class AgentToolHandler:
                 if store:
                     # ALL occurrences (including the first) get ephemeral clones
                     # to avoid sharing a pool instance with previous delegations
-                    from ...agents.profile import AgentProfile, AgentType
+                    from ...agents.profile import AgentType
 
                     base = store.get(agent_id)
                     if base:
                         ts = int(time.time() * 1000)
                         idx = seen_counter[agent_id]
                         eph_id = f"ephemeral_{agent_id}_{ts}_{idx}"
-                        clone = AgentProfile(
+                        clone = base.derive(
                             id=eph_id,
                             name=f"{base.name} (分身{idx})",
-                            description=base.description,
                             type=AgentType.DYNAMIC,
-                            skills=list(base.skills),
-                            skills_mode=base.skills_mode,
-                            custom_prompt=base.custom_prompt or "",
-                            icon=base.icon or "🤖",
-                            color=base.color or "#6b7280",
-                            fallback_profile_id=base.fallback_profile_id,
                             created_by="ai_parallel_clone",
                             ephemeral=True,
                             inherit_from=agent_id,
@@ -374,7 +367,7 @@ class AgentToolHandler:
             getattr(getattr(session, "context", None), "agent_profile_id", "default") or "default"
         )
 
-        from ...agents.profile import AgentProfile, AgentType, SkillsMode
+        from ...agents.profile import AgentType, SkillsMode
 
         store = self._get_profile_store()
         base_profile = store.get(inherit_from) if store else None
@@ -396,7 +389,7 @@ class AgentToolHandler:
         if custom_prompt_overlay:
             merged_prompt = f"{merged_prompt}\n\n{custom_prompt_overlay}".strip()
 
-        ephemeral_profile = AgentProfile(
+        ephemeral_profile = base_profile.derive(
             id=ephemeral_id,
             name=f"{base_profile.name} (临时)",
             description=f"Inherited from {inherit_from}: {reason or message[:80]}",
@@ -404,9 +397,6 @@ class AgentToolHandler:
             skills=merged_skills,
             skills_mode=base_profile.skills_mode if merged_skills else SkillsMode.ALL,
             custom_prompt=merged_prompt,
-            icon=base_profile.icon or "🤖",
-            color=base_profile.color or "#6b7280",
-            fallback_profile_id=base_profile.fallback_profile_id,
             created_by="ai_spawn",
             ephemeral=True,
             inherit_from=inherit_from,
@@ -443,6 +433,9 @@ class AgentToolHandler:
         skills = params.get("skills") or []
         custom_prompt = (params.get("custom_prompt") or "").strip()
         persistent = bool(params.get("persistent", False))
+        identity_mode = params.get("identity_mode") or "shared"
+        memory_mode = params.get("memory_mode") or "shared"
+        memory_inherit_global = params.get("memory_inherit_global", True)
 
         if not name:
             return "❌ name is required"
@@ -510,6 +503,9 @@ class AgentToolHandler:
             custom_prompt=custom_prompt,
             icon="🤖",
             color="#6b7280",
+            identity_mode=identity_mode,
+            memory_mode=memory_mode,
+            memory_inherit_global=memory_inherit_global,
             created_by="ai",
             ephemeral=is_ephemeral,
         )

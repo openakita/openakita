@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,16 @@ class GenerateTitleRequest(BaseModel):
     message: str = Field(..., description="用户第一条消息")
     reply: str = Field("", description="AI 回复摘要（可选）")
     conversation_id: str = Field("", description="会话 ID（用于跨设备标题同步）")
+
+
+class SessionUiStateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    endpoint_id: str | None = Field(None, alias="endpointId", max_length=200)
+    endpoint_policy: Literal["prefer", "require"] = Field("prefer", alias="endpointPolicy")
+    org_mode: bool = Field(False, alias="orgMode")
+    org_id: str | None = Field(None, alias="orgId", max_length=128)
+    org_node_id: str | None = Field(None, alias="orgNodeId", max_length=128)
 
 
 def _visible_history_messages(session) -> list[tuple[int, dict]]:
@@ -163,6 +174,12 @@ async def list_sessions(request: Request, channel: str = "desktop"):
             if isinstance(last_content, str):
                 last_msg_content = last_content[:100]
 
+        selected_endpoint = s.get_metadata("selected_endpoint") or ""
+        endpoint_policy = s.get_metadata("endpoint_policy") or "prefer"
+        ui_org_state = s.get_metadata("ui_org_state") or {}
+        if not isinstance(ui_org_state, dict):
+            ui_org_state = {}
+
         result.append(
             {
                 "id": s.chat_id,
@@ -171,6 +188,11 @@ async def list_sessions(request: Request, channel: str = "desktop"):
                 "timestamp": int(s.last_active.timestamp() * 1000),
                 "messageCount": len(visible_msgs),
                 "agentProfileId": getattr(s.context, "agent_profile_id", "default"),
+                "endpointId": selected_endpoint or None,
+                "endpointPolicy": endpoint_policy if selected_endpoint else "prefer",
+                "orgMode": bool(ui_org_state.get("orgMode") and ui_org_state.get("orgId")),
+                "orgId": ui_org_state.get("orgId") or None,
+                "orgNodeId": ui_org_state.get("orgNodeId") or None,
             }
         )
 
@@ -180,6 +202,48 @@ async def list_sessions(request: Request, channel: str = "desktop"):
         data_epoch = wac.data_epoch
 
     return {"sessions": result, "data_epoch": data_epoch, "ready": True}
+
+
+@router.post("/api/sessions/{conversation_id}/ui-state")
+async def update_session_ui_state(
+    request: Request,
+    conversation_id: str,
+    body: SessionUiStateRequest,
+    channel: str = "desktop",
+    user_id: str = "desktop_user",
+):
+    """Persist per-conversation UI selections such as model endpoint and org mode."""
+    _validate_id(conversation_id, "conversation_id")
+    _validate_id(channel, "channel")
+    _validate_id(user_id, "user_id")
+    session_manager = getattr(request.app.state, "session_manager", None)
+    if not session_manager:
+        raise HTTPException(status_code=503, detail="Session manager unavailable")
+
+    session = session_manager.get_session(
+        channel=channel,
+        chat_id=conversation_id,
+        user_id=user_id,
+        create_if_missing=False,
+    )
+    if session is None:
+        return {"ok": False, "reason": "session_not_found"}
+    session.set_metadata("selected_endpoint", body.endpoint_id or "")
+    session.set_metadata("endpoint_policy", body.endpoint_policy if body.endpoint_id else "prefer")
+    session.set_metadata(
+        "ui_org_state",
+        {
+            "orgMode": bool(body.org_mode and body.org_id),
+            "orgId": body.org_id or "",
+            "orgNodeId": body.org_node_id or "",
+        },
+    )
+    session_manager.mark_dirty()
+    try:
+        session_manager.persist()
+    except Exception as exc:
+        logger.warning("[Sessions API] Failed to persist UI state: %s", exc)
+    return {"ok": True}
 
 
 @router.get("/api/sessions/{conversation_id}/history")

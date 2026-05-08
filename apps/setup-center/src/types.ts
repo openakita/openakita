@@ -217,6 +217,8 @@ export type ChatMessage = {
   } | null;
   timestamp: number;
   streaming?: boolean;
+  /** Ephemeral UI-only status while an SSE stream is alive; never persisted as message content. */
+  streamStatus?: string | null;
 };
 
 // ─── 思维链 (Thinking Chain) 类型 ───
@@ -314,9 +316,13 @@ export type ChatAttachment = {
   type: "image" | "file" | "voice" | "video" | "document";
   name: string;
   url?: string;
+  localPath?: string;
+  uploadId?: string;
   previewUrl?: string;
   size?: number;
   mimeType?: string;
+  uploadStatus?: "uploading" | "uploaded" | "failed";
+  uploadError?: string;
   /** Transient upload tracking ID — not persisted to backend */
   _uploadId?: string;
 };
@@ -334,6 +340,10 @@ export type ChatConversation = {
   titleManuallySet?: boolean;
   agentProfileId?: string;
   endpointId?: string;
+  endpointPolicy?: "prefer" | "require";
+  orgMode?: boolean;
+  orgId?: string;
+  orgNodeId?: string;
   status?: ConversationStatus;
 };
 

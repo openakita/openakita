@@ -8,7 +8,8 @@ import pytest
 
 from openakita.core.prompt_assembler import PromptAssembler
 from openakita.prompt.builder import _build_catalogs_section
-from openakita.skills.catalog import SkillCatalog
+from openakita.skills.catalog import SKILL_INSTRUCTION_ADVISORY, SkillCatalog
+from openakita.skills.registry import SkillEntry
 from openakita.tools.handlers.skills import SkillsHandler
 
 
@@ -82,6 +83,32 @@ def test_catalog_scope_index_uses_skill_index_without_grouped_expansion():
     assert "技能使用规则" in output
 
 
+def test_skill_catalog_marks_instructions_as_guidance():
+    catalog = _make_catalog([
+        _FakeSkill("brainstorming", "Must ask one question first", category="workflow")
+    ])
+
+    grouped = catalog.get_grouped_compact_catalog()
+    index = catalog.get_index_catalog()
+
+    assert SKILL_INSTRUCTION_ADVISORY in grouped
+    assert SKILL_INSTRUCTION_ADVISORY in index
+
+
+def test_skill_guidance_advisory_is_not_duplicated_in_prompt_rules():
+    catalog = _make_catalog([
+        _FakeSkill("brainstorming", "Must ask one question first", category="workflow")
+    ])
+
+    output = _build_catalogs_section(
+        tool_catalog=None,
+        skill_catalog=catalog,
+        mcp_catalog=None,
+    )
+
+    assert output.count(SKILL_INSTRUCTION_ADVISORY) == 1
+
+
 @pytest.mark.asyncio
 async def test_prompt_assembler_passes_intent_tool_hints(monkeypatch):
     captured = {}
@@ -136,3 +163,26 @@ def test_list_skills_defaults_to_compact_directory(tmp_path: Path):
     assert "path=" not in compact
     assert "long trigger description long trigger description long trigger description" in verbose
     assert "path=" in verbose
+
+
+def test_get_skill_info_marks_external_skill_instructions_as_guidance(tmp_path: Path):
+    skill_path = tmp_path / "brainstorming" / "SKILL.md"
+    skill_path.parent.mkdir()
+    skill_path.write_text("---\nname: brainstorming\n---\n", encoding="utf-8")
+    skill = SkillEntry(
+        skill_id="brainstorming",
+        name="brainstorming",
+        description="Explore design before implementation.",
+        skill_path=str(skill_path),
+        _parsed_skill=SimpleNamespace(body="You MUST ask one question at a time."),
+    )
+    registry = MagicMock()
+    registry.get.return_value = skill
+    registry.list_all.return_value = [skill]
+    handler = SkillsHandler(SimpleNamespace(skill_registry=registry))
+
+    output = handler._get_skill_info({"skill_name": "brainstorming"})
+
+    assert "**类型**: 外部技能" in output
+    assert SKILL_INSTRUCTION_ADVISORY in output
+    assert "You MUST ask one question at a time." in output

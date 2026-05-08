@@ -54,7 +54,11 @@ export function friendlyFetchError(rawError: string, t: (k: string, vars?: Recor
  */
 export function inferCapabilities(modelName: string, _providerSlug?: string | null): Record<string, boolean> {
   const m = modelName.toLowerCase();
-  const caps: Record<string, boolean> = { text: true, vision: false, video: false, tools: false, thinking: false };
+  const caps: Record<string, boolean> = { text: true, vision: false, video: false, tools: false, thinking: false, image_generation: false };
+
+  if (isImageGenerationModel(modelName)) {
+    return { ...caps, text: false, image_generation: true };
+  }
 
   if (["vl", "vision", "visual", "image", "-v-", "4v"].some(kw => m.includes(kw))) caps.vision = true;
   if (["kimi", "gemini"].some(kw => m.includes(kw))) caps.video = true;
@@ -65,10 +69,36 @@ export function inferCapabilities(modelName: string, _providerSlug?: string | nu
   return caps;
 }
 
+export function isImageGenerationModel(modelName: string): boolean {
+  const m = modelName.trim().toLowerCase();
+  return ["qwen-image", "wanx-", "dall-e", "gpt-image"].some(prefix => m.startsWith(prefix));
+}
+
 export function isMiniMaxProvider(providerSlug: string | null, baseUrl: string): boolean {
   const slug = (providerSlug || "").toLowerCase();
   const base = (baseUrl || "").toLowerCase();
   return ["minimax", "minimax-cn", "minimax-int"].includes(slug) || base.includes("minimax") || base.includes("minimaxi");
+}
+
+export function isOpenRouterProvider(providerSlug: string | null, baseUrl: string): boolean {
+  const slug = (providerSlug || "").toLowerCase();
+  const base = (baseUrl || "").toLowerCase();
+  return slug === "openrouter" || base.includes("openrouter.ai");
+}
+
+function openRouterRouterModels(): ListedModel[] {
+  return [
+    {
+      id: "openrouter/auto",
+      name: "OpenRouter Auto Router",
+      capabilities: { ...inferCapabilities("openrouter/auto", "openrouter"), tools: true },
+    },
+    {
+      id: "openrouter/free",
+      name: "OpenRouter Free Models Router",
+      capabilities: { ...inferCapabilities("openrouter/free", "openrouter"), tools: true },
+    },
+  ];
 }
 
 export function isVolcCodingPlanProvider(providerSlug: string | null, baseUrl: string): boolean {
@@ -267,14 +297,21 @@ export async function fetchModelsDirectly(params: {
     throw new Error(`API ${resp.status}: ${resp.body.slice(0, 200)}`);
   }
   const data = JSON.parse(resp.body);
-  return (data.data ?? [])
+  const routerModels = isOpenRouterProvider(providerSlug, baseUrl) ? openRouterRouterModels() : [];
+  const seen = new Set(routerModels.map((m) => m.id));
+  const apiModels = (data.data ?? [])
     .map((m: any) => ({
       id: String(m.id ?? "").trim(),
       name: String(m.id ?? ""),
       capabilities: inferCapabilities(String(m.id ?? ""), providerSlug),
     }))
-    .filter((m: ListedModel) => m.id)
+    .filter((m: ListedModel) => {
+      if (!m.id || seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    })
     .sort((a: ListedModel, b: ListedModel) => a.id.localeCompare(b.id));
+  return [...routerModels, ...apiModels];
 }
 
 /**

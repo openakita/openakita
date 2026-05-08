@@ -535,23 +535,21 @@ class BrowserHandler:
     # ── view_image / screenshot 多模态支持 ────────────
 
     def _model_supports_vision(self) -> bool:
-        """检查当前 LLM 是否支持 vision（图片输入）。"""
-        try:
-            from ...llm.capabilities import get_provider_slug_from_base_url, infer_capabilities
+        """检查当前 LLM 路由是否存在可用 vision 端点。
 
+        工具层只决定是否值得返回图片内容；最终发给哪个端点、是否需要
+        降级，由 LLMClient 在发送前统一处理。
+        """
+        try:
             brain = getattr(self.agent, "brain", None)
             if not brain:
                 return False
-            model = getattr(brain, "model_name", "") or ""
-            base_url = ""
             llm_client = getattr(brain, "_llm_client", None)
-            if llm_client:
-                base_url = getattr(llm_client, "base_url", "") or ""
-            provider = get_provider_slug_from_base_url(base_url) if base_url else None
-            caps = infer_capabilities(model, provider)
-            return caps.get("vision", False)
+            if llm_client and hasattr(llm_client, "has_any_endpoint_with_capability"):
+                return bool(llm_client.has_any_endpoint_with_capability("vision"))
         except Exception:
             return False
+        return False
 
     @staticmethod
     def _load_image_as_base64(path_str: str) -> tuple[str, str, int, int] | None:
@@ -649,6 +647,47 @@ class BrowserHandler:
         return f"✅ 图片: {path_str} ({w}x{h})\n\n{description}"
 
     @staticmethod
+    def _is_unhelpful_vision_text(text: str) -> bool:
+        lowered = text.lower()
+        markers = (
+            "无法直接查看",
+            "无法看到",
+            "没有看到任何图片",
+            "不能查看图片",
+            "看不到图片",
+            "unable to view",
+            "can't view",
+            "cannot view",
+            "cannot see the image",
+        )
+        return any(marker in lowered for marker in markers)
+
+    @staticmethod
+    def _vision_unavailable_message() -> str:
+        return (
+            "[图片分析未完成]\n"
+            "图片文件已读取，但当前没有可用的视觉模型端点来理解截图内容。"
+            "请继续使用 desktop_window、desktop_inspect、desktop_find_element、日志读取、"
+            "文件搜索或 PowerShell 命令把界面状态转成文本后再判断；"
+            "如果任务必须读取屏幕文字或图像细节，请配置带 vision 能力的模型端点。"
+        )
+
+    @staticmethod
+    def _vision_endpoint_available() -> bool:
+        try:
+            from ...llm.client import get_default_client
+
+            client = get_default_client()
+            providers = getattr(client, "_providers", {})
+            for provider in providers.values():
+                config = getattr(provider, "config", None)
+                if config and config.has_capability("vision") and provider.is_healthy:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
     async def _download_and_load_image(url: str) -> tuple[str, str, int, int] | None:
         """下载 HTTP(S) 图片到临时文件并加载为 base64。"""
         import tempfile
@@ -703,6 +742,9 @@ class BrowserHandler:
         question: str = "",
     ) -> str:
         """使用 VL 模型对图片进行文字描述（当主模型不支持 vision 时的降级方案）。"""
+        if not self._vision_endpoint_available():
+            return self._vision_unavailable_message()
+
         try:
             from ...llm.client import get_default_client
             from ...llm.types import ImageBlock, ImageContent, Message, TextBlock
@@ -723,12 +765,15 @@ class BrowserHandler:
             if response.content:
                 for block in response.content:
                     if hasattr(block, "text"):
-                        return f"[图片分析结果]\n{block.text}"
+                        text = block.text
+                        if self._is_unhelpful_vision_text(text):
+                            return self._vision_unavailable_message()
+                        return f"[图片分析结果]\n{text}"
 
             return "[图片分析] 无法获取描述"
         except Exception as e:
             logger.warning(f"[view_image] VL fallback failed: {e}")
-            return f"[图片分析失败: {e}]\n提示: 当前模型不支持图片输入，建议切换到支持 vision 的模型（如 qwen-vl-plus）。"
+            return f"[图片分析失败: {e}]\n{self._vision_unavailable_message()}"
 
     def _try_embed_screenshot(self, result: dict) -> list | None:
         """尝试将 browser_screenshot 的结果嵌入图片内容。

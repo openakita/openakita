@@ -355,13 +355,24 @@ class TaskExecutor:
             task: 要执行的任务
             skip_end_notification: 是否跳过结束通知（用于从提醒升级的情况）
         """
-        # 检查是否是系统任务（需要特殊处理）
-        if task.action and task.action.startswith("system:"):
-            return await self._execute_system_task(task)
-
         agent = None
         im_context_set = False
         try:
+            # 系统任务只负责产出结果，通知仍走统一路径，避免完成结果只写历史不发 IM。
+            if task.action and task.action.startswith("system:"):
+                system_success, system_result = await self._execute_system_task(task)
+                if not skip_end_notification:
+                    delivered = await self._send_end_notification(
+                        task,
+                        success=system_success,
+                        message=system_result,
+                    )
+                    if not delivered:
+                        error_msg = "任务已完成，但结果通知发送失败，请检查 IM 通道连接状态。"
+                        logger.warning(f"TaskExecutor: system task {task.id} result delivery failed")
+                        return False, error_msg
+                return system_success, system_result
+
             # 1. 创建 Agent
             agent = await self._create_agent(task.agent_profile_id)
 
@@ -394,7 +405,7 @@ class TaskExecutor:
                         f"(default: {self.timeout_seconds}s)"
                     )
             try:
-                result = await asyncio.wait_for(
+                agent_success, result = await asyncio.wait_for(
                     self._run_agent(agent, prompt), timeout=task_timeout
                 )
             except TimeoutError:
@@ -408,9 +419,19 @@ class TaskExecutor:
                 return False, error_msg
 
             # 5. 发送结果通知（如果需要）
+            if not agent_success:
+                if not skip_end_notification:
+                    await self._send_end_notification(task, success=False, message=result)
+                logger.warning(f"TaskExecutor: task {task.id} failed via agent result: {result}")
+                return False, result
+
             agent_sent = getattr(agent, "_task_message_sent", False)
             if not agent_sent and not skip_end_notification:
-                await self._send_end_notification(task, success=True, message=result)
+                delivered = await self._send_end_notification(task, success=True, message=result)
+                if not delivered:
+                    error_msg = "任务已完成，但结果通知发送失败，请检查 IM 通道连接状态。"
+                    logger.warning(f"TaskExecutor: task {task.id} result delivery failed")
+                    return False, error_msg
 
             logger.info(f"TaskExecutor: task {task.id} completed successfully")
             return True, result
@@ -443,12 +464,16 @@ class TaskExecutor:
         try:
             notification = f"🚀 开始执行任务: {task.name}\n\n请稍候，我正在处理中..."
 
-            await self.gateway.send(
+            delivered = await self._send_gateway_text(
                 channel=task.channel_id,
                 chat_id=task.chat_id,
                 text=notification,
+                reliable=False,
             )
-            logger.info(f"Sent start notification for task {task.id}")
+            if delivered:
+                logger.info(f"Sent start notification for task {task.id}")
+            else:
+                logger.info(f"Start notification for task {task.id} was not immediately delivered")
 
         except Exception as e:
             logger.error(f"Failed to send start notification: {e}")
@@ -458,7 +483,7 @@ class TaskExecutor:
         task: ScheduledTask,
         success: bool,
         message: str,
-    ) -> None:
+    ) -> bool:
         """发送任务结束通知（IM 通道 + 桌面通知）"""
         # 桌面通知（独立于 IM 通道，始终尝试）
         try:
@@ -475,33 +500,95 @@ class TaskExecutor:
         except Exception as e:
             logger.debug(f"Desktop notification failed for task {task.id}: {e}")
 
-        # IM 通道通知
-        if not task.channel_id or not task.chat_id or not self.gateway:
+        # IM 通道通知。没有配置目标通道时只做桌面通知不视为失败；但已经配置
+        # channel/chat_id 却缺少 gateway 时，不能把“未发送”记录成成功。
+        if not task.channel_id or not task.chat_id:
             logger.debug(f"Task {task.id} has no notification channel configured")
-            return
+            return True
+
+        if not self.gateway:
+            logger.warning(
+                f"TaskExecutor: task {task.id} has target channel "
+                f"{task.channel_id}/{task.chat_id} but no gateway is attached"
+            )
+            return False
 
         if not task.metadata.get("notify_on_complete", True):
             logger.debug(f"Task {task.id} has completion notification disabled")
-            return
+            return True
 
-        try:
-            status = "✅ 任务完成" if success else "❌ 任务失败"
-            notification = f"""{status}: {task.name}
+        status = "✅ 任务完成" if success else "❌ 任务失败"
+        notification = f"""{status}: {task.name}
 
 结果:
 {message}
 """
 
-            await self.gateway.send(
+        delivered = await self._deliver_task_notification(task, notification)
+        if delivered:
+            logger.info(f"Sent end notification for task {task.id}")
+            return True
+
+        logger.warning(
+            f"TaskExecutor: end notification for task {task.id} was not delivered "
+            f"({task.channel_id}/{task.chat_id})"
+        )
+        return False
+
+    async def _deliver_task_notification(self, task: ScheduledTask, text: str) -> bool:
+        """投递任务通知；主通道失败时尝试已知 IM 目标，保持单一通知入口。"""
+        primary = (task.channel_id, task.chat_id)
+        if task.channel_id and task.chat_id:
+            if await self._send_gateway_text(
                 channel=task.channel_id,
                 chat_id=task.chat_id,
-                text=notification,
-            )
+                text=text,
+                user_id=task.user_id or "system",
+            ):
+                return True
 
-            logger.info(f"Sent end notification for task {task.id}")
+        for channel, chat_id in self._find_all_im_targets():
+            if (channel, chat_id) == primary:
+                continue
+            if await self._send_gateway_text(channel=channel, chat_id=chat_id, text=text):
+                logger.info(
+                    f"TaskExecutor: notification for {task.id} delivered via fallback "
+                    f"{channel}/{chat_id}"
+                )
+                return True
 
+        return False
+
+    async def _send_gateway_text(
+        self,
+        *,
+        channel: str,
+        chat_id: str,
+        text: str,
+        user_id: str = "system",
+        reliable: bool = True,
+    ) -> bool:
+        """Return True only for immediate delivery, not platform-side queued sends."""
+        if not self.gateway:
+            return False
+        try:
+            if reliable and hasattr(self.gateway, "send_text_reliably"):
+                return bool(
+                    await self.gateway.send_text_reliably(
+                        channel=channel,
+                        chat_id=chat_id,
+                        text=text,
+                        user_id=user_id,
+                    )
+                )
+
+            result = await self.gateway.send(channel=channel, chat_id=chat_id, text=text)
+            if isinstance(result, str):
+                return bool(result)
+            return result is not None
         except Exception as e:
-            logger.error(f"Failed to send end notification: {e}")
+            logger.warning(f"TaskExecutor: send failed for {channel}/{chat_id}: {e}")
+            return False
 
     async def _setup_im_context(self, agent: Any, task: ScheduledTask) -> bool:
         """
@@ -581,7 +668,7 @@ class TaskExecutor:
             logger.debug("Failed to load agent profile %r", profile_id, exc_info=True)
             return None
 
-    async def _run_agent(self, agent: Any, prompt: str) -> str:
+    async def _run_agent(self, agent: Any, prompt: str) -> tuple[bool, str]:
         """
         运行 Agent（使用 Ralph 模式）
 
@@ -592,11 +679,13 @@ class TaskExecutor:
         if hasattr(agent, "execute_task_from_message"):
             result = await agent.execute_task_from_message(prompt)
             if isinstance(result, str):
-                return result
-            return result.data if result.success else (result.error or "Unknown error")
+                return True, result
+            if result.success:
+                return True, str(result.data or "")
+            return False, result.error or "Unknown error"
         # 降级到普通 chat
         elif hasattr(agent, "chat"):
-            return await agent.chat(prompt)
+            return True, await agent.chat(prompt)
         else:
             raise ValueError("Agent does not have execute_task_from_message or chat method")
 
@@ -621,20 +710,40 @@ class TaskExecutor:
         action = task.action
         logger.info(f"Executing system task: {action}")
 
+        from ..config import settings
+        from ..core.token_tracking import (
+            TokenBudgetState,
+            reset_token_budget,
+            set_token_budget,
+            token_budget_status,
+        )
+
         # 系统任务也需要超时保护，避免 selfcheck 等任务无限运行
         SYSTEM_TASK_TIMEOUTS = {
-            "system:daily_selfcheck": 300,  # 5 分钟
+            "system:daily_selfcheck": max(settings.scheduler_task_timeout, 1200),
             "system:daily_memory": 1800,  # 30 分钟（含 LLM review 大量记忆）
             "system:workspace_backup": 300,  # 5 分钟
             "system:memory_nudge_review": 120,  # 2 分钟（轻量 LLM 审视）
         }
         timeout = SYSTEM_TASK_TIMEOUTS.get(action)
+        budget_tokens = (
+            settings.scheduler_background_token_budget
+            if action
+            in {"system:daily_selfcheck", "system:daily_memory", "system:memory_nudge_review"}
+            else 0
+        )
+        budget_token = set_token_budget(
+            TokenBudgetState(name=action or "system_task", max_tokens=budget_tokens)
+            if budget_tokens > 0
+            else None
+        )
 
         try:
             if action == "system:daily_memory":
                 coro = self._system_daily_memory()
             elif action == "system:daily_selfcheck":
-                coro = self._system_daily_selfcheck()
+                soft_timeout = max(timeout - 30, 1) if timeout else None
+                coro = self._system_daily_selfcheck(soft_timeout)
             elif action == "system:proactive_heartbeat":
                 return await self._system_proactive_heartbeat(task)
             elif action == "system:workspace_backup":
@@ -655,6 +764,13 @@ class TaskExecutor:
                         )
                         logger.warning(f"TaskExecutor: {result_msg}")
                         return True, result_msg
+                    if action == "system:daily_selfcheck":
+                        result_msg = (
+                            "系统自检超过后台保护时长，已停止本轮检查。"
+                            "已保存的部分报告会保留，后续问题下次继续处理。"
+                        )
+                        logger.warning(f"TaskExecutor: {result_msg}")
+                        return True, result_msg
                     error_msg = f"System task {action} timed out after {timeout}s"
                     logger.error(f"TaskExecutor: {error_msg}")
                     return False, error_msg
@@ -664,6 +780,17 @@ class TaskExecutor:
         except Exception as e:
             logger.error(f"System task {action} failed: {e}")
             return False, str(e)
+        finally:
+            status = token_budget_status()
+            if status.get("enabled"):
+                logger.info(
+                    "System task token budget: action=%s used=%s max=%s exceeded=%s",
+                    action,
+                    status.get("used_tokens"),
+                    status.get("max_tokens"),
+                    status.get("exceeded"),
+                )
+            reset_token_budget(budget_token)
 
     async def _system_daily_memory(self) -> tuple[bool, str]:
         """
@@ -1042,7 +1169,10 @@ class TaskExecutor:
             logger.error(f"Proactive heartbeat failed: {e}")
             return False, str(e)
 
-    async def _system_daily_selfcheck(self) -> tuple[bool, str]:
+    async def _system_daily_selfcheck(
+        self,
+        max_runtime_seconds: int | None = None,
+    ) -> tuple[bool, str]:
         """
         执行系统自检
 
@@ -1076,7 +1206,10 @@ class TaskExecutor:
             # 2. 执行自检（传入时间范围，复用 agent 的 memory_manager 避免 DB 锁冲突）
             brain = Brain()
             checker = SelfChecker(brain=brain, memory_manager=self.memory_manager)
-            report = await checker.run_daily_check(since=since)
+            report = await checker.run_daily_check(
+                since=since,
+                max_runtime_seconds=max_runtime_seconds,
+            )
 
             # 2.1 生成 Markdown 报告文本（用于 IM 推送）
             report_md = None
@@ -1139,6 +1272,8 @@ class TaskExecutor:
                 f"- 分析范围: {time_range_info}\n"
                 f"- 报告推送: {push_info}"
             )
+            if getattr(report, "partial", False):
+                summary += f"\n- 状态: 部分完成（{getattr(report, 'status_note', '')}）"
 
             logger.info(
                 f"Selfcheck completed: {report.total_errors} errors, {report.fix_success} fixed"
@@ -1269,7 +1404,7 @@ class TaskExecutor:
 
         Args:
             task: 任务
-        suppress_send_to_chat: 是否禁止通过旧范式“工具发消息”（兼容旧参数；文本由网关自动发送）
+        suppress_send_to_chat: 兼容旧参数；当前仅用于提示系统会兜底转发文本。
         """
         # 基础 prompt
         prompt = task.prompt
@@ -1288,9 +1423,9 @@ class TaskExecutor:
         if task.channel_id and task.chat_id:
             context_parts.append("")
             if suppress_send_to_chat:
-                # 禁止发消息，由系统统一处理
                 context_parts.append(
-                    "注意: 不要尝试通过工具发送文本消息；系统会自动发送结果通知。请直接返回执行结果。"
+                    "请优先把用户需要看到的最终结果完整写在回复正文中，系统会尝试转发；"
+                    "如果任务明确需要主动告知、交付附件或结合 IM 上下文互动，可以使用可用的 IM/交付工具。"
                 )
             else:
                 context_parts.append(

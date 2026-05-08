@@ -193,6 +193,7 @@ class AgentFactory:
 
         if profile.preferred_endpoint:
             agent._preferred_endpoint = profile.preferred_endpoint
+            agent._endpoint_policy = profile.endpoint_policy or "prefer"
 
         logger.info(
             f"AgentFactory created: {profile.id} "
@@ -203,7 +204,8 @@ class AgentFactory:
             f"plugins_mode={profile.plugins_mode}, "
             f"identity_mode={profile.identity_mode}, "
             f"memory_mode={profile.memory_mode}, "
-            f"preferred_endpoint={profile.preferred_endpoint or 'auto'})"
+            f"preferred_endpoint={profile.preferred_endpoint or 'auto'}, "
+            f"endpoint_policy={profile.endpoint_policy or 'prefer'})"
         )
         return agent
 

@@ -71,7 +71,34 @@ class IMChannelHandler:
             return False
 
     @staticmethod
-    def _normalize_artifacts(raw: Any) -> list[dict]:
+    def _normalize_artifact_item(item: Any) -> dict | None:
+        if isinstance(item, str):
+            path = item.strip()
+            return {"type": "file", "path": path} if path else None
+        if not isinstance(item, dict):
+            return None
+
+        artifact = dict(item)
+        path = (
+            artifact.get("path")
+            or artifact.get("file_path")
+            or artifact.get("filepath")
+            or artifact.get("local_path")
+        )
+        if path and not artifact.get("path"):
+            artifact["path"] = path
+
+        if not artifact.get("type") and artifact.get("path"):
+            artifact["type"] = "file"
+        if not artifact.get("name"):
+            name = artifact.get("filename") or artifact.get("file_name")
+            if name:
+                artifact["name"] = name
+
+        return artifact
+
+    @classmethod
+    def _normalize_artifacts(cls, raw: Any) -> list[dict]:
         """Normalize ``artifacts`` param: handle str (JSON), list of dicts, etc.
 
         Some LLM models pass artifacts as a JSON string instead of a list.
@@ -83,9 +110,13 @@ class IMChannelHandler:
                 try:
                     parsed = json.loads(raw)
                     if isinstance(parsed, list):
-                        return [item for item in parsed if isinstance(item, dict)]
+                        return [
+                            item
+                            for item in (cls._normalize_artifact_item(item) for item in parsed)
+                            if item is not None
+                        ]
                     if isinstance(parsed, dict):
-                        return [parsed]
+                        return cls._normalize_artifacts(parsed)
                 except (json.JSONDecodeError, TypeError):
                     pass
             logger.warning(
@@ -94,10 +125,47 @@ class IMChannelHandler:
             )
             return []
         if isinstance(raw, list):
-            return [item for item in raw if isinstance(item, dict)]
+            return [
+                item
+                for item in (cls._normalize_artifact_item(item) for item in raw)
+                if item is not None
+            ]
         if isinstance(raw, dict):
-            return [raw]
+            nested = raw.get("artifacts") or raw.get("recipients") or raw.get("files")
+            nested = nested or raw.get("file_attachments") or raw.get("attachments")
+            if nested is not None:
+                return cls._normalize_artifacts(nested)
+            item = cls._normalize_artifact_item(raw)
+            return [item] if item is not None else []
         return []
+
+    @classmethod
+    def _normalize_delivery_params(cls, params: dict[str, Any]) -> dict[str, Any]:
+        """Convert legacy delivery shapes into the single ``artifacts`` manifest."""
+        normalized = dict(params or {})
+        raw = None
+        raw_key = ""
+        for key in ("artifacts", "recipients", "files", "file_attachments", "attachments"):
+            value = normalized.get(key)
+            if value not in (None, "", []):
+                raw = value
+                raw_key = key
+                break
+
+        artifacts = cls._normalize_artifacts(raw)
+        normalized["artifacts"] = artifacts
+
+        if raw_key == "recipients" and not normalized.get("target_channel"):
+            channels = {
+                str(item.get("channel") or "").strip()
+                for item in artifacts
+                if isinstance(item, dict)
+            }
+            channels -= {"", "default", "current", "desktop"}
+            if len(channels) == 1:
+                normalized["target_channel"] = next(iter(channels))
+
+        return normalized
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """处理工具调用"""
@@ -105,6 +173,7 @@ class IMChannelHandler:
 
         # deliver_artifacts 支持跨通道发送（target_channel 参数）
         if tool_name == "deliver_artifacts":
+            params = self._normalize_delivery_params(params)
             target_channel = (params.get("target_channel") or "").strip()
             if target_channel:
                 prefer_chat_type = (params.get("prefer_chat_type") or "private").strip()
@@ -545,17 +614,18 @@ class IMChannelHandler:
                 }
             )
 
-        return json.dumps(
-            {
-                "ok": all(r.get("status") == "delivered" for r in receipts),
-                "channel": "desktop",
-                "receipts": receipts,
-                "hint": "Desktop mode: files are served via /api/files/ endpoint. "
-                "Frontend should display images inline using the file_url.",
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+        ok = all(r.get("status") == "delivered" for r in receipts) if receipts else False
+        payload = {
+            "ok": ok,
+            "channel": "desktop",
+            "receipts": receipts,
+            "hint": "Desktop mode: files are served via /api/files/ endpoint. "
+            "Frontend should display images inline using the file_url.",
+        }
+        if not receipts:
+            payload["error"] = "missing_artifacts"
+            payload["error_code"] = "missing_artifacts"
+        return json.dumps(payload, ensure_ascii=False, indent=2)
 
     async def _deliver_artifacts(self, params: dict) -> str:
         """

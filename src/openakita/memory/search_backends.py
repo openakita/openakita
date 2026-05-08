@@ -35,6 +35,8 @@ class SearchBackend(Protocol):
         query: str,
         limit: int = 10,
         filter_type: str | None = None,
+        scope: str | None = None,
+        scope_owner: str | None = None,
     ) -> list[tuple[str, float]]:
         """搜索, 返回 [(memory_id, score), ...], score 越高越相关"""
         ...
@@ -83,9 +85,16 @@ class FTS5Backend:
         query: str,
         limit: int = 10,
         filter_type: str | None = None,
+        scope: str | None = None,
+        scope_owner: str | None = None,
     ) -> list[tuple[str, float]]:
         segmented = self._segment(query)
-        results = self._storage.search_fts(segmented, limit=limit * 2)
+        results = self._storage.search_fts(
+            segmented,
+            limit=limit * 2,
+            scope=scope,
+            scope_owner=scope_owner,
+        )
 
         if filter_type:
             results = [r for r in results if r.get("type", "").upper() == filter_type.upper()]
@@ -150,6 +159,8 @@ class ChromaDBBackend:
         query: str,
         limit: int = 10,
         filter_type: str | None = None,
+        scope: str | None = None,
+        scope_owner: str | None = None,
     ) -> list[tuple[str, float]]:
         results = self._vs.search(
             query=query,
@@ -227,12 +238,19 @@ class APIEmbeddingBackend:
         query: str,
         limit: int = 10,
         filter_type: str | None = None,
+        scope: str | None = None,
+        scope_owner: str | None = None,
     ) -> list[tuple[str, float]]:
         query_emb = self._get_embedding(query)
         if query_emb is None:
             return []
 
-        memories = self._storage.query(memory_type=filter_type, limit=200)
+        memories = self._storage.query(
+            memory_type=filter_type,
+            scope=scope,
+            scope_owner=scope_owner,
+            limit=200,
+        )
         if not memories:
             return []
 

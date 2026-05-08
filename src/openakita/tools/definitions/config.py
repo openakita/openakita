@@ -12,12 +12,14 @@ CONFIG_TOOLS = [
         "description": (
             "Unified system configuration tool. When user wants to: "
             "(1) view or change any system setting (log level, thinking mode, proxy, IM channel, etc.), "
-            "(2) add/remove/toggle/test LLM endpoints, "
+            "(2) add/remove/toggle/test LLM endpoints, or select the current conversation's LLM endpoint, "
             "(3) switch UI theme or language, "
             "(4) discover what settings are available, "
             "(5) manage LLM providers (add/update/remove custom providers), "
             "(6) check external extension modules (opencli, cli-anything) status and install/upgrade commands. "
-            "IMPORTANT: Before calling action=set, action=add_endpoint, or action=manage_provider with add/update/remove, "
+            "IMPORTANT: If the user wants to switch/use/select an existing model endpoint for this chat, "
+            "call action=select_endpoint. Do NOT use add_endpoint unless the user is creating a new endpoint. "
+            "Before calling action=set, action=add_endpoint, or action=manage_provider with add/update/remove, "
             "ALWAYS use ask_user first to confirm the changes with the user. "
             "If unsure which config key to use, call action=discover first."
         ),
@@ -52,6 +54,11 @@ API Key 存入 .env，JSON 中只引用环境变量名。
 ### toggle_endpoint -- 启用/停用 LLM 端点
 按名称切换端点启用状态并热重载。仅在用户明确要求启用或停用某个端点时使用。
 
+### select_endpoint -- 选择当前会话使用的 LLM 端点
+按名称临时切换当前会话的主聊天模型端点，不修改端点配置文件。
+当用户说“切换到某模型/端点”“使用某模型”“改用某端点”时优先使用本 action。
+如果 endpoint_name 为 `auto` / `default` / `默认`，则恢复默认模型选择。
+
 ### test_endpoint -- 测试端点连通性
 发送轻量请求验证 API 可达性，返回延迟和状态。
 
@@ -82,6 +89,7 @@ API Key 存入 .env，JSON 中只引用环境变量名。
 2. 查看当前值 → get
 3. 修改前 → 用 ask_user 确认
 4. 确认后 → set / add_endpoint / remove_endpoint / toggle_endpoint / manage_provider
+5. 用户只想切换当前聊天模型 → select_endpoint（无需修改配置）
 """,
         "input_schema": {
             "type": "object",
@@ -95,6 +103,7 @@ API Key 存入 .env，JSON 中只引用环境变量名。
                         "add_endpoint",
                         "remove_endpoint",
                         "toggle_endpoint",
+                        "select_endpoint",
                         "test_endpoint",
                         "set_ui",
                         "manage_provider",
@@ -170,7 +179,10 @@ API Key 存入 .env，JSON 中只引用环境变量名。
                 },
                 "endpoint_name": {
                     "type": "string",
-                    "description": "端点名称（remove_endpoint / test_endpoint 时必填）",
+                    "description": (
+                        "端点名称（remove_endpoint / test_endpoint / select_endpoint 时必填）。"
+                        "select_endpoint 可用 auto/default/默认 恢复默认模型。"
+                    ),
                 },
                 "target": {
                     "type": "string",
@@ -248,6 +260,7 @@ API Key 存入 .env，JSON 中只引用环境变量名。
             "User wants to view or change system settings",
             "User asks about available configuration options",
             "User wants to add, remove, or test LLM endpoints",
+            "User wants to switch, select, or use an existing model/LLM endpoint for the current chat",
             "User wants to switch theme or language",
             "User wants to add, modify, or remove LLM providers/服务商",
             "User asks about external modules/extensions status, install, or upgrade",

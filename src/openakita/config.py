@@ -68,18 +68,17 @@ class Settings(BaseSettings):
     )
 
     # === ForceToolCall（工具护栏）===
-    # 当模型在“可能需要工具”的任务中只给文本不调用工具时，Agent 可追问 1 次以推动工具调用。
-    # 设为 0 可完全关闭该行为（推荐 IM 闲聊/客服式对话场景）。
+    # 默认信任模型自主判断是否需要工具；仅由意图分析或用户配置显式开启追问。
     force_tool_call_max_retries: int = Field(
-        default=2,
+        default=0,
         description="当模型未调用工具时，最多追问要求调用工具的次数（0=禁用，信任模型自主判断）",
     )
     force_tool_call_im_floor: int = Field(
-        default=2,
+        default=0,
         description="IM 通道的 ForceToolCall 最低重试次数（0=与全局一致，不强制下限）",
     )
     confirmation_text_max_retries: int = Field(
-        default=2,
+        default=1,
         description="工具执行后无可见文本时的最大追问次数（0=禁用）",
     )
 
@@ -97,6 +96,14 @@ class Settings(BaseSettings):
     long_running_tool_timeout_seconds: int = Field(
         default=0,
         description="长耗时工具（shell/browser/org 等）硬超时（秒），0=不限时（默认）",
+    )
+    web_search_attempt_timeout_seconds: int = Field(
+        default=25,
+        ge=0,
+        description=(
+            "web_search/news_search 单次外部搜索源等待上限（秒），0=不限。"
+            "超时只跳过本次搜索等待并把结果交给模型继续决策，不判定整个任务失败"
+        ),
     )
 
     allow_parallel_tools_with_interrupt_checks: bool = Field(
@@ -252,6 +259,14 @@ class Settings(BaseSettings):
     scheduler_timezone: str = Field(default="Asia/Shanghai", description="调度器时区")
     scheduler_task_timeout: int = Field(
         default=1200, description="定时任务执行超时时间（秒），默认 1200 秒（20分钟）"
+    )
+    scheduler_background_token_budget: int = Field(
+        default=120000,
+        description="单次后台系统任务的 token 预算，达到后在安全检查点暂停（0=不限制）",
+    )
+    scheduler_selfcheck_fix_token_budget: int = Field(
+        default=60000,
+        description="单次自检自动修复的 token 预算，达到后跳过后续自动修复（0=不限制）",
     )
 
     # === 记忆整理配置 ===
@@ -937,6 +952,7 @@ _PERSISTABLE_KEYS: list[str] = [
     "confirmation_text_max_retries",
     "tool_hard_timeout_seconds",
     "long_running_tool_timeout_seconds",
+    "web_search_attempt_timeout_seconds",
     "always_load_tools",
     "always_load_categories",
 ]

@@ -3,16 +3,27 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from openakita.orgs.models import NodeStatus
 from openakita.orgs.tool_handler import OrgToolHandler
-from openakita.orgs.models import MsgType, MemoryScope
 
 
 @pytest.fixture()
 def handler(mock_runtime) -> OrgToolHandler:
+    async def _set_node_status(org, node, new_status, reason="", *, current_task=""):
+        node.status = new_status
+        await mock_runtime._save_org(org)
+        await mock_runtime._broadcast_ws("org:node_status", {
+            "org_id": org.id,
+            "node_id": node.id,
+            "status": new_status.value,
+            "current_task": current_task,
+        })
+
+    mock_runtime.set_node_status = AsyncMock(side_effect=_set_node_status)
     return OrgToolHandler(mock_runtime)
 
 
@@ -77,10 +88,7 @@ class TestOrgAwarenessTools:
         result = await handler.handle(
             "org_get_org_chart", {}, persisted_org.id, "node_ceo",
         )
-        if isinstance(result, str):
-            data = json.loads(result)
-        else:
-            data = result
+        data = json.loads(result) if isinstance(result, str) else result
         assert "departments" in data
 
     async def test_find_colleague(self, handler: OrgToolHandler, persisted_org):
@@ -95,20 +103,14 @@ class TestOrgAwarenessTools:
             "org_get_node_status", {"node_id": "node_cto"},
             persisted_org.id, "node_ceo",
         )
-        if isinstance(result, str):
-            data = json.loads(result)
-        else:
-            data = result
+        data = json.loads(result) if isinstance(result, str) else result
         assert "status" in data
 
     async def test_get_org_status(self, handler: OrgToolHandler, persisted_org):
         result = await handler.handle(
             "org_get_org_status", {}, persisted_org.id, "node_ceo",
         )
-        if isinstance(result, str):
-            data = json.loads(result)
-        else:
-            data = result
+        data = json.loads(result) if isinstance(result, str) else result
         assert "org_name" in data or "status" in data
 
 
@@ -139,6 +141,11 @@ class TestHRTools:
             persisted_org.id, "node_ceo",
         )
         assert "冻结" in result
+        node = persisted_org.get_node("node_dev")
+        assert node is not None
+        assert node.status == NodeStatus.FROZEN
+        handler._runtime.set_node_status.assert_awaited()
+        handler._runtime._broadcast_ws.assert_awaited()
 
     async def test_unfreeze_node(self, handler: OrgToolHandler, persisted_org):
         await handler.handle(
@@ -152,6 +159,9 @@ class TestHRTools:
             persisted_org.id, "node_ceo",
         )
         assert "解冻" in result
+        node = persisted_org.get_node("node_dev")
+        assert node is not None
+        assert node.status == NodeStatus.IDLE
 
 
 class TestDeptMemoryTools:

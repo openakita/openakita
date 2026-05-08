@@ -119,7 +119,7 @@ export function exportConversation(msgs: ChatMessage[], title: string, format: "
   let mimeType: string;
   let ext: string;
   if (format === "json") {
-    content = JSON.stringify(msgs.map(({ streaming, ...rest }) => rest), null, 2);
+    content = JSON.stringify(msgs.map(({ streaming, streamStatus, ...rest }) => rest), null, 2);
     mimeType = "application/json";
     ext = "json";
   } else {
@@ -187,7 +187,7 @@ export function sanitizeStoredMessages(raw: unknown): ChatMessage[] {
     if (typeof m.timestamp !== "number") return false;
     return true;
   }).map((m) => {
-    const cleaned = { ...m, streaming: undefined };
+    const cleaned = { ...m, streaming: undefined, streamStatus: undefined };
     if (m.role === "assistant" && (!m.content || m.content.trim() === "") && !m.toolCalls?.length && !m.todo) {
       return null;
     }
@@ -208,12 +208,12 @@ export function loadMessagesFromStorage(key: string): ChatMessage[] {
 
 export function saveMessagesToStorage(key: string, msgs: ChatMessage[], maxMessages = STORED_MESSAGE_WINDOW): boolean {
   const windowed = maxMessages > 0 && msgs.length > maxMessages ? msgs.slice(-maxMessages) : msgs;
-  const base = windowed.map(({ streaming, ...rest }) => rest);
+  const base = windowed.map(({ streaming, streamStatus, ...rest }) => rest);
   try {
     localStorage.setItem(key, JSON.stringify(base));
     return true;
   } catch {
-    const slim = windowed.map(({ streaming, thinkingChain, ...rest }) => rest);
+    const slim = windowed.map(({ streaming, streamStatus, thinkingChain, ...rest }) => rest);
     try {
       localStorage.setItem(key, JSON.stringify(slim));
       return true;
@@ -221,6 +221,13 @@ export function saveMessagesToStorage(key: string, msgs: ChatMessage[], maxMessa
       return false;
     }
   }
+}
+
+export function shouldRenderConversationMessages(
+  conversationId: string | null | undefined,
+  activeConversationId: string | null | undefined,
+): boolean {
+  return Boolean(conversationId) && conversationId === activeConversationId;
 }
 
 function latestMessageTimestamp(msgs: ChatMessage[]): number {
@@ -390,22 +397,59 @@ export function formatAskUserAnswer(answer: string, askUser: ChatAskUser): strin
 
 // ── 后端数据修补 ──
 
+type BackendHistoryMessage = {
+  id?: string;
+  index?: number;
+  role: string;
+  content: string;
+  chain_summary?: ChainSummaryItem[];
+  artifacts?: ChatArtifact[] | null;
+  usage?: ChatMessage["usage"];
+};
+
 export function patchMessagesWithBackend(
   localMsgs: ChatMessage[],
-  backendMsgs: {
-    role: string;
-    content: string;
-    chain_summary?: ChainSummaryItem[];
-    artifacts?: ChatArtifact[] | null;
-    usage?: ChatMessage["usage"];
-  }[],
+  backendMsgs: BackendHistoryMessage[],
 ): ChatMessage[] {
   const backendAssistant = backendMsgs.filter((m) => m.role === "assistant");
-  let aIdx = 0;
+  const backendByHistoryIndex = new Map<number, BackendHistoryMessage>();
+  const backendById = new Map<string, BackendHistoryMessage>();
+  backendAssistant.forEach((m) => {
+    if (typeof m.index === "number") backendByHistoryIndex.set(m.index, m);
+    if (m.id) backendById.set(m.id, m);
+  });
+  const usedBackendMessages = new Set<BackendHistoryMessage>();
+  let fallbackAssistantIdx = 0;
+
+  const claimBackendForLocalMessage = (m: ChatMessage): BackendHistoryMessage | undefined => {
+    if (typeof m.historyIndex === "number") {
+      const indexed = backendByHistoryIndex.get(m.historyIndex);
+      if (indexed && !usedBackendMessages.has(indexed)) {
+        usedBackendMessages.add(indexed);
+        return indexed;
+      }
+    }
+
+    const byId = backendById.get(m.id);
+    if (byId && !usedBackendMessages.has(byId)) {
+      usedBackendMessages.add(byId);
+      return byId;
+    }
+
+    while (fallbackAssistantIdx < backendAssistant.length) {
+      const candidate = backendAssistant[fallbackAssistantIdx++];
+      if (!usedBackendMessages.has(candidate)) {
+        usedBackendMessages.add(candidate);
+        return candidate;
+      }
+    }
+    return undefined;
+  };
+
   let changed = false;
   const patched = localMsgs.map((m) => {
     if (m.role !== "assistant") return m;
-    const backend = backendAssistant[aIdx++];
+    const backend = claimBackendForLocalMessage(m);
     if (!backend) return m;
 
     const patches: Partial<ChatMessage> = {};

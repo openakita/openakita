@@ -1,6 +1,5 @@
 """L1 Unit Tests: Memory data models (v2)."""
 
-import pytest
 from datetime import datetime
 
 from openakita.memory.types import (
@@ -199,6 +198,28 @@ class TestEpisode:
         md = ep.to_markdown()
         assert "修复 bug" in md
         assert "success" in md
+
+    def test_tools_used_with_dict_shape_do_not_crash_markdown_or_dict(self):
+        ep = Episode(
+            summary="listed recent tasks",
+            goal="检查记忆",
+            outcome="success",
+            tools_used=[{"name": {"bad": "shape"}}, {"function": {"name": "search_memory"}}],
+        )
+
+        md = ep.to_markdown()
+        data = ep.to_dict()
+        loaded = Episode.from_dict(
+            {
+                **data,
+                "tools_used": [{"name": "list_recent_tasks"}, {"function": {"name": "trace_memory"}}],
+            }
+        )
+
+        assert '{"bad": "shape"}' in md
+        assert "search_memory" in md
+        assert data["tools_used"] == ['{"bad": "shape"}', "search_memory"]
+        assert loaded.tools_used == ["list_recent_tasks", "trace_memory"]
 
 
 class TestScratchpad:

@@ -78,10 +78,13 @@ class TestExecuteTool:
         registry.get_permission_check.return_value = None
         executor = ToolExecutor(handler_registry=registry, max_parallel=1)
 
-        await executor.execute_tool("browser-click", {"text": "??"})
+        await executor.execute_tool("browser-click", {"text": "登录"})
 
         assert captured["tool_name"] == "browser_click"
-        assert captured["params"]["text"] == "??"
+        assert captured["params"]["text"] == "登录"
+
+    def test_todo_tracking_is_not_a_tool_execution_gate(self, executor):
+        assert executor._check_todo_required("write_file", "session-needs-plan") is None
 
     async def test_execute_tool_normalizes_browser_fill_alias_to_type(self):
         registry = MagicMock()

@@ -1,9 +1,6 @@
 """L2 Component Tests: Prompt compilation and system prompt building."""
 
-import pytest
-from pathlib import Path
-
-from openakita.prompt.budget import BudgetConfig, BudgetResult, estimate_tokens
+from openakita.prompt.budget import BudgetConfig
 
 
 class TestPromptCompileFunctions:
@@ -89,4 +86,19 @@ class TestBuildSystemPrompt:
             budget_config=budget,
         )
         assert isinstance(prompt, str)
+
+    def test_build_includes_remote_web_app_guidance(self, tmp_path):
+        from openakita.prompt.builder import build_system_prompt
+
+        identity_dir = tmp_path / "identity"
+        identity_dir.mkdir()
+        (identity_dir / "SOUL.md").write_text("# Soul\nTest.", encoding="utf-8")
+
+        prompt = build_system_prompt(identity_dir=identity_dir, tools_enabled=False)
+
+        assert "手机/局域网/远程访问" in prompt
+        assert "不要硬编码" in prompt
+        assert "localhost" in prompt
+        assert "window.location" in prompt
+        assert "0.0.0.0" in prompt
 

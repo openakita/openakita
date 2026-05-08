@@ -5,6 +5,7 @@ File 工具 - 文件操作
 import logging
 import re
 import shutil
+from fnmatch import fnmatch
 from pathlib import Path
 
 import aiofiles
@@ -39,6 +40,7 @@ class FileTool:
 
     def __init__(self, base_path: str | None = None):
         self.base_path = Path(base_path) if base_path else Path.cwd()
+        self.last_traversal_skipped = 0
 
     def _resolve_path(self, path: str) -> Path:
         """解析路径（支持相对路径和绝对路径）"""
@@ -288,22 +290,9 @@ class FileTool:
         file_glob = include or "*"
         results: list[dict] = []
 
-        for file_path in dir_path.rglob(file_glob):
+        for file_path in self._iter_matching_paths(dir_path, file_glob, recursive=True):
             if len(results) >= max_results:
                 break
-
-            if not file_path.is_file():
-                continue
-
-            # 跳过忽略目录
-            parts = file_path.relative_to(dir_path).parts
-            if any(p in DEFAULT_IGNORE_DIRS for p in parts):
-                continue
-            # 跳过 .xxx 隐藏目录（除 .github 等常用目录）
-            if any(
-                p.startswith(".") and p not in (".github", ".vscode", ".cursor") for p in parts[:-1]
-            ):
-                continue
 
             # 跳过二进制文件
             if file_path.suffix.lower() in self.BINARY_EXTENSIONS:
@@ -389,9 +378,17 @@ class FileTool:
         dir_path = self._resolve_path(path)
 
         if recursive:
-            return [str(p.relative_to(dir_path)) for p in dir_path.rglob(pattern)]
-        else:
+            return [
+                str(p.relative_to(dir_path))
+                for p in self._iter_matching_paths(dir_path, pattern, recursive=True, files_only=False)
+            ]
+
+        self.last_traversal_skipped = 0
+        try:
             return [str(p.relative_to(dir_path)) for p in dir_path.glob(pattern)]
+        except OSError:
+            self.last_traversal_skipped = 1
+            return []
 
     async def search(
         self,
@@ -428,6 +425,84 @@ class FileTool:
                     matches.append(str(file_path.relative_to(dir_path)))
 
         return matches
+
+    def _iter_matching_paths(
+        self,
+        dir_path: Path,
+        pattern: str,
+        *,
+        recursive: bool,
+        files_only: bool = True,
+    ):
+        """Yield paths while pruning ignored and unstable directories.
+
+        Cloud desktops and package managers can mutate deep dependency trees while
+        we scan them. Treat those races like unreadable folders: skip and keep
+        returning useful results instead of failing the whole tool call.
+        """
+        self.last_traversal_skipped = 0
+
+        if not recursive:
+            try:
+                candidates = dir_path.glob(pattern)
+                for path in candidates:
+                    if self._should_skip_relative_path(path, dir_path):
+                        continue
+                    if files_only and not path.is_file():
+                        continue
+                    yield path
+            except OSError:
+                self.last_traversal_skipped += 1
+            return
+
+        def walk(root: Path):
+            try:
+                children = list(root.iterdir())
+            except OSError:
+                self.last_traversal_skipped += 1
+                return
+
+            for child in children:
+                if self._should_skip_relative_path(child, dir_path):
+                    continue
+
+                try:
+                    is_dir = child.is_dir()
+                    is_file = child.is_file()
+                except OSError:
+                    self.last_traversal_skipped += 1
+                    continue
+
+                if self._matches_pattern(child, dir_path, pattern) and (not files_only or is_file):
+                    yield child
+
+                if is_dir:
+                    yield from walk(child)
+
+        yield from walk(dir_path)
+
+    @staticmethod
+    def _matches_pattern(path: Path, root: Path, pattern: str) -> bool:
+        try:
+            rel = path.relative_to(root)
+        except ValueError:
+            return False
+        rel_posix = rel.as_posix()
+        pattern_posix = pattern.replace("\\", "/")
+        return rel.match(pattern) or fnmatch(rel_posix, pattern_posix) or fnmatch(path.name, pattern)
+
+    @staticmethod
+    def _should_skip_relative_path(path: Path, root: Path) -> bool:
+        try:
+            parts = path.relative_to(root).parts
+        except ValueError:
+            return True
+        if any(part in DEFAULT_IGNORE_DIRS for part in parts):
+            return True
+        return any(
+            part.startswith(".") and part not in (".github", ".vscode", ".cursor")
+            for part in parts[:-1]
+        )
 
     async def copy(self, src: str, dst: str) -> bool:
         """

@@ -521,15 +521,21 @@ class ToolExecutor:
 
                 # 如果有警告/错误日志，附加到结果
                 if new_logs:
-                    result += "\n\n[执行日志]:\n"
-                    for log in new_logs[-10:]:
-                        result += f"[{log['level']}] {log['module']}: {log['message']}\n"
+                    log_text = "\n\n[执行日志]:\n" + "".join(
+                        f"[{log['level']}] {log['module']}: {log['message']}\n"
+                        for log in new_logs[-10:]
+                    )
+                    if isinstance(result, list):
+                        result.append({"type": "text", "text": log_text})
+                    else:
+                        result += log_text
 
                 # ★ 通用截断守卫：工具自身未做截断时的安全网
-                result = self._guard_truncate(tool_name, result)
+                if isinstance(result, str):
+                    result = self._guard_truncate(tool_name, result)
                 self._observe_current_turn_tool_result(tool_name, tool_input, result)
 
-                span.set_attribute("result_length", len(result))
+                span.set_attribute("result_length", len(str(result)))
 
                 await self._dispatch_hook(
                     "on_after_tool_use",
@@ -540,7 +546,7 @@ class ToolExecutor:
                 self._record_experience(
                     tool_name,
                     tool_input,
-                    result,
+                    str(result),
                     success=True,
                     duration_ms=(time.monotonic() - started_at) * 1000,
                 )
@@ -887,7 +893,8 @@ class ToolExecutor:
                             tool_name,
                         )
 
-                result_str = str(result) if result is not None else "操作已完成"
+                result_content = result if result is not None else "操作已完成"
+                result_str = str(result_content)
 
                 # execute_tool 内部捕获所有异常并返回字符串，不会抛到这里。
                 # 对于 PARSE_ERROR_KEY（参数截断）路径，需要在此修正 success
@@ -972,6 +979,7 @@ class ToolExecutor:
                 success = False
                 tool_error = classify_error(e, tool_name=tool_name)
                 result_str = tool_error.to_tool_result()
+                result_content = result_str
                 logger.error(f"Tool batch execution error: {tool_name}: {e}")
                 logger.info(f"[Tool] {tool_name} ❌ 错误: {result_str}")
 
@@ -992,7 +1000,7 @@ class ToolExecutor:
             tool_result = {
                 "type": "tool_result",
                 "tool_use_id": tool_use_id,
-                "content": result_str,
+                "content": result_content,
                 "receipt_id": f"tool_{uuid.uuid4().hex[:12]}",
                 "tool_name": tool_name,
             }

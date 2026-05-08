@@ -56,6 +56,31 @@ class SkillsMode(StrEnum):
 _SKILLS_MODE_ALIASES: dict[str, str] = {
     "only": "inclusive",
 }
+_IDENTITY_MODES = frozenset({"shared", "custom"})
+_MEMORY_MODES = frozenset({"shared", "isolated"})
+
+
+def _normalize_choice(value: Any, *, allowed: frozenset[str], default: str, field_name: str) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in allowed:
+            return normalized
+    logger.warning("Invalid AgentProfile.%s=%r, falling back to %r", field_name, value, default)
+    return default
+
+
+def _coerce_bool(value: Any, *, default: bool = True) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    if value is None:
+        return default
+    return bool(value)
 
 
 def safe_agent_type(value: Any) -> AgentType:
@@ -125,6 +150,8 @@ class AgentProfile:
 
     # 首选 LLM 端点（为 None 或空字符串时使用全局优先级，不可用时自动回退）
     preferred_endpoint: str | None = None
+    # prefer: 优先使用该端点，不可用时自动回退；require: 必须使用该端点，不自动切换。
+    endpoint_policy: str = "prefer"
 
     # 权限规则集 (OpenCode 风格，空列表 = 全部允许)
     # 格式: [{"permission": "edit", "pattern": "*", "action": "deny"}, ...]
@@ -177,6 +204,21 @@ class AgentProfile:
     def __post_init__(self):
         self.type = safe_agent_type(self.type)
         self.skills_mode = safe_skills_mode(self.skills_mode)
+        if self.endpoint_policy not in {"prefer", "require"}:
+            self.endpoint_policy = "prefer"
+        self.identity_mode = _normalize_choice(
+            self.identity_mode,
+            allowed=_IDENTITY_MODES,
+            default="shared",
+            field_name="identity_mode",
+        )
+        self.memory_mode = _normalize_choice(
+            self.memory_mode,
+            allowed=_MEMORY_MODES,
+            default="shared",
+            field_name="memory_mode",
+        )
+        self.memory_inherit_global = _coerce_bool(self.memory_inherit_global)
         if not self.created_at:
             self.created_at = datetime.now(UTC).isoformat()
 
@@ -248,6 +290,35 @@ class AgentProfile:
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)
+
+    def derive(
+        self,
+        *,
+        id: str,
+        name: str | None = None,
+        description: str | None = None,
+        type: AgentType = AgentType.DYNAMIC,
+        created_by: str,
+        ephemeral: bool = True,
+        inherit_from: str | None = None,
+        **overrides: Any,
+    ) -> AgentProfile:
+        """Create a derived profile while preserving runtime and isolation settings."""
+        data = self.to_dict()
+        data.update(
+            {
+                "id": id,
+                "name": name if name is not None else self.name,
+                "description": description if description is not None else self.description,
+                "type": type,
+                "created_by": created_by,
+                "created_at": "",
+                "ephemeral": ephemeral,
+                "inherit_from": inherit_from if inherit_from is not None else self.id,
+            }
+        )
+        data.update(overrides)
+        return AgentProfile.from_dict(data)
 
 
 _global_store: ProfileStore | None = None
@@ -366,6 +437,7 @@ class ProfileStore:
             "category",
             "fallback_profile_id",
             "preferred_endpoint",
+            "endpoint_policy",
             "identity_mode",
             "memory_mode",
             "memory_inherit_global",

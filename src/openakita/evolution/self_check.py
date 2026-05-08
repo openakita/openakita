@@ -13,6 +13,7 @@
 import json
 import logging
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -115,6 +116,8 @@ class DailyReport:
 
     # 报告状态
     reported: bool = False
+    partial: bool = False
+    status_note: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -144,6 +147,8 @@ class DailyReport:
             "retrospect_summary": self.retrospect_summary,
             "memory_insights": self.memory_insights,
             "reported": self.reported,
+            "partial": self.partial,
+            "status_note": self.status_note,
         }
 
     def to_markdown(self) -> str:
@@ -161,6 +166,15 @@ class DailyReport:
             f"- 修复失败: {self.fix_failed}",
             "",
         ]
+
+        if self.partial:
+            lines.extend(
+                [
+                    "> 本轮自检已保存部分结果，后续问题会在下次自检继续处理。",
+                    f"> 原因: {self.status_note or '后台预算已用尽'}",
+                    "",
+                ]
+            )
 
         # 核心组件错误
         if self.core_error_patterns:
@@ -587,7 +601,11 @@ ID: {result.test_id}
 - fix_instruction 要写清楚使用什么工具（shell/file），执行什么命令
 - 只输出 JSON 数组"""
 
-    async def run_daily_check(self, since: datetime | None = None) -> DailyReport:
+    async def run_daily_check(
+        self,
+        since: datetime | None = None,
+        max_runtime_seconds: int | None = None,
+    ) -> DailyReport:
         """
         执行系统自检（LLM 驱动）
 
@@ -601,6 +619,7 @@ ID: {result.test_id}
 
         Args:
             since: 只分析此时间之后的日志和复盘记录。None 表示分析全部（首次运行）。
+            max_runtime_seconds: 本轮自检的软时间预算；达到后保存部分报告并返回。
 
         Returns:
             DailyReport
@@ -616,6 +635,29 @@ ID: {result.test_id}
             date=today,
             timestamp=datetime.now(),
         )
+        deadline = (
+            time.monotonic() + max_runtime_seconds
+            if max_runtime_seconds and max_runtime_seconds > 0
+            else None
+        )
+
+        def time_budget_reached() -> bool:
+            return deadline is not None and time.monotonic() >= deadline
+
+        def mark_partial(reason: str) -> None:
+            if report.partial:
+                return
+            report.partial = True
+            report.status_note = reason
+            report.tool_error_patterns.append(
+                {
+                    "pattern": "selfcheck_paused",
+                    "count": 1,
+                    "logger": "openakita.evolution.self_check",
+                    "message": reason,
+                    "last_seen": datetime.now().isoformat(),
+                }
+            )
 
         # === 阶段 1: 收集所有问题信息（日志 + 记忆 + 复盘） ===
 
@@ -627,6 +669,7 @@ ID: {result.test_id}
 
         if errors:
             patterns = log_analyzer.classify_errors(errors)
+            patterns = self._filter_selfcheck_feedback_patterns(patterns)
             report.total_errors = sum(p.count for p in patterns.values())
             error_summary = log_analyzer.generate_error_summary(patterns)
             logger.info(f"Extracted {report.total_errors} errors from logs")
@@ -678,10 +721,20 @@ ID: {result.test_id}
             return report
 
         try:
+            if time_budget_reached():
+                mark_partial("自检收集阶段已达到后台时间预算，已保存当前报告。")
+                self._save_daily_report(report)
+                return report
+
             # LLM 综合分析（如果有 brain）
             if self.brain:
-                analysis_results = await self._analyze_errors_with_llm(full_analysis_input)
+                analysis_results = await self._analyze_errors_with_llm(
+                    full_analysis_input,
+                    deadline=deadline,
+                )
                 logger.info(f"LLM analyzed {len(analysis_results)} issues")
+                if time_budget_reached():
+                    mark_partial("自检分析已达到后台时间预算，已保存部分结果，下次继续。")
             else:
                 # 没有 brain，使用规则匹配（降级模式）
                 logger.warning("No brain available, using rule-based analysis")
@@ -699,7 +752,11 @@ ID: {result.test_id}
                 logger.info("Selfcheck autofix is disabled, skipping fix attempts")
 
             MAX_FIX_ATTEMPTS = 3
+            fix_budget_start: int | None = None
             for result in analysis_results:
+                if time_budget_reached():
+                    mark_partial("自检分析已达到后台时间预算，已保存部分结果，下次继续。")
+                    break
                 error_type = result.get("error_type", "unknown")
                 can_fix = result.get("can_fix", False)
 
@@ -720,6 +777,38 @@ ID: {result.test_id}
                     report.tool_errors += 1
 
                     if autofix_enabled and report.fix_attempted < MAX_FIX_ATTEMPTS:
+                        from ..core.token_tracking import (
+                            token_budget_exceeded,
+                            token_budget_status,
+                        )
+
+                        budget_status = token_budget_status()
+                        if fix_budget_start is None:
+                            fix_budget_start = int(budget_status.get("used_tokens") or 0)
+                        fix_tokens_used = int(budget_status.get("used_tokens") or 0) - fix_budget_start
+                        fix_budget_exceeded = (
+                            settings.scheduler_selfcheck_fix_token_budget > 0
+                            and fix_tokens_used >= settings.scheduler_selfcheck_fix_token_budget
+                        )
+                        if token_budget_exceeded() or fix_budget_exceeded:
+                            logger.info(
+                                "Skipping selfcheck autofix for %s: token budget reached",
+                                result.get("error_id"),
+                            )
+                            report.tool_error_patterns.append(
+                                {
+                                    "pattern": result.get("error_id", ""),
+                                    "count": 1,
+                                    "logger": result.get("module", "unknown"),
+                                    "message": (
+                                        f"{result.get('analysis', '')}\n"
+                                        "自动修复已暂停：本轮后台 token 预算已用完或自检修复预算已用完，"
+                                        "下次自检会继续。"
+                                    ),
+                                    "last_seen": datetime.now().isoformat(),
+                                }
+                            )
+                            continue
                         report.fix_attempted += 1
 
                         try:
@@ -750,6 +839,21 @@ ID: {result.test_id}
                             "last_seen": datetime.now().isoformat(),
                         }
                     )
+
+            from ..core.token_tracking import token_budget_exceeded
+
+            if token_budget_exceeded():
+                report.partial = True
+                report.status_note = "本轮后台 token 预算已用完，自检已安全暂停。"
+                report.tool_error_patterns.append(
+                    {
+                        "pattern": "background_token_budget_reached",
+                        "count": 1,
+                        "logger": "openakita.scheduler",
+                        "message": "本轮后台 token 预算已用完，自检已安全暂停，后续问题下次继续处理。",
+                        "last_seen": datetime.now().isoformat(),
+                    }
+                )
 
             logger.info(
                 f"Daily check complete: {report.total_errors} errors, "
@@ -1024,7 +1128,11 @@ ID: {result.test_id}
             logger.warning(f"Failed to generate optimization suggestions: {e}")
             return []
 
-    async def _analyze_errors_with_llm(self, error_summary: str) -> list[dict]:
+    async def _analyze_errors_with_llm(
+        self,
+        error_summary: str,
+        deadline: float | None = None,
+    ) -> list[dict]:
         """
         使用 LLM 分析错误并决定修复策略（支持分批处理）
 
@@ -1053,6 +1161,9 @@ ID: {result.test_id}
 
         if len(error_summary) <= MAX_CHARS_PER_BATCH:
             # 摘要较小，直接处理
+            if deadline is not None and time.monotonic() >= deadline:
+                logger.info("Skipping selfcheck LLM analysis: time budget reached")
+                return []
             return await self._analyze_single_batch(error_summary, system_prompt)
 
         # 摘要太大，分批处理
@@ -1089,6 +1200,25 @@ ID: {result.test_id}
         # 分批调用 LLM
         all_results = []
         for i, batch in enumerate(batches):
+            if deadline is not None and time.monotonic() >= deadline:
+                logger.info(
+                    "Stopping selfcheck analysis after %s/%s batches: time budget reached",
+                    i,
+                    len(batches),
+                )
+                break
+            try:
+                from ..core.token_tracking import token_budget_exceeded
+
+                if token_budget_exceeded():
+                    logger.info(
+                        "Stopping selfcheck analysis after %s/%s batches: token budget reached",
+                        i,
+                        len(batches),
+                    )
+                    break
+            except Exception:
+                pass
             logger.info(f"Analyzing batch {i + 1}/{len(batches)} ({len(batch)} chars)")
             try:
                 batch_results = await self._analyze_single_batch(batch, system_prompt)
@@ -1147,15 +1277,77 @@ ID: {result.test_id}
             json_match = re.search(r"\[[\s\S]*\]", content)
             if json_match:
                 json_str = json_match.group()
-                return json.loads(json_str)
+                return self._normalize_llm_analysis(json.loads(json_str))
 
             # 尝试直接解析
-            return json.loads(content)
+            return self._normalize_llm_analysis(json.loads(content))
 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
             logger.debug(f"LLM response: {content}")
             return []
+
+    def _normalize_llm_analysis(self, parsed: Any) -> list[dict]:
+        """Normalize model output into analysis objects.
+
+        Some models return a list of short strings even when asked for objects.
+        Treat those as low-risk human-readable findings instead of failing the
+        whole selfcheck run.
+        """
+        if isinstance(parsed, dict):
+            parsed_items = [parsed]
+        elif isinstance(parsed, list):
+            parsed_items = parsed
+        else:
+            logger.warning("Selfcheck LLM returned unsupported JSON type: %s", type(parsed).__name__)
+            return []
+
+        results: list[dict] = []
+        for idx, item in enumerate(parsed_items, start=1):
+            if isinstance(item, dict):
+                results.append(item)
+                continue
+            if isinstance(item, str) and item.strip():
+                results.append(
+                    {
+                        "error_id": f"llm_unstructured_finding_{idx}",
+                        "module": "openakita.evolution.self_check",
+                        "error_type": "core",
+                        "analysis": item.strip(),
+                        "severity": "low",
+                        "can_fix": False,
+                        "fix_instruction": "",
+                        "fix_reason": "模型返回了非结构化建议，作为报告项保留。",
+                        "requires_restart": False,
+                        "note_to_user": item.strip(),
+                    }
+                )
+                continue
+            logger.debug("Ignoring unsupported selfcheck analysis item: %r", item)
+
+        return results
+
+    def _filter_selfcheck_feedback_patterns(
+        self,
+        patterns: dict[str, ErrorPattern],
+    ) -> dict[str, ErrorPattern]:
+        """Drop selfcheck timeout noise so failed checks do not amplify themselves."""
+        filtered: dict[str, ErrorPattern] = {}
+        dropped = 0
+        for key, pattern in patterns.items():
+            samples = pattern.samples or []
+            is_selfcheck_timeout = any(
+                "system:daily_selfcheck" in sample.message and "timed out" in sample.message
+                for sample in samples
+            )
+            if is_selfcheck_timeout:
+                dropped += pattern.count
+                continue
+            filtered[key] = pattern
+
+        if dropped:
+            logger.info("Filtered %s selfcheck timeout feedback errors", dropped)
+        return filtered
 
     def _analyze_errors_with_rules(self, patterns: dict) -> list[dict]:
         """
@@ -1295,6 +1487,20 @@ ID: {result.test_id}
                         r"\bGet-Process\b",
                     ],
                 }
+                agent._selfcheck_allowed_tools = {
+                    "ask_user",
+                    "tool_search",
+                    "glob",
+                    "grep",
+                    "read_file",
+                    "write_file",
+                    "edit_file",
+                    "list_directory",
+                    "run_shell",
+                    "list_skills",
+                    "get_skill_info",
+                    "list_mcp_servers",
+                }
 
                 agent._context.messages = []
                 agent._conversation_history = []
@@ -1346,7 +1552,7 @@ ID: {result.test_id}
                             timeout=self.FIX_TIMEOUT_SECONDS,
                         )
                         success = "失败" not in result_msg and "error" not in result_msg.lower()
-                except (asyncio.TimeoutError, TimeoutError):
+                except TimeoutError:
                     logger.warning(
                         f"Fix attempt {attempt + 1} timed out after {self.FIX_TIMEOUT_SECONDS}s"
                     )
