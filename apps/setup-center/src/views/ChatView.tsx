@@ -2233,28 +2233,9 @@ export function ChatView({
             }
           } catch { /* fall through to generic error */ }
         }
-        let displayError = `???${response.status} ????`;
-        try {
-          const contentType = response.headers.get("content-type") || "";
-          if (contentType.includes("application/json")) {
-            const data = await response.json().catch(() => null);
-            const pickText = (value: unknown): string => {
-              if (typeof value === "string") return value;
-              if (value == null) return "";
-              try { return JSON.stringify(value); } catch { return String(value); }
-            };
-            const message = pickText(data?.message || data?.detail || data?.error);
-            const hint = pickText(data?.hint);
-            displayError = [`???${response.status}`, message, hint].filter(Boolean).join("\n\n");
-          } else {
-            const errText = await response.text().catch(() => "????");
-            displayError = `???${response.status} ${errText}`;
-          }
-        } catch {
-          // Keep the compact fallback above.
-        }
+        const errText = await response.text().catch(() => "请求失败");
         updateMessages((prev) => prev.map((m) =>
-          m.id === assistantMsg.id ? { ...m, content: displayError, streaming: false } : m
+          m.id === assistantMsg.id ? { ...m, content: `错误：${response.status} ${errText}`, streaming: false } : m
         ));
         if (thisConvId) updateConvStatus(thisConvId, "error");
         return;
