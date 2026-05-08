@@ -1,6 +1,7 @@
 """L3 Integration Tests: FastAPI /api/chat SSE endpoint and control routes."""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -77,6 +78,27 @@ class TestChatEndpoint:
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
+    async def test_chat_without_mode_uses_agent_default(self, client, mock_agent, monkeypatch):
+        captured_kwargs = {}
+
+        async def fake_stream(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            yield {"type": "text_delta", "content": "Hello from mock agent"}
+            yield {"type": "done"}
+
+        monkeypatch.setattr(mock_agent, "chat_with_session_stream", fake_stream)
+
+        resp = await client.post(
+            "/api/chat",
+            json={"message": "Hello", "conversation_id": "test-conv-no-mode"},
+        )
+
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+        assert "Hello from mock agent" in resp.text
+        assert captured_kwargs["mode"] == "agent"
+        assert captured_kwargs["plan_mode"] is False
+
     async def test_chat_empty_message(self, client):
         resp = await client.post(
             "/api/chat",
@@ -112,6 +134,43 @@ class TestChatEndpoint:
         assert "text/event-stream" in resp.headers.get("content-type", "")
         assert "Hello from mock agent" in resp.text
         assert mock_agent.last_stream_kwargs["endpoint_override"] is None
+
+    async def test_chat_startup_error_returns_structured_retryable_json(self, client, monkeypatch):
+        from openakita.api.routes import chat as chat_routes
+
+        async def fail_agent_init(*args, **kwargs):
+            raise RuntimeError("agent pool unavailable")
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fail_agent_init)
+
+        resp = await client.post(
+            "/api/chat",
+            json={"message": "Hello", "conversation_id": "test-conv-1"},
+        )
+
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["error"] == "chat_startup_failed"
+        assert data["stage"] == "agent_init"
+        assert data["retryable"] is True
+        assert "聊天服务" in data["message"]
+        assert "agent pool unavailable" in data["detail"]
+
+    async def test_generate_title_thinking_only_response_falls_back(self, client, mock_agent, monkeypatch):
+        from openakita.api.routes import chat as chat_routes
+
+        monkeypatch.setattr(chat_routes, "_resolve_agent", lambda agent: mock_agent)
+        mock_agent.brain.think_lightweight = AsyncMock(
+            return_value=SimpleNamespace(content="<think>\n只生成了思考内容", usage={})
+        )
+
+        resp = await client.post(
+            "/api/sessions/generate-title",
+            json={"message": "你好", "conversation_id": "test-conv-title"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "你好"
 
 
 class TestChatControlEndpoints:
