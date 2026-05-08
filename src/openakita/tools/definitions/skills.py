@@ -17,19 +17,38 @@ SKILLS_TOOLS = [
     {
         "name": "list_skills",
         "category": "Skills",
-        "description": "List all installed skills following Agent Skills specification. When you need to: (1) Check available skills, (2) Find skill for a task, (3) Verify skill installation.",
+        "description": "List installed skills as a compact directory. Use get_skill_info for full instructions instead of requesting verbose lists by default.",
         "detail": """列出已安装的技能（遵循 Agent Skills 规范）。
 
 **返回信息**：
 - 技能名称
-- 技能描述
+- 默认只返回极短摘要，避免把全量技能描述灌入上下文
 - 是否可自动调用
 
 **适用场景**：
 - 查看可用技能
 - 为任务查找合适的技能
-- 验证技能安装状态""",
-        "input_schema": {"type": "object", "properties": {}},
+- 验证技能安装状态
+
+**按需展开**：
+- 需要完整清单描述时传 `verbose=true`
+- 需要路径排查时传 `include_paths=true`
+- 要真正使用某个技能时，优先调用 `get_skill_info(skill_name)` 获取完整说明""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "verbose": {
+                    "type": "boolean",
+                    "description": "是否返回完整技能描述。默认 false，仅返回紧凑目录。",
+                    "default": False,
+                },
+                "include_paths": {
+                    "type": "boolean",
+                    "description": "是否包含技能目录路径。默认 false；需要排查安装位置时才打开。",
+                    "default": False,
+                },
+            },
+        },
     },
     {
         "name": "get_skill_info",

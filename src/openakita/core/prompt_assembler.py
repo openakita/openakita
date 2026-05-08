@@ -78,6 +78,7 @@ class PromptAssembler:
         memory_scope: "Any | None" = None,
         catalog_scope: list[str] | None = None,
         include_project_guidelines: bool | None = None,
+        intent_tool_hints: list[str] | None = None,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2) - 异步版本。
@@ -136,6 +137,7 @@ class PromptAssembler:
             memory_scope=memory_scope,
             catalog_scope=catalog_scope,
             include_project_guidelines=include_project_guidelines,
+            intent_tool_hints=intent_tool_hints,
         )
 
     def _build_compiled_sync(

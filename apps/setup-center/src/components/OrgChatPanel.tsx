@@ -234,7 +234,15 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           if (data.status === "done" || data.status === "error") {
             if (!_pendingCmds.has(convId)) break;
             _pendingCmds.delete(convId);
-            const resultText = data.result?.result || data.result?.error || data.error || JSON.stringify(data);
+            const result = data.result as Record<string, unknown> | null | undefined;
+            let resultText = JSON.stringify(data);
+            if (result && typeof result.result === "string" && result.result.trim()) {
+              resultText = result.result;
+            } else if (result && typeof result.error === "string" && result.error.trim()) {
+              resultText = result.error;
+            } else if (typeof data.error === "string" && data.error.trim()) {
+              resultText = data.error;
+            }
             const steps = pending.lastRendered;
             const content = steps
               ? `<details>\n<summary>${t("org.chat.executionSteps", { count: pending.segmentCount })}</summary>\n\n${steps}\n\n</details>\n\n${resultText}`
@@ -612,9 +620,13 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       }
       const atts = files && files.length > 0 ? files : undefined;
       if (mountedRef.current) {
-        setMessages(prev => prev.map(m =>
-          m.id === placeholderId ? { ...m, content, streaming: false, role, attachments: atts } : m
-        ));
+        setMessages(prev => {
+          const next = prev.map(m =>
+            m.id === placeholderId ? { ...m, content, streaming: false, role, attachments: atts } : m
+          );
+          messagesRef.current = next;
+          return next;
+        });
       } else {
         const existing = loadFromLocalStorage(convId);
         const msg: ChatMsg = { id: placeholderId, role, content, timestamp: Date.now(), attachments: atts };
@@ -633,7 +645,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       const banner = stopped
         ? `\n\n<div class="ocp-done-banner ocp-done-banner-warn">&#x26A0;&#xFE0F; ${t("org.chat.orgAutoPaused")}</div>`
         : `\n\n<div class="ocp-done-banner">&#x2705; ${t("org.chat.taskCompleted")}</div>`;
-      const warningLine = stopped && opts?.warning
+      const warningLine = opts?.warning
         ? `\n\n> ${opts.warning}`
         : "";
       if (segments.length === 0) return resultText + warningLine + banner;
@@ -642,6 +654,17 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         return `<details>\n<summary>✓ ${seg.nodeName}</summary>\n\n${body}\n\n</details>`;
       }).join("\n\n");
       return `${allCollapsed}\n\n---\n\n${resultText}${warningLine}${banner}`;
+    };
+
+    const getCommandResultText = (
+      result: Record<string, unknown> | null | undefined,
+      error: unknown,
+      fallback: unknown,
+    ): string => {
+      if (result && typeof result.result === "string" && result.result.trim()) return result.result;
+      if (result && typeof result.error === "string" && result.error.trim()) return result.error;
+      if (typeof error === "string" && error.trim()) return error;
+      return JSON.stringify(fallback);
     };
 
     let finalContent = "";
@@ -669,7 +692,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           resolved = true;
           const result = d.result as Record<string, unknown> | null;
           const error = d.error as string | undefined;
-          const resultText = String((result && (result.result || result.error)) || error || JSON.stringify(d));
+          const resultText = getCommandResultText(result, error, d);
           const stopped = !!(result && result.stopped_by_watchdog);
           const warning = result && typeof result.warning === "string" ? result.warning as string : undefined;
           setTimeout(() => {
@@ -687,7 +710,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             if (pd.status === "done" || pd.status === "error") {
               if (!resolved) {
                 resolved = true;
-                const resultText = pd.result?.result || pd.result?.error || pd.error || JSON.stringify(pd);
+                const resultText = getCommandResultText(pd.result, pd.error, pd);
                 const stopped = !!(pd.result && pd.result.stopped_by_watchdog);
                 const warning = pd.result && typeof pd.result.warning === "string" ? pd.result.warning : undefined;
                 finalContent = wrapWithProcess(resultText, { stoppedByWatchdog: stopped, warning });

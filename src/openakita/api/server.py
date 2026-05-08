@@ -714,9 +714,43 @@ async def start_api_server(
             await asyncio.to_thread(api_thread.join, 5.0)
 
     proxy_task = asyncio.create_task(_proxy())
+    # Keep a handle to the app so the serve process can update late-bound
+    # runtime references such as the IM gateway after HTTP is already online.
+    setattr(proxy_task, "_openakita_api_app", app)
     return proxy_task
 
 
 def update_agent(app: FastAPI, agent: Any) -> None:
     """Update the agent reference in the running app (e.g. after initialization)."""
     app.state.agent = agent
+
+
+def update_runtime_refs(
+    api_task: asyncio.Task | None,
+    *,
+    agent: Any = None,
+    session_manager: Any = None,
+    gateway: Any = None,
+    orchestrator: Any = None,
+    agent_pool: Any = None,
+) -> bool:
+    """Update runtime references on an API server started by start_api_server().
+
+    Some dependencies, especially IM channels, may intentionally start after
+    the HTTP API so desktop clients can connect early. This keeps routes that
+    read ``request.app.state`` in sync once those late dependencies are ready.
+    """
+    app = getattr(api_task, "_openakita_api_app", None) if api_task is not None else None
+    if app is None:
+        return False
+    if agent is not None:
+        app.state.agent = agent
+    if session_manager is not None:
+        app.state.session_manager = session_manager
+    if gateway is not None:
+        app.state.gateway = gateway
+    if orchestrator is not None:
+        app.state.orchestrator = orchestrator
+    if agent_pool is not None:
+        app.state.agent_pool = agent_pool
+    return True

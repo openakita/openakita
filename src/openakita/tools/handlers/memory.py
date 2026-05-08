@@ -79,6 +79,25 @@ class MemoryHandler:
         "---\n\n"
     )
 
+    @staticmethod
+    def _context_text(value: Any, limit: int | None = None) -> str:
+        """Format persisted session values safely for human-readable output."""
+        if value is None:
+            text = ""
+        elif isinstance(value, str):
+            text = value
+        elif isinstance(value, (dict, list, tuple)):
+            try:
+                text = json.dumps(value, ensure_ascii=False, default=str)
+            except (TypeError, ValueError):
+                text = str(value)
+        else:
+            text = str(value)
+
+        if limit is not None:
+            return text[:limit]
+        return text
+
     def __init__(self, agent: "Agent"):
         self.agent = agent
         self._guide_injected: bool = False
@@ -820,27 +839,32 @@ class MemoryHandler:
             sub_records = getattr(ctx, "sub_agent_records", None) or []
             if sub_records:
                 parts.append("\n## 子Agent执行记录")
-                for r in sub_records:
-                    name = r.get("agent_name", "unknown")
+                for raw_record in sub_records:
+                    r = raw_record if isinstance(raw_record, dict) else {}
+                    name = self._context_text(r.get("agent_name", "unknown")) or "unknown"
                     parts.append(f"\n### {name}")
-                    task_msg = r.get("task_message", "")
+                    task_msg = self._context_text(r.get("task_message", ""), 200)
                     if task_msg:
-                        parts.append(f"- 任务: {task_msg[:200]}")
+                        parts.append(f"- 任务: {task_msg}")
                     elapsed = r.get("elapsed_s", "")
-                    if elapsed:
-                        parts.append(f"- 耗时: {elapsed}s")
+                    if elapsed not in (None, ""):
+                        parts.append(f"- 耗时: {self._context_text(elapsed)}s")
                     tools_raw = r.get("tools_used") or []
+                    if isinstance(tools_raw, (str, bytes)) or not hasattr(tools_raw, "__iter__"):
+                        tools_raw = [tools_raw]
                     tools = [
-                        t if isinstance(t, str)
-                        else (t.get("name") if isinstance(t, dict) and t.get("name") else str(t))
+                        self._context_text(
+                            t if isinstance(t, str)
+                            else (t.get("name") if isinstance(t, dict) and t.get("name") else t)
+                        )
                         for t in tools_raw
                     ]
                     tools = [t for t in tools if t]
                     if tools:
                         parts.append(f"- 工具: {', '.join(tools[:10])}")
-                    preview = r.get("result_preview", "")
+                    preview = self._context_text(r.get("result_preview", ""), 1000)
                     if preview:
-                        parts.append(f"- 结果预览:\n{preview[:1000]}")
+                        parts.append(f"- 结果预览:\n{preview}")
             else:
                 parts.append("\n## 子Agent执行记录\n无子Agent记录")
 
@@ -848,9 +872,10 @@ class MemoryHandler:
             parts.append("\n## 工具使用记录")
             react_traces = getattr(ctx, "react_traces", None)
             if react_traces:
-                for i, trace in enumerate(react_traces[-20:], 1):
-                    tool = trace.get("tool_name", "")
-                    status = trace.get("status", "")
+                for i, raw_trace in enumerate(react_traces[-20:], 1):
+                    trace = raw_trace if isinstance(raw_trace, dict) else {}
+                    tool = self._context_text(trace.get("tool_name", ""))
+                    status = self._context_text(trace.get("status", ""))
                     if tool:
                         parts.append(f"{i}. {tool} ({status})")
             else:
@@ -862,12 +887,11 @@ class MemoryHandler:
             display_msgs = msgs[-20:] if len(msgs) > 20 else msgs
             if len(msgs) > 20:
                 parts.append(f"（显示最近 20 条，共 {len(msgs)} 条）\n")
-            for msg in display_msgs:
-                role = msg.get("role", "?")
-                ts = msg.get("timestamp", "")
-                ts_display = ts[:16] if ts else ""
-                content = msg.get("content", "")
-                content = content[:500] if isinstance(content, str) else str(content)[:500]
+            for raw_msg in display_msgs:
+                msg = raw_msg if isinstance(raw_msg, dict) else {}
+                role = self._context_text(msg.get("role", "?")) or "?"
+                ts_display = self._context_text(msg.get("timestamp", ""), 16)
+                content = self._context_text(msg.get("content", ""), 500)
                 parts.append(f"[{ts_display}] {role}: {content}")
 
         return "\n".join(parts) if parts else "无可用会话信息"

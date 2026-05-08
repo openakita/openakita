@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,11 +10,9 @@ from openakita.memory.extractor import MemoryExtractor
 from openakita.memory.types import (
     ConversationTurn,
     Episode,
-    MemoryType,
     Scratchpad,
-    SemanticMemory,
 )
-from tests.fixtures.mock_llm import MockBrain, MockLLMClient, MockResponse
+from tests.fixtures.mock_llm import MockLLMClient
 
 
 @dataclass
@@ -38,6 +36,16 @@ class SimpleMockBrain:
     async def think(self, prompt: str, **kwargs):
         text = self._responses.pop(0) if self._responses else self._default
         return SimpleResponse(content=text)
+
+
+class ObjectContentBrain:
+    """Brain mock whose response.content can be a dict/list, matching provider edge cases."""
+
+    def __init__(self, content):
+        self.content = content
+
+    async def think(self, prompt: str, **kwargs):
+        return SimpleNamespace(content=self.content)
 
 
 @pytest.fixture
@@ -136,6 +144,33 @@ class TestExtractFromTurnV2:
         result = await extractor.extract_from_turn_v2(turn)
         assert all(len(r["content"]) >= 5 for r in result)
 
+    async def test_handles_structured_turn_content(self, mock_brain_simple):
+        mock_brain_simple.preset(json.dumps([
+            {
+                "type": "FACT",
+                "content": "用户使用多模态消息",
+                "importance": 0.6,
+            }
+        ]))
+        extractor = MemoryExtractor(brain=mock_brain_simple)
+        turn = ConversationTurn(
+            role="user",
+            content=[{"type": "text", "text": "这是一条来自多模态消息的用户输入，应该可以提取"}],
+        )
+
+        result = await extractor.extract_from_turn_v2(turn)
+
+        assert len(result) == 1
+        assert result[0]["content"] == "用户使用多模态消息"
+
+    async def test_handles_structured_response_content(self):
+        extractor = MemoryExtractor(brain=ObjectContentBrain({"message": "NONE"}))
+        turn = ConversationTurn(role="user", content="这段内容足够长，用来验证结构化响应不会触发 strip 错误")
+
+        result = await extractor.extract_from_turn_v2(turn)
+
+        assert result == []
+
 
 class TestExtractQuickFacts:
     """extract_quick_facts is deprecated (always returns []).
@@ -155,6 +190,49 @@ class TestExtractQuickFacts:
 
     def test_empty_messages(self, extractor_no_brain):
         assert extractor_no_brain.extract_quick_facts([]) == []
+
+
+class TestExtractFromConversation:
+    async def test_handles_structured_conversation_content(self, mock_brain_simple):
+        mock_brain_simple.preset(json.dumps([
+            {
+                "type": "FACT",
+                "subject": "用户",
+                "predicate": "消息类型",
+                "content": "用户发送过结构化内容",
+                "importance": 0.6,
+            }
+        ]))
+        extractor = MemoryExtractor(brain=mock_brain_simple)
+        turns = [
+            ConversationTurn(
+                role="user",
+                content={"type": "text", "text": "这是一条结构化用户消息，内容足够长"},
+            )
+        ]
+
+        items, scores = await extractor.extract_from_conversation(turns)
+
+        assert scores == []
+        assert len(items) == 1
+        assert items[0]["content"] == "用户发送过结构化内容"
+
+    def test_parse_memory_items_handles_structured_fields(self, extractor_no_brain):
+        items = extractor_no_brain._parse_memory_items(
+            [
+                {
+                    "type": "FACT",
+                    "subject": {"name": "用户"},
+                    "predicate": ["偏好"],
+                    "content": {"text": "用户偏好结构化输入"},
+                    "duration": {"value": "permanent"},
+                    "importance": 0.7,
+                }
+            ]
+        )
+
+        assert len(items) == 1
+        assert "用户偏好结构化输入" in items[0]["content"]
 
 
 class TestGenerateEpisode:

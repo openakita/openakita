@@ -61,7 +61,7 @@ import type {
 import {
   IDLE_THRESHOLD_MS, IDLE_TOKEN_THRESHOLD, PASTE_CHAR_THRESHOLD, UNDO_MAX_STEPS,
   exportConversation, appendAuthToken, stripLegacySummary,
-  sanitizeStoredMessages, loadMessagesFromStorage, saveMessagesToStorage,
+  sanitizeStoredMessages, loadMessagesFromStorage, saveMessagesToStorage, STORED_MESSAGE_WINDOW,
   buildChainFromSummary, formatAskUserAnswer, patchMessagesWithBackend,
   classifyError, basename, formatToolDescription, generateGroupSummary,
   ERROR_META, SVG_PATHS, getNextSpinnerTip,
@@ -90,6 +90,15 @@ function _cmdPrefix(cmd: string): string {
   if (parts.length >= 2) return `${parts[0]} ${parts[1]}`;
   return parts[0] || "";
 }
+
+const HISTORY_PAGE_LIMIT = 80;
+
+type HistoryPageState = {
+  total: number;
+  startIndex: number | null;
+  hasMoreBefore: boolean;
+  loadingOlder: boolean;
+};
 
 // ─── 主组件 ───
 
@@ -169,6 +178,12 @@ export function ChatView({
     } catch { return null; }
   });
   const [hydrating, setHydrating] = useState(false);
+  const [historyPage, setHistoryPage] = useState<HistoryPageState>({
+    total: 0,
+    startIndex: null,
+    hasMoreBefore: false,
+    loadingOlder: false,
+  });
 
   // ── Workspace switch: reload chat state from new scoped keys ──
   // Also performs one-time migration of legacy global keys into the first real
@@ -653,8 +668,7 @@ export function ChatView({
         // Re-hydrate active conversation if it was among the stale ones
         const curActive = activeConvIdRef.current;
         if (curActive && staleIds.has(curActive) && !busyIds.has(curActive)) {
-          const meta = convs.find((c) => c.id === curActive);
-          void hydrateConversationMessages(curActive, meta?.messageCount || 0);
+          void hydrateConversationMessages(curActive);
         }
       } catch {
         setConversations((prev) =>
@@ -691,52 +705,116 @@ export function ChatView({
   const hydrateSeqRef = useRef(0);
 
   const mapBackendHistoryToMessages = useCallback(
-    (rows: { id: string; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[]; artifacts?: ChatArtifact[]; ask_user?: { question: string; options?: { id: string; label: string }[]; questions?: ChatAskQuestion[] } }[]): ChatMessage[] => {
+    (rows: { id: string; index?: number; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[]; artifacts?: ChatArtifact[]; ask_user?: { question: string; options?: { id: string; label: string }[]; questions?: ChatAskQuestion[] }; usage?: ChatMessage["usage"] }[]): ChatMessage[] => {
       return rows.map((m) => ({
         id: m.id,
+        ...(typeof m.index === "number" ? { historyIndex: m.index } : {}),
         role: m.role as "user" | "assistant" | "system",
         content: m.content,
         timestamp: m.timestamp,
         ...(m.chain_summary?.length ? { thinkingChain: buildChainFromSummary(m.chain_summary) } : {}),
         ...(m.artifacts?.length ? { artifacts: m.artifacts } : {}),
         ...(m.ask_user ? { askUser: m.ask_user, content: "" } : {}),
+        ...(m.usage ? { usage: m.usage } : {}),
       }));
     },
     [],
   );
 
-  const hydrateConversationMessages = useCallback(async (convId: string, expectedCount = 0) => {
+  const hydrateConversationMessages = useCallback(async (convId: string) => {
     const seq = ++hydrateSeqRef.current;
     setHydrating(true);
-    const localMsgs = loadMessagesFromStorage(STORAGE_KEY_MSGS_PREFIX + convId);
+    const localMsgs = loadMessagesFromStorage(STORAGE_KEY_MSGS_PREFIX + convId).slice(-STORED_MESSAGE_WINDOW);
 
-    const localCount = Array.isArray(localMsgs) ? localMsgs.length : 0;
-    const shouldSyncBackend = serviceRunning && (localCount === 0 || (expectedCount > 0 && localCount < expectedCount));
+    // Always ask the backend when available.  A completed answer may be saved
+    // there after a desktop/web SSE disconnect while localStorage still has the
+    // interrupted placeholder with the same message count.
+    const shouldSyncBackend = serviceRunning;
 
     if (!shouldSyncBackend) {
-      if (seq === hydrateSeqRef.current) { setMessages(localMsgs); setHydrating(false); }
+      if (seq === hydrateSeqRef.current) {
+        setMessages(localMsgs);
+        setHistoryPage({
+          total: localMsgs.length,
+          startIndex: null,
+          hasMoreBefore: false,
+          loadingOlder: false,
+        });
+        setHydrating(false);
+      }
       return;
     }
 
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history`);
+      const res = await safeFetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history?limit=${HISTORY_PAGE_LIMIT}`);
       const data = await res.json();
       const backendMsgs = Array.isArray(data?.messages) ? mapBackendHistoryToMessages(data.messages) : [];
 
-      const chosen = backendMsgs.length >= localCount ? backendMsgs : localMsgs;
-      if (seq === hydrateSeqRef.current) { setMessages(chosen); setHydrating(false); }
+      const chosen = backendMsgs.length > 0 ? backendMsgs : localMsgs;
+      if (seq === hydrateSeqRef.current) {
+        setMessages(chosen);
+        setHistoryPage({
+          total: typeof data?.total === "number" ? data.total : chosen.length,
+          startIndex: typeof data?.start_index === "number" ? data.start_index : null,
+          hasMoreBefore: Boolean(data?.has_more_before),
+          loadingOlder: false,
+        });
+        setHydrating(false);
+      }
 
-      if (backendMsgs.length >= localCount) {
-        saveMessagesToStorage(STORAGE_KEY_MSGS_PREFIX + convId, backendMsgs);
+      if (chosen !== localMsgs) {
+        saveMessagesToStorage(STORAGE_KEY_MSGS_PREFIX + convId, chosen);
       }
     } catch {
-      if (seq === hydrateSeqRef.current) { setMessages(localMsgs); setHydrating(false); }
+      if (seq === hydrateSeqRef.current) {
+        setMessages(localMsgs);
+        setHistoryPage({
+          total: localMsgs.length,
+          startIndex: null,
+          hasMoreBefore: false,
+          loadingOlder: false,
+        });
+        setHydrating(false);
+      }
     }
   }, [serviceRunning, apiBaseUrl, mapBackendHistoryToMessages, STORAGE_KEY_MSGS_PREFIX]);
+
+  const loadOlderMessages = useCallback(async () => {
+    const convId = activeConvIdRef.current;
+    if (!convId || !serviceRunning || historyPage.loadingOlder || !historyPage.hasMoreBefore || historyPage.startIndex == null) {
+      return;
+    }
+    setHistoryPage((prev) => ({ ...prev, loadingOlder: true }));
+    messageListRef.current?.saveScrollPosition();
+    try {
+      const res = await safeFetch(
+        `${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history?limit=${HISTORY_PAGE_LIMIT}&before=${historyPage.startIndex}`,
+      );
+      const data = await res.json();
+      const olderMsgs = Array.isArray(data?.messages) ? mapBackendHistoryToMessages(data.messages) : [];
+      if (olderMsgs.length > 0) {
+        setMessages((prev) => {
+          const seen = new Set(prev.map((m) => m.id));
+          return [...olderMsgs.filter((m) => !seen.has(m.id)), ...prev];
+        });
+      }
+      setHistoryPage({
+        total: typeof data?.total === "number" ? data.total : historyPage.total,
+        startIndex: typeof data?.start_index === "number" ? data.start_index : historyPage.startIndex,
+        hasMoreBefore: Boolean(data?.has_more_before),
+        loadingOlder: false,
+      });
+      requestAnimationFrame(() => messageListRef.current?.restoreScrollPosition());
+    } catch {
+      setHistoryPage((prev) => ({ ...prev, loadingOlder: false }));
+      requestAnimationFrame(() => messageListRef.current?.restoreScrollPosition());
+    }
+  }, [serviceRunning, historyPage, apiBaseUrl, mapBackendHistoryToMessages]);
 
   useEffect(() => {
     if (!activeConvId) {
       setMessages([]);
+      setHistoryPage({ total: 0, startIndex: null, hasMoreBefore: false, loadingOlder: false });
       return;
     }
     if (skipConvLoadRef.current) {
@@ -751,9 +829,7 @@ export function ChatView({
       setDisplayActiveSubAgents(ctx.activeSubAgents);
       setDisplaySubAgentTasks(ctx.subAgentTasks);
     } else {
-      const activeMeta = conversations.find((c) => c.id === activeConvId);
-      const expectedCount = activeMeta?.messageCount || 0;
-      void hydrateConversationMessages(activeConvId, expectedCount);
+      void hydrateConversationMessages(activeConvId);
       setDisplayActiveSubAgents([]);
       setDisplaySubAgentTasks([]);
     }
@@ -1950,21 +2026,37 @@ export function ChatView({
     setStreamingTick(t => t + 1);
 
     // ── Per-session helpers: write to StreamContext, sync to screen only if active ──
-    // rAF throttle: StreamContext always gets the latest data immediately,
-    // but React state (setMessages) is flushed at most once per animation frame.
-    // This reduces O(N) reconciliation from ~30-60/s to ≤60fps, critical for long histories.
+    // StreamContext always gets the latest data immediately, while React state is
+    // flushed at a bounded cadence. This protects typing from long SSE event bursts.
+    const SCREEN_FLUSH_MIN_MS = 50;
     let screenFlushRaf = 0;
+    let screenFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastScreenFlushAt = 0;
     const flushToScreen = () => {
       screenFlushRaf = 0;
+      if (screenFlushTimer) {
+        clearTimeout(screenFlushTimer);
+        screenFlushTimer = null;
+      }
+      lastScreenFlushAt = Date.now();
       const c = streamContexts.current.get(thisConvId);
       if (c && activeConvIdRef.current === thisConvId) setMessages(c.messages);
+    };
+    const scheduleScreenFlush = () => {
+      if (screenFlushRaf || screenFlushTimer) return;
+      const elapsed = Date.now() - lastScreenFlushAt;
+      const delay = Math.max(0, SCREEN_FLUSH_MIN_MS - elapsed);
+      screenFlushTimer = setTimeout(() => {
+        screenFlushTimer = null;
+        screenFlushRaf = requestAnimationFrame(flushToScreen);
+      }, delay);
     };
     const updateMessages = (updater: (msgs: ChatMessage[]) => ChatMessage[]) => {
       const c = streamContexts.current.get(thisConvId);
       if (!c) return;
       c.messages = updater(c.messages);
-      if (activeConvIdRef.current === thisConvId && !screenFlushRaf) {
-        screenFlushRaf = requestAnimationFrame(flushToScreen);
+      if (activeConvIdRef.current === thisConvId) {
+        scheduleScreenFlush();
       }
     };
     const updateSubAgents = (
@@ -2018,8 +2110,7 @@ export function ChatView({
       };
 
       const poll = () => {
-        const ctx = streamContexts.current.get(thisConvId);
-        if (!ctx || ctx.userStopped) return;
+        if (sctx.userStopped) return;
         attempts++;
         safeFetch(`${apiBaseRef.current}/api/sessions/${encodeURIComponent(convId)}/history`)
           .then((r) => r.ok ? r.json() : null)
@@ -2050,7 +2141,9 @@ export function ChatView({
               staleCount++;
             }
             setMessages((prev) => {
-              const updated = prev.map((m) => {
+              const isActiveRecovery = activeConvIdRef.current === thisConvId;
+              const baseMessages = isActiveRecovery ? prev : loadMessagesFromStorage(_recoverKey);
+              const updated = baseMessages.map((m) => {
                 if (m.id !== _recoverMsgId) return m;
                 if (m.content && m.content.length >= contentLen) return m;
                 const patched: ChatMessage = { ...m, content: lastAssistant.content };
@@ -2063,8 +2156,10 @@ export function ChatView({
                 }
                 return patched;
               });
+              const liveCtx = streamContexts.current.get(thisConvId);
+              if (liveCtx) liveCtx.messages = updated;
               try { saveMessagesToStorage(_recoverKey, updated); } catch { /* quota */ }
-              return updated;
+              return isActiveRecovery ? updated : prev;
             });
             if (staleCount < maxStale && attempts < maxAttempts) {
               setTimeout(poll, getInterval());
@@ -2839,14 +2934,17 @@ export function ChatView({
                   const ctxLimit = event.usage.history_context_limit ?? event.usage.context_limit;
                   if (typeof ctxTokens === "number") setContextTokens(ctxTokens);
                   if (typeof ctxLimit === "number") setContextLimit(ctxLimit);
-                  const inTokens = event.usage.billable_input_tokens ?? event.usage.input_tokens;
-                  const outTokens = event.usage.billable_output_tokens ?? event.usage.output_tokens;
-                  const totalTokens = event.usage.billable_total_tokens ?? event.usage.total_tokens;
+                  const isEstimatedUsage = Boolean(event.usage.usage_estimated);
+                  const inTokens = isEstimatedUsage ? event.usage.input_tokens : (event.usage.billable_input_tokens ?? event.usage.input_tokens);
+                  const outTokens = isEstimatedUsage ? event.usage.output_tokens : (event.usage.billable_output_tokens ?? event.usage.output_tokens);
+                  const totalTokens = isEstimatedUsage ? event.usage.total_tokens : (event.usage.billable_total_tokens ?? event.usage.total_tokens);
                   if (typeof inTokens === "number" && typeof outTokens === "number") {
                     assistantMsg.usage = {
                       input_tokens: inTokens,
                       output_tokens: outTokens,
                       total_tokens: totalTokens ?? inTokens + outTokens,
+                      usage_estimated: isEstimatedUsage,
+                      usage_source: event.usage.usage_source,
                     };
                   }
                 }
@@ -2934,33 +3032,25 @@ export function ChatView({
         if (!gracefulDone && convId) {
           // SSE 连接被中断（未收到 "done" 事件），后端可能仍在运行，启动持续轮询恢复
           attemptRecovery(3000);
-        } else if (gracefulDone) {
-          // SSE 正常完成，但若未交付任何有效响应，做一次性回填
-          const streamDeliveredPayload = !!(
-            currentContent.trim() || currentAsk || currentToolCalls.length > 0
-          );
-          if (!streamDeliveredPayload && convId) {
-            safeFetch(`${apiBase}/api/sessions/${encodeURIComponent(convId)}/history`)
-              .then((r) => r.json())
-              .then((data) => {
-                const rows = Array.isArray(data?.messages) ? data.messages : [];
-                const candidates = rows.filter((m: { role?: string; content?: string }) => m?.role === "assistant" && typeof m?.content === "string");
-                const newerThanUser = candidates.filter((m: { timestamp?: number }) => typeof m?.timestamp === "number" && m.timestamp >= userMsg.timestamp);
-                const lastAssistant = (newerThanUser.length > 0 ? newerThanUser : candidates).slice(-1)[0];
-                if (!lastAssistant?.content) return;
-                const backendLen = (lastAssistant.content as string).length;
-                setMessages((prev) => prev.map((m) => {
-                  if (m.id !== assistantMsg.id) return m;
-                  if (m.content && m.content.length >= backendLen) return m;
-                  const patched: ChatMessage = { ...m, content: lastAssistant.content };
-                  if ((!m.thinkingChain || m.thinkingChain.length === 0) && Array.isArray(lastAssistant.chain_summary) && lastAssistant.chain_summary.length > 0) {
-                    patched.thinkingChain = buildChainFromSummary(lastAssistant.chain_summary);
-                  }
-                  return patched;
-                }));
-              })
-              .catch(() => {});
-          }
+        } else if (gracefulDone && convId) {
+          // SSE 正常完成后也静默校验一次后端历史。桌面端恢复前台或
+          // fetch 流边界异常时，UI 可能已经显示了半截 Markdown 表格；
+          // 后端 session history 是最终落盘结果，用它补齐更完整的回答。
+          safeFetch(`${apiBase}/api/sessions/${encodeURIComponent(convId)}/history`)
+            .then((r) => r.json())
+            .then((data) => {
+              const rows = Array.isArray(data?.messages) ? data.messages : [];
+              if (!rows.length) return;
+              setMessages((prev) => {
+                const patched = patchMessagesWithBackend(prev, rows);
+                if (patched === prev) return prev;
+                const liveCtx = streamContexts.current.get(thisConvId);
+                if (liveCtx) liveCtx.messages = patched;
+                try { saveMessagesToStorage(STORAGE_KEY_MSGS_PREFIX + thisConvId, patched); } catch { /* quota */ }
+                return patched;
+              });
+            })
+            .catch(() => {});
         }
       }
     } catch (e: unknown) {
@@ -2998,6 +3088,7 @@ export function ChatView({
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
       if (screenFlushRaf) { cancelAnimationFrame(screenFlushRaf); screenFlushRaf = 0; }
+      if (screenFlushTimer) { clearTimeout(screenFlushTimer); screenFlushTimer = null; }
       const ctx = streamContexts.current.get(thisConvId);
       if (ctx) {
         ctx.isStreaming = false;
@@ -4114,6 +4205,9 @@ export function ChatView({
             isStreaming={isCurrentConvStreaming}
             conversationId={activeConvId || undefined}
             httpApiBase={() => apiBaseUrl}
+            hasMoreBefore={historyPage.hasMoreBefore}
+            loadingOlder={historyPage.loadingOlder}
+            onLoadOlder={loadOlderMessages}
             onPlanStepAction={(action, stepIdx, description) => {
               const msg = action === "skip"
                 ? `请跳过当前步骤（第 ${stepIdx + 1} 步：${description}），直接进入下一步。`

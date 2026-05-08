@@ -50,6 +50,11 @@ export const MessageBubble = memo(function MessageBubble({
   const { t } = useTranslation();
   const isUser = msg.role === "user";
   const isAssistant = msg.role === "assistant";
+  const usageTotal = msg.usage
+    ? (msg.usage.total_tokens ?? (msg.usage.input_tokens + msg.usage.output_tokens))
+    : 0;
+  const showUsage = Boolean(msg.usage && usageTotal > 0);
+  const usagePrefix = msg.usage?.usage_estimated ? "~" : "";
   return (
     <div className="msgBubbleWrap" style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", marginBottom: 16, position: "relative" }}>
       {!isUser && msg.agentName && (
@@ -138,9 +143,9 @@ export const MessageBubble = memo(function MessageBubble({
       </div>
       <div className="msgActions" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: 0.35, marginTop: 2, paddingLeft: 2, paddingRight: 2 }}>
         <span>{formatTime(msg.timestamp)}</span>
-        {msg.usage && (
-          <span style={{ opacity: 0.7 }} title={`In: ${msg.usage.input_tokens} · Out: ${msg.usage.output_tokens}`}>
-            {msg.usage.total_tokens ?? (msg.usage.input_tokens + msg.usage.output_tokens)} tokens
+        {showUsage && msg.usage && (
+          <span style={{ opacity: 0.7 }} title={`${msg.usage.usage_estimated ? "Estimated · " : ""}In: ${msg.usage.input_tokens} · Out: ${msg.usage.output_tokens}`}>
+            {usagePrefix}{usageTotal} tokens
           </span>
         )}
         {!msg.streaming && msg.content && (

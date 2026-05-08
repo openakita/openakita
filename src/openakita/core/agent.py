@@ -33,9 +33,6 @@ if TYPE_CHECKING:
     from ..sessions import Session
 
 from ..config import settings
-from .confirmation_state import get_confirmation_store
-from .risk_intent import RiskIntentResult, RiskLevel, classify_risk_intent
-from .trusted_paths import consume_session_trust, is_trusted_workspace_path
 
 # 记忆系统
 from ..memory import MemoryManager
@@ -96,7 +93,9 @@ from ..tools.shell import ShellTool
 from ..tools.web import WebTool
 from .agent_state import AgentState
 from .brain import Brain, Context
+from .confirmation_state import get_confirmation_store
 from .context_manager import ContextManager
+from .context_manager import _CancelledError as _CtxCancelledError
 from .context_utils import get_max_context_tokens as _shared_get_max_context_tokens
 from .context_utils import get_raw_context_window as _shared_get_raw_context_window
 from .errors import UserCancelledError
@@ -110,6 +109,7 @@ from .response_handler import (
     parse_intent_tag,
     strip_thinking_tags,
 )
+from .risk_intent import RiskIntentResult, RiskLevel, classify_risk_intent
 from .skill_manager import SkillManager
 from .task_monitor import RETROSPECT_PROMPT, TaskMonitor
 from .token_tracking import (
@@ -119,6 +119,7 @@ from .token_tracking import (
     set_tracking_context,
 )
 from .tool_executor import ToolExecutor
+from .trusted_paths import consume_session_trust, is_trusted_workspace_path
 from .user_profile import get_profile_manager
 
 _DESKTOP_AVAILABLE: bool | None = None  # None = not yet checked
@@ -2453,7 +2454,7 @@ class Agent:
         _has_image_atts = getattr(self, "_has_pending_image_attachments", False)
 
         from ..prompt.budget import estimate_tokens
-        from ..prompt.builder import PromptTier, resolve_tier
+        from ..prompt.builder import resolve_tier
 
         _user_input_tokens = estimate_tokens(task_description) if task_description else 0
         _prompt_tier = resolve_tier(ctx_window)
@@ -2465,10 +2466,11 @@ class Agent:
         )
         _prompt_profile = _strategy.profile
         _skip_catalogs = _strategy.skip_catalogs
+        _intent_tool_hints = list(getattr(intent, "tool_hints", []) or [])
 
         # Session-level system prompt cache: reuse when the structural
         # parameters (mode, catalogs, profile) haven't changed.  Memory
-        # keywords vary per turn so the cache key includes them.
+        # keywords and intent tool hints vary per turn so the cache key includes them.
         _conv_id = session.id if session else ""
         try:
             _working_facts_cache_key = json.dumps(
@@ -2489,6 +2491,7 @@ class Agent:
             _strategy.memory_scope,
             tuple(sorted(_strategy.catalog_scope)),
             _strategy.include_project_guidelines,
+            tuple(sorted(_intent_tool_hints)),
             tuple(sorted(_mem_keywords)) if _mem_keywords else (),
             _working_facts_cache_key,
         )
@@ -2519,6 +2522,7 @@ class Agent:
                 memory_scope=_strategy.memory_scope,
                 catalog_scope=_strategy.catalog_scope,
                 include_project_guidelines=_strategy.include_project_guidelines,
+                intent_tool_hints=_intent_tool_hints,
             )
             self._system_prompt_cache[_cache_key] = prompt
             self._system_prompt_cache_dirty = False
@@ -2541,7 +2545,7 @@ class Agent:
             )
         self._system_prompt_cache_dirty = True
 
-    def _resolve_prompt_profile(self, intent: Any, session_type: str) -> "PromptProfile":
+    def _resolve_prompt_profile(self, intent: Any, session_type: str) -> Any:
         """Determine PromptProfile from intent and session type."""
         from ..prompt.builder import PromptProfile
 
@@ -2991,6 +2995,42 @@ class Agent:
             )
             self._invalidate_system_prompt_cache("context compression")
         return result
+
+    async def _compress_context_for_prepare(
+        self,
+        messages: list[dict],
+        *,
+        session_id: str,
+        conversation_id: str | None = None,
+    ) -> list[dict]:
+        """Compress session history during prepare without reusing stale cancel signals."""
+        active_task = None
+        if self.agent_state:
+            active_task = self.agent_state.get_task_for_session(session_id)
+
+        current_cancel_event = getattr(self.context_manager, "_cancel_event", None)
+        if not active_task or current_cancel_event is not active_task.cancel_event:
+            self.context_manager.set_cancel_event(None)
+
+        try:
+            return await self._compress_context(messages, conversation_id=conversation_id)
+        except _CtxCancelledError:
+            active_task = (
+                self.agent_state.get_task_for_session(session_id) if self.agent_state else None
+            )
+            if active_task and (active_task.cancelled or bool(active_task.cancel_reason.strip())):
+                raise UserCancelledError(
+                    reason=active_task.cancel_reason or "用户请求停止",
+                    source="prepare_context_compress",
+                ) from None
+
+            logger.warning(
+                "[Session:%s] Prepare context compression cancelled without active task "
+                "cancellation. Fallback to uncompressed context.",
+                session_id or conversation_id,
+            )
+            self.context_manager.set_cancel_event(None)
+            return messages
 
     async def _compress_large_tool_results(
         self, messages: list[dict], threshold: int = LARGE_TOOL_RESULT_THRESHOLD
@@ -4389,7 +4429,11 @@ class Agent:
         )
 
         # 11. Context compression
-        messages = await self._compress_context(messages)
+        messages = await self._compress_context_for_prepare(
+            messages,
+            session_id=session_id,
+            conversation_id=conversation_id,
+        )
 
         # 12. TaskMonitor creation
         task_monitor = TaskMonitor(
@@ -4676,20 +4720,27 @@ class Agent:
                 return "✅ 好的，已停止当前任务。"
 
             # === 共享准备 ===
-            (
-                messages,
-                session_type,
-                task_monitor,
-                conversation_id,
-                im_tokens,
-            ) = await self._prepare_session_context(
-                message=message,
-                session_messages=session_messages,
-                session_id=session_id,
-                session=session,
-                gateway=gateway,
-                conversation_id=conversation_id,
-            )
+            try:
+                (
+                    messages,
+                    session_type,
+                    task_monitor,
+                    conversation_id,
+                    im_tokens,
+                ) = await self._prepare_session_context(
+                    message=message,
+                    session_messages=session_messages,
+                    session_id=session_id,
+                    session=session,
+                    gateway=gateway,
+                    conversation_id=conversation_id,
+                )
+            except UserCancelledError:
+                logger.info(
+                    f"[Session:{session_id}] Cancelled during prepare compression, "
+                    "returning stop acknowledgement"
+                )
+                return "✅ 好的，已停止当前任务。"
 
             # 准备阶段后检查（含 pending cancel）
             _conv_cancel_id = conversation_id or session_id
@@ -4768,7 +4819,7 @@ class Agent:
                 and not _risk_pre_authorized
             ):
                 response_text = _build_destructive_intent_question(message, _risk_intent)
-                pending = get_confirmation_store().create(
+                get_confirmation_store().create(
                     conversation_id=session_id,
                     original_message=message,
                     classification=_risk_intent.to_dict(),
@@ -5015,22 +5066,31 @@ class Agent:
                 return
 
             # === 共享准备 ===
-            (
-                messages,
-                session_type,
-                task_monitor,
-                conversation_id,
-                im_tokens,
-            ) = await self._prepare_session_context(
-                message=message,
-                session_messages=session_messages,
-                session_id=session_id,
-                session=session,
-                gateway=gateway,
-                conversation_id=conversation_id,
-                attachments=attachments,
-                mode=mode,
-            )
+            try:
+                (
+                    messages,
+                    session_type,
+                    task_monitor,
+                    conversation_id,
+                    im_tokens,
+                ) = await self._prepare_session_context(
+                    message=message,
+                    session_messages=session_messages,
+                    session_id=session_id,
+                    session=session,
+                    gateway=gateway,
+                    conversation_id=conversation_id,
+                    attachments=attachments,
+                    mode=mode,
+                )
+            except UserCancelledError:
+                logger.info(
+                    f"[Session:{session_id}] Cancelled during prepare compression, "
+                    "returning stop acknowledgement"
+                )
+                yield {"type": "text_delta", "content": "✅ 好的，已停止当前任务。"}
+                yield {"type": "done"}
+                return
 
             yield {"type": "heartbeat"}
 
@@ -5500,14 +5560,25 @@ class Agent:
             return {}
         total_in = sum(t.get("tokens", {}).get("input", 0) for t in trace)
         total_out = sum(t.get("tokens", {}).get("output", 0) for t in trace)
+        usage_estimated = any(bool(t.get("usage_estimated")) for t in trace)
+        usage_sources = {
+            str(t.get("usage_source"))
+            for t in trace
+            if str(t.get("usage_source") or "").strip()
+        }
         summary = {
             "input_tokens": total_in,
             "output_tokens": total_out,
             "total_tokens": total_in + total_out,
-            "billable_input_tokens": total_in,
-            "billable_output_tokens": total_out,
-            "billable_total_tokens": total_in + total_out,
         }
+        if usage_estimated:
+            summary["usage_estimated"] = True
+        else:
+            summary["billable_input_tokens"] = total_in
+            summary["billable_output_tokens"] = total_out
+            summary["billable_total_tokens"] = total_in + total_out
+        if usage_sources:
+            summary["usage_source"] = "mixed" if len(usage_sources) > 1 else next(iter(usage_sources))
         try:
             re = self.reasoning_engine
             ctx_mgr = getattr(self, "context_manager", None) or getattr(
@@ -6143,7 +6214,7 @@ class Agent:
                         farewell_text = block.text.strip()
                         break
                 logger.info(f"[StopTask][BgFarewell] LLM farewell 完成: {farewell_text[:100]}")
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 logger.warning("[StopTask][BgFarewell] LLM farewell 超时 (5s)")
             except Exception as e:
                 logger.warning(f"[StopTask][BgFarewell] LLM farewell 失败: {e}")

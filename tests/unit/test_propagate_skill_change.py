@@ -12,10 +12,9 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # FakeAgent 构造
@@ -136,6 +135,13 @@ class TestHappyPath:
         patched_env.notify_pools.assert_called_once()
         patched_env.notify_changed.assert_called_once_with("install")
         assert agent._context.system == "NEW-PROMPT"
+
+    def test_uses_public_preset_utils_helper(self, patched_env):
+        agent = _build_fake_agent()
+        agent.propagate_skill_change("reload")
+
+        patched_env.collect_skills.assert_called_once()
+        assert not hasattr(agent, "_collect_preset_referenced_skills")
 
     def test_rescan_false_skips_load_all(self, patched_env):
         agent = _build_fake_agent()

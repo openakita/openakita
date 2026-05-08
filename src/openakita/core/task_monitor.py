@@ -252,10 +252,11 @@ class TaskMonitor:
         self,
         tool_name: str,
         tool_input: dict,
-        result: str,
+        result: str | float | int = "",
+        legacy_success: bool | None = None,
         *,
-        success: bool,
-        duration_ms: int,
+        success: bool | None = None,
+        duration_ms: int | None = None,
     ) -> None:
         """记录一次工具调用（并行安全）
 
@@ -263,16 +264,24 @@ class TaskMonitor:
         - begin_tool_call/end_tool_call 依赖“同一时间仅一个工具调用”的隐含前提
         - 当一个模型在同一轮返回多个 tool_use（并行工具调用）时，Agent 可能并发执行工具
         - 此方法允许调用方自行测量耗时并直接写入当前 iteration，避免共享状态竞争
+        - 兼容旧调用 record_tool_call(name, input, elapsed_seconds, success)
         """
         if not self._current_iteration:
             return
         self._touch_progress()
+        if duration_ms is None and isinstance(result, (int, float)):
+            duration_ms = int(result * 1000)
+            result = ""
+        if success is None:
+            success = True if legacy_success is None else bool(legacy_success)
+        if duration_ms is None:
+            duration_ms = 0
         record = ToolCallRecord(
             name=tool_name,
             input_summary=str(tool_input),
-            output_summary=result if result else "",
+            output_summary=str(result) if result else "",
             duration_ms=int(duration_ms),
-            success=success,
+            success=bool(success),
         )
         self._current_iteration.tool_calls.append(record)
 

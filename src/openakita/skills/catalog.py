@@ -122,76 +122,22 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
 
     def generate_catalog(self, *, exposure_filter: str | None = None) -> str:
         """
-        生成已启用技能清单（disabled 和 disable_model_invocation 技能不出现在系统提示中）
+        生成已启用技能目录。
+
+        这是旧接口，仍被启动预热、技能安装/重载和若干 CLI/debug 路径调用。
+        默认必须保持目录式输出，避免这些旁路重新生成 name + description +
+        when_to_use 的长清单并进入缓存或提示词。需要按任务展开摘要时使用
+        get_grouped_compact_catalog()；需要完整说明时使用 get_skill_info。
 
         Args:
             exposure_filter: "core" | "core+recommended" | None
                 控制按 exposure_level 过滤。CONSUMER_CHAT 场景传 "core"，
                 IM_ASSISTANT 传 "core+recommended"，LOCAL_AGENT 传 None。
         """
-        with self._lock:
-            skills = self._list_model_visible(exposure_filter=exposure_filter)
-            hidden_count = self.registry.count_catalog_hidden()
-
-            if not skills:
-                if hidden_count > 0:
-                    empty_catalog = (
-                        "\n## Available Skills\n\n"
-                        "No skills are pre-loaded for this agent profile.\n"
-                        f"However, {hidden_count} additional skill(s) are installed. "
-                        "Use `list_skills` to discover them, then `get_skill_info(skill_name)` "
-                        "to load instructions when the task requires a specific skill.\n"
-                    )
-                else:
-                    empty_catalog = (
-                        "\n## Available Skills\n\n"
-                        "No skills installed. Use the skill creation workflow to add new skills.\n"
-                    )
-                if exposure_filter is None:
-                    self._cached_catalog = empty_catalog
-                return empty_catalog
-
-            skill_entries = []
-            for skill in skills:
-                desc = skill.description or ""
-                first_line = desc.split("\n")[0].strip()
-                when = getattr(skill, "when_to_use", "") or ""
-
-                if when:
-                    entry = self._safe_format(
-                        self.SKILL_ENTRY_WITH_HINT_TEMPLATE,
-                        name=skill.name,
-                        description=first_line,
-                        when_to_use=when,
-                    )
-                else:
-                    entry = self._safe_format(
-                        self.SKILL_ENTRY_TEMPLATE,
-                        name=skill.name,
-                        description=first_line,
-                    )
-                skill_entries.append(entry)
-
-            skill_list = "\n".join(skill_entries)
-
-            if hidden_count > 0:
-                skill_list += (
-                    f"\n\n_({hidden_count} more skill(s) available — "
-                    "use `list_skills` to discover all installed skills)_"
-                )
-
-            catalog = self._safe_format(self.CATALOG_TEMPLATE, skill_list=skill_list)
-            # Only cache unfiltered results (exposure_filter=None)
-            if exposure_filter is not None:
-                return catalog
+        catalog = self.get_index_catalog(exposure_filter=exposure_filter)
+        if exposure_filter is None:
             self._cached_catalog = catalog
-
-            logger.info(
-                "Generated skill catalog with %d skills (%d hidden)",
-                len(skills),
-                hidden_count,
-            )
-            return catalog
+        return catalog
 
     def get_catalog(self, refresh: bool = False) -> str:
         """
@@ -393,10 +339,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                 return "\n".join(lines).rstrip() + "\n"
 
             if max_tokens <= 0:
-                if priority_categories:
-                    result = _render_mixed(160)
-                else:
-                    result = _render(160)
+                result = _render_mixed(160) if priority_categories else _render(160)
             else:
                 if priority_categories:
                     result = _render_mixed(160)

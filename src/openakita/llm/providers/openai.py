@@ -118,8 +118,13 @@ def _humanize_upstream_error(status: int, body: str) -> str:
         return "API Key 无效或已过期，请到设置中心检查模型端点凭据"
     if status == 429 or "rate limit" in body_l:
         return "调用频率已超过上游限制，请稍后再试"
-    if "insufficientquota" in body_l or "insufficient_quota" in body_l or "balance" in body_l:
-        return "云端账户余额不足或额度已用尽，请充值后再继续使用"
+    if (
+        status == 402
+        or "insufficientquota" in body_l
+        or "insufficient_quota" in body_l
+        or "balance" in body_l
+    ):
+        return "云端账户余额不足或额度已用尽 (quota_exhausted)，请充值后再继续使用"
     if status == 408 or "timeout" in body_l:
         return "云端响应超时，请稍后重试或换个模型"
     if status == 404 or "modelnotfound" in body_l or "model not found" in body_l:

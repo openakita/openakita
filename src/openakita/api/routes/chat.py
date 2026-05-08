@@ -956,6 +956,71 @@ async def _stream_chat(
 
         # --- Save assistant response to session ---
         _save_done = True
+
+        # Collect usage once and reuse the same payload for SSE and session history.
+        # Missing provider usage must not be persisted as a real-looking zero.
+        _usage_data: dict | None = None
+        try:
+            _cached = getattr(actual_agent, "_last_usage_summary", None)
+            if _cached:
+                _usage_data = dict(_cached)
+            else:
+                re = getattr(actual_agent, "reasoning_engine", None)
+                trace = getattr(actual_agent, "_last_finalized_trace", None) or (
+                    getattr(re, "_last_react_trace", []) if re else []
+                )
+                if trace:
+                    total_in = sum(t.get("tokens", {}).get("input", 0) for t in trace)
+                    total_out = sum(t.get("tokens", {}).get("output", 0) for t in trace)
+                    if total_in or total_out:
+                        usage_estimated = any(bool(t.get("usage_estimated")) for t in trace)
+                        usage_sources = {
+                            str(t.get("usage_source"))
+                            for t in trace
+                            if str(t.get("usage_source") or "").strip()
+                        }
+                        _usage_data = {
+                            "input_tokens": total_in,
+                            "output_tokens": total_out,
+                            "total_tokens": total_in + total_out,
+                        }
+                        if usage_estimated:
+                            _usage_data["usage_estimated"] = True
+                        else:
+                            # Fix-13: 双写新字段名，前端可逐步切换。
+                            _usage_data["billable_input_tokens"] = total_in
+                            _usage_data["billable_output_tokens"] = total_out
+                            _usage_data["billable_total_tokens"] = total_in + total_out
+                        if usage_sources:
+                            _usage_data["usage_source"] = (
+                                "mixed" if len(usage_sources) > 1 else next(iter(usage_sources))
+                            )
+                ctx_mgr = getattr(actual_agent, "context_manager", None) or getattr(
+                    re, "_context_manager", None
+                )
+                if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
+                    _max_ctx = ctx_mgr.get_max_context_tokens()
+                    _msgs = getattr(re, "_last_working_messages", None) or getattr(
+                        getattr(actual_agent, "_context", None), "messages", []
+                    )
+                    _cur_ctx = ctx_mgr.estimate_messages_tokens(_msgs) if _msgs else 0
+                    if _usage_data is None:
+                        _usage_data = {}
+                    _usage_data["context_tokens"] = _cur_ctx
+                    _usage_data["context_limit"] = _max_ctx
+                    _usage_data["history_context_tokens"] = _cur_ctx
+                    _usage_data["history_context_limit"] = _max_ctx
+                # 透出 ContextPressure 摘要 — 供前端"上下文健康度"展示。
+                # 已由 reasoning_engine 在每轮 token 异常检测时同步刷新，
+                # 此处直接读取，零额外计算。
+                _last_pressure = getattr(re, "_last_context_pressure", None)
+                if _last_pressure:
+                    if _usage_data is None:
+                        _usage_data = {}
+                    _usage_data["context_pressure"] = dict(_last_pressure)
+        except Exception:
+            pass
+
         # ask_user 场景：_ask_user_question 已包含 LLM 文本 + 问题（由 reason_stream 拼接），
         # 优先使用它作为保存文本，确保下一轮 LLM 能看到完整的确认问题上下文。
         if _ask_user_question or _ask_user_questions:
@@ -1015,6 +1080,10 @@ async def _stream_chat(
                     _msg_meta["tool_summary"] = _tool_summary
                 if _collected_artifacts:
                     _msg_meta["artifacts"] = _collected_artifacts
+                if _usage_data and (
+                    _usage_data.get("input_tokens") or _usage_data.get("output_tokens")
+                ):
+                    _msg_meta["usage"] = _usage_data
                 if _ask_user_question:
                     _ask_user_data: dict = {"question": _ask_user_question}
                     if _ask_user_options:
@@ -1034,56 +1103,6 @@ async def _stream_chat(
         if session and hasattr(session, "context") and session_manager:
             if getattr(session.context, "sub_agent_records", None):
                 session_manager.mark_dirty()
-
-        # Collect usage — prefer pre-computed summary (survives cleanup),
-        # fall back to reading full trace (legacy path)
-        _usage_data: dict | None = None
-        try:
-            _cached = getattr(actual_agent, "_last_usage_summary", None)
-            if _cached:
-                _usage_data = dict(_cached)
-            else:
-                re = getattr(actual_agent, "reasoning_engine", None)
-                trace = getattr(actual_agent, "_last_finalized_trace", None) or (
-                    getattr(re, "_last_react_trace", []) if re else []
-                )
-                if trace:
-                    total_in = sum(t.get("tokens", {}).get("input", 0) for t in trace)
-                    total_out = sum(t.get("tokens", {}).get("output", 0) for t in trace)
-                    _usage_data = {
-                        "input_tokens": total_in,
-                        "output_tokens": total_out,
-                        "total_tokens": total_in + total_out,
-                        # Fix-13: 双写新字段名，前端可逐步切换。
-                        "billable_input_tokens": total_in,
-                        "billable_output_tokens": total_out,
-                        "billable_total_tokens": total_in + total_out,
-                    }
-                ctx_mgr = getattr(actual_agent, "context_manager", None) or getattr(
-                    re, "_context_manager", None
-                )
-                if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
-                    _max_ctx = ctx_mgr.get_max_context_tokens()
-                    _msgs = getattr(re, "_last_working_messages", None) or getattr(
-                        getattr(actual_agent, "_context", None), "messages", []
-                    )
-                    _cur_ctx = ctx_mgr.estimate_messages_tokens(_msgs) if _msgs else 0
-                    if _usage_data is None:
-                        _usage_data = {}
-                    _usage_data["context_tokens"] = _cur_ctx
-                    _usage_data["context_limit"] = _max_ctx
-                    _usage_data["history_context_tokens"] = _cur_ctx
-                    _usage_data["history_context_limit"] = _max_ctx
-                # 透出 ContextPressure 摘要 — 供前端"上下文健康度"展示。
-                # 已由 reasoning_engine 在每轮 token 异常检测时同步刷新，
-                # 此处直接读取，零额外计算。
-                _last_pressure = getattr(re, "_last_context_pressure", None)
-                if _last_pressure:
-                    if _usage_data is None:
-                        _usage_data = {}
-                    _usage_data["context_pressure"] = dict(_last_pressure)
-        except Exception:
-            pass
 
         if not _client_disconnected and not _agent_errored:
             # 透传本轮真实生效的 mode（IntentAnalyzer 可能把 CHAT 类闲聊静默

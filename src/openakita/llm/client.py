@@ -78,6 +78,19 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
         or "content_filter" in err_l
     ):
         categories.add(FailoverReason.CONTENT_SAFETY)
+    if (
+        "quota_exhausted" in err_l
+        or "insufficient_quota" in err_l
+        or "insufficient balance" in err_l
+        or "payment required" in err_l
+        or "api error (402)" in err_l
+        or "http 402" in err_l
+        or "(402)" in err_l
+        or "余额不足" in err_l
+        or "额度不足" in err_l
+        or "额度已用尽" in err_l
+    ):
+        categories.add(FailoverReason.QUOTA)
 
     if FailoverReason.CONTENT_SAFETY in categories:
         hints.append(

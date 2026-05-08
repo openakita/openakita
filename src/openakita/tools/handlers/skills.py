@@ -88,6 +88,8 @@ class SkillsHandler:
 
     def _list_skills(self, params: dict) -> str:
         """列出所有技能，区分启用/禁用/可发现状态"""
+        verbose = bool(params.get("verbose", False))
+        include_paths = bool(params.get("include_paths", False))
         all_skills = self.agent.skill_registry.list_all(include_disabled=True)
         if not all_skills:
             return (
@@ -111,39 +113,57 @@ class SkillsHandler:
             f"({enabled_total} 预加载, "
             f"{len(discoverable_external)} 可发现, "
             f"{len(disabled_external)} 禁用):\n\n"
+            "默认返回紧凑目录，避免把所有技能说明塞进对话上下文。"
+            "需要完整描述时再次调用 `list_skills({\"verbose\": true})`；"
+            "需要准确路径时优先用 `get_skill_info(skill_name)`，或显式传 `include_paths: true`。\n\n"
         )
+
+        def display_name(skill) -> str:
+            zh_name = skill.name_i18n.get("zh", "")
+            return f"{skill.name} ({zh_name})" if zh_name else skill.name
+
+        def short_desc(skill, limit: int = 80) -> str:
+            desc = (getattr(skill, "description", "") or "").split("\n")[0].strip()
+            when = (getattr(skill, "when_to_use", "") or "").strip()
+            text = when or desc
+            if len(text) > limit:
+                return text[:limit].rstrip() + "..."
+            return text
+
+        def exposure_suffix(skill, *, system: bool = False) -> str:
+            exposed = build_skill_exposure(skill)
+            parts = [f"source={exposed.origin_label}"]
+            if system and exposed.tool_name:
+                parts.append(f"tool={exposed.tool_name}")
+            if system and exposed.handler:
+                parts.append(f"handler={exposed.handler}")
+            if include_paths and exposed.skill_dir:
+                parts.append(f"path={exposed.skill_dir}")
+            return ", ".join(parts)
 
         if system_skills:
             output += f"**系统技能 ({len(system_skills)})** [全部启用]:\n"
             for skill in system_skills:
-                exposed = build_skill_exposure(skill)
                 auto = "自动" if not skill.disable_model_invocation else "手动"
-                zh_name = skill.name_i18n.get("zh", "")
-                name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
-                output += f"- {name_part} [{auto}] - {skill.description}\n"
-                output += (
-                    f"  source={exposed.origin_label}"
-                    + (f", tool={exposed.tool_name}" if exposed.tool_name else "")
-                    + (f", handler={exposed.handler}" if exposed.handler else "")
-                    + (f", path={exposed.skill_dir}" if exposed.skill_dir else "")
-                    + "\n"
-                )
+                output += f"- {display_name(skill)} [{auto}]"
+                if verbose:
+                    output += f" - {skill.description}"
+                else:
+                    hint = short_desc(skill)
+                    if hint:
+                        output += f" - {hint}"
+                output += f"\n  {exposure_suffix(skill, system=True)}\n"
             output += "\n"
 
         if enabled_external:
             output += f"**已启用外部技能 ({len(enabled_external)})**:\n"
             for skill in enabled_external:
-                exposed = build_skill_exposure(skill)
                 auto = "自动" if not skill.disable_model_invocation else "手动"
-                zh_name = skill.name_i18n.get("zh", "")
-                name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
-                output += f"- {name_part} [{auto}]\n"
-                output += f"  {skill.description}\n"
-                output += (
-                    f"  source={exposed.origin_label}"
-                    + (f", path={exposed.skill_dir}" if exposed.skill_dir else "")
-                    + "\n\n"
-                )
+                output += f"- {display_name(skill)} [{auto}]"
+                hint = skill.description if verbose else short_desc(skill)
+                if hint:
+                    output += f" - {hint}"
+                output += f"\n  {exposure_suffix(skill)}\n\n"
 
         if discoverable_external:
             output += (
@@ -151,32 +171,22 @@ class SkillsHandler:
                 "[未预加载 — 使用 get_skill_info(skill_name) 加载指令后即可使用]:\n"
             )
             for skill in discoverable_external:
-                exposed = build_skill_exposure(skill)
-                zh_name = skill.name_i18n.get("zh", "")
-                name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
-                output += f"- {name_part} [可发现]\n"
-                output += f"  {skill.description}\n"
-                output += (
-                    f"  source={exposed.origin_label}"
-                    + (f", path={exposed.skill_dir}" if exposed.skill_dir else "")
-                    + "\n\n"
-                )
+                output += f"- {display_name(skill)} [可发现]"
+                hint = skill.description if verbose else short_desc(skill)
+                if hint:
+                    output += f" - {hint}"
+                output += f"\n  {exposure_suffix(skill)}\n\n"
 
         if disabled_external:
             output += (
                 f"**已禁用外部技能 ({len(disabled_external)})** [需在技能面板启用后才可使用]:\n"
             )
             for skill in disabled_external:
-                exposed = build_skill_exposure(skill)
-                zh_name = skill.name_i18n.get("zh", "")
-                name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
-                output += f"- {name_part} [已禁用]\n"
-                output += f"  {skill.description}\n"
-                output += (
-                    f"  source={exposed.origin_label}"
-                    + (f", path={exposed.skill_dir}" if exposed.skill_dir else "")
-                    + "\n\n"
-                )
+                output += f"- {display_name(skill)} [已禁用]"
+                hint = skill.description if verbose else short_desc(skill)
+                if hint:
+                    output += f" - {hint}"
+                output += f"\n  {exposure_suffix(skill)}\n\n"
 
         return self._truncate_skill_content("list_skills", output)
 
@@ -417,7 +427,7 @@ class SkillsHandler:
             elif getattr(self.agent, "_execution_env_spec", None) is not None:
                 from ...runtime_envs import apply_execution_environment, ensure_execution_env
 
-                spec = ensure_execution_env(getattr(self.agent, "_execution_env_spec"))
+                spec = ensure_execution_env(self.agent._execution_env_spec)
                 env_scope = "agent"
                 deps_hash = spec.deps_hash
                 python_executable = str(spec.python_path)

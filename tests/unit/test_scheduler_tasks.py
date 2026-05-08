@@ -1,10 +1,11 @@
 """L1 Unit Tests: Scheduled task creation, state transitions, and triggers."""
 
-import pytest
+import asyncio
 from datetime import datetime, timedelta
 
-from openakita.scheduler.task import ScheduledTask, TaskStatus, TriggerType, TaskType
-from openakita.scheduler.triggers import OnceTrigger, IntervalTrigger, CronTrigger, Trigger
+from openakita.scheduler.executor import TaskExecutor
+from openakita.scheduler.task import ScheduledTask, TaskStatus, TriggerType
+from openakita.scheduler.triggers import CronTrigger, IntervalTrigger, OnceTrigger, Trigger
 
 
 class TestScheduledTaskCreation:
@@ -97,6 +98,31 @@ class TestTaskStateTransitions:
         # After failure, task may go to FAILED or back to SCHEDULED for retry
         assert task.status in (TaskStatus.FAILED, TaskStatus.SCHEDULED)
         assert task.fail_count == 1
+
+
+class TestSystemTaskTimeouts:
+    async def test_daily_memory_timeout_is_safe_pause_not_failure(self, monkeypatch):
+        async def fake_wait_for(_coro, timeout):
+            if hasattr(_coro, "close"):
+                _coro.close()
+            raise TimeoutError
+
+        monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+        task = ScheduledTask.create(
+            name="daily memory",
+            description="daily memory",
+            trigger_type=TriggerType.INTERVAL,
+            trigger_config={"interval_minutes": 60},
+            prompt="",
+            action="system:daily_memory",
+            deletable=False,
+        )
+        executor = TaskExecutor()
+
+        success, message = await executor._execute_system_task(task)
+
+        assert success is True
+        assert "下次" in message
 
 
 class TestTaskSerialization:

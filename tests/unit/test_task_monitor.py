@@ -1,16 +1,14 @@
 """L1 Unit Tests: TaskMonitor lifecycle and metrics."""
 
-import pytest
 import time
 
 from openakita.core.task_monitor import (
-    TaskMonitor,
-    TaskMetrics,
-    TaskPhase,
-    ToolCallRecord,
     IterationRecord,
     RetrospectRecord,
     RetrospectStorage,
+    TaskMetrics,
+    TaskMonitor,
+    ToolCallRecord,
 )
 
 
@@ -51,6 +49,19 @@ class TestToolCallRecording:
             duration_ms=150,
         )
         tm.end_iteration()
+
+    def test_record_tool_call_accepts_legacy_elapsed_success_args(self):
+        tm = TaskMonitor(task_id="t4-legacy", description="Legacy tool test")
+        tm.start(model="gpt-4")
+        tm.begin_iteration(1, model="gpt-4")
+
+        tm.record_tool_call("read_file", {"path": "/test.txt"}, 0.25, True)
+        tm.end_iteration()
+
+        [record] = tm.metrics.iterations[0].tool_calls
+        assert record.name == "read_file"
+        assert record.duration_ms == 250
+        assert record.success is True
 
     def test_begin_end_tool_call(self):
         tm = TaskMonitor(task_id="t5", description="Tool begin/end")

@@ -120,6 +120,8 @@ export type StreamEvent =
       billable_input_tokens?: number;
       billable_output_tokens?: number;
       billable_total_tokens?: number;
+      usage_estimated?: boolean;
+      usage_source?: string;
       // ContextPressure 快照：来自 ReasoningEngine.calculate_context_pressure，
       // 给"上下文健康度" UI 用。所有字段都是 token 数。
       context_pressure?: {

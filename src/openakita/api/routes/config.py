@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -330,6 +330,74 @@ def _mask_raw_env(raw: str) -> str:
     )
 
 
+def _runtime_env_key_map() -> dict[str, str]:
+    """Map env-style keys to RuntimeState-managed settings fields."""
+    from openakita.config import _PERSISTABLE_KEYS
+
+    return {key.upper(): key for key in _PERSISTABLE_KEYS}
+
+
+def _runtime_env_value(field_name: str) -> str:
+    """Return a frontend-friendly string for a RuntimeState-backed setting."""
+    from openakita.config import settings
+
+    value = getattr(settings, field_name)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False)
+    return "" if value is None else str(value)
+
+
+def _runtime_default_value(field_name: str) -> Any:
+    """Return the Settings default for a RuntimeState-backed field."""
+    from openakita.config import Settings
+
+    field = Settings.model_fields[field_name]
+    return field.get_default(call_default_factory=True)
+
+
+def _coerce_runtime_value(field_name: str, raw_value: str) -> Any:
+    """Coerce a frontend env string into the typed Settings field value."""
+    from pydantic import TypeAdapter
+
+    from openakita.config import Settings
+
+    field = Settings.model_fields[field_name]
+    value: Any = raw_value.strip()
+    origin = getattr(field.annotation, "__origin__", None)
+    if origin in (list, dict) or str(field.annotation).startswith(("list[", "dict[")):
+        try:
+            value = json.loads(value) if value else _runtime_default_value(field_name)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field_name} must be valid JSON") from exc
+    return TypeAdapter(field.annotation).validate_python(value)
+
+
+def _sync_runtime_agent_settings(request: Request, changed_fields: set[str]) -> None:
+    """Apply runtime settings that live inside already-created Agent objects."""
+    if "persona_name" not in changed_fields:
+        return
+
+    try:
+        from openakita.config import settings
+
+        agent = getattr(request.app.state, "agent", None)
+        actual_agent = getattr(agent, "_local_agent", agent)
+        persona_manager = getattr(actual_agent, "persona_manager", None)
+        if persona_manager is not None:
+            persona_manager.switch_preset(settings.persona_name)
+        if hasattr(actual_agent, "_invalidate_system_prompt_cache"):
+            actual_agent._invalidate_system_prompt_cache("persona config changed")
+        ctx = getattr(actual_agent, "_context", None)
+        if ctx is not None and getattr(ctx, "system", None) and hasattr(
+            actual_agent, "_build_system_prompt"
+        ):
+            ctx.system = actual_agent._build_system_prompt()
+    except Exception as exc:
+        logger.warning("[Config API] persona runtime sync failed: %s", exc)
+
+
 @router.get("/api/config/env")
 async def read_env():
     """Read .env file content as key-value pairs.
@@ -342,10 +410,12 @@ async def read_env():
     (see apiKeyDirty in LLMView.tsx).
     """
     env_path = _project_root() / ".env"
-    if not env_path.exists():
-        return {"env": {}, "has_value": {}, "raw": ""}
-    content = env_path.read_bytes().decode("utf-8", errors="replace")
+    content = ""
+    if env_path.exists():
+        content = env_path.read_bytes().decode("utf-8", errors="replace")
     env = _parse_env(content)
+    for env_key, field_name in _runtime_env_key_map().items():
+        env[env_key] = _runtime_env_value(field_name)
     masked_env = {k: _mask_value(k, v) for k, v in env.items()}
     has_value = {k: bool(v and v.strip()) for k, v in env.items()}
     masked_raw = _mask_raw_env(content)
@@ -353,7 +423,7 @@ async def read_env():
 
 
 @router.post("/api/config/env")
-async def write_env(body: EnvUpdateRequest):
+async def write_env(body: EnvUpdateRequest, request: Request):
     """Update .env file with key-value entries (merge, preserving comments).
 
     - Non-empty values are upserted.
@@ -377,25 +447,82 @@ async def write_env(body: EnvUpdateRequest):
     _sensitive_key_re = _re.compile(
         r"(TOKEN|SECRET|PASSWORD|KEY|APIKEY|CREDENTIAL)", _re.IGNORECASE
     )
+    runtime_key_map = _runtime_env_key_map()
     safe_entries: dict[str, str] = {}
+    runtime_entries: dict[str, str] = {}
     for key, value in body.entries.items():
         if value and "***" in value and _sensitive_key_re.search(key):
             logger.warning(
                 "[Config API] write_env: dropping masked value for %s", key
             )
             continue
-        safe_entries[key] = value
+        field_name = runtime_key_map.get(key.upper())
+        if field_name:
+            runtime_entries[key.upper()] = value
+        else:
+            safe_entries[key] = value
 
-    new_content = _update_env_content(
-        existing, safe_entries, delete_keys=set(body.delete_keys)
-    )
-    safe_write(env_path, new_content)
+    runtime_delete_fields: dict[str, str] = {}
+    env_delete_keys: set[str] = set()
+    for key in body.delete_keys:
+        field_name = runtime_key_map.get(key.upper())
+        if field_name:
+            runtime_delete_fields[key.upper()] = field_name
+            env_delete_keys.add(key)
+        else:
+            env_delete_keys.add(key)
+
+    runtime_changed_fields: set[str] = set()
+    if runtime_entries or runtime_delete_fields:
+        from openakita.config import runtime_state, settings
+
+        errors: list[str] = []
+        runtime_updates: dict[str, Any] = {}
+        for env_key, raw_value in runtime_entries.items():
+            field_name = runtime_key_map[env_key]
+            try:
+                new_value = _coerce_runtime_value(field_name, raw_value)
+            except (TypeError, ValueError) as exc:
+                errors.append(f"{env_key}: {exc}")
+                continue
+            runtime_updates[field_name] = new_value
+            env_delete_keys.add(env_key)
+
+        for env_key, field_name in runtime_delete_fields.items():
+            runtime_updates[field_name] = _runtime_default_value(field_name)
+            env_delete_keys.add(env_key)
+
+        if errors:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "invalid_runtime_config",
+                    "messages": errors,
+                },
+            )
+
+        for field_name, new_value in runtime_updates.items():
+            if getattr(settings, field_name) != new_value:
+                setattr(settings, field_name, new_value)
+                runtime_changed_fields.add(field_name)
+
+        runtime_state.save()
+
+    if safe_entries or (env_delete_keys and env_path.exists()):
+        new_content = _update_env_content(
+            existing, safe_entries, delete_keys=env_delete_keys
+        )
+        safe_write(env_path, new_content)
     for key, value in safe_entries.items():
         if value:
             os.environ[key] = value
-    for key in body.delete_keys:
+    for key in env_delete_keys:
         os.environ.pop(key, None)
-    count = len([v for v in safe_entries.values() if v]) + len(body.delete_keys)
+    count = (
+        len([v for v in safe_entries.values() if v])
+        + len(runtime_entries)
+        + len(env_delete_keys)
+    )
     logger.info(f"[Config API] Updated .env with {count} entries")
 
     # Push changes into the in-process Settings singleton so consumers that
@@ -463,7 +590,18 @@ async def write_env(body: EnvUpdateRequest):
         "SESSION_MAX_HISTORY",
         "BACKUP_",
     )
-    changed_keys = {k for k, v in safe_entries.items() if v} | set(body.delete_keys)
+    if runtime_changed_fields:
+        _sync_runtime_agent_settings(request, runtime_changed_fields)
+        _notify_runtime_config_changed(
+            request,
+            "runtime_config:" + ",".join(sorted(runtime_changed_fields)),
+        )
+
+    changed_keys = (
+        {k for k, v in safe_entries.items() if v}
+        | set(runtime_entries.keys())
+        | set(body.delete_keys)
+    )
     restart_required = any(
         any(k.upper().startswith(p) for p in _RESTART_REQUIRED_PREFIXES) for k in changed_keys
     )
@@ -479,7 +617,7 @@ async def write_env(body: EnvUpdateRequest):
 
     return {
         "status": "ok",
-        "updated_keys": list(safe_entries.keys()),
+        "updated_keys": list(safe_entries.keys()) + list(runtime_entries.keys()),
         "restart_required": restart_required,
         "hot_reloadable": hot_reloadable,
     }

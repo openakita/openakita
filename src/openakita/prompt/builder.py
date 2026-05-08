@@ -648,6 +648,7 @@ def build_system_prompt(
             prompt_profile=_profile,
             prompt_tier=_tier,
             catalog_scope=_catalog_scope,
+            intent_tool_hints=intent_tool_hints,
         )
         if catalogs_section:
             tool_parts.append(catalogs_section)
@@ -1640,6 +1641,7 @@ def _build_catalogs_section(
     prompt_profile: "PromptProfile | None" = None,
     prompt_tier: "PromptTier | None" = None,
     catalog_scope: set[str] | None = None,
+    intent_tool_hints: list[str] | None = None,
 ) -> str:
     """构建 Catalogs 层（工具/技能/插件/MCP 清单）
 
@@ -1689,7 +1691,7 @@ def _build_catalogs_section(
                 exc_info=True,
             )
 
-    if skill_catalog and (not _scope or _scope & {"skills", "skill", "tools", "project"}):
+    if skill_catalog and (not _scope or _scope & {"skills", "skill", "tools", "project", "index"}):
         try:
             # Profile-aware exposure filter
             _exp_filter: str | None = None
@@ -1705,15 +1707,18 @@ def _build_catalogs_section(
             from .budget import intent_to_priority_categories
             _priority_cats = intent_to_priority_categories(intent_tool_hints)
 
-            # 零丢失 + 自适应压缩：所有技能名字始终保留，
-            # 描述文本根据 catalogs_budget 的 55% 分配自动分级压缩。
-            # 技能数少于 50 时完整展示，超出预算时先缩短描述再降为仅名字。
-            _skills_budget = budget_tokens * 55 // 100
-            skills_grouped = skill_catalog.get_grouped_compact_catalog(
-                exposure_filter=_exp_filter,
-                max_tokens=_skills_budget,
-                priority_categories=_priority_cats or None,
-            )
+            if _index_only:
+                skills_grouped = skill_catalog.get_index_catalog(exposure_filter=_exp_filter)
+            else:
+                # 零丢失 + 自适应压缩：所有技能名字始终保留，
+                # 描述文本根据 catalogs_budget 的 55% 分配自动分级压缩。
+                # 若 IntentAnalyzer 命中相关分类，只展开主线分类，其余保持目录索引。
+                _skills_budget = budget_tokens * 55 // 100
+                skills_grouped = skill_catalog.get_grouped_compact_catalog(
+                    exposure_filter=_exp_filter,
+                    max_tokens=_skills_budget,
+                    priority_categories=_priority_cats or None,
+                )
 
             skills_rule = (
                 "### 技能使用规则\n"

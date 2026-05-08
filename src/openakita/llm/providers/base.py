@@ -363,13 +363,27 @@ class LLMProvider(ABC):
             for kw in [
                 "allocationquota",
                 "freetieronly",
+                "insufficientquota",
                 "insufficient_quota",
+                "insufficient balance",
+                "balance insufficient",
+                "account balance",
                 "quota_exceeded",
+                "quota exceeded",
+                "payment required",
                 "billing",
                 "free tier",
                 "free_tier",
                 "quota",
                 "exceeded your current",
+                "api error (402)",
+                "http 402",
+                "(402)",
+                "余额不足",
+                "额度不足",
+                "额度已用尽",
+                "账户余额",
+                "请充值",
             ]
         ):
             return FailoverReason.QUOTA

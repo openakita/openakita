@@ -39,6 +39,9 @@ export interface MessageListProps {
   onSkipStep?: () => void;
   onImagePreview?: (displayUrl: string, downloadUrl: string, name: string) => void;
   onAtBottomChange?: (atBottom: boolean) => void;
+  onLoadOlder?: () => void;
+  hasMoreBefore?: boolean;
+  loadingOlder?: boolean;
 }
 
 function applySearchHighlights(container: HTMLElement, query: string) {
@@ -87,6 +90,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     conversationId,
     httpApiBase,
     onPlanStepAction,
+    onLoadOlder,
+    hasMoreBefore = false,
+    loadingOlder = false,
   },
   ref,
 ) {
@@ -95,7 +101,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const itemRefs = useRef(new Map<string, HTMLDivElement>());
   const forceFollowRef = useRef(false);
   const atBottomRef = useRef(true);
-  const savedScrollTopRef = useRef<number | null>(null);
+  const savedScrollPositionRef = useRef<{ top: number; height: number } | null>(null);
 
   const emitAtBottomChange = useCallback((atBottom: boolean) => {
     atBottomRef.current = atBottom;
@@ -158,13 +164,14 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     isAtBottom: () => atBottomRef.current,
     saveScrollPosition: () => {
       const el = scrollerElRef.current;
-      if (el) savedScrollTopRef.current = el.scrollTop;
+      if (el) savedScrollPositionRef.current = { top: el.scrollTop, height: el.scrollHeight };
     },
     restoreScrollPosition: () => {
       const el = scrollerElRef.current;
-      if (el && savedScrollTopRef.current !== null) {
-        el.scrollTop = savedScrollTopRef.current;
-        savedScrollTopRef.current = null;
+      if (el && savedScrollPositionRef.current !== null) {
+        const prev = savedScrollPositionRef.current;
+        el.scrollTop = prev.top + (el.scrollHeight - prev.height);
+        savedScrollPositionRef.current = null;
         syncAtBottomState();
       }
     },
@@ -258,6 +265,27 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
         style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain" }}
       >
         <div>
+          {hasMoreBefore && (
+            <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 8px" }}>
+              <button
+                type="button"
+                onClick={onLoadOlder}
+                disabled={loadingOlder}
+                style={{
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--text-muted)",
+                  borderRadius: 999,
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  cursor: loadingOlder ? "default" : "pointer",
+                  opacity: loadingOlder ? 0.7 : 1,
+                }}
+              >
+                {loadingOlder ? "正在加载更早消息..." : "加载更早消息"}
+              </button>
+            </div>
+          )}
           {messages.map((msg, index) => (
             <div
               key={computeItemKey(index, msg)}

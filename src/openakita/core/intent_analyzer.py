@@ -308,6 +308,74 @@ _CONTEXT_DEPENDENT_RE = re.compile(
     r"^[我你他她它](?:的|们的))"
 )
 
+_ACTION_VERB_RE = re.compile(
+    r"(?:帮我|请你|开始|继续|执行|处理|排查|查看|看看|检查|分析|修复|安装|"
+    r"下载|打开|运行|创建|生成|写入|修改|改成|删除|清理|搜索)"
+)
+
+_TOOL_TARGET_RE = re.compile(
+    r"(?:日志|报错|警告|错误|文件|目录|项目|代码|仓库|网页|浏览器|GitHub|issue|"
+    r"skill|技能|配置|环境|数据库|截图|任务|命令|脚本)"
+)
+
+
+def _looks_like_tool_action_request(message: str) -> bool:
+    """Return True for requests that clearly require operating on external state."""
+    stripped = message.strip()
+    if not stripped:
+        return False
+
+    # Continuation commands are only treated as tool actions when they explicitly
+    # refer to an execution/task, avoiding ordinary acknowledgements like "继续说".
+    if re.search(r"(?:继续|执行).{0,8}(?:任务|处理|排查|操作|执行|不要停|别停)", stripped):
+        return True
+
+    return bool(_ACTION_VERB_RE.search(stripped) and _TOOL_TARGET_RE.search(stripped))
+
+
+def _infer_tool_action_hints(message: str) -> tuple[list[str], bool]:
+    hints: list[str] = []
+    needs_project_context = False
+
+    def add_hint(name: str) -> None:
+        if name not in hints:
+            hints.append(name)
+
+    if re.search(r"(?:浏览器|网页)", message):
+        add_hint("Browser")
+    if re.search(r"(?:GitHub|issue|网页|搜索|下载|仓库)", message, flags=re.IGNORECASE):
+        add_hint("Web Search")
+    if re.search(r"(?:日志|报错|警告|错误|文件|目录|项目|代码|skill|技能|配置|数据库|命令|脚本)", message):
+        add_hint("File System")
+        needs_project_context = True
+
+    if not hints:
+        add_hint("File System")
+
+    return hints, needs_project_context
+
+
+def _make_tool_action_result(message: str, *, follow_up: bool = False) -> IntentResult:
+    intent = IntentType.FOLLOW_UP if follow_up else IntentType.TASK
+    tool_hints, requires_project_context = _infer_tool_action_hints(message)
+    return IntentResult(
+        intent=intent,
+        confidence=0.95,
+        task_definition=message[:600],
+        task_type="action",
+        tool_hints=tool_hints,
+        memory_keywords=[],
+        force_tool=True,
+        todo_required=False,
+        raw_output="[action-tool-guard]",
+        fast_reply=False,
+        prompt_depth=PromptDepth.STANDARD,
+        memory_scope=MemoryScope.RELEVANT,
+        requires_tools=True,
+        requires_project_context=requires_project_context,
+        risk_level_hint=RiskLevelHint.NONE,
+    )
+
 
 def _try_fast_query_shortcut(message: str) -> IntentResult | None:
     """Rule-based shortcut for obvious query messages (math, date, definitions).
@@ -317,6 +385,8 @@ def _try_fast_query_shortcut(message: str) -> IntentResult | None:
         return None
     if _CONTEXT_DEPENDENT_RE.search(stripped):
         return None
+    if _looks_like_tool_action_request(stripped):
+        return _make_tool_action_result(stripped)
     if _QUERY_PATTERNS.match(stripped):
         logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' matched as QUERY (rule-based)")
         return IntentResult(
@@ -614,6 +684,14 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
                 f"[IntentAnalyzer] Complex task detected (score={signal.score}), "
                 f"suggesting Plan mode"
             )
+
+    if result.intent in (IntentType.CHAT, IntentType.QUERY) and _looks_like_tool_action_request(message):
+        logger.info(
+            "[IntentAnalyzer] Coerced %s to task because message requires external action: %r",
+            result.intent.value,
+            message[:120],
+        )
+        return _make_tool_action_result(message)
 
     return result
 

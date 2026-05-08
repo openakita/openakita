@@ -18,6 +18,13 @@ import logging
 import re
 from datetime import datetime
 
+from .json_utils import (
+    as_clean_str,
+    coerce_text,
+    extract_json_array,
+    extract_json_object,
+    loads_llm_json,
+)
 from .types import (
     ActionNode,
     ConversationTurn,
@@ -38,11 +45,7 @@ def _loads_llm_json(text: str):
     This is intentionally conservative: it removes markdown fences and trailing
     commas, but does not try to invent missing fields.
     """
-    cleaned = text.strip()
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
-    cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
-    return json.loads(cleaned)
+    return loads_llm_json(text)
 
 
 class MemoryExtractor:
@@ -214,7 +217,7 @@ duration 参考:
         if not self.brain:
             return []
 
-        content = turn.content or ""
+        content = coerce_text(turn.content)
         if len(content.strip()) < 10 and not turn.tool_calls:
             return []
 
@@ -234,15 +237,15 @@ duration 参考:
                 system="你是记忆提取专家。只输出 NONE 或 JSON 数组。",
             )
 
-            text = (getattr(response, "content", None) or str(response)).strip()
+            text = coerce_text(getattr(response, "content", response)).strip()
             if "NONE" in text.upper() or not text:
                 return []
 
-            json_match = re.search(r"\[[\s\S]*\]", text)
-            if not json_match:
+            json_text = extract_json_array(text)
+            if not json_text:
                 return []
 
-            data = _loads_llm_json(json_match.group())
+            data = _loads_llm_json(json_text)
             if not isinstance(data, list):
                 return []
 
@@ -250,11 +253,11 @@ duration 参考:
             for item in data:
                 if not isinstance(item, dict):
                     continue
-                c = (item.get("content") or "").strip()
+                c = as_clean_str(item.get("content"))
                 if len(c) < 5:
                     continue
-                mem_type = (item.get("type") or "FACT").upper()
-                duration = (item.get("duration") or "").strip()
+                mem_type = as_clean_str(item.get("type"), "FACT").upper()
+                duration = as_clean_str(item.get("duration"))
                 if duration not in ("permanent", "7d", "24h", "session"):
                     duration = {
                         "RULE": "permanent",
@@ -266,13 +269,13 @@ duration 参考:
                 results.append(
                     {
                         "type": mem_type,
-                        "subject": (item.get("subject") or "").strip(),
-                        "predicate": (item.get("predicate") or "").strip(),
+                        "subject": as_clean_str(item.get("subject")),
+                        "predicate": as_clean_str(item.get("predicate")),
                         "content": c,
                         "importance": max(0.1, min(1.0, float(item.get("importance", 0.5)))),
                         "duration": duration,
                         "is_update": bool(item.get("is_update", False)),
-                        "update_hint": (item.get("update_hint") or "").strip(),
+                        "update_hint": as_clean_str(item.get("update_hint")),
                     }
                 )
 
@@ -397,7 +400,7 @@ duration 参考:
             return [], []
 
         user_turns = [
-            t for t in turns if t.role == "user" and t.content and len(t.content.strip()) >= 10
+            t for t in turns if t.role == "user" and len(coerce_text(t.content).strip()) >= 10
         ]
         if not user_turns:
             return [], []
@@ -407,7 +410,7 @@ duration 参考:
         conv_lines = []
         for t in turns[-30:]:
             role_label = "用户" if t.role == "user" else "助手"
-            content, _ = _st(t.content or "", 1500, save_full=False, label="mem_conv")
+            content, _ = _st(coerce_text(t.content), 1500, save_full=False, label="mem_conv")
             if content.strip():
                 conv_lines.append(f"[{role_label}]: {content}")
             tool_ctx = self._build_tool_context(t.tool_calls, t.tool_results)
@@ -423,7 +426,8 @@ duration 参考:
         has_citations = cited_memories and len(cited_memories) > 0
         if has_citations:
             cited_text = "\n".join(
-                f"- ID={m['id']} | {m.get('content', '')[:150]}" for m in cited_memories
+                f"- ID={m['id']} | {coerce_text(m.get('content', ''))[:150]}"
+                for m in cited_memories
             )
             prompt += self.CITATION_SCORING_SECTION.format(cited_memories=cited_text)
             prompt += '\n\n最终输出格式: {"memories": [...], "citation_scores": [...]}\n如果没有要提取的记忆，memories 为空数组。只输出 JSON。'
@@ -435,18 +439,18 @@ duration 参考:
 
         try:
             response = await self._call_brain_main(prompt, system=system_msg)
-            text = (getattr(response, "content", None) or str(response)).strip()
+            text = coerce_text(getattr(response, "content", response)).strip()
 
             if not has_citations:
                 if "NONE" in text.upper() or not text:
                     return [], []
                 return self._parse_memory_list(text), []
 
-            json_match = re.search(r"\{[\s\S]*\}", text)
-            if not json_match:
+            json_text = extract_json_object(text)
+            if not json_text:
                 return self._parse_memory_list(text), []
 
-            data = _loads_llm_json(json_match.group())
+            data = _loads_llm_json(json_text)
             if not isinstance(data, dict):
                 return self._parse_memory_list(text), []
 
@@ -480,7 +484,7 @@ duration 参考:
         if not self.brain or not turns:
             return []
 
-        assistant_turns = [t for t in turns if t.role == "assistant" and t.content]
+        assistant_turns = [t for t in turns if t.role == "assistant" and coerce_text(t.content)]
         if len(assistant_turns) < 2:
             return []
 
@@ -489,7 +493,7 @@ duration 参考:
         conv_lines = []
         for t in turns[-30:]:
             role_label = "用户" if t.role == "user" else "助手"
-            content, _ = _st(t.content or "", 1500, save_full=False, label="mem_conv")
+            content, _ = _st(coerce_text(t.content), 1500, save_full=False, label="mem_conv")
             if content.strip():
                 conv_lines.append(f"[{role_label}]: {content}")
             tool_ctx = self._build_tool_context(t.tool_calls, t.tool_results)
@@ -507,7 +511,7 @@ duration 参考:
                 prompt,
                 system="你是任务经验总结专家。只输出 NONE 或 JSON 数组。",
             )
-            text = (getattr(response, "content", None) or str(response)).strip()
+            text = coerce_text(getattr(response, "content", response)).strip()
             if "NONE" in text.upper() or not text:
                 return []
             return self._parse_memory_list(text)
@@ -517,11 +521,11 @@ duration 参考:
 
     def _parse_memory_list(self, text: str) -> list[dict]:
         """Parse a JSON array of memory items from LLM output."""
-        json_match = re.search(r"\[[\s\S]*\]", text)
-        if not json_match:
+        json_text = extract_json_array(text)
+        if not json_text:
             return []
         try:
-            data = _loads_llm_json(json_match.group())
+            data = _loads_llm_json(json_text)
             if not isinstance(data, list):
                 return []
             return self._parse_memory_items(data)
@@ -534,11 +538,11 @@ duration 参考:
         for item in items:
             if not isinstance(item, dict):
                 continue
-            c = (item.get("content") or "").strip()
+            c = as_clean_str(item.get("content"))
             if len(c) < 5:
                 continue
-            mem_type = (item.get("type") or "FACT").upper()
-            duration = (item.get("duration") or "").strip()
+            mem_type = as_clean_str(item.get("type"), "FACT").upper()
+            duration = as_clean_str(item.get("duration"))
             if duration not in ("permanent", "7d", "24h", "session"):
                 duration = {
                     "RULE": "permanent",
@@ -551,13 +555,13 @@ duration 参考:
             results.append(
                 {
                     "type": mem_type,
-                    "subject": (item.get("subject") or "").strip(),
-                    "predicate": (item.get("predicate") or "").strip(),
+                    "subject": as_clean_str(item.get("subject")),
+                    "predicate": as_clean_str(item.get("predicate")),
                     "content": c,
                     "importance": min(1.0, max(0.3, float(item.get("importance", 0.5)))),
                     "duration": duration,
                     "is_update": bool(item.get("is_update", False)),
-                    "update_hint": "",
+                    "update_hint": as_clean_str(item.get("update_hint")),
                 }
             )
         return results
@@ -619,7 +623,7 @@ duration 参考:
         from openakita.core.tool_executor import smart_truncate as _st
 
         def _episode_line(t):
-            c, _ = _st(t.content or "", 600, save_full=False, label="mem_episode")
+            c, _ = _st(coerce_text(t.content), 600, save_full=False, label="mem_episode")
             suffix = f" [调用了 {len(t.tool_calls)} 个工具]" if t.tool_calls else ""
             return f"[{t.role}]: {c}{suffix}"
 
@@ -638,22 +642,35 @@ duration 参考:
             try:
                 prompt = self.EPISODE_PROMPT.format(conversation=conv_text)
                 resp = await self._call_brain(prompt, system="你是交互情节分析专家。只输出 JSON。")
-                text = (getattr(resp, "content", None) or str(resp)).strip()
-                json_match = re.search(r"\{[\s\S]*\}", text)
-                if json_match:
-                    data = _loads_llm_json(json_match.group())
-                    episode.summary = data.get("summary", "")
-                    episode.goal = data.get("goal", "")
-                    episode.outcome = data.get("outcome", "completed")
-                    episode.entities = data.get("entities", [])
+                text = coerce_text(getattr(resp, "content", resp)).strip()
+                json_text = extract_json_object(text)
+                if json_text:
+                    data = _loads_llm_json(json_text)
+                    if not isinstance(data, dict):
+                        data = {}
+                    episode.summary = as_clean_str(data.get("summary"))
+                    episode.goal = as_clean_str(data.get("goal"))
+                    episode.outcome = as_clean_str(data.get("outcome"), "completed")
+                    raw_entities = data.get("entities", [])
+                    if not isinstance(raw_entities, list):
+                        raw_entities = [raw_entities]
+                    episode.entities = [
+                        entity_text
+                        for entity in raw_entities
+                        if (entity_text := as_clean_str(entity))
+                    ]
                     if data.get("tools_used"):
-                        episode.tools_used = list(set(episode.tools_used + data["tools_used"]))
+                        raw_tools = data["tools_used"]
+                        if not isinstance(raw_tools, list):
+                            raw_tools = [raw_tools]
+                        tools_used = [as_clean_str(tool) for tool in raw_tools]
+                        episode.tools_used = list(set(episode.tools_used + tools_used))
             except Exception as e:
                 logger.warning(f"[Extractor] Episode LLM generation failed: {e}")
 
         if not episode.summary:
             episode.summary = self._generate_fallback_summary(turns)
-            episode.goal = turns[0].content[:100] if turns[0].content else ""
+            episode.goal = coerce_text(turns[0].content)[:100] if turns[0].content else ""
             episode.entities = self._extract_entities(turns)
 
         return episode
@@ -700,7 +717,9 @@ duration 参考:
         return nodes
 
     def _generate_fallback_summary(self, turns: list[ConversationTurn]) -> str:
-        user_msgs = [t.content[:100] for t in turns if t.role == "user" and t.content]
+        user_msgs = [
+            coerce_text(t.content)[:100] for t in turns if t.role == "user" and coerce_text(t.content)
+        ]
         if user_msgs:
             return f"对话涉及: {'; '.join(user_msgs[:3])}"
         return f"共 {len(turns)} 轮对话"
@@ -708,7 +727,7 @@ duration 参考:
     def _extract_entities(self, turns: list[ConversationTurn]) -> list[str]:
         entities = set()
         for turn in turns:
-            text = turn.content or ""
+            text = coerce_text(turn.content)
             for m in re.finditer(r'[A-Za-z]:[\\\/][^\s"\']+', text):
                 entities.add(m.group(0))
             for m in re.finditer(r"[\w-]+\.(?:py|js|ts|md|json|yaml|toml|sh)\b", text):
@@ -735,7 +754,7 @@ duration 参考:
                     episode_summary=episode.summary or episode.to_markdown(),
                 )
                 resp = await self._call_brain(prompt)
-                text = (getattr(resp, "content", None) or str(resp)).strip()
+                text = coerce_text(getattr(resp, "content", resp)).strip()
 
                 from openakita.core.tool_executor import smart_truncate as _st
 
@@ -814,8 +833,8 @@ duration 参考:
         for msg in messages:
             if msg.get("role") != "user":
                 continue
-            content = msg.get("content", "")
-            if not isinstance(content, str) or len(content) < 5:
+            content = coerce_text(msg.get("content", ""))
+            if len(content) < 5:
                 continue
 
             for pattern in self._RULE_SIGNAL_PATTERNS:
@@ -855,14 +874,15 @@ duration 参考:
         if not self.brain:
             return []
 
-        if len((turn.content or "").strip()) < 10:
+        content = coerce_text(turn.content)
+        if len(content.strip()) < 10:
             return []
 
         try:
             context_text = f"上下文: {context}" if context else ""
             prompt = self.EXTRACTION_PROMPT.format(
                 role=turn.role,
-                content=turn.content,
+                content=content,
                 context=context_text,
             )
 
@@ -871,7 +891,7 @@ duration 参考:
                 system="你是记忆提取专家。只输出 NONE 或 JSON 数组，不要其他内容。",
             )
 
-            response_text = (getattr(response, "content", "") or str(response)).strip()
+            response_text = coerce_text(getattr(response, "content", response)).strip()
             if "NONE" in response_text.upper() or not response_text:
                 return []
 
@@ -909,7 +929,7 @@ duration 参考:
         if turn.role != "user":
             return []
 
-        text = (turn.content or "").strip()
+        text = coerce_text(turn.content).strip()
         if len(text) < 10:
             return []
 
@@ -977,7 +997,7 @@ duration 参考:
         if not self.brain or not conversation:
             return []
 
-        conv_text = "\n".join(f"[{t.role}]: {t.content}" for t in conversation[-30:])
+        conv_text = "\n".join(f"[{t.role}]: {coerce_text(t.content)}" for t in conversation[-30:])
 
         prompt = f"""分析以下对话，提取值得长期记住的信息。
 
@@ -1007,7 +1027,7 @@ duration 参考:
                 system="你是记忆提取专家。只输出 JSON 数组。",
                 max_tokens=1000,
             )
-            return self._parse_json_response(response.content)
+            return self._parse_json_response(coerce_text(getattr(response, "content", response)))
         except Exception as e:
             logger.error(f"LLM batch extraction failed: {e}")
             return []
@@ -1015,10 +1035,10 @@ duration 参考:
     def _parse_json_response(self, response: str, source: str = "llm_extraction") -> list[Memory]:
         memories = []
         try:
-            json_match = re.search(r"\[[\s\S]*\]", response)
-            if not json_match:
+            json_text = extract_json_array(response)
+            if not json_text:
                 return []
-            data = _loads_llm_json(json_match.group())
+            data = _loads_llm_json(json_text)
             if not isinstance(data, list):
                 return []
 
@@ -1035,11 +1055,11 @@ duration 参考:
             for item in data:
                 if not isinstance(item, dict):
                     continue
-                content = (item.get("content") or "").strip()
+                content = as_clean_str(item.get("content"))
                 if len(content) < 5:
                     continue
 
-                type_str = (item.get("type") or "FACT").upper()
+                type_str = as_clean_str(item.get("type"), "FACT").upper()
                 mem_type = type_map.get(type_str, MemoryType.FACT)
 
                 try:
@@ -1061,9 +1081,9 @@ duration 参考:
                         content=content,
                         source=source,
                         importance_score=importance,
-                        subject=item.get("subject", ""),
-                        predicate=item.get("predicate", ""),
-                        tags=item.get("tags", []),
+                        subject=as_clean_str(item.get("subject")),
+                        predicate=as_clean_str(item.get("predicate")),
+                        tags=[as_clean_str(tag) for tag in item.get("tags", []) if as_clean_str(tag)],
                     )
                 )
 

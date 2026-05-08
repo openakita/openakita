@@ -582,6 +582,108 @@ def _guard_unbacked_action_claim(
     return text.rstrip() + warning
 
 
+_USER_BLOCKED_MARKERS = (
+    "无法继续",
+    "不能继续",
+    "没法继续",
+    "需要用户",
+    "需要你",
+    "请手动",
+    "等待用户",
+    "卡住",
+    "卡在",
+    "遇到技术障碍",
+    "需要人工",
+    "需要协助",
+    "需要帮助",
+    "需要登录",
+    "验证码",
+    "权限不足",
+    "浏览器已关闭",
+    "浏览器被关闭",
+    "被用户关闭",
+)
+
+_USER_BLOCKED_ACTIONS = (
+    "无法",
+    "不能",
+    "没法",
+    "失败",
+    "超时",
+    "卡住",
+    "卡在",
+    "阻塞",
+    "需要",
+    "等待",
+)
+
+
+def _looks_like_waiting_for_user_response(text: str) -> bool:
+    """Whether a post-tool final answer is a real user handoff, not a task promise.
+
+    This protects long ReAct tasks from being pushed back into tool execution by
+    completion verification after the model has already reported a blocker such
+    as "需要你截图/请手动确认/浏览器被关闭". Those replies are valid stopping
+    points: the next step must come from the user, not another forced tool call.
+    """
+    normalized = (text or "").strip()
+    if not normalized:
+        return False
+
+    lowered = normalized.lower()
+    if any(
+        marker in lowered
+        for marker in (
+            "waiting for user",
+            "need your help",
+            "need you to",
+            "please provide",
+            "please confirm",
+            "manual confirmation",
+            "cannot continue",
+            "can't continue",
+            "blocked",
+        )
+    ):
+        return True
+
+    if any(marker in normalized for marker in _USER_BLOCKED_MARKERS):
+        return True
+
+    if "请" in normalized and any(
+        marker in normalized
+        for marker in (
+            "手动",
+            "确认",
+            "提供",
+            "截图",
+            "验证码",
+            "登录",
+            "权限",
+        )
+    ):
+        return True
+
+    # More conservative composite check for phrases that split the blocker and
+    # the requested user action across a sentence.
+    has_blocker = any(marker in normalized for marker in _USER_BLOCKED_ACTIONS)
+    asks_user = any(
+        marker in normalized
+        for marker in (
+            "你",
+            "用户",
+            "手动",
+            "确认",
+            "提供",
+            "截图",
+            "验证码",
+            "登录",
+            "权限",
+        )
+    )
+    return has_blocker and asks_user
+
+
 class ReasoningEngine:
     """
     显式推理-行动引擎。
@@ -1824,25 +1926,33 @@ class ReasoningEngine:
 
                 if isinstance(result, str):
                     react_trace.append(_iter_trace)
+                    final_exit_reason = self._last_exit_reason
+                    is_verify_incomplete = final_exit_reason == "verify_incomplete"
+                    trace_result = "verify_incomplete" if is_verify_incomplete else "completed"
                     logger.info(
-                        f"[ReAct] === COMPLETED after {iteration + 1} iterations, "
+                        f"[ReAct] === {trace_result.upper()} after {iteration + 1} iterations, "
                         f"tools: {list(set(executed_tool_names))} ==="
                     )
                     self._save_react_trace(
-                        react_trace, conversation_id, session_type, "completed", _trace_started_at
+                        react_trace, conversation_id, session_type, trace_result, _trace_started_at
                     )
                     try:
-                        state.transition(TaskStatus.COMPLETED)
+                        state.transition(
+                            TaskStatus.FAILED if is_verify_incomplete else TaskStatus.COMPLETED
+                        )
                     except ValueError:
                         pass
                     tracer.end_trace(
                         metadata={
-                            "result": "completed",
+                            "result": trace_result,
                             "iterations": iteration + 1,
                             "tools_used": list(set(executed_tool_names)),
                         }
                     )
-                    await broadcast_event("pet-status-update", {"status": "success"})
+                    await broadcast_event(
+                        "pet-status-update",
+                        {"status": "error" if is_verify_incomplete else "success"},
+                    )
                     return result
                 else:
                     # 需要继续循环（验证不通过）
@@ -3525,9 +3635,33 @@ class ReasoningEngine:
                     _cache_create = _cache_create or getattr(
                         _usage, "cache_creation_input_tokens", 0
                     )
+                _usage_source = "provider" if (_in_tokens or _out_tokens) else ""
+                _usage_estimated = False
+                if not (_in_tokens or _out_tokens):
+                    try:
+                        _est_input = ContextManager.static_estimate_tokens(effective_prompt or "")
+                        _est_input += self._context_manager.estimate_messages_tokens(working_messages)
+                        _est_input += self._context_manager.estimate_tools_tokens(tools)
+                        _est_output_payload = {
+                            "thinking": decision.thinking_content or "",
+                            "text": decision.text_content or "",
+                            "tool_calls": decision.tool_calls or [],
+                        }
+                        _est_output = ContextManager.static_estimate_tokens(
+                            json.dumps(_est_output_payload, ensure_ascii=False, default=str)
+                        )
+                        if _est_input or _est_output:
+                            _in_tokens = _est_input
+                            _out_tokens = _est_output
+                            _usage_source = "estimate"
+                            _usage_estimated = True
+                    except Exception as _est_err:
+                        logger.debug(
+                            f"[ReAct-Stream] token estimate failed (non-fatal): {_est_err}"
+                        )
                 if _in_tokens or _out_tokens:
                     self._budget.record_tokens(_in_tokens, _out_tokens)
-                    if _in_tokens:
+                    if _in_tokens and not _usage_estimated:
                         _last_real_input_tokens = _in_tokens
                 # 流式路径下 brain 不落 token_tracking（详见 brain.messages_create_stream
                 # 注释），需在此显式落库以保留 cache_read/cache_create 命中统计。
@@ -3552,6 +3686,7 @@ class ReasoningEngine:
                                 request_id=_request_id,
                                 turn_id=_turn_id,
                                 operation_type="chat_react_iteration_stream",
+                                operation_detail=_usage_source,
                                 channel="api",
                                 iteration=_iteration + 1,
                                 agent_profile_id=agent_profile_id,
@@ -3602,6 +3737,8 @@ class ReasoningEngine:
                     ],
                     "tool_results": [],
                     "tokens": {"input": _in_tokens, "output": _out_tokens},
+                    "usage_source": _usage_source,
+                    "usage_estimated": _usage_estimated,
                     "context_compressed": _ctx_compressed_info,
                 }
                 tool_names_log = [tc.get("name", "?") for tc in (decision.tool_calls or [])]
@@ -3700,19 +3837,27 @@ class ReasoningEngine:
 
                     if isinstance(result, str):
                         react_trace.append(_iter_trace)
+                        final_exit_reason = self._last_exit_reason
+                        is_verify_incomplete = final_exit_reason == "verify_incomplete"
+                        trace_result = "verify_incomplete" if is_verify_incomplete else "completed"
                         self._save_react_trace(
                             react_trace,
                             conversation_id,
                             session_type,
-                            "completed",
+                            trace_result,
                             _trace_started_at,
                         )
                         try:
-                            state.transition(TaskStatus.COMPLETED)
+                            state.transition(
+                                TaskStatus.FAILED if is_verify_incomplete else TaskStatus.COMPLETED
+                            )
                         except ValueError:
-                            state.status = TaskStatus.COMPLETED
+                            state.status = (
+                                TaskStatus.FAILED if is_verify_incomplete else TaskStatus.COMPLETED
+                            )
                         logger.info(
-                            f"[ReAct-Stream] === COMPLETED after {_iteration + 1} iterations ==="
+                            f"[ReAct-Stream] === {trace_result.upper()} after "
+                            f"{_iteration + 1} iterations ==="
                         )
                         if _streamed_text:
                             if result != _raw_streamed_text:
@@ -3722,7 +3867,10 @@ class ReasoningEngine:
                             for i in range(0, len(result), chunk_size):
                                 yield {"type": "text_delta", "content": result[i : i + chunk_size]}
                                 await asyncio.sleep(0.01)
-                        await broadcast_event("pet-status-update", {"status": "success"})
+                        await broadcast_event(
+                            "pet-status-update",
+                            {"status": "error" if is_verify_incomplete else "success"},
+                        )
                         # 终态检查点：summary 取最终回答前 200 字，便于"任务时间线"
                         # 直接显示"已完成什么"。
                         yield _build_task_checkpoint_event(
@@ -3730,7 +3878,7 @@ class ReasoningEngine:
                             conversation_id=conversation_id,
                             task_id=state.task_id,
                             iteration=_iteration,
-                            exit_reason="completed",
+                            exit_reason=trace_result,
                             summary=str(result or ""),
                         )
                         yield {"type": "done"}
@@ -5682,7 +5830,7 @@ class ReasoningEngine:
                             f"{block.text.strip()[:100]}"
                         )
                         break
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 logger.warning("[ReAct-Stream][BgFarewell] LLM farewell 超时 (5s)")
             except Exception as e:
                 logger.warning(f"[ReAct-Stream][BgFarewell] LLM farewell 失败: {e}")
@@ -6217,6 +6365,13 @@ class ReasoningEngine:
                     cleaned_text, executed_tool_names, all_tool_results
                 )
                 last_user_request = ResponseHandler.get_last_user_request(original_messages)
+                if _looks_like_waiting_for_user_response(cleaned_text):
+                    logger.info(
+                        "[TaskVerify] Skipping completion verify because response "
+                        "hands control back to user."
+                    )
+                    self._last_exit_reason = "waiting_user"
+                    return cleaned_text
                 # 汇总轮（root post-summary 注入的 [用户指令最终汇总] 提示）下，
                 # 本次 ReAct 的目的就是输出汇总文本而非再产出文件，verify 全程绕过。
                 # 与 B1 的关键词白名单互补：B1 修关键词命中根因，B2 兜底全路径。

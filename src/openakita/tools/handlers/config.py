@@ -436,7 +436,7 @@ class ConfigHandler:
     # set: 修改配置
     # ------------------------------------------------------------------
     def _set_config(self, params: dict) -> str:
-        from ...config import Settings, _PERSISTABLE_KEYS, runtime_state, settings
+        from ...config import _PERSISTABLE_KEYS, Settings, runtime_state, settings
 
         updates = params.get("updates")
         if not updates or not isinstance(updates, dict):
@@ -448,6 +448,7 @@ class ConfigHandler:
         changes: list[str] = []
         env_entries: dict[str, str] = {}
         persist_dirty = False
+        persist_changed_fields: set[str] = set()
         restart_needed: list[str] = []
         errors: list[str] = []
 
@@ -466,10 +467,11 @@ class ConfigHandler:
 
             field_info = Settings.model_fields[field_name]
 
-            _, err = self._validate_value(field_name, field_info, new_value)
+            validated_value, err = self._validate_value(field_name, field_info, new_value)
             if err:
                 errors.append(f"`{env_key}`: {err}")
                 continue
+            new_value = validated_value
 
             old_value = getattr(settings, field_name, None)
             if _is_sensitive(field_name) and old_value:
@@ -480,8 +482,11 @@ class ConfigHandler:
             new_display = _mask_value(new_value) if _is_sensitive(field_name) else str(new_value)
 
             if field_name in _persistable_set:
-                setattr(settings, field_name, new_value)
+                if old_value != new_value:
+                    setattr(settings, field_name, new_value)
+                    persist_changed_fields.add(field_name)
                 persist_dirty = True
+                env_entries[env_key.upper()] = ""
             else:
                 env_entries[env_key.upper()] = _serialize_env_value(new_value)
 
@@ -501,8 +506,9 @@ class ConfigHandler:
             existing = ""
             if env_path.exists():
                 existing = env_path.read_text(encoding="utf-8", errors="replace")
-            new_content = _update_env_content(existing, env_entries)
-            safe_write(env_path, new_content)
+            if existing or any(value != "" for value in env_entries.values()):
+                new_content = _update_env_content(existing, env_entries)
+                safe_write(env_path, new_content)
 
             for key, value in env_entries.items():
                 if value:
@@ -527,6 +533,21 @@ class ConfigHandler:
                 logger.info("[ConfigHandler] set: runtime_state saved (persistable keys updated)")
             except Exception as e:
                 logger.warning(f"[ConfigHandler] runtime_state save failed: {e}")
+
+        if "persona_name" in persist_changed_fields:
+            try:
+                persona_manager = getattr(self.agent, "persona_manager", None)
+                if persona_manager is not None:
+                    persona_manager.switch_preset(settings.persona_name)
+                if hasattr(self.agent, "_invalidate_system_prompt_cache"):
+                    self.agent._invalidate_system_prompt_cache("persona config changed")
+                ctx = getattr(self.agent, "_context", None)
+                if ctx is not None and getattr(ctx, "system", None) and hasattr(
+                    self.agent, "_build_system_prompt"
+                ):
+                    ctx.system = self.agent._build_system_prompt()
+            except Exception as e:
+                logger.warning(f"[ConfigHandler] persona runtime sync failed: {e}")
 
         # 构建响应
         result_lines = ["✅ 配置已更新:\n"] + changes

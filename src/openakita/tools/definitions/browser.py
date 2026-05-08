@@ -35,12 +35,14 @@ BROWSER_TOOLS = [
             ],
             params_desc={
                 "visible": "True=显示浏览器窗口（用户可见），False=后台运行（不可见）",
+                "user_confirmed": "当浏览器之前被用户关闭后，只有用户明确确认继续时才传 True 重新打开前台浏览器",
             },
             notes=[
                 "⚠️ 每次浏览器任务前建议调用此工具确认状态",
                 "如果浏览器已在运行，直接返回当前状态，不会重复启动",
                 "服务重启后浏览器会关闭，不能假设已打开",
                 "默认显示浏览器窗口",
+                "如果工具提示浏览器可能被用户关闭，不要自动重开；先询问用户，得到明确确认后传 user_confirmed=True",
             ],
         ),
         "triggers": [
@@ -84,6 +86,11 @@ BROWSER_TOOLS = [
                     "type": "boolean",
                     "description": "True=显示浏览器窗口, False=后台运行。默认 True",
                     "default": True,
+                },
+                "user_confirmed": {
+                    "type": "boolean",
+                    "description": "仅当用户明确确认重新打开前台浏览器时传 True；用于浏览器被用户关闭后的重启保护",
+                    "default": False,
                 },
             },
             "required": [],

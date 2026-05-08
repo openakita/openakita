@@ -93,6 +93,7 @@ class ConsolidationTracker:
         """记录一次记忆整理"""
         now = datetime.now()
         self._state["last_memory_consolidation"] = now.isoformat()
+        self._state.pop("memory_consolidation_checkpoint", None)
 
         history = self._state.setdefault("memory_consolidation_history", [])
         entry = {"timestamp": now.isoformat()}
@@ -115,6 +116,26 @@ class ConsolidationTracker:
 
         self._save()
         logger.info(f"Recorded memory consolidation at {now.isoformat()}")
+
+    def get_memory_consolidation_checkpoint(self) -> dict:
+        """读取未完成的每日记忆整理断点。"""
+        checkpoint = self._state.get("memory_consolidation_checkpoint")
+        return checkpoint if isinstance(checkpoint, dict) else {}
+
+    def record_memory_consolidation_checkpoint(self, checkpoint: dict) -> None:
+        """保存每日记忆整理进度，不更新 last_memory_consolidation。"""
+        if not isinstance(checkpoint, dict):
+            return
+        checkpoint["updated_at"] = datetime.now().isoformat()
+        checkpoint.setdefault("started_at", checkpoint["updated_at"])
+        self._state["memory_consolidation_checkpoint"] = checkpoint
+        self._save()
+
+    def clear_memory_consolidation_checkpoint(self) -> None:
+        """清除每日记忆整理断点。"""
+        if "memory_consolidation_checkpoint" in self._state:
+            self._state.pop("memory_consolidation_checkpoint", None)
+            self._save()
 
     def get_memory_consolidation_time_range(self) -> tuple[datetime | None, datetime]:
         """

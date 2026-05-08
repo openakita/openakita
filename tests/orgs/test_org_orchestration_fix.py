@@ -25,7 +25,7 @@ from openakita.core.supervisor import (
     RuntimeSupervisor,
 )
 from openakita.orgs.failure_diagnoser import _extract_evidence
-from openakita.orgs.runtime import UserCommandTracker
+from openakita.orgs.runtime import OrgRuntime, UserCommandTracker
 from openakita.orgs.tool_handler import OrgToolHandler
 
 # ---------------------------------------------------------------------------
@@ -414,6 +414,58 @@ class TestUserCommandTrackerSubtree:
         t.register_chain("chain_X")
         t.unregister_chain("chain_X")
         assert "chain_X" not in t.open_chains
+
+
+class TestRootVisibleResultCapture:
+    def test_verify_incomplete_long_root_summary_is_cached(self):
+        rt = OrgRuntime(manager=MagicMock())
+        summary = "# 最终汇总\n\n" + "这是一段已经生成的组织最终汇总。" * 20
+
+        payload = rt._capture_root_visible_result(
+            "org_a",
+            "node_root",
+            result_text=summary,
+            origin="delivery_followup",
+            is_normal=False,
+            exit_reason="verify_incomplete",
+        )
+
+        assert payload is not None
+        assert payload["result"] == summary
+        assert payload["usable_incomplete"] is True
+        assert "warning" in payload
+        assert rt._latest_root_result["org_a"]["result"] == summary
+
+    def test_verify_incomplete_short_result_is_not_cached_as_final(self):
+        rt = OrgRuntime(manager=MagicMock())
+
+        payload = rt._capture_root_visible_result(
+            "org_a",
+            "node_root",
+            result_text="还没完成",
+            origin="delivery_followup",
+            is_normal=False,
+            exit_reason="verify_incomplete",
+        )
+
+        assert payload is None
+        assert "org_a" not in rt._latest_root_result
+
+    def test_non_user_visible_origin_is_not_cached(self):
+        rt = OrgRuntime(manager=MagicMock())
+        summary = "# 最终汇总\n\n" + "这是一段已经生成的组织最终汇总。" * 20
+
+        payload = rt._capture_root_visible_result(
+            "org_a",
+            "node_root",
+            result_text=summary,
+            origin="answer",
+            is_normal=True,
+            exit_reason="normal",
+        )
+
+        assert payload is None
+        assert "org_a" not in rt._latest_root_result
 
 
 # ---------------------------------------------------------------------------

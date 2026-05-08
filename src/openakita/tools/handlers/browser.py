@@ -16,7 +16,6 @@
 - view_image: 查看/分析本地图片
 """
 
-import asyncio
 import logging
 import re
 from pathlib import Path
@@ -148,7 +147,7 @@ class BrowserHandler:
                 timeout=_BROWSER_LOCK_TIMEOUT,
             ):
                 return await self._dispatch(tool_name, params)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             current_holder = await _browser_lock_manager.get_holder("tool:browser")
             logger.warning(
                 f"[Browser] Lock timeout for {tool_name} (holder={current_holder}, waiter={holder})"
@@ -175,7 +174,7 @@ class BrowserHandler:
             elif tool_name == "browser_navigate":
                 result = await pw.navigate(params.get("url", ""))
                 if result.get("success"):
-                    setattr(self.agent, "_last_browser_navigate_url", params.get("url", ""))
+                    self.agent._last_browser_navigate_url = params.get("url", "")
                 return result
             elif tool_name == "browser_screenshot":
                 result = await pw.screenshot(
@@ -245,10 +244,13 @@ class BrowserHandler:
             if "closed" in error_str.lower() or "target" in error_str.lower():
                 logger.warning("[Browser] Browser/page closed detected, resetting state")
                 await manager.reset_state()
+                self.agent._browser_user_closed = True
                 return {
                     "success": False,
                     "error": "浏览器连接已断开（可能被用户关闭）。\n"
-                    "【重要】状态已重置，请直接调用 browser_open 重新启动浏览器，无需先调用 browser_close。",
+                    "【重要】不要自动重新打开前台浏览器。请先向用户说明浏览器已关闭，"
+                    "只有在用户明确确认继续后，才能调用 browser_open 并传入 "
+                    '{"user_confirmed": true} 重新启动。',
                 }
 
             return {"success": False, "error": error_str}
@@ -318,6 +320,19 @@ class BrowserHandler:
     async def _handle_open(self, manager: Any, params: dict) -> dict:
         """处理 browser_open（合并了状态查询功能）。"""
         visible = params.get("visible", True)
+        if (
+            getattr(self.agent, "_browser_user_closed", False)
+            and visible
+            and not params.get("user_confirmed")
+        ):
+            return {
+                "success": False,
+                "error": (
+                    "浏览器之前已被用户关闭。为避免在用户未确认时重新打开前台浏览器，"
+                    "本次启动已被拦截。请先询问用户是否继续；用户确认后再调用 "
+                    'browser_open({"visible": true, "user_confirmed": true})。'
+                ),
+            }
 
         if manager.is_ready and manager.context and manager.page:
             try:
@@ -345,6 +360,17 @@ class BrowserHandler:
             except Exception as e:
                 logger.warning(f"[Browser] Browser connection lost: {e}, resetting state")
                 await manager.reset_state()
+                self.agent._browser_user_closed = True
+                if visible and not params.get("user_confirmed"):
+                    return {
+                        "success": False,
+                        "error": (
+                            "浏览器连接已断开（可能被用户关闭）。为避免在用户未确认时"
+                            "重新打开前台浏览器，本次启动已被拦截。请先询问用户是否继续；"
+                            "用户确认后再调用 "
+                            'browser_open({"visible": true, "user_confirmed": true})。'
+                        ),
+                    }
         elif manager.is_ready:
             logger.warning("[Browser] Incomplete browser state, resetting")
             await manager.reset_state()
@@ -352,6 +378,8 @@ class BrowserHandler:
         success = await manager.start(visible=visible)
 
         if success:
+            if params.get("user_confirmed") or not visible:
+                self.agent._browser_user_closed = False
             current_url = manager.page.url if manager.page else None
             current_title = None
             tab_count = 0

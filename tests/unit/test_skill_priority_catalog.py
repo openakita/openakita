@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
-
-import pytest
 
 from openakita.prompt.budget import (
     _TOOL_HINT_TO_SKILL_CATEGORY,
     intent_to_priority_categories,
 )
 from openakita.skills.catalog import SkillCatalog
-
 
 # ---------------------------------------------------------------------------
 # intent_to_priority_categories

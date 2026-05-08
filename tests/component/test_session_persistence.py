@@ -14,6 +14,7 @@ import re
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -372,6 +373,71 @@ class TestSearchMemorySemantic:
         result = handler._search_memory({"query": "test", "type": "fact"})
         engine.retrieve_candidates.assert_not_called()
         mm.search_memories.assert_called_once()
+
+
+# ===========================================================================
+# Fix-4b: get_session_context tolerates malformed persisted context
+# ===========================================================================
+
+class TestGetSessionContextFormatting:
+
+    def _make_handler(self, context):
+        from openakita.tools.handlers.memory import MemoryHandler
+
+        agent = MagicMock()
+        agent._current_session = SimpleNamespace(
+            id="s1",
+            channel="desktop",
+            context=context,
+        )
+        return MemoryHandler(agent)
+
+    def test_sub_agent_tools_with_non_string_name_do_not_crash(self):
+        context = SimpleNamespace(
+            messages=[],
+            react_traces=[],
+            sub_agent_records=[
+                {
+                    "agent_name": "Researcher",
+                    "task_message": {"goal": "分析 issue"},
+                    "elapsed_s": 3,
+                    "tools_used": [{"name": {"bad": "shape"}}],
+                    "result_preview": ["done"],
+                }
+            ],
+        )
+        handler = self._make_handler(context)
+
+        result = handler._get_session_context({"sections": ["summary", "sub_agents"]})
+
+        assert "## 会话概况" in result
+        assert "- 工具: {\"bad\": \"shape\"}" in result
+        assert "- 任务: {\"goal\": \"分析 issue\"}" in result
+        assert "- 结果预览:\n[\"done\"]" in result
+
+    def test_tools_and_messages_with_non_string_fields_do_not_crash(self):
+        context = SimpleNamespace(
+            sub_agent_records=[],
+            react_traces=[
+                {
+                    "tool_name": {"name": "get_session_context"},
+                    "status": ["ok"],
+                }
+            ],
+            messages=[
+                {
+                    "role": {"kind": "user"},
+                    "timestamp": 1735689600,
+                    "content": {"text": "hello"},
+                }
+            ],
+        )
+        handler = self._make_handler(context)
+
+        result = handler._get_session_context({"sections": ["tools", "messages"]})
+
+        assert "1. {\"name\": \"get_session_context\"} ([\"ok\"])" in result
+        assert "[1735689600] {\"kind\": \"user\"}: {\"text\": \"hello\"}" in result
 
 
 # ===========================================================================

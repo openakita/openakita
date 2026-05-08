@@ -87,6 +87,7 @@ import { toast } from "sonner";
 import { useVersionCheck } from "./hooks/useVersionCheck";
 import { useEnvManager } from "./hooks/useEnvManager";
 import { AdvancedView } from "./views/AdvancedView";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 const THEME_I18N_KEYS: Record<Theme, string> = {
   system: "topbar.themeSystem",
@@ -102,6 +103,12 @@ const THEME_I18N_KEYS: Record<Theme, string> = {
  *  5s accommodates slow devices where the event loop may be busy. */
 const HEALTH_POLL_TIMEOUT_MS = 5_000;
 const DEFAULT_LOCAL_API_BASE = "http://127.0.0.1:18900";
+// First-run startup can install channel/plugin dependencies before the API is
+// reachable on older builds or dirty user environments. Keep the UI waiting
+// with progress instead of declaring "HTTP unreachable" too early.
+const LOCAL_SERVICE_READY_TIMEOUT_MS = 120_000;
+const ONBOARDING_HTTP_READY_TIMEOUT_MS = 180_000;
+const HTTP_READY_POLL_INTERVAL_MS = 2_000;
 
 interface EnvFieldCtx {
   envDraft: EnvMap;
@@ -2571,15 +2578,20 @@ function MainApp() {
    * 启动进程（PID 存活）不代表 HTTP 可达，FastAPI+uvicorn 需要额外几秒初始化。
    * @returns true 如果在 maxWaitMs 内服务响应了 /api/health
    */
-  async function waitForServiceReady(baseUrl: string, maxWaitMs = 60000): Promise<boolean> {
+  async function waitForServiceReady(
+    baseUrl: string,
+    maxWaitMs = LOCAL_SERVICE_READY_TIMEOUT_MS,
+    onTick?: (elapsedMs: number) => void,
+  ): Promise<boolean> {
     const start = Date.now();
-    const interval = 1000;
     while (Date.now() - start < maxWaitMs) {
       try {
         const res = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(3000) });
         if (res.ok) return true;
       } catch { /* not ready yet */ }
-      await new Promise((r) => setTimeout(r, interval));
+      const elapsedMs = Date.now() - start;
+      onTick?.(elapsedMs);
+      await new Promise((r) => setTimeout(r, HTTP_READY_POLL_INTERVAL_MS));
     }
     return false;
   }
@@ -2659,7 +2671,7 @@ function MainApp() {
         workspaceId: effectiveWsId,
       });
       setServiceStatus(ss);
-      const ready = await waitForServiceReady("http://127.0.0.1:18900");
+      const ready = await waitForServiceReady("http://127.0.0.1:18900", LOCAL_SERVICE_READY_TIMEOUT_MS);
       const real = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", {
         workspaceId: effectiveWsId,
       });
@@ -2682,7 +2694,7 @@ function MainApp() {
         // Process is alive but HTTP API not yet reachable — keep waiting in background
         dismissLoading(_busyId);
         _busyId = notifyLoading(t("topbar.starting") + "…");
-        const bgReady = await waitForServiceReady("http://127.0.0.1:18900", 60000);
+        const bgReady = await waitForServiceReady("http://127.0.0.1:18900", LOCAL_SERVICE_READY_TIMEOUT_MS);
         if (bgReady) {
           notifySuccess(t("connect.success"));
           await refreshStatus("local", "http://127.0.0.1:18900", true);
@@ -4233,18 +4245,20 @@ function MainApp() {
           logTask("等待 HTTP 服务就绪", "running");
           log("等待 HTTP 服务就绪...");
           setObBackendStartupPhase("waiting", t("onboarding.backendStartup.waiting"));
-          for (let i = 0; i < 20; i++) {
-            await new Promise(r => setTimeout(r, 2000));
-            updateTask("http-wait", { detail: `已等待 ${(i + 1) * 2}s...` });
+          const maxHttpWaitTicks = Math.ceil(ONBOARDING_HTTP_READY_TIMEOUT_MS / HTTP_READY_POLL_INTERVAL_MS);
+          for (let i = 0; i < maxHttpWaitTicks; i++) {
+            await new Promise(r => setTimeout(r, HTTP_READY_POLL_INTERVAL_MS));
+            const waitedSec = Math.round(((i + 1) * HTTP_READY_POLL_INTERVAL_MS) / 1000);
+            updateTask("http-wait", { detail: `已等待 ${waitedSec}s...` });
             setObBackendStartup((prev) => ({
               ...prev,
               phase: "waiting",
-              detail: t("onboarding.backendStartup.waitingDetail", { seconds: (i + 1) * 2 }),
+              detail: t("onboarding.backendStartup.waitingDetail", { seconds: waitedSec }),
             }));
             if (i > 0 && obLogPath) {
               const now = new Date();
               const ts = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
-              invoke("append_onboarding_log", { logPath: obLogPath, line: `[${ts}] [任务] 等待 HTTP 服务就绪: 已等待 ${(i + 1) * 2}s...` }).catch(() => {});
+              invoke("append_onboarding_log", { logPath: obLogPath, line: `[${ts}] [任务] 等待 HTTP 服务就绪: 已等待 ${waitedSec}s...` }).catch(() => {});
             }
             try {
               const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
@@ -4253,12 +4267,12 @@ function MainApp() {
                 setServiceStatus({ running: true, pid: null, pidFile: "" });
                 setObBackendStartupPhase("ready", t("onboarding.backendStartup.ready"));
                 httpReady = true;
-                updateTask("http-wait", { status: "done", detail: `${(i + 1) * 2}s` });
-                logTask("等待 HTTP 服务就绪", "done", `${(i + 1) * 2}s`);
+                updateTask("http-wait", { status: "done", detail: `${waitedSec}s` });
+                logTask("等待 HTTP 服务就绪", "done", `${waitedSec}s`);
                 break;
               }
             } catch { /* not ready yet */ }
-            if (i % 5 === 4) log(`仍在等待 HTTP 服务启动... (${(i + 1) * 2}s)`);
+            if (i % 5 === 4) log(`仍在等待 HTTP 服务启动... (${waitedSec}s)`);
           }
           if (!httpReady) {
             log("[!] HTTP 服务尚未就绪，可进入主页面后手动刷新");
@@ -4686,12 +4700,14 @@ function MainApp() {
                         await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: wsId });
                         setObBackendStartupPhase("waiting", t("onboarding.backendStartup.waiting"));
                         let earlyHttpReady = false;
-                        for (let i = 0; i < 15; i++) {
-                          await new Promise(r => setTimeout(r, 2000));
+                        const maxEarlyHttpWaitTicks = Math.ceil(ONBOARDING_HTTP_READY_TIMEOUT_MS / HTTP_READY_POLL_INTERVAL_MS);
+                        for (let i = 0; i < maxEarlyHttpWaitTicks; i++) {
+                          await new Promise(r => setTimeout(r, HTTP_READY_POLL_INTERVAL_MS));
+                          const waitedSec = Math.round(((i + 1) * HTTP_READY_POLL_INTERVAL_MS) / 1000);
                           setObBackendStartup((prev) => ({
                             ...prev,
                             phase: "waiting",
-                            detail: t("onboarding.backendStartup.waitingDetail", { seconds: (i + 1) * 2 }),
+                            detail: t("onboarding.backendStartup.waitingDetail", { seconds: waitedSec }),
                           }));
                           try {
                             const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
@@ -5210,10 +5226,12 @@ function MainApp() {
     }
     if (view === "security") {
       return (
-        <SecurityView
-          apiBaseUrl={apiBaseUrl}
-          serviceRunning={serviceStatus?.running ?? false}
-        />
+        <ErrorBoundary>
+          <SecurityView
+            apiBaseUrl={apiBaseUrl}
+            serviceRunning={serviceStatus?.running ?? false}
+          />
+        </ErrorBoundary>
       );
     }
     if (view.startsWith("plugin_app:")) {
@@ -5553,7 +5571,9 @@ function MainApp() {
             />
           </div>
           <div style={{ display: view === "org_editor" ? undefined : "none", flex: 1, minHeight: 0 }}>
-            <OrgEditorView apiBaseUrl={apiBaseUrl} visible={view === "org_editor"} />
+            <ErrorBoundary>
+              <OrgEditorView apiBaseUrl={apiBaseUrl} visible={view === "org_editor"} />
+            </ErrorBoundary>
           </div>
           <div
             className="content"

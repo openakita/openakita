@@ -2085,20 +2085,8 @@ def serve(
         await init_core_services(agent_or_master)
         console.print("[green]✓[/green] 核心服务已就绪")
 
-        # 启动 IM 通道（可选）
-        console.print("[bold green]正在启动 IM 通道...[/bold green]")
-        im_channels = await start_im_channels(agent_or_master)
-
-        if im_channels:
-            console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
-        else:
-            console.print("[yellow]ℹ[/yellow] 未启用 IM 通道（HTTP API 仍可使用）")
-
-        # 注入 shutdown_event 到网关（供终极重启指令使用）
-        if _message_gateway is not None:
-            _message_gateway.set_shutdown_event(shutdown_event)
-
-        # 启动 HTTP API 服务器（供 Setup Center Chat 页面使用）
+        # 先启动 HTTP API（供 Setup Center/桌面端使用）。
+        # IM 通道依赖安装可能很慢，不能阻塞 /api/health 就绪。
         api_task = None
         _api_fatal = False
         try:
@@ -2130,6 +2118,29 @@ def serve(
                 "[red]HTTP API 启动失败，进程即将退出。请检查端口 18900 是否被占用。[/red]"
             )
             shutdown_event.set()
+
+        if not _api_fatal:
+            # 启动 IM 通道（可选）。放在 HTTP API 之后，避免首次安装通道依赖时
+            # 桌面端长时间无法访问本地健康检查。
+            console.print("[bold green]正在启动 IM 通道...[/bold green]")
+            im_channels = await start_im_channels(agent_or_master)
+
+            if im_channels:
+                console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
+            else:
+                console.print("[yellow]ℹ[/yellow] 未启用 IM 通道（HTTP API 仍可使用）")
+
+            # 注入 shutdown_event 到网关（供终极重启指令使用），并把晚启动的网关
+            # 回填给已经运行的 FastAPI app state。
+            if _message_gateway is not None:
+                _message_gateway.set_shutdown_event(shutdown_event)
+                if api_task is not None:
+                    try:
+                        from openakita.api.server import update_runtime_refs
+
+                        update_runtime_refs(api_task, gateway=_message_gateway)
+                    except Exception:
+                        logger.debug("Failed to update API gateway reference", exc_info=True)
 
         console.print()
         if dev:

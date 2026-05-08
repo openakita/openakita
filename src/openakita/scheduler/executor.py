@@ -396,7 +396,7 @@ class TaskExecutor:
                 result = await asyncio.wait_for(
                     self._run_agent(agent, prompt), timeout=task_timeout
                 )
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 timeout_display = (
                     f"{task_timeout // 60} 分钟" if task_timeout >= 60 else f"{task_timeout} 秒"
                 )
@@ -617,7 +617,14 @@ class TaskExecutor:
             if timeout:
                 try:
                     return await asyncio.wait_for(coro, timeout=timeout)
-                except (asyncio.TimeoutError, TimeoutError):
+                except TimeoutError:
+                    if action == "system:daily_memory":
+                        result_msg = (
+                            "记忆整理超过系统保护时长，已停止本轮整理。"
+                            "如果之前已有进度，下次会从已保存的位置继续。"
+                        )
+                        logger.warning(f"TaskExecutor: {result_msg}")
+                        return True, result_msg
                     error_msg = f"System task {action} timed out after {timeout}s"
                     logger.error(f"TaskExecutor: {error_msg}")
                     return False, error_msg
@@ -672,7 +679,26 @@ class TaskExecutor:
                 )
                 logger.debug("Created fallback MemoryManager for consolidation")
 
-            result = await mm.consolidate_daily()
+            result = await mm.consolidate_daily(
+                checkpoint=tracker.get_memory_consolidation_checkpoint(),
+                checkpoint_callback=tracker.record_memory_consolidation_checkpoint,
+                time_budget_seconds=1500,
+            )
+
+            if result.get("partial"):
+                llm_review = result.get("llm_review") or {}
+                processed_batches = llm_review.get("processed_batches", 0)
+                total_batches = llm_review.get("total_batches", 0)
+                summary = (
+                    "记忆整理已安全暂停，进度已保存，下次会继续:\n"
+                    f"- 已提取: {result.get('unextracted_processed', 0)}\n"
+                    f"- 已去重: {result.get('duplicates_removed', 0)}\n"
+                    f"- 记忆审查批次: {processed_batches}/{total_batches}\n"
+                    f"- 说明: {result.get('reason', '本轮时间预算已用完')}\n"
+                    f"- 时间范围: {since.strftime('%m-%d %H:%M') if since else '全部'} → {until.strftime('%m-%d %H:%M')}"
+                )
+                logger.info(f"Memory consolidation paused with checkpoint: {result}")
+                return True, summary
 
             tracker.record_memory_consolidation(result)
 

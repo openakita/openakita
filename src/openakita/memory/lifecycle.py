@@ -3,7 +3,7 @@
 
 统一归纳 + 衰减 + 去重逻辑:
 - 处理未归纳的原文 → 生成 Episode → 提取语义记忆
-- O(n log n) 聚类去重 (替代 O(n²))
+- 基于内容相似度的本地去重（按类型分组，减少全库比较）
 - 衰减计算与归档
 - 刷新 MEMORY.md / USER.md
 - 晋升 PERSONA_TRAIT
@@ -12,12 +12,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .extractor import MemoryExtractor
+from .json_utils import coerce_text, extract_json_array, loads_llm_json
 from .retention import apply_retention
 from .storage import _is_db_locked
 
@@ -140,26 +142,119 @@ class LifecycleManager:
     # Daily Consolidation (凌晨任务编排)
     # ==================================================================
 
-    async def consolidate_daily(self) -> dict:
+    async def consolidate_daily(
+        self,
+        *,
+        checkpoint: dict | None = None,
+        checkpoint_callback: Callable[[dict], None] | None = None,
+        time_budget_seconds: int | None = None,
+        review_max_batches: int | None = None,
+    ) -> dict:
         """
         凌晨归纳主流程, 返回统计报告
         """
-        report: dict = {"started_at": datetime.now().isoformat()}
+        started_at = time.monotonic()
+        checkpoint = checkpoint or {}
+        phase = checkpoint.get("phase") if isinstance(checkpoint, dict) else None
+        report: dict = {
+            "started_at": datetime.now().isoformat(),
+            "resumed_from_checkpoint": bool(checkpoint),
+        }
 
-        extracted = await self.process_unextracted_turns()
-        report["unextracted_processed"] = extracted
+        def has_budget(reserve_seconds: int = 30) -> bool:
+            if not time_budget_seconds:
+                return True
+            return (time.monotonic() - started_at) < max(1, time_budget_seconds - reserve_seconds)
 
-        deduped = await self.deduplicate_batch()
-        report["duplicates_removed"] = deduped
+        def save_checkpoint(next_phase: str, extra: dict | None = None) -> None:
+            if not checkpoint_callback:
+                return
+            state = {
+                "phase": next_phase,
+                "partial_report": dict(report),
+            }
+            if extra:
+                state.update(extra)
+            checkpoint_callback(state)
 
-        decayed = self.compute_decay()
-        report["memories_decayed"] = decayed
+        if phase not in ("llm_review", "post_review"):
+            extracted_result = await self.process_unextracted_turns(
+                deadline_monotonic=(started_at + time_budget_seconds)
+                if time_budget_seconds
+                else None,
+            )
+            if isinstance(extracted_result, dict):
+                extracted = int(extracted_result.get("processed", 0) or 0)
+                report["unextracted_processed"] = extracted
+                if extracted_result.get("partial"):
+                    report["partial"] = True
+                    report["reason"] = extracted_result.get(
+                        "reason",
+                        "本轮时间预算即将用完，已保存对话提取进度，下次继续。",
+                    )
+                    report["finished_at"] = datetime.now().isoformat()
+                    save_checkpoint("turns")
+                    logger.info(f"[Lifecycle] Daily consolidation paused safely: {report}")
+                    return report
+            else:
+                extracted = extracted_result
+            report["unextracted_processed"] = extracted
 
-        cleaned_att = self.cleanup_stale_attachments()
-        report["stale_attachments_cleaned"] = cleaned_att
+            deduped = await self.deduplicate_batch()
+            report["duplicates_removed"] = deduped
+            if not has_budget():
+                report["partial"] = True
+                report["reason"] = "本轮已完成对话提取和去重，剩余步骤下次继续。"
+                report["finished_at"] = datetime.now().isoformat()
+                save_checkpoint("turns")
+                return report
 
-        review_result = await self.review_memories_with_llm()
-        report["llm_review"] = review_result
+            decayed = self.compute_decay()
+            report["memories_decayed"] = decayed
+
+            cleaned_att = self.cleanup_stale_attachments()
+            report["stale_attachments_cleaned"] = cleaned_att
+            if not has_budget():
+                report["partial"] = True
+                report["reason"] = "本轮已完成基础清理，剩余记忆审查下次继续。"
+                report["finished_at"] = datetime.now().isoformat()
+                save_checkpoint("llm_review")
+                return report
+
+            save_checkpoint("llm_review")
+        else:
+            report.update(checkpoint.get("partial_report") or {})
+            report["resumed_from_checkpoint"] = True
+
+        if phase == "post_review":
+            review_result = checkpoint.get("llm_review") or {}
+            report["llm_review"] = review_result
+        else:
+            review_checkpoint = checkpoint.get("llm_review") if isinstance(checkpoint, dict) else None
+            review_result = await self.review_memories_with_llm(
+                checkpoint=review_checkpoint if isinstance(review_checkpoint, dict) else None,
+                checkpoint_callback=lambda state: save_checkpoint("llm_review", {"llm_review": state}),
+                max_batches=review_max_batches,
+                deadline_monotonic=(started_at + time_budget_seconds) if time_budget_seconds else None,
+            )
+            report["llm_review"] = review_result
+
+        if isinstance(review_result, dict) and review_result.get("partial"):
+            report["partial"] = True
+            report["reason"] = review_result.get(
+                "reason",
+                "本轮时间预算已用完，已保存进度，下次会继续整理剩余记忆。",
+            )
+            report["finished_at"] = datetime.now().isoformat()
+            logger.info(f"[Lifecycle] Daily consolidation paused safely: {report}")
+            return report
+
+        if not has_budget():
+            report["partial"] = True
+            report["reason"] = "本轮已完成记忆审查，剩余收尾步骤下次继续。"
+            save_checkpoint("post_review", {"llm_review": review_result})
+            report["finished_at"] = datetime.now().isoformat()
+            return report
 
         synthesized = await self.synthesize_experiences()
         report["experience_synthesized"] = synthesized
@@ -170,6 +265,7 @@ class LifecycleManager:
 
         self._sync_vector_store()
 
+        report["partial"] = False
         report["finished_at"] = datetime.now().isoformat()
         logger.info(f"[Lifecycle] Daily consolidation complete: {report}")
         return report
@@ -237,18 +333,38 @@ class LifecycleManager:
     # Process Unextracted Turns
     # ==================================================================
 
-    async def process_unextracted_turns(self) -> int:
+    async def process_unextracted_turns(
+        self,
+        *,
+        deadline_monotonic: float | None = None,
+    ) -> int | dict:
         """处理未归纳的原文 → 生成 Episode → 提取语义记忆"""
         unextracted = self.store.get_unextracted_turns(limit=200)
         if not unextracted:
-            return 0
+            return {"processed": 0, "partial": False} if deadline_monotonic else 0
 
         by_session: dict[str, list[dict]] = defaultdict(list)
         for turn in unextracted:
             by_session[turn["session_id"]].append(turn)
 
         total = 0
+
+        def pause_if_needed() -> dict | None:
+            if deadline_monotonic is None:
+                return None
+            if time.monotonic() >= deadline_monotonic - 30:
+                return {
+                    "processed": total,
+                    "partial": True,
+                    "reason": "本轮时间预算即将用完，已保存对话提取进度，下次继续。",
+                }
+            return None
+
         for session_id, turns in by_session.items():
+            if paused := pause_if_needed():
+                logger.info("[Lifecycle] Pausing unextracted turn processing before session %s", session_id)
+                return paused
+
             conv_turns = [
                 ConversationTurn(
                     role=t["role"],
@@ -275,17 +391,33 @@ class LifecycleManager:
 
             self.store.save_episode(episode)
 
-            for turn_obj in conv_turns:
-                items = await self.extractor.extract_from_turn_v2(turn_obj)
-                for item in items:
-                    self._save_extracted_item(item, episode.id)
-                total += len(items)
-
-            indices = [t["turn_index"] for t in turns]
-            self.store.mark_turns_extracted(session_id, indices)
+            for turn_data, turn_obj in zip(turns, conv_turns, strict=False):
+                if paused := pause_if_needed():
+                    logger.info(
+                        "[Lifecycle] Pausing unextracted turn processing at %s/%s",
+                        session_id,
+                        turn_data.get("turn_index"),
+                    )
+                    return paused
+                try:
+                    items = await self.extractor.extract_from_turn_v2(turn_obj)
+                    for item in items:
+                        self._save_extracted_item(item, episode.id)
+                    total += len(items)
+                    self.store.mark_turns_extracted(session_id, [turn_data["turn_index"]])
+                except Exception as e:
+                    logger.warning(
+                        "[Lifecycle] Failed to extract turn %s/%s: %s",
+                        session_id,
+                        turn_data.get("turn_index"),
+                        e,
+                    )
 
         retry_items = self.store.dequeue_extraction(batch_size=20)
         for item in retry_items:
+            if paused := pause_if_needed():
+                logger.info("[Lifecycle] Pausing queued extraction processing at item %s", item.get("id"))
+                return paused
             turn = ConversationTurn(
                 role="user",
                 content=item.get("content", ""),
@@ -300,7 +432,7 @@ class LifecycleManager:
             self.store.complete_extraction(item["id"], success=success)
 
         logger.info(f"[Lifecycle] Processed {total} memories from unextracted turns")
-        return total
+        return {"processed": total, "partial": False} if deadline_monotonic else total
 
     def _save_extracted_item(self, item: dict, episode_id: str | None = None) -> None:
         type_map = {
@@ -384,7 +516,7 @@ class LifecycleManager:
         self.store.save_semantic(mem)
 
     # ==================================================================
-    # Deduplication (O(n log n))
+    # Deduplication
     # ==================================================================
 
     async def deduplicate_batch(self) -> int:
@@ -613,6 +745,10 @@ class LifecycleManager:
         self,
         progress_callback: Callable[[dict], None] | None = None,
         cancel_event: asyncio.Event | None = None,
+        checkpoint: dict | None = None,
+        checkpoint_callback: Callable[[dict], None] | None = None,
+        max_batches: int | None = None,
+        deadline_monotonic: float | None = None,
     ) -> dict:
         """
         使用 LLM 审查所有记忆，清理垃圾、合并重复、更新过期内容。
@@ -620,35 +756,101 @@ class LifecycleManager:
         Args:
             progress_callback: 每完成一个 batch 后调用，传入当前进度 dict
             cancel_event: 如果 set，则在下一个 batch 前中止
+            checkpoint: 上次未完成审查留下的批次游标
+            checkpoint_callback: 每完成一个 batch 后保存游标
+            max_batches: 本轮最多审查多少批，None 表示不限制
+            deadline_monotonic: 接近该 monotonic 时间时安全暂停
 
         Returns:
             审查报告 {deleted, updated, merged, kept, errors}
         """
-        import json
         import math
-        import re
 
         all_memories = self.store.load_all_memories()
         if not all_memories:
-            return {"deleted": 0, "updated": 0, "merged": 0, "kept": 0}
+            return {"deleted": 0, "updated": 0, "merged": 0, "kept": 0, "partial": False}
 
         if not self.extractor or not self.extractor.brain:
             logger.warning("[Lifecycle] No LLM available for memory review, skipping")
-            return {"deleted": 0, "updated": 0, "merged": 0, "kept": len(all_memories)}
+            return {
+                "deleted": 0,
+                "updated": 0,
+                "merged": 0,
+                "kept": len(all_memories),
+                "partial": False,
+            }
 
         report = {"deleted": 0, "updated": 0, "merged": 0, "kept": 0, "errors": 0}
 
         batch_size = 15
-        total_batches = math.ceil(len(all_memories) / batch_size)
-        consecutive_risky_skips = 0
+        memory_by_id = {m.id: m for m in all_memories}
+
+        if checkpoint and isinstance(checkpoint.get("memory_ids"), list):
+            memory_ids = list(checkpoint["memory_ids"])
+            cursor = int(checkpoint.get("cursor", 0) or 0)
+            saved_report = checkpoint.get("report")
+            if isinstance(saved_report, dict):
+                for key in report:
+                    report[key] = int(saved_report.get(key, report[key]) or 0)
+            consecutive_risky_skips = int(checkpoint.get("consecutive_risky_skips", 0) or 0)
+        else:
+            memory_ids = [m.id for m in all_memories]
+            cursor = 0
+            consecutive_risky_skips = 0
+
+        total_batches = math.ceil(len(memory_ids) / batch_size)
+        cursor = min(max(cursor, 0), total_batches)
         max_consecutive_risky = 3
+        processed_this_run = 0
 
-        for batch_idx, i in enumerate(range(0, len(all_memories), batch_size)):
+        def save_review_checkpoint(partial: bool, reason: str | None = None) -> None:
+            if not checkpoint_callback:
+                return
+            state = {
+                "memory_ids": memory_ids,
+                "cursor": cursor,
+                "batch_size": batch_size,
+                "total_batches": total_batches,
+                "report": dict(report),
+                "consecutive_risky_skips": consecutive_risky_skips,
+                "partial": partial,
+                "done": not partial,
+            }
+            if reason:
+                state["reason"] = reason
+            checkpoint_callback(state)
+
+        def should_pause() -> str | None:
             if cancel_event and cancel_event.is_set():
-                logger.info("[Lifecycle] Memory review cancelled by user")
-                break
+                return "记忆审查已收到取消信号，已保存当前进度。"
+            if max_batches is not None and processed_this_run >= max_batches:
+                return "本轮已完成预设批次数，剩余记忆下次继续审查。"
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic - 30:
+                return "本轮时间预算即将用完，已保存进度，下次继续。"
+            return None
 
-            batch = all_memories[i : i + batch_size]
+        for batch_idx in range(cursor, total_batches):
+            pause_reason = should_pause()
+            if pause_reason:
+                logger.info("[Lifecycle] Memory review paused: %s", pause_reason)
+                save_review_checkpoint(partial=True, reason=pause_reason)
+                report.update(
+                    {
+                        "partial": True,
+                        "reason": pause_reason,
+                        "processed_batches": cursor,
+                        "total_batches": total_batches,
+                    }
+                )
+                return report
+
+            i = batch_idx * batch_size
+            batch_ids = memory_ids[i : i + batch_size]
+            batch = [memory_by_id[mid] for mid in batch_ids if mid in memory_by_id]
+            if not batch:
+                cursor = batch_idx + 1
+                save_review_checkpoint(partial=cursor < total_batches)
+                continue
 
             if progress_callback:
                 progress_callback(
@@ -656,7 +858,7 @@ class LifecycleManager:
                         "phase": "llm_calling",
                         "batch": batch_idx,
                         "total_batches": total_batches,
-                        "total_memories": len(all_memories),
+                        "total_memories": len(memory_ids),
                         "processed": i,
                         "report": dict(report),
                     }
@@ -664,7 +866,8 @@ class LifecycleManager:
 
             memories_text = "\n".join(
                 f"- ID={m.id} | type={m.type.value} | score={m.importance_score:.2f} "
-                f"| cited={m.access_count} | subject={m.subject or ''} | content={m.content}"
+                f"| cited={m.access_count} | subject={coerce_text(m.subject)} "
+                f"| content={coerce_text(m.content)}"
                 for m in batch
             )
 
@@ -675,111 +878,130 @@ class LifecycleManager:
                     prompt,
                     system="你是记忆质量审查专家。只输出 JSON 数组。",
                 )
-                text = (getattr(response, "content", None) or str(response)).strip()
+                text = coerce_text(getattr(response, "content", response)).strip()
 
-                json_match = re.search(r"\[[\s\S]*\]", text)
-                if not json_match:
+                json_text = extract_json_array(text)
+                if not json_text:
                     logger.warning(f"[Lifecycle] LLM review batch {batch_idx}: no JSON output")
                     report["kept"] += len(batch)
-                    continue
-
-                decisions = json.loads(json_match.group())
-                if not isinstance(decisions, list):
-                    report["kept"] += len(batch)
-                    continue
-
-                destructive = 0
-                for d in decisions:
-                    if not isinstance(d, dict):
-                        continue
-                    action = str(d.get("action", "keep")).lower()
-                    if action in ("delete", "merge"):
-                        destructive += 1
-                if destructive > max(3, int(len(batch) * 0.4)):
-                    consecutive_risky_skips += 1
-                    logger.warning(
-                        "[Lifecycle] Skip risky review batch %s: destructive=%s/%s "
-                        "(consecutive=%s/%s)",
-                        batch_idx,
-                        destructive,
-                        len(batch),
-                        consecutive_risky_skips,
-                        max_consecutive_risky,
-                    )
-                    report["kept"] += len(batch)
-                    if consecutive_risky_skips >= max_consecutive_risky:
-                        remaining = len(all_memories) - (i + len(batch))
+                    decisions = None
+                else:
+                    try:
+                        decisions = loads_llm_json(json_text)
+                    except ValueError as parse_error:
                         logger.warning(
-                            "[Lifecycle] Aborting LLM review: %s consecutive risky "
-                            "batches — LLM appears unreliable for this corpus. "
-                            "Keeping remaining %s memories as-is.",
+                            "[Lifecycle] LLM review batch %s json_parse_error: %s "
+                            "(output_chars=%s)",
+                            batch_idx,
+                            parse_error,
+                            len(text),
+                        )
+                        report["errors"] += 1
+                        report["kept"] += len(batch)
+                        decisions = None
+
+                if not isinstance(decisions, list):
+                    if decisions is not None:
+                        report["kept"] += len(batch)
+                    decision_map = {}
+                else:
+                    destructive = 0
+                    for d in decisions:
+                        if not isinstance(d, dict):
+                            continue
+                        action = str(d.get("action", "keep")).lower()
+                        if action in ("delete", "merge"):
+                            destructive += 1
+                    if destructive > max(3, int(len(batch) * 0.4)):
+                        consecutive_risky_skips += 1
+                        logger.warning(
+                            "[Lifecycle] Skip risky review batch %s: destructive=%s/%s "
+                            "(consecutive=%s/%s); continuing with later batches",
+                            batch_idx,
+                            destructive,
+                            len(batch),
+                            consecutive_risky_skips,
                             max_consecutive_risky,
-                            remaining,
                         )
-                        report["kept"] += remaining
-                        break
-                    continue
-                consecutive_risky_skips = 0
-
-                decision_map = {d["id"]: d for d in decisions if isinstance(d, dict) and "id" in d}
-
-                for mem in batch:
-                    dec = decision_map.get(mem.id)
-                    if not dec:
-                        report["kept"] += 1
-                        continue
-
-                    action = dec.get("action", "keep")
-
-                    if action == "delete":
-                        self.store.delete_semantic(mem.id)
-                        report["deleted"] += 1
-                        logger.debug(
-                            f"[Lifecycle] Review DELETE: {mem.content[:50]} "
-                            f"({dec.get('reason', '')})"
-                        )
-
-                    elif action == "update":
-                        updates: dict = {}
-                        if dec.get("new_content"):
-                            updates["content"] = dec["new_content"]
-                        if dec.get("new_importance"):
-                            updates["importance_score"] = float(dec["new_importance"])
-                        if updates:
-                            self.store.update_semantic(mem.id, updates)
-                            report["updated"] += 1
-                        else:
-                            report["kept"] += 1
-
-                    elif action == "merge":
-                        target_id = dec.get("merged_with")
-                        new_content = dec.get("new_content")
-                        if target_id and new_content:
-                            self.store.update_semantic(target_id, {"content": new_content})
-                            self.store.delete_semantic(mem.id)
-                            report["merged"] += 1
-                        else:
-                            report["kept"] += 1
-
+                        report["kept"] += len(batch)
+                        if consecutive_risky_skips >= max_consecutive_risky:
+                            logger.warning(
+                                "[Lifecycle] Memory review remains in safe-skip mode after "
+                                "%s consecutive risky batches; later batches will still be reviewed.",
+                                consecutive_risky_skips,
+                            )
+                        decision_map = None
                     else:
-                        report["kept"] += 1
+                        consecutive_risky_skips = 0
+                        decision_map = {
+                            d["id"]: d for d in decisions if isinstance(d, dict) and "id" in d
+                        }
+                        if not decision_map:
+                            report["kept"] += len(batch)
+                            decision_map = None
+
+                if decision_map:
+                    for mem in batch:
+                        dec = decision_map.get(mem.id)
+                        if not dec:
+                            report["kept"] += 1
+                            continue
+
+                        action = coerce_text(dec.get("action", "keep")).lower()
+
+                        if action == "delete":
+                            self.store.delete_semantic(mem.id)
+                            report["deleted"] += 1
+                            logger.debug(
+                                f"[Lifecycle] Review DELETE: {coerce_text(mem.content)[:50]} "
+                                f"({coerce_text(dec.get('reason', ''))})"
+                            )
+
+                        elif action == "update":
+                            updates: dict = {}
+                            if dec.get("new_content"):
+                                updates["content"] = coerce_text(dec["new_content"])
+                            if dec.get("new_importance"):
+                                updates["importance_score"] = float(dec["new_importance"])
+                            if updates:
+                                self.store.update_semantic(mem.id, updates)
+                                report["updated"] += 1
+                            else:
+                                report["kept"] += 1
+
+                        elif action == "merge":
+                            target_id = dec.get("merged_with")
+                            new_content = dec.get("new_content")
+                            if target_id and new_content:
+                                self.store.update_semantic(target_id, {"content": new_content})
+                                self.store.delete_semantic(mem.id)
+                                report["merged"] += 1
+                            else:
+                                report["kept"] += 1
+
+                        else:
+                            report["kept"] += 1
 
             except Exception as e:
                 logger.error(f"[Lifecycle] LLM review batch {batch_idx} failed: {e}")
                 report["errors"] += 1
                 report["kept"] += len(batch)
 
+            cursor = batch_idx + 1
+            processed_this_run += 1
+
             if progress_callback:
                 progress_callback(
                     {
                         "phase": "batch_done",
-                        "batch": batch_idx + 1,
+                        "batch": cursor,
                         "total_batches": total_batches,
-                        "total_memories": len(all_memories),
-                        "processed": min(i + batch_size, len(all_memories)),
+                        "total_memories": len(memory_ids),
+                        "processed": min(i + batch_size, len(memory_ids)),
                         "report": dict(report),
                     }
                 )
+            save_review_checkpoint(partial=cursor < total_batches)
 
         cancelled = cancel_event.is_set() if cancel_event else False
 
@@ -789,13 +1011,15 @@ class LifecycleManager:
                     "phase": "done",
                     "batch": total_batches,
                     "total_batches": total_batches,
-                    "total_memories": len(all_memories),
-                    "processed": len(all_memories),
+                    "total_memories": len(memory_ids),
+                    "processed": len(memory_ids),
                     "report": dict(report),
                     "done": True,
                     "cancelled": cancelled,
                 }
             )
+
+        save_review_checkpoint(partial=False)
 
         # All batches failed → LLM completely unavailable, re-raise so the
         # scheduler can mark_failed() and trigger its existing notification.
@@ -811,6 +1035,13 @@ class LifecycleManager:
             f"deleted={report['deleted']}, updated={report['updated']}, "
             f"merged={report['merged']}, kept={report['kept']}"
             f"{' (cancelled)' if cancelled else ''}"
+        )
+        report.update(
+            {
+                "partial": False,
+                "processed_batches": total_batches,
+                "total_batches": total_batches,
+            }
         )
         return report
 

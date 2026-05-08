@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import re
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,8 @@ router = APIRouter()
 # 上限 128 字节。挡住路径穿越/控制字符/SQL 元字符等异常输入。
 # 与 schemas.ChatRequest.conversation_id 模式保持一致（UUID/IM chatroom@xxx 都覆盖）。
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_\-:.@]{1,128}$")
+_DEFAULT_HISTORY_LIMIT = 80
+_MAX_HISTORY_LIMIT = 200
 
 
 def _validate_id(value: str, field: str) -> None:
@@ -49,6 +51,83 @@ class GenerateTitleRequest(BaseModel):
     conversation_id: str = Field("", description="会话 ID（用于跨设备标题同步）")
 
 
+def _visible_history_messages(session) -> list[tuple[int, dict]]:
+    """Return UI-visible session messages with their stable original indexes."""
+    truncation_prefixes = ("[用户规则（必须遵守）]", "[历史背景，非当前任务]")
+    visible: list[tuple[int, dict]] = []
+    for idx, msg in enumerate(session.context.messages):
+        content = msg.get("content", "")
+        if (
+            msg.get("role") == "system"
+            and isinstance(content, str)
+            and content.startswith(truncation_prefixes)
+        ):
+            continue
+        visible.append((idx, msg))
+    return visible
+
+
+def _history_entry(session, conversation_id: str, original_idx: int, msg: dict) -> dict:
+    """Serialize a session message for the chat UI."""
+    _STRIP_MARKERS = [
+        "\n\n<<DELEGATION_TRACE>>",
+        "\n\n<<TOOL_TRACE>>",
+        "\n\n[子Agent工作总结]",
+        "\n\n[执行摘要]",
+    ]
+
+    role = msg.get("role", "user")
+    content = msg.get("content", "")
+    if not isinstance(content, str):
+        content = str(content) if content else ""
+    if role == "assistant":
+        for marker in _STRIP_MARKERS:
+            if marker in content:
+                content = content[: content.index(marker)]
+        if (
+            content.startswith("<<TOOL_TRACE>>")
+            or content.startswith("<<DELEGATION_TRACE>>")
+            or content.startswith("[执行摘要]")
+            or content.startswith("[子Agent工作总结]")
+        ):
+            content = ""
+
+    ts = msg.get("timestamp", "")
+    epoch_ms = 0
+    if ts:
+        try:
+            from datetime import datetime
+
+            dt = datetime.fromisoformat(ts)
+            epoch_ms = int(dt.timestamp() * 1000)
+        except Exception:
+            pass
+
+    entry: dict = {
+        "id": f"restored-{conversation_id}-{original_idx}",
+        "index": original_idx,
+        "role": role,
+        "content": content,
+        "timestamp": epoch_ms or int(session.last_active.timestamp() * 1000),
+    }
+    chain_summary = msg.get("chain_summary")
+    if chain_summary:
+        entry["chain_summary"] = chain_summary
+    tool_summary = msg.get("tool_summary")
+    if tool_summary:
+        entry["tool_summary"] = tool_summary
+    artifacts = msg.get("artifacts")
+    if artifacts:
+        entry["artifacts"] = artifacts
+    ask_user = msg.get("ask_user")
+    if ask_user:
+        entry["ask_user"] = ask_user
+    usage = msg.get("usage")
+    if isinstance(usage, dict) and (usage.get("input_tokens") or usage.get("output_tokens")):
+        entry["usage"] = usage
+    return entry
+
+
 @router.get("/api/sessions")
 async def list_sessions(request: Request, channel: str = "desktop"):
     """List sessions for a given channel (default: desktop).
@@ -66,21 +145,9 @@ async def list_sessions(request: Request, channel: str = "desktop"):
     sessions = [s for s in sessions if not s.chat_id.startswith("org_")]
     sessions.sort(key=lambda s: s.last_active, reverse=True)
 
-    # 向后兼容：旧版 _truncate_history 会在 session 中插入 system 摘要消息，
-    # 新版已不再产生（改用 metadata trim），但已有 session 中可能残留这些消息。
-    truncation_prefixes = ("[用户规则（必须遵守）]", "[历史背景，非当前任务]")
-
     result = []
     for s in sessions:
-        msgs = s.context.messages
-        visible_msgs = [
-            m for m in msgs
-            if not (
-                m.get("role") == "system"
-                and isinstance(m.get("content", ""), str)
-                and m.get("content", "").startswith(truncation_prefixes)
-            )
-        ]
+        visible_msgs = [m for _, m in _visible_history_messages(s)]
         user_msgs = [m for m in visible_msgs if m.get("role") == "user"]
         first_user = user_msgs[0] if user_msgs else None
         title = ""
@@ -119,6 +186,17 @@ async def get_session_history(
     conversation_id: str,
     channel: str = "desktop",
     user_id: str = "desktop_user",
+    limit: int = Query(
+        _DEFAULT_HISTORY_LIMIT,
+        ge=1,
+        le=_MAX_HISTORY_LIMIT,
+        description="Maximum number of visible messages to return.",
+    ),
+    before: int | None = Query(
+        None,
+        ge=0,
+        description="Return messages whose stable history index is lower than this value.",
+    ),
 ):
     """Get message history for a specific session.
 
@@ -139,69 +217,30 @@ async def get_session_history(
         create_if_missing=False,
     )
     if not session:
-        return {"messages": []}
-
-    # 同时兼容新 marker (<<TOOL_TRACE>> / <<DELEGATION_TRACE>>) 与旧 marker
-    _STRIP_MARKERS = [
-        "\n\n<<DELEGATION_TRACE>>",
-        "\n\n<<TOOL_TRACE>>",
-        "\n\n[子Agent工作总结]",
-        "\n\n[执行摘要]",
-    ]
-    # 向后兼容：过滤旧版 _truncate_history 插入的 system 摘要（新版已不再产生）
-    truncation_prefixes = ("[用户规则（必须遵守）]", "[历史背景，非当前任务]")
-
-    result = []
-    for i, msg in enumerate(session.context.messages):
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        if not isinstance(content, str):
-            content = str(content) if content else ""
-        if role == "system" and content.startswith(truncation_prefixes):
-            continue
-        if role == "assistant":
-            for marker in _STRIP_MARKERS:
-                if marker in content:
-                    content = content[: content.index(marker)]
-            if (
-                content.startswith("<<TOOL_TRACE>>")
-                or content.startswith("<<DELEGATION_TRACE>>")
-                or content.startswith("[执行摘要]")
-                or content.startswith("[子Agent工作总结]")
-            ):
-                content = ""
-        ts = msg.get("timestamp", "")
-        epoch_ms = 0
-        if ts:
-            try:
-                from datetime import datetime
-
-                dt = datetime.fromisoformat(ts)
-                epoch_ms = int(dt.timestamp() * 1000)
-            except Exception:
-                pass
-
-        entry: dict = {
-            "id": f"restored-{conversation_id}-{i}",
-            "role": role,
-            "content": content,
-            "timestamp": epoch_ms or int(session.last_active.timestamp() * 1000),
+        return {
+            "messages": [],
+            "total": 0,
+            "start_index": None,
+            "end_index": None,
+            "has_more_before": False,
         }
-        chain_summary = msg.get("chain_summary")
-        if chain_summary:
-            entry["chain_summary"] = chain_summary
-        tool_summary = msg.get("tool_summary")
-        if tool_summary:
-            entry["tool_summary"] = tool_summary
-        artifacts = msg.get("artifacts")
-        if artifacts:
-            entry["artifacts"] = artifacts
-        ask_user = msg.get("ask_user")
-        if ask_user:
-            entry["ask_user"] = ask_user
-        result.append(entry)
 
-    return {"messages": result}
+    visible = _visible_history_messages(session)
+    if before is not None:
+        visible = [(idx, msg) for idx, msg in visible if idx < before]
+
+    page = visible[-limit:]
+    result = [_history_entry(session, conversation_id, idx, msg) for idx, msg in page]
+    start_index = page[0][0] if page else None
+    end_index = page[-1][0] if page else None
+
+    return {
+        "messages": result,
+        "total": len(_visible_history_messages(session)),
+        "start_index": start_index,
+        "end_index": end_index,
+        "has_more_before": bool(page and any(idx < page[0][0] for idx, _ in visible)),
+    }
 
 
 @router.delete("/api/sessions/{conversation_id}")

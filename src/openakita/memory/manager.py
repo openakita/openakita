@@ -33,6 +33,7 @@ from pathlib import Path
 from ..core.log_health import record_health_event
 from .consolidator import MemoryConsolidator
 from .extractor import MemoryExtractor
+from .json_utils import coerce_text
 from .retention import apply_retention
 from .retrieval import RetrievalEngine
 from .types import (
@@ -340,6 +341,8 @@ class MemoryManager:
                 filename, mime_type, local_path, url, description,
                 transcription, extracted_text, tags, direction, file_size
         """
+        content = coerce_text(content)
+
         replace = self._get_replace_backend()
         if replace is not None:
             with contextlib.suppress(Exception):
@@ -1171,9 +1174,10 @@ class MemoryManager:
 
     def _get_replace_backend(self):
         """Return the active replace-mode plugin backend, if any."""
-        if not self._plugin_backends:
+        backends = getattr(self, "_plugin_backends", None)
+        if not backends:
             return None
-        for entry in self._plugin_backends.values():
+        for entry in backends.values():
             if isinstance(entry, dict) and entry.get("replace"):
                 return entry.get("backend")
         return None
@@ -1247,7 +1251,14 @@ class MemoryManager:
 
     # ==================== Daily Consolidation ====================
 
-    async def consolidate_daily(self) -> dict:
+    async def consolidate_daily(
+        self,
+        *,
+        checkpoint: dict | None = None,
+        checkpoint_callback=None,
+        time_budget_seconds: int | None = None,
+        review_max_batches: int | None = None,
+    ) -> dict:
         """每日归纳 (v2: 委托给 LifecycleManager)"""
         try:
             from ..config import settings
@@ -1258,8 +1269,17 @@ class MemoryManager:
                 extractor=self.extractor,
                 identity_dir=settings.identity_path,
             )
-            result = await lifecycle.consolidate_daily()
-            if self._get_memory_mode() in ("mode2", "auto") and self._ensure_relational():
+            result = await lifecycle.consolidate_daily(
+                checkpoint=checkpoint,
+                checkpoint_callback=checkpoint_callback,
+                time_budget_seconds=time_budget_seconds,
+                review_max_batches=review_max_batches,
+            )
+            if (
+                not result.get("partial")
+                and self._get_memory_mode() in ("mode2", "auto")
+                and self._ensure_relational()
+            ):
                 try:
                     relational_report = await self.relational_consolidator.consolidate()
                     result["relational_consolidation"] = relational_report

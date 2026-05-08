@@ -905,9 +905,14 @@ class ToolExecutor:
                 skip_reason = e.reason or "用户请求跳过"
                 result_str = f"[用户跳过了此步骤: {skip_reason}]"
                 logger.info(f"[SkipStep] Tool {tool_name} skipped: {skip_reason}")
-                elapsed = time.time() - t0
                 if use_parallel_safe_monitor and task_monitor:
-                    task_monitor.record_tool_call(tool_name, tool_input, elapsed, True)
+                    task_monitor.record_tool_call(
+                        tool_name,
+                        tool_input,
+                        result_str,
+                        success=True,
+                        duration_ms=int((time.time() - t0) * 1000),
+                    )
                 elif (not parallel_enabled) and task_monitor:
                     task_monitor.end_tool_call(result_str, success=True)
                 return (
@@ -932,7 +937,13 @@ class ToolExecutor:
 
             # 记录到 task_monitor
             if use_parallel_safe_monitor and task_monitor:
-                task_monitor.record_tool_call(tool_name, tool_input, elapsed, success)
+                task_monitor.record_tool_call(
+                    tool_name,
+                    tool_input,
+                    result_str,
+                    success=success,
+                    duration_ms=int(elapsed * 1000),
+                )
             elif (not parallel_enabled) and task_monitor:
                 task_monitor.end_tool_call(result_str, success)
 
