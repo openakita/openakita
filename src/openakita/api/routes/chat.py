@@ -29,36 +29,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _chat_startup_error_response(
-    exc: Exception,
-    *,
-    conversation_id: str,
-    request_id: str,
-    stage: str,
-) -> JSONResponse:
-    """Return a structured pre-stream error instead of FastAPI's bare 500 page."""
-    logger.exception(
-        "[Chat API] Pre-stream startup failed stage=%s conv=%s request=%s",
-        stage,
-        conversation_id,
-        request_id,
-    )
-    detail = str(exc)[:300] if str(exc) else type(exc).__name__
-    return JSONResponse(
-        status_code=503,
-        content={
-            "error": "chat_startup_failed",
-            "stage": stage,
-            "conversation_id": conversation_id,
-            "request_id": request_id,
-            "retryable": True,
-            "message": "????????????????????????????????????????????",
-            "hint": "???????????????????????API Key ??????????",
-            "detail": detail,
-        },
-    )
-
-
 def _chat_endpoint_names() -> set[str]:
     """Return configured main-chat endpoint names.
 
@@ -1316,20 +1286,12 @@ async def chat(request: Request, body: ChatRequest):
             content={"error": "empty_message", "message": "消息内容不能为空"},
         )
 
-    try:
-        pending_response = await _handle_pending_risk_answer(
-            request=request,
-            conversation_id=conversation_id,
-            answer=body.message or "",
-            as_stream=True,
-        )
-    except Exception as exc:
-        return _chat_startup_error_response(
-            exc,
-            conversation_id=conversation_id,
-            request_id=request_id,
-            stage="pending_risk_answer",
-        )
+    pending_response = await _handle_pending_risk_answer(
+        request=request,
+        conversation_id=conversation_id,
+        answer=body.message or "",
+        as_stream=True,
+    )
     if isinstance(pending_response, _RiskAuthorizedReplay):
         # 用户已对上一轮高风险请求授权，且无受控执行入口 — 用原始 message
         # 替换当前的"确认继续"，让 LLM 重新规划工具调用。后续 risk gate
@@ -1361,15 +1323,7 @@ async def chat(request: Request, body: ChatRequest):
     lifecycle = get_lifecycle_manager()
     busy_gen = 0
     if client_id:
-        try:
-            conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
-        except Exception as exc:
-            return _chat_startup_error_response(
-                exc,
-                conversation_id=conversation_id,
-                request_id=request_id,
-                stage="conversation_lifecycle",
-            )
+        conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
         if conflict is not None:
             return JSONResponse(
                 status_code=409,
@@ -1406,15 +1360,10 @@ async def chat(request: Request, body: ChatRequest):
     try:
         agent = await _get_agent_for_session(request, conversation_id, body.agent_profile_id)
         session_manager = getattr(request.app.state, "session_manager", None)
-    except Exception as exc:
+    except Exception:
         if client_id:
             await lifecycle.finish(conversation_id, generation=busy_gen)
-        return _chat_startup_error_response(
-            exc,
-            conversation_id=conversation_id,
-            request_id=request_id,
-            stage="agent_init",
-        )
+        raise
 
     # Resolve effective mode: backward compat plan_mode=true -> mode="plan"
     effective_mode = body.mode
