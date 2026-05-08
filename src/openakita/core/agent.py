@@ -739,6 +739,9 @@ class Agent:
             embedding_api_model=settings.embedding_api_model,
             agent_id=self.name,
         )
+        self._memory_backends: dict[str, dict] = {}
+        self.memory_manager.set_plugin_backends(self._memory_backends)
+        self._active_agent_lifecycle_runs: dict[str, dict[str, Any]] = {}
 
         # 用户档案管理器
         self.profile_manager = get_profile_manager()
@@ -1584,7 +1587,7 @@ class Agent:
         plugins_dir = Path(settings.project_root) / "data" / "plugins"
         state_path = Path(settings.project_root) / "data" / "plugin_state.json"
 
-        memory_backends: dict = {}
+        memory_backends: dict = getattr(self, "_memory_backends", {})
         search_backends: dict = {}
 
         if self.memory_manager:
@@ -2153,6 +2156,94 @@ class Agent:
 
             if synced_any:
                 logger.info("MCP catalog refreshed after auto-connect tool discovery")
+
+        self._register_mcp_memory_providers()
+
+    def _register_mcp_memory_providers(self) -> None:
+        """Register opt-in MCP servers as memory providers on the main memory path."""
+        if not getattr(self, "memory_manager", None) or not getattr(self, "mcp_catalog", None):
+            return
+
+        try:
+            from ..memory.mcp_provider import MCPMemoryProvider
+        except Exception as e:
+            logger.debug("[MCPMemory] provider adapter unavailable: %s", e)
+            return
+
+        retrieval_sources = getattr(self.memory_manager.retrieval_engine, "_external_sources", None)
+        memory_backends = getattr(self, "_memory_backends", None)
+        if retrieval_sources is None or memory_backends is None:
+            return
+
+        existing_sources = {
+            getattr(source, "source_name", "") for source in retrieval_sources
+        }
+
+        for server in self.mcp_catalog.servers:
+            provider_cfg = getattr(server, "memory_provider", None) or {}
+            if not provider_cfg or provider_cfg.get("enabled", True) is False:
+                continue
+
+            tools = self._resolve_mcp_memory_tools(server, provider_cfg)
+            if not tools.get("search") and not tools.get("record_turn") and not tools.get("store"):
+                logger.warning(
+                    "[MCPMemory] %s marked as memoryProvider but no memory tools were found",
+                    server.identifier,
+                )
+                continue
+
+            mode = str(provider_cfg.get("mode") or "augment").lower()
+            if mode not in {"augment", "replace"}:
+                mode = "augment"
+
+            provider = MCPMemoryProvider(
+                client=self.mcp_client,
+                server=server.identifier,
+                tools=tools,
+                mode=mode,
+                default_limit=int(provider_cfg.get("limit") or 5),
+            )
+
+            key = f"mcp:{server.identifier}"
+            memory_backends[key] = {"backend": provider, "replace": provider.replace}
+            if not provider.replace and provider.source_name not in existing_sources:
+                retrieval_sources.append(provider)
+                existing_sources.add(provider.source_name)
+            logger.info(
+                "[MCPMemory] registered %s as %s memory provider",
+                server.identifier,
+                mode,
+            )
+
+    @staticmethod
+    def _resolve_mcp_memory_tools(server: Any, provider_cfg: dict) -> dict[str, str]:
+        configured = provider_cfg.get("tools") or {}
+        if not isinstance(configured, dict):
+            configured = {}
+
+        tool_names = {getattr(t, "name", "") for t in getattr(server, "tools", [])}
+
+        def pick(purpose: str, candidates: tuple[str, ...]) -> str:
+            explicit = configured.get(purpose)
+            if explicit:
+                return str(explicit)
+            for name in candidates:
+                if name in tool_names:
+                    return name
+            return ""
+
+        record_turn = pick(
+            "record_turn",
+            ("record_turn", "add_message", "save_message", "add_conversation"),
+        )
+        return {
+            "search": pick("search", ("search_memory", "search_memories", "retrieve_memory")),
+            "store": pick("store", ("add_memory", "store_memory", "save_memory")),
+            "delete": pick("delete", ("delete_memory", "remove_memory")),
+            "start_session": pick("start_session", ("start_session", "begin_session")),
+            "end_session": pick("end_session", ("end_session", "finish_session")),
+            "record_turn": record_turn,
+        }
 
     async def _start_builtin_mcp_servers(self) -> None:
         """启动内置浏览器服务 (Playwright，独立于 MCP 体系)"""
@@ -4587,7 +4678,118 @@ class Agent:
         session_type = "im" if _channel and _channel not in ("cli", "desktop") else "cli"
         self._current_session_type = session_type
 
+        extra_context = await self._dispatch_agent_run_start(
+            session_id=session_id,
+            conversation_id=conversation_id,
+            session=session,
+            message=message,
+            messages=messages,
+            session_type=session_type,
+            mode=mode,
+        )
+        if extra_context:
+            self._append_lifecycle_context(messages, extra_context)
+
         return messages, session_type, task_monitor, conversation_id, im_tokens
+
+    async def _dispatch_agent_run_start(
+        self,
+        *,
+        session_id: str,
+        conversation_id: str,
+        session: Any,
+        message: str,
+        messages: list[dict],
+        session_type: str,
+        mode: str,
+    ) -> list[str]:
+        """Fire per-turn start hooks and collect optional context snippets."""
+        hooks = getattr(getattr(self, "_plugin_manager", None), "hook_registry", None)
+        run_key = conversation_id or session_id
+        self._active_agent_lifecycle_runs[run_key] = {
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "session": session,
+            "message": message,
+            "session_type": session_type,
+            "mode": mode,
+        }
+        if hooks is None:
+            return []
+
+        kwargs = {
+            "agent": self,
+            "session": session,
+            "session_id": session_id,
+            "conversation_id": conversation_id,
+            "message": message,
+            "messages": messages,
+            "session_type": session_type,
+            "mode": mode,
+        }
+        results: list[str] = []
+        for hook_name in ("before_agent_run", "before_agent_start"):
+            try:
+                hook_results = await hooks.dispatch(hook_name, **kwargs)
+                results.extend(r for r in hook_results if isinstance(r, str) and r.strip())
+            except Exception as e:
+                logger.debug("%s hook error (ignored): %s", hook_name, e)
+        return results
+
+    @staticmethod
+    def _append_lifecycle_context(messages: list[dict], snippets: list[str]) -> None:
+        text = "\n\n[External Memory Context]\n" + "\n".join(snippets)
+        for msg in reversed(messages):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                msg["content"] = content + text
+                return
+            if isinstance(content, list):
+                content.append({"type": "text", "text": text.strip()})
+                return
+        messages.append({"role": "user", "content": text.strip()})
+
+    async def _finish_agent_run_lifecycle_once(
+        self,
+        *,
+        session_id: str,
+        conversation_id: str | None = None,
+        response_text: str = "",
+        success: bool = True,
+        error: str = "",
+        status: str = "completed",
+    ) -> None:
+        run_key = conversation_id or session_id
+        payload = self._active_agent_lifecycle_runs.pop(run_key, None)
+        if payload is None and conversation_id:
+            payload = self._active_agent_lifecycle_runs.pop(session_id, None)
+        if payload is None:
+            return
+
+        hooks = getattr(getattr(self, "_plugin_manager", None), "hook_registry", None)
+        if hooks is None:
+            return
+
+        kwargs = {
+            "agent": self,
+            "session": payload.get("session"),
+            "session_id": payload.get("session_id") or session_id,
+            "conversation_id": payload.get("conversation_id") or conversation_id,
+            "message": payload.get("message", ""),
+            "response": response_text,
+            "success": success,
+            "error": error,
+            "status": status,
+            "session_type": payload.get("session_type", ""),
+            "mode": payload.get("mode", ""),
+        }
+        for hook_name in ("after_agent_run", "agent_end"):
+            try:
+                await hooks.dispatch(hook_name, **kwargs)
+            except Exception as e:
+                logger.debug("%s hook error (ignored): %s", hook_name, e)
 
     async def _finalize_session(
         self,
@@ -4687,6 +4889,14 @@ class Agent:
 
         # 5. Cleanup（总是执行，放在 finally 中由调用方保证）
         # 注意：此方法不做 cleanup，cleanup 统一在 _cleanup_session_state() 中
+
+        await self._finish_agent_run_lifecycle_once(
+            session_id=session_id,
+            conversation_id=getattr(self, "_current_conversation_id", None),
+            response_text=response_text,
+            success=True,
+            status="completed",
+        )
 
     def _cleanup_session_state(self, im_tokens: Any) -> None:
         """
@@ -5086,6 +5296,13 @@ class Agent:
 
             return response_text
         finally:
+            await self._finish_agent_run_lifecycle_once(
+                session_id=session_id,
+                conversation_id=locals().get("conversation_id"),
+                response_text=locals().get("response_text", ""),
+                success=False,
+                status="aborted",
+            )
             self._cleanup_session_state(im_tokens)
 
     async def chat_with_session_stream(
@@ -5569,6 +5786,13 @@ class Agent:
             yield {"type": "error", "message": str(e)[:500]}
             yield {"type": "done"}
         finally:
+            await self._finish_agent_run_lifecycle_once(
+                session_id=session_id,
+                conversation_id=locals().get("conversation_id"),
+                response_text=locals().get("_reply_text", ""),
+                success=False,
+                status="aborted",
+            )
             self._cleanup_session_state(im_tokens)
 
     def _handle_plan_exit_pending(
