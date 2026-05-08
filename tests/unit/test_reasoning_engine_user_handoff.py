@@ -151,6 +151,44 @@ async def test_tool_evidence_required_blocks_implicit_long_reply_without_tools()
 
 
 @pytest.mark.asyncio
+async def test_tool_evidence_required_blocks_reply_tag_without_tools():
+    engine = ReasoningEngine(
+        brain=None,
+        tool_executor=None,
+        context_manager=None,
+        response_handler=AsyncMock(),
+        agent_state=AgentState(),
+    )
+    working_messages = []
+
+    result = await engine._handle_final_answer(
+        decision=Decision(
+            type=DecisionType.FINAL_ANSWER,
+            text_content="[REPLY]\n我已经分析过这个 issue，当前代码没有类似问题。",
+        ),
+        working_messages=working_messages,
+        original_messages=[{"role": "user", "content": "分析这个 GitHub issue 是否仍存在"}],
+        tools_executed_in_task=False,
+        executed_tool_names=[],
+        delivery_receipts=[],
+        all_tool_results=[],
+        no_tool_call_count=0,
+        verify_incomplete_count=0,
+        no_confirmation_text_count=0,
+        max_no_tool_retries=1,
+        max_verify_retries=1,
+        max_confirmation_text_retries=1,
+        base_force_retries=1,
+        conversation_id="c1",
+        tool_evidence_required=True,
+    )
+
+    assert isinstance(result, tuple)
+    assert result[1] == 1
+    assert "需要外部证据或工具验证" in working_messages[-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_plain_long_reply_without_tools_is_still_accepted():
     engine = ReasoningEngine(
         brain=None,

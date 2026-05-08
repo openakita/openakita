@@ -6624,7 +6624,12 @@ class ReasoningEngine:
                 max_no_tool_retries,
             )
 
-        if intent == "REPLY" and stripped_text and len(stripped_text.strip()) > 10:
+        if (
+            intent == "REPLY"
+            and stripped_text
+            and len(stripped_text.strip()) > 10
+            and not tool_evidence_required
+        ):
             logger.info(
                 "[IntentTag] REPLY intent with substantial text, "
                 "accepting as valid response (no ForceToolCall)"
@@ -6663,22 +6668,7 @@ class ReasoningEngine:
                         "reasoning_content": decision.thinking_content or None,
                     }
                 )
-            if intent == "REPLY":
-                logger.warning(
-                    f"[IntentTag] REPLY intent but text too short — "
-                    f"ForceToolCall retry ({no_tool_call_count}/{max_no_tool_retries})"
-                )
-                retry_msg = "[系统] 你的回复过于简短，请提供更详细的回答。"
-            elif intent == "ACTION":
-                logger.warning(
-                    "[IntentTag] ACTION intent declared but no tool calls — "
-                    "hallucination detected, forcing retry"
-                )
-                retry_msg = (
-                    "[系统] ⚠️ 你声明了 [ACTION] 意图但没有调用任何工具。"
-                    "请立即调用所需的工具来完成用户请求，不要只描述你会做什么。"
-                )
-            elif tool_evidence_required:
+            if tool_evidence_required:
                 logger.warning(
                     "[IntentTag] Tool evidence required but final answer had "
                     f"tool_calls=0 — ForceToolCall retry "
@@ -6689,6 +6679,21 @@ class ReasoningEngine:
                     "请先调用合适的查询、读取、搜索、API 或 MCP 工具获取证据；"
                     "如果当前没有可用工具或权限不足，请直接说明无法验证，不要编造结果。"
                 )
+            elif intent == "ACTION":
+                logger.warning(
+                    "[IntentTag] ACTION intent declared but no tool calls — "
+                    "hallucination detected, forcing retry"
+                )
+                retry_msg = (
+                    "[系统] ⚠️ 你声明了 [ACTION] 意图但没有调用任何工具。"
+                    "请立即调用所需的工具来完成用户请求，不要只描述你会做什么。"
+                )
+            elif intent == "REPLY":
+                logger.warning(
+                    f"[IntentTag] REPLY intent but text too short — "
+                    f"ForceToolCall retry ({no_tool_call_count}/{max_no_tool_retries})"
+                )
+                retry_msg = "[系统] 你的回复过于简短，请提供更详细的回答。"
             else:
                 logger.warning(
                     f"[IntentTag] No intent tag, short text with action claims, tool_calls=0 — "

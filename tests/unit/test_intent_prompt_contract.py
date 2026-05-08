@@ -144,6 +144,31 @@ suggest_plan: false
     assert result.force_tool is True
 
 
+def test_immediate_execute_followup_is_guarded_without_hard_timeout_policy():
+    result = _parse_intent_output(
+        """
+intent: chat
+task_type: other
+goal: execute previous task now
+tool_hints: []
+memory_keywords: []
+requires_tools: false
+evidence_required: false
+requires_project_context: false
+risk_level_hint: none
+destructive: false
+scope: narrow
+suggest_plan: false
+""",
+        "立即执行",
+    )
+
+    assert result.intent == IntentType.TASK
+    assert result.requires_tools is True
+    assert result.evidence_required is True
+    assert result.force_tool is True
+
+
 def test_tool_required_query_keeps_force_tool_guard():
     result = IntentResult(
         intent=IntentType.QUERY,

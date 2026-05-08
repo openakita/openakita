@@ -331,6 +331,12 @@ _STRONG_EVIDENCE_RE = re.compile(
 
 _EVIDENCE_ACTION_RE = re.compile(r"(?:分析|排查|检查|验证|复现|下载|查看|看看|定位)")
 
+_EXECUTION_FOLLOWUP_RE = re.compile(
+    r"^(?:立即|马上|现在|直接|开始|继续|接着)?\s*"
+    r"(?:执行|处理|推进|继续执行|接着做)"
+    r"(?:\s*(?:任务|这个|它|上面|刚才的|之前的|不要停|别停|下去|吧|。|！|!))?$"
+)
+
 
 def _requires_external_evidence(message: str) -> bool:
     """Whether the answer should be backed by current external/project evidence.
@@ -344,6 +350,8 @@ def _requires_external_evidence(message: str) -> bool:
         return False
     if _STRONG_EVIDENCE_RE.search(stripped):
         return True
+    if _EXECUTION_FOLLOWUP_RE.search(stripped):
+        return True
     return bool(_EVIDENCE_ACTION_RE.search(stripped) and _TOOL_TARGET_RE.search(stripped))
 
 
@@ -355,6 +363,8 @@ def _looks_like_tool_action_request(message: str) -> bool:
 
     # Continuation commands are only treated as tool actions when they explicitly
     # refer to an execution/task, avoiding ordinary acknowledgements like "继续说".
+    if _EXECUTION_FOLLOWUP_RE.search(stripped):
+        return True
     if re.search(r"(?:继续|执行).{0,8}(?:任务|处理|排查|操作|执行|不要停|别停)", stripped):
         return True
 

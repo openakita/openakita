@@ -181,20 +181,20 @@ class ToolExecutor:
         "list_resources",
     }
 
-    # 长时间运行工具的硬超时（秒），防止工具卡死拖垮整个 agent 循环
-    # 值为 0 表示不设硬超时（由工具自身的进度监控负责，如 Orchestrator 的 idle-timeout）
-    _TOOL_HARD_TIMEOUT: int = 120
-
-    _LONG_RUNNING_TOOLS: dict[str, int] = {
-        "org_request_meeting": 600,
-        "org_broadcast": 300,
-        "delegate_to_agent": 0,
-        "delegate_parallel": 0,
-        "spawn_agent": 0,
-        "browser_navigate": 300,
-        "browser_use": 300,
-        "run_shell": 300,
-    }
+    # 默认不对工具施加硬超时。长任务由用户停止/跳过、工具自身进度监控、
+    # 或用户显式配置的 timeout 控制，避免短硬限制打断真实任务。
+    _LONG_RUNNING_TOOLS: frozenset[str] = frozenset(
+        {
+            "org_request_meeting",
+            "org_broadcast",
+            "delegate_to_agent",
+            "delegate_parallel",
+            "spawn_agent",
+            "browser_navigate",
+            "browser_use",
+            "run_shell",
+        }
+    )
 
     def get_handler_name(self, tool_name: str) -> str | None:
         """获取工具对应的 handler 名称"""
@@ -285,6 +285,23 @@ class ToolExecutor:
 
         return batches
 
+    def _hard_timeout_for_tool(self, tool_name: str) -> int:
+        """Return the user-configured hard timeout for a tool.
+
+        0 means no executor-level hard timeout. This keeps long user tasks from
+        being cut off by built-in short limits; users can still configure a
+        timeout when they want that safety net.
+        """
+        setting_name = (
+            "long_running_tool_timeout_seconds"
+            if tool_name in self._LONG_RUNNING_TOOLS
+            else "tool_hard_timeout_seconds"
+        )
+        try:
+            return max(0, int(getattr(settings, setting_name, 0)))
+        except (TypeError, ValueError):
+            return 0
+
     async def _execute_with_cancel(
         self,
         coro,
@@ -309,7 +326,7 @@ class ToolExecutor:
         if state and hasattr(state, "skip_event") and state.skip_event:
             skip_future = asyncio.ensure_future(state.skip_event.wait())
 
-        hard_timeout = self._LONG_RUNNING_TOOLS.get(tool_name, self._TOOL_HARD_TIMEOUT)
+        hard_timeout = self._hard_timeout_for_tool(tool_name)
 
         timeout_task: asyncio.Future | None = None
         if hard_timeout > 0:

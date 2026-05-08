@@ -90,6 +90,14 @@ class Settings(BaseSettings):
         default=1,
         description="单轮并行工具调用最大并发数（默认 1=串行；>1 启用并行）",
     )
+    tool_hard_timeout_seconds: int = Field(
+        default=0,
+        description="普通工具调用硬超时（秒），0=不限时（默认，由用户/工具自身中断控制）",
+    )
+    long_running_tool_timeout_seconds: int = Field(
+        default=0,
+        description="长耗时工具（shell/browser/org 等）硬超时（秒），0=不限时（默认）",
+    )
 
     allow_parallel_tools_with_interrupt_checks: bool = Field(
         default=False,
@@ -927,6 +935,8 @@ _PERSISTABLE_KEYS: list[str] = [
     "force_tool_call_max_retries",
     "force_tool_call_im_floor",
     "confirmation_text_max_retries",
+    "tool_hard_timeout_seconds",
+    "long_running_tool_timeout_seconds",
     "always_load_tools",
     "always_load_categories",
 ]
