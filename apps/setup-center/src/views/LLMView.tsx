@@ -1038,6 +1038,9 @@ export function LLMView(props: LLMViewProps) {
       });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.error || "toggle failed");
+      if (json.reload?.status === "failed") {
+        notifyError("端点状态已保存，但当前聊天会话暂未加载新配置；稍后重试或重启服务即可。");
+      }
       loadSavedEndpoints().catch(() => {});
     } catch (e) {
       notifyError(String(e));

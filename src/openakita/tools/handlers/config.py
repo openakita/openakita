@@ -253,6 +253,8 @@ class ConfigHandler:
                 return await self._add_endpoint(params)
             elif action == "remove_endpoint":
                 return self._remove_endpoint(params)
+            elif action == "toggle_endpoint":
+                return self._toggle_endpoint(params)
             elif action == "test_endpoint":
                 return await self._test_endpoint(params)
             elif action == "set_ui":
@@ -264,7 +266,7 @@ class ConfigHandler:
             else:
                 return (
                     f"未知的 action: {action}。支持: discover, get, set, "
-                    "add_endpoint, remove_endpoint, test_endpoint, set_ui, "
+                    "add_endpoint, remove_endpoint, toggle_endpoint, test_endpoint, set_ui, "
                     "manage_provider, extensions"
                 )
         except Exception as e:
@@ -690,10 +692,9 @@ class ConfigHandler:
         if validation.get("context_window"):
             ep_dict["context_window"] = int(validation["context_window"])
         if validation["disable"]:
-            ep_dict["enabled"] = False
             validation_note = (
-                "\n- 预检: 发现明确的授权/额度问题，已先保存为禁用，"
-                "请修正套餐、模型权限或 API Key 后再启用。"
+                "\n- 预检: 发现授权/额度可能有问题，已按你的配置保留启用；"
+                "如果聊天不可用，请检查 API Key、模型权限或账户余额。"
             )
         elif validation["message"]:
             validation_note = f"\n- 预检: {validation['message']}"
@@ -761,6 +762,29 @@ class ConfigHandler:
 
         reload_info = self._reload_llm_client()
         return f'✅ 已删除端点 "{endpoint_name}" ({target})。{reload_info}'
+
+    def _toggle_endpoint(self, params: dict) -> str:
+        endpoint_name = (params.get("endpoint_name") or "").strip()
+        if not endpoint_name:
+            return "❌ 缺少 endpoint_name 参数"
+
+        target = (params.get("target") or "main").strip()
+        endpoint_type_map = {"compiler": "compiler_endpoints", "stt": "stt_endpoints"}
+        endpoint_type = endpoint_type_map.get(target, "endpoints")
+
+        from ...config import settings
+        from ...llm.config import get_default_config_path
+        from ...llm.endpoint_manager import EndpointManager
+
+        mgr = EndpointManager(Path(settings.project_root), config_path=get_default_config_path())
+        try:
+            updated = mgr.toggle_endpoint(endpoint_name, endpoint_type=endpoint_type)
+        except ValueError as e:
+            return f"❌ {e}"
+
+        reload_info = self._reload_llm_client()
+        state = "启用" if updated.get("enabled", True) else "停用"
+        return f'✅ 已{state}端点 "{endpoint_name}" ({target})。{reload_info}'
 
     # ------------------------------------------------------------------
     # test_endpoint: 测试连通性
@@ -1361,20 +1385,22 @@ class ConfigHandler:
         return "\n".join(lines)
 
     def _reload_llm_client(self) -> str:
-        """热重载 LLM client，返回结果描述"""
-        brain = getattr(self.agent, "brain", None)
-        llm_client = getattr(brain, "_llm_client", None) if brain else None
-        if llm_client is None:
-            return "⚠️ LLM client 未找到，请手动重启服务"
+        """应用 LLM 配置到运行时，返回面向用户的简短描述。"""
+        from ...llm.config import get_default_config_path
+        from ...llm.runtime_config import apply_llm_runtime_config
 
-        try:
-            success = llm_client.reload()
-            if success:
-                count = len(llm_client.endpoints)
-                return f"已热重载 ({count} 个端点生效)"
-            return "⚠️ 热重载返回 false"
-        except Exception as e:
-            return f"⚠️ 热重载失败: {e}"
+        result = apply_llm_runtime_config(
+            agent=self.agent,
+            config_path=get_default_config_path(),
+            reason="llm_config:system_config",
+        )
+        if result.get("status") == "failed":
+            reason = result.get("reason") or "unknown"
+            return f"⚠️ 配置已保存，但当前会话暂未加载新配置（{reason}）"
+        count = result.get("endpoints")
+        if count is not None:
+            return f"已热重载 ({count} 个主端点生效)"
+        return "配置已保存，运行时会在下次会话或服务启动时加载"
 
 
 def create_handler(agent: "Agent"):

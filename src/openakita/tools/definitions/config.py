@@ -12,7 +12,7 @@ CONFIG_TOOLS = [
         "description": (
             "Unified system configuration tool. When user wants to: "
             "(1) view or change any system setting (log level, thinking mode, proxy, IM channel, etc.), "
-            "(2) add/remove/test LLM endpoints, "
+            "(2) add/remove/toggle/test LLM endpoints, "
             "(3) switch UI theme or language, "
             "(4) discover what settings are available, "
             "(5) manage LLM providers (add/update/remove custom providers), "
@@ -49,6 +49,9 @@ API Key 存入 .env，JSON 中只引用环境变量名。
 ### remove_endpoint -- 删除 LLM 端点
 按名称删除并热重载。
 
+### toggle_endpoint -- 启用/停用 LLM 端点
+按名称切换端点启用状态并热重载。仅在用户明确要求启用或停用某个端点时使用。
+
 ### test_endpoint -- 测试端点连通性
 发送轻量请求验证 API 可达性，返回延迟和状态。
 
@@ -78,7 +81,7 @@ API Key 存入 .env，JSON 中只引用环境变量名。
 1. 不确定 key 名 → 先 discover
 2. 查看当前值 → get
 3. 修改前 → 用 ask_user 确认
-4. 确认后 → set / add_endpoint / remove_endpoint / manage_provider
+4. 确认后 → set / add_endpoint / remove_endpoint / toggle_endpoint / manage_provider
 """,
         "input_schema": {
             "type": "object",
@@ -91,6 +94,7 @@ API Key 存入 .env，JSON 中只引用环境变量名。
                         "set",
                         "add_endpoint",
                         "remove_endpoint",
+                        "toggle_endpoint",
                         "test_endpoint",
                         "set_ui",
                         "manage_provider",
