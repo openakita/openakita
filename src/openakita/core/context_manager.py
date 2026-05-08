@@ -1449,6 +1449,8 @@ class ContextManager:
             f"Applying hard truncation."
         )
 
+        protected_media_idx = self._current_turn_media_message_index(messages)
+
         # Build per-message token array and suffix sum
         n = len(messages)
         msg_tokens = [self._estimate_single_message_tokens(msg) for msg in messages]
@@ -1471,8 +1473,14 @@ class ContextManager:
                 lo = mid + 1
         drop_until = lo
 
+        if 0 <= protected_media_idx < drop_until:
+            drop_until = protected_media_idx
+
         truncated = list(messages[drop_until:])
         dropped_messages = list(messages[:drop_until])
+        protected_truncated_idx = (
+            protected_media_idx - drop_until if protected_media_idx >= drop_until else -1
+        )
         if dropped_messages:
             logger.warning(f"[HardTruncate] Dropped {len(dropped_messages)} earliest messages")
 
@@ -1495,7 +1503,11 @@ class ContextManager:
                         ),
                     }
                 elif isinstance(content, list):
-                    new_content = self._hard_truncate_content_blocks(content, max_chars_per_msg)
+                    new_content = self._hard_truncate_content_blocks(
+                        content,
+                        max_chars_per_msg,
+                        preserve_media=i == protected_truncated_idx,
+                    )
                     truncated[i] = {**msg, "content": new_content}
 
         truncated.insert(
@@ -1543,6 +1555,7 @@ class ContextManager:
             f"> {effective_limit} limit (overhead={overhead_bytes}). "
             f"Stripping media from history."
         )
+        protected_media_idx = self._current_turn_media_message_index(messages)
         result = list(messages)
         budget_per_msg = effective_limit // max(len(result), 1)
         for i, msg in enumerate(result):
@@ -1550,8 +1563,32 @@ class ContextManager:
             if isinstance(content, list):
                 result[i] = {
                     **msg,
-                    "content": self._hard_truncate_content_blocks(content, budget_per_msg),
+                    "content": self._hard_truncate_content_blocks(
+                        content,
+                        budget_per_msg,
+                        preserve_media=i == protected_media_idx,
+                    ),
                 }
+        if self._payload_size_bytes(result) <= effective_limit:
+            return result
+
+        if protected_media_idx >= 0:
+            msg = result[protected_media_idx]
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                result[protected_media_idx] = {
+                    **msg,
+                    "content": self._hard_truncate_content_blocks(
+                        content,
+                        budget_per_msg,
+                        preserve_media=False,
+                        current_turn_notice=True,
+                    ),
+                }
+                logger.warning(
+                    "[PayloadGuard] Current-turn media exceeds payload budget; "
+                    "replaced with explicit size notice"
+                )
         return result
 
     _MEDIA_BLOCK_TYPES = frozenset(
@@ -1566,10 +1603,57 @@ class ContextManager:
     )
 
     @classmethod
+    def _has_media_blocks(cls, content: object) -> bool:
+        if not isinstance(content, list):
+            return False
+        return any(
+            isinstance(item, dict) and item.get("type", "") in cls._MEDIA_BLOCK_TYPES
+            for item in content
+        )
+
+    @classmethod
+    def _current_turn_media_message_index(cls, messages: list[dict]) -> int:
+        """Return the current user turn when it directly carries media."""
+        if not messages:
+            return -1
+        i = len(messages) - 1
+        msg = messages[i]
+        if msg.get("role") == "user" and cls._has_media_blocks(msg.get("content")):
+            return i
+        return -1
+
+    @staticmethod
+    def _payload_size_bytes(messages: list[dict]) -> int:
+        return sum(
+            len(json.dumps(msg, ensure_ascii=False, default=str).encode("utf-8"))
+            for msg in messages
+        )
+
+    @staticmethod
+    def _media_removed_notice(item_type: str, *, current_turn_notice: bool = False) -> str:
+        label = {
+            "image": "图片",
+            "image_url": "图片",
+            "video": "视频",
+            "video_url": "视频",
+            "audio": "音频",
+            "input_audio": "音频",
+        }.get(item_type, "媒体")
+        if current_turn_notice:
+            return (
+                f"[本轮{label}内容过大，已无法随当前请求发送。"
+                f"请压缩{label}后重新上传，或改用更小尺寸文件。]"
+            )
+        return f"[{label}内容已移除以节省上下文空间]"
+
+    @classmethod
     def _hard_truncate_content_blocks(
         cls,
         content: list,
         max_chars: int,
+        *,
+        preserve_media: bool = False,
+        current_turn_notice: bool = False,
     ) -> list:
         """截断 content block 列表中的大型内容（图片/视频/大文本等）。"""
         new_content: list = []
@@ -1581,18 +1665,16 @@ class ContextManager:
             item_type = item.get("type", "")
 
             if item_type in cls._MEDIA_BLOCK_TYPES:
-                label = {
-                    "image": "图片",
-                    "image_url": "图片",
-                    "video": "视频",
-                    "video_url": "视频",
-                    "audio": "音频",
-                    "input_audio": "音频",
-                }.get(item_type, "媒体")
+                if preserve_media:
+                    new_content.append(item)
+                    continue
                 new_content.append(
                     {
                         "type": "text",
-                        "text": f"[{label}内容已移除以节省上下文空间]",
+                        "text": cls._media_removed_notice(
+                            item_type,
+                            current_turn_notice=current_turn_notice,
+                        ),
                     }
                 )
                 logger.warning(f"[HardTruncate] Stripped {item_type} block to free context")
