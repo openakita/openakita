@@ -62,15 +62,19 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
     hints: list[str] = []
     categories: set[str] = set()
 
+    provider_errors: list[str] = []
     if failed_providers:
         for p in failed_providers:
             cat = getattr(p, "error_category", "")
             if cat:
                 categories.add(cat)
+            err = getattr(p, "_last_error", "")
+            if err:
+                provider_errors.append(str(err))
 
     # last_error 字符串中的关键字也参与分类（chat_stream 路径下 provider 上
     # 可能没来得及打 _error_category 标记，但错误消息里仍保留 data_inspection 关键字）
-    err_l = (last_error or "").lower()
+    err_l = "\n".join([last_error or "", *provider_errors]).lower()
     if (
         "data_inspection" in err_l
         or "datainspectionfailed" in err_l
@@ -114,7 +118,10 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
         else:
             hints.append("🌐 检测到网络超时/连接失败，请检查网络连接和代理设置。")
     if FailoverReason.STRUCTURAL in categories:
-        hints.append("⚙️ 检测到请求格式错误，这通常是模型兼容性问题，请尝试切换其他模型。")
+        if "tool names must be unique" in err_l:
+            hints.append("⚙️ 检测到内部工具定义重复，请升级到修复版本后重试。")
+        else:
+            hints.append("⚙️ 检测到请求格式错误，这通常是模型兼容性问题，请尝试切换其他模型。")
 
     if not hints:
         # 无法分类时的通用提示

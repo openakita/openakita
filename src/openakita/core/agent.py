@@ -945,6 +945,7 @@ class Agent:
                 len(self._tools),
                 len(tools),
             )
+        tools = self._dedupe_tools_by_name(tools, source="_effective_tools")
         if self._is_sub_agent_call:
             tools = [t for t in tools if t.get("name") not in self._agent_tool_names]
 
@@ -1064,6 +1065,38 @@ class Agent:
             tools = [t for t in tools if t.get("name") in allowed_ctx]
 
         return tools
+
+    @staticmethod
+    def _dedupe_tools_by_name(tools: list[dict], *, source: str) -> list[dict]:
+        """Keep tool names unique before sending them toward provider schemas.
+
+        Provider APIs such as DeepSeek reject duplicate tool names.  Tool lists
+        can be assembled from built-ins, plugins, skills and optional integrations,
+        so this is a conservative invariant at the aggregation boundary.
+        """
+        seen: set[str] = set()
+        result: list[dict] = []
+        duplicates: list[str] = []
+
+        for tool in tools:
+            name = tool.get("name")
+            if not name:
+                continue
+            if name in seen:
+                duplicates.append(str(name))
+                continue
+            seen.add(str(name))
+            result.append(tool)
+
+        if duplicates:
+            logger.warning(
+                "[Agent] %s: removed %d duplicate tool definition(s): %s",
+                source,
+                len(duplicates),
+                sorted(set(duplicates)),
+            )
+
+        return result
 
     def _derive_tool_hints_from_profile(self) -> list[str]:
         """Derive tool category hints from the agent profile's skills list.

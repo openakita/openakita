@@ -974,6 +974,8 @@ class Brain:
 
         result: list[Tool] = []
         skipped = 0
+        duplicate_names: list[str] = []
+        seen_names: set[str] = set()
         deferred = 0
         promoted = 0
         always_available = 0
@@ -995,6 +997,10 @@ class Brain:
             if not name:
                 skipped += 1
                 continue
+            if name in seen_names:
+                duplicate_names.append(name)
+                continue
+            seen_names.add(name)
 
             tool_payload_tokens = 0
             if schema:
@@ -1046,6 +1052,12 @@ class Brain:
                 skipped,
                 len(tools),
                 len(result),
+            )
+        if duplicate_names:
+            logger.warning(
+                "[Brain] _convert_tools_to_llm: removed %d duplicate tool definition(s): %s",
+                len(duplicate_names),
+                sorted(set(duplicate_names)),
             )
         if deferred:
             logger.info(
@@ -1532,7 +1544,6 @@ class Brain:
     ) -> None:
         """清理超过指定天数或目录体积上限的调试文件（request + response）。"""
         try:
-            import os
             from datetime import timedelta
 
             cutoff_time = datetime.now() - timedelta(days=max_age_days)
