@@ -6688,24 +6688,23 @@ class ReasoningEngine:
             )
             return clean_llm_response(stripped_text)
 
-        # No intent tag but text is long enough to be a genuine analysis / knowledge
-        # response.  Accept as implicit REPLY **only if** the text does not look like
-        # an action-claim hallucination (e.g. "已帮你保存/删除/发送…" without any
-        # actual tool calls).
-        _IMPLICIT_REPLY_THRESHOLD = 200
+        # No intent tag but visible text is a genuine analysis / knowledge /
+        # writing response. Accept it as implicit REPLY as long as it does not
+        # look like an action-claim hallucination (e.g. "?????/??/???"
+        # without any actual tool calls). This keeps tools available without
+        # forcing them into pure explanation or creative-writing turns.
         _ACTION_CLAIM_RE = _get_action_claim_re()
         _txt = (stripped_text or "").strip()
         if (
             intent is None
             and _txt
-            and len(_txt) > _IMPLICIT_REPLY_THRESHOLD
             and not _ACTION_CLAIM_RE.search(_txt)
             and not tool_evidence_required
         ):
             logger.info(
-                f"[IntentTag] No intent tag but substantial text "
-                f"({len(_txt)} chars > {_IMPLICIT_REPLY_THRESHOLD}), "
-                f"no action-claim detected — accepting as implicit REPLY"
+                f"[IntentTag] No intent tag but visible text "
+                f"({len(_txt)} chars), "
+                f"no action-claim detected ? accepting as implicit REPLY"
             )
             return clean_llm_response(stripped_text)
 

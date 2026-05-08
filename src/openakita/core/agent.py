@@ -156,12 +156,11 @@ def _resolve_force_tool_policy(intent: Any) -> tuple[int | None, bool]:
 
     Plain chat/knowledge queries stay lightweight. Evidence-sensitive requests
     get one soft nudge to gather tool evidence, avoiding repeated prompts or
-    broad default loop limits.
+    broad default loop limits.  Non-evidence tasks are allowed to complete with
+    text: the model may still choose tools, but the runtime should not force them.
     """
     if not intent:
         return None, False
-
-    from .intent_analyzer import IntentType as _IT
 
     requires_tools = bool(getattr(intent, "requires_tools", False))
     force_tool = bool(getattr(intent, "force_tool", False))
@@ -169,13 +168,77 @@ def _resolve_force_tool_policy(intent: Any) -> tuple[int | None, bool]:
         bool(getattr(intent, "evidence_required", False)) or requires_tools or force_tool
     )
 
-    if intent.intent in (_IT.CHAT, _IT.QUERY):
-        return (1, True) if evidence_required else (0, False)
-
     if evidence_required:
         return 1, True
 
-    return max(0, int(getattr(settings, "force_tool_call_max_retries", 2)) - 1), False
+    return 0, False
+
+
+def _looks_like_explicit_no_tool_request(message: str) -> bool:
+    text = (message or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "??????",
+            "?????",
+            "?????",
+            "??????",
+            "???????",
+            "??????",
+            "?????",
+            "????",
+            "?????",
+            "no tools",
+            "without tools",
+            "do not use tools",
+            "don't use tools",
+            "plain text",
+        )
+    )
+
+
+def _looks_like_external_tool_request(message: str) -> bool:
+    """Conservative guard for sub-agent delegation.
+
+    Sub-agents skip the full IntentAnalyzer for latency.  Only explicit external
+    action/evidence requests should force tools; otherwise the model can still
+    call tools if useful, but plain writing/analysis is accepted as text.
+    """
+    text = (message or "").lower()
+    if not text.strip():
+        return False
+    if _looks_like_explicit_no_tool_request(text):
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "??",
+            "???",
+            "????",
+            "??",
+            "??",
+            "??",
+            "??",
+            "??",
+            "??",
+            "????",
+            "????",
+            "??",
+            "??",
+            "????",
+            "????",
+            "api",
+            "mcp",
+            "read file",
+            "search",
+            "web",
+            "download",
+            "write file",
+            "save",
+            "run command",
+            "call tool",
+        )
+    )
 
 
 # ---- 本地图片附件 → data URL（BUG-1 修复） ----
@@ -3823,26 +3886,30 @@ class Agent:
             except Exception as e:
                 logger.debug(f"[TraitMiner] Mining failed (non-critical): {e}")
 
-        # 7. IntentAnalyzer (unified intent analysis — all messages go through LLM)
-        #    Sub-agents skip IntentAnalyzer: they receive structured task instructions
-        #    from the parent, always TASK intent, always need tools.
+        # 7. IntentAnalyzer (unified intent analysis ? all messages go through LLM)
+        #    Sub-agents skip the full analyzer for latency, but they are not
+        #    automatically forced into tools: many delegated jobs are pure writing
+        #    or analysis tasks where a direct text answer is the correct output.
         from .intent_analyzer import IntentAnalyzer, IntentResult, IntentType
 
         if self._is_sub_agent_call:
             _profile_hints = self._derive_tool_hints_from_profile()
+            _requires_tools = _looks_like_external_tool_request(message)
             intent_result = IntentResult(
                 intent=IntentType.TASK,
                 confidence=1.0,
                 task_definition=message[:600],
-                task_type="action",
-                tool_hints=_profile_hints,
+                task_type="action" if _requires_tools else "analysis",
+                tool_hints=_profile_hints if _requires_tools else [],
                 memory_keywords=[],
-                force_tool=True,
+                force_tool=_requires_tools,
+                requires_tools=_requires_tools,
+                evidence_required=_requires_tools,
                 todo_required=False,
             )
             logger.info(
                 f"[Session:{session_id}] Sub-agent: skipping IntentAnalyzer, "
-                f"forced TASK intent, profile_tool_hints={_profile_hints}"
+                f"requires_tools={_requires_tools}, profile_tool_hints={_profile_hints}"
             )
         else:
             if not hasattr(self, "_intent_analyzer"):

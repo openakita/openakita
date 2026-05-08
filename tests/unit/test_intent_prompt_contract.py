@@ -1,4 +1,7 @@
-from openakita.core.agent import _resolve_force_tool_policy
+from openakita.core.agent import (
+    _looks_like_external_tool_request,
+    _resolve_force_tool_policy,
+)
 from openakita.core.intent_analyzer import (
     IntentResult,
     IntentType,
@@ -270,3 +273,32 @@ def test_plain_query_still_disables_force_tool_guard():
 
     assert force_retries == 0
     assert evidence_required is False
+
+def test_plain_task_without_tools_disables_force_tool_guard():
+    result = IntentResult(
+        intent=IntentType.TASK,
+        task_type="analysis",
+        requires_tools=False,
+        evidence_required=False,
+        force_tool=False,
+    )
+
+    force_retries, evidence_required = _resolve_force_tool_policy(result)
+
+    assert force_retries == 0
+    assert evidence_required is False
+
+
+def test_sub_agent_plain_text_delegation_does_not_force_tools():
+    message = (
+        "????????????? AI ???????? 200 ????"
+        "???????????????????"
+    )
+
+    assert _looks_like_external_tool_request(message) is False
+
+
+def test_sub_agent_external_delegation_still_requires_tools():
+    message = "??? /tmp/report.md???????????????"
+
+    assert _looks_like_external_tool_request(message) is True

@@ -222,6 +222,41 @@ async def test_plain_long_reply_without_tools_is_still_accepted():
 
 
 @pytest.mark.asyncio
+async def test_plain_short_analysis_without_tools_is_accepted():
+    engine = ReasoningEngine(
+        brain=None,
+        tool_executor=None,
+        context_manager=None,
+        response_handler=AsyncMock(),
+        agent_state=AgentState(),
+    )
+    working_messages = []
+    reply = "??????????????????????????????"
+
+    result = await engine._handle_final_answer(
+        decision=Decision(type=DecisionType.FINAL_ANSWER, text_content=reply),
+        working_messages=working_messages,
+        original_messages=[{"role": "user", "content": "?????????????"}],
+        tools_executed_in_task=False,
+        executed_tool_names=[],
+        delivery_receipts=[],
+        all_tool_results=[],
+        no_tool_call_count=0,
+        verify_incomplete_count=0,
+        no_confirmation_text_count=0,
+        max_no_tool_retries=1,
+        max_verify_retries=1,
+        max_confirmation_text_retries=1,
+        base_force_retries=1,
+        conversation_id="c1",
+        tool_evidence_required=False,
+    )
+
+    assert result == reply
+    assert working_messages == []
+
+
+@pytest.mark.asyncio
 async def test_tool_evidence_required_exhausts_to_unverified_without_repeated_prompts():
     engine = ReasoningEngine(
         brain=None,
