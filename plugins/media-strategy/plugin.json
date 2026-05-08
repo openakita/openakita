@@ -1,0 +1,77 @@
+{
+  "id": "media-strategy",
+  "name": "Media Strategy",
+  "version": "0.1.0",
+  "display_name_zh": "融媒智策",
+  "display_name_en": "Media Strategy",
+  "icon": "icon.svg",
+  "description": "Source-backed media hotspot radar and editorial planning workbench.",
+  "description_i18n": {
+    "zh": "融媒智策：全源融聚・智察热点・策研采编，提供 RSS 套餐、热点雷达、信源复核、报道策划与 IM 交互。",
+    "en": "Media Strategy: source-backed news radar, verification packs, editorial planning and IM-ready agent tools."
+  },
+  "slogan": "全源融聚・智察热点・策研采编",
+  "type": "python",
+  "entry": "plugin.py",
+  "author": "OpenAkita",
+  "category": "productivity",
+  "tags": ["media", "news", "rss", "radar", "editorial", "planning"],
+  "permissions": [
+    "log",
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "channel.send",
+    "memory.read",
+    "memory.write",
+    "brain.access",
+    "settings.read"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0",
+    "python": ">=3.11",
+    "pip": [
+      "feedparser>=6.0.11",
+      "beautifulsoup4>=4.12.0"
+    ]
+  },
+  "provides": {
+    "tools": [
+      "media_strategy_subscribe_package",
+      "media_strategy_add_feed",
+      "media_strategy_list_sources",
+      "media_strategy_ingest",
+      "media_strategy_hot_radar",
+      "media_strategy_search_news",
+      "media_strategy_daily_brief",
+      "media_strategy_verify_pack",
+      "media_strategy_replicate_plan"
+    ],
+    "routes": true,
+    "skill": "SKILL.md"
+  },
+  "brand": {
+    "primary": "#0F766E",
+    "primary_hover": "#0D9488",
+    "primary_soft": "#CCFBF1",
+    "dark_primary": "#2DD4BF",
+    "iconify": "solar:radar-linear"
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "icon": "media-strategy-brand.svg",
+    "title": "融媒智策",
+    "title_i18n": {
+      "zh": "融媒智策",
+      "en": "Media Strategy"
+    },
+    "sidebar_group": "apps",
+    "permissions": ["notifications", "theme", "clipboard", "download"]
+  }
+}

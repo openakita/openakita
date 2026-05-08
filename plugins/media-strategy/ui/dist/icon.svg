@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Media Strategy">
+  <metadata>Iconify source: solar:radar-linear; theme adapted for OpenAkita Media Strategy.</metadata>
+  <defs>
+    <linearGradient id="g" x1="18" y1="16" x2="110" y2="114" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2DD4BF"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="108" height="108" rx="28" fill="url(#g)"/>
+  <circle cx="64" cy="64" r="34" fill="none" stroke="#ECFEFF" stroke-width="6" opacity=".95"/>
+  <circle cx="64" cy="64" r="18" fill="none" stroke="#ECFEFF" stroke-width="5" opacity=".78"/>
+  <circle cx="64" cy="64" r="5" fill="#ECFEFF"/>
+  <path d="M64 64 91 43" fill="none" stroke="#ECFEFF" stroke-width="6" stroke-linecap="round"/>
+  <path d="M27 83a44 44 0 0 0 74 0" fill="none" stroke="#CCFBF1" stroke-width="5" stroke-linecap="round" opacity=".9"/>
+  <path d="M35 30h18M35 42h28" fill="none" stroke="#ECFEFF" stroke-width="5" stroke-linecap="round" opacity=".9"/>
+</svg>
