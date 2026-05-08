@@ -194,26 +194,23 @@ def _collect_system_info() -> dict:
     except Exception:
         pass
 
-    # IM channels
+    # IM channels. Treat legacy .env fields and runtime im_bots as equally valid
+    # configuration sources so diagnostics reflect what the user is actually using.
     try:
+        from openakita.channels.status import collect_effective_im_status
         from openakita.config import settings
 
-        channels = []
-        if getattr(settings, "telegram_enabled", False):
-            channels.append("telegram")
-        if getattr(settings, "feishu_enabled", False):
-            channels.append("feishu")
-        if getattr(settings, "wework_enabled", False):
-            channels.append("wework")
-        if getattr(settings, "dingtalk_enabled", False):
-            channels.append("dingtalk")
-        if getattr(settings, "onebot_enabled", False):
-            channels.append("onebot")
-        if getattr(settings, "qqbot_enabled", False):
-            channels.append("qqbot")
-        if getattr(settings, "wechat_enabled", False):
-            channels.append("wechat")
-        info["im_channels"] = channels
+        gateway = None
+        try:
+            from openakita.main import get_message_gateway
+
+            gateway = get_message_gateway()
+        except Exception:
+            pass
+
+        im_status = collect_effective_im_status(settings, gateway)
+        info["im_channels"] = im_status["channels"]
+        info["im_channel_details"] = im_status["details"]
     except Exception:
         pass
 
@@ -375,7 +372,9 @@ def _collect_sanitized_config() -> dict:
     runtime_path = _resolve_data_dir() / "runtime_state.json"
     if runtime_path.exists():
         try:
-            sanitized["_runtime_state"] = json.loads(runtime_path.read_text("utf-8"))
+            from openakita.utils.redaction import redact_value
+
+            sanitized["_runtime_state"] = redact_value(json.loads(runtime_path.read_text("utf-8")))
         except Exception:
             pass
 

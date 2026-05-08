@@ -51,14 +51,14 @@ async def list_channels(request: Request):
     channels: list[dict[str, Any]] = []
 
     gateway = _get_gateway(request)
-    if gateway is None:
-        return JSONResponse(content={"channels": channels})
 
     # Build lookup tables from persisted bot/profile config so the viewer
     # shows the same agent binding that MessageGateway applies at runtime.
     from openakita.agents.profile import get_profile_store
+    from openakita.channels.status import collect_effective_im_status
     from openakita.config import settings
 
+    effective_status = collect_effective_im_status(settings, gateway)
     bot_name_map: dict[str, str] = {}
     profile_name_map: dict[str, str] = {"default": "Default Agent"}
     for b in getattr(settings, "im_bots", []):
@@ -71,8 +71,8 @@ async def list_channels(request: Request):
         logger.debug("[IM API] Failed to load agent profile names: %s", e)
 
     # _adapters is a dict {name: adapter} in MessageGateway
-    adapters_dict = getattr(gateway, "_adapters", None) or {}
-    adapters_list = getattr(gateway, "adapters", [])
+    adapters_dict = (getattr(gateway, "_adapters", None) or {}) if gateway is not None else {}
+    adapters_list = getattr(gateway, "adapters", []) if gateway is not None else []
     if isinstance(adapters_dict, dict):
         adapter_items = list(adapters_dict.items())
     else:
@@ -128,12 +128,44 @@ async def list_channels(request: Request):
             "agentProfileName": agent_profile_name,
         }
         if status == "offline":
-            reasons = getattr(gateway, "_failed_adapter_reasons", {})
+            reasons = getattr(gateway, "_failed_adapter_reasons", {}) if gateway is not None else {}
             if name in reasons:
                 entry["error"] = reasons[name]
         channels.append(entry)
 
-    return JSONResponse(content={"channels": channels})
+    seen_channels = {str(c.get("channel") or "") for c in channels}
+    for detail in effective_status["details"]:
+        if detail.get("source") != "im_bots":
+            continue
+        channel = str(detail.get("channel") or detail.get("type") or "")
+        if not channel or channel in seen_channels:
+            continue
+        if not detail.get("enabled") and not detail.get("configured"):
+            continue
+        channels.append(
+            {
+                "channel": channel,
+                "channel_type": detail.get("type"),
+                "name": detail.get("name") or channel,
+                "status": "configured" if detail.get("configured") else "offline",
+                "sessionCount": 0,
+                "lastActive": None,
+                "agentProfileId": "default",
+                "agentProfileName": profile_name_map.get("default", "Default Agent"),
+                "source": "im_bots",
+                "configured": detail.get("configured", False),
+                "missing": detail.get("missing", []),
+            }
+        )
+        seen_channels.add(channel)
+
+    return JSONResponse(
+        content={
+            "channels": channels,
+            "effective_channels": effective_status["channels"],
+            "effective_details": effective_status["details"],
+        }
+    )
 
 
 @router.get("/api/im/sessions")
