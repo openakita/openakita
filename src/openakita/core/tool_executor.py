@@ -858,6 +858,9 @@ class ToolExecutor:
                 if isinstance(tool_input, dict) and PARSE_ERROR_KEY in tool_input:
                     success = False
 
+                if isinstance(result_str, str) and result_str.startswith("⚠️ 工具执行被中断:"):
+                    success = False
+
                 if success and isinstance(result_str, str) and result_str.lstrip().startswith("{"):
                     try:
                         payload, _ = json.JSONDecoder().raw_decode(result_str.lstrip())

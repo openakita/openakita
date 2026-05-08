@@ -1,5 +1,6 @@
 """L2 Component Tests: ToolExecutor execution and truncation guard."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -116,4 +117,28 @@ async def test_structured_tool_error_marks_tool_result_as_error():
     payload = json.loads(tool_results[0]["content"])
     assert payload["error"] is True
     assert payload["error_type"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_tool_hard_timeout_marks_tool_result_as_error():
+    registry = MagicMock()
+    registry.has_tool.return_value = True
+    registry.get_handler_name_for_tool.return_value = "filesystem"
+    registry.get_permission_check.return_value = None
+
+    async def _slow_tool(_tool_name, _params):
+        await asyncio.sleep(0.05)
+        return "late"
+
+    registry.execute_by_tool = AsyncMock(side_effect=_slow_tool)
+    executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+    executor._LONG_RUNNING_TOOLS = {**executor._LONG_RUNNING_TOOLS, "slow_tool": 0.01}
+
+    tool_results, executed, _ = await executor.execute_batch(
+        [{"id": "u1", "name": "slow_tool", "input": {}}]
+    )
+
+    assert executed == []
+    assert tool_results[0]["is_error"] is True
+    assert "工具执行被中断" in tool_results[0]["content"]
 

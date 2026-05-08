@@ -1253,6 +1253,7 @@ class ReasoningEngine:
         agent_profile_id: str = "default",
         endpoint_override: str | None = None,
         force_tool_retries: int | None = None,
+        tool_evidence_required: bool = False,
         is_sub_agent: bool = False,
         mode: str = "agent",
     ) -> str:
@@ -1275,6 +1276,8 @@ class ReasoningEngine:
             endpoint_override: 端点覆盖（来自 Agent profile 或 API 请求）
             force_tool_retries: Intent-driven override for max ForceToolCall retries
                 (None = use default from settings, 0 = disable ForceToolCall)
+            tool_evidence_required: true when the user request requires external
+                evidence/tool verification even if classified as a question
 
         Returns:
             最终响应文本
@@ -1921,6 +1924,7 @@ class ReasoningEngine:
                     base_force_retries=base_force_retries,
                     conversation_id=conversation_id,
                     supervisor_intervened=_supervisor_intervened,
+                    tool_evidence_required=tool_evidence_required,
                     mode=mode,
                 )
 
@@ -2906,6 +2910,7 @@ class ReasoningEngine:
         agent_profile_id: str = "default",
         session: Any = None,
         force_tool_retries: int | None = None,
+        tool_evidence_required: bool = False,
         is_sub_agent: bool = False,
         request_id: str = "",
         turn_id: str = "",
@@ -3832,6 +3837,7 @@ class ReasoningEngine:
                         base_force_retries=base_force_retries,
                         conversation_id=conversation_id,
                         supervisor_intervened=_supervisor_intervened,
+                        tool_evidence_required=tool_evidence_required,
                         mode=_effective_mode,
                     )
 
@@ -6303,6 +6309,7 @@ class ReasoningEngine:
         base_force_retries: int,
         conversation_id: str | None,
         supervisor_intervened: bool = False,
+        tool_evidence_required: bool = False,
         mode: str = "agent",
     ) -> str | tuple:
         """
@@ -6636,6 +6643,7 @@ class ReasoningEngine:
             and _txt
             and len(_txt) > _IMPLICIT_REPLY_THRESHOLD
             and not _ACTION_CLAIM_RE.search(_txt)
+            and not tool_evidence_required
         ):
             logger.info(
                 f"[IntentTag] No intent tag but substantial text "
@@ -6669,6 +6677,17 @@ class ReasoningEngine:
                 retry_msg = (
                     "[系统] ⚠️ 你声明了 [ACTION] 意图但没有调用任何工具。"
                     "请立即调用所需的工具来完成用户请求，不要只描述你会做什么。"
+                )
+            elif tool_evidence_required:
+                logger.warning(
+                    "[IntentTag] Tool evidence required but final answer had "
+                    f"tool_calls=0 — ForceToolCall retry "
+                    f"({no_tool_call_count}/{max_no_tool_retries})"
+                )
+                retry_msg = (
+                    "[系统] 这个用户请求需要外部证据或工具验证，但你的上一条回复没有调用任何工具。"
+                    "请先调用合适的查询、读取、搜索、API 或 MCP 工具获取证据；"
+                    "如果当前没有可用工具或权限不足，请直接说明无法验证，不要编造结果。"
                 )
             else:
                 logger.warning(

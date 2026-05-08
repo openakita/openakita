@@ -1,4 +1,5 @@
 from openakita.core.intent_analyzer import (
+    IntentResult,
     IntentType,
     MemoryScope,
     PromptDepth,
@@ -6,6 +7,7 @@ from openakita.core.intent_analyzer import (
     _parse_intent_output,
     _try_fast_query_shortcut,
 )
+from openakita.core.agent import _resolve_force_tool_policy
 
 
 def test_parse_prompt_contract_minimal_query():
@@ -133,3 +135,31 @@ suggest_plan: false
     assert result.intent == IntentType.TASK
     assert result.requires_tools is True
     assert result.force_tool is True
+
+
+def test_tool_required_query_keeps_force_tool_guard():
+    result = IntentResult(
+        intent=IntentType.QUERY,
+        task_type="analysis",
+        requires_tools=True,
+        force_tool=False,
+    )
+
+    force_retries, evidence_required = _resolve_force_tool_policy(result)
+
+    assert force_retries is None
+    assert evidence_required is True
+
+
+def test_plain_query_still_disables_force_tool_guard():
+    result = IntentResult(
+        intent=IntentType.QUERY,
+        task_type="question",
+        requires_tools=False,
+        force_tool=False,
+    )
+
+    force_retries, evidence_required = _resolve_force_tool_policy(result)
+
+    assert force_retries == 0
+    assert evidence_required is False
