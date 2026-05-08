@@ -151,6 +151,31 @@ def _ensure_desktop():
 logger = logging.getLogger(__name__)
 
 
+def _resolve_force_tool_policy(intent: Any) -> tuple[int | None, bool]:
+    """Return ForceToolCall override and whether a final answer needs tool evidence.
+
+    Plain chat/knowledge queries should stay lightweight.  Queries that the
+    intent analyzer has marked as requiring tools still need at least one real
+    evidence-gathering tool call before a text answer can be accepted.
+    """
+    if not intent:
+        return None, False
+
+    from .intent_analyzer import IntentType as _IT
+
+    requires_tools = bool(getattr(intent, "requires_tools", False))
+    force_tool = bool(getattr(intent, "force_tool", False))
+    evidence_required = requires_tools or force_tool
+
+    if intent.intent in (_IT.CHAT, _IT.QUERY):
+        return (None, True) if evidence_required else (0, False)
+
+    if evidence_required:
+        return None, True
+
+    return max(0, int(getattr(settings, "force_tool_call_max_retries", 2)) - 1), False
+
+
 # ---- 本地图片附件 → data URL（BUG-1 修复） ----
 # 上传到 /api/uploads/<name> 的图片只能在本机通过 HTTP 访问，
 # 远端云模型（通义/OpenAI vision）无法回调 127.0.0.1，会报 InvalidParameter。
@@ -5233,17 +5258,10 @@ class Agent:
                 )
                 return
 
-            # Intent-driven ForceToolCall for streaming path
-            _force_tool_retries = None
-            if _intent:
-                if _intent.intent in (_IT.CHAT, _IT.QUERY):
-                    _force_tool_retries = 0
-                elif _intent.force_tool:
-                    pass
-                else:
-                    _force_tool_retries = max(
-                        0, getattr(settings, "force_tool_call_max_retries", 2) - 1
-                    )
+            # Intent-driven ForceToolCall for streaming path.
+            # Simple queries stay lightweight, but evidence-seeking queries must
+            # produce a real tool trace before the final answer is accepted.
+            _force_tool_retries, _tool_evidence_required = _resolve_force_tool_policy(_intent)
 
             _agent_profile_id = "default"
             if session and hasattr(session, "context"):
@@ -5419,6 +5437,7 @@ class Agent:
                 agent_profile_id=_agent_profile_id,
                 session=session,
                 force_tool_retries=_force_tool_retries,
+                tool_evidence_required=_tool_evidence_required,
                 is_sub_agent=getattr(self, "_is_sub_agent_call", False),
                 request_id=_request_id,
                 turn_id=_turn_id,
@@ -6381,16 +6400,7 @@ class Agent:
             _agent_profile_id = getattr(session.context, "agent_profile_id", "default") or "default"
 
         # === Intent-driven ForceToolCall policy ===
-        force_tool_retries = None
-        if intent_result:
-            from .intent_analyzer import IntentType as _IT
-
-            if intent_result.intent in (_IT.CHAT, _IT.QUERY):
-                force_tool_retries = 0
-            elif intent_result.force_tool:
-                pass  # None = use default from settings
-            else:
-                force_tool_retries = max(0, getattr(settings, "force_tool_call_max_retries", 2) - 1)
+        force_tool_retries, tool_evidence_required = _resolve_force_tool_policy(intent_result)
 
         # === 委托给 ReasoningEngine ===
         return await self.reasoning_engine.run(
@@ -6408,6 +6418,7 @@ class Agent:
             agent_profile_id=_agent_profile_id,
             endpoint_override=endpoint_override,
             force_tool_retries=force_tool_retries,
+            tool_evidence_required=tool_evidence_required,
             is_sub_agent=getattr(self, "_is_sub_agent_call", False),
             mode=mode,
         )
@@ -7051,12 +7062,24 @@ class Agent:
             else asyncio.Event()
         )
 
+        def _fail_task(error: str) -> TaskResult:
+            """Finish task execution with a stable TaskResult failure contract."""
+            duration = time.time() - start_time
+            task.mark_failed(error)
+            task_monitor.complete(success=False, response="", error=error)
+            return TaskResult(
+                success=False,
+                error=error,
+                iterations=iteration,
+                duration_seconds=duration,
+            )
+
         try:
             while iteration < max_tool_iterations:
                 # C8: 每轮迭代开始时检查任务是否被取消
                 if self._task_cancelled:
                     logger.info(f"[StopTask] Task cancelled in execute_task: {self._cancel_reason}")
-                    return "✅ 任务已停止。"
+                    return _fail_task("✅ 任务已停止。")
 
                 iteration += 1
                 logger.info(f"Task iteration {iteration}")
@@ -7074,7 +7097,7 @@ class Agent:
                             f"[Task:{task.id}] Exceeded max model switches "
                             f"({MAX_TASK_MODEL_SWITCHES}), aborting task"
                         )
-                        return (
+                        return _fail_task(
                             "❌ 任务执行失败，已尝试多个模型仍无法恢复。\n"
                             "💡 你可以直接重新发送来重试。"
                         )
@@ -7084,7 +7107,7 @@ class Agent:
                         logger.warning(
                             "[ModelSwitch] No fallback model available for sub-agent timeout"
                         )
-                        return "任务失败：所有模型端点均不可用，请检查网络连接。"
+                        return _fail_task("任务失败：所有模型端点均不可用，请检查网络连接。")
                     task_monitor.switch_model(
                         new_model,
                         f"任务执行超过 {task_monitor.timeout_seconds} 秒，重试 {task_monitor.retry_count} 次后切换",
@@ -7104,7 +7127,7 @@ class Agent:
                                 f"[ModelSwitch] switch_model failed: {msg}. "
                                 f"Aborting task (no healthy endpoint)."
                             )
-                            return (
+                            return _fail_task(
                                 f"❌ 任务失败：模型切换失败（{msg}），无法继续执行。\n"
                                 "💡 建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
                             )
@@ -7159,9 +7182,10 @@ class Agent:
                     logger.info(
                         f"[StopTask] LLM call interrupted by user cancel in execute_task {task.id}"
                     )
-                    return await self._handle_cancel_farewell(
+                    _cancel_message = await self._handle_cancel_farewell(
                         messages, _build_effective_system_prompt_task(), current_model
                     )
+                    return _fail_task(_cancel_message)
 
                 except Exception as e:
                     logger.error(f"[LLM] Brain call failed in task {task.id}: {e}")
@@ -7173,7 +7197,7 @@ class Agent:
                             f"[Task:{task.id}] Global retry limit reached "
                             f"({_total_llm_retries}/{MAX_TOTAL_LLM_RETRIES}), aborting"
                         )
-                        return (
+                        return _fail_task(
                             f"❌ 任务执行失败，已重试 {MAX_TOTAL_LLM_RETRIES} 次仍无法恢复。\n"
                             f"错误: {str(e)[:200]}\n"
                             "💡 你可以直接重新发送来重试。"
@@ -7199,7 +7223,7 @@ class Agent:
                                     llm_client.reset_all_cooldowns(include_structural=True)
                                 continue
                         logger.error(f"[Task:{task.id}] Structural error, aborting: {str(e)[:200]}")
-                        return (
+                        return _fail_task(
                             f"❌ API 请求格式错误，无法恢复。\n"
                             f"错误: {str(e)[:200]}\n"
                             "💡 你可以直接重新发送来重试。"
@@ -7216,9 +7240,10 @@ class Agent:
                         try:
                             await self._cancellable_await(asyncio.sleep(2), _cancel_event)
                         except UserCancelledError:
-                            return await self._handle_cancel_farewell(
+                            _cancel_message = await self._handle_cancel_farewell(
                                 messages, _build_effective_system_prompt_task(), current_model
                             )
+                            return _fail_task(_cancel_message)
                         continue
                     else:
                         _task_switch_count += 1
@@ -7227,7 +7252,7 @@ class Agent:
                                 f"[Task:{task.id}] Exceeded max model switches "
                                 f"({MAX_TASK_MODEL_SWITCHES}), aborting task"
                             )
-                            return (
+                            return _fail_task(
                                 f"❌ 任务执行失败，已尝试多个模型仍无法恢复。\n"
                                 f"错误: {str(e)[:200]}\n"
                                 "💡 你可以直接重新发送来重试。"
@@ -7238,7 +7263,7 @@ class Agent:
                             logger.warning(
                                 "[ModelSwitch] No fallback model available for sub-agent error"
                             )
-                            return "任务失败：所有模型端点均不可用，请检查网络连接。"
+                            return _fail_task("任务失败：所有模型端点均不可用，请检查网络连接。")
                         task_monitor.switch_model(
                             new_model,
                             f"LLM 调用失败，重试 {task_monitor.retry_count} 次后切换: {e}",
@@ -7259,7 +7284,7 @@ class Agent:
                                 )
                                 # switch_model 失败（目标在冷静期），不重置 retry_count
                                 # 直接 break，避免无限重试
-                                return (
+                                return _fail_task(
                                     f"❌ 任务失败：模型切换失败（{msg}），无法继续执行。\n"
                                     "💡 建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
                                 )
