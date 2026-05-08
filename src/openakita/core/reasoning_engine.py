@@ -1235,6 +1235,46 @@ class ReasoningEngine:
 
         return restored_messages, cp.iteration
 
+    def _apply_endpoint_override(
+        self,
+        endpoint_override: str | None,
+        *,
+        conversation_id: str | None,
+        reason: str,
+    ) -> bool:
+        """Apply an endpoint preference without making it a hard blocker."""
+        if not endpoint_override:
+            return False
+
+        llm_client = getattr(self._brain, "_llm_client", None)
+        if not llm_client or not hasattr(llm_client, "switch_model"):
+            logger.warning(
+                "[EndpointOverride] Ignoring %s because no switch-capable LLM client is available",
+                endpoint_override,
+            )
+            return False
+
+        ok, msg = llm_client.switch_model(
+            endpoint_name=endpoint_override,
+            hours=0.05,
+            reason=reason,
+            conversation_id=conversation_id,
+        )
+        if ok:
+            logger.info(
+                "[EndpointOverride] Switched to %s for %s",
+                endpoint_override,
+                conversation_id or "global",
+            )
+            return True
+
+        logger.warning(
+            "[EndpointOverride] Ignoring unavailable endpoint %s: %s; using auto selection",
+            endpoint_override,
+            msg,
+        )
+        return False
+
     async def run(
         self,
         messages: list[dict],
@@ -1353,25 +1393,15 @@ class ReasoningEngine:
         if endpoint_override:
             if not conversation_id:
                 conversation_id = f"_run_{uuid.uuid4().hex[:12]}"
-            llm_client = getattr(self._brain, "_llm_client", None)
-            if llm_client and hasattr(llm_client, "switch_model"):
-                ok, msg = llm_client.switch_model(
-                    endpoint_name=endpoint_override,
-                    hours=0.05,
-                    reason=f"agent profile endpoint override: {endpoint_override}",
-                    conversation_id=conversation_id,
-                )
-                if ok:
-                    _provider = llm_client._providers.get(endpoint_override)
-                    if _provider:
-                        current_model = _provider.model
-                    logger.info(
-                        f"[EndpointOverride] Switched to {endpoint_override} for {conversation_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"[EndpointOverride] Failed to switch to {endpoint_override}: {msg}, using default"
-                    )
+            if self._apply_endpoint_override(
+                endpoint_override,
+                conversation_id=conversation_id,
+                reason=f"agent profile endpoint override: {endpoint_override}",
+            ):
+                llm_client = getattr(self._brain, "_llm_client", None)
+                _provider = getattr(llm_client, "_providers", {}).get(endpoint_override)
+                if _provider:
+                    current_model = _provider.model
 
         # ForceToolCall 配置
         im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 2)))
@@ -3046,19 +3076,11 @@ class ReasoningEngine:
             if endpoint_override:
                 if not conversation_id:
                     conversation_id = f"_stream_{uuid.uuid4().hex[:12]}"
-                llm_client = getattr(self._brain, "_llm_client", None)
-                if llm_client and hasattr(llm_client, "switch_model"):
-                    ok, msg = llm_client.switch_model(
-                        endpoint_name=endpoint_override,
-                        hours=0.05,
-                        reason=f"chat endpoint override: {endpoint_override}",
-                        conversation_id=conversation_id,
-                    )
-                    if not ok:
-                        yield {"type": "error", "message": f"端点切换失败: {msg}"}
-                        yield {"type": "done"}
-                        return
-                    _endpoint_switched = True
+                _endpoint_switched = self._apply_endpoint_override(
+                    endpoint_override,
+                    conversation_id=conversation_id,
+                    reason=f"chat endpoint override: {endpoint_override}",
+                )
 
             current_model = self._brain.model
             if _endpoint_switched and endpoint_override:

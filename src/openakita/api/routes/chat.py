@@ -1313,19 +1313,13 @@ async def chat(request: Request, body: ChatRequest):
             },
         )
     if body.endpoint and body.endpoint not in chat_endpoint_names:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": "unknown_chat_endpoint",
-                "endpoint": body.endpoint,
-                "message": (
-                    f"未知的聊天端点: {body.endpoint}。请在主聊天端点列表中选择，不要使用"
-                    "编译端点或语音端点。"
-                ),
-            },
+        logger.warning(
+            "[Chat API] Ignoring stale chat endpoint %r; falling back to auto selection",
+            body.endpoint,
         )
+        body.endpoint = None
 
-    # ── Busy-lock check (via lifecycle manager) ──
+    # ?? Busy-lock check (via lifecycle manager) ??
     lifecycle = get_lifecycle_manager()
     busy_gen = 0
     if client_id:

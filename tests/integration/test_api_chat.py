@@ -13,6 +13,7 @@ from openakita.api.server import create_app
 def mock_agent():
     agent = MagicMock()
     agent.initialized = True
+    agent._initialized = True
     agent.state = MagicMock()
     agent.state.has_active_task = False
     agent.state.is_task_cancelled = False
@@ -21,12 +22,16 @@ def mock_agent():
     agent.settings = MagicMock()
     agent.settings.max_iterations = 10
     agent.session_manager = None
+    agent.last_stream_kwargs = {}
 
     async def fake_stream(*args, **kwargs):
-        yield "Hello from mock agent"
+        agent.last_stream_kwargs = kwargs
+        yield {"type": "text_delta", "content": "Hello from mock agent"}
+        yield {"type": "done"}
 
     agent.chat_with_session_stream = fake_stream
     agent.chat_with_session = AsyncMock(return_value="Hello from mock agent")
+    agent.insert_user_message = AsyncMock(return_value=True)
     return agent
 
 
@@ -35,6 +40,7 @@ def app(mock_agent, monkeypatch):
     from openakita.api.routes import chat as chat_routes
 
     monkeypatch.setattr(chat_routes, "_chat_endpoint_names", lambda: {"mock-main"})
+    monkeypatch.setattr(chat_routes, "_resolve_agent", lambda agent: agent)
     return create_app(
         agent=mock_agent,
         shutdown_event=asyncio.Event(),
@@ -93,7 +99,7 @@ class TestChatEndpoint:
         assert data["error"] == "no_chat_endpoints_configured"
         assert "\u4e3b\u804a\u5929" in data["message"]
 
-    async def test_chat_rejects_non_chat_endpoint(self, client):
+    async def test_chat_ignores_stale_endpoint(self, client, mock_agent):
         resp = await client.post(
             "/api/chat",
             json={
@@ -102,10 +108,10 @@ class TestChatEndpoint:
                 "endpoint": "compiler-only",
             },
         )
-        assert resp.status_code == 400
-        data = resp.json()
-        assert data["error"] == "unknown_chat_endpoint"
-        assert data["endpoint"] == "compiler-only"
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+        assert "Hello from mock agent" in resp.text
+        assert mock_agent.last_stream_kwargs["endpoint_override"] is None
 
 
 class TestChatControlEndpoints:
