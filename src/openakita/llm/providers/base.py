@@ -516,6 +516,11 @@ class LLMProvider(ABC):
                 "payload too large",
                 "request entity too large",
                 "larger than allowed",
+                "exceed_context_size",
+                "exceeds the available context",
+                "maximum context length",
+                "prompt is too long",
+                "too many tokens",
             ]
         ):
             return FailoverReason.STRUCTURAL

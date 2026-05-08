@@ -979,7 +979,7 @@ class Brain:
         deferred = 0
         promoted = 0
         always_available = 0
-        schema_budget = int(getattr(settings, "api_tools_schema_budget_tokens", 12000) or 12000)
+        schema_budget = self._resolve_api_tools_schema_budget()
         schema_tokens = 0
         for tool in tools:
             name = tool.get("name", "")
@@ -1083,6 +1083,31 @@ class Brain:
             )
 
         return result if result else None
+
+    def _resolve_api_tools_schema_budget(self) -> int:
+        """Scale API tool schema budget to the active model context window."""
+        configured = int(getattr(settings, "api_tools_schema_budget_tokens", 12000) or 0)
+        if configured <= 0:
+            return configured
+
+        ctx = 0
+        try:
+            info = self.get_current_model_info()
+            endpoint_name = info.get("name", "")
+            for ep in getattr(getattr(self, "_llm_client", None), "endpoints", []):
+                if ep.name == endpoint_name:
+                    ctx = int(getattr(ep, "context_window", 0) or 0)
+                    break
+        except Exception:
+            ctx = 0
+
+        if ctx <= 0:
+            return configured
+        if ctx < 8000:
+            return min(configured, max(800, int(ctx * 0.25)))
+        if ctx < 32000:
+            return min(configured, max(2000, int(ctx * 0.20)))
+        return configured
 
     def _convert_response_to_anthropic(self, response: LLMResponse) -> AnthropicMessage:
         """将 LLMClient Response 转换为 Anthropic Message

@@ -8,6 +8,7 @@ LLM 统一类型定义
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from urllib.parse import urlparse
 
 _OPENAI_ENDPOINT_SUFFIXES = (
     "/chat/completions",
@@ -490,6 +491,51 @@ class LLMResponse:
         }
 
 
+DEFAULT_CONTEXT_WINDOW = 200000
+LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW = 4096
+_LOCAL_PROVIDER_SLUGS = {"local", "localai", "lmstudio", "ollama"}
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def is_local_endpoint_config(provider: str = "", base_url: str = "") -> bool:
+    """Return True for local OpenAI-compatible runtimes such as LM Studio/Ollama/LocalAI."""
+    provider_slug = (provider or "").strip().lower()
+    if provider_slug in _LOCAL_PROVIDER_SLUGS:
+        return True
+
+    try:
+        parsed = urlparse(base_url or "")
+        host = (parsed.hostname or "").lower()
+    except Exception:
+        host = ""
+    return host in _LOCAL_HOSTS
+
+
+def normalize_context_window(
+    value: int | str | None,
+    *,
+    provider: str = "",
+    base_url: str = "",
+) -> int:
+    """Normalize endpoint context windows.
+
+    Hosted providers keep the broad historical default. Local runtimes often
+    expose 4K/8K GGUF models; treating a missing value as 200K causes the
+    prompt/tool budgeter to overload them before it can recover.
+    """
+    is_local = is_local_endpoint_config(provider, base_url)
+    try:
+        ctx = int(value) if value is not None and value != "" else 0
+    except (TypeError, ValueError):
+        ctx = 0
+
+    if is_local and (ctx <= 0 or ctx == DEFAULT_CONTEXT_WINDOW):
+        return LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW
+    if ctx <= 0:
+        return DEFAULT_CONTEXT_WINDOW
+    return ctx
+
+
 @dataclass
 class EndpointConfig:
     """端点配置"""
@@ -503,7 +549,7 @@ class EndpointConfig:
     model: str = ""  # 模型名称
     priority: int = 1  # 优先级 (越小越优先)
     max_tokens: int = 0  # 最大输出 tokens (0=不限制，使用模型默认上限)
-    context_window: int = 200000  # 上下文窗口大小 (输入+输出总 token 上限)，配置缺失时的兜底值
+    context_window: int = DEFAULT_CONTEXT_WINDOW  # 上下文窗口大小 (输入+输出总 token 上限)
     timeout: int = 180  # 超时时间 (秒)
     capabilities: list[str] | None = None  # 能力列表
     extra_params: dict | None = None  # 额外参数
@@ -519,6 +565,11 @@ class EndpointConfig:
     def __post_init__(self):
         if self.capabilities is None:
             self.capabilities = ["text"]
+        self.context_window = normalize_context_window(
+            self.context_window,
+            provider=self.provider,
+            base_url=self.base_url,
+        )
 
     def has_capability(self, capability: str) -> bool:
         """检查是否有某种能力
@@ -659,7 +710,11 @@ class EndpointConfig:
             model=data.get("model", ""),
             priority=data.get("priority", 1),
             max_tokens=data.get("max_tokens", 0),
-            context_window=data.get("context_window", 200000),
+            context_window=normalize_context_window(
+                data.get("context_window"),
+                provider=data.get("provider", ""),
+                base_url=data.get("base_url", ""),
+            ),
             timeout=data.get("timeout", 180),
             capabilities=data.get("capabilities"),
             extra_params=data.get("extra_params"),

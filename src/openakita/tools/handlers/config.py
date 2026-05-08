@@ -661,6 +661,8 @@ class ConfigHandler:
         endpoint_type_map = {"compiler": "compiler_endpoints", "stt": "stt_endpoints"}
         endpoint_type = endpoint_type_map.get(target, "endpoints")
 
+        from openakita.llm.types import normalize_context_window
+
         ep_dict = {
             "name": name,
             "provider": provider,
@@ -669,7 +671,11 @@ class ConfigHandler:
             "model": model,
             "priority": int(endpoint_data.get("priority", 10)),
             "max_tokens": int(endpoint_data.get("max_tokens", 0)),
-            "context_window": int(endpoint_data.get("context_window", 200000)),
+            "context_window": normalize_context_window(
+                endpoint_data.get("context_window"),
+                provider=provider,
+                base_url=base_url,
+            ),
             "timeout": int(endpoint_data.get("timeout", 180)),
         }
         if "enabled" in endpoint_data:
@@ -681,6 +687,8 @@ class ConfigHandler:
 
         validation_note = ""
         validation = await self._probe_endpoint_before_enable(ep_dict, api_key)
+        if validation.get("context_window"):
+            ep_dict["context_window"] = int(validation["context_window"])
         if validation["disable"]:
             ep_dict["enabled"] = False
             validation_note = (
@@ -708,6 +716,10 @@ class ConfigHandler:
 
         api_key_env = result.get("api_key_env", "")
         key_info = f"API Key 已存入 .env ({api_key_env})" if api_key_env else "未配置 API Key"
+        context_note = ""
+        if ep_dict.get("context_window"):
+            context_note = f"\n- 上下文窗口: {ep_dict['context_window']} tokens"
+
         return (
             f"✅ 已添加 LLM 端点:\n"
             f"- 名称: {name}\n"
@@ -717,6 +729,7 @@ class ConfigHandler:
             f"- {key_info}\n"
             f"- 目标: {target}\n"
             f"- 状态: {'禁用（待修复配置）' if result.get('enabled') is False else '启用'}"
+            f"{context_note}"
             f"{validation_note}\n"
             f"- {reload_info}"
         )
@@ -832,7 +845,7 @@ class ConfigHandler:
         不支持只给提示，避免把可用但不支持模型列表的中转站误伤。
         """
         if not api_key:
-            return {"disable": False, "message": ""}
+            return {"disable": False, "message": "", "context_window": None}
 
         import httpx
 
@@ -842,7 +855,7 @@ class ConfigHandler:
         base_url = normalize_base_url(str(endpoint.get("base_url") or ""))
         api_type = str(endpoint.get("api_type") or "openai")
         if not base_url:
-            return {"disable": False, "message": ""}
+            return {"disable": False, "message": "", "context_window": None}
 
         if api_type == "anthropic":
             test_url = base_url + "/v1/models"
@@ -863,21 +876,112 @@ class ConfigHandler:
             async with httpx.AsyncClient(timeout=8, follow_redirects=True, trust_env=False) as client:
                 resp = await client.get(test_url, headers=headers)
         except httpx.TimeoutException:
-            return {"disable": False, "message": "连通性预检超时，已保留启用状态，后续调用会自动故障切换。"}
+            return {
+                "disable": False,
+                "message": "连通性预检超时，已保留启用状态，后续调用会自动故障切换。",
+                "context_window": None,
+            }
         except httpx.RequestError:
-            return {"disable": False, "message": "暂时无法连接到该地址，已保留启用状态，后续调用会自动故障切换。"}
+            return {
+                "disable": False,
+                "message": "暂时无法连接到该地址，已保留启用状态，后续调用会自动故障切换。",
+                "context_window": None,
+            }
 
         if resp.status_code < 400:
-            return {"disable": False, "message": "连通正常。"}
+            detected_ctx = self._extract_context_window_from_models_response(
+                resp,
+                str(endpoint.get("model") or ""),
+            )
+            if detected_ctx:
+                return {
+                    "disable": False,
+                    "message": f"连通正常，已识别模型上下文约 {detected_ctx} tokens。",
+                    "context_window": detected_ctx,
+                }
+            return {"disable": False, "message": "连通正常。", "context_window": None}
 
         body = (resp.text or "")[:1000]
         category = LLMProvider._classify_error(f"HTTP {resp.status_code}\n{body}")
         if category in ("auth", "quota"):
-            return {"disable": True, "message": body[:240]}
+            return {"disable": True, "message": body[:240], "context_window": None}
         return {
             "disable": False,
             "message": f"/models 返回 {resp.status_code}，可能是服务商不支持模型列表；已保留启用状态。",
+            "context_window": None,
         }
+
+    @staticmethod
+    def _extract_context_window_from_models_response(resp: Any, model_name: str) -> int | None:
+        """Best-effort context window detection from OpenAI-compatible /models responses."""
+        try:
+            payload = resp.json()
+        except Exception:
+            return None
+
+        candidates: list[dict] = []
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                candidates = [item for item in data if isinstance(item, dict)]
+            else:
+                candidates = [payload]
+        elif isinstance(payload, list):
+            candidates = [item for item in payload if isinstance(item, dict)]
+
+        if not candidates:
+            return None
+
+        wanted = (model_name or "").strip().lower()
+        ordered = candidates
+        if wanted:
+            exact = [
+                item
+                for item in candidates
+                if str(item.get("id") or item.get("name") or item.get("model") or "").lower()
+                == wanted
+            ]
+            if exact:
+                ordered = exact + [item for item in candidates if item not in exact]
+
+        keys = {
+            "context_window",
+            "context_length",
+            "max_context_length",
+            "max_context",
+            "context_size",
+            "n_ctx",
+            "max_model_len",
+            "max_sequence_length",
+            "max_position_embeddings",
+        }
+
+        def walk(value: Any) -> int | None:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if str(key).lower() in keys:
+                        try:
+                            found = int(item)
+                        except (TypeError, ValueError):
+                            found = 0
+                        if found > 0:
+                            return found
+                for item in value.values():
+                    found = walk(item)
+                    if found:
+                        return found
+            elif isinstance(value, list):
+                for item in value:
+                    found = walk(item)
+                    if found:
+                        return found
+            return None
+
+        for item in ordered:
+            found = walk(item)
+            if found:
+                return found
+        return None
 
     # ------------------------------------------------------------------
     # set_ui: 设置 UI 偏好

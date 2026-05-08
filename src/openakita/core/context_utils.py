@@ -57,13 +57,12 @@ def get_max_context_tokens(
     """根据端点配置计算可用上下文 token 数。
 
     优先级:
-    1. 端点配置的 context_window（缺失/为 0 时使用 200000 兜底）
+    1. 端点配置的 context_window（本地端点缺失时已在 EndpointConfig 归一化为小窗口）
     2. 减去 max_tokens 输出预留和 5% buffer
     3. 完全无法获取时 fallback 到 DEFAULT_MAX_CONTEXT_TOKENS (160K)
     """
-    FALLBACK_CONTEXT_WINDOW = 200000
-
     from ..config import settings
+    from ..llm.types import DEFAULT_CONTEXT_WINDOW
 
     try:
         info = brain.get_current_model_info(conversation_id=conversation_id)
@@ -72,7 +71,7 @@ def get_max_context_tokens(
             if ep.name == ep_name:
                 ctx = getattr(ep, "context_window", 0) or 0
                 if ctx <= 0:
-                    ctx = FALLBACK_CONTEXT_WINDOW
+                    ctx = DEFAULT_CONTEXT_WINDOW
                 if settings.context_max_window > 0:
                     ctx = min(ctx, settings.context_max_window)
                 output_reserve = ep.max_tokens or 4096

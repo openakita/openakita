@@ -120,6 +120,18 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
     if FailoverReason.STRUCTURAL in categories:
         if "tool names must be unique" in err_l:
             hints.append("⚙️ 检测到内部工具定义重复，请升级到修复版本后重试。")
+        elif (
+            "exceed_context_size" in err_l
+            or "exceeds the available context" in err_l
+            or "context window" in err_l
+            or "maximum context length" in err_l
+            or "too many tokens" in err_l
+        ):
+            hints.append(
+                "🧠 当前模型上下文窗口偏小，刚才的系统提示词、工具清单或对话内容超出了模型可接收范围。"
+                "OpenAkita 会优先尝试减少提示词和工具清单后继续；如果仍失败，请在本地模型服务中调大 context size，"
+                "或切换到上下文更大的模型。"
+            )
         else:
             hints.append("⚙️ 检测到请求格式错误，这通常是模型兼容性问题，请尝试切换其他模型。")
 
