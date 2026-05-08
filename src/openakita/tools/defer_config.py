@@ -19,6 +19,7 @@ ALWAYS_LOAD_TOOLS: frozenset[str] = frozenset(
         "list_directory",
         "grep",
         "glob",
+        "move_file",
         "delete_file",
         # PowerShell（Windows 核心）
         "run_powershell",

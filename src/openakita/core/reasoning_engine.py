@@ -474,6 +474,7 @@ _CLAIMED_TOOL_TO_FRAGMENTS: dict[str, tuple[str, ...]] = {
     "deliver_artifacts": ("deliver_artifacts",),
     "schedule_task": ("schedule_task",),
     "add_memory": ("add_memory",),
+    "move_file": ("move_file",),
     "delete_file": ("delete_file",),
 }
 
@@ -492,6 +493,10 @@ _VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
     "记录": ("add_memory", "create_todo"),
     "存入": ("add_memory", "update_user_profile", "write_file"),
     "创建": ("write_file", "create_todo", "schedule_task", "create_agent"),
+    "移动": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
+    "移至": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
+    "重命名": ("move_file", "run_shell", "run_powershell"),
+    "复制": ("write_file", "run_shell", "run_powershell"),
     "添加": ("add_memory", "create_todo", "schedule_task", "edit_file"),
     "发送": ("deliver_artifacts", "send_to_chat", "smtp_email_sender", "send_message"),
     "调度": ("schedule_task",),

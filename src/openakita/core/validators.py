@@ -300,12 +300,14 @@ class FileValidator(BaseValidator):
 
     从 tool_results 文本中提取路径，校验文件在磁盘上的实际状态：
     - write_file / edit_file: 文件应存在且大小 > 0
+    - move_file: 源路径应已不存在，目标路径应存在
     - delete_file: 文件应已不存在
     """
 
     _WRITE_PATH_RE = re.compile(
         r"文件已[写编][入辑][:：]\s*(.+?)(?:\s+\(\d+\s*bytes\)|（|$)", re.MULTILINE
     )
+    _MOVE_PATH_RE = re.compile(r"(?:文件|目录)已移动[:：]\s*(.+?)\s*->\s*(.+?)\s*$", re.MULTILINE)
     _DELETE_PATH_RE = re.compile(r"(?:文件|目录)已删除[:：]\s*(.+?)\s*$", re.MULTILINE)
 
     @property
@@ -313,7 +315,7 @@ class FileValidator(BaseValidator):
         return "FileValidator"
 
     def validate(self, context: ValidationContext) -> ValidatorOutput:
-        file_tools = {"write_file", "edit_file", "delete_file"}
+        file_tools = {"write_file", "edit_file", "move_file", "delete_file"}
         if not (file_tools & set(context.executed_tools)):
             return ValidatorOutput(
                 name=self.name,
@@ -344,6 +346,21 @@ class FileValidator(BaseValidator):
                         issues.append(f"write/edit 目标为空文件: {fpath}")
                 except OSError as e:
                     issues.append(f"无法检查 {fpath}: {e}")
+                continue
+
+            # move: 源应消失，目标应存在
+            m = self._MOVE_PATH_RE.search(content)
+            if m:
+                src = m.group(1).strip()
+                dst = m.group(2).strip()
+                checked += 1
+                try:
+                    if Path(src).exists():
+                        issues.append(f"move 源路径仍存在: {src}")
+                    if not Path(dst).exists():
+                        issues.append(f"move 目标不存在: {dst}")
+                except OSError as e:
+                    issues.append(f"无法检查 move 结果: {e}")
                 continue
 
             # delete: 文件应已不存在

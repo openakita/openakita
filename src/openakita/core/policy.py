@@ -477,7 +477,7 @@ def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
         return OpType.CREATE
     if tool_name == "edit_file":
         return OpType.EDIT
-    if tool_name in ("delete_file", "rename_file"):
+    if tool_name in ("delete_file", "rename_file", "move_file"):
         return OpType.DELETE
     if tool_name in (
         "run_shell",
@@ -492,6 +492,47 @@ def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
     ):
         return OpType.CREATE
     return OpType.CREATE
+
+
+def _file_operation_targets(tool_name: str, params: dict[str, Any]) -> list[tuple[str, OpType]]:
+    """Return file paths and their operation semantics for zone checks."""
+    if tool_name == "move_file":
+        src = (
+            params.get("src")
+            or params.get("source")
+            or params.get("source_path")
+            or params.get("from")
+            or ""
+        )
+        dst = (
+            params.get("dst")
+            or params.get("destination")
+            or params.get("target_path")
+            or params.get("to")
+            or ""
+        )
+        targets: list[tuple[str, OpType]] = []
+        if src:
+            targets.append((src, OpType.DELETE))
+        if dst:
+            op_type = OpType.CREATE
+            try:
+                fp = Path(dst) if Path(dst).is_absolute() else Path.cwd() / dst
+                if fp.exists() and fp.is_dir() and src:
+                    final_path = fp / Path(src).name
+                    if final_path.exists():
+                        op_type = OpType.OVERWRITE
+                elif fp.exists():
+                    op_type = OpType.OVERWRITE
+            except Exception:
+                pass
+            targets.append((dst, op_type))
+        return targets
+
+    path = params.get("path", "") or params.get("file_path", "")
+    if not path:
+        return []
+    return [(path, _tool_to_optype(tool_name, params))]
 
 
 _ZONE_LABELS = {
@@ -861,6 +902,7 @@ class PolicyEngine:
             "read_file",
             "write_file",
             "edit_file",
+            "move_file",
             "delete_file",
             "list_directory",
             "grep",
@@ -889,6 +931,7 @@ class PolicyEngine:
             "read_file",
             "write_file",
             "edit_file",
+            "move_file",
             "delete_file",
             "list_directory",
             "grep",
@@ -896,23 +939,27 @@ class PolicyEngine:
             "search_replace",
         }
         if tool_name in file_tools:
-            path = params.get("path", "") or params.get("file_path", "")
-            if not path:
+            targets = _file_operation_targets(tool_name, params)
+            if not targets:
                 return None
-            zone = self.resolve_zone(path)
-            op_type = _tool_to_optype(tool_name, params)
-            if zone == Zone.FORBIDDEN or (zone == Zone.PROTECTED and op_type != OpType.READ):
-                result = PolicyResult(
-                    decision=PolicyDecision.DENY,
-                    reason=(
-                        "操作被拒绝: 该路径属于系统或密钥保护范围，"
-                        f"信任模式下也不允许执行{_op_label(op_type)}操作 (路径: {path})"
-                    ),
-                    policy_name="BaselineProtection",
-                    metadata={"zone": zone.value, "op_type": op_type.value, "trust_mode": True},
-                )
-                self._audit(tool_name, params, result)
-                return result
+            for path, op_type in targets:
+                zone = self.resolve_zone(path)
+                if zone == Zone.FORBIDDEN or (zone == Zone.PROTECTED and op_type != OpType.READ):
+                    result = PolicyResult(
+                        decision=PolicyDecision.DENY,
+                        reason=(
+                            "操作被拒绝: 该路径属于系统或密钥保护范围，"
+                            f"信任模式下也不允许执行{_op_label(op_type)}操作 (路径: {path})"
+                        ),
+                        policy_name="BaselineProtection",
+                        metadata={
+                            "zone": zone.value,
+                            "op_type": op_type.value,
+                            "trust_mode": True,
+                        },
+                    )
+                    self._audit(tool_name, params, result)
+                    return result
             return None
 
         if tool_name in ("run_shell", "run_powershell"):
@@ -1018,59 +1065,68 @@ class PolicyEngine:
         if not self._config.zones.enabled:
             return None
 
-        path = params.get("path", "") or params.get("file_path", "")
-        if not path:
+        targets = _file_operation_targets(tool_name, params)
+        if not targets:
             return None
 
-        zone = self.resolve_zone(path)
-        op_type = _tool_to_optype(tool_name, params)
-        decision = _ZONE_OP_MATRIX[zone][op_type]
+        checkpoint_metadata: dict[str, Any] | None = None
+        for path, op_type in targets:
+            zone = self.resolve_zone(path)
+            decision = _ZONE_OP_MATRIX[zone][op_type]
 
-        needs_checkpoint = (
-            zone == Zone.CONTROLLED
-            and op_type in (OpType.EDIT, OpType.OVERWRITE)
-            and self._config.checkpoint.enabled
-        )
+            needs_checkpoint = (
+                zone == Zone.CONTROLLED
+                and op_type in (OpType.EDIT, OpType.OVERWRITE)
+                and self._config.checkpoint.enabled
+            )
 
-        if decision == PolicyDecision.DENY:
-            result = PolicyResult(
-                decision=PolicyDecision.DENY,
-                reason=(
-                    f"操作被拒绝: 不允许在{_zone_label(zone)}对该路径执行{_op_label(op_type)}操作 (路径: {path})"
-                ),
-                policy_name="ZonePolicy",
-                metadata={
+            if decision == PolicyDecision.DENY:
+                result = PolicyResult(
+                    decision=PolicyDecision.DENY,
+                    reason=(
+                        f"操作被拒绝: 不允许在{_zone_label(zone)}对该路径执行"
+                        f"{_op_label(op_type)}操作 (路径: {path})"
+                    ),
+                    policy_name="ZonePolicy",
+                    metadata={
+                        "zone": zone.value,
+                        "op_type": op_type.value,
+                    },
+                )
+                self._on_deny(tool_name, params, result)
+                return result
+
+            if decision == PolicyDecision.CONFIRM:
+                if self._config.confirmation.auto_confirm:
+                    continue
+                result = PolicyResult(
+                    decision=PolicyDecision.CONFIRM,
+                    reason=(
+                        f"此操作需要您的确认: 在{_zone_label(zone)}执行"
+                        f"{_op_label(op_type)} (路径: {path})"
+                    ),
+                    policy_name="ZonePolicy",
+                    metadata={
+                        "zone": zone.value,
+                        "op_type": op_type.value,
+                        "needs_checkpoint": needs_checkpoint,
+                    },
+                )
+                self._audit(tool_name, params, result)
+                return result
+
+            # ALLOW — still note if checkpoint needed
+            if needs_checkpoint:
+                checkpoint_metadata = {
+                    "needs_checkpoint": True,
                     "zone": zone.value,
                     "op_type": op_type.value,
-                },
-            )
-            self._on_deny(tool_name, params, result)
-            return result
-
-        if decision == PolicyDecision.CONFIRM:
-            if self._config.confirmation.auto_confirm:
-                return None
-            result = PolicyResult(
-                decision=PolicyDecision.CONFIRM,
-                reason=(
-                    f"此操作需要您的确认: 在{_zone_label(zone)}执行{_op_label(op_type)} (路径: {path})"
-                ),
-                policy_name="ZonePolicy",
-                metadata={
-                    "zone": zone.value,
-                    "op_type": op_type.value,
-                    "needs_checkpoint": needs_checkpoint,
-                },
-            )
-            self._audit(tool_name, params, result)
-            return result
-
-        # ALLOW — still note if checkpoint needed
-        if needs_checkpoint:
+                }
+        if checkpoint_metadata:
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
                 reason="",
-                metadata={"needs_checkpoint": True, "zone": zone.value, "op_type": op_type.value},
+                metadata=checkpoint_metadata,
             )
         return None
 
@@ -1199,7 +1255,7 @@ class PolicyEngine:
         if not self._config.self_protection.enabled:
             return None
 
-        write_tools = {"write_file", "edit_file", "delete_file"}
+        write_tools = {"write_file", "edit_file", "move_file", "delete_file"}
         if tool_name in ("run_shell", "run_powershell"):
             command = str(params.get("command", ""))
             risk = self.classify_shell_risk(command)
@@ -1215,15 +1271,29 @@ class PolicyEngine:
                         self._on_deny(tool_name, params, result)
                         return result
         elif tool_name in write_tools:
-            path = params.get("path", "") or params.get("file_path", "")
-            if path and tool_name == "delete_file":
+            paths: list[str] = []
+            if tool_name == "move_file":
+                src = (
+                    params.get("src")
+                    or params.get("source")
+                    or params.get("source_path")
+                    or params.get("from")
+                    or ""
+                )
+                if src:
+                    paths.append(src)
+            elif tool_name == "delete_file":
+                path = params.get("path", "") or params.get("file_path", "")
+                if path:
+                    paths.append(path)
+            for path in paths:
                 norm_path = _normalise(path)
                 for pdir in self._config.self_protection.protected_dirs:
                     norm_dir = _normalise(pdir)
                     if norm_path == norm_dir or norm_path.startswith(norm_dir.rstrip("/") + "/"):
                         result = PolicyResult(
                             decision=PolicyDecision.DENY,
-                            reason=f"自保护: 禁止删除 Agent 关键目录 '{pdir}' 下的文件",
+                            reason=f"自保护: 禁止移动/删除 Agent 关键目录 '{pdir}' 下的文件",
                             policy_name="SelfProtection",
                         )
                         self._on_deny(tool_name, params, result)

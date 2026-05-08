@@ -9,6 +9,7 @@ File System 工具定义
 - list_directory: 列出目录
 - grep: 内容搜索
 - glob: 文件名模式搜索
+- move_file: 移动或重命名文件/目录
 - delete_file: 删除文件
 
 Description 质量对齐 Cursor Agent Mode — 所有行为约束前置到 description。
@@ -26,6 +27,7 @@ FILESYSTEM_TOOLS = [
             "IMPORTANT — Use specialized tools instead of shell equivalents when available:\n"
             "- read_file instead of cat/head/tail\n"
             "- write_file/edit_file instead of sed/awk/echo >\n"
+            "- move_file instead of mv/move/ren for moving or renaming files\n"
             "- grep/glob instead of find/grep/rg\n"
             "- web_fetch instead of curl (for reading webpage content)\n\n"
             "Windows routing:\n"
@@ -406,6 +408,49 @@ FILESYSTEM_TOOLS = [
                 },
             },
             "required": ["pattern"],
+        },
+    },
+    {
+        "name": "move_file",
+        "category": "File System",
+        "description": (
+            "Move or rename a file or directory, then verify the source disappeared "
+            "and the destination exists.\n\n"
+            "Use this when the user asks to move, rename, archive, or relocate a file. "
+            "Prefer this over run_shell('mv ...') / run_shell('move ...') so paths and "
+            "results are verified consistently.\n\n"
+            "IMPORTANT:\n"
+            "- `src` is the existing source file or directory path\n"
+            "- `dst` is the destination path; if it is an existing directory, the source "
+            "keeps its current name inside that directory\n"
+            "- To rename while moving, pass the full final destination filename in `dst`\n"
+            "- The tool rejects paths containing invalid null characters instead of "
+            "silently truncating them"
+        ),
+        "detail": """移动或重命名文件/目录。
+
+**适用场景**:
+- 将文件移动到另一个目录
+- 移动时顺便重命名
+- 归档生成的文件
+
+**注意事项**:
+- 自动创建目标父目录
+- 执行后会验证源路径已消失、目标路径已存在
+- 如果目标是已存在目录，会把源放入该目录并保留原文件名""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "src": {
+                    "type": "string",
+                    "description": "源文件或目录路径",
+                },
+                "dst": {
+                    "type": "string",
+                    "description": "目标路径；移动并重命名时传完整的新文件路径",
+                },
+            },
+            "required": ["src", "dst"],
         },
     },
     {

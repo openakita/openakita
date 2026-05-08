@@ -9,6 +9,7 @@
 - list_directory: 列出目录
 - grep: 内容搜索
 - glob: 文件名模式搜索
+- move_file: 移动或重命名文件/目录
 - delete_file: 删除文件
 """
 
@@ -72,6 +73,7 @@ class FilesystemHandler:
         "list_directory",
         "grep",
         "glob",
+        "move_file",
         "delete_file",
     ]
 
@@ -137,6 +139,8 @@ class FilesystemHandler:
             return await self._grep(params)
         elif tool_name == "glob":
             return await self._glob(params)
+        elif tool_name == "move_file":
+            return await self._move_file(params)
         elif tool_name == "delete_file":
             return await self._delete_file(params)
         else:
@@ -814,6 +818,54 @@ class FilesystemHandler:
             output += f"\n\n[OUTPUT_TRUNCATED] 共 {total} 个文件，已显示前 {max_show} 个。"
 
         return output
+
+    async def _move_file(self, params: dict) -> str:
+        """移动或重命名文件/目录，并验证磁盘状态。"""
+        src = (
+            params.get("src")
+            or params.get("source")
+            or params.get("source_path")
+            or params.get("from")
+            or ""
+        )
+        dst = (
+            params.get("dst")
+            or params.get("destination")
+            or params.get("target_path")
+            or params.get("to")
+            or ""
+        )
+        if not src or not dst:
+            return "❌ move_file 缺少必要参数 'src' 和 'dst'。"
+        if "\x00" in src or "\x00" in dst:
+            return "❌ move_file 路径包含无效空字符，请去掉不可见字符后重试。"
+
+        policy = self._get_fix_policy()
+        if policy:
+            write_roots = policy.get("write_roots") or []
+            for raw in (src, dst):
+                target = self._resolve_to_abs(raw)
+                if not self._is_under_any_root(target, write_roots):
+                    msg = f"❌ 自检自动修复护栏：禁止移动该路径。\n目标: {target}"
+                    logger.warning(msg)
+                    return msg
+
+        src_path = self.agent.file_tool._resolve_path(src)
+        dst_path = self.agent.file_tool._resolve_path(dst)
+
+        if not src_path.exists():
+            return f"❌ 源路径不存在: {src}"
+
+        final_dst_path = dst_path / src_path.name if dst_path.exists() and dst_path.is_dir() else dst_path
+        kind = "目录" if src_path.is_dir() else "文件"
+        success = await self.agent.file_tool.move(src, dst)
+        if not success:
+            return f"❌ 移动失败: {src} -> {dst}"
+        if src_path.exists():
+            return f"⚠️ 移动操作返回成功但源路径仍存在: {src}"
+        if not final_dst_path.exists():
+            return f"⚠️ 移动操作返回成功但目标路径不存在: {final_dst_path}"
+        return f"{kind}已移动: {src} -> {final_dst_path}"
 
     async def _delete_file(self, params: dict) -> str:
         """删除文件或空目录"""

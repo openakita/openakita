@@ -48,6 +48,7 @@ CATALOG_EXCLUDED_TOOLS = tuple(
             "write_file",
             "edit_file",
             "list_directory",
+            "move_file",
             "ask_user",
             "glob",
             "web_search",

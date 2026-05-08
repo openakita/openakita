@@ -183,6 +183,7 @@ CATEGORY_PREFIXES = {
         "list_directory",
         "glob",
         "grep",
+        "move_file",
         "delete_file",
     ),
     "Text Search": ("semantic_search", "read_lints"),

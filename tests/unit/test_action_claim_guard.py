@@ -98,6 +98,30 @@ def test_unbacked_send_claim_with_unrelated_tools_is_warned():
     assert "发送" in guarded
 
 
+def test_unbacked_move_claim_with_read_only_tool_is_warned():
+    """#435: 只读取文件不能背书“已移动成功”。"""
+    text = "文件已移动成功。"
+
+    guarded = _guard_unbacked_action_claim(text, ["read_file"])
+
+    assert text in guarded
+    assert "一致性提示" in guarded
+    assert "移动" in guarded
+
+
+def test_successful_move_file_backs_move_claim():
+    text = "文件已移动成功。"
+
+    assert _guard_unbacked_action_claim(text, ["move_file"]) == text
+
+
+def test_successful_write_delete_pair_backs_move_claim():
+    """兼容旧执行方式：读写目标后删除源文件，也能构成移动凭证。"""
+    text = "文件已移动成功。"
+
+    assert _guard_unbacked_action_claim(text, ["write_file", "delete_file"]) == text
+
+
 def test_action_claim_without_action_verb_is_passed_through():
     """文本里没有任何 V→T 映射动词 → 即使有 prefix 也不报警（避免误拦）。"""
     text = "已帮你分析完毕，结论如上。"
@@ -122,3 +146,4 @@ def test_extract_unbacked_verbs_only_after_prefix():
     """『需要修改』不算 claim，『已修改』才算。"""
     assert _extract_unbacked_verbs("我会修改这个文件", set()) == []
     assert _extract_unbacked_verbs("已修改这个文件", set()) == ["修改"]
+    assert _extract_unbacked_verbs("已移动这个文件", {"read_file"}) == ["移动"]
