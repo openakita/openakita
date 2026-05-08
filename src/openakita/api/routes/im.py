@@ -54,13 +54,21 @@ async def list_channels(request: Request):
     if gateway is None:
         return JSONResponse(content={"channels": channels})
 
-    # Build bot_id -> bot_name lookup from settings
+    # Build lookup tables from persisted bot/profile config so the viewer
+    # shows the same agent binding that MessageGateway applies at runtime.
+    from openakita.agents.profile import get_profile_store
     from openakita.config import settings
 
     bot_name_map: dict[str, str] = {}
+    profile_name_map: dict[str, str] = {"default": "Default Agent"}
     for b in getattr(settings, "im_bots", []):
         if isinstance(b, dict) and b.get("id") and b.get("name"):
             bot_name_map[b["id"]] = b["name"]
+    try:
+        profile_store = get_profile_store()
+        profile_name_map.update({p.id: p.name for p in profile_store.list_all()})
+    except Exception as e:
+        logger.debug("[IM API] Failed to load agent profile names: %s", e)
 
     # _adapters is a dict {name: adapter} in MessageGateway
     adapters_dict = getattr(gateway, "_adapters", None) or {}
@@ -107,6 +115,8 @@ async def list_channels(request: Request):
             or bot_name_map.get(name)
             or name
         )
+        agent_profile_id = getattr(adapter, "agent_profile_id", None) or "default"
+        agent_profile_name = profile_name_map.get(agent_profile_id, agent_profile_id)
         entry: dict[str, Any] = {
             "channel": name,
             "channel_type": getattr(adapter, "channel_type", name.split(":")[0]),
@@ -114,6 +124,8 @@ async def list_channels(request: Request):
             "status": status,
             "sessionCount": session_count,
             "lastActive": last_active,
+            "agentProfileId": agent_profile_id,
+            "agentProfileName": agent_profile_name,
         }
         if status == "offline":
             reasons = getattr(gateway, "_failed_adapter_reasons", {})

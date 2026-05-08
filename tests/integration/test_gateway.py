@@ -1,5 +1,6 @@
 """L3 Integration Tests: MessageGateway message routing and processing."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +12,6 @@ from openakita.channels.types import (
     MessageContent,
     MessageType,
     OutgoingMessage,
-    UnifiedMessage,
 )
 from tests.fixtures.factories import create_channel_message, create_test_session
 
@@ -142,4 +142,38 @@ class TestMessageGatewayBroadcast:
 
         assert result == {"wechat:test": 1}
         adapter.send_text.assert_awaited_once()
+
+
+class TestMessageGatewayAgentBinding:
+    def test_applies_adapter_bound_agent_to_new_session(self):
+        session = create_test_session(channel="feishu:writer", chat_id="chat-1", user_id="user-1")
+        session_manager = MagicMock()
+        session_manager.mark_dirty = MagicMock()
+
+        gateway = MessageGateway(session_manager=session_manager)
+        gateway._adapters["feishu:writer"] = SimpleNamespace(agent_profile_id="writer-agent")
+
+        gateway._apply_bot_agent_profile(session, "feishu:writer")
+
+        assert session.get_metadata("_bot_default_agent") == "writer-agent"
+        assert session.context.agent_profile_id == "writer-agent"
+        session_manager.mark_dirty.assert_called_once()
+
+    def test_preserves_manual_agent_switch_when_applying_bot_default(self):
+        session = create_test_session(channel="feishu:writer", chat_id="chat-1", user_id="user-1")
+        session.context.agent_profile_id = "reviewer-agent"
+        session.context.agent_switch_history.append(
+            {"from": "writer-agent", "to": "reviewer-agent", "at": "2026-05-08T00:00:00"}
+        )
+        session_manager = MagicMock()
+        session_manager.mark_dirty = MagicMock()
+
+        gateway = MessageGateway(session_manager=session_manager)
+        gateway._adapters["feishu:writer"] = SimpleNamespace(agent_profile_id="writer-agent")
+
+        gateway._apply_bot_agent_profile(session, "feishu:writer")
+
+        assert session.get_metadata("_bot_default_agent") == "writer-agent"
+        assert session.context.agent_profile_id == "reviewer-agent"
+        session_manager.mark_dirty.assert_not_called()
 

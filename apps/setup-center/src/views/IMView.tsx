@@ -45,6 +45,8 @@ type IMChannel = {
   status: "online" | "offline";
   sessionCount: number;
   lastActive: string | null;
+  agentProfileId?: string;
+  agentProfileName?: string;
   error?: string;
 };
 
@@ -726,7 +728,14 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
                     </TooltipProvider>
                   ) : <DotGray />}
                   {(IM_LOGO_MAP[(ch.channel_type || "").toLowerCase()] || IM_LOGO_MAP[(ch.channel || "").toLowerCase()])?.({ size: 14 })}
-                  <span className="truncate">{getChannelDisplayName(ch)}</span>
+                  <span className="min-w-0 text-left">
+                    <span className="block truncate">{getChannelDisplayName(ch)}</span>
+                    <span className="block truncate text-[10px] font-normal opacity-70" title={ch.agentProfileId}>
+                      {t("im.botAgent")}: {ch.agentProfileId === "default"
+                        ? t("im.botAgentDefault")
+                        : (ch.agentProfileName || ch.agentProfileId || t("im.botAgentDefault"))}
+                    </span>
+                  </span>
                 </span>
                 <Badge variant="secondary" className="ml-1.5 h-5 min-w-[20px] justify-center text-[11px] px-1.5">
                   {ch.sessionCount}
