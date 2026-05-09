@@ -78,9 +78,29 @@ _EXECUTE_RE = re.compile(
 _GENERIC_DO_RE = re.compile(r"(执行|运行|跑一下|跑下|run\b|execute\b)", re.IGNORECASE)
 
 # Shell/命令上下文词；用于判定通用执行动词是否真的指向 shell 命令。
+#
+# 注意：旧实现把裸 "脚本/script" 当 shell 上下文，会把"抖音宣传脚本/视频脚本/
+# 直播脚本/小红书文案脚本"等内容创作语境下的"脚本"误判为 shell。这里要求
+# "脚本/script" 必须紧贴 shell/bash/powershell/python/.sh/.ps1/.bat/.py 等真正
+# 的运行时关键词，避免被内容类"脚本"碰瓷。
 _SHELL_CONTEXT_RE = re.compile(
-    r"(shell|bash|powershell|pwsh|cmd|命令行|脚本|script|"
+    r"(shell|bash|powershell|pwsh|cmd|命令行|"
+    r"(?:shell|bash|powershell|python|node|node\.js|cmd|批处理|sh)\s*脚本|"
+    r"脚本\s*(?:文件|路径|name|执行|运行|跑)|"
+    r"\.(?:sh|ps1|bat|cmd|py|js|ts|rb|pl|zsh|fish)\b|"
+    r"#!\s*/(?:bin|usr)|"
     r"命令\s|这条命令|这段命令|这个命令|run_shell|run_powershell)",
+    re.IGNORECASE,
+)
+
+# 委派 / 多 Agent 协作上下文：命中即认为"执行"指的是子 Agent 任务的执行，
+# 不是 shell 调用，禁止升级到 HIGH-risk shell。
+# 例：「让 video-planner 写 30 秒脚本，要并发执行」「分发任务给 marketing-planner」
+_DELEGATION_CONTEXT_RE = re.compile(
+    r"(委派|委托|委托给|分发(?:任务|子任务|工作)|交给|派给|让(?:他|她|他们|"
+    r"[a-z0-9_\-]+\s*(?:agent|planner|writer|reviewer|support))|"
+    r"并行(?:执行|跑|做|委托|委派|分发)|并发(?:执行|跑|做|委托|委派|分发)|"
+    r"delegate|delegation|sub[-_]?agent|spawn\s+agent|fan[-_]?out|in\s+parallel)",
     re.IGNORECASE,
 )
 
@@ -645,8 +665,14 @@ class RiskIntentClassifier:
         # 高敏感 shell 动词无条件 EXECUTE
         if _EXECUTE_RE.search(text):
             return OperationKind.EXECUTE
-        # 通用「执行/运行」**仅当**伴随明确 shell 上下文时才升 EXECUTE
-        if _GENERIC_DO_RE.search(text) and _SHELL_CONTEXT_RE.search(text):
+        # 通用「执行/运行」**仅当**伴随明确 shell 上下文，且 *不在* 多 Agent 委派
+        # 语境时才升 EXECUTE。委派语境里的"执行"几乎一定是子 Agent 任务执行，
+        # 不是 shell。
+        if (
+            _GENERIC_DO_RE.search(text)
+            and _SHELL_CONTEXT_RE.search(text)
+            and not _DELEGATION_CONTEXT_RE.search(text)
+        ):
             return OperationKind.EXECUTE
         if re.search(r"(删除|删掉|移除|delete|remove|drop|truncate)", lowered, re.IGNORECASE):
             return OperationKind.DELETE

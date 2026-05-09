@@ -1204,6 +1204,7 @@ class Brain:
         tools: list[ToolParam] | None = None,
         max_tokens: int | None = None,
         thinking_depth: str | None = None,
+        enable_thinking: bool | None = None,
     ) -> Response:
         """
         发送思考请求到 LLM（通过 LLMClient）
@@ -1215,6 +1216,8 @@ class Brain:
             tools: 可用工具列表
             max_tokens: 最大输出 token（不传则使用 self.max_tokens）
             thinking_depth: 思考深度 ('low'/'medium'/'high'/'max'/None)
+            enable_thinking: 是否启用思考；None=沿用全局开关；True/False=本次显式覆盖
+                （辅助任务如记忆抽取/总结请显式传 False，避免 thinking 浪费）
 
         Returns:
             Response 对象
@@ -1243,13 +1246,18 @@ class Brain:
             sys_prompt, llm_messages, llm_tools, caller="_chat_with_llm_client"
         )
 
+        # 思考开关：调用方可显式覆盖；否则沿用全局
+        _thinking_flag = (
+            self.is_thinking_enabled() if enable_thinking is None else bool(enable_thinking)
+        )
+
         # 调用 LLMClient
         response = await self._llm_client.chat(
             messages=llm_messages,
             system=sys_prompt,
             tools=llm_tools,
             max_tokens=max_tokens or self.max_tokens,
-            enable_thinking=self.is_thinking_enabled(),
+            enable_thinking=_thinking_flag,
             thinking_depth=thinking_depth,
         )
 

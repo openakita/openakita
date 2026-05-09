@@ -328,7 +328,9 @@ class TaskExecutor:
 
 只回复 NO_ACTION 或 NEEDS_ACTION，不要有其他内容。"""
 
-                response = await brain.think(check_prompt)
+                response = await brain.think(
+                    check_prompt, enable_thinking=False, max_tokens=16
+                )
                 result = response.content.strip().upper()
 
                 needs_action = "NEEDS_ACTION" in result

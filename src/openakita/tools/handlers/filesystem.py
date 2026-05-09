@@ -557,13 +557,30 @@ class FilesystemHandler:
         from ...core.im_context import get_im_session
 
         if not get_im_session():
-            result += (
-                "\n\n💡 当前为 Desktop 模式，用户无法直接访问服务器文件。"
-                "请将文件的关键内容直接包含在回复中，"
-                "或调用 deliver_artifacts(artifacts=[{type: 'file', path: '"
-                + str(path)
-                + "'}]) 使文件在前端可下载。"
-            )
+            # plan / ask 模式下 deliver_artifacts 是被 mode-guard 拦截的工具，
+            # 这里再主动诱导只会让模型撞墙报"该工具在当前模式不可用"，
+            # 用户体验和审计日志都很差。改成模式自适应：仅在 agent 模式
+            # 才提示 deliver_artifacts，其它模式只引导内联展示文件内容。
+            try:
+                _exec_mode = getattr(
+                    getattr(self.agent, "tool_executor", None), "_current_mode", "agent"
+                )
+            except Exception:
+                _exec_mode = "agent"
+            if _exec_mode == "agent":
+                result += (
+                    "\n\n💡 当前为 Desktop 模式，用户无法直接访问服务器文件。"
+                    "请将文件的关键内容直接包含在回复中，"
+                    "或调用 deliver_artifacts(artifacts=[{type: 'file', path: '"
+                    + str(path)
+                    + "'}]) 使文件在前端可下载。"
+                )
+            else:
+                result += (
+                    "\n\n💡 当前为 Desktop 模式且非 agent 执行模式，"
+                    "请将文件的关键内容直接包含在回复中（如方案大纲/checklist），"
+                    "供用户审阅。本模式下不提供文件下载工具。"
+                )
         return result
 
     # read_file 默认最大行数。运行时可通过 READ_FILE_DEFAULT_LIMIT 调整。

@@ -250,7 +250,9 @@ class DailyConsolidator:
 - 每条记忆精简为一句话"""
 
             response = await self.brain.think(
-                prompt, system="你是内容精简专家。输出精简后的 Markdown 内容。"
+                prompt,
+                system="你是内容精简专家。输出精简后的 Markdown 内容。",
+                enable_thinking=False,
             )
 
             return response.content.strip()

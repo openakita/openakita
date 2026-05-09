@@ -76,6 +76,18 @@ def _tool_rate_limit_key(tool_name: str, tool_args: Any) -> str:
     return f"{tool_name}:{hashlib.md5(param_str.encode()).hexdigest()}"
 
 
+# 同名工具在单轮任务内的硬上限（防止 LLM 把记忆/搜索工具用成循环）。
+# 这里只覆盖"写多了会污染或浪费 token"的工具；read-only 工具仍由
+# _MAX_SAME_TOOL_PER_TASK（同参数）+ readonly_stagnation_limit 控制。
+# 注意：这个限制是按 *同名工具* 计数，无论参数是否不同——
+# 单轮内 9 次 add_memory 即便每次内容不同也几乎肯定是 LLM 失控。
+_PER_TOOL_NAME_TASK_LIMITS: dict[str, int] = {
+    "add_memory": 5,
+    "consolidate_memories": 1,
+    "memory_delete_by_query": 2,
+}
+
+
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
 from .tool_executor import ToolExecutor
 
@@ -612,6 +624,43 @@ def _successful_tool_names(
     return {name for name in executed if name not in seen or name in succeeded}
 
 
+# 历史回溯标记：当声明动词 *附近* 出现这些词，说明 LLM 是在汇总过去动作，
+# 不是在本轮做出新声明，一致性守卫应放行。
+# - 时间戳：`[17:30]` `[2026-05-09 17:30]`
+# - 中文回溯副词：之前 / 刚才 / 历史 / 上文 / 上次 / 早些 / 先前 / 此前
+# - 已在……：已在 17:30 / 已经在历史 / 之前已 ...
+_RECAP_NEAR_RE = __import__("re").compile(
+    r"(?:"
+    r"\[\d{1,2}:\d{2}\]"
+    r"|\[\d{4}-\d{2}-\d{2}[^\]]*\]"
+    r"|(?:之前|刚才|此前|先前|上次|上文|历史(?:记录|中|上)|早些时(?:候)?|早前|前面|"
+    r"过去|本轮之前|前几轮|最近(?:的)?(?:对话|会话|任务)|根据(?:对话|历史)|"
+    r"回顾|总结|复述|汇总|盘点)"
+    r")"
+)
+
+
+def _is_recap_context(text: str, verb_or_tool: str) -> bool:
+    """Return True if the verb/tool mention sits inside a historical-recap window.
+
+    Heuristic: scan a ±48-character window around each occurrence of the verb /
+    tool name. If any window contains a timestamp or recap adverb, treat the
+    whole claim as a historical summary instead of a fresh action.
+    """
+    import re as _re
+
+    if not text or not verb_or_tool:
+        return False
+    half = 48
+    for m in _re.finditer(_re.escape(verb_or_tool), text, _re.IGNORECASE):
+        start = max(0, m.start() - half)
+        end = min(len(text), m.end() + half)
+        window = text[start:end]
+        if _RECAP_NEAR_RE.search(window):
+            return True
+    return False
+
+
 def _extract_unbacked_verbs(
     text: str,
     successful_tools: set[str],
@@ -639,6 +688,10 @@ def _extract_unbacked_verbs(
             continue
         if any(any(frag in t for frag in fragments) for t in successful_tools):
             continue
+        # 历史回溯放行：模型在复述/汇总以前真正发生过的工具调用时
+        # 不应被当成幻觉。
+        if _is_recap_context(text, tool_name):
+            continue
         unbacked.append(f"{tool_name}调用")
 
     for verb, fragments in _VERB_TO_TOOL_FRAGMENTS.items():
@@ -648,6 +701,8 @@ def _extract_unbacked_verbs(
         if not verb_pat.search(text):
             continue
         if any(any(frag in t for frag in fragments) for t in successful_tools):
+            continue
+        if _is_recap_context(text, verb):
             continue
         unbacked.append(verb)
     return unbacked
@@ -674,6 +729,10 @@ def _guard_unbacked_action_claim(
     successful_tools = _successful_tool_names(executed_tool_names, tool_results)
 
     if not executed_tool_names:
+        # 整段回复是历史汇总（含时间戳/回溯副词且无新动作迹象）→ 守卫不应介入，
+        # 否则用户问"复述一下你做了什么"会被替换成"没有凭证"。
+        if _RECAP_NEAR_RE.search(text):
+            return text
         memory_markers = ("记住", "记忆")
         if any(marker in text for marker in memory_markers):
             return (
@@ -1599,6 +1658,9 @@ class ReasoningEngine:
         tools_executed_in_task = False
         _supervisor_intervened = False
         _tool_call_counter: dict[str, int] = {}
+        # 按 *同名工具* 计数（不区分参数），用于阻止单轮内同工具被 LLM
+        # 调用过多次的失控场景（典型：add_memory 在一轮里写 9 条）。
+        _tool_name_counter: dict[str, int] = {}
         # same_tool_call_limit=0（默认）= 不限同工具同参数重复，调用处需先判 > 0
         _MAX_SAME_TOOL_PER_TASK = max(0, int(getattr(settings, "same_tool_call_limit", 0) or 0))
         # 0=不限/禁用对应检测；LoopBudgetGuard 内部已处理 0 短路
@@ -2449,7 +2511,28 @@ class ReasoningEngine:
                     _tc_args = tc.get("input", tc.get("arguments", {}))
                     _tc_key = _tool_rate_limit_key(_tc_name, _tc_args)
                     _tool_call_counter[_tc_key] = _tool_call_counter.get(_tc_key, 0) + 1
+                    _tool_name_counter[_tc_name] = _tool_name_counter.get(_tc_name, 0) + 1
+                    _per_name_limit = _PER_TOOL_NAME_TASK_LIMITS.get(_tc_name, 0)
                     if (
+                        _per_name_limit > 0
+                        and _tool_name_counter[_tc_name] > _per_name_limit
+                    ):
+                        logger.warning(
+                            f"[RateLimit] Tool '{_tc_name}' called "
+                            f"{_tool_name_counter[_tc_name]} times in this task "
+                            f"(per-name limit={_per_name_limit}), skipping execution"
+                        )
+                        _rate_limited_by_id[tc.get("id", "")] = {
+                            "type": "tool_result",
+                            "tool_use_id": tc.get("id", ""),
+                            "content": (
+                                f"[系统] 工具 {_tc_name} 在本任务已调用 "
+                                f"{_tool_name_counter[_tc_name] - 1} 次，"
+                                f"已达单轮上限 {_per_name_limit}。"
+                                f"请把剩余信息合并到现有调用，或推迟到下一轮。"
+                            ),
+                        }
+                    elif (
                         _MAX_SAME_TOOL_PER_TASK > 0
                         and _tool_call_counter[_tc_key] > _MAX_SAME_TOOL_PER_TASK
                     ):
@@ -3311,6 +3394,7 @@ class ReasoningEngine:
             tools_executed_in_task = False
             _supervisor_intervened = False
             _tool_call_counter: dict[str, int] = {}
+            _tool_name_counter: dict[str, int] = {}
             # same_tool_call_limit=0（默认）= 不限同工具同参数重复，调用处需先判 > 0
             _MAX_SAME_TOOL_PER_TASK = max(0, int(getattr(settings, "same_tool_call_limit", 0) or 0))
             # 0=不限/禁用对应检测；LoopBudgetGuard 内部已处理 0 短路
@@ -4400,7 +4484,25 @@ class ReasoningEngine:
                         # arguments is valid progress, especially for todo step updates.
                         _tool_key = _tool_rate_limit_key(tool_name, tool_args)
                         _tool_call_counter[_tool_key] = _tool_call_counter.get(_tool_key, 0) + 1
+                        _tool_name_counter[tool_name] = _tool_name_counter.get(tool_name, 0) + 1
+                        _per_name_limit = _PER_TOOL_NAME_TASK_LIMITS.get(tool_name, 0)
+                        _rl_msg = ""
                         if (
+                            _per_name_limit > 0
+                            and _tool_name_counter[tool_name] > _per_name_limit
+                        ):
+                            logger.warning(
+                                f"[RateLimit] Tool '{tool_name}' called "
+                                f"{_tool_name_counter[tool_name]} times in this task "
+                                f"(per-name limit={_per_name_limit}), skipping"
+                            )
+                            _rl_msg = (
+                                f"[系统] 工具 {tool_name} 在本任务已调用 "
+                                f"{_tool_name_counter[tool_name] - 1} 次，"
+                                f"已达单轮上限 {_per_name_limit}。"
+                                f"请把剩余信息合并到现有调用，或推迟到下一轮。"
+                            )
+                        elif (
                             _MAX_SAME_TOOL_PER_TASK > 0
                             and _tool_call_counter[_tool_key] > _MAX_SAME_TOOL_PER_TASK
                         ):
@@ -4414,6 +4516,7 @@ class ReasoningEngine:
                                 f"{_tool_call_counter[_tool_key] - 1} 次，已达上限。"
                                 f"请整合操作或继续下一步。"
                             )
+                        if _rl_msg:
                             yield {
                                 "type": "tool_call_start",
                                 "tool": tool_name,

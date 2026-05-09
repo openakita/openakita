@@ -26,6 +26,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -353,6 +354,23 @@ class MemoryManager:
             return "session", current
         return "global", ""
 
+    # 任务流水账识别：包含这些动词或客观操作描述的提取项几乎一定是
+    # 一次性任务记录（删除 / 创建 / 上传 / 编辑 / 调用工具 / 帮我做 ...），
+    # 不应被自动升级为 PERMANENT，否则 USER.md 会被任务日志污染（P1-7）。
+    _TASK_MARKER_RE: re.Pattern[str] | None = None
+
+    @classmethod
+    def _task_marker_re_for_extraction(cls) -> re.Pattern[str]:
+        if cls._TASK_MARKER_RE is None:
+            cls._TASK_MARKER_RE = re.compile(
+                r"(?:用户(?:希望|想|想要|要求|让|请|让我|让你|交给|安排)|"
+                r"任务|操作|执行|完成|交付|生成|创建|删除|清理|清掉|搜索|查询|"
+                r"整理|发送|上传|下载|导出|导入|配置|安装|卸载|启动|关闭|访问|"
+                r"截图|录制|提交|推送|拉取|更新|修复|测试|部署|帮[我你他她]|"
+                r"call_mcp_tool|run_shell|run_powershell|write_file|edit_file)"
+            )
+        return cls._TASK_MARKER_RE
+
     def query_visible_semantic(self, **kwargs) -> list[SemanticMemory]:
         """Query memories visible to the current turn without leaking other sessions."""
         limit = int(kwargs.pop("limit", 50) or 50)
@@ -586,7 +604,24 @@ class MemoryManager:
         importance = item.get("importance", 0.5)
         content = item.get("content", "").strip()
 
-        if importance >= 0.85 or mem_type == MemoryType.RULE:
+        # PERMANENT 是最贵的层（不会被衰减、永远进 USER.md / MEMORY.md），
+        # 因此只允许 *用户身份层* 的记忆走到这里。否则一次任务记录就被永久化，
+        # USER.md 会被「[experience] 用户希望删除工作区 py 文件」这种一次性
+        # 流水账填满（P1-7）。
+        _persona_types = {
+            MemoryType.PERSONA_TRAIT,
+            MemoryType.PREFERENCE,
+            MemoryType.RULE,
+        }
+        # 内容含有任务/操作动词 → 几乎一定是任务流水账，不是身份层信息。
+        _task_marker_re = self._task_marker_re_for_extraction()
+        _looks_like_task = bool(_task_marker_re.search(content)) if content else False
+
+        if (
+            importance >= 0.9
+            and mem_type in _persona_types
+            and not _looks_like_task
+        ):
             priority = MemoryPriority.PERMANENT
         elif importance >= 0.6:
             priority = MemoryPriority.LONG_TERM
@@ -702,6 +737,8 @@ class MemoryManager:
                 f"记忆B: {existing_content}\n\n"
                 f"只回答 YES 或 NO。",
                 system="你是记忆去重判断器。如果两条记忆表达的核心信息相同（即使措辞不同），回答YES。否则回答NO。只输出一个词。",
+                enable_thinking=False,
+                max_tokens=16,
             )
             text = (getattr(resp, "content", None) or str(resp)).strip().upper()
             return "YES" in text and "NO" not in text
