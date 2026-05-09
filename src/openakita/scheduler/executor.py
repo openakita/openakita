@@ -698,9 +698,19 @@ class TaskExecutor:
         if hasattr(agent, "execute_task_from_message"):
             # Scheduler owns start/end delivery. Prevent Agent's generic
             # desktop completion toast from producing a second notification.
-            with contextlib.suppress(Exception):
+            # 必须用 try/finally 包住整个执行段：旧实现只在调用前 set，
+            # 一旦 set 自身或 execute_task_from_message 抛异常，
+            # 标志状态会泄漏到下一次复用同一 agent 实例的调用，
+            # 边缘情况下还可能漏 set，让 Agent 内部再弹一条桌面通知。
+            try:
                 agent._suppress_desktop_task_notification = True
-            result = await agent.execute_task_from_message(prompt)
+            except Exception as e:
+                logger.warning(f"Failed to set _suppress_desktop_task_notification on agent: {e}")
+            try:
+                result = await agent.execute_task_from_message(prompt)
+            finally:
+                with contextlib.suppress(Exception):
+                    agent._suppress_desktop_task_notification = False
             if isinstance(result, str):
                 return True, result
             if result.success:
