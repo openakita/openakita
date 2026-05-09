@@ -376,48 +376,114 @@ def _apply_previous_answer_replay_hint(message: str) -> str:
     return f"{_PREVIOUS_ANSWER_REPLAY_HINT}\n\n{message}"
 
 
+_EXTERNAL_TOOL_MARKERS: tuple[str, ...] = (
+    # ---- 直接的"调用工具/读写文件/上网"动作 ----
+    "读取",
+    "读文件",
+    "查看文件",
+    "搜索",
+    "联网",
+    "网页",
+    "下载",
+    "保存",
+    "写入",
+    "创建文件",
+    "生成文件",
+    "附件",
+    "运行",
+    "执行命令",
+    "调用工具",
+    # ---- "做一份/写一份/出一份" 类需要落盘交付的产出动词 ----
+    # 这些动词单独出现就强烈暗示"产出可交付物"——纯模型对话很少使用，
+    # 真正的纯写作场景（"写一首诗"/"翻译一句话"）走 _looks_like_explicit_no_tool_request
+    # 显式排除，或由调用方传 task_type=analysis 覆盖。
+    "做一份",
+    "做个",
+    "做一个",
+    "写一份",
+    "写个",
+    "写一个",
+    "出一份",
+    "出个",
+    "整理一份",
+    "整理出",
+    "汇总一份",
+    "汇总出",
+    "梳理一份",
+    "梳理出",
+    "输出一份",
+    "输出文件",
+    "生成一份",
+    "产出",
+    "交付",
+    # ---- 协作 / 研究 / 报告 类（团队语境的强信号） ----
+    "策划",
+    "排期",
+    "选题",
+    "调研",
+    "竞品",
+    "行业分析",
+    "市场分析",
+    "数据分析",
+    "趋势分析",
+    "可行性",
+    "立项",
+    "需求分析",
+    "评测",
+    "对比",
+    "宣传",
+    "运营",
+    "上线",
+    "发布",
+    # ---- 英文动词 ----
+    "api",
+    "mcp",
+    "read file",
+    "search",
+    "web",
+    "download",
+    "write file",
+    "save",
+    "run command",
+    "call tool",
+    "create a",
+    "make a plan",
+    "draft a",
+    "produce a",
+    "deliver a",
+    "generate a",
+    "write a report",
+    "research",
+    "analyze",
+    "compare",
+)
+
+
 def _looks_like_external_tool_request(message: str) -> bool:
     """Conservative guard for sub-agent delegation.
 
     Sub-agents skip the full IntentAnalyzer for latency.  Only explicit external
     action/evidence requests should force tools; otherwise the model can still
     call tools if useful, but plain writing/analysis is accepted as text.
+
+    History: the original 5/8 keyword list (read file / search / write file /
+    api / mcp …) missed common Chinese phrasings like "做一份 X 计划", "整理
+    一下", "出个报告", which let coordinator nodes silently bypass delegation
+    (root agents would write the deliverable themselves instead of dispatching
+    to subordinates). The expanded list here covers the high-frequency Chinese
+    "produce a deliverable" verbs without forcing tools on plain chit-chat.
+
+    NOTE: organization coordinator nodes are also forced via a separate
+    structural path (``Agent._prepare_session_context`` checks
+    ``_is_org_coordinator``); this keyword check is the secondary safety net
+    for non-org sub-agents.
     """
     text = (message or "").lower()
     if not text.strip():
         return False
     if _looks_like_explicit_no_tool_request(text):
         return False
-    return any(
-        marker in text
-        for marker in (
-            "读取",
-            "读文件",
-            "查看文件",
-            "搜索",
-            "联网",
-            "网页",
-            "下载",
-            "保存",
-            "写入",
-            "创建文件",
-            "生成文件",
-            "附件",
-            "运行",
-            "执行命令",
-            "调用工具",
-            "api",
-            "mcp",
-            "read file",
-            "search",
-            "web",
-            "download",
-            "write file",
-            "save",
-            "run command",
-            "call tool",
-        )
-    )
+    return any(marker in text for marker in _EXTERNAL_TOOL_MARKERS)
 
 
 # ---- 本地图片附件 → data URL（BUG-1 修复） ----
@@ -1263,6 +1329,13 @@ class Agent:
 
         # Sub-agent call flag: set by orchestrator._call_agent()
         self._is_sub_agent_call = False
+        # Organization coordinator flag: set by ``orgs.runtime._create_node_agent``
+        # iff the node has direct subordinates. Used by
+        # ``_prepare_session_context`` to keep the coordinator strictly in
+        # delegation mode (force_tool=True) and by orchestrator to pick the
+        # coordinator-mode prompt independent of the global
+        # ``coordinator_mode_enabled`` flag.
+        self._is_org_coordinator = False
         # Agent tool names to exclude when running as sub-agent
         self._agent_tool_names = frozenset(
             {"delegate_to_agent", "delegate_parallel", "create_agent", "spawn_agent"}
@@ -4567,6 +4640,22 @@ class Agent:
         if self._is_sub_agent_call:
             _profile_hints = self._derive_tool_hints_from_profile()
             _requires_tools = _looks_like_external_tool_request(message)
+
+            # Structural override for organization coordinator nodes: any node
+            # that has direct subordinates (set by ``runtime._create_node_agent``
+            # via ``_is_org_coordinator``) must use tools — its only legitimate
+            # outputs are ``org_delegate_task`` / ``org_wait_for_deliverable``
+            # / ``org_accept_deliverable`` / ``org_submit_deliverable``.
+            # Without this override the relaxed force-tool policy (5/8) lets
+            # the editor-in-chief / CEO / tech-lead style root nodes "do the
+            # work themselves" by calling write_file directly, bypassing the
+            # team. Keyword detection alone is not enough because users often
+            # phrase requests as "帮我做一份 X" without any external-tool
+            # marker, so we anchor the contract to the org topology.
+            _is_org_coord = bool(getattr(self, "_is_org_coordinator", False))
+            if _is_org_coord:
+                _requires_tools = True
+
             intent_result = IntentResult(
                 intent=IntentType.TASK,
                 confidence=1.0,
@@ -4581,7 +4670,9 @@ class Agent:
             )
             logger.info(
                 f"[Session:{session_id}] Sub-agent: skipping IntentAnalyzer, "
-                f"requires_tools={_requires_tools}, profile_tool_hints={_profile_hints}"
+                f"requires_tools={_requires_tools}, "
+                f"is_org_coordinator={_is_org_coord}, "
+                f"profile_tool_hints={_profile_hints}"
             )
         else:
             if not hasattr(self, "_intent_analyzer"):

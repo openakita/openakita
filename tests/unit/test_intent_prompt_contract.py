@@ -538,3 +538,66 @@ def test_sub_agent_external_delegation_still_requires_tools():
     message = "请读取 /tmp/report.md，并根据文件内容总结关键结论。"
 
     assert _looks_like_external_tool_request(message) is True
+
+
+# ---------------------------------------------------------------------------
+# Regression: 5/8 keyword-only delegation guard missed common Chinese
+# "produce-a-deliverable" verbs. Coordinator nodes (editor-in-chief, CEO,
+# tech-lead) ended up self-executing tasks like "做一份 X 计划" instead of
+# delegating because none of "做一份 / 出一份 / 整理 / 宣传 / 调研" matched.
+# These cases lock in the expanded marker list.
+# ---------------------------------------------------------------------------
+
+
+def test_make_a_plan_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("帮我做一份 OpenAkita 的宣传计划") is True
+
+
+def test_compile_a_report_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("整理一份本周项目进展汇总") is True
+
+
+def test_research_competitor_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("调研一下竞品的定价策略") is True
+
+
+def test_publish_announcement_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("写一份本月的产品发布通告") is True
+
+
+def test_english_produce_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("Please produce a marketing plan") is True
+
+
+def test_explicit_no_tool_keeps_pure_writing_path():
+    """Even with deliverable-style verbs, an explicit "no tools" rider should
+    still route the request to text-only sub-agent flow (preserves the
+    "扮演 X 写一段 200 字" use case introduced in 5/8)."""
+    message = (
+        "请扮演记者写一份 200 字的产品介绍。直接用纯文本回复，不要调用任何工具。"
+    )
+
+    assert _looks_like_external_tool_request(message) is False
+
+
+def test_org_coordinator_resolves_force_tool_policy_even_for_writing_request():
+    """Even when the message looks like pure writing ("做一份 X 宣传计划"),
+    if the agent is an org coordinator (has subordinates), the sub-agent
+    branch in ``Agent._prepare_session_context`` flips ``requires_tools`` and
+    ``evidence_required`` to True. This locks in that the resulting
+    IntentResult drives ForceToolCall (max_retries=1, evidence_required=True),
+    so the coordinator cannot silently give a final-answer text without
+    delegating.
+    """
+    coord_intent = IntentResult(
+        intent=IntentType.TASK,
+        task_type="action",
+        requires_tools=True,
+        evidence_required=True,
+        force_tool=True,
+    )
+
+    force_retries, evidence_required = _resolve_force_tool_policy(coord_intent)
+
+    assert force_retries == 1
+    assert evidence_required is True
