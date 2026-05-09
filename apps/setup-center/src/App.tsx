@@ -1040,6 +1040,23 @@ function MainApp() {
         // 宽限期内不计入
         if (visibilityGraceRef.current) return;
 
+        // ── 启动宽限：后端 dual-venv hack cold start 实测要 90~120 秒 ──
+        // 这段时间内 fetch /api/health 必然失败，但后端正在加载 122 个 skills、
+        // 初始化 Memory/IM 通道、启动 uvicorn。如果走老逻辑（5 次失败 = 25s 转 dead），
+        // UI 会在启动期闪一下"未启动"红条。
+        // 改成：直接问 Rust 后端是否仍在 boot grace（基于 PID started_at）。
+        // 是 → 不进入 suspect/degraded/dead，phase 强制 starting，重置 failCount。
+        if (IS_TAURI && dataMode !== "remote") {
+          try {
+            const stillStarting = await invoke<boolean>("is_backend_auto_starting");
+            if (stillStarting) {
+              heartbeatFailCount.current = 0;
+              if (backendBootPhase !== "starting") setBackendBootPhase("starting");
+              return;
+            }
+          } catch { /* invoke 不可用 — 走原有降级逻辑 */ }
+        }
+
         heartbeatAliveSuccessCountRef.current = 0;
         heartbeatFailCount.current += 1;
         const suspectThreshold = 2;  // 连续失败 ≥2 才进入 suspect，单次孤立超时不变黄

@@ -42,7 +42,21 @@ static AUTO_START_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// 用于 ``is_backend_auto_starting`` 的超时兜底：超过 ``AUTO_START_TIMEOUT_MS``
 /// 视为后台 spawn 线程已经死掉/卡死，强制返回 false 防止前端 toast 永久卡住。
 static AUTO_START_STARTED_AT_MS: AtomicU64 = AtomicU64::new(0);
-const AUTO_START_TIMEOUT_MS: u64 = 90_000;
+const AUTO_START_TIMEOUT_MS: u64 = 180_000;
+
+/// 后端启动宽限期（秒）。Backend cold-start 在 dual-venv hack 下：
+///   * Python 解释器 import 整个生态 ≈ 30s
+///   * 加载 122 个 skills + 30 个 handler + 数百兆 Memory ≈ 60s
+///   * IM channel 初始化 + uvicorn bind ≈ 10s
+/// 实测从 spawn 到 HTTP /api/health 可访问需要 90~120 秒。
+///
+/// 启动宽限期内：
+///   - Rust 心跳即使 fetch /api/health 失败也不视为"backend down"，不发
+///     `backend:lost`、不触发 auto-spawn（避免在 startup 期间反复刷
+///     "[heartbeat] backend down" 日志、误以为后端崩溃）。
+///   - `is_backend_auto_starting` 仍然返回 true，让前端 UI 显示
+///     "正在启动" 而非 "未启动"。
+const BACKEND_BOOT_GRACE_SEC: u64 = 150;
 
 /// `openakita_service_start` 的进程级互斥窗口（毫秒）。
 /// 在 3 秒内对同一 workspace 的第二次调用将被直接拒绝，避免前端重试/竞态
@@ -2198,6 +2212,26 @@ fn write_pid_file(workspace_id: &str, pid: u32, started_by: &str) -> Result<(), 
     Ok(())
 }
 
+/// 判断当前 workspace 的后端是否仍在"启动宽限期"内：PID 文件存在、
+/// 进程还在跑、且 PID 文件创建时间距今 < BACKEND_BOOT_GRACE_SEC。
+///
+/// 用于压制 startup 期间的"backend down"误报和无意义的 auto-spawn，
+/// 同时让前端 UI 在这段时间内持续显示"正在启动"而非"未启动"。
+fn backend_in_boot_grace(workspace_id: &str) -> bool {
+    let Some(data) = read_pid_file(workspace_id) else {
+        return false;
+    };
+    if !is_pid_running(data.pid) {
+        return false;
+    }
+    if data.started_at == 0 {
+        // 旧格式 / 外部进程，无可靠 started_at — 不进入宽限。
+        return false;
+    }
+    let age = now_epoch_secs().saturating_sub(data.started_at);
+    age < BACKEND_BOOT_GRACE_SEC
+}
+
 /// 读取 PID 文件，兼容旧版纯数字格式
 fn read_pid_file(workspace_id: &str) -> Option<PidFileData> {
     let path = service_pid_file(workspace_id);
@@ -3965,6 +3999,7 @@ fn main() {
                 std::thread::spawn(move || {
                     let mut consecutive_failures: u32 = 0;
                     let mut last_status_was_healthy: Option<bool> = None;
+                    let mut last_starting_log_at: u64 = 0;
                     loop {
                         std::thread::sleep(std::time::Duration::from_secs(5));
                         let state_snap = read_state_file();
@@ -3991,6 +4026,34 @@ fn main() {
                             }
                             continue;
                         }
+
+                        // ── 启动宽限期：PID 还在 spawn 后的 BACKEND_BOOT_GRACE_SEC 秒内 ──
+                        // 后端 dual-venv hack cold start 实测需要 90~120 秒（Python
+                        // import + 122 个 skills + Memory + IM channels + uvicorn bind）。
+                        // 心跳 5s × 3 次失败 = 15s 就报 down 完全不合理：那时后端
+                        // 才刚开始加载 skills，HTTP 还没绑定端口。
+                        // 在宽限期内：
+                        //   - emit `backend:status starting=true` 让 UI 显示"正在启动"
+                        //   - 不发 backend:lost，不触发 auto-spawn
+                        //   - 不累加 consecutive_failures
+                        if backend_in_boot_grace(&ws_id) {
+                            let now = now_epoch_secs();
+                            // 最多每 30 秒打一条 log + emit，避免刷屏
+                            if now.saturating_sub(last_starting_log_at) >= 30 {
+                                log_to_file(&format!(
+                                    "[heartbeat] backend in boot-grace (port={}) — skipping down/spawn",
+                                    port
+                                ));
+                                let _ = app_handle.emit(
+                                    "backend:status",
+                                    serde_json::json!({"healthy": false, "starting": true, "port": port}),
+                                );
+                                last_starting_log_at = now;
+                            }
+                            consecutive_failures = 0;
+                            continue;
+                        }
+
                         consecutive_failures = consecutive_failures.saturating_add(1);
                         if consecutive_failures < 3 {
                             continue;
@@ -4029,7 +4092,7 @@ fn main() {
                         let ws_clone = ws_id.clone();
                         match openakita_service_start(venv_dir, ws_clone) {
                             Ok(status) => log_to_file(&format!(
-                                "[heartbeat] auto-spawn ok: running={}, pid={:?}",
+                                "[heartbeat] auto-spawn returned: running={}, pid={:?} (note: pid may be existing process if dedupe-skip)",
                                 status.running, status.pid
                             )),
                             Err(e) => log_to_file(&format!("[heartbeat] auto-spawn FAILED: {}", e)),
@@ -4984,27 +5047,48 @@ fn autostart_set_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
 
 /// 前端调用：查询后端是否正在自动启动中。
 /// 返回 true 时前端应禁用启动/重启按钮并显示"正在自动启动服务"提示。
+///
+/// 判定优先级：
+/// 1. `AUTO_START_IN_PROGRESS` 为 true 且未超时 — 自动启动 spawn 线程仍在跑
+/// 2. 后端 PID 文件存在但仍处于 BOOT_GRACE 期 + HTTP 不可达 — 进程已 spawn
+///    但还在 cold-start（dual-venv hack 实测要 90~120 秒）
+///
+/// 第 2 条是关键：spawn 调用本身是同步立即返回的，AUTO_START_IN_PROGRESS
+/// 在 spawn 返回后立即被清掉，但此时后端可能还要 90 秒才能 HTTP ready。
+/// 老逻辑会让前端在 spawn 返回后立刻把 UI 从"启动中"切回"未启动"，
+/// 等 90 秒后端真起来再切回"运行中"——这就是用户感知到的诡异闪烁。
 #[tauri::command]
 fn is_backend_auto_starting() -> bool {
-    if !AUTO_START_IN_PROGRESS.load(Ordering::SeqCst) {
-        return false;
-    }
-    // 90s 兜底：spawn 线程理应在该窗口内完成（成功/失败都会清 flag）。
-    // 超时仍 true 视为线程已死掉/卡住，主动清掉，避免前端 toast 永久卡住。
-    let started_at = AUTO_START_STARTED_AT_MS.load(Ordering::SeqCst);
-    if started_at > 0 {
-        let elapsed = now_ms().saturating_sub(started_at);
-        if elapsed >= AUTO_START_TIMEOUT_MS {
-            log_to_file(&format!(
-                "[auto-start] is_backend_auto_starting timeout after {}ms, clearing flag",
-                elapsed
-            ));
-            AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
-            AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
-            return false;
+    // 优先级 1：显式的 AUTO_START_IN_PROGRESS flag
+    if AUTO_START_IN_PROGRESS.load(Ordering::SeqCst) {
+        let started_at = AUTO_START_STARTED_AT_MS.load(Ordering::SeqCst);
+        if started_at > 0 {
+            let elapsed = now_ms().saturating_sub(started_at);
+            if elapsed >= AUTO_START_TIMEOUT_MS {
+                log_to_file(&format!(
+                    "[auto-start] is_backend_auto_starting timeout after {}ms, clearing flag",
+                    elapsed
+                ));
+                AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
+                AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
+            } else {
+                return true;
+            }
+        } else {
+            return true;
         }
     }
-    true
+    // 优先级 2：BOOT_GRACE — 进程已 spawn、PID 还活着、HTTP 还没起来
+    let state = read_state_file();
+    if let Some(ws_id) = state.current_workspace_id {
+        if backend_in_boot_grace(&ws_id) {
+            let port = read_workspace_api_port(&ws_id).unwrap_or(18900);
+            if !is_backend_http_healthy(Some(port)) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// 前端"重试启动/修复"按钮调用：先把残骸 venv 和 manifest 删干净，
