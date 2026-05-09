@@ -660,6 +660,17 @@ function MainApp() {
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean | null>(null);
   // autoStartBackend 已合并到"开机自启"：--background 模式自动拉起后端，无需独立开关
   const [serviceStatus, setServiceStatus] = useState<{ running: boolean; pid: number | null; pidFile: string; port?: number } | null>(null);
+  // ── 后端启动阶段（独立于 serviceStatus）──
+  // serviceStatus 只能表达 "running:true|false"，无法区分"未启动"和"正在启动中"。
+  // 老 UI 在自动启动期间一旦 invoke is_backend_auto_starting 偶发返回 false 或失败，
+  // 立刻把 serviceStatus 写成 {running:false} → StatusView 那条红色"后端服务未启动"
+  // banner 立刻闪一下，等几秒后端起来又变回 running:true → 用户体验上就是
+  // "启动中→未启动→运行中" 的诡异闪烁。
+  // 用 backendBootPhase 显式表达"启动中"语义，让 StatusView 在 starting 期间
+  // 显示蓝色"正在启动"而不是红色"未启动"。
+  const [backendBootPhase, setBackendBootPhase] = useState<"unknown" | "starting" | "running" | "stopped" | "error">(
+    IS_TAURI ? "starting" : "running",
+  );
   // 心跳状态机: "alive" | "suspect" | "degraded" | "dead"
   const [heartbeatState, setHeartbeatState] = useState<"alive" | "suspect" | "degraded" | "dead">("dead");
   const heartbeatStateRef = useRef<"alive" | "suspect" | "degraded" | "dead">("dead");
@@ -837,6 +848,7 @@ function MainApp() {
               const svcVersion = healthData.version || "";
               setApiBaseUrl(url);
               setServiceStatus({ running: true, pid: healthData.pid || null, pidFile: "" });
+              setBackendBootPhase("running");
               if (svcVersion) setBackendVersion(svcVersion);
               notifyPluginAppsReady();
               try { await refreshStatus("local", url, true); } catch { /* ignore */ }
@@ -851,6 +863,7 @@ function MainApp() {
             } catch { /* 服务未运行 */ }
 
             if (!alreadyConnected && !cancelled) {
+              setBackendBootPhase("starting");
               let handled = false;
               try {
                 const autoStarting = await invoke<boolean>("is_backend_auto_starting");
@@ -897,13 +910,31 @@ function MainApp() {
                       notifySuccess(t("topbar.autoStartSuccess"));
                     } else {
                       setServiceStatus({ running: false, pid: null, pidFile: "" });
+                      setBackendBootPhase("error");
                       notifyError(t("topbar.autoStartFail"));
                     }
                   }
                 }
               } catch { /* is_backend_auto_starting 不可用，忽略 */ }
               if (!handled && !cancelled) {
-                setServiceStatus({ running: false, pid: null, pidFile: "" });
+                // 兜底：is_backend_auto_starting 返回 false 或 invoke 不可用。
+                // 不要立即把 serviceStatus 写成 false（那样 StatusView 会立刻
+                // 闪一下红色"未启动"banner），而是再做一次 grace-window 健康
+                // 探测：1.5s 内连续 3 次 fetch /api/health 都失败才算真没启动。
+                // 这是为了对付 Tauri setup 完成与前端 mount 的时序竞争——
+                // 此时后端可能正在 spawn，HTTP 端口随时会起来。
+                let confirmed = false;
+                for (let i = 0; i < 3 && !cancelled && !confirmed; i++) {
+                  await new Promise((r) => setTimeout(r, 500));
+                  try {
+                    confirmed = await connectToRunningService(localUrl);
+                    if (confirmed) break;
+                  } catch { /* still down */ }
+                }
+                if (!confirmed && !cancelled) {
+                  setServiceStatus({ running: false, pid: null, pidFile: "" });
+                  setBackendBootPhase("stopped");
+                }
               }
             }
           }
@@ -995,6 +1026,7 @@ function MainApp() {
             if (IS_TAURI) try { await invoke("set_tray_backend_status", { status: "alive" }); } catch { /* ignore */ }
           }
           setServiceStatus(prev => prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" });
+          setBackendBootPhase("running");
           // 提取后端版本
           try {
             const data = await res.json();
@@ -1045,6 +1077,7 @@ function MainApp() {
           if (IS_TAURI) try { await invoke("set_tray_backend_status", { status: "dead" }); } catch { /* ignore */ }
         }
         setServiceStatus(prev => prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" });
+        setBackendBootPhase("stopped");
         setBackendVersion(null);
         // 注意：不要在 dead 状态下重置 heartbeatFailCount！
         // 否则下轮心跳 failCount 从 0 开始 → 进入 suspect → 再次变为 dead → 重复发送系统通知。
@@ -2663,6 +2696,7 @@ function MainApp() {
    */
   async function doStartLocalService(effectiveWsId: string) {
     let _busyId = notifyLoading(t("topbar.starting"));
+    setBackendBootPhase("starting");
     try {
       setDataMode("local");
       setApiBaseUrl("http://127.0.0.1:18900");
@@ -2677,6 +2711,7 @@ function MainApp() {
       });
       setServiceStatus(real);
       if (ready && real.running) {
+        setBackendBootPhase("running");
         notifySuccess(t("connect.success"));
         // forceAliveCheck=true to bypass stale serviceStatus closure
         await refreshStatus("local", "http://127.0.0.1:18900", true);
@@ -2696,6 +2731,7 @@ function MainApp() {
         _busyId = notifyLoading(t("topbar.starting") + "…");
         const bgReady = await waitForServiceReady("http://127.0.0.1:18900", LOCAL_SERVICE_READY_TIMEOUT_MS);
         if (bgReady) {
+          setBackendBootPhase("running");
           notifySuccess(t("connect.success"));
           await refreshStatus("local", "http://127.0.0.1:18900", true);
           autoCheckEndpoints("http://127.0.0.1:18900");
@@ -2707,13 +2743,16 @@ function MainApp() {
             }
           } catch { /* ignore */ }
         } else {
+          setBackendBootPhase("error");
           notifyError(t("topbar.startFail") + " (HTTP API not reachable)");
           await refreshStatus("local", "http://127.0.0.1:18900", true);
         }
       } else {
+        setBackendBootPhase("error");
         notifyError(t("topbar.startFail"));
       }
     } catch (e) {
+      setBackendBootPhase("error");
       notifyError(String(e));
     } finally {
       dismissLoading(_busyId);
@@ -2806,6 +2845,7 @@ function MainApp() {
     try {
       const final_ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", { workspaceId: id });
       setServiceStatus(final_ss);
+      if (!final_ss.running) setBackendBootPhase("stopped");
     } catch { /* ignore */ }
   }
 
@@ -2977,6 +3017,7 @@ function MainApp() {
           workspaces={workspaces}
           envDraft={envDraft}
           serviceStatus={serviceStatus}
+          backendBootPhase={backendBootPhase}
           heartbeatState={heartbeatState}
           busy={busy}
           autostartEnabled={autostartEnabled}
@@ -3011,14 +3052,40 @@ function MainApp() {
   }
 
   function renderRuntimeBootstrapPanel() {
-    const stage = installProgress?.stage || (serviceStatus?.running ? "运行环境已就绪" : "等待启动后端");
-    const percent = installProgress?.percent ?? (serviceStatus?.running ? 100 : 0);
+    const stage = installProgress?.stage
+      || (backendBootPhase === "starting" ? t("status.backendStarting")
+        : serviceStatus?.running ? "运行环境已就绪"
+        : backendBootPhase === "error" ? t("status.backendStartFailed")
+        : "等待启动后端");
+    const percent = installProgress?.percent
+      ?? (backendBootPhase === "starting" ? 60
+        : serviceStatus?.running ? 100
+        : 0);
     const runtimeRoot = info?.openakitaRootDir
       ? joinPath(info.openakitaRootDir, "runtime")
       : "~/.openakita/runtime";
     const appVenvHint = joinPath(runtimeRoot, "app-venv");
     const agentVenvHint = joinPath(runtimeRoot, "agent-venv");
     const runtimeLogHint = joinPath(joinPath(runtimeRoot, "logs"), "bootstrap.log");
+
+    // "修复" 真正干活：调 Tauri repair_runtime_env 把 app-venv/agent-venv/manifest 删掉重建，
+    // 否则 ensure_venv 的早期健康检查会被残骸 launcher 蒙混通过，怎么点都修不好。
+    const onRepair = async () => {
+      if (!currentWorkspaceId) return;
+      const _b = notifyLoading(t("status.runtimeRepairing"));
+      try {
+        // 先停掉 fallback 的 bundled 后端，避免新 venv 创建过程中 import 冲突。
+        try { await doStopService(currentWorkspaceId); } catch { /* ignore */ }
+        const report = await invoke<string>("repair_runtime_env");
+        notifySuccess(report.split("\n").slice(0, 3).join("\n"));
+        await doStartLocalService(currentWorkspaceId);
+      } catch (e) {
+        notifyError(t("status.runtimeRepairFailed", { err: String(e) }));
+      } finally {
+        dismissLoading(_b);
+      }
+    };
+
     return (
       <div className="mx-auto w-full max-w-6xl px-6 pt-5">
         <div className="card border border-blue-200/70 bg-blue-50/50 dark:border-blue-500/30 dark:bg-blue-950/20">
@@ -3029,14 +3096,25 @@ function MainApp() {
                 桌面端会优先创建 app runtime venv 和 agent tools venv；失败时回退到 legacy PyInstaller 兼容模式。
               </p>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!!busy || !currentWorkspaceId}
-              onClick={() => currentWorkspaceId && doStartLocalService(currentWorkspaceId)}
-            >
-              重试启动/修复
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!!busy || !currentWorkspaceId || backendBootPhase === "starting"}
+                onClick={() => currentWorkspaceId && doStartLocalService(currentWorkspaceId)}
+              >
+                重试启动
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={!!busy || !currentWorkspaceId}
+                onClick={onRepair}
+                title={t("status.runtimeRepairHint")}
+              >
+                {t("status.runtimeRepairTitle")}
+              </Button>
+            </div>
           </div>
           <div className="mt-4 h-2 rounded-full bg-blue-100 dark:bg-blue-950 overflow-hidden">
             <div

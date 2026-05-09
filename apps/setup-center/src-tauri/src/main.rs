@@ -1069,11 +1069,57 @@ fn health_check_python(py: &Path, code: &str, log_path: &Path) -> bool {
     }
 }
 
+/// 严格判断目录是否是一个完整的 venv。
+///
+/// uv 在 Windows 上创建 venv 时会先写 `Scripts/python.exe`（一个 launcher
+/// 桩），随后再写 `pyvenv.cfg`、`Lib/site-packages/`、seed pip。如果中间任何
+/// 一步失败（被杀软拦截、断网下载 pip 失败、权限问题、用户强行关窗口等），
+/// 残骸 launcher 会留在磁盘上。它跑起来时因为读不到 `pyvenv.cfg`，
+/// `sys.prefix` 会回退到 base interpreter（即 uv 管理的全局 Python），
+/// `import pip` 也能成功——但 `uv pip install --python <这个 launcher>`
+/// 会判定为 "externally managed" 而拒绝安装。所以光看 `import pip`
+/// 不足以证明这是一个真正的、隔离的 venv。
+fn venv_is_real_isolated(venv_dir: &Path, py: &Path, log_path: &Path) -> bool {
+    if !py.exists() {
+        return false;
+    }
+    if !venv_dir.join("pyvenv.cfg").exists() {
+        return false;
+    }
+    health_check_python(
+        py,
+        "import sys, pip; assert sys.prefix != sys.base_prefix, 'venv launcher fell back to base interpreter'",
+        log_path,
+    )
+}
+
 fn ensure_venv(venv_dir: &Path, python_version: &str, log_path: &Path) -> Result<PathBuf, String> {
     let py = runtime_venv_python_path(venv_dir);
-    if health_check_python(&py, "import pip", log_path) {
+    if venv_is_real_isolated(venv_dir, &py, log_path) {
         return Ok(py);
     }
+
+    // 在重建前彻底清空残骸目录。`uv venv --clear` 自身在某些边界条件下
+    // 会留下半残文件（典型场景：上次 uv 在 seed pip 阶段被中断，留下
+    // launcher 但缺 pyvenv.cfg），下次再调 `uv venv --clear` 不一定能恢复。
+    // 自己 remove_dir_all 一刀更稳。
+    if venv_dir.exists() {
+        if let Err(e) = fs::remove_dir_all(venv_dir) {
+            if let Ok(mut log) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+            {
+                let _ = writeln!(
+                    log,
+                    "warning: pre-clean of {} failed: {} (will fall back to `uv venv --clear`)",
+                    venv_dir.display(),
+                    e
+                );
+            }
+        }
+    }
+
     let uv = bootstrap_uv_path();
     let mut cmd = Command::new(&uv);
     // uv does not guarantee pip is present unless the venv is seeded. The
@@ -1083,12 +1129,15 @@ fn ensure_venv(venv_dir: &Path, python_version: &str, log_path: &Path) -> Result
     cmd.arg(venv_dir);
     apply_no_window(&mut cmd);
     run_and_log(cmd, log_path)?;
-    if health_check_python(&py, "import pip", log_path) {
+    if venv_is_real_isolated(venv_dir, &py, log_path) {
         Ok(py)
     } else {
+        let has_cfg = venv_dir.join("pyvenv.cfg").exists();
         Err(format!(
-            "venv health check failed after creation: {}",
-            py.display()
+            "venv health check failed after creation: {} (pyvenv.cfg present={}, see {} for details)",
+            py.display(),
+            has_cfg,
+            log_path.display()
         ))
     }
 }
@@ -1179,11 +1228,20 @@ fn write_runtime_manifest(info: &RuntimeEnvInfo, bootstrap: &BootstrapManifest) 
 fn mark_legacy_runtime_mode(error: &str) {
     let pip_index = resolve_runtime_pip_index();
     let now = now_epoch_secs().to_string();
+    // 即便 dual-venv 创建失败回退到 PyInstaller bundled 后端，也把 bootstrap
+    // manifest 中的 wheel sha256 写进 runtime manifest。否则 wheel_hash 永远是
+    // 空串，`runtime_wheel_hash_matches_bootstrap()` 永远返回 false，下一次
+    // `startup_version_check` 会判定"wheel 变了"并主动 stop_backend_for_restart，
+    // 把刚 fallback 拉起来的 bundled 后端反复杀掉，造成"启动一下又无响应"循环。
+    let (wheel_hash, python_version) = match read_bootstrap_manifest() {
+        Ok(b) => (b.wheel.sha256, b.python_version),
+        Err(_) => (String::new(), "3.12".to_string()),
+    };
     let manifest = RuntimeManifest {
         schema_version: 1,
         app_version: env!("CARGO_PKG_VERSION").into(),
-        wheel_hash: String::new(),
-        python_version: "3.12".into(),
+        wheel_hash,
+        python_version,
         app_venv: RuntimeEnvState {
             path: app_venv_dir().to_string_lossy().to_string(),
             status: "failed".into(),
@@ -3367,7 +3425,17 @@ fn runtime_wheel_hash_matches_bootstrap() -> bool {
         return true;
     }
     read_runtime_manifest()
-        .map(|m| !m.legacy_mode && m.wheel_hash == bootstrap_hash)
+        .map(|m| {
+            // legacy 模式下 dual-venv 没创建成功，wheel hash 字段写不写都
+            // 不代表"app-venv 包含 bootstrap wheel 的代码"。但如果重启后
+            // 端只会再走一遍 dual-venv 创建（大概率仍然失败）然后再 fallback
+            // 到同一个 PyInstaller bundled 后端，重启没有任何意义，反而把
+            // 唯一能用的后端杀掉。所以 legacy 模式直接视为 hash 匹配。
+            if m.legacy_mode {
+                return true;
+            }
+            m.wheel_hash == bootstrap_hash
+        })
         .unwrap_or(false)
 }
 
@@ -4021,6 +4089,7 @@ fn main() {
             openakita_check_pid_alive,
             set_tray_backend_status,
             is_backend_auto_starting,
+            repair_runtime_env,
             get_auto_start_backend,
             set_auto_start_backend,
             get_auto_update,
@@ -4936,6 +5005,62 @@ fn is_backend_auto_starting() -> bool {
         }
     }
     true
+}
+
+/// 前端"重试启动/修复"按钮调用：先把残骸 venv 和 manifest 删干净，
+/// 然后重新 ensure dual runtime venv。Bug-rescue 路径，正常启动不会走这里。
+///
+/// 老的"重试启动/修复"只是再次调 `openakita_service_start`，但 `ensure_venv`
+/// 的早期健康检查会被残骸 launcher 蒙混通过、直接 return Ok 而不重建 venv，
+/// 用户怎么点都修不好——必须先把 app-venv 目录砍了再重建。
+#[tauri::command]
+fn repair_runtime_env() -> Result<String, String> {
+    let mut report = String::new();
+    for dir in [app_venv_dir(), agent_venv_dir()] {
+        if dir.exists() {
+            match fs::remove_dir_all(&dir) {
+                Ok(()) => report.push_str(&format!("removed {}\n", dir.display())),
+                Err(e) => {
+                    report.push_str(&format!("warn: remove {} failed: {}\n", dir.display(), e));
+                }
+            }
+        }
+    }
+    let manifest = runtime_manifest_path();
+    if manifest.exists() {
+        match fs::remove_file(&manifest) {
+            Ok(()) => report.push_str(&format!("removed {}\n", manifest.display())),
+            Err(e) => {
+                report.push_str(&format!(
+                    "warn: remove {} failed: {}\n",
+                    manifest.display(),
+                    e
+                ));
+            }
+        }
+    }
+    let app_venv_log = runtime_logs_dir().join("app-venv.log");
+    if app_venv_log.exists() {
+        let _ = fs::remove_file(&app_venv_log);
+    }
+    let agent_venv_log = runtime_logs_dir().join("agent-venv.log");
+    if agent_venv_log.exists() {
+        let _ = fs::remove_file(&agent_venv_log);
+    }
+    match ensure_dual_runtime_env() {
+        Ok(info) => {
+            report.push_str(&format!(
+                "ok: app_python={} agent_python={}\n",
+                info.app_python.display(),
+                info.agent_python.display()
+            ));
+            Ok(report)
+        }
+        Err(e) => {
+            report.push_str(&format!("ensure_dual_runtime_env failed: {}\n", e));
+            Err(report)
+        }
+    }
 }
 
 #[tauri::command]
