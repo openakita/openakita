@@ -317,6 +317,11 @@ _DIRECT_SHORT_ANSWER_RE = re.compile(
     re.IGNORECASE,
 )
 
+_SHORT_EXPLANATION_RE = re.compile(
+    r"^(?:请)?(?:简单|简洁|直接)?(?:解释|说明|介绍)(?:一下)?[，,:：\s]+.{1,40}$",
+    re.IGNORECASE,
+)
+
 # Context-dependent markers: when present the user is referencing prior
 # conversation turns, so the fast (history-free) path MUST be skipped.
 _CONTEXT_DEPENDENT_RE = re.compile(
@@ -362,6 +367,12 @@ _WRITE_CONFIRMATION_RE = re.compile(
     r"(?:写入|保存|记录|读取|验证|文件|内容).{0,12}"
     r"(?:成功|了吗|没有|没看到|看不到|不同|不一致|确认|确定)"
     r"|(?:还是)?没有写入成功|(?:系统中)?没看到(?:该)?文件|和你显示不同",
+    re.IGNORECASE,
+)
+
+_DESKTOP_SCREENSHOT_RE = re.compile(
+    r"(?:桌面|屏幕|电脑|窗口|当前(?:画面|界面)).{0,8}(?:截图|截屏|屏幕截图)"
+    r"|(?:截图|截屏|屏幕截图).{0,8}(?:发我|发给我|发送|传给我|给我|桌面|屏幕|电脑|窗口)",
     re.IGNORECASE,
 )
 
@@ -414,6 +425,8 @@ def _infer_tool_action_hints(message: str) -> tuple[list[str], bool]:
 
     if re.search(r"(?:浏览器|网页)", message):
         add_hint("Browser")
+    if _DESKTOP_SCREENSHOT_RE.search(message):
+        add_hint("Desktop")
     if re.search(r"(?:GitHub|issue|网页|搜索|下载|仓库)", message, flags=re.IGNORECASE):
         add_hint("Web Search")
     if re.search(r"(?:日志|报错|警告|错误|文件|目录|项目|代码|skill|技能|配置|数据库|命令|脚本)", message):
@@ -459,7 +472,11 @@ def _try_fast_query_shortcut(message: str) -> IntentResult | None:
         return None
     if _looks_like_tool_action_request(stripped):
         return _make_tool_action_result(stripped)
-    if _QUERY_PATTERNS.match(stripped) or _DIRECT_SHORT_ANSWER_RE.match(stripped):
+    if (
+        _QUERY_PATTERNS.match(stripped)
+        or _DIRECT_SHORT_ANSWER_RE.match(stripped)
+        or _SHORT_EXPLANATION_RE.match(stripped)
+    ):
         logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' matched as QUERY (rule-based)")
         return IntentResult(
             intent=IntentType.QUERY,
@@ -602,8 +619,8 @@ def _make_default(message: str) -> IntentResult:
     工具能力服务到**，否则会出现"明明用户在让 OpenAkita 干活，却被识别成
     chitchat 然后没有任何工具被挂到上下文里"的退步。所以这里：
 
-    * intent 默认 ``TASK``（之前曾经临时被改回 ``QUERY`` + 0 confidence，
-      违反 docstring 与 reasoning_engine 的预期，已修正）；
+    * 明显的知识问答仍走轻量 ``QUERY``，避免简单解释进入 ReAct 工具循环；
+    * 其余情况默认 ``TASK``；
     * confidence 设为 ``0.0`` 让上层知道这不是来自 LLM 的高置信结果；
     * 强制 ``force_tool=True`` + ``requires_tools=True`` —— 兜底必须能
       调用工具，否则就退化成纯文本助手；
@@ -611,6 +628,15 @@ def _make_default(message: str) -> IntentResult:
       一个最小可用的工具集；
     * todo_required 仍然 False（LLM 没说要拆 todo，就别强行拆）。
     """
+    fast_query = _try_fast_query_shortcut(message)
+    if fast_query is not None:
+        fast_query.confidence = 0.0
+        fast_query.prompt_depth = PromptDepth.MINIMAL
+        fast_query.fast_reply = False
+        fast_query.task_definition = message[:600]
+        fast_query.raw_output = ""
+        return fast_query
+
     evidence_required = _requires_external_evidence(message)
     tool_hints, requires_project_context = _infer_tool_action_hints(message)
     return IntentResult(

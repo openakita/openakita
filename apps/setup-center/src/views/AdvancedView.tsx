@@ -34,7 +34,16 @@ export interface AdvancedViewProps {
   busy: string | null;
   workspaces: WorkspaceSummary[];
   currentWorkspaceId: string | null;
-  serviceStatus: { running: boolean; pid: number | null; pidFile: string; port?: number } | null;
+  serviceStatus: {
+    running: boolean;
+    pid: number | null;
+    pidFile: string;
+    port?: number;
+    heartbeatPhase?: string;
+    heartbeatHttpReady?: boolean;
+    heartbeatImReady?: boolean;
+    heartbeatReady?: boolean;
+  } | null;
   dataMode: "local" | "remote";
   info: PlatformInfo | null;
   storeVisible: boolean;

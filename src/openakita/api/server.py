@@ -310,6 +310,13 @@ def create_app(
     app.state.gateway = gateway
     app.state.orchestrator = orchestrator
     app.state.agent_pool = agent_pool
+    app.state.startup_phase = "http_ready" if gateway is None else "running"
+    app.state.readiness = {
+        "phase": app.state.startup_phase,
+        "http_ready": True,
+        "im_ready": gateway is not None,
+        "ready": gateway is not None,
+    }
 
     if agent is not None:
         pm = getattr(agent, "_plugin_manager", None)
@@ -736,6 +743,8 @@ def update_runtime_refs(
     gateway: Any = None,
     orchestrator: Any = None,
     agent_pool: Any = None,
+    startup_phase: str | None = None,
+    readiness: dict[str, Any] | None = None,
 ) -> bool:
     """Update runtime references on an API server started by start_api_server().
 
@@ -756,4 +765,8 @@ def update_runtime_refs(
         app.state.orchestrator = orchestrator
     if agent_pool is not None:
         app.state.agent_pool = agent_pool
+    if startup_phase is not None:
+        app.state.startup_phase = startup_phase
+    if readiness is not None:
+        app.state.readiness = readiness
     return True

@@ -2356,9 +2356,13 @@ struct HeartbeatData {
     pid: u32,
     timestamp: f64, // unix epoch seconds (float for sub-second precision)
     #[serde(default)]
-    phase: String, // "starting" | "initializing" | "running" | "restarting" | "stopping"
+    phase: String, // "starting" | "initializing" | "http_ready" | "starting_im" | "running" | "restarting" | "stopping"
     #[serde(default)]
     http_ready: bool, // HTTP API 是否就绪
+    #[serde(default)]
+    im_ready: bool, // IM / late-bound gateway 是否完成启动路径
+    #[serde(default)]
+    ready: bool, // 后端业务启动流程是否整体收敛
 }
 
 /// 心跳文件路径：{workspace_dir}/data/backend.heartbeat
@@ -4322,9 +4326,18 @@ struct ServiceStatus {
     running: bool,
     pid: Option<u32>,
     pid_file: String,
-    /// 后端心跳阶段："starting" | "initializing" | "running" | "restarting" | "stopping" | ""
+    /// 后端心跳阶段："starting" | "initializing" | "http_ready" | "starting_im" | "running" | "restarting" | "stopping" | ""
     #[serde(default)]
     heartbeat_phase: String,
+    /// HTTP API 是否就绪
+    #[serde(default)]
+    heartbeat_http_ready: bool,
+    /// IM / late-bound gateway 启动路径是否已收敛
+    #[serde(default)]
+    heartbeat_im_ready: bool,
+    /// 后端业务启动流程是否整体收敛
+    #[serde(default)]
+    heartbeat_ready: bool,
     /// 心跳是否过期（超过 30 秒没更新）。None = 没有心跳文件（旧版后端）
     #[serde(default)]
     heartbeat_stale: Option<bool>,
@@ -4340,20 +4353,23 @@ fn build_service_status(
     pid: Option<u32>,
     pid_file_str: String,
 ) -> ServiceStatus {
-    let (heartbeat_phase, heartbeat_stale, heartbeat_age_secs) =
+    let (heartbeat_phase, heartbeat_http_ready, heartbeat_im_ready, heartbeat_ready, heartbeat_stale, heartbeat_age_secs) =
         if let Some(hb) = read_heartbeat_file(workspace_id) {
             let now = now_epoch_secs() as f64;
             let age = now - hb.timestamp;
             let stale = age > 30.0; // 超过 30 秒无心跳视为过期
-            (hb.phase, Some(stale), Some(age))
+            (hb.phase, hb.http_ready, hb.im_ready, hb.ready, Some(stale), Some(age))
         } else {
-            (String::new(), None, None)
+            (String::new(), false, false, false, None, None)
         };
     ServiceStatus {
         running,
         pid,
         pid_file: pid_file_str,
         heartbeat_phase,
+        heartbeat_http_ready,
+        heartbeat_im_ready,
+        heartbeat_ready,
         heartbeat_stale,
         heartbeat_age_secs,
     }

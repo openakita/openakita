@@ -659,7 +659,16 @@ function MainApp() {
   const [autostartEnabled, setAutostartEnabled] = useState<boolean | null>(null);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean | null>(null);
   // autoStartBackend 已合并到"开机自启"：--background 模式自动拉起后端，无需独立开关
-  const [serviceStatus, setServiceStatus] = useState<{ running: boolean; pid: number | null; pidFile: string; port?: number } | null>(null);
+  const [serviceStatus, setServiceStatus] = useState<{
+    running: boolean;
+    pid: number | null;
+    pidFile: string;
+    port?: number;
+    heartbeatPhase?: string;
+    heartbeatHttpReady?: boolean;
+    heartbeatImReady?: boolean;
+    heartbeatReady?: boolean;
+  } | null>(null);
   // ── 后端启动阶段（独立于 serviceStatus）──
   // serviceStatus 只能表达 "running:true|false"，无法区分"未启动"和"正在启动中"。
   // 老 UI 在自动启动期间一旦 invoke is_backend_auto_starting 偶发返回 false 或失败，
@@ -1030,13 +1039,18 @@ function MainApp() {
             setHeartbeatState("alive");
             if (IS_TAURI) try { await invoke("set_tray_backend_status", { status: "alive" }); } catch { /* ignore */ }
           }
-          setServiceStatus(prev => prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" });
-          setBackendBootPhase("running");
-          // 提取后端版本
+          // /api/health 200 只代表 HTTP API 可达，不再等同于业务完全启动完成。
+          // 新后端会返回 readiness，旧后端没有该字段时按 ready=true 兼容。
+          let readinessReady = true;
+          // 提取后端版本与 readiness
           try {
             const data = await res.json();
             if (data.version) setBackendVersion(data.version);
+            const readiness = data?.readiness || {};
+            readinessReady = readiness.ready !== false;
           } catch { /* ignore */ }
+          setServiceStatus(prev => prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" });
+          setBackendBootPhase(readinessReady ? "running" : "starting");
           notifyPluginAppsReady();
         } else {
           throw new Error("non-ok");
@@ -1213,9 +1227,14 @@ function MainApp() {
     };
   }, []);
 
-  // ── Web mode: subscribe to WebSocket events (replaces Tauri listen() for real-time updates) ──
+  // ── Backend WebSocket events: keep derived status fresh across Web/Tauri ──
+  // IM channels intentionally start after the HTTP API so the desktop can connect early.
+  // On Tauri, relying only on the first /api/im/channels fetch leaves the StatusView stuck
+  // at "configured/unknown" until another user action refreshes it. Subscribe here too so
+  // the backend's im:channel_status event reconciles the UI as soon as adapters finish.
   useEffect(() => {
-    if ((!IS_WEB && !IS_CAPACITOR) || !webAuthed) return;
+    if (!IS_TAURI && !IS_WEB && !IS_CAPACITOR) return;
+    if ((IS_WEB || IS_CAPACITOR) && !webAuthed) return;
     const unsub = onWsEvent((event, data) => {
       const p = data as any;
       if (!p) return;
@@ -2321,6 +2340,9 @@ function MainApp() {
             try {
               const healthData = await ping.json();
               if (healthData.version) setBackendVersion(healthData.version);
+              const readiness = healthData?.readiness || {};
+              const ready = readiness.ready !== false;
+              setBackendBootPhase(ready ? "running" : "starting");
             } catch { /* ignore parse error */ }
             setServiceStatus((prev) =>
               prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" }
@@ -2483,12 +2505,27 @@ function MainApp() {
         // was started externally (not via this app).
         if (effectiveDataMode !== "remote" && currentWorkspaceId) {
           try {
-            const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", { workspaceId: currentWorkspaceId });
+            const ss = await invoke<{
+              running: boolean;
+              pid: number | null;
+              pidFile: string;
+              heartbeatPhase?: string;
+              heartbeatHttpReady?: boolean;
+              heartbeatImReady?: boolean;
+              heartbeatReady?: boolean;
+            }>("openakita_service_status", { workspaceId: currentWorkspaceId });
             setServiceStatus((prev) => ({
               running: prev?.running ?? serviceAlive,
               pid: ss.pid ?? prev?.pid ?? null,
               pidFile: ss.pidFile ?? prev?.pidFile ?? "",
+              heartbeatPhase: ss.heartbeatPhase ?? prev?.heartbeatPhase,
+              heartbeatHttpReady: ss.heartbeatHttpReady ?? prev?.heartbeatHttpReady,
+              heartbeatImReady: ss.heartbeatImReady ?? prev?.heartbeatImReady,
+              heartbeatReady: ss.heartbeatReady ?? prev?.heartbeatReady,
             }));
+            if (ss.heartbeatReady === false && ss.heartbeatPhase) {
+              setBackendBootPhase("starting");
+            }
           } catch { /* keep existing status */ }
         }
         // IM channels (HTTP API mode)
@@ -2571,10 +2608,21 @@ function MainApp() {
       // This is the fallback when the HTTP API is not alive.
       if (effectiveDataMode !== "remote") {
         try {
-          const ss = await invoke<{ running: boolean; pid: number | null; pidFile: string }>("openakita_service_status", {
+          const ss = await invoke<{
+            running: boolean;
+            pid: number | null;
+            pidFile: string;
+            heartbeatPhase?: string;
+            heartbeatHttpReady?: boolean;
+            heartbeatImReady?: boolean;
+            heartbeatReady?: boolean;
+          }>("openakita_service_status", {
             workspaceId: currentWorkspaceId,
           });
           setServiceStatus(ss);
+          if (ss.running && ss.heartbeatReady === false && ss.heartbeatPhase) {
+            setBackendBootPhase("starting");
+          }
         } catch {
           // keep existing status rather than wiping it
         }
@@ -3084,14 +3132,17 @@ function MainApp() {
   }
 
   function renderRuntimeBootstrapPanel() {
+    const backendReady = serviceStatus?.running && backendBootPhase === "running" && serviceStatus?.heartbeatReady !== false;
     const stage = installProgress?.stage
       || (backendBootPhase === "starting" ? t("status.backendStarting")
-        : serviceStatus?.running ? "运行环境已就绪"
+        : backendReady ? "运行环境已就绪"
+        : serviceStatus?.running ? "后端正在完成初始化"
         : backendBootPhase === "error" ? t("status.backendStartFailed")
         : "等待启动后端");
     const percent = installProgress?.percent
       ?? (backendBootPhase === "starting" ? 60
-        : serviceStatus?.running ? 100
+        : backendReady ? 100
+        : serviceStatus?.running ? 85
         : 0);
     const runtimeRoot = info?.openakitaRootDir
       ? joinPath(info.openakitaRootDir, "runtime")
@@ -3160,7 +3211,7 @@ function MainApp() {
             <div>App venv：<span className="font-mono text-xs">{appVenvHint}</span></div>
             <div>Agent venv：<span className="font-mono text-xs">{agentVenvHint}</span></div>
             <div>日志路径：<span className="font-mono text-xs">{runtimeLogHint}</span></div>
-            <div>状态：<span className="font-medium">{venvStatus || (serviceStatus?.running ? "后端运行中" : "尚未启动")}</span></div>
+            <div>状态：<span className="font-medium">{venvStatus || (backendReady ? "后端运行中" : serviceStatus?.running ? "后端初始化中" : "尚未启动")}</span></div>
           </div>
           {installLiveLog && (
             <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-200">

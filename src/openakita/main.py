@@ -2051,6 +2051,8 @@ def serve(
                     "timestamp": time.time(),
                     "phase": "starting",
                     "http_ready": False,
+                    "im_ready": False,
+                    "ready": False,
                 }
             ),
             encoding="utf-8",
@@ -2085,8 +2087,10 @@ def serve(
     # 以表明进程已卡死）。心跳文件位于 {CWD}/data/backend.heartbeat。
     _heartbeat_file = Path.cwd() / "data" / "backend.heartbeat"
     _heartbeat_stop = threading.Event()
-    _heartbeat_phase = "starting"  # "starting" | "initializing" | "running" | "restarting"
+    _heartbeat_phase = "starting"  # "starting" | "initializing" | "http_ready" | "starting_im" | "running" | "restarting"
     _heartbeat_http_ready = False
+    _heartbeat_im_ready = False
+    _heartbeat_ready = False
 
     def _write_heartbeat():
         """写入一次心跳（原子写入：先写临时文件再重命名）"""
@@ -2099,6 +2103,8 @@ def serve(
                 "timestamp": time.time(),
                 "phase": _heartbeat_phase,
                 "http_ready": _heartbeat_http_ready,
+                "im_ready": _heartbeat_im_ready,
+                "ready": _heartbeat_ready,
                 "version": __version__,
                 "git_hash": __git_hash__,
             }
@@ -2117,10 +2123,12 @@ def serve(
 
     def _start_heartbeat():
         """启动心跳线程"""
-        nonlocal _heartbeat_phase, _heartbeat_http_ready
+        nonlocal _heartbeat_phase, _heartbeat_http_ready, _heartbeat_im_ready, _heartbeat_ready
         _heartbeat_stop.clear()
         _heartbeat_phase = "starting"
         _heartbeat_http_ready = False
+        _heartbeat_im_ready = False
+        _heartbeat_ready = False
         _write_heartbeat()  # 立即写一次
         t = threading.Thread(target=_heartbeat_loop, daemon=True, name="heartbeat")
         t.start()
@@ -2142,11 +2150,15 @@ def serve(
 
     async def _serve():
         nonlocal shutdown_event, agent_or_master, shutdown_triggered
-        nonlocal _heartbeat_phase, _heartbeat_http_ready
+        nonlocal _heartbeat_phase, _heartbeat_http_ready, _heartbeat_im_ready, _heartbeat_ready
         _install_windows_asyncio_pipe_filter()
         shutdown_event = asyncio.Event()
         shutdown_triggered = False
         _heartbeat_phase = "initializing"
+        _heartbeat_http_ready = False
+        _heartbeat_im_ready = False
+        _heartbeat_ready = False
+        _write_heartbeat()
 
         from openakita import get_version_string
 
@@ -2235,8 +2247,13 @@ def serve(
                 f"[green]✓[/green] HTTP API 已启动: http://{_display_host}:{_api_port}"
                 + ("  [dim](lan_mode: 0.0.0.0)[/dim]" if _api_host == "0.0.0.0" else "")
             )
-            _heartbeat_phase = "running"
+            # HTTP API 已可访问，但 IM 通道、晚绑定 gateway、部分后台服务可能仍在启动。
+            # 不要在这里把 phase 标成 running，否则前端会把"HTTP ready"误解为
+            # "整个后端已完成启动"，这正是状态面板反复出现假运行/未知 IM 的根因。
+            _heartbeat_phase = "http_ready"
             _heartbeat_http_ready = True
+            _heartbeat_im_ready = False
+            _heartbeat_ready = False
             _write_heartbeat()  # 立即刷新心跳，标记 HTTP 就绪
         except ImportError:
             console.print("[yellow]⚠[/yellow] HTTP API 未启动（缺少 fastapi/uvicorn 依赖）")
@@ -2256,6 +2273,11 @@ def serve(
         if not _api_fatal:
             # 启动 IM 通道（可选）。放在 HTTP API 之后，避免首次安装通道依赖时
             # 桌面端长时间无法访问本地健康检查。
+            _heartbeat_phase = "starting_im"
+            _heartbeat_http_ready = True
+            _heartbeat_im_ready = False
+            _heartbeat_ready = False
+            _write_heartbeat()
             console.print("[bold green]正在启动 IM 通道...[/bold green]")
             im_channels = await start_im_channels(agent_or_master)
 
@@ -2268,13 +2290,33 @@ def serve(
             # 回填给已经运行的 FastAPI app state。
             if _message_gateway is not None:
                 _message_gateway.set_shutdown_event(shutdown_event)
-                if api_task is not None:
-                    try:
-                        from openakita.api.server import update_runtime_refs
+            if api_task is not None:
+                try:
+                    from openakita.api.server import update_runtime_refs
 
-                        update_runtime_refs(api_task, gateway=_message_gateway)
-                    except Exception:
-                        logger.debug("Failed to update API gateway reference", exc_info=True)
+                    update_runtime_refs(
+                        api_task,
+                        gateway=_message_gateway,
+                        startup_phase="running",
+                        readiness={
+                            "phase": "running",
+                            "http_ready": True,
+                            "im_ready": True,
+                            "ready": True,
+                            "started_im_channels": im_channels,
+                            "gateway_bound": _message_gateway is not None,
+                        },
+                    )
+                except Exception:
+                    logger.debug("Failed to update API runtime readiness", exc_info=True)
+
+            # 到这里才是真正的 serve 启动完成：HTTP API 可访问，IM 启动路径也已收敛
+            # （即便没有启用 IM 或某些 adapter 失败，后台服务也已完成启动流程）。
+            _heartbeat_phase = "running"
+            _heartbeat_http_ready = True
+            _heartbeat_im_ready = True
+            _heartbeat_ready = True
+            _write_heartbeat()
 
         console.print()
         if dev:

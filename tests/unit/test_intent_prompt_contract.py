@@ -83,6 +83,16 @@ async def test_direct_identity_question_uses_fast_query_without_tools():
     assert result.evidence_required is False
 
 
+async def test_desktop_screenshot_request_promotes_desktop_tools_without_llm():
+    result = await IntentAnalyzer(_FailingCompilerBrain()).analyze("帮我把桌面截图发我")
+
+    assert result.intent == IntentType.TASK
+    assert result.force_tool is True
+    assert result.requires_tools is True
+    assert result.tool_hints == ["Desktop"]
+    assert result.requires_project_context is False
+
+
 async def test_one_sentence_explanation_skips_tools_without_blocking_model_answer():
     result = await IntentAnalyzer(_FailingCompilerBrain()).analyze("一句话解释 Docker")
 
