@@ -684,33 +684,75 @@ def _consume_risk_authorization(session: Any, message: str) -> bool:
             "original_message": ...,
         }
 
-    If the current ``message`` matches and the stamp is still fresh, return
-    ``True`` and **consume** the marker (single-use). Otherwise return
-    ``False``.
+    PR-A2 also writes a structured ``risk_authorized_intent`` (see
+    :class:`AuthorizedIntent`). Both are checked here for backward
+    compatibility; whichever matches is consumed in a single-use fashion.
 
     Single-use + short TTL (30s) avoids granting blanket future authority.
     """
     if session is None or not message:
         return False
+    consumed_any = False
     try:
         stamp = session.get_metadata("risk_authorized_replay")
     except Exception:
-        return False
-    if not isinstance(stamp, dict):
-        return False
+        stamp = None
+    if isinstance(stamp, dict):
+        expired = False
+        try:
+            expired = float(stamp.get("expires_at", 0)) < time.time()
+        except (TypeError, ValueError):
+            expired = True
+        msg_match = (
+            (stamp.get("original_message") or "").strip()
+            == (message or "").strip()
+        )
+        if expired:
+            try:
+                session.set_metadata("risk_authorized_replay", None)
+            except Exception:
+                pass
+        elif msg_match:
+            try:
+                session.set_metadata("risk_authorized_replay", None)
+            except Exception:
+                pass
+            consumed_any = True
+        # mismatch + not expired: 保留 stamp，等正确的消息再来消费
+        # （改动原因：原实现 mismatch 也清掉，会让"先 a 再 b"场景误清 a 的授权）
+
+    # 结构化 AuthorizedIntent（PR-A2）
     try:
-        if float(stamp.get("expires_at", 0)) < time.time():
-            session.set_metadata("risk_authorized_replay", None)
-            return False
-    except (TypeError, ValueError):
-        return False
-    if (stamp.get("original_message") or "").strip() != (message or "").strip():
-        return False
-    try:
-        session.set_metadata("risk_authorized_replay", None)
+        intent_data = session.get_metadata("risk_authorized_intent")
     except Exception:
-        pass
-    return True
+        intent_data = None
+    if isinstance(intent_data, dict):
+        try:
+            from .risk_intent import AuthorizedIntent
+
+            intent = AuthorizedIntent.from_dict(intent_data)
+        except Exception:
+            intent = None
+        if intent is None or intent.is_expired(time.time()):
+            try:
+                session.set_metadata("risk_authorized_intent", None)
+            except Exception:
+                pass
+        else:
+            msg_match = (intent.original_message or "").strip() == (message or "").strip()
+            if msg_match:
+                # 把 intent 暂存到 session，供 prompt builder 注入到 system prompt；
+                # 实际"消费"在 ToolExecutor 路由完成后再做（保证拿到 scope）。
+                try:
+                    session.set_metadata(
+                        "risk_authorized_intent_active",
+                        intent.to_dict(),
+                    )
+                    session.set_metadata("risk_authorized_intent", None)
+                except Exception:
+                    pass
+                consumed_any = True
+    return consumed_any
 
 
 def _check_trusted_path_skip(
@@ -752,15 +794,66 @@ def _check_trusted_path_skip(
 
 
 def _build_destructive_intent_question(message: str, classification: RiskIntentResult | None = None) -> str:
+    """生成高危确认提示。
+
+    PR-1.1：两步式 summary。先把用户的长描述抽成 ≤30 字的"准备执行 X"
+    摘要 + scope，再给三选项；避免直接抛出原始 message 让用户读不懂。
+    """
     target = (message or "").strip()
-    if len(target) > 240:
-        target = target[:240] + "..."
+    summary = _summarize_destructive_action(target, classification)
+    options = "回复 **继续** / **只查看** / **取消** 三选一。"
+    if classification is not None:
+        op = (
+            classification.operation_kind.value
+            if hasattr(classification.operation_kind, "value")
+            else str(classification.operation_kind or "")
+        )
+        target_kind = (
+            classification.target_kind.value
+            if hasattr(classification.target_kind, "value")
+            else str(classification.target_kind or "")
+        )
+        meta_parts = []
+        if op and op not in ("none", "unknown"):
+            meta_parts.append(f"op={op}")
+        if target_kind and target_kind not in ("unknown",):
+            meta_parts.append(f"target={target_kind}")
+        meta_line = f"（{', '.join(meta_parts)}）" if meta_parts else ""
+    else:
+        meta_line = ""
+
     return (
-        f"想跟你确认下：你是要 **{target}**？\n\n"
-        "这个动作可能会改动文件 / 配置 / 权限，做完不一定能撤回，所以我先停一下。\n"
-        "回复 **继续**（或 好 / 是 / yes）就开始执行；\n"
-        "回复 **只查看** 我就只读不改；回复 **取消** 就跳过。"
+        f"准备执行：**{summary}** {meta_line}\n\n"
+        "这个动作可能改动文件 / 配置 / 权限，做完不一定能撤回，先确认一下。\n"
+        f"{options}"
     )
+
+
+_DESTRUCTIVE_VERBS = (
+    "删除", "删掉", "清空", "清除", "重置", "覆盖", "禁用", "关闭",
+    "卸载", "销毁", "格式化",
+)
+
+
+def _summarize_destructive_action(text: str, classification: Any | None = None) -> str:
+    """Best-effort one-line summary of a destructive request (≤30 chars)."""
+    raw = (text or "").strip()
+    if not raw:
+        return "未指定操作"
+    if len(raw) <= 30:
+        return raw
+    # 尝试切到第一句
+    for sep in ("。", "\n", "；", ";", "！", "!"):
+        idx = raw.find(sep)
+        if 5 <= idx <= 30:
+            return raw[:idx].strip() or raw[:30] + "…"
+    # 找到第一个动词 + 下文
+    for verb in _DESTRUCTIVE_VERBS:
+        i = raw.find(verb)
+        if i != -1:
+            tail = raw[i : i + 28]
+            return tail + ("…" if len(raw) > i + 28 else "")
+    return raw[:28] + "…"
 
 # Prompt Compiler 系统提示词（两段式 Prompt 第一阶段）
 PROMPT_COMPILER_SYSTEM = """【角色】
@@ -1302,6 +1395,19 @@ class Agent:
 
         logger.info(f"Agent '{self.name}' created (with refactored sub-modules)")
 
+    # 永远不会因为 intent-driven defer 被剔除的工具分类。
+    #
+    # 这两类是 OpenAkita 在每一轮里都需要的"基础能力"：
+    # - ``System``：``ask_user`` / ``schedule_task`` 等控制流工具，没有它们
+    #   LLM 没办法触发追问或排程，体验直接退化。
+    # - ``Memory``：``memory_search`` / ``memory_recall`` 之类，被裁掉就等于
+    #   切断了"我曾经记住过 X"的入口，会导致明显的健忘 bug。
+    #
+    # 暴露成类常量主要是为了：(1) 单测 / 文档可以直接 import 看到；
+    # (2) 用户在 ``settings.always_load_categories`` 里追加新分类时不必
+    # 重复列举这两类。运行时会和 ``settings.always_load_categories`` 取并集。
+    _ALWAYS_KEEP_CATEGORIES: tuple[str, ...] = ("System", "Memory")
+
     @property
     def _effective_tools(self) -> list[dict]:
         """Tools available for the current call context.
@@ -1313,6 +1419,7 @@ class Agent:
            - Intent hints can un-defer specific categories
            - IM sessions auto-include IM Channel category
            - User settings.always_load_tools / always_load_categories override defer
+             (always_load_categories 自动并入 ``_ALWAYS_KEEP_CATEGORIES``)
            - _discovered_tools (from tool_search) override defer
            - Deferred tools stay in list but marked _deferred=True (schema omitted by Brain)
         3. Context window: reduce set for small models
@@ -1391,7 +1498,11 @@ class Agent:
             intent_hints.add("IM Channel")
 
         user_always_tools = frozenset(settings.always_load_tools)
-        user_always_cats = frozenset(settings.always_load_categories)
+        # 把 ``_ALWAYS_KEEP_CATEGORIES`` 和用户自己配的 ``always_load_categories``
+        # 取并集，作为最终的 always-keep 类别集合（System / Memory 始终在内）。
+        user_always_cats = frozenset(
+            list(settings.always_load_categories) + list(self._ALWAYS_KEEP_CATEGORIES)
+        )
         discovered = getattr(self, "_discovered_tools", set())
 
         hint_names: set[str] = set()
@@ -3124,6 +3235,13 @@ class Agent:
                     if session_config
                     else "zh",
                 }
+                # PR-A2：把活跃的授权意图传给 prompt builder，让它注入到 system prompt
+                try:
+                    intent_data = session.get_metadata("risk_authorized_intent_active")
+                    if isinstance(intent_data, dict) and intent_data:
+                        session_context["authorized_intent"] = intent_data
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -5181,6 +5299,9 @@ class Agent:
         """Fire per-turn start hooks and collect optional context snippets."""
         hooks = getattr(getattr(self, "_plugin_manager", None), "hook_registry", None)
         run_key = conversation_id or session_id
+        # 防御：mock / 子类化测试可能绕过 ``Agent.__init__``。
+        if not isinstance(getattr(self, "_active_agent_lifecycle_runs", None), dict):
+            self._active_agent_lifecycle_runs = {}
         self._active_agent_lifecycle_runs[run_key] = {
             "session_id": session_id,
             "conversation_id": conversation_id,
@@ -5237,9 +5358,14 @@ class Agent:
         status: str = "completed",
     ) -> None:
         run_key = conversation_id or session_id
-        payload = self._active_agent_lifecycle_runs.pop(run_key, None)
+        # 测试 / 子类化场景里偶尔会绕过 ``Agent.__init__`` 直接 mock，
+        # 防御性地确保字典存在，避免 AttributeError 把整条 chat 链路拉炸。
+        runs = getattr(self, "_active_agent_lifecycle_runs", None)
+        if not isinstance(runs, dict):
+            return
+        payload = runs.pop(run_key, None)
         if payload is None and conversation_id:
-            payload = self._active_agent_lifecycle_runs.pop(session_id, None)
+            payload = runs.pop(session_id, None)
         if payload is None:
             return
 
@@ -7308,10 +7434,27 @@ class Agent:
         if _looks_like_explicit_no_tool_request(task_description):
             force_tool_retries, tool_evidence_required = 0, False
 
+        # === PR-M1: Intent-driven 工具裁剪。 ===
+        # chat 意图下只挂 5 个核心工具（详见 reasoning_engine._filter_tools_by_intent）。
+        # 这一步在传入 reasoning engine 之前做，避免 system prompt 注入大段无用工具
+        # schema，token 浪费 + LLM 分心同时治本。
+        _engine_tools = self._effective_tools
+        try:
+            from .reasoning_engine import _filter_tools_by_intent
+
+            _engine_tools = _filter_tools_by_intent(
+                _engine_tools,
+                intent_name=getattr(getattr(intent_result, "intent", None), "value", None),
+                intent_tool_hints=list(getattr(intent_result, "tool_hints", []) or []),
+                requires_tools=bool(getattr(intent_result, "requires_tools", False)),
+            )
+        except Exception as _exc:
+            logger.debug(f"[ToolFilter/Intent] skipped: {_exc}")
+
         # === 委托给 ReasoningEngine ===
         return await self.reasoning_engine.run(
             messages,
-            tools=self._effective_tools,
+            tools=_engine_tools,
             system_prompt=system_prompt,
             base_system_prompt=base_system_prompt,
             task_description=task_description,
@@ -8404,7 +8547,9 @@ class Agent:
         duration = time.time() - start_time
 
         # === 桌面通知（仅本地通道：cli/desktop；IM 通道已有自己的通知机制）===
-        if settings.desktop_notify_enabled:
+        if settings.desktop_notify_enabled and not getattr(
+            self, "_suppress_desktop_task_notification", False
+        ):
             _session = getattr(self, "_current_session", None)
             _channel = getattr(_session, "channel", "cli") if _session else "cli"
             if _channel in ("cli", "desktop"):

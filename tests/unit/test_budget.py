@@ -1,6 +1,5 @@
 """L1 Unit Tests: Token budget estimation and allocation."""
 
-import pytest
 
 from openakita.prompt.budget import (
     BudgetConfig,
@@ -78,7 +77,7 @@ class TestApplyBudgetToSections:
     def test_all_empty_content(self):
         sections = {"memory": "", "tools": "", "identity": ""}
         results = apply_budget_to_sections(sections, BudgetConfig())
-        for name, result in results.items():
+        for _name, result in results.items():
             assert result.original_tokens == 0
             assert result.truncated is False
 
@@ -101,8 +100,12 @@ class TestApplyBudgetToSections:
 
     def test_budget_config_defaults(self):
         config = BudgetConfig()
+        # 默认值与 prompt/budget.py::BudgetConfig 字段一致；
+        # 老用例曾断言 user_budget=300 / memory_budget=2500 / total_budget=18000，
+        # 但 budget 实现已将默认 user/runtime + memory + 总预算上调到当前值，
+        # 测试这里只断言"已到位"，避免每次调参就要联动改测试。
         assert config.identity_budget == 6000
         assert config.catalogs_budget == 8000
-        assert config.user_budget == 300
-        assert config.memory_budget == 2500
-        assert config.total_budget == 18000
+        assert config.user_budget == 1200
+        assert config.memory_budget == 3500
+        assert config.total_budget == 22000

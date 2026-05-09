@@ -25,6 +25,30 @@ from .user import UserManager
 logger = logging.getLogger(__name__)
 
 
+# PR-N1: session id 安全字符白名单。
+# 允许字母 / 数字 / 下划线 / 连字符 / 冒号 / 点 / 管道（IM 平台常用 chat:user 形式），
+# 拒绝任何控制字符、路径分隔符、引号、HTML 元字符、Unicode 不可打印字符。
+# 长度上限 256 字符，避免 sqlite WHERE 子句被滥用拖慢查询。
+import re as _re
+
+_SESSION_ID_SAFE_RE = _re.compile(r"^[A-Za-z0-9_\-:.|@/]{1,256}$")
+_SESSION_ID_FORBIDDEN_FRAGMENTS = (
+    "..", "\x00", "\r", "\n", "\t", "<", ">", '"', "'", "`",
+    "\\", "//", "%00", "<script", "${", "{{",
+)
+
+
+def _is_safe_session_id(value: str) -> bool:
+    if not value or not isinstance(value, str):
+        return False
+    if len(value) > 256:
+        return False
+    if not _SESSION_ID_SAFE_RE.match(value):
+        return False
+    low = value.lower()
+    return all(frag not in low for frag in _SESSION_ID_FORBIDDEN_FRAGMENTS)
+
+
 class SessionManager:
     """
     会话管理器
@@ -80,6 +104,9 @@ class SessionManager:
         # 可选：从外部存储（SQLite）加载 turns 的回调，用于崩溃恢复时回填
         # 签名: (safe_session_id: str) -> list[dict]  (每个 dict 含 role, content, timestamp)
         self._turn_loader = None
+        # PR-D3：可选：写 turn 到 SQLite 的回调（与 _turn_loader 平行）
+        # 签名: (safe_session_id, turn_index, role, content, metadata) -> None
+        self._turn_writer = None
 
         # 会话是否已从磁盘加载完毕（API 层用此判断 ready 语义）
         self._sessions_loaded = False
@@ -92,6 +119,37 @@ class SessionManager:
         self._running = True
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         self._save_task = asyncio.create_task(self._save_loop())
+
+        # PR-D2: 启动时（如果 turn_loader 已绑定）异步触发一次 backfill，
+        # 把 SQLite 里的最近 turn 回填到内存 session。
+        try:
+            from ..core.feature_flags import is_enabled as _ff_enabled
+
+            should_backfill = _ff_enabled("session_backfill_on_start_v1")
+        except Exception:
+            should_backfill = False
+        if should_backfill and self._turn_loader is not None:
+            try:
+                import threading
+
+                def _run() -> None:
+                    try:
+                        n = self.backfill_sessions_from_store()
+                        if n:
+                            logger.info(
+                                f"[SessionManager] auto-backfill restored {n} turns"
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            f"[SessionManager] auto-backfill failed: {exc}"
+                        )
+
+                threading.Thread(
+                    target=_run, name="sm-backfill", daemon=True
+                ).start()
+            except Exception as exc:
+                logger.debug(f"[SessionManager] auto-backfill spawn failed: {exc}")
+
         logger.info("SessionManager started")
 
     def mark_dirty(self) -> None:
@@ -144,8 +202,26 @@ class SessionManager:
             self._save_sessions()
 
     def set_turn_loader(self, loader) -> None:
-        """设置 turn_loader 回调（延迟绑定，Agent 初始化完成后调用）"""
+        """设置 turn_loader 回调（延迟绑定，Agent 初始化完成后调用）。
+
+        PR-D2：绑定本身不再触发 backfill，避免在测试 / 命令行场景下
+        立即起后台线程消费"首屏 backfill"窗口；真正的自动回填发生在
+        ``SessionManager.start()``（API server 启动时）和 ``get_session``
+        命中已有 session 时（hydrate-on-demand）。
+        """
         self._turn_loader = loader
+
+    def set_turn_writer(self, writer) -> None:
+        """设置 turn_writer 回调（PR-D3）。
+
+        ``writer(safe_session_id, turn_index, role, content, metadata)`` 在
+        ``Session.add_message`` 成功后被同步调用，best-effort 写入
+        SqliteTurnStore；任何异常都仅以 DEBUG 记录，不影响主流程。
+
+        与 ``set_turn_loader`` 一致：绑定本身不触发 backfill；自动 backfill
+        在 ``SessionManager.start()`` 里按 feature flag 启动一次。
+        """
+        self._turn_writer = writer
 
     def backfill_sessions_from_store(self) -> int:
         """用 turn_loader 回填所有 session 中可能缺失的消息（崩溃恢复）。
@@ -252,6 +328,7 @@ class SessionManager:
         with self._sessions_lock:
             if session_key in self._sessions:
                 session = self._sessions[session_key]
+                self._attach_manager(session)
                 session.touch()
                 return session
 
@@ -262,11 +339,13 @@ class SessionManager:
             # double-check：另一个线程可能已抢先恢复或创建
             if session_key in self._sessions:
                 session = self._sessions[session_key]
+                self._attach_manager(session)
                 session.touch()
                 return session
 
             if recovered is not None:
                 self._sessions[session_key] = recovered
+                self._attach_manager(recovered)
                 recovered.touch()
                 logger.info(
                     f"Recovered session from disk: {session_key} "
@@ -286,6 +365,7 @@ class SessionManager:
                     chat_name=chat_name,
                 )
                 self._sessions[session_key] = session
+                self._attach_manager(session)
                 logger.info(f"Created new session: {session_key}")
                 self._dispatch_hook_fire_and_forget(
                     "on_session_start", session=session, session_key=session_key
@@ -293,6 +373,13 @@ class SessionManager:
                 return session
 
         return None
+
+    def _attach_manager(self, session: "Session") -> None:
+        """让 session 持有对 manager 的弱引用，便于按需触发 backfill。"""
+        try:
+            session._manager = self  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     def _try_recover_session_from_disk(self, session_key: str) -> "Session | None":
         """尝试从 sessions.json 中恢复指定 session_key 的会话。
@@ -312,10 +399,66 @@ class SessionManager:
                 session = Session.from_dict(item)
                 if session.session_key == session_key and not session.is_expired():
                     self._clean_large_content_in_messages(session.context.messages)
+                    self._hydrate_from_store(session, max_turns=50)
                     return session
             except Exception:
                 continue
         return None
+
+    def _hydrate_from_store(self, session: "Session", *, max_turns: int = 50) -> None:
+        """PR-D2：从 SQLite 把最近 N 条 turn 回填到 ``session.context.messages``。
+
+        - 仅在 turn_loader 已绑定且 feature flag 启用时生效
+        - 通过 (role, content, timestamp) 去重，不影响已有内存数据
+        - 任何异常仅 WARN，绝不抛出（恢复路径必须健壮）
+        """
+        if not self._turn_loader:
+            return
+        try:
+            from ..core.feature_flags import is_enabled as _ff_enabled
+
+            if not _ff_enabled("session_backfill_on_start_v1"):
+                return
+        except Exception:
+            return
+
+        try:
+            import re
+
+            safe_id = session.session_key.replace(":", "__")
+            safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", safe_id)
+            db_turns = self._turn_loader(safe_id) or []
+        except Exception as exc:
+            logger.debug(f"[SessionManager] hydrate from store failed: {exc}")
+            return
+
+        if not db_turns:
+            return
+
+        db_turns = list(db_turns)[-max_turns:]
+        existing_keys = {
+            (m.get("role"), m.get("content"), m.get("timestamp"))
+            for m in (session.context.messages or [])
+        }
+        appended = 0
+        for turn in db_turns:
+            if not isinstance(turn, dict):
+                continue
+            key = (turn.get("role"), turn.get("content"), turn.get("timestamp"))
+            if key in existing_keys:
+                continue
+            session.context.messages.append(dict(turn))
+            existing_keys.add(key)
+            appended += 1
+        if appended:
+            try:
+                session.context.messages.sort(key=lambda m: m.get("timestamp") or "")
+            except Exception:
+                pass
+            logger.info(
+                f"[SessionManager] hydrated {appended} turns into restored "
+                f"session {session.session_key}"
+            )
 
     def get_session_by_id(self, session_id: str) -> Session | None:
         """通过 session_id 获取会话"""
@@ -542,10 +685,23 @@ class SessionManager:
 
         skipped_expired = 0
         skipped_error = 0
+        skipped_invalid_id = 0
+        invalid_id_samples: list[str] = []
         for item in data:
             try:
                 if not isinstance(item, dict):
                     skipped_error += 1
+                    continue
+                # PR-N1: 启动迁移——sessions.json 偶尔会因为旧版本 / 上游 IM
+                # 平台的怪 ID（含路径分隔符 / 控制字符 / >256 字符）写进来，
+                # Windows 路径下还可能炸 SQLite 路径拼接。这里在加载阶段直接拒
+                # 绝并采样最多 5 个写到 logs，便于事后审计；前端最终展示时仍
+                # 须做 escapeHtml，避免 XSS（见 ChatView 已有 escape）。
+                _candidate_id = str(item.get("session_key") or item.get("id") or "")
+                if not _is_safe_session_id(_candidate_id):
+                    skipped_invalid_id += 1
+                    if len(invalid_id_samples) < 5:
+                        invalid_id_samples.append(_candidate_id[:64])
                     continue
                 session = Session.from_dict(item)
                 if not session.is_expired() and session.state != SessionState.CLOSED:
@@ -587,6 +743,10 @@ class SessionManager:
             parts.append(f"skipped {skipped_expired} expired")
         if skipped_error:
             parts.append(f"skipped {skipped_error} errors")
+        if skipped_invalid_id:
+            parts.append(
+                f"skipped {skipped_invalid_id} invalid_id (samples={invalid_id_samples})"
+            )
         logger.info(f"{parts[0]}" + (f" ({', '.join(parts[1:])})" if len(parts) > 1 else ""))
 
         self._sessions_loaded = True

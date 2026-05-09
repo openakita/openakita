@@ -595,6 +595,24 @@ def build_system_prompt(
     if session_meta:
         system_parts.append(session_meta)
 
+    # 6.55 已授权高危操作范围（PR-A2）：用户已确认 + 没有受控入口的高危请求，
+    # 在这里把"已授权范围"明确告诉 LLM，禁止扩大或全盘扫描。
+    try:
+        from ..core.feature_flags import is_enabled as _ff_enabled
+
+        if (
+            _ff_enabled("risk_authorized_intent_v2")
+            and isinstance(session_context, dict)
+            and session_context.get("authorized_intent")
+        ):
+            auth_section = _build_authorized_intent_section(
+                session_context["authorized_intent"]
+            )
+            if auth_section:
+                system_parts.append(auth_section)
+    except Exception:
+        pass
+
     # 6.6 架构概况（powered by {model}，区分主/子 Agent）
 
     arch_section = _build_arch_section(
@@ -1307,6 +1325,59 @@ def _build_session_metadata_section(
             else:
                 lines.append("- **子 Agent 协作记录**: 有（可通过 get_session_context 查询详情）")
 
+    return "\n".join(lines)
+
+
+def _build_authorized_intent_section(intent: dict) -> str:
+    """渲染"已授权高危操作范围"段落（PR-A2）。
+
+    用户已经在 ask_user 弹窗里确认了这次高危操作；为了避免 LLM 在
+    ReAct 自由发挥（如调 grep 全盘扫描，参见 2026-05-09 P0-1），
+    把已授权的精确意图结构化注入 system prompt。
+    """
+    if not isinstance(intent, dict):
+        return ""
+    op = str(intent.get("operation") or "").strip() or "unknown"
+    target = str(intent.get("target_kind") or "").strip() or "unknown"
+    scope = intent.get("scope") or {}
+    scope_str = ""
+    if isinstance(scope, dict) and scope:
+        try:
+            import json as _json
+
+            scope_str = _json.dumps(scope, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            scope_str = str(scope)
+
+    op_hint_map = {
+        "memory_delete": (
+            "请优先使用 `memory_delete_by_query` 工具（dry_run=True 先预览，"
+            "确认无误后再执行）。**禁止**用 `grep` / `glob` 在用户主目录或 "
+            "`.openakita/runtime`、`.openakita/workspaces` 等运行时数据目录"
+            "递归搜索；那是程序内部存储，会让后端卡死。"
+        ),
+        "shell_execute": (
+            "请直接调用 `run_powershell` / `run_shell` 执行用户指定的命令，"
+            "不要再次询问用户。**禁止**扩大命令范围或递归扫描。"
+        ),
+        "skill_install": (
+            "请调用 `install_skill` 工具，参数从 scope 中读取。"
+        ),
+    }
+    op_hint = op_hint_map.get(op, "请按 scope 指定的最小范围执行；不得扩大。")
+
+    lines = [
+        "## 已授权高危操作（仅本轮有效，30s 内）",
+        f"- **operation**: `{op}`",
+        f"- **target_kind**: `{target}`",
+    ]
+    if scope_str:
+        lines.append(f"- **scope**: `{scope_str}`")
+    lines.append("")
+    lines.append("**执行约束**（违反将被工具层拦截）：")
+    lines.append(f"- {op_hint}")
+    lines.append("- 严禁把已授权范围扩大到其它目标、其它路径、其它会话。")
+    lines.append("- 完成本次受限操作后立即结束本轮，不要顺手做未授权的清理。")
     return "\n".join(lines)
 
 
@@ -2111,21 +2182,50 @@ def _build_pinned_rules_section(
 
         active_rules.sort(key=lambda item: item[0].importance_score, reverse=True)
 
+        try:
+            from ..core.feature_flags import is_enabled as _ff_enabled
+
+            ff_rule_dedup = _ff_enabled("memory_rule_session_scope_v1")
+        except Exception:
+            ff_rule_dedup = True
+
         lines = ["## 当前相关规则\n", "以下规则按来源与相关性注入；跨会话规则仅在相关时参考。"]
         total_chars = 0
         max_chars = _PINNED_RULES_MAX_TOKENS * _PINNED_RULES_CHARS_PER_TOKEN
         seen_prefixes: set[str] = set()
+        seen_content_hashes: set[str] = set()
         for r, reason in active_rules:
             content = (r.content or "").strip()
             if not content:
                 continue
-            prefix = content[:40]
-            if prefix in seen_prefixes:
-                continue
-            seen_prefixes.add(prefix)
-            source = getattr(r, "source", "") or getattr(r, "source_episode_id", "") or "memory"
+
             scope = getattr(r, "scope", "global") or "global"
-            confidence = getattr(r, "confidence", 0.0)
+            confidence = float(getattr(r, "confidence", 0.0) or 0.0)
+            source = getattr(r, "source", "") or getattr(r, "source_episode_id", "") or "memory"
+
+            # PR-B3：自动生成的全局规则需要更高 confidence 才注入，避免
+            # daily_consolidation 把测试数据当通用规则到处注入。
+            if ff_rule_dedup and scope == "global":
+                auto_sources = {"daily_consolidation", "memory_nudge", "session_extraction"}
+                if source in auto_sources and confidence < 0.6:
+                    continue
+
+            # PR-B3：内容哈希去重，比 prefix(40) 更稳，剥离来源差异后归一
+            if ff_rule_dedup:
+                import hashlib
+                import re as _re
+
+                normalized = _re.sub(r"\s+", " ", content.lower()).strip()
+                ch = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
+                if ch in seen_content_hashes:
+                    continue
+                seen_content_hashes.add(ch)
+            else:
+                prefix = content[:40]
+                if prefix in seen_prefixes:
+                    continue
+                seen_prefixes.add(prefix)
+
             line = (
                 f"- [{scope}; reason={reason}; confidence={confidence:.2f}; source={source}] "
                 f"{content}"
@@ -2256,7 +2356,22 @@ def _build_experience_section(
 
         lines = ["## 历史经验（执行任务前请参考）\n"]
         total_chars = 0
+        seen_hashes: set[str] = set()  # PR-B2: 内容哈希去重
+        try:
+            from ..core.feature_flags import is_enabled as _ff_enabled
+
+            ff_dedup = _ff_enabled("memory_session_scope_v1")
+        except Exception:
+            ff_dedup = True
         for m in top:
+            content_key = (m.content or "").strip().lower()
+            if ff_dedup and content_key:
+                import hashlib
+
+                ch = hashlib.sha1(content_key.encode("utf-8")).hexdigest()[:16]
+                if ch in seen_hashes:
+                    continue
+                seen_hashes.add(ch)
             icon = {"error": "⚠️", "skill": "💡", "experience": "📝"}.get(m.type.value, "📝")
             content = m.content
             if len(content) > _EXPERIENCE_ITEM_MAX_CHARS:

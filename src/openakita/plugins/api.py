@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import logging
 from abc import ABC, abstractmethod
+from collections import ChainMap
 from collections.abc import Callable, Coroutine
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -83,13 +84,23 @@ class PluginAPI:
         self._manifest = manifest
         self._granted_permissions = set(granted_permissions)
         self._data_dir = data_dir
-        self._host = dict(host_refs or {})
+        # ChainMap：先查 ``_host_overrides``（per-plugin 包装层，如 scoped
+        # skill_loader），再查共享的 host_refs。这样：
+        # 1) 宿主在 plugin 加载之后才把 ``gateway`` / ``brain`` 等 wire 进来，
+        #    已存在的 PluginAPI 实例也能立即看到（live-binding）；
+        # 2) 我们对 skill_loader 的 capability-scoped 包装仍然是 plugin 私有，
+        #    不会回写污染 host_refs；
+        # 3) ``self._host.get(key)`` 这类调用点不需要任何改动。
+        self._host_overrides: dict[str, Any] = {}
+        self._host_refs_shared: dict[str, Any] = host_refs if host_refs is not None else {}
+        self._host: ChainMap[str, Any] = ChainMap(self._host_overrides, self._host_refs_shared)
         self._hook_registry = hook_registry
 
         # Wrap skill_loader with capability-scoped proxy
-        if "skill_loader" in self._host and self._host["skill_loader"] is not None:
-            self._host["skill_loader"] = _ScopedSkillLoader(
-                self._host["skill_loader"],
+        skill_loader_ref = self._host_refs_shared.get("skill_loader")
+        if skill_loader_ref is not None:
+            self._host_overrides["skill_loader"] = _ScopedSkillLoader(
+                skill_loader_ref,
                 plugin_id=plugin_id,
             )
         self._registered_tools: list[str] = []
@@ -748,7 +759,9 @@ class PluginAPI:
         """Register a handler for bridge events sent from the plugin UI."""
         handlers: dict = self._host.get("_ui_event_handlers", {})
         handlers.setdefault(self._plugin_id, {})[event_type] = handler
-        self._host["_ui_event_handlers"] = handlers
+        # 写到共享的 host_refs（而不是 ChainMap 第一层 plugin-private overrides），
+        # 这样不同 plugin 注册的 UI handler 可以汇总到一个 dict 里。
+        self._host_refs_shared["_ui_event_handlers"] = handlers
         self.log(f"Registered UI event handler for '{event_type}'")
 
     def broadcast_ui_event(self, event_type: str, data: dict, **kwargs: Any) -> None:

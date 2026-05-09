@@ -51,6 +51,18 @@ from .proxy_utils import (
 logger = logging.getLogger(__name__)
 
 
+def _safe_dig(data: object, *keys: str) -> object:
+    """Walk nested dicts safely; returns ``None`` if any key is missing."""
+    cur = data
+    for k in keys:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(k)
+        if cur is None:
+            return None
+    return cur
+
+
 _THINKING_BUDGET_BY_DEPTH = {
     "low": 1024,
     "medium": 4096,
@@ -1141,8 +1153,18 @@ class OpenAIProvider(LLMProvider):
         return ""
 
     def _recover_empty_content_text(self, message: dict, choice: dict, data: dict) -> tuple[str, str]:
-        """Recover visible text from compatibility gateways with empty message.content."""
+        """Recover visible text from compatibility gateways with empty message.content.
+
+        PR-C1: extended to cover the dashscope OpenAI-compat gateway, which
+        sometimes returns the actual text in non-standard locations
+        (``message.reasoning_content`` for thinking models, ``data.output.text``
+        / ``data.output.choices[0].message.content`` for native dashscope
+        passthroughs, or ``choice.delta.content`` for accidentally streamed
+        chunks).
+        """
+        # 1) reasoning_content / message-level fallbacks
         for source, value in (
+            ("message.reasoning_content", message.get("reasoning_content")),
             ("message.output", message.get("output")),
             ("message.text", message.get("text")),
             ("message.thinking", message.get("thinking")),
@@ -1153,16 +1175,45 @@ class OpenAIProvider(LLMProvider):
             if recovered:
                 return source, recovered
 
+        # 2) choice.delta.content — when an OpenAI-compat proxy accidentally
+        #    sends a stream-style payload through the non-stream endpoint.
+        delta = choice.get("delta") if isinstance(choice, dict) else None
+        if isinstance(delta, dict):
+            recovered = self._extract_text_value(delta.get("content"))
+            if recovered:
+                return "choice.delta.content", recovered
+
+        # 3) Responses API style array
         output = data.get("output")
         if isinstance(output, list) and output:
             recovered = self._extract_from_responses_output(output)
             if recovered:
                 return "data.output", recovered.strip()
 
+        # 4) Native dashscope passthrough: data.output.{text,choices,...}
+        if isinstance(output, dict):
+            recovered = self._extract_text_value(output.get("text"))
+            if recovered:
+                return "data.output.text", recovered
+            choices_in_output = output.get("choices")
+            if isinstance(choices_in_output, list):
+                for inner in choices_in_output:
+                    if not isinstance(inner, dict):
+                        continue
+                    inner_msg = inner.get("message") or {}
+                    recovered = self._extract_text_value(inner_msg.get("content"))
+                    if recovered:
+                        return "data.output.choices.message.content", recovered
+                    recovered = self._extract_text_value(inner.get("text"))
+                    if recovered:
+                        return "data.output.choices.text", recovered
+
         for source, value in (
             ("data.text", data.get("text")),
             ("data.output_text", data.get("output_text")),
             ("data.response", data.get("response")),
+            ("data.result.output_text", _safe_dig(data, "result", "output_text")),
+            ("data.result.text", _safe_dig(data, "result", "text")),
         ):
             recovered = self._extract_text_value(value)
             if recovered:
@@ -1361,6 +1412,7 @@ class OpenAIProvider(LLMProvider):
 
         # 非标准 OpenAI-compatible 代理容错：有 token 但 message.content 为空时，
         # 不要求一定存在 reasoning_content，尽量从其他常见字段恢复可见文本。
+        recovered_from: str = ""
         if not text_content and not has_tool_calls and not content_blocks and _out_tokens > 0:
             recovered_source, recovered_text = self._recover_empty_content_text(
                 message, choice, data
@@ -1368,9 +1420,11 @@ class OpenAIProvider(LLMProvider):
             if recovered_text:
                 text_content = recovered_text
                 content_blocks.insert(0, TextBlock(text=text_content))
-                logger.warning(
-                    f"[PARSE] Recovered {len(recovered_text)} chars from {recovered_source} "
-                    f"(content was empty, {_out_tokens} output tokens) from {self.name}"
+                recovered_from = recovered_source
+                # PR-C2: 已经成功恢复，不要打 ERROR；INFO 级足够运维观察
+                logger.info(
+                    f"[PARSE] auto-recovered {len(recovered_text)} chars from {recovered_source} "
+                    f"(content empty, {_out_tokens} output tokens, endpoint={self.name})"
                 )
 
         # Add recovered/plain text before diagnosing content loss.  The previous
@@ -1413,8 +1467,9 @@ class OpenAIProvider(LLMProvider):
                 k for k in choice if k not in ("message", "index", "finish_reason", "logprobs")
             )
             _token_details = usage_data.get("completion_tokens_details")
-            logger.error(
-                f"[PARSE] ⚠️ CONTENT LOST: {_out_tokens} output tokens but content_blocks "
+            # PR-C2: 降级为 WARN（不再误触发 endpoint cooldown）
+            logger.warning(
+                f"[PARSE] CONTENT LOST: {_out_tokens} output tokens but content_blocks "
                 f"is empty from {self.name}. message keys={msg_keys}, "
                 f"preview={msg_preview}, "
                 f"extra_data_keys={_extra_keys}, extra_choice_keys={_choice_keys}, "
@@ -1432,6 +1487,15 @@ class OpenAIProvider(LLMProvider):
                 "token_details": _token_details,
                 "usage": usage_data,
             }
+            # PR-C3: 把完整原始响应 dump 到 data/llm_debug/empty_response_*.json
+            # 供后续根因分析或向 dashscope 提工单。受 feature flag 控制。
+            try:
+                from ...core.feature_flags import is_enabled as _ff_enabled
+
+                if _ff_enabled("openai_empty_response_dump_v1"):
+                    self._dump_empty_response(data)
+            except Exception:
+                pass
 
         # 解析停止原因
         finish_reason = choice.get("finish_reason", "stop")
@@ -1476,7 +1540,33 @@ class OpenAIProvider(LLMProvider):
             usage=usage,
             model=data.get("model", self.config.model),
             reasoning_content=reasoning_content,
+            recovered_from=recovered_from,
         )
+
+    def _dump_empty_response(self, data: dict) -> None:
+        """PR-C3: 把无可恢复内容的 raw response 写到 llm_debug 便于排查。"""
+        try:
+            from datetime import datetime
+            from pathlib import Path
+
+            from ...config import settings as _settings
+
+            debug_dir = _settings.project_root / "data" / "llm_debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            filename = debug_dir / f"empty_response_{self.name}_{ts}.json"
+            payload = {
+                "endpoint": self.name,
+                "model": self.config.model,
+                "raw_response": data,
+            }
+            filename.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            logger.info(f"[PARSE] Empty response dumped to {filename}")
+        except Exception as exc:
+            logger.debug(f"[PARSE] dump empty_response failed: {exc}")
 
     def _convert_stream_event(self, event: dict) -> dict | list[dict]:
         """转换流式事件为统一格式。

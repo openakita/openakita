@@ -338,6 +338,53 @@ if ("serviceWorker" in navigator && __BUILD_TARGET__ === "web") {
   });
 }
 
+// PR-Q1: 启动前最多 ping backend 5s，给随后所有自动 useQuery / fetch 一个明确
+// 的 readiness 信号，避免开机一瞬间几十个请求全炸 502/连接拒绝、然后 toast 刷屏。
+//
+// 渲染策略：
+//   1. 不阻塞渲染——超时也照常 render，让用户能看到"后端未就绪"的引导界面；
+//   2. 通过 window.__OPENAKITA_BACKEND_READY 暴露状态（组件可以读它做 useQuery
+//      的 enabled 依赖），并 dispatch `openakita_backend_ready` 事件，方便外部
+//      模块（比如 SchedulerView 的轮询）等待真正可用再开请求。
+async function waitForBackend(maxMs = 5000): Promise<boolean> {
+  const start = Date.now();
+  const apiBase =
+    __BUILD_TARGET__ === "tauri"
+      ? "http://127.0.0.1:18900"
+      : (window.location.origin || "");
+  while (Date.now() - start < maxMs) {
+    try {
+      const res = await fetch(`${apiBase}/api/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(1500),
+      });
+      if (res.ok) return true;
+    } catch {
+      /* swallow — keep retrying until budget exhausted */
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return false;
+}
+
+declare global {
+  interface Window {
+    __OPENAKITA_BACKEND_READY?: boolean;
+  }
+}
+
+window.__OPENAKITA_BACKEND_READY = false;
+
+waitForBackend().then((ok) => {
+  window.__OPENAKITA_BACKEND_READY = ok;
+  window.dispatchEvent(
+    new CustomEvent("openakita_backend_ready", { detail: { ok } }),
+  );
+  if (!ok) {
+    logger.warn("Boot", "Backend not reachable within 5s; UI will still render");
+  }
+});
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <GlobalErrorBoundary>

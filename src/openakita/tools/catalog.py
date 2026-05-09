@@ -102,6 +102,30 @@ but with full schema you'll fill arguments more reliably.
 {tool_list}
 """
 
+    # PR-R1: 中文版 catalog header。
+    # 当 settings.prompt_lang == "zh" 时使用此模板，避免中文用户在中文 system prompt
+    # 中突然出现一段英文 header，看起来不一致 + 模型可能因此误判主语言。
+    CATALOG_TEMPLATE_ZH = """
+## 可用系统工具
+
+### 工具选择优先级
+1. **已安装的 Skill** — 先检查 skills/ 目录
+2. **MCP 服务工具** — 通过 MCP 协议接入的外部能力
+3. **Shell 命令** — 系统命令和脚本
+4. **临时脚本** — write_file + run_shell 处理一次性任务
+5. **搜索 + 安装** — 从 GitHub 等源查找并安装新能力
+6. **创建 Skill** — 用 skill-creator 沉淀长期可复用的能力
+
+### 能力扩展协议
+缺能力时：先查已安装 Skill → 再搜网络 → 安装或自建 → 继续任务。
+不要对用户说"做不到" —— 先获取能力，再继续推进。
+
+调用 `tool_search(query="...")` 获取标有 [DEFERRED] 的工具的完整参数描述；
+直接调用也允许（会自动升级到完整信息），但拿到完整 schema 后参数填写更可靠。
+
+{tool_list}
+"""
+
     # 分类展示顺序（决定系统提示中的排列顺序）
     # 不在此列表中的分类会自动追加到末尾
     CATEGORY_ORDER = [
@@ -188,6 +212,7 @@ but with full schema you'll fill arguments more reliably.
         self,
         exclude_high_freq: bool = True,
         deferred_tools: set[str] | None = None,
+        lang: str | None = None,
     ) -> str:
         """
         生成工具清单（Level 1）
@@ -258,10 +283,26 @@ but with full schema you'll fill arguments more reliably.
                 category_sections.append(section)
 
         tool_list = "\n".join(category_sections)
-        catalog = self._safe_format(self.CATALOG_TEMPLATE, tool_list=tool_list)
-        self._cached_catalog = catalog
+        # PR-R1: 按 prompt_lang 切换 header 模板。
+        # lang 取值：None=按 settings.prompt_lang 自动；"zh"/"en"=显式指定。
+        # 缺省回退到英文模板，保持与历史行为一致。
+        _lang = (lang or "").lower()
+        if not _lang:
+            try:
+                from ..config import settings
+                _lang = (getattr(settings, "prompt_lang", "") or "").lower()
+            except Exception:
+                _lang = ""
+        template = self.CATALOG_TEMPLATE_ZH if _lang.startswith("zh") else self.CATALOG_TEMPLATE
+        catalog = self._safe_format(template, tool_list=tool_list)
+        # 仅在使用默认（auto）时写缓存，显式 lang 调用走一次性路径，
+        # 避免缓存被中文版污染影响后续英文调用。
+        if not lang:
+            self._cached_catalog = catalog
 
-        logger.info(f"Generated tool catalog with {len(self._tools)} tools")
+        logger.info(
+            f"Generated tool catalog with {len(self._tools)} tools (lang={_lang or 'auto'})"
+        )
         return catalog
 
     def get_direct_tool_schemas(self) -> list[dict]:

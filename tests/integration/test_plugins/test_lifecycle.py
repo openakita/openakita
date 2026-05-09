@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-from openakita.plugins.api import PluginPermissionError
 from openakita.plugins.hooks import HookRegistry
 from openakita.plugins.manager import PluginManager
 from openakita.plugins.manifest import BASIC_PERMISSIONS
@@ -142,8 +141,11 @@ async def test_load_all_example_plugins(tmp_path: Path) -> None:
     # or hitting import/compat issues (message-logger, ollama-provider) end up
     # in the failed list — the important thing is they don't crash the manager.
     all_discovered = loaded_ids | failed_ids
-    assert len(all_discovered) == 11, (
-        f"Expected all 11 plugins discovered, got {len(all_discovered)}: {all_discovered}"
+    # 历史上 examples/plugins 下只有 11 个示例，新加 ``ollama-provider`` 后变 12，
+    # 后面还可能继续加。关键不变量是“全部被发现 + 主要几个能加载”，所以放宽
+    # 为 ``>= 11`` 而不是精确等于。
+    assert len(all_discovered) >= 11, (
+        f"Expected at least 11 plugins discovered, got {len(all_discovered)}: {all_discovered}"
     )
     assert pm.loaded_count >= 3, (
         f"Expected at least 3 plugins loaded, got {pm.loaded_count}"
@@ -298,7 +300,10 @@ async def test_tool_definitions_chain(tmp_path):
             self._tools: dict[str, dict] = {}
             self._cached_catalog = None
 
-        def add_tool(self, tool: dict):
+        # PluginAPI.register_tools 现在会以 ``add_tool(defn, source="plugin:<id>")``
+        # 形式调用，所以 fake 也得吃 ``source`` kwarg；签名宽松一点，避免后续再加
+        # 形参又要回来更新这个 fake。
+        def add_tool(self, tool: dict, *, source: str | None = None, **_: Any):
             self._tools[tool["name"]] = tool
             self._cached_catalog = None
 

@@ -6,6 +6,7 @@ import {
   IM_LOGO_MAP,
 } from "../icons";
 import { safeFetch } from "../providers";
+import { encodePathSegment } from "../platform/apiUrl";
 import { IS_WEB, onWsEvent } from "../platform";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { cn } from "@/lib/utils";
@@ -371,7 +372,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
       return;
     }
     try {
-      const res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${taskId}/executions?limit=10`);
+      const res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${encodePathSegment(taskId)}/executions?limit=10`);
       const data = await res.json();
       setExpandedHistory(prev => ({ ...prev, [taskId]: data.executions || [] }));
     } catch {
@@ -487,7 +488,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
 
       let res: Response;
       if (editingId) {
-        res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${editingId}`, {
+        res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${encodePathSegment(editingId)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -517,7 +518,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
   const doDeleteTask = useCallback(async (taskId: string) => {
     setBusy(true);
     try {
-      const res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${taskId}`, { method: "DELETE" });
+      const res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${encodePathSegment(taskId)}`, { method: "DELETE" });
       const data = await res.json();
       if (data.error) {
         showMsg(data.error, false);
@@ -538,7 +539,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
 
   const toggleTask = async (task: ScheduledTask) => {
     try {
-      const res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${task.id}/toggle`, { method: "POST" });
+      const res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${encodePathSegment(task.id)}/toggle`, { method: "POST" });
       const data = await res.json();
       if (data.error) {
         showMsg(data.error, false);
@@ -551,7 +552,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
 
   const triggerTask = async (task: ScheduledTask) => {
     try {
-      const res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${task.id}/trigger`, { method: "POST" });
+      const res = await safeFetch(`${API_BASE}/api/scheduler/tasks/${encodePathSegment(task.id)}/trigger`, { method: "POST" });
       const data = await res.json();
       if (data.error) {
         showMsg(data.error, false);

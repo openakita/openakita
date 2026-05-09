@@ -14,6 +14,61 @@ from typing import ClassVar
 logger = logging.getLogger(__name__)
 
 
+# PR-I2: metadata 字段类型归一化。
+# 调度器的 metadata 既被 Python 写、又被前端读，还可能从历史 sessions.json 反序列化
+# 回来——历史上至少出现过 "silent": "true"（字符串）和 "fail_count": "0"
+# （字符串）这两种坏数据，会让 `if task.metadata.get("silent"):` 永远成立。
+# 在 from_dict 入口集中转一次，保证类型契约一致，是最低成本的根治。
+_METADATA_BOOL_KEYS = (
+    "silent",
+    "needs_summary",
+    "needs_consolidation",
+    "consolidation_done",
+    "is_recurring_consolidation",
+    "force_inject",
+    "auto_generated",
+    "high_priority",
+)
+_METADATA_INT_KEYS = (
+    "fail_count",
+    "run_count",
+    "max_retries",
+    "consolidation_count",
+    "consecutive_fail_count",
+)
+
+
+def _coerce_metadata(metadata: dict) -> dict:
+    """Normalize known bool / int fields in scheduler metadata."""
+    if not isinstance(metadata, dict):
+        return {}
+    coerced: dict = {}
+    for key, value in metadata.items():
+        if key in _METADATA_BOOL_KEYS:
+            if isinstance(value, bool):
+                coerced[key] = value
+            elif isinstance(value, str):
+                v = value.strip().lower()
+                if v in ("true", "1", "yes", "on", "y", "t"):
+                    coerced[key] = True
+                elif v in ("false", "0", "no", "off", "n", "f", ""):
+                    coerced[key] = False
+                else:
+                    coerced[key] = bool(value)
+            elif isinstance(value, (int, float)):
+                coerced[key] = bool(value)
+            else:
+                coerced[key] = bool(value)
+        elif key in _METADATA_INT_KEYS:
+            try:
+                coerced[key] = int(value) if value is not None else 0
+            except (TypeError, ValueError):
+                coerced[key] = 0
+        else:
+            coerced[key] = value
+    return coerced
+
+
 class TriggerType(Enum):
     """触发器类型"""
 
@@ -430,6 +485,19 @@ class ScheduledTask:
         self.fail_count = 0
         self.updated_at = datetime.now()
 
+        # PR-I1: 成功执行后必须清理 metadata 里残留的 last_error / last_error_at，
+        # 否则前端「定时任务」面板会一直显示上一轮失败原因（即使本轮已经成功），
+        # 用户会以为任务一直在挂掉。同时清掉 last_status_color 之类的派生字段。
+        try:
+            from openakita.core.feature_flags import is_enabled as _ff_enabled
+            _scheduler_clean = _ff_enabled("scheduler_metadata_cleanup_v1")
+        except Exception:
+            _scheduler_clean = True
+        if _scheduler_clean and isinstance(self.metadata, dict):
+            for stale_key in ("last_error", "last_error_at", "last_failure_traceback", "last_status_color"):
+                self.metadata.pop(stale_key, None)
+            self.metadata["last_success_at"] = self.last_run.isoformat()
+
         if self.trigger_type == TriggerType.ONCE:
             self.status = TaskStatus.COMPLETED
             self.enabled = False
@@ -452,6 +520,9 @@ class ScheduledTask:
             if not self.metadata:
                 self.metadata = {}
             self.metadata["last_error"] = error
+            # PR-I1 配套：写入失败时间戳，便于「定时任务」面板显示
+            # "上次失败 5 分钟前"，以及 mark_completed 时按时间戳判定是否过期。
+            self.metadata["last_error_at"] = self.last_run.isoformat()
 
         if self.fail_count >= 5:
             if self.deletable:
@@ -538,11 +609,33 @@ class ScheduledTask:
         metadata = data.get("metadata", {})
         if not isinstance(metadata, dict):
             metadata = {}
+        # PR-I2: 强制 metadata 中的 bool/数字字段做安全 cast。
+        # 历史上前端 / 旧版本曾把 bool 序列化成字符串 "true"/"false"，
+        # 反序列化回来后 `if task.metadata["silent"]:` 永远是真值（非空字符串），
+        # 静音任务突然吵起来；这里在入口做一次集中归一化，治本。
+        metadata = _coerce_metadata(metadata)
 
         def _safe_int(val, default=0):
             try:
                 return int(val) if val is not None else default
             except (TypeError, ValueError):
+                return default
+
+        def _safe_bool(val, default=False):
+            if isinstance(val, bool):
+                return val
+            if val is None:
+                return default
+            if isinstance(val, str):
+                v = val.strip().lower()
+                if v in ("true", "1", "yes", "on", "y", "t"):
+                    return True
+                if v in ("false", "0", "no", "off", "n", "f", ""):
+                    return False
+                return default
+            try:
+                return bool(val)
+            except Exception:
                 return default
 
         now_iso = datetime.now().isoformat()
@@ -597,17 +690,17 @@ class ScheduledTask:
             agent_profile_id=data.get("agent_profile_id", "default"),
             task_source=task_source,
             durability=durability,
-            enabled=data.get("enabled", True),
+            enabled=_safe_bool(data.get("enabled", True), True),
             status=status,
-            deletable=data.get("deletable", True),
+            deletable=_safe_bool(data.get("deletable", True), True),
             last_run=_parse_dt(data.get("last_run")),
             next_run=_parse_dt(data.get("next_run")),
             run_count=_safe_int(data.get("run_count"), 0),
             fail_count=_safe_int(data.get("fail_count"), 0),
             created_at=_parse_dt(data.get("created_at"), now_iso),
             updated_at=_parse_dt(data.get("updated_at"), now_iso),
-            silent=bool(data.get("silent", False)),
-            no_schedule_tools=bool(data.get("no_schedule_tools", False)),
+            silent=_safe_bool(data.get("silent", False), False),
+            no_schedule_tools=_safe_bool(data.get("no_schedule_tools", False), False),
             skill_ids=data.get("skill_ids") or [],
             metadata=metadata,
         )

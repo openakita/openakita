@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef, lazy, Suspense } from 
 import { useTranslation } from "react-i18next";
 import { IconBrain } from "../icons";
 import { safeFetch } from "../providers";
+import { encodePathSegment } from "../platform/apiUrl";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -232,7 +233,8 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
 
   const doDelete = async (id: string) => {
     try {
-      await safeFetch(`${API_BASE}/api/memories/${id}`, { method: "DELETE" });
+      // PR-O1: encodePathSegment 防止 id 含特殊字符破坏路径
+      await safeFetch(`${API_BASE}/api/memories/${encodePathSegment(id)}`, { method: "DELETE" });
       setMemories(prev => prev.filter(m => m.id !== id));
       setSelected(prev => { const n = new Set(prev); n.delete(id); return n; });
       loadStats();
@@ -276,7 +278,7 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
 
   const handleUpdate = async (id: string) => {
     try {
-      await safeFetch(`${API_BASE}/api/memories/${id}`, {
+      await safeFetch(`${API_BASE}/api/memories/${encodePathSegment(id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: editContent, importance_score: editScore }),

@@ -250,6 +250,37 @@ async def test_save_endpoints_batch_returns_saved_endpoints(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_save_endpoints_rejects_below_two_chat_endpoints_when_flag(monkeypatch):
+    """P1-5: batch save 至少需要 2 条启用的 chat endpoint（可被 feature flag 关闭）。"""
+    from openakita.core.feature_flags import clear_overrides, set_flag
+
+    clear_overrides()
+    set_flag("llm_view_min_endpoints_v1", True)
+    manager = _FakeEndpointManager()
+    monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: manager)
+    monkeypatch.setattr(
+        config_routes,
+        "_trigger_reload",
+        lambda request: {"status": "ok", "reloaded": True},
+    )
+    try:
+        resp = await config_routes.save_endpoints(
+            config_routes.SaveEndpointsRequest(
+                endpoints=[
+                    {"name": "solo", "provider": "openai", "model": "gpt-4o"},
+                ],
+                api_key="sk-x",
+            ),
+            SimpleNamespace(),
+        )
+        assert resp["status"] == "error"
+        assert "2" in resp.get("error", "")
+        assert manager.endpoints == []
+    finally:
+        clear_overrides()
+
+
+@pytest.mark.asyncio
 async def test_toggle_endpoint_returns_runtime_reload_result(monkeypatch):
     manager = _FakeEndpointManager()
     monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: manager)

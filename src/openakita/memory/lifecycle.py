@@ -1198,12 +1198,43 @@ class LifecycleManager:
     # ==================================================================
 
     def refresh_memory_md(self, identity_dir: Path) -> None:
-        """刷新 MEMORY.md — LLM 审查后直接选取 top-K（无需关键词过滤）"""
-        memories = self.store.query_semantic(min_importance=0.5, limit=100)
+        """刷新 MEMORY.md — LLM 审查后直接选取 top-K（无需关键词过滤）
+
+        PR-B2：
+        - 排除 ``source="profile_fallback"`` 的记忆（那是会话内的非结构化档案
+          补充，不应该写进全局 MEMORY.md，否则跨会话注入会造成身份污染）。
+        - 同一 (type, content_hash) 仅保留一条，避免 manual / session_extraction /
+          daily_consolidation 三份重复同时写入。
+        """
+        memories = self.store.query_semantic(min_importance=0.5, limit=200)
+
+        try:
+            from ..core.feature_flags import is_enabled as _ff_enabled
+
+            ff_filter = _ff_enabled("memory_session_scope_v1")
+        except Exception:
+            ff_filter = True
+
+        if ff_filter:
+            memories = [
+                m for m in memories
+                if str(getattr(m, "source", "") or "") != "profile_fallback"
+            ]
 
         by_type: dict[str, list[SemanticMemory]] = defaultdict(list)
+        seen_hashes: set[tuple[str, str]] = set()
         for mem in memories:
-            by_type[mem.type.value].append(mem)
+            type_value = mem.type.value
+            content_norm = (mem.content or "").strip().lower()
+            if ff_filter and content_norm:
+                import hashlib
+
+                ch = hashlib.sha1(content_norm.encode("utf-8")).hexdigest()[:16]
+                key = (type_value, ch)
+                if key in seen_hashes:
+                    continue
+                seen_hashes.add(key)
+            by_type[type_value].append(mem)
 
         lines: list[str] = ["# 核心记忆\n"]
         type_labels = {

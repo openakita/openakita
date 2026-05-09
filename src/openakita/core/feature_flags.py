@@ -51,6 +51,12 @@ _DEFAULTS: dict[str, bool] = {
     "scheduler_metadata_cleanup_v1": True,
     # P2-2
     "llm_inflight_loop_aware_v1": True,
+    # P2-5
+    "intent_tool_slim_v1": True,
+    # P1-2
+    "text_replace_on_restart_v1": True,
+    # P1-5
+    "llm_view_min_endpoints_v1": True,
 }
 
 
@@ -69,6 +75,33 @@ _DISABLED_AT_IMPORT: set[str] = _parse_csv_env("OPENAKITA_FF_DISABLE")
 _ENABLED_AT_IMPORT: set[str] = _parse_csv_env("OPENAKITA_FF_ENABLE")
 
 
+def _settings_overrides() -> dict[str, bool]:
+    """PR-T1: 把 settings.feature_flags（dict）作为持久化灰度配置源。
+
+    优先级：runtime override (set_flag) > env (DISABLE/ENABLE) >
+            settings.feature_flags > _DEFAULTS。
+
+    settings.feature_flags 来自 .env / pydantic-settings，所以用户 / 运维
+    可以在不重新部署代码的前提下，从配置文件单条关掉某个 v1/v2 行为，
+    把代码瞬间回退到老路径。失败时静默返回空，避免影响其它 flag。
+    """
+    try:
+        from ..config import settings
+
+        ff = getattr(settings, "feature_flags", None)
+        if isinstance(ff, dict):
+            return {str(k): bool(v) for k, v in ff.items()}
+        if isinstance(ff, str) and ff.strip():
+            import json as _json
+
+            data = _json.loads(ff)
+            if isinstance(data, dict):
+                return {str(k): bool(v) for k, v in data.items()}
+    except Exception:
+        return {}
+    return {}
+
+
 def is_enabled(name: str) -> bool:
     """Return whether a feature flag is on. Unknown flags are treated as off."""
     with _lock:
@@ -78,6 +111,9 @@ def is_enabled(name: str) -> bool:
         return False
     if name in _ENABLED_AT_IMPORT:
         return True
+    settings_ff = _settings_overrides()
+    if name in settings_ff:
+        return settings_ff[name]
     return _DEFAULTS.get(name, False)
 
 

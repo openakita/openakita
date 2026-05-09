@@ -456,6 +456,9 @@ class LLMResponse:
     model: str
     reasoning_content: str | None = None  # Kimi 专用：思考内容
     endpoint_name: str = ""  # 实际处理此请求的端点名称（由 LLMClient 填充）
+    # PR-C2: 当从非标准字段恢复 content 时记录来源（如 "message.reasoning_content"）。
+    # endpoint_manager 见此字段视为"已自愈"，不再触发 30s cooldown。
+    recovered_from: str = ""
 
     @property
     def text(self) -> str:

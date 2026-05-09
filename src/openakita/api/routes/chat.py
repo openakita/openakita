@@ -203,6 +203,7 @@ async def _handle_pending_risk_answer(
                         # 真实意图（真实意图是 original_message，将在下一轮被 LLM
                         # 重新规划）。标记 transient_for_llm 仅供 UI 展示。
                         session.add_message("user", answer, transient_for_llm=True)
+                        # 旧字段保留向后兼容（旧 agent 路径会读它）
                         session.set_metadata(
                             "risk_authorized_replay",
                             {
@@ -211,6 +212,36 @@ async def _handle_pending_risk_answer(
                                 "original_message": consumed.original_message,
                             },
                         )
+                        # PR-A2：结构化授权意图，避免 LLM 自由 ReAct 全盘 grep。
+                        try:
+                            from openakita.core.feature_flags import (
+                                is_enabled as _ff_enabled,
+                            )
+                            from openakita.core.risk_intent import (
+                                derive_authorized_intent,
+                            )
+
+                            if _ff_enabled("risk_authorized_intent_v2"):
+                                _intent = derive_authorized_intent(
+                                    classification,
+                                    original_message=consumed.original_message,
+                                    confirmation_id=consumed.confirmation_id,
+                                    now=time.time(),
+                                )
+                                session.set_metadata(
+                                    "risk_authorized_intent",
+                                    _intent.to_dict(),
+                                )
+                                logger.info(
+                                    "[RiskGate] Issued AuthorizedIntent op=%s target=%s scope=%s",
+                                    _intent.operation,
+                                    _intent.target_kind,
+                                    _intent.scope,
+                                )
+                        except Exception as exc:
+                            logger.warning(
+                                "[Chat API] Failed to derive AuthorizedIntent: %s", exc
+                            )
                         session_manager.persist()
                 except Exception as exc:
                     logger.warning(

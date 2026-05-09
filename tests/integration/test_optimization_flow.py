@@ -7,25 +7,23 @@ Validates the full flow: IntentAnalyzer -> Prompt Construction -> Tool Filtering
 
 from __future__ import annotations
 
-import asyncio
+from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from dataclasses import dataclass, field
-from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
 
 from openakita.core.intent_analyzer import (
     IntentAnalyzer,
     IntentResult,
     IntentType,
-    _parse_intent_output,
-    _parse_list,
     _build_task_definition,
     _make_default,
+    _parse_intent_output,
+    _parse_list,
 )
-from openakita.tools.catalog import ToolCatalog
 from openakita.prompt.budget import BudgetConfig
-from openakita.prompt.compiler import compile_all, check_compiled_outdated
-
+from openakita.prompt.compiler import check_compiled_outdated, compile_all
+from openakita.tools.catalog import ToolCatalog
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -159,8 +157,13 @@ memory_keywords: []"""
         assert result.intent == IntentType.COMMAND
 
     def test_parse_compound_task(self):
+        # PR-O2: ``todo_required`` 需要 ComplexitySignal score >= 2 才会保留 True
+        # （单一 ``task_type=compound`` 只贡献 1 分，会被 ``signal.score < 2`` 这条
+        # 防过度拆分的兜底拉回 False）。所以这里同时给 ``scope: broad`` 让 cross_module
+        # 也算 1 分，凑齐 score=2。
         raw = """intent: task
 task_type: compound
+scope: broad
 goal: 多步骤任务
 inputs:
   given: []
@@ -222,6 +225,24 @@ class TestIntentAnalyzerLLMCall:
         brain = MagicMock()
         brain.compiler_think = AsyncMock()
         return brain
+
+    @pytest.fixture(autouse=True)
+    def _disable_fast_paths(self, monkeypatch):
+        """禁用 IntentAnalyzer 内部的 ``_try_fast_chat_shortcut`` /
+        ``_try_fast_query_shortcut`` rule-based 抢答。
+
+        这些 fast-path 是产线优化（"你好"/"几点了" 这类输入直接返回
+        CHAT/QUERY，不发 LLM），但本组测试要验证**LLM 路径**本身的解析
+        和兜底，所以需要绕开 fast-path。
+        """
+        from openakita.core import intent_analyzer as ia
+
+        monkeypatch.setattr(ia, "_try_fast_query_shortcut", lambda message: None)
+        monkeypatch.setattr(
+            ia,
+            "_try_fast_chat_shortcut",
+            lambda message, has_history=False: None,
+        )
 
     async def test_chat_intent_via_llm(self, mock_brain):
         mock_brain.compiler_think.return_value = FakeResponse(
@@ -336,6 +357,12 @@ class TestToolCatalogGroups:
 
 class TestPromptCompilerNoTooling:
     def test_compile_all_no_agent_tooling(self, tmp_path):
+        # 历史漂移说明：旧版本架构里 ``agent_core`` 是单一编译目标且没有
+        # ``agent_tooling``；新版本把行为规范拆成 ``agent_behavior`` 和
+        # ``agent_tooling``，``agent_core`` 仅作为 ``_STATIC_FALLBACKS`` 兜底
+        # 文本继续保留。所以这里改为：
+        # 1) 旧 ``agent_core`` key 不应再出现在 compile_all 输出里；
+        # 2) 至少出现一个 identity 编译产物（identity_core / agent_behavior）。
         identity_dir = tmp_path / "identity"
         identity_dir.mkdir()
         (identity_dir / "SOUL.md").write_text("# Soul\nI am helpful.", encoding="utf-8")
@@ -346,8 +373,8 @@ class TestPromptCompilerNoTooling:
 
         result = compile_all(identity_dir, use_llm=False)
         assert isinstance(result, dict)
-        assert "agent_tooling" not in result
-        assert "agent_core" in result or "soul" in result
+        assert "agent_core" not in result
+        assert "agent_behavior" in result or "identity_core" in result
 
     def test_no_compile_agent_tooling_function(self):
         from openakita.prompt import compiler
@@ -613,9 +640,15 @@ class TestEndToEndIntentToPompt:
         assert force_tool_retries == 0
 
     async def test_compound_task_requires_plan(self):
-        """Compound tasks should trigger todo_required."""
+        """Compound tasks should trigger todo_required.
+
+        ``compound`` 单独只贡献 ``ComplexitySignal.score=1``；现在解析器有
+        “score < 2 时强制 ``todo_required=False``”的过度拆分保护，所以这里
+        额外加 ``scope: broad`` 把 cross_module 也算上，凑齐 score=2。
+        """
         raw = """intent: task
 task_type: compound
+scope: broad
 goal: 多步骤项目
 inputs:
   given: []

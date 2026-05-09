@@ -598,15 +598,22 @@ def compile_soul(content: str) -> str:
 
 
 def compile_agent_core(content: str) -> str:
-    return _compile_with_rules(content, _COMPILE_PROMPTS["agent_core"])
+    """向后兼容 alias。
+
+    历史上 ``agent_core`` 是 AGENT.md 的核心行为编译目标；新方案把它
+    拆成 ``agent_behavior`` + ``agent_tooling``。这里转 ``agent_behavior``
+    作为最接近原语义的目标，避免外部调用者拿到 ``KeyError``。
+    """
+    return _compile_with_rules(content, _COMPILE_PROMPTS["agent_behavior"])
 
 
 def compile_agent_tooling(content: str) -> str:
-    return _compile_with_rules(content, {"target": "agent_tooling", "max_tokens": 300})
+    return _compile_with_rules(content, _COMPILE_PROMPTS["agent_tooling"])
 
 
 def compile_user(content: str) -> str:
-    return _compile_with_rules(content, _COMPILE_PROMPTS["user"])
+    """向后兼容 alias，新名字是 ``user_profile_core``。"""
+    return _compile_with_rules(content, _COMPILE_PROMPTS["user_profile_core"])
 
 
 def compile_persona(content: str) -> str:

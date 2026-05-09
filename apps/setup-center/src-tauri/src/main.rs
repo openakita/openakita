@@ -3886,6 +3886,93 @@ fn main() {
             } else {
                 log_to_file("[auto-start] skipped: no current_workspace_id in state");
             }
+
+            // PR-F1: 启动常驻 5s 心跳。后端崩溃时连续 3 次失败（≈ 15s）就尝试
+            // 自动重启 + 向前端 emit `backend:lost` / `backend:back`。
+            // 旧实现仅依赖 startup_version_check 一次性探测，进程死后用户要等
+            // 60+ 分钟才能在 autostart.log 里看到下一次探测。
+            {
+                let app_handle = app.handle().clone();
+                let app_version_for_hb = app_version.clone();
+                std::thread::spawn(move || {
+                    let mut consecutive_failures: u32 = 0;
+                    let mut last_status_was_healthy: Option<bool> = None;
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        let state_snap = read_state_file();
+                        let ws_id = match state_snap.current_workspace_id {
+                            Some(s) => s,
+                            None => continue,
+                        };
+                        let port = read_workspace_api_port(&ws_id).unwrap_or(18900);
+                        let healthy = is_backend_http_healthy(Some(port));
+                        if healthy {
+                            consecutive_failures = 0;
+                            if last_status_was_healthy != Some(true) {
+                                let _ = app_handle.emit(
+                                    "backend:status",
+                                    serde_json::json!({"healthy": true, "port": port}),
+                                );
+                                if last_status_was_healthy == Some(false) {
+                                    let _ = app_handle.emit(
+                                        "backend:back",
+                                        serde_json::json!({"port": port}),
+                                    );
+                                }
+                                last_status_was_healthy = Some(true);
+                            }
+                            continue;
+                        }
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        if consecutive_failures < 3 {
+                            continue;
+                        }
+                        if last_status_was_healthy != Some(false) {
+                            let _ = app_handle.emit(
+                                "backend:lost",
+                                serde_json::json!({
+                                    "port": port,
+                                    "consecutive_failures": consecutive_failures,
+                                }),
+                            );
+                            log_to_file(&format!(
+                                "[heartbeat] backend down for {}s, attempting auto spawn (port={})",
+                                consecutive_failures * 5,
+                                port,
+                            ));
+                            last_status_was_healthy = Some(false);
+                        }
+                        if AUTO_START_IN_PROGRESS.load(Ordering::SeqCst) {
+                            continue;
+                        }
+                        let check_result = startup_version_check(&app_version_for_hb, port);
+                        let need_start = !matches!(check_result, VersionCheckResult::RunningOk);
+                        if !need_start {
+                            // 端口又被别人占了或 health 临时抖动 — 重置计数
+                            consecutive_failures = 0;
+                            continue;
+                        }
+                        AUTO_START_IN_PROGRESS.store(true, Ordering::SeqCst);
+                        AUTO_START_STARTED_AT_MS.store(now_ms(), Ordering::SeqCst);
+                        let venv_dir = openakita_root_dir()
+                            .join("venv")
+                            .to_string_lossy()
+                            .to_string();
+                        let ws_clone = ws_id.clone();
+                        match openakita_service_start(venv_dir, ws_clone) {
+                            Ok(status) => log_to_file(&format!(
+                                "[heartbeat] auto-spawn ok: running={}, pid={:?}",
+                                status.running, status.pid
+                            )),
+                            Err(e) => log_to_file(&format!("[heartbeat] auto-spawn FAILED: {}", e)),
+                        }
+                        AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
+                        AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
+                        consecutive_failures = 0;
+                    }
+                });
+            }
+
             Ok(())
             })();
 

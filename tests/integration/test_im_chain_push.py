@@ -29,7 +29,14 @@ def session():
 def gateway():
     sm = MagicMock()
     gw = MessageGateway(session_manager=sm)
+    # 进度链路最终走 ``gateway.send(channel=..., chat_id=...)``（内部按 channel
+    # 找 adapter）。测试里没注册 telegram adapter，必须把 ``send`` mock 掉，否则
+    # ``flush_progress`` / ``_flush`` 都会因为 “No adapter for channel: telegram”
+    # 提前返回，``send_to_session`` 也根本不会被触发，从而让 “merge / flush” 类
+    # 测试的 ``assert_awaited_once`` 永远不通过。``send_to_session`` 同时 mock
+    # 是为了兜底（少数代码路径仍走 session 接口）。
     gw.send_to_session = AsyncMock(return_value="ok")
+    gw.send = AsyncMock(return_value="ok")
     return gw
 
 
@@ -94,8 +101,10 @@ class TestThrottleMerge:
 
         await asyncio.sleep(0.5)
 
-        gateway.send_to_session.assert_awaited_once()
-        sent_text = gateway.send_to_session.call_args[0][1]
+        # 实际 flush 走 ``gateway.send(channel=..., chat_id=..., text=...)``，
+        # ``text`` 是 keyword 参数，所以从 ``call_args.kwargs`` 取。
+        gateway.send.assert_awaited_once()
+        sent_text = gateway.send.call_args.kwargs.get("text", "")
         assert "line1" in sent_text
         assert "line2" in sent_text
         assert "line3" in sent_text
@@ -111,8 +120,8 @@ class TestFlushProgress:
 
         await gateway.flush_progress(session)
 
-        gateway.send_to_session.assert_awaited_once()
-        sent_text = gateway.send_to_session.call_args[0][1]
+        gateway.send.assert_awaited_once()
+        sent_text = gateway.send.call_args.kwargs.get("text", "")
         assert "buffered1" in sent_text
         assert "buffered2" in sent_text
 

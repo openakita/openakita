@@ -25,7 +25,11 @@ let _handlers: WsEventHandler[] = [];
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _reconnectDelay = 1000;
 let _reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 120;
+// PR-F1: 后端崩溃自愈窗口可能很久（Tauri 心跳 + 重启需要 30s+）；
+// 上限 120 次（≈ 1h）会让用户看到"放弃重连"的死状态。改成无限重连，
+// 但用指数退避到 60s + jitter，防止后端起来时被一波重连风暴冲击。
+const MAX_RECONNECT_ATTEMPTS = Number.POSITIVE_INFINITY;
+const MAX_RECONNECT_DELAY = 60000;
 let _connected = false;
 let _intentionallyClosed = false;
 let _apiBaseUrlOverride = "";
@@ -175,19 +179,22 @@ function _connect(): void {
 function _scheduleReconnect(): void {
   if (_reconnectTimer || _intentionallyClosed) return;
   _reconnectAttempts++;
-  if (_reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+  if (Number.isFinite(MAX_RECONNECT_ATTEMPTS) && _reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
     logger.warn("WS", `Gave up reconnecting after ${MAX_RECONNECT_ATTEMPTS} attempts`);
     return;
   }
+  // PR-F1: 指数退避到 60s + ±25% jitter（避免后端起来时雷鸣群效应）
+  const jitter = 1 + (Math.random() * 0.5 - 0.25);
+  const delayWithJitter = Math.max(500, Math.round(_reconnectDelay * jitter));
   _reconnectTimer = setTimeout(async () => {
     _reconnectTimer = null;
-    _reconnectDelay = Math.min(_reconnectDelay * 2, 30000);
+    _reconnectDelay = Math.min(_reconnectDelay * 2, MAX_RECONNECT_DELAY);
     const token = getAccessToken();
     if (!token || isTokenExpiringSoon(token, 60)) {
       await refreshAccessToken().catch(() => {});
     }
     _connect();
-  }, _reconnectDelay);
+  }, delayWithJitter);
 }
 
 /**

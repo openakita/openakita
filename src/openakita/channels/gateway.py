@@ -28,12 +28,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from ..sessions import Session, SessionManager
+from ..utils.errors import format_user_friendly_error as format_user_friendly_error  # re-export
 from .base import ChannelAdapter
 from .group_response import GroupResponseMode, SmartModeThrottle
 from .types import MediaStatus, MessageContent, OutgoingMessage, UnifiedMessage
 
 if TYPE_CHECKING:
+    from ..core.brain import Brain
+    from ..llm.stt_client import STTClient
     from .dm_pairing import DMPairingManager
+    from .media_parser import MediaParseResult
 
 
 def _notify_im_event(event: str, data: dict | None = None) -> None:
@@ -46,12 +50,64 @@ def _notify_im_event(event: str, data: dict | None = None) -> None:
         pass
 
 
-from ..utils.errors import format_user_friendly_error as format_user_friendly_error  # re-export
+_INTERNAL_OBJECT_TOKENS_RE = None
 
-if TYPE_CHECKING:
-    from ..core.brain import Brain
-    from ..llm.stt_client import STTClient
-    from .media_parser import MediaParseResult
+
+def _format_user_error(exc: BaseException | str) -> str:
+    """PR-E1: 把任何异常/字符串转成对外可见的中文提示。
+
+    根因：旧实现 ``f"[处理出错: {str(e)[:200]}]"`` 直接把 Python 内部对象
+    的 repr 暴露给用户。当 ``e.args[0]`` 是 ``slice(None, 200, None)``
+    或 ``<TypedDict at 0x...>`` 这类对象时，IM 用户看到的是诡异的
+    ``[处理出错: slice(None, 200, None)]``（参见 2026-05-09 P1-3）。
+
+    本函数：
+    - 优先从 exc.args[0] 取真实的字符串理由
+    - 过滤掉 slice(...) / <... object at 0x...> / typing repr 等内部 token
+    - 兜底用 ``utils.errors.format_user_friendly_error`` 转中文
+    - 始终把完整 traceback 在 logger.error(exc_info=True) 处保留
+    """
+    import re
+
+    global _INTERNAL_OBJECT_TOKENS_RE
+    if _INTERNAL_OBJECT_TOKENS_RE is None:
+        _INTERNAL_OBJECT_TOKENS_RE = re.compile(
+            r"(slice\([^)]*\)|<[^>]*?at\s+0x[0-9a-fA-F]+>|<class\s+'[^']+'>"
+            r"|<function\s+[^>]+>|<built-in[^>]+>|<bound method[^>]+>"
+            r"|<module[^>]+>|typing\.[A-Za-z_]+\[[^\]]*\])"
+        )
+
+    if isinstance(exc, BaseException):
+        candidate = ""
+        try:
+            args = list(exc.args or [])
+            for a in args:
+                if isinstance(a, str) and a.strip():
+                    candidate = a.strip()
+                    break
+        except Exception:
+            pass
+        if not candidate:
+            candidate = str(exc).strip()
+        if not candidate:
+            candidate = type(exc).__name__
+    else:
+        candidate = str(exc).strip() if exc else ""
+
+    # Strip internal repr tokens
+    cleaned = _INTERNAL_OBJECT_TOKENS_RE.sub("", candidate).strip()
+    if not cleaned:
+        cleaned = "服务暂时无法响应，请稍后再试"
+
+    # Truncate very long stacks-as-strings
+    if len(cleaned) > 240:
+        cleaned = cleaned[:240].rstrip() + "…"
+
+    try:
+        return format_user_friendly_error(cleaned)
+    except Exception:
+        return f"[处理出错: {cleaned}]"
+
 
 logger = logging.getLogger(__name__)
 
@@ -3120,7 +3176,7 @@ class MessageGateway:
                     if _last.get("role") == "user":
                         session.add_message(
                             role="assistant",
-                            content=f"[处理出错: {str(e)[:200]}]",
+                            content=_format_user_error(e),
                         )
                         self.session_manager.mark_dirty()
             except Exception:
@@ -3778,7 +3834,7 @@ class MessageGateway:
 
         except Exception as e:
             logger.error(f"Agent error: {e}", exc_info=True)
-            return (format_user_friendly_error(str(e)), False)
+            return (_format_user_error(e), False)
         finally:
             session.set_metadata("pending_images", None)
             session.set_metadata("pending_videos", None)
@@ -3901,7 +3957,7 @@ class MessageGateway:
         except Exception as e:
             logger.error(f"[IM] Streaming agent error: {e}", exc_info=True)
             if not reply_text:
-                reply_text = format_user_friendly_error(str(e))
+                reply_text = _format_user_error(e)
 
         if not reply_text or not reply_text.strip():
             return (reply_text, False)

@@ -6,6 +6,11 @@ Covers:
 - ``auto`` falls back to edge/stub when no api_key configured
 - PRESET_VOICES_ZH non-empty back-compat shape
 - _redacted_config (defined inside plugin.py) masks api_key fields
+
+历史漂移说明：plugins/avatar-speaker 已经从仓库中移除（统一改由 manga-studio
+里的 tts_client + 新的 plugin 接管），但本测试文件留下来还会引用一个不存在
+的 ``plugins/avatar-speaker/providers.py``。在仓库重新引入该 plugin 之前，
+整个 module 自动 skip，避免污染 CI 输出。
 """
 
 from __future__ import annotations
@@ -17,6 +22,13 @@ from pathlib import Path
 import pytest
 
 PLUGIN_DIR = Path(__file__).resolve().parents[3] / "plugins" / "avatar-speaker"
+
+if not (PLUGIN_DIR / "providers.py").exists():
+    pytest.skip(
+        "plugins/avatar-speaker has been retired; tests skipped until/unless"
+        " the plugin is reintroduced.",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture(autouse=True)

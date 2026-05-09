@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>融媒智策 · Media Strategy</title>
+  <meta name="oa-iconify" content="solar:radar-linear">
   <!-- Self-contained plugin UI. Assets are owned by this plugin; no /api/plugins/_sdk dependency. -->
   <script src="_assets/bootstrap.js"></script>
   <link rel="stylesheet" href="_assets/styles.css">
@@ -206,7 +207,6 @@
   <main class="content">
     <section id="tab-radar" class="stack-layout">
       <div class="filter-bar">
-        <span class="pill">Iconify: solar:radar-linear</span>
         <select id="package" class="input">
           <option value="">全部套餐</option><option value="taiwan">台海观察</option><option value="policy">时政政策</option><option value="economy">经济财经</option><option value="world">国际局势</option><option value="tech">科技产业</option><option value="platform">平台热点</option>
         </select>
@@ -270,8 +270,7 @@
           <span class="filler"></span>
           <button id="newPackage" class="btn btn-primary">+ 新建套餐</button>
         </div>
-        <div class="oa-hint">套餐 = 主题标签集合。点击卡片切换订阅状态（仅切换，不会立刻刷新雷达）。内置套餐只读，可「克隆」为我的套餐再编辑。自定义套餐可以编辑或删除。</div>
-        <div id="packagesOut" class="package-row">加载中</div>
+        <div id="packagesOut" class="package-row"><div class="empty">加载中…</div></div>
       </div>
       <div class="card">
         <h2 class="oa-section-title">添加 RSS 源</h2>
@@ -303,7 +302,6 @@
           <button id="addFeed" class="btn btn-primary">添加并校验</button>
           <button id="syncSources" class="btn">同步内置源</button>
         </div>
-        <div class="oa-hint">自定义 RSS 会经过 URL 安全校验，避免访问本机或内网地址。</div>
       </div>
       <details class="collapsible" id="sourcesDetails">
         <summary>
@@ -312,12 +310,12 @@
         </summary>
         <div class="collapsible__body">
           <div class="section-toolbar">
-            <span class="oa-hint" style="flex:1; margin-bottom:0">信源默认折叠，避免长列表占满屏幕。可在下面按套餐批量启停，也可对每个源做编辑。</span>
+            <span class="filler"></span>
             <select id="bulkPackageSelect" class="input" style="max-width:180px"></select>
             <button id="bulkEnable" class="btn">套餐内全部启用</button>
             <button id="bulkDisable" class="btn">套餐内全部停用</button>
           </div>
-          <div id="sourcesOut" class="source-grid">加载中</div>
+          <div id="sourcesOut" class="source-grid"><div class="empty">加载中…</div></div>
         </div>
       </details>
       <div class="card">
@@ -589,16 +587,37 @@ function activateTab(tab){
   history.replaceState(null, '', '#' + (section.id || 'tab-radar').replace('tab-', ''));
   if(tab === 'reports') loadReports().catch(()=>{});
 }
+function describePluginError(err){
+  const msg = String(err && (err.message || err) || '');
+  if(/404|Not Found|未找到/i.test(msg)){
+    return '插件路由未注册：请到「设置 → 插件管理」批准 routes.register 权限并重新加载插件';
+  }
+  if(/503|not ready|未就绪/i.test(msg)){
+    return '插件正在初始化，请稍候再试';
+  }
+  if(/Failed to fetch|NetworkError|TypeError/i.test(msg)){
+    return '无法连接后端服务，请确认 OpenAkita 已启动';
+  }
+  return msg || '未知错误';
+}
+function setSectionPlaceholder(sectionId, message, asEmpty=true){
+  const el = $(sectionId);
+  if(!el) return;
+  el.innerHTML = `<div class="${asEmpty ? 'empty' : ''}">${esc(message)}</div>`;
+}
 async function refreshHealth(){
   try{
     const h=await api('/healthz');
     lastHealth = h;
-    showHealth(true, `运行中 · ${h.version} · ${h.sources_enabled || 0} 源`);
+    showHealth(true, `运行中 · v${h.version} · ${h.sources_enabled || 0}/${h.sources_total || 0} 源`);
     renderMetrics();
     return h;
   }catch(e){
-    showHealth(false, '健康检查失败');
-    throw e;
+    const reason = describePluginError(e);
+    showHealth(false, '插件未就绪');
+    const pill = $('health');
+    if(pill) pill.title = reason;
+    return null;
   }
 }
 async function runRadar(){
@@ -626,7 +645,13 @@ async function runTask(mode, params, outId){
   return data;
 }
 async function loadPackages(){
-  const pk=await api('/packages');
+  let pk;
+  try{
+    pk = await api('/packages');
+  }catch(e){
+    setSectionPlaceholder('packagesOut', describePluginError(e));
+    throw e;
+  }
   PACKAGES_CACHE = pk.packages || {};
   rebuildPackageSelects();
   $('packagesOut').innerHTML = Object.values(PACKAGES_CACHE).map(p=>{
@@ -682,7 +707,14 @@ async function loadPackages(){
   });
 }
 async function loadSources(){
-  const data=await api('/sources');
+  let data;
+  try{
+    data = await api('/sources');
+  }catch(e){
+    setSectionPlaceholder('sourcesOut', describePluginError(e));
+    $('sourcesCount').textContent = '加载失败';
+    throw e;
+  }
   SOURCES_CACHE = data.sources || [];
   $('sourcesCount').textContent = `共 ${SOURCES_CACHE.length} 个，启用 ${SOURCES_CACHE.filter(s=>s.enabled).length} 个`;
   $('sourcesOut').innerHTML = SOURCES_CACHE.map(s=>{

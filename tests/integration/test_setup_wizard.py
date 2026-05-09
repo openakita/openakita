@@ -9,7 +9,6 @@ The interactive prompts are NOT tested here — only the file-writing logic.
 import json
 
 import pytest
-from pathlib import Path
 
 from openakita.setup.wizard import SetupWizard
 
@@ -112,8 +111,10 @@ class TestWriteLLMEndpoints:
 
         data = json.loads(ep_file.read_text(encoding="utf-8"))
         assert "endpoints" in data
-        assert len(data["endpoints"]) >= 1
-        assert data["endpoints"][0]["name"] == "primary"
+        assert len(data["endpoints"]) >= 2
+        names = {e["name"] for e in data["endpoints"]}
+        assert "primary" in names
+        assert "backup" in names
 
     def test_endpoints_have_settings(self, wizard, tmp_path):
         (tmp_path / "data").mkdir(exist_ok=True)

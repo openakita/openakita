@@ -258,12 +258,22 @@ def test_agent_output_guard(task, output, tools, expected_trigger):
 
 
 def test_profile_unknown_key_falls_back_to_memory():
-    """update_user_profile 收到非白名单 key 必须自动写入 add_memory，而非报错。
+    """PR-B1 之后：未知 key 不再 silent 落入全局 fact 记忆。
 
-    回归场景：F4a 修复前直接返回 `❌ 未知的档案项`，
-    小白用户提供的事实信息全部丢失。
+    历史背景：F4a（旧策略）让 LLM 把任意自由 key 都写入 ``profile_fallback``
+    的全局 fact 记忆，造成跨会话身份污染（2026-05-09 P0-2）。PR-B1 改为：
+    1) 已知 key（含别名映射）正常入库；
+    2) 未知 key **必须** 被拒绝，并提示 LLM 改用 ``add_memory``；
+    3) ``add_memory`` 不应被自动调用。
+
+    本测试在新策略下成为防回退挡板：任何"自动 fallback 到全局记忆"行为
+    都视为回归。
     """
+    from openakita.core.feature_flags import clear_overrides, set_flag
     from openakita.tools.handlers.profile import ProfileHandler
+
+    clear_overrides()
+    set_flag("profile_whitelist_v2", True)
 
     captured: dict = {}
 
@@ -275,16 +285,19 @@ def test_profile_unknown_key_falls_back_to_memory():
             captured["profile_set"] = (key, value)
 
     class _FakeMemMgr:
-        def add_memory(self, mem):
+        def add_memory(self, mem, **_kw):  # pragma: no cover - 不该被走到
             captured["memory"] = mem
 
     class _FakeAgent:
         profile_manager = _FakeProfileMgr()
         memory_manager = _FakeMemMgr()
 
-    handler = ProfileHandler(_FakeAgent())
-    msg = handler._update_profile({"key": "favorite_food", "value": "拉面"})
-    assert "拉面" in msg
-    assert "memory" in captured, "未知 key 必须落入 add_memory"
-    assert "profile_set" not in captured
-    assert captured["memory"].content.endswith("favorite_food = 拉面")
+    try:
+        handler = ProfileHandler(_FakeAgent())
+        msg = handler._update_profile({"key": "favorite_food", "value": "拉面"})
+        assert "favorite_food" in msg
+        assert "拒绝" in msg or "未知" in msg
+        assert "memory" not in captured, "未知 key 不能再自动落入 add_memory"
+        assert "profile_set" not in captured
+    finally:
+        clear_overrides()

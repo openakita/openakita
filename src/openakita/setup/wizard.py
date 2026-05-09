@@ -69,6 +69,7 @@ class SetupWizard:
             "MODEL_DOWNLOAD_SOURCE": "hf-mirror",
             "EMBEDDING_MODEL": "shibing624/text2vec-base-chinese",
             "SCHEDULER_TIMEZONE": "Asia/Shanghai",
+            "WHISPER_LANGUAGE": "zh",
         }
         self._llm_endpoints: list[dict] = []
         self._providers: list[dict] = _load_providers()
@@ -793,7 +794,20 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
                     "max_tokens": int(self.config.get("MAX_TOKENS", "0")),
                     "timeout": 180,
                     "capabilities": capabilities,
-                }
+                },
+                {
+                    "name": "backup",
+                    "provider": provider,
+                    "api_type": api_type,
+                    "base_url": base_url,
+                    "api_key_env": api_key_env,
+                    "model": model,
+                    "priority": 2,
+                    "max_tokens": int(self.config.get("MAX_TOKENS", "0")),
+                    "timeout": 180,
+                    "capabilities": capabilities,
+                    "note": "向导预置的第二聊天端点（可与 primary 共用同一密钥，便于故障切换占位）",
+                },
             ]
 
         for ep in endpoints_to_save:

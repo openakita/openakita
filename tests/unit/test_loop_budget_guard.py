@@ -68,8 +68,10 @@ class TestNearContextRatio:
         )
         assert decision.should_stop is True
         assert decision.exit_reason == "token_growth_terminated"
-        assert "ctx_max=200000" in decision.message
-        assert "hard_terminate_ratio=0.80" in decision.message
+        # 用户可见消息现在是脱敏的友好提示；详细的 ctx_max=... / hard_terminate_ratio=...
+        # 改为只写日志，避免直接暴露给 IM 用户。本测试只断言 exit_reason，详细字段
+        # 由 ``test_terminate_decision_log_emits_diagnostics`` 等日志测试覆盖。
+        assert "终止" in decision.message
 
     def test_near_window_still_terminates(self):
         """At 99% of window, even with context_safe=True and a permissive
@@ -143,4 +145,5 @@ class TestRatioClamping:
             max_recoveries=1,
         )
         assert decision.should_stop is True
-        assert "hard_terminate_ratio=0.99" in decision.message
+        assert decision.exit_reason == "token_growth_terminated"
+        # 同上：诊断字段（ratio=0.99 来自 5.0 被 clamp）只走日志，消息里不再回显。

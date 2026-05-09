@@ -627,7 +627,11 @@ async def ensure_session_manager():
 
 
 def _setup_session_backfill(agent_or_master):
-    """从 SQLite 回填 session 中可能缺失的消息（崩溃恢复）。"""
+    """从 SQLite 回填 session 中可能缺失的消息（崩溃恢复）。
+
+    PR-D3：同时绑定 ``set_turn_writer``，让 ``Session.add_message`` 能在
+    用户/助手每条消息落地时同步写一份到 SQLite，进程崩溃也不丢历史。
+    """
     _actual_agent = agent_or_master
     if _actual_agent and hasattr(_actual_agent, "memory_manager"):
         _mm = _actual_agent.memory_manager
@@ -635,9 +639,45 @@ def _setup_session_backfill(agent_or_master):
             _session_manager.set_turn_loader(
                 lambda safe_id: _mm.store.get_recent_turns(safe_id, limit=200)
             )
+
+            def _write_turn(safe_id, turn_index, role, content, metadata):
+                try:
+                    _mm.store.save_turn(
+                        session_id=safe_id,
+                        turn_index=turn_index,
+                        role=role,
+                        content=content if isinstance(content, str) else str(content),
+                        timestamp=metadata.get("timestamp"),
+                    )
+                except Exception as exc:
+                    logger.debug(f"[main] turn writer failed: {exc}")
+
+            try:
+                _session_manager.set_turn_writer(_write_turn)
+            except Exception as exc:
+                logger.warning(f"[main] set_turn_writer failed: {exc}")
             backfilled = _session_manager.backfill_sessions_from_store()
             if backfilled:
                 logger.info(f"Session backfill: recovered {backfilled} turns from SQLite")
+
+
+def _web_password_already_set() -> bool:
+    """PR-L1: 检查 data/web_access.json 是否已经存了哈希密码。
+
+    用于 lan_mode 开启时的安全闸：只要本机已配置过密码，就允许 0.0.0.0；
+    否则拒绝启动，避免无密码裸奔。
+    """
+    try:
+        ws = settings.user_workspace_path
+        web_access = Path(ws) / "data" / "web_access.json"
+        if not web_access.exists():
+            return False
+        import json as _json
+
+        data = _json.loads(web_access.read_text(encoding="utf-8"))
+        return bool(data.get("password_hash") or data.get("hash"))
+    except Exception:
+        return False
 
 
 async def init_core_services(agent_or_master):
@@ -2090,7 +2130,37 @@ def serve(
         api_task = None
         _api_fatal = False
         try:
-            from openakita.api.server import start_api_server
+            from openakita.api.server import API_HOST, API_PORT, start_api_server
+
+            # PR-L1: 解析 API host / port，按 settings.api_lan_mode 决定绑定范围。
+            # 优先级：环境变量 API_HOST > settings.api_lan_mode 推导 > settings.api_host。
+            # 安全闸：开启 lan_mode 必须有 web_access 密码或 api_token，
+            # 否则 0.0.0.0 暴露后任何同网段设备无认证即可调 API。
+            _api_host = API_HOST  # 已经是 env(API_HOST) > "127.0.0.1"
+            _api_port = API_PORT
+            try:
+                if getattr(settings, "api_lan_mode", False):
+                    _has_password = bool(os.environ.get("OPENAKITA_WEB_PASSWORD") or _web_password_already_set())
+                    _has_token = bool(getattr(settings, "api_token", "") or "").strip()
+                    if not (_has_password or _has_token):
+                        raise RuntimeError(
+                            "api_lan_mode=True 但既没有 web_access 密码也没有 api_token，"
+                            "拒绝启动以避免裸奔暴露。请先在 Setup Center 设置访问密码，"
+                            "或在 .env 设置 OPENAKITA_API_TOKEN=<32 字符随机串>。"
+                        )
+                    if not os.environ.get("API_HOST"):
+                        _api_host = "0.0.0.0"
+                        console.print(
+                            "[yellow]⚠ 已开启 api_lan_mode，HTTP API 将绑定到 0.0.0.0 ——"
+                            " 同网段所有设备都能看到这个端口。[/yellow]"
+                        )
+                else:
+                    if not os.environ.get("API_HOST"):
+                        _api_host = getattr(settings, "api_host", "127.0.0.1") or "127.0.0.1"
+            except RuntimeError:
+                raise
+            except Exception as _exc:
+                logger.warning(f"[main] api host resolution fallback: {_exc}")
 
             api_task = await start_api_server(
                 agent=agent_or_master,
@@ -2099,8 +2169,14 @@ def serve(
                 gateway=_message_gateway,
                 orchestrator=_orchestrator,
                 agent_pool=_desktop_pool,
+                host=_api_host,
+                port=_api_port,
             )
-            console.print("[green]✓[/green] HTTP API 已启动: http://127.0.0.1:18900")
+            _display_host = "127.0.0.1" if _api_host in ("0.0.0.0", "::") else _api_host
+            console.print(
+                f"[green]✓[/green] HTTP API 已启动: http://{_display_host}:{_api_port}"
+                + ("  [dim](lan_mode: 0.0.0.0)[/dim]" if _api_host == "0.0.0.0" else "")
+            )
             _heartbeat_phase = "running"
             _heartbeat_http_ready = True
             _write_heartbeat()  # 立即刷新心跳，标记 HTTP 就绪

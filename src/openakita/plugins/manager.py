@@ -47,6 +47,76 @@ _ALLOWED_HOST_REFS = frozenset(
 )
 
 
+class _LiveFilteredHostRefs:
+    """Dict-like view that exposes a whitelisted subset of an external dict.
+
+    宿主把 ``host_refs`` 传给 ``PluginManager`` 后，仍然可以继续往同一个
+    dict 里追加（典型场景：API server 启动时还没初始化 gateway，加载完
+    plugin 之后才把 gateway 注入），所以我们必须**共享同一个 dict 对象**。
+    与此同时，plugin 只允许看到 ``_ALLOWED_HOST_REFS`` 列出的字段。
+
+    这个轻量 wrapper 把 ``get/__contains__/__iter__/setdefault/keys/items``
+    都委托给 external dict，但每次访问都会先按白名单过滤。它故意**不**实现
+    完整 ``MutableMapping`` 协议，避免 plugin 误以为可以往里写 ``brain``
+    之类的字段——写操作仍走宿主代码。
+    """
+
+    __slots__ = ("_external", "_allowlist")
+
+    def __init__(self, external: dict[str, Any], allowlist: frozenset[str]) -> None:
+        self._external = external
+        self._allowlist = allowlist
+
+    @staticmethod
+    def _is_internal_key(key: object) -> bool:
+        """Bookkeeping keys (``_pending_plugin_routers`` / ``_ui_event_handlers``)
+        prefixed with ``_`` are treated as internal storage and bypass the
+        allowlist — plugins can read/write them across calls without us having
+        to whitelist every new bookkeeping field."""
+        return isinstance(key, str) and key.startswith("_")
+
+    def _is_visible(self, key: object) -> bool:
+        return key in self._allowlist or self._is_internal_key(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if not self._is_visible(key):
+            return default
+        return self._external.get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        if not self._is_visible(key):
+            raise KeyError(key)
+        return self._external[key]
+
+    def __contains__(self, key: object) -> bool:
+        return self._is_visible(key) and key in self._external
+
+    def __iter__(self):
+        return (k for k in self._external if self._is_visible(k))
+
+    def keys(self):
+        return [k for k in self._external if self._is_visible(k)]
+
+    def items(self):
+        return [(k, self._external[k]) for k in self._external if self._is_visible(k)]
+
+    def values(self):
+        return [self._external[k] for k in self._external if self._is_visible(k)]
+
+    def setdefault(self, key: str, default: Any) -> Any:
+        # ``setdefault`` 用于宿主自身（PluginManager 内部）记账型字段，例如
+        # ``_pending_plugin_routers``——这些字段不在白名单里、也不暴露给
+        # plugin，所以这里直接落到 external dict，调用方负责自己 keep state。
+        return self._external.setdefault(key, default)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+    def __repr__(self) -> str:
+        visible = {k: self._external.get(k) for k in self.keys()}
+        return f"_LiveFilteredHostRefs({visible!r})"
+
+
 class PluginManager:
     """Discover, load, and manage plugin lifecycle.
 
@@ -79,11 +149,21 @@ class PluginManager:
         asset_bus_path = self._state_path.parent / "asset_bus.db"
         self._asset_bus = AssetBus(asset_bus_path)
 
-        # Inject ourselves into host_refs BEFORE filtering so the bus is
-        # available to plugins via host_refs.get("asset_bus").
-        merged_host_refs = dict(host_refs or {})
-        merged_host_refs.setdefault("asset_bus", self._asset_bus)
-        self._host_refs = self._filter_host_refs(merged_host_refs)
+        # Inject ourselves into host_refs BEFORE wiring up the live view so
+        # the bus is available to plugins via host_refs.get("asset_bus").
+        #
+        # PR-late-wiring 修复：以前这里是 ``dict(host_refs or {})``，PluginManager
+        # 拿到的是一个**复制**，宿主在 plugin 加载之后才把 ``gateway`` /
+        # ``brain`` 等 wire 进来时，PluginAPI 永远看不到。现在改成共享同一份
+        # external dict，并通过 ``_LiveFilteredHostRefs`` 在 PluginAPI 边界上
+        # 实施白名单过滤，保证 (a) live-binding 生效；(b) plugin 仍然只能看到
+        # ``_ALLOWED_HOST_REFS`` 列出的字段。
+        external_host_refs: dict[str, Any] = (
+            host_refs if host_refs is not None else {}
+        )
+        external_host_refs.setdefault("asset_bus", self._asset_bus)
+        self._external_host_refs = external_host_refs
+        self._host_refs = _LiveFilteredHostRefs(external_host_refs, _ALLOWED_HOST_REFS)
 
         self._state = PluginState.load(self._state_path)
         self._error_tracker = PluginErrorTracker()
@@ -314,6 +394,7 @@ class PluginManager:
                 logger.error("Plugin '%s' %s, skipped", manifest.id, msg)
                 self._failed[manifest.id] = msg
                 self._state.record_error(manifest.id, msg)
+                self._record_failure_jsonl(manifest.id, "TimeoutError", msg, "")
             except Exception as e:
                 if (
                     isinstance(e, ModuleNotFoundError)
@@ -346,6 +427,12 @@ class PluginManager:
                     )
                 self._failed[manifest.id] = msg
                 self._state.record_error(manifest.id, msg)
+                # PR-P1: 把失败原因 + traceback 落到 jsonl，便于事后排查回放，
+                # 也让前端 PluginManagerView 能展示"上次加载失败 N 个，原因..."。
+                import traceback as _tb
+                self._record_failure_jsonl(
+                    manifest.id, type(e).__name__, msg, _tb.format_exc()
+                )
 
         self._refresh_skill_catalog()
         self._reload_llm_registries()
@@ -1217,6 +1304,37 @@ class PluginManager:
             self._state.save(self._state_path)
         except Exception as e:
             logger.error("Failed to save plugin state: %s", e)
+
+    def _record_failure_jsonl(
+        self,
+        plugin_id: str,
+        error_type: str,
+        message: str,
+        traceback_str: str,
+    ) -> None:
+        """PR-P1: 把单个插件加载失败追加到 plugin_failures.jsonl。
+
+        每行一个 JSON 对象 {ts, plugin_id, error_type, message, traceback}.
+        traceback 截断到 8 KB，避免一个炸链插件把日志文件撑爆。
+        前端 PluginManagerView 可以读这个文件展示"上次启动失败 N 个，原因..."
+        """
+        try:
+            import json as _json
+            from datetime import datetime
+
+            log_path = self._state_path.parent / "plugin_failures.jsonl"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            entry = {
+                "ts": datetime.now().isoformat(),
+                "plugin_id": plugin_id,
+                "error_type": error_type,
+                "message": message[:2000],
+                "traceback": (traceback_str or "")[:8192],
+            }
+            with log_path.open("a", encoding="utf-8") as f:
+                f.write(_json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            logger.debug(f"[PluginManager] _record_failure_jsonl failed: {exc}")
 
     # --- Query ---
 

@@ -285,6 +285,69 @@ def _get_mode_ruleset(mode: str) -> PermissionRuleset:
     return DEFAULT_RULESET
 
 
+# PR-M1: chat / 闲聊意图下"工具裁剪到核心 5 个"白名单。
+# 之前 chat 意图也会把 50+ 工具的完整 schema 注入 system prompt，导致：
+# 1) 模型分心，把"今天天气怎么样"误判成需要 search/web/exec 类工具；
+# 2) 输入 token 爆涨 5~8k，便宜的 chat 端点反而比真实任务还贵。
+# 这里只保留：思考、最小问答、查询长期记忆、查询用户档案、ask_user 反问。
+# 任何写文件 / 跑命令 / 调外部服务的能力一律不挂。
+_CHAT_INTENT_CORE_TOOLS: tuple[str, ...] = (
+    "think",
+    "ask_user",
+    "search_memory",
+    "get_user_profile",
+    "get_session_context",
+)
+
+
+def _filter_tools_by_intent(
+    tools: list[dict],
+    *,
+    intent_name: str | None,
+    intent_tool_hints: list[str] | None = None,
+    requires_tools: bool = False,
+) -> list[dict]:
+    """Intent-driven 二次裁剪：闲聊场景只挂少量核心工具。
+
+    传入的 intent_name 应该是 IntentType.value（比如 "chat" / "query"）。
+    requires_tools=True 时跳过裁剪（说明意图分析判断这次确实需要调外部能力）。
+    intent_tool_hints 里显式点名的工具一定保留。
+    """
+    try:
+        from .feature_flags import is_enabled as _ff_enabled
+        if not _ff_enabled("intent_tool_slim_v1"):
+            return tools
+    except Exception:
+        pass
+    if requires_tools or not tools:
+        return tools
+    if (intent_name or "").lower() not in ("chat",):
+        return tools
+    keep_names = set(_CHAT_INTENT_CORE_TOOLS) | set(intent_tool_hints or [])
+    filtered: list[dict] = []
+    for tool in tools:
+        name = tool.get("name", "")
+        if not name:
+            fn = tool.get("function", {})
+            name = fn.get("name", "")
+        if name in keep_names:
+            filtered.append(tool)
+    if filtered and len(filtered) < len(tools):
+        logger.info(
+            f"[ToolFilter/Intent] chat intent slim: {len(tools)} -> {len(filtered)} tools "
+            f"(kept: {sorted({t.get('name') or t.get('function', {}).get('name', '') for t in filtered})})"
+        )
+    # 安全闸：极端情况下 keep 列表都不在 tools 里，至少把 ask_user 留下，
+    # 避免 LLM 在 chat 意图下完全失去与用户对话的反问能力。
+    if not filtered:
+        for tool in tools:
+            name = tool.get("name", "") or tool.get("function", {}).get("name", "")
+            if name == "ask_user":
+                filtered.append(tool)
+                break
+    return filtered or tools
+
+
 def _filter_tools_by_mode(tools: list[dict], mode: str) -> list[dict]:
     """Filter tool list based on the active mode using the permission system.
 
@@ -3060,6 +3123,11 @@ class ReasoningEngine:
         - {"type": "context_compressed", "before_tokens": N, "after_tokens": M}
         - {"type": "thinking_start"} / {"type": "thinking_delta"} / {"type": "thinking_end"}
         - {"type": "text_delta", "content": "..."}
+        - {"type": "text_replace", "content": "..."}  # PR-G1: reset 前端 buffer，
+                                                       # 用于 ForceToolCall / Supervisor /
+                                                       # tool_evidence_required 等需要"撤回
+                                                       # 已发出文本，重新生成"的场景。
+                                                       # 前端 ChatView 已支持该 case。
         - {"type": "tool_call_start"} / {"type": "tool_call_end"}
         - {"type": "todo_created"} / {"type": "todo_step_updated"}
         - {"type": "ask_user", "question": "..."}
@@ -3662,6 +3730,11 @@ class ReasoningEngine:
                         continue
                     elif isinstance(retry_result, tuple):
                         current_model, working_messages = retry_result
+                        # PR-G1: 切换模型属于 reasoning restart，前一段 text_delta
+                        # 多半是不完整的报错或被截断的回复——必须清前端 buffer，
+                        # 否则用户会看到「半截错误信息 + 新模型完整回答」拼成的诡异内容。
+                        if _streamed_text:
+                            yield {"type": "text_replace", "content": ""}
                         yield {
                             "type": "chain_text",
                             "content": "当前模型不可用，正在切换到备用模型...",
@@ -5359,6 +5432,14 @@ class ReasoningEngine:
                                     f"(iter={_iteration}, pattern={intervention.pattern.value})"
                                 )
                             max_no_tool_retries = 0
+                            # PR-G1: supervisor 注入新 prompt 后下一轮 LLM 会重新生成，
+                            # 已发的 text_delta 多半是被 supervisor 判定有问题的输出，
+                            # 必须先 reset 前端 buffer，避免新旧文字拼在一起。
+                            try:
+                                if _streamed_text:
+                                    yield {"type": "text_replace", "content": ""}
+                            except NameError:
+                                pass
 
                     continue  # Next iteration
 

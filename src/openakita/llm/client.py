@@ -229,37 +229,80 @@ class LLMClient:
     _global_semaphore: asyncio.Semaphore | None = None
     _global_semaphore_loop_id: int | None = None
     _global_semaphore_value: int = 0
-    _global_inflight: int = 0  # 当前在飞请求计数（用于监控）
+    # PR-K1: inflight 改成 {loop_id: counter} 字典 + 自愈。
+    # 旧实现是单个 int 类变量，在 pytest-asyncio 反复创建 / 销毁 event loop、
+    # 或 Tauri 子进程被 kill 后重启的场景下会"残留"到新 loop —— 健康面板里
+    # 永远显示在飞 N 个请求，触发假阳性扩容/告警。改成按 loop 维度记录后，
+    # 旧 loop 的计数自动随 semaphore 重建而清零，新 loop 从 0 开始；同时
+    # 仍提供 cls._global_inflight 兼容 property 给老调用方（比如外部监控
+    # 抓取代码）。
+    _global_inflight_by_loop: dict[int | None, int] = {}
 
     # 认证失败的端点在进程生命周期内永久跳过（需修改配置后重启或 reload 才恢复）
     _auth_failed_endpoints: set[str] = set()
     _auth_logged_endpoints: set[str] = set()  # 只记录一次告警
 
+    @staticmethod
+    def _current_loop_id() -> int | None:
+        try:
+            return id(asyncio.get_running_loop())
+        except RuntimeError:
+            return None
+
     @classmethod
     def _get_semaphore(cls, max_concurrent: int = 0) -> asyncio.Semaphore:
         """获取或创建全局并发信号量（绑定到当前 event loop）。"""
         target = max_concurrent or cls.DEFAULT_MAX_CONCURRENT
-        try:
-            loop_id = id(asyncio.get_running_loop())
-        except RuntimeError:
-            loop_id = None
+        loop_id = cls._current_loop_id()
         if (
             cls._global_semaphore is None
             or cls._global_semaphore_loop_id != loop_id
             or cls._global_semaphore_value != target
         ):
             cls._global_semaphore = asyncio.Semaphore(target)
+            # 自愈：semaphore 换了，旧 loop 的计数已经无意义，全部清掉
+            if cls._global_semaphore_loop_id is not None:
+                cls._global_inflight_by_loop.pop(cls._global_semaphore_loop_id, None)
             cls._global_semaphore_loop_id = loop_id
             cls._global_semaphore_value = target
-            cls._global_inflight = 0
+            cls._global_inflight_by_loop[loop_id] = 0
         return cls._global_semaphore
+
+    @classmethod
+    def _inflight_inc(cls) -> None:
+        loop_id = cls._current_loop_id()
+        cls._global_inflight_by_loop[loop_id] = cls._global_inflight_by_loop.get(loop_id, 0) + 1
+
+    @classmethod
+    def _inflight_dec(cls) -> None:
+        loop_id = cls._current_loop_id()
+        cur = cls._global_inflight_by_loop.get(loop_id, 0)
+        if cur > 0:
+            cls._global_inflight_by_loop[loop_id] = cur - 1
+        else:
+            # 自愈：若计数已经异常归零，不要扣到负数（旧实现会出现 -1, -2 …）
+            cls._global_inflight_by_loop[loop_id] = 0
+
+    # ── 兼容旧字段：外部监控可能直接读 _global_inflight ─
+    class _InflightDescriptor:
+        def __get__(self, instance, owner):
+            loop_id = LLMClient._current_loop_id()
+            return LLMClient._global_inflight_by_loop.get(loop_id, 0)
+
+        def __set__(self, instance, value):
+            loop_id = LLMClient._current_loop_id()
+            LLMClient._global_inflight_by_loop[loop_id] = int(value)
+
+    _global_inflight = _InflightDescriptor()  # type: ignore[assignment]
 
     @classmethod
     def get_concurrency_stats(cls) -> dict:
         """返回当前并发统计（供健康监控 API 使用）。"""
+        loop_id = cls._current_loop_id()
         return {
-            "inflight": cls._global_inflight,
+            "inflight": cls._global_inflight_by_loop.get(loop_id, 0),
             "max_concurrent": cls._global_semaphore_value or cls.DEFAULT_MAX_CONCURRENT,
+            "tracked_loops": len(cls._global_inflight_by_loop),
         }
 
     def __init__(
@@ -468,7 +511,7 @@ class LLMClient:
         """
         sem = self._get_semaphore(self._settings.get("max_concurrent", 0))
         async with sem:
-            LLMClient._global_inflight += 1
+            LLMClient._inflight_inc()
             try:
                 return await self._chat_impl(
                     messages=messages,
@@ -483,7 +526,7 @@ class LLMClient:
                     **kwargs,
                 )
             finally:
-                LLMClient._global_inflight -= 1
+                LLMClient._inflight_dec()
 
     async def _chat_impl(
         self,
@@ -628,7 +671,7 @@ class LLMClient:
         """
         sem = self._get_semaphore(self._settings.get("max_concurrent", 0))
         async with sem:
-            LLMClient._global_inflight += 1
+            LLMClient._inflight_inc()
             try:
                 async for event in self._chat_stream_impl(
                     messages=messages,
@@ -644,7 +687,7 @@ class LLMClient:
                 ):
                     yield event
             finally:
-                LLMClient._global_inflight -= 1
+                LLMClient._inflight_dec()
 
     async def _chat_stream_impl(
         self,
@@ -1720,10 +1763,20 @@ class LLMClient:
 
                 # ── 结构性失败: 有 token 但无内容 → 切换端点 (#418) ──
                 # 部分代理返回 content:null 但 output_tokens>0，
-                # 应视为端点异常而非成功，触发 failover
+                # 应视为端点异常而非成功，触发 failover。
+                # PR-C2: 如果 provider 已经从 reasoning_content / data.output 等字段
+                # 自愈了 content，``response.recovered_from`` 非空，本端点视为成功，
+                # 不触发 failover、不进 cooldown。
                 if not response.content and response.usage.output_tokens > 0:
-                    logger.error(
-                        f"[LLM] ⚠️ CONTENT LOST: endpoint={provider.name} "
+                    if getattr(response, "recovered_from", ""):
+                        # 不应该到这一行（content 应已被 fallback 填充），保险起见兜底
+                        logger.info(
+                            f"[LLM] endpoint={provider.name} content recovered from "
+                            f"{response.recovered_from}, treating as success"
+                        )
+                        return response
+                    logger.warning(
+                        f"[LLM] CONTENT LOST: endpoint={provider.name} "
                         f"tokens_out={response.usage.output_tokens} but content is empty "
                         f"(enable_thinking={request.enable_thinking}, "
                         f"stream_only={getattr(provider, '_stream_only', False)}, "

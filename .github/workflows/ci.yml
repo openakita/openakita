@@ -244,6 +244,15 @@ jobs:
         working-directory: apps/setup-center
         run: npm ci
 
+      # PR-J1: 跑 react-hooks lint 阻断 React #310 类回归。
+      # 失败时（rules-of-hooks 检测到条件 hook）必须 fail CI；
+      # exhaustive-deps 是 warn 不会 fail。
+      - name: Lint react-hooks (rules-of-hooks)
+        if: ${{ hashFiles('apps/setup-center/package-lock.json') != '' && hashFiles('apps/setup-center/eslint.config.js') != '' }}
+        working-directory: apps/setup-center
+        run: npm run lint --if-present
+        continue-on-error: false
+
       - name: Build
         if: ${{ hashFiles('apps/setup-center/package-lock.json') != '' }}
         working-directory: apps/setup-center

@@ -596,26 +596,38 @@ class IntentAnalyzer:
 
 
 def _make_default(message: str) -> IntentResult:
-    """Fallback: behaves like the old flow (TASK + full tools + ForceToolCall)."""
+    """LLM 不可用 / 输出为空时的安全兜底。
+
+    安全约束：当意图分析器拿不到结果，我们必须**保证用户的需求仍然能被
+    工具能力服务到**，否则会出现"明明用户在让 OpenAkita 干活，却被识别成
+    chitchat 然后没有任何工具被挂到上下文里"的退步。所以这里：
+
+    * intent 默认 ``TASK``（之前曾经临时被改回 ``QUERY`` + 0 confidence，
+      违反 docstring 与 reasoning_engine 的预期，已修正）；
+    * confidence 设为 ``0.0`` 让上层知道这不是来自 LLM 的高置信结果；
+    * 强制 ``force_tool=True`` + ``requires_tools=True`` —— 兜底必须能
+      调用工具，否则就退化成纯文本助手；
+    * 工具 hint 使用启发式 ``_infer_tool_action_hints``，给 reasoning_engine
+      一个最小可用的工具集；
+    * todo_required 仍然 False（LLM 没说要拆 todo，就别强行拆）。
+    """
     evidence_required = _requires_external_evidence(message)
-    tool_hints, requires_project_context = (
-        _infer_tool_action_hints(message) if evidence_required else ([], False)
-    )
+    tool_hints, requires_project_context = _infer_tool_action_hints(message)
     return IntentResult(
-        intent=IntentType.QUERY,
+        intent=IntentType.TASK,
         confidence=0.0,
         task_definition=message[:600],
-        task_type="question",
+        task_type="action",
         tool_hints=tool_hints,
         memory_keywords=[],
-        force_tool=evidence_required,
+        force_tool=True,
         todo_required=False,
         raw_output="",
         prompt_depth=PromptDepth.MINIMAL,
         memory_scope=MemoryScope.PINNED_ONLY,
         capability_scope=[],
         catalog_scope=[],
-        requires_tools=evidence_required,
+        requires_tools=True,
         evidence_required=evidence_required,
         requires_project_context=requires_project_context,
         risk_level_hint=RiskLevelHint.NONE,

@@ -285,6 +285,172 @@ class RiskIntentResult:
         return data
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Authorized intent (PR-A2)
+#
+# When the user confirms a high-risk action whose classification has no
+# direct controlled-action entry, we previously dropped them back into a
+# free-form ReAct loop with the original message — and the LLM happily
+# decided to grep the entire ``~/.openakita`` tree to "find" what to delete
+# (incident 2026-05-09 P0-1).
+#
+# Instead we now persist a structured ``AuthorizedIntent`` that
+#   1. names the operation explicitly (e.g. ``memory_delete``);
+#   2. captures the normalized scope (e.g. ``query="上海"``);
+#   3. expires quickly (default 30 s, single-use).
+# Agent-side consumers either route directly to a dedicated tool
+# (``memory_delete_by_query``) or inject the intent into the system prompt
+# with explicit "do NOT widen the scope, do NOT grep recursively" guidance.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class AuthorizedIntent:
+    operation: str  # e.g. "memory_delete", "shell_execute", "skill_install"
+    target_kind: str  # mirrors RiskIntentResult.target_kind for traceability
+    scope: dict[str, Any] = field(default_factory=dict)
+    original_message: str = ""
+    confirmation_id: str = ""
+    expires_at: float = 0.0  # epoch seconds
+    issued_at: float = 0.0  # epoch seconds
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "operation": self.operation,
+            "target_kind": self.target_kind,
+            "scope": dict(self.scope or {}),
+            "original_message": self.original_message,
+            "confirmation_id": self.confirmation_id,
+            "expires_at": float(self.expires_at or 0.0),
+            "issued_at": float(self.issued_at or 0.0),
+            "version": 2,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "AuthorizedIntent | None":
+        if not isinstance(data, dict):
+            return None
+        try:
+            return cls(
+                operation=str(data.get("operation") or ""),
+                target_kind=str(data.get("target_kind") or "unknown"),
+                scope=dict(data.get("scope") or {}),
+                original_message=str(data.get("original_message") or ""),
+                confirmation_id=str(data.get("confirmation_id") or ""),
+                expires_at=float(data.get("expires_at") or 0.0),
+                issued_at=float(data.get("issued_at") or 0.0),
+            )
+        except Exception:
+            return None
+
+    def is_expired(self, now: float) -> bool:
+        return float(self.expires_at or 0.0) < now
+
+
+_DEFAULT_AUTHORIZED_TTL_SECONDS = 30.0
+
+
+def derive_authorized_intent(
+    classification: dict[str, Any] | RiskIntentResult,
+    *,
+    original_message: str,
+    confirmation_id: str,
+    now: float,
+    ttl: float = _DEFAULT_AUTHORIZED_TTL_SECONDS,
+) -> AuthorizedIntent:
+    """Build an ``AuthorizedIntent`` from a (possibly opaque) classification.
+
+    The function intentionally stays lightweight — it normalizes operation
+    and scope from the most common message shapes (delete X memory / forget
+    Y / clear Z). Callers can extend ``scope`` afterwards with any extra
+    parameters they hold (target ids, conversation_id, etc.).
+    """
+    if isinstance(classification, RiskIntentResult):
+        op_value = (
+            classification.operation_kind.value
+            if hasattr(classification.operation_kind, "value")
+            else str(classification.operation_kind or "")
+        )
+        target_value = (
+            classification.target_kind.value
+            if hasattr(classification.target_kind, "value")
+            else str(classification.target_kind or "")
+        )
+    else:
+        op_value = str(classification.get("operation_kind") or "")
+        target_value = str(classification.get("target_kind") or "")
+
+    operation, scope = _infer_operation_and_scope(
+        op_value=op_value,
+        target_value=target_value,
+        original_message=original_message,
+    )
+    return AuthorizedIntent(
+        operation=operation,
+        target_kind=target_value or "unknown",
+        scope=scope,
+        original_message=original_message or "",
+        confirmation_id=confirmation_id or "",
+        expires_at=float(now) + float(ttl),
+        issued_at=float(now),
+    )
+
+
+_MEMORY_KEYWORDS_RE = re.compile(
+    r"(记忆|memory|印象|档案|profile|偏好|preference)", re.IGNORECASE
+)
+_DELETE_KEYWORDS_RE = re.compile(
+    r"(删除|删掉|清掉|清除|忘记|忘掉|remove|delete|clear|forget|drop)",
+    re.IGNORECASE,
+)
+
+
+def _infer_operation_and_scope(
+    *, op_value: str, target_value: str, original_message: str
+) -> tuple[str, dict[str, Any]]:
+    text = (original_message or "").strip()
+    op_lower = (op_value or "").lower()
+
+    # Memory deletion is the canonical case the incident hit.
+    if _MEMORY_KEYWORDS_RE.search(text) and (
+        op_lower in ("delete", "reset", "overwrite", "disable")
+        or _DELETE_KEYWORDS_RE.search(text)
+    ):
+        return "memory_delete", {
+            "query": _extract_quoted_or_topic(text),
+            "raw": text,
+        }
+
+    if op_lower in ("delete", "reset", "overwrite") or _DELETE_KEYWORDS_RE.search(text):
+        return "destructive_action", {"raw": text}
+
+    if op_lower == "execute":
+        return "shell_execute", {"raw": text}
+
+    if (target_value or "").lower() == "skill_install":
+        return "skill_install", {"raw": text}
+
+    return "generic_action", {"raw": text}
+
+
+_QUOTED_RE = re.compile(r"[“\"'](.+?)[”\"']")
+
+
+def _extract_quoted_or_topic(text: str) -> str:
+    if not text:
+        return ""
+    m = _QUOTED_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    # 取第一组 2-12 字的中文/英文实体词作为粗略 topic
+    short = re.findall(r"[\u4e00-\u9fa5A-Za-z0-9_]{2,12}", text)
+    for token in short:
+        if token in {"删除", "请", "帮我", "把", "记忆", "memory", "delete"}:
+            continue
+        return token
+    return ""
+
+
 class RiskIntentClassifier:
     """Classify whether a request is read-only or a dangerous write."""
 

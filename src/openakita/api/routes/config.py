@@ -35,6 +35,37 @@ def _project_root() -> Path:
         return Path.cwd()
 
 
+def _enabled_chat_endpoints_count(endpoints: list[Any]) -> int:
+    """Treat ``enabled: false`` as excluded; unset ``enabled`` means on."""
+    n = 0
+    for raw in endpoints:
+        if not isinstance(raw, dict):
+            continue
+        if raw.get("enabled") is False:
+            continue
+        n += 1
+    return n
+
+
+def _two_chat_endpoints_denial_reason(candidate_list: list[Any], endpoint_type: str) -> str | None:
+    """Require ≥2 usable chat endpoints when ``llm_view_min_endpoints_v1`` on."""
+    if endpoint_type != "endpoints":
+        return None
+    try:
+        from openakita.core.feature_flags import is_enabled as _ff_enabled
+    except Exception:
+        return None
+    if not _ff_enabled("llm_view_min_endpoints_v1"):
+        return None
+    if _enabled_chat_endpoints_count(candidate_list) >= 2:
+        return None
+    return (
+        "至少需要 2 个处于启用状态的聊天模型端点（主 + 备用，便于故障切换）。"
+        "请再添加或启用一条端点；若在开发环境只需单端点，可在 FEATURE_FLAGS "
+        "中将 llm_view_min_endpoints_v1 设为 false。"
+    )
+
+
 def _read_endpoints_safe(ep_path: Path) -> dict | None:
     """Read llm_endpoints.json with .bak fallback."""
     from openakita.utils.atomic_io import read_json_safe
@@ -775,6 +806,10 @@ async def save_endpoints(body: SaveEndpointsRequest, request: Request):
         )
         api_key = None
 
+    deny_two = _two_chat_endpoints_denial_reason(body.endpoints, body.endpoint_type)
+    if deny_two:
+        return {"status": "error", "error": deny_two}
+
     mgr = _get_endpoint_manager()
     existing_by_name: dict[str, dict] = {}
     try:
@@ -850,6 +885,18 @@ async def delete_endpoint_by_name(
 ):
     """Delete an LLM endpoint by name. Cleans up the .env key if no longer used."""
     mgr = _get_endpoint_manager()
+    try:
+        cur_del = mgr.list_endpoints(endpoint_type)
+    except Exception:
+        cur_del = []
+    if endpoint_type == "endpoints" and len(cur_del) > 0:
+        hypo_del = [
+            ep for ep in cur_del if str(ep.get("name") or "").strip() != str(name).strip()
+        ]
+        deny_del = _two_chat_endpoints_denial_reason(hypo_del, endpoint_type)
+        if deny_del:
+            return {"status": "error", "error": deny_del, "name": name}
+
     removed = mgr.delete_endpoint(name, endpoint_type=endpoint_type, clean_env=clean_env)
     if removed is None:
         return {"status": "not_found", "name": name}
@@ -893,6 +940,19 @@ async def toggle_endpoint(body: ToggleEndpointRequest, request: Request):
     except (ValueError, Exception) as e:
         logger.error("[Config API] toggle-endpoint failed: %s", e, exc_info=True)
         return {"status": "error", "error": str(e)}
+    deny_tgl = None
+    if body.endpoint_type == "endpoints" and mgr.list_endpoints(body.endpoint_type):
+        deny_tgl = _two_chat_endpoints_denial_reason(
+            mgr.list_endpoints(body.endpoint_type),
+            body.endpoint_type,
+        )
+    if deny_tgl:
+        try:
+            mgr.toggle_endpoint(body.name, endpoint_type=body.endpoint_type)
+        except Exception:
+            pass
+        return {"status": "error", "error": deny_tgl}
+
     reload_result = _trigger_reload(request)
     return {
         "status": "ok",

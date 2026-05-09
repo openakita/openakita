@@ -236,6 +236,7 @@ export function IMView({
 }) {
   const { t } = useTranslation();
   const api = apiBaseUrl ?? DEFAULT_API;
+  const [activeTab, setActiveTab] = useState<"messages" | "groupPolicy">("messages");
 
   if (!serviceRunning) {
     return (
@@ -246,8 +247,6 @@ export function IMView({
       </div>
     );
   }
-
-  const [activeTab, setActiveTab] = useState<"messages" | "groupPolicy">("messages");
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-6 py-6 h-full overflow-hidden">

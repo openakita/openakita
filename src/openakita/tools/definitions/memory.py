@@ -245,6 +245,64 @@ MEMORY_TOOLS = [
         },
     },
     {
+        "name": "memory_delete_by_query",
+        "category": "Memory",
+        "description": (
+            "Delete memories matching a query (controlled). Always preview with "
+            "dry_run=True first; the call returns a confirm_token you must echo "
+            "back with dry_run=False to actually delete. Requires the user to have "
+            "confirmed the deletion via the RiskGate ask_user dialog."
+        ),
+        "detail": """受控的按查询条件批量删除记忆。
+
+**调用约定**（**禁止**用 grep/find 在用户主目录递归搜索来"找记忆"）：
+1. 先用 `dry_run=True` 调一次，预览将删除的内容并拿到 `confirm_token`
+2. 用户已经在 RiskGate ask_user 弹窗里同意删除（system prompt 里会有
+   `## 已授权高危操作` 段落标明）
+3. 拿 `confirm_token` + `dry_run=False` 调一次，真正执行删除
+
+**参数**：
+- `query` 必填：按内容关键字过滤
+- `source` 可选：按来源过滤（如 "profile_fallback"）
+- `memory_type` 可选：fact/preference/skill/error/rule/experience
+- `max_delete` 默认 50，硬上限 200
+""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "按内容关键字过滤"},
+                "source": {"type": "string", "description": "按来源过滤（可选）"},
+                "memory_type": {
+                    "type": "string",
+                    "enum": [
+                        "fact",
+                        "preference",
+                        "skill",
+                        "error",
+                        "rule",
+                        "experience",
+                    ],
+                    "description": "按记忆类型过滤（可选）",
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "True=预览，False=真删（需要 confirm_token）",
+                    "default": True,
+                },
+                "max_delete": {
+                    "type": "integer",
+                    "description": "本次最多删除条数（默认 50，最大 200）",
+                    "default": 50,
+                },
+                "confirm_token": {
+                    "type": "string",
+                    "description": "dry_run=False 时必填，由前一次 dry_run 返回",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "get_session_context",
         "category": "Memory",
         "description": "Get detailed context of the current session, including sub-agent execution records, tool usage history, and full message list. Use when conversation history lacks detail about delegation results or you need to review what happened in this session.",

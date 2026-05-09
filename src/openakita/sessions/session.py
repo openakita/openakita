@@ -490,7 +490,49 @@ class Session:
             self._trim_old_metadata()
             if len(self.context.messages) > self.config.max_history:
                 self._truncate_history()
+            # PR-D3: best-effort 同步写 SqliteTurnStore，避免崩溃丢历史。
+            # 仅持久化主对话角色（user/assistant），且 transient_for_llm 的
+            # 临时消息（如 RiskGate 确认应答）不写盘。
+            try:
+                if (
+                    role in ("user", "assistant", "tool")
+                    and not metadata.get("transient_for_llm")
+                ):
+                    self._write_turn_to_store(role, content, metadata)
+            except Exception as exc:
+                logger.debug(f"[Session] write_turn_to_store skipped: {exc}")
         return added
+
+    def _write_turn_to_store(self, role: str, content: str, metadata: dict) -> None:
+        """Persist a single turn to SQLite via session_manager._turn_writer."""
+        try:
+            from ..core.feature_flags import is_enabled as _ff_enabled
+
+            if not _ff_enabled("history_db_merge_v1"):
+                return
+        except Exception:
+            return
+
+        manager = getattr(self, "_manager", None)
+        writer = getattr(manager, "_turn_writer", None) if manager else None
+        if writer is None:
+            return
+
+        try:
+            import re as _re
+
+            safe_id = (self.session_key or "").replace(":", "__")
+            safe_id = _re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", safe_id)
+            turn_index = max(0, len(self.context.messages) - 1)
+            writer(
+                safe_id,
+                turn_index,
+                role,
+                content,
+                metadata,
+            )
+        except Exception as exc:
+            logger.debug(f"[Session] turn writer failed: {exc}")
 
     def _trim_old_metadata(self) -> None:
         """裁剪旧消息的重型元数据以控制内存与序列化体积。

@@ -733,8 +733,6 @@ class FilesystemHandler:
 
     # grep 最大结果条目数
     GREP_MAX_RESULTS = 200
-    # PR-A1: 单次 grep 最多耗时（秒），防止全盘扫描卡死 worker
-    GREP_HARD_TIMEOUT_SECONDS = 30
 
     async def _grep(self, params: dict) -> str:
         """内容搜索"""
@@ -760,6 +758,16 @@ class FilesystemHandler:
             max_results = 50
 
         try:
+            from ...config import settings
+
+            grep_timeout = max(
+                5,
+                min(int(getattr(settings, "grep_timeout_sec", 30) or 30), 600),
+            )
+        except Exception:
+            grep_timeout = 30
+
+        try:
             results = await asyncio.wait_for(
                 self.agent.file_tool.grep(
                     pattern,
@@ -769,7 +777,7 @@ class FilesystemHandler:
                     max_results=max_results,
                     case_insensitive=case_insensitive,
                 ),
-                timeout=self.GREP_HARD_TIMEOUT_SECONDS,
+                timeout=grep_timeout,
             )
         except FileNotFoundError as e:
             return f"❌ {e}"
@@ -782,11 +790,11 @@ class FilesystemHandler:
                     f"避免扫描运行时数据目录或整个用户主目录。"
                 )
             return f"❌ 正则表达式错误: {e}"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return (
-                f"❌ grep 超时（>{self.GREP_HARD_TIMEOUT_SECONDS}s）。"
+                f"❌ grep 超时（>{grep_timeout}s）。"
                 f"建议：1) 用更精确的 path 缩小范围；2) 用 include 限定文件类型"
-                f"（如 include=\"*.py\"）；3) 用更具体的 pattern。"
+                f'（如 include="*.py"）；3) 用更具体的 pattern。（可配置 grep_timeout_sec）'
             )
 
         if not results:

@@ -108,7 +108,10 @@ class TestFriendlyErrorHint:
             failed_providers=None,
             last_error="API error (400): Invalid function response: ok",
         )
-        assert "工具返回格式" in hint
+        # 文案从“工具返回格式异常”改成更明确、可执行的“工具调用上下文格式异常，
+        # OpenAkita 会清理工具历史后重试”。本测试只保证：1) 提示是工具相关而不是
+        # 兜底的“API Key/网络/余额”泛化文案；2) 包含“工具”关键字，让 IM 用户能定位。
+        assert "工具" in hint
         assert "API Key" not in hint
 
 

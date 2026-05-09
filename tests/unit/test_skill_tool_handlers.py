@@ -18,14 +18,10 @@ Watcher 回调 ``Agent._on_skills_dir_changed`` 的测试也包含在此（HOT_R
 
 from __future__ import annotations
 
-import asyncio
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, AsyncMock
-
-import pytest
-
+from unittest.mock import AsyncMock, MagicMock
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -225,7 +221,8 @@ class TestManageSkillEnabled:
         out = handler._manage_skill_enabled(
             {"changes": [{"skill_name": "foo", "enabled": True}], "reason": "test"}
         )
-        assert "技能状态已更新" in out
+        assert "外部技能启用列表已更新" in out
+        assert "foo" in out and "启用" in out
 
         # 最新写入的 allowlist 文件应包含 foo
         import json
@@ -266,7 +263,8 @@ class TestManageSkillEnabled:
         out = handler._manage_skill_enabled(
             {"changes": [{"skill_name": "foo", "enabled": False}]}
         )
-        assert "技能状态已更新" in out
+        assert "外部技能启用列表已更新" in out
+        assert "foo" in out and "禁用" in out
         agent.propagate_skill_change.assert_called_once_with(
             SkillEvent.DISABLE, rescan=False
         )

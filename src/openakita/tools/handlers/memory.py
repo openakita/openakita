@@ -43,6 +43,7 @@ class MemoryHandler:
         "trace_memory",
         "search_relational_memory",
         "get_session_context",
+        "memory_delete_by_query",
     ]
 
     _SEARCH_TOOLS = frozenset(
@@ -294,6 +295,8 @@ class MemoryHandler:
             result = await self._search_relational_memory(params)
         elif tool_name == "get_session_context":
             return self._get_session_context(params)
+        elif tool_name == "memory_delete_by_query":
+            return self._delete_by_query(params)
         else:
             return f"❌ Unknown memory tool: {tool_name}"
 
@@ -1103,6 +1106,160 @@ class MemoryHandler:
                 parts.append(f"[{ts_display}] {role}: {content}")
 
         return "\n".join(parts) if parts else "无可用会话信息"
+
+    def _delete_by_query(self, params: dict) -> str:
+        """受控的按查询条件批量删除记忆 (PR-A3)。
+
+        前置条件（任一）：
+        - 用户已通过 RiskGate 授权（session.metadata 含 risk_authorized_intent_active）
+        - 调用方显式 dry_run=True 仅预览
+
+        参数：
+        - query: 必填，按内容关键字过滤
+        - source: 可选，按 source 过滤（如 "profile_fallback"）
+        - memory_type: 可选，按 MemoryType 过滤
+        - dry_run: 默认 True，先返回预览再要求 dry_run=False 真删
+        - max_delete: 默认 50，硬上限 200，避免一次性误删
+        - confirm_token: dry_run=False 时必填，由前一次 dry_run 返回（防止 LLM 自我授权）
+        """
+        try:
+            from ...memory.types import MemoryType
+        except Exception as exc:
+            return f"❌ memory_delete_by_query 不可用: {exc}"
+
+        query = (params.get("query") or "").strip()
+        source = (params.get("source") or "").strip() or None
+        type_str = (params.get("memory_type") or "").strip()
+        dry_run = params.get("dry_run", True)
+        if not isinstance(dry_run, bool):
+            dry_run = str(dry_run).lower() not in ("false", "0", "no")
+        try:
+            max_delete = int(params.get("max_delete") or 50)
+        except (TypeError, ValueError):
+            max_delete = 50
+        max_delete = max(1, min(max_delete, 200))
+        confirm_token = (params.get("confirm_token") or "").strip()
+
+        # 真删前必须有 dry_run 预览返回的 token，避免 LLM 直接 dry_run=False 误删或无匹配时静默返回
+        if not dry_run and not confirm_token:
+            return (
+                "❌ 拒绝执行：`dry_run=False` 时必须提供 `confirm_token`（由上一次 "
+                "`dry_run=True` 预览末尾给出）。请先预览再确认删除。"
+            )
+
+        if not query and not source and not type_str:
+            return (
+                "❌ memory_delete_by_query 至少需要 query / source / memory_type 之一。"
+                "拒绝执行无差别删除。"
+            )
+
+        memory_type: MemoryType | None = None
+        if type_str:
+            try:
+                memory_type = MemoryType(type_str.lower())
+            except ValueError:
+                return (
+                    f"❌ memory_type 无效: {type_str}. "
+                    f"可用值: {', '.join(t.value for t in MemoryType)}"
+                )
+
+        mm = getattr(self.agent, "memory_manager", None)
+        if mm is None or not hasattr(mm, "search_memories"):
+            return "❌ memory_manager 不可用，无法删除"
+
+        try:
+            candidates = mm.search_memories(
+                query=query,
+                memory_type=memory_type,
+                limit=max_delete + 1,
+            )
+        except Exception as exc:
+            return f"❌ 搜索候选记忆失败: {exc}"
+
+        if source:
+            candidates = [
+                m for m in candidates
+                if str(getattr(m, "source", "") or "") == source
+            ]
+
+        candidates = candidates[:max_delete]
+        if not candidates:
+            return f"未找到符合条件的记忆（query={query!r}, source={source!r}）。"
+
+        preview_lines = [f"将删除 {len(candidates)} 条记忆，预览前 5 条："]
+        for mem in candidates[:5]:
+            content = (getattr(mem, "content", "") or "")[:120]
+            mem_id = str(getattr(mem, "id", ""))[:12]
+            mem_source = str(getattr(mem, "source", "") or "?")
+            preview_lines.append(
+                f"- [{mem_id}] type={getattr(mem, 'type', '?')} source={mem_source}\n"
+                f"  内容: {content}"
+            )
+
+        # 生成 token 以防 LLM 在没有 dry_run 预览的情况下直接删
+        try:
+            import hashlib
+
+            token_seed = "|".join(str(getattr(m, "id", "")) for m in candidates)
+            expected_token = hashlib.sha256(token_seed.encode("utf-8")).hexdigest()[:16]
+        except Exception:
+            expected_token = ""
+
+        if dry_run:
+            preview_lines.append("")
+            preview_lines.append(
+                "（这只是预览，未执行删除。如确认无误，请用相同参数 + "
+                f"`dry_run=False` 且 `confirm_token=\"{expected_token}\"` 再调一次。）"
+            )
+            return "\n".join(preview_lines)
+
+        if expected_token and confirm_token != expected_token:
+            preview_lines.append("")
+            preview_lines.append(
+                "❌ 拒绝执行：confirm_token 不匹配。请先以 dry_run=True 预览，"
+                "拷贝返回的 confirm_token 再调用。"
+            )
+            return "\n".join(preview_lines)
+
+        # 同时检查 RiskGate 已授权，二次保险
+        try:
+            session = getattr(self.agent, "current_session", None)
+            authorized = False
+            if session is not None:
+                intent = session.get_metadata("risk_authorized_intent_active")
+                if isinstance(intent, dict) and intent.get("operation") == "memory_delete":
+                    authorized = True
+            if not authorized:
+                preview_lines.append("")
+                preview_lines.append(
+                    "❌ 拒绝执行：未检测到用户在 RiskGate 中确认的授权范围。"
+                    "请引导用户重新发起删除请求并通过弹窗确认。"
+                )
+                return "\n".join(preview_lines)
+        except Exception:
+            pass
+
+        deleted = 0
+        for mem in candidates:
+            try:
+                mem_id = str(getattr(mem, "id", ""))
+                if mem_id and mm.delete_memory(mem_id):
+                    deleted += 1
+            except Exception as exc:
+                logger.warning("[memory_delete_by_query] delete %s failed: %s", mem_id, exc)
+
+        # 消费授权
+        try:
+            session = getattr(self.agent, "current_session", None)
+            if session is not None:
+                session.set_metadata("risk_authorized_intent_active", None)
+        except Exception:
+            pass
+
+        return (
+            f"✅ 已删除 {deleted}/{len(candidates)} 条记忆。\n"
+            f"前 5 条预览见上一步 dry_run 输出。"
+        )
 
 
 def create_handler(agent: "Agent"):

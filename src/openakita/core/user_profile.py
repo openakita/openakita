@@ -248,7 +248,129 @@ USER_PROFILE_ITEMS = [
         priority=3,
         category="business",
     ),
+    # === 通用人口统计学（PR-B1，覆盖 LLM 高频回写场景） ===
+    UserProfileItem(
+        key="city",
+        name="所在城市",
+        description="用户当前所在的城市/地区",
+        question="你目前主要在哪座城市生活或工作？",
+        priority=2,
+        category="basic",
+    ),
+    UserProfileItem(
+        key="location",
+        name="详细位置",
+        description="比 city 更细粒度的位置（区/园区/校区等，可选）",
+        question="如果方便，能告诉我更具体的位置吗？",
+        priority=4,
+        category="basic",
+    ),
+    UserProfileItem(
+        key="profession",
+        name="职业",
+        description="用户的职业头衔（如 UI 设计师 / 产品经理 / 学生）",
+        question="你目前的职业是什么？",
+        priority=2,
+        category="basic",
+    ),
+    UserProfileItem(
+        key="age",
+        name="年龄",
+        description="用户年龄（数字或段位，如 32 / 30+）",
+        question="如果方便分享，可以告诉我你的年龄吗？",
+        priority=3,
+        category="basic",
+    ),
+    UserProfileItem(
+        key="birthday",
+        name="生日",
+        description="用户生日（YYYY-MM-DD 或 MM-DD）",
+        question="可以告诉我你的生日吗？方便在那天送上祝福。",
+        priority=4,
+        category="basic",
+    ),
+    UserProfileItem(
+        key="gender",
+        name="性别/称谓",
+        description="性别或希望被称呼的代词",
+        question="希望我怎么称呼你（先生/女士/直呼名字…）？",
+        priority=4,
+        category="basic",
+    ),
+    UserProfileItem(
+        key="primary_goal",
+        name="当前主要目标",
+        description="用户当前阶段最在意的目标或主线（如 找新工作 / 涨粉 / 减肥）",
+        question="你最近最重要的一件事是什么？",
+        priority=3,
+        category="basic",
+    ),
 ]
+
+
+# PR-B1：常见自然语言键名 → 白名单 key 的别名映射。
+# LLM 经常写 `update_user_profile(key="地点", value="杭州")` 而不是 `city`，
+# 没有这层映射就会走 _save_unknown_as_memory 的 profile_fallback，跨会话污染。
+USER_PROFILE_KEY_ALIASES: dict[str, str] = {
+    # city / location
+    "城市": "city",
+    "所在城市": "city",
+    "居住城市": "city",
+    "city_name": "city",
+    "current_city": "city",
+    "地点": "location",
+    "位置": "location",
+    "address": "location",
+    "区域": "location",
+    # profession
+    "职业": "profession",
+    "工作": "profession",
+    "title": "profession",
+    "job": "profession",
+    "job_title": "profession",
+    "occupation": "profession",
+    "role": "profession",
+    "user_role": "profession",
+    "agent_role_for_user": "profession",
+    # work_field 别名（已存在于白名单）
+    "行业领域": "work_field",
+    "学习领域": "work_field",
+    # age / birthday
+    "年龄": "age",
+    "岁": "age",
+    "user_age": "age",
+    "生日": "birthday",
+    "birth_day": "birthday",
+    "birth_date": "birthday",
+    "date_of_birth": "birthday",
+    # gender
+    "性别": "gender",
+    "称呼方式": "gender",
+    # primary_goal
+    "目标": "primary_goal",
+    "近期目标": "primary_goal",
+    "goal": "primary_goal",
+    "current_goal": "primary_goal",
+    # name aliases
+    "姓名": "name",
+    "昵称": "name",
+    "称呼": "name",
+    "user_name": "name",
+    "nickname": "name",
+}
+
+
+def resolve_profile_key(key: str) -> str:
+    """Map common natural-language keys to the canonical whitelist key.
+
+    Returns the original key if no alias matches; callers can then check
+    against the whitelist to decide whether to accept or reject.
+    """
+    if not key:
+        return key
+    if any(item.key == key for item in USER_PROFILE_ITEMS):
+        return key
+    return USER_PROFILE_KEY_ALIASES.get(key, key)
 
 
 @dataclass

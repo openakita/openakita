@@ -421,15 +421,8 @@ async def diagnostics():
     }
 
 
-@router.post("/api/health/check")
-async def health_check(request: Request, body: HealthCheckRequest):
-    """
-    Check health of a specific LLM endpoint or all endpoints.
-
-    Uses dry_run mode: sends a real test request but does NOT modify
-    the provider's healthy/cooldown state, ensuring no interference
-    with ongoing Agent LLM calls.
-    """
+async def _do_health_check(request: Request, body: HealthCheckRequest):
+    """共享 GET / POST 的实际探测逻辑。"""
     agent = getattr(request.app.state, "agent", None)
     if agent is None:
         return {"error": "Agent not initialized"}
@@ -441,18 +434,45 @@ async def health_check(request: Request, body: HealthCheckRequest):
     results: list[HealthResult] = []
 
     if body.endpoint_name:
-        # Check specific endpoint (with timeout)
         provider = llm_client._providers.get(body.endpoint_name)
         if not provider:
             return {"error": f"Endpoint not found: {body.endpoint_name}"}
         result = await _check_with_timeout(body.endpoint_name, provider)
         results.append(result)
     else:
-        # Check all endpoints concurrently with per-endpoint timeout
         tasks = [_check_with_timeout(name, p) for name, p in llm_client._providers.items()]
         results = list(await asyncio.gather(*tasks))
 
     return {"results": [r.model_dump() for r in results]}
+
+
+@router.post("/api/health/check")
+async def health_check_post(request: Request, body: HealthCheckRequest):
+    """
+    Check health of a specific LLM endpoint or all endpoints (POST).
+
+    Uses dry_run mode: sends a real test request but does NOT modify
+    the provider's healthy/cooldown state, ensuring no interference
+    with ongoing Agent LLM calls.
+    """
+    return await _do_health_check(request, body)
+
+
+# PR-S1: 新增 GET 版本，便于浏览器 / curl / 监控脚本一键探测，
+# 不必每次都构造 POST 请求体。endpoint_name 通过 query string 传入；
+# 不带参数则探测全部端点。
+@router.get("/api/health/check")
+async def health_check_get(request: Request, endpoint_name: str = ""):
+    """
+    Check health of a specific LLM endpoint or all endpoints (GET).
+
+    GET /api/health/check                 → 探测全部端点
+    GET /api/health/check?endpoint_name=x → 探测指定端点
+
+    与 POST /api/health/check 行为一致；前端 / 监控集成可任选其一。
+    """
+    body = HealthCheckRequest(endpoint_name=endpoint_name or None)
+    return await _do_health_check(request, body)
 
 
 @router.get("/api/health/loop")

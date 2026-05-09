@@ -63,7 +63,14 @@ class SessionUiStateRequest(BaseModel):
 
 
 def _visible_history_messages(session) -> list[tuple[int, dict]]:
-    """Return UI-visible session messages with their stable original indexes."""
+    """Return UI-visible session messages with their stable original indexes.
+
+    PR-D1: 当内存里的 messages 比预期少（尤其崩溃后重启场景），按需从
+    SQLite turn store 回填，保证 ``GET /api/sessions/{id}/history`` 不会
+    在用户视角"突然空了"。
+    """
+    _maybe_backfill_messages(session)
+
     truncation_prefixes = ("[用户规则（必须遵守）]", "[历史背景，非当前任务]")
     visible: list[tuple[int, dict]] = []
     for idx, msg in enumerate(session.context.messages):
@@ -76,6 +83,129 @@ def _visible_history_messages(session) -> list[tuple[int, dict]]:
             continue
         visible.append((idx, msg))
     return visible
+
+
+_BACKFILL_DONE_FLAG = "_history_backfilled"
+
+
+def _maybe_backfill_messages(session) -> None:
+    """Hydrate ``session.context.messages`` from SQLite store if needed.
+
+    一次会话只回填一次（由 ``_history_backfilled`` 元数据标记控制）。
+    """
+    try:
+        from ...core.feature_flags import is_enabled as _ff_enabled
+
+        if not _ff_enabled("history_db_merge_v1"):
+            return
+    except Exception:
+        return
+
+    if not session or not getattr(session, "context", None):
+        return
+
+    try:
+        already = session.get_metadata(_BACKFILL_DONE_FLAG)
+    except Exception:
+        already = None
+    if already:
+        return
+
+    # 仅在 messages 较少时才尝试回填，避免热路径反复扫 SQLite
+    try:
+        msg_count = len(session.context.messages or [])
+    except Exception:
+        msg_count = 0
+
+    # 元数据里可能存了 message_count，崩溃前的真实数。
+    expected = 0
+    try:
+        meta_count = session.get_metadata("message_count") or 0
+        expected = int(meta_count)
+    except Exception:
+        expected = 0
+
+    if msg_count >= expected and msg_count > 1:
+        # 内存里至少有两条且达到记账值，无需回填
+        try:
+            session.set_metadata(_BACKFILL_DONE_FLAG, True)
+        except Exception:
+            pass
+        return
+
+    # 找到 SessionManager（通过 session 对象的弱关系定位）
+    manager = getattr(session, "_manager", None)
+    loader = getattr(manager, "_turn_loader", None) if manager else None
+    if loader is None:
+        # 没有 store 接入，直接打标避免重复尝试
+        try:
+            session.set_metadata(_BACKFILL_DONE_FLAG, True)
+        except Exception:
+            pass
+        return
+
+    try:
+        import re as _re
+
+        safe_id = (session.session_key or "").replace(":", "__")
+        safe_id = _re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", safe_id)
+        db_turns = loader(safe_id) or []
+    except Exception as exc:
+        logger.debug(f"[Sessions] backfill loader failed: {exc}")
+        db_turns = []
+
+    if not db_turns:
+        try:
+            session.set_metadata(_BACKFILL_DONE_FLAG, True)
+        except Exception:
+            pass
+        return
+
+    # 合并：用 (role, content, timestamp) 做去重
+    existing_keys = {
+        (m.get("role"), m.get("content"), m.get("timestamp"))
+        for m in (session.context.messages or [])
+    }
+    appended = 0
+    try:
+        with getattr(session.context, "_msg_lock", _NULL_LOCK):
+            for turn in db_turns:
+                if not isinstance(turn, dict):
+                    continue
+                key = (turn.get("role"), turn.get("content"), turn.get("timestamp"))
+                if key in existing_keys:
+                    continue
+                session.context.messages.append(dict(turn))
+                existing_keys.add(key)
+                appended += 1
+    except Exception as exc:
+        logger.debug(f"[Sessions] backfill append failed: {exc}")
+
+    if appended:
+        # 时间戳排序（缺失则保持原顺序）
+        try:
+            session.context.messages.sort(key=lambda m: m.get("timestamp") or "")
+        except Exception:
+            pass
+        logger.info(
+            f"[Sessions] backfilled {appended} turns from SQLite for {session.session_key}"
+        )
+
+    try:
+        session.set_metadata(_BACKFILL_DONE_FLAG, True)
+    except Exception:
+        pass
+
+
+class _NullLock:
+    def __enter__(self):  # noqa: D401
+        return self
+
+    def __exit__(self, *exc) -> None:  # noqa: D401
+        return None
+
+
+_NULL_LOCK = _NullLock()
 
 
 def _history_entry(session, conversation_id: str, original_idx: int, msg: dict) -> dict:
