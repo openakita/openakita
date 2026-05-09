@@ -858,7 +858,7 @@ export function SkillManager({
   }, [venvDir, currentWorkspaceId, serviceRunning, apiBaseUrl, dataMode]);
 
   const reloadRuntimeAfterLocalInstall = useCallback(async () => {
-    if (!serviceRunning || !apiBaseUrl) return true;
+    if (!serviceRunning || apiBaseUrl == null) return true;
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/skills/reload`, {
         method: "POST",
@@ -892,7 +892,7 @@ export function SkillManager({
 
   // ── 加载技能分类列表 ──
   const loadCategories = useCallback(async () => {
-    if (!serviceRunning || !apiBaseUrl) return;
+    if (!serviceRunning || apiBaseUrl == null) return;
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/skill-categories`, {
         signal: AbortSignal.timeout(8_000),
@@ -945,7 +945,7 @@ export function SkillManager({
 
   // ── 大类启用/禁用 / 创建 / 删除（mass action over allowlist） ──
   const handleCategoryEnableAll = useCallback(async (name: string) => {
-    if (!apiBaseUrl) return;
+    if (apiBaseUrl == null) return;
     setCategoryBusy(name);
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}/enable`, {
@@ -973,7 +973,7 @@ export function SkillManager({
   }, [apiBaseUrl, t, displayCategoryName, refreshAfterCategoryMutation]);
 
   const handleCategoryDisableAll = useCallback(async (name: string) => {
-    if (!apiBaseUrl) return;
+    if (apiBaseUrl == null) return;
     setCategoryBusy(name);
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}/disable`, {
@@ -1004,7 +1004,7 @@ export function SkillManager({
     mode: "create" | "edit",
     data: { name: string; description: string; originalName?: string },
   ) => {
-    if (!apiBaseUrl) return;
+    if (apiBaseUrl == null) return;
     try {
       if (mode === "create") {
         const res = await safeFetch(`${apiBaseUrl}/api/skill-categories`, {
@@ -1042,7 +1042,7 @@ export function SkillManager({
   }, [apiBaseUrl, t, displayCategoryName, refreshAfterCategoryMutation]);
 
   const handleMoveSkill = useCallback(async (skillId: string) => {
-    if (!apiBaseUrl) return;
+    if (apiBaseUrl == null) return;
     const choices = ["", ...categories.filter(c => !c.system_readonly).map(c => c.name)].join("\n  - ");
     const target = window.prompt(t("skills.category.movePrompt") + "\n  - " + choices);
     if (target == null) return;
@@ -1183,7 +1183,7 @@ export function SkillManager({
 
   // ── AI 整理技能 ──
   const handleAiOrganize = useCallback(async () => {
-    if (!serviceRunning || !apiBaseUrl) return;
+    if (!serviceRunning || apiBaseUrl == null) return;
     setAiOrganizing(true);
     setError(null);
     try {
@@ -1309,7 +1309,7 @@ export function SkillManager({
     setDetailContentLoading(true);
     setDetailSaving(false);
 
-    if (!serviceRunning || !apiBaseUrl) {
+    if (!serviceRunning || apiBaseUrl == null) {
       setDetailContentError(t("skills.requiresBackend"));
       setDetailContentLoading(false);
       return;
@@ -1346,7 +1346,7 @@ export function SkillManager({
   }, []);
 
   const handleSaveContent = useCallback(async () => {
-    if (!detailSkill || !serviceRunning || !apiBaseUrl) return;
+    if (!detailSkill || !serviceRunning || apiBaseUrl == null) return;
     setDetailSaving(true);
     setDetailContentError(null);
     try {
