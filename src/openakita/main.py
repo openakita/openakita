@@ -1059,7 +1059,7 @@ async def start_im_channels(agent_or_master):
 
     if hasattr(agent, "_plugin_manager") and agent._plugin_manager:
         _message_gateway._plugin_hooks = agent._plugin_manager.hook_registry
-        agent._plugin_manager._host_refs["gateway"] = _message_gateway
+        agent._plugin_manager._external_host_refs["gateway"] = _message_gateway
         if _session_manager is not None:
             _session_manager._plugin_hooks = agent._plugin_manager.hook_registry
 
