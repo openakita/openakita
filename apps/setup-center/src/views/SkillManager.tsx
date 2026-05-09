@@ -22,6 +22,11 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { ModalOverlay } from "../components/ModalOverlay";
 
 // ─── i18n 辅助：按当前语言优先显示中文名/描述 ───
@@ -65,6 +70,117 @@ function friendlyError(e: unknown, t: (key: string) => string, context: ErrorCon
     general: "skills.errorUnknown",
   };
   return t(contextMap[context]);
+}
+
+// ─── 分类对话框（新建 / 编辑） ───
+
+type CategoryDialogState = {
+  mode: "create";
+} | {
+  mode: "edit";
+  originalName: string;
+  currentDescription: string | null;
+} | null;
+
+function CategoryDialog({
+  state,
+  onClose,
+  onSubmit,
+  t,
+}: {
+  state: CategoryDialogState;
+  onClose: () => void;
+  onSubmit: (mode: "create" | "edit", data: { name: string; description: string; originalName?: string }) => Promise<void>;
+  t: (key: string) => string;
+}) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!state) return;
+    if (state.mode === "edit") {
+      setName(state.originalName);
+      setDescription(state.currentDescription ?? "");
+    } else {
+      setName("");
+      setDescription("");
+    }
+  }, [state]);
+
+  const handleSubmit = async () => {
+    if (!name.trim()) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(
+        state!.mode,
+        {
+          name: name.trim(),
+          description: description.trim(),
+          originalName: state?.mode === "edit" ? state.originalName : undefined,
+        },
+      );
+      onClose();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const isEdit = state?.mode === "edit";
+
+  return (
+    <Dialog open={!!state} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {isEdit ? t("skills.category.editTitle") : t("skills.category.createTitle")}
+          </DialogTitle>
+          <DialogDescription>
+            {isEdit ? t("skills.category.editSubtitle") : t("skills.category.createSubtitle")}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4 py-2">
+          <div className="space-y-2">
+            <Label className="text-sm">
+              {t("skills.category.nameLabel")}
+              <span className="ml-1 text-destructive">*</span>
+            </Label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t("skills.category.namePlaceholder")}
+              maxLength={32}
+              autoFocus
+              onKeyDown={(e) => { if (e.key === "Enter" && name.trim()) handleSubmit(); }}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm">
+              {t("skills.category.descLabel")}
+            </Label>
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder={t("skills.category.descPlaceholder")}
+              className="min-h-20 resize-none"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button onClick={handleSubmit} disabled={submitting || !name.trim()}>
+            {submitting && <Loader2 className="animate-spin mr-1" size={14} />}
+            {isEdit ? t("common.save") : t("skills.category.createBtn")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // ─── 配置表单自动生成 ───
@@ -656,6 +772,7 @@ export function SkillManager({
   const [groupView, setGroupView] = useState(true);
   const [categoryBusy, setCategoryBusy] = useState<string | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [categoryDialogState, setCategoryDialogState] = useState<CategoryDialogState>(null);
   // 安装时选择落入的分类（""=不指定，安装到顶层）
   const [installCategory, setInstallCategory] = useState<string>("");
   const [detailSkill, setDetailSkill] = useState<SkillInfo | null>(null);
@@ -883,68 +1000,46 @@ export function SkillManager({
     }
   }, [apiBaseUrl, t, displayCategoryName, refreshAfterCategoryMutation]);
 
-  const handleCategoryCreate = useCallback(async () => {
+  const handleCategoryDialogSubmit = useCallback(async (
+    mode: "create" | "edit",
+    data: { name: string; description: string; originalName?: string },
+  ) => {
     if (!apiBaseUrl) return;
-    const name = window.prompt(t("skills.category.createNamePrompt"));
-    if (!name) return;
-    const description = window.prompt(t("skills.category.createDescPrompt")) ?? "";
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), description: description.trim() }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      const data = await res.json();
-      if (data?.error || data?.detail) {
-        throw new Error(String(data.error || data.detail));
+      if (mode === "create") {
+        const res = await safeFetch(`${apiBaseUrl}/api/skill-categories`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: data.name, description: data.description }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        const resp = await res.json();
+        if (resp?.error || resp?.detail) throw new Error(String(resp.error || resp.detail));
+        toast.success(t("skills.category.created", { name: data.name }));
+      } else {
+        const original = data.originalName!;
+        const payload: Record<string, string> = {};
+        if (data.name !== original) payload.new_name = data.name;
+        payload.description = data.description;
+        const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(original)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10_000),
+        });
+        const resp = await res.json();
+        if (resp?.error || resp?.detail) throw new Error(String(resp.error || resp.detail));
+        if (data.name !== original) {
+          toast.success(t("skills.category.renamed", { from: displayCategoryName(original), to: data.name }));
+        } else {
+          toast.success(t("skills.category.descUpdated"));
+        }
       }
-      toast.success(t("skills.category.created", { name: name.trim() }));
-      await refreshAfterCategoryMutation();
-    } catch (e) {
-      toast.error(friendlyError(e, t, "save"));
-    }
-  }, [apiBaseUrl, t, refreshAfterCategoryMutation]);
-
-  const handleCategoryRename = useCallback(async (name: string) => {
-    if (!apiBaseUrl) return;
-    const next = window.prompt(t("skills.category.renamePrompt"), name);
-    if (!next || next === name) return;
-    try {
-      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ new_name: next.trim() }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      const data = await res.json();
-      if (data?.error || data?.detail) throw new Error(String(data.error || data.detail));
-      toast.success(t("skills.category.renamed", { from: displayCategoryName(name), to: next.trim() }));
       await refreshAfterCategoryMutation();
     } catch (e) {
       toast.error(friendlyError(e, t, "save"));
     }
   }, [apiBaseUrl, t, displayCategoryName, refreshAfterCategoryMutation]);
-
-  const handleCategoryEditDesc = useCallback(async (name: string, current: string | null) => {
-    if (!apiBaseUrl) return;
-    const next = window.prompt(t("skills.category.editDescPrompt"), current ?? "");
-    if (next == null) return;
-    try {
-      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: next }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      const data = await res.json();
-      if (data?.error || data?.detail) throw new Error(String(data.error || data.detail));
-      toast.success(t("skills.category.descUpdated"));
-      await refreshAfterCategoryMutation();
-    } catch (e) {
-      toast.error(friendlyError(e, t, "save"));
-    }
-  }, [apiBaseUrl, t, refreshAfterCategoryMutation]);
 
   const handleMoveSkill = useCallback(async (skillId: string) => {
     if (!apiBaseUrl) return;
@@ -1774,7 +1869,7 @@ export function SkillManager({
                 variant="outline"
                 size="sm"
                 className="h-8"
-                onClick={handleCategoryCreate}
+                onClick={() => setCategoryDialogState({ mode: "create" })}
                 title={t("skills.category.createTitle")}
               >
                 {t("skills.category.create")}
@@ -1877,19 +1972,14 @@ export function SkillManager({
                               variant="ghost"
                               size="sm"
                               className="h-7 px-2 text-xs"
-                              onClick={() => handleCategoryEditDesc(catName, meta?.description ?? null)}
-                              title={t("skills.category.editDesc")}
+                              onClick={() => setCategoryDialogState({
+                                mode: "edit",
+                                originalName: catName,
+                                currentDescription: meta?.description ?? null,
+                              })}
+                              title={t("skills.category.edit")}
                             >
-                              {t("skills.category.editDesc")}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-xs"
-                              onClick={() => handleCategoryRename(catName)}
-                              title={t("skills.category.rename")}
-                            >
-                              {t("skills.category.rename")}
+                              {t("skills.category.edit")}
                             </Button>
                           </div>
                         )}
@@ -2078,6 +2168,14 @@ export function SkillManager({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 分类新建/编辑对话框 */}
+      <CategoryDialog
+        state={categoryDialogState}
+        onClose={() => setCategoryDialogState(null)}
+        onSubmit={handleCategoryDialogSubmit}
+        t={t}
+      />
 
       {/* 未保存更改提示栏 */}
       {enabledDirty && (
