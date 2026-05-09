@@ -934,8 +934,8 @@ export function AgentManagerView({
       </div>
 
       {filteredProfiles.length === 0 && !loading && (
-        <div style={{ textAlign: "center", padding: 40, opacity: 0.5 }}>
-          <IconBot size={40} />
+        <div style={{ textAlign: "center", padding: 28, opacity: 0.55 }}>
+          <IconBot size={32} />
           <div style={{ marginTop: 8 }}>{t("common.noData")}</div>
         </div>
       )}

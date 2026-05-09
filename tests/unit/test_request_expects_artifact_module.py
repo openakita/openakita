@@ -43,6 +43,21 @@ class TestRequestExpectsArtifactModuleLevel:
         assert request_expects_artifact("发我一张图片") is True
         assert request_expects_artifact("please attach the file") is True
 
+    def test_input_attachment_reference_is_not_delivery_intent(self):
+        # 读取/分析用户已上传的附件是输入对象，不代表需要再交付一个附件。
+        assert (
+            request_expects_artifact(
+                "Read the attached text file and answer only the project code it contains."
+            )
+            is False
+        )
+        assert request_expects_artifact("请读取我上传的附件，并总结里面的项目代号") is False
+        assert request_expects_artifact("分析刚发来的图片里有什么") is False
+
+    def test_input_attachment_with_explicit_export_still_expects_delivery(self):
+        assert request_expects_artifact("Read the attached file and export a summary") is True
+        assert request_expects_artifact("读取附件内容，然后导出成 excel") is True
+
     def test_pure_chat_returns_false(self):
         # 真正只是闲聊/问答，不含"交付意图"信号
         assert request_expects_artifact("你好今天天气怎么样") is False

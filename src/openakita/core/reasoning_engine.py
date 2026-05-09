@@ -196,6 +196,8 @@ def _apply_tool_result_budget(
     max_total: int | None = None,
 ) -> list[dict]:
     """Proportionally truncate tool results if total exceeds budget."""
+    from .tool_executor import OVERFLOW_MARKER, save_overflow
+
     if max_total is None:
         max_total = int(getattr(settings, "context_tool_results_total_chars", 80_000) or 80_000)
     total = sum(len(str(r.get("content", ""))) for r in tool_results)
@@ -205,13 +207,18 @@ def _apply_tool_result_budget(
     ratio = max_total / total
     for r in tool_results:
         content = str(r.get("content", ""))
+        if OVERFLOW_MARKER in content:
+            continue
         if len(content) > 1000:
             budget = max(500, int(len(content) * ratio))
             if len(content) > budget:
                 half = budget // 2
+                overflow_path = save_overflow("tool_result_budget", content)
                 r["content"] = (
                     content[:half]
-                    + f"\n\n... [{len(content) - budget} chars truncated] ...\n\n"
+                    + f"\n\n{OVERFLOW_MARKER} 本轮工具结果合计 {total} 字符，"
+                    + f"超过上下文预算 {max_total} 字符；已压缩此结果。"
+                    + f"\n完整内容已保存到: {overflow_path}\n\n"
                     + content[-half:]
                 )
     return tool_results
@@ -2588,7 +2595,11 @@ class ReasoningEngine:
                     self._last_exit_reason = "loop_terminated"
                     return msg
                 if _budget_decision.should_warn:
-                    working_messages.append({"role": "user", "content": _budget_decision.message})
+                    logger.info(
+                        "[LoopBudget] warning for model only (%s): %s",
+                        _budget_decision.exit_reason,
+                        _budget_decision.message,
+                    )
                     _iter_trace.setdefault("loop_budget_warnings", []).append(
                         _budget_decision.exit_reason
                     )
@@ -4930,7 +4941,11 @@ class ReasoningEngine:
                         yield {"type": "done"}
                         return
                     if _budget_decision.should_warn:
-                        working_messages.append({"role": "user", "content": _budget_decision.message})
+                        logger.info(
+                            "[LoopBudget] warning for model only (%s): %s",
+                            _budget_decision.exit_reason,
+                            _budget_decision.message,
+                        )
                         _iter_trace.setdefault("loop_budget_warnings", []).append(
                             _budget_decision.exit_reason
                         )
@@ -5494,7 +5509,16 @@ class ReasoningEngine:
                     budget.record(tokens)
                     warning = budget.get_warning_message()
                     if warning:
-                        yield {"type": "budget_warning", "message": warning}
+                        yield {
+                            "type": "budget_warning",
+                            "dimension": "tokens",
+                            "level": "warning",
+                            "usage_ratio": budget.used / budget.total_limit
+                            if budget.total_limit
+                            else 0,
+                            "renewed": False,
+                            "message": warning,
+                        }
                     if budget.is_exceeded:
                         yield {
                             "type": "budget_exceeded",

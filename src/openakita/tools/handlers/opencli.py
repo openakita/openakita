@@ -13,13 +13,15 @@ import logging
 import shutil
 from typing import TYPE_CHECKING, Any
 
+from ...config import settings
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
 logger = logging.getLogger(__name__)
 
-_OPENCLI_CMD_TIMEOUT = 60  # seconds
-_OPENCLI_TASK_TIMEOUT = 120  # seconds for run commands
+_OPENCLI_CMD_TIMEOUT = 300  # fallback seconds; runtime value comes from settings
+_OPENCLI_TASK_TIMEOUT = 900  # fallback seconds for run commands
 
 
 def _find_opencli() -> str | None:
@@ -54,9 +56,11 @@ class OpenCLIHandler:
         return f"Unknown opencli tool: {tool_name}"
 
     async def _run_cmd(
-        self, args: list[str], timeout: float = _OPENCLI_CMD_TIMEOUT
+        self, args: list[str], timeout: float | None = None
     ) -> tuple[int, str, str]:
         """Execute opencli with given args, return (returncode, stdout, stderr)."""
+        if timeout is None:
+            timeout = float(getattr(settings, "opencli_command_timeout_seconds", _OPENCLI_CMD_TIMEOUT) or 0)
         cmd = [self._opencli_path or "opencli"] + args
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -64,16 +68,20 @@ class OpenCLIHandler:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=timeout,
-            )
+            communicate = proc.communicate()
+            if timeout > 0:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    communicate,
+                    timeout=timeout,
+                )
+            else:
+                stdout_bytes, stderr_bytes = await communicate
             return (
                 proc.returncode or 0,
                 stdout_bytes.decode("utf-8", errors="replace"),
                 stderr_bytes.decode("utf-8", errors="replace"),
             )
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             try:
                 proc.kill()  # type: ignore[possibly-undefined]
             except Exception:
@@ -121,7 +129,7 @@ class OpenCLIHandler:
 
         rc, stdout, stderr = await self._run_cmd(
             cmd_parts,
-            timeout=_OPENCLI_TASK_TIMEOUT,
+            timeout=float(getattr(settings, "opencli_task_timeout_seconds", _OPENCLI_TASK_TIMEOUT) or 0),
         )
         if rc != 0:
             error_msg = stderr.strip() or stdout.strip() or "未知错误"

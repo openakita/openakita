@@ -14,12 +14,14 @@ import os
 import shutil
 from typing import TYPE_CHECKING, Any
 
+from ...config import settings
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
 logger = logging.getLogger(__name__)
 
-_CMD_TIMEOUT = 60  # seconds
+_CMD_TIMEOUT = 300  # fallback seconds; runtime value comes from settings
 _CLI_PREFIX = "cli-anything-"
 
 
@@ -44,24 +46,30 @@ class CLIAnythingHandler:
     async def _run_cmd(
         self,
         cmd: list[str],
-        timeout: float = _CMD_TIMEOUT,
+        timeout: float | None = None,
     ) -> tuple[int, str, str]:
+        if timeout is None:
+            timeout = float(getattr(settings, "cli_command_timeout_seconds", _CMD_TIMEOUT) or 0)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=timeout,
-            )
+            communicate = proc.communicate()
+            if timeout > 0:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    communicate,
+                    timeout=timeout,
+                )
+            else:
+                stdout_bytes, stderr_bytes = await communicate
             return (
                 proc.returncode or 0,
                 stdout_bytes.decode("utf-8", errors="replace"),
                 stderr_bytes.decode("utf-8", errors="replace"),
             )
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             try:
                 proc.kill()  # type: ignore[possibly-undefined]
             except Exception:

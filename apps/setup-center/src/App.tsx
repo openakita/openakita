@@ -3316,7 +3316,7 @@ function MainApp() {
                   <div className="grid3">
                     {FT({ k: "DESKTOP_COMPRESSION_QUALITY", label: t("config.toolsCompression"), placeholder: "85" })}
                     {FT({ k: "DESKTOP_CACHE_TTL", label: "Cache TTL", placeholder: "1.0" })}
-                    {FB({ k: "DESKTOP_FAILSAFE", label: "Failsafe" })}
+                    {FB({ k: "DESKTOP_FAILSAFE", label: "安全角保护", help: "鼠标移到屏幕角落时自动停止桌面操作，避免误点或误操作。" })}
                   </div>
                   {FB({ k: "DESKTOP_VISION_ENABLED", label: t("config.toolsVision"), help: t("config.toolsVisionHelp") })}
                   <div className="grid3">
@@ -3561,7 +3561,7 @@ function MainApp() {
           <div className="divider" />
 
           <div className="card" style={{ marginTop: 0 }}>
-            <div className="cardTitle" style={{ fontSize: 14, marginBottom: 6 }}>
+            <div className="cardTitle">
               LLM（不在这里重复填）
             </div>
             <div className="cardHint">
@@ -3572,7 +3572,7 @@ function MainApp() {
           </div>
 
           <div className="card" style={{ marginTop: 0 }}>
-            <div className="cardTitle" style={{ fontSize: 14, marginBottom: 6 }}>
+            <div className="cardTitle">
               网络代理与并行
             </div>
             <div className="grid3">
@@ -3588,7 +3588,7 @@ function MainApp() {
           </div>
 
           <div className="card">
-            <div className="cardTitle" style={{ fontSize: 14, marginBottom: 6 }}>
+            <div className="cardTitle">
               IM 通道
             </div>
             <div className="cardHint">
@@ -3794,7 +3794,7 @@ function MainApp() {
           </div>
 
           <div className="card">
-            <div className="cardTitle" style={{ fontSize: 14, marginBottom: 6 }}>
+            <div className="cardTitle">
               MCP / 桌面自动化 / 语音与 GitHub
             </div>
             <div className="grid2">
@@ -3856,7 +3856,7 @@ function MainApp() {
                 <div className="grid3" style={{ marginTop: 10 }}>
                   {FT({ k: "DESKTOP_COMPRESSION_QUALITY", label: "压缩质量", placeholder: "85" })}
                   {FT({ k: "DESKTOP_CACHE_TTL", label: "截图缓存秒", placeholder: "1.0" })}
-                  {FB({ k: "DESKTOP_FAILSAFE", label: "failsafe", help: "鼠标移到角落中止（PyAutoGUI 风格）" })}
+                  {FB({ k: "DESKTOP_FAILSAFE", label: "安全角保护", help: "鼠标移到屏幕角落时自动停止桌面操作，避免误点或误操作。" })}
                 </div>
                 <div className="divider" />
                 {FB({ k: "DESKTOP_VISION_ENABLED", label: "启用视觉", help: "用于屏幕理解/定位" })}
@@ -3876,7 +3876,7 @@ function MainApp() {
           </div>
 
           <div className="card">
-            <div className="cardTitle" style={{ fontSize: 14, marginBottom: 6 }}>
+            <div className="cardTitle">
               灵魂与意志（核心配置）
             </div>
             <div className="cardHint">
@@ -5103,8 +5103,8 @@ function MainApp() {
 
     if (view === "skills") {
       return disabledViews.includes("skills") ? (
-        <div className="card" style={{ opacity: 0.5, textAlign: "center", padding: 40 }}>
-          <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，请在「工具与技能」配置中启用</p>
+        <div className="card" style={{ opacity: 0.65, textAlign: "center", padding: 28 }}>
+          <p style={{ color: "#94a3b8", fontSize: 13 }}>此模块已禁用，请在「工具与技能」配置中启用</p>
         </div>
       ) : (
         <SkillManager
@@ -5123,8 +5123,8 @@ function MainApp() {
     }
     if (view === "im") {
       return disabledViews.includes("im") ? (
-        <div className="card" style={{ opacity: 0.5, textAlign: "center", padding: 40 }}>
-          <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，请在「配置 → IM 通道」中启用</p>
+        <div className="card" style={{ opacity: 0.65, textAlign: "center", padding: 28 }}>
+          <p style={{ color: "#94a3b8", fontSize: 13 }}>此模块已禁用，请在「配置 → IM 通道」中启用</p>
         </div>
       ) : (
         <IMView serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl} />
@@ -5142,8 +5142,8 @@ function MainApp() {
     }
     if (view === "mcp") {
       return disabledViews.includes("mcp") ? (
-        <div className="card" style={{ opacity: 0.5, textAlign: "center", padding: 40 }}>
-          <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，请在「工具与技能」配置中启用</p>
+        <div className="card" style={{ opacity: 0.65, textAlign: "center", padding: 28 }}>
+          <p style={{ color: "#94a3b8", fontSize: 13 }}>此模块已禁用，请在「工具与技能」配置中启用</p>
         </div>
       ) : (
             <MCPView
@@ -5160,8 +5160,8 @@ function MainApp() {
     }
     if (view === "scheduler") {
       return disabledViews.includes("scheduler") ? (
-        <div className="card" style={{ opacity: 0.5, textAlign: "center", padding: 40 }}>
-          <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，请在「灵魂与意志」配置中启用</p>
+        <div className="card" style={{ opacity: 0.65, textAlign: "center", padding: 28 }}>
+          <p style={{ color: "#94a3b8", fontSize: 13 }}>此模块已禁用，请在「灵魂与意志」配置中启用</p>
         </div>
       ) : (
         <SchedulerView serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl} />
@@ -5169,8 +5169,8 @@ function MainApp() {
     }
     if (view === "memory") {
       return disabledViews.includes("memory") ? (
-        <div className="card" style={{ opacity: 0.5, textAlign: "center", padding: 40 }}>
-          <p style={{ color: "#94a3b8", fontSize: 15 }}>此模块已禁用，请在「灵魂与意志」配置中启用</p>
+        <div className="card" style={{ opacity: 0.65, textAlign: "center", padding: 28 }}>
+          <p style={{ color: "#94a3b8", fontSize: 13 }}>此模块已禁用，请在「灵魂与意志」配置中启用</p>
         </div>
       ) : (
         <MemoryView serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl} />

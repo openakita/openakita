@@ -531,7 +531,7 @@ class SkillRegistry:
             )
             return False
 
-        if existing is not None and force:
+        if existing is not None and force and not self._is_same_registration_source(existing, entry):
             self._record_conflict(
                 action="overridden", winner=entry, loser=existing
             )
@@ -539,6 +539,21 @@ class SkillRegistry:
         self._skills[entry.skill_id] = entry
         logger.info(f"Registered skill: {entry.skill_id} (name={entry.name})")
         return True
+
+    @staticmethod
+    def _is_same_registration_source(existing: "SkillEntry", new_entry: "SkillEntry") -> bool:
+        """Return true when a force reload is just refreshing the same skill on disk."""
+
+        def _norm_path(value: str | None) -> str:
+            text = (value or "").replace("\\", "/").rstrip("/")
+            return text.lower() if text else ""
+
+        return (
+            _norm_path(existing.skill_path) == _norm_path(new_entry.skill_path)
+            and (existing.source_url or "") == (new_entry.source_url or "")
+            and (existing.plugin_source or "") == (new_entry.plugin_source or "")
+            and str(existing.origin or "") == str(new_entry.origin or "")
+        )
 
     def _record_conflict(
         self, *, action: str, winner: "SkillEntry", loser: "SkillEntry"

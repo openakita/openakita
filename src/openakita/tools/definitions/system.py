@@ -161,15 +161,17 @@ SYSTEM_TOOLS = [
     {
         "name": "get_session_logs",
         "category": "System",
-        "description": "Get current session system logs. IMPORTANT: When commands fail, encounter errors, or need to understand previous operation results, call this tool. Logs contain: command details, error info, system status.",
+        "description": "Get concise current session logs. Use for command failures and recent operation status. This is not the full LLM debug trace.",
         "detail": """获取当前会话的系统日志。
 
-**重要**: 当命令执行失败、遇到错误、或需要了解之前的操作结果时，应该调用此工具查看日志。
+当命令执行失败、遇到错误、或需要了解之前的操作结果时，可调用此工具查看最近会话日志。
 
-**日志包含**:
+**日志通常包含**:
 - 命令执行详情
 - 错误信息
 - 系统状态
+
+这不是完整的 LLM 调试 trace；默认会过滤 DEBUG 和大上下文调试日志，避免把内部实现噪音带回对话。
 
 **使用场景**:
 1. 命令返回错误码
@@ -187,6 +189,11 @@ SYSTEM_TOOLS = [
                     "type": "string",
                     "enum": ["DEBUG", "INFO", "WARNING", "ERROR"],
                     "description": "过滤日志级别（可选，ERROR 可快速定位问题）",
+                },
+                "include_debug": {
+                    "type": "boolean",
+                    "description": "是否包含 DEBUG/LLM DEBUG 日志（默认 false，仅排查内部问题时开启）",
+                    "default": False,
                 },
             },
         },

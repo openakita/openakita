@@ -1390,15 +1390,15 @@ class Brain:
             # 记录日志并在 token 数量过大时发出警告
             token_detail = f"system={estimated_system_tokens}, messages={estimated_messages_tokens}, tools={estimated_tools_tokens}"
             if total_estimated_tokens > 50000:
-                logger.warning(
+                logger.debug(
                     f"[LLM DEBUG] ⚠️ Very large context! Estimated {total_estimated_tokens} tokens ({token_detail})"
                 )
             elif total_estimated_tokens > 30000:
-                logger.warning(
+                logger.debug(
                     f"[LLM DEBUG] Large context: {total_estimated_tokens} tokens ({token_detail})"
                 )
             else:
-                logger.info(
+                logger.debug(
                     f"[LLM DEBUG] Request saved: {total_estimated_tokens} tokens ({token_detail})"
                 )
 
@@ -1470,7 +1470,7 @@ class Brain:
             tool_count = sum(1 for b in content_blocks if b.get("type") == "tool_use")
             in_tokens = debug_data["llm_response"]["usage"]["input_tokens"]
             out_tokens = debug_data["llm_response"]["usage"]["output_tokens"]
-            logger.info(
+            logger.debug(
                 f"[LLM DEBUG] Response saved: text_len={text_len}, tool_calls={tool_count}, "
                 f"tokens_in={in_tokens}, tokens_out={out_tokens} (request_id={request_id})"
             )

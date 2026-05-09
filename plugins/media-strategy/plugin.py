@@ -53,11 +53,43 @@ class SubscribePackageBody(_StrictBase):
     enabled: bool = True
 
 
+class CreatePackageBody(_StrictBase):
+    label_zh: str
+    label_en: str = ""
+    description: str = ""
+    keywords: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    prefer_id: str = ""
+    clone_from: str = ""
+
+
+class UpdatePackageBody(_StrictBase):
+    label_zh: str | None = None
+    label_en: str | None = None
+    description: str | None = None
+    keywords: list[str] | None = None
+    enabled: bool | None = None
+
+
+class BulkPackageSourcesBody(_StrictBase):
+    enabled: bool = True
+
+
 class AddFeedBody(_StrictBase):
     name: str
     url: str
     package_ids: list[str] = Field(default_factory=list)
     enabled: bool = True
+    authority: float | None = None
+
+
+class UpdateSourceBody(_StrictBase):
+    label_zh: str | None = None
+    label_en: str | None = None
+    url: str | None = None
+    package_ids: list[str] | None = None
+    authority: float | None = None
+    enabled: bool | None = None
 
 
 class ToggleSourceBody(_StrictBase):
@@ -132,17 +164,29 @@ class Plugin(PluginBase):
         value = (raw or "").strip()
         if not value:
             return None, ""
-        p = Path(value).expanduser()
+        try:
+            p = Path(value).expanduser()
+        except Exception as exc:  # noqa: BLE001
+            return None, f"路径解析失败：{exc}"
         if not p.is_absolute():
-            return None, "存储目录必须是绝对路径"
+            return None, "请填写绝对路径，例如 D:\\media-strategy 或 /home/me/media-strategy"
+        if not p.exists() and not p.parent.exists():
+            return None, f"父目录不存在：{p.parent}"
         try:
             p.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return None, f"无法创建目录：{exc}"
+        try:
             probe = p / ".media_strategy_write_test"
             probe.write_text("ok", encoding="utf-8")
             probe.unlink(missing_ok=True)
-        except Exception as exc:  # noqa: BLE001
+        except OSError as exc:
             return None, f"目录不可写：{exc}"
         return p.resolve(), ""
+
+    def _default_data_dir(self) -> Path:
+        host = self._api.get_data_dir() if self._api is not None else None
+        return Path(host) / "media_strategy" if host else Path.cwd() / ".media-strategy"
 
     def _resolve_data_dir(self) -> Path:
         cfg = self._load_settings()
@@ -153,8 +197,38 @@ class Plugin(PluginBase):
                 return path
             if self._api is not None:
                 self._api.log(f"{PLUGIN_ID}: ignoring invalid custom_data_dir {custom!r}: {err}", "warning")
-        host = self._api.get_data_dir() if self._api is not None else None
-        return Path(host) / "media_strategy" if host else Path.cwd() / ".media-strategy"
+        return self._default_data_dir()
+
+    def _storage_dirs(self) -> dict[str, Path]:
+        base = self._data_dir or self._resolve_data_dir()
+        return {
+            "data_dir": base,
+            "outputs": base / "outputs",
+            "database": base,
+        }
+
+    def _enriched_settings(self, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+        cfg = self._load_settings()
+        requested = str(cfg.get("custom_data_dir") or "").strip()
+        active = self._data_dir or self._resolve_data_dir()
+        cfg["data_dir_active"] = str(active)
+        cfg["data_dir_default"] = str(self._default_data_dir())
+        cfg["data_dir_status"] = ""
+        cfg["data_dir_pending_reload"] = False
+        if requested:
+            resolved, err = self._validate_custom_data_dir(requested)
+            if resolved is None:
+                cfg["data_dir_status"] = err
+            else:
+                cfg["custom_data_dir"] = str(resolved)
+                cfg["data_dir_pending_reload"] = str(resolved) != str(active)
+        else:
+            cfg["data_dir_pending_reload"] = str(self._default_data_dir()) != str(active)
+        return {
+            "settings": settings or {},
+            "host_config": cfg,
+            "config": {**(settings or {}), **cfg},
+        }
 
     def _build_router(self) -> APIRouter:
         router = APIRouter()
@@ -189,7 +263,8 @@ class Plugin(PluginBase):
         async def get_settings() -> dict[str, Any]:
             await self._ensure_ready()
             assert self._tm is not None
-            return {"settings": await self._tm.get_settings(), "host_config": self._load_settings()}
+            settings = await self._tm.get_settings()
+            return self._enriched_settings(settings)
 
         @router.put("/settings")
         async def put_settings(body: SettingsBody) -> dict[str, Any]:
@@ -202,7 +277,158 @@ class Plugin(PluginBase):
                     raise HTTPException(status_code=422, detail=err)
                 self._save_settings({"custom_data_dir": str(path) if path else ""})
             settings = await self._tm.set_settings(updates)
-            return {"ok": True, "settings": settings, "reload_required": "custom_data_dir" in updates}
+            enriched = self._enriched_settings(settings)
+            return {
+                "ok": True,
+                **enriched,
+                "reload_required": bool(enriched["host_config"].get("data_dir_pending_reload")),
+            }
+
+        @router.get("/storage/stats")
+        async def storage_stats() -> dict[str, Any]:
+            await self._ensure_ready()
+            stats: dict[str, dict[str, Any]] = {}
+            truncated_any = False
+            max_files = 50000
+            for key, folder in self._storage_dirs().items():
+                total_bytes = 0
+                file_count = 0
+                truncated = False
+                if folder.is_dir():
+                    try:
+                        for path in folder.rglob("*"):
+                            try:
+                                if path.is_file():
+                                    total_bytes += path.stat().st_size
+                                    file_count += 1
+                                    if file_count >= max_files:
+                                        truncated = True
+                                        break
+                            except OSError:
+                                continue
+                    except OSError:
+                        pass
+                truncated_any = truncated_any or truncated
+                stats[key] = {
+                    "path": str(folder),
+                    "size_bytes": total_bytes,
+                    "size_mb": round(total_bytes / 1048576, 1),
+                    "file_count": file_count,
+                    "truncated": truncated,
+                }
+            return {"ok": True, "stats": stats, "truncated": truncated_any}
+
+        @router.post("/storage/open-folder")
+        async def open_folder(body: dict[str, Any]) -> dict[str, Any]:
+            raw_path = str(body.get("path") or "").strip()
+            key = str(body.get("key") or "").strip()
+            if raw_path:
+                target = Path(raw_path).expanduser()
+            else:
+                dirs = self._storage_dirs()
+                if key not in dirs:
+                    raise HTTPException(status_code=400, detail=f"Unknown key: {key}")
+                target = dirs[key]
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"Cannot create folder: {exc}") from exc
+            import subprocess
+
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", str(target)])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(target)])
+                else:
+                    subprocess.Popen(["xdg-open", str(target)])
+            except (OSError, FileNotFoundError) as exc:
+                raise HTTPException(status_code=500, detail=f"Cannot open folder: {exc}") from exc
+            return {"ok": True, "path": str(target)}
+
+        @router.get("/storage/list-dir")
+        async def list_dir(path: str = "") -> dict[str, Any]:
+            raw = (path or "").strip()
+            if not raw:
+                anchors: list[dict[str, Any]] = []
+                home = Path.home()
+                anchors.append({"name": "Home", "path": str(home), "is_dir": True, "kind": "home"})
+                for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Movies"):
+                    p = home / sub
+                    if p.is_dir():
+                        anchors.append({"name": sub, "path": str(p), "is_dir": True, "kind": "shortcut"})
+                if sys.platform == "win32":
+                    import string
+
+                    for letter in string.ascii_uppercase:
+                        drive = Path(f"{letter}:/")
+                        try:
+                            if drive.exists():
+                                anchors.append({
+                                    "name": f"{letter}:",
+                                    "path": str(drive),
+                                    "is_dir": True,
+                                    "kind": "drive",
+                                })
+                        except OSError:
+                            continue
+                else:
+                    anchors.append({"name": "/", "path": "/", "is_dir": True, "kind": "drive"})
+                return {"ok": True, "path": "", "parent": None, "items": anchors, "is_anchor": True}
+
+            try:
+                target = Path(raw).expanduser().resolve(strict=False)
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if not target.is_dir():
+                raise HTTPException(status_code=400, detail="Not a directory")
+
+            items: list[dict[str, Any]] = []
+            try:
+                for entry in target.iterdir():
+                    if entry.name.startswith("."):
+                        continue
+                    try:
+                        if entry.is_dir():
+                            items.append({"name": entry.name, "path": str(entry), "is_dir": True})
+                    except (PermissionError, OSError):
+                        continue
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            items.sort(key=lambda item: str(item["name"]).lower())
+            parent_path = str(target.parent) if target.parent != target else None
+            return {
+                "ok": True,
+                "path": str(target),
+                "parent": parent_path,
+                "items": items,
+                "is_anchor": False,
+            }
+
+        @router.post("/storage/mkdir")
+        async def make_dir(body: dict[str, Any]) -> dict[str, Any]:
+            parent = str(body.get("parent") or "").strip()
+            name = str(body.get("name") or "").strip()
+            if not parent or not name:
+                raise HTTPException(status_code=400, detail="Missing parent or name")
+            if "/" in name or "\\" in name or name in (".", ".."):
+                raise HTTPException(status_code=400, detail="Invalid folder name")
+            try:
+                parent_path = Path(parent).expanduser().resolve(strict=False)
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if not parent_path.is_dir():
+                raise HTTPException(status_code=400, detail="Parent is not a directory")
+            new_path = parent_path / name
+            try:
+                new_path.mkdir(parents=False, exist_ok=False)
+            except FileExistsError as exc:
+                raise HTTPException(status_code=409, detail="Folder already exists") from exc
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            return {"ok": True, "path": str(new_path)}
 
         @router.get("/packages")
         async def packages() -> dict[str, Any]:
@@ -219,6 +445,67 @@ class Plugin(PluginBase):
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=f"unknown package: {body.package_id}") from exc
             return {"ok": True, "packages": packages}
+
+        @router.post("/packages")
+        async def create_package(body: CreatePackageBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            label = body.label_zh.strip()
+            if not label:
+                raise HTTPException(status_code=422, detail="label_zh is required")
+            try:
+                if body.clone_from:
+                    package = await self._tm.clone_builtin_package(
+                        body.clone_from, label_zh=label, prefer_id=body.prefer_id
+                    )
+                else:
+                    package = await self._tm.add_custom_package(
+                        label_zh=label,
+                        label_en=body.label_en,
+                        description=body.description,
+                        keywords=body.keywords,
+                        enabled=body.enabled,
+                        prefer_id=body.prefer_id,
+                    )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"unknown source package: {body.clone_from}") from exc
+            return {"ok": True, "package": package, "packages": await self._tm.list_packages()}
+
+        @router.patch("/packages/{package_id}")
+        async def update_package(package_id: str, body: UpdatePackageBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            try:
+                package = await self._tm.update_package(
+                    package_id,
+                    label_zh=body.label_zh,
+                    label_en=body.label_en,
+                    description=body.description,
+                    keywords=body.keywords,
+                    enabled=body.enabled,
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"unknown package: {package_id}") from exc
+            return {"ok": True, "package": package, "packages": await self._tm.list_packages()}
+
+        @router.delete("/packages/{package_id}")
+        async def delete_package(package_id: str) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            try:
+                await self._tm.delete_custom_package(package_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"unknown package: {package_id}") from exc
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            return {"ok": True, "packages": await self._tm.list_packages()}
+
+        @router.post("/packages/{package_id}/bulk-toggle-sources")
+        async def bulk_toggle_sources(package_id: str, body: BulkPackageSourcesBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            stats = await self._tm.bulk_set_sources_enabled_for_package(package_id, body.enabled)
+            return {"ok": True, "stats": stats, "sources": await self._tm.list_sources()}
 
         @router.get("/sources")
         async def sources() -> dict[str, Any]:
@@ -243,6 +530,42 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=404, detail=f"unknown source: {source_id}") from exc
             return {"ok": True, "source": source}
 
+        @router.patch("/sources/{source_id}")
+        async def update_source(source_id: str, body: UpdateSourceBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            normalized_url: str | None = None
+            if body.url is not None:
+                try:
+                    normalized_url = validate_feed_url(body.url)
+                except Exception as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+            try:
+                source = await self._tm.update_source(
+                    source_id,
+                    label_zh=body.label_zh,
+                    label_en=body.label_en,
+                    url=normalized_url,
+                    package_ids=body.package_ids,
+                    authority=body.authority,
+                    enabled=body.enabled,
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"unknown source: {source_id}") from exc
+            return {"ok": True, "source": source}
+
+        @router.delete("/sources/{source_id}")
+        async def delete_source(source_id: str) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            try:
+                await self._tm.delete_custom_source(source_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"unknown source: {source_id}") from exc
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            return {"ok": True, "sources": await self._tm.list_sources()}
+
         @router.post("/feeds")
         async def add_feed(body: AddFeedBody) -> dict[str, Any]:
             await self._ensure_ready()
@@ -257,6 +580,10 @@ class Plugin(PluginBase):
                 package_ids=body.package_ids,
                 enabled=body.enabled,
             )
+            if body.authority is not None:
+                source = await self._tm.update_source(
+                    source["id"], authority=body.authority
+                )
             return {"ok": True, "source": source}
 
         @router.post("/tasks")

@@ -16,6 +16,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ..memory.json_utils import coerce_text
 from .task import ScheduledTask
 
 logger = logging.getLogger(__name__)
@@ -922,7 +923,7 @@ class TaskExecutor:
                 return True, "No recent conversation turns to review"
 
             conversation_text = "\n".join(
-                f"[{t.get('role', 'unknown')}]: {t.get('content', '')[:500]}"
+                f"[{t.get('role', 'unknown')}]: {coerce_text(t.get('content'))[:500]}"
                 for t in recent_turns
                 if t.get("content")
             )

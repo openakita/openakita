@@ -1301,7 +1301,7 @@ export function ChatView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBaseUrl, getClientId]);
 
-  // ── 死亡开关状态初始化 + WS 监听 ──
+  // ── Read-only protection state initialization + WS listener ──
   useEffect(() => {
     safeFetch(`${apiBaseUrl}/api/config/security/self-protection`)
       .then(r => r.json())
@@ -1701,11 +1701,11 @@ export function ChatView({
         setMessages(prev => [...prev, { id: genId(), role: "system", content: t("chat.skillsLoadFail", "无法加载技能列表。"), timestamp: Date.now() }]);
       });
     }},
-    { id: "unlock", label: "解除只读", description: "重置死亡开关，解除 Agent 只读模式", action: () => {
+    { id: "unlock", label: "解除只读", description: "解除只读保护，恢复 Agent 写入能力", action: () => {
       safeFetch(`${apiBase}/api/config/security/death-switch/reset`, { method: "POST" })
         .then(() => {
           setDeathSwitchActive(false);
-          setMessages((prev) => [...prev, { id: genId(), role: "system", content: "死亡开关已重置，Agent 已退出只读模式。", timestamp: Date.now() }]);
+          setMessages((prev) => [...prev, { id: genId(), role: "system", content: "只读保护已解除，Agent 可以继续执行写入操作。", timestamp: Date.now() }]);
         })
         .catch(() => {
           setMessages((prev) => [...prev, { id: genId(), role: "system", content: "重置失败，请检查后端服务状态。", timestamp: Date.now() }]);
@@ -3124,11 +3124,10 @@ export function ChatView({
                 if (renewed) {
                   noticeText =
                     `${dimLabel}已超出预算（${pct}%），但任务仍在持续产出工具调用 / token，` +
-                    `已自动续期。如需停止任务，可点击下方"停止"按钮。` +
-                    `（如想取消时长限制：配置 → 高级配置 → 长任务与上下文保护 → 任务预算 → 把 TASK_BUDGET_DURATION 设为 0 并保存）`;
+                    `系统已允许它继续推进。如需停止任务，可点击下方"停止"按钮。`;
                 } else if (level === "downgrade") {
                   noticeText =
-                    `${dimLabel}已用至 ${pct}%，接近上限。任务仍在继续，但可能即将触达 PAUSE。` +
+                    `${dimLabel}已用至 ${pct}%，接近你设置的上限。任务仍在继续，之后可能会暂停等待你确认。` +
                     `如需让任务自然结束，可主动让我"基于已有进展给出阶段性结论"。`;
                 } else {
                   noticeText =
@@ -4521,19 +4520,19 @@ export function ChatView({
           return activePlan ? <FloatingPlanBar plan={activePlan} /> : null;
         })()}
 
-        {/* 死亡开关只读模式 Banner */}
+        {/* Read-only protection banner */}
         {deathSwitchActive && (
           <div className="flex items-center gap-3 border-t border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm">
             <span style={{ fontSize: 16 }}>&#x1F6D1;</span>
             <span style={{ flex: 1, color: "var(--destructive, #ef4444)" }}>
-              Agent 处于只读模式 — 死亡开关已触发，所有写入操作被阻止
+              Agent 当前处于只读保护状态，写入操作已暂时暂停
             </span>
             <button
               onClick={() => {
                 safeFetch(`${apiBase}/api/config/security/death-switch/reset`, { method: "POST" })
                   .then(() => {
                     setDeathSwitchActive(false);
-                    setMessages((prev) => [...prev, { id: genId(), role: "system", content: "死亡开关已重置，Agent 已退出只读模式。", timestamp: Date.now() }]);
+                    setMessages((prev) => [...prev, { id: genId(), role: "system", content: "只读保护已解除，Agent 可以继续执行写入操作。", timestamp: Date.now() }]);
                   })
                   .catch(() => {});
               }}

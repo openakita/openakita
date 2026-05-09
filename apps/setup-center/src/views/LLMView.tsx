@@ -1240,9 +1240,9 @@ export function LLMView(props: LLMViewProps) {
     <>
       {/* ── Main endpoint list ── */}
       <div className="card">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="mb-2 flex items-start justify-between gap-3">
           <div>
-            <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.title")}</div>
+            <div className="cardTitle">{t("llm.title")}</div>
             <div className="cardHint">{t("llm.subtitle")}</div>
           </div>
           <Button size="sm" onClick={openAddEpDialog} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>
@@ -1258,8 +1258,8 @@ export function LLMView(props: LLMViewProps) {
         )}
 
         {savedEndpoints.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-            <Inbox size={32} strokeWidth={1.5} className="mb-2 opacity-40" />
+          <div className="flex flex-col items-center justify-center py-7 text-muted-foreground">
+            <Inbox size={28} strokeWidth={1.5} className="mb-2 opacity-35" />
             <p className="text-sm">{t("llm.noEndpoints")}</p>
           </div>
         ) : (
@@ -1309,10 +1309,10 @@ export function LLMView(props: LLMViewProps) {
       </div>
 
       {/* ── Compiler endpoints ── */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div className="card" style={{ marginTop: 10 }}>
+        <div className="mb-2 flex items-start justify-between gap-3">
           <div>
-            <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.compiler")}</div>
+            <div className="cardTitle">{t("llm.compiler")}</div>
             <div className="cardHint">{t("llm.compilerHint")}</div>
           </div>
           <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setCompilerProviderSlug(""); setCompilerApiType("openai"); setCompilerBaseUrl(""); setCompilerApiKeyValue(""); setCompilerModel(""); setCompilerEndpointName(""); setCompilerCodingPlan(false); setCompilerModels([]); setAddCompDialogOpen(true); }} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>
@@ -1320,8 +1320,8 @@ export function LLMView(props: LLMViewProps) {
           </Button>
         </div>
         {savedCompilerEndpoints.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-            <Inbox size={32} strokeWidth={1.5} className="mb-2 opacity-40" />
+          <div className="flex flex-col items-center justify-center py-7 text-muted-foreground">
+            <Inbox size={28} strokeWidth={1.5} className="mb-2 opacity-35" />
             <p className="text-sm">{t("llm.noEndpoints")}</p>
           </div>
         ) : (
@@ -1357,10 +1357,10 @@ export function LLMView(props: LLMViewProps) {
       </div>
 
       {/* ── STT endpoints ── */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div className="card" style={{ marginTop: 10 }}>
+        <div className="mb-2 flex items-start justify-between gap-3">
           <div>
-            <div className="cardTitle" style={{ marginBottom: 2 }}>{t("llm.stt")}</div>
+            <div className="cardTitle">{t("llm.stt")}</div>
             <div className="cardHint">{t("llm.sttHint")}</div>
           </div>
           <Button variant="outline" size="sm" className="bg-primary/5 border-primary/30 text-primary hover:bg-primary/10 hover:text-primary" onClick={() => { if (providers.length === 0) doLoadProviders(); setSttProviderSlug(""); setSttApiType("openai"); setSttBaseUrl(""); setSttApiKeyValue(""); setSttModel(""); setSttEndpointName(""); setSttModels([]); setAddSttDialogOpen(true); }} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : undefined}>
@@ -1368,8 +1368,8 @@ export function LLMView(props: LLMViewProps) {
           </Button>
         </div>
         {savedSttEndpoints.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-            <Inbox size={32} strokeWidth={1.5} className="mb-2 opacity-40" />
+          <div className="flex flex-col items-center justify-center py-7 text-muted-foreground">
+            <Inbox size={28} strokeWidth={1.5} className="mb-2 opacity-35" />
             <p className="text-sm">{t("llm.noEndpoints")}</p>
           </div>
         ) : (

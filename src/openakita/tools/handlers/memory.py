@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ...memory.json_utils import coerce_tool_names
+from ...memory.json_utils import coerce_text, coerce_tool_names
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -661,7 +661,7 @@ class MemoryHandler:
                             "episode_id": row.get("episode_id", ""),
                             "timestamp": row.get("timestamp", ""),
                             "role": row.get("role", ""),
-                            "content": str(row.get("content", ""))[:500],
+                            "content": coerce_text(row.get("content"))[:500],
                             "tool_calls": row.get("tool_calls") or [],
                             "tool_results": row.get("tool_results") or [],
                         }
@@ -772,7 +772,7 @@ class MemoryHandler:
             lines.append(f"\n## 相关对话（共 {len(turns)} 轮，显示前 6 轮）\n")
             for t in turns[:6]:
                 role = t.get("role", "?")
-                content = str(t.get("content", ""))[:200]
+                content = coerce_text(t.get("content"))[:200]
                 lines.append(f"[{role}] {content}")
                 if t.get("tool_calls"):
                     tc = t["tool_calls"]
@@ -820,7 +820,7 @@ class MemoryHandler:
             lines.append(f"\n## 对话原文（共 {len(turns)} 轮，显示前 8 轮）\n")
             for t in turns[:8]:
                 role = t.get("role", "?")
-                content = str(t.get("content", ""))[:300]
+                content = coerce_text(t.get("content"))[:300]
                 lines.append(f"[{role}] {content}")
                 if t.get("tool_calls"):
                     tc = t["tool_calls"]
@@ -928,7 +928,7 @@ class MemoryHandler:
                             "file": jsonl_file.name,
                             "timestamp": ts,
                             "role": turn.get("role", ""),
-                            "content": str(turn.get("content", ""))[:500],
+                            "content": coerce_text(turn.get("content"))[:500],
                             "tool_calls": turn.get("tool_calls", []),
                             "tool_results": turn.get("tool_results", []),
                         }

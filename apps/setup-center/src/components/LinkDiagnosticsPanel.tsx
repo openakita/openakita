@@ -33,8 +33,9 @@ export function LinkDiagnosticsPanel({ httpApiBase }: LinkDiagnosticsPanelProps)
   const [diag, setDiag] = useState<LinkDiagnostic | null>(null);
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [statusText, setStatusText] = useState("");
 
-  const refresh = async () => {
+  const refresh = async (showResult = true) => {
     setLoading(true);
     try {
       const resp = await safeFetch(`${httpApiBase()}/api/diagnostics/last-link`);
@@ -42,19 +43,32 @@ export function LinkDiagnosticsPanel({ httpApiBase }: LinkDiagnosticsPanelProps)
         const body = (await resp.json()) as LinkDiagnostic | Record<string, never>;
         if (body && Object.keys(body).length > 0) {
           setDiag(body as LinkDiagnostic);
+          if (showResult) {
+            setStatusText(t("status.linkDiag.refreshed", { defaultValue: "已刷新，已读取到最近一次链接记录。" }));
+          }
         } else {
           setDiag(null);
+          if (showResult) {
+            setStatusText(t("status.linkDiag.refreshedEmpty", { defaultValue: "已刷新，本次会话还没有链接读取记录。" }));
+          }
         }
+      } else if (showResult) {
+        setStatusText(t("status.linkDiag.refreshFailed", { defaultValue: "刷新失败，请稍后再试。" }));
       }
-    } catch {
-      // best-effort: stay silent on the panel
+    } catch (e) {
+      if (showResult) {
+        setStatusText(t("status.linkDiag.refreshFailedDetail", {
+          defaultValue: "刷新失败：{{error}}",
+          error: String(e),
+        }));
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    refresh();
+    refresh(false);
   }, []);
 
   const onClear = async () => {
@@ -76,11 +90,19 @@ export function LinkDiagnosticsPanel({ httpApiBase }: LinkDiagnosticsPanelProps)
           }),
         );
         setDiag(null);
+        setStatusText(t("status.linkDiag.clearedHint", {
+          defaultValue: "已清理本会话缓存。不会删除聊天记录，只会让下次读取重新获取。",
+        }));
       } else {
         notifyError(`HTTP ${resp.status}`);
+        setStatusText(t("status.linkDiag.clearFailed", { defaultValue: "清理失败，请稍后再试。" }));
       }
     } catch (e) {
       notifyError(String(e));
+      setStatusText(t("status.linkDiag.clearFailedDetail", {
+        defaultValue: "清理失败：{{error}}",
+        error: String(e),
+      }));
     } finally {
       setClearing(false);
     }
@@ -159,6 +181,11 @@ export function LinkDiagnosticsPanel({ httpApiBase }: LinkDiagnosticsPanelProps)
               })}
             </span>
           )}
+          {statusText && (
+            <div style={{ marginTop: 4, fontSize: 12, opacity: 0.75 }}>
+              {statusText}
+            </div>
+          )}
         </div>
       </div>
       <div className="statusPanelActions" style={{ display: "flex", gap: 6 }}>
@@ -166,19 +193,19 @@ export function LinkDiagnosticsPanel({ httpApiBase }: LinkDiagnosticsPanelProps)
           size="sm"
           variant="outline"
           className="h-7 text-xs px-2.5"
-          onClick={refresh}
-          disabled={loading}
+          onClick={() => refresh(true)}
+          disabled={loading || clearing}
           title={t("status.linkDiag.refresh", { defaultValue: "刷新" }) as string}
         >
-          <RefreshCw size={12} />
-          {t("status.linkDiag.refresh", { defaultValue: "刷新" })}
+          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+          {loading ? t("status.checking", { defaultValue: "刷新中" }) : t("status.linkDiag.refresh", { defaultValue: "刷新" })}
         </Button>
         <Button
           size="sm"
           variant="outline"
           className="h-7 text-xs px-2.5"
           onClick={onClear}
-          disabled={clearing}
+          disabled={clearing || loading}
           title={
             t("status.linkDiag.clearHint", {
               defaultValue:
@@ -186,8 +213,8 @@ export function LinkDiagnosticsPanel({ httpApiBase }: LinkDiagnosticsPanelProps)
             }) as string
           }
         >
-          <Eraser size={12} />
-          {t("status.linkDiag.clear", { defaultValue: "清理本会话缓存" })}
+          {clearing ? <RefreshCw size={12} className="animate-spin" /> : <Eraser size={12} />}
+          {clearing ? t("status.linkDiag.clearing", { defaultValue: "清理中" }) : t("status.linkDiag.clear", { defaultValue: "清理本会话缓存" })}
         </Button>
       </div>
     </div>

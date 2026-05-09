@@ -42,10 +42,32 @@ class ToolSkipped(Exception):
 
 
 # ========== 通用截断守卫常量 ==========
-MAX_TOOL_RESULT_CHARS = 16000  # 通用截断阈值 (~8000 tokens)
+DEFAULT_TOOL_RESULT_MAX_CHARS = 32000
+MAX_TOOL_RESULT_CHARS = DEFAULT_TOOL_RESULT_MAX_CHARS  # backward-compatible export
 OVERFLOW_MARKER = "[OUTPUT_TRUNCATED]"  # 截断标记，已含此标记的不二次截断
 _OVERFLOW_DIR = Path("data/tool_overflow")
-_OVERFLOW_MAX_FILES = 50  # 溢出目录保留的最大文件数
+_OVERFLOW_MAX_FILES = 200  # fallback; runtime value comes from settings
+
+
+def _get_tool_result_max_chars() -> int:
+    try:
+        return max(1000, int(getattr(settings, "tool_result_max_chars", DEFAULT_TOOL_RESULT_MAX_CHARS)))
+    except (TypeError, ValueError):
+        return DEFAULT_TOOL_RESULT_MAX_CHARS
+
+
+def _get_tool_overflow_max_files() -> int:
+    try:
+        return max(10, int(getattr(settings, "tool_overflow_max_files", _OVERFLOW_MAX_FILES)))
+    except (TypeError, ValueError):
+        return _OVERFLOW_MAX_FILES
+
+
+def _get_read_file_default_limit() -> int:
+    try:
+        return max(1, int(getattr(settings, "read_file_default_limit", 2000)))
+    except (TypeError, ValueError):
+        return 2000
 
 
 def save_overflow(tool_name: str, content: str) -> str:
@@ -59,7 +81,8 @@ def save_overflow(tool_name: str, content: str) -> str:
         filename = f"{tool_name}_{ts}.txt"
         filepath = _OVERFLOW_DIR / filename
         filepath.write_text(content, encoding="utf-8")
-        _cleanup_overflow_files(_OVERFLOW_DIR, _OVERFLOW_MAX_FILES)
+        max_files = _get_tool_overflow_max_files()
+        _cleanup_overflow_files(_OVERFLOW_DIR, max_files)
         logger.info(f"[Overflow] Saved {len(content)} chars to {filepath}")
         return str(filepath)
     except Exception as exc:
@@ -204,6 +227,7 @@ class ToolExecutor:
             "browser_navigate",
             "browser_use",
             "run_shell",
+            "run_powershell",
         }
     )
 
@@ -692,7 +716,7 @@ class ToolExecutor:
                 sandbox_output += f"stdout:\n{sb_result.stdout}\n"
             if sb_result.stderr:
                 sandbox_output += f"stderr:\n{sb_result.stderr}\n"
-            return sandbox_output
+            return self._guard_truncate(tool_name, sandbox_output)
 
         return await self._execute_tool_impl(tool_name, tool_input)
 
@@ -1072,22 +1096,24 @@ class ToolExecutor:
         - 已含 OVERFLOW_MARKER 的跳过（工具自行处理过了）
         - 超限时保存完整输出到溢出文件，截断并附加分页提示
         """
-        if not result or len(result) <= MAX_TOOL_RESULT_CHARS:
+        max_chars = _get_tool_result_max_chars()
+        if not result or len(result) <= max_chars:
             return result
         if OVERFLOW_MARKER in result:
             return result  # 工具自己已处理
 
         overflow_path = save_overflow(tool_name, result)
         total_chars = len(result)
-        truncated = result[:MAX_TOOL_RESULT_CHARS]
+        truncated = result[:max_chars]
+        read_limit = _get_read_file_default_limit()
         hint = (
             f"\n\n{OVERFLOW_MARKER} 工具 '{tool_name}' 输出共 {total_chars} 字符，"
-            f"已截断到前 {MAX_TOOL_RESULT_CHARS} 字符。\n"
+            f"已截断到前 {max_chars} 字符。\n"
             f"完整输出已保存到: {overflow_path}\n"
-            f'使用 read_file(path="{overflow_path}", offset=1, limit=300) 查看完整内容。'
+            f'使用 read_file(path="{overflow_path}", offset=1, limit={read_limit}) 查看完整内容。'
         )
         logger.info(
-            f"[Guard] Truncated {tool_name} output: {total_chars} → {MAX_TOOL_RESULT_CHARS} chars, "
+            f"[Guard] Truncated {tool_name} output: {total_chars} → {max_chars} chars, "
             f"overflow saved to {overflow_path}"
         )
         return truncated + hint

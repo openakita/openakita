@@ -436,7 +436,7 @@ class MCPClient:
         return (py, ["-m", config.args[1], *config.args[2:]])
 
     _CONNECT_TIMEOUT: int = 30
-    _CALL_TIMEOUT: int = 60
+    _CALL_TIMEOUT: int = 0
 
     def _load_timeouts(self) -> None:
         """从配置加载超时参数（settings → 环境变量 → 默认值）"""
@@ -447,6 +447,18 @@ class MCPClient:
             self._CALL_TIMEOUT = settings.mcp_timeout
         except Exception:
             pass
+
+    async def _await_operation(self, awaitable: Any) -> Any:
+        """Await an MCP operation with the configured call timeout.
+
+        ``mcp_timeout=0`` means no call-level timeout. Connection setup still
+        uses ``mcp_connect_timeout`` so dead servers fail fast, while long MCP
+        tools can finish naturally.
+        """
+        timeout = max(0, int(self._CALL_TIMEOUT or 0))
+        if timeout <= 0:
+            return await awaitable
+        return await asyncio.wait_for(awaitable, timeout=timeout)
 
     async def _connect_stdio(self, server_name: str, config: MCPServerConfig) -> MCPConnectResult:
         """通过 stdio 连接到 MCP 服务器"""
@@ -530,7 +542,7 @@ class MCPClient:
             tool_count = len(self.list_tools(server_name))
             logger.info(f"Connected to MCP server via stdio: {server_name} ({tool_count} tools)")
             return MCPConnectResult(success=True, tool_count=tool_count)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             stderr_hint = self._try_capture_stdio_stderr(stdio_cm)
             msg = (
                 f"连接超时（{self._CONNECT_TIMEOUT}s）。"
@@ -610,7 +622,7 @@ class MCPClient:
                 f"Connected to MCP server via streamable HTTP: {server_name} ({config.url}, {tool_count} tools)"
             )
             return MCPConnectResult(success=True, tool_count=tool_count)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             msg = f"HTTP 连接超时（{self._CONNECT_TIMEOUT}s）。URL: {config.url}"
             logger.error(f"Timeout connecting to {server_name} via streamable HTTP")
             await self._cleanup_cms(client_cm, http_cm)
@@ -671,7 +683,7 @@ class MCPClient:
                 f"Connected to MCP server via SSE: {server_name} ({config.url}, {tool_count} tools)"
             )
             return MCPConnectResult(success=True, tool_count=tool_count)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             msg = f"SSE 连接超时（{self._CONNECT_TIMEOUT}s）。URL: {config.url}"
             logger.error(f"Timeout connecting to {server_name} via SSE")
             await self._cleanup_cms(client_cm, sse_cm)
@@ -1006,10 +1018,7 @@ class MCPClient:
                         error=f"Invalid connection for server: {server_name}",
                     )
 
-                result = await asyncio.wait_for(
-                    client.call_tool(tool_name, arguments),
-                    timeout=self._CALL_TIMEOUT,
-                )
+                result = await self._await_operation(client.call_tool(tool_name, arguments))
 
                 content = self._extract_content(result.content)
 
@@ -1090,10 +1099,7 @@ class MCPClient:
                         success=False,
                         error=f"Invalid connection for server: {server_name}",
                     )
-                result = await asyncio.wait_for(
-                    client.read_resource(uri),
-                    timeout=self._CALL_TIMEOUT,
-                )
+                result = await self._await_operation(client.read_resource(uri))
 
                 content = []
                 for item in result.contents:
@@ -1164,10 +1170,7 @@ class MCPClient:
                         success=False,
                         error=f"Invalid connection for server: {server_name}",
                     )
-                result = await asyncio.wait_for(
-                    client.get_prompt(prompt_name, arguments or {}),
-                    timeout=self._CALL_TIMEOUT,
-                )
+                result = await self._await_operation(client.get_prompt(prompt_name, arguments or {}))
 
                 messages = []
                 for msg in result.messages:

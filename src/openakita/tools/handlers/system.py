@@ -81,14 +81,22 @@ class SystemHandler:
         count = params.get("count", 20)
         # level 参数改为 level_filter（修复参数名不匹配问题）
         level_filter = params.get("level_filter") or params.get("level")
+        include_debug = bool(params.get("include_debug", False))
 
         log_buffer = get_session_log_buffer()
         logs = log_buffer.get_logs(count=count, level_filter=level_filter)
+        if not include_debug:
+            logs = [
+                log
+                for log in logs
+                if log.get("level") != "DEBUG"
+                and "[LLM DEBUG]" not in str(log.get("message", ""))
+            ]
 
         if not logs:
             return "没有会话日志"
 
-        output = f"最近 {len(logs)} 条日志:\n\n"
+        output = f"最近 {len(logs)} 条会话日志（不包含完整 LLM 调试 trace）:\n\n"
         for log in logs:
             output += f"[{log['level']}] {log['module']}: {log['message']}\n"
 

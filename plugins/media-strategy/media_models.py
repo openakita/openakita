@@ -156,7 +156,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "http://www.cctv.com/program/rss/02/04/index.xml",
         "packages": ["economy", "policy"],
         "authority": 0.76,
-        "default_enabled": False,
+        "default_enabled": True,
     },
     "cctv-hk-tw": {
         "label_zh": "央视港澳台新闻",
@@ -172,7 +172,143 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "http://www.cctv.com/program/rss/02/09/index.xml",
         "packages": ["policy", "world"],
         "authority": 0.8,
-        "default_enabled": False,
+        "default_enabled": True,
+    },
+    "people-politics": {
+        "label_zh": "人民网 时政",
+        "label_en": "People.cn Politics",
+        "url": "http://www.people.com.cn/rss/politics.xml",
+        "packages": ["policy"],
+        "authority": 0.78,
+        "default_enabled": True,
+    },
+    "people-world": {
+        "label_zh": "人民网 国际",
+        "label_en": "People.cn World",
+        "url": "http://www.people.com.cn/rss/world.xml",
+        "packages": ["world", "policy"],
+        "authority": 0.74,
+        "default_enabled": True,
+    },
+    "xinhua-politics": {
+        "label_zh": "新华网 时政",
+        "label_en": "Xinhua Politics",
+        "url": "http://www.xinhuanet.com/politics/news_politics.xml",
+        "packages": ["policy"],
+        "authority": 0.78,
+        "default_enabled": True,
+    },
+    "xinhua-world": {
+        "label_zh": "新华网 国际",
+        "label_en": "Xinhua World",
+        "url": "http://www.xinhuanet.com/world/news_world.xml",
+        "packages": ["world", "policy"],
+        "authority": 0.74,
+        "default_enabled": True,
+    },
+    "thepaper-featured": {
+        "label_zh": "澎湃新闻 推荐",
+        "label_en": "The Paper Featured",
+        "url": "https://rsshub.app/thepaper/featured",
+        "packages": ["policy", "world", "economy"],
+        "authority": 0.7,
+        "default_enabled": True,
+    },
+    "yicai-news": {
+        "label_zh": "第一财经",
+        "label_en": "Yicai",
+        "url": "https://www.yicai.com/api/ajax/getrss/list/0",
+        "packages": ["economy"],
+        "authority": 0.72,
+        "default_enabled": True,
+    },
+    "caixin-latest": {
+        "label_zh": "财新网 最新",
+        "label_en": "Caixin Latest",
+        "url": "http://www.caixin.com/rss/latest.xml",
+        "packages": ["economy", "policy"],
+        "authority": 0.76,
+        "default_enabled": True,
+    },
+    "wallstreetcn-global": {
+        "label_zh": "华尔街见闻 全球",
+        "label_en": "WallStreetCN Global",
+        "url": "https://rsshub.app/wallstreetcn/news/global",
+        "packages": ["economy", "world"],
+        "authority": 0.7,
+        "default_enabled": True,
+    },
+    "kr36": {
+        "label_zh": "36 氪",
+        "label_en": "36Kr",
+        "url": "https://36kr.com/feed",
+        "packages": ["tech", "economy"],
+        "authority": 0.66,
+        "default_enabled": True,
+    },
+    "huxiu": {
+        "label_zh": "虎嗅",
+        "label_en": "Huxiu",
+        "url": "https://www.huxiu.com/rss/0.xml",
+        "packages": ["tech", "platform"],
+        "authority": 0.62,
+        "default_enabled": True,
+    },
+    "ithome": {
+        "label_zh": "IT 之家",
+        "label_en": "IT Home",
+        "url": "https://www.ithome.com/rss/",
+        "packages": ["tech"],
+        "authority": 0.6,
+        "default_enabled": True,
+    },
+    "jiqizhixin": {
+        "label_zh": "机器之心",
+        "label_en": "Synced",
+        "url": "https://www.jiqizhixin.com/rss",
+        "packages": ["tech"],
+        "authority": 0.7,
+        "default_enabled": True,
+    },
+    "qbitai": {
+        "label_zh": "量子位",
+        "label_en": "QbitAI",
+        "url": "https://www.qbitai.com/feed",
+        "packages": ["tech"],
+        "authority": 0.66,
+        "default_enabled": True,
+    },
+    "guancha": {
+        "label_zh": "观察者网",
+        "label_en": "Guancha",
+        "url": "https://rsshub.app/guancha/headline",
+        "packages": ["policy", "world"],
+        "authority": 0.6,
+        "default_enabled": True,
+    },
+    "huanqiu-opinion": {
+        "label_zh": "环球时报 评论",
+        "label_en": "Huanqiu Opinion",
+        "url": "https://opinion.huanqiu.com/feed/all",
+        "packages": ["policy", "world"],
+        "authority": 0.62,
+        "default_enabled": True,
+    },
+    "rsshub-douyin-hot": {
+        "label_zh": "抖音热门 RSSHub",
+        "label_en": "RSSHub Douyin Hot",
+        "url": "https://rsshub.app/douyin/hot",
+        "packages": ["platform"],
+        "authority": 0.42,
+        "default_enabled": True,
+    },
+    "rsshub-bilibili-weekly": {
+        "label_zh": "B 站每周必看 RSSHub",
+        "label_en": "RSSHub Bilibili Weekly",
+        "url": "https://rsshub.app/bilibili/popular/weekly",
+        "packages": ["platform", "tech"],
+        "authority": 0.46,
+        "default_enabled": True,
     },
     "bbc-zh": {
         "label_zh": "BBC 中文",
@@ -180,7 +316,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml",
         "packages": ["world", "taiwan", "policy"],
         "authority": 0.78,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "bbc-world": {
         "label_zh": "BBC World",
@@ -196,7 +332,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rss.dw.com/rdf/rss-chi-all",
         "packages": ["world", "taiwan", "policy"],
         "authority": 0.72,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "rfi-cn": {
         "label_zh": "法广中文",
@@ -204,7 +340,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://www.rfi.fr/cn/rss",
         "packages": ["world", "taiwan", "policy"],
         "authority": 0.7,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "voa-zh": {
         "label_zh": "美国之音中文",
@@ -220,7 +356,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://www.zaobao.com.sg/realtime/china/rss.xml",
         "packages": ["policy", "taiwan", "economy"],
         "authority": 0.76,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "zaobao-world": {
         "label_zh": "联合早报国际即时",
@@ -260,7 +396,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://taiwaninfo.nat.gov.tw/rss",
         "packages": ["taiwan", "world"],
         "authority": 0.72,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "diplomat-main": {
         "label_zh": "The Diplomat",
@@ -268,7 +404,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://thediplomat.com/feed/",
         "packages": ["world", "taiwan", "policy"],
         "authority": 0.72,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "diplomat-china-power": {
         "label_zh": "The Diplomat China Power",
@@ -276,7 +412,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://thediplomat.com/category/china-power/feed/",
         "packages": ["taiwan", "policy", "world"],
         "authority": 0.73,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "reuters-world": {
         "label_zh": "Reuters World",
@@ -292,7 +428,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rsshub.app/weibo/search/hot",
         "packages": ["platform"],
         "authority": 0.42,
-        "default_enabled": False,
+        "default_enabled": True,
     },
     "rsshub-zhihu-hot": {
         "label_zh": "知乎热榜 RSSHub",
@@ -300,9 +436,17 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rsshub.app/zhihu/hotlist",
         "packages": ["platform", "tech"],
         "authority": 0.42,
-        "default_enabled": False,
+        "default_enabled": True,
     },
 }
+
+AUTHORITY_TOOLTIP_ZH: Final[str] = (
+    "权重 (0~1)：决定该信源在热点排序中的加权倍数。"
+    "0.8 以上 = 主流官方源（央视/人民/新华），"
+    "0.6~0.8 = 行业财经/科技垂直媒体，"
+    "0.4 以下 = 社交平台/聚合榜单（信号噪声较大）。"
+    "数值仅影响排序与「主流/边缘」标签，不会过滤掉任何文章。"
+)
 
 DEFAULT_SETTINGS: Final[dict[str, Any]] = {
     "custom_data_dir": "",

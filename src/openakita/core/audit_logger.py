@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+DEFAULT_AUDIT_PATH = "data/audit/policy_decisions.jsonl"
 
 
 _SENSITIVE_KEYS = frozenset(
@@ -54,9 +55,11 @@ def _mask_sensitive(text: str, max_len: int = 200) -> str:
 class AuditLogger:
     """Append-only JSONL audit logger for policy decisions."""
 
-    def __init__(self, path: str = "data/audit/policy_decisions.jsonl") -> None:
-        self._path = Path(path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, path: str = DEFAULT_AUDIT_PATH, enabled: bool = True) -> None:
+        self._enabled = enabled
+        self._path = Path(path or DEFAULT_AUDIT_PATH)
+        if self._enabled:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
 
     def log(
         self,
@@ -67,6 +70,8 @@ class AuditLogger:
         params_preview: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        if not self._enabled:
+            return
         entry = {
             "ts": time.time(),
             "tool": tool_name,
@@ -85,6 +90,8 @@ class AuditLogger:
 
     def tail(self, n: int = 50) -> list[dict[str, Any]]:
         """Read the last *n* entries."""
+        if not self._enabled:
+            return []
         if not self._path.exists():
             return []
         try:
@@ -104,7 +111,16 @@ def get_audit_logger() -> AuditLogger:
             from .policy import get_policy_engine
 
             cfg = get_policy_engine().config.self_protection
-            _global_audit = AuditLogger(path=cfg.audit_path)
+            _global_audit = AuditLogger(
+                path=cfg.audit_path or DEFAULT_AUDIT_PATH,
+                enabled=cfg.audit_to_file,
+            )
         except Exception:
             _global_audit = AuditLogger()
     return _global_audit
+
+
+def reset_audit_logger() -> None:
+    """Force the next audit write/read to use the latest policy config."""
+    global _global_audit
+    _global_audit = None

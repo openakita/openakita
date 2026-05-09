@@ -19,6 +19,8 @@ import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...config import settings
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -314,16 +316,30 @@ class FilesystemHandler:
 
         block_timeout_ms = params.get("block_timeout_ms")
         if block_timeout_ms is None:
-            timeout_s = params.get("timeout", 60)
-            # 确保 timeout_s 是整数类型（防止外部传入字符串导致 TypeError）
+            timeout_s = params.get("timeout")
+            if timeout_s is None:
+                try:
+                    block_timeout_ms = int(settings.run_shell_default_block_timeout_ms)
+                except (TypeError, ValueError):
+                    block_timeout_ms = 30000
+            else:
+                # 兼容旧 timeout（秒）参数。显式传入时才从秒换算为阻塞等待时间。
+                try:
+                    timeout_s = max(0, int(timeout_s))
+                except (ValueError, TypeError):
+                    timeout_s = 30
+                block_timeout_ms = timeout_s * 1000
+                try:
+                    max_block_ms = int(settings.run_shell_max_block_timeout_ms)
+                except (TypeError, ValueError):
+                    max_block_ms = 1800000
+                if max_block_ms > 0:
+                    block_timeout_ms = min(block_timeout_ms, max_block_ms)
+        else:
             try:
-                timeout_s = int(timeout_s)
+                block_timeout_ms = max(0, int(block_timeout_ms))
             except (ValueError, TypeError):
-                timeout_s = 60
-            # Cap shell timeout at 300s（v1.26.x 调整）。10 分钟以上的命令通常是
-            # LLM 误用（应改为后台进程或拆步），强制 cap 避免 reasoning 长时间阻塞。
-            timeout_s = max(10, min(timeout_s, 300))
-            block_timeout_ms = timeout_s * 1000
+                block_timeout_ms = int(settings.run_shell_default_block_timeout_ms)
 
         session_id = params.get("session_id", 1)
 
@@ -426,9 +442,9 @@ class FilesystemHandler:
                 cmd_lower = command.strip().lower()
                 if cmd_lower.startswith(("python", "python3")):
                     output_parts.append(
-                        "⚠️ Python 不在系统 PATH 中（Windows 9009 = 命令未找到）。\n"
-                        "请先安装 Python：run_shell 执行 'winget install Python.Python.3.12 --accept-package-agreements --accept-source-agreements'\n"
-                        "安装完成后系统将自动检测，无需重启。不要再重试 python/python3 命令。"
+                        "⚠️ 当前 Shell 没有找到 Python 命令（Windows 9009 = 命令未找到）。\n"
+                        "可以先尝试 `py -3 --version`，或使用已安装 Python 的完整路径。"
+                        "如果确实未安装，再通过官网、Microsoft Store 或 winget 安装。"
                     )
                 else:
                     first_word = command.strip().split()[0] if command.strip() else command
@@ -446,9 +462,8 @@ class FilesystemHandler:
 
             full_error = "\n".join(output_parts)
             truncated_result = self._truncate_shell_output(full_error)
-            truncated_result += (
-                "\n提示: 如果不确定原因，可以调用 get_session_logs 查看详细日志，或尝试其他命令。"
-            )
+            if not result.stdout and not result.stderr:
+                truncated_result += "\n提示: 该命令没有输出；可换用更具体的诊断命令确认原因。"
             return truncated_result
 
     def _truncate_shell_output(self, text: str) -> str:
@@ -551,8 +566,8 @@ class FilesystemHandler:
             )
         return result
 
-    # read_file 默认最大行数（参考 Claude Code 的 2000 行，我们用 300 更保守）
-    READ_FILE_DEFAULT_LIMIT = 300
+    # read_file 默认最大行数。运行时可通过 READ_FILE_DEFAULT_LIMIT 调整。
+    READ_FILE_DEFAULT_LIMIT = 2000
 
     async def _read_file(self, params: dict) -> str:
         """读取文件（支持 offset/limit 分页）"""
@@ -575,14 +590,15 @@ class FilesystemHandler:
         content = await self.agent.file_tool.read(path)
 
         offset = params.get("offset", 1)  # 起始行号（1-based），默认第 1 行
-        limit = params.get("limit", self.READ_FILE_DEFAULT_LIMIT)
+        limit = params.get("limit", getattr(settings, "read_file_default_limit", self.READ_FILE_DEFAULT_LIMIT))
 
         # 确保 offset/limit 合法
         try:
             offset = max(1, int(offset))
             limit = max(1, int(limit))
         except (TypeError, ValueError):
-            offset, limit = 1, self.READ_FILE_DEFAULT_LIMIT
+            offset = 1
+            limit = int(getattr(settings, "read_file_default_limit", self.READ_FILE_DEFAULT_LIMIT))
 
         lines = content.split("\n")
         total_lines = len(lines)
@@ -717,9 +733,13 @@ class FilesystemHandler:
 
     # grep 最大结果条目数
     GREP_MAX_RESULTS = 200
+    # PR-A1: 单次 grep 最多耗时（秒），防止全盘扫描卡死 worker
+    GREP_HARD_TIMEOUT_SECONDS = 30
 
     async def _grep(self, params: dict) -> str:
         """内容搜索"""
+        import asyncio
+
         pattern = params.get("pattern", "")
         if not pattern:
             return "❌ grep 缺少必要参数 'pattern'。"
@@ -740,24 +760,53 @@ class FilesystemHandler:
             max_results = 50
 
         try:
-            results = await self.agent.file_tool.grep(
-                pattern,
-                path,
-                include=include,
-                context_lines=context_lines,
-                max_results=max_results,
-                case_insensitive=case_insensitive,
+            results = await asyncio.wait_for(
+                self.agent.file_tool.grep(
+                    pattern,
+                    path,
+                    include=include,
+                    context_lines=context_lines,
+                    max_results=max_results,
+                    case_insensitive=case_insensitive,
+                ),
+                timeout=self.GREP_HARD_TIMEOUT_SECONDS,
             )
         except FileNotFoundError as e:
             return f"❌ {e}"
         except ValueError as e:
+            msg = str(e)
+            if msg.startswith("grep refused"):
+                return (
+                    f"❌ grep 被拒绝执行: {msg}\n"
+                    f"提示: 请缩小 path 到具体的项目子目录（如 src/、docs/），"
+                    f"避免扫描运行时数据目录或整个用户主目录。"
+                )
             return f"❌ 正则表达式错误: {e}"
+        except asyncio.TimeoutError:
+            return (
+                f"❌ grep 超时（>{self.GREP_HARD_TIMEOUT_SECONDS}s）。"
+                f"建议：1) 用更精确的 path 缩小范围；2) 用 include 限定文件类型"
+                f"（如 include=\"*.py\"）；3) 用更具体的 pattern。"
+            )
 
         if not results:
             return self._append_traversal_note(f"未找到匹配 '{pattern}' 的内容。")
 
+        scan_summary = ""
+        match_results = []
+        for r in results:
+            if "_scan_summary" in r:
+                scan_summary = r["_scan_summary"]
+            else:
+                match_results.append(r)
+
+        if not match_results and scan_summary:
+            return self._append_traversal_note(
+                f"未找到匹配 '{pattern}' 的内容。\n[grep] {scan_summary}"
+            )
+
         lines: list[str] = []
-        for m in results:
+        for m in match_results:
             if context_lines > 0 and "context_before" in m:
                 for ctx_line in m["context_before"]:
                     lines.append(f"{m['file']}-{ctx_line}")
@@ -766,8 +815,10 @@ class FilesystemHandler:
                 for ctx_line in m["context_after"]:
                     lines.append(f"{m['file']}-{ctx_line}")
                 lines.append("")
+        if scan_summary:
+            lines.append(f"\n[grep] {scan_summary}")
 
-        total = len(results)
+        total = len(match_results)
         header = f"找到 {total} 条匹配"
         if total >= max_results:
             header += f"（已达上限 {max_results}，可能还有更多）"

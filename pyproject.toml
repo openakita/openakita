@@ -74,7 +74,7 @@ dependencies = [
 [project.optional-dependencies]
 # 飞书 IM 通道
 feishu = [
-    "lark-oapi>=1.5.5",         # 2026-04 上游版本，5 个月 bug fix + 安全补丁
+    "lark-oapi>=1.6.2",         # 2026 上游版本，含消息/事件/卡片 API 更新
     "qrcode>=8.0",
 ]
 
@@ -159,7 +159,7 @@ desktop = [
 # 全部可选依赖（core + 所有 IM 通道 + 桌面自动化 + 插件 SDK）
 all = [
     # -- IM 通道 --
-    "lark-oapi>=1.5.5",
+    "lark-oapi>=1.6.2",
     "dingtalk-stream>=0.24.3",
     "aiohttp>=3.13.0",
     "pycryptodome>=3.23.0",

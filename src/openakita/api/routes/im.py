@@ -12,6 +12,8 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from openakita.memory.json_utils import coerce_text
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -43,6 +45,12 @@ def _notify_im_event(event: str, data: dict | None = None) -> None:
         asyncio.ensure_future(broadcast_event(event, data))
     except Exception:
         pass
+
+
+def _content_preview(value: Any, limit: int) -> str:
+    """Convert structured IM message content to safe preview text before slicing."""
+
+    return coerce_text(value)[:limit]
 
 
 @router.get("/api/im/channels")
@@ -192,9 +200,9 @@ async def list_sessions(request: Request, channel: str = Query("")):
             msg_count = len(history)
             last_item = history[-1]
             if isinstance(last_item, dict):
-                last_msg = (last_item.get("content") or "")[:100]
+                last_msg = _content_preview(last_item.get("content"), 100)
             else:
-                last_msg = str(getattr(last_item, "content", ""))[:100]
+                last_msg = _content_preview(getattr(last_item, "content", ""), 100)
 
         # SessionState 是 Enum，需要取 .value 才能 JSON 序列化
         state = getattr(sess, "state", "active")
@@ -353,21 +361,9 @@ async def get_session_messages(
     page = history[offset : offset + limit]
 
     def _to_str(content: Any) -> str:
-        """Ensure content is a plain string for the API response.
+        """Ensure content is a plain string for the API response."""
 
-        Anthropic MessageParam may store content as a list of content blocks.
-        """
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    parts.append(block.get("text", ""))
-                elif isinstance(block, str):
-                    parts.append(block)
-            return "".join(parts)
-        return str(content) if content is not None else ""
+        return coerce_text(content)
 
     messages: list[dict[str, Any]] = []
     for item in page:
@@ -402,11 +398,11 @@ async def get_session_messages(
             content_id_map: dict[tuple[str, str], int] = {}
             for t in turns:
                 if t.get("id") is not None:
-                    key = (t.get("role", ""), _to_str(t.get("content", ""))[:200])
+                    key = (t.get("role", ""), _content_preview(t.get("content"), 200))
                     content_id_map.setdefault(key, t["id"])
             matched = 0
             for msg in messages:
-                key = (msg.get("role", ""), (msg.get("content") or "")[:200])
+                key = (msg.get("role", ""), _content_preview(msg.get("content"), 200))
                 msg["id"] = content_id_map.get(key)
                 if msg["id"] is not None:
                     matched += 1
@@ -450,7 +446,7 @@ async def delete_session_messages(request: Request, session_id: str, body: Delet
         turn_id_set = set(body.turn_ids)
         for t in all_turns:
             if t.get("id") in turn_id_set:
-                deleted_keys.add((t.get("role", ""), (t.get("content") or "")[:200]))
+                deleted_keys.add((t.get("role", ""), _content_preview(t.get("content"), 200)))
     except Exception as exc:
         logger.warning("[IM] Failed to build deleted_keys for session %s: %s", session_id, exc)
 
@@ -471,8 +467,11 @@ async def delete_session_messages(request: Request, session_id: str, body: Delet
 
                     def _msg_key(m: Any) -> tuple[str, str]:
                         if isinstance(m, dict):
-                            return (m.get("role", ""), (m.get("content") or "")[:200])
-                        return (getattr(m, "role", ""), str(getattr(m, "content", ""))[:200])
+                            return (m.get("role", ""), _content_preview(m.get("content"), 200))
+                        return (
+                            getattr(m, "role", ""),
+                            _content_preview(getattr(m, "content", ""), 200),
+                        )
 
                     ctx.messages = [m for m in msgs if _msg_key(m) not in deleted_keys]
 

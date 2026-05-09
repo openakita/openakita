@@ -16,6 +16,8 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any
 
+from ...config import settings
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -204,9 +206,13 @@ class PowerShellHandler:
 
         working_dir = params.get("working_directory")
         try:
-            timeout = max(10, min(int(params.get("timeout", 120)), 600))
+            timeout = int(params.get("timeout", settings.powershell_default_timeout_seconds))
         except (TypeError, ValueError):
-            timeout = 120
+            timeout = int(settings.powershell_default_timeout_seconds)
+        timeout = max(0, timeout)
+        max_timeout = int(getattr(settings, "powershell_max_timeout_seconds", 1800) or 0)
+        if max_timeout > 0 and timeout > 0:
+            timeout = min(timeout, max_timeout)
 
         exe = ps_info["executable"]
 
@@ -263,10 +269,14 @@ class PowerShellHandler:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
 
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(),
-                timeout=timeout,
-            )
+            communicate = process.communicate()
+            if timeout > 0:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    communicate,
+                    timeout=timeout,
+                )
+            else:
+                stdout_bytes, stderr_bytes = await communicate
 
             stdout = self._decode(stdout_bytes)
             stderr = self._decode(stderr_bytes)
@@ -287,7 +297,7 @@ class PowerShellHandler:
                     parts.append(f"[stderr]:\n{stderr}")
                 return "\n".join(parts)
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             logger.error(f"[PowerShell] Command timed out after {timeout}s")
             if process and process.returncode is None:
                 try:

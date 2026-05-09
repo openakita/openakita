@@ -757,7 +757,7 @@ a:hover {
 }
 
 .content {
-  padding: 18px;
+  padding: 14px;
   overflow: auto;
   min-width: 0;
   scrollbar-gutter: stable;
@@ -767,32 +767,32 @@ a:hover {
   border: 1px solid var(--line);
   background: var(--panel2);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 12px;
   min-width: 0;
   overflow: hidden;
 }
 
 .card + .card {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .cardTitle {
-  font-size: 16px;
-  font-weight: 800;
-  letter-spacing: 0.2px;
-  margin: 0 0 8px 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+  margin: 0 0 5px 0;
 }
 
 .cardHint {
   font-size: 12px;
   color: var(--muted);
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 .grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 
 /* Welcome step guide */
@@ -836,12 +836,12 @@ a:hover {
 .grid3 {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 
 .field {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .labelRow {

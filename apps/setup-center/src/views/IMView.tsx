@@ -1575,9 +1575,9 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
       </div>
 
       {bots.length === 0 && !loading && (
-        <div className="flex flex-col items-center justify-center py-10 text-muted-foreground opacity-50">
-          <IconBot size={40} />
-          <div className="mt-3">{t("im.noBots")}</div>
+        <div className="flex flex-col items-center justify-center py-8 text-muted-foreground opacity-60">
+          <IconBot size={32} />
+          <div className="mt-2">{t("im.noBots")}</div>
           <div className="text-xs mt-1">{t("im.noBotsHint")}</div>
         </div>
       )}

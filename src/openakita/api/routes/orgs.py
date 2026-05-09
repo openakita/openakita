@@ -19,6 +19,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from openakita.core.engine_bridge import to_engine
+from openakita.memory.json_utils import coerce_text
 
 ALLOWED_AVATAR_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml"}
 MAX_AVATAR_SIZE = 2 * 1024 * 1024  # 2 MB
@@ -955,7 +956,7 @@ async def get_node_thinking(request: Request, org_id: str, node_id: str):
                 if msg.get("from_node") == node_id
                 else msg.get("from_node"),
                 "msg_type": msg.get("msg_type", ""),
-                "content": msg.get("content", "")[:_LIM_API],
+                "content": coerce_text(msg.get("content"))[:_LIM_API],
             }
         )
     timeline.sort(key=lambda x: x.get("timestamp", ""), reverse=True)

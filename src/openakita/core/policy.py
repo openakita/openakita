@@ -619,7 +619,7 @@ class PolicyEngine:
                 forbidden=_default_forbidden_paths(),
                 default_zone=Zone.WORKSPACE,
             ),
-            confirmation=ConfirmationConfig(mode="smart", auto_confirm=False),
+            confirmation=ConfirmationConfig(mode="yolo", auto_confirm=True),
             command_patterns=CommandPatternConfig(
                 enabled=True,
                 blocked_commands=list(_DEFAULT_BLOCKED_COMMANDS),
@@ -976,10 +976,13 @@ class PolicyEngine:
                 )
                 self._audit(tool_name, params, result)
                 return result
-            if risk in (RiskLevel.HIGH, RiskLevel.MEDIUM):
+            if (
+                risk in (RiskLevel.HIGH, RiskLevel.MEDIUM)
+                and self._command_touches_self_protection_area(command)
+            ):
                 result = PolicyResult(
                     decision=PolicyDecision.CONFIRM,
-                    reason=f"信任模式下仍需确认中高风险命令: {command[:120]}",
+                    reason=f"信任模式下修改 Agent 关键目录仍需确认: {command[:120]}",
                     policy_name="BaselineProtection",
                     metadata={"risk_level": risk.value, "trust_mode": True},
                 )
@@ -1000,6 +1003,27 @@ class PolicyEngine:
         for pattern in [*self._config.zones.forbidden, *self._config.zones.protected]:
             probe = _normalise(pattern).rstrip("*").rstrip("/").lower()
             if probe and probe in command_norm:
+                return True
+        return False
+
+    def _command_touches_self_protection_area(self, command: str) -> bool:
+        """Detect destructive shell commands targeting OpenAkita's own critical dirs."""
+        if not self._config.self_protection.enabled:
+            return False
+        command_norm = command.replace("\\", "/").lower()
+        destructive = re.search(
+            r"\b(rm|del|rd|rmdir|remove-item|move|mv|copy|cp|set-content|add-content|new-item)\b",
+            command,
+            re.IGNORECASE,
+        )
+        if not destructive:
+            return False
+        for pdir in self._config.self_protection.protected_dirs:
+            probes = {
+                _normalise(pdir).rstrip("*").rstrip("/").lower(),
+                pdir.replace("\\", "/").rstrip("*").rstrip("/").lower(),
+            }
+            if any(probe and probe in command_norm for probe in probes):
                 return True
         return False
 
@@ -1877,5 +1901,24 @@ def set_policy_engine(engine: PolicyEngine) -> None:
 def reset_policy_engine() -> None:
     """重置全局策略引擎（重新加载配置时使用）"""
     global _global_policy_engine
+    previous = _global_policy_engine
     _global_policy_engine = None
+    try:
+        from .audit_logger import reset_audit_logger
+
+        reset_audit_logger()
+    except Exception:
+        pass
+    if previous is not None:
+        refreshed = get_policy_engine()
+        refreshed._readonly_mode = previous._readonly_mode
+        refreshed._consecutive_denials = previous._consecutive_denials
+        refreshed._total_denials = previous._total_denials
+        refreshed._confirmed_cache = previous._confirmed_cache
+        refreshed._session_allowlist = previous._session_allowlist
+        refreshed._pending_ui_confirms = previous._pending_ui_confirms
+        refreshed._ui_confirm_events = previous._ui_confirm_events
+        refreshed._ui_confirm_decisions = previous._ui_confirm_decisions
+        refreshed._skill_allowlists = previous._skill_allowlists
+        refreshed._session_allow_count = previous._session_allow_count
 

@@ -12,9 +12,9 @@
 - max_tool_calls: 最大工具调用次数
 
 预算策略:
-- Warning (80%): 注入预算警告
-- Downgrade (90%): 切换到更便宜的模型
-- Pause (100%): 暂停执行，通知用户
+- Warning (80%): 通过事件/日志提示，不注入模型上下文
+- Downgrade (90%): 标记降级建议，由调用方决定是否展示
+- Pause (100%): 暂停执行，通知用户可以继续或调整预算
 """
 
 from __future__ import annotations

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 READONLY_EXPLORATION_TOOLS = frozenset({
@@ -147,18 +150,25 @@ class LoopBudgetGuard:
             total_tokens > self.token_anomaly_threshold
             and self.total_tool_calls_seen >= max(5, self.max_total_tool_calls // 2)
         ):
-            diag = (
-                f" [input={input_tokens}, output={output_tokens}, "
-                f"ctx_max={max_context_tokens or '?'}, "
-                f"hard_terminate_ratio={eff_ratio:.2f}, "
-                f"anomaly_threshold={self.token_anomaly_threshold}, "
-                f"tool_calls={self.total_tool_calls_seen}/{self.max_total_tool_calls}]"
+            logger.info(
+                "[LoopBudget] token anomaly: input=%s output=%s ctx_max=%s "
+                "hard_terminate_ratio=%.2f anomaly_threshold=%s tool_calls=%s/%s "
+                "recoveries=%s/%s",
+                input_tokens,
+                output_tokens,
+                max_context_tokens or "?",
+                eff_ratio,
+                self.token_anomaly_threshold,
+                self.total_tool_calls_seen,
+                self.max_total_tool_calls,
+                self.token_anomaly_recoveries,
+                max_recoveries,
             )
             if self.token_anomaly_recoveries < max_recoveries:
                 return LoopBudgetDecision(
                     False,
                     "token_growth_recoverable",
-                    "⚠️ 检测到上下文 token 异常膨胀，将先执行强制压缩并在下一轮继续。" + diag,
+                    "⚠️ 检测到上下文增长过快，将先压缩历史内容并在下一轮继续。",
                     should_warn=True,
                 )
             return LoopBudgetDecision(
@@ -166,7 +176,7 @@ class LoopBudgetGuard:
                 "token_growth_terminated",
                 "⚠️ 检测到上下文 token 异常膨胀且工具调用已接近预算，"
                 "已尝试压缩但仍未恢复到安全区，已自动终止以避免继续扩大上下文。"
-                "请基于已有信息总结结论。" + diag,
+                "请基于已有信息总结结论。",
             )
         return LoopBudgetDecision(False)
 

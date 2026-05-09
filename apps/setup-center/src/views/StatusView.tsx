@@ -547,7 +547,7 @@ export function StatusView(props: StatusViewProps) {
                   <span className={"healthDot " + dot} />
                 </span>
                 <span className="inline-flex h-4 w-4 items-center justify-center">
-                  {LogoComp && <span style={{ display: "inline-flex", flexShrink: 0 }}>{LogoComp({ size: 16 })}</span>}
+                  {LogoComp && <span style={{ display: "inline-flex", flexShrink: 0 }}><LogoComp size={16} /></span>}
                 </span>
                 <span style={{ fontWeight: 600, fontSize: 13, minWidth: 0 }}>{c.name}</span>
                 <span className="imStatusLabel text-right">{label}</span>

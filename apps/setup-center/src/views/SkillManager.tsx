@@ -432,7 +432,7 @@ function SkillDetailModal({
         {/* Content area */}
         <div style={{ flex: 1, overflow: "auto", padding: "16px 24px" }}>
           {contentLoading ? (
-            <div style={{ textAlign: "center", padding: 40, opacity: 0.5 }}>{t("skills.loadingContent")}</div>
+            <div style={{ textAlign: "center", padding: 28, opacity: 0.55 }}>{t("skills.loadingContent")}</div>
           ) : contentError ? (
             <div className="errorBox" style={{ margin: 0 }}>{contentError}</div>
           ) : isEditing ? (

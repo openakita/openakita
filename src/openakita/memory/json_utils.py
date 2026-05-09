@@ -24,6 +24,11 @@ def coerce_text(value: Any) -> str:
         text = _extract_multimodal_text(value)
         if text:
             return text
+        content = value.get("content")
+        if content is not None:
+            text = coerce_text(content).strip()
+            if text:
+                return text
         return json.dumps(value, ensure_ascii=False, default=str)
     if isinstance(value, Iterable):
         parts = []
@@ -96,13 +101,64 @@ def loads_llm_json(text: str) -> Any:
 
 def _extract_multimodal_text(value: dict) -> str:
     value_type = value.get("type")
+    if isinstance(value_type, str) and value_type.startswith("plugin:"):
+        return _format_plugin_event(value_type, value.get("data"))
     if value_type == "text" and isinstance(value.get("text"), str):
         return value["text"]
     if isinstance(value.get("content"), str):
         return value["content"]
     if isinstance(value.get("text"), str):
         return value["text"]
+    if value_type in {"image", "image_url", "input_image"}:
+        return "[图片]"
+    if value_type in {"video", "input_video"}:
+        return "[视频]"
+    if value_type in {"audio", "input_audio"}:
+        return "[音频]"
+    if value_type in {"file", "input_file"}:
+        return "[文件]"
     return ""
+
+
+def _format_plugin_event(value_type: str, data: Any) -> str:
+    """Return a compact human-readable summary for persisted plugin events."""
+
+    parts = value_type.split(":")
+    plugin_name = parts[1] if len(parts) > 1 and parts[1] else "unknown"
+    event_name = parts[2] if len(parts) > 2 and parts[2] else "event"
+    event_label = {
+        "task_update": "任务更新",
+        "chain_update": "任务链更新",
+        "progress": "进度更新",
+        "result": "结果",
+        "error": "错误",
+    }.get(event_name, event_name.replace("_", " "))
+
+    if not isinstance(data, dict):
+        detail = coerce_text(data).strip()
+        return f"插件 {plugin_name} {event_label}: {detail}" if detail else f"插件 {plugin_name} {event_label}"
+
+    status = data.get("status") or data.get("state") or data.get("phase")
+    message = data.get("message") or data.get("title") or data.get("name")
+    identifier = (
+        data.get("task_id")
+        or data.get("group_id")
+        or data.get("id")
+        or data.get("job_id")
+    )
+
+    detail_parts: list[str] = []
+    if status:
+        detail_parts.append(coerce_text(status))
+    if message:
+        detail_parts.append(coerce_text(message))
+
+    summary = f"插件 {plugin_name} {event_label}"
+    if detail_parts:
+        summary += ": " + " / ".join(p for p in detail_parts if p)
+    if identifier:
+        summary += f" ({coerce_text(identifier)})"
+    return summary
 
 
 def _clean_llm_json_text(text: str) -> str:

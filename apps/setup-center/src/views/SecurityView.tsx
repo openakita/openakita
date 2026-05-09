@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  IconShield, IconRefresh, IconPlus, IconX, IconTrash,
-  IconChevronDown, IconChevronRight, IconClock, IconSave, IconAlertCircle,
+  IconShield, IconPlus, IconX, IconTrash,
+  IconChevronDown, IconChevronRight, IconClock, IconAlertCircle,
 } from "../icons";
+import { safeFetch } from "../providers";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,13 +73,17 @@ const ZONE_META: Record<string, { color: string; tw: string }> = {
 };
 
 const BACKEND_OPTIONS = [
-  { value: "auto", label: "Auto" },
-  { value: "low_integrity", label: "Low Integrity (Windows)" },
-  { value: "bubblewrap", label: "Bubblewrap (Linux)" },
-  { value: "seatbelt", label: "Seatbelt (macOS)" },
-  { value: "docker", label: "Docker" },
-  { value: "none", label: "None (Disabled)" },
+  { value: "auto", label: "轻量沙箱（当前可用）", available: true },
+  { value: "none", label: "不使用沙箱", available: true },
+  { value: "low_integrity", label: "Low Integrity (Windows，预留)", available: false },
+  { value: "bubblewrap", label: "Bubblewrap (Linux，预留)", available: false },
+  { value: "seatbelt", label: "Seatbelt (macOS，预留)", available: false },
+  { value: "docker", label: "Docker（预留）", available: false },
 ];
+
+function errorMessage(err: unknown, fallback: string) {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
 
 type ConfirmConfig = {
   mode: string;
@@ -119,20 +124,28 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   const [allowlist, setAllowlist] = useState<AllowlistData>({ commands: [], tools: [] });
   const [permissionMode, setPermissionMode] = useState<PermissionMode>("yolo");
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [savingAction, setSavingAction] = useState<string | null>(null);
+  const [loadingAll, setLoadingAll] = useState(false);
+  const [refreshingAudit, setRefreshingAudit] = useState(false);
+  const [refreshingCheckpoints, setRefreshingCheckpoints] = useState(false);
+  const [rewindingId, setRewindingId] = useState<string | null>(null);
+  const saving = savingAction !== null;
 
   const api = useCallback(async (path: string, method = "GET", body?: unknown) => {
     const opts: RequestInit = { method, headers: { "Content-Type": "application/json" } };
     if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(`${apiBaseUrl}${path}`, opts);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const res = await safeFetch(`${apiBaseUrl}${path}`, opts);
     const json = await res.json();
     if (method !== "GET" && json && json.status === "error") throw new Error(json.message || "Server error");
     return json;
   }, [apiBaseUrl]);
 
-  const load = useCallback(async () => {
-    if (!serviceRunning) return;
+  const load = useCallback(async (showResult = false) => {
+    if (!serviceRunning) {
+      if (showResult) toast.error(t("security.backendOff", "后端服务未运行"));
+      return false;
+    }
+    setLoadingAll(true);
     try {
       const [modeRes, zRes, cRes, sRes, cfRes, spRes, alRes] = await Promise.all([
         api("/api/config/permission-mode"),
@@ -151,34 +164,79 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       if (cfRes && cfRes.mode) setConfirmConfig(cfRes);
       if (spRes && spRes.enabled !== undefined) setSelfProtect(spRes);
       if (alRes && (alRes.commands || alRes.tools)) setAllowlist(alRes);
-    } catch { /* ignore */ }
-  }, [api, serviceRunning]);
+      if (showResult) toast.success(t("security.refreshAllDone", "安全配置已刷新"));
+      return true;
+    } catch (err) {
+      if (showResult) {
+        toast.error(t("security.refreshFailed", "刷新失败"), {
+          description: errorMessage(err, t("security.refreshFailed", "刷新失败")),
+        });
+      }
+      return false;
+    } finally {
+      setLoadingAll(false);
+    }
+  }, [api, serviceRunning, t]);
 
   useEffect(() => { load(); }, [load]);
 
-  const loadAudit = useCallback(async () => {
-    if (!serviceRunning) return;
+  const loadAudit = useCallback(async (showResult = false) => {
+    if (!serviceRunning) {
+      if (showResult) toast.error(t("security.backendOff", "后端服务未运行"));
+      return false;
+    }
+    setRefreshingAudit(true);
     try {
       const res = await api("/api/config/security/audit");
       setAudit(res.entries || []);
-    } catch { /* ignore */ }
-  }, [api, serviceRunning]);
+      if (showResult) toast.success(t("security.auditRefreshed", "审计日志已刷新"));
+      return true;
+    } catch (err) {
+      if (showResult) {
+        toast.error(t("security.refreshFailed", "刷新失败"), {
+          description: errorMessage(err, t("security.refreshFailed", "刷新失败")),
+        });
+      }
+      return false;
+    } finally {
+      setRefreshingAudit(false);
+    }
+  }, [api, serviceRunning, t]);
 
-  const loadCheckpoints = useCallback(async () => {
-    if (!serviceRunning) return;
+  const loadCheckpoints = useCallback(async (showResult = false) => {
+    if (!serviceRunning) {
+      if (showResult) toast.error(t("security.backendOff", "后端服务未运行"));
+      return false;
+    }
+    setRefreshingCheckpoints(true);
     try {
       const res = await api("/api/config/security/checkpoints");
       setCheckpoints(res.checkpoints || []);
-    } catch { /* ignore */ }
-  }, [api, serviceRunning]);
+      if (showResult) toast.success(t("security.checkpointsRefreshed", "文件快照已刷新"));
+      return true;
+    } catch (err) {
+      if (showResult) {
+        toast.error(t("security.refreshFailed", "刷新失败"), {
+          description: errorMessage(err, t("security.refreshFailed", "刷新失败")),
+        });
+      }
+      return false;
+    } finally {
+      setRefreshingCheckpoints(false);
+    }
+  }, [api, serviceRunning, t]);
 
   const loadAllowlist = useCallback(async () => {
     if (!serviceRunning) return;
     try {
       const res = await api("/api/config/security/allowlist");
       if (res.commands || res.tools) setAllowlist(res);
-    } catch { /* ignore */ }
-  }, [api, serviceRunning]);
+    } catch (err) {
+      toast.error(t("security.refreshFailed", "刷新失败"), {
+        description: errorMessage(err, t("security.refreshFailed", "刷新失败")),
+      });
+    }
+  }, [api, serviceRunning, t]);
 
   useEffect(() => {
     if (tab === "audit") loadAudit();
@@ -186,39 +244,53 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   }, [tab, loadAudit, loadCheckpoints]);
 
   const doSave = async (endpoint: string, body: unknown, successKey: string) => {
-    setSaving(true);
+    setSavingAction(endpoint);
     try {
       await api(endpoint, "POST", body);
       toast.success(t(`security.${successKey}`));
-    } catch {
-      toast.error(t("security.saveFailed"));
+      await load(false);
+    } catch (err) {
+      toast.error(t("security.saveFailed"), {
+        description: errorMessage(err, t("security.saveFailed")),
+      });
+    } finally {
+      setSavingAction(null);
     }
-    setSaving(false);
   };
 
   const selectPermissionMode = async (mode: PermissionMode) => {
     const previousMode = permissionMode;
     setPermissionMode(mode);
-    setSaving(true);
+    setSavingAction("permission-mode");
     try {
       await api("/api/config/permission-mode", "POST", { mode });
       toast.success(t("security.permissionModeSaved", "安全模式已更新"));
       await load();
       if (mode !== "yolo") setShowAdvanced(true);
-    } catch {
+    } catch (err) {
       setPermissionMode(previousMode);
-      toast.error(t("security.saveFailed"));
+      toast.error(t("security.saveFailed"), {
+        description: errorMessage(err, t("security.saveFailed")),
+      });
+    } finally {
+      setSavingAction(null);
     }
-    setSaving(false);
   };
 
   const rewindCheckpoint = async (id: string) => {
     if (!confirm(t("security.rewindConfirm", { id }))) return;
+    setRewindingId(id);
     try {
       await api("/api/config/security/checkpoint/rewind", "POST", { checkpoint_id: id });
       toast.success(t("security.rewound"));
-      loadCheckpoints();
-    } catch { /* ignore */ }
+      await loadCheckpoints(false);
+    } catch (err) {
+      toast.error(t("security.rewindFailed", "回滚失败"), {
+        description: errorMessage(err, t("security.rewindFailed", "回滚失败")),
+      });
+    } finally {
+      setRewindingId(null);
+    }
   };
 
   if (!serviceRunning) {
@@ -235,15 +307,26 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       await api(`/api/config/security/allowlist/${entryType}/${index}`, "DELETE");
       toast.success(t("security.allowlistDeleted", "已删除"));
       loadAllowlist();
-    } catch { toast.error(t("security.saveFailed")); }
+    } catch (err) {
+      toast.error(t("security.saveFailed"), {
+        description: errorMessage(err, t("security.saveFailed")),
+      });
+    }
   };
 
   const resetDeathSwitch = async () => {
+    setSavingAction("death-switch-reset");
     try {
       await api("/api/config/security/death-switch/reset", "POST");
-      toast.success(t("security.deathSwitchReset", "死亡开关已重置"));
+      toast.success(t("security.deathSwitchReset", "只读保护已解除"));
       setSelfProtect((p) => ({ ...p, readonly_mode: false }));
-    } catch { toast.error(t("security.saveFailed")); }
+    } catch (err) {
+      toast.error(t("security.saveFailed"), {
+        description: errorMessage(err, t("security.saveFailed")),
+      });
+    } finally {
+      setSavingAction(null);
+    }
   };
 
   const TABS: { id: TabId; labelKey: string }[] = [
@@ -281,26 +364,30 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   ];
 
   return (
-    <div className="mx-auto max-w-[1080px] space-y-5 px-6 py-5">
+    <div className="mx-auto max-w-[1040px] space-y-3.5 px-5 py-4">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1.5 min-w-0">
-          <h2 className="truncate text-lg font-bold tracking-tight" title={t("security.title", "安全控制")}>
+        <div className="min-w-0 space-y-1">
+          <h2 className="truncate text-xl font-semibold tracking-tight" title={t("security.title", "安全控制")}>
             {t("security.title", "安全控制")}
           </h2>
-          <p className="truncate text-xs text-muted-foreground leading-relaxed" title={t("security.desc", "配置系统安全策略，包括文件访问区域、命令拦截和沙箱环境。")}>
+          <p className="truncate text-[13px] leading-5 text-muted-foreground" title={t("security.desc", "配置系统安全策略，包括文件访问区域、命令拦截和沙箱环境。")}>
             {t("security.desc", "配置系统安全策略，包括文件访问区域、命令拦截和沙箱环境。")}
           </p>
         </div>
+        <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={() => load(true)} disabled={loadingAll || saving}>
+          <RotateCw size={14} className={cn("mr-1.5", loadingAll && "animate-spin")} />
+          {t("security.refreshAll", "刷新全部")}
+        </Button>
       </div>
 
       {/* Mode switch */}
-      <Card className="border-border/50 shadow-sm">
-        <CardHeader className="px-5 py-4 pb-2">
-          <CardTitle className="text-sm font-semibold">{t("security.permissionMode", "安全模式")}</CardTitle>
+      <Card className="gap-0 border-border/70 py-0 shadow-sm">
+        <CardHeader className="px-4 py-3">
+          <CardTitle className="text-[13px] font-semibold">{t("security.permissionMode", "安全模式")}</CardTitle>
         </CardHeader>
-        <CardContent className="px-5 pb-5 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <CardContent className="space-y-3 px-4 pb-4">
+          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
             {MODE_CARDS.map((mode) => {
               const active = permissionMode === mode.id;
               const ModeIcon = mode.icon;
@@ -311,30 +398,30 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
                   disabled={saving}
                   onClick={() => selectPermissionMode(mode.id)}
                   className={cn(
-                    "rounded-lg border p-4 text-left transition-colors",
-                    active ? "border-primary bg-primary/10" : "border-border/60 hover:bg-muted/40",
+                    "min-h-[104px] rounded-lg border p-3 text-left transition-colors",
+                    active ? "border-primary/70 bg-primary/10 shadow-sm" : "border-border/70 hover:bg-muted/40",
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-2 text-sm font-semibold">
-                      <span className={cn("grid size-8 place-items-center rounded-lg border", mode.tone)}>
-                        <ModeIcon size={16} />
+                    <span className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+                      <span className={cn("grid size-7 shrink-0 place-items-center rounded-lg border", mode.tone)}>
+                        <ModeIcon size={15} />
                       </span>
-                      {mode.title}
+                      <span className="truncate">{mode.title}</span>
                     </span>
-                    {active && <Badge variant="secondary">{t("security.current", "当前")}</Badge>}
+                    {active && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{t("security.current", "当前")}</Badge>}
                   </div>
-                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{mode.desc}</p>
+                  <p className="mt-2 text-[12px] leading-5 text-muted-foreground">{mode.desc}</p>
                 </button>
               );
             })}
           </div>
           {permissionMode === "yolo" && (
-            <div className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 px-4 py-3">
-              <p className="text-xs text-muted-foreground">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+              <p className="text-[12px] leading-5 text-muted-foreground">
                 {t("security.trustModeAdvancedHint", "当前为默认无感体验。下方细项属于高级设置，通常无需调整。")}
               </p>
-              <Button variant="outline" size="sm" onClick={() => setShowAdvanced((v) => !v)}>
+              <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={() => setShowAdvanced((v) => !v)}>
                 {showAdvanced ? t("security.hideAdvanced", "收起高级设置") : t("security.showAdvanced", "显示高级设置")}
               </Button>
             </div>
@@ -345,19 +432,19 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {advancedVisible && (
         <>
       {/* Tab bar */}
-      <div className="flex items-center justify-between overflow-x-auto flex-shrink-0">
+      <div className="flex shrink-0 items-center justify-between overflow-x-auto">
         <ToggleGroup
           type="single"
           value={tab}
           onValueChange={(v) => { if (v) setTab(v as TabId); }}
           variant="outline"
-          className="min-w-max shrink-0"
+          className="min-w-max shrink-0 gap-1"
         >
           {TABS.map((tb) => (
             <ToggleGroupItem
               key={tb.id}
               value={tb.id}
-              className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+              className="h-8 px-3 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
               title={t(tb.labelKey)}
             >
               {t(tb.labelKey)}
@@ -369,12 +456,12 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {/* Confirmation */}
       {tab === "confirmation" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm">
-          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50">
+          <CardHeader className="border-b border-border/50 px-4 py-2.5">
             <CardTitle className="text-sm font-semibold">{t("security.confirmation", "确认行为")}</CardTitle>
           </CardHeader>
-          <CardContent className="px-5 pt-4 pb-5 space-y-5">
-            <p className="text-sm text-muted-foreground">{t("security.confirmationDesc", "配置安全确认弹窗的触发模式、超时行为和缓存策略。")}</p>
-            <div className="space-y-4 max-w-md">
+          <CardContent className="space-y-4 px-4 pb-4 pt-3">
+            <p className="text-xs leading-5 text-muted-foreground">{t("security.confirmationDesc", "配置安全确认弹窗的触发模式、超时行为和缓存策略。")}</p>
+            <div className="max-w-md space-y-3.5">
               {/* Mode selector */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">{t("security.confirmMode", "确认模式")}</Label>
@@ -459,14 +546,14 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {/* Self-protection */}
       {tab === "selfprotection" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm">
-          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50">
+          <CardHeader className="border-b border-border/50 px-4 py-2.5">
             <CardTitle className="text-sm font-semibold">{t("security.selfProtection", "自保护")}</CardTitle>
           </CardHeader>
-          <CardContent className="px-5 pt-4 pb-5 space-y-5">
-            <p className="text-sm text-muted-foreground">{t("security.selfProtectionDesc", "配置 Agent 自保护机制，防止误操作破坏关键目录。")}</p>
-            <div className="space-y-4 max-w-lg">
+          <CardContent className="space-y-4 px-4 pb-4 pt-3">
+            <p className="text-xs leading-5 text-muted-foreground">{t("security.selfProtectionDesc", "配置 Agent 自保护机制，防止误操作破坏关键目录。")}</p>
+            <div className="max-w-lg space-y-3.5">
               {/* Enabled switch */}
-              <div className="flex items-center justify-between border border-border/50 p-4 rounded-lg bg-muted/20">
+              <div className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 p-3">
                 <div className="space-y-0.5">
                   <Label className="text-sm font-medium">{t("security.selfProtectionEnabled", "启用自保护")}</Label>
                 </div>
@@ -484,24 +571,42 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
               </div>
               {/* Death switch threshold */}
               <div className="space-y-2">
-                <Label className="text-sm font-medium">{t("security.deathSwitchThreshold", "死亡开关阈值（连续拒绝次数）")}</Label>
+                <Label className="text-sm font-medium">{t("security.deathSwitchThreshold", "自动保护阈值（连续拒绝次数）")}</Label>
                 <Input type="number" value={selfProtect.death_switch_threshold} onChange={(e) => setSelfProtect((p) => ({ ...p, death_switch_threshold: parseInt(e.target.value) || 3 }))} className="h-9 w-32" />
               </div>
               {/* Total multiplier */}
               <div className="space-y-2">
-                <Label className="text-sm font-medium">{t("security.deathSwitchMultiplier", "累计拒绝乘数")}</Label>
+                <Label className="text-sm font-medium">{t("security.deathSwitchMultiplier", "累计保护系数")}</Label>
                 <Input type="number" value={selfProtect.death_switch_total_multiplier} onChange={(e) => setSelfProtect((p) => ({ ...p, death_switch_total_multiplier: parseInt(e.target.value) || 3 }))} className="h-9 w-32" />
-                <p className="text-xs text-muted-foreground">{t("security.deathSwitchMultiplierDesc", "累计拒绝次数 = 阈值 × 乘数 时也会触发死亡开关")}</p>
+                <p className="text-xs text-muted-foreground">{t("security.deathSwitchMultiplierDesc", "累计拒绝次数达到阈值 × 系数时，会自动进入只读保护状态。")}</p>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 p-3">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">{t("security.auditToFile", "写入审计日志文件")}</Label>
+                  <p className="text-xs text-muted-foreground">{t("security.auditToFileDesc", "关闭后仍会做安全判定，但不会继续追加本地 JSONL 审计文件。")}</p>
+                </div>
+                <Switch checked={selfProtect.audit_to_file} onCheckedChange={(v) => setSelfProtect((p) => ({ ...p, audit_to_file: v }))} />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">{t("security.auditPath", "审计日志路径")}</Label>
+                <Input
+                  value={selfProtect.audit_path}
+                  onChange={(e) => setSelfProtect((p) => ({ ...p, audit_path: e.target.value }))}
+                  placeholder="data/audit/policy_decisions.jsonl"
+                  className="h-9 font-mono text-sm"
+                  disabled={!selfProtect.audit_to_file}
+                />
               </div>
               {/* Readonly mode indicator + reset */}
               {selfProtect.readonly_mode && (
                 <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
                   <IconAlertCircle size={20} className="text-destructive shrink-0" />
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-destructive">{t("security.readonlyModeActive", "Agent 当前处于只读模式（死亡开关已触发）")}</p>
+                    <p className="text-sm font-medium text-destructive">{t("security.readonlyModeActive", "Agent 当前处于只读保护状态，写入操作已暂时暂停。")}</p>
                   </div>
-                  <Button variant="destructive" size="sm" onClick={resetDeathSwitch}>
-                    {t("security.resetDeathSwitch", "重置")}
+                  <Button variant="destructive" size="sm" onClick={resetDeathSwitch} disabled={savingAction === "death-switch-reset"}>
+                    {savingAction === "death-switch-reset" && <Loader2 className="mr-1 size-3 animate-spin" />}
+                    {t("security.resetDeathSwitch", "解除只读保护")}
                   </Button>
                 </div>
               )}
@@ -519,12 +624,12 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {/* Zones */}
       {tab === "zones" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm">
-          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50">
+          <CardHeader className="border-b border-border/50 px-4 py-2.5">
             <CardTitle className="text-sm font-semibold">{t("security.zones", "安全区域")}</CardTitle>
           </CardHeader>
-          <CardContent className="px-5 pt-4 pb-5 space-y-4">
-            <p className="text-sm text-muted-foreground">{t("security.zonesDesc")}</p>
-            <div className="grid grid-cols-1 gap-3">
+          <CardContent className="space-y-3.5 px-4 pb-4 pt-3">
+            <p className="text-xs leading-5 text-muted-foreground">{t("security.zonesDesc")}</p>
+            <div className="grid grid-cols-1 gap-2.5">
               {(["workspace", "controlled", "protected", "forbidden"] as const).map((zone) => (
                 <ZonePanel
                   key={zone}
@@ -559,12 +664,12 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {/* Commands */}
       {tab === "commands" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm">
-          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50">
+          <CardHeader className="border-b border-border/50 px-4 py-2.5">
             <CardTitle className="text-sm font-semibold">{t("security.commands", "命令拦截")}</CardTitle>
           </CardHeader>
-          <CardContent className="px-5 pt-4 pb-5 space-y-5">
-            <p className="text-sm text-muted-foreground">{t("security.commandsDesc")}</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <CardContent className="space-y-4 px-4 pb-4 pt-3">
+            <p className="text-xs leading-5 text-muted-foreground">{t("security.commandsDesc")}</p>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <TagEditor
                 label={t("security.criticalPatterns")}
                 items={commands.custom_critical}
@@ -603,13 +708,13 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {/* Sandbox */}
       {tab === "sandbox" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm">
-          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50">
+          <CardHeader className="border-b border-border/50 px-4 py-2.5">
             <CardTitle className="text-sm font-semibold">{t("security.sandbox", "沙箱配置")}</CardTitle>
           </CardHeader>
-          <CardContent className="px-5 pt-4 pb-5 space-y-5">
-            <p className="text-sm text-muted-foreground">{t("security.sandboxDesc")}</p>
-            <div className="space-y-4 max-w-lg">
-              <div className="flex items-center justify-between border border-border/50 p-4 rounded-lg bg-muted/20">
+          <CardContent className="space-y-4 px-4 pb-4 pt-3">
+            <p className="text-xs leading-5 text-muted-foreground">{t("security.sandboxDesc")}</p>
+            <div className="max-w-lg space-y-3.5">
+              <div className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 p-3">
                 <div className="space-y-0.5">
                   <Label className="text-sm font-medium">{t("security.sandboxEnabled")}</Label>
                   <p className="text-xs text-muted-foreground">{t("security.sandboxEnabledDesc", "启用或禁用命令执行沙箱")}</p>
@@ -621,15 +726,20 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
               </div>
               <div className="space-y-2">
                 <Label className="text-sm font-medium">{t("security.sandboxBackend")}</Label>
-                <Select value={sandbox.backend} onValueChange={(v) => setSandbox((p) => ({ ...p, backend: v }))}>
+                <Select
+                  value={sandbox.backend === "none" ? "none" : "auto"}
+                  onValueChange={(v) => setSandbox((p) => ({ ...p, backend: v, enabled: v === "none" ? false : p.enabled }))}
+                >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {BACKEND_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                      <SelectItem key={o.value} value={o.value} disabled={!o.available}>{o.label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground pt-1">{t("security.sandboxBackendDesc", "选择用于隔离执行环境的后端技术")}</p>
+                <p className="text-xs text-muted-foreground pt-1">
+                  {t("security.sandboxBackendDesc", "当前后端实现为轻量沙箱：执行前做策略检查并限制高危命令，Docker/seatbelt/bubblewrap 等 OS 级隔离暂未接入。")}
+                </p>
               </div>
               {/* Risk levels */}
               <div className="space-y-2">
@@ -662,7 +772,14 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
               />
             </div>
             <div className="flex justify-end pt-2 border-t border-border/50 mt-6 pt-4">
-              <Button onClick={() => doSave("/api/config/security/sandbox", sandbox, "sandboxSaved")} disabled={saving}>
+              <Button
+                onClick={() => doSave(
+                  "/api/config/security/sandbox",
+                  { ...sandbox, backend: sandbox.backend === "none" ? "none" : "auto" },
+                  "sandboxSaved",
+                )}
+                disabled={saving}
+              >
                 {saving ? <Loader2 className="size-4 animate-spin mr-2" /> : <Save size={14} className="mr-2" />}
                 {t("security.save")}
               </Button>
@@ -674,20 +791,20 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {/* Audit */}
       {tab === "audit" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm overflow-hidden">
-          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50 flex flex-row items-center justify-between space-y-0">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50 px-4 py-2.5">
             <div className="space-y-1">
               <CardTitle className="text-sm font-semibold">{t("security.audit", "审计日志")}</CardTitle>
               <p className="text-xs text-muted-foreground">
                 {t("security.auditCount", { count: audit.length })}
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={loadAudit} className="h-8">
-              <RotateCw size={14} className="mr-1.5" /> {t("security.refresh")}
+            <Button variant="outline" size="sm" onClick={() => loadAudit(true)} disabled={refreshingAudit} className="h-8">
+              <RotateCw size={14} className={cn("mr-1.5", refreshingAudit && "animate-spin")} /> {t("security.refresh")}
             </Button>
           </CardHeader>
           <CardContent className="p-0">
             {audit.length === 0 ? (
-              <div className="py-16 text-center text-muted-foreground text-sm flex flex-col items-center">
+              <div className="flex flex-col items-center py-10 text-center text-sm text-muted-foreground">
                 <IconShield size={32} className="mb-3 opacity-20" />
                 {t("security.noAudit")}
               </div>
@@ -722,20 +839,20 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {/* Checkpoints */}
       {tab === "checkpoints" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm overflow-hidden">
-          <CardHeader className="px-5 py-3 pb-3 border-b border-border/50 flex flex-row items-center justify-between space-y-0">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50 px-4 py-2.5">
             <div className="space-y-1">
               <CardTitle className="text-sm font-semibold">{t("security.checkpoints", "安全检查点")}</CardTitle>
               <p className="text-xs text-muted-foreground">
                 {t("security.checkpointCount", { count: checkpoints.length })}
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={loadCheckpoints} className="h-8">
-              <RotateCw size={14} className="mr-1.5" /> {t("security.refresh")}
+            <Button variant="outline" size="sm" onClick={() => loadCheckpoints(true)} disabled={refreshingCheckpoints} className="h-8">
+              <RotateCw size={14} className={cn("mr-1.5", refreshingCheckpoints && "animate-spin")} /> {t("security.refresh")}
             </Button>
           </CardHeader>
           <CardContent className="p-0">
             {checkpoints.length === 0 ? (
-              <div className="py-16 text-center text-muted-foreground text-sm flex flex-col items-center">
+              <div className="flex flex-col items-center py-10 text-center text-sm text-muted-foreground">
                 <IconClock size={32} className="mb-3 opacity-20" />
                 {t("security.noCheckpoints")}
               </div>
@@ -762,7 +879,8 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
                         {new Date(cp.timestamp * 1000).toLocaleString()}
                       </TableCell>
                       <TableCell className="px-5 py-3 text-right">
-                        <Button variant="outline" size="sm" onClick={() => rewindCheckpoint(cp.checkpoint_id)} className="h-7 text-xs">
+                        <Button variant="outline" size="sm" onClick={() => rewindCheckpoint(cp.checkpoint_id)} disabled={rewindingId === cp.checkpoint_id} className="h-7 text-xs">
+                          {rewindingId === cp.checkpoint_id && <Loader2 className="mr-1 size-3 animate-spin" />}
                           {t("security.rewind")}
                         </Button>
                       </TableCell>
@@ -807,18 +925,18 @@ function ZonePanel({ zone, paths, onChange }: {
   };
 
   return (
-    <Card className="p-0 gap-0 overflow-hidden">
+    <Card className="gap-0 overflow-hidden p-0">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-accent/50 transition-colors"
+        className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-accent/50"
       >
-        <span className={cn("size-3 rounded-full shrink-0", meta.tw)} />
+        <span className={cn("size-2.5 shrink-0 rounded-full", meta.tw)} />
         <span className="flex-1 text-sm font-semibold">{t(`security.zone_${zone}`)}</span>
         <Badge variant="secondary" className="text-xs font-mono">{paths.length}</Badge>
         {expanded ? <IconChevronDown size={16} className="text-muted-foreground" /> : <IconChevronRight size={16} className="text-muted-foreground" />}
       </button>
       {expanded && (
-        <CardContent className="pt-0 pb-4 space-y-2">
+        <CardContent className="space-y-2 pb-3 pt-0">
           {paths.map((p, i) => (
             <div key={i} className="flex items-center gap-2 group bg-muted/30 rounded-md border border-transparent hover:border-border transition-colors px-2 py-1">
               <code className="flex-1 text-xs font-mono">{p}</code>
@@ -831,15 +949,15 @@ function ZonePanel({ zone, paths, onChange }: {
               </Button>
             </div>
           ))}
-          <div className="flex gap-2 mt-3">
+          <div className="mt-2.5 flex gap-2">
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && add()}
               placeholder="D:/path/to/dir/**"
-              className="h-9 text-sm font-mono"
+              className="h-8 text-sm font-mono"
             />
-            <Button variant="secondary" size="sm" onClick={add} className="h-9 px-4">
+            <Button variant="secondary" size="sm" onClick={add} className="h-8 px-3">
               <IconPlus size={14} className="mr-1.5" />
               {t("common.add", "添加")}
             </Button>
@@ -863,12 +981,12 @@ function TagEditor({ label, items, onChange, placeholder }: {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       <Label className="text-sm font-medium">{label}</Label>
       {items.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5">
           {items.map((item, i) => (
-            <Badge key={i} variant="secondary" className="gap-1.5 pl-2.5 pr-1 py-1 font-mono text-xs border-transparent hover:border-border transition-colors">
+            <Badge key={i} variant="secondary" className="gap-1.5 border-transparent py-0.5 pl-2 pr-1 font-mono text-xs transition-colors hover:border-border">
               {item}
               <button
                 onClick={() => onChange(items.filter((_, j) => j !== i))}
@@ -886,9 +1004,9 @@ function TagEditor({ label, items, onChange, placeholder }: {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
           placeholder={placeholder}
-          className="h-9 text-sm font-mono"
+          className="h-8 text-sm font-mono"
         />
-        <Button variant="secondary" size="sm" onClick={add} className="h-9 px-4">
+        <Button variant="secondary" size="sm" onClick={add} className="h-8 px-3">
           <IconPlus size={14} className="mr-1.5" />
           {t("common.add", "添加")}
         </Button>

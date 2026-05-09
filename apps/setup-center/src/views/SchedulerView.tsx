@@ -811,7 +811,221 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
     }
   };
 
-  
+  const renderTaskForm = () => (
+    <Card className="gap-0 border-primary py-0 shadow-sm relative overflow-hidden">
+      <div className="absolute top-0 left-0 w-1 h-full bg-primary" />
+      <CardHeader className="px-6 py-4 pb-3">
+        <CardTitle className="text-lg">
+          {editingId ? t("scheduler.editTask") : t("scheduler.addTask")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-1.5">
+          <Label>{t("scheduler.name")}</Label>
+          <Input
+            placeholder={t("scheduler.namePlaceholder")}
+            value={form.name}
+            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label>{t("scheduler.taskType")}</Label>
+            <Select value={form.task_type} onValueChange={v => setForm(f => ({ ...f, task_type: v }))}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="reminder">{t("scheduler.typeReminder")}</SelectItem>
+                <SelectItem value="task">{t("scheduler.typeTask")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("scheduler.triggerType")}</Label>
+            <Select value={form.scheduleMode} onValueChange={v => setForm(f => ({ ...f, scheduleMode: v as ScheduleMode }))}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="once">{t("scheduler.triggerOnce")}</SelectItem>
+                <SelectItem value="daily">{t("scheduler.triggerDaily")}</SelectItem>
+                <SelectItem value="weekly">{t("scheduler.triggerWeekly")}</SelectItem>
+                <SelectItem value="monthly">{t("scheduler.triggerMonthly")}</SelectItem>
+                <SelectItem value="interval">{t("scheduler.triggerInterval")}</SelectItem>
+                <SelectItem value="custom">{t("scheduler.triggerCron")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {form.task_type === "task" && (
+          <div className="space-y-1.5">
+            <Label>{t("scheduler.agentProfile")}</Label>
+            <Select
+              value={form.agent_profile_id || "default"}
+              onValueChange={v => setForm(f => ({ ...f, agent_profile_id: v }))}
+            >
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent position="popper" className="max-h-[300px]">
+                {agentProfiles.length === 0 && (
+                  <SelectItem value="default">{t("scheduler.agentDefault")}</SelectItem>
+                )}
+                {agentProfiles.map(profile => (
+                  <SelectItem key={profile.id} value={profile.id}>
+                    <span className="flex items-center gap-1.5">
+                      {profile.icon && <span>{profile.icon}</span>}
+                      <span>{profile.name || profile.id}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+                {form.agent_profile_id
+                  && !agentProfiles.some(profile => profile.id === form.agent_profile_id) && (
+                  <SelectItem value={form.agent_profile_id}>
+                    {form.agent_profile_id}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {t("scheduler.agentProfileHint")}
+            </p>
+          </div>
+        )}
+
+        {renderTriggerFields()}
+
+        {form.task_type === "reminder" ? (
+          <div className="space-y-1.5">
+            <Label>{t("scheduler.reminderMessage")}</Label>
+            <Textarea
+              rows={3}
+              placeholder={t("scheduler.reminderPlaceholder")}
+              value={form.reminder_message}
+              onChange={e => setForm(f => ({ ...f, reminder_message: e.target.value }))}
+              className="resize-y"
+            />
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <Label>{t("scheduler.prompt")}</Label>
+            <Textarea
+              rows={3}
+              placeholder={t("scheduler.promptPlaceholder")}
+              value={form.prompt}
+              onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
+              className="resize-y"
+            />
+          </div>
+        )}
+
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <Label className="mb-0">{t("scheduler.channel")}</Label>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info size={14} className="text-muted-foreground cursor-help shrink-0" />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[260px]">
+                  {t("scheduler.channelTooltip")}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+          {(() => {
+            const currentKey = form.channel_id && form.chat_id ? `${form.channel_id}|${form.chat_id}` : "";
+            const knownKeys = new Set(channels.map(ch => `${ch.channel_id}|${ch.chat_id}`));
+            const isStale = !!currentKey && !knownKeys.has(currentKey);
+
+            return (
+              <>
+                <Select
+                  value={currentKey || "__none__"}
+                  onValueChange={v => {
+                    if (v === "__none__") {
+                      setForm(f => ({ ...f, channel_id: "", chat_id: "" }));
+                    } else {
+                      const [ch, ...rest] = v.split("|");
+                      setForm(f => ({ ...f, channel_id: ch, chat_id: rest.join("|") }));
+                    }
+                  }}
+                >
+                  <SelectTrigger className={cn("w-full", isStale && "border-amber-400 dark:border-amber-600")}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper" className="max-h-[300px]">
+                    <SelectItem value="__none__">
+                      {t("scheduler.channelNone")}
+                    </SelectItem>
+                    {(() => {
+                      const grouped = groupChannelsByPlatform(channels);
+                      return Object.entries(grouped).map(([platform, items], gi) => {
+                        const base = items[0] ? extractPlatformBase(items[0].channel_id).toLowerCase() : "";
+                        const LogoIcon = IM_LOGO_MAP[base];
+                        return (
+                          <SelectGroup key={platform}>
+                            {gi > 0 && <div className="mx-2 my-1 h-px bg-border" />}
+                            <SelectLabel className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground px-2">
+                              {LogoIcon && <LogoIcon size={14} />}
+                              {platform}
+                            </SelectLabel>
+                            {items.map(ch => {
+                              const itemBase = extractPlatformBase(ch.channel_id).toLowerCase();
+                              const ItemLogo = IM_LOGO_MAP[itemBase];
+                              const noPairedChat = !ch.chat_id;
+                              const label = ch.alias || ch.chat_name || shortChatId(ch.chat_id)
+                                || ch.bot_display_name || t("scheduler.channelPending");
+                              return (
+                                <SelectItem key={`${ch.channel_id}|${ch.chat_id}`} value={`${ch.channel_id}|${ch.chat_id}`}>
+                                  <span className="flex items-center gap-1.5">
+                                    {ItemLogo && <ItemLogo size={14} />}
+                                    {noPairedChat ? <IconLink size={12} /> : ch.chat_type === "group" ? <IconUsers size={12} /> : <IconMessageCircle size={12} />}
+                                    <span className={noPairedChat ? "text-muted-foreground" : ""}>{label}</span>
+                                  </span>
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectGroup>
+                        );
+                      });
+                    })()}
+                    {isStale && (
+                      <SelectItem value={currentKey}>
+                        <IconAlertCircle size={12} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />{formatChannelLabel(form.channel_id, form.chat_id)}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                {isStale && (
+                  <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 mt-1">
+                    <AlertTriangle size={12} className="shrink-0" />
+                    {t("scheduler.channelStale")}
+                  </p>
+                )}
+                {channels.length === 0 && !currentKey && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t("scheduler.channelEmpty")}
+                  </p>
+                )}
+              </>
+            );
+          })()}
+        </div>
+
+        <div className="flex items-center gap-2 pt-2">
+          <Label className="flex items-center gap-2 cursor-pointer text-sm font-normal">
+            <Checkbox checked={form.enabled} onCheckedChange={(v) => setForm(f => ({ ...f, enabled: !!v }))} />
+            {t("scheduler.enabled")}
+          </Label>
+        </div>
+      </CardContent>
+      <CardFooter className="flex gap-3 justify-end bg-muted/30 py-4 border-t border-border/50">
+        <Button variant="outline" size="sm" onClick={closeForm}>{t("scheduler.cancel")}</Button>
+        <Button size="sm" onClick={saveTask} disabled={busy}>
+          {busy && <Loader2 className="animate-spin mr-1.5" size={14} />}
+          {editingId ? t("scheduler.save") : t("scheduler.addTask")}
+        </Button>
+      </CardFooter>
+    </Card>
+  );
 
   const countBadge = (count: number, tab: TaskTab) => (
     <Badge
@@ -900,222 +1114,8 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
         </CardContent>
       </Card>
 
-      {/* Form dialog */}
-      {showForm && (
-        <Card className="gap-0 border-primary py-0 shadow-sm relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-1 h-full bg-primary" />
-          <CardHeader className="px-6 py-4 pb-3">
-            <CardTitle className="text-lg">
-              {editingId ? t("scheduler.editTask") : t("scheduler.addTask")}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>{t("scheduler.name")}</Label>
-              <Input
-                placeholder={t("scheduler.namePlaceholder")}
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label>{t("scheduler.taskType")}</Label>
-                <Select value={form.task_type} onValueChange={v => setForm(f => ({ ...f, task_type: v }))}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="reminder">{t("scheduler.typeReminder")}</SelectItem>
-                    <SelectItem value="task">{t("scheduler.typeTask")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>{t("scheduler.triggerType")}</Label>
-                <Select value={form.scheduleMode} onValueChange={v => setForm(f => ({ ...f, scheduleMode: v as ScheduleMode }))}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="once">{t("scheduler.triggerOnce")}</SelectItem>
-                    <SelectItem value="daily">{t("scheduler.triggerDaily")}</SelectItem>
-                    <SelectItem value="weekly">{t("scheduler.triggerWeekly")}</SelectItem>
-                    <SelectItem value="monthly">{t("scheduler.triggerMonthly")}</SelectItem>
-                    <SelectItem value="interval">{t("scheduler.triggerInterval")}</SelectItem>
-                    <SelectItem value="custom">{t("scheduler.triggerCron")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {form.task_type === "task" && (
-              <div className="space-y-1.5">
-                <Label>{t("scheduler.agentProfile")}</Label>
-                <Select
-                  value={form.agent_profile_id || "default"}
-                  onValueChange={v => setForm(f => ({ ...f, agent_profile_id: v }))}
-                >
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent position="popper" className="max-h-[300px]">
-                    {agentProfiles.length === 0 && (
-                      <SelectItem value="default">{t("scheduler.agentDefault")}</SelectItem>
-                    )}
-                    {agentProfiles.map(profile => (
-                      <SelectItem key={profile.id} value={profile.id}>
-                        <span className="flex items-center gap-1.5">
-                          {profile.icon && <span>{profile.icon}</span>}
-                          <span>{profile.name || profile.id}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                    {form.agent_profile_id
-                      && !agentProfiles.some(profile => profile.id === form.agent_profile_id) && (
-                      <SelectItem value={form.agent_profile_id}>
-                        {form.agent_profile_id}
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  {t("scheduler.agentProfileHint")}
-                </p>
-              </div>
-            )}
-
-            {renderTriggerFields()}
-
-            {form.task_type === "reminder" ? (
-              <div className="space-y-1.5">
-                <Label>{t("scheduler.reminderMessage")}</Label>
-                <Textarea
-                  rows={3}
-                  placeholder={t("scheduler.reminderPlaceholder")}
-                  value={form.reminder_message}
-                  onChange={e => setForm(f => ({ ...f, reminder_message: e.target.value }))}
-                  className="resize-y"
-                />
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                <Label>{t("scheduler.prompt")}</Label>
-                <Textarea
-                  rows={3}
-                  placeholder={t("scheduler.promptPlaceholder")}
-                  value={form.prompt}
-                  onChange={e => setForm(f => ({ ...f, prompt: e.target.value }))}
-                  className="resize-y"
-                />
-              </div>
-            )}
-
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5">
-                <Label className="mb-0">{t("scheduler.channel")}</Label>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Info size={14} className="text-muted-foreground cursor-help shrink-0" />
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-[260px]">
-                      {t("scheduler.channelTooltip")}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              {(() => {
-                const currentKey = form.channel_id && form.chat_id ? `${form.channel_id}|${form.chat_id}` : "";
-                const knownKeys = new Set(channels.map(ch => `${ch.channel_id}|${ch.chat_id}`));
-                const isStale = !!currentKey && !knownKeys.has(currentKey);
-
-                return (
-                  <>
-                    <Select
-                      value={currentKey || "__none__"}
-                      onValueChange={v => {
-                        if (v === "__none__") {
-                          setForm(f => ({ ...f, channel_id: "", chat_id: "" }));
-                        } else {
-                          const [ch, ...rest] = v.split("|");
-                          setForm(f => ({ ...f, channel_id: ch, chat_id: rest.join("|") }));
-                        }
-                      }}
-                    >
-                      <SelectTrigger className={cn("w-full", isStale && "border-amber-400 dark:border-amber-600")}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent position="popper" className="max-h-[300px]">
-                        <SelectItem value="__none__">
-                          {t("scheduler.channelNone")}
-                        </SelectItem>
-                        {(() => {
-                          const grouped = groupChannelsByPlatform(channels);
-                          return Object.entries(grouped).map(([platform, items], gi) => {
-                            const base = items[0] ? extractPlatformBase(items[0].channel_id).toLowerCase() : "";
-                            const LogoIcon = IM_LOGO_MAP[base];
-                            return (
-                              <SelectGroup key={platform}>
-                                {gi > 0 && <div className="mx-2 my-1 h-px bg-border" />}
-                                <SelectLabel className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground px-2">
-                                  {LogoIcon && <LogoIcon size={14} />}
-                                  {platform}
-                                </SelectLabel>
-                                {items.map(ch => {
-                                  const itemBase = extractPlatformBase(ch.channel_id).toLowerCase();
-                                  const ItemLogo = IM_LOGO_MAP[itemBase];
-                                  const noPairedChat = !ch.chat_id;
-                                  const label = ch.alias || ch.chat_name || shortChatId(ch.chat_id)
-                                    || ch.bot_display_name || t("scheduler.channelPending");
-                                  return (
-                                    <SelectItem key={`${ch.channel_id}|${ch.chat_id}`} value={`${ch.channel_id}|${ch.chat_id}`}>
-                                      <span className="flex items-center gap-1.5">
-                                        {ItemLogo && <ItemLogo size={14} />}
-                                        {noPairedChat ? <IconLink size={12} /> : ch.chat_type === "group" ? <IconUsers size={12} /> : <IconMessageCircle size={12} />}
-                                        <span className={noPairedChat ? "text-muted-foreground" : ""}>{label}</span>
-                                      </span>
-                                    </SelectItem>
-                                  );
-                                })}
-                              </SelectGroup>
-                            );
-                          });
-                        })()}
-                        {isStale && (
-                          <SelectItem value={currentKey}>
-                            <IconAlertCircle size={12} style={{ display: "inline", verticalAlign: "middle", marginRight: 3 }} />{formatChannelLabel(form.channel_id, form.chat_id)}
-                          </SelectItem>
-                        )}
-                      </SelectContent>
-                    </Select>
-                    {isStale && (
-                      <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 mt-1">
-                        <AlertTriangle size={12} className="shrink-0" />
-                        {t("scheduler.channelStale")}
-                      </p>
-                    )}
-                    {channels.length === 0 && !currentKey && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {t("scheduler.channelEmpty")}
-                      </p>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-
-            <div className="flex items-center gap-2 pt-2">
-              <Label className="flex items-center gap-2 cursor-pointer text-sm font-normal">
-                <Checkbox checked={form.enabled} onCheckedChange={(v) => setForm(f => ({ ...f, enabled: !!v }))} />
-                {t("scheduler.enabled")}
-              </Label>
-            </div>
-          </CardContent>
-          <CardFooter className="flex gap-3 justify-end bg-muted/30 py-4 border-t border-border/50">
-            <Button variant="outline" size="sm" onClick={closeForm}>{t("scheduler.cancel")}</Button>
-            <Button size="sm" onClick={saveTask} disabled={busy}>
-              {busy && <Loader2 className="animate-spin mr-1.5" size={14} />}
-              {editingId ? t("scheduler.save") : t("scheduler.addTask")}
-            </Button>
-          </CardFooter>
-        </Card>
-      )}
+      {/* New tasks still open near the header; edits open inline below the selected task. */}
+      {showForm && !editingId && renderTaskForm()}
 
       {/* Task list */}
       <div className="flex flex-col gap-4">
@@ -1144,7 +1144,11 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
         ) : (
           <div className="flex flex-col gap-2.5">
             {filteredTasks.map(task => (
-              <Card key={task.id} className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-all hover:shadow-md">
+              <React.Fragment key={task.id}>
+              <Card className={cn(
+                "gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-all hover:shadow-md",
+                editingId === task.id && "border-primary/60 shadow-md",
+              )}>
                 <CardContent className="px-4 py-3.5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2.5">
                     <div className="flex flex-wrap items-center gap-1.5 min-w-0">
@@ -1334,6 +1338,8 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                   )}
                 </CardContent>
               </Card>
+              {showForm && editingId === task.id && renderTaskForm()}
+              </React.Fragment>
             ))}
           </div>
         )}

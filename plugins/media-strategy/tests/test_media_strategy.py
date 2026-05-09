@@ -36,8 +36,20 @@ def test_ui_assets_and_iconify_tokens_exist() -> None:
     assert "/api/plugins/_sdk/" not in html
     assert "solar:radar-linear" in html
     assert "#0F766E" in html
-    for token in ("/radar", "/ingest", "/sources/sync", "/packages/subscribe"):
+    for token in (
+        "/radar",
+        "/ingest",
+        "/sources/sync",
+        "/packages/subscribe",
+        "/reports",
+        "/storage/stats",
+        "/storage/open-folder",
+        "/storage/list-dir",
+        "/storage/mkdir",
+    ):
         assert token in html
+    assert "[hidden] { display:none !important; }" in html
+    assert 'data-tab="reports"' in html
     for icon in (PLUGIN_DIR / "icon.svg", ui / "icon.svg", ui / "media-strategy-brand.svg"):
         blob = icon.read_text("utf-8")
         assert "<svg" in blob and "Iconify source: solar:radar-linear" in blob
@@ -46,7 +58,7 @@ def test_ui_assets_and_iconify_tokens_exist() -> None:
 def test_builtin_source_catalog_is_rich() -> None:
     from media_models import SOURCE_DEFS
 
-    assert len(SOURCE_DEFS) >= 18
+    assert len(SOURCE_DEFS) >= 30
     for required in (
         "cctv-domestic",
         "cctv-hk-tw",
@@ -54,10 +66,32 @@ def test_builtin_source_catalog_is_rich() -> None:
         "zaobao-china",
         "taiwan-info",
         "diplomat-china-power",
+        "people-politics",
+        "xinhua-politics",
+        "thepaper-featured",
+        "yicai-news",
+        "caixin-latest",
+        "kr36",
+        "ithome",
+        "jiqizhixin",
+        "qbitai",
+        "rsshub-douyin-hot",
     ):
         assert required in SOURCE_DEFS
     packages = {pkg for source in SOURCE_DEFS.values() for pkg in source["packages"]}
     assert {"policy", "taiwan", "economy", "world", "tech", "platform"}.issubset(packages)
+
+
+def test_default_enabled_strategy_favors_domestic() -> None:
+    from media_models import SOURCE_DEFS
+
+    # Domestic sources are enabled by default; overseas Western outlets are not.
+    assert SOURCE_DEFS["people-politics"]["default_enabled"] is True
+    assert SOURCE_DEFS["yicai-news"]["default_enabled"] is True
+    assert SOURCE_DEFS["rsshub-weibo-hot"]["default_enabled"] is True
+    assert SOURCE_DEFS["bbc-zh"]["default_enabled"] is False
+    assert SOURCE_DEFS["dw-zh"]["default_enabled"] is False
+    assert SOURCE_DEFS["reuters-world"]["default_enabled"] is False
 
 
 def test_feed_parser_stdlib_fallback() -> None:
@@ -128,6 +162,76 @@ async def test_task_manager_seeds_and_upserts_article(tmp_path: Path) -> None:
         )
         assert inserted2 is False
         assert article2["duplicate_count"] == 2
+    finally:
+        await tm.close()
+
+
+@pytest.mark.asyncio
+async def test_package_crud_and_source_editing(tmp_path: Path) -> None:
+    from media_task_manager import MediaTaskManager
+
+    tm = MediaTaskManager(tmp_path / "ms.sqlite")
+    await tm.init()
+    try:
+        # Builtin packages are seeded into the dedicated table.
+        pkgs = await tm.list_packages()
+        assert "policy" in pkgs and pkgs["policy"]["custom"] is False
+
+        # Create a custom package.
+        custom = await tm.add_custom_package(
+            label_zh="地缘安全",
+            description="跨区域地缘冲突追踪",
+            keywords=["地缘", "冲突"],
+            enabled=True,
+        )
+        assert custom["custom"] is True
+        assert custom["enabled"] is True
+        assert custom["label_zh"] == "地缘安全"
+
+        # Builtin packages cannot be deleted.
+        with pytest.raises(PermissionError):
+            await tm.delete_custom_package("policy")
+
+        # Custom package can be edited.
+        edited = await tm.update_package(
+            custom["id"], description="新描述", keywords=["a", "b"]
+        )
+        assert edited["description"] == "新描述"
+        assert edited["keywords"] == ["a", "b"]
+
+        # Cloning a builtin produces a new custom package with the same metadata.
+        clone = await tm.clone_builtin_package("taiwan", label_zh="我的台海")
+        assert clone["custom"] is True
+        assert clone["label_zh"] == "我的台海"
+
+        # Source editing covers labels, packages, authority, enabled.
+        src = await tm.add_custom_source(
+            name="Demo", url="https://example.com/feed.xml", package_ids=[custom["id"]]
+        )
+        updated = await tm.update_source(
+            src["id"], label_zh="新名字", authority=0.83, package_ids=[custom["id"], "policy"]
+        )
+        assert updated["label_zh"] == "新名字"
+        assert abs(updated["authority"] - 0.83) < 1e-6
+        assert set(updated["package_ids"]) == {custom["id"], "policy"}
+
+        # Bulk toggle by package operates only on members of that package.
+        stats = await tm.bulk_set_sources_enabled_for_package(custom["id"], False)
+        assert stats["affected"] == 1
+        sources_now = await tm.list_sources()
+        for s in sources_now:
+            if s["id"] == src["id"]:
+                assert s["enabled"] is False
+
+        # Builtin source cannot be deleted.
+        with pytest.raises(PermissionError):
+            await tm.delete_custom_source("cctv-domestic")
+
+        # Deleting a custom package strips its id from sources but keeps the source.
+        await tm.delete_custom_package(custom["id"])
+        survivors = await tm.list_sources()
+        my_src = next(s for s in survivors if s["id"] == src["id"])
+        assert custom["id"] not in (my_src.get("package_ids") or [])
     finally:
         await tm.close()
 

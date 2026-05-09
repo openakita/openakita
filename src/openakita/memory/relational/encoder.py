@@ -8,6 +8,7 @@ import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ..json_utils import coerce_text
 from .types import (
     Dimension,
     EdgeType,
@@ -76,7 +77,7 @@ class MemoryEncoder:
 
         for turn in turns:
             role = turn.get("role", "")
-            content = turn.get("content", "") or ""
+            content = coerce_text(turn.get("content"))
             if not content or len(content) < 15:
                 continue
 
@@ -318,7 +319,7 @@ class MemoryEncoder:
         total = 0
         for t in turns:
             role = t.get("role", "?")
-            content = (t.get("content") or "")[:600]
+            content = coerce_text(t.get("content"))[:600]
             line = f"[{role}] {content}"
             if total + len(line) > max_chars:
                 break
@@ -435,7 +436,7 @@ Output ONLY valid JSON array:"""
                     )
 
             node = MemoryNode(
-                content=item.get("content", "")[:500],
+                content=coerce_text(item.get("content"))[:500],
                 node_type=nt,
                 occurred_at=datetime.now(),
                 entities=entities,

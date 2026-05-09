@@ -32,9 +32,10 @@
         --border:#334155;
       }
     }
+    [hidden] { display:none !important; }
     body { background:var(--bg); color:var(--text); line-height:1.5; -webkit-font-smoothing:antialiased; }
     .app { min-height:100%; display:flex; flex-direction:column; }
-    .header { display:flex; justify-content:space-between; align-items:center; padding:14px 20px; background:var(--bg-card); border-bottom:1px solid var(--border); }
+    .header { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:16px 20px; background:linear-gradient(135deg,var(--bg-card),var(--bg-hover)); border-bottom:1px solid var(--border); }
     .oa-hero-title { display:flex; align-items:center; gap:12px; margin:0; font-size:20px; font-weight:700; color:var(--text); }
     .oa-hero-title__icon { width:40px; height:40px; border-radius:12px; background:linear-gradient(135deg,#2DD4BF,#0F766E); display:grid; place-items:center; color:#fff; box-shadow:0 8px 22px rgba(15,118,110,.22); }
     .oa-hero-title__icon img { width:32px; height:32px; }
@@ -42,27 +43,33 @@
     .oa-hero-title__sub { font-size:12px; color:var(--text-muted); font-weight:500; margin-top:4px; }
     .api-pill { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:999px; border:1px solid var(--border); color:var(--text-muted); font-size:12px; background:var(--bg-card); }
     .api-pill.ok { color:var(--primary); border-color:rgba(15,118,110,.35); background:var(--primary-soft); }
-    .tabs { display:flex; gap:4px; padding:0 20px; background:var(--bg-card); border-bottom:1px solid var(--border); }
-    .tab { padding:10px 14px; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--text-muted); cursor:pointer; font-size:13px; display:inline-flex; gap:6px; align-items:center; }
+    .tabs { display:flex; gap:4px; padding:0 20px; background:var(--bg-card); border-bottom:1px solid var(--border); overflow-x:auto; }
+    .tab { padding:11px 14px; border:0; border-bottom:2px solid transparent; background:transparent; color:var(--text-muted); cursor:pointer; font-size:13px; display:inline-flex; gap:6px; align-items:center; white-space:nowrap; }
     .tab:hover { color:var(--text); background:var(--bg-hover); }
     .tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600; }
-    .content { padding:18px 20px; flex:1; overflow:auto; }
-    .stack-layout { display:flex; flex-direction:column; gap:12px; }
-    .grid { display:grid; grid-template-columns:1.2fr .8fr; gap:14px; align-items:start; }
-    .card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; box-shadow:0 1px 2px rgba(15,23,42,.04); }
-    .card.grow { min-height:320px; }
-    .oa-section-title { display:flex; align-items:center; gap:10px; margin:0 0 12px; font-size:16px; font-weight:650; }
+    .content { padding:18px 20px; flex:1; overflow:auto; display:flex; }
+    .content > section { width:100%; min-height:calc(100vh - 154px); }
+    .stack-layout { display:flex; flex-direction:column; gap:14px; }
+    .grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(360px,.9fr); gap:14px; align-items:stretch; min-height:0; }
+    .card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:16px; box-shadow:0 1px 2px rgba(15,23,42,.04); min-width:0; }
+    .card-fill { display:flex; flex-direction:column; min-height:0; height:100%; }
+    .card.grow { min-height:0; }
+    .oa-section-title { display:flex; align-items:center; gap:10px; margin:0 0 14px; font-size:16px; font-weight:650; }
     .oa-section-title::before { content:""; width:4px; height:18px; border-radius:2px; background:var(--primary); }
-    .oa-hint { font-size:12px; color:var(--text); line-height:1.6; background:var(--bg-hover); border-left:3px solid var(--primary); padding:8px 12px; border-radius:6px; margin-bottom:10px; }
-    .filter-bar { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card); }
+    .oa-hint { font-size:12px; color:var(--text); line-height:1.6; background:var(--bg-hover); border-left:3px solid var(--primary); padding:10px 12px; border-radius:8px; margin-bottom:12px; }
+    .filter-bar { display:grid; grid-template-columns:auto minmax(160px,1fr) minmax(140px,.7fr) minmax(220px,1.2fr) auto auto; gap:12px; align-items:end; padding:14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card); }
+    .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; align-items:end; margin-bottom:12px; }
+    .field { display:flex; flex-direction:column; gap:6px; min-width:0; }
+    .field label { font-size:12px; color:var(--text-muted); }
     .seg-group { display:inline-flex; gap:4px; padding:3px; background:var(--bg-hover); border-radius:8px; }
     .seg-btn { padding:6px 10px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--text-muted); cursor:pointer; font-size:12px; }
     .seg-btn.active { background:var(--bg-card); color:var(--primary); border-color:var(--border); font-weight:650; }
-    .btn { padding:7px 12px; border-radius:7px; border:1px solid var(--border); background:var(--bg-card); color:var(--text); cursor:pointer; font-size:13px; display:inline-flex; gap:6px; align-items:center; }
+    .btn { min-height:34px; padding:7px 13px; border-radius:7px; border:1px solid var(--border); background:var(--bg-card); color:var(--text); cursor:pointer; font-size:13px; display:inline-flex; gap:6px; align-items:center; justify-content:center; white-space:nowrap; }
     .btn:hover { background:var(--bg-hover); }
+    .btn:disabled { opacity:.58; cursor:not-allowed; }
     .btn-primary { color:#fff; background:var(--primary); border-color:var(--primary); }
     .btn-primary:hover { background:var(--primary-hover); }
-    .input { padding:8px 10px; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text); min-width:180px; }
+    .input { min-height:34px; padding:8px 10px; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text); min-width:0; width:100%; }
     .item { padding:12px; border:1px solid var(--border); border-radius:9px; margin-bottom:8px; background:var(--bg-card); }
     .item h3 { margin:0 0 6px; font-size:14px; }
     .meta { display:flex; flex-wrap:wrap; gap:6px; color:var(--text-muted); font-size:12px; }
@@ -70,11 +77,16 @@
     .pill.score { color:var(--primary); border-color:rgba(15,118,110,.35); }
     .pill.high { color:var(--danger); } .pill.medium { color:var(--warning); } .pill.low { color:var(--success); }
     .empty { text-align:center; color:var(--text-muted); padding:28px 12px; font-size:13px; }
+    .empty-fill { flex:1; display:grid; place-items:center; min-height:220px; }
     .report { max-height:520px; overflow:auto; color:var(--text); }
     .report h1 { font-size:20px; }.report h2 { font-size:16px; margin-top:18px; }.report p,.report li { font-size:13px; }
-    .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-    .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
-    .metric { padding:10px 12px; border:1px solid var(--border); border-radius:9px; background:var(--bg-card); }
+    .toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px; }
+    .toolbar .input { flex:1 1 220px; }
+    .toast { position:fixed; right:18px; bottom:18px; max-width:360px; padding:10px 12px; border-radius:9px; border:1px solid var(--border); background:var(--bg-card); color:var(--text); box-shadow:0 12px 32px rgba(15,23,42,.16); font-size:13px; z-index:10; }
+    .toast.error { border-color:rgba(220,38,38,.45); color:var(--danger); }
+    .selected-bar { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:10px 12px; border:1px dashed rgba(15,118,110,.45); border-radius:9px; background:var(--bg-hover); color:var(--text-muted); font-size:12px; margin-bottom:12px; }
+    .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+    .metric { padding:12px 14px; border:1px solid var(--border); border-radius:9px; background:var(--bg-card); }
     .metric strong { display:block; font-size:18px; color:var(--primary); }
     .metric span { font-size:12px; color:var(--text-muted); }
     .source-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
@@ -83,16 +95,96 @@
     .source-card__head { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
     .source-card__title { font-size:13px; font-weight:650; }
     .source-card__url { margin-top:6px; font-size:11px; color:var(--text-dim); word-break:break-all; }
+    .source-card__actions { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }
+    .source-card__actions .btn { padding:4px 8px; font-size:12px; min-height:28px; }
     .package-row { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
-    .package-card { border:1px solid var(--border); border-radius:9px; padding:10px; background:var(--bg-card); cursor:pointer; }
+    .package-card { border:1px solid var(--border); border-radius:9px; padding:10px; background:var(--bg-card); cursor:pointer; position:relative; display:flex; flex-direction:column; gap:4px; }
     .package-card.active { border-color:var(--primary); background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); box-shadow:0 0 0 1px rgba(15,118,110,.16) inset; }
     .package-card strong { display:block; font-size:13px; }
     .package-card span { color:var(--text-muted); font-size:12px; }
-    .task-list { display:grid; gap:8px; }
+    .package-card__badge { position:absolute; top:6px; right:6px; padding:1px 6px; border-radius:999px; font-size:10px; background:var(--bg-hover); color:var(--text-muted); border:1px solid var(--border); }
+    .package-card__badge.custom { color:var(--primary); border-color:rgba(15,118,110,.4); background:var(--primary-soft); }
+    .package-card__actions { display:flex; gap:4px; flex-wrap:wrap; margin-top:6px; padding-top:6px; border-top:1px dashed var(--border); }
+    .package-card__actions .pa-btn { padding:3px 7px; border-radius:6px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-muted); font-size:11px; cursor:pointer; }
+    .package-card__actions .pa-btn:hover { color:var(--primary); border-color:var(--primary); }
+    .package-card__actions .pa-btn.danger:hover { color:var(--danger); border-color:var(--danger); }
+    .section-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
+    .section-toolbar .filler { flex:1; }
+    /* details (collapsible) */
+    .collapsible { border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card); }
+    .collapsible > summary { list-style:none; cursor:pointer; padding:14px 16px; display:flex; gap:10px; align-items:center; user-select:none; }
+    .collapsible > summary::-webkit-details-marker { display:none; }
+    .collapsible > summary::before { content:"\\25B6"; color:var(--text-dim); font-size:10px; transition:transform .15s; }
+    .collapsible[open] > summary::before { transform:rotate(90deg); }
+    .collapsible > summary .oa-section-title { margin:0; }
+    .collapsible__body { padding:0 16px 16px; }
+    .collapsible__count { color:var(--text-muted); font-size:12px; margin-left:auto; }
+    /* chip multi-select */
+    .chip-row { display:flex; flex-wrap:wrap; gap:6px; padding:6px; border:1px solid var(--border); border-radius:8px; background:var(--bg); min-height:42px; }
+    .chip { display:inline-flex; align-items:center; gap:4px; padding:4px 9px; border-radius:999px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-muted); font-size:12px; cursor:pointer; }
+    .chip.on { color:#fff; background:var(--primary); border-color:var(--primary); }
+    .chip:hover { border-color:var(--primary); }
+    /* tooltip */
+    .has-tip { display:inline-flex; align-items:center; gap:4px; }
+    .tip-ico { display:inline-grid; place-items:center; width:14px; height:14px; border-radius:50%; border:1px solid var(--border); background:var(--bg-hover); color:var(--text-muted); font-size:10px; cursor:help; }
+    .has-tip:hover .tip-pop, .tip-ico:focus + .tip-pop { display:block; }
+    .tip-pop { display:none; position:absolute; z-index:30; max-width:280px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg-card); color:var(--text); font-size:12px; line-height:1.5; box-shadow:0 12px 32px rgba(15,23,42,.18); margin-top:18px; }
+    .tip-anchor { position:relative; display:inline-block; }
+    /* generic modal */
+    .modal-shade { position:fixed; inset:0; z-index:25; display:grid; place-items:center; background:rgba(15,23,42,.42); padding:18px; }
+    .modal-card { width:min(560px,96vw); max-height:88vh; display:flex; flex-direction:column; border:1px solid var(--border); border-radius:12px; background:var(--bg-card); box-shadow:0 24px 80px rgba(15,23,42,.24); overflow:hidden; }
+    .modal-card__head, .modal-card__foot { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:12px 14px; border-bottom:1px solid var(--border); }
+    .modal-card__foot { border-top:1px solid var(--border); border-bottom:0; }
+    .modal-card__body { padding:14px; overflow:auto; display:flex; flex-direction:column; gap:12px; }
+    .advanced-block { border-top:1px dashed var(--border); padding-top:10px; margin-top:4px; }
+    .advanced-toggle { background:none; border:0; color:var(--primary); padding:0; cursor:pointer; font-size:12px; display:inline-flex; gap:4px; align-items:center; }
+    .range-row { display:flex; gap:10px; align-items:center; }
+    .range-row input[type=range] { flex:1; }
+    .range-row .range-val { font-variant-numeric:tabular-nums; min-width:40px; text-align:right; color:var(--primary); font-weight:650; }
+    .task-list { display:grid; gap:8px; align-content:start; }
     .task-row { display:flex; justify-content:space-between; gap:10px; border:1px solid var(--border); border-radius:8px; padding:9px 10px; font-size:12px; }
     .status-done { color:var(--success); }.status-failed { color:var(--danger); }.status-running { color:var(--warning); }
-    @media (max-width: 900px) { .grid { grid-template-columns:1fr; } .header { align-items:flex-start; gap:10px; flex-direction:column; } }
-    @media (max-width: 700px) { .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    .report-row { border:1px solid var(--border); border-radius:9px; padding:10px; cursor:pointer; background:var(--bg-card); }
+    .report-row:hover { background:var(--bg-hover); }
+    .storage-panel { margin-top:16px; padding:18px; border:1px solid var(--border); border-radius:12px; background:linear-gradient(180deg,var(--bg-card),var(--bg)); }
+    .storage-panel .oa-section-title { margin-bottom:16px; }
+    .storage-path-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:end; }
+    .storage-path-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:flex-end; padding-bottom:1px; }
+    .storage-path-actions .btn { min-width:82px; }
+    .storage-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; margin-top:16px; }
+    .storage-card { padding:14px; border:1px solid var(--border); border-radius:11px; background:var(--bg-card); cursor:pointer; transition:border-color .15s, background .15s, transform .15s; }
+    .storage-card:hover { border-color:var(--primary); background:var(--bg-hover); transform:translateY(-1px); }
+    .storage-card strong { display:block; margin:4px 0; color:var(--primary); font-size:20px; line-height:1.2; }
+    .status-note { margin-top:14px; padding:13px 14px; border-radius:11px; font-size:12px; color:var(--text-muted); background:var(--bg-hover); border:1px solid var(--border); }
+    .status-note__title { display:flex; align-items:center; gap:8px; margin-bottom:6px; color:var(--text); font-weight:650; font-size:13px; }
+    .status-note__path { color:var(--text); word-break:break-all; }
+    .status-note__desc { margin-top:5px; line-height:1.55; }
+    .status-note.warn { color:#92400e; background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.35); }
+    .status-note.error { color:var(--danger); background:rgba(220,38,38,.08); border-color:rgba(220,38,38,.35); }
+    .settings-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:16px 0 4px; margin-top:4px; border-top:1px dashed var(--border); }
+    .runtime-info-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin-top:14px; }
+    .info-card { padding:13px 14px; border:1px solid var(--border); border-radius:11px; background:var(--bg-card); min-width:0; }
+    .info-card__label { font-size:12px; color:var(--text-muted); margin-bottom:5px; }
+    .info-card__value { color:var(--text); font-size:13px; word-break:break-all; }
+    .folder-modal { position:fixed; inset:0; z-index:20; display:grid; place-items:center; background:rgba(15,23,42,.38); padding:18px; }
+    .folder-dialog { width:min(760px,96vw); max-height:86vh; display:flex; flex-direction:column; border:1px solid var(--border); border-radius:12px; background:var(--bg-card); box-shadow:0 24px 80px rgba(15,23,42,.24); overflow:hidden; }
+    .folder-dialog__head, .folder-dialog__foot { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:12px 14px; border-bottom:1px solid var(--border); }
+    .folder-dialog__foot { border-top:1px solid var(--border); border-bottom:0; }
+    .folder-dialog__path { padding:9px 14px; color:var(--text-muted); font-size:12px; border-bottom:1px solid var(--border); word-break:break-all; }
+    .folder-list { padding:10px; overflow:auto; min-height:260px; max-height:48vh; }
+    .folder-item { width:100%; display:flex; justify-content:space-between; gap:12px; align-items:center; padding:9px 10px; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--text); cursor:pointer; text-align:left; }
+    .folder-item:hover { background:var(--bg-hover); border-color:var(--border); }
+    .folder-new-row { display:flex; gap:8px; padding:10px 14px; border-top:1px solid var(--border); }
+    #tab-radar > .grid { flex:1; }
+    #tab-radar > .grid > .stack-layout { display:grid; grid-template-rows:minmax(0,1fr) minmax(170px,.5fr); height:100%; }
+    #items { flex:1; overflow:auto; }
+    #tasks { flex:1; }
+    #briefOut, #planOut, #reportPreview { flex:1; min-height:260px; }
+    #tab-brief > .card, #tab-plan > .card { flex:1; display:flex; flex-direction:column; }
+    #tab-reports > .grid { flex:1; }
+    @media (max-width: 1100px) { .filter-bar { grid-template-columns:repeat(2,minmax(0,1fr)); } .filter-bar .pill { grid-column:1 / -1; } }
+    @media (max-width: 900px) { .grid { grid-template-columns:1fr; } .header { align-items:flex-start; gap:10px; flex-direction:column; } #tab-radar > .grid > .stack-layout { display:flex; height:auto; } .storage-path-row { grid-template-columns:1fr; } }
+    @media (max-width: 700px) { .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .filter-bar { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -108,6 +200,7 @@
     <button class="tab active" data-tab="radar">雷达</button>
     <button class="tab" data-tab="brief">简报</button>
     <button class="tab" data-tab="plan">策研采编</button>
+    <button class="tab" data-tab="reports">报告</button>
     <button class="tab" data-tab="settings">设置</button>
   </nav>
   <main class="content">
@@ -129,72 +222,372 @@
         <div class="metric"><strong>-</strong><span>失败源</span></div>
       </div>
       <div class="grid">
-        <div class="card grow"><h2 class="oa-section-title">热点榜</h2><div id="items" class="empty">暂无数据，先拉取 RSS 或调整时间窗。</div></div>
+        <div class="card card-fill grow"><h2 class="oa-section-title">热点榜</h2><div id="items" class="empty empty-fill">暂无数据，先拉取 RSS 或调整时间窗。</div></div>
         <div class="stack-layout">
-          <div class="card"><h2 class="oa-section-title">信源复核</h2><div class="oa-hint">所有热点都保留原文链接。对高风险内容，请先复核再进入采编。</div><button id="verify" class="btn btn-primary">为选中热点生成复核清单</button><div id="verifyOut" class="report"></div></div>
-          <div class="card"><h2 class="oa-section-title">最近任务</h2><div id="tasks" class="task-list"></div></div>
+          <div class="card card-fill"><h2 class="oa-section-title">信源复核</h2><div class="oa-hint">所有热点都保留原文链接。对高风险内容，请先复核再进入采编。</div><div id="selectedSummary" class="selected-bar"><span>未选择热点</span><button id="clearSelection" class="btn">清空</button></div><div class="toolbar"><input id="verifyTopic" class="input" placeholder="复核主题，可留空"><button id="verify" class="btn btn-primary">生成复核清单</button></div><div id="verifyOut" class="report"></div></div>
+          <div class="card card-fill"><h2 class="oa-section-title">最近任务</h2><div id="tasks" class="task-list"></div></div>
         </div>
       </div>
     </section>
     <section id="tab-brief" class="stack-layout" hidden>
-      <div class="card"><h2 class="oa-section-title">融媒简报</h2><div class="oa-hint">适合早报、午报、晚报和专题简报，每条保留来源链接。</div><button id="brief" class="btn btn-primary">生成今日简报</button><div id="briefOut" class="report"></div></div>
+      <div class="card card-fill">
+        <h2 class="oa-section-title">融媒简报</h2>
+        <div class="oa-hint">适合早报、午报、晚报和专题简报，每条保留来源链接。若主程序 Brain（大模型推理能力）不可用，会自动用规则模板降级生成。</div>
+        <div class="form-grid">
+          <div class="field"><label for="briefSession">简报时段</label><select id="briefSession" class="input"><option value="morning">早报</option><option value="noon">午报</option><option value="evening">晚报</option><option value="topic">专题简报</option></select></div>
+          <div class="field"><label for="briefPackage">套餐范围</label><select id="briefPackage" class="input"><option value="">全部套餐</option><option value="taiwan">台海观察</option><option value="policy">时政政策</option><option value="economy">经济财经</option><option value="world">国际局势</option><option value="tech">科技产业</option><option value="platform">平台热点</option></select></div>
+          <div class="field"><label for="briefHours">时间窗口</label><select id="briefHours" class="input"><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="72">72 小时</option><option value="168">7 天</option></select></div>
+          <div class="field"><label for="briefLimit">条数</label><input id="briefLimit" class="input" type="number" min="3" max="100" value="20"></div>
+        </div>
+        <div class="toolbar"><button id="brief" class="btn btn-primary">生成简报</button><button id="briefRefresh" class="btn">先刷新热点</button></div>
+        <div id="briefOut" class="report"></div>
+      </div>
     </section>
     <section id="tab-plan" class="stack-layout" hidden>
-      <div class="card"><h2 class="oa-section-title">策研采编计划</h2><div class="oa-hint">复刻只复用角度、结构和制作方法，不照搬原文。</div><input id="topic" class="input" placeholder="主题，可留空按选中热点生成"><button id="plan" class="btn btn-primary">生成采访/拍摄/脚本计划</button><div id="planOut" class="report"></div></div>
+      <div class="card card-fill">
+        <h2 class="oa-section-title">策研采编计划</h2>
+        <div class="oa-hint">复刻只复用选题角度、叙事结构和制作方法，不照搬标题、文案或视频内容。</div>
+        <div id="planSelection" class="selected-bar"><span>优先使用雷达页选中的热点；未选择时按主题检索。</span><button id="useTopItems" class="btn">选中前三条</button></div>
+        <div class="form-grid">
+          <div class="field"><label for="topic">主题</label><input id="topic" class="input" placeholder="例如：台海最新动态"></div>
+          <div class="field"><label for="targetFormat">内容形态</label><select id="targetFormat" class="input"><option value="short_video">短视频</option><option value="interview">采访</option><option value="article">深度文章</option><option value="live_script">直播脚本</option></select></div>
+          <div class="field"><label for="tone">语气</label><input id="tone" class="input" value="稳健客观"></div>
+        </div>
+        <div class="toolbar"><button id="plan" class="btn btn-primary">生成采访/拍摄/脚本计划</button></div>
+        <div id="planOut" class="report"></div>
+      </div>
+    </section>
+    <section id="tab-reports" class="stack-layout" hidden>
+      <div class="grid">
+        <div class="card card-fill"><h2 class="oa-section-title">报告历史</h2><div class="toolbar"><button id="reloadReports" class="btn">刷新报告</button></div><div id="reportsOut" class="task-list"></div></div>
+        <div class="card card-fill"><h2 class="oa-section-title">报告预览</h2><div id="reportPreview" class="report empty empty-fill">选择左侧报告查看内容。</div></div>
+      </div>
     </section>
     <section id="tab-settings" class="stack-layout" hidden>
-      <div class="card"><h2 class="oa-section-title">套餐订阅</h2><div id="packagesOut" class="package-row">加载中</div></div>
+      <div class="card">
+        <div class="section-toolbar">
+          <h2 class="oa-section-title" style="margin:0">套餐订阅</h2>
+          <span class="filler"></span>
+          <button id="newPackage" class="btn btn-primary">+ 新建套餐</button>
+        </div>
+        <div class="oa-hint">套餐 = 主题标签集合。点击卡片切换订阅状态（仅切换，不会立刻刷新雷达）。内置套餐只读，可「克隆」为我的套餐再编辑。自定义套餐可以编辑或删除。</div>
+        <div id="packagesOut" class="package-row">加载中</div>
+      </div>
       <div class="card">
         <h2 class="oa-section-title">添加 RSS 源</h2>
-        <div class="toolbar">
-          <input id="feedName" class="input" placeholder="源名称">
-          <input id="feedUrl" class="input" style="min-width:320px" placeholder="https://example.com/feed.xml">
-          <select id="feedPackage" class="input"><option value="taiwan">台海观察</option><option value="policy">时政政策</option><option value="economy">经济财经</option><option value="world">国际局势</option><option value="tech">科技产业</option><option value="platform">平台热点</option></select>
+        <div class="form-grid">
+          <div class="field"><label for="feedName">源名称</label><input id="feedName" class="input" placeholder="例如：人民网 时政"></div>
+          <div class="field" style="grid-column:span 2"><label for="feedUrl">RSS URL</label><input id="feedUrl" class="input" placeholder="https://example.com/feed.xml"></div>
+        </div>
+        <div class="field">
+          <label>所属套餐（可多选）</label>
+          <div id="feedPackages" class="chip-row">加载中</div>
+        </div>
+        <div class="advanced-block">
+          <button type="button" id="toggleFeedAdvanced" class="advanced-toggle">+ 高级设置</button>
+          <div id="feedAdvanced" hidden style="margin-top:10px">
+            <div class="field">
+              <label class="has-tip tip-anchor">
+                <span>权重 authority</span>
+                <span class="tip-ico" tabindex="0">i</span>
+                <span class="tip-pop" id="feedAuthorityTip">加载中</span>
+              </label>
+              <div class="range-row">
+                <input id="feedAuthority" type="range" min="0.1" max="1" step="0.05" value="0.5">
+                <span id="feedAuthorityVal" class="range-val">0.50</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top:12px">
           <button id="addFeed" class="btn btn-primary">添加并校验</button>
           <button id="syncSources" class="btn">同步内置源</button>
         </div>
         <div class="oa-hint">自定义 RSS 会经过 URL 安全校验，避免访问本机或内网地址。</div>
       </div>
-      <div class="card"><h2 class="oa-section-title">信源管理</h2><div id="sourcesOut" class="source-grid">加载中</div></div>
-      <div class="card"><h2 class="oa-section-title">存储与健康</h2><div id="settingsOut" class="report">加载中</div></div>
+      <details class="collapsible" id="sourcesDetails">
+        <summary>
+          <h2 class="oa-section-title">信源管理</h2>
+          <span id="sourcesCount" class="collapsible__count">点击展开</span>
+        </summary>
+        <div class="collapsible__body">
+          <div class="section-toolbar">
+            <span class="oa-hint" style="flex:1; margin-bottom:0">信源默认折叠，避免长列表占满屏幕。可在下面按套餐批量启停，也可对每个源做编辑。</span>
+            <select id="bulkPackageSelect" class="input" style="max-width:180px"></select>
+            <button id="bulkEnable" class="btn">套餐内全部启用</button>
+            <button id="bulkDisable" class="btn">套餐内全部停用</button>
+          </div>
+          <div id="sourcesOut" class="source-grid">加载中</div>
+        </div>
+      </details>
+      <div class="card">
+        <h2 class="oa-section-title">运行设置</h2>
+        <div class="form-grid">
+          <div class="field"><label for="fetchTimeout">抓取超时（秒）</label><input id="fetchTimeout" class="input" type="number" min="3" max="120"></div>
+          <div class="field"><label for="fetchConcurrency">抓取并发</label><input id="fetchConcurrency" class="input" type="number" min="1" max="16"></div>
+          <div class="field"><label for="llmTemperature">LLM 温度</label><input id="llmTemperature" class="input" type="number" min="0" max="1" step="0.1"></div>
+        </div>
+        <div class="field"><label for="userAgent">RSS User-Agent</label><input id="userAgent" class="input"></div>
+        <div class="storage-panel">
+          <h3 class="oa-section-title">存储管理</h3>
+          <div class="storage-path-row">
+            <div class="field">
+              <label for="customDataDir">数据目录</label>
+              <input id="customDataDir" class="input" placeholder="留空 = 使用 OpenAkita 默认目录；也可填写绝对路径">
+            </div>
+            <div class="storage-path-actions">
+              <button id="browseDataDir" class="btn">浏览</button>
+              <button id="openDataDir" class="btn">打开</button>
+              <button id="resetDataDir" class="btn">恢复默认</button>
+            </div>
+          </div>
+          <div id="dataDirStatus" class="status-note">数据目录用于保存 SQLite 数据库、抓取结果和生成报告。变更后通常需要重新加载插件才会生效。</div>
+          <div id="storageStats" class="storage-grid"></div>
+        </div>
+        <div class="settings-actions"><button id="saveSettings" class="btn btn-primary">保存设置</button><button id="reloadSettings" class="btn">重新加载</button><button id="refreshStorage" class="btn">刷新存储统计</button></div>
+        <div id="settingsOut" class="runtime-info-grid">加载中</div>
+      </div>
     </section>
   </main>
+  <div id="sourceModal" class="modal-shade" hidden>
+    <div class="modal-card">
+      <div class="modal-card__head"><strong id="sourceModalTitle">编辑信源</strong><button class="btn" data-close-source-modal>关闭</button></div>
+      <div class="modal-card__body">
+        <div class="field"><label for="srcModalName">名称</label><input id="srcModalName" class="input"></div>
+        <div class="field"><label for="srcModalUrl">RSS URL</label><input id="srcModalUrl" class="input"></div>
+        <div class="field">
+          <label>所属套餐（可多选）</label>
+          <div id="srcModalPackages" class="chip-row"></div>
+        </div>
+        <div class="field">
+          <label>启用状态</label>
+          <div class="seg-group" id="srcModalEnabled" data-value="1">
+            <button type="button" class="seg-btn" data-val="1">启用</button>
+            <button type="button" class="seg-btn" data-val="0">停用</button>
+          </div>
+        </div>
+        <div class="advanced-block">
+          <button type="button" id="srcModalToggleAdv" class="advanced-toggle">+ 高级设置</button>
+          <div id="srcModalAdvanced" hidden style="margin-top:10px">
+            <div class="field">
+              <label class="has-tip tip-anchor">
+                <span>权重 authority</span>
+                <span class="tip-ico" tabindex="0">i</span>
+                <span class="tip-pop" id="srcModalAuthorityTip">加载中</span>
+              </label>
+              <div class="range-row">
+                <input id="srcModalAuthority" type="range" min="0.1" max="1" step="0.05" value="0.5">
+                <span id="srcModalAuthorityVal" class="range-val">0.50</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-card__foot">
+        <button id="srcModalDelete" class="btn" style="color:var(--danger); border-color:rgba(220,38,38,.45)">删除</button>
+        <div style="display:flex; gap:8px">
+          <button class="btn" data-close-source-modal>取消</button>
+          <button id="srcModalSave" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="packageModal" class="modal-shade" hidden>
+    <div class="modal-card">
+      <div class="modal-card__head"><strong id="pkgModalTitle">新建套餐</strong><button class="btn" data-close-package-modal>关闭</button></div>
+      <div class="modal-card__body">
+        <div class="field"><label for="pkgModalLabel">套餐名称</label><input id="pkgModalLabel" class="input" placeholder="例如：地缘安全"></div>
+        <div class="field"><label for="pkgModalLabelEn">英文名（可选）</label><input id="pkgModalLabelEn" class="input" placeholder="Geopolitics"></div>
+        <div class="field"><label for="pkgModalDescription">描述</label><input id="pkgModalDescription" class="input" placeholder="一句话描述这个套餐关注的主题"></div>
+        <div class="field"><label for="pkgModalKeywords">关键词（逗号或空格分隔）</label><input id="pkgModalKeywords" class="input" placeholder="地缘 / 冲突 / 制裁"></div>
+        <div class="field">
+          <label>启用状态</label>
+          <div class="seg-group" id="pkgModalEnabled" data-value="1">
+            <button type="button" class="seg-btn" data-val="1">启用</button>
+            <button type="button" class="seg-btn" data-val="0">停用</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-card__foot">
+        <button id="pkgModalDelete" class="btn" style="color:var(--danger); border-color:rgba(220,38,38,.45)" hidden>删除</button>
+        <div style="display:flex; gap:8px; margin-left:auto">
+          <button class="btn" data-close-package-modal>取消</button>
+          <button id="pkgModalSave" class="btn btn-primary">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="folderPicker" class="folder-modal" hidden>
+    <div class="folder-dialog">
+      <div class="folder-dialog__head"><strong>选择数据目录</strong><button id="closeFolderPicker" class="btn">关闭</button></div>
+      <div id="folderPickerPath" class="folder-dialog__path">加载中</div>
+      <div class="toolbar" style="padding:10px 14px;margin:0"><button id="folderPickerUp" class="btn">上一级</button><button id="folderPickerRoot" class="btn">位置列表</button></div>
+      <div id="folderPickerList" class="folder-list"></div>
+      <div class="folder-new-row"><input id="newFolderName" class="input" placeholder="新建文件夹名称"><button id="createFolder" class="btn">新建</button></div>
+      <div class="folder-dialog__foot"><span id="folderPickerHint" class="meta">选择一个文件夹后点击确认。</span><button id="chooseFolder" class="btn btn-primary">使用此目录</button></div>
+    </div>
+  </div>
+  <div id="toast" class="toast" hidden></div>
 </div>
 <script>
 const API = window.OpenAkitaPlugin.apiBase;
+const FALLBACK_PACKAGE_OPTIONS = [
+  ['taiwan','台海观察'], ['policy','时政政策'], ['economy','经济财经'],
+  ['world','国际局势'], ['tech','科技产业'], ['platform','平台热点']
+];
+const AUTHORITY_TIP_HTML = `
+  <strong>权重 (0.1~1.0)</strong> 决定信源在热点排序中的加权倍数：<br>
+  • 0.8+：主流官方源（央视/人民/新华），默认排到前面<br>
+  • 0.6~0.8：行业财经/科技垂直媒体（财新/36氪/IT之家）<br>
+  • 0.4 以下：社交平台/聚合榜单（微博/抖音），信号噪声较大<br>
+  数值仅影响排序与「主流/边缘」标签，<u>不会过滤任何文章</u>。
+`;
+let PACKAGES_CACHE = {};
+let SOURCES_CACHE = [];
 let selected = [];
 let lastItems = [];
 let lastHealth = null;
+let toastTimer = null;
+let currentFolderPath = "";
+let currentFolderParent = null;
+let editingSourceId = "";
+let editingPackageId = "";
+
 async function api(path, opts={}) {
   const res = await fetch(API + path, {headers:{'Content-Type':'application/json'}, ...opts});
   const body = await res.json().catch(()=>({}));
-  if (!res.ok) throw new Error(body.detail || res.statusText);
+  if (!res.ok) throw new Error(body.detail || body.hint || res.statusText);
   return body;
 }
-function showHealth(ok, text){ const el=document.getElementById('health'); el.textContent=text; el.className='api-pill ' + (ok?'ok':''); }
+function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function statusClass(s){ return s === 'done' ? 'status-done' : s === 'failed' ? 'status-failed' : s === 'running' ? 'status-running' : ''; }
+function showHealth(ok, text){ const el=$('health'); el.textContent=text; el.className='api-pill ' + (ok?'ok':''); }
+function toast(message, error=false){
+  const el=$('toast');
+  el.textContent=message;
+  el.className='toast' + (error ? ' error' : '');
+  el.hidden=false;
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{ el.hidden=true; }, 3600);
+}
+async function guard(fn, label='操作'){
+  try { return await fn(); }
+  catch(e){ toast(`${label}失败：${e.message || e}`, true); throw e; }
+}
+async function withBusy(btn, text, fn){
+  const old=btn.textContent;
+  btn.disabled=true;
+  btn.textContent=text;
+  try { return await fn(); }
+  finally { btn.disabled=false; btn.textContent=old; }
+}
+function packageOptions(){
+  const live = Object.values(PACKAGES_CACHE);
+  if(live.length) return live.map(p=>[p.id, p.label_zh || p.id]);
+  return FALLBACK_PACKAGE_OPTIONS;
+}
+function packageLabel(id){
+  if(!id) return '全部套餐';
+  const p = PACKAGES_CACHE[id];
+  if(p) return p.label_zh || p.id;
+  return FALLBACK_PACKAGE_OPTIONS.find(x=>x[0]===id)?.[1] || id;
+}
+function rebuildPackageSelects(){
+  const opts = packageOptions();
+  const optHtml = (withAll=true) =>
+    (withAll ? '<option value="">全部套餐</option>' : '') +
+    opts.map(([id,label])=>`<option value="${esc(id)}">${esc(label)}</option>`).join('');
+  ['package','briefPackage'].forEach(id=>{
+    const el=$(id); if(!el) return;
+    const cur=el.value;
+    el.innerHTML = optHtml(true);
+    el.value = cur;
+  });
+  const bulk=$('bulkPackageSelect');
+  if(bulk){
+    const cur=bulk.value;
+    bulk.innerHTML = '<option value="">— 选择套餐 —</option>' + opts.map(([id,label])=>`<option value="${esc(id)}">${esc(label)}</option>`).join('');
+    bulk.value = cur && opts.some(o=>o[0]===cur) ? cur : '';
+  }
+}
+function renderChipPicker(container, selectedIds){
+  const sel = new Set(selectedIds || []);
+  container.dataset.selected = JSON.stringify([...sel]);
+  container.innerHTML = packageOptions().map(([id,label])=>
+    `<button type="button" class="chip ${sel.has(id)?'on':''}" data-pkg="${esc(id)}">${esc(label)}</button>`
+  ).join('') || '<span class="meta">先创建套餐</span>';
+  container.querySelectorAll('[data-pkg]').forEach(btn=>btn.onclick=()=>{
+    const cur = new Set(JSON.parse(container.dataset.selected || '[]'));
+    const id = btn.dataset.pkg;
+    if(cur.has(id)){ cur.delete(id); btn.classList.remove('on'); }
+    else { cur.add(id); btn.classList.add('on'); }
+    container.dataset.selected = JSON.stringify([...cur]);
+  });
+}
+function getChipPickerValue(container){
+  return JSON.parse(container.dataset.selected || '[]');
+}
+function readSegValue(group){ return group.dataset.value === '1' ? true : false; }
+function bindSegGroup(group){
+  group.querySelectorAll('.seg-btn').forEach(btn=>btn.onclick=()=>{
+    group.dataset.value = btn.dataset.val;
+    group.querySelectorAll('.seg-btn').forEach(b=>b.classList.toggle('active', b.dataset.val===btn.dataset.val));
+  });
+  // initial highlight
+  const v = group.dataset.value || '1';
+  group.querySelectorAll('.seg-btn').forEach(b=>b.classList.toggle('active', b.dataset.val===v));
+}
+function setSegValue(group, val){
+  group.dataset.value = val ? '1' : '0';
+  group.querySelectorAll('.seg-btn').forEach(b=>b.classList.toggle('active', b.dataset.val===group.dataset.value));
+}
+function formatSize(mb){ return `${Number(mb || 0).toFixed(1)} MB`; }
+function renderSelection(){
+  const picked = lastItems.filter(item => selected.includes(item.id));
+  const text = picked.length ? `已选择 ${picked.length} 条：${picked.map(x=>x.title).slice(0,2).join('、')}${picked.length>2?' 等':''}` : '未选择热点';
+  $('selectedSummary').querySelector('span').textContent = text;
+  $('planSelection').querySelector('span').textContent = picked.length ? text : '优先使用雷达页选中的热点；未选择时按主题检索。';
+}
+function setSelected(ids){
+  selected = [...new Set((ids || []).filter(Boolean))];
+  document.querySelectorAll('#items input[type=checkbox]').forEach(cb => { cb.checked = selected.includes(cb.dataset.id); });
+  renderSelection();
+}
 function renderItems(items){
-  lastItems = items || [];
-  selected = items.slice(0, 3).map(x=>x.id);
-  const el=document.getElementById('items');
-  if(!items.length){ el.className='empty'; el.textContent='暂无热点，先拉取 RSS 或扩大范围。'; return; }
+  lastItems = Array.isArray(items) ? items : [];
+  setSelected(lastItems.slice(0, 3).map(x=>x.id));
+  const el=$('items');
+  if(!lastItems.length){
+    el.className='empty empty-fill';
+    el.textContent='暂无热点，先拉取 RSS 或扩大范围。';
+    renderSelection();
+    return;
+  }
   el.className='';
-  el.innerHTML = items.map((it,i)=>`<article class="item">
+  el.innerHTML = lastItems.map((it,i)=>`<article class="item">
     <h3><label><input type="checkbox" data-id="${esc(it.id)}" ${i<3?'checked':''}> <a href="${esc(it.url)}" target="_blank" rel="noreferrer">${esc(it.title)}</a></label></h3>
     <div class="meta"><span class="pill score">score ${esc(it.hot_score||0)}</span><span class="pill ${esc(it.risk_level||'medium')}">risk ${esc(it.risk_level||'medium')}</span><span>${esc(it.source_id||'')}</span><span>${esc(it.published_at||it.fetched_at||'')}</span></div>
     <p>${esc(it.ai_summary || it.summary || '无摘要')}</p>
   </article>`).join('');
-  el.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener('change',()=>{ selected=[...el.querySelectorAll('input:checked')].map(x=>x.dataset.id); }));
+  el.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener('change',()=>setSelected([...el.querySelectorAll('input:checked')].map(x=>x.dataset.id))));
+  renderSelection();
 }
 function renderMetrics(radarStats={}, ingestStats=null){
   const enabled = lastHealth?.sources_enabled ?? '-';
   const failed = ingestStats?.failed ?? lastHealth?.sources_failed ?? '-';
-  document.getElementById('metrics').innerHTML = `
+  $('metrics').innerHTML = `
     <div class="metric"><strong>${esc(radarStats.total ?? lastItems.length ?? 0)}</strong><span>热点数</span></div>
     <div class="metric"><strong>${esc(enabled)}</strong><span>已启用源</span></div>
     <div class="metric"><strong>${esc(ingestStats?.inserted ?? '-')}</strong><span>最近新增</span></div>
     <div class="metric"><strong>${esc(failed)}</strong><span>失败源</span></div>`;
+}
+function activateTab(tab){
+  const section = $('tab-' + tab) || $('tab-radar');
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('main section').forEach(s=>{ s.hidden = s !== section; });
+  history.replaceState(null, '', '#' + (section.id || 'tab-radar').replace('tab-', ''));
+  if(tab === 'reports') loadReports().catch(()=>{});
 }
 async function refreshHealth(){
   try{
@@ -202,84 +595,470 @@ async function refreshHealth(){
     lastHealth = h;
     showHealth(true, `运行中 · ${h.version} · ${h.sources_enabled || 0} 源`);
     renderMetrics();
-  }catch(e){ showHealth(false, '健康检查失败'); }
+    return h;
+  }catch(e){
+    showHealth(false, '健康检查失败');
+    throw e;
+  }
 }
 async function runRadar(){
-  const pkg=document.getElementById('package').value;
-  const q=document.getElementById('query').value.trim();
-  const hours=document.getElementById('hours').value;
-  const data=await api(`/radar?q=${encodeURIComponent(q)}&package_id=${encodeURIComponent(pkg)}&since_hours=${hours}&limit=50`);
+  const params = new URLSearchParams({
+    q: $('query').value.trim(),
+    package_id: $('package').value,
+    since_hours: $('hours').value,
+    limit: '50'
+  });
+  const data=await api('/radar?' + params.toString());
   renderItems(data.items || []);
   renderMetrics(data.stats || {});
+  return data;
 }
 async function runTask(mode, params, outId){
-  const out=document.getElementById(outId);
-  out.innerHTML='<p>生成中...</p>';
+  const out=$(outId);
+  out.className='report';
+  out.innerHTML='<p>生成中，请稍候...</p>';
   const data=await api('/tasks',{method:'POST',body:JSON.stringify({mode,params})});
+  if(data.ok === false) throw new Error(data.hint || data.error || '任务失败');
   const md=data.result?.report?.markdown || JSON.stringify(data.result,null,2);
   out.innerHTML=window.MarkdownMini.render(md);
   await loadTasks();
+  await loadReports();
   return data;
 }
-document.querySelectorAll('.tab').forEach(btn=>btn.onclick=()=>{ document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); document.querySelectorAll('main section').forEach(s=>s.hidden=true); document.getElementById('tab-'+btn.dataset.tab).hidden=false; });
-document.getElementById('ingest').onclick=async()=>{
-  const pkg=document.getElementById('package').value;
-  const data=await api('/ingest',{method:'POST',body:JSON.stringify({package_ids:[pkg].filter(Boolean)})});
-  document.getElementById('verifyOut').innerHTML = `<p>拉取完成：新增 ${esc(data.result?.inserted ?? 0)}，失败源 ${esc(data.result?.failed ?? 0)}。</p>`;
-  renderMetrics({}, data.result || {});
-  await refreshHealth(); await loadSources(); await loadTasks(); await runRadar();
-};
-document.getElementById('radar').onclick=runRadar;
-document.getElementById('brief').onclick=()=>runTask('daily_brief',{session:'morning',since_hours:24,limit:20},'briefOut');
-document.getElementById('verify').onclick=()=>runTask('verify_pack',{article_ids:selected},'verifyOut');
-document.getElementById('plan').onclick=()=>runTask('replicate_plan',{article_ids:selected,topic:document.getElementById('topic').value,target_format:'short_video',tone:'稳健客观'},'planOut');
 async function loadPackages(){
   const pk=await api('/packages');
-  document.getElementById('packagesOut').innerHTML = Object.values(pk.packages).map(p=>`
-    <div class="package-card ${p.enabled?'active':''}" data-package="${esc(p.id)}">
-      <strong>${esc(p.label_zh)}</strong><span>${esc(p.description)}</span>
-    </div>`).join('');
-  document.querySelectorAll('.package-card').forEach(card=>card.onclick=async()=>{
+  PACKAGES_CACHE = pk.packages || {};
+  rebuildPackageSelects();
+  $('packagesOut').innerHTML = Object.values(PACKAGES_CACHE).map(p=>{
+    const isCustom = !!p.custom;
+    const badge = isCustom
+      ? '<span class="package-card__badge custom">自定义</span>'
+      : '<span class="package-card__badge">内置</span>';
+    const actions = isCustom
+      ? `<button type="button" class="pa-btn" data-pkg-edit="${esc(p.id)}">编辑</button>
+         <button type="button" class="pa-btn danger" data-pkg-delete="${esc(p.id)}">删除</button>`
+      : `<button type="button" class="pa-btn" data-pkg-clone="${esc(p.id)}">克隆为我的套餐</button>`;
+    return `<div class="package-card ${p.enabled?'active':''}" data-package="${esc(p.id)}">
+      ${badge}
+      <strong>${esc(p.label_zh)}</strong><span>${esc(p.description||'(无描述)')}</span>
+      <div class="package-card__actions">${actions}</div>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('.package-card').forEach(card=>card.onclick=async (ev)=>{
+    if(ev.target.closest('.pa-btn')) return;
     const id=card.dataset.package;
-    const enabled=!card.classList.contains('active');
-    await api('/packages/subscribe',{method:'POST',body:JSON.stringify({package_id:id,enabled})});
-    await loadPackages(); await runRadar();
+    const wasActive = card.classList.contains('active');
+    const nextEnabled = !wasActive;
+    card.classList.toggle('active', nextEnabled);
+    if(PACKAGES_CACHE[id]) PACKAGES_CACHE[id].enabled = nextEnabled;
+    toast(`${packageLabel(id)}已${nextEnabled ? '启用' : '停用'}`);
+    try{
+      await api('/packages/subscribe',{method:'POST',body:JSON.stringify({package_id:id,enabled:nextEnabled})});
+    }catch(e){
+      card.classList.toggle('active', wasActive);
+      if(PACKAGES_CACHE[id]) PACKAGES_CACHE[id].enabled = wasActive;
+      toast(`更新套餐失败：${e.message || e}`, true);
+    }
+  });
+  document.querySelectorAll('[data-pkg-edit]').forEach(btn=>btn.onclick=(ev)=>{
+    ev.stopPropagation();
+    openPackageModal('edit', btn.dataset.pkgEdit);
+  });
+  document.querySelectorAll('[data-pkg-delete]').forEach(btn=>btn.onclick=(ev)=>{
+    ev.stopPropagation();
+    const id = btn.dataset.pkgDelete;
+    if(!confirm(`确定删除自定义套餐「${packageLabel(id)}」？\n（删除后属于该套餐的信源会自动剥离这个标签，但信源本身不会被删）`)) return;
+    guard(async()=>{
+      const data = await api(`/packages/${encodeURIComponent(id)}`,{method:'DELETE'});
+      PACKAGES_CACHE = data.packages || {};
+      toast('套餐已删除');
+      await loadPackages();
+      await loadSources();
+    }, '删除套餐');
+  });
+  document.querySelectorAll('[data-pkg-clone]').forEach(btn=>btn.onclick=(ev)=>{
+    ev.stopPropagation();
+    openPackageModal('clone', btn.dataset.pkgClone);
   });
 }
 async function loadSources(){
   const data=await api('/sources');
-  document.getElementById('sourcesOut').innerHTML = data.sources.map(s=>`
-    <div class="source-card ${s.enabled?'':'off'}">
-      <div class="source-card__head"><div><div class="source-card__title">${esc(s.label_zh)}</div><span class="pill">${esc((s.package_ids||[]).join(' / '))}</span></div>
-      <button class="btn" data-source="${esc(s.id)}" data-enabled="${s.enabled?'1':'0'}">${s.enabled?'停用':'启用'}</button></div>
-      <div class="meta"><span>权重 ${esc(s.authority)}</span><span>${esc(s.last_status || '未拉取')}</span>${s.last_error?`<span class="pill high">失败</span>`:''}</div>
+  SOURCES_CACHE = data.sources || [];
+  $('sourcesCount').textContent = `共 ${SOURCES_CACHE.length} 个，启用 ${SOURCES_CACHE.filter(s=>s.enabled).length} 个`;
+  $('sourcesOut').innerHTML = SOURCES_CACHE.map(s=>{
+    const tags = (s.package_ids||[]).map(packageLabel).join(' / ') || '未分类';
+    const editBtn = `<button class="btn" data-source-edit="${esc(s.id)}">编辑</button>`;
+    const toggleBtn = `<button class="btn" data-source-toggle="${esc(s.id)}" data-enabled="${s.enabled?'1':'0'}">${s.enabled?'停用':'启用'}</button>`;
+    return `<div class="source-card ${s.enabled?'':'off'}">
+      <div class="source-card__head">
+        <div style="min-width:0; flex:1">
+          <div class="source-card__title">${esc(s.label_zh)} ${s.custom?'<span class="pill" style="margin-left:4px">自定义</span>':''}</div>
+          <span class="pill">${esc(tags)}</span>
+        </div>
+        <div class="source-card__actions">${editBtn}${toggleBtn}</div>
+      </div>
+      <div class="meta">
+        <span class="has-tip tip-anchor">权重 ${Number(s.authority||0).toFixed(2)}<span class="tip-ico" tabindex="0">i</span><span class="tip-pop">${AUTHORITY_TIP_HTML}</span></span>
+        <span>${esc(s.last_status || '未拉取')}</span>${s.last_error?`<span class="pill high">${esc(s.last_error).slice(0,60)}</span>`:''}
+      </div>
       <div class="source-card__url">${esc(s.url)}</div>
-    </div>`).join('');
-  document.querySelectorAll('[data-source]').forEach(btn=>btn.onclick=async()=>{
-    await api(`/sources/${encodeURIComponent(btn.dataset.source)}/enabled`,{method:'POST',body:JSON.stringify({enabled:btn.dataset.enabled!=='1'})});
-    await loadSources(); await refreshHealth();
+    </div>`;
+  }).join('') || '<div class="empty">暂无信源</div>';
+  document.querySelectorAll('[data-source-toggle]').forEach(btn=>btn.onclick=()=>guard(async()=>{
+    const id = btn.dataset.sourceToggle;
+    const next = btn.dataset.enabled !== '1';
+    await api(`/sources/${encodeURIComponent(id)}/enabled`,{method:'POST',body:JSON.stringify({enabled:next})});
+    await loadSources();
+    refreshHealth().catch(()=>{});
+  }, '更新信源'));
+  document.querySelectorAll('[data-source-edit]').forEach(btn=>btn.onclick=()=>{
+    openSourceModal(btn.dataset.sourceEdit);
   });
+}
+function openSourceModal(sourceId){
+  const src = SOURCES_CACHE.find(s=>s.id === sourceId);
+  if(!src){ toast('找不到信源', true); return; }
+  editingSourceId = sourceId;
+  $('sourceModalTitle').textContent = `编辑信源 · ${src.label_zh}`;
+  $('srcModalName').value = src.label_zh || '';
+  $('srcModalUrl').value = src.url || '';
+  renderChipPicker($('srcModalPackages'), src.package_ids || []);
+  setSegValue($('srcModalEnabled'), !!src.enabled);
+  $('srcModalAuthority').value = String(src.authority ?? 0.5);
+  $('srcModalAuthorityVal').textContent = Number(src.authority ?? 0.5).toFixed(2);
+  $('srcModalAuthorityTip').innerHTML = AUTHORITY_TIP_HTML;
+  $('srcModalAdvanced').hidden = true;
+  $('srcModalToggleAdv').textContent = '+ 高级设置（权重）';
+  $('srcModalDelete').hidden = !src.custom;
+  $('sourceModal').hidden = false;
+}
+function closeSourceModal(){
+  $('sourceModal').hidden = true;
+  editingSourceId = '';
+}
+function openPackageModal(mode, packageId=''){
+  editingPackageId = mode === 'edit' ? packageId : '';
+  const isEdit = mode === 'edit';
+  const isClone = mode === 'clone';
+  const src = packageId ? PACKAGES_CACHE[packageId] : null;
+  $('pkgModalTitle').textContent = isEdit ? `编辑套餐 · ${src?.label_zh || ''}`
+    : isClone ? `克隆套餐 · ${src?.label_zh || ''} → 我的套餐`
+    : '新建套餐';
+  $('pkgModalLabel').value = isEdit ? (src?.label_zh || '')
+    : isClone ? `${src?.label_zh || ''} 副本` : '';
+  $('pkgModalLabelEn').value = isEdit ? (src?.label_en || '') : (src?.label_en || '');
+  $('pkgModalDescription').value = isEdit ? (src?.description || '') : (src?.description || '');
+  $('pkgModalKeywords').value = isEdit ? ((src?.keywords || []).join(', ')) : ((src?.keywords || []).join(', '));
+  setSegValue($('pkgModalEnabled'), src ? !!src.enabled : true);
+  $('pkgModalDelete').hidden = !isEdit;
+  $('pkgModalSave').dataset.mode = isEdit ? 'edit' : (isClone ? 'clone' : 'create');
+  $('pkgModalSave').dataset.cloneFrom = isClone ? packageId : '';
+  $('packageModal').hidden = false;
+}
+function closePackageModal(){
+  $('packageModal').hidden = true;
+  editingPackageId = '';
 }
 async function loadTasks(){
   const data=await api('/tasks?limit=8');
-  document.getElementById('tasks').innerHTML = (data.tasks||[]).map(t=>`
+  $('tasks').innerHTML = (data.tasks||[]).map(t=>`
     <div class="task-row"><span>${esc(t.mode)} · <b class="${statusClass(t.status)}">${esc(t.status)}</b></span><span>${esc(t.id)}</span></div>`).join('') || '<div class="empty">暂无任务</div>';
 }
+async function loadReports(){
+  const data=await api('/reports?limit=20');
+  $('reportsOut').innerHTML = (data.reports||[]).map(r=>`
+    <div class="report-row" data-report="${esc(r.id)}">
+      <strong>${esc(r.title)}</strong>
+      <div class="meta"><span>${esc(r.kind)}</span><span>${esc(r.created_at)}</span><span>${esc(r.meta?.source || '')}</span></div>
+    </div>`).join('') || '<div class="empty">暂无报告，先生成简报、复核或采编计划。</div>';
+  document.querySelectorAll('[data-report]').forEach(row=>row.onclick=()=>guard(async()=>{
+    const data=await api(`/reports/${encodeURIComponent(row.dataset.report)}`);
+    $('reportPreview').className='report';
+    $('reportPreview').innerHTML=window.MarkdownMini.render(data.report?.markdown || '');
+  }, '加载报告'));
+}
+function renderStorageStats(stats){
+  const labels = {data_dir:'数据目录', outputs:'报告输出', database:'数据库目录'};
+  $('storageStats').innerHTML = Object.entries(stats || {}).map(([key, s])=>`
+    <div class="storage-card" data-storage-key="${esc(key)}" title="${esc(s.path)}">
+      <span class="meta">${esc(labels[key] || key)}</span>
+      <strong>${esc(formatSize(s.size_mb))}</strong>
+      <span class="meta">${esc(s.file_count)} 个文件${s.truncated ? ' +' : ''}</span>
+    </div>`).join('') || '<div class="empty">暂无存储统计</div>';
+  document.querySelectorAll('[data-storage-key]').forEach(card=>card.onclick=()=>guard(
+    ()=>openStorageFolder(card.dataset.storageKey),
+    '打开目录'
+  ));
+}
+async function loadStorageStats(){
+  const data = await api('/storage/stats');
+  renderStorageStats(data.stats || {});
+  return data;
+}
+async function openStorageFolder(key, path=''){
+  await api('/storage/open-folder',{method:'POST',body:JSON.stringify(path ? {path} : {key})});
+  toast('已请求系统打开文件夹');
+}
+function showDataDirStatus(cfg){
+  const el = $('dataDirStatus');
+  const active = cfg?.data_dir_active || '未知';
+  const requested = (cfg?.custom_data_dir || '').trim();
+  if (cfg?.data_dir_status) {
+    el.className = 'status-note error';
+    el.innerHTML = `
+      <div class="status-note__title">目录不可用</div>
+      <div class="status-note__path">${esc(cfg.data_dir_status)}</div>
+      <div class="status-note__desc">当前仍在使用：${esc(active)}</div>`;
+  } else if (cfg?.data_dir_pending_reload) {
+    el.className = 'status-note warn';
+    el.innerHTML = `
+      <div class="status-note__title">已保存，等待重新加载</div>
+      <div class="status-note__path">当前生效：${esc(active)}</div>
+      <div class="status-note__desc">新的数据目录会在插件重新加载后接管 SQLite 数据库和报告输出。</div>`;
+  } else {
+    el.className = 'status-note';
+    el.innerHTML = `
+      <div class="status-note__title">目录状态正常</div>
+      <div class="status-note__path">${esc(active)}</div>
+      <div class="status-note__desc">${requested ? '正在使用自定义目录。' : '留空时使用 OpenAkita 管理的默认目录。'}</div>`;
+  }
+}
+async function loadFolderPicker(path=''){
+  $('folderPickerList').innerHTML = '<div class="empty">加载中...</div>';
+  const qs = path ? '?path=' + encodeURIComponent(path) : '';
+  const data = await api('/storage/list-dir' + qs);
+  currentFolderPath = data.path || '';
+  currentFolderParent = data.parent || null;
+  $('folderPickerPath').textContent = currentFolderPath || '位置列表';
+  $('folderPickerHint').textContent = currentFolderPath ? currentFolderPath : '先选择一个位置或磁盘。';
+  $('folderPickerUp').disabled = !currentFolderParent;
+  const rows = (data.items || []).map(item=>`
+    <button class="folder-item" data-folder-path="${esc(item.path)}">
+      <span>[目录] ${esc(item.name)}</span><span class="meta">${esc(item.kind || '')}</span>
+    </button>`).join('');
+  $('folderPickerList').innerHTML = rows || '<div class="empty">此目录下没有可选子文件夹</div>';
+  document.querySelectorAll('[data-folder-path]').forEach(btn=>btn.onclick=()=>guard(
+    ()=>loadFolderPicker(btn.dataset.folderPath),
+    '读取目录'
+  ));
+}
+function openFolderPicker(){
+  $('folderPicker').hidden = false;
+  $('newFolderName').value = '';
+  guard(()=>loadFolderPicker(($('customDataDir').value || '').trim()), '打开目录选择器').catch(()=>loadFolderPicker('').catch(()=>{}));
+}
+function closeFolderPicker(){ $('folderPicker').hidden = true; }
 async function loadSettings(){
   const s=await api('/settings');
-  const h=lastHealth || await api('/healthz');
-  document.getElementById('settingsOut').innerHTML = `
-    <p><b>数据目录</b>：${esc(s.host_config.custom_data_dir || h.data_dir || '宿主管理目录')}</p>
-    <p><b>Brain</b>：${h.brain_available?'可用':'不可用，将使用规则降级'}</p>
-    <p><b>依赖</b>：${Object.entries(h.deps || {}).map(([k,v])=>`${esc(k)}=${v.last_success?'ok':'pending'}`).join('，') || '无状态'}</p>`;
+  const h=lastHealth || await refreshHealth();
+  const settings = s.settings || {};
+  const cfg = s.host_config || {};
+  $('fetchTimeout').value = settings.fetch_timeout_sec ?? 15;
+  $('fetchConcurrency').value = settings.fetch_concurrency ?? 4;
+  $('llmTemperature').value = settings.llm_temperature ?? 0.2;
+  $('customDataDir').value = cfg.custom_data_dir || settings.custom_data_dir || '';
+  $('userAgent').value = settings.user_agent || '';
+  showDataDirStatus(cfg);
+  $('settingsOut').innerHTML = `
+    <div class="info-card"><div class="info-card__label">当前数据目录</div><div class="info-card__value">${esc(cfg.data_dir_active || h.data_dir || '宿主管理目录')}</div></div>
+    <div class="info-card"><div class="info-card__label">默认目录</div><div class="info-card__value">${esc(cfg.data_dir_default || '宿主管理目录')}</div></div>
+    <div class="info-card"><div class="info-card__label">Brain 状态</div><div class="info-card__value">${h.brain_available?'可用':'不可用，将使用规则降级'}</div></div>
+    <div class="info-card"><div class="info-card__label">依赖状态</div><div class="info-card__value">${Object.entries(h.deps || {}).map(([k,v])=>`${esc(k)}=${v.last_success?'ok':'pending'}`).join('，') || '无状态'}</div></div>`;
+  await loadStorageStats().catch(()=>{});
 }
-document.getElementById('addFeed').onclick=async()=>{
-  await api('/feeds',{method:'POST',body:JSON.stringify({name:document.getElementById('feedName').value,url:document.getElementById('feedUrl').value,package_ids:[document.getElementById('feedPackage').value],enabled:true})});
-  document.getElementById('feedName').value=''; document.getElementById('feedUrl').value='';
-  await loadSources(); await refreshHealth();
+async function saveSettings(){
+  const updates = {
+    fetch_timeout_sec: Number($('fetchTimeout').value || 15),
+    fetch_concurrency: Number($('fetchConcurrency').value || 4),
+    llm_temperature: Number($('llmTemperature').value || 0.2),
+    custom_data_dir: $('customDataDir').value.trim(),
+    user_agent: $('userAgent').value.trim()
+  };
+  const data = await api('/settings',{method:'PUT',body:JSON.stringify({updates})});
+  toast(data.reload_required ? '设置已保存，数据目录变更需重新加载插件生效。' : '设置已保存');
+  await loadSettings();
+  await loadStorageStats().catch(()=>{});
+}
+
+document.querySelectorAll('.tab').forEach(btn=>btn.onclick=()=>activateTab(btn.dataset.tab));
+$('clearSelection').onclick=()=>setSelected([]);
+$('useTopItems').onclick=()=>setSelected(lastItems.slice(0,3).map(x=>x.id));
+$('ingest').onclick=()=>withBusy($('ingest'),'拉取中...',()=>guard(async()=>{
+  const pkg=$('package').value;
+  const data=await api('/ingest',{method:'POST',body:JSON.stringify({package_ids:[pkg].filter(Boolean)})});
+  $('verifyOut').innerHTML = `<p>拉取完成：新增 ${esc(data.result?.inserted ?? 0)}，失败源 ${esc(data.result?.failed ?? 0)}。</p>`;
+  renderMetrics({}, data.result || {});
+  await refreshHealth(); await loadSources(); await loadTasks(); await runRadar();
+}, '拉取 RSS'));
+$('radar').onclick=()=>withBusy($('radar'),'生成中...',()=>guard(runRadar, '生成雷达'));
+$('briefRefresh').onclick=()=>withBusy($('briefRefresh'),'刷新中...',()=>guard(runRadar, '刷新热点'));
+$('brief').onclick=()=>withBusy($('brief'),'生成中...',()=>guard(()=>runTask('daily_brief',{
+  session:$('briefSession').value,
+  package_id:$('briefPackage').value,
+  since_hours:Number($('briefHours').value || 24),
+  limit:Number($('briefLimit').value || 20)
+},'briefOut'), '生成简报'));
+$('verify').onclick=()=>withBusy($('verify'),'生成中...',()=>guard(()=>runTask('verify_pack',{article_ids:selected,topic:$('verifyTopic').value.trim()},'verifyOut'), '生成复核'));
+$('plan').onclick=()=>withBusy($('plan'),'生成中...',()=>guard(()=>runTask('replicate_plan',{
+  article_ids:selected,
+  topic:$('topic').value.trim(),
+  target_format:$('targetFormat').value,
+  tone:$('tone').value.trim() || '稳健客观'
+},'planOut'), '生成采编计划'));
+$('addFeed').onclick=()=>guard(async()=>{
+  const package_ids = getChipPickerValue($('feedPackages'));
+  if(!package_ids.length){ throw new Error('请至少选择一个套餐'); }
+  const advanced = !$('feedAdvanced').hidden;
+  const payload = {
+    name: $('feedName').value,
+    url: $('feedUrl').value,
+    package_ids,
+    enabled: true,
+  };
+  if(advanced) payload.authority = Number($('feedAuthority').value);
+  await api('/feeds',{method:'POST',body:JSON.stringify(payload)});
+  $('feedName').value=''; $('feedUrl').value='';
+  renderChipPicker($('feedPackages'), []);
+  toast('RSS 源已添加');
+  await loadSources(); refreshHealth().catch(()=>{});
+}, '添加 RSS');
+$('syncSources').onclick=()=>guard(async()=>{ await api('/sources/sync',{method:'POST'}); toast('内置信源已同步'); await loadSources(); refreshHealth().catch(()=>{}); }, '同步信源');
+$('toggleFeedAdvanced').onclick=()=>{
+  const block=$('feedAdvanced');
+  const open=block.hidden;
+  block.hidden=!open;
+  $('toggleFeedAdvanced').textContent = open ? '− 高级设置' : '+ 高级设置';
+  if(open) $('feedAuthorityTip').innerHTML = AUTHORITY_TIP_HTML;
 };
-document.getElementById('syncSources').onclick=async()=>{ await api('/sources/sync',{method:'POST'}); await loadSources(); await refreshHealth(); };
-refreshHealth(); loadPackages().catch(()=>{}); loadSources().catch(()=>{}); loadSettings().catch(()=>{}); loadTasks().catch(()=>{}); runRadar().catch(()=>{});
+$('feedAuthority').oninput=()=>{ $('feedAuthorityVal').textContent = Number($('feedAuthority').value).toFixed(2); };
+$('newPackage').onclick=()=>openPackageModal('create');
+document.querySelectorAll('[data-close-source-modal]').forEach(b=>b.onclick=closeSourceModal);
+document.querySelectorAll('[data-close-package-modal]').forEach(b=>b.onclick=closePackageModal);
+bindSegGroup($('srcModalEnabled'));
+bindSegGroup($('pkgModalEnabled'));
+$('srcModalToggleAdv').onclick=()=>{
+  const block=$('srcModalAdvanced');
+  const open=block.hidden;
+  block.hidden=!open;
+  $('srcModalToggleAdv').textContent = open ? '− 高级设置（权重）' : '+ 高级设置（权重）';
+  if(open) $('srcModalAuthorityTip').innerHTML = AUTHORITY_TIP_HTML;
+};
+$('srcModalAuthority').oninput=()=>{ $('srcModalAuthorityVal').textContent = Number($('srcModalAuthority').value).toFixed(2); };
+$('srcModalSave').onclick=()=>guard(async()=>{
+  if(!editingSourceId) return;
+  const advanced = !$('srcModalAdvanced').hidden;
+  const payload = {
+    label_zh: $('srcModalName').value.trim(),
+    url: $('srcModalUrl').value.trim(),
+    package_ids: getChipPickerValue($('srcModalPackages')),
+    enabled: readSegValue($('srcModalEnabled')),
+  };
+  if(advanced) payload.authority = Number($('srcModalAuthority').value);
+  await api(`/sources/${encodeURIComponent(editingSourceId)}`,{method:'PATCH',body:JSON.stringify(payload)});
+  toast('信源已更新');
+  closeSourceModal();
+  await loadSources(); refreshHealth().catch(()=>{});
+}, '保存信源');
+$('srcModalDelete').onclick=()=>{
+  if(!editingSourceId) return;
+  const src = SOURCES_CACHE.find(s=>s.id===editingSourceId);
+  if(!src?.custom){ toast('内置信源不可删除', true); return; }
+  if(!confirm(`确定删除自定义信源「${src.label_zh}」？`)) return;
+  guard(async()=>{
+    await api(`/sources/${encodeURIComponent(editingSourceId)}`,{method:'DELETE'});
+    toast('信源已删除');
+    closeSourceModal();
+    await loadSources(); refreshHealth().catch(()=>{});
+  }, '删除信源');
+};
+$('pkgModalSave').onclick=()=>guard(async()=>{
+  const mode = $('pkgModalSave').dataset.mode || 'create';
+  const keywords = $('pkgModalKeywords').value.split(/[,，\s]+/).map(x=>x.trim()).filter(Boolean);
+  const body = {
+    label_zh: $('pkgModalLabel').value.trim(),
+    label_en: $('pkgModalLabelEn').value.trim(),
+    description: $('pkgModalDescription').value.trim(),
+    keywords,
+    enabled: readSegValue($('pkgModalEnabled')),
+  };
+  if(!body.label_zh) throw new Error('套餐名称不能为空');
+  if(mode === 'create'){
+    await api('/packages',{method:'POST',body:JSON.stringify(body)});
+    toast('已创建自定义套餐');
+  } else if(mode === 'clone'){
+    const cloneFrom = $('pkgModalSave').dataset.cloneFrom;
+    await api('/packages',{method:'POST',body:JSON.stringify({...body, clone_from: cloneFrom})});
+    toast('已克隆为自定义套餐');
+  } else if(mode === 'edit' && editingPackageId){
+    await api(`/packages/${encodeURIComponent(editingPackageId)}`,{method:'PATCH',body:JSON.stringify(body)});
+    toast('套餐已更新');
+  }
+  closePackageModal();
+  await loadPackages();
+}, '保存套餐');
+$('pkgModalDelete').onclick=()=>{
+  if(!editingPackageId) return;
+  const src = PACKAGES_CACHE[editingPackageId];
+  if(!src?.custom){ toast('内置套餐不可删除', true); return; }
+  if(!confirm(`确定删除自定义套餐「${src.label_zh}」？`)) return;
+  guard(async()=>{
+    await api(`/packages/${encodeURIComponent(editingPackageId)}`,{method:'DELETE'});
+    toast('套餐已删除');
+    closePackageModal();
+    await loadPackages();
+    await loadSources();
+  }, '删除套餐');
+};
+$('bulkEnable').onclick=()=>bulkTogglePackageSources(true);
+$('bulkDisable').onclick=()=>bulkTogglePackageSources(false);
+async function bulkTogglePackageSources(enabled){
+  const id = $('bulkPackageSelect').value;
+  if(!id){ toast('请先在下拉里选择一个套餐', true); return; }
+  guard(async()=>{
+    const data = await api(`/packages/${encodeURIComponent(id)}/bulk-toggle-sources`,{method:'POST',body:JSON.stringify({enabled})});
+    toast(`已${enabled?'启用':'停用'}「${packageLabel(id)}」下 ${data.stats?.affected ?? 0} 个信源`);
+    await loadSources(); refreshHealth().catch(()=>{});
+  }, '批量启停');
+}
+$('saveSettings').onclick=()=>withBusy($('saveSettings'),'保存中...',()=>guard(saveSettings, '保存设置'));
+$('reloadSettings').onclick=()=>guard(loadSettings, '加载设置');
+$('reloadReports').onclick=()=>guard(loadReports, '刷新报告');
+$('refreshStorage').onclick=()=>guard(loadStorageStats, '刷新存储统计');
+$('openDataDir').onclick=()=>guard(()=>openStorageFolder('data_dir'), '打开数据目录');
+$('browseDataDir').onclick=openFolderPicker;
+$('resetDataDir').onclick=()=>{ $('customDataDir').value=''; toast('已清空自定义目录，保存后恢复默认目录'); };
+$('closeFolderPicker').onclick=closeFolderPicker;
+$('folderPickerRoot').onclick=()=>guard(()=>loadFolderPicker(''), '读取位置列表');
+$('folderPickerUp').onclick=()=>currentFolderParent && guard(()=>loadFolderPicker(currentFolderParent), '读取上级目录');
+$('chooseFolder').onclick=()=>{
+  if(!currentFolderPath){ toast('请先进入一个具体目录', true); return; }
+  $('customDataDir').value = currentFolderPath;
+  closeFolderPicker();
+  toast('已选择目录，点击保存设置后生效');
+};
+$('createFolder').onclick=()=>guard(async()=>{
+  const name = $('newFolderName').value.trim();
+  if(!currentFolderPath || !name) throw new Error('请先进入父目录并填写新文件夹名称');
+  const data = await api('/storage/mkdir',{method:'POST',body:JSON.stringify({parent:currentFolderPath,name})});
+  $('newFolderName').value = '';
+  await loadFolderPicker(currentFolderPath);
+  toast(`已新建：${data.path}`);
+}, '新建文件夹');
+
+activateTab((location.hash || '#radar').slice(1));
+refreshHealth().catch(()=>{});
+loadPackages().then(()=>{
+  renderChipPicker($('feedPackages'), []);
+  $('feedAuthorityTip').innerHTML = AUTHORITY_TIP_HTML;
+}).catch(()=>{
+  renderChipPicker($('feedPackages'), []);
+});
+loadSources().catch(()=>{});
+loadSettings().catch(()=>{});
+loadStorageStats().catch(()=>{});
+loadTasks().catch(()=>{});
+loadReports().catch(()=>{});
+runRadar().catch(()=>{});
 </script>
 </body>
 </html>

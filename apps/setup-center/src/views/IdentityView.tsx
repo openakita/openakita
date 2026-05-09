@@ -296,7 +296,7 @@ export function IdentityView({ serviceRunning, apiBaseUrl }: Props) {
         {/* Right: Editor */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           {!selectedFile ? (
-            <div className="card" style={{ textAlign: "center", padding: 40, color: "var(--muted)" }}>
+            <div className="card" style={{ textAlign: "center", padding: 28, color: "var(--muted)" }}>
               {t("identity.noFileSelected")}
             </div>
           ) : (

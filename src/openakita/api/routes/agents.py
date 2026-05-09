@@ -8,6 +8,8 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from openakita.memory.json_utils import coerce_text
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -884,7 +886,7 @@ async def get_topology(request: Request):
                             )
                             for m in msgs:
                                 if m.get("role") == "user":
-                                    conv_title = (m.get("content") or "")[:60]
+                                    conv_title = coerce_text(m.get("content"))[:60]
                     except Exception:
                         pass
 
@@ -997,7 +999,7 @@ async def get_topology(request: Request):
                     msgs = getattr(sess.context, "messages", None) or []
                     for m in msgs:
                         if isinstance(m, dict) and m.get("role") == "user":
-                            conv_title = (m.get("content") or "")[:60]
+                            conv_title = coerce_text(m.get("content"))[:60]
 
                     seen_ids.add(sid)
                     nodes.append(

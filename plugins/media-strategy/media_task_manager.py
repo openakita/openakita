@@ -38,6 +38,19 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 CREATE INDEX IF NOT EXISTS idx_sources_enabled ON sources(enabled, kind);
 
+CREATE TABLE IF NOT EXISTS packages (
+    id TEXT PRIMARY KEY,
+    label_zh TEXT NOT NULL,
+    label_en TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    keywords_json TEXT NOT NULL DEFAULT '[]',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    custom INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_packages_custom ON packages(custom, enabled);
+
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     mode TEXT NOT NULL,
@@ -150,15 +163,30 @@ def _row_to_dict(row: aiosqlite.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
     data = dict(row)
-    for key in ("params_json", "result_json", "package_ids_json", "tags_json", "raw_json", "meta_json"):
+    for key in (
+        "params_json",
+        "result_json",
+        "package_ids_json",
+        "tags_json",
+        "raw_json",
+        "meta_json",
+        "keywords_json",
+    ):
         if key in data:
             public = key.removesuffix("_json")
-            data[public] = _json_loads(data.pop(key), [] if key.endswith("ids_json") or key == "tags_json" else {})
+            list_keys = ("package_ids_json", "tags_json", "keywords_json")
+            data[public] = _json_loads(data.pop(key), [] if key in list_keys else {})
     if "enabled" in data:
         data["enabled"] = bool(data["enabled"])
     if "custom" in data:
         data["custom"] = bool(data["custom"])
     return data
+
+
+def _normalize_package_id(raw: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in (raw or "").strip())
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    return cleaned[:48]
 
 
 async def _fetchone(
@@ -247,12 +275,34 @@ class MediaTaskManager:
                     now,
                 ),
             )
+        # Seed builtin packages into the dedicated `packages` table. If a legacy
+        # `config.package.<id>.enabled` flag already exists for an older user,
+        # honor it as the initial enabled state to avoid silently flipping their
+        # preferences when this migration runs the first time.
+        legacy_rows = await db.execute_fetchall(
+            "SELECT key, value FROM config WHERE key LIKE 'package.%.enabled'"
+        )
+        legacy_enabled: dict[str, bool] = {
+            str(row["key"]).split(".")[1]: bool(_json_loads(row["value"], False))
+            for row in legacy_rows
+        }
         for package_id, meta in PACKAGE_DEFS.items():
+            initial_enabled = legacy_enabled.get(package_id, bool(meta["default_enabled"]))
             await db.execute(
-                "INSERT OR IGNORE INTO config(key, value, updated_at) VALUES (?, ?, ?)",
+                """
+                INSERT OR IGNORE INTO packages(
+                    id, label_zh, label_en, description, keywords_json,
+                    enabled, custom, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+                """,
                 (
-                    f"package.{package_id}.enabled",
-                    json.dumps(bool(meta["default_enabled"]), ensure_ascii=False),
+                    package_id,
+                    meta["label_zh"],
+                    meta.get("label_en", ""),
+                    meta.get("description", ""),
+                    json.dumps(meta.get("keywords") or [], ensure_ascii=False),
+                    1 if initial_enabled else 0,
+                    now,
                     now,
                 ),
             )
@@ -338,26 +388,162 @@ class MediaTaskManager:
         return await self.get_settings()
 
     async def set_package_enabled(self, package_id: str, enabled: bool) -> dict[str, Any]:
-        if package_id not in PACKAGE_DEFS:
-            raise KeyError(package_id)
         db = self._require()
-        await db.execute(
-            "INSERT OR REPLACE INTO config(key, value, updated_at) VALUES (?, ?, ?)",
-            (f"package.{package_id}.enabled", json.dumps(bool(enabled)), time.time()),
+        cursor = await db.execute(
+            "UPDATE packages SET enabled=?, updated_at=? WHERE id=?",
+            (1 if enabled else 0, time.time(), package_id),
         )
         await db.commit()
+        if cursor.rowcount <= 0:
+            raise KeyError(package_id)
         return await self.list_packages()
 
     async def list_packages(self) -> dict[str, Any]:
         db = self._require()
-        rows = await db.execute_fetchall("SELECT key, value FROM config WHERE key LIKE 'package.%.enabled'")
-        enabled_map = {
-            str(row["key"]).split(".")[1]: bool(_json_loads(row["value"], False)) for row in rows
-        }
-        return {
-            pid: {**meta, "id": pid, "enabled": enabled_map.get(pid, bool(meta["default_enabled"]))}
-            for pid, meta in PACKAGE_DEFS.items()
-        }
+        rows = await db.execute_fetchall(
+            "SELECT * FROM packages ORDER BY custom ASC, id ASC"
+        )
+        out: dict[str, Any] = {}
+        for row in rows:
+            data = _row_to_dict(row) or {}
+            out[str(data["id"])] = data
+        return out
+
+    async def add_custom_package(
+        self,
+        *,
+        label_zh: str,
+        label_en: str = "",
+        description: str = "",
+        keywords: list[str] | None = None,
+        enabled: bool = True,
+        prefer_id: str = "",
+    ) -> dict[str, Any]:
+        db = self._require()
+        now = time.time()
+        base = _normalize_package_id(prefer_id) or _normalize_package_id(label_zh) or "pkg"
+        candidate = base
+        suffix = 1
+        while True:
+            row = await _fetchone(db, "SELECT id FROM packages WHERE id=?", (candidate,))
+            if row is None:
+                break
+            suffix += 1
+            candidate = f"{base}-{suffix}"
+            if suffix > 99:
+                candidate = f"pkg-{uuid.uuid4().hex[:8]}"
+                break
+        await db.execute(
+            """
+            INSERT INTO packages(
+                id, label_zh, label_en, description, keywords_json,
+                enabled, custom, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+            """,
+            (
+                candidate,
+                label_zh.strip() or candidate,
+                label_en.strip(),
+                description.strip(),
+                json.dumps(keywords or [], ensure_ascii=False),
+                1 if enabled else 0,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+        row = await _fetchone(db, "SELECT * FROM packages WHERE id=?", (candidate,))
+        return _row_to_dict(row) or {}
+
+    async def clone_builtin_package(
+        self,
+        source_id: str,
+        *,
+        label_zh: str = "",
+        prefer_id: str = "",
+    ) -> dict[str, Any]:
+        db = self._require()
+        row = await _fetchone(db, "SELECT * FROM packages WHERE id=?", (source_id,))
+        if row is None:
+            raise KeyError(source_id)
+        src = _row_to_dict(row) or {}
+        new_label = (label_zh or f"{src.get('label_zh') or source_id} (副本)").strip()
+        return await self.add_custom_package(
+            label_zh=new_label,
+            label_en=str(src.get("label_en") or ""),
+            description=str(src.get("description") or ""),
+            keywords=list(src.get("keywords") or []),
+            enabled=bool(src.get("enabled", True)),
+            prefer_id=prefer_id,
+        )
+
+    async def update_package(
+        self,
+        package_id: str,
+        *,
+        label_zh: str | None = None,
+        label_en: str | None = None,
+        description: str | None = None,
+        keywords: list[str] | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        db = self._require()
+        row = await _fetchone(db, "SELECT * FROM packages WHERE id=?", (package_id,))
+        if row is None:
+            raise KeyError(package_id)
+        existing = _row_to_dict(row) or {}
+        is_builtin = not bool(existing.get("custom"))
+        sets: list[str] = []
+        values: list[Any] = []
+        if label_zh is not None and not is_builtin:
+            sets.append("label_zh=?")
+            values.append(label_zh.strip() or existing.get("label_zh") or package_id)
+        if label_en is not None and not is_builtin:
+            sets.append("label_en=?")
+            values.append(label_en.strip())
+        if description is not None and not is_builtin:
+            sets.append("description=?")
+            values.append(description.strip())
+        if keywords is not None and not is_builtin:
+            sets.append("keywords_json=?")
+            values.append(json.dumps(keywords, ensure_ascii=False))
+        if enabled is not None:
+            sets.append("enabled=?")
+            values.append(1 if enabled else 0)
+        if not sets:
+            return existing
+        sets.append("updated_at=?")
+        values.append(time.time())
+        values.append(package_id)
+        await db.execute(f"UPDATE packages SET {', '.join(sets)} WHERE id=?", values)
+        await db.commit()
+        row2 = await _fetchone(db, "SELECT * FROM packages WHERE id=?", (package_id,))
+        return _row_to_dict(row2) or {}
+
+    async def delete_custom_package(self, package_id: str) -> dict[str, Any]:
+        db = self._require()
+        row = await _fetchone(db, "SELECT custom FROM packages WHERE id=?", (package_id,))
+        if row is None:
+            raise KeyError(package_id)
+        if not bool(row["custom"]):
+            raise PermissionError("builtin package cannot be deleted")
+        await db.execute("DELETE FROM packages WHERE id=?", (package_id,))
+        # Strip the deleted package id from any source's package_ids_json so
+        # ingest filters don't dangle on a tombstone.
+        srcs = await db.execute_fetchall(
+            "SELECT id, package_ids_json FROM sources WHERE package_ids_json LIKE ?",
+            (f'%"{package_id}"%',),
+        )
+        for src_row in srcs:
+            ids = _json_loads(src_row["package_ids_json"], [])
+            cleaned = [pid for pid in ids if pid != package_id]
+            if cleaned != ids:
+                await db.execute(
+                    "UPDATE sources SET package_ids_json=?, updated_at=? WHERE id=?",
+                    (json.dumps(cleaned, ensure_ascii=False), time.time(), src_row["id"]),
+                )
+        await db.commit()
+        return {"ok": True, "deleted": package_id}
 
     async def set_source_enabled(self, source_id: str, enabled: bool) -> dict[str, Any]:
         db = self._require()
@@ -415,6 +601,88 @@ class MediaTaskManager:
         await db.commit()
         row = await _fetchone(db, "SELECT * FROM sources WHERE id=?", (source_id,))
         return _row_to_dict(row) or {}
+
+    async def update_source(
+        self,
+        source_id: str,
+        *,
+        label_zh: str | None = None,
+        label_en: str | None = None,
+        url: str | None = None,
+        package_ids: list[str] | None = None,
+        authority: float | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        db = self._require()
+        row = await _fetchone(db, "SELECT * FROM sources WHERE id=?", (source_id,))
+        if row is None:
+            raise KeyError(source_id)
+        sets: list[str] = []
+        values: list[Any] = []
+        if label_zh is not None:
+            label = label_zh.strip() or str(row["label_zh"] or source_id)
+            sets.append("label_zh=?")
+            values.append(label)
+            if label_en is None:
+                sets.append("label_en=?")
+                values.append(label)
+        if label_en is not None:
+            sets.append("label_en=?")
+            values.append(label_en.strip())
+        if url is not None:
+            sets.append("url=?")
+            values.append(url.strip())
+        if package_ids is not None:
+            sets.append("package_ids_json=?")
+            values.append(json.dumps(package_ids, ensure_ascii=False))
+        if authority is not None:
+            clamped = max(0.0, min(1.0, float(authority)))
+            sets.append("authority=?")
+            values.append(clamped)
+        if enabled is not None:
+            sets.append("enabled=?")
+            values.append(1 if enabled else 0)
+        if not sets:
+            return _row_to_dict(row) or {}
+        sets.append("updated_at=?")
+        values.append(time.time())
+        values.append(source_id)
+        await db.execute(f"UPDATE sources SET {', '.join(sets)} WHERE id=?", values)
+        await db.commit()
+        row2 = await _fetchone(db, "SELECT * FROM sources WHERE id=?", (source_id,))
+        return _row_to_dict(row2) or {}
+
+    async def delete_custom_source(self, source_id: str) -> dict[str, Any]:
+        db = self._require()
+        row = await _fetchone(db, "SELECT custom FROM sources WHERE id=?", (source_id,))
+        if row is None:
+            raise KeyError(source_id)
+        if not bool(row["custom"]):
+            raise PermissionError("builtin source cannot be deleted")
+        await db.execute("DELETE FROM sources WHERE id=?", (source_id,))
+        await db.commit()
+        return {"ok": True, "deleted": source_id}
+
+    async def bulk_set_sources_enabled_for_package(
+        self, package_id: str, enabled: bool
+    ) -> dict[str, int]:
+        db = self._require()
+        rows = await db.execute_fetchall(
+            "SELECT id, package_ids_json FROM sources WHERE package_ids_json LIKE ?",
+            (f'%"{package_id}"%',),
+        )
+        affected = 0
+        now = time.time()
+        for row in rows:
+            ids = _json_loads(row["package_ids_json"], [])
+            if package_id in ids:
+                await db.execute(
+                    "UPDATE sources SET enabled=?, updated_at=? WHERE id=?",
+                    (1 if enabled else 0, now, row["id"]),
+                )
+                affected += 1
+        await db.commit()
+        return {"affected": affected}
 
     async def update_source_status(
         self,

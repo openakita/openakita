@@ -373,7 +373,7 @@ export function AdvancedView(props: AdvancedViewProps) {
     <>
       {/* ── Card 1: 系统配置（桌面通知 / 会话 / 日志） ── */}
       <div className="card">
-        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("config.agentAdvanced")}</h3>
+        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>{t("config.agentAdvanced")}</h3>
 
         <Section title={t("config.agentDesktopNotify")}>
           <div className="grid2">
@@ -414,9 +414,9 @@ export function AdvancedView(props: AdvancedViewProps) {
       </div>
 
       {/* ── Card 1.5: 长任务与上下文保护 ── */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("config.ctxLongTaskTitle")}</h3>
-        <p className="text-xs text-muted-foreground mb-2">{t("config.ctxLongTaskHint")}</p>
+      <div className="card" style={{ marginTop: 10 }}>
+        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 6 }}>{t("config.ctxLongTaskTitle")}</h3>
+        <p className="mb-2 text-xs leading-5 text-muted-foreground">{t("config.ctxLongTaskHint")}</p>
 
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <Button
@@ -526,8 +526,8 @@ export function AdvancedView(props: AdvancedViewProps) {
       </div>
 
       {/* ── Card 2: 网络与安全 ── */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("adv.networkSecurityTitle")}</h3>
+      <div className="card" style={{ marginTop: 10 }}>
+        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>{t("adv.networkSecurityTitle")}</h3>
 
         <Section title={t("adv.webNetworkTitle", { defaultValue: "Web 访问" })}>
           <div className="cardHint" style={{ marginBottom: 4 }}>
@@ -584,8 +584,8 @@ export function AdvancedView(props: AdvancedViewProps) {
       </div>
 
       {/* ── Card 3: 平台与云服务 ── */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("adv.platformTitle")}</h3>
+      <div className="card" style={{ marginTop: 10 }}>
+        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>{t("adv.platformTitle")}</h3>
 
         <Section title={t("adv.hubTitle")}
           toggle={
@@ -657,8 +657,8 @@ export function AdvancedView(props: AdvancedViewProps) {
       </div>
 
       {/* ── Card 4: 数据与备份 ── */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("adv.dataBackupTitle")}</h3>
+      <div className="card" style={{ marginTop: 10 }}>
+        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>{t("adv.dataBackupTitle")}</h3>
 
         <Section title={t("adv.backupAutoTitle")} subtitle={t("adv.backupAutoHint")}
           toggle={
@@ -876,8 +876,8 @@ export function AdvancedView(props: AdvancedViewProps) {
       <ExtensionsCard shouldUseHttpApi={shouldUseHttpApi} httpApiBase={httpApiBase} />
 
       {/* ── Card 6: 系统信息与运维 ── */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>{t("adv.sysOpsTitle")}</h3>
+      <div className="card" style={{ marginTop: 10 }}>
+        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>{t("adv.sysOpsTitle")}</h3>
 
         <Section title={t("adv.sysTitle")}
           toggle={IS_TAURI ? (
@@ -1045,7 +1045,7 @@ function ExtensionsCard({
   }
 
   return (
-    <div className="card" style={{ marginTop: 12 }}>
+    <div className="card" style={{ marginTop: 10 }}>
       <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{t("adv.extTitle")}</h3>
       <p className="text-xs text-muted-foreground" style={{ marginBottom: 12 }}>{t("adv.extHint")}</p>
 

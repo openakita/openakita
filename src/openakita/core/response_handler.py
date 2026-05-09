@@ -273,6 +273,65 @@ _ARTIFACT_INTENT_KEYWORDS: tuple[str, ...] = (
     "export",
 )
 
+_INPUT_ARTIFACT_REFERENCE_PATTERNS: tuple[str, ...] = (
+    r"\bread\s+(?:the\s+)?attached\b",
+    r"\bopen\s+(?:the\s+)?attached\b",
+    r"\banaly[sz]e\s+(?:the\s+)?attached\b",
+    r"\bsummar(?:ize|ise|y)\s+(?:the\s+)?attached\b",
+    r"\bextract\b.+\b(?:attached|file|attachment)\b",
+    r"\b(?:attached|uploaded)\s+(?:file|image|photo|picture|document|attachment)\b",
+    r"读取(?:我)?(?:刚)?(?:上传|发送|发来)?的?(?:附件|文件|图片)",
+    r"阅读(?:我)?(?:刚)?(?:上传|发送|发来)?的?(?:附件|文件|图片)",
+    r"分析(?:我)?(?:刚)?(?:上传|发送|发来)?的?(?:附件|文件|图片)",
+    r"查看(?:我)?(?:刚)?(?:上传|发送|发来)?的?(?:附件|文件|图片)",
+    r"总结(?:我)?(?:刚)?(?:上传|发送|发来)?的?(?:附件|文件|图片)",
+    r"(?:附件|文件|图片)(?:里|中|内容)",
+)
+
+_ARTIFACT_DELIVERY_INTENT_KEYWORDS: tuple[str, ...] = (
+    "下载",
+    "发我",
+    "发给我",
+    "给我一张",
+    "给我发",
+    "导出",
+    "另存",
+    "保存为",
+    "生成一份",
+    "出一份",
+    "做一份",
+    "写一份",
+    "生成文件",
+    "创建文件",
+    "输出文件",
+    "生成图片",
+    "生成图像",
+    "生成海报",
+    "download",
+    "send me",
+    "export",
+    "attach the file",
+    "attach a file",
+    "create a file",
+    "write a file",
+    "generate a file",
+    "save as",
+    "generate an image",
+    "create an image",
+    "make an image",
+)
+
+
+def _looks_like_input_artifact_reference(text: str) -> bool:
+    return any(
+        re.search(pattern, text, flags=re.IGNORECASE)
+        for pattern in _INPUT_ARTIFACT_REFERENCE_PATTERNS
+    )
+
+
+def _has_artifact_delivery_intent(text: str) -> bool:
+    return any(key in text for key in _ARTIFACT_DELIVERY_INTENT_KEYWORDS)
+
 
 def request_expects_artifact(user_request: str | None) -> bool:
     """判断用户原始请求是否明显要求附件/文件类交付物。
@@ -287,6 +346,8 @@ def request_expects_artifact(user_request: str | None) -> bool:
     if raw.startswith(_SYSTEM_REQUEST_PREFIXES_TUPLE):
         return False
     text = raw.lower()
+    if _looks_like_input_artifact_reference(text) and not _has_artifact_delivery_intent(text):
+        return False
     return any(key in text for key in _ARTIFACT_INTENT_KEYWORDS)
 
 

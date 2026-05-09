@@ -12,6 +12,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from openakita.memory.json_utils import coerce_text
+
 from .models import (
     MemoryType,
     MsgType,
@@ -777,7 +779,7 @@ class OrgToolHandler:
 
         if _guard_enabled:
             raw_msg_type = args.get("msg_type", "question")
-            content_preview = (args.get("content") or "")[:2000]
+            content_preview = coerce_text(args.get("content"))[:2000]
             org_for_guard = self._runtime.get_org(org_id)
             sender_has_children = False
             if org_for_guard:
@@ -932,7 +934,7 @@ class OrgToolHandler:
             await self._runtime._broadcast_ws("org:message", {
                 "org_id": org_id, "from_node": node_id, "to_node": to_node,
                 "msg_type": args.get("msg_type", "question"),
-                "content": args["content"][:_LIM_WS],
+                "content": coerce_text(args.get("content"))[:_LIM_WS],
             })
             self._runtime._mark_effective_action(org_id, node_id)
             self._runtime._on_inbound_for_node(org_id, to_node)
@@ -1372,7 +1374,7 @@ class OrgToolHandler:
             await self._runtime._broadcast_ws("org:escalation", {
                 "org_id": org_id, "from_node": node_id,
                 "to_node": result.to_node if hasattr(result, "to_node") else "",
-                "content": args["content"][:_LIM_WS],
+                "content": coerce_text(args.get("content"))[:_LIM_WS],
             })
             self._runtime._mark_effective_action(org_id, node_id)
             try:
@@ -1408,11 +1410,11 @@ class OrgToolHandler:
         scope_label = "部门" if scope == "department" else "全组织"
         await self._runtime._broadcast_ws("org:broadcast", {
             "org_id": org_id, "from_node": node_id, "scope": scope,
-            "content": args["content"][:_LIM_WS],
+            "content": coerce_text(args.get("content"))[:_LIM_WS],
         })
         self._runtime.get_event_store(org_id).emit(
             "broadcast", node_id,
-            {"scope": scope, "content": args["content"][:_LIM_EVENT]},
+            {"scope": scope, "content": coerce_text(args.get("content"))[:_LIM_EVENT]},
         )
         return f"已{scope_label}广播"
 
@@ -1558,13 +1560,13 @@ class OrgToolHandler:
             importance=args.get("importance", 0.5),
         )
         if entry is None:
-            return f"黑板已有相似内容，跳过重复写入: {args['content'][:50]}"
+            return f"黑板已有相似内容，跳过重复写入: {coerce_text(args.get('content'))[:50]}"
         await self._runtime._broadcast_ws("org:blackboard_update", {
             "org_id": org_id, "scope": "org", "node_id": node_id,
             "memory_type": args.get("memory_type", "fact"),
-            "content": args["content"][:_LIM_WS],
+            "content": coerce_text(args.get("content"))[:_LIM_WS],
         })
-        return f"已写入组织黑板: {args['content'][:50]}"
+        return f"已写入组织黑板: {coerce_text(args.get('content'))[:50]}"
 
     async def _handle_org_read_dept_memory(
         self, args: dict, org_id: str, node_id: str
@@ -1609,7 +1611,7 @@ class OrgToolHandler:
         await self._runtime._broadcast_ws("org:blackboard_update", {
             "org_id": org_id, "scope": "department", "department": dept,
             "node_id": node_id, "memory_type": args.get("memory_type", "fact"),
-            "content": args["content"][:_LIM_WS],
+            "content": coerce_text(args.get("content"))[:_LIM_WS],
         })
         return f"已写入 {dept} 部门记忆"
 
@@ -1649,9 +1651,9 @@ class OrgToolHandler:
         await self._runtime._broadcast_ws("org:blackboard_update", {
             "org_id": org_id, "scope": "node", "node_id": node_id,
             "memory_type": raw_mt,
-            "content": args["content"][:_LIM_WS],
+            "content": coerce_text(args.get("content"))[:_LIM_WS],
         })
-        return f"已写入私有记忆: {args['content'][:50]}"
+        return f"已写入私有记忆: {coerce_text(args.get('content'))[:50]}"
 
     # ------------------------------------------------------------------
     # Policy tools

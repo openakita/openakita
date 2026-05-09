@@ -36,6 +36,7 @@ from ..config import settings
 
 # 记忆系统
 from ..memory import MemoryManager
+from ..memory.json_utils import coerce_text
 
 # Prompt 编译管线 (v2)
 # 技能系统 (SKILL.md 规范)
@@ -190,6 +191,7 @@ def _looks_like_explicit_no_tool_request(message: str) -> bool:
             "纯文本回复",
             "no tools",
             "without tools",
+            "without using tools",
             "do not use tools",
             "don't use tools",
             "plain text",
@@ -4634,7 +4636,7 @@ class Agent:
 
             def _fp(m: dict) -> str:
                 return _hl.md5(
-                    f"{m.get('role', '')}:{(m.get('content', '') or '')[:200]}".encode(
+                    f"{m.get('role', '')}:{coerce_text(m.get('content', ''))[:200]}".encode(
                         errors="replace"
                     )
                 ).hexdigest()
@@ -4668,7 +4670,7 @@ class Agent:
         messages: list[dict] = []
         for msg in history_messages:
             role = msg.get("role", "user")
-            content = msg.get("content", "")
+            content = coerce_text(msg.get("content", ""))
             ts = msg.get("timestamp", "")
             # 标记为「仅 UI 展示，不喂 LLM」的消息（例如风险确认/取消的系统回执），
             # 跳过以避免污染上下文，导致下一轮 LLM 模仿"已确认高危..."口吻。
@@ -6121,6 +6123,8 @@ class Agent:
             # Simple queries stay lightweight, but evidence-seeking queries must
             # produce a real tool trace before the final answer is accepted.
             _force_tool_retries, _tool_evidence_required = _resolve_force_tool_policy(_intent)
+            if _looks_like_explicit_no_tool_request(message):
+                _force_tool_retries, _tool_evidence_required = 0, False
 
             _agent_profile_id = "default"
             if session and hasattr(session, "context"):
@@ -7301,6 +7305,8 @@ class Agent:
 
         # === Intent-driven ForceToolCall policy ===
         force_tool_retries, tool_evidence_required = _resolve_force_tool_policy(intent_result)
+        if _looks_like_explicit_no_tool_request(task_description):
+            force_tool_retries, tool_evidence_required = 0, False
 
         # === 委托给 ReasoningEngine ===
         return await self.reasoning_engine.run(

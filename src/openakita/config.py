@@ -97,6 +97,56 @@ class Settings(BaseSettings):
         default=0,
         description="长耗时工具（shell/browser/org 等）硬超时（秒），0=不限时（默认）",
     )
+    tool_result_max_chars: int = Field(
+        default=32000,
+        ge=1000,
+        description="单个工具结果进入模型前的兜底截断字符数；完整内容会保存到 overflow 文件",
+    )
+    tool_overflow_max_files: int = Field(
+        default=200,
+        ge=10,
+        description="工具超长输出 overflow 目录保留的最大文件数",
+    )
+    run_shell_default_block_timeout_ms: int = Field(
+        default=30000,
+        ge=0,
+        description="run_shell 未显式设置 block_timeout_ms/timeout 时的阻塞等待毫秒数；0=立即后台化",
+    )
+    run_shell_max_block_timeout_ms: int = Field(
+        default=1800000,
+        ge=0,
+        description="run_shell 兼容 timeout 参数换算后的最大阻塞等待毫秒数；0=不额外钳制",
+    )
+    powershell_default_timeout_seconds: int = Field(
+        default=120,
+        ge=0,
+        description="run_powershell 默认等待时间（秒）；0=不设置子进程超时",
+    )
+    powershell_max_timeout_seconds: int = Field(
+        default=1800,
+        ge=0,
+        description="run_powershell 显式 timeout 的最大值（秒）；0=不额外钳制",
+    )
+    cli_command_timeout_seconds: int = Field(
+        default=300,
+        ge=0,
+        description="CLI-Anything 普通命令默认等待时间（秒）；0=不设置子进程超时",
+    )
+    opencli_command_timeout_seconds: int = Field(
+        default=300,
+        ge=0,
+        description="OpenCLI list/doctor 默认等待时间（秒）；0=不设置子进程超时",
+    )
+    opencli_task_timeout_seconds: int = Field(
+        default=900,
+        ge=0,
+        description="OpenCLI run 默认等待时间（秒）；0=不设置子进程超时",
+    )
+    read_file_default_limit: int = Field(
+        default=2000,
+        ge=1,
+        description="read_file 未指定 limit 时默认读取的行数",
+    )
     web_search_attempt_timeout_seconds: int = Field(
         default=25,
         ge=0,
@@ -249,7 +299,11 @@ class Settings(BaseSettings):
 
     # === MCP 配置 ===
     mcp_enabled: bool = Field(default=True, description="是否启用 MCP (Model Context Protocol)")
-    mcp_timeout: int = Field(default=60, description="MCP 工具调用超时时间（秒），默认 60 秒")
+    mcp_timeout: int = Field(
+        default=0,
+        ge=0,
+        description="MCP 工具/资源/提示词调用超时时间（秒），0=不限制；连接超时单独由 mcp_connect_timeout 控制",
+    )
     mcp_connect_timeout: int = Field(
         default=30, description="MCP 服务器连接超时时间（秒），默认 30 秒"
     )
@@ -952,6 +1006,16 @@ _PERSISTABLE_KEYS: list[str] = [
     "confirmation_text_max_retries",
     "tool_hard_timeout_seconds",
     "long_running_tool_timeout_seconds",
+    "tool_result_max_chars",
+    "tool_overflow_max_files",
+    "run_shell_default_block_timeout_ms",
+    "run_shell_max_block_timeout_ms",
+    "powershell_default_timeout_seconds",
+    "powershell_max_timeout_seconds",
+    "cli_command_timeout_seconds",
+    "opencli_command_timeout_seconds",
+    "opencli_task_timeout_seconds",
+    "read_file_default_limit",
     "web_search_attempt_timeout_seconds",
     "always_load_tools",
     "always_load_categories",

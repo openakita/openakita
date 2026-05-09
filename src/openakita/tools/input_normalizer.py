@@ -23,7 +23,8 @@ def normalize_tool_input(
     if not tool_schema:
         return params
     normalized = _normalize_value(params, tool_schema, path=tool_name)
-    return _normalize_browser_tool_input(tool_name, normalized)
+    normalized = _normalize_browser_tool_input(tool_name, normalized)
+    return _normalize_shell_tool_input(tool_name, normalized)
 
 
 def _normalize_browser_tool_input(tool_name: str, params: Any) -> Any:
@@ -34,6 +35,24 @@ def _normalize_browser_tool_input(tool_name: str, params: Any) -> Any:
     if tool_name == "browser_click":
         return _normalize_browser_click_input(params)
     return params
+
+
+def _normalize_shell_tool_input(tool_name: str, params: Any) -> Any:
+    if tool_name != "run_shell" or not isinstance(params, dict):
+        return params
+    if params.get("block_timeout_ms") is not None or params.get("timeout") is not None:
+        return params
+
+    normalized = dict(params)
+    try:
+        from ..config import settings
+
+        normalized["block_timeout_ms"] = int(
+            getattr(settings, "run_shell_default_block_timeout_ms", 30000) or 0
+        )
+    except Exception:
+        normalized["block_timeout_ms"] = 30000
+    return normalized
 
 
 def _normalize_browser_type_input(params: dict[str, Any]) -> dict[str, Any]:

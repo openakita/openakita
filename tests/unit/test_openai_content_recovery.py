@@ -1,5 +1,5 @@
-import pytest
 import httpx
+import pytest
 
 from openakita.llm.providers.base import LLMProvider
 from openakita.llm.providers.openai import OpenAIProvider
@@ -52,6 +52,28 @@ def test_parse_response_recovers_visible_text_from_top_level_output_with_choices
     response = _provider()._parse_response(data)
 
     assert response.content[0].text == "可见回复"
+
+
+def test_parse_response_plain_message_content_is_not_marked_lost():
+    provider = _provider()
+
+    response = provider._parse_response(
+        {
+            "id": "chatcmpl-test",
+            "model": "gpt-test",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "Hello from plain content"},
+                }
+            ],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+        }
+    )
+
+    assert response.content[0].text == "Hello from plain content"
+    assert provider._last_raw_diagnostic is None
 
 
 def test_parse_response_records_diagnostic_when_tokens_have_no_recoverable_text():
