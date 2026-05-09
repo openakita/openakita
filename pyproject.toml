@@ -91,13 +91,13 @@ wework = [
 
 # 企业微信 WebSocket 长连接通道
 wework_ws = [
-    "websockets>=16.0",         # 2026-01 主版本，max_size 分片限制 + Python 3.14 支持
+    "websockets>=15.0,<16.0",   # 兼容 lark-oapi(<16) 且保留 additional_headers API
     "cryptography>=46.0.7",     # 补丁级安全更新
 ]
 
 # OneBot 协议通道 (NapCat/Lagrange 等)
 onebot = [
-    "websockets>=16.0",
+    "websockets>=15.0,<16.0",
 ]
 
 # QQ 官方机器人
@@ -106,7 +106,7 @@ onebot = [
 # （由 src/openakita/channels/media/audio_utils.py 处理），请额外
 # `pip install pilk` 或安装 voice extra。
 qqbot = [
-    "websockets>=16.0",         # QQ Gateway WebSocket 连接
+    "websockets>=15.0,<16.0",   # QQ Gateway WebSocket 连接；需兼容 lark-oapi(<16)
     "aiohttp>=3.13.0",          # Webhook 模式 HTTP 回调服务器
 ]
 
@@ -148,7 +148,7 @@ windows = [
 # 不强制拉所有 IM 通道依赖；channel deps 由 Tauri runtime manager / channel
 # bootstrap 在 agent-venv / app-venv 按需安装。
 desktop = [
-    "websockets>=16.0",
+    "websockets>=15.0,<16.0",
     "psutil>=5.9.0",
     "pyperclip>=1.8.2",
     "mss>=9.0.0; platform_system == 'Windows'",
@@ -163,7 +163,7 @@ all = [
     "dingtalk-stream>=0.24.3",
     "aiohttp>=3.13.0",
     "pycryptodome>=3.23.0",
-    "websockets>=16.0",
+    "websockets>=15.0,<16.0",
     "cryptography>=46.0.7",
     "pilk>=0.2.1",  # 语音接收/转写（QQ/微信 SILK 解码），发送不再需要
     # -- 桌面自动化 --
