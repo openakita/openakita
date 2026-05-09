@@ -58,6 +58,11 @@ const AUTO_START_TIMEOUT_MS: u64 = 180_000;
 ///     "正在启动" 而非 "未启动"。
 const BACKEND_BOOT_GRACE_SEC: u64 = 150;
 
+/// 即便 PID 已不在跑，也允许在 spawn 后这段窗口内继续认为"在启动宽限"。
+/// 用于覆盖 spawn → Python 闪退 → Rust 心跳自愈重 spawn 的过渡窗口，
+/// 避免前端 UI 在这个 30 秒小窗口里闪一下"已停止"。
+const BACKEND_BOOT_GRACE_PID_DEAD_SEC: u64 = 30;
+
 /// `openakita_service_start` 的进程级互斥窗口（毫秒）。
 /// 在 3 秒内对同一 workspace 的第二次调用将被直接拒绝，避免前端重试/竞态
 /// 在短时间内连续 spawn 出多个后端进程（autostart.log 里 27s 内 5 次 spawn
@@ -1187,6 +1192,11 @@ fn ensure_app_venv(
     cmd.args(["pip", "install", "--python"]);
     cmd.arg(&app_py);
     cmd.arg(wheel_arg);
+    // 显式把 certifi 加进同一次安装：虽然 httpx/requests/aiohttp 会传递依赖
+    // certifi，但 [desktop] extras 不一定每次都触发它；显式钉死避免万一某个
+    // resolver 走捷径跳过 certifi 导致 ssl.create_default_context() 找不到
+    // cacert.pem（用户日志里 dashscope/QQBot 的 SSL [Errno 2] 根因）。
+    cmd.arg("certifi");
     cmd.args(["--reinstall-package", "openakita"]);
     // `uv pip install` does not support pip's `--prefer-binary` flag.
     // Keep binary preference on Python-side `pip install` calls only.
@@ -1326,6 +1336,28 @@ fn apply_dual_runtime_env(cmd: &mut Command) {
         cmd.env("PIP_TRUSTED_HOST", &pip_index.trusted_host);
     }
     prepend_path(cmd, &runtime_venv_bin_dir(&agent_venv_dir()));
+
+    // ── SSL CA bundle 注入 ──
+    // uv-managed Python 没有内置 OS-level 信任 store，``ssl.create_default_context()``
+    // 在 Windows 上会因为找不到 cafile 报 ``FileNotFoundError`` —— LLM 调用、
+    // QQBot、httpx/requests/aiohttp 全部会被这条路径影响（用户日志里
+    // dashscope-qwen3.5-plus / QQ Bot 的 SSL [Errno 2] 都是同一个根因）。
+    // 解决：拿 app-venv 里 certifi 提供的 cacert.pem，注入到所有标准变量里：
+    //   - ssl 模块: SSL_CERT_FILE / SSL_CERT_DIR
+    //   - requests: REQUESTS_CA_BUNDLE
+    //   - libcurl/aiohttp: CURL_CA_BUNDLE
+    if let Some(sp) = runtime_venv_site_packages_dir(&app_venv_dir()) {
+        let cacert = sp.join("certifi").join("cacert.pem");
+        if cacert.exists() {
+            cmd.env("SSL_CERT_FILE", &cacert);
+            cmd.env("REQUESTS_CA_BUNDLE", &cacert);
+            cmd.env("CURL_CA_BUNDLE", &cacert);
+            // SSL_CERT_DIR 指向 certifi 目录，作为 hash-named symlink 兜底
+            if let Some(parent) = cacert.parent() {
+                cmd.env("SSL_CERT_DIR", parent);
+            }
+        }
+    }
 }
 
 /// 获取安装包内置的 Python 解释器路径（openakita-server/_internal）
@@ -2212,8 +2244,16 @@ fn write_pid_file(workspace_id: &str, pid: u32, started_by: &str) -> Result<(), 
     Ok(())
 }
 
-/// 判断当前 workspace 的后端是否仍在"启动宽限期"内：PID 文件存在、
-/// 进程还在跑、且 PID 文件创建时间距今 < BACKEND_BOOT_GRACE_SEC。
+/// 判断当前 workspace 的后端是否仍在"启动宽限期"内。
+///
+/// 宽限规则：
+///   1. PID 文件存在，且 `started_at > 0`（旧格式/外部进程不进入宽限）
+///   2. age < BACKEND_BOOT_GRACE_SEC
+///   3. **PID 还在跑**：仍在宽限
+///      **或** PID 已死但 age < BACKEND_BOOT_GRACE_PID_DEAD_SEC：依然算宽限
+///         —— 这是为了对付 dual-venv hack 启动初期"Python 子进程
+///         一闪而过又被自愈重 spawn"的窗口，避免心跳立刻误判 down
+///         然后前端跟着闪一下"已停止"红条。
 ///
 /// 用于压制 startup 期间的"backend down"误报和无意义的 auto-spawn，
 /// 同时让前端 UI 在这段时间内持续显示"正在启动"而非"未启动"。
@@ -2221,15 +2261,26 @@ fn backend_in_boot_grace(workspace_id: &str) -> bool {
     let Some(data) = read_pid_file(workspace_id) else {
         return false;
     };
-    if !is_pid_running(data.pid) {
-        return false;
-    }
     if data.started_at == 0 {
-        // 旧格式 / 外部进程，无可靠 started_at — 不进入宽限。
         return false;
     }
     let age = now_epoch_secs().saturating_sub(data.started_at);
-    age < BACKEND_BOOT_GRACE_SEC
+    if age >= BACKEND_BOOT_GRACE_SEC {
+        return false;
+    }
+    if is_pid_running(data.pid) {
+        return true;
+    }
+    // PID 已死，但还在 spawn-死亡-重 spawn 自愈窗口内 → 仍视作宽限，
+    // 避免心跳跳过 boot-grace 直接报 lost。
+    age < BACKEND_BOOT_GRACE_PID_DEAD_SEC
+}
+
+/// 暴露给前端的命令版本，便于 App.tsx 心跳直接判定"是否还在启动宽限"，
+/// 而不必走 `is_backend_auto_starting`（后者复用同一逻辑但语义偏向"自启动"）。
+#[tauri::command]
+fn backend_in_boot_grace_cmd(workspace_id: String) -> bool {
+    backend_in_boot_grace(&workspace_id)
 }
 
 /// 读取 PID 文件，兼容旧版纯数字格式
@@ -4152,6 +4203,7 @@ fn main() {
             openakita_check_pid_alive,
             set_tray_backend_status,
             is_backend_auto_starting,
+            backend_in_boot_grace_cmd,
             repair_runtime_env,
             get_auto_start_backend,
             set_auto_start_backend,
@@ -4883,9 +4935,21 @@ fn openakita_service_start(
         });
     }
 
-    // Confirm the process is still alive shortly after spawning.
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    if !is_pid_running(pid) {
+    // Confirm the process is still alive after spawning.
+    // 实测在 dual-venv hack 下，Python 解释器 import 失败/路径错误等
+    // "立即退出"故障通常发生在 spawn 后 1-3 秒内。原来 sleep 500ms 仅能
+    // 抓到极少数现场，导致 service_start 误返回 Ok，前端跟着进入 starting
+    // 死循环。改成 6 次 × 500ms 轮询，命中即停，最多多等 2.5s 即可换来
+    // 准确的失败判定。
+    let mut alive = true;
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if !is_pid_running(pid) {
+            alive = false;
+            break;
+        }
+    }
+    if !alive {
         {
             let mut guard = MANAGED_CHILD.lock().unwrap();
             if let Some(ref mp) = *guard {

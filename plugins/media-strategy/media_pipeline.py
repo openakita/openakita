@@ -11,9 +11,11 @@ from media_ai.analyzer import (
     build_brief,
     build_replicate_plan,
     build_verify_pack,
+    cluster_topics,
     markdown_to_html,
     score_article,
 )
+from media_fetchers.html import fetch_and_parse_html
 from media_fetchers.rss import UnsafeFeedUrl, fetch_and_parse
 from media_task_manager import MediaTaskManager, utcnow_iso
 
@@ -54,11 +56,19 @@ class MediaPipeline:
             started = utcnow_iso()
             try:
                 source_payload = {**source, "id": source["id"]}
-                _, items = await fetch_and_parse(
-                    source_payload,
-                    timeout_sec=timeout,
-                    user_agent=user_agent,
-                )
+                kind = str(source.get("kind") or "rss").lower()
+                if kind == "html":
+                    _, items = await fetch_and_parse_html(
+                        source_payload,
+                        timeout_sec=timeout,
+                        user_agent=user_agent,
+                    )
+                else:
+                    _, items = await fetch_and_parse(
+                        source_payload,
+                        timeout_sec=timeout,
+                        user_agent=user_agent,
+                    )
                 inserted_count = 0
                 for item in items:
                     payload = {
@@ -126,17 +136,97 @@ class MediaPipeline:
         since_hours = int(params.get("since_hours") or 24)
         package_id = str(params.get("package_id") or params.get("category") or "")
         limit = int(params.get("limit") or 30)
+        cluster = bool(params.get("cluster"))
+        compact = bool(params.get("compact"))
+        if cluster:
+            return await self.top_topics(
+                {
+                    "since_hours": since_hours,
+                    "package_id": package_id,
+                    "limit": limit,
+                    "min_coverage": int(params.get("min_coverage") or 1),
+                    "compact": compact,
+                }
+            )
         items = await self.tm.recent_articles(
             since_hours=since_hours,
             package_id=package_id,
             limit=limit,
         )
+        if compact:
+            items = [_compact_article(it) for it in items]
         return {
             "items": items,
             "stats": {
                 "total": len(items),
                 "since_hours": since_hours,
                 "package_id": package_id,
+                "compact": compact,
+                "cluster": False,
+            },
+        }
+
+    async def top_topics(self, params: dict[str, Any]) -> dict[str, Any]:
+        """图2「选题推荐逻辑」：跨源聚合 + 权威加权，默认输出 Top 5。
+
+        - ``limit`` 默认 5，可由用户自定义（上限 20）。
+        - ``min_coverage`` 控制至少要被几家源同时报道才入选，默认 1
+          （等于退化为单源排序），常用值 2 表示「至少两家媒体同时报道」。
+        - ``compact=True``（默认）：仅返回标题、链接、来源列表与权重分，
+          减少 Token 消耗；用户点击链接自行阅读原文。
+        """
+
+        since_hours = int(params.get("since_hours") or 24)
+        package_id = str(params.get("package_id") or params.get("category") or "")
+        raw_limit = int(params.get("limit") or 5)
+        limit = max(1, min(raw_limit, 20))
+        min_coverage = max(1, int(params.get("min_coverage") or 1))
+        compact = params.get("compact")
+        compact = True if compact is None else bool(compact)
+
+        # Pull a wider candidate window so cross-source clustering has enough
+        # material; bound it to keep DB scans cheap.
+        fetch_limit = max(120, limit * 12)
+        fetch_limit = min(fetch_limit, 500)
+        items = await self.tm.recent_articles(
+            since_hours=since_hours,
+            package_id=package_id,
+            limit=fetch_limit,
+        )
+        clusters = cluster_topics(items)
+        filtered = [c for c in clusters if int(c.get("sources_count") or 1) >= min_coverage]
+        selected = filtered[:limit]
+        out_items: list[dict[str, Any]]
+        if compact:
+            out_items = [
+                {
+                    "title": c["title"],
+                    "url": c["url"],
+                    "sources": c["source_ids"],
+                    "sources_count": c["sources_count"],
+                    "weighted_score": c["weighted_score"],
+                    "hot_score_max": c["hot_score_max"],
+                    "risk_level": c["risk_level"],
+                    "published_at": c.get("published_at"),
+                    "article_ids": c["article_ids"][:5],
+                }
+                for c in selected
+            ]
+        else:
+            out_items = selected
+        return {
+            "items": out_items,
+            "stats": {
+                "total_candidates": len(items),
+                "total_clusters": len(clusters),
+                "filtered": len(filtered),
+                "selected": len(selected),
+                "since_hours": since_hours,
+                "package_id": package_id,
+                "min_coverage": min_coverage,
+                "limit": limit,
+                "compact": compact,
+                "cluster": True,
             },
         }
 
@@ -236,3 +326,20 @@ class MediaPipeline:
 
 def _session_label(session: str) -> str:
     return {"morning": "早报", "noon": "午报", "evening": "晚报"}.get(session, "简报")
+
+
+_COMPACT_KEYS: tuple[str, ...] = (
+    "id",
+    "source_id",
+    "package_ids",
+    "title",
+    "url",
+    "hot_score",
+    "risk_level",
+    "published_at",
+    "fetched_at",
+)
+
+
+def _compact_article(article: dict[str, Any]) -> dict[str, Any]:
+    return {key: article.get(key) for key in _COMPACT_KEYS if key in article}

@@ -415,6 +415,137 @@ class Brain:
         self._record_usage(response)
         return self._llm_response_to_response(response)
 
+    async def think_lightweight_stream(
+        self,
+        prompt: str,
+        system: str | None = None,
+        max_tokens: int = 2048,
+        enable_thinking: bool = False,
+        thinking_depth: str | None = None,
+    ):
+        """流式版 think_lightweight：yield reasoning_engine 风格的高层事件字典。
+
+        与 :meth:`think_lightweight` 同样优先 compiler 端点、失败回退主端点；
+        但全程通过 LLMClient.chat_stream 把 token 增量推给调用方，让 IM 通道
+        的 fast-reply 也能呈现"打字机"流式效果。
+
+        Yields:
+            ``{"type": "text_delta", "content": "..."}``
+            ``{"type": "thinking_delta", "content": "..."}``
+            ``{"type": "thinking_end", "duration_ms": int}``
+            ``{"type": "done"}``
+            ``{"type": "error", "message": str}``（仅严重失败时）
+        """
+        # 延迟导入避免与 stream_accumulator 形成循环依赖
+        from .stream_accumulator import StreamAccumulator
+
+        messages = [Message(role="user", content=[TextBlock(text=prompt)])]
+        sys_prompt = system or ""
+
+        req_id = self._dump_llm_request(
+            sys_prompt, messages, [], caller="think_lightweight_stream"
+        )
+
+        async def _stream_via(client: LLMClient, label: str):
+            """从 *client* 的 chat_stream 转发 raw 事件，并用 StreamAccumulator 翻译为高层事件。
+
+            返回 (yielded_text: bool, response: LLMResponse | None) 给上层决定是否回退。
+            """
+            acc = StreamAccumulator()
+            yielded_text = False
+            try:
+                async for raw in client.chat_stream(
+                    messages=messages,
+                    system=sys_prompt,
+                    enable_thinking=enable_thinking,
+                    thinking_depth=thinking_depth,
+                    max_tokens=max_tokens,
+                ):
+                    if isinstance(raw, dict) and raw.get("type") == "endpoint_meta":
+                        continue
+                    for high in acc.feed(raw):
+                        ht = high.get("type")
+                        if ht in ("text_delta", "thinking_delta", "thinking_end"):
+                            if ht == "text_delta":
+                                yielded_text = True
+                            yield ("event", high)
+            except Exception as exc:
+                yield ("error", exc)
+                return
+            decision = acc.build_decision()
+            yield ("done", decision)
+            logger.info(
+                f"[LLM] think_lightweight_stream completed via {label} endpoint "
+                f"(yielded_text={yielded_text})"
+            )
+
+        use_compiler = self._compiler_available()
+        primary_client = self._compiler_client if use_compiler else self._llm_client
+        primary_label = "compiler" if use_compiler else "main"
+
+        any_text_yielded = False
+        compiler_failed_exc: Exception | None = None
+
+        async for kind, payload in _stream_via(primary_client, primary_label):
+            if kind == "event":
+                evt = payload
+                if evt.get("type") == "text_delta":
+                    any_text_yielded = True
+                yield evt
+            elif kind == "error":
+                compiler_failed_exc = payload
+                if use_compiler:
+                    self._compiler_on_failure(str(payload))
+                break
+            elif kind == "done":
+                if use_compiler:
+                    self._compiler_on_success()
+                self._dump_llm_response(
+                    None,
+                    caller=f"think_lightweight_stream_{primary_label}",
+                    request_id=req_id,
+                )
+                yield {"type": "done"}
+                return
+
+        # 失败回退：仅当 compiler 链路报错且主端点尚未被使用时
+        if compiler_failed_exc is not None and use_compiler:
+            if any_text_yielded:
+                # 已经向用户吐了部分文本，不能切端点造成内容前后不一致；直接报错收尾
+                logger.warning(
+                    f"[LLM] think_lightweight_stream: compiler failed mid-stream "
+                    f"({compiler_failed_exc}), no fallback (text already yielded)"
+                )
+                yield {"type": "error", "message": str(compiler_failed_exc)[:300]}
+                yield {"type": "done"}
+                return
+            logger.warning(
+                f"[LLM] think_lightweight_stream: compiler failed ({compiler_failed_exc}), "
+                "falling back to main endpoint"
+            )
+            async for kind, payload in _stream_via(self._llm_client, "main_fallback"):
+                if kind == "event":
+                    yield payload
+                elif kind == "error":
+                    logger.error(
+                        f"[LLM] think_lightweight_stream: main fallback also failed: {payload}"
+                    )
+                    yield {"type": "error", "message": str(payload)[:300]}
+                    yield {"type": "done"}
+                    return
+                elif kind == "done":
+                    self._dump_llm_response(
+                        None,
+                        caller="think_lightweight_stream_main_fallback",
+                        request_id=req_id,
+                    )
+                    yield {"type": "done"}
+                    return
+
+        if compiler_failed_exc is not None and not use_compiler:
+            yield {"type": "error", "message": str(compiler_failed_exc)[:300]}
+            yield {"type": "done"}
+
     def _llm_response_to_response(self, llm_response: LLMResponse) -> Response:
         """将 LLMResponse 转换为向后兼容的 Response"""
         text_parts = []

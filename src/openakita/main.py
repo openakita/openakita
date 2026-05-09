@@ -46,6 +46,41 @@ setup_logging(
 logger = logging.getLogger(__name__)
 
 
+# ── Windows asyncio Proactor 噪音抑制（logging 层兜底）──
+# Tauri/uvicorn 在 Windows 上 SSE/WebSocket 客户端断开时会触发
+# ``_ProactorBasePipeTransport._call_connection_lost`` 抛 ``ConnectionResetError
+# [WinError 10054]``。``_serve()`` 里的 ``loop.set_exception_handler`` 已经
+# 处理了同一 loop 内的 callback，但有些路径（跨 loop / 多 worker / 后置
+# install 时机错过）仍会冒到 asyncio 模块自己的 logger 里。
+# 在 logging 层加一个 filter 是最稳的兜底——只要 record 命中特征就降级，不写
+# error.log，前端 BugReport 不再被 60% 噪音占据。
+class _WindowsAsyncioPipeFilter(logging.Filter):
+    _NEEDLES = (
+        "_ProactorBasePipeTransport._call_connection_lost",
+        "ConnectionResetError",
+        "WinError 10054",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+        try:
+            msg = record.getMessage()
+        except Exception:
+            msg = str(record.msg) if record.msg else ""
+        if any(needle in msg for needle in self._NEEDLES):
+            return False
+        if record.exc_info and record.exc_info[1] is not None:
+            exc = record.exc_info[1]
+            if isinstance(exc, ConnectionResetError):
+                return False
+            if "WinError 10054" in str(exc):
+                return False
+        return True
+
+
+if sys.platform == "win32":
+    logging.getLogger("asyncio").addFilter(_WindowsAsyncioPipeFilter())
+
+
 # 初始化追踪系统
 def _init_tracing() -> None:
     """根据配置初始化 Agent 追踪系统"""
@@ -2000,6 +2035,29 @@ def serve(
     import time
     import warnings
     from pathlib import Path
+
+    # ── 最早期心跳：在加载 IM/Skills/Plugins/uvicorn 之前先写一次心跳 ──
+    # 让 Tauri 心跳读到 phase=starting/http_ready=false，避免 dual-venv hack
+    # 期间（cold start 90~120s）前端因为读不到任何信号而误判 backend 已死。
+    # 这一段只用 stdlib，不引入任何新依赖，保证即使后续 import 失败心跳也已落盘。
+    try:
+        _early_hb_path = Path.cwd() / "data" / "backend.heartbeat"
+        _early_hb_path.parent.mkdir(parents=True, exist_ok=True)
+        _early_hb_tmp = _early_hb_path.with_suffix(".heartbeat.tmp")
+        _early_hb_tmp.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "timestamp": time.time(),
+                    "phase": "starting",
+                    "http_ready": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        _early_hb_tmp.replace(_early_hb_path)
+    except Exception:
+        pass  # 早期心跳写失败不应阻塞 serve
 
     from openakita import config as cfg
 

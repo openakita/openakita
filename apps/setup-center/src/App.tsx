@@ -932,8 +932,13 @@ function MainApp() {
                   } catch { /* still down */ }
                 }
                 if (!confirmed && !cancelled) {
+                  // 1.5s grace 没能拨通 HTTP，但**不要直接判 stopped 闪一下红条**。
+                  // 真正的状态由 5s 心跳轮询收敛——心跳分支会先问 Rust
+                  // backend_in_boot_grace_cmd / is_backend_auto_starting，
+                  // 若仍在 boot grace 就保持 "starting"；若真的死了再降级 dead。
+                  // 这里保留 unknown，避免 mount 与 spawn 竞态时刺出一个 stopped 帧。
                   setServiceStatus({ running: false, pid: null, pidFile: "" });
-                  setBackendBootPhase("stopped");
+                  // backendBootPhase 保持 unknown / 上一帧；不强制写 stopped
                 }
               }
             }
@@ -1044,17 +1049,27 @@ function MainApp() {
         // 这段时间内 fetch /api/health 必然失败，但后端正在加载 122 个 skills、
         // 初始化 Memory/IM 通道、启动 uvicorn。如果走老逻辑（5 次失败 = 25s 转 dead），
         // UI 会在启动期闪一下"未启动"红条。
-        // 改成：直接问 Rust 后端是否仍在 boot grace（基于 PID started_at）。
-        // 是 → 不进入 suspect/degraded/dead，phase 强制 starting，重置 failCount。
+        // 改成：先问 Rust 后端是否仍在 boot grace。
+        //   1) backend_in_boot_grace_cmd —— 基于 PID 文件 started_at 判定（含 PID 死亡 30s 容忍窗）
+        //   2) 退化到 is_backend_auto_starting —— 兼容旧 Rust 端
+        // 命中任一就保持 "starting"，重置 failCount，不进入 suspect/degraded/dead。
         if (IS_TAURI && dataMode !== "remote") {
+          let stillStarting = false;
           try {
-            const stillStarting = await invoke<boolean>("is_backend_auto_starting");
-            if (stillStarting) {
-              heartbeatFailCount.current = 0;
-              if (backendBootPhase !== "starting") setBackendBootPhase("starting");
-              return;
-            }
-          } catch { /* invoke 不可用 — 走原有降级逻辑 */ }
+            stillStarting = await invoke<boolean>("backend_in_boot_grace_cmd", {
+              workspaceId: currentWorkspaceId,
+            });
+          } catch {
+            // 老版本 Rust 后端没有 backend_in_boot_grace_cmd，退化路径
+            try {
+              stillStarting = await invoke<boolean>("is_backend_auto_starting");
+            } catch { /* invoke 不可用 — 走原有降级逻辑 */ }
+          }
+          if (stillStarting) {
+            heartbeatFailCount.current = 0;
+            if (backendBootPhase !== "starting") setBackendBootPhase("starting");
+            return;
+          }
         }
 
         heartbeatAliveSuccessCountRef.current = 0;

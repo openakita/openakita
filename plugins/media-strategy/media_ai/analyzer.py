@@ -56,6 +56,109 @@ def _keyword_score(text: str, package_ids: list[str]) -> float:
     return min(score, 3.0)
 
 
+# Common Chinese newsroom prefixes that should not split otherwise identical
+# topics across sources. Strip them before computing the clustering signature.
+_TITLE_PREFIX_RE = re.compile(
+    r"^\s*[【\[（(]?\s*"
+    r"(?:突发|最新|快讯|独家|首发|实时|直播|更新|快报|视频|图集|多图|组图|专访|分析|评论|社论)"
+    r"\s*[】\]）)]?\s*[:：丨\|·\-—,，]?\s*"
+)
+_RISK_RANK: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
+_RANK_TO_RISK: dict[int, str] = {0: "low", 1: "medium", 2: "high"}
+
+
+def topic_signature(title: str, *, length: int = 24) -> str:
+    """Compute a normalized clustering key for cross-source topic grouping.
+
+    Different outlets often phrase the same event with slightly different
+    titles ("国台办：xxx" vs "国台办回应xxx vs 突发：国台办xxx"). The signature
+    strips common newsroom prefixes and keeps the first ``length`` alnum
+    characters so equivalent topics from different sources collapse into a
+    single cluster.
+    """
+
+    if not title:
+        return ""
+    cleaned = _TITLE_PREFIX_RE.sub("", title.strip()).strip()
+    cleaned = "".join(ch.lower() for ch in cleaned if ch.isalnum())
+    return cleaned[:length]
+
+
+def cluster_topics(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group articles by topic signature and rank by coverage + authority.
+
+    Selection logic (实现图2「选题推荐逻辑优化」):
+    1. 同一选题被多个来源同时报道 → 视为重要，权重越高
+    2. 单条最高 hot_score 仍是排序基底（已含权威权重 + 时新度）
+    3. 覆盖度对数加权，避免热搜聚合源把单一事件刷爆排名
+    """
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        sig = topic_signature(str(item.get("title") or ""))
+        if not sig:
+            sig = f"_id_{item.get('id') or id(item)}"
+        groups.setdefault(sig, []).append(item)
+
+    out: list[dict[str, Any]] = []
+    for sig, members in groups.items():
+        sources_seen: list[str] = []
+        for m in members:
+            sid = str(m.get("source_id") or "")
+            if sid and sid not in sources_seen:
+                sources_seen.append(sid)
+
+        leader = max(members, key=lambda x: float(x.get("hot_score") or 0))
+        max_hot = float(leader.get("hot_score") or 0)
+        sum_hot = sum(float(m.get("hot_score") or 0) for m in members)
+        avg_hot = sum_hot / max(1, len(members))
+
+        risk_max = 0
+        latest_at = ""
+        article_ids: list[str] = []
+        for m in members:
+            risk_max = max(risk_max, _RISK_RANK.get(str(m.get("risk_level") or "medium"), 1))
+            published = str(m.get("published_at") or m.get("fetched_at") or "")
+            if published > latest_at:
+                latest_at = published
+            aid = str(m.get("id") or "")
+            if aid:
+                article_ids.append(aid)
+
+        coverage = max(1, len(sources_seen))
+        # 覆盖加权采用对数：1->2 家 +1.6 分；3 家 +3.2；5 家 +4.6；10 家 +5.7。
+        coverage_bonus = 1.6 * math.log2(coverage + 1)
+        weighted = round(max_hot + coverage_bonus + 0.4 * avg_hot, 2)
+
+        out.append(
+            {
+                "signature": sig,
+                "title": str(leader.get("title") or ""),
+                "url": str(leader.get("url") or ""),
+                "lead_source_id": str(leader.get("source_id") or ""),
+                "source_ids": sources_seen,
+                "sources_count": coverage,
+                "hot_score_max": round(max_hot, 2),
+                "hot_score_avg": round(avg_hot, 2),
+                "weighted_score": weighted,
+                "coverage_bonus": round(coverage_bonus, 2),
+                "article_ids": article_ids,
+                "article_count": len(members),
+                "risk_level": _RANK_TO_RISK[risk_max],
+                "published_at": latest_at or None,
+            }
+        )
+
+    out.sort(
+        key=lambda x: (
+            -float(x["weighted_score"]),
+            -int(x["sources_count"]),
+            -float(x["hot_score_max"]),
+        )
+    )
+    return out
+
+
 def score_article(item: dict[str, Any], source: dict[str, Any] | None = None) -> dict[str, Any]:
     """Assign a deterministic 0-10 hotspot score and risk level."""
 

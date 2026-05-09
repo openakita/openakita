@@ -6354,43 +6354,123 @@ class Agent:
             _turn_id = turn_id or f"{conversation_id}:{int(time.time() * 1000)}"
             _allow_lightweight_fast_reply = not endpoint_override
 
+            # 决定 fast-path 是否启用思考链：
+            # - thinking_mode == "on"：用户显式开启 → 同步开思维链
+            # - 其它（off/auto/None）：fast-path 仍优先轻量速回，不开思考
+            _fast_enable_think = _thinking_mode == "on"
+
+            async def _run_fast_reply_stream(
+                _system: str,
+                *,
+                log_prefix: str,
+                fallback_text: str | None,
+                result_holder: dict,
+            ):
+                """统一的 fast-reply 流式执行器。
+
+                优先 ``brain.think_lightweight_stream`` 走真流式 token；流式失败或空回
+                时回退到非流式 ``think_lightweight``，确保用户始终能收到回复。
+                由于 async generator 无法 ``return`` 值，最终的 ``text/usage/ok``
+                通过 ``result_holder`` 字典回传给调用方。
+                """
+                _stream_text = ""
+                _stream_failed = False
+                # —— 路径 A：尝试真流式 ——
+                try:
+                    async for _evt in self.brain.think_lightweight_stream(
+                        prompt=message,
+                        system=_system,
+                        enable_thinking=_fast_enable_think,
+                    ):
+                        _et = _evt.get("type")
+                        if _et == "text_delta":
+                            _piece = _evt.get("content", "")
+                            if _piece:
+                                _stream_text += _piece
+                                yield _evt
+                        elif _et in ("thinking_delta", "thinking_end"):
+                            yield _evt
+                        elif _et == "error":
+                            _stream_failed = True
+                            logger.warning(
+                                f"[{log_prefix}] streaming reported error: "
+                                f"{_evt.get('message', '')}"
+                            )
+                        elif _et == "done":
+                            break
+                except Exception as exc:
+                    _stream_failed = True
+                    logger.warning(f"[{log_prefix}] streaming path failed: {exc}")
+
+                _cleaned = clean_llm_response(_stream_text) if _stream_text else ""
+                if _cleaned and not _stream_failed:
+                    result_holder["text"] = _cleaned
+                    result_holder["usage"] = None
+                    result_holder["ok"] = True
+                    return
+
+                # —— 路径 B：流式失败或为空 → 回退到一次性非流式 ——
+                try:
+                    _resp = await self.brain.think_lightweight(
+                        prompt=message,
+                        system=_system,
+                    )
+                    _fb_text = clean_llm_response(_resp.content if _resp.content else "")
+                    if _fb_text:
+                        # 流式没吐过有效字符时才补发整段，避免内容重复
+                        if not _stream_text.strip():
+                            yield {"type": "text_delta", "content": _fb_text}
+                        result_holder["text"] = _fb_text
+                        result_holder["usage"] = _resp.usage
+                        result_holder["ok"] = True
+                        return
+                except Exception as exc:
+                    logger.error(f"[{log_prefix}] non-stream fallback also failed: {exc}")
+
+                # —— 路径 C：所有路径失败 ——
+                if fallback_text:
+                    if not _stream_text.strip():
+                        yield {"type": "text_delta", "content": fallback_text}
+                    result_holder["text"] = fallback_text
+                    result_holder["usage"] = None
+                    result_holder["ok"] = True
+                    return
+                # QUERY 路径要求 fall through 到完整 agent
+                result_holder["text"] = _cleaned or ""
+                result_holder["usage"] = None
+                result_holder["ok"] = False
+
             if (
                 _allow_lightweight_fast_reply
                 and _intent
                 and _intent.intent == _IT.CHAT
                 and getattr(_intent, "fast_reply", False)
             ):
-                # Ultra-fast path: rule-based greeting only, use lightweight model
-                try:
-                    _identity_snippet = ""
-                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
-                        _identity_snippet = (
-                            self.identity.get_system_prompt(include_active_task=False) or ""
-                        )[:500]
+                # Ultra-fast path: rule-based greeting only, use lightweight model.
+                # 改造为流式：用户开启「流式」/「思维链」开关时，问候也走打字机效果。
+                _identity_snippet = ""
+                if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                    _identity_snippet = (
+                        self.identity.get_system_prompt(include_active_task=False) or ""
+                    )[:500]
 
-                    _fast_system = (
-                        f"{_identity_snippet}\n\n"
-                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
-                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
-                    ).strip()
+                _fast_system = (
+                    f"{_identity_snippet}\n\n"
+                    "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                    "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                ).strip()
 
-                    _fast_response = await self.brain.think_lightweight(
-                        prompt=message,
-                        system=_fast_system,
-                    )
-                    _fast_usage = _fast_response.usage
-                    _reply_text = clean_llm_response(
-                        _fast_response.content if _fast_response.content else ""
-                    )
-                    if _reply_text:
-                        yield {"type": "text_delta", "content": _reply_text}
-                    else:
-                        yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
-                        _reply_text = "你好！有什么我可以帮你的吗？"
-                except Exception as e:
-                    logger.error(f"[FastReply] Failed: {e}")
-                    yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
-                    _reply_text = "你好！有什么我可以帮你的吗？"
+                _holder: dict = {"text": "", "usage": None, "ok": False}
+                async for _evt in _run_fast_reply_stream(
+                    _fast_system,
+                    log_prefix="FastReply",
+                    fallback_text="你好！有什么我可以帮你的吗？",
+                    result_holder=_holder,
+                ):
+                    yield _evt
+                _reply_text = _holder["text"]
+                _fast_usage = _holder["usage"]
+
                 yield {"type": "done"}
 
                 await self._finalize_session(
@@ -6421,46 +6501,40 @@ class Agent:
                 # Fast-path for simple factual queries (math, date, definitions)
                 # No tools passed → LLM answers directly; empty response falls through
                 # to full agent path below.
-                _query_ok = False
+                _runtime_info = ""
                 try:
-                    _runtime_info = ""
-                    try:
-                        from ..prompt.builder import _build_runtime_section
+                    from ..prompt.builder import _build_runtime_section
 
-                        _runtime_info = _build_runtime_section() or ""
-                    except Exception:
-                        pass
+                    _runtime_info = _build_runtime_section() or ""
+                except Exception:
+                    pass
 
-                    _identity_snippet = ""
-                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
-                        _identity_snippet = (
-                            self.identity.get_system_prompt(include_active_task=False) or ""
-                        )[:500]
+                _identity_snippet = ""
+                if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                    _identity_snippet = (
+                        self.identity.get_system_prompt(include_active_task=False) or ""
+                    )[:500]
 
-                    _fast_system = (
-                        f"{_identity_snippet}\n\n"
-                        f"{_runtime_info}\n\n"
-                        "用户提出了一个简单的知识/计算/日期问题。"
-                        "请直接给出准确、简洁的回答。不要使用任何工具。"
-                        "如果涉及日期/时间，请根据上面的运行环境信息回答。"
-                    ).strip()
+                _fast_system = (
+                    f"{_identity_snippet}\n\n"
+                    f"{_runtime_info}\n\n"
+                    "用户提出了一个简单的知识/计算/日期问题。"
+                    "请直接给出准确、简洁的回答。不要使用任何工具。"
+                    "如果涉及日期/时间，请根据上面的运行环境信息回答。"
+                ).strip()
 
-                    logger.info(f"[FastQuery-Stream] Answering '{message}' without tools")
-                    _fast_response = await self.brain.think_lightweight(
-                        prompt=message,
-                        system=_fast_system,
-                    )
-                    _fast_usage = _fast_response.usage
-                    _reply_text = clean_llm_response(
-                        _fast_response.content if _fast_response.content else ""
-                    )
-                    if _reply_text:
-                        yield {"type": "text_delta", "content": _reply_text}
-                        _query_ok = True
-                    else:
-                        logger.warning("[FastQuery-Stream] Empty response, falling back to full agent")
-                except Exception as e:
-                    logger.warning(f"[FastQuery-Stream] Failed ({e}), falling back to full agent")
+                logger.info(f"[FastQuery-Stream] Answering '{message}' without tools")
+                _holder = {"text": "", "usage": None, "ok": False}
+                async for _evt in _run_fast_reply_stream(
+                    _fast_system,
+                    log_prefix="FastQuery-Stream",
+                    fallback_text=None,  # QUERY 失败要 fall through 到完整 agent
+                    result_holder=_holder,
+                ):
+                    yield _evt
+                _reply_text = _holder["text"]
+                _fast_usage = _holder["usage"]
+                _query_ok = _holder["ok"]
 
                 if _query_ok:
                     yield {"type": "done"}

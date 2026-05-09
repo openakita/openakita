@@ -258,7 +258,7 @@ def _looks_like_image(path: str) -> bool:
 
 
 ExtractFramesFn = Callable[..., list[Path]]
-ComputeEnvelopeFn = Callable[..., np.ndarray]
+ComputeEnvelopeFn = Callable[..., "np.ndarray"]
 
 
 # ── Checker #1 — boundary frame jitter ───────────────────────────────────

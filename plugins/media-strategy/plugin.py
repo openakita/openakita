@@ -101,6 +101,14 @@ class CreateTaskBody(_StrictBase):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class TopTopicsBody(_StrictBase):
+    package_id: str = ""
+    since_hours: int = Field(default=24, ge=1, le=168)
+    limit: int = Field(default=5, ge=1, le=20)
+    min_coverage: int = Field(default=1, ge=1, le=20)
+    compact: bool = True
+
+
 class Plugin(PluginBase):
     def __init__(self) -> None:
         self._api: PluginAPI | None = None
@@ -602,6 +610,9 @@ class Plugin(PluginBase):
             q: str = "",
             since_hours: int = Query(default=24, ge=1, le=168),
             limit: int = Query(default=30, ge=1, le=100),
+            cluster: bool = False,
+            compact: bool = False,
+            min_coverage: int = Query(default=1, ge=1, le=20),
         ) -> dict[str, Any]:
             await self._ensure_ready()
             assert self._pipeline is not None
@@ -610,8 +621,21 @@ class Plugin(PluginBase):
                     {"q": q, "package_id": package_id, "limit": limit}
                 )
             return await self._pipeline.hot_radar(
-                {"package_id": package_id, "since_hours": since_hours, "limit": limit}
+                {
+                    "package_id": package_id,
+                    "since_hours": since_hours,
+                    "limit": limit,
+                    "cluster": cluster,
+                    "compact": compact,
+                    "min_coverage": min_coverage,
+                }
             )
+
+        @router.post("/top-topics")
+        async def top_topics(body: TopTopicsBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._pipeline is not None
+            return await self._pipeline.top_topics(body.model_dump())
 
         @router.get("/tasks")
         async def list_tasks(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
@@ -702,6 +726,17 @@ class Plugin(PluginBase):
             _tool("media_strategy_list_sources", "查看套餐、订阅源和健康状态。", {}),
             _tool("media_strategy_ingest", "手动拉取最新 RSS 新闻。", {"package_ids": "array", "limit_sources": "integer"}),
             _tool("media_strategy_hot_radar", "生成热点雷达榜。", {"package_id": "string", "since_hours": "integer", "limit": "integer"}),
+            _tool(
+                "media_strategy_top_topics",
+                "选题推荐：按多源覆盖+权威加权聚合输出 Top 5-10 高权重热点，仅返回标题与原文链接以节省 Token。",
+                {
+                    "package_id": "string",
+                    "since_hours": "integer",
+                    "limit": "integer",
+                    "min_coverage": "integer",
+                    "compact": "boolean",
+                },
+            ),
             _tool("media_strategy_search_news", "按关键词、分类检索新闻。", {"q": "string", "package_id": "string", "limit": "integer"}),
             _tool("media_strategy_daily_brief", "生成融媒早报、午报、晚报或专题简报。", {"session": "string", "since_hours": "integer", "limit": "integer"}),
             _tool("media_strategy_verify_pack", "为热点生成信源复核清单。", {"article_ids": "array", "topic": "string"}),
@@ -730,6 +765,13 @@ class Plugin(PluginBase):
             return await self._create_and_run_task("ingest", args)
         if name == "media_strategy_hot_radar":
             return {"ok": True, **(await self._pipeline.hot_radar(args))}
+        if name == "media_strategy_top_topics":
+            payload = dict(args)
+            if "limit" not in payload:
+                payload["limit"] = 5
+            if "compact" not in payload:
+                payload["compact"] = True
+            return {"ok": True, **(await self._pipeline.top_topics(payload))}
         if name == "media_strategy_search_news":
             return {"ok": True, **(await self._pipeline.search_news(args))}
         if name == "media_strategy_daily_brief":

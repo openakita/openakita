@@ -1505,14 +1505,18 @@ class OrgRuntime:
             #      只会污染 workspace。
             # 任何异常仅 warning，不影响主流程。
             persisted_attachment: dict | None = None
+            files_registered = self._node_files_registered_in_task.get(cache_key, 0)
             try:
-                expects_artifact = request_expects_artifact(prompt)
+                # files_registered>0 时把"方案/策划/计划/报告"等弱信号升级为强：
+                # 子节点已经写过文件，coordinator 必须走 deliver_artifacts 转发。
+                expects_artifact = request_expects_artifact(
+                    prompt, has_produced_files=files_registered > 0
+                )
             except Exception:
                 expects_artifact = False
             auto_persist_enabled = bool(
                 getattr(org, "auto_persist_final_answer", True)
             )
-            files_registered = self._node_files_registered_in_task.get(cache_key, 0)
             if (
                 auto_persist_enabled
                 and expects_artifact

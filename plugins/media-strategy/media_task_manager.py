@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS sources (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL DEFAULT 'rss',
     package_ids_json TEXT NOT NULL DEFAULT '[]',
+    selectors_json TEXT NOT NULL DEFAULT '{}',
     label_zh TEXT NOT NULL,
     label_en TEXT NOT NULL DEFAULT '',
     url TEXT NOT NULL,
@@ -167,6 +168,7 @@ def _row_to_dict(row: aiosqlite.Row | None) -> dict[str, Any] | None:
         "params_json",
         "result_json",
         "package_ids_json",
+        "selectors_json",
         "tags_json",
         "raw_json",
         "meta_json",
@@ -229,9 +231,30 @@ class MediaTaskManager:
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.executescript(SCHEMA_SQL)
+        await self._migrate_sources_schema()
         await self._seed_defaults()
         await self.sync_builtin_sources()
         await self._db.commit()
+
+    async def _migrate_sources_schema(self) -> None:
+        """Backfill columns added in later releases for existing user dbs.
+
+        SQLite has no ``ADD COLUMN IF NOT EXISTS`` primitive; we inspect
+        ``PRAGMA table_info`` and additively migrate. This runs on every
+        startup but is idempotent — once the column exists we no-op.
+        """
+
+        db = self._require()
+        cursor = await db.execute("PRAGMA table_info(sources)")
+        try:
+            rows = await cursor.fetchall()
+        finally:
+            await cursor.close()
+        columns = {row[1] for row in rows}
+        if "selectors_json" not in columns:
+            await db.execute(
+                "ALTER TABLE sources ADD COLUMN selectors_json TEXT NOT NULL DEFAULT '{}'"
+            )
 
     async def close(self) -> None:
         if self._db is not None:
@@ -259,13 +282,15 @@ class MediaTaskManager:
             await db.execute(
                 """
                 INSERT OR IGNORE INTO sources(
-                    id, kind, package_ids_json, label_zh, label_en, url, enabled,
-                    authority, custom, created_at, updated_at
-                ) VALUES (?, 'rss', ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    id, kind, package_ids_json, selectors_json, label_zh, label_en,
+                    url, enabled, authority, custom, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                 """,
                 (
                     source_id,
+                    str(meta.get("kind") or "rss"),
                     json.dumps(meta["packages"], ensure_ascii=False),
+                    json.dumps(meta.get("selectors") or {}, ensure_ascii=False),
                     meta["label_zh"],
                     meta["label_en"],
                     meta["url"],
@@ -321,17 +346,21 @@ class MediaTaskManager:
         now = time.time()
         for source_id, meta in SOURCE_DEFS.items():
             row = await _fetchone(db, "SELECT id, custom FROM sources WHERE id=?", (source_id,))
+            kind = str(meta.get("kind") or "rss")
+            selectors_json = json.dumps(meta.get("selectors") or {}, ensure_ascii=False)
             if row is None:
                 await db.execute(
                     """
                     INSERT INTO sources(
-                        id, kind, package_ids_json, label_zh, label_en, url, enabled,
-                        authority, custom, created_at, updated_at
-                    ) VALUES (?, 'rss', ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                        id, kind, package_ids_json, selectors_json, label_zh, label_en,
+                        url, enabled, authority, custom, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                     """,
                     (
                         source_id,
+                        kind,
                         json.dumps(meta["packages"], ensure_ascii=False),
+                        selectors_json,
                         meta["label_zh"],
                         meta["label_en"],
                         meta["url"],
@@ -346,11 +375,14 @@ class MediaTaskManager:
                 await db.execute(
                     """
                     UPDATE sources
-                    SET package_ids_json=?, label_zh=?, label_en=?, url=?, authority=?, updated_at=?
+                    SET kind=?, package_ids_json=?, selectors_json=?, label_zh=?,
+                        label_en=?, url=?, authority=?, updated_at=?
                     WHERE id=?
                     """,
                     (
+                        kind,
                         json.dumps(meta["packages"], ensure_ascii=False),
+                        selectors_json,
                         meta["label_zh"],
                         meta["label_en"],
                         meta["url"],

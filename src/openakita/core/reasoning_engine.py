@@ -6593,6 +6593,56 @@ class ReasoningEngine:
             assistant_content=assistant_content,
         )
 
+    def _collect_inbound_artifact_receipts(self) -> list[dict]:
+        """从当前 session 的 sub_agent_records 合成"父节点已收到子节点交付物"的回执列表。
+
+        coordinator 多智能体场景下，子 agent 完成后由 orchestrator 调
+        ``_persist_sub_agent_record`` 把 ``output_files`` 写到
+        ``ctx.sub_agent_records[*].output_files``。此处在父节点 ReAct 收尾
+        verify_task_completion 之前把这些已落盘的文件合成 receipt 抄入
+        ``delivery_receipts``，让 trust-but-verify 能：
+          1. 通过 ``_has_produced_files`` 信号触发"方案/策划/计划/报告"等弱
+             关键词的 expects_artifact=True 升级；
+          2. 在父节点真没调 ``deliver_artifacts`` 的情况下让 LLM 复核能看到
+             "上下文已有附件、但本节点没转发给用户"，更准确地判 INCOMPLETE
+             并触发下一轮 deliver_artifacts。
+
+        如果 session 不可用 / 没有 sub_agent_records，安全返回空列表。
+        """
+        try:
+            session = getattr(self._state, "current_session", None)
+            ctx = getattr(session, "context", None) if session is not None else None
+            records = getattr(ctx, "sub_agent_records", None) if ctx is not None else None
+            if not records:
+                return []
+            seen_paths: set[str] = set()
+            receipts: list[dict] = []
+            for rec in records:
+                if not isinstance(rec, dict):
+                    continue
+                files = rec.get("output_files") or []
+                if not isinstance(files, list):
+                    continue
+                for fp in files:
+                    if not isinstance(fp, str) or not fp:
+                        continue
+                    if fp in seen_paths:
+                        continue
+                    seen_paths.add(fp)
+                    receipts.append(
+                        {
+                            "status": "delivered",
+                            "from_sub_agent": rec.get("agent_name") or rec.get("agent_id") or "",
+                            "file_path": fp,
+                            "filename": fp.rsplit("/", 1)[-1].rsplit("\\", 1)[-1],
+                            "summary": f"子节点已交付文件: {fp}",
+                            "source": "sub_agent_record",
+                        }
+                    )
+            return receipts
+        except Exception:
+            return []
+
     @staticmethod
     def _build_fallback_summary(
         executed_tool_names: list[str],
@@ -6719,11 +6769,20 @@ class ReasoningEngine:
                 )
                 # 同时拼装组织级 verify 上下文（B4 由 ValidationContext 消费）
                 org_validation_kwargs = self._build_org_validation_kwargs()
+                # 把子节点已落盘的文件合成回执并入 delivery_receipts，
+                # 避免 coordinator 节点没显式调 deliver_artifacts 时
+                # trust-but-verify 看不到任何"已交付证据"而 INSUFFICIENT。
+                inbound_receipts = self._collect_inbound_artifact_receipts()
+                _verify_receipts = (
+                    list(delivery_receipts) + inbound_receipts
+                    if inbound_receipts
+                    else delivery_receipts
+                )
                 is_completed = await self._response_handler.verify_task_completion(
                     user_request=last_user_request,
                     assistant_response=cleaned_text,
                     executed_tools=executed_tool_names,
-                    delivery_receipts=delivery_receipts,
+                    delivery_receipts=_verify_receipts,
                     tool_results=all_tool_results,
                     conversation_id=conversation_id,
                     bypass=supervisor_intervened or is_summary_round,
@@ -6815,7 +6874,22 @@ class ReasoningEngine:
                     #   而不是再来一段纯文字"我已经做好了"。
                     # - expects_artifact=False：温和复核提示，避免对纯对话场景喷
                     #   "你必须交付文件"的噪音误导。
-                    expects_artifact = request_expects_artifact(last_user_request)
+                    # 子节点已经产出过文件 → "方案/策划/计划/报告"等弱信号
+                    # 词也升级成 expects_artifact=True，提示 LLM 走附件交付。
+                    _has_produced_files_re = (
+                        bool(delivery_receipts)
+                        or bool(self._collect_inbound_artifact_receipts())
+                        or any(
+                            (tr.get("tool_name") or tr.get("name") or "") in {
+                                "write_file", "auto_persist_node_final_answer"
+                            }
+                            for tr in (all_tool_results or [])
+                            if isinstance(tr, dict) and not tr.get("is_error")
+                        )
+                    )
+                    expects_artifact = request_expects_artifact(
+                        last_user_request, has_produced_files=_has_produced_files_re
+                    )
                     if expects_artifact:
                         retry_msg = (
                             "[系统] ⚠️ 用户请求里明确提到附件/文件类交付物，"

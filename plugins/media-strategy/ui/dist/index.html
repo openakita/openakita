@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>融媒智策 · Media Strategy</title>
-  <meta name="oa-iconify" content="solar:radar-linear">
+  <meta name="oa-iconify" content="game-icons:newspaper">
   <!-- Self-contained plugin UI. Assets are owned by this plugin; no /api/plugins/_sdk dependency. -->
   <script src="_assets/bootstrap.js"></script>
   <link rel="stylesheet" href="_assets/styles.css">
@@ -129,7 +129,12 @@
     .has-tip { display:inline-flex; align-items:center; gap:4px; }
     .tip-ico { display:inline-grid; place-items:center; width:14px; height:14px; border-radius:50%; border:1px solid var(--border); background:var(--bg-hover); color:var(--text-muted); font-size:10px; cursor:help; }
     .has-tip:hover .tip-pop, .tip-ico:focus + .tip-pop { display:block; }
-    .tip-pop { display:none; position:absolute; z-index:30; max-width:280px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg-card); color:var(--text); font-size:12px; line-height:1.5; box-shadow:0 12px 32px rgba(15,23,42,.18); margin-top:18px; }
+    .tip-pop { display:none; position:absolute; top:100%; left:0; z-index:60; width:320px; max-width:calc(100vw - 32px); padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--bg-card); color:var(--text); font-size:12px; line-height:1.6; box-shadow:0 12px 32px rgba(15,23,42,.18); margin-top:8px; white-space:normal; word-break:break-word; text-align:left; font-weight:normal; }
+    .tip-pop__lead { color:var(--text); }
+    .tip-pop__row { display:flex; gap:8px; align-items:flex-start; padding:4px 0; }
+    .tip-pop__tag { flex:0 0 auto; min-width:60px; padding:2px 8px; border-radius:999px; background:var(--primary-soft); color:var(--primary); font-weight:650; font-size:11px; text-align:center; line-height:1.5; }
+    .tip-pop__desc { flex:1 1 auto; color:var(--text-muted); }
+    .tip-pop__foot { margin-top:6px; padding-top:6px; border-top:1px dashed var(--border); color:var(--text-muted); }
     .tip-anchor { position:relative; display:inline-block; }
     /* generic modal */
     .modal-shade { position:fixed; inset:0; z-index:25; display:grid; place-items:center; background:rgba(15,23,42,.42); padding:18px; }
@@ -147,10 +152,11 @@
     .status-done { color:var(--success); }.status-failed { color:var(--danger); }.status-running { color:var(--warning); }
     .report-row { border:1px solid var(--border); border-radius:9px; padding:10px; cursor:pointer; background:var(--bg-card); }
     .report-row:hover { background:var(--bg-hover); }
-    .storage-panel { margin-top:16px; padding:18px; border:1px solid var(--border); border-radius:12px; background:linear-gradient(180deg,var(--bg-card),var(--bg)); }
+    .settings-section-card { display:flex; flex-direction:column; gap:18px; }
+    .storage-panel { margin-top:0; padding:18px; border:1px solid var(--border); border-radius:12px; background:linear-gradient(180deg,var(--bg-card),var(--bg)); }
     .storage-panel .oa-section-title { margin-bottom:16px; }
-    .storage-path-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:end; }
-    .storage-path-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:flex-end; padding-bottom:1px; }
+    .storage-path-row { display:grid; grid-template-columns:1fr; gap:12px; align-items:start; }
+    .storage-path-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:flex-start; padding-top:2px; }
     .storage-path-actions .btn { min-width:82px; }
     .storage-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; margin-top:16px; }
     .storage-card { padding:14px; border:1px solid var(--border); border-radius:11px; background:var(--bg-card); cursor:pointer; transition:border-color .15s, background .15s, transform .15s; }
@@ -162,8 +168,10 @@
     .status-note__desc { margin-top:5px; line-height:1.55; }
     .status-note.warn { color:#92400e; background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.35); }
     .status-note.error { color:var(--danger); background:rgba(220,38,38,.08); border-color:rgba(220,38,38,.35); }
-    .settings-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:16px 0 4px; margin-top:4px; border-top:1px dashed var(--border); }
-    .runtime-info-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; margin-top:14px; }
+    .settings-footer-panel { padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--bg-card); }
+    .settings-actions { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin-bottom:14px; padding-bottom:14px; border-bottom:1px dashed var(--border); }
+    .settings-actions .btn { min-width:104px; }
+    .runtime-info-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin-top:0; }
     .info-card { padding:13px 14px; border:1px solid var(--border); border-radius:11px; background:var(--bg-card); min-width:0; }
     .info-card__label { font-size:12px; color:var(--text-muted); margin-bottom:5px; }
     .info-card__value { color:var(--text); font-size:13px; word-break:break-all; }
@@ -286,7 +294,7 @@
           <button type="button" id="toggleFeedAdvanced" class="advanced-toggle">+ 高级设置</button>
           <div id="feedAdvanced" hidden style="margin-top:10px">
             <div class="field">
-              <label class="has-tip tip-anchor">
+              <label class="has-tip tip-anchor" for="feedAuthority">
                 <span>权重 authority</span>
                 <span class="tip-ico" tabindex="0">i</span>
                 <span class="tip-pop" id="feedAuthorityTip">加载中</span>
@@ -318,7 +326,7 @@
           <div id="sourcesOut" class="source-grid"><div class="empty">加载中…</div></div>
         </div>
       </details>
-      <div class="card">
+      <div class="card settings-section-card">
         <h2 class="oa-section-title">运行设置</h2>
         <div class="form-grid">
           <div class="field"><label for="fetchTimeout">抓取超时（秒）</label><input id="fetchTimeout" class="input" type="number" min="3" max="120"></div>
@@ -342,8 +350,10 @@
           <div id="dataDirStatus" class="status-note">数据目录用于保存 SQLite 数据库、抓取结果和生成报告。变更后通常需要重新加载插件才会生效。</div>
           <div id="storageStats" class="storage-grid"></div>
         </div>
-        <div class="settings-actions"><button id="saveSettings" class="btn btn-primary">保存设置</button><button id="reloadSettings" class="btn">重新加载</button><button id="refreshStorage" class="btn">刷新存储统计</button></div>
-        <div id="settingsOut" class="runtime-info-grid">加载中</div>
+        <div class="settings-footer-panel">
+          <div class="settings-actions"><button id="saveSettings" class="btn btn-primary">保存设置</button><button id="reloadSettings" class="btn">重新加载</button><button id="refreshStorage" class="btn">刷新存储统计</button></div>
+          <div id="settingsOut" class="runtime-info-grid">加载中</div>
+        </div>
       </div>
     </section>
   </main>
@@ -368,11 +378,7 @@
           <button type="button" id="srcModalToggleAdv" class="advanced-toggle">+ 高级设置</button>
           <div id="srcModalAdvanced" hidden style="margin-top:10px">
             <div class="field">
-              <label class="has-tip tip-anchor">
-                <span>权重 authority</span>
-                <span class="tip-ico" tabindex="0">i</span>
-                <span class="tip-pop" id="srcModalAuthorityTip">加载中</span>
-              </label>
+              <label for="srcModalAuthority">权重 authority</label>
               <div class="range-row">
                 <input id="srcModalAuthority" type="range" min="0.1" max="1" step="0.05" value="0.5">
                 <span id="srcModalAuthorityVal" class="range-val">0.50</span>
@@ -434,11 +440,12 @@ const FALLBACK_PACKAGE_OPTIONS = [
   ['world','国际局势'], ['tech','科技产业'], ['platform','平台热点']
 ];
 const AUTHORITY_TIP_HTML = `
-  <strong>权重 (0.1~1.0)</strong> 决定信源在热点排序中的加权倍数：<br>
-  • 0.8+：主流官方源（央视/人民/新华），默认排到前面<br>
-  • 0.6~0.8：行业财经/科技垂直媒体（财新/36氪/IT之家）<br>
-  • 0.4 以下：社交平台/聚合榜单（微博/抖音），信号噪声较大<br>
-  数值仅影响排序与「主流/边缘」标签，<u>不会过滤任何文章</u>。
+  <div class="tip-pop__lead"><strong>权重 (0.1～1.0)</strong>：决定信源在热点排序中的加权倍数。</div>
+  <div class="tip-pop__row"><span class="tip-pop__tag">0.8+</span><span class="tip-pop__desc">主流官方源 · 央视、新闻联播、新华网、人民网</span></div>
+  <div class="tip-pop__row"><span class="tip-pop__tag">0.6 – 0.8</span><span class="tip-pop__desc">权威主流与垂直媒体 · 财新、UDN兩岸、BBC 中文、机器之心</span></div>
+  <div class="tip-pop__row"><span class="tip-pop__tag">0.4 – 0.6</span><span class="tip-pop__desc">地方与跨海峡聚合站 · 中国台湾网、东南网、台海网（HTML 抓取）</span></div>
+  <div class="tip-pop__row"><span class="tip-pop__tag">&lt; 0.4</span><span class="tip-pop__desc">社交平台与热榜聚合 · 微博、抖音、B 站、知乎热榜，信号噪声大</span></div>
+  <div class="tip-pop__foot">仅影响排序与「主流/边缘」标签，<u>不会过滤任何文章</u>。</div>
 `;
 let PACKAGES_CACHE = {};
 let SOURCES_CACHE = [];
@@ -730,7 +737,7 @@ async function loadSources(){
         <div class="source-card__actions">${editBtn}${toggleBtn}</div>
       </div>
       <div class="meta">
-        <span class="has-tip tip-anchor">权重 ${Number(s.authority||0).toFixed(2)}<span class="tip-ico" tabindex="0">i</span><span class="tip-pop">${AUTHORITY_TIP_HTML}</span></span>
+        <span>权重 ${Number(s.authority||0).toFixed(2)}</span>
         <span>${esc(s.last_status || '未拉取')}</span>${s.last_error?`<span class="pill high">${esc(s.last_error).slice(0,60)}</span>`:''}
       </div>
       <div class="source-card__url">${esc(s.url)}</div>
@@ -758,7 +765,6 @@ function openSourceModal(sourceId){
   setSegValue($('srcModalEnabled'), !!src.enabled);
   $('srcModalAuthority').value = String(src.authority ?? 0.5);
   $('srcModalAuthorityVal').textContent = Number(src.authority ?? 0.5).toFixed(2);
-  $('srcModalAuthorityTip').innerHTML = AUTHORITY_TIP_HTML;
   $('srcModalAdvanced').hidden = true;
   $('srcModalToggleAdv').textContent = '+ 高级设置（权重）';
   $('srcModalDelete').hidden = !src.custom;
@@ -973,7 +979,6 @@ $('srcModalToggleAdv').onclick=()=>{
   const open=block.hidden;
   block.hidden=!open;
   $('srcModalToggleAdv').textContent = open ? '− 高级设置（权重）' : '+ 高级设置（权重）';
-  if(open) $('srcModalAuthorityTip').innerHTML = AUTHORITY_TIP_HTML;
 };
 $('srcModalAuthority').oninput=()=>{ $('srcModalAuthorityVal').textContent = Number($('srcModalAuthority').value).toFixed(2); };
 $('srcModalSave').onclick=()=>guard(async()=>{

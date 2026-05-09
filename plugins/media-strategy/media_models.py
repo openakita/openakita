@@ -21,7 +21,7 @@ BRAND: Final[dict[str, str]] = {
     "primary_hover": "#0D9488",
     "primary_soft": "#CCFBF1",
     "dark_primary": "#2DD4BF",
-    "iconify": "solar:radar-linear",
+    "iconify": "game-icons:newspaper",
 }
 
 MODES: Final[dict[str, dict[str, Any]]] = {
@@ -164,6 +164,30 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "http://www.cctv.com/program/rss/02/10/index.xml",
         "packages": ["taiwan", "policy"],
         "authority": 0.76,
+        "default_enabled": True,
+    },
+    "xinhua-taiwan": {
+        "label_zh": "新华网 台湾",
+        "label_en": "Xinhua Taiwan",
+        "url": "http://www.xinhuanet.com/tw/news_tw.xml",
+        "packages": ["taiwan", "policy"],
+        "authority": 0.76,
+        "default_enabled": True,
+    },
+    "people-taiwan": {
+        "label_zh": "人民网 台湾频道",
+        "label_en": "People.cn Taiwan",
+        "url": "http://www.people.com.cn/rss/tw.xml",
+        "packages": ["taiwan", "policy"],
+        "authority": 0.74,
+        "default_enabled": True,
+    },
+    "chinanews-taiwan": {
+        "label_zh": "中国新闻网 台湾",
+        "label_en": "China News Taiwan",
+        "url": "https://www.chinanews.com.cn/rss/taiwan.xml",
+        "packages": ["taiwan", "policy"],
+        "authority": 0.74,
         "default_enabled": True,
     },
     "cctv-xinwenlianbo": {
@@ -396,7 +420,89 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://taiwaninfo.nat.gov.tw/rss",
         "packages": ["taiwan", "world"],
         "authority": 0.72,
-        "default_enabled": False,
+        "default_enabled": True,
+    },
+    "udn-cross-strait": {
+        "label_zh": "联合新闻网 兩岸",
+        "label_en": "UDN Cross-Strait",
+        "url": "https://udn.com/rssfeed/news/2/6638?ch=news",
+        "packages": ["taiwan", "world"],
+        "authority": 0.7,
+        "default_enabled": True,
+    },
+    "chinatimes-politics": {
+        "label_zh": "中时新闻网 政治",
+        "label_en": "ChinaTimes Politics",
+        "url": "https://www.chinatimes.com/politic/rss.xml",
+        "packages": ["taiwan", "world"],
+        "authority": 0.62,
+        "default_enabled": True,
+    },
+    "ettoday-mainland": {
+        "label_zh": "ETToday 中國大陸",
+        "label_en": "ETToday Mainland",
+        "url": "https://www.ettoday.net/rss/rss-cn.xml",
+        "packages": ["taiwan", "world"],
+        "authority": 0.66,
+        "default_enabled": True,
+    },
+    "nownews-politics": {
+        "label_zh": "今日新闻网 政治",
+        "label_en": "NowNews Politics",
+        "url": "https://www.nownews.com/cat/politics/feed/",
+        "packages": ["taiwan", "world"],
+        "authority": 0.6,
+        "default_enabled": True,
+    },
+    # ---------------------------------------------------------------
+    # HTML-listing sources for sites without public RSS feeds.
+    # Selectors are intentionally conservative so the heuristic anchor
+    # scan in media_fetchers/html.py can top up if a layout changes.
+    # ---------------------------------------------------------------
+    "taiwancn-jsbg": {
+        "label_zh": "中国台湾网 即时报道",
+        "label_en": "Taiwan.cn Updates",
+        "kind": "html",
+        "url": "https://www.taiwan.cn/jsbg/",
+        "selectors": {
+            "item": "ul li a, .news-list li a, .list a",
+            "title": "",
+            "link": "",
+            "link_attr": "href",
+        },
+        "packages": ["taiwan", "policy"],
+        "authority": 0.7,
+        "default_enabled": True,
+    },
+    "fjsen-taihai": {
+        "label_zh": "东南网 台海频道",
+        "label_en": "Fjsen Taihai",
+        "kind": "html",
+        "url": "https://taihai.fjsen.com/",
+        "selectors": {
+            "item": "ul li a, .news_list li a, .list_news li a",
+            "title": "",
+            "link": "",
+            "link_attr": "href",
+        },
+        "packages": ["taiwan"],
+        "authority": 0.62,
+        "default_enabled": True,
+    },
+    "taihainet-twxw": {
+        "label_zh": "台海网 台湾新闻",
+        "label_en": "Taihainet Taiwan News",
+        "kind": "html",
+        "url": "https://www.taihainet.com/news/twxw/",
+        "selectors": {
+            "item": "ul li a, .news-list li a, .list01 li a, .lieall li a",
+            "title": "",
+            "link": "",
+            "link_attr": "href",
+        },
+        "packages": ["taiwan"],
+        "authority": 0.62,
+        "default_enabled": True,
     },
     "diplomat-main": {
         "label_zh": "The Diplomat",
@@ -465,6 +571,7 @@ TOOL_NAMES: Final[tuple[str, ...]] = (
     "media_strategy_list_sources",
     "media_strategy_ingest",
     "media_strategy_hot_radar",
+    "media_strategy_top_topics",
     "media_strategy_search_news",
     "media_strategy_daily_brief",
     "media_strategy_verify_pack",
