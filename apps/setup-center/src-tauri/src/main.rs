@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::Emitter;
 use tauri::Manager;
 #[cfg(desktop)]
@@ -1165,6 +1166,7 @@ fn ensure_app_venv(
     bootstrap: &BootstrapManifest,
     pip_index: &RuntimePipIndex,
 ) -> Result<PathBuf, String> {
+    let started = Instant::now();
     let log_path = runtime_logs_dir().join("app-venv.log");
     let app_py = runtime_venv_python_path(&app_venv_dir());
     let expected_version = env!("CARGO_PKG_VERSION");
@@ -1176,9 +1178,14 @@ fn ensure_app_venv(
         })
         .unwrap_or(false);
     if manifest_ok && health_check_python(&app_py, "import openakita, pip, certifi", &log_path) {
+        log_to_file(&format!(
+            "[runtime] ensure_app_venv reused existing env in {}ms",
+            started.elapsed().as_millis()
+        ));
         return Ok(app_py);
     }
 
+    log_to_file("[runtime] ensure_app_venv rebuilding app runtime");
     let app_py = ensure_venv(&app_venv_dir(), &bootstrap.python_version, &log_path)?;
     let wheel_path = bootstrap_resource_dir().join(&bootstrap.wheel.name);
     if !wheel_path.exists() {
@@ -1205,8 +1212,17 @@ fn ensure_app_venv(
         cmd.args(["--trusted-host", &pip_index.trusted_host]);
     }
     apply_no_window(&mut cmd);
+    let install_started = Instant::now();
     run_and_log(cmd, &log_path)?;
+    log_to_file(&format!(
+        "[runtime] app wheel install finished in {}ms",
+        install_started.elapsed().as_millis()
+    ));
     if health_check_python(&app_py, "import openakita, pip, certifi", &log_path) {
+        log_to_file(&format!(
+            "[runtime] ensure_app_venv ready in {}ms",
+            started.elapsed().as_millis()
+        ));
         Ok(app_py)
     } else {
         Err("app venv health check failed after OpenAkita install".into())
@@ -1217,8 +1233,15 @@ fn ensure_agent_venv(
     bootstrap: &BootstrapManifest,
     _pip_index: &RuntimePipIndex,
 ) -> Result<PathBuf, String> {
+    let started = Instant::now();
     let log_path = runtime_logs_dir().join("agent-venv.log");
-    ensure_venv(&agent_venv_dir(), &bootstrap.python_version, &log_path)
+    let result = ensure_venv(&agent_venv_dir(), &bootstrap.python_version, &log_path);
+    log_to_file(&format!(
+        "[runtime] ensure_agent_venv finished in {}ms status={}",
+        started.elapsed().as_millis(),
+        if result.is_ok() { "ok" } else { "error" }
+    ));
+    result
 }
 
 fn write_runtime_manifest(info: &RuntimeEnvInfo, bootstrap: &BootstrapManifest) {
@@ -1288,6 +1311,7 @@ fn mark_legacy_runtime_mode(error: &str) {
 }
 
 fn ensure_dual_runtime_env() -> Result<RuntimeEnvInfo, String> {
+    let started = Instant::now();
     ensure_runtime_layout()?;
     let bootstrap = read_bootstrap_manifest()?;
     let pip_index = resolve_runtime_pip_index();
@@ -1301,6 +1325,10 @@ fn ensure_dual_runtime_env() -> Result<RuntimeEnvInfo, String> {
         pip_index,
     };
     write_runtime_manifest(&info, &bootstrap);
+    log_to_file(&format!(
+        "[runtime] ensure_dual_runtime_env finished in {}ms",
+        started.elapsed().as_millis()
+    ));
     Ok(info)
 }
 
@@ -4009,7 +4037,7 @@ fn main() {
                     let venv_dir = openakita_root_dir().join("venv").to_string_lossy().to_string();
                     let ws_clone = ws_id.clone();
                     std::thread::spawn(move || {
-                        match openakita_service_start(venv_dir.clone(), ws_clone.clone()) {
+                        match openakita_service_start_impl(venv_dir.clone(), ws_clone.clone()) {
                             Ok(status) => {
                                 log_to_file(&format!(
                                     "[auto-start] success: running={}, pid={:?}",
@@ -4145,7 +4173,7 @@ fn main() {
                             .to_string_lossy()
                             .to_string();
                         let ws_clone = ws_id.clone();
-                        match openakita_service_start(venv_dir, ws_clone) {
+                        match openakita_service_start_impl(venv_dir, ws_clone) {
                             Ok(status) => log_to_file(&format!(
                                 "[heartbeat] auto-spawn returned: running={}, pid={:?} (note: pid may be existing process if dedupe-skip)",
                                 status.running, status.pid
@@ -4705,10 +4733,31 @@ fn read_env_kv(path: &Path) -> Vec<(String, String)> {
 }
 
 #[tauri::command]
-fn openakita_service_start(
+async fn openakita_service_start(
     venv_dir: String,
     workspace_id: String,
 ) -> Result<ServiceStatus, String> {
+    let task_started = Instant::now();
+    let log_workspace_id = workspace_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        openakita_service_start_impl(venv_dir, workspace_id)
+    })
+    .await
+    .map_err(|e| format!("backend start task failed: {e}"))?;
+    log_to_file(&format!(
+        "[service_start] async command finished: ws={}, elapsed_ms={}, status={}",
+        log_workspace_id,
+        task_started.elapsed().as_millis(),
+        if result.is_ok() { "ok" } else { "error" }
+    ));
+    result
+}
+
+fn openakita_service_start_impl(
+    venv_dir: String,
+    workspace_id: String,
+) -> Result<ServiceStatus, String> {
+    let service_start_started = Instant::now();
     log_to_file(&format!(
         "[service_start] called: ws={}, venv={}",
         workspace_id, venv_dir
@@ -4832,7 +4881,12 @@ fn openakita_service_start(
     }
 
     // 优先使用内嵌 PyInstaller 后端，降级到 venv python
+    let backend_resolve_started = Instant::now();
     let (backend_exe, backend_args) = get_backend_executable(&venv_dir);
+    log_to_file(&format!(
+        "[service_start] backend executable resolved in {}ms",
+        backend_resolve_started.elapsed().as_millis()
+    ));
     log_to_file(&format!(
         "[service_start] exe={}, exists={}",
         backend_exe.display(),
@@ -4928,13 +4982,18 @@ fn openakita_service_start(
         cmd.creation_flags(0x00000008u32 | 0x00000200u32 | 0x0800_0000u32); // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
     }
 
+    let spawn_started = Instant::now();
     let child = cmd.spawn().map_err(|e| {
         let msg = format!("spawn openakita serve failed: {e}");
         log_to_file(&format!("[service_start] {}", msg));
         msg
     })?;
     let pid = child.id();
-    log_to_file(&format!("[service_start] spawned pid={}", pid));
+    log_to_file(&format!(
+        "[service_start] spawned pid={} in {}ms",
+        pid,
+        spawn_started.elapsed().as_millis()
+    ));
     let started_at = now_epoch_secs();
 
     // ── 3. 写 JSON PID 文件 ──
@@ -4992,6 +5051,10 @@ fn openakita_service_start(
         ));
     }
 
+    log_to_file(&format!(
+        "[service_start] completed in {}ms",
+        service_start_started.elapsed().as_millis()
+    ));
     Ok(build_service_status(&workspace_id, true, Some(pid), pf))
 }
 

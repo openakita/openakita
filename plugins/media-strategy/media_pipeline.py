@@ -10,6 +10,7 @@ from typing import Any
 from media_ai.analyzer import (
     build_brief,
     build_replicate_plan,
+    build_topic_analysis,
     build_verify_pack,
     cluster_topics,
     markdown_to_html,
@@ -267,6 +268,85 @@ class MediaPipeline:
         title = f"{topic or '热点'}信源复核"
         report = await self._save_report(task_id, "verify_pack", title, md, {"source": source})
         return {"report": report, "items": items, "source": source}
+
+    async def ai_topic_analysis(self, task_id: str, params: dict[str, Any]) -> dict[str, Any]:
+        await self.tm.update_task(
+            task_id,
+            progress=0.12,
+            pipeline_step="规则聚类中：正在筛选高价值热点",
+        )
+        limit = max(1, min(int(params.get("limit") or 10), 20))
+        evidence_limit = max(1, min(int(params.get("evidence_limit") or 5), 8))
+        radar = await self.top_topics(
+            {
+                "since_hours": int(params.get("since_hours") or 24),
+                "package_id": str(params.get("package_id") or ""),
+                "limit": limit,
+                "min_coverage": int(params.get("min_coverage") or 1),
+                "compact": False,
+            }
+        )
+        clusters = list(radar.get("items") or [])
+
+        await self.tm.update_task(
+            task_id,
+            progress=0.28,
+            pipeline_step=f"证据整理中：已选出 {len(clusters)} 个热点簇",
+        )
+        topics: list[dict[str, Any]] = []
+        for cluster in clusters:
+            evidence = await self.tm.get_articles_by_ids(
+                [str(x) for x in (cluster.get("article_ids") or [])[:evidence_limit]]
+            )
+            topics.append(
+                {
+                    "title": cluster.get("title"),
+                    "url": cluster.get("url"),
+                    "source_ids": cluster.get("source_ids") or [],
+                    "sources_count": cluster.get("sources_count"),
+                    "weighted_score": cluster.get("weighted_score"),
+                    "risk_level": cluster.get("risk_level"),
+                    "published_at": cluster.get("published_at"),
+                    "article_ids": cluster.get("article_ids") or [],
+                    "evidence": [
+                        {
+                            "id": item.get("id"),
+                            "title": item.get("title"),
+                            "source_id": item.get("source_id"),
+                            "url": item.get("url"),
+                            "published_at": item.get("published_at"),
+                            "summary": item.get("summary") or item.get("ai_summary"),
+                            "risk_level": item.get("risk_level"),
+                        }
+                        for item in evidence
+                    ],
+                }
+            )
+
+        await self.tm.update_task(
+            task_id,
+            progress=0.42,
+            pipeline_step="大模型分析中：通常需要 30-90 秒，请不要关闭页面",
+        )
+        settings = await self.tm.get_settings()
+        md, source = await build_topic_analysis(
+            self._brain(),
+            topics,
+            temperature=float(settings.get("llm_temperature") or 0.2),
+        )
+        await self.tm.update_task(
+            task_id,
+            progress=0.88,
+            pipeline_step="报告保存中",
+        )
+        report = await self._save_report(
+            task_id,
+            "ai_topic_analysis",
+            "AI 选题分析报告",
+            md,
+            {"source": source, **(radar.get("stats") or {})},
+        )
+        return {"report": report, "topics": topics, "source": source, "stats": radar.get("stats") or {}}
 
     async def replicate_plan(self, task_id: str, params: dict[str, Any]) -> dict[str, Any]:
         items = await self._select_items(params)

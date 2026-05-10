@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, IS_TAURI, logger, relaunchApp } from "../platform";
+import { invoke, IS_TAURI, logger } from "../platform";
 import { safeFetch } from "../providers";
 import { envGet } from "../utils";
 import { notifyLoading, notifyError, notifySuccess, dismissLoading } from "../utils/notify";
@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { TroubleshootPanel } from "../components/TroubleshootPanel";
-import { LinkDiagnosticsPanel } from "../components/LinkDiagnosticsPanel";
+import { LinkDiagnosticsPanel, type LinkDiagnostic } from "../components/LinkDiagnosticsPanel";
 import { SkillConflictsPanel } from "../components/SkillConflictsPanel";
 import { ProviderIcon } from "../components/ProviderIcon";
 import type { EnvMap, WorkspaceSummary, ViewId } from "../types";
@@ -36,6 +36,7 @@ export interface StatusViewProps {
     heartbeatHttpReady?: boolean;
     heartbeatImReady?: boolean;
     heartbeatReady?: boolean;
+    lastLinkDiagnostic?: LinkDiagnostic | null;
   } | null;
   /**
    * 后端启动阶段。区分 "starting"（自动启动中 / 用户刚点启动）与 "stopped"（确认未启动）
@@ -259,7 +260,7 @@ export function StatusView(props: StatusViewProps) {
                 {t("topbar.autoStarting")}
               </Badge>
             )}
-            {serviceStatus?.running && effectiveWsId && (<>
+            {serviceStatus?.running && !phaseStarting && effectiveWsId && (<>
               <Button size="sm" variant="destructive" className="statusBtn" onClick={async () => {
                 const _b = notifyLoading(t("status.stopping"));
                 try {
@@ -272,11 +273,7 @@ export function StatusView(props: StatusViewProps) {
                   await doStopService(effectiveWsId);
                   await waitForServiceDown("http://127.0.0.1:18900", 15000);
                   dismissLoading(_b);
-                  if (IS_TAURI) {
-                    await relaunchApp();
-                  } else {
-                    await doStartLocalService(effectiveWsId);
-                  }
+                  await doStartLocalService(effectiveWsId);
                 } catch (e) { notifyError(String(e)); dismissLoading(_b); }
               }} disabled={!!busy}><RotateCcw size={13} />{t("status.restart")}</Button>
             </>)}
@@ -318,7 +315,10 @@ export function StatusView(props: StatusViewProps) {
         )}
 
         {/* Link diagnostics + per-session cache reset */}
-        <LinkDiagnosticsPanel httpApiBase={httpApiBase} />
+        <LinkDiagnosticsPanel
+          httpApiBase={httpApiBase}
+          initialDiagnostic={serviceStatus?.lastLinkDiagnostic ?? null}
+        />
 
         {/* Skill registration conflicts (multi-source same name detection) */}
         <SkillConflictsPanel httpApiBase={httpApiBase} />

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import sqlite3
 import threading
 from datetime import datetime, timedelta
@@ -127,6 +128,7 @@ class MemoryStorage:
         logger.info(f"[MemoryStorage] Migrating schema v{from_version} → v{_SCHEMA_VERSION}")
 
         try:
+            self._backup_before_migration(from_version)
             self._create_tables()
 
             if from_version < 2:
@@ -142,6 +144,29 @@ class MemoryStorage:
             except Exception:
                 pass
             raise
+
+    def _backup_before_migration(self, from_version: int) -> Path | None:
+        """Create a best-effort SQLite backup before schema/data migration."""
+        if from_version >= _SCHEMA_VERSION or not self._db_path.exists():
+            return None
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = self._db_path.with_name(
+            f"{self._db_path.name}.bak.v{from_version}_to_v{_SCHEMA_VERSION}.{timestamp}"
+        )
+        try:
+            with sqlite3.connect(str(backup_path)) as dst:
+                self._conn.backup(dst)
+            logger.info(f"[MemoryStorage] Pre-migration backup created: {backup_path}")
+            return backup_path
+        except Exception as e:
+            logger.warning(f"[MemoryStorage] SQLite backup API failed: {e}")
+            try:
+                shutil.copy2(self._db_path, backup_path)
+                logger.info(f"[MemoryStorage] Pre-migration file backup created: {backup_path}")
+                return backup_path
+            except Exception as copy_error:
+                logger.warning(f"[MemoryStorage] Pre-migration backup skipped: {copy_error}")
+                return None
 
     def _migrate_v1_to_v2(self) -> None:
         """Add v2 columns to existing memories table."""
@@ -162,7 +187,7 @@ class MemoryStorage:
         self._conn.commit()
 
     def _migrate_v2_to_v3(self) -> None:
-        """Add owner columns and quarantine unowned legacy global memories."""
+        """Add owner columns without making legacy desktop memories disappear."""
         c = self._conn
         for col, default in [("user_id", "'default'"), ("workspace_id", "'default'")]:
             try:
@@ -170,20 +195,34 @@ class MemoryStorage:
             except sqlite3.OperationalError:
                 pass
 
-        # 旧版本把用户事实、测试数据和系统经验都写到 global/空 owner。
-        # 这些记录不能再默认参与用户推理，先保守隔离，后续由管理工具确认归属。
+        # Owner-only updates do not change FTS-indexed content. Older databases may have an
+        # empty external-content FTS table; firing the generic UPDATE trigger during this
+        # migration can make SQLite report a malformed FTS image.
+        c.execute("DROP TRIGGER IF EXISTS memories_fts_au")
+        # 旧桌面版通常是单用户本地库。直接把 global/default 隔离会让用户升级后
+        # 看到“记忆清零”。这里保守迁到 user/default，后续可由恢复/诊断入口
+        # 处理真正无法确认归属的数据。
         c.execute(
             """
             UPDATE memories
-            SET scope = 'legacy_quarantine',
+            SET scope = 'user',
                 scope_owner = '',
-                user_id = 'legacy',
+                user_id = COALESCE(NULLIF(user_id, ''), 'default'),
                 workspace_id = COALESCE(NULLIF(workspace_id, ''), 'default')
             WHERE (scope IS NULL OR scope = 'global')
               AND (scope_owner IS NULL OR scope_owner = '')
               AND (user_id IS NULL OR user_id = '' OR user_id = 'default')
             """
         )
+        try:
+            c.execute("""CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, content, subject, predicate, tags)
+                VALUES ('delete', old.rowid, old.content, old.subject, old.predicate, old.tags);
+                INSERT INTO memories_fts(rowid, content, subject, predicate, tags)
+                VALUES (new.rowid, new.content, new.subject, new.predicate, new.tags);
+            END""")
+        except sqlite3.OperationalError:
+            pass
         self._conn.commit()
 
     def _create_tables(self) -> None:

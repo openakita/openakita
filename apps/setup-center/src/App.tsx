@@ -6,6 +6,7 @@ import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserS
 import { LoginView } from "./views/LoginView";
 import { ServerManagerView } from "./views/ServerManagerView";
 import { ChatView } from "./views/ChatView";
+import type { LinkDiagnostic } from "./components/LinkDiagnosticsPanel";
 
 // Lazy-loaded views — keeps first-screen bundle small (4.7 Code Splitting)
 const SkillManager = lazy(() => import("./views/SkillManager").then(m => ({ default: m.SkillManager })));
@@ -668,6 +669,7 @@ function MainApp() {
     heartbeatHttpReady?: boolean;
     heartbeatImReady?: boolean;
     heartbeatReady?: boolean;
+    lastLinkDiagnostic?: LinkDiagnostic | null;
   } | null>(null);
   // ── 后端启动阶段（独立于 serviceStatus）──
   // serviceStatus 只能表达 "running:true|false"，无法区分"未启动"和"正在启动中"。
@@ -686,6 +688,7 @@ function MainApp() {
   const heartbeatFailCount = useRef(0);
   /** 连续成功次数，从 degraded/suspect 回到 alive 需至少 2 次，避免偶发超时导致绿黄反复横跳 */
   const heartbeatAliveSuccessCountRef = useRef(0);
+  const lastReadinessReadyRef = useRef<boolean | null>(null);
   const wsRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pageVisible, setPageVisible] = useState(true);
   const visibilityGraceRef = useRef(false); // 休眠恢复宽限期
@@ -855,9 +858,21 @@ function MainApp() {
               if (cancelled) return true;
               const healthData = await healthRes.json();
               const svcVersion = healthData.version || "";
+              const readiness = healthData?.readiness || {};
+              const readinessReady = readiness.ready !== false;
+              const readinessPhase = String(readiness.phase || healthData.startup_phase || "");
               setApiBaseUrl(url);
-              setServiceStatus({ running: true, pid: healthData.pid || null, pidFile: "" });
-              setBackendBootPhase("running");
+              setServiceStatus({
+                running: true,
+                pid: healthData.pid || null,
+                pidFile: "",
+                heartbeatPhase: readinessPhase || undefined,
+                heartbeatHttpReady: readiness.http_ready,
+                heartbeatImReady: readiness.im_ready,
+                heartbeatReady: readiness.ready,
+                lastLinkDiagnostic: healthData.last_link_diagnostic || null,
+              });
+              setBackendBootPhase(readinessReady ? "running" : "starting");
               if (svcVersion) setBackendVersion(svcVersion);
               notifyPluginAppsReady();
               try { await refreshStatus("local", url, true); } catch { /* ignore */ }
@@ -1042,16 +1057,40 @@ function MainApp() {
           // /api/health 200 只代表 HTTP API 可达，不再等同于业务完全启动完成。
           // 新后端会返回 readiness，旧后端没有该字段时按 ready=true 兼容。
           let readinessReady = true;
+          let readinessPhase = "";
+          let readinessHttpReady: boolean | undefined;
+          let readinessImReady: boolean | undefined;
+          let readinessFullyReady: boolean | undefined;
+          let lastLinkDiagnostic: LinkDiagnostic | null | undefined;
           // 提取后端版本与 readiness
           try {
             const data = await res.json();
             if (data.version) setBackendVersion(data.version);
             const readiness = data?.readiness || {};
             readinessReady = readiness.ready !== false;
+            readinessPhase = String(readiness.phase || data.startup_phase || "");
+            readinessHttpReady = readiness.http_ready;
+            readinessImReady = readiness.im_ready;
+            readinessFullyReady = readiness.ready;
+            lastLinkDiagnostic = data.last_link_diagnostic || null;
           } catch { /* ignore */ }
-          setServiceStatus(prev => prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" });
+          const wasReady = lastReadinessReadyRef.current;
+          lastReadinessReadyRef.current = readinessReady;
+          setServiceStatus(prev => ({
+            ...(prev || { pid: null, pidFile: "" }),
+            running: true,
+            heartbeatPhase: readinessPhase || prev?.heartbeatPhase,
+            heartbeatHttpReady: readinessHttpReady ?? prev?.heartbeatHttpReady,
+            heartbeatImReady: readinessImReady ?? prev?.heartbeatImReady,
+            heartbeatReady: readinessFullyReady ?? prev?.heartbeatReady,
+            lastLinkDiagnostic:
+              lastLinkDiagnostic !== undefined ? lastLinkDiagnostic : prev?.lastLinkDiagnostic,
+          }));
           setBackendBootPhase(readinessReady ? "running" : "starting");
           notifyPluginAppsReady();
+          if (wasReady === false && readinessReady) {
+            void refreshStatus(undefined, undefined, true).catch(() => {});
+          }
         } else {
           throw new Error("non-ok");
         }
@@ -2031,6 +2070,11 @@ function MainApp() {
    * 不含 env 保存逻辑，可独立调用（如 Bot 配置保存后重启）。
    */
   async function restartService(): Promise<void> {
+    if (backendBootPhase === "starting" || (serviceStatus?.running && serviceStatus.heartbeatReady === false)) {
+      notifyError("后端仍在启动或初始化中，请等待运行状态稳定后再重启。");
+      return;
+    }
+
     const base = httpApiBase();
     setRestartOverlay({ phase: "restarting" });
 
@@ -2342,11 +2386,18 @@ function MainApp() {
               if (healthData.version) setBackendVersion(healthData.version);
               const readiness = healthData?.readiness || {};
               const ready = readiness.ready !== false;
+              const phase = String(readiness.phase || healthData.startup_phase || "");
               setBackendBootPhase(ready ? "running" : "starting");
+              setServiceStatus((prev) => ({
+                ...(prev || { pid: healthData.pid || null, pidFile: "" }),
+                running: true,
+                heartbeatPhase: phase || prev?.heartbeatPhase,
+                heartbeatHttpReady: readiness.http_ready ?? prev?.heartbeatHttpReady,
+                heartbeatImReady: readiness.im_ready ?? prev?.heartbeatImReady,
+                heartbeatReady: readiness.ready ?? prev?.heartbeatReady,
+                lastLinkDiagnostic: healthData.last_link_diagnostic || null,
+              }));
             } catch { /* ignore parse error */ }
-            setServiceStatus((prev) =>
-              prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" }
-            );
           }
         } catch {
           serviceAlive = false;
@@ -2522,6 +2573,7 @@ function MainApp() {
               heartbeatHttpReady: ss.heartbeatHttpReady ?? prev?.heartbeatHttpReady,
               heartbeatImReady: ss.heartbeatImReady ?? prev?.heartbeatImReady,
               heartbeatReady: ss.heartbeatReady ?? prev?.heartbeatReady,
+              lastLinkDiagnostic: prev?.lastLinkDiagnostic ?? null,
             }));
             if (ss.heartbeatReady === false && ss.heartbeatPhase) {
               setBackendBootPhase("starting");
@@ -3133,8 +3185,11 @@ function MainApp() {
 
   function renderRuntimeBootstrapPanel() {
     const backendReady = serviceStatus?.running && backendBootPhase === "running" && serviceStatus?.heartbeatReady !== false;
+    const heartbeatPhase = serviceStatus?.heartbeatPhase || "";
     const stage = installProgress?.stage
-      || (backendBootPhase === "starting" ? t("status.backendStarting")
+      || (heartbeatPhase === "starting_im" ? "HTTP API 已就绪，正在启动 IM 通道和后台连接"
+        : heartbeatPhase === "http_ready" ? "HTTP API 已就绪，后台服务仍在继续初始化"
+        : backendBootPhase === "starting" ? t("status.backendStarting")
         : backendReady ? "运行环境已就绪"
         : serviceStatus?.running ? "后端正在完成初始化"
         : backendBootPhase === "error" ? t("status.backendStartFailed")
@@ -4384,6 +4439,7 @@ function MainApp() {
       try {
         setObBackendStartupPhase("checking", t("onboarding.backendStartup.checking"));
         const earlyProbe = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) }).then(r => r.ok).catch(() => false);
+        const backendStartInFlight = ["checking", "starting", "waiting"].includes(obBackendStartup.phase);
         if (earlyProbe) {
           log("[OK] 后端已在运行（由 ob-welcome 提前启动）");
           setServiceStatus({ running: true, pid: null, pidFile: "" });
@@ -4394,12 +4450,18 @@ function MainApp() {
           updateTask("http-wait", { status: "done", detail: "已就绪" });
           logTask("等待 HTTP 服务就绪", "done", "已就绪");
         } else {
-          log(t("onboarding.progress.startingService"));
-          setObBackendStartupPhase("starting", t("onboarding.backendStartup.starting"));
-          await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
-          log(t("onboarding.progress.serviceStarted"));
-          updateTask("service-start", { status: "done" });
-          logTask("启动后端服务", "done");
+          if (backendStartInFlight) {
+            log("后端启动已在后台进行，继续等待 HTTP 服务就绪...");
+            updateTask("service-start", { status: "done", detail: "已在后台启动" });
+            logTask("启动后端服务", "done", "已在后台启动");
+          } else {
+            log(t("onboarding.progress.startingService"));
+            setObBackendStartupPhase("starting", t("onboarding.backendStartup.starting"));
+            await invoke("openakita_service_start", { venvDir: effectiveVenv, workspaceId: activeWsId });
+            log(t("onboarding.progress.serviceStarted"));
+            updateTask("service-start", { status: "done" });
+            logTask("启动后端服务", "done");
+          }
 
           // ── STEP: http-wait ──
           updateTask("http-wait", { status: "running" });

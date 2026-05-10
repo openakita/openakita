@@ -97,8 +97,23 @@ class ToggleSourceBody(_StrictBase):
 
 
 class CreateTaskBody(_StrictBase):
-    mode: Literal["ingest", "hot_radar", "daily_brief", "verify_pack", "replicate_plan"]
+    mode: Literal[
+        "ingest",
+        "hot_radar",
+        "daily_brief",
+        "verify_pack",
+        "replicate_plan",
+        "ai_topic_analysis",
+    ]
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class AiTopicAnalysisBody(_StrictBase):
+    package_id: str = ""
+    since_hours: int = Field(default=24, ge=1, le=168)
+    limit: int = Field(default=10, ge=1, le=20)
+    min_coverage: int = Field(default=1, ge=1, le=20)
+    evidence_limit: int = Field(default=5, ge=1, le=8)
 
 
 class TopTopicsBody(_StrictBase):
@@ -637,6 +652,14 @@ class Plugin(PluginBase):
             assert self._pipeline is not None
             return await self._pipeline.top_topics(body.model_dump())
 
+        @router.post("/ai/analyze-top")
+        async def ai_analyze_top(body: AiTopicAnalysisBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            return await self._create_and_start_background_task(
+                "ai_topic_analysis",
+                body.model_dump(),
+            )
+
         @router.get("/tasks")
         async def list_tasks(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
             await self._ensure_ready()
@@ -681,9 +704,36 @@ class Plugin(PluginBase):
 
     async def _create_and_run_task(self, mode: str, params: dict[str, Any]) -> dict[str, Any]:
         await self._ensure_ready()
-        assert self._tm is not None and self._pipeline is not None
+        assert self._tm is not None
         task = await self._tm.create_task(mode, params)
         task_id = task["id"]
+        return await self._run_existing_task(task_id, mode, params)
+
+    async def _create_and_start_background_task(
+        self, mode: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        await self._ensure_ready()
+        assert self._tm is not None
+        task = await self._tm.create_task(mode, params)
+        task_id = task["id"]
+        await self._tm.update_task(
+            task_id,
+            status="running",
+            started_at=utcnow_iso(),
+            progress=0.03,
+            pipeline_step="任务已创建，等待执行",
+        )
+        if self._api is None:
+            raise HTTPException(status_code=503, detail="plugin api is not ready")
+        self._api.spawn_task(
+            self._run_existing_task(task_id, mode, params),
+            name=f"plugin:{PLUGIN_ID}:task:{task_id}",
+        )
+        return {"ok": True, "background": True, "task": await self._tm.get_task(task_id)}
+
+    async def _run_existing_task(self, task_id: str, mode: str, params: dict[str, Any]) -> dict[str, Any]:
+        await self._ensure_ready()
+        assert self._tm is not None and self._pipeline is not None
         await self._tm.update_task(task_id, status="running", started_at=utcnow_iso(), progress=0.05)
         try:
             if mode == "ingest":
@@ -696,12 +746,15 @@ class Plugin(PluginBase):
                 result = await self._pipeline.verify_pack(task_id, params)
             elif mode == "replicate_plan":
                 result = await self._pipeline.replicate_plan(task_id, params)
+            elif mode == "ai_topic_analysis":
+                result = await self._pipeline.ai_topic_analysis(task_id, params)
             else:
                 raise ValueError(f"unsupported mode: {mode}")
             await self._tm.update_task(
                 task_id,
                 status="done",
                 progress=1.0,
+                pipeline_step="已完成",
                 finished_at=utcnow_iso(),
                 result=result,
             )
@@ -738,6 +791,17 @@ class Plugin(PluginBase):
                 },
             ),
             _tool("media_strategy_search_news", "按关键词、分类检索新闻。", {"q": "string", "package_id": "string", "limit": "integer"}),
+            _tool(
+                "media_strategy_ai_analyze_topics",
+                "对规则筛选后的 Top N 热点簇调用主程序大模型生成选题分析报告，避免逐条新闻烧模型。",
+                {
+                    "package_id": "string",
+                    "since_hours": "integer",
+                    "limit": "integer",
+                    "min_coverage": "integer",
+                    "evidence_limit": "integer",
+                },
+            ),
             _tool("media_strategy_daily_brief", "生成融媒早报、午报、晚报或专题简报。", {"session": "string", "since_hours": "integer", "limit": "integer"}),
             _tool("media_strategy_verify_pack", "为热点生成信源复核清单。", {"article_ids": "array", "topic": "string"}),
             _tool("media_strategy_replicate_plan", "生成热点复刻、采访、拍摄和制作计划。", {"article_ids": "array", "topic": "string", "target_format": "string", "tone": "string"}),
@@ -774,6 +838,8 @@ class Plugin(PluginBase):
             return {"ok": True, **(await self._pipeline.top_topics(payload))}
         if name == "media_strategy_search_news":
             return {"ok": True, **(await self._pipeline.search_news(args))}
+        if name == "media_strategy_ai_analyze_topics":
+            return await self._create_and_run_task("ai_topic_analysis", args)
         if name == "media_strategy_daily_brief":
             return await self._create_and_run_task("daily_brief", args)
         if name == "media_strategy_verify_pack":

@@ -952,6 +952,13 @@ export function OrgEditorView({
         }
       } else if (ev === "org:task_complete") {
         triggerEdgeAnimation((d as any).node_id, (d as any).node_id, "#22c55e");
+      } else if (
+        ev === "org:command_done" ||
+        ev === "org:command_phase" ||
+        ev === "org:command_stopped_no_progress"
+      ) {
+        void fetchOrg(orgId);
+        bbPanelRef.current?.refresh();
       } else if (ev === "org:task_cancelled") {
         bbPanelRef.current?.refresh();
       } else if (ev === "org:quota_exhausted") {
@@ -964,7 +971,7 @@ export function OrgEditorView({
         bbPanelRef.current?.refresh();
       }
     });
-  }, [visible, currentOrgId, setNodes, triggerEdgeAnimation, showToast]);
+  }, [visible, currentOrgId, setNodes, triggerEdgeAnimation, showToast, fetchOrg]);
 
   // ── Start/Stop org ──
   const handleStartOrg = useCallback(async () => {

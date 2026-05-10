@@ -92,11 +92,12 @@ const NODE_TYPE_LABEL_KEYS: Record<string, string> = {
 interface Props {
   apiBaseUrl?: string;
   searchQuery?: string;
+  refreshKey?: number;
   quality?: GraphQuality;
   onQualityChange?: (q: GraphQuality) => void;
 }
 
-export function MemoryGraph3D({ apiBaseUrl = "", searchQuery = "", quality: qualityProp, onQualityChange }: Props) {
+export function MemoryGraph3D({ apiBaseUrl = "", searchQuery = "", refreshKey = 0, quality: qualityProp, onQualityChange }: Props) {
   const { t } = useTranslation();
   // ForceGraph3D ref type doesn't export cleanly; use its expected shape
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -180,7 +181,7 @@ export function MemoryGraph3D({ apiBaseUrl = "", searchQuery = "", quality: qual
       }
     })();
     return () => { cancelled = true; };
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, refreshKey]);
 
   // Bloom post-processing — only when quality = high
   useEffect(() => {

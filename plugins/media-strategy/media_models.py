@@ -573,6 +573,7 @@ TOOL_NAMES: Final[tuple[str, ...]] = (
     "media_strategy_hot_radar",
     "media_strategy_top_topics",
     "media_strategy_search_news",
+    "media_strategy_ai_analyze_topics",
     "media_strategy_daily_brief",
     "media_strategy_verify_pack",
     "media_strategy_replicate_plan",

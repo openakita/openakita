@@ -94,6 +94,23 @@ function _cmdPrefix(cmd: string): string {
 const HISTORY_PAGE_LIMIT = 80;
 type EndpointPolicy = "prefer" | "require";
 
+function formatOrgCommandPhase(phase?: string, openChainCount?: number): string {
+  switch (phase) {
+    case "awaiting_summary":
+      return "正在等待主编汇总最终结果";
+    case "done":
+      return "组织命令已完成";
+    case "error":
+      return "组织命令执行出错";
+    case "running":
+    default:
+      if (typeof openChainCount === "number" && openChainCount > 0) {
+        return `正在等待 ${openChainCount} 条下级任务链收口`;
+      }
+      return "组织正在协调任务";
+  }
+}
+
 type HistoryPageState = {
   total: number;
   startIndex: number | null;
@@ -389,6 +406,7 @@ export function ChatView({
   const isOrgConvSwitchRef = useRef(false);
   const [orgCommandPending, setOrgCommandPending] = useState(false);
   const orgCommandPendingRef = useRef(false);
+  const activeOrgCommandRef = useRef<{ orgId: string; commandId: string } | null>(null);
 
   // Org 协调可视化面板状态
   const [orgNodeStates, setOrgNodeStates] = useState<Map<string, { status: string; task?: string; ts: number }>>(new Map());
@@ -1929,6 +1947,7 @@ export function ChatView({
         // 去重，这里再加一层 UI 级保险，避免相邻同行被重复 push 到气泡）。
         let lastProgressLine = "";
         let lastProgressAtMs = 0;
+        let lastProgressAt = Date.now();
         const PROGRESS_DEDUPE_MS = 1000;
         const pushProgress = (line: string) => {
           const now = Date.now();
@@ -1937,6 +1956,7 @@ export function ChatView({
           }
           lastProgressLine = line;
           lastProgressAtMs = now;
+          lastProgressAt = now;
           progressLines.push(line);
           const preview = progressLines.slice(-8).map(l => `> ${l}`).join("\n");
           updateOrgMessages((prev) => prev.map(m =>
@@ -1988,6 +2008,27 @@ export function ChatView({
               return m;
             });
             pushProgress(`✓ **${nodeId}** 任务完成`);
+          } else if (event === "org:task_delivered") {
+            pushProgress(`⇢ **${nodeId}** 向 **${toNode || "上级"}** 提交交付物`);
+          } else if (event === "org:task_accepted") {
+            const acceptedBy = (d.accepted_by || "") as string;
+            pushProgress(`✓ **${acceptedBy || "上级"}** 已验收 **${nodeId}** 的交付物`);
+          } else if (event === "org:task_rejected") {
+            const rejectedBy = (d.rejected_by || "") as string;
+            const reason = ((d.reason || d.feedback || "") as string).slice(0, 80);
+            pushProgress(`! **${rejectedBy || "上级"}** 打回 **${nodeId}** 的交付物${reason ? `：${reason}` : ""}`);
+          } else if (event === "org:task_failed") {
+            const reason = ((d.error || d.reason || d.exit_reason || "") as string).slice(0, 100);
+            pushProgress(`✗ **${nodeId}** 任务失败${reason ? `：${reason}` : ""}`);
+          } else if (event === "org:command_phase") {
+            const activeCmd = activeOrgCommandRef.current;
+            const eventCommandId = (d.command_id || "") as string;
+            if (!eventCommandId || !activeCmd || eventCommandId === activeCmd.commandId) {
+              pushProgress(`… ${formatOrgCommandPhase((d.phase || "") as string)}`);
+            }
+          } else if (event === "org:command_stuck_warning") {
+            const idleSecs = Number(d.idle_secs || 0);
+            pushProgress(`! 组织 ${idleSecs > 0 ? `${Math.round(idleSecs)} 秒` : "一段时间"}无新进展，仍在等待收口`);
           } else if (event === "org:task_timeout") {
             setOrgNodeStates(prev => {
               const m = new Map(prev);
@@ -2018,6 +2059,7 @@ export function ChatView({
                 : m
             ));
           } else {
+            activeOrgCommandRef.current = { orgId: targetOrgId, commandId };
             let resolved = false;
             const onDone = onWsEvent((evt, raw) => {
               const d = raw as Record<string, unknown> | null;
@@ -2038,11 +2080,7 @@ export function ChatView({
 
             const pollInterval = 5_000;
             const stallThreshold = 60_000;
-            let lastProgressAt = Date.now();
-            const origPushProgress = pushProgress;
-            const wrappedPush = (line: string) => { lastProgressAt = Date.now(); origPushProgress(line); };
-            // Replace the outer pushProgress's timestamp tracking
-            void wrappedPush;
+            let lastPhase = "";
 
             const pollStartTime = Date.now();
             const MAX_POLL_WAIT_MS = 10 * 60 * 1000;
@@ -2055,6 +2093,18 @@ export function ChatView({
                   `${apiBaseUrl}/api/orgs/${targetOrgId}/commands/${commandId}`
                 );
                 const pollData = await pollRes.json();
+                const phase = (pollData.phase || pollData.status || "") as string;
+                const openChainCount = typeof pollData.open_chain_count === "number"
+                  ? pollData.open_chain_count
+                  : undefined;
+                if (pollData.status === "running" && phase && phase !== lastPhase) {
+                  lastPhase = phase;
+                  pushProgress(`… ${formatOrgCommandPhase(phase, openChainCount)}`);
+                }
+                if (pollData.warned_stuck && !lastPhase.includes("stuck")) {
+                  lastPhase = `${phase}:stuck`;
+                  pushProgress("! 组织长时间无新进展，仍在等待下级任务或最终汇总");
+                }
                 if (pollData.status === "done" || pollData.status === "error") {
                   if (!resolved) {
                     resolved = true;
@@ -2099,6 +2149,7 @@ export function ChatView({
           ));
         } finally {
           unsub();
+          activeOrgCommandRef.current = null;
           orgCommandPendingRef.current = false;
           setOrgCommandPending(false);
           if (orgConvId) {
@@ -3517,6 +3568,15 @@ export function ChatView({
   const closeLightbox = useCallback(() => setLightbox(null), []);
 
   const handleCancelTask = useCallback(() => {
+    if (orgCommandPendingRef.current && activeOrgCommandRef.current) {
+      const { orgId, commandId } = activeOrgCommandRef.current;
+      safeFetch(`${apiBaseRef.current}/api/orgs/${orgId}/commands/${commandId}/cancel`, {
+        method: "POST",
+      }).catch(() => {
+        notifyError("组织命令停止请求失败，请稍后重试");
+      });
+      return;
+    }
     safeFetch(`${apiBase}/api/chat/cancel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -5240,13 +5300,11 @@ export function ChatView({
                   ) : (
                     <button
                       data-slot="stop"
-                      onClick={orgCommandPending ? undefined : handleCancelTask}
-                      className={`chatInputSendBtn ${orgCommandPending ? "" : "chatInputStopBtn"}`}
-                      title={orgCommandPending ? "组织处理中..." : t("chat.stopGeneration")}
-                      disabled={orgCommandPending}
-                      style={orgCommandPending ? { opacity: 0.5, cursor: "wait" } : undefined}
+                      onClick={handleCancelTask}
+                      className="chatInputSendBtn chatInputStopBtn"
+                      title={orgCommandPending ? "停止组织命令" : t("chat.stopGeneration")}
                     >
-                      {orgCommandPending ? <IconSend size={14} /> : <IconStop size={14} />}
+                      <IconStop size={14} />
                     </button>
                   )
                 ) : (

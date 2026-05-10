@@ -905,6 +905,7 @@ class OrgRuntime:
         content: str,
         *,
         chain_id: str | None = None,
+        command_id: str | None = None,
     ) -> dict:
         """Send a user command to an organization node."""
         org = self._active_orgs.get(org_id)
@@ -967,6 +968,7 @@ class OrgRuntime:
 
         tracker = UserCommandTracker(
             org_id, target.id,
+            command_id=command_id,
             user_command_content=content,
         )
         self._active_user_cmd[tracker_key] = tracker
@@ -2681,7 +2683,7 @@ class OrgRuntime:
 
         chain_id = msg.metadata.get("task_chain_id", "")
         if chain_id:
-            prefix += f" [任务链: {chain_id[:12]}]"
+            prefix += f" [任务链: {chain_id[:12]}…]"
 
         extra = ""
         if msg.msg_type == MsgType.TASK_DELIVERED:
@@ -2720,6 +2722,11 @@ class OrgRuntime:
                         lines.append(f"  - **{fname}**{size_str}")
                 if lines:
                     extra += f"\n附件清单（共 {len(attachments)} 个）:\n" + "\n".join(lines)
+            if chain_id:
+                extra += (
+                    "\n验收时请使用完整任务链 ID："
+                    f'task_chain_id="{chain_id}"'
+                )
             extra += "\n请用 org_accept_deliverable 或 org_reject_deliverable 进行验收。"
         elif msg.msg_type == MsgType.TASK_REJECTED:
             reason = msg.metadata.get("rejection_reason", "")
@@ -3404,6 +3411,34 @@ class OrgRuntime:
             )
         self.get_event_store(org_id).emit("soft_stop", "user", {})
 
+    def get_command_tracker_snapshot(
+        self,
+        org_id: str,
+        command_id: str,
+    ) -> dict | None:
+        """Return a compact live snapshot for a running user command."""
+        if not command_id:
+            return None
+        now = time.monotonic()
+        for (oid, root_id), tracker in list(self._active_user_cmd.items()):
+            if oid != org_id or tracker.command_id != command_id:
+                continue
+            return {
+                "command_id": tracker.command_id,
+                "root_node_id": root_id,
+                "phase": tracker._last_phase_emitted or tracker.state or "running",
+                "tracker_state": tracker.state,
+                "root_chain_id": tracker.root_chain_id or "",
+                "open_chains": sorted(tracker.open_chains),
+                "open_chain_count": len(tracker.open_chains),
+                "elapsed_s": round(now - tracker.started_at, 1),
+                "last_progress_elapsed_s": round(now - tracker.last_progress_at, 1),
+                "warned_stuck": tracker.warned_stuck,
+                "auto_stopped": tracker.auto_stopped,
+                "user_cancelled": tracker.user_cancelled,
+            }
+        return None
+
     async def cancel_user_command(
         self,
         org_id: str,
@@ -3412,7 +3447,7 @@ class OrgRuntime:
         """用户主动强制终止当前在跑的用户命令。
 
         语义：
-          - 把该 org 下所有未完成的 ``UserCommandTracker`` 标记为
+          - 把该 org 下匹配 ``command_id`` 的未完成 ``UserCommandTracker`` 标记为
             ``user_cancelled=True`` + ``auto_stopped=True``，并 ``completed.set()``，
             让 ``send_command`` 立刻 unblock 走"stopped_by_watchdog +
             cancelled_by_user"分支返回阶段性结果。
@@ -3422,9 +3457,8 @@ class OrgRuntime:
 
         Args:
             org_id: 目标组织。
-            command_id: 仅用于审计日志；当前实现按 org 粒度终止该 org 下所有
-                未完成 trackers（实际同一 org 同一 root 至多一个 in-flight
-                tracker，故等价于按 command 粒度终止）。
+            command_id: 有值时只终止匹配的用户命令；为空时终止该 org 下所有
+                未完成 trackers（保留旧调用兼容）。
 
         Returns:
             ``{"ok": True, "cancelled_roots": [...], "command_id": ...}``
@@ -3432,6 +3466,8 @@ class OrgRuntime:
         cancelled_roots: list[str] = []
         for (oid, root_id), tracker in list(self._active_user_cmd.items()):
             if oid != org_id:
+                continue
+            if command_id and tracker.command_id != command_id:
                 continue
             if tracker.completed.is_set():
                 continue

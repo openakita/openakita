@@ -582,11 +582,26 @@ class RelationalMemoryStore:
         )
         return [self._row_to_node(cur.description, r) for r in cur.fetchall()]
 
-    def get_all_nodes(self, limit: int = 2000) -> list[MemoryNode]:
+    def get_all_nodes(
+        self,
+        limit: int = 2000,
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> list[MemoryNode]:
         active_where, active_params = self._active_node_where()
+        conditions = [active_where]
+        params: list[object] = [*active_params]
+        if user_id is not None:
+            conditions.append("COALESCE(user_id, 'default') = ?")
+            params.append(user_id)
+        if workspace_id is not None:
+            conditions.append("COALESCE(workspace_id, 'default') = ?")
+            params.append(workspace_id)
+        where = " AND ".join(conditions)
         cur = self._conn.execute(
-            f"SELECT * FROM mdrm_nodes WHERE {active_where} ORDER BY importance DESC LIMIT ?",
-            (*active_params, limit),
+            f"SELECT * FROM mdrm_nodes WHERE {where} ORDER BY importance DESC LIMIT ?",
+            (*params, limit),
         )
         return [self._row_to_node(cur.description, r) for r in cur.fetchall()]
 

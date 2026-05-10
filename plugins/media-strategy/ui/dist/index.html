@@ -35,6 +35,7 @@
     }
     [hidden] { display:none !important; }
     body { background:var(--bg); color:var(--text); line-height:1.5; -webkit-font-smoothing:antialiased; }
+    html, body { scroll-behavior:auto; }
     .app { min-height:100%; display:flex; flex-direction:column; }
     .header { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:16px 20px; background:linear-gradient(135deg,var(--bg-card),var(--bg-hover)); border-bottom:1px solid var(--border); }
     .oa-hero-title { display:flex; align-items:center; gap:12px; margin:0; font-size:20px; font-weight:700; color:var(--text); }
@@ -83,8 +84,13 @@
     .report h1 { font-size:20px; }.report h2 { font-size:16px; margin-top:18px; }.report p,.report li { font-size:13px; }
     .toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px; }
     .toolbar .input { flex:1 1 220px; }
-    .toast { position:fixed; right:18px; bottom:18px; max-width:360px; padding:10px 12px; border-radius:9px; border:1px solid var(--border); background:var(--bg-card); color:var(--text); box-shadow:0 12px 32px rgba(15,23,42,.16); font-size:13px; z-index:10; }
-    .toast.error { border-color:rgba(220,38,38,.45); color:var(--danger); }
+    .toast { position:fixed; top:18px; right:18px; max-width:min(420px,calc(100vw - 36px)); padding:12px 14px 12px 42px; border-radius:12px; border:1px solid rgba(15,118,110,.28); background:var(--bg-card); color:var(--text); box-shadow:0 18px 46px rgba(15,23,42,.18); font-size:13px; line-height:1.5; z-index:80; transform-origin:top right; animation:toast-in .18s ease-out; }
+    .toast::before { content:""; position:absolute; left:14px; top:14px; width:16px; height:16px; border-radius:999px; background:var(--primary); box-shadow:0 0 0 4px var(--primary-soft); }
+    .toast::after { content:""; position:absolute; left:19px; top:18px; width:5px; height:8px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg); }
+    .toast.error { border-color:rgba(220,38,38,.35); color:var(--danger); background:linear-gradient(180deg,var(--bg-card),rgba(220,38,38,.06)); }
+    .toast.error::before { background:var(--danger); box-shadow:0 0 0 4px rgba(220,38,38,.12); }
+    .toast.error::after { content:"!"; left:19px; top:12px; width:auto; height:auto; border:0; transform:none; color:#fff; font-size:12px; font-weight:800; }
+    @keyframes toast-in { from { opacity:0; transform:translateY(-8px) scale(.98); } to { opacity:1; transform:translateY(0) scale(1); } }
     .selected-bar { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:10px 12px; border:1px dashed rgba(15,118,110,.45); border-radius:9px; background:var(--bg-hover); color:var(--text-muted); font-size:12px; margin-bottom:12px; }
     .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
     .metric { padding:12px 14px; border:1px solid var(--border); border-radius:9px; background:var(--bg-card); }
@@ -98,15 +104,15 @@
     .source-card__url { margin-top:6px; font-size:11px; color:var(--text-dim); word-break:break-all; }
     .source-card__actions { display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }
     .source-card__actions .btn { padding:4px 8px; font-size:12px; min-height:28px; }
-    .package-row { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
-    .package-card { border:1px solid var(--border); border-radius:9px; padding:10px; background:var(--bg-card); cursor:pointer; position:relative; display:flex; flex-direction:column; gap:4px; }
+    .package-row { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; align-items:stretch; }
+    .package-card { border:1px solid var(--border); border-radius:9px; padding:10px; min-height:116px; background:var(--bg-card); cursor:pointer; position:relative; display:grid; grid-template-rows:auto 1fr auto; gap:6px; }
     .package-card.active { border-color:var(--primary); background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); box-shadow:0 0 0 1px rgba(15,118,110,.16) inset; }
-    .package-card strong { display:block; font-size:13px; }
-    .package-card span { color:var(--text-muted); font-size:12px; }
+    .package-card strong { display:block; padding-right:54px; font-size:13px; line-height:1.35; }
+    .package-card > span:not(.package-card__badge) { color:var(--text-muted); font-size:12px; line-height:1.45; }
     .package-card__badge { position:absolute; top:6px; right:6px; padding:1px 6px; border-radius:999px; font-size:10px; background:var(--bg-hover); color:var(--text-muted); border:1px solid var(--border); }
     .package-card__badge.custom { color:var(--primary); border-color:rgba(15,118,110,.4); background:var(--primary-soft); }
-    .package-card__actions { display:flex; gap:4px; flex-wrap:wrap; margin-top:6px; padding-top:6px; border-top:1px dashed var(--border); }
-    .package-card__actions .pa-btn { padding:3px 7px; border-radius:6px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-muted); font-size:11px; cursor:pointer; }
+    .package-card__actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; min-height:32px; margin-top:2px; padding-top:8px; border-top:1px dashed var(--border); }
+    .package-card__actions .pa-btn { min-height:26px; padding:3px 8px; border-radius:6px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-muted); font-size:11px; cursor:pointer; }
     .package-card__actions .pa-btn:hover { color:var(--primary); border-color:var(--primary); }
     .package-card__actions .pa-btn.danger:hover { color:var(--danger); border-color:var(--danger); }
     .section-toolbar { display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
@@ -233,6 +239,7 @@
         <div class="card card-fill grow"><h2 class="oa-section-title">热点榜</h2><div id="items" class="empty empty-fill">暂无数据，先拉取 RSS 或调整时间窗。</div></div>
         <div class="stack-layout">
           <div class="card card-fill"><h2 class="oa-section-title">信源复核</h2><div class="oa-hint">所有热点都保留原文链接。对高风险内容，请先复核再进入采编。</div><div id="selectedSummary" class="selected-bar"><span>未选择热点</span><button id="clearSelection" class="btn">清空</button></div><div class="toolbar"><input id="verifyTopic" class="input" placeholder="复核主题，可留空"><button id="verify" class="btn btn-primary">生成复核清单</button></div><div id="verifyOut" class="report"></div></div>
+          <div class="card card-fill"><h2 class="oa-section-title">AI 选题分析</h2><div class="oa-hint">先用规则筛出 Top N 热点簇，再批量调用主程序大模型分析，避免逐条新闻消耗过高。</div><div class="filter-bar"><div class="field"><label for="aiLimit">分析 Top N</label><input id="aiLimit" class="input" type="number" min="1" max="20" value="10"></div><div class="field"><label for="aiMinCoverage">最少来源数</label><input id="aiMinCoverage" class="input" type="number" min="1" max="20" value="1"></div><div class="field"><label for="aiEvidenceLimit">每簇证据</label><input id="aiEvidenceLimit" class="input" type="number" min="1" max="8" value="5"></div></div><div class="toolbar"><button id="aiAnalyze" class="btn btn-primary">AI 分析 Top 热点</button></div><div id="aiAnalysisOut" class="report empty">尚未开始。大模型分析可能需要 30-90 秒，开始后会显示进度。</div></div>
           <div class="card card-fill"><h2 class="oa-section-title">最近任务</h2><div id="tasks" class="task-list"></div></div>
         </div>
       </div>
@@ -559,6 +566,18 @@ function setSelected(ids){
   document.querySelectorAll('#items input[type=checkbox]').forEach(cb => { cb.checked = selected.includes(cb.dataset.id); });
   renderSelection();
 }
+function resetPageScroll(){
+  const targets = [document.scrollingElement, document.documentElement, document.body, document.querySelector('.content')].filter(Boolean);
+  targets.forEach(el=>{
+    try { el.scrollTop = 0; el.scrollLeft = 0; } catch(_) {}
+  });
+  try { window.scrollTo(0, 0); } catch(_) {}
+}
+function resetPageScrollSoon(){
+  resetPageScroll();
+  requestAnimationFrame(resetPageScroll);
+  setTimeout(resetPageScroll, 80);
+}
 function renderItems(items){
   lastItems = Array.isArray(items) ? items : [];
   setSelected(lastItems.slice(0, 3).map(x=>x.id));
@@ -592,6 +611,7 @@ function activateTab(tab){
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('main section').forEach(s=>{ s.hidden = s !== section; });
   history.replaceState(null, '', '#' + (section.id || 'tab-radar').replace('tab-', ''));
+  resetPageScrollSoon();
   if(tab === 'reports') loadReports().catch(()=>{});
 }
 function describePluginError(err){
@@ -650,6 +670,51 @@ async function runTask(mode, params, outId){
   await loadTasks();
   await loadReports();
   return data;
+}
+function renderTaskProgress(task, outId){
+  const out=$(outId);
+  const pct = Math.round(Number(task?.progress || 0) * 100);
+  const step = task?.pipeline_step || (task?.status === 'running' ? '大模型处理中，请稍候' : task?.status || '');
+  out.className='report';
+  out.innerHTML = `<p><strong>任务 ${esc(task?.status || 'pending')}</strong> · ${esc(pct)}%</p><p>${esc(step)}</p><p class="meta">${esc(task?.id || '')}</p>`;
+}
+async function pollTask(taskId, outId){
+  let delay = 1200;
+  for(let i=0;i<120;i++){
+    const data = await api(`/tasks/${encodeURIComponent(taskId)}`);
+    const task = data.task || {};
+    if(task.status === 'done'){
+      const md = task.result?.report?.markdown || JSON.stringify(task.result || {}, null, 2);
+      $(outId).className='report';
+      $(outId).innerHTML=window.MarkdownMini.render(md);
+      await loadTasks();
+      await loadReports();
+      return task;
+    }
+    if(task.status === 'failed'){
+      throw new Error(task.error_message || task.error_kind || '任务失败');
+    }
+    renderTaskProgress(task, outId);
+    await new Promise(resolve=>setTimeout(resolve, delay));
+    delay = Math.min(3000, delay + 200);
+  }
+  throw new Error('任务仍在运行，请稍后到报告页或最近任务查看结果');
+}
+async function runAiAnalysis(){
+  const out=$('aiAnalysisOut');
+  out.className='report';
+  out.innerHTML='<p>正在创建 AI 分析任务...</p>';
+  const data=await api('/ai/analyze-top',{method:'POST',body:JSON.stringify({
+    package_id:$('package').value,
+    since_hours:Number($('hours').value || 24),
+    limit:Number($('aiLimit').value || 10),
+    min_coverage:Number($('aiMinCoverage').value || 1),
+    evidence_limit:Number($('aiEvidenceLimit').value || 5)
+  })});
+  const task=data.task || {};
+  renderTaskProgress(task, 'aiAnalysisOut');
+  await loadTasks();
+  return await pollTask(task.id, 'aiAnalysisOut');
 }
 async function loadPackages(){
   let pk;
@@ -929,6 +994,7 @@ $('ingest').onclick=()=>withBusy($('ingest'),'拉取中...',()=>guard(async()=>{
   await refreshHealth(); await loadSources(); await loadTasks(); await runRadar();
 }, '拉取 RSS'));
 $('radar').onclick=()=>withBusy($('radar'),'生成中...',()=>guard(runRadar, '生成雷达'));
+$('aiAnalyze').onclick=()=>withBusy($('aiAnalyze'),'分析中...',()=>guard(runAiAnalysis, 'AI 选题分析'));
 $('briefRefresh').onclick=()=>withBusy($('briefRefresh'),'刷新中...',()=>guard(runRadar, '刷新热点'));
 $('brief').onclick=()=>withBusy($('brief'),'生成中...',()=>guard(()=>runTask('daily_brief',{
   session:$('briefSession').value,
@@ -1083,6 +1149,7 @@ $('createFolder').onclick=()=>guard(async()=>{
 }, '新建文件夹');
 
 activateTab((location.hash || '#radar').slice(1));
+resetPageScrollSoon();
 refreshHealth().catch(()=>{});
 loadPackages().then(()=>{
   renderChipPicker($('feedPackages'), []);

@@ -14,6 +14,7 @@ from media_ai.prompts import (
     EDITORIAL_SYSTEM_ZH,
     brief_prompt,
     replicate_prompt,
+    topic_analysis_prompt,
     verify_prompt,
 )
 
@@ -26,6 +27,21 @@ def _brain_content(response: Any) -> str:
     content = getattr(response, "content", None)
     if content is None and isinstance(response, dict):
         content = response.get("content")
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+                continue
+            if isinstance(block, dict):
+                text = block.get("text") or block.get("content")
+                if text:
+                    parts.append(str(text))
+                continue
+            text = getattr(block, "text", None)
+            if text:
+                parts.append(str(text))
+        return "\n".join(part for part in parts if part).strip()
     return str(content or "")
 
 
@@ -207,8 +223,31 @@ async def call_brain(
 ) -> str:
     if brain is None:
         raise RuntimeError("brain.access not granted")
+
+    # OpenAkita's host Brain exposes think()/messages_create_async(); older
+    # plugin-facing adapters may expose chat(). Try host-native APIs first so
+    # reports use the configured main model instead of silently falling back.
+    if hasattr(brain, "think"):
+        response = await brain.think(
+            prompt,
+            system=EDITORIAL_SYSTEM_ZH,
+            max_tokens=max_tokens,
+            enable_thinking=False,
+        )
+        return _brain_content(response).strip()
+
+    messages = [{"role": "user", "content": prompt}]
+    if hasattr(brain, "messages_create_async"):
+        response = await brain.messages_create_async(
+            messages=messages,
+            system=EDITORIAL_SYSTEM_ZH,
+            max_tokens=max_tokens,
+            use_thinking=False,
+        )
+        return _brain_content(response).strip()
+
     response = await brain.chat(
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
         system=EDITORIAL_SYSTEM_ZH,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -244,6 +283,24 @@ async def build_verify_pack(
         return md or fallback_brief(items, title=f"{topic or '热点'}信源复核"), "brain"
     except Exception:
         return fallback_brief(items, title=f"{topic or '热点'}信源复核"), "fallback"
+
+
+async def build_topic_analysis(
+    brain: Any,
+    topics: list[dict[str, Any]],
+    *,
+    temperature: float = 0.2,
+) -> tuple[str, str]:
+    try:
+        md = await call_brain(
+            brain,
+            topic_analysis_prompt(topics),
+            max_tokens=2800,
+            temperature=temperature,
+        )
+        return md or _fallback_topic_analysis(topics), "brain"
+    except Exception:
+        return _fallback_topic_analysis(topics), "fallback"
 
 
 async def build_replicate_plan(
@@ -299,6 +356,28 @@ def _fallback_plan(items: list[dict[str, Any]], *, topic: str, target_format: st
         ]
     )
     return "\n".join(lines)
+
+
+def _fallback_topic_analysis(topics: list[dict[str, Any]]) -> str:
+    lines = [
+        "# AI 选题分析报告",
+        "",
+        "以下为规则整理结果；主程序大模型不可用时不会生成深度判断。",
+        "",
+    ]
+    for idx, topic in enumerate(topics, start=1):
+        lines.extend(
+            [
+                f"## {idx}. {topic.get('title') or '未命名热点'}",
+                f"- 原文：{topic.get('url') or '无'}",
+                f"- 覆盖源：{', '.join(topic.get('source_ids') or []) or '未知'}",
+                f"- 加权分：{topic.get('weighted_score', 0)}",
+                f"- 风险等级：{topic.get('risk_level', 'medium')}",
+                "- 复核提示：请打开原文链接确认来源、时间和转引链。",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
 
 
 def markdown_to_html(md: str) -> str:

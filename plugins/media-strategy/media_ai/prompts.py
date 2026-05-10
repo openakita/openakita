@@ -66,6 +66,22 @@ def verify_prompt(items: list[dict[str, Any]], *, topic: str) -> str:
 """
 
 
+def topic_analysis_prompt(topics: list[dict[str, Any]]) -> str:
+    payload = json.dumps(topics, ensure_ascii=False, indent=2)
+    return f"""请基于下面的热点簇生成一份“AI 选题分析报告”。
+
+要求：
+- 只分析给定来源，不补写未给出的事实。
+- 每个热点簇给出：核心判断、为什么值得跟、已有证据、缺口与风险、建议动作。
+- 对单一来源、社交平台热榜、时间滞后的内容明确标注“仅作线索/待复核”。
+- 最后给一个 Top 3 采编优先级排序，说明排序理由。
+- 保留原文链接或 article_id，方便编辑人工复核。
+
+热点簇 JSON：
+{payload}
+"""
+
+
 def replicate_prompt(
     items: list[dict[str, Any]],
     *,

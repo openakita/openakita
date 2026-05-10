@@ -96,6 +96,70 @@ class OrgToolHandler:
             pass
         return "组织未运行"
 
+    def _resolve_acceptance_chain_id(
+        self,
+        org_id: str,
+        *,
+        chain_id: str,
+        from_node: str,
+        accepted_by: str,
+    ) -> tuple[str, str | None]:
+        """Resolve a possibly shortened chain id used by acceptance tools.
+
+        The prompt shows a short chain label for readability, but the model must
+        call tools with the full ``task_chain_id``. If it passes the visible
+        prefix, resolve it only when the current accepter/from-node pair has one
+        obvious delivered task.
+        """
+        raw = (chain_id or "").strip()
+        if not raw:
+            return "", None
+
+        try:
+            from openakita.orgs.project_store import ProjectStore
+
+            store = ProjectStore(self._runtime._manager._org_dir(org_id))
+            if store.find_task_by_chain(raw):
+                return raw, None
+
+            tasks = store.all_tasks(
+                assignee=from_node or None,
+                delegated_by=accepted_by or None,
+            )
+            matches = [
+                t for t in tasks
+                if str(t.get("chain_id") or "").startswith(raw)
+            ]
+            if not matches:
+                return raw, (
+                    f"未找到任务链 {raw}。请使用交付消息里的完整 task_chain_id。"
+                )
+
+            delivered = [t for t in matches if t.get("status") == "delivered"]
+            candidates = delivered or matches
+            if len(candidates) == 1:
+                resolved = str(candidates[0].get("chain_id") or raw)
+                logger.info(
+                    "[ToolHandler] resolved shortened acceptance chain: "
+                    "passed=%s resolved=%s from=%s accepted_by=%s",
+                    raw, resolved, from_node, accepted_by,
+                )
+                return resolved, None
+
+            candidate_ids = [
+                str(t.get("chain_id") or "") for t in candidates[:5]
+            ]
+            return raw, (
+                f"任务链 {raw} 匹配到多个候选，无法安全验收。"
+                f"请使用完整 task_chain_id：{candidate_ids}"
+            )
+        except Exception:
+            logger.debug(
+                "[ToolHandler] resolve acceptance chain skipped",
+                exc_info=True,
+            )
+            return raw, None
+
     _INT_DEFAULTS: dict[str, int] = {
         "priority": 0,
         "bandwidth_limit": 60,
@@ -2088,6 +2152,15 @@ class OrgToolHandler:
             return "不能验收自己的交付物"
 
         chain_id = args.get("task_chain_id", "")
+        if chain_id:
+            chain_id, chain_error = self._resolve_acceptance_chain_id(
+                org_id,
+                chain_id=chain_id,
+                from_node=from_node,
+                accepted_by=node_id,
+            )
+            if chain_error:
+                return chain_error
         if chain_id:
             events = self._runtime.get_event_store(org_id)
             if events:

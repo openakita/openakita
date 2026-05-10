@@ -96,6 +96,11 @@ class MemoryCreateRequest(BaseModel):
     tags: list[str] = []
 
 
+class ClaimLegacyRequest(BaseModel):
+    include_inactive: bool = True
+    include_default_graph_nodes: bool = True
+
+
 def _serialize(mem: Any) -> dict:
     return {
         "id": mem.id,
@@ -128,6 +133,122 @@ def _current_owner(request: Request) -> tuple[str, str]:
         except Exception:
             pass
     return "default", "default"
+
+
+def _owner_counts(store: Any) -> dict[str, Any]:
+    db = getattr(store, "db", None)
+    conn = getattr(db, "_conn", None)
+    if conn is None:
+        return {"total": 0, "by_scope": {}, "by_owner": []}
+
+    by_scope = {
+        (row[0] or "global"): row[1]
+        for row in conn.execute(
+            "SELECT COALESCE(scope, 'global') AS scope, COUNT(*) FROM memories GROUP BY scope"
+        ).fetchall()
+    }
+    by_owner = [
+        {
+            "scope": row[0] or "global",
+            "scope_owner": row[1] or "",
+            "user_id": row[2] or "default",
+            "workspace_id": row[3] or "default",
+            "count": row[4],
+        }
+        for row in conn.execute(
+            """
+            SELECT COALESCE(scope, 'global'),
+                   COALESCE(scope_owner, ''),
+                   COALESCE(user_id, 'default'),
+                   COALESCE(workspace_id, 'default'),
+                   COUNT(*)
+            FROM memories
+            GROUP BY scope, scope_owner, user_id, workspace_id
+            ORDER BY COUNT(*) DESC
+            """
+        ).fetchall()
+    ]
+    total = sum(by_scope.values())
+    return {"total": total, "by_scope": by_scope, "by_owner": by_owner}
+
+
+def _graph_owner_counts(mm: Any) -> dict[str, Any]:
+    if not mm or not mm._ensure_relational() or not mm.relational_store:
+        return {"total_nodes": 0, "by_owner": []}
+    conn = getattr(mm.relational_store, "_conn", None)
+    if conn is None:
+        return {"total_nodes": 0, "by_owner": []}
+    try:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(user_id, 'default'),
+                   COALESCE(workspace_id, 'default'),
+                   COUNT(*)
+            FROM mdrm_nodes
+            GROUP BY user_id, workspace_id
+            ORDER BY COUNT(*) DESC
+            """
+        ).fetchall()
+    except Exception:
+        return {"total_nodes": 0, "by_owner": []}
+    by_owner = [
+        {"user_id": row[0] or "default", "workspace_id": row[1] or "default", "count": row[2]}
+        for row in rows
+    ]
+    return {"total_nodes": sum(row["count"] for row in by_owner), "by_owner": by_owner}
+
+
+def _claim_graph_nodes(
+    mm: Any,
+    *,
+    memory_ids: set[str],
+    user_id: str,
+    workspace_id: str,
+    include_default_graph_nodes: bool,
+) -> int:
+    if not mm or not mm._ensure_relational() or not mm.relational_store:
+        return 0
+    conn = getattr(mm.relational_store, "_conn", None)
+    if conn is None:
+        return 0
+    updated = 0
+    try:
+        if memory_ids:
+            placeholders = ",".join("?" for _ in memory_ids)
+            cur = conn.execute(
+                f"""
+                UPDATE mdrm_nodes
+                SET user_id = ?, workspace_id = ?
+                WHERE id IN ({placeholders})
+                """,
+                [user_id, workspace_id, *memory_ids],
+            )
+            updated += cur.rowcount if cur.rowcount is not None else 0
+        cur = conn.execute(
+            """
+            UPDATE mdrm_nodes
+            SET user_id = ?, workspace_id = ?
+            WHERE user_id = 'legacy'
+            """,
+            (user_id, workspace_id),
+        )
+        updated += cur.rowcount if cur.rowcount is not None else 0
+        if include_default_graph_nodes:
+            cur = conn.execute(
+                """
+                UPDATE mdrm_nodes
+                SET user_id = ?, workspace_id = ?
+                WHERE COALESCE(user_id, 'default') = 'default'
+                  AND COALESCE(workspace_id, 'default') = 'default'
+                """,
+                (user_id, workspace_id),
+            )
+            updated += cur.rowcount if cur.rowcount is not None else 0
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"[MemoryAPI] Claim graph nodes failed: {e}")
+        return updated
+    return updated
 
 
 def _priority_for_importance(mem_type: MemoryType, importance: float) -> MemoryPriority:
@@ -269,6 +390,83 @@ async def memory_stats(request: Request):
     }
 
 
+@router.get("/migration-status")
+async def memory_migration_status(request: Request):
+    """Diagnose legacy memory visibility after owner-scoped migration."""
+    store = _get_store(request)
+    if not store:
+        raise HTTPException(503, "Memory store not available")
+
+    user_id, workspace_id = _current_owner(request)
+    current_visible = store.count_memories(
+        scope="user",
+        scope_owner="",
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+    legacy_count = store.count_memories(
+        scope="legacy_quarantine",
+        scope_owner="",
+        user_id="legacy",
+        include_inactive=True,
+    )
+    all_counts = _owner_counts(store)
+    graph_counts = _graph_owner_counts(_get_manager(request))
+    return {
+        "current_owner": {"user_id": user_id, "workspace_id": workspace_id},
+        "current_visible": current_visible,
+        "legacy_quarantine": legacy_count,
+        "semantic": all_counts,
+        "graph": graph_counts,
+        "has_recoverable_legacy": legacy_count > 0,
+    }
+
+
+@router.post("/claim-legacy")
+async def claim_legacy_memories(request: Request, body: ClaimLegacyRequest | None = None):
+    """Claim quarantined legacy memories into the current desktop owner."""
+    store = _get_store(request)
+    if not store:
+        raise HTTPException(503, "Memory store not available")
+    body = body or ClaimLegacyRequest()
+    user_id, workspace_id = _current_owner(request)
+    legacy = store.load_all_memories(
+        scope="legacy_quarantine",
+        scope_owner="",
+        user_id="legacy",
+        workspace_id=None,
+        include_inactive=body.include_inactive,
+    )
+    claimed_ids: set[str] = set()
+    for mem in legacy:
+        ok = store.db.update_memory(
+            mem.id,
+            {
+                "scope": "user",
+                "scope_owner": "",
+                "user_id": user_id,
+                "workspace_id": workspace_id,
+            },
+        )
+        if ok:
+            claimed_ids.add(mem.id)
+
+    graph_updated = _claim_graph_nodes(
+        _get_manager(request),
+        memory_ids=claimed_ids,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        include_default_graph_nodes=body.include_default_graph_nodes,
+    )
+    _sync_json(request)
+    return {
+        "ok": True,
+        "claimed": len(claimed_ids),
+        "graph_nodes_updated": graph_updated,
+        "current_owner": {"user_id": user_id, "workspace_id": workspace_id},
+    }
+
+
 @router.post("/review")
 async def trigger_review(request: Request):
     """Start async LLM-driven memory review. Returns immediately with task status."""
@@ -381,7 +579,8 @@ async def get_memory_graph(request: Request, limit: int = 500):
     if mode_cfg != "mode1" and mm._ensure_relational() and mm.relational_store:
         rs = mm.relational_store
         mode = "mode2"
-        raw_nodes = rs.get_all_nodes(limit=limit)
+        user_id, workspace_id = _current_owner(request)
+        raw_nodes = rs.get_all_nodes(limit=limit, user_id=user_id, workspace_id=workspace_id)
         node_ids = {n.id for n in raw_nodes}
 
         for n in raw_nodes:

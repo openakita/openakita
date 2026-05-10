@@ -41,6 +41,7 @@ def test_ui_assets_and_iconify_tokens_exist() -> None:
         "/ingest",
         "/sources/sync",
         "/packages/subscribe",
+        "/ai/analyze-top",
         "/reports",
         "/storage/stats",
         "/storage/open-folder",
@@ -290,6 +291,90 @@ async def test_brief_falls_back_without_brain() -> None:
     assert source == "fallback"
     assert "融媒智策早报" in md
     assert "https://example.com" in md
+
+
+@pytest.mark.asyncio
+async def test_brief_uses_host_brain_think() -> None:
+    from media_ai.analyzer import build_brief
+
+    class FakeBrain:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def think(self, prompt: str, **kwargs: object) -> object:
+            self.calls.append({"prompt": prompt, **kwargs})
+            return type("Resp", (), {"content": "# AI 简报\n\n已由大模型生成。"})()
+
+    brain = FakeBrain()
+    md, source = await build_brief(
+        brain,
+        [{"title": "政策发布", "url": "https://example.com", "source_id": "demo"}],
+        title="融媒智策早报",
+        session="morning",
+    )
+
+    assert source == "brain"
+    assert "AI 简报" in md
+    assert brain.calls
+    assert brain.calls[0]["enable_thinking"] is False
+    assert "融媒智策" in str(brain.calls[0]["system"])
+
+
+@pytest.mark.asyncio
+async def test_brain_content_parses_anthropic_blocks() -> None:
+    from media_ai.analyzer import build_verify_pack
+
+    class FakeBrain:
+        async def messages_create_async(self, **_: object) -> object:
+            return type(
+                "Msg",
+                (),
+                {
+                    "content": [
+                        {"type": "text", "text": "# 复核清单"},
+                        type("Block", (), {"text": "需要补查官方口径。"})(),
+                    ]
+                },
+            )()
+
+    md, source = await build_verify_pack(
+        FakeBrain(),
+        [{"title": "台海政策新动态", "url": "https://example.com", "source_id": "demo"}],
+        topic="台海最新动态复核",
+    )
+
+    assert source == "brain"
+    assert "# 复核清单" in md
+    assert "需要补查官方口径" in md
+    assert "{'type': 'text'" not in md
+
+
+@pytest.mark.asyncio
+async def test_topic_analysis_uses_brain_for_top_clusters() -> None:
+    from media_ai.analyzer import build_topic_analysis
+
+    class FakeBrain:
+        async def think(self, prompt: str, **kwargs: object) -> object:
+            assert "热点簇 JSON" in prompt
+            assert kwargs["enable_thinking"] is False
+            return type("Resp", (), {"content": "# AI 选题分析报告\n\n## Top 3"})()
+
+    md, source = await build_topic_analysis(
+        FakeBrain(),
+        [
+            {
+                "title": "国台办：坚决反对外部势力干涉",
+                "url": "https://example.com/a",
+                "source_ids": ["xinhua-taiwan", "people-taiwan"],
+                "weighted_score": 9.2,
+                "risk_level": "low",
+                "evidence": [],
+            }
+        ],
+    )
+
+    assert source == "brain"
+    assert "AI 选题分析报告" in md
 
 
 def test_topic_signature_normalizes_prefixes() -> None:
