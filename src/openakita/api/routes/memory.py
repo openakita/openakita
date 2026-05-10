@@ -278,6 +278,26 @@ def _normalize_legacy_tags(mem: Any, *extra: str) -> list[str]:
     return sorted({str(t) for t in [*existing, *extra] if str(t).strip()})
 
 
+def _is_reviewed_legacy(mem: Any) -> bool:
+    if getattr(mem, "superseded_by", None):
+        return True
+    tags = {str(t) for t in (getattr(mem, "tags", None) or [])}
+    return "legacy_pending_review" in tags or any(t.startswith("legacy_reason:") for t in tags)
+
+
+def _legacy_review_counts(store: Any) -> dict[str, int]:
+    legacy = store.load_all_memories(
+        scope="legacy_quarantine",
+        scope_owner="",
+        user_id="legacy",
+        workspace_id=None,
+        include_inactive=True,
+    )
+    pending = sum(1 for mem in legacy if not _is_reviewed_legacy(mem))
+    reviewed = len(legacy) - pending
+    return {"total": len(legacy), "pending": pending, "reviewed": reviewed}
+
+
 def _identity_slot_for(subject: str, predicate: str) -> str:
     if (subject or "").strip().lower() not in {"用户", "user", "当前用户", "我"}:
         return ""
@@ -379,6 +399,8 @@ def _safe_import_legacy_memories(
     active_slots = _active_slot_index(store, user_id, workspace_id)
 
     for mem in legacy:
+        if _is_reviewed_legacy(mem):
+            continue
         subject, predicate = _infer_legacy_subject_predicate(mem)
         reason = _legacy_candidate_reason(mem, subject, predicate)
         if reason:
@@ -590,21 +612,18 @@ async def memory_migration_status(request: Request):
         user_id=user_id,
         workspace_id=workspace_id,
     )
-    legacy_count = store.count_memories(
-        scope="legacy_quarantine",
-        scope_owner="",
-        user_id="legacy",
-        include_inactive=True,
-    )
+    legacy_counts = _legacy_review_counts(store)
     all_counts = _owner_counts(store)
     graph_counts = _graph_owner_counts(_get_manager(request))
     return {
         "current_owner": {"user_id": user_id, "workspace_id": workspace_id},
         "current_visible": current_visible,
-        "legacy_quarantine": legacy_count,
+        "legacy_quarantine": legacy_counts["total"],
+        "legacy_pending": legacy_counts["pending"],
+        "legacy_reviewed": legacy_counts["reviewed"],
         "semantic": all_counts,
         "graph": graph_counts,
-        "has_recoverable_legacy": legacy_count > 0,
+        "has_recoverable_legacy": legacy_counts["pending"] > 0,
     }
 
 

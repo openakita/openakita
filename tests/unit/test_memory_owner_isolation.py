@@ -206,6 +206,8 @@ def test_memory_migration_status_and_claim_legacy(tmp_path):
     status = client.get("/api/memories/migration-status")
     assert status.status_code == 200
     assert status.json()["legacy_quarantine"] == 1
+    assert status.json()["legacy_pending"] == 1
+    assert status.json()["has_recoverable_legacy"] is True
     assert status.json()["current_visible"] == 0
 
     claimed = client.post("/api/memories/claim-legacy", json={})
@@ -219,6 +221,9 @@ def test_memory_migration_status_and_claim_legacy(tmp_path):
     assert body["total"] == 1
     assert body["memories"][0]["content"] == "用户喜欢中文解释"
     assert body["memories"][0]["importance_score"] <= 0.65
+    status_after = client.get("/api/memories/migration-status").json()
+    assert status_after["legacy_pending"] == 0
+    assert status_after["has_recoverable_legacy"] is False
 
 
 def test_claim_legacy_keeps_unstructured_task_logs_quarantined(tmp_path):
@@ -238,6 +243,10 @@ def test_claim_legacy_keeps_unstructured_task_logs_quarantined(tmp_path):
     assert claimed.json()["claimed"] == 0
     assert claimed.json()["rejected"] == 1
     assert client.get("/api/memories").json()["total"] == 0
+    status_after = client.get("/api/memories/migration-status").json()
+    assert status_after["legacy_pending"] == 0
+    assert status_after["legacy_reviewed"] == 1
+    assert status_after["has_recoverable_legacy"] is False
 
 
 def test_claim_legacy_does_not_override_current_identity_slot(tmp_path):
@@ -261,6 +270,10 @@ def test_claim_legacy_does_not_override_current_identity_slot(tmp_path):
     body = client.get("/api/memories").json()
     assert body["total"] == 1
     assert body["memories"][0]["content"] == "用户名字是小红"
+    status_after = client.get("/api/memories/migration-status").json()
+    assert status_after["legacy_pending"] == 0
+    assert status_after["legacy_reviewed"] == 1
+    assert status_after["has_recoverable_legacy"] is False
 
 
 def test_memory_graph_is_filtered_by_current_owner(tmp_path):

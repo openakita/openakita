@@ -2400,7 +2400,7 @@
     "reviewKept": "保留",
     "reviewErrors": "错误",
     "legacyRecoveryTitle": "发现旧版记忆待整理",
-    "legacyRecoveryDesc": "当前用户 {{user}} / {{workspace}} 暂未使用这些旧数据：隔离记忆 {{legacy}} 条，默认图谱节点 {{graph}} 个。点击后会先清洗和分流，只导入可信记忆；冲突身份、流水账和格式异常内容会继续隔离。",
+    "legacyRecoveryDesc": "当前用户 {{user}} / {{workspace}} 还有 {{legacy}} 条旧版记忆未整理。点击后会先清洗和分流，只导入可信记忆；冲突身份、流水账和格式异常内容会继续隔离。",
     "legacyClaimAction": "整理导入旧版记忆",
     "legacyClaimSuccess": "已审查 {{reviewed}} 条旧版记忆，导入 {{promoted}} 条，继续隔离 {{rejected}} 条，跳过冲突 {{conflicts}} 条，并更新 {{graph}} 个图谱节点",
     "legacyClaimFailed": "整理导入旧版记忆失败",
