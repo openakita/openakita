@@ -90,10 +90,14 @@ def replicate_prompt(
     tone: str,
     revision_instructions: str = "",
     annotations: str = "",
+    current_draft: str = "",
 ) -> str:
     feedback_block = ""
-    if revision_instructions.strip() or annotations.strip():
+    if revision_instructions.strip() or annotations.strip() or current_draft.strip():
         feedback_block = f"""
+
+当前已有采编计划草稿：
+{current_draft.strip() or "（无）"}
 
 用户标注 / 修改意见：
 {revision_instructions.strip() or "（无）"}
@@ -101,7 +105,11 @@ def replicate_prompt(
 用户重点标注片段：
 {annotations.strip() or "（无）"}
 
-请把上面的意见视为本轮重写约束：保留用户认可的部分，重点修改用户点名不满意的结构、表达、选题角度或执行动作。
+请把上面的意见视为本轮“局部修订”约束：
+- 如果用户只批注了某一句、某一段或某一个点，优先只改对应位置及必要的上下文衔接。
+- 没有被批注、没有被整体修改说明点名的问题，尽量保持原草稿的结构、段落顺序、标题和表达。
+- 不要因为局部批注而重写整篇；只有当整体修改说明明确要求“整篇重写/整体改版”时，才允许大范围重组。
+- 输出仍需是一份完整可发布的采编计划，但未改动部分应尽量沿用原草稿。
 """
     return f"""请基于给定来源生成“热点复刻与采编执行计划”。
 

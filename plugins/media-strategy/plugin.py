@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Final, Literal
+from urllib.parse import quote
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 
@@ -19,10 +20,10 @@ try:
 except Exception:
     pass
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Response
 from media_fetchers.rss import validate_feed_url
 from media_models import BRAND, DISPLAY_NAME_ZH, PLUGIN_ID, PLUGIN_VERSION, SLOGAN, TOOL_NAMES
-from media_pipeline import MediaPipeline
+from media_pipeline import MediaPipeline, _styled_report_html
 from media_task_manager import MediaTaskManager, utcnow_iso
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -86,6 +87,67 @@ def _get_active_scheduler() -> Any:
         return None
 
 
+def _download_filename(title: str, suffix: str) -> str:
+    cleaned = "".join("_" if ch in '\\/:*?"<>|\r\n\t' else ch for ch in title).strip()
+    cleaned = (cleaned or "media-strategy-report")[:80]
+    return f"{cleaned}.{suffix}"
+
+
+def _downloads_dir() -> Path:
+    home = Path.home()
+    for name in ("Downloads", "下载"):
+        candidate = home / name
+        if candidate.exists():
+            return candidate
+    return home
+
+
+def _report_download_content(row: dict[str, Any], fmt: str) -> tuple[str, str, str]:
+    title = str(row.get("title") or row.get("kind") or "报告预览")
+    markdown = str(row.get("markdown") or "")
+    if fmt == "md":
+        return markdown, "text/markdown; charset=utf-8", _download_filename(title, "md")
+    if fmt == "html":
+        content = str(row.get("html") or "")
+        if not content and markdown:
+            content = _styled_report_html(
+                title=title,
+                kind=str(row.get("kind") or ""),
+                markdown=markdown,
+                meta=row.get("meta") if isinstance(row.get("meta"), dict) else {},
+            )
+        if not content:
+            raise HTTPException(status_code=422, detail="report html is empty")
+        return content, "text/html; charset=utf-8", _download_filename(title, "html")
+    raise HTTPException(status_code=400, detail="fmt must be md or html")
+
+
+def _write_report_push_file(data_dir: Path, row: dict[str, Any], fmt: str = "html") -> Path:
+    content, _media_type, filename = _report_download_content(row, fmt)
+    report_id = str(row.get("id") or "")
+    safe_report_id = "".join(ch for ch in report_id if ch.isalnum() or ch in "-_")[:12]
+    target_dir = data_dir / "push_exports"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stem, suffix = filename.rsplit(".", 1)
+    target = target_dir / f"{stem}-{safe_report_id}.{suffix}" if safe_report_id else target_dir / filename
+    target.write_text(content, encoding="utf-8")
+    return target
+
+
+def _report_push_summary(row: dict[str, Any], *, file_sent: bool) -> str:
+    title = str(row.get("title") or row.get("kind") or "融媒智策报告").strip()
+    markdown = str(row.get("markdown") or "").strip()
+    lines = [
+        line.strip(" #*-")
+        for line in markdown.splitlines()
+        if line.strip() and not line.strip().startswith("|") and not set(line.strip()) <= {"-", "_", "*"}
+    ]
+    highlights = [line for line in lines if line and line != title][:3]
+    prefix = "已发送 HTML 报表附件" if file_sent else "HTML 报表附件发送失败，先发送摘要"
+    body = "\n".join(f"- {item[:120]}" for item in highlights) or "- 请打开报告查看完整内容。"
+    return f"{prefix}：{title}\n{body}"
+
+
 def _serialize_schedule(task: Any) -> dict[str, Any]:
     prompt = getattr(task, "prompt", "") or ""
     try:
@@ -109,10 +171,33 @@ def _serialize_schedule(task: Any) -> dict[str, Any]:
         "chat_id": getattr(task, "chat_id", None),
         "mode": meta.get("mode"),
         "session": meta.get("session"),
+        "scope": meta.get("scope") or ("preset" if meta.get("session") in {"morning", "noon", "evening"} else "custom"),
         "package_id": meta.get("package_id"),
         "since_hours": meta.get("since_hours"),
         "limit": meta.get("limit"),
+        "min_coverage": meta.get("min_coverage"),
+        "evidence_limit": meta.get("evidence_limit"),
+        "pre_ingest": meta.get("pre_ingest", True),
+        "repeat": meta.get("repeat"),
     }
+
+
+def _schedule_matches(existing: Any, *, name: str, mode: str, session: str, scope: str) -> bool:
+    if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
+        return False
+    if str(getattr(existing, "name", "") or "") == name:
+        return True
+    try:
+        meta = _parse_schedule_prompt(getattr(existing, "prompt", "") or "")
+    except ValueError:
+        return False
+    existing_scope = str(meta.get("scope") or ("preset" if meta.get("session") in {"morning", "noon", "evening"} else "custom"))
+    return (
+        str(meta.get("mode") or "") == mode
+        and str(meta.get("session") or "") == session
+        and existing_scope == scope
+        and scope == "preset"
+    )
 
 
 class _StrictBase(BaseModel):
@@ -344,6 +429,70 @@ class Plugin(PluginBase):
             "config": {**(settings or {}), **cfg},
         }
 
+    async def _push_report_to_channel(
+        self,
+        row: dict[str, Any],
+        *,
+        channel: str,
+        chat_id: str,
+        text_only: bool = False,
+    ) -> dict[str, Any]:
+        if self._api is None:
+            raise HTTPException(status_code=503, detail="plugin api is not ready")
+        title = str(row.get("title") or row.get("kind") or "融媒智策报告")
+        text = str(row.get("markdown") or "").strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="report markdown is empty")
+
+        text_sender = getattr(self._api, "send_message_async", None)
+        if not callable(text_sender):
+            raise HTTPException(status_code=503, detail="channel.send is not available")
+
+        file_sender = getattr(self._api, "send_file_async", None)
+        if not text_only and callable(file_sender):
+            data_dir = self._data_dir or self._resolve_data_dir()
+            try:
+                target = _write_report_push_file(data_dir, row, "html")
+                caption = f"{title}\nHTML 报表已生成，建议打开附件查看完整排版。"
+                message_id = await file_sender(
+                    channel=channel,
+                    chat_id=chat_id,
+                    file_path=target,
+                    caption=caption,
+                )
+                await text_sender(
+                    channel=channel,
+                    chat_id=chat_id,
+                    text=_report_push_summary(row, file_sent=True),
+                )
+                return {
+                    "ok": True,
+                    "mode": "file",
+                    "format": "html",
+                    "file": str(target),
+                    "message_id": message_id,
+                    "channel": channel,
+                    "chat_id": chat_id,
+                }
+            except Exception as exc:  # noqa: BLE001
+                if self._api is not None:
+                    self._api.log(f"{PLUGIN_ID}: report file push failed; sending summary ({exc!r})", "warning")
+                await text_sender(
+                    channel=channel,
+                    chat_id=chat_id,
+                    text=_report_push_summary(row, file_sent=False),
+                )
+                return {
+                    "ok": False,
+                    "mode": "summary",
+                    "file_error": str(exc),
+                    "channel": channel,
+                    "chat_id": chat_id,
+                }
+
+        await text_sender(channel=channel, chat_id=chat_id, text=text[:12000] if text_only else _report_push_summary(row, file_sent=False))
+        return {"ok": True, "mode": "text" if text_only else "summary", "channel": channel, "chat_id": chat_id}
+
     def _build_router(self) -> APIRouter:
         router = APIRouter()
 
@@ -468,12 +617,28 @@ class Plugin(PluginBase):
             parsed = urlparse(raw_url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise HTTPException(status_code=422, detail="Only http/https external URLs are allowed")
+            import os
+            import subprocess
             import webbrowser
 
             try:
-                opened = webbrowser.open(raw_url, new=2)
+                if sys.platform == "win32":
+                    os.startfile(raw_url)  # type: ignore[attr-defined]
+                    opened = True
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", raw_url])
+                    opened = True
+                else:
+                    subprocess.Popen(["xdg-open", raw_url])
+                    opened = True
             except Exception as exc:  # noqa: BLE001
-                raise HTTPException(status_code=500, detail=f"Cannot open URL: {exc}") from exc
+                try:
+                    opened = webbrowser.open(raw_url, new=2)
+                except Exception as fallback_exc:  # noqa: BLE001
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Cannot open URL: {fallback_exc or exc}",
+                    ) from fallback_exc
             return {"ok": True, "opened": bool(opened), "url": raw_url}
 
         @router.get("/storage/list-dir")
@@ -807,7 +972,53 @@ class Plugin(PluginBase):
             row = await self._tm.get_report(report_id)
             if row is None:
                 raise HTTPException(status_code=404, detail="report not found")
+            # Re-render on read so older saved reports benefit from renderer fixes
+            # without needing a data migration.
+            if row.get("markdown"):
+                row["html"] = _styled_report_html(
+                    title=str(row.get("title") or row.get("kind") or "报告预览"),
+                    kind=str(row.get("kind") or ""),
+                    markdown=str(row.get("markdown") or ""),
+                    meta=row.get("meta") if isinstance(row.get("meta"), dict) else {},
+                )
             return {"report": row}
+
+        @router.get("/reports/{report_id}/download.{fmt}")
+        async def download_report(report_id: str, fmt: str) -> Response:
+            await self._ensure_ready()
+            assert self._tm is not None
+            row = await self._tm.get_report(report_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="report not found")
+            content, media_type, filename = _report_download_content(row, fmt)
+            quoted = quote(filename)
+            return Response(
+                content=content,
+                media_type=media_type,
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
+            )
+
+        @router.post("/reports/{report_id}/save.{fmt}")
+        async def save_report(report_id: str, fmt: str) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            row = await self._tm.get_report(report_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="report not found")
+            content, _media_type, filename = _report_download_content(row, fmt)
+            stem = filename.rsplit(".", 1)[0]
+            suffix = filename.rsplit(".", 1)[1]
+            safe_report_id = "".join(ch for ch in report_id if ch.isalnum() or ch in "-_")[:12]
+            target_dir = _downloads_dir() / "OpenAkita" / "media-strategy"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / f"{stem}-{safe_report_id}.{suffix}"
+            if target.exists():
+                target = target_dir / f"{stem}-{safe_report_id}-{int(time.time())}.{suffix}"
+            try:
+                target.write_text(content, encoding="utf-8")
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"Cannot save report: {exc}") from exc
+            return {"ok": True, "path": str(target), "filename": target.name, "format": fmt}
 
         @router.get("/schedules")
         async def list_schedules() -> dict[str, Any]:
@@ -827,11 +1038,14 @@ class Plugin(PluginBase):
             if scheduler is None:
                 raise HTTPException(status_code=503, detail="scheduler_unavailable")
             mode = str(payload.get("mode") or "daily_brief").strip()
-            if mode != "daily_brief":
-                raise HTTPException(status_code=400, detail="only daily_brief schedules are supported")
-            session = str(payload.get("session") or "morning").strip()
-            if session not in {"morning", "noon", "evening"}:
-                raise HTTPException(status_code=400, detail="session must be morning|noon|evening")
+            if mode not in {"daily_brief", "ai_topic_analysis"}:
+                raise HTTPException(status_code=400, detail="mode must be daily_brief or ai_topic_analysis")
+            scope = str(payload.get("scope") or "preset").strip()
+            if scope not in {"preset", "custom"}:
+                raise HTTPException(status_code=400, detail="scope must be preset or custom")
+            session = str(payload.get("session") or ("custom" if scope == "custom" else "morning")).strip()
+            if scope == "preset" and session not in {"morning", "noon", "evening"}:
+                raise HTTPException(status_code=400, detail="preset session must be morning|noon|evening")
             cron = str(payload.get("cron") or payload.get("cron_expression") or "").strip()
             if not cron:
                 raise HTTPException(status_code=400, detail="cron expression required")
@@ -840,11 +1054,16 @@ class Plugin(PluginBase):
             if not channel or not chat_id:
                 raise HTTPException(status_code=400, detail="channel and chat_id are required")
             body = {
-                "mode": "daily_brief",
+                "mode": mode,
+                "scope": scope,
                 "session": session,
                 "package_id": str(payload.get("package_id") or ""),
                 "since_hours": int(payload.get("since_hours") or 24),
                 "limit": int(payload.get("limit") or 20),
+                "min_coverage": int(payload.get("min_coverage") or 1),
+                "evidence_limit": int(payload.get("evidence_limit") or 5),
+                "pre_ingest": bool(payload.get("pre_ingest", True)),
+                "repeat": str(payload.get("repeat") or "daily"),
                 "channel": channel,
                 "chat_id": chat_id,
             }
@@ -853,25 +1072,34 @@ class Plugin(PluginBase):
             except ImportError as exc:
                 raise HTTPException(status_code=503, detail=f"scheduler module unavailable: {exc}") from exc
 
-            name = str(payload.get("name") or "").strip() or f"media-strategy {session}-brief"
+            default_name = f"media-strategy {session}-brief" if scope == "preset" else "media-strategy custom-report"
+            name = str(payload.get("name") or "").strip() or default_name
             if not _task_name_is_media_strategy(name):
                 name = f"media-strategy {name}"
+            removed_ids: list[str] = []
+            for existing in list(scheduler.list_tasks()):
+                if _schedule_matches(existing, name=name, mode=mode, session=session, scope=scope):
+                    existing_id = str(getattr(existing, "id", "") or "")
+                    if existing_id:
+                        outcome = await scheduler.remove_task(existing_id)
+                        if outcome == "ok":
+                            removed_ids.append(existing_id)
             task = ScheduledTask.create_cron(
                 name=name,
-                description=f"media-strategy {session} brief → {channel}/{chat_id}",
+                description=f"{mode} → {channel}/{chat_id}",
                 cron_expression=cron,
                 prompt=_SCHEDULE_PROMPT_PREFIX + json.dumps(body, ensure_ascii=False),
                 channel_id=channel,
                 chat_id=chat_id,
                 silent=True,
-                metadata={"plugin_id": PLUGIN_ID, "mode": mode, "session": session},
+                metadata={"plugin_id": PLUGIN_ID, "mode": mode, "session": session, "scope": scope},
             )
             task.enabled = bool(payload.get("enabled", True))
             try:
                 task_id = await scheduler.add_task(task)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            return {"ok": True, "id": task_id, "schedule": _serialize_schedule(task)}
+            return {"ok": True, "id": task_id, "updated_from": removed_ids, "schedule": _serialize_schedule(task)}
 
         @router.delete("/schedules/{schedule_id}")
         async def delete_schedule(schedule_id: str) -> dict[str, Any]:
@@ -926,7 +1154,7 @@ class Plugin(PluginBase):
         @router.get("/scheduler/channels")
         async def scheduler_channels() -> dict[str, Any]:
             host = getattr(self._api, "_host", None) or {}
-            api_app = host.get("api_app") if isinstance(host, dict) else None
+            api_app = host.get("api_app") if hasattr(host, "get") else None
             if api_app is None:
                 return {"ok": True, "channels": []}
             try:
@@ -946,7 +1174,7 @@ class Plugin(PluginBase):
         @router.get("/available-channels")
         async def available_channels() -> dict[str, Any]:
             host = getattr(self._api, "_host", None) or {}
-            gateway = host.get("gateway") if isinstance(host, dict) else None
+            gateway = host.get("gateway") if hasattr(host, "get") else None
             if gateway is None:
                 return {"ok": True, "channels": []}
             names: list[str] = []
@@ -982,17 +1210,15 @@ class Plugin(PluginBase):
             row = await self._tm.get_report(report_id)
             if row is None:
                 raise HTTPException(status_code=404, detail="report not found")
-            text = str(row.get("markdown") or "").strip()
-            if not text:
-                raise HTTPException(status_code=422, detail="report markdown is empty")
-            sender = getattr(self._api, "send_message", None)
-            if not callable(sender):
-                raise HTTPException(status_code=503, detail="channel.send is not available")
             try:
-                sender(channel=body.channel, chat_id=body.chat_id, text=text[:12000])
+                return await self._push_report_to_channel(
+                    row,
+                    channel=body.channel,
+                    chat_id=body.chat_id,
+                    text_only=body.text_only,
+                )
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
-            return {"ok": True, "channel": body.channel, "chat_id": body.chat_id}
 
         return router
 
@@ -1004,35 +1230,43 @@ class Plugin(PluginBase):
             payload = _parse_schedule_prompt(getattr(task, "prompt", "") or "")
         except ValueError as exc:
             return {"ok": False, "reason": "prompt_parse_failed", "error": str(exc)}
-        if payload.get("mode") != "daily_brief":
+        mode = str(payload.get("mode") or "")
+        if mode not in {"daily_brief", "ai_topic_analysis"}:
             return {"ok": False, "reason": "unknown_mode", "mode": payload.get("mode")}
         channel = str(payload.get("channel") or "").strip()
         chat_id = str(payload.get("chat_id") or "").strip()
         if not channel or not chat_id:
             return {"ok": False, "reason": "missing_target"}
         try:
-            internal = await self._tm.create_task(
-                "daily_brief",
-                {**payload, "scheduled": True},
-            )
+            if payload.get("pre_ingest", True):
+                package_id = str(payload.get("package_id") or "")
+                await self._pipeline.ingest({"package_ids": [package_id] if package_id else []})
+            internal = await self._tm.create_task(mode, {**payload, "scheduled": True})
+            run_params = {
+                "package_id": str(payload.get("package_id") or ""),
+                "since_hours": int(payload.get("since_hours") or 24),
+                "limit": int(payload.get("limit") or 20),
+                "scheduled": True,
+            }
+            if mode == "daily_brief":
+                run_params["session"] = str(payload.get("session") or "custom")
+            elif mode == "ai_topic_analysis":
+                run_params["min_coverage"] = int(payload.get("min_coverage") or 1)
+                run_params["evidence_limit"] = int(payload.get("evidence_limit") or 5)
             result = await self._run_existing_task(
                 internal["id"],
-                "daily_brief",
-                {
-                    "session": str(payload.get("session") or "morning"),
-                    "package_id": str(payload.get("package_id") or ""),
-                    "since_hours": int(payload.get("since_hours") or 24),
-                    "limit": int(payload.get("limit") or 20),
-                    "scheduled": True,
-                },
+                mode,
+                run_params,
             )
             report = (result.get("result") or {}).get("report") or {}
-            text = str(report.get("markdown") or "").strip()
-            sender = getattr(self._api, "send_message", None)
             dispatched: dict[str, Any] | None = None
-            if callable(sender) and text:
-                sender(channel=channel, chat_id=chat_id, text=text[:12000])
-                dispatched = {"ok": True, "channel": channel, "chat_id": chat_id}
+            if report:
+                dispatched = await self._push_report_to_channel(
+                    report,
+                    channel=channel,
+                    chat_id=chat_id,
+                    text_only=bool(payload.get("text_only", False)),
+                )
             return {"ok": True, "task": result.get("task"), "report": report, "dispatched": dispatched}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "reason": "run_failed", "error": str(exc)}

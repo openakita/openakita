@@ -251,9 +251,10 @@ class StreamAccumulator:
             self.text_content += text
             return [{"type": "text_delta", "content": text}] if text else []
 
-        # ── OpenAI 归一化: thinking ──
-        if delta_type == "thinking":
-            text = delta.get("text", "")
+        # ── OpenAI 归一化: thinking / reasoning ──
+        # 不同兼容网关会把同一类增量命名为 thinking 或 reasoning。
+        if delta_type in ("thinking", "reasoning"):
+            text = delta.get("text", "") or delta.get("thinking", "") or delta.get("reasoning", "")
             self.thinking_content += text
             return [{"type": "thinking_delta", "content": text}] if text else []
 

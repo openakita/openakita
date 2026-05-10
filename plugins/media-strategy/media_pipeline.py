@@ -383,9 +383,24 @@ class MediaPipeline:
         return {"report": report, "items": items, "source": source}
 
     async def verify_pack(self, task_id: str, params: dict[str, Any]) -> dict[str, Any]:
+        await self.tm.update_task(
+            task_id,
+            progress=0.12,
+            pipeline_step="确认素材中：正在读取已选热点和候选文章",
+        )
         items = await self._select_items(params)
         topic = str(params.get("topic") or "")
         settings = await self.tm.get_settings()
+        await self.tm.update_task(
+            task_id,
+            progress=0.34,
+            pipeline_step=f"整理来源中：已选出 {len(items)} 条文章，正在汇总来源和发布时间",
+        )
+        await self.tm.update_task(
+            task_id,
+            progress=0.58,
+            pipeline_step="AI 复核中：正在识别旧闻、单一来源、时效性和链接风险",
+        )
         md, source = await build_verify_pack(
             self._brain(),
             items,
@@ -393,6 +408,11 @@ class MediaPipeline:
             temperature=float(settings.get("llm_temperature") or 0.2),
         )
         title = f"{topic or '热点'}信源复核"
+        await self.tm.update_task(
+            task_id,
+            progress=0.86,
+            pipeline_step="保存报告中：正在写入复核清单和处理建议",
+        )
         report = await self._save_report(task_id, "verify_pack", title, md, {"source": source})
         return {"report": report, "items": items, "source": source}
 
@@ -487,6 +507,7 @@ class MediaPipeline:
         tone = str(params.get("tone") or "稳健客观")
         revision_instructions = str(params.get("revision_instructions") or "")
         annotations = str(params.get("annotations") or "")
+        current_draft = str(params.get("current_draft") or "")
         settings = await self.tm.get_settings()
         await self.tm.update_task(
             task_id,
@@ -506,6 +527,7 @@ class MediaPipeline:
             tone=tone,
             revision_instructions=revision_instructions,
             annotations=annotations,
+            current_draft=current_draft,
             temperature=float(settings.get("llm_temperature") or 0.2),
         )
         await self.tm.update_task(
@@ -606,10 +628,12 @@ def _styled_report_html(
     h1 {{ font-size:28px; line-height:1.3; margin:0 0 18px; padding-bottom:12px; border-bottom:1px solid var(--border); }}
     h2 {{ margin:30px 0 12px; padding-left:12px; border-left:4px solid var(--primary); font-size:19px; }}
     h3 {{ margin:22px 0 10px; color:var(--primary); font-size:16px; }}
+    h4 {{ margin:18px 0 8px; color:#334155; font-size:14px; }}
     p {{ margin:10px 0; }}
     ul,ol {{ padding-left:24px; }}
     li {{ margin:7px 0; }}
     strong {{ color:#0f172a; }}
+    em {{ color:#334155; }}
     a {{ color:var(--primary); text-decoration:none; border-bottom:1px dotted var(--primary); }}
     table {{ width:100%; border-collapse:separate; border-spacing:0; margin:16px 0; border:1px solid var(--border); border-radius:12px; overflow:hidden; }}
     th,td {{ padding:10px 12px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }}
@@ -617,6 +641,7 @@ def _styled_report_html(
     tr:last-child td {{ border-bottom:0; }}
     blockquote {{ margin:16px 0; padding:12px 14px; border-left:4px solid var(--primary); background:var(--soft); border-radius:10px; color:#334155; }}
     code {{ padding:2px 6px; border-radius:6px; background:#f1f5f9; border:1px solid var(--border); }}
+    hr {{ height:1px; border:0; background:linear-gradient(90deg,transparent,var(--border),transparent); margin:24px 0; }}
     .footer {{ margin-top:34px; color:var(--muted); font-size:12px; border-top:1px dashed var(--border); padding-top:14px; }}
   </style>
 </head>
@@ -629,6 +654,16 @@ def _styled_report_html(
     </section>
     <main>{body}<div class="footer">由 OpenAkita 融媒智策生成 · 请以原文链接和人工复核为准</div></main>
   </div>
+  <script>
+    document.addEventListener('click', function (event) {{
+      var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+      if (!link) return;
+      var href = link.getAttribute('href') || '';
+      if (!/^https?:\\/\\//i.test(href)) return;
+      event.preventDefault();
+      window.parent && window.parent.postMessage({{ type: 'media-strategy:open-url', url: href }}, '*');
+    }});
+  </script>
 </body>
 </html>"""
 

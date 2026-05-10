@@ -3,12 +3,19 @@ window.MarkdownMini = {
   inline(s){
     return this.escape(s)
       .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" data-external-link>$1</a>')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
       .replace(/`([^`]+)`/g, '<code>$1</code>');
+  },
+  isTableSeparator(line){
+    return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line);
+  },
+  isTableLine(line){
+    return line.includes('|') && (this.isTableSeparator(line) || /^\|?.+\|.+\|?$/.test(line));
   },
   table(lines){
     const rows = lines
-      .filter(line => !/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line))
+      .filter(line => !this.isTableSeparator(line.trim()))
       .map(line => line.trim().replace(/^\||\|$/g, '').split('|').map(cell => this.inline(cell.trim())));
     if(!rows.length) return '';
     const [head, ...body] = rows;
@@ -18,17 +25,23 @@ window.MarkdownMini = {
     const lines = String(md || "").replace(/\r\n/g, "\n").split("\n");
     const out = [];
     let list = [];
+    let listKind = 'ul';
     const flushList = () => {
-      if(list.length){ out.push(`<ul>${list.map(item=>`<li>${item}</li>`).join('')}</ul>`); list = []; }
+      if(list.length){ out.push(`<${listKind}>${list.map(item=>`<li>${item}</li>`).join('')}</${listKind}>`); list = []; }
     };
     for(let i=0;i<lines.length;i++){
       const raw = lines[i];
       const line = raw.trim();
       if(!line){ flushList(); continue; }
-      if(line.includes('|') && /^\|?[^|]+\|/.test(line)){
+      if(/^[-*_]{3,}$/.test(line)){
+        flushList();
+        out.push('<hr>');
+        continue;
+      }
+      if(this.isTableLine(line)){
         flushList();
         const tableLines = [];
-        while(i < lines.length && lines[i].trim().includes('|')){
+        while(i < lines.length && this.isTableLine(lines[i].trim())){
           tableLines.push(lines[i].trim());
           i++;
         }
@@ -36,14 +49,21 @@ window.MarkdownMini = {
         out.push(this.table(tableLines));
         continue;
       }
-      const heading = line.match(/^(#{1,3})\s+(.+)$/);
+      const heading = line.match(/^(#{1,4})\s+(.+)$/);
       if(heading){
         flushList();
         out.push(`<h${heading[1].length}>${this.inline(heading[2])}</h${heading[1].length}>`);
         continue;
       }
       const bullet = line.match(/^[-*]\s+(.+)$/);
-      if(bullet){ list.push(this.inline(bullet[1])); continue; }
+      const ordered = line.match(/^\d+[.)]\s+(.+)$/);
+      if(bullet || ordered){
+        const nextKind = bullet ? 'ul' : 'ol';
+        if(list.length && listKind !== nextKind) flushList();
+        listKind = nextKind;
+        list.push(this.inline((bullet || ordered)[1]));
+        continue;
+      }
       if(line.startsWith('>')){
         flushList();
         out.push(`<blockquote>${this.inline(line.replace(/^>\s*/, ''))}</blockquote>`);

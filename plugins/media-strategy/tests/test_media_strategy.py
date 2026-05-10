@@ -66,10 +66,10 @@ def test_brief_workbench_presets_match_session_cards() -> None:
     html = (PLUGIN_DIR / "ui" / "dist" / "index.html").read_text("utf-8")
 
     assert '<option value="12" selected>12 小时</option>' in html
-    assert "noon:{label:'每日午报', cron:'30 12 * * *', since_hours:6, limit:15}" in html
-    assert "const useCurrentDraft = activeSession === session;" in html
-    assert "since_hours:useCurrentDraft ? Number($('briefHours').value || tpl.since_hours) : tpl.since_hours" in html
-    assert "limit:useCurrentDraft ? Number($('briefLimit').value || tpl.limit) : tpl.limit" in html
+    assert "noon:{label:'每日午报', time:'12:30', since_hours:6, limit:15}" in html
+    assert "scope:'preset'" in html
+    assert "data-brief-role=\"scheduleStatus\"" in html
+    assert "saveCustomSchedule" in html
 
 
 def test_builtin_source_catalog_is_rich() -> None:
@@ -315,11 +315,15 @@ def test_replicate_prompt_accepts_user_revision_context() -> None:
         tone="本地融媒体口吻",
         revision_instructions="标题太硬，采访计划要更可执行。",
         annotations="保留第二部分，重写拍摄计划。",
+        current_draft="## 选题判断\n原有判断保留。\n\n## 拍摄计划\n这里需要调整。",
     )
 
     assert "三分钟口播 + 图卡拆条" in prompt
     assert "标题太硬" in prompt
     assert "保留第二部分" in prompt
+    assert "当前已有采编计划草稿" in prompt
+    assert "优先只改对应位置" in prompt
+    assert "不要因为局部批注而重写整篇" in prompt
 
 
 def test_replicate_report_uses_dedicated_theme() -> None:
@@ -336,6 +340,51 @@ def test_replicate_report_uses_dedicated_theme() -> None:
     assert "迭代计划" in html
     assert "晨间速览" not in html
     assert ">晨<" not in html
+
+
+def test_report_markdown_renderer_handles_llm_report_format() -> None:
+    from media_ai.analyzer import markdown_to_html
+
+    html = markdown_to_html(
+        "\n".join(
+            [
+                "---",
+                "### 📋 已有信源档案",
+                "| 来源媒体 | 发布时间 (UTC) | 链接状态 |",
+                "|---|---|---|",
+                "| 联合早报 | 2026-05-09 14:08 | [查看链接](https://example.com) |",
+                "### ⚖️ 交叉印证与真实性判断",
+                "**多源情况**：**强交叉**。整合了多方信源。",
+                "1. **极高敏感性**：必须标注“据外电报道”。",
+                "2. **动态变化**：停火协议极其脆弱。",
+            ]
+        )
+    )
+
+    assert "<hr>" in html
+    assert "<h3>📋 已有信源档案</h3>" in html
+    assert "<table>" in html
+    assert "<strong>多源情况</strong>" in html
+    assert "<ol>" in html and "<li><strong>极高敏感性</strong>" in html
+    assert "**" not in html
+    assert "|---|" not in html
+
+
+def test_report_markdown_renderer_drops_alignment_rows() -> None:
+    from media_ai.analyzer import markdown_to_html
+
+    html = markdown_to_html(
+        "\n".join(
+            [
+                "| 序号 | 核心事件 | 来源媒体 |",
+                "| :--- | :--- | :--- |",
+                "| 01 | 测试事件 | 联合早报 |",
+            ]
+        )
+    )
+
+    assert "<tbody><tr><td>01</td><td>测试事件</td><td>联合早报</td></tr></tbody>" in html
+    assert ":---" not in html
 
 
 def test_validate_feed_url_rejects_localhost() -> None:
