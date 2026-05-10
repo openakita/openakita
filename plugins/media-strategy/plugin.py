@@ -444,8 +444,22 @@ class Plugin(PluginBase):
         if not text:
             raise HTTPException(status_code=422, detail="report markdown is empty")
 
-        text_sender = getattr(self._api, "send_message_async", None)
-        if not callable(text_sender):
+        async def _send_text_best_effort(message: str) -> dict[str, Any]:
+            text_sender = getattr(self._api, "send_message_async", None)
+            if callable(text_sender):
+                try:
+                    message_id = await text_sender(channel=channel, chat_id=chat_id, text=message)
+                    return {"ok": True, "message_id": message_id, "method": "async"}
+                except Exception as exc:  # noqa: BLE001
+                    if self._api is not None:
+                        self._api.log(
+                            f"{PLUGIN_ID}: async text push failed; trying legacy sender ({exc!r})",
+                            "warning",
+                        )
+            legacy_sender = getattr(self._api, "send_message", None)
+            if callable(legacy_sender):
+                legacy_sender(channel=channel, chat_id=chat_id, text=message)
+                return {"ok": True, "method": "legacy"}
             raise HTTPException(status_code=503, detail="channel.send is not available")
 
         file_sender = getattr(self._api, "send_file_async", None)
@@ -460,37 +474,35 @@ class Plugin(PluginBase):
                     file_path=target,
                     caption=caption,
                 )
-                await text_sender(
-                    channel=channel,
-                    chat_id=chat_id,
-                    text=_report_push_summary(row, file_sent=True),
-                )
+                summary_result: dict[str, Any]
+                try:
+                    summary_result = await _send_text_best_effort(_report_push_summary(row, file_sent=True))
+                except Exception as summary_exc:  # noqa: BLE001
+                    summary_result = {"ok": False, "error": str(summary_exc)}
                 return {
                     "ok": True,
                     "mode": "file",
                     "format": "html",
                     "file": str(target),
                     "message_id": message_id,
+                    "summary_result": summary_result,
                     "channel": channel,
                     "chat_id": chat_id,
                 }
             except Exception as exc:  # noqa: BLE001
                 if self._api is not None:
                     self._api.log(f"{PLUGIN_ID}: report file push failed; sending summary ({exc!r})", "warning")
-                await text_sender(
-                    channel=channel,
-                    chat_id=chat_id,
-                    text=_report_push_summary(row, file_sent=False),
-                )
+                text_result = await _send_text_best_effort(_report_push_summary(row, file_sent=False))
                 return {
-                    "ok": False,
+                    "ok": bool(text_result.get("ok")),
                     "mode": "summary",
                     "file_error": str(exc),
+                    "text_result": text_result,
                     "channel": channel,
                     "chat_id": chat_id,
                 }
 
-        await text_sender(channel=channel, chat_id=chat_id, text=text[:12000] if text_only else _report_push_summary(row, file_sent=False))
+        text_result = await _send_text_best_effort(text[:12000] if text_only else _report_push_summary(row, file_sent=False))
         return {"ok": True, "mode": "text" if text_only else "summary", "channel": channel, "chat_id": chat_id}
 
     def _build_router(self) -> APIRouter:

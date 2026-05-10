@@ -132,7 +132,7 @@
     .collapsible { border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card); }
     .collapsible > summary { list-style:none; cursor:pointer; padding:14px 16px; display:flex; gap:10px; align-items:center; user-select:none; }
     .collapsible > summary::-webkit-details-marker { display:none; }
-    .collapsible > summary::before { content:"\\25B6"; color:var(--text-dim); font-size:10px; transition:transform .15s; }
+    .collapsible > summary::before { content:"▶"; color:var(--text-dim); font-size:10px; transition:transform .15s; }
     .collapsible[open] > summary::before { transform:rotate(90deg); }
     .collapsible > summary .oa-section-title { margin:0; }
     .collapsible__body { padding:0 16px 16px; }
@@ -140,7 +140,7 @@
     .plan-setup-card { padding:0; overflow:hidden; }
     .plan-setup-summary { list-style:none; cursor:pointer; padding:14px 16px; display:flex; align-items:center; gap:10px; }
     .plan-setup-summary::-webkit-details-marker { display:none; }
-    .plan-setup-summary::before { content:"\\25B6"; color:var(--primary); font-size:10px; transition:transform .15s; }
+    .plan-setup-summary::before { content:"▶"; color:var(--primary); font-size:10px; transition:transform .15s; }
     .plan-setup-card[open] .plan-setup-summary::before { transform:rotate(90deg); }
     .plan-setup-summary .oa-section-title { margin:0; }
     .plan-setup-summary .meta { margin-left:auto; font-size:12px; color:var(--text-muted); }
@@ -261,7 +261,7 @@
     .brief-process-wrap[hidden] { display:none !important; }
     .brief-process-toggle { cursor:pointer; padding:10px 12px; color:var(--primary); font-weight:700; list-style:none; display:flex; align-items:center; gap:8px; }
     .brief-process-toggle::-webkit-details-marker { display:none; }
-    .brief-process-toggle::before { content:"\\25B6"; color:var(--primary); font-size:10px; transition:transform .15s; }
+    .brief-process-toggle::before { content:"▶"; color:var(--primary); font-size:10px; transition:transform .15s; }
     .brief-process-wrap[open] .brief-process-toggle::before { transform:rotate(90deg); }
     .brief-process { border:1px solid rgba(15,118,110,.25); border-radius:12px; padding:12px; background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); margin-bottom:12px; }
     .brief-process-wrap .brief-process { border:0; border-top:1px solid rgba(15,118,110,.15); border-radius:0; margin-bottom:0; }
