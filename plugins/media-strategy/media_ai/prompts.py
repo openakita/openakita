@@ -88,12 +88,27 @@ def replicate_prompt(
     topic: str,
     target_format: str,
     tone: str,
+    revision_instructions: str = "",
+    annotations: str = "",
 ) -> str:
+    feedback_block = ""
+    if revision_instructions.strip() or annotations.strip():
+        feedback_block = f"""
+
+用户标注 / 修改意见：
+{revision_instructions.strip() or "（无）"}
+
+用户重点标注片段：
+{annotations.strip() or "（无）"}
+
+请把上面的意见视为本轮重写约束：保留用户认可的部分，重点修改用户点名不满意的结构、表达、选题角度或执行动作。
+"""
     return f"""请基于给定来源生成“热点复刻与采编执行计划”。
 
 主题：{topic or "按给定新闻自动归纳"}
 目标形态：{target_format}
 语气：{tone}
+{feedback_block}
 
 输出结构：
 1. 选题判断：为什么值得做，适合哪个受众。

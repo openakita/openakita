@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import html as html_lib
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from media_ai.analyzer import (
     score_article,
 )
 from media_fetchers.html import fetch_and_parse_html
+from media_fetchers.newsnow import fetch_from_newsnow, newsnow_rate_limit_remaining
 from media_fetchers.rss import UnsafeFeedUrl, fetch_and_parse
 from media_task_manager import MediaTaskManager, utcnow_iso
 
@@ -60,15 +62,45 @@ class MediaPipeline:
         limit_sources = int(params.get("limit_sources") or 0)
         if limit_sources > 0:
             sources = sources[:limit_sources]
+        newsnow_remaining = newsnow_rate_limit_remaining(settings, now_ts=time.time())
+        newsnow_skipped = [
+            s["id"]
+            for s in sources
+            if str(s.get("kind") or "rss").lower() == "newsnow" and newsnow_remaining > 0
+        ]
+        if newsnow_skipped:
+            sources = [s for s in sources if s["id"] not in set(newsnow_skipped)]
+        try:
+            newsnow_request_interval_ms = int(settings.get("newsnow.request_interval_ms") or 600)
+        except (TypeError, ValueError):
+            newsnow_request_interval_ms = 600
+        newsnow_request_interval_ms = max(0, min(newsnow_request_interval_ms, 5000))
 
         stats = {
-            "sources": len(sources),
+            "sources": len(sources) + len(newsnow_skipped),
             "fetched": 0,
             "inserted": 0,
             "failed": 0,
             "errors": [],
             "skipped_disabled_packages": skipped_disabled,
+            "skipped_rate_limited_sources": newsnow_skipped,
+            "newsnow_retry_after_s": int(newsnow_remaining) if newsnow_skipped else 0,
         }
+        for skipped_id in newsnow_skipped:
+            finished = utcnow_iso()
+            message = f"newsnow_rate_limited: {int(newsnow_remaining)}s remaining"
+            await self.tm.update_source_status(skipped_id, status="skipped", error=message)
+            await self.tm.insert_crawl_record(
+                source_id=skipped_id,
+                status="skipped",
+                fetched_count=0,
+                inserted_count=0,
+                error_message=message,
+                started_at=finished,
+                finished_at=finished,
+            )
+        newsnow_hit = False
+        last_newsnow_request_ts = 0.0
         for source in sources:
             started = utcnow_iso()
             try:
@@ -80,6 +112,23 @@ class MediaPipeline:
                         timeout_sec=timeout,
                         user_agent=user_agent,
                     )
+                elif kind == "newsnow":
+                    if (
+                        str(settings.get("newsnow.mode") or "public") == "public"
+                        and last_newsnow_request_ts > 0
+                        and newsnow_request_interval_ms > 0
+                    ):
+                        elapsed_ms = (time.time() - last_newsnow_request_ts) * 1000
+                        if elapsed_ms < newsnow_request_interval_ms:
+                            await asyncio.sleep((newsnow_request_interval_ms - elapsed_ms) / 1000)
+                    _, items = await fetch_from_newsnow(
+                        source_payload,
+                        settings=settings,
+                        timeout_sec=timeout,
+                        user_agent=user_agent,
+                    )
+                    last_newsnow_request_ts = time.time()
+                    newsnow_hit = True
                 else:
                     _, items = await fetch_and_parse(
                         source_payload,
@@ -147,6 +196,8 @@ class MediaPipeline:
                 stats["failed"] += 1
                 stats["errors"].append({"source_id": source["id"], "error": message})
                 await asyncio.sleep(0)
+        if newsnow_hit and str(settings.get("newsnow.mode") or "public") == "public":
+            await self.tm.set_settings({"newsnow.last_fetch_ts": str(int(time.time()))})
         return stats
 
     async def hot_radar(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -297,8 +348,13 @@ class MediaPipeline:
         settings = await self.tm.get_settings()
         await self.tm.update_task(
             task_id,
+            progress=0.28,
+            pipeline_step=f"素材整理中：已选出 {len(items)} 条候选新闻，正在组织给大模型的输入",
+        )
+        await self.tm.update_task(
+            task_id,
             progress=0.42,
-            pipeline_step="大模型分析中：正在生成摘要、风向和采编建议",
+            pipeline_step="Brain 分析中：正在生成核心风向、重点摘要和采编建议",
         )
         md, source = await build_brief(
             self._brain(),
@@ -310,7 +366,7 @@ class MediaPipeline:
         await self.tm.update_task(
             task_id,
             progress=0.78,
-            pipeline_step="HTML 报表渲染中：正在生成美化预览",
+            pipeline_step=f"HTML 报表渲染中：正在套用{_session_label(session)}专属主题",
         )
         report = await self._save_report(
             task_id,
@@ -318,6 +374,11 @@ class MediaPipeline:
             title,
             md,
             {"source": source, "session": session, **radar["stats"]},
+        )
+        await self.tm.update_task(
+            task_id,
+            progress=0.92,
+            pipeline_step="保存报告中：已生成 Markdown 与 HTML，等待预览或 IM 推送",
         )
         return {"report": report, "items": items, "source": source}
 
@@ -415,21 +476,55 @@ class MediaPipeline:
         return {"report": report, "topics": topics, "source": source, "stats": radar.get("stats") or {}}
 
     async def replicate_plan(self, task_id: str, params: dict[str, Any]) -> dict[str, Any]:
+        await self.tm.update_task(
+            task_id,
+            progress=0.14,
+            pipeline_step="素材确认中：正在读取已选热点或按主题检索候选新闻",
+        )
         items = await self._select_items(params)
         topic = str(params.get("topic") or "")
         target_format = str(params.get("target_format") or "short_video")
         tone = str(params.get("tone") or "稳健客观")
+        revision_instructions = str(params.get("revision_instructions") or "")
+        annotations = str(params.get("annotations") or "")
         settings = await self.tm.get_settings()
+        await self.tm.update_task(
+            task_id,
+            progress=0.28,
+            pipeline_step=f"约束整理中：已准备 {len(items)} 条来源，正在合并内容形态、语气和用户标注",
+        )
+        await self.tm.update_task(
+            task_id,
+            progress=0.46,
+            pipeline_step="Brain 生成中：正在让大模型形成可执行采编计划",
+        )
         md, source = await build_replicate_plan(
             self._brain(),
             items,
             topic=topic,
             target_format=target_format,
             tone=tone,
+            revision_instructions=revision_instructions,
+            annotations=annotations,
             temperature=float(settings.get("llm_temperature") or 0.2),
         )
+        await self.tm.update_task(
+            task_id,
+            progress=0.82,
+            pipeline_step="计划整理中：正在渲染 Markdown/HTML 并保存为可追溯报告",
+        )
         title = f"{topic or '热点'}策研采编计划"
-        report = await self._save_report(task_id, "replicate_plan", title, md, {"source": source})
+        report = await self._save_report(
+            task_id,
+            "replicate_plan",
+            title,
+            md,
+            {
+                "source": source,
+                "target_format": target_format,
+                "has_feedback": bool(revision_instructions.strip() or annotations.strip()),
+            },
+        )
         return {"report": report, "items": items, "source": source}
 
     async def _select_items(self, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -480,13 +575,15 @@ def _styled_report_html(
     meta = meta or {}
     body = markdown_to_html(markdown)
     source = html_lib.escape(str(meta.get("source") or ""))
-    session = html_lib.escape(str(meta.get("session") or ""))
+    session_raw = str(meta.get("session") or "")
+    session = html_lib.escape(session_raw)
     label = {
         "daily_brief": "融媒简报",
         "verify_pack": "信源复核",
         "ai_topic_analysis": "AI 选题分析",
         "replicate_plan": "策研采编",
     }.get(kind, kind)
+    theme = _report_theme(kind, session_raw)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -494,25 +591,29 @@ def _styled_report_html(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{html_lib.escape(title)}</title>
   <style>
-    :root {{ --primary:#0F766E; --soft:#ECFDF5; --text:#0f172a; --muted:#64748b; --border:#dbe4ef; }}
-    body {{ margin:0; background:#f8fafc; color:var(--text); font:14px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }}
-    .hero {{ padding:34px 38px; background:linear-gradient(135deg,#0F766E,#14B8A6 58%,#F59E0B); color:#fff; }}
-    .hero h1 {{ margin:0 0 12px; font-size:30px; letter-spacing:.02em; }}
-    .hero p {{ margin:0; opacity:.92; }}
-    .chips {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }}
-    .chip {{ padding:5px 12px; border-radius:999px; background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.28); font-size:12px; }}
-    main {{ max-width:980px; margin:0 auto; padding:26px 28px 40px; background:#fff; min-height:70vh; box-shadow:0 18px 60px rgba(15,23,42,.08); }}
+    :root {{ --primary:{theme["primary"]}; --accent:{theme["accent"]}; --soft:{theme["soft"]}; --bg:{theme["bg"]}; --text:#111827; --muted:#64748b; --border:#dbe4ef; }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; color:var(--text); font:14px/1.78 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; background:radial-gradient(circle at 9% 12%, {theme["glow"]}, transparent 26%), radial-gradient(circle at 88% 8%, rgba(255,255,255,.72), transparent 22%), linear-gradient(135deg,var(--bg),#fff 54%,var(--soft)); }}
+    .shell {{ max-width:1100px; margin:0 auto; padding:26px; }}
+    .hero {{ position:relative; overflow:hidden; min-height:210px; padding:36px 40px; border-radius:28px; color:#fff; background:radial-gradient(circle at 16% 20%, rgba(255,255,255,.26), transparent 19%), linear-gradient(135deg,var(--primary),{theme["mid"]} 58%,var(--accent)); box-shadow:0 24px 70px {theme["shadow"]}; }}
+    .hero::before {{ content:""; position:absolute; inset:auto -70px -120px auto; width:310px; height:310px; border-radius:42%; border:28px solid rgba(255,255,255,.13); transform:rotate(18deg); }}
+    .hero::after {{ content:"{theme["mark"]}"; position:absolute; right:34px; top:28px; font-size:96px; line-height:1; opacity:.13; font-weight:900; }}
+    .hero h1 {{ position:relative; margin:0 0 12px; font-size:34px; letter-spacing:-.03em; }}
+    .hero p {{ position:relative; margin:0; max-width:760px; opacity:.92; }}
+    .chips {{ position:relative; display:flex; flex-wrap:wrap; gap:8px; margin-top:22px; }}
+    .chip {{ padding:7px 12px; border-radius:999px; background:rgba(255,255,255,.17); border:1px solid rgba(255,255,255,.28); font-size:12px; backdrop-filter:blur(6px); }}
+    main {{ margin-top:18px; padding:30px; border:1px solid rgba(148,163,184,.22); border-radius:24px; background:rgba(255,255,255,.92); min-height:70vh; box-shadow:0 18px 60px rgba(15,23,42,.08); }}
     h1 {{ font-size:28px; line-height:1.3; margin:0 0 18px; padding-bottom:12px; border-bottom:1px solid var(--border); }}
-    h2 {{ margin:28px 0 12px; padding-left:12px; border-left:4px solid var(--primary); font-size:19px; }}
-    h3 {{ margin:20px 0 10px; color:var(--primary); font-size:16px; }}
+    h2 {{ margin:30px 0 12px; padding-left:12px; border-left:4px solid var(--primary); font-size:19px; }}
+    h3 {{ margin:22px 0 10px; color:var(--primary); font-size:16px; }}
     p {{ margin:10px 0; }}
     ul,ol {{ padding-left:24px; }}
     li {{ margin:7px 0; }}
-    strong {{ color:#0b5f59; }}
-    a {{ color:var(--primary); text-decoration:none; border-bottom:1px dotted rgba(15,118,110,.5); }}
+    strong {{ color:#0f172a; }}
+    a {{ color:var(--primary); text-decoration:none; border-bottom:1px dotted var(--primary); }}
     table {{ width:100%; border-collapse:separate; border-spacing:0; margin:16px 0; border:1px solid var(--border); border-radius:12px; overflow:hidden; }}
     th,td {{ padding:10px 12px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }}
-    th {{ background:var(--soft); color:#0b5f59; }}
+    th {{ background:var(--soft); color:var(--primary); }}
     tr:last-child td {{ border-bottom:0; }}
     blockquote {{ margin:16px 0; padding:12px 14px; border-left:4px solid var(--primary); background:var(--soft); border-radius:10px; color:#334155; }}
     code {{ padding:2px 6px; border-radius:6px; background:#f1f5f9; border:1px solid var(--border); }}
@@ -520,14 +621,105 @@ def _styled_report_html(
   </style>
 </head>
 <body>
-  <section class="hero">
-    <h1>{html_lib.escape(title)}</h1>
-    <p>AI 辅助生成的融媒简报，保留来源线索，建议编辑复核后发布。</p>
-    <div class="chips"><span class="chip">{html_lib.escape(label)}</span><span class="chip">{session or "综合"}</span><span class="chip">{source or "规则/大模型"}</span></div>
-  </section>
-  <main>{body}<div class="footer">由 OpenAkita 融媒智策生成 · 请以原文链接和人工复核为准</div></main>
+  <div class="shell">
+    <section class="hero">
+      <h1>{html_lib.escape(title)}</h1>
+      <p>{theme["desc"]}。AI 辅助生成，保留来源线索，建议编辑复核后发布。</p>
+      <div class="chips"><span class="chip">{html_lib.escape(label)}</span><span class="chip">{theme["scope"] if kind != "daily_brief" else (session or "综合")}</span><span class="chip">{source or "规则/大模型"}</span><span class="chip">{theme["label"]}</span></div>
+    </section>
+    <main>{body}<div class="footer">由 OpenAkita 融媒智策生成 · 请以原文链接和人工复核为准</div></main>
+  </div>
 </body>
 </html>"""
+
+
+def _report_theme(kind: str, session: str) -> dict[str, str]:
+    if kind == "replicate_plan":
+        return {
+            "primary": "#0F766E",
+            "mid": "#2563EB",
+            "accent": "#7C3AED",
+            "soft": "#EEF6FF",
+            "bg": "#F8FAFC",
+            "glow": "rgba(37,99,235,.16)",
+            "shadow": "rgba(15,23,42,.16)",
+            "mark": "策",
+            "label": "采编执行",
+            "scope": "迭代计划",
+            "desc": "策研采编主题突出选题判断、采访拍摄执行、平台改写和复盘动作",
+        }
+    if kind == "verify_pack":
+        return {
+            "primary": "#7C2D12",
+            "mid": "#EA580C",
+            "accent": "#F59E0B",
+            "soft": "#FFF7ED",
+            "bg": "#FFFBEB",
+            "glow": "rgba(234,88,12,.15)",
+            "shadow": "rgba(124,45,18,.16)",
+            "mark": "核",
+            "label": "信源复核",
+            "scope": "复核清单",
+            "desc": "信源复核主题强调来源、时间、转引链和待补查口径",
+        }
+    if kind == "ai_topic_analysis":
+        return {
+            "primary": "#4338CA",
+            "mid": "#7C3AED",
+            "accent": "#06B6D4",
+            "soft": "#EEF2FF",
+            "bg": "#F5F3FF",
+            "glow": "rgba(124,58,237,.16)",
+            "shadow": "rgba(67,56,202,.16)",
+            "mark": "析",
+            "label": "选题分析",
+            "scope": "热点簇",
+            "desc": "AI 选题分析主题聚焦多源覆盖、风险缺口和采编优先级",
+        }
+    theme = _brief_theme(session)
+    return {**theme, "scope": session or "综合"}
+
+
+def _brief_theme(session: str) -> dict[str, str]:
+    themes = {
+        "morning": {
+            "primary": "#0F766E",
+            "mid": "#14B8A6",
+            "accent": "#F59E0B",
+            "soft": "#ECFDF5",
+            "bg": "#F0FDFA",
+            "glow": "rgba(20,184,166,.22)",
+            "shadow": "rgba(15,118,110,.20)",
+            "mark": "晨",
+            "label": "晨间速览",
+            "desc": "晨间主题聚焦隔夜和清晨新增热点，适合快速把握今日议程",
+        },
+        "noon": {
+            "primary": "#B45309",
+            "mid": "#F97316",
+            "accent": "#FACC15",
+            "soft": "#FFF7ED",
+            "bg": "#FFFBEB",
+            "glow": "rgba(249,115,22,.20)",
+            "shadow": "rgba(180,83,9,.18)",
+            "mark": "午",
+            "label": "午间更新",
+            "desc": "午间主题突出上午新增、政策响应和传播热度变化",
+        },
+        "evening": {
+            "primary": "#4338CA",
+            "mid": "#7C3AED",
+            "accent": "#06B6D4",
+            "soft": "#EEF2FF",
+            "bg": "#F5F3FF",
+            "glow": "rgba(124,58,237,.18)",
+            "shadow": "rgba(67,56,202,.18)",
+            "mark": "晚",
+            "label": "晚间复盘",
+            "desc": "晚间主题强调全天复盘、风险沉淀和次日采编准备",
+        },
+    }
+    return themes.get(session, themes["morning"])
 
 
 def _fetch_error_message(exc: Exception) -> str:

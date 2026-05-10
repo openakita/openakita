@@ -31,10 +31,15 @@ except Exception:  # noqa: BLE001
 _MAX_REDIRECTS = 8
 _TAG_RE = re.compile(r"\{[^}]*\}")
 _HTML_RE = re.compile(r"<[^>]+>")
+_CHARSET_RE = re.compile(
+    rb"""(?:charset=["']?\s*|encoding=["'])([A-Za-z0-9._-]+)""",
+    re.IGNORECASE,
+)
 _URL_DATE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"/((?:19|20)\d{2})-(\d{2})/(\d{2})/"),
     re.compile(r"/((?:19|20)\d{2})-(\d{2})-(\d{2})(?:[^\d]|$)"),
     re.compile(r"/((?:19|20)\d{2})/(\d{2})/(\d{2})/"),
+    re.compile(r"/((?:19|20)\d{2})(\d{2})/(\d{2})/"),
     re.compile(r"/((?:19|20)\d{2})/(\d{2})(\d{2})(?:[^\d]|/)"),
     re.compile(r"(?<!\d)((?:19|20)\d{2})(\d{2})(\d{2})(?!\d)"),
 )
@@ -57,8 +62,15 @@ class UnsafeFeedUrl(ValueError):
 
 
 def _decode_response_text(response: httpx.Response) -> str:
-    if response.charset_encoding:
-        return response.text
+    declared = _CHARSET_RE.search(response.content[:4096])
+    if declared:
+        encoding = declared.group(1).decode("ascii", errors="ignore").lower()
+        if encoding in {"gb2312", "gbk", "gb18030"}:
+            return response.content.decode("gb18030", errors="replace")
+        try:
+            return response.content.decode(encoding, errors="replace")
+        except LookupError:
+            pass
     if _charset_from_bytes is not None:
         match = _charset_from_bytes(response.content).best()
         if match and match.encoding:
@@ -66,6 +78,8 @@ def _decode_response_text(response: httpx.Response) -> str:
                 return response.content.decode(match.encoding, errors="replace")
             except LookupError:
                 pass
+    if response.charset_encoding:
+        return response.text
     for encoding in ("utf-8", "gb18030", "big5"):
         try:
             return response.content.decode(encoding)

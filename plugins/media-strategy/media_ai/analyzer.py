@@ -310,12 +310,21 @@ async def build_replicate_plan(
     topic: str,
     target_format: str,
     tone: str,
+    revision_instructions: str = "",
+    annotations: str = "",
     temperature: float = 0.2,
 ) -> tuple[str, str]:
     try:
         md = await call_brain(
             brain,
-            replicate_prompt(items, topic=topic, target_format=target_format, tone=tone),
+            replicate_prompt(
+                items,
+                topic=topic,
+                target_format=target_format,
+                tone=tone,
+                revision_instructions=revision_instructions,
+                annotations=annotations,
+            ),
             max_tokens=2600,
             temperature=temperature,
         )

@@ -257,6 +257,7 @@ def parse_html_listing(
                 soup, base_url, seen_urls, source_id, max_items - len(items)
             )
         )
+    items.sort(key=lambda item: item.published_at or "", reverse=True)
     return items[:max_items]
 
 

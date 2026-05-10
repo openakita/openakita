@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 
@@ -38,6 +39,80 @@ def _purge_module_cache() -> int:
             sys.modules.pop(name, None)
             removed += 1
     return removed
+
+
+_SCHEDULE_PROMPT_PREFIX: Final[str] = "[media-strategy] "
+_MEDIA_STRATEGY_NAME_PREFIXES: Final[tuple[str, ...]] = ("media-strategy ", "media-strategy:")
+
+
+def _task_name_is_media_strategy(name: str) -> bool:
+    return bool(name) and any(name.startswith(prefix) for prefix in _MEDIA_STRATEGY_NAME_PREFIXES)
+
+
+def _is_media_strategy_schedule(**kwargs: Any) -> bool:
+    task = kwargs.get("task")
+    if task is None:
+        return False
+    name = getattr(task, "name", "") or ""
+    if _task_name_is_media_strategy(name):
+        return True
+    prompt = getattr(task, "prompt", "") or ""
+    return str(prompt).startswith(_SCHEDULE_PROMPT_PREFIX)
+
+
+def _parse_schedule_prompt(prompt: str) -> dict[str, Any]:
+    text = (prompt or "").strip()
+    if text.startswith(_SCHEDULE_PROMPT_PREFIX):
+        text = text[len(_SCHEDULE_PROMPT_PREFIX) :]
+    if not text:
+        raise ValueError("empty prompt")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"not json: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("prompt must decode to an object")
+    return data
+
+
+def _get_active_scheduler() -> Any:
+    try:
+        from openakita.scheduler import get_active_scheduler  # type: ignore
+    except ImportError:
+        return None
+    try:
+        return get_active_scheduler()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _serialize_schedule(task: Any) -> dict[str, Any]:
+    prompt = getattr(task, "prompt", "") or ""
+    try:
+        meta = _parse_schedule_prompt(prompt)
+    except ValueError:
+        meta = {}
+    next_run = getattr(task, "next_run", None)
+    trigger_config = getattr(task, "trigger_config", {}) or {}
+    cron = str(trigger_config.get("cron") or "") if isinstance(trigger_config, dict) else ""
+    return {
+        "id": getattr(task, "id", ""),
+        "name": getattr(task, "name", ""),
+        "description": getattr(task, "description", ""),
+        "cron": cron,
+        "enabled": bool(getattr(task, "enabled", True)),
+        "status": str(getattr(task, "status", "")),
+        "next_run": next_run.isoformat() if hasattr(next_run, "isoformat") else None,
+        "run_count": int(getattr(task, "run_count", 0)),
+        "fail_count": int(getattr(task, "fail_count", 0)),
+        "channel": getattr(task, "channel_id", None),
+        "chat_id": getattr(task, "chat_id", None),
+        "mode": meta.get("mode"),
+        "session": meta.get("session"),
+        "package_id": meta.get("package_id"),
+        "since_hours": meta.get("since_hours"),
+        "limit": meta.get("limit"),
+    }
 
 
 class _StrictBase(BaseModel):
@@ -141,6 +216,7 @@ class Plugin(PluginBase):
         self._tm: MediaTaskManager | None = None
         self._pipeline: MediaPipeline | None = None
         self._init_task: asyncio.Task[Any] | None = None
+        self._hook_registered = False
 
     def on_load(self, api: PluginAPI) -> None:
         removed = _purge_module_cache()
@@ -164,6 +240,11 @@ class Plugin(PluginBase):
         router = self._build_router()
         api.register_api_routes(router)
         api.register_tools(self._tool_definitions(), handler=self._handle_tool)
+        try:
+            api.register_hook("on_schedule", self._on_schedule, match=_is_media_strategy_schedule)
+            self._hook_registered = True
+        except Exception as exc:  # noqa: BLE001
+            api.log(f"{PLUGIN_ID}: register_hook(on_schedule) failed: {exc}", "warning")
         self._init_task = api.spawn_task(self._init(), name=f"plugin:{PLUGIN_ID}:init")
         api.log(f"{DISPLAY_NAME_ZH} loaded (v{PLUGIN_VERSION}, {len(TOOL_NAMES)} tools)")
 
@@ -638,6 +719,8 @@ class Plugin(PluginBase):
         @router.post("/tasks")
         async def create_task(body: CreateTaskBody) -> dict[str, Any]:
             await self._ensure_ready()
+            if body.mode in {"daily_brief", "replicate_plan"}:
+                return await self._create_and_start_background_task(body.mode, body.params)
             return await self._create_and_run_task(body.mode, body.params)
 
         @router.post("/ingest")
@@ -726,6 +809,120 @@ class Plugin(PluginBase):
                 raise HTTPException(status_code=404, detail="report not found")
             return {"report": row}
 
+        @router.get("/schedules")
+        async def list_schedules() -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                return {"ok": True, "items": [], "scheduler_ready": False}
+            items = [
+                _serialize_schedule(task)
+                for task in scheduler.list_tasks()
+                if _task_name_is_media_strategy(getattr(task, "name", "") or "")
+            ]
+            return {"ok": True, "items": items, "scheduler_ready": True}
+
+        @router.post("/schedules")
+        async def create_schedule(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                raise HTTPException(status_code=503, detail="scheduler_unavailable")
+            mode = str(payload.get("mode") or "daily_brief").strip()
+            if mode != "daily_brief":
+                raise HTTPException(status_code=400, detail="only daily_brief schedules are supported")
+            session = str(payload.get("session") or "morning").strip()
+            if session not in {"morning", "noon", "evening"}:
+                raise HTTPException(status_code=400, detail="session must be morning|noon|evening")
+            cron = str(payload.get("cron") or payload.get("cron_expression") or "").strip()
+            if not cron:
+                raise HTTPException(status_code=400, detail="cron expression required")
+            channel = str(payload.get("channel") or "").strip()
+            chat_id = str(payload.get("chat_id") or "").strip()
+            if not channel or not chat_id:
+                raise HTTPException(status_code=400, detail="channel and chat_id are required")
+            body = {
+                "mode": "daily_brief",
+                "session": session,
+                "package_id": str(payload.get("package_id") or ""),
+                "since_hours": int(payload.get("since_hours") or 24),
+                "limit": int(payload.get("limit") or 20),
+                "channel": channel,
+                "chat_id": chat_id,
+            }
+            try:
+                from openakita.scheduler.task import ScheduledTask  # type: ignore
+            except ImportError as exc:
+                raise HTTPException(status_code=503, detail=f"scheduler module unavailable: {exc}") from exc
+
+            name = str(payload.get("name") or "").strip() or f"media-strategy {session}-brief"
+            if not _task_name_is_media_strategy(name):
+                name = f"media-strategy {name}"
+            task = ScheduledTask.create_cron(
+                name=name,
+                description=f"media-strategy {session} brief → {channel}/{chat_id}",
+                cron_expression=cron,
+                prompt=_SCHEDULE_PROMPT_PREFIX + json.dumps(body, ensure_ascii=False),
+                channel_id=channel,
+                chat_id=chat_id,
+                silent=True,
+                metadata={"plugin_id": PLUGIN_ID, "mode": mode, "session": session},
+            )
+            task.enabled = bool(payload.get("enabled", True))
+            try:
+                task_id = await scheduler.add_task(task)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {"ok": True, "id": task_id, "schedule": _serialize_schedule(task)}
+
+        @router.delete("/schedules/{schedule_id}")
+        async def delete_schedule(schedule_id: str) -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                raise HTTPException(status_code=503, detail="scheduler_unavailable")
+            existing = scheduler.get_task(schedule_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="not_found")
+            if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
+                raise HTTPException(status_code=403, detail="refusing to delete schedule not owned by media-strategy")
+            outcome = await scheduler.remove_task(schedule_id)
+            if outcome != "ok":
+                raise HTTPException(status_code=400, detail=outcome)
+            return {"ok": True, "id": schedule_id, "deleted": True}
+
+        @router.post("/schedules/{schedule_id}/toggle")
+        async def toggle_schedule(schedule_id: str) -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                raise HTTPException(status_code=503, detail="scheduler_unavailable")
+            existing = scheduler.get_task(schedule_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="not_found")
+            if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
+                raise HTTPException(status_code=403, detail="refusing to toggle schedule not owned by media-strategy")
+            if getattr(existing, "enabled", True):
+                await scheduler.disable_task(schedule_id)
+            else:
+                await scheduler.enable_task(schedule_id)
+            updated = scheduler.get_task(schedule_id)
+            return {"ok": True, "id": schedule_id, "schedule": _serialize_schedule(updated) if updated else None}
+
+        @router.post("/schedules/{schedule_id}/trigger")
+        async def trigger_schedule(schedule_id: str) -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                raise HTTPException(status_code=503, detail="scheduler_unavailable")
+            existing = scheduler.get_task(schedule_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="not_found")
+            if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
+                raise HTTPException(status_code=403, detail="refusing to trigger schedule not owned by media-strategy")
+            trigger = getattr(scheduler, "trigger_task", None)
+            if not callable(trigger):
+                raise HTTPException(status_code=501, detail="host scheduler does not expose trigger_task")
+            result = trigger(schedule_id)
+            if hasattr(result, "__await__"):
+                await result
+            return {"ok": True, "id": schedule_id, "triggered": True}
+
         @router.get("/scheduler/channels")
         async def scheduler_channels() -> dict[str, Any]:
             host = getattr(self._api, "_host", None) or {}
@@ -733,7 +930,9 @@ class Plugin(PluginBase):
             if api_app is None:
                 return {"ok": True, "channels": []}
             try:
-                from openakita.api.routes.scheduler import list_channels as _host_list_channels  # type: ignore
+                from openakita.api.routes.scheduler import (
+                    list_channels as _host_list_channels,  # type: ignore
+                )
             except Exception:  # noqa: BLE001
                 return {"ok": True, "channels": []}
             from types import SimpleNamespace
@@ -750,10 +949,31 @@ class Plugin(PluginBase):
             gateway = host.get("gateway") if isinstance(host, dict) else None
             if gateway is None:
                 return {"ok": True, "channels": []}
+            names: list[str] = []
             adapters = getattr(gateway, "_adapters", None)
             if isinstance(adapters, dict):
-                return {"ok": True, "channels": [str(k) for k in adapters.keys()]}
-            return {"ok": True, "channels": []}
+                names = [str(k) for k in adapters]
+            else:
+                probe = [
+                    "feishu",
+                    "wework",
+                    "wework_ws",
+                    "dingtalk",
+                    "telegram",
+                    "onebot",
+                    "qqbot",
+                    "wechat",
+                    "email",
+                ]
+                get = getattr(gateway, "get_adapter", None)
+                if callable(get):
+                    for name in probe:
+                        try:
+                            if get(name) is not None:
+                                names.append(name)
+                        except Exception:  # noqa: BLE001 - best-effort probe only
+                            continue
+            return {"ok": True, "channels": names}
 
         @router.post("/reports/{report_id}/push")
         async def push_report(report_id: str, body: PushReportBody) -> dict[str, Any]:
@@ -775,6 +995,47 @@ class Plugin(PluginBase):
             return {"ok": True, "channel": body.channel, "chat_id": body.chat_id}
 
         return router
+
+    async def _on_schedule(self, **kwargs: Any) -> dict[str, Any]:
+        task = kwargs.get("task")
+        if task is None or self._tm is None or self._pipeline is None:
+            return {"ok": False, "reason": "pipeline_unavailable"}
+        try:
+            payload = _parse_schedule_prompt(getattr(task, "prompt", "") or "")
+        except ValueError as exc:
+            return {"ok": False, "reason": "prompt_parse_failed", "error": str(exc)}
+        if payload.get("mode") != "daily_brief":
+            return {"ok": False, "reason": "unknown_mode", "mode": payload.get("mode")}
+        channel = str(payload.get("channel") or "").strip()
+        chat_id = str(payload.get("chat_id") or "").strip()
+        if not channel or not chat_id:
+            return {"ok": False, "reason": "missing_target"}
+        try:
+            internal = await self._tm.create_task(
+                "daily_brief",
+                {**payload, "scheduled": True},
+            )
+            result = await self._run_existing_task(
+                internal["id"],
+                "daily_brief",
+                {
+                    "session": str(payload.get("session") or "morning"),
+                    "package_id": str(payload.get("package_id") or ""),
+                    "since_hours": int(payload.get("since_hours") or 24),
+                    "limit": int(payload.get("limit") or 20),
+                    "scheduled": True,
+                },
+            )
+            report = (result.get("result") or {}).get("report") or {}
+            text = str(report.get("markdown") or "").strip()
+            sender = getattr(self._api, "send_message", None)
+            dispatched: dict[str, Any] | None = None
+            if callable(sender) and text:
+                sender(channel=channel, chat_id=chat_id, text=text[:12000])
+                dispatched = {"ok": True, "channel": channel, "chat_id": chat_id}
+            return {"ok": True, "task": result.get("task"), "report": report, "dispatched": dispatched}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "reason": "run_failed", "error": str(exc)}
 
     async def _create_and_run_task(self, mode: str, params: dict[str, Any]) -> dict[str, Any]:
         await self._ensure_ready()

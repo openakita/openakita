@@ -48,6 +48,11 @@ def test_ui_assets_and_iconify_tokens_exist() -> None:
         "/storage/open-folder",
         "/storage/list-dir",
         "/storage/mkdir",
+        "customTargetFormat",
+        "planFeedback",
+        "reportModalAnnotate",
+        "annotationList",
+        "按批注重新处理",
     ):
         assert token in html
     assert "[hidden] { display:none !important; }" in html
@@ -55,6 +60,16 @@ def test_ui_assets_and_iconify_tokens_exist() -> None:
     for icon in (PLUGIN_DIR / "icon.svg", ui / "icon.svg", ui / "media-strategy-brand.svg"):
         blob = icon.read_text("utf-8")
         assert "<svg" in blob and "Iconify source: game-icons:newspaper" in blob
+
+
+def test_brief_workbench_presets_match_session_cards() -> None:
+    html = (PLUGIN_DIR / "ui" / "dist" / "index.html").read_text("utf-8")
+
+    assert '<option value="12" selected>12 小时</option>' in html
+    assert "noon:{label:'每日午报', cron:'30 12 * * *', since_hours:6, limit:15}" in html
+    assert "const useCurrentDraft = activeSession === session;" in html
+    assert "since_hours:useCurrentDraft ? Number($('briefHours').value || tpl.since_hours) : tpl.since_hours" in html
+    assert "limit:useCurrentDraft ? Number($('briefLimit').value || tpl.limit) : tpl.limit" in html
 
 
 def test_builtin_source_catalog_is_rich() -> None:
@@ -112,14 +127,17 @@ def test_taiwan_package_includes_new_sources() -> None:
     ):
         assert required in taiwan_sources, required
     assert SOURCE_DEFS["fjsen-taihai"]["default_enabled"] is True
+    assert SOURCE_DEFS["xinhua-taiwan"]["default_enabled"] is True
+    assert SOURCE_DEFS["xinhua-taiwan"]["kind"] == "html"
     for stale_or_broken in (
-        "xinhua-taiwan",
-        "people-taiwan",
         "udn-cross-strait",
         "nownews-politics",
-        "taihainet-twxw",
     ):
         assert stale_or_broken in DEPRECATED_SOURCE_IDS
+    assert "people-taiwan" not in DEPRECATED_SOURCE_IDS
+    assert "taihainet-twxw" not in DEPRECATED_SOURCE_IDS
+    assert SOURCE_DEFS["people-taiwan"]["kind"] == "html"
+    assert SOURCE_DEFS["taihainet-twxw"]["url"] == "https://tw.taihainet.com/"
 
 
 def test_html_sources_declare_selectors() -> None:
@@ -133,16 +151,57 @@ def test_html_sources_declare_selectors() -> None:
 
 
 def test_default_enabled_strategy_favors_domestic() -> None:
-    from media_models import DEPRECATED_SOURCE_IDS, SOURCE_DEFS
+    from media_models import DEPRECATED_SOURCE_IDS, RESTORED_SOURCE_IDS, SOURCE_DEFS
 
     # Default-enabled sources must be currently fetchable and timestamp-safe.
+    enabled_ids = {
+        sid
+        for sid, meta in SOURCE_DEFS.items()
+        if meta.get("default_enabled") and sid not in DEPRECATED_SOURCE_IDS
+    }
+    assert len(enabled_ids) >= 20
+    assert SOURCE_DEFS["cctv-domestic"]["default_enabled"] is True
+    assert SOURCE_DEFS["people-politics"]["default_enabled"] is True
+    assert SOURCE_DEFS["people-world"]["default_enabled"] is True
+    assert SOURCE_DEFS["caixin-latest"]["default_enabled"] is True
     assert SOURCE_DEFS["ithome"]["default_enabled"] is True
     assert SOURCE_DEFS["qbitai"]["default_enabled"] is True
     assert SOURCE_DEFS["fjsen-taihai"]["default_enabled"] is True
-    assert "people-politics" in DEPRECATED_SOURCE_IDS
+    for expanded_source in (
+        "bbc-zh",
+        "bbc-world",
+        "rfi-cn",
+        "zaobao-china",
+        "zaobao-world",
+        "diplomat-main",
+        "diplomat-china-power",
+        "idaily-today",
+        "sspai",
+        "ifanr",
+        "solidot",
+        "geekpark",
+        "appinn",
+        "meituan-tech",
+        "xinhua-politics",
+        "xinhua-taiwan",
+        "xinhua-world",
+        "cctv-xinwenlianbo",
+        "dw-zh",
+        "taihainet-twxw",
+        "thepaper-featured",
+        "kr36",
+        "huxiu",
+        "rsshub-douyin-hot",
+        "rsshub-bilibili-weekly",
+        "rsshub-weibo-hot",
+        "rsshub-zhihu-hot",
+        "newsnow-baidu-hot",
+        "newsnow-toutiao-hot",
+    ):
+        assert SOURCE_DEFS[expanded_source]["default_enabled"] is True
+        assert expanded_source in RESTORED_SOURCE_IDS
+    assert RESTORED_SOURCE_IDS.isdisjoint(DEPRECATED_SOURCE_IDS)
     assert "yicai-news" in DEPRECATED_SOURCE_IDS
-    assert "rsshub-weibo-hot" in DEPRECATED_SOURCE_IDS
-    assert SOURCE_DEFS["bbc-zh"]["default_enabled"] is False
     assert SOURCE_DEFS["reuters-world"]["default_enabled"] is False
 
 
@@ -184,6 +243,50 @@ def test_feed_parser_infers_date_from_url_when_feed_date_missing() -> None:
     assert items[0].published_at == "2013-10-16T00:00:00Z"
 
 
+def test_newsnow_parser_and_rate_limit() -> None:
+    from media_fetchers.newsnow import _parse_envelope, newsnow_rate_limit_remaining
+
+    payload = {
+        "status": "cache",
+        "updatedTime": 1778404729489,
+        "items": [
+            {
+                "title": "平台热点样例",
+                "url": "https://example.com/hot",
+                "extra": {"hover": "热榜摘要"},
+            }
+        ],
+    }
+    items = _parse_envelope(payload, source_id="rsshub-weibo-hot", platform_id="weibo")
+
+    assert len(items) == 1
+    assert items[0].published_at == "2026-05-10T09:18:49Z"
+    assert items[0].summary == "热榜摘要"
+    assert items[0].raw["parser"] == "newsnow"
+    assert (
+        newsnow_rate_limit_remaining(
+            {
+                "newsnow.mode": "public",
+                "newsnow.min_interval_s": 300,
+                "newsnow.last_fetch_ts": "1000",
+            },
+            now_ts=1100,
+        )
+        == 200
+    )
+    assert (
+        newsnow_rate_limit_remaining(
+            {
+                "newsnow.mode": "self_host",
+                "newsnow.min_interval_s": 300,
+                "newsnow.last_fetch_ts": "1000",
+            },
+            now_ts=1100,
+        )
+        == 0
+    )
+
+
 def test_feed_parser_skips_items_without_reliable_time() -> None:
     from media_fetchers import rss
 
@@ -202,6 +305,39 @@ def test_feed_parser_skips_items_without_reliable_time() -> None:
     assert items == []
 
 
+def test_replicate_prompt_accepts_user_revision_context() -> None:
+    from media_ai.prompts import replicate_prompt
+
+    prompt = replicate_prompt(
+        [{"title": "台海政策新动态", "source_id": "demo", "url": "https://example.com"}],
+        topic="台海最新动态",
+        target_format="三分钟口播 + 图卡拆条",
+        tone="本地融媒体口吻",
+        revision_instructions="标题太硬，采访计划要更可执行。",
+        annotations="保留第二部分，重写拍摄计划。",
+    )
+
+    assert "三分钟口播 + 图卡拆条" in prompt
+    assert "标题太硬" in prompt
+    assert "保留第二部分" in prompt
+
+
+def test_replicate_report_uses_dedicated_theme() -> None:
+    from media_pipeline import _styled_report_html
+
+    html = _styled_report_html(
+        title="贸易策研采编计划",
+        kind="replicate_plan",
+        markdown="# 贸易策研采编计划\n\n## 选题判断\n\n内容",
+        meta={"source": "brain"},
+    )
+
+    assert "采编执行" in html
+    assert "迭代计划" in html
+    assert "晨间速览" not in html
+    assert ">晨<" not in html
+
+
 def test_validate_feed_url_rejects_localhost() -> None:
     from media_fetchers.rss import UnsafeFeedUrl, validate_feed_url
 
@@ -211,7 +347,7 @@ def test_validate_feed_url_rejects_localhost() -> None:
 
 @pytest.mark.asyncio
 async def test_task_manager_seeds_and_upserts_article(tmp_path: Path) -> None:
-    from media_models import DEPRECATED_SOURCE_IDS
+    from media_models import DEPRECATED_SOURCE_IDS, RESTORED_SOURCE_IDS
     from media_task_manager import MediaTaskManager
 
     tm = MediaTaskManager(tmp_path / "media.sqlite")
@@ -223,8 +359,18 @@ async def test_task_manager_seeds_and_upserts_article(tmp_path: Path) -> None:
         source_ids = {source["id"] for source in sources}
         assert {"ithome", "qbitai", "fjsen-taihai"}.issubset(source_ids)
         assert {"xinhua-taiwan", "people-taiwan"}.issubset(source_ids)
+        assert source_ids.isdisjoint(DEPRECATED_SOURCE_IDS)
+        all_source_ids = {
+            source["id"] for source in await tm.list_sources(include_deprecated=True)
+        }
+        assert "yicai-news" in all_source_ids - source_ids
         enabled_source_ids = {source["id"] for source in await tm.list_sources(enabled_only=True)}
         assert enabled_source_ids.isdisjoint(DEPRECATED_SOURCE_IDS)
+        assert RESTORED_SOURCE_IDS.issubset(enabled_source_ids)
+        await tm.set_source_enabled("people-politics", False)
+        await tm.sync_builtin_sources()
+        enabled_after_sync = {source["id"] for source in await tm.list_sources(enabled_only=True)}
+        assert "people-politics" in enabled_after_sync
         toggled = await tm.set_source_enabled("ithome", False)
         assert toggled["enabled"] is False
         source = await tm.add_custom_source(
