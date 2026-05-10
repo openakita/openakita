@@ -378,6 +378,8 @@ def test_report_markdown_renderer_drops_alignment_rows() -> None:
             [
                 "| 序号 | 核心事件 | 来源媒体 |",
                 "| :--- | :--- | :--- |",
+                "| - | - | - |",
+                "| :— | —: | :–: |",
                 "| 01 | 测试事件 | 联合早报 |",
             ]
         )
@@ -385,6 +387,76 @@ def test_report_markdown_renderer_drops_alignment_rows() -> None:
 
     assert "<tbody><tr><td>01</td><td>测试事件</td><td>联合早报</td></tr></tbody>" in html
     assert ":---" not in html
+    assert "<td>-</td>" not in html
+
+
+@pytest.mark.asyncio
+async def test_report_push_renders_pdf_before_im_file_send(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import plugin as media_plugin
+
+    async def fake_render(html: str, out_path: Path) -> None:
+        assert "<html" in html
+        out_path.write_bytes(b"%PDF-1.4 stub\n")
+
+    class StubAdapter:
+        def __init__(self) -> None:
+            self.file_calls: list[dict[str, str]] = []
+            self.text_calls: list[tuple[str, str]] = []
+
+        def has_capability(self, name: str) -> bool:
+            return name == "send_file"
+
+        async def send_file(self, chat_id: str, file_path: str, caption: str = "") -> str:
+            self.file_calls.append({"chat_id": chat_id, "file_path": file_path, "caption": caption})
+            return "file-1"
+
+        async def send_text(self, chat_id: str, text: str) -> str:
+            self.text_calls.append((chat_id, text))
+            return "text-1"
+
+    class StubGateway:
+        def __init__(self, adapter: StubAdapter) -> None:
+            self.adapter = adapter
+
+        def get_adapter(self, channel: str) -> StubAdapter | None:
+            return self.adapter if channel == "wechat" else None
+
+    class StubAPI:
+        def __init__(self, adapter: StubAdapter) -> None:
+            self._host = {"gateway": StubGateway(adapter)}
+            self.logs: list[tuple[str, str]] = []
+
+        def log(self, message: str, level: str = "info") -> None:
+            self.logs.append((level, message))
+
+    monkeypatch.setattr(media_plugin, "_render_report_html_to_pdf", fake_render)
+    adapter = StubAdapter()
+    p = media_plugin.Plugin()
+    p._api = StubAPI(adapter)
+    p._data_dir = tmp_path
+
+    result = await p._push_report_to_channel(
+        {
+            "id": "r1",
+            "title": "融媒智策晚报",
+            "kind": "daily_brief",
+            "markdown": "# 融媒智策晚报\n\n- 台海与 AI 重点动态",
+            "html": "<html><body><h1>融媒智策晚报</h1></body></html>",
+            "meta": {},
+        },
+        channel="wechat",
+        chat_id="chat-1",
+    )
+
+    assert result["ok"] is True
+    assert result["mode"] == "file"
+    assert result["format"] == "pdf"
+    assert adapter.file_calls[0]["file_path"].endswith(".pdf")
+    assert adapter.file_calls[0]["caption"] == ""
+    assert Path(adapter.file_calls[0]["file_path"]).read_bytes().startswith(b"%PDF")
+    assert "已发送 PDF 报表附件" in adapter.text_calls[0][1]
 
 
 def test_validate_feed_url_rejects_localhost() -> None:

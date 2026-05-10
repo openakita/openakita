@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import platform
 import sys
 import time
 from pathlib import Path
@@ -122,18 +124,6 @@ def _report_download_content(row: dict[str, Any], fmt: str) -> tuple[str, str, s
     raise HTTPException(status_code=400, detail="fmt must be md or html")
 
 
-def _write_report_push_file(data_dir: Path, row: dict[str, Any], fmt: str = "html") -> Path:
-    content, _media_type, filename = _report_download_content(row, fmt)
-    report_id = str(row.get("id") or "")
-    safe_report_id = "".join(ch for ch in report_id if ch.isalnum() or ch in "-_")[:12]
-    target_dir = data_dir / "push_exports"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    stem, suffix = filename.rsplit(".", 1)
-    target = target_dir / f"{stem}-{safe_report_id}.{suffix}" if safe_report_id else target_dir / filename
-    target.write_text(content, encoding="utf-8")
-    return target
-
-
 def _report_push_summary(row: dict[str, Any], *, file_sent: bool) -> str:
     title = str(row.get("title") or row.get("kind") or "融媒智策报告").strip()
     markdown = str(row.get("markdown") or "").strip()
@@ -143,9 +133,107 @@ def _report_push_summary(row: dict[str, Any], *, file_sent: bool) -> str:
         if line.strip() and not line.strip().startswith("|") and not set(line.strip()) <= {"-", "_", "*"}
     ]
     highlights = [line for line in lines if line and line != title][:3]
-    prefix = "已发送 HTML 报表附件" if file_sent else "HTML 报表附件发送失败，先发送摘要"
+    prefix = "已发送 PDF 报表附件" if file_sent else "PDF 报表附件发送失败，先发送摘要"
     body = "\n".join(f"- {item[:120]}" for item in highlights) or "- 请打开报告查看完整内容。"
     return f"{prefix}：{title}\n{body}"
+
+
+def _bundled_runtime_roots() -> list[Path]:
+    roots: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass))
+    exe_dir = Path(sys.executable).parent
+    candidates = [exe_dir]
+    if exe_dir.name != "_internal":
+        candidates.append(exe_dir / "_internal")
+    for candidate in candidates:
+        if candidate.is_dir() and candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
+def _find_bundled_chromium() -> tuple[str | None, Path | None]:
+    system = platform.system()
+    exe_name = "chrome.exe" if system == "Windows" else "chrome"
+    for root in _bundled_runtime_roots():
+        for browsers_name in ("playwright-browsers", "playwright-browser"):
+            browsers_root = root / browsers_name
+            if not browsers_root.is_dir():
+                continue
+            for chromium_dir in sorted(browsers_root.glob("chromium-*"), reverse=True):
+                candidates: list[Path] = []
+                if system == "Windows":
+                    candidates.extend(
+                        chromium_dir / win_dir / exe_name
+                        for win_dir in ("chrome-win64", "chrome-win")
+                    )
+                elif system == "Darwin":
+                    candidates.extend(
+                        chromium_dir
+                        / mac_dir
+                        / "Chromium.app"
+                        / "Contents"
+                        / "MacOS"
+                        / "Chromium"
+                        for mac_dir in ("chrome-mac-arm64", "chrome-mac")
+                    )
+                else:
+                    candidates.append(chromium_dir / "chrome-linux" / exe_name)
+                for candidate in candidates:
+                    if candidate.is_file():
+                        return str(candidate), browsers_root
+    return None, None
+
+
+def _configure_pdf_playwright_launch() -> dict[str, Any]:
+    launch_kwargs: dict[str, Any] = {"headless": True}
+    executable, browsers_root = _find_bundled_chromium()
+    if browsers_root is not None:
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_root)
+    if executable:
+        launch_kwargs["executable_path"] = executable
+    return launch_kwargs
+
+
+async def _render_report_html_to_pdf(html: str, out_path: Path) -> None:
+    launch_kwargs = _configure_pdf_playwright_launch()
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise RuntimeError("playwright_unavailable") from exc
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(**launch_kwargs)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html, wait_until="load")
+            await page.pdf(
+                path=str(out_path),
+                format="A4",
+                print_background=True,
+                margin={"top": "14mm", "right": "12mm", "bottom": "14mm", "left": "12mm"},
+            )
+            await page.close()
+        finally:
+            await browser.close()
+
+
+async def _write_report_push_pdf(data_dir: Path, row: dict[str, Any]) -> Path:
+    html, _media_type, filename = _report_download_content(row, "html")
+    safe_name = Path(filename).name
+    if safe_name.lower().endswith(".html"):
+        safe_name = safe_name[:-5] + ".pdf"
+    elif not safe_name.lower().endswith(".pdf"):
+        safe_name += ".pdf"
+    report_id = str(row.get("id") or "")
+    safe_report_id = "".join(ch for ch in report_id if ch.isalnum() or ch in "-_")[:12]
+    target_dir = data_dir / "push_exports"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stem = safe_name.rsplit(".", 1)[0]
+    target = target_dir / f"{stem}-{safe_report_id}.pdf" if safe_report_id else target_dir / safe_name
+    await _render_report_html_to_pdf(html, target)
+    return target
 
 
 def _serialize_schedule(task: Any) -> dict[str, Any]:
@@ -439,41 +527,59 @@ class Plugin(PluginBase):
     ) -> dict[str, Any]:
         if self._api is None:
             raise HTTPException(status_code=503, detail="plugin api is not ready")
-        title = str(row.get("title") or row.get("kind") or "融媒智策报告")
         text = str(row.get("markdown") or "").strip()
         if not text:
             raise HTTPException(status_code=422, detail="report markdown is empty")
 
+        def _adapter() -> Any:
+            host = getattr(self._api, "_host", None) or {}
+            gateway = host.get("gateway") if hasattr(host, "get") else None
+            if gateway is None:
+                raise RuntimeError("No gateway available for report push")
+            get_adapter = getattr(gateway, "get_adapter", None)
+            adapter = get_adapter(channel) if callable(get_adapter) else None
+            if adapter is None:
+                raise RuntimeError(f"No adapter found for channel '{channel}'")
+            return adapter
+
         async def _send_text_best_effort(message: str) -> dict[str, Any]:
-            text_sender = getattr(self._api, "send_message_async", None)
-            if callable(text_sender):
+            try:
+                adapter = _adapter()
+                if hasattr(adapter, "send_text"):
+                    message_id = await adapter.send_text(chat_id, message)
+                    return {"ok": True, "message_id": message_id, "method": "adapter"}
+            except Exception as exc:  # noqa: BLE001
+                if self._api is not None:
+                    self._api.log(
+                        f"{PLUGIN_ID}: adapter text push failed; trying PluginAPI sender ({exc!r})",
+                        "warning",
+                    )
+            legacy_sender = getattr(self._api, "send_message", None)
+            if callable(legacy_sender):
                 try:
-                    message_id = await text_sender(channel=channel, chat_id=chat_id, text=message)
-                    return {"ok": True, "message_id": message_id, "method": "async"}
+                    legacy_sender(channel=channel, chat_id=chat_id, text=message)
+                    return {"ok": True, "method": "legacy"}
                 except Exception as exc:  # noqa: BLE001
                     if self._api is not None:
                         self._api.log(
-                            f"{PLUGIN_ID}: async text push failed; trying legacy sender ({exc!r})",
+                            f"{PLUGIN_ID}: PluginAPI text push failed ({exc!r})",
                             "warning",
                         )
-            legacy_sender = getattr(self._api, "send_message", None)
-            if callable(legacy_sender):
-                legacy_sender(channel=channel, chat_id=chat_id, text=message)
-                return {"ok": True, "method": "legacy"}
             raise HTTPException(status_code=503, detail="channel.send is not available")
 
-        file_sender = getattr(self._api, "send_file_async", None)
-        if not text_only and callable(file_sender):
+        if not text_only:
             data_dir = self._data_dir or self._resolve_data_dir()
             try:
-                target = _write_report_push_file(data_dir, row, "html")
-                caption = f"{title}\nHTML 报表已生成，建议打开附件查看完整排版。"
-                message_id = await file_sender(
-                    channel=channel,
-                    chat_id=chat_id,
-                    file_path=target,
-                    caption=caption,
-                )
+                adapter = _adapter()
+                if hasattr(adapter, "has_capability") and not adapter.has_capability("send_file"):
+                    raise RuntimeError(f"Adapter '{channel}' does not support send_file")
+                target = await _write_report_push_pdf(data_dir, row)
+                try:
+                    message_id = await adapter.send_file(chat_id, str(target), caption="")
+                except TypeError as exc:
+                    if "caption" not in str(exc):
+                        raise
+                    message_id = await adapter.send_file(chat_id, str(target))
                 summary_result: dict[str, Any]
                 try:
                     summary_result = await _send_text_best_effort(_report_push_summary(row, file_sent=True))
@@ -482,7 +588,7 @@ class Plugin(PluginBase):
                 return {
                     "ok": True,
                     "mode": "file",
-                    "format": "html",
+                    "format": "pdf",
                     "file": str(target),
                     "message_id": message_id,
                     "summary_result": summary_result,

@@ -505,12 +505,13 @@ def _split_table_row(line: str) -> list[str]:
 
 
 def _is_table_separator(line: str) -> bool:
-    return bool(re.fullmatch(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?", line))
+    cells = _split_table_row(line)
+    return bool(cells) and all(_is_table_separator_cell(cell) for cell in cells)
 
 
 def _is_table_separator_cell(cell: str) -> bool:
-    normalized = cell.strip().replace("\\-", "-")
-    return bool(re.fullmatch(r":?-{3,}:?", normalized))
+    normalized = re.sub(r"\s+", "", cell.strip().replace("\\-", "-").replace("—", "-").replace("–", "-"))
+    return bool(re.fullmatch(r":?-+:?", normalized))
 
 
 def _render_table(lines: list[str]) -> str:

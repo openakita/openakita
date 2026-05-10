@@ -8,7 +8,11 @@ window.MarkdownMini = {
       .replace(/`([^`]+)`/g, '<code>$1</code>');
   },
   isTableSeparator(line){
-    return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line);
+    const cells = String(line || '').trim().replace(/^\||\|$/g, '').split('|');
+    return cells.length > 0 && cells.every(cell => {
+      const normalized = cell.trim().replace(/\\-/g, '-').replace(/[—–]/g, '-').replace(/\s+/g, '');
+      return /^:?-+:?$/.test(normalized);
+    });
   },
   isTableLine(line){
     return line.includes('|') && (this.isTableSeparator(line) || /^\|?.+\|.+\|?$/.test(line));

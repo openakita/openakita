@@ -1853,7 +1853,7 @@ async function pushBriefReport(report=currentBriefReport, session=activeBriefSes
     method:'POST',
     body:JSON.stringify(target)
   });
-  toast(resp.ok ? (resp.mode === 'file' ? 'HTML 报表文件已推送到 IM' : '简报文本已推送到 IM') : '推送失败', !resp.ok);
+  toast(resp.ok ? (resp.mode === 'file' ? 'PDF 报表文件已推送到 IM' : '简报文本已推送到 IM') : '推送失败', !resp.ok);
   return resp;
 }
 async function runBrief(){
@@ -1879,7 +1879,7 @@ async function runBrief(){
     showBriefProcess();
     out.innerHTML = renderBriefProcess(0.96, '正在推送到 IM', 3);
     const pushResp = await pushBriefReport(report, params.session);
-    out.innerHTML = renderBriefProcess(1, pushResp.mode === 'file' ? '简报生成完成，已推送 HTML 报表文件' : '简报生成完成，已推送文本内容', 3);
+    out.innerHTML = renderBriefProcess(1, pushResp.mode === 'file' ? '简报生成完成，已推送 PDF 报表文件' : '简报生成完成，已推送文本内容', 3);
   }
   hideBriefProcess();
   return doneTask;
