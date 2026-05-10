@@ -930,6 +930,8 @@ class ToolExecutor:
 
                 if isinstance(result_str, str) and result_str.startswith("⚠️ 工具执行被中断:"):
                     success = False
+                if isinstance(result_str, str) and result_str.lstrip().startswith("❌"):
+                    success = False
 
                 if success and isinstance(result_str, str) and result_str.lstrip().startswith("{"):
                     try:

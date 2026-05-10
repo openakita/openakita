@@ -55,9 +55,7 @@ class OrgIdentity:
                 level = 1
         else:
             level = 0
-            if node.agent_profile_id:
-                role = self._get_profile_prompt(node.agent_profile_id) or ""
-            if not role and node.custom_prompt:
+            if node.custom_prompt:
                 role = node.custom_prompt
             if not role:
                 role = self._auto_generate_role(node)

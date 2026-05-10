@@ -45,6 +45,7 @@ from .types import (
     MemoryPriority,
     MemoryType,
     SemanticMemory,
+    normalize_tags,
 )
 from .unified_store import UnifiedStore
 from .vector_store import VectorStore
@@ -53,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 _apply_retention = apply_retention
+_UNSET_OWNER = object()
 
 
 class MemoryManager:
@@ -123,6 +125,8 @@ class MemoryManager:
         self._memories_lock = threading.RLock()
 
         self._current_session_id: str | None = None
+        self._current_user_id: str = "default"
+        self._current_workspace_id: str = "default"
         self._session_turns: list[ConversationTurn] = []
         self._recent_messages: list[dict] = []
 
@@ -265,7 +269,13 @@ class MemoryManager:
                 skipped += 1
                 continue
 
-            self.store.save_semantic(self._stamp_agent_id(mem))
+            self.store.save_semantic(
+                self._stamp_agent_id(mem),
+                scope="legacy_quarantine",
+                scope_owner="",
+                user_id="legacy",
+                workspace_id=self._current_workspace_id,
+            )
             existing_ids.add(mem.id)
             existing_fingerprints.add(fingerprint)
             migrated += 1
@@ -306,8 +316,18 @@ class MemoryManager:
 
     # ==================== Session Management ====================
 
-    def start_session(self, session_id: str) -> None:
+    def start_session(
+        self,
+        session_id: str,
+        *,
+        user_id: str | None | object = _UNSET_OWNER,
+        workspace_id: str | None | object = _UNSET_OWNER,
+    ) -> None:
         self._current_session_id = session_id
+        if user_id is not _UNSET_OWNER:
+            self._current_user_id = str(user_id).strip() if user_id else "anonymous"
+        if workspace_id is not _UNSET_OWNER:
+            self._current_workspace_id = str(workspace_id).strip() if workspace_id else "default"
         self._session_turns = []
         self._recent_messages = []
         self._session_cited_memories = []
@@ -332,27 +352,185 @@ class MemoryManager:
         if self._get_replace_backend() is None:
             logger.debug(f"[Memory] start_session({session_id}): fresh session (offset=0)")
 
-    def _visible_scope_pairs(self) -> list[tuple[str, str]]:
+    def _visible_scope_entries(self) -> list[tuple[str, str, str, str]]:
         """Return scopes visible to the current turn, ordered from private to shared.
 
-        会话记忆优先，全局记忆只作为明确共享的长期偏好/经验补充。
+        会话记忆优先，随后是当前用户长期记忆，最后是系统记忆。
+        legacy_quarantine 永不默认进入推理链。
         """
         current = (self._current_session_id or "").strip()
+        user_id = self._current_user_id or "default"
+        workspace_id = self._current_workspace_id or "default"
+        entries: list[tuple[str, str, str, str]] = []
         if current:
-            return [("session", current), ("global", "")]
-        return [("global", "")]
+            entries.append(("session", current, user_id, workspace_id))
+        entries.append(("user", "", user_id, workspace_id))
+        entries.append(("system", "", "system", workspace_id))
+        return entries
+
+    def _visible_scope_pairs(self) -> list[tuple[str, str]]:
+        """Backward-compatible view for callers that only understand scope pairs."""
+        return [(scope, owner) for scope, owner, _user, _workspace in self._visible_scope_entries()]
 
     def _set_retrieval_scope_context(self) -> None:
         retrieval_engine = getattr(self, "retrieval_engine", None)
         setter = getattr(retrieval_engine, "set_scope_context", None)
         if setter:
-            setter(self._visible_scope_pairs())
+            setter(self._visible_scope_entries())
 
     def _current_write_scope(self) -> tuple[str, str]:
         current = (self._current_session_id or "").strip()
         if current:
             return "session", current
-        return "global", ""
+        return "user", ""
+
+    def _current_owner(self) -> tuple[str, str]:
+        return self._current_user_id or "default", self._current_workspace_id or "default"
+
+    _IDENTITY_SLOT_ALIASES: dict[str, str] = {
+        "姓名": "user.name",
+        "名字": "user.name",
+        "称呼": "user.name",
+        "name": "user.name",
+        "年龄": "user.age",
+        "age": "user.age",
+        "城市": "user.city",
+        "所在地": "user.city",
+        "位置": "user.city",
+        "居住地": "user.city",
+        "location": "user.city",
+        "city": "user.city",
+        "职业": "user.job",
+        "工作": "user.job",
+        "职位": "user.job",
+        "job": "user.job",
+        "profession": "user.job",
+        "宠物": "user.pet",
+        "pet": "user.pet",
+    }
+
+    @classmethod
+    def _identity_slot_for(cls, memory: SemanticMemory) -> str:
+        subject = (memory.subject or "").strip().lower()
+        if subject not in {"用户", "user", "当前用户", "我"}:
+            return ""
+        predicate = (memory.predicate or "").strip().lower()
+        for alias, slot in cls._IDENTITY_SLOT_ALIASES.items():
+            if alias.lower() == predicate:
+                return slot
+        if predicate.startswith("preference.") or predicate.startswith("偏好."):
+            return f"user.preference.{predicate.split('.', 1)[1]}"
+        return ""
+
+    def _save_identity_slot_memory(
+        self,
+        memory: SemanticMemory,
+        *,
+        scope: str,
+        scope_owner: str,
+        user_id: str,
+        workspace_id: str,
+        slot: str,
+    ) -> str:
+        """Save identity facts as active slots and supersede older conflicting values."""
+        old_active = self.store.query_semantic(
+            scope=scope,
+            scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            limit=20,
+            include_inactive=False,
+        )
+        memory.tags = sorted({*normalize_tags(memory.tags), "identity_slot", slot})
+        self.store.save_semantic(
+            self._stamp_agent_id(memory),
+            scope=scope,
+            scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            skip_dedup=True,
+        )
+        for old in old_active:
+            if old.id == memory.id or old.superseded_by:
+                continue
+            if self._identity_slot_for(old) != slot:
+                continue
+            self.store.update_semantic(old.id, {"superseded_by": memory.id})
+            with self._memories_lock:
+                cached = self._memories.get(old.id)
+                if cached:
+                    cached.superseded_by = memory.id
+        with self._memories_lock:
+            self._memories[memory.id] = memory
+            self._save_memories()
+        return memory.id
+
+    def _normalize_scope_for_owner(self, scope: str, source: str = "") -> tuple[str, str, str, str]:
+        """Normalize legacy/global user writes into owner-scoped user memories."""
+        norm_scope = (scope or "user").strip() or "user"
+        if norm_scope == "global":
+            norm_scope = "user"
+        user_id, workspace_id = self._current_owner()
+        if norm_scope == "system":
+            user_id = "system"
+        if norm_scope == "legacy_quarantine":
+            user_id = "legacy"
+        return norm_scope, source or "", user_id, workspace_id
+
+    def save_user_memory(
+        self,
+        memory: SemanticMemory,
+        *,
+        scope: str | None = None,
+        scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+        skip_dedup: bool = False,
+    ) -> str:
+        """Save user-owned semantic memory through the single owner-aware path."""
+        write_scope, write_owner = self._current_write_scope()
+        if scope:
+            write_scope = "user" if scope == "global" else scope
+        if scope_owner is not None:
+            write_owner = scope_owner
+        if write_scope == "system":
+            write_user = "system"
+        elif write_scope == "legacy_quarantine":
+            write_user = "legacy"
+        else:
+            write_user = user_id or self._current_user_id or "default"
+        write_workspace = workspace_id or self._current_workspace_id or "default"
+        memory.scope = write_scope
+        memory.scope_owner = write_owner
+        memory.user_id = write_user
+        memory.workspace_id = write_workspace
+        identity_slot = self._identity_slot_for(memory)
+        if identity_slot:
+            write_scope = "user"
+            write_owner = ""
+            memory.scope = write_scope
+            memory.scope_owner = write_owner
+            return self._save_identity_slot_memory(
+                memory,
+                scope=write_scope,
+                scope_owner=write_owner,
+                user_id=write_user,
+                workspace_id=write_workspace,
+                slot=identity_slot,
+            )
+        saved_id = self.store.save_semantic(
+            self._stamp_agent_id(memory),
+            scope=write_scope,
+            scope_owner=write_owner,
+            user_id=write_user,
+            workspace_id=write_workspace,
+            skip_dedup=skip_dedup,
+        )
+        if saved_id == memory.id:
+            with self._memories_lock:
+                self._memories[memory.id] = memory
+                self._save_memories()
+        return saved_id
 
     # 任务流水账识别：包含这些动词或客观操作描述的提取项几乎一定是
     # 一次性任务记录（删除 / 创建 / 上传 / 编辑 / 调用工具 / 帮我做 ...），
@@ -377,11 +555,13 @@ class MemoryManager:
         merged: list[SemanticMemory] = []
         seen: set[str] = set()
         per_scope_limit = max(limit, 1)
-        for scope, scope_owner in self._visible_scope_pairs():
+        for scope, scope_owner, user_id, workspace_id in self._visible_scope_entries():
             results = self.store.query_semantic(
                 **kwargs,
                 scope=scope,
                 scope_owner=scope_owner,
+                user_id=user_id,
+                workspace_id=workspace_id,
                 limit=per_scope_limit,
             )
             for mem in results:
@@ -403,13 +583,15 @@ class MemoryManager:
         """Search current-session memories first, then explicitly global memories."""
         merged: list[tuple[SemanticMemory, float]] = []
         seen: set[str] = set()
-        for scope, scope_owner in self._visible_scope_pairs():
+        for scope, scope_owner, user_id, workspace_id in self._visible_scope_entries():
             scored = self.store.search_semantic_scored(
                 query,
                 limit=limit,
                 filter_type=filter_type,
                 scope=scope,
                 scope_owner=scope_owner,
+                user_id=user_id,
+                workspace_id=workspace_id,
             )
             for mem, score in scored:
                 if mem.id in seen:
@@ -629,16 +811,21 @@ class MemoryManager:
             priority = MemoryPriority.SHORT_TERM
 
         write_scope, write_owner = self._current_write_scope()
+        write_user, write_workspace = self._current_owner()
 
         # Dedup layer 1: exact subject+predicate match → evolve existing
         subject = item.get("subject", "")
         predicate = item.get("predicate", "")
-        if subject and predicate:
+        self._sync_profile_fact(subject, predicate, content)
+        _identity_probe = SemanticMemory(subject=subject, predicate=predicate, content=content)
+        if subject and predicate and not self._identity_slot_for(_identity_probe):
             existing = self.store.find_similar(
                 subject,
                 predicate,
                 scope=write_scope,
                 scope_owner=write_owner,
+                user_id=write_user,
+                workspace_id=write_workspace,
             )
             if existing:
                 self._evolve_memory(existing, content, importance)
@@ -653,6 +840,8 @@ class MemoryManager:
                     limit=5,
                     scope=write_scope,
                     scope_owner=write_owner,
+                    user_id=write_user,
+                    workspace_id=write_workspace,
                 )
                 for s in similar:
                     existing_content = (s.content or "").strip()
@@ -686,18 +875,53 @@ class MemoryManager:
             tags=[item.get("type", "fact").lower()],
         )
         _apply_retention(mem, item.get("duration"))
-        saved_id = self.store.save_semantic(
-            self._stamp_agent_id(mem),
+        saved_id = self.save_user_memory(
+            mem,
             scope=write_scope,
             scope_owner=write_owner,
+            user_id=write_user,
+            workspace_id=write_workspace,
         )
 
-        if saved_id == mem.id:
-            with self._memories_lock:
-                self._memories[mem.id] = mem
-                self._save_memories()
-
         return saved_id
+
+    def _sync_profile_fact(self, subject: str, predicate: str, content: str) -> None:
+        """Mirror structured user identity facts into UserProfileManager when possible."""
+        if not content:
+            return
+        if (subject or "").strip().lower() not in {"用户", "user", "当前用户"}:
+            return
+        profile_mgr = getattr(self, "profile_manager", None)
+        if profile_mgr is None:
+            return
+        try:
+            from openakita.core.user_profile import resolve_profile_key
+        except Exception:
+            return
+        key = resolve_profile_key((predicate or "").strip())
+        available = set(getattr(profile_mgr, "get_available_keys", lambda: [])())
+        if key not in available:
+            return
+        value = self._extract_profile_value(key, content)
+        if value:
+            with contextlib.suppress(Exception):
+                profile_mgr.update_profile(key, value)
+
+    @staticmethod
+    def _extract_profile_value(key: str, content: str) -> str:
+        import re
+
+        text = (content or "").strip()
+        if key == "age":
+            m = re.search(r"(\d{1,3})\s*岁?", text)
+            return m.group(1) if m else ""
+        if key in {"city", "location"}:
+            m = re.search(r"(?:在|位于|住在|居住在|城市[是为:]?)\s*([^，。；,;\s]+)", text)
+            return m.group(1) if m else text[:40]
+        if key in {"name", "profession", "work_field", "preferred_language"}:
+            m = re.search(r"(?:叫|是|为|使用|喜欢)\s*([^，。；,;\s]+)", text)
+            return m.group(1) if m else text[:40]
+        return text[:80]
 
     @staticmethod
     def _fast_dedup_check(new: str, existing: str) -> str:
@@ -756,10 +980,10 @@ class MemoryManager:
         updates: dict = {
             "confidence": min(1.0, existing.confidence + 0.1),
         }
-        should_update_content = new_importance > existing.importance_score or (
-            new_importance >= existing.importance_score
-            and len(new_content) > len(existing.content or "")
-        )
+        # Same subject+predicate with a different value is an update/conflict,
+        # not a duplicate. Always move the active fact forward so "28 -> 29"
+        # cannot be swallowed by near-duplicate logic.
+        should_update_content = bool(new_content and new_content != (existing.content or ""))
         if should_update_content:
             updates["content"] = new_content
         updates["importance_score"] = max(existing.importance_score, new_importance)
@@ -1071,11 +1295,16 @@ class MemoryManager:
     async def on_context_compressing(self, messages: list[dict]) -> None:
         """Called before context compression — extract quick facts and save to queue."""
         quick_facts = self.extractor.extract_quick_facts(messages)
+        write_scope, write_owner = self._current_write_scope()
+        write_user, write_workspace = self._current_owner()
         for fact in quick_facts:
-            saved_id = self.store.save_semantic(self._stamp_agent_id(fact))
-            if saved_id == fact.id:
-                with self._memories_lock:
-                    self._memories[fact.id] = fact
+            self.save_user_memory(
+                fact,
+                scope=write_scope,
+                scope_owner=write_owner,
+                user_id=write_user,
+                workspace_id=write_workspace,
+            )
         if quick_facts:
             logger.info(f"[Memory] Quick extraction before compression: {len(quick_facts)} facts")
 
@@ -1102,6 +1331,10 @@ class MemoryManager:
                     for n in result.nodes:
                         if self.agent_id and not n.agent_id:
                             n.agent_id = self.agent_id
+                        if not getattr(n, "user_id", "") or n.user_id == "default":
+                            n.user_id = write_user
+                        if not getattr(n, "workspace_id", "") or n.workspace_id == "default":
+                            n.workspace_id = write_workspace
                     self.relational_store.save_nodes_batch(result.nodes)
                     self._relational_pending_nodes.extend(result.nodes)
                 if result.edges:
@@ -1162,16 +1395,37 @@ class MemoryManager:
                 return content[len(prefix) :]
         return content
 
-    def add_memory(self, memory: Memory, scope: str = "global", scope_owner: str = "") -> str:
+    def add_memory(
+        self,
+        memory: Memory,
+        scope: str = "user",
+        scope_owner: str = "",
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> str:
         """添加记忆 (v1 compat: writes to both v1 and v2 stores)"""
+        if scope == "global":
+            scope = "user"
+        if scope == "system":
+            user_id = "system"
+        elif scope == "legacy_quarantine":
+            user_id = "legacy"
+        else:
+            user_id = user_id or self._current_user_id or "default"
+        workspace_id = workspace_id or self._current_workspace_id or "default"
         memory.scope = scope
         memory.scope_owner = scope_owner
+        memory.user_id = user_id
+        memory.workspace_id = workspace_id
         with self._memories_lock:
             existing = [
                 m
                 for m in self._memories.values()
                 if (getattr(m, "scope", "global") or "global") == scope
                 and (getattr(m, "scope_owner", "") or "") == scope_owner
+                and (getattr(m, "user_id", "default") or "default") == user_id
+                and (getattr(m, "workspace_id", "default") or "default") == workspace_id
             ]
             unique = self.extractor.deduplicate([memory], existing)
             if not unique:
@@ -1194,6 +1448,13 @@ class MemoryManager:
                             if (
                                 (getattr(existing_mem, "scope", "global") or "global") != scope
                                 or (getattr(existing_mem, "scope_owner", "") or "") != scope_owner
+                                    or (getattr(existing_mem, "user_id", "default") or "default")
+                                    != user_id
+                                    or (
+                                        getattr(existing_mem, "workspace_id", "default")
+                                        or "default"
+                                    )
+                                    != workspace_id
                             ):
                                 continue
                             existing_core = self._strip_common_prefix(existing_mem.content)
@@ -1208,6 +1469,8 @@ class MemoryManager:
                         limit=5,
                         scope=scope,
                         scope_owner=scope_owner,
+                        user_id=user_id,
+                        workspace_id=workspace_id,
                     )
                     core_lower = core_content.strip()[:80].lower()
                     for hit in fts_hits:
@@ -1237,8 +1500,14 @@ class MemoryManager:
             priority=memory.priority,
             content=memory.content,
             source=memory.source,
+            subject=getattr(memory, "subject", "") or "",
+            predicate=getattr(memory, "predicate", "") or "",
             importance_score=memory.importance_score,
             tags=memory.tags,
+            scope=scope,
+            scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
         )
         if hasattr(memory, "expires_at"):
             sem.expires_at = memory.expires_at
@@ -1246,6 +1515,8 @@ class MemoryManager:
             self._stamp_agent_id(sem),
             scope=scope,
             scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
             skip_dedup=True,
         )
 
@@ -1279,6 +1550,8 @@ class MemoryManager:
                     node_type=_node_type,
                     session_id=self._current_session_id or "",
                     agent_id=self.agent_id or "",
+                    user_id=user_id,
+                    workspace_id=workspace_id,
                     importance=memory.importance_score,
                     confidence=0.7,
                 )
@@ -1306,11 +1579,19 @@ class MemoryManager:
         memory_type: MemoryType | None = None,
         tags: list[str] | None = None,
         limit: int = 10,
-        scope: str = "global",
+        scope: str = "user",
         scope_owner: str = "",
+        user_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[Memory]:
         results = []
         now = datetime.now()
+        if scope == "global":
+            scope = "user"
+        user_id = user_id or (
+            "system" if scope == "system" else "legacy" if scope == "legacy_quarantine" else self._current_user_id
+        ) or "default"
+        workspace_id = workspace_id or self._current_workspace_id or "default"
         with self._memories_lock:
             for memory in self._memories.values():
                 if memory.superseded_by:
@@ -1318,8 +1599,14 @@ class MemoryManager:
                 if memory.expires_at and memory.expires_at < now:
                     continue
                 mem_scope = getattr(memory, "scope", "global") or "global"
+                if mem_scope == "global":
+                    mem_scope = "user"
                 mem_owner = getattr(memory, "scope_owner", "") or ""
                 if mem_scope != scope or mem_owner != scope_owner:
+                    continue
+                if (getattr(memory, "user_id", "default") or "default") != user_id:
+                    continue
+                if (getattr(memory, "workspace_id", "default") or "default") != workspace_id:
                     continue
                 if memory_type and memory.type != memory_type:
                     continue

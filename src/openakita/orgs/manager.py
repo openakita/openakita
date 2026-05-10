@@ -21,6 +21,7 @@ from .models import (
     OrgStatus,
     _new_id,
     _now_iso,
+    infer_agent_profile_id_for_node,
 )
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,8 @@ class OrgManager:
                     for key in _CONFIG_FIELDS:
                         if key in nd:
                             setattr(old, key, nd[key])
+                    if not old.agent_profile_id:
+                        old.agent_profile_id = infer_agent_profile_id_for_node(old.to_dict())
                     updated.append(old)
                 else:
                     clean = {k: v for k, v in nd.items() if k not in _RUNTIME_KEYS}
@@ -313,6 +316,9 @@ class OrgManager:
         tpl["status"] = OrgStatus.DORMANT.value
         if overrides:
             tpl.update(overrides)
+        for node in tpl.get("nodes", []) or []:
+            if isinstance(node, dict) and not node.get("agent_profile_id"):
+                node["agent_profile_id"] = infer_agent_profile_id_for_node(node)
         return self.create(tpl)
 
     def save_as_template(self, org_id: str, template_id: str | None = None) -> str:

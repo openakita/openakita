@@ -571,19 +571,36 @@ _CLAIMED_TOOL_TO_FRAGMENTS: dict[str, tuple[str, ...]] = {
 # 执行过；否则按幻觉降级处理。映射只覆盖最常被滥用的高风险动词，避免
 # 误拦低风险描述（如"已分析/已生成"等）。
 _VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
-    "删除": ("delete_file", "delete_memory", "remove", "cancel_scheduled_task"),
-    "删掉": ("delete_file", "delete_memory", "remove"),
+    "删除": (
+        "delete_file",
+        "delete_memory",
+        "remove",
+        "cancel_scheduled_task",
+        "run_shell",
+        "run_powershell",
+    ),
+    "删掉": ("delete_file", "delete_memory", "remove", "run_shell", "run_powershell"),
+    "清空": ("delete_file", "run_shell", "run_powershell"),
     "编辑": ("edit_file",),
     "修改": ("edit_file", "update_user_profile", "update_scheduled_task"),
     "覆盖": ("write_file", "edit_file"),
     "写入": ("write_file", "edit_file"),
-    "保存": ("write_file", "edit_file", "add_memory", "update_user_profile"),
+    "保存": (
+        "write_file",
+        "edit_file",
+        "add_memory",
+        "update_user_profile",
+        "create_plan_file",
+        "create_todo",
+        "schedule_task",
+    ),
     "保存到记忆": ("add_memory", "update_user_profile"),
     "记住": ("add_memory", "update_user_profile"),
-    "记录": ("add_memory", "create_todo"),
+    "记录": ("add_memory", "create_todo", "schedule_task", "create_plan_file"),
     "存入": ("add_memory", "update_user_profile", "write_file"),
-    "创建": ("write_file", "create_todo", "schedule_task", "create_agent"),
+    "创建": ("write_file", "create_todo", "schedule_task", "create_agent", "create_plan_file"),
     "添加": ("add_memory", "create_todo", "schedule_task", "edit_file"),
+    "安排": ("schedule_task", "create_todo"),
     "移动": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
     "移至": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
     "重命名": ("move_file", "run_shell", "run_powershell"),
@@ -733,15 +750,18 @@ def _guard_unbacked_action_claim(
         # 否则用户问"复述一下你做了什么"会被替换成"没有凭证"。
         if _RECAP_NEAR_RE.search(text):
             return text
-        memory_markers = ("记住", "记忆")
-        if any(marker in text for marker in memory_markers):
-            return (
-                "我会在本轮对话中按这个信息处理，但当前没有检测到长期记忆写入凭证，"
-                "所以不会声称已经保存到记忆。"
-            )
+        unbacked = _extract_unbacked_verbs(text, set())
+        verbs_str = "/".join(unbacked[:3]) if unbacked else "外部动作"
+        memory_hint = (
+            "当前没有检测到长期记忆写入凭证，所以请勿据此认定已写入长期记忆。"
+            if any(v in {"保存", "保存到记忆", "记住", "记录", "存入"} for v in unbacked)
+            or "记忆" in text
+            else "当前没有检测到实际工具执行凭证，因此请勿据此认定外部动作已经完成。"
+        )
         return (
-            "当前没有检测到实际工具执行凭证，因此我不能声称外部动作已经完成。"
-            "我可以继续按你的要求执行，或先给出可执行方案。"
+            text.rstrip()
+            + f"\n\n⚠️ 一致性提示：上文宣称已『{verbs_str}』，但本轮没有成功工具调用凭证。"
+            + memory_hint
         )
 
     unbacked = _extract_unbacked_verbs(text, successful_tools)

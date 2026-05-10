@@ -77,18 +77,29 @@ class RetrievalEngine:
         self._decompose_cache: dict[str, dict] = {}
         self._external_sources: list = []
         self._plugin_hooks = None
-        self._scope_pairs: list[tuple[str, str]] = [("global", "")]
+        self._scope_pairs: list[tuple[str, str, str, str]] = [
+            ("user", "", "default", "default")
+        ]
 
-    def set_scope_context(self, scope_pairs: list[tuple[str, str]] | None = None) -> None:
+    def set_scope_context(self, scope_pairs: list[tuple] | None = None) -> None:
         """Set the visible memory scopes for this retrieval engine."""
         pairs = []
-        for scope, owner in scope_pairs or [("global", "")]:
+        for entry in scope_pairs or [("user", "", "default", "default")]:
+            if len(entry) >= 4:
+                scope, owner, user_id, workspace_id = entry[:4]
+            else:
+                scope, owner = entry[:2]
+                user_id, workspace_id = "default", "default"
             norm_scope = (scope or "global").strip() or "global"
+            if norm_scope == "global":
+                norm_scope = "user"
             norm_owner = (owner or "").strip()
-            pair = (norm_scope, norm_owner)
+            norm_user = (user_id or "default").strip() or "default"
+            norm_workspace = (workspace_id or "default").strip() or "default"
+            pair = (norm_scope, norm_owner, norm_user, norm_workspace)
             if pair not in pairs:
                 pairs.append(pair)
-        self._scope_pairs = pairs or [("global", "")]
+        self._scope_pairs = pairs or [("user", "", "default", "default")]
 
     def retrieve(
         self,
@@ -243,12 +254,14 @@ class RetrievalEngine:
         now = datetime.now()
         candidates = []
         seen: set[str] = set()
-        for scope, scope_owner in self._scope_pairs:
+        for scope, scope_owner, user_id, workspace_id in self._scope_pairs:
             scored_results = self.store.search_semantic_scored(
                 query,
                 limit=limit,
                 scope=scope,
                 scope_owner=scope_owner,
+                user_id=user_id,
+                workspace_id=workspace_id,
             )
             for mem, raw_score in scored_results:
                 if mem.id in seen:
@@ -275,7 +288,7 @@ class RetrievalEngine:
     def _search_episodes(self, query: str, limit: int = 5) -> list[RetrievalCandidate]:
         entities = self._extract_query_entities(query)
         episodes: list[Episode] = []
-        session_ids = [owner for scope, owner in self._scope_pairs if scope == "session" and owner]
+        session_ids = [owner for scope, owner, _user, _workspace in self._scope_pairs if scope == "session" and owner]
 
         for entity in entities[:3]:
             if session_ids:
@@ -317,11 +330,13 @@ class RetrievalEngine:
         query_tokens = set(query.lower().split()) if query else set()
         candidates = []
         seen: set[str] = set()
-        for scope, scope_owner in self._scope_pairs:
+        for scope, scope_owner, user_id, workspace_id in self._scope_pairs:
             memories = self.store.query_semantic(
                 min_importance=0.6,
                 scope=scope,
                 scope_owner=scope_owner,
+                user_id=user_id,
+                workspace_id=workspace_id,
                 limit=limit,
             )
             for mem in memories:
@@ -404,7 +419,7 @@ class RetrievalEngine:
 
         search_terms = self._get_attachment_search_terms(raw_query, search_keywords)
         session_id = ""
-        for scope, owner in self._scope_pairs:
+        for scope, owner, _user, _workspace in self._scope_pairs:
             if scope == "session" and owner:
                 session_id = owner
                 break

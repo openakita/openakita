@@ -78,13 +78,17 @@ class UnifiedStore:
     def save_semantic(
         self,
         memory: SemanticMemory,
-        scope: str = "global",
+        scope: str = "user",
         scope_owner: str = "",
+        user_id: str = "default",
+        workspace_id: str = "default",
         *,
         skip_dedup: bool = False,
     ) -> str:
         memory.scope = scope
         memory.scope_owner = scope_owner
+        memory.user_id = user_id or "default"
+        memory.workspace_id = workspace_id or "default"
 
         if not skip_dedup and memory.content and len(memory.content.strip()) > 10:
             try:
@@ -92,6 +96,8 @@ class UnifiedStore:
                     memory.content,
                     scope,
                     scope_owner,
+                    memory.user_id,
+                    memory.workspace_id,
                 )
                 if dup_id:
                     logger.debug(
@@ -122,12 +128,28 @@ class UnifiedStore:
         content: str,
         scope: str,
         scope_owner: str,
+        user_id: str,
+        workspace_id: str,
     ) -> str | None:
         """Return existing memory ID if *content* is near-duplicate, else None."""
         core = content.strip()[:100].lower()
-        hits = self.search.search(core, limit=5)
+        hits = self.search.search(
+            core,
+            limit=5,
+            scope=scope,
+            scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
         if not hits and self._fts5_fallback is not None:
-            hits = self._fts5_fallback.search(core, limit=5)
+            hits = self._fts5_fallback.search(
+                core,
+                limit=5,
+                scope=scope,
+                scope_owner=scope_owner,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
         for mid, _score in hits:
             existing = self.db.get_memory(mid)
             if not existing:
@@ -137,6 +159,10 @@ class UnifiedStore:
             if (existing.get("scope") or "global") != scope:
                 continue
             if (existing.get("scope_owner") or "") != scope_owner:
+                continue
+            if (existing.get("user_id") or "default") != user_id:
+                continue
+            if (existing.get("workspace_id") or "default") != workspace_id:
                 continue
             ec = (existing.get("content") or "").strip().lower()
             if core[:80] in ec or ec[:80] in core:
@@ -207,8 +233,10 @@ class UnifiedStore:
         query: str,
         limit: int = 10,
         filter_type: str | None = None,
-        scope: str = "global",
+        scope: str = "user",
         scope_owner: str = "",
+        user_id: str = "default",
+        workspace_id: str = "default",
         include_inactive: bool = False,
     ) -> list[SemanticMemory]:
         scored = self.search_semantic_scored(
@@ -217,6 +245,8 @@ class UnifiedStore:
             filter_type=filter_type,
             scope=scope,
             scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
             include_inactive=include_inactive,
         )
         return [mem for mem, _score in scored]
@@ -226,8 +256,10 @@ class UnifiedStore:
         query: str,
         limit: int = 10,
         filter_type: str | None = None,
-        scope: str = "global",
+        scope: str = "user",
         scope_owner: str = "",
+        user_id: str = "default",
+        workspace_id: str = "default",
         include_inactive: bool = False,
     ) -> list[tuple[SemanticMemory, float]]:
         """Like search_semantic but also returns the raw similarity score.
@@ -242,6 +274,8 @@ class UnifiedStore:
             filter_type=filter_type,
             scope=scope,
             scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
         )
         merged: dict[str, float] = {mid: float(s) for mid, s in primary}
 
@@ -253,6 +287,8 @@ class UnifiedStore:
                     filter_type=filter_type,
                     scope=scope,
                     scope_owner=scope_owner,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
                 )
                 for mid, s in fts_results:
                     prev = merged.get(mid)
@@ -272,7 +308,14 @@ class UnifiedStore:
                     continue
                 d_scope = d.get("scope") or "global"
                 d_owner = d.get("scope_owner") or ""
-                if d_scope == scope and d_owner == scope_owner:
+                d_user = d.get("user_id") or "default"
+                d_workspace = d.get("workspace_id") or "default"
+                if (
+                    d_scope == scope
+                    and d_owner == scope_owner
+                    and d_user == user_id
+                    and d_workspace == workspace_id
+                ):
                     scored.append((SemanticMemory.from_dict(d), float(score)))
                     if len(scored) >= limit:
                         break
@@ -285,15 +328,35 @@ class UnifiedStore:
         return [SemanticMemory.from_dict(r) for r in rows]
 
     def find_similar(
-        self, subject: str, predicate: str, scope: str = "global", scope_owner: str = ""
+        self,
+        subject: str,
+        predicate: str,
+        scope: str = "user",
+        scope_owner: str = "",
+        user_id: str = "default",
+        workspace_id: str = "default",
     ) -> SemanticMemory | None:
         """Find existing memory with same subject+predicate for update detection."""
-        rows = self.db.query(subject=subject, scope=scope, scope_owner=scope_owner, limit=10)
+        rows = self.db.query(
+            subject=subject,
+            scope=scope,
+            scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            limit=10,
+        )
         for row in rows:
             if row.get("predicate", "").lower() == predicate.lower():
                 return SemanticMemory.from_dict(row)
         query = f"{subject} {predicate}"
-        results = self.search.search(query, limit=5)
+        results = self.search.search(
+            query,
+            limit=5,
+            scope=scope,
+            scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
         for mid, score in results:
             if score > 0.8:
                 d = self.db.get_memory(mid)
@@ -304,7 +367,14 @@ class UnifiedStore:
                 ):
                     d_scope = d.get("scope") or "global"
                     d_owner = d.get("scope_owner") or ""
-                    if d_scope == scope and d_owner == scope_owner:
+                    d_user = d.get("user_id") or "default"
+                    d_workspace = d.get("workspace_id") or "default"
+                    if (
+                        d_scope == scope
+                        and d_owner == scope_owner
+                        and d_user == user_id
+                        and d_workspace == workspace_id
+                    ):
                         return SemanticMemory.from_dict(d)
         return None
 
@@ -313,25 +383,33 @@ class UnifiedStore:
         memory_type: str | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
         include_inactive: bool = False,
     ) -> int:
         return self.db.count(
             memory_type,
             scope=scope,
             scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
             active_only=not include_inactive,
         )
 
     def load_all_memories(
         self,
-        scope: str = "global",
-        scope_owner: str = "",
+        scope: str | None = None,
+        scope_owner: str | None = None,
         *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
         include_inactive: bool = False,
     ) -> list[SemanticMemory]:
         rows = self.db.load_all(
             scope=scope,
             scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
             active_only=not include_inactive,
         )
         return [SemanticMemory.from_dict(r) for r in rows]

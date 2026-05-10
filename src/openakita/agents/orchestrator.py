@@ -224,7 +224,7 @@ class AgentMailbox:
     async def receive(self, timeout: float = 300.0) -> dict | None:
         try:
             return await asyncio.wait_for(self._queue.get(), timeout=timeout)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return None
 
     async def drain_all(self) -> list[dict]:
@@ -540,7 +540,7 @@ class AgentOrchestrator:
 
             return result
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             health.failed += 1
             health.last_error = "timeout_idle"
             self._fallback.record_failure(agent_profile_id)
@@ -1101,6 +1101,19 @@ class AgentOrchestrator:
                             tools_used = list(dict.fromkeys(_task.tools_executed))
                 except Exception:
                     pass
+                if not tools_used and re_engine is not None:
+                    try:
+                        trace = getattr(re_engine, "_last_react_trace", None) or []
+                        trace_tools: list[str] = []
+                        for iter_entry in trace:
+                            if not isinstance(iter_entry, dict):
+                                continue
+                            for call in iter_entry.get("tool_calls") or ():
+                                if isinstance(call, dict) and call.get("name"):
+                                    trace_tools.append(str(call["name"]))
+                        tools_used = list(dict.fromkeys(trace_tools))
+                    except Exception:
+                        pass
 
                 # Forward artifact delivery receipts from sub-agent so the parent
                 # SSE stream can emit artifact events to the frontend.

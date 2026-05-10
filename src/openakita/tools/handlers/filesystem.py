@@ -93,6 +93,7 @@ class FilesystemHandler:
             agent: Agent 实例，用于访问 shell_tool 和 file_tool
         """
         self.agent = agent
+        self._read_file_cache: dict[tuple[str, int, int], str] = {}
 
     def _get_fix_policy(self) -> dict | None:
         """
@@ -617,12 +618,19 @@ class FilesystemHandler:
             offset = 1
             limit = int(getattr(settings, "read_file_default_limit", self.READ_FILE_DEFAULT_LIMIT))
 
+        cache_key = (str(self._resolve_to_abs(path)), offset, limit)
+        cached = self._read_file_cache.get(cache_key)
+        if cached is not None:
+            return "♻️ 复用本轮 read_file 缓存结果：\n" + cached
+
         lines = content.split("\n")
         total_lines = len(lines)
 
         # 如果文件在 limit 范围内且从头读取，直接返回全部
         if total_lines <= limit and offset <= 1:
-            return f"文件内容 ({total_lines} 行):\n{content}"
+            result = f"文件内容 ({total_lines} 行):\n{content}"
+            self._remember_read_file_cache(cache_key, result)
+            return result
 
         # 分页截取
         start = offset - 1  # 转为 0-based
@@ -648,7 +656,14 @@ class FilesystemHandler:
                 f"查看后续内容。"
             )
 
+        self._remember_read_file_cache(cache_key, result)
         return result
+
+    def _remember_read_file_cache(self, key: tuple[str, int, int], result: str) -> None:
+        self._read_file_cache[key] = result
+        if len(self._read_file_cache) > 64:
+            oldest = next(iter(self._read_file_cache))
+            self._read_file_cache.pop(oldest, None)
 
     # list_directory 默认最大条目数
     LIST_DIR_DEFAULT_MAX = 200

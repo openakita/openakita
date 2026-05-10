@@ -113,7 +113,21 @@ def _serialize(mem: Any) -> dict:
         "updated_at": mem.updated_at.isoformat() if mem.updated_at else None,
         "last_accessed_at": mem.last_accessed_at.isoformat() if mem.last_accessed_at else None,
         "expires_at": mem.expires_at.isoformat() if mem.expires_at else None,
+        "scope": getattr(mem, "scope", "user"),
+        "scope_owner": getattr(mem, "scope_owner", ""),
+        "user_id": getattr(mem, "user_id", "default"),
+        "workspace_id": getattr(mem, "workspace_id", "default"),
     }
+
+
+def _current_owner(request: Request) -> tuple[str, str]:
+    mm = _get_manager(request)
+    if mm and hasattr(mm, "_current_owner"):
+        try:
+            return mm._current_owner()
+        except Exception:
+            pass
+    return "default", "default"
 
 
 def _priority_for_importance(mem_type: MemoryType, importance: float) -> MemoryPriority:
@@ -149,7 +163,17 @@ async def create_memory(request: Request, body: MemoryCreateRequest):
             tags=body.tags or [],
         )
         apply_retention(mem)
-        mem_id = store.save_semantic(mem)
+        mm = _get_manager(request)
+        if mm and hasattr(mm, "save_user_memory"):
+            mem_id = mm.save_user_memory(mem, scope="user")
+        else:
+            user_id, workspace_id = _current_owner(request)
+            mem_id = store.save_semantic(
+                mem,
+                scope="user",
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
         _sync_json(request)
         return {"status": "ok", "id": mem_id}
     except HTTPException:
@@ -179,10 +203,14 @@ async def list_memories(
     search = search or q
 
     if search:
+        user_id, workspace_id = _current_owner(request)
         results = store.search_semantic(
             search,
             limit=limit,
             filter_type=type,
+            scope="user",
+            user_id=user_id,
+            workspace_id=workspace_id,
             include_inactive=include_inactive,
         )
         return {
@@ -192,6 +220,7 @@ async def list_memories(
             "offset": 0,
         }
 
+    user_id, workspace_id = _current_owner(request)
     results, total = store.query_paged(
         memory_type=type,
         min_importance=min_score if min_score > 0 else None,
@@ -199,8 +228,10 @@ async def list_memories(
         sort_order=sort_order,
         limit=limit,
         offset=offset,
-        scope="global",
+        scope="user",
         scope_owner="",
+        user_id=user_id,
+        workspace_id=workspace_id,
         include_inactive=include_inactive,
     )
     return {
@@ -217,7 +248,13 @@ async def memory_stats(request: Request):
     if not store:
         raise HTTPException(503, "Memory store not available")
 
-    all_mems = store.load_all_memories()
+    user_id, workspace_id = _current_owner(request)
+    all_mems = store.load_all_memories(
+        scope="user",
+        scope_owner="",
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
     by_type: dict[str, int] = {}
     total_score = 0.0
     for m in all_mems:
@@ -383,7 +420,13 @@ async def get_memory_graph(request: Request, limit: int = 500):
             import json as _json
             from collections import defaultdict
 
-            all_mems = store.load_all_memories()[:limit]
+            user_id, workspace_id = _current_owner(request)
+            all_mems = store.load_all_memories(
+                scope="user",
+                scope_owner="",
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )[:limit]
             subject_map: dict[str, list[str]] = defaultdict(list)
             for m in all_mems:
                 nodes_out.append(

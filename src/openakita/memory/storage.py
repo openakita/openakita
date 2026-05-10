@@ -29,7 +29,7 @@ from .types import normalize_tags
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 # Process-level singleton registry: same db_path → same MemoryStorage instance
 _instance_registry: dict[str, MemoryStorage] = {}
@@ -131,6 +131,8 @@ class MemoryStorage:
 
             if from_version < 2:
                 self._migrate_v1_to_v2()
+            if from_version < 3:
+                self._migrate_v2_to_v3()
 
             self._set_schema_version(_SCHEMA_VERSION)
             logger.info("[MemoryStorage] Schema migration complete")
@@ -157,6 +159,31 @@ class MemoryStorage:
                 self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_def}")
             except sqlite3.OperationalError:
                 pass  # column already exists
+        self._conn.commit()
+
+    def _migrate_v2_to_v3(self) -> None:
+        """Add owner columns and quarantine unowned legacy global memories."""
+        c = self._conn
+        for col, default in [("user_id", "'default'"), ("workspace_id", "'default'")]:
+            try:
+                c.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT DEFAULT {default}")
+            except sqlite3.OperationalError:
+                pass
+
+        # 旧版本把用户事实、测试数据和系统经验都写到 global/空 owner。
+        # 这些记录不能再默认参与用户推理，先保守隔离，后续由管理工具确认归属。
+        c.execute(
+            """
+            UPDATE memories
+            SET scope = 'legacy_quarantine',
+                scope_owner = '',
+                user_id = 'legacy',
+                workspace_id = COALESCE(NULLIF(workspace_id, ''), 'default')
+            WHERE (scope IS NULL OR scope = 'global')
+              AND (scope_owner IS NULL OR scope_owner = '')
+              AND (user_id IS NULL OR user_id = '' OR user_id = 'default')
+            """
+        )
         self._conn.commit()
 
     def _create_tables(self) -> None:
@@ -219,6 +246,18 @@ class MemoryStorage:
         except sqlite3.OperationalError:
             pass
         c.execute("CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_id)")
+
+        # v5: 用户/工作区隔离。任何用户事实必须带 owner；legacy 迁移会把旧
+        # global/空 owner 数据移入 legacy_quarantine，避免继续污染当前用户。
+        for col, default in [("user_id", "'default'"), ("workspace_id", "'default'")]:
+            try:
+                c.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT DEFAULT {default}")
+            except sqlite3.OperationalError:
+                pass
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_owner "
+            "ON memories(workspace_id, user_id, scope, scope_owner)"
+        )
 
         # --- FTS5 full-text index ---
         try:
@@ -494,8 +533,8 @@ class MemoryStorage:
                      access_count, tags, created_at, updated_at, expires_at, metadata,
                      subject, predicate, confidence, decay_rate,
                      last_accessed_at, superseded_by, source_episode_id,
-                     scope, scope_owner, agent_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     scope, scope_owner, agent_id, user_id, workspace_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         memory.get("id", ""),
@@ -520,6 +559,8 @@ class MemoryStorage:
                         memory.get("scope", "global"),
                         memory.get("scope_owner", ""),
                         memory.get("agent_id", ""),
+                        memory.get("user_id", "default"),
+                        memory.get("workspace_id", "default"),
                     ),
                 )
                 self._conn.commit()
@@ -541,8 +582,8 @@ class MemoryStorage:
                      access_count, tags, created_at, updated_at, expires_at, metadata,
                      subject, predicate, confidence, decay_rate,
                      last_accessed_at, superseded_by, source_episode_id,
-                     scope, scope_owner, agent_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     scope, scope_owner, agent_id, user_id, workspace_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
@@ -568,6 +609,8 @@ class MemoryStorage:
                             m.get("scope", "global"),
                             m.get("scope_owner", ""),
                             m.get("agent_id", ""),
+                            m.get("user_id", "default"),
+                            m.get("workspace_id", "default"),
                         )
                         for m in memories
                     ],
@@ -581,19 +624,24 @@ class MemoryStorage:
 
     def load_all(
         self,
-        scope: str = "global",
-        scope_owner: str = "",
+        scope: str | None = None,
+        scope_owner: str | None = None,
         *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
         active_only: bool = True,
     ) -> list[dict]:
         if not self._conn:
             return []
         try:
-            conditions = [
-                "(scope IS NULL OR scope = ?)",
-                "(scope_owner IS NULL OR scope_owner = ?)",
-            ]
-            params: list[Any] = [scope, scope_owner]
+            conditions: list[str] = []
+            params: list[Any] = []
+            if scope is not None:
+                conditions.append("(scope IS NULL OR scope = ?)")
+                params.append(scope)
+            if scope_owner is not None:
+                conditions.append("(scope_owner IS NULL OR scope_owner = ?)")
+                params.append(scope_owner)
             if active_only:
                 conditions.extend(
                     [
@@ -602,7 +650,13 @@ class MemoryStorage:
                     ]
                 )
                 params.append(datetime.now().isoformat())
-            where = " AND ".join(conditions)
+            if user_id is not None:
+                conditions.append("COALESCE(user_id, '') = ?")
+                params.append(user_id)
+            if workspace_id is not None:
+                conditions.append("COALESCE(workspace_id, 'default') = ?")
+                params.append(workspace_id)
+            where = " AND ".join(conditions) if conditions else "1=1"
             cursor = self._conn.execute(
                 f"SELECT * FROM memories WHERE {where} ORDER BY created_at DESC",
                 params,
@@ -660,6 +714,9 @@ class MemoryStorage:
             "metadata",
             "scope",
             "scope_owner",
+            "user_id",
+            "workspace_id",
+            "agent_id",
             "expires_at",
         }
         filtered = {k: v for k, v in updates.items() if k in allowed}
@@ -696,6 +753,8 @@ class MemoryStorage:
         subject: str | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
         active_only: bool = True,
@@ -727,6 +786,12 @@ class MemoryStorage:
         if scope_owner is not None:
             conditions.append("(scope_owner IS NULL OR scope_owner = ?)")
             params.append(scope_owner)
+        if user_id is not None:
+            conditions.append("COALESCE(user_id, '') = ?")
+            params.append(user_id)
+        if workspace_id is not None:
+            conditions.append("COALESCE(workspace_id, 'default') = ?")
+            params.append(workspace_id)
         if active_only:
             conditions.append("(expires_at IS NULL OR expires_at >= ?)")
             params.append(datetime.now().isoformat())
@@ -752,6 +817,8 @@ class MemoryStorage:
         memory_type: str | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
         active_only: bool = True,
     ) -> int:
         if not self._conn:
@@ -768,6 +835,12 @@ class MemoryStorage:
             if scope_owner is not None:
                 conditions.append("(scope_owner IS NULL OR scope_owner = ?)")
                 params.append(scope_owner)
+            if user_id is not None:
+                conditions.append("COALESCE(user_id, '') = ?")
+                params.append(user_id)
+            if workspace_id is not None:
+                conditions.append("COALESCE(workspace_id, 'default') = ?")
+                params.append(workspace_id)
             if active_only:
                 conditions.append("(expires_at IS NULL OR expires_at >= ?)")
                 params.append(datetime.now().isoformat())
@@ -790,6 +863,8 @@ class MemoryStorage:
         min_importance: float | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
         sort_by: str = "importance_score",
         sort_order: str = "desc",
         limit: int = 50,
@@ -820,6 +895,12 @@ class MemoryStorage:
         if scope_owner is not None:
             conditions.append("(scope_owner IS NULL OR scope_owner = ?)")
             params.append(scope_owner)
+        if user_id is not None:
+            conditions.append("COALESCE(user_id, '') = ?")
+            params.append(user_id)
+        if workspace_id is not None:
+            conditions.append("COALESCE(workspace_id, 'default') = ?")
+            params.append(workspace_id)
         if active_only:
             conditions.append("(expires_at IS NULL OR expires_at >= ?)")
             params.append(datetime.now().isoformat())
@@ -857,6 +938,8 @@ class MemoryStorage:
         limit: int = 10,
         scope: str | None = None,
         scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
         active_only: bool = True,
     ) -> list[dict]:
         """Full-text search using FTS5 with BM25 ranking, with LIKE fallback for CJK.
@@ -876,6 +959,12 @@ class MemoryStorage:
         if scope_owner is not None:
             scope_clauses.append("(m.scope_owner IS NULL OR m.scope_owner = ?)")
             scope_params.append(scope_owner)
+        if user_id is not None:
+            scope_clauses.append("COALESCE(m.user_id, '') = ?")
+            scope_params.append(user_id)
+        if workspace_id is not None:
+            scope_clauses.append("COALESCE(m.workspace_id, 'default') = ?")
+            scope_params.append(workspace_id)
         if active_only:
             scope_clauses.append("(m.expires_at IS NULL OR m.expires_at >= ?)")
             scope_params.append(datetime.now().isoformat())
@@ -915,6 +1004,12 @@ class MemoryStorage:
             if scope_owner is not None:
                 where += " AND (scope_owner IS NULL OR scope_owner = ?)"
                 like_params.append(scope_owner)
+            if user_id is not None:
+                where += " AND COALESCE(user_id, '') = ?"
+                like_params.append(user_id)
+            if workspace_id is not None:
+                where += " AND COALESCE(workspace_id, 'default') = ?"
+                like_params.append(workspace_id)
             if active_only:
                 where += " AND (expires_at IS NULL OR expires_at >= ?)"
                 like_params.append(datetime.now().isoformat())

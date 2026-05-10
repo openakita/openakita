@@ -7,7 +7,7 @@ handler so that:
    when there is no active session).
 3. When the LLM passes ``scope="auto"`` (or omits it), and the user message
    contains an explicit cross-session intent ("永久保存", "下次新会话也能查到",
-   "长期记住", ...), the memory is stored as ``global`` instead of being
+   "长期记住", ...), the memory is stored as owner-scoped ``user`` instead of being
    auto-downgraded to session.
 4. The new broader ``_STABLE_FACT_RE`` matches LLM-rewritten phrasings such as
    "用户陈彦廷居住在重庆" (which the previous narrow regex missed).
@@ -26,7 +26,7 @@ class _StubManager:
         sid = (self._current_session_id or "").strip()
         if sid:
             return "session", sid
-        return "global", ""
+        return "user", ""
 
 
 def test_explicit_scope_global_always_wins():
@@ -36,7 +36,7 @@ def test_explicit_scope_global_always_wins():
         _StubManager(),
         explicit_scope="global",
     )
-    assert scope == "global"
+    assert scope == "user"
     assert owner == ""
     assert "explicit-global" in tags
 
@@ -59,8 +59,8 @@ def test_explicit_scope_session_no_active_session_falls_back_to_global():
         _StubManager(session_id=""),
         explicit_scope="session",
     )
-    # No live session → don't drop the memory; persist as short-term global.
-    assert scope == "global"
+    # No live session → don't drop the memory; persist as current-user memory.
+    assert scope == "user"
     assert owner == ""
 
 
@@ -72,7 +72,7 @@ def test_user_persistence_intent_upgrades_to_global():
         explicit_scope="auto",
         user_intent_hint="把这个永久保存下来，下次新会话也能查到",
     )
-    assert scope == "global"
+    assert scope == "user"
     assert "user-requested-global" in tags
 
 
@@ -84,7 +84,7 @@ def test_long_term_intent_keyword_upgrades_to_global():
         explicit_scope="auto",
         user_intent_hint="请长期记住这件事",
     )
-    assert scope == "global"
+    assert scope == "user"
 
 
 def test_stable_fact_regex_matches_llm_rewritten_phrasings():
@@ -100,13 +100,13 @@ def test_stable_fact_regex_matches_llm_rewritten_phrasings():
     assert not pattern.search("当前需要下载这个文件")
 
 
-def test_durable_type_defaults_to_global_even_without_explicit_scope():
+def test_durable_type_defaults_to_user_scope_even_without_explicit_scope():
     scope, _owner, _tags, _note = MemoryHandler._memory_scope_for_manual_add(
         "对所有失败请求都要重试两次",
         "rule",
         _StubManager(),
     )
-    assert scope == "global"
+    assert scope == "user"
 
 
 def test_one_off_task_falls_back_to_session_with_actionable_note():

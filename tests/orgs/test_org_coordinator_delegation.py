@@ -60,6 +60,18 @@ class TestRootSummaryEarlyExit:
         # No org lookup, no inbox push, no asyncio task scheduled.
         runtime_stub.get_org.assert_not_called()
 
+    def test_progress_does_not_reset_user_level_stuck_warning(self):
+        tracker = UserCommandTracker(
+            org_id="org_test",
+            root_node_id="node_root",
+            user_command_content="hello",
+        )
+        tracker.warned_stuck = True
+
+        tracker._touch()
+
+        assert tracker.warned_stuck is True
+
     def test_already_pushed_summary_is_still_debounced(self):
         """The pre-existing debounce on ``summary_pushed_at`` keeps working —
         ensure the new "no chain" early-exit does not regress it."""

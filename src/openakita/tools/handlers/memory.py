@@ -167,7 +167,7 @@ class MemoryHandler:
                     return value
             except Exception:
                 pass
-        return "global", ""
+        return "user", ""
 
     @classmethod
     def _memory_scope_for_manual_add(
@@ -198,28 +198,28 @@ class MemoryHandler:
         # 1) explicit scope wins — model knows best when user is explicit
         if normalized_scope == "global":
             tags.append("explicit-global")
-            return "global", "", tags, None
+            return "user", "", tags, "已按当前用户范围保存为跨会话长期记忆。"
         if normalized_scope == "session":
             tags.append("explicit-session")
             if current_scope == "session" and current_owner:
                 return current_scope, current_owner, tags, None
             # No active session — fall back to global short-term
-            return "global", "", tags, None
+            return "user", "", tags, None
 
         # 2) user explicitly asked for cross-session persistence in their msg
         if user_intent_hint and cls._USER_PERSIST_INTENT_RE.search(user_intent_hint):
             tags.append("user-requested-global")
-            return "global", "", tags, None
+            return "user", "", tags, "已按当前用户范围保存为跨会话长期记忆。"
 
         # 3) durable types default to global unless caller is in a tight session
         if mem_type in {"preference", "rule", "skill", "error", "experience"}:
             if cls._SUPERSEDE_RE.search(content):
                 tags.append("supersedes-prior-memory")
-            return "global", "", tags, None
+            return "user", "", tags, None
 
         # 4) regex on content body
         if cls._STABLE_FACT_RE.search(content):
-            return "global", "", tags, None
+            return "user", "", tags, None
 
         # 5) one-off / task report → session-scoped
         if cls._ONE_OFF_TASK_RE.search(content) or cls._TASK_REPORT_RE.search(content):
@@ -232,7 +232,7 @@ class MemoryHandler:
                     "这更像当前任务上下文，已仅保存在本会话，避免污染长期记忆。",
                 )
             return (
-                "global",
+                "user",
                 "",
                 tags,
                 "这更像一次性任务记录，已按低优先级短期记忆保存。",
@@ -250,7 +250,7 @@ class MemoryHandler:
                 "如需跨会话持久化，请改传 scope=\"global\" 重试。",
             )
 
-        return "global", "", tags, None
+        return "user", "", tags, None
 
     def _supersede_related_memories(
         self,
@@ -271,11 +271,15 @@ class MemoryHandler:
             return 0
 
         try:
+            owner_getter = getattr(getattr(self.agent, "memory_manager", None), "_current_owner", None)
+            user_id, workspace_id = owner_getter() if callable(owner_getter) else ("default", "default")
             hits = store.search_semantic(
                 content,
                 limit=10,
                 scope=scope,
                 scope_owner=scope_owner,
+                user_id=user_id,
+                workspace_id=workspace_id,
             )
         except Exception:
             return 0
@@ -326,6 +330,7 @@ class MemoryHandler:
         self.agent = agent
         self._guide_injected: bool = False
         self._recent_add_contents: list[str] = []
+        self._search_cache: dict[tuple[str, str, str], str] = {}
         # Hydrate _guide_injected from the persistent marker so AgentPool
         # eviction / process restart don't reinject the guide.
         self._guide_marker_path = self._compute_guide_marker_path()
@@ -361,6 +366,7 @@ class MemoryHandler:
         operators can re-enable it by deleting ``data/state/<flag>``.
         """
         self._recent_add_contents.clear()
+        self._search_cache.clear()
         if self._guide_marker_path is not None and self._guide_marker_path.exists():
             self._guide_injected = True
 
@@ -484,7 +490,16 @@ class MemoryHandler:
 
         try:
             store = self.agent.memory_manager.store
-            existing_hits = store.search_semantic(content.strip(), limit=3)
+            owner_getter = getattr(self.agent.memory_manager, "_current_owner", None)
+            user_id, workspace_id = owner_getter() if callable(owner_getter) else ("default", "default")
+            existing_hits = store.search_semantic(
+                content.strip(),
+                limit=3,
+                scope=scope,
+                scope_owner=scope_owner,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
             for hit in existing_hits:
                 if hit.content and content.strip()[:80].lower() in hit.content.lower():
                     return "✅ 记忆已存在（FTS5 预检命中），无需重复记录。请继续执行其他任务。"
@@ -556,7 +571,9 @@ class MemoryHandler:
                 self._recent_add_contents.pop(0)
             self._recent_add_contents.append(content_key)
             lines = [f"✅ 已记住: [{mem_type_str}] {content}", f"ID: {memory_id}"]
-            if scope == "global":
+            if scope == "user":
+                lines.append("范围: 当前用户的跨会话长期记忆 (user)")
+            elif scope == "global":
                 lines.append("范围: 跨会话长期记忆 (global)")
             else:
                 lines.append(f"范围: 仅当前会话 (session={scope_owner})")
@@ -582,6 +599,15 @@ class MemoryHandler:
         now = datetime.now()
 
         mm = self.agent.memory_manager
+        conversation_id = (
+            getattr(self.agent, "_current_conversation_id", "")
+            or getattr(self.agent, "_current_session_id", "")
+            or ""
+        )
+        cache_key = (conversation_id, str(query).strip().lower(), str(type_filter or ""))
+        cached = self._search_cache.get(cache_key)
+        if cached is not None:
+            return cached + "\n\n（本轮重复查询，已复用缓存结果）"
 
         # 路径 A: 无类型过滤 → RetrievalEngine 多路召回
         if not type_filter:
@@ -617,6 +643,7 @@ class MemoryHandler:
                                 c.content or "", 400, save_full=False, label="mem_search"
                             )
                             output += f"- [{c.source_type}] {c_trunc}{ep_hint}\n\n"
+                        self._remember_search_result(cache_key, output)
                         return output
                 except Exception as e:
                     logger.warning(f"[search_memory] RetrievalEngine failed: {e}")
@@ -644,6 +671,7 @@ class MemoryHandler:
                         )
                         output += f"- [{m.type.value}] {m.content}\n"  # Memory content 完整保留
                         output += f"  (重要性: {m.importance_score:.1f}, 引用: {m.access_count}{ep_hint})\n\n"
+                    self._remember_search_result(cache_key, output)
                     return output
             except Exception as e:
                 logger.warning(f"[search_memory] SQLite search failed: {e}")
@@ -672,7 +700,9 @@ class MemoryHandler:
         memories = [m for m in memories if not m.expires_at or m.expires_at >= now]
 
         if not memories:
-            return f"未找到与 '{query}' 相关的记忆"
+            output = f"未找到与 '{query}' 相关的记忆"
+            self._remember_search_result(cache_key, output)
+            return output
 
         cited = [{"id": m.id, "content": m.content[:200]} for m in memories]
         mm.record_cited_memories(cited)
@@ -685,7 +715,14 @@ class MemoryHandler:
             output += f"- [{m.type.value}] {m.content}\n"
             output += f"  (重要性: {m.importance_score:.1f}, 引用: {m.access_count}{ep_hint})\n\n"
 
+        self._remember_search_result(cache_key, output)
         return output
+
+    def _remember_search_result(self, key: tuple[str, str, str], value: str) -> None:
+        if len(self._search_cache) >= 64:
+            oldest = next(iter(self._search_cache))
+            self._search_cache.pop(oldest, None)
+        self._search_cache[key] = value
 
     def _get_memory_stats(self, params: dict) -> str:
         """获取记忆统计"""
@@ -760,17 +797,43 @@ class MemoryHandler:
         )
 
         results: list[dict] = []
+        keywords = self._split_trace_keywords(keyword)
+
+        # === 数据源 0: 当前活跃 session（尚未落库/索引的最新轮次） ===
+        self._search_current_session_messages(
+            keyword,
+            keywords,
+            session_id_filter,
+            max_results,
+            results,
+        )
 
         # === 数据源 1: SQLite conversation_turns（主数据源） ===
         store = getattr(self.agent.memory_manager, "store", None)
         if store:
             try:
-                rows = store.search_turns(
-                    keyword=keyword,
-                    session_id=session_id_filter or None,
-                    days_back=days_back,
-                    limit=max_results,
-                )
+                rows = []
+                seen_row_keys: set[tuple[str, str, str]] = set()
+                for kw in keywords:
+                    for row in store.search_turns(
+                        keyword=kw,
+                        session_id=session_id_filter or None,
+                        days_back=days_back,
+                        limit=max_results,
+                    ):
+                        key = (
+                            str(row.get("session_id", "")),
+                            str(row.get("timestamp", "")),
+                            str(row.get("role", "")),
+                        )
+                        if key in seen_row_keys:
+                            continue
+                        seen_row_keys.add(key)
+                        rows.append(row)
+                        if len(rows) >= max_results:
+                            break
+                    if len(rows) >= max_results:
+                        break
                 for row in rows:
                     results.append(
                         {
@@ -833,6 +896,59 @@ class MemoryHandler:
             return f"未找到包含 '{keyword}' 的对话记录（最近 {days_back} 天）"
 
         return self._format_trace_results(results, keyword)
+
+    @staticmethod
+    def _split_trace_keywords(keyword: str) -> list[str]:
+        parts = [p for p in re.split(r"[\s,，;；|/]+", keyword.strip()) if p]
+        return list(dict.fromkeys(parts or [keyword.strip()]))
+
+    def _search_current_session_messages(
+        self,
+        keyword: str,
+        keywords: list[str],
+        session_id_filter: str,
+        limit: int,
+        results: list[dict],
+    ) -> None:
+        session = getattr(self.agent, "_current_session", None)
+        if session is None:
+            return
+        sid = str(getattr(session, "id", "") or getattr(session, "session_id", "") or "")
+        if session_id_filter and session_id_filter != sid:
+            return
+        messages = getattr(session, "messages", None) or []
+        lowered_keywords = [k.lower() for k in keywords if k]
+        for msg in reversed(list(messages)):
+            if len(results) >= limit:
+                return
+            if isinstance(msg, dict):
+                role = msg.get("role", "")
+                content = coerce_text(msg.get("content"))
+                ts = msg.get("timestamp", "")
+                tool_calls = msg.get("tool_calls") or []
+                tool_results = msg.get("tool_results") or []
+            else:
+                role = getattr(msg, "role", "")
+                content = coerce_text(getattr(msg, "content", ""))
+                ts = getattr(msg, "timestamp", "")
+                tool_calls = getattr(msg, "tool_calls", []) or []
+                tool_results = getattr(msg, "tool_results", []) or []
+            hay = " ".join([
+                content,
+                json.dumps(tool_calls, ensure_ascii=False, default=str),
+                json.dumps(tool_results, ensure_ascii=False, default=str),
+            ]).lower()
+            if keyword.lower() not in hay and not any(k in hay for k in lowered_keywords):
+                continue
+            results.append({
+                "source": "current_session",
+                "session_id": sid,
+                "timestamp": str(ts),
+                "role": str(role),
+                "content": content[:500],
+                "tool_calls": tool_calls,
+                "tool_results": tool_results,
+            })
 
     def _trace_memory(self, params: dict) -> str:
         """跨层导航：从记忆→情节→对话，或从情节→记忆+对话"""
@@ -1067,7 +1183,7 @@ class MemoryHandler:
         for i, r in enumerate(results, 1):
             source = r["source"]
             output += f"--- 记录 {i} [{source}] ---\n"
-            if source in ("sqlite_turns", "conversation_history"):
+            if source in ("current_session", "sqlite_turns", "conversation_history"):
                 if r.get("session_id"):
                     output += f"会话: {r['session_id']}\n"
                 elif r.get("file"):

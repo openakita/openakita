@@ -494,6 +494,25 @@ def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
     return OpType.CREATE
 
 
+_MCP_WRITE_HINT_RE = re.compile(
+    r"(write|create|update|delete|remove|insert|set|patch|post|put|send|publish|"
+    r"deploy|install|uninstall|exec|run|修改|写入|创建|删除|移除|更新|发送|发布|部署|安装|卸载|执行)",
+    re.IGNORECASE,
+)
+
+
+def _is_readonly_mcp_tool(params: dict[str, Any]) -> bool:
+    tool_name = str(
+        params.get("tool")
+        or params.get("tool_name")
+        or params.get("name")
+        or ""
+    )
+    if not tool_name:
+        return False
+    return not bool(_MCP_WRITE_HINT_RE.search(tool_name))
+
+
 def _file_operation_targets(tool_name: str, params: dict[str, Any]) -> list[tuple[str, OpType]]:
     """Return file paths and their operation semantics for zone checks."""
     if tool_name == "move_file":
@@ -533,6 +552,23 @@ def _file_operation_targets(tool_name: str, params: dict[str, Any]) -> list[tupl
     if not path:
         return []
     return [(path, _tool_to_optype(tool_name, params))]
+
+
+def _dangerous_tool_reason(tool_name: str, params: dict[str, Any]) -> str | None:
+    """Return a human-readable reason when a tool is too risky to auto-confirm."""
+    if tool_name in ("run_shell", "run_powershell"):
+        return "shell 命令执行"
+    if tool_name == "call_mcp_tool" and not _is_readonly_mcp_tool(params):
+        mcp_tool = params.get("tool") or params.get("tool_name") or params.get("name") or "unknown"
+        return f"MCP 写操作或未知副作用工具 ({mcp_tool})"
+    if tool_name in {"delete_file", "move_file", "rename_file"}:
+        return "文件删除/移动操作"
+    if tool_name == "write_file" and _tool_to_optype(tool_name, params) == OpType.OVERWRITE:
+        return "覆盖写入已有文件"
+    for _path, op_type in _file_operation_targets(tool_name, params):
+        if op_type in (OpType.DELETE, OpType.RECURSIVE_DELETE, OpType.OVERWRITE):
+            return f"{_op_label(op_type)}操作"
+    return None
 
 
 _ZONE_LABELS = {
@@ -834,6 +870,16 @@ class PolicyEngine:
             baseline_result = self._check_baseline_protection(tool_name, params)
             if baseline_result:
                 return baseline_result
+            dangerous_reason = _dangerous_tool_reason(tool_name, params)
+            if dangerous_reason:
+                result = PolicyResult(
+                    decision=PolicyDecision.CONFIRM,
+                    reason=f"信任模式下仍需确认高风险操作: {dangerous_reason}",
+                    policy_name="TrustModeDangerousOperation",
+                    metadata={"trust_mode": True, "dangerous_reason": dangerous_reason},
+                )
+                self._audit(tool_name, params, result)
+                return result
             self._on_allow(tool_name, params)
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
@@ -896,6 +942,17 @@ class PolicyEngine:
             shell_result = self._check_shell_command(tool_name, params)
             if shell_result:
                 return shell_result
+
+        if tool_name == "call_mcp_tool" and not _is_readonly_mcp_tool(params):
+            mcp_tool = params.get("tool") or params.get("tool_name") or params.get("name") or "unknown"
+            result = PolicyResult(
+                decision=PolicyDecision.CONFIRM,
+                reason=f"MCP 工具 '{mcp_tool}' 可能产生写入或外部副作用，执行前需要确认",
+                policy_name="McpToolRisk",
+                metadata={"mcp_tool": str(mcp_tool), "dangerous_reason": "mcp_write_or_unknown"},
+            )
+            self._audit(tool_name, params, result)
+            return result
 
         # L1: Zone × OpType matrix for file operations
         file_tools = {
@@ -976,6 +1033,17 @@ class PolicyEngine:
                 )
                 self._audit(tool_name, params, result)
                 return result
+            if risk == RiskLevel.HIGH or (
+                risk == RiskLevel.MEDIUM and self._is_destructive_shell_command(command)
+            ):
+                result = PolicyResult(
+                    decision=PolicyDecision.CONFIRM,
+                    reason=f"此命令会修改或删除文件，执行前需要您的确认: {command[:120]}",
+                    policy_name="BaselineProtection",
+                    metadata={"risk_level": risk.value, "trust_mode": True},
+                )
+                self._audit(tool_name, params, result)
+                return result
             if (
                 risk in (RiskLevel.HIGH, RiskLevel.MEDIUM)
                 and self._command_touches_self_protection_area(command)
@@ -989,6 +1057,20 @@ class PolicyEngine:
                 self._audit(tool_name, params, result)
                 return result
         return None
+
+    @staticmethod
+    def _is_destructive_shell_command(command: str) -> bool:
+        """Detect shell commands that can remove, clear, overwrite, or move user data."""
+        return bool(
+            re.search(
+                r"\b("
+                r"rm|del|erase|rd|rmdir|remove-item|clear-content|clear-item|"
+                r"set-content|move-item|mv|move|unlink|truncate"
+                r")\b",
+                command,
+                re.IGNORECASE,
+            )
+        )
 
     def _command_touches_sensitive_area(self, command: str) -> bool:
         """Detect shell commands that operate on protected/forbidden paths in trust mode."""
@@ -1121,7 +1203,8 @@ class PolicyEngine:
                 return result
 
             if decision == PolicyDecision.CONFIRM:
-                if self._config.confirmation.auto_confirm:
+                dangerous_reason = _dangerous_tool_reason(tool_name, params)
+                if self._config.confirmation.auto_confirm and not dangerous_reason:
                     continue
                 result = PolicyResult(
                     decision=PolicyDecision.CONFIRM,
@@ -1134,6 +1217,7 @@ class PolicyEngine:
                         "zone": zone.value,
                         "op_type": op_type.value,
                         "needs_checkpoint": needs_checkpoint,
+                        **({"dangerous_reason": dangerous_reason} if dangerous_reason else {}),
                     },
                 )
                 self._audit(tool_name, params, result)

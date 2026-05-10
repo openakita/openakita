@@ -24,6 +24,7 @@ def normalize_tool_input(
         return params
     normalized = _normalize_value(params, tool_schema, path=tool_name)
     normalized = _normalize_browser_tool_input(tool_name, normalized)
+    normalized = _normalize_plan_tool_input(tool_name, normalized)
     return _normalize_shell_tool_input(tool_name, normalized)
 
 
@@ -53,6 +54,54 @@ def _normalize_shell_tool_input(tool_name: str, params: Any) -> Any:
     except Exception:
         normalized["block_timeout_ms"] = 30000
     return normalized
+
+
+def _normalize_plan_tool_input(tool_name: str, params: Any) -> Any:
+    if tool_name != "create_plan_file" or not isinstance(params, dict):
+        return params
+    normalized = dict(params)
+    if not normalized.get("body"):
+        body = _first_present(normalized, "content", "markdown", "plan_content")
+        if body is not None:
+            normalized["body"] = body
+    if not normalized.get("name"):
+        name = _first_present(normalized, "plan_name", "title", "plan_title")
+        if name is not None:
+            normalized["name"] = name
+    if not normalized.get("todos"):
+        steps = _first_present(normalized, "steps", "items")
+        if steps is not None:
+            normalized["todos"] = _normalize_plan_steps(steps)
+    return normalized
+
+
+def _normalize_plan_steps(steps: Any) -> Any:
+    if isinstance(steps, str):
+        try:
+            parsed = json.loads(steps)
+            steps = parsed
+        except json.JSONDecodeError:
+            return steps
+    if not isinstance(steps, list):
+        return steps
+    normalized_steps: list[dict[str, Any]] = []
+    for idx, step in enumerate(steps, start=1):
+        if isinstance(step, str):
+            content = step.strip()
+            if content:
+                normalized_steps.append({"id": f"step_{idx}", "content": content})
+            continue
+        if not isinstance(step, dict):
+            continue
+        content = _first_present(step, "content", "description", "task", "title")
+        if not content:
+            continue
+        normalized_steps.append({
+            "id": step.get("id") or f"step_{idx}",
+            "content": str(content),
+            "status": step.get("status", "pending"),
+        })
+    return normalized_steps
 
 
 def _normalize_browser_type_input(params: dict[str, Any]) -> dict[str, Any]:

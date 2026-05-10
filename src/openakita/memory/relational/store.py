@@ -104,6 +104,11 @@ class RelationalMemoryStore:
             c.execute("ALTER TABLE mdrm_nodes ADD COLUMN agent_id TEXT DEFAULT ''")
         except sqlite3.OperationalError:
             pass
+        for col, default in [("user_id", "'default'"), ("workspace_id", "'default'")]:
+            try:
+                c.execute(f"ALTER TABLE mdrm_nodes ADD COLUMN {col} TEXT DEFAULT {default}")
+            except sqlite3.OperationalError:
+                pass
 
         for idx_sql in [
             "CREATE INDEX IF NOT EXISTS idx_mdrm_nodes_time ON mdrm_nodes(occurred_at)",
@@ -111,6 +116,7 @@ class RelationalMemoryStore:
             "CREATE INDEX IF NOT EXISTS idx_mdrm_nodes_project ON mdrm_nodes(project)",
             "CREATE INDEX IF NOT EXISTS idx_mdrm_nodes_session ON mdrm_nodes(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_mdrm_nodes_agent ON mdrm_nodes(agent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_mdrm_nodes_owner ON mdrm_nodes(workspace_id, user_id)",
             "CREATE INDEX IF NOT EXISTS idx_mdrm_edges_source ON mdrm_edges(source_id)",
             "CREATE INDEX IF NOT EXISTS idx_mdrm_edges_target ON mdrm_edges(target_id)",
             "CREATE INDEX IF NOT EXISTS idx_mdrm_edges_dim ON mdrm_edges(dimension)",
@@ -296,8 +302,8 @@ class RelationalMemoryStore:
                (id, content, node_type, occurred_at, valid_from, valid_until,
                 entities, action_verb, action_category, session_id, project, goal,
                 importance, confidence, access_count, embedding, created_at, updated_at,
-                agent_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                agent_id, user_id, workspace_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 node.id,
                 node.content,
@@ -318,6 +324,8 @@ class RelationalMemoryStore:
                 node.created_at.isoformat() if node.created_at else now,
                 now,
                 node.agent_id,
+                node.user_id,
+                node.workspace_id,
             ),
         )
 
@@ -351,8 +359,8 @@ class RelationalMemoryStore:
                    (id, content, node_type, occurred_at, valid_from, valid_until,
                     entities, action_verb, action_category, session_id, project, goal,
                     importance, confidence, access_count, embedding, created_at, updated_at,
-                    agent_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    agent_id, user_id, workspace_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     node.id,
                     node.content,
@@ -373,6 +381,8 @@ class RelationalMemoryStore:
                     node.created_at.isoformat() if node.created_at else now,
                     now,
                     node.agent_id,
+                    node.user_id,
+                    node.workspace_id,
                 ),
             )
             self._conn.execute("DELETE FROM mdrm_entity_index WHERE node_id = ?", (node.id,))
@@ -758,6 +768,8 @@ class RelationalMemoryStore:
             created_at=_parse_dt(d.get("created_at")),
             updated_at=_parse_dt(d.get("updated_at")),
             agent_id=d.get("agent_id", ""),
+            user_id=d.get("user_id", "default") or "default",
+            workspace_id=d.get("workspace_id", "default") or "default",
         )
 
     def _row_to_edge(self, description: Any, row: tuple) -> MemoryEdge:

@@ -1219,6 +1219,7 @@ class Agent:
 
         # 用户档案管理器
         self.profile_manager = get_profile_manager()
+        self.memory_manager.profile_manager = self.profile_manager
 
         # ==================== 人格系统 + 活人感 + 表情包 ====================
         from ..tools.sticker import StickerEngine
@@ -2976,24 +2977,35 @@ class Agent:
                 if changed:
                     await self.task_scheduler.save()
 
-        # 任务 3: 活人感心跳（每 30 分钟触发）
+        # 任务 3: 活人感心跳（默认关闭；用户显式启用 proactive_enabled 后注册）
         try:
-            if "system_proactive_heartbeat" not in existing_ids:
-                heartbeat_task = ScheduledTask(
-                    id="system_proactive_heartbeat",
-                    name="活人感心跳",
-                    trigger_type=TriggerType.INTERVAL,
-                    trigger_config={"interval_minutes": 30},
-                    action="system:proactive_heartbeat",
-                    prompt="检查是否需要发送主动消息（问候/提醒/跟进）",
-                    description="定时检查并发送主动消息",
-                    task_type=TaskType.TASK,
-                    enabled=True,
-                    deletable=False,
-                    metadata={"notify_on_start": False, "notify_on_complete": False},
-                )
-                await self.task_scheduler.add_task(heartbeat_task)
-                logger.info("Registered system task: proactive_heartbeat (every 30 min)")
+            heartbeat_task_id = "system_proactive_heartbeat"
+            if settings.proactive_enabled:
+                interval_min = max(120, int(settings.proactive_min_interval_minutes or 120))
+                if heartbeat_task_id not in existing_ids:
+                    heartbeat_task = ScheduledTask(
+                        id=heartbeat_task_id,
+                        name="活人感心跳",
+                        trigger_type=TriggerType.INTERVAL,
+                        trigger_config={"interval_minutes": interval_min},
+                        action="system:proactive_heartbeat",
+                        prompt="检查是否需要发送主动消息（问候/提醒/跟进）",
+                        description="定时检查并发送主动消息",
+                        task_type=TaskType.TASK,
+                        enabled=True,
+                        deletable=False,
+                        metadata={"notify_on_start": False, "notify_on_complete": False},
+                    )
+                    await self.task_scheduler.add_task(heartbeat_task)
+                    logger.info(
+                        "Registered system task: proactive_heartbeat (every %s min)",
+                        interval_min,
+                    )
+            else:
+                existing_heartbeat = self.task_scheduler.get_task(heartbeat_task_id)
+                if existing_heartbeat and existing_heartbeat.enabled:
+                    await self.task_scheduler.disable_task(heartbeat_task_id)
+                    logger.info("Disabled proactive_heartbeat task (feature disabled in settings)")
         except Exception as e:
             logger.warning(f"Failed to register proactive_heartbeat task: {e}")
 
@@ -4553,7 +4565,11 @@ class Agent:
             conversation_safe_id = _memory_key.replace(":", "__")
             conversation_safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", conversation_safe_id)
             if getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id:
-                self.memory_manager.start_session(conversation_safe_id)
+                self.memory_manager.start_session(
+                    conversation_safe_id,
+                    user_id=getattr(session, "user_id", None) if session else None,
+                    workspace_id="default",
+                )
                 if hasattr(self, "_memory_handler"):
                     self._memory_handler.reset_guide()
                 # 1.5 新会话时清空 Scratchpad 工作记忆，避免跨会话泄漏
@@ -4562,7 +4578,9 @@ class Agent:
                     if store and hasattr(store, "save_scratchpad"):
                         from ..memory.types import Scratchpad as _SpClear
 
-                        store.save_scratchpad(_SpClear(user_id="default"))
+                        store.save_scratchpad(
+                            _SpClear(user_id=getattr(session, "user_id", "default") if session else "default")
+                        )
                         logger.debug(
                             f"[Session] Cleared scratchpad for new conversation {conversation_id}"
                         )

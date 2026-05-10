@@ -555,7 +555,7 @@ class TestAllowlists:
 # ---------------------------------------------------------------------------
 
 class TestConfirmationMode:
-    def test_yolo_mode_auto_allows_high(self):
+    def test_yolo_mode_still_confirms_high(self):
         config = SecurityConfig(
             enabled=True,
             confirmation=ConfirmationConfig(mode="yolo"),
@@ -563,8 +563,7 @@ class TestConfirmationMode:
         )
         engine = PolicyEngine(config)
         result = engine.assert_tool_allowed("run_shell", {"command": "rm -rf /tmp/x"})
-        assert result.decision == PolicyDecision.ALLOW
-        assert result.metadata.get("trust_mode") is True
+        assert result.decision == PolicyDecision.CONFIRM
 
     def test_yolo_mode_allows_unknown_path_write(self, tmp_path):
         config = SecurityConfig(
@@ -614,7 +613,7 @@ class TestConfirmationMode:
         assert result.decision == PolicyDecision.DENY
         assert result.policy_name == "BaselineProtection"
 
-    def test_yolo_mode_allows_ordinary_shell_without_confirmation(self):
+    def test_yolo_mode_confirms_ordinary_shell_execution(self):
         config = SecurityConfig(
             enabled=True,
             confirmation=ConfirmationConfig(mode="yolo"),
@@ -622,8 +621,7 @@ class TestConfirmationMode:
         )
         engine = PolicyEngine(config)
         result = engine.assert_tool_allowed("run_shell", {"command": "pip install requests"})
-        assert result.decision == PolicyDecision.ALLOW
-        assert result.metadata.get("trust_mode") is True
+        assert result.decision == PolicyDecision.CONFIRM
 
     def test_cautious_mode_confirms_medium(self):
         config = SecurityConfig(
