@@ -26,6 +26,86 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+_LAYOUT_NODE_W = 240
+_LAYOUT_NODE_H = 100
+_LAYOUT_GAP_X = 40
+_LAYOUT_GAP_Y = 80
+
+
+def _apply_initial_tree_layout(data: dict) -> None:
+    """Assign a readable first-open layout to template-created organizations.
+
+    Built-in and user-saved templates may carry stale or overly compact
+    coordinates. Creating from a template is a fresh org, so normalize the
+    initial canvas once before persisting it.
+    """
+    nodes = data.get("nodes") or []
+    edges = data.get("edges") or []
+    if not nodes:
+        return
+
+    node_ids = [str(n.get("id") or "") for n in nodes if isinstance(n, dict) and n.get("id")]
+    node_id_set = set(node_ids)
+    if not node_id_set:
+        return
+
+    children_map: dict[str, list[str]] = {}
+    parent_set: set[str] = set()
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source = str(edge.get("source") or "")
+        target = str(edge.get("target") or "")
+        if source not in node_id_set or target not in node_id_set or source == target:
+            continue
+        children_map.setdefault(source, []).append(target)
+        parent_set.add(target)
+
+    roots = [node_id for node_id in node_ids if node_id not in parent_set]
+    if not roots:
+        roots = node_ids[:1]
+
+    levels: list[list[str]] = []
+    visited: set[str] = set()
+    queue = list(roots)
+    while queue:
+        level: list[str] = []
+        next_queue: list[str] = []
+        for node_id in queue:
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+            level.append(node_id)
+            for child_id in children_map.get(node_id, []):
+                if child_id not in visited:
+                    next_queue.append(child_id)
+        if level:
+            levels.append(level)
+        queue = next_queue
+
+    orphaned = [node_id for node_id in node_ids if node_id not in visited]
+    if orphaned:
+        if levels:
+            levels[-1].extend(orphaned)
+        else:
+            levels.append(orphaned)
+
+    max_level_width = max(len(level) for level in levels)
+    total_w = max_level_width * (_LAYOUT_NODE_W + _LAYOUT_GAP_X) - _LAYOUT_GAP_X
+    pos_map: dict[str, dict[str, int]] = {}
+    for level_index, level in enumerate(levels):
+        level_w = len(level) * (_LAYOUT_NODE_W + _LAYOUT_GAP_X) - _LAYOUT_GAP_X
+        offset_x = (total_w - level_w) // 2
+        for node_index, node_id in enumerate(level):
+            pos_map[node_id] = {
+                "x": offset_x + node_index * (_LAYOUT_NODE_W + _LAYOUT_GAP_X),
+                "y": level_index * (_LAYOUT_NODE_H + _LAYOUT_GAP_Y),
+            }
+
+    for node in nodes:
+        if isinstance(node, dict) and node.get("id") in pos_map:
+            node["position"] = pos_map[str(node["id"])]
+
 
 class OrgManager:
     """组织持久化管理器"""
@@ -319,6 +399,7 @@ class OrgManager:
         for node in tpl.get("nodes", []) or []:
             if isinstance(node, dict) and not node.get("agent_profile_id"):
                 node["agent_profile_id"] = infer_agent_profile_id_for_node(node)
+        _apply_initial_tree_layout(tpl)
         return self.create(tpl)
 
     def save_as_template(self, org_id: str, template_id: str | None = None) -> str:

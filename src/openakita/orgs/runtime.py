@@ -1470,7 +1470,7 @@ class OrgRuntime:
             if org.id not in self._active_orgs:
                 return {"node_id": node.id, "result": result_text}
 
-            # 区分 task 真实退出原因：normal/ask_user -> 完成；
+            # 区分 task 真实退出原因：normal/ask_user/waiting_user -> 完成或中性收口；
             # loop_terminated -> 被 Supervisor 强制终止；
             # max_iterations -> 超过最大迭代；
             # verify_incomplete -> TaskVerify 判定未完成但重试耗尽
@@ -1621,7 +1621,7 @@ class OrgRuntime:
                 )
                 is_soft_verify = False
 
-            is_normal = exit_reason in ("normal", "ask_user") or is_soft_verify
+            is_normal = exit_reason in ("normal", "ask_user", "waiting_user") or is_soft_verify
             is_terminated = exit_reason == "loop_terminated"
 
             status_reason = "task_completed" if is_normal else (

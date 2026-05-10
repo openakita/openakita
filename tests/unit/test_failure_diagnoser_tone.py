@@ -98,6 +98,11 @@ class TestVerifyIncompleteTemplateRetained:
     def test_verify_incomplete_with_children_template_still_exists(self):
         assert "verify_incomplete_with_children" in _DIAGNOSIS_TEMPLATES
 
+    def test_unknown_template_does_not_expose_trace_path(self):
+        suggestion = _DIAGNOSIS_TEMPLATES["unknown"]["suggestion"]
+        assert "react_trace" not in suggestion
+        assert "data/react_traces" not in suggestion
+
     def test_headline_emphasizes_artifact_delivery(self):
         h = _DIAGNOSIS_TEMPLATES["verify_incomplete"]["headline"]
         assert "附件" in h or "文件" in h

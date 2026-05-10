@@ -4875,13 +4875,15 @@ class ReasoningEngine:
                         if _result_summary:
                             yield {"type": "chain_text", "content": _result_summary}
 
-                        # deliver_artifacts 回执收集（与 run() 一致）
-                        # 与 run() 路径对齐：deliver_artifacts 为直接交付，
-                        # org_accept_deliverable 为"中继交付"（父节点验收子节点
-                        # 带文件的交付物，receipts.status == "relayed"），
-                        # 两种都算 TaskVerify 眼里的有效交付证据。
+                        # 交付回执收集（与 run() 一致）：直接交付、子节点提交、
+                        # 父节点验收中继交付，三种 receipts 都算 TaskVerify
+                        # 眼里的有效交付证据。
                         if (
-                            tool_name in ("deliver_artifacts", "org_accept_deliverable")
+                            tool_name in (
+                                "deliver_artifacts",
+                                "org_submit_deliverable",
+                                "org_accept_deliverable",
+                            )
                             and result_text
                         ):
                             try:

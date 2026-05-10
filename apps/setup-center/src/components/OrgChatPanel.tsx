@@ -47,10 +47,10 @@ interface TimelineSegment {
   resultPreview?: string;
   /**
    * 节点退出原因：
-   * - undefined/"normal"/"ask_user": 正常完成
+   * - undefined/"normal"/"ask_user"/"waiting_user": 正常完成或等待用户补充
    * - "loop_terminated": Supervisor 强制终止死循环
    * - "max_iterations": 达到最大迭代次数
-   * - "verify_incomplete": 任务验证未通过
+   * - "verify_incomplete": 内部验证未匹配，普通用户界面不展示为失败
    */
   exitReason?: string;
   /** 是否非正常结束，用于 UI 明确区分"完成" vs "终止/失败" */
@@ -93,6 +93,12 @@ interface PendingCmd {
   finalContent: string | null;
 }
 const _pendingCmds = new Map<string, PendingCmd>();
+
+const SOFT_ORG_EXIT_REASONS = new Set(["normal", "ask_user", "waiting_user", "verify_incomplete"]);
+
+function isSoftOrgExitReason(reason?: string): boolean {
+  return !reason || SOFT_ORG_EXIT_REASONS.has(reason);
+}
 
 function saveToLocalStorage(cid: string, msgs: ChatMsg[]): void {
   try {
@@ -410,33 +416,6 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       return "⚠";
     }
 
-    /** 把后端返回的结构化诊断 payload 渲染成一段 markdown，追加到 seg.lines 末尾 */
-    function formatDiagnosisMarkdown(d: FailureDiagnosis): string {
-      const parts: string[] = [];
-      const headline = d.headline || t("org.chat.taskIncomplete");
-      parts.push(`**🔍 ${t("org.chat.whyFailed")}**：${headline}`);
-      const evidence = d.evidence || [];
-      if (evidence.length > 0) {
-        parts.push("");
-        parts.push(`**${t("org.chat.keyActions", { count: evidence.length })}**`);
-        for (const item of evidence) {
-          const iterN = item.iter ?? "?";
-          const tool = item.tool || "?";
-          const args = item.args_summary ? `(${item.args_summary})` : "";
-          const err = (item.error || "").replace(/\s+/g, " ").trim();
-          const errShort = err.length > 140 ? err.slice(0, 140) + "…" : err;
-          parts.push(`- ${t("org.chat.round", { n: iterN, from: `\`${tool}\`${args}`, to: errShort })}`);
-        }
-      }
-      const suggestion = d.suggestion || "";
-      if (suggestion) {
-        parts.push("");
-        parts.push(`**${t("org.chat.suggestions")}**:`);
-        parts.push(suggestion);
-      }
-      return parts.join("\n");
-    }
-
     function renderTimeline(): string {
       return segments.map(seg => {
         const body = seg.lines.join("\n\n");
@@ -496,8 +475,9 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             const seg = segments[idx];
             seg.done = true;
             seg.exitReason = exitReason;
-            // 正常完成才打 ✓；非正常退出交给后续 task_terminated/task_failed 事件打"⏹/⚠"
-            if (exitReason === "normal" || exitReason === "ask_user") {
+            // 软退出在用户界面按完成/等待处理；真正异常交给后续事件显示极简状态。
+            if (isSoftOrgExitReason(exitReason)) {
+              seg.failed = false;
               pushSegLine(seg, t("org.chat.completed", { name: `**${nn(nid)}**` }));
             } else {
               seg.failed = true;
@@ -542,9 +522,6 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           seg.failed = true;
           seg.diagnosis = diagnosis;
           pushSegLine(seg, t("org.chat.forceTerminated", { name: `**${nn(nid)}**` }));
-          if (diagnosis) {
-            pushSegLine(seg, formatDiagnosisMarkdown(diagnosis));
-          }
         }
         updatePreview();
       } else if (event === "org:task_failed") {
@@ -557,16 +534,19 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           seg.done = true;
           seg.resultPreview = preview;
           seg.exitReason = reason;
+          if (isSoftOrgExitReason(reason)) {
+            seg.failed = false;
+            seg.diagnosis = undefined;
+            pushSegLine(seg, t("org.chat.completed", { name: `**${nn(nid)}**` }));
+            updatePreview();
+            return;
+          }
           seg.failed = true;
           seg.diagnosis = diagnosis;
           const reasonLabel =
             reason === "max_iterations" ? t("org.chat.maxIterations") :
-            reason === "verify_incomplete" ? t("org.chat.validationFailed") :
             t("org.chat.executionFailed");
           pushSegLine(seg, t("org.chat.incomplete", { name: `**${nn(nid)}**`, reason: reasonLabel }));
-          if (diagnosis) {
-            pushSegLine(seg, formatDiagnosisMarkdown(diagnosis));
-          }
         }
         updatePreview();
       } else if (event === "org:blackboard_update") {

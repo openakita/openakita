@@ -312,7 +312,13 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
         body: JSON.stringify({ include_inactive: true, include_default_graph_nodes: true }),
       });
       const data = await res.json();
-      toast.success(t("memory.legacyClaimSuccess", { count: data.claimed ?? 0, graph: data.graph_nodes_updated ?? 0 }));
+      toast.success(t("memory.legacyClaimSuccess", {
+        promoted: data.promoted ?? data.claimed ?? 0,
+        reviewed: data.reviewed ?? 0,
+        rejected: data.rejected ?? 0,
+        conflicts: data.conflict_skipped ?? 0,
+        graph: data.graph_nodes_updated ?? 0,
+      }));
       await Promise.all([loadMemories(), loadStats(), loadMigrationStatus()]);
       setGraphRefreshKey((v) => v + 1);
     } catch (e: any) {

@@ -111,6 +111,12 @@ function formatOrgCommandPhase(phase?: string, openChainCount?: number): string 
   }
 }
 
+const SOFT_ORG_EXIT_REASONS = new Set(["normal", "ask_user", "waiting_user", "verify_incomplete"]);
+
+function isSoftOrgExitReason(reason?: string): boolean {
+  return !reason || SOFT_ORG_EXIT_REASONS.has(reason);
+}
+
 type HistoryPageState = {
   total: number;
   startIndex: number | null;
@@ -2018,8 +2024,13 @@ export function ChatView({
             const reason = ((d.reason || d.feedback || "") as string).slice(0, 80);
             pushProgress(`! **${rejectedBy || "上级"}** 打回 **${nodeId}** 的交付物${reason ? `：${reason}` : ""}`);
           } else if (event === "org:task_failed") {
-            const reason = ((d.error || d.reason || d.exit_reason || "") as string).slice(0, 100);
-            pushProgress(`✗ **${nodeId}** 任务失败${reason ? `：${reason}` : ""}`);
+            const exitReason = (d.exit_reason || "") as string;
+            if (isSoftOrgExitReason(exitReason)) return;
+            const reason =
+              exitReason === "max_iterations" ? "达到迭代上限" :
+              exitReason === "loop_terminated" ? "被系统终止" :
+              "执行未完成";
+            pushProgress(`✗ **${nodeId}** ${reason}`);
           } else if (event === "org:command_phase") {
             const activeCmd = activeOrgCommandRef.current;
             const eventCommandId = (d.command_id || "") as string;

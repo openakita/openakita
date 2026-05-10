@@ -108,7 +108,7 @@ PACKAGE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "label_en": "Economy",
         "description": "宏观经济、资本市场、产业政策与国际经贸。",
         "keywords": ["经济", "金融", "贸易", "关税", "汇率", "市场"],
-        "default_enabled": False,
+        "default_enabled": True,
     },
     "world": {
         "label_zh": "国际局势",
@@ -122,14 +122,14 @@ PACKAGE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "label_en": "Tech",
         "description": "科技产业、AI、芯片、平台与新质生产力。",
         "keywords": ["科技", "AI", "人工智能", "芯片", "平台", "产业"],
-        "default_enabled": False,
+        "default_enabled": True,
     },
     "platform": {
         "label_zh": "平台热点",
         "label_en": "Platform Trends",
         "description": "适合融媒体选题的热榜、舆论和传播观察源。",
         "keywords": ["热搜", "视频", "社交", "平台", "舆论", "传播"],
-        "default_enabled": False,
+        "default_enabled": True,
     },
 }
 
@@ -172,7 +172,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "http://www.xinhuanet.com/tw/news_tw.xml",
         "packages": ["taiwan", "policy"],
         "authority": 0.76,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "people-taiwan": {
         "label_zh": "人民网 台湾频道",
@@ -180,7 +180,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "http://www.people.com.cn/rss/tw.xml",
         "packages": ["taiwan", "policy"],
         "authority": 0.74,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "chinanews-taiwan": {
         "label_zh": "中国新闻网 台湾",
@@ -236,7 +236,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rsshub.app/thepaper/featured",
         "packages": ["policy", "world", "economy"],
         "authority": 0.7,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "yicai-news": {
         "label_zh": "第一财经",
@@ -244,7 +244,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://www.yicai.com/api/ajax/getrss/list/0",
         "packages": ["economy"],
         "authority": 0.72,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "caixin-latest": {
         "label_zh": "财新网 最新",
@@ -260,7 +260,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rsshub.app/wallstreetcn/news/global",
         "packages": ["economy", "world"],
         "authority": 0.7,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "kr36": {
         "label_zh": "36 氪",
@@ -308,7 +308,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rsshub.app/guancha/headline",
         "packages": ["policy", "world"],
         "authority": 0.6,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "huanqiu-opinion": {
         "label_zh": "环球时报 评论",
@@ -316,7 +316,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://opinion.huanqiu.com/feed/all",
         "packages": ["policy", "world"],
         "authority": 0.62,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "rsshub-douyin-hot": {
         "label_zh": "抖音热门 RSSHub",
@@ -324,7 +324,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rsshub.app/douyin/hot",
         "packages": ["platform"],
         "authority": 0.42,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "rsshub-bilibili-weekly": {
         "label_zh": "B 站每周必看 RSSHub",
@@ -332,7 +332,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rsshub.app/bilibili/popular/weekly",
         "packages": ["platform", "tech"],
         "authority": 0.46,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "bbc-zh": {
         "label_zh": "BBC 中文",
@@ -436,7 +436,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://www.chinatimes.com/politic/rss.xml",
         "packages": ["taiwan", "world"],
         "authority": 0.62,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "ettoday-mainland": {
         "label_zh": "ETToday 中國大陸",
@@ -452,7 +452,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://www.nownews.com/cat/politics/feed/",
         "packages": ["taiwan", "world"],
         "authority": 0.6,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     # ---------------------------------------------------------------
     # HTML-listing sources for sites without public RSS feeds.
@@ -472,7 +472,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         },
         "packages": ["taiwan", "policy"],
         "authority": 0.7,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "fjsen-taihai": {
         "label_zh": "东南网 台海频道",
@@ -502,7 +502,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         },
         "packages": ["taiwan"],
         "authority": 0.62,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "diplomat-main": {
         "label_zh": "The Diplomat",
@@ -534,7 +534,7 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rsshub.app/weibo/search/hot",
         "packages": ["platform"],
         "authority": 0.42,
-        "default_enabled": True,
+        "default_enabled": False,
     },
     "rsshub-zhihu-hot": {
         "label_zh": "知乎热榜 RSSHub",
@@ -542,8 +542,53 @@ SOURCE_DEFS: Final[dict[str, dict[str, Any]]] = {
         "url": "https://rsshub.app/zhihu/hotlist",
         "packages": ["platform", "tech"],
         "authority": 0.42,
-        "default_enabled": True,
+        "default_enabled": False,
     },
+}
+
+DEPRECATED_SOURCE_IDS: Final[set[str]] = {
+    # Removed from the active catalog because the endpoints currently return
+    # 404/403, empty feeds, stale multi-year archives, or unstable third-party data.
+    "cctv-domestic",
+    "cctv-international",
+    "cctv-finance",
+    "cctv-hk-tw",
+    "cctv-xinwenlianbo",
+    "people-politics",
+    "people-world",
+    "xinhua-politics",
+    "xinhua-taiwan",
+    "xinhua-world",
+    "people-taiwan",
+    "chinanews-taiwan",
+    "thepaper-featured",
+    "yicai-news",
+    "caixin-latest",
+    "wallstreetcn-global",
+    "kr36",
+    "huxiu",
+    "jiqizhixin",
+    "guancha",
+    "huanqiu-opinion",
+    "rsshub-douyin-hot",
+    "rsshub-bilibili-weekly",
+    "rsshub-weibo-hot",
+    "rsshub-zhihu-hot",
+    "voa-zh",
+    "zaobao-china",
+    "zaobao-world",
+    "chinadaily-china",
+    "chinadaily-world",
+    "chinadaily-business",
+    "taiwan-info",
+    "udn-cross-strait",
+    "chinatimes-politics",
+    "ettoday-mainland",
+    "nownews-politics",
+    "taiwancn-jsbg",
+    "taihainet-twxw",
+    "dw-zh",
+    "reuters-world",
 }
 
 AUTHORITY_TOOLTIP_ZH: Final[str] = (

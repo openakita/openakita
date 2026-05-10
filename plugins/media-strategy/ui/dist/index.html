@@ -52,14 +52,16 @@
     .content { padding:18px 20px; flex:1; overflow:auto; display:flex; }
     .content > section { width:100%; min-height:calc(100vh - 154px); }
     .stack-layout { display:flex; flex-direction:column; gap:14px; }
-    .grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(360px,.9fr); gap:14px; align-items:stretch; min-height:0; }
+    .grid { display:grid; grid-template-columns:minmax(0,.95fr) minmax(460px,1.15fr); gap:14px; align-items:start; min-height:0; }
     .card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:16px; box-shadow:0 1px 2px rgba(15,23,42,.04); min-width:0; }
     .card-fill { display:flex; flex-direction:column; min-height:0; height:100%; }
     .card.grow { min-height:0; }
     .oa-section-title { display:flex; align-items:center; gap:10px; margin:0 0 14px; font-size:16px; font-weight:650; }
     .oa-section-title::before { content:""; width:4px; height:18px; border-radius:2px; background:var(--primary); }
     .oa-hint { font-size:12px; color:var(--text); line-height:1.6; background:var(--bg-hover); border-left:3px solid var(--primary); padding:10px 12px; border-radius:8px; margin-bottom:12px; }
-    .filter-bar { display:grid; grid-template-columns:auto minmax(160px,1fr) minmax(140px,.7fr) minmax(220px,1.2fr) auto auto; gap:12px; align-items:end; padding:14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card); }
+    .filter-bar { display:grid; grid-template-columns:minmax(120px,.55fr) minmax(150px,.7fr) minmax(180px,1fr) minmax(110px,.45fr) minmax(118px,auto) minmax(118px,auto); gap:12px; align-items:end; padding:14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card); }
+    .filter-bar > .btn { width:auto; min-width:118px; padding-inline:16px; justify-self:end; }
+    .mini-filter-bar { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card); }
     .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; align-items:end; margin-bottom:12px; }
     .field { display:flex; flex-direction:column; gap:6px; min-width:0; }
     .field label { font-size:12px; color:var(--text-muted); }
@@ -74,22 +76,29 @@
     .input { min-height:34px; padding:8px 10px; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text); min-width:0; width:100%; }
     .item { padding:12px; border:1px solid var(--border); border-radius:9px; margin-bottom:8px; background:var(--bg-card); }
     .item h3 { margin:0 0 6px; font-size:14px; }
+    .item-summary-empty { color:var(--text-muted); font-size:12px; font-style:italic; }
     .meta { display:flex; flex-wrap:wrap; gap:6px; color:var(--text-muted); font-size:12px; }
     .pill { display:inline-flex; padding:2px 8px; border-radius:999px; background:var(--bg-hover); border:1px solid var(--border); color:var(--text-muted); font-size:12px; }
     .pill.score { color:var(--primary); border-color:rgba(15,118,110,.35); }
     .pill.high { color:var(--danger); } .pill.medium { color:var(--warning); } .pill.low { color:var(--success); }
     .empty { text-align:center; color:var(--text-muted); padding:28px 12px; font-size:13px; }
     .empty-fill { flex:1; display:grid; place-items:center; min-height:220px; }
-    .report { max-height:520px; overflow:auto; color:var(--text); }
-    .report h1 { font-size:20px; }.report h2 { font-size:16px; margin-top:18px; }.report p,.report li { font-size:13px; }
+    .report { max-height:520px; overflow:auto; color:var(--text); line-height:1.72; }
+    .report h1 { font-size:21px; line-height:1.35; margin:0 0 14px; padding-bottom:10px; border-bottom:1px solid var(--border); }
+    .report h2 { font-size:17px; margin:20px 0 10px; padding-left:10px; border-left:4px solid var(--primary); }
+    .report h3 { font-size:15px; margin:16px 0 8px; color:var(--primary); }
+    .report p,.report li { font-size:13px; }
+    .report table { width:100%; border-collapse:separate; border-spacing:0; margin:12px 0; font-size:12px; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+    .report th,.report td { padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; text-align:left; }
+    .report th { background:var(--bg-hover); color:var(--text); font-weight:650; }
+    .report tr:last-child td { border-bottom:0; }
+    .report a { color:var(--primary); text-decoration:none; border-bottom:1px dotted rgba(15,118,110,.45); }
+    .report blockquote { margin:12px 0; padding:10px 12px; border-left:3px solid var(--primary); background:var(--bg-hover); border-radius:8px; color:var(--text-muted); }
+    .report code { padding:1px 5px; border-radius:5px; background:var(--bg-hover); border:1px solid var(--border); }
     .toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px; }
     .toolbar .input { flex:1 1 220px; }
-    .toast { position:fixed; top:18px; right:18px; max-width:min(420px,calc(100vw - 36px)); padding:12px 14px 12px 42px; border-radius:12px; border:1px solid rgba(15,118,110,.28); background:var(--bg-card); color:var(--text); box-shadow:0 18px 46px rgba(15,23,42,.18); font-size:13px; line-height:1.5; z-index:80; transform-origin:top right; animation:toast-in .18s ease-out; }
-    .toast::before { content:""; position:absolute; left:14px; top:14px; width:16px; height:16px; border-radius:999px; background:var(--primary); box-shadow:0 0 0 4px var(--primary-soft); }
-    .toast::after { content:""; position:absolute; left:19px; top:18px; width:5px; height:8px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg); }
-    .toast.error { border-color:rgba(220,38,38,.35); color:var(--danger); background:linear-gradient(180deg,var(--bg-card),rgba(220,38,38,.06)); }
-    .toast.error::before { background:var(--danger); box-shadow:0 0 0 4px rgba(220,38,38,.12); }
-    .toast.error::after { content:"!"; left:19px; top:12px; width:auto; height:auto; border:0; transform:none; color:#fff; font-size:12px; font-weight:800; }
+    .toast { position:fixed; top:18px; right:18px; max-width:min(460px,calc(100vw - 36px)); padding:12px 14px; border-radius:12px; border:1px solid rgba(15,118,110,.22); border-left:4px solid var(--primary); background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); color:var(--text); box-shadow:0 14px 34px rgba(15,23,42,.14); font-size:13px; line-height:1.55; z-index:80; transform-origin:top right; animation:toast-in .18s ease-out; }
+    .toast.error { border-color:rgba(220,38,38,.28); border-left-color:var(--danger); color:var(--danger); background:linear-gradient(180deg,var(--bg-card),rgba(220,38,38,.06)); }
     @keyframes toast-in { from { opacity:0; transform:translateY(-8px) scale(.98); } to { opacity:1; transform:translateY(0) scale(1); } }
     .selected-bar { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:10px 12px; border:1px dashed rgba(15,118,110,.45); border-radius:9px; background:var(--bg-hover); color:var(--text-muted); font-size:12px; margin-bottom:12px; }
     .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
@@ -153,11 +162,63 @@
     .range-row { display:flex; gap:10px; align-items:center; }
     .range-row input[type=range] { flex:1; }
     .range-row .range-val { font-variant-numeric:tabular-nums; min-width:40px; text-align:right; color:var(--primary); font-weight:650; }
-    .task-list { display:grid; gap:8px; align-content:start; }
-    .task-row { display:flex; justify-content:space-between; gap:10px; border:1px solid var(--border); border-radius:8px; padding:9px 10px; font-size:12px; }
+    .task-list { display:grid; gap:10px; align-content:start; max-height:420px; overflow:auto; padding-right:3px; }
+    .task-row { display:grid; grid-template-columns:1fr auto; gap:8px 12px; align-items:start; border:1px solid var(--border); border-radius:10px; padding:11px 12px; font-size:12px; background:var(--bg-card); }
+    .task-row__title { font-weight:700; color:var(--text); }
+    .task-row__desc { color:var(--text-muted); margin-top:4px; line-height:1.45; }
+    .task-row__status { justify-self:end; padding:2px 8px; border-radius:999px; background:var(--bg-hover); border:1px solid var(--border); font-weight:700; }
+    .task-row__meta { grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:8px; color:var(--text-dim); font-size:11px; }
     .status-done { color:var(--success); }.status-failed { color:var(--danger); }.status-running { color:var(--warning); }
     .report-row { border:1px solid var(--border); border-radius:9px; padding:10px; cursor:pointer; background:var(--bg-card); }
     .report-row:hover { background:var(--bg-hover); }
+    .workspace-card { min-height:min(680px,calc(100vh - 268px)); }
+    .tool-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:12px; padding:5px; border:1px solid var(--border); border-radius:12px; background:var(--bg); }
+    .tool-tab { min-height:38px; border:0; border-radius:9px; background:transparent; color:var(--text-muted); cursor:pointer; font-size:13px; font-weight:600; }
+    .tool-tab:hover { background:var(--bg-hover); color:var(--text); }
+    .tool-tab.active { background:var(--primary); color:#fff; box-shadow:0 8px 18px rgba(15,118,110,.18); }
+    .tool-panel { display:flex; flex-direction:column; gap:12px; min-height:0; }
+    .tool-panel[hidden] { display:none !important; }
+    .ai-capability { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+    .ai-capability span { padding:9px 10px; border:1px solid rgba(15,118,110,.22); border-radius:10px; background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); color:var(--primary); font-size:12px; font-weight:650; text-align:center; }
+    .report-actions { display:grid; gap:8px; align-content:start; max-height:180px; overflow:auto; padding-right:2px; }
+    .report-action { width:100%; justify-content:flex-start; text-align:left; white-space:normal; min-height:40px; padding:9px 10px; }
+    .report-inline { border:1px solid rgba(15,118,110,.25); border-radius:12px; padding:12px; background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); }
+    .report-inline strong { display:block; margin-bottom:6px; }
+    .report-inline .meta { margin-bottom:10px; }
+    .report-modal-card { width:min(1040px,96vw); max-height:92vh; }
+    .report-modal-body { padding:0; display:block; }
+    .report-modal-toolbar { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--bg); }
+    .report-modal-toolbar__actions { display:flex; gap:8px; align-items:center; }
+    .report-viewer { max-height:calc(92vh - 104px); padding:18px 22px; overflow:auto; }
+    .report-frame { width:100%; min-height:calc(92vh - 122px); border:0; background:#fff; }
+    .brief-workbench { display:grid; grid-template-columns:minmax(320px,430px) minmax(0,1fr); gap:14px; align-items:start; }
+    .brief-left, .brief-preview-pane { display:flex; flex-direction:column; gap:12px; min-width:0; }
+    .brief-preview-pane { position:sticky; top:0; }
+    .brief-session-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+    .brief-session-card { border:1px solid var(--border); border-radius:12px; padding:11px; background:var(--bg-card); cursor:pointer; text-align:left; }
+    .brief-session-card.active { border-color:var(--primary); background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); box-shadow:0 0 0 2px rgba(15,118,110,.08); }
+    .brief-session-card strong { display:block; margin-bottom:4px; }
+    .brief-preview-frame { width:100%; min-height:calc(100vh - 260px); border:1px solid var(--border); border-radius:12px; background:#fff; }
+    .brief-process { border:1px solid rgba(15,118,110,.25); border-radius:12px; padding:12px; background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); }
+    .brief-process__bar { height:8px; border-radius:999px; overflow:hidden; background:rgba(15,118,110,.12); margin:8px 0 10px; }
+    .brief-process__bar span { display:block; height:100%; background:linear-gradient(90deg,var(--primary),var(--primary-hover)); transition:width .25s ease; }
+    .brief-process__steps { display:grid; gap:6px; color:var(--text-muted); font-size:12px; }
+    .brief-process__steps span.active { color:var(--primary); font-weight:700; }
+    .channel-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .ai-process { border:1px solid rgba(15,118,110,.25); border-radius:12px; padding:12px; background:linear-gradient(180deg,var(--bg-card),var(--bg-hover)); }
+    .ai-process__head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:10px; }
+    .ai-process__title { font-weight:700; color:var(--text); }
+    .ai-process__desc { margin-top:4px; color:var(--text-muted); font-size:12px; line-height:1.55; }
+    .ai-process__bar { height:8px; border-radius:999px; overflow:hidden; background:rgba(15,118,110,.12); margin:10px 0 12px; }
+    .ai-process__bar span { display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,var(--primary),var(--primary-hover)); transition:width .28s ease; }
+    .ai-steps { display:grid; gap:8px; }
+    .ai-step { display:grid; grid-template-columns:22px 1fr; gap:8px; align-items:start; color:var(--text-muted); font-size:12px; }
+    .ai-step__dot { width:18px; height:18px; border-radius:999px; display:grid; place-items:center; border:1px solid var(--border); background:var(--bg-card); color:var(--text-dim); font-size:10px; }
+    .ai-step.done { color:var(--text); }
+    .ai-step.done .ai-step__dot { background:var(--success); border-color:var(--success); color:#fff; }
+    .ai-step.active .ai-step__dot { background:var(--primary); border-color:var(--primary); color:#fff; box-shadow:0 0 0 5px var(--primary-soft); animation:pulse-dot 1.4s infinite; }
+    .ai-step strong { display:block; color:var(--text); margin-bottom:2px; }
+    @keyframes pulse-dot { 0%,100% { transform:scale(1); } 50% { transform:scale(1.08); } }
     .settings-section-card { display:flex; flex-direction:column; gap:18px; }
     .storage-panel { margin-top:0; padding:18px; border:1px solid var(--border); border-radius:12px; background:linear-gradient(180deg,var(--bg-card),var(--bg)); }
     .storage-panel .oa-section-title { margin-bottom:16px; }
@@ -190,16 +251,17 @@
     .folder-item { width:100%; display:flex; justify-content:space-between; gap:12px; align-items:center; padding:9px 10px; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--text); cursor:pointer; text-align:left; }
     .folder-item:hover { background:var(--bg-hover); border-color:var(--border); }
     .folder-new-row { display:flex; gap:8px; padding:10px 14px; border-top:1px solid var(--border); }
-    #tab-radar > .grid { flex:1; }
-    #tab-radar > .grid > .stack-layout { display:grid; grid-template-rows:minmax(0,1fr) minmax(170px,.5fr); height:100%; }
-    #items { flex:1; overflow:auto; }
-    #tasks { flex:1; }
+    #tab-radar > .grid { flex:0 0 auto; }
+    #tab-radar > .grid > .stack-layout { display:flex; flex-direction:column; gap:14px; height:auto; }
+    #tab-radar > .grid > .stack-layout .card-fill { height:auto; }
+    #items { max-height:min(680px,calc(100vh - 320px)); overflow:auto; padding-right:4px; }
+    #tasks { max-height:220px; overflow:auto; }
     #briefOut, #planOut, #reportPreview { flex:1; min-height:260px; }
     #tab-brief > .card, #tab-plan > .card { flex:1; display:flex; flex-direction:column; }
     #tab-reports > .grid { flex:1; }
     @media (max-width: 1100px) { .filter-bar { grid-template-columns:repeat(2,minmax(0,1fr)); } .filter-bar .pill { grid-column:1 / -1; } }
-    @media (max-width: 900px) { .grid { grid-template-columns:1fr; } .header { align-items:flex-start; gap:10px; flex-direction:column; } #tab-radar > .grid > .stack-layout { display:flex; height:auto; } .storage-path-row { grid-template-columns:1fr; } }
-    @media (max-width: 700px) { .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .filter-bar { grid-template-columns:1fr; } }
+    @media (max-width: 900px) { .grid, .brief-workbench { grid-template-columns:1fr; } .header { align-items:flex-start; gap:10px; flex-direction:column; } #items { max-height:none; } .storage-path-row { grid-template-columns:1fr; } .workspace-card { min-height:auto; } .brief-preview-pane { position:static; } }
+    @media (max-width: 700px) { .summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .filter-bar, .mini-filter-bar, .ai-capability, .tool-tabs, .brief-session-grid, .channel-row { grid-template-columns:1fr; } }
   </style>
 </head>
 <body>
@@ -226,8 +288,9 @@
         </select>
         <select id="hours" class="input"><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="72">72 小时</option><option value="168">7 天</option></select>
         <input id="query" class="input" placeholder="关键词，例如 台海 / 政策 / 关税">
-        <button id="ingest" class="btn">拉取已启用源</button>
-        <button id="radar" class="btn btn-primary">生成热点雷达</button>
+        <div class="field"><label for="autoSelectLimit">自动勾选 Top N</label><input id="autoSelectLimit" class="input" type="number" min="0" max="20" value="3" title="刷新热点榜后自动勾选 Top N，0 表示不自动勾选"></div>
+        <button id="ingest" class="btn">拉取选中套餐</button>
+        <button id="radar" class="btn btn-primary">刷新热点榜</button>
       </div>
       <div class="summary-grid" id="metrics">
         <div class="metric"><strong>-</strong><span>热点数</span></div>
@@ -237,32 +300,77 @@
       </div>
       <div class="grid">
         <div class="card card-fill grow"><h2 class="oa-section-title">热点榜</h2><div id="items" class="empty empty-fill">暂无数据，先拉取 RSS 或调整时间窗。</div></div>
-        <div class="stack-layout">
-          <div class="card card-fill"><h2 class="oa-section-title">信源复核</h2><div class="oa-hint">所有热点都保留原文链接。对高风险内容，请先复核再进入采编。</div><div id="selectedSummary" class="selected-bar"><span>未选择热点</span><button id="clearSelection" class="btn">清空</button></div><div class="toolbar"><input id="verifyTopic" class="input" placeholder="复核主题，可留空"><button id="verify" class="btn btn-primary">生成复核清单</button></div><div id="verifyOut" class="report"></div></div>
-          <div class="card card-fill"><h2 class="oa-section-title">AI 选题分析</h2><div class="oa-hint">先用规则筛出 Top N 热点簇，再批量调用主程序大模型分析，避免逐条新闻消耗过高。</div><div class="filter-bar"><div class="field"><label for="aiLimit">分析 Top N</label><input id="aiLimit" class="input" type="number" min="1" max="20" value="10"></div><div class="field"><label for="aiMinCoverage">最少来源数</label><input id="aiMinCoverage" class="input" type="number" min="1" max="20" value="1"></div><div class="field"><label for="aiEvidenceLimit">每簇证据</label><input id="aiEvidenceLimit" class="input" type="number" min="1" max="8" value="5"></div></div><div class="toolbar"><button id="aiAnalyze" class="btn btn-primary">AI 分析 Top 热点</button></div><div id="aiAnalysisOut" class="report empty">尚未开始。大模型分析可能需要 30-90 秒，开始后会显示进度。</div></div>
-          <div class="card card-fill"><h2 class="oa-section-title">最近任务</h2><div id="tasks" class="task-list"></div></div>
+        <div class="card card-fill workspace-card">
+          <h2 class="oa-section-title">AI 流程工作台</h2>
+          <div class="tool-tabs" role="tablist">
+            <button class="tool-tab active" data-tool-tab="verify">信源复核</button>
+            <button class="tool-tab" data-tool-tab="analysis">AI 选题分析</button>
+            <button class="tool-tab" data-tool-tab="tasks">最近任务</button>
+          </div>
+          <div id="tool-verify" class="tool-panel">
+            <div class="oa-hint">AI 会基于已选热点生成复核清单，识别旧稿、单一来源、时效性和链接风险。报告生成后会自动弹窗，也会保存在下方历史入口。</div>
+            <div class="ai-capability"><span>AI 交叉核验</span><span>旧闻/时效识别</span><span>复核动作建议</span></div>
+            <div id="selectedSummary" class="selected-bar"><span>未选择热点</span><button id="clearSelection" class="btn">清空</button></div>
+            <div class="toolbar"><input id="verifyTopic" class="input" placeholder="复核主题，可留空"><button id="verify" class="btn btn-primary">生成 AI 复核报告</button></div>
+            <div id="verifyOut" class="report-inline"><strong>尚未生成复核报告</strong><div class="meta">选择左侧热点后点击生成，完成后自动打开报告。</div></div>
+            <div><div class="meta" style="margin-bottom:6px">历史复核报告</div><div id="verifyReportList" class="report-actions"><div class="empty">暂无复核报告</div></div></div>
+          </div>
+          <div id="tool-analysis" class="tool-panel" hidden>
+            <div class="oa-hint">先用规则筛出 Top N 热点簇，再批量调用主程序大模型分析，避免逐条新闻消耗过高。</div>
+            <div class="mini-filter-bar"><div class="field"><label for="aiLimit">分析 Top N</label><input id="aiLimit" class="input" type="number" min="1" max="20" value="10"></div><div class="field"><label for="aiMinCoverage">最少来源数</label><input id="aiMinCoverage" class="input" type="number" min="1" max="20" value="1"></div><div class="field"><label for="aiEvidenceLimit">每簇证据</label><input id="aiEvidenceLimit" class="input" type="number" min="1" max="8" value="5"></div></div>
+            <div class="toolbar"><button id="aiAnalyze" class="btn btn-primary">AI 分析 Top 热点</button></div>
+            <div id="aiAnalysisOut" class="report-inline"><strong>尚未开始 AI 选题分析</strong><div class="meta">大模型分析可能需要 30-90 秒，开始后会显示进度。</div></div>
+            <div><div class="meta" style="margin-bottom:6px">历史选题分析</div><div id="aiReportList" class="report-actions"><div class="empty">暂无选题分析报告</div></div></div>
+          </div>
+          <div id="tool-tasks" class="tool-panel" hidden>
+            <div class="oa-hint">这里显示最近抓取、复核、AI 分析等任务状态。报告类任务完成后可在对应功能页或“报告”页再次打开。</div>
+            <div id="tasks" class="task-list"></div>
+          </div>
         </div>
       </div>
     </section>
     <section id="tab-brief" class="stack-layout" hidden>
-      <div class="card card-fill">
-        <h2 class="oa-section-title">融媒简报</h2>
-        <div class="oa-hint">适合早报、午报、晚报和专题简报，每条保留来源链接。若主程序 Brain（大模型推理能力）不可用，会自动用规则模板降级生成。</div>
-        <div class="form-grid">
-          <div class="field"><label for="briefSession">简报时段</label><select id="briefSession" class="input"><option value="morning">早报</option><option value="noon">午报</option><option value="evening">晚报</option><option value="topic">专题简报</option></select></div>
-          <div class="field"><label for="briefPackage">套餐范围</label><select id="briefPackage" class="input"><option value="">全部套餐</option><option value="taiwan">台海观察</option><option value="policy">时政政策</option><option value="economy">经济财经</option><option value="world">国际局势</option><option value="tech">科技产业</option><option value="platform">平台热点</option></select></div>
-          <div class="field"><label for="briefHours">时间窗口</label><select id="briefHours" class="input"><option value="6">6 小时</option><option value="24" selected>24 小时</option><option value="72">72 小时</option><option value="168">7 天</option></select></div>
-          <div class="field"><label for="briefLimit">条数</label><input id="briefLimit" class="input" type="number" min="3" max="100" value="20"></div>
+      <div class="brief-workbench">
+        <div class="brief-left">
+          <div class="card">
+            <h2 class="oa-section-title">融媒简报工作台</h2>
+            <div class="oa-hint">对齐早报 / 午报 / 晚报工作流：先筛选热点，再调用主程序 Brain 生成判断，最后渲染成美化 HTML 报表，可下载或推送到 IM。</div>
+            <div class="brief-session-grid">
+              <button class="brief-session-card active" data-brief-session="morning"><strong>早报</strong><span class="meta">适合 08:00 前快速总览</span></button>
+              <button class="brief-session-card" data-brief-session="noon"><strong>午报</strong><span class="meta">适合中午更新新增热点</span></button>
+              <button class="brief-session-card" data-brief-session="evening"><strong>晚报</strong><span class="meta">适合收盘/下班后复盘</span></button>
+            </div>
+            <input id="briefSession" type="hidden" value="morning">
+            <div class="form-grid" style="margin-top:12px">
+              <div class="field"><label for="briefPackage">套餐范围</label><select id="briefPackage" class="input"><option value="">全部套餐</option><option value="taiwan">台海观察</option><option value="policy">时政政策</option><option value="economy">经济财经</option><option value="world">国际局势</option><option value="tech">科技产业</option><option value="platform">平台热点</option></select></div>
+              <div class="field"><label for="briefHours">时间窗口</label><select id="briefHours" class="input"><option value="6">6 小时</option><option value="12">12 小时</option><option value="24" selected>24 小时</option><option value="72">72 小时</option><option value="168">7 天</option></select></div>
+              <div class="field"><label for="briefLimit">条数</label><input id="briefLimit" class="input" type="number" min="3" max="100" value="20"></div>
+            </div>
+            <div class="field">
+              <label><input id="briefPushEnabled" type="checkbox"> 生成后推送到 IM</label>
+              <div class="channel-row">
+                <select id="briefChannel" class="input"><option value="">选择通道</option></select>
+                <input id="briefChatId" class="input" placeholder="chat_id / 会话 ID">
+              </div>
+            </div>
+            <div class="toolbar"><button id="brief" class="btn btn-primary">生成并预览</button><button id="briefRefresh" class="btn">先刷新热点</button><button id="briefLoadChannels" class="btn">刷新 IM 通道</button></div>
+            <div id="briefOut" class="brief-process"><strong>尚未生成简报</strong><div class="meta">生成后右侧会显示 HTML 报表预览。</div></div>
+          </div>
+          <div class="card"><h2 class="oa-section-title">简报历史</h2><div id="briefReportList" class="report-actions"><div class="empty">暂无简报报告</div></div></div>
         </div>
-        <div class="toolbar"><button id="brief" class="btn btn-primary">生成简报</button><button id="briefRefresh" class="btn">先刷新热点</button></div>
-        <div id="briefOut" class="report"></div>
+        <div class="brief-preview-pane">
+          <div class="card card-fill">
+            <div class="section-toolbar"><h2 class="oa-section-title" style="margin:0">HTML 报表即时预览</h2><span class="filler"></span><button id="briefDownloadHtml" class="btn">下载 HTML</button><button id="briefPushNow" class="btn">推送当前简报</button></div>
+            <iframe id="briefPreviewFrame" class="brief-preview-frame" title="融媒简报 HTML 预览"></iframe>
+          </div>
+        </div>
       </div>
     </section>
     <section id="tab-plan" class="stack-layout" hidden>
       <div class="card card-fill">
         <h2 class="oa-section-title">策研采编计划</h2>
         <div class="oa-hint">复刻只复用选题角度、叙事结构和制作方法，不照搬标题、文案或视频内容。</div>
-        <div id="planSelection" class="selected-bar"><span>优先使用雷达页选中的热点；未选择时按主题检索。</span><button id="useTopItems" class="btn">选中前三条</button></div>
+        <div id="planSelection" class="selected-bar"><span>优先使用雷达页选中的热点；未选择时按主题检索。</span><button id="useTopItems" class="btn">按自动数量选中</button></div>
         <div class="form-grid">
           <div class="field"><label for="topic">主题</label><input id="topic" class="input" placeholder="例如：台海最新动态"></div>
           <div class="field"><label for="targetFormat">内容形态</label><select id="targetFormat" class="input"><option value="short_video">短视频</option><option value="interview">采访</option><option value="article">深度文章</option><option value="live_script">直播脚本</option></select></div>
@@ -438,6 +546,18 @@
       <div class="folder-dialog__foot"><span id="folderPickerHint" class="meta">选择一个文件夹后点击确认。</span><button id="chooseFolder" class="btn btn-primary">使用此目录</button></div>
     </div>
   </div>
+  <div id="reportModal" class="modal-shade" hidden>
+    <div class="modal-card report-modal-card">
+      <div class="modal-card__head"><strong id="reportModalTitle">报告预览</strong><button id="closeReportModal" class="btn">关闭</button></div>
+      <div class="modal-card__body report-modal-body">
+        <div class="report-modal-toolbar">
+          <span id="reportModalMeta" class="meta">AI 生成内容</span>
+          <div class="report-modal-toolbar__actions"><button id="reportModalDownload" class="btn">下载 Markdown</button><button id="reportModalDownloadHtml" class="btn">下载 HTML</button><button id="reportModalOpenReports" class="btn">查看全部报告</button></div>
+        </div>
+        <div id="reportModalBody" class="report report-viewer"></div>
+      </div>
+    </div>
+  </div>
   <div id="toast" class="toast" hidden></div>
 </div>
 <script>
@@ -464,6 +584,17 @@ let currentFolderPath = "";
 let currentFolderParent = null;
 let editingSourceId = "";
 let editingPackageId = "";
+let currentModalReport = null;
+let currentBriefReport = null;
+let briefChannels = [];
+let aiProgressStartedAt = 0;
+const AI_PROGRESS_MIN_MS = 1800;
+const AI_STEPS = [
+  {key:'cluster', threshold:0.12, title:'规则聚类', desc:'筛选高价值热点簇，先减少无效内容。'},
+  {key:'evidence', threshold:0.28, title:'证据整理', desc:'汇总原文链接、发布时间和来源覆盖。'},
+  {key:'llm', threshold:0.42, title:'大模型分析', desc:'调用主程序 Brain 生成判断、风险和行动建议。'},
+  {key:'save', threshold:0.88, title:'报告保存', desc:'写入报告历史，方便后续反复查看和下载。'}
+];
 
 async function api(path, opts={}) {
   const res = await fetch(API + path, {headers:{'Content-Type':'application/json'}, ...opts});
@@ -471,17 +602,32 @@ async function api(path, opts={}) {
   if (!res.ok) throw new Error(body.detail || body.hint || res.statusText);
   return body;
 }
+async function openExternalLink(url){
+  const raw = String(url || '').trim();
+  if(!/^https?:\/\//i.test(raw)) throw new Error('只允许打开 http/https 链接');
+  if(window.OpenAkitaPlugin?.openExternal){
+    await window.OpenAkitaPlugin.openExternal(raw);
+    return;
+  }
+  try{
+    await api('/external/open-url',{method:'POST',body:JSON.stringify({url:raw})});
+    return;
+  }catch(e){
+    const win = window.open(raw, '_blank', 'noopener,noreferrer');
+    if(!win) throw e;
+  }
+}
 function $(id){ return document.getElementById(id); }
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function statusClass(s){ return s === 'done' ? 'status-done' : s === 'failed' ? 'status-failed' : s === 'running' ? 'status-running' : ''; }
 function showHealth(ok, text){ const el=$('health'); el.textContent=text; el.className='api-pill ' + (ok?'ok':''); }
-function toast(message, error=false){
+function toast(message, error=false, timeout=2600){
   const el=$('toast');
   el.textContent=message;
   el.className='toast' + (error ? ' error' : '');
   el.hidden=false;
   clearTimeout(toastTimer);
-  toastTimer=setTimeout(()=>{ el.hidden=true; }, 3600);
+  toastTimer=setTimeout(()=>{ el.hidden=true; }, timeout);
 }
 async function guard(fn, label='操作'){
   try { return await fn(); }
@@ -555,6 +701,80 @@ function setSegValue(group, val){
   group.querySelectorAll('.seg-btn').forEach(b=>b.classList.toggle('active', b.dataset.val===group.dataset.value));
 }
 function formatSize(mb){ return `${Number(mb || 0).toFixed(1)} MB`; }
+function autoSelectLimit(){
+  const el = $('autoSelectLimit');
+  const value = Number(el?.value ?? 3);
+  if(!Number.isFinite(value)) return 3;
+  return Math.max(0, Math.min(20, Math.floor(value)));
+}
+function formatDateTime(value){
+  if(value === null || value === undefined || value === '') return '';
+  let date;
+  if(typeof value === 'number') date = new Date(value * 1000);
+  else date = new Date(value);
+  if(Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('zh-CN', {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+}
+function safeFileName(name){
+  return String(name || 'media-strategy-report').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80);
+}
+function downloadMarkdown(report){
+  if(!report?.markdown) return toast('报告内容为空，无法下载', true);
+  const blob = new Blob([report.markdown], {type:'text/markdown;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeFileName(report.title || reportKindLabel(report.kind))}.md`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 500);
+}
+function downloadHtml(report){
+  if(!report?.html) return toast('该报告没有 HTML 预览内容', true);
+  const blob = new Blob([report.html], {type:'text/html;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeFileName(report.title || reportKindLabel(report.kind))}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 500);
+}
+function taskModeLabel(mode){
+  return {
+    ingest:'拉取新闻源',
+    hot_radar:'刷新热点榜',
+    daily_brief:'生成融媒简报',
+    verify_pack:'生成 AI 信源复核',
+    replicate_plan:'生成策研采编计划',
+    ai_topic_analysis:'AI 选题分析'
+  }[mode] || mode || '任务';
+}
+function taskStatusLabel(status){
+  return {pending:'等待中', running:'运行中', done:'已完成', failed:'失败'}[status] || status || '未知';
+}
+function taskSummary(task){
+  const params = task?.params || {};
+  if(task.mode === 'ingest'){
+    const pkgs = (params.package_ids || []).map(packageLabel).join('、') || '全部已启用套餐';
+    return `抓取范围：${pkgs}`;
+  }
+  if(task.mode === 'verify_pack'){
+    return `复核主题：${params.topic || '按已选热点'}；文章 ${params.article_ids?.length || 0} 条`;
+  }
+  if(task.mode === 'ai_topic_analysis'){
+    return `分析 Top ${params.limit || 10} 热点，证据 ${params.evidence_limit || 5} 条/簇`;
+  }
+  if(task.mode === 'daily_brief'){
+    return `时间窗口：${params.since_hours || 24} 小时；条数 ${params.limit || 20}`;
+  }
+  if(task.mode === 'replicate_plan'){
+    return `主题：${params.topic || '按已选热点'}；形态：${params.target_format || '未指定'}`;
+  }
+  return task.pipeline_step || '任务记录';
+}
 function renderSelection(){
   const picked = lastItems.filter(item => selected.includes(item.id));
   const text = picked.length ? `已选择 ${picked.length} 条：${picked.map(x=>x.title).slice(0,2).join('、')}${picked.length>2?' 等':''}` : '未选择热点';
@@ -580,7 +800,8 @@ function resetPageScrollSoon(){
 }
 function renderItems(items){
   lastItems = Array.isArray(items) ? items : [];
-  setSelected(lastItems.slice(0, 3).map(x=>x.id));
+  const autoCount = autoSelectLimit();
+  setSelected(lastItems.slice(0, autoCount).map(x=>x.id));
   const el=$('items');
   if(!lastItems.length){
     el.className='empty empty-fill';
@@ -590,12 +811,17 @@ function renderItems(items){
   }
   el.className='';
   el.innerHTML = lastItems.map((it,i)=>`<article class="item">
-    <h3><label><input type="checkbox" data-id="${esc(it.id)}" ${i<3?'checked':''}> <a href="${esc(it.url)}" target="_blank" rel="noreferrer">${esc(it.title)}</a></label></h3>
+    <h3><label><input type="checkbox" data-id="${esc(it.id)}" ${selected.includes(it.id)?'checked':''}> <a href="${esc(it.url)}" data-external-link>${esc(it.title)}</a></label></h3>
     <div class="meta"><span class="pill score">score ${esc(it.hot_score||0)}</span><span class="pill ${esc(it.risk_level||'medium')}">risk ${esc(it.risk_level||'medium')}</span><span>${esc(it.source_id||'')}</span><span>${esc(it.published_at||it.fetched_at||'')}</span></div>
-    <p>${esc(it.ai_summary || it.summary || '无摘要')}</p>
+    ${renderItemSummary(it)}
   </article>`).join('');
   el.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.addEventListener('change',()=>setSelected([...el.querySelectorAll('input:checked')].map(x=>x.dataset.id))));
   renderSelection();
+}
+function renderItemSummary(item){
+  const text = item.ai_summary || item.summary || '';
+  if(text) return `<p>${esc(text)}</p>`;
+  return '<p class="item-summary-empty">该来源未提供摘要，仅保留标题和原文链接。</p>';
 }
 function renderMetrics(radarStats={}, ingestStats=null){
   const enabled = lastHealth?.sources_enabled ?? '-';
@@ -613,6 +839,230 @@ function activateTab(tab){
   history.replaceState(null, '', '#' + (section.id || 'tab-radar').replace('tab-', ''));
   resetPageScrollSoon();
   if(tab === 'reports') loadReports().catch(()=>{});
+}
+function activateToolTab(tab){
+  const id = tab || 'verify';
+  document.querySelectorAll('[data-tool-tab]').forEach(btn=>btn.classList.toggle('active', btn.dataset.toolTab === id));
+  document.querySelectorAll('.tool-panel').forEach(panel=>{ panel.hidden = panel.id !== 'tool-' + id; });
+}
+function reportKindLabel(kind){
+  return {
+    verify_pack:'AI 信源复核',
+    ai_topic_analysis:'AI 选题分析',
+    daily_brief:'融媒简报',
+    replicate_plan:'策研采编'
+  }[kind] || kind || '报告';
+}
+function renderReportButton(report){
+  return `<button type="button" class="btn report-action" data-report-open="${esc(report.id)}">
+    <span><strong>${esc(report.title || reportKindLabel(report.kind))}</strong><br><span class="meta">${esc(reportKindLabel(report.kind))} · ${esc(formatDateTime(report.created_at))}</span></span>
+  </button>`;
+}
+function renderReportLists(reports){
+  const verify = (reports || []).filter(r=>r.kind === 'verify_pack');
+  const ai = (reports || []).filter(r=>r.kind === 'ai_topic_analysis');
+  const briefs = (reports || []).filter(r=>r.kind === 'daily_brief');
+  const verifyEl = $('verifyReportList');
+  const aiEl = $('aiReportList');
+  const briefEl = $('briefReportList');
+  if(verifyEl) verifyEl.innerHTML = verify.map(renderReportButton).join('') || '<div class="empty">暂无复核报告</div>';
+  if(aiEl) aiEl.innerHTML = ai.map(renderReportButton).join('') || '<div class="empty">暂无选题分析报告</div>';
+  if(briefEl) briefEl.innerHTML = briefs.map(renderReportButton).join('') || '<div class="empty">暂无简报报告</div>';
+}
+function openReportModal({title='报告预览', markdown='', kind='', created_at='', source='', id=''}={}){
+  const html = arguments[0]?.html || '';
+  currentModalReport = {id, title, markdown, html, kind, created_at, source};
+  $('reportModalTitle').textContent = title || reportKindLabel(kind);
+  $('reportModalMeta').textContent = `${reportKindLabel(kind)}${created_at ? ' · ' + created_at : ''}${source ? ' · ' + source : ''}`;
+  $('reportModalBody').innerHTML = html
+    ? `<iframe class="report-frame" title="${esc(title || '报告预览')}" srcdoc="${esc(html)}"></iframe>`
+    : window.MarkdownMini.render(markdown || '');
+  $('reportModal').hidden = false;
+}
+function closeReportModal(){ $('reportModal').hidden = true; }
+async function openReportById(reportId){
+  const data = await api(`/reports/${encodeURIComponent(reportId)}`);
+  const report = data.report || {};
+  openReportModal({
+    id: report.id,
+    title: report.title || '报告预览',
+    markdown: report.markdown || '',
+    html: report.html || '',
+    kind: report.kind,
+    created_at: report.created_at,
+    source: report.meta?.source || ''
+  });
+  const preview = $('reportPreview');
+  if(preview){
+    preview.className='report';
+    preview.innerHTML = report.html
+      ? `<iframe class="report-frame" title="${esc(report.title || '报告预览')}" srcdoc="${esc(report.html)}"></iframe>`
+      : window.MarkdownMini.render(report.markdown || '');
+  }
+  if(report.kind === 'daily_brief') setBriefPreview(report);
+}
+function renderInlineReport(outId, report, source=''){
+  const out=$(outId);
+  if(!out || !report) return;
+  out.className='report-inline';
+  out.innerHTML = `<strong>${esc(report.title || reportKindLabel(report.kind))}</strong>
+    <div class="meta">${esc(reportKindLabel(report.kind))}${source ? ' · ' + esc(source) : ''}</div>
+    <div class="toolbar" style="margin:0"><button type="button" class="btn btn-primary" data-report-open="${esc(report.id)}">打开报告</button><button type="button" class="btn" data-report-download="${esc(report.id)}">下载 Markdown</button></div>`;
+}
+function showGeneratedReport(outId, data){
+  const report = data.result?.report || data.report;
+  const source = data.result?.source || report?.meta?.source || '';
+  if(!report) return;
+  renderInlineReport(outId, report, source);
+  if(report.kind === 'daily_brief') setBriefPreview(report);
+  openReportModal({
+    id: report.id,
+    title: report.title || reportKindLabel(report.kind),
+    markdown: report.markdown || '',
+    html: report.html || '',
+    kind: report.kind,
+    created_at: report.created_at,
+    source
+  });
+}
+function setBriefPreview(report){
+  currentBriefReport = report || null;
+  const frame = $('briefPreviewFrame');
+  if(frame) frame.srcdoc = report?.html || '<!doctype html><meta charset="utf-8"><body style="font:14px sans-serif;padding:24px;color:#64748b">暂无 HTML 简报预览</body>';
+}
+function renderBriefProcess(progress, step, activeIndex=0){
+  const steps = ['筛选热点素材', '调用大模型分析', '渲染 HTML 报表', '保存报告/推送 IM'];
+  return `<strong>${esc(step)}</strong>
+    <div class="brief-process__bar"><span style="width:${esc(Math.max(4, Math.round(progress * 100)))}%"></span></div>
+    <div class="brief-process__steps">${steps.map((s,i)=>`<span class="${i===activeIndex?'active':''}">${i+1}. ${esc(s)}</span>`).join('')}</div>`;
+}
+async function playBriefProcess(finalStep='简报生成完成'){
+  const out = $('briefOut');
+  const checkpoints = [
+    [0.18, '筛选热点素材中：读取套餐、时间窗口和高分新闻', 0],
+    [0.42, '大模型分析中：生成核心风向、重点摘要和采编建议', 1],
+    [0.76, 'HTML 报表渲染中：生成可下载的美化页面', 2],
+    [0.92, finalStep, 3],
+  ];
+  for(const [progress, step, idx] of checkpoints){
+    out.className = 'brief-process';
+    out.innerHTML = renderBriefProcess(progress, step, idx);
+    await new Promise(resolve=>setTimeout(resolve, 420));
+  }
+}
+async function loadBriefChannels(){
+  let list = [];
+  try{
+    const resp = await api('/scheduler/channels');
+    list = Array.isArray(resp.channels) ? resp.channels : [];
+  }catch(_){}
+  if(!list.length){
+    try{
+      const resp = await api('/available-channels');
+      list = (resp.channels || []).map(name=>({channel_id:String(name), chat_id:''}));
+    }catch(_){}
+  }
+  briefChannels = list;
+  const select = $('briefChannel');
+  if(!select) return;
+  const cur = select.value;
+  select.innerHTML = '<option value="">选择通道</option>' + list.map((ch, idx)=>{
+    const channel = ch.channel_id || ch.channel || ch.name || '';
+    const chatId = ch.chat_id || '';
+    const label = ch.chat_name || ch.alias || `${channel}${chatId ? ' · ' + chatId : ''}`;
+    return `<option value="${esc(idx)}">${esc(label)}</option>`;
+  }).join('');
+  select.value = cur;
+}
+function selectedBriefChannel(){
+  const idx = Number($('briefChannel')?.value);
+  const ch = briefChannels[idx];
+  if(!ch) return {channel:'', chat_id:($('briefChatId')?.value || '').trim()};
+  return {
+    channel: String(ch.channel_id || ch.channel || ch.name || ''),
+    chat_id: String(($('briefChatId')?.value || '').trim() || ch.chat_id || '')
+  };
+}
+async function pushBriefReport(report=currentBriefReport){
+  if(!report?.id) throw new Error('请先生成或打开一份简报');
+  const target = selectedBriefChannel();
+  if(!target.channel || !target.chat_id) throw new Error('请先选择 IM 通道并填写 chat_id');
+  const resp = await api(`/reports/${encodeURIComponent(report.id)}/push`, {
+    method:'POST',
+    body:JSON.stringify(target)
+  });
+  toast(resp.ok ? '简报已推送到 IM' : '推送失败', !resp.ok);
+  return resp;
+}
+async function runBrief(){
+  const out = $('briefOut');
+  out.className = 'brief-process';
+  out.innerHTML = renderBriefProcess(0.08, '正在创建简报任务', 0);
+  const params = {
+    session:$('briefSession').value,
+    package_id:$('briefPackage').value,
+    since_hours:Number($('briefHours').value || 24),
+    limit:Number($('briefLimit').value || 20)
+  };
+  const taskPromise = api('/tasks',{method:'POST',body:JSON.stringify({mode:'daily_brief',params})});
+  await playBriefProcess();
+  const data = await taskPromise;
+  if(data.ok === false) throw new Error(data.hint || data.error || '任务失败');
+  showGeneratedReport('briefOut', data);
+  await loadTasks();
+  await loadReports();
+  const report = data.result?.report;
+  if(report) setBriefPreview(report);
+  if($('briefPushEnabled').checked && report){
+    out.innerHTML = renderBriefProcess(0.96, '正在推送到 IM', 3);
+    await pushBriefReport(report);
+  }
+  return data;
+}
+function renderAiProcess(task={}, options={}){
+  const progress = Math.max(0, Math.min(1, Number(task?.progress || options.progress || 0)));
+  const status = task?.status || options.status || 'running';
+  const elapsed = aiProgressStartedAt ? Math.max(0, Math.round((Date.now() - aiProgressStartedAt) / 1000)) : 0;
+  const stepText = task?.pipeline_step || options.step || '正在准备 AI 分析任务';
+  const nextIndex = AI_STEPS.findIndex(step => progress < step.threshold);
+  const activeIndex = status === 'done' ? AI_STEPS.length : (nextIndex === -1 ? AI_STEPS.length - 1 : nextIndex);
+  const stepsHtml = AI_STEPS.map((step, idx)=>{
+    const done = status === 'done' || progress >= step.threshold || idx < activeIndex;
+    const active = status !== 'done' && idx === activeIndex;
+    return `<div class="ai-step ${done ? 'done' : ''} ${active ? 'active' : ''}">
+      <span class="ai-step__dot">${done ? '✓' : idx + 1}</span>
+      <span><strong>${esc(step.title)}</strong>${esc(step.desc)}</span>
+    </div>`;
+  }).join('');
+  return `<div class="ai-process">
+    <div class="ai-process__head">
+      <div><div class="ai-process__title">${esc(taskStatusLabel(status))} · ${esc(Math.round(progress * 100))}%</div>
+      <div class="ai-process__desc">${esc(stepText)}<br>这里展示的是可公开的处理进度和分析环节，不展示模型内部隐藏推理链。</div></div>
+      <span class="pill">耗时 ${esc(elapsed)}s</span>
+    </div>
+    <div class="ai-process__bar"><span style="width:${esc(Math.max(4, Math.round(progress * 100)))}%"></span></div>
+    <div class="ai-steps">${stepsHtml}</div>
+  </div>`;
+}
+async function waitAiProgressMinimum(){
+  const elapsed = Date.now() - aiProgressStartedAt;
+  const remain = AI_PROGRESS_MIN_MS - elapsed;
+  if(remain > 0) await new Promise(resolve=>setTimeout(resolve, remain));
+}
+async function playAiCompletionSequence(finalTask, outId){
+  const out = $(outId);
+  const checkpoints = [
+    {progress:0.12, pipeline_step:'规则聚类中：正在筛选高价值热点'},
+    {progress:0.28, pipeline_step:'证据整理中：已选出热点簇，正在汇总来源证据'},
+    {progress:0.42, pipeline_step:'大模型分析中：正在请求主程序 Brain 生成判断'},
+    {progress:0.88, pipeline_step:'报告保存中：正在写入历史报告'}
+  ];
+  for(const point of checkpoints){
+    out.innerHTML = renderAiProcess({status:'running', ...point});
+    await new Promise(resolve=>setTimeout(resolve, 360));
+  }
+  out.innerHTML = renderAiProcess({...finalTask, status:'done', progress:1});
+  await waitAiProgressMinimum();
 }
 function describePluginError(err){
   const msg = String(err && (err.message || err) || '');
@@ -657,25 +1107,34 @@ async function runRadar(){
   const data=await api('/radar?' + params.toString());
   renderItems(data.items || []);
   renderMetrics(data.stats || {});
+  if(data.stats?.package_disabled){
+    toast(`「${packageLabel($('package').value)}」未启用，热点榜不展示该套餐历史数据`, true, 3200);
+  } else {
+    toast(`热点榜已刷新：${data.stats?.total ?? (data.items || []).length} 条`);
+  }
   return data;
 }
 async function runTask(mode, params, outId){
   const out=$(outId);
-  out.className='report';
+  out.className='report-inline';
   out.innerHTML='<p>生成中，请稍候...</p>';
   const data=await api('/tasks',{method:'POST',body:JSON.stringify({mode,params})});
   if(data.ok === false) throw new Error(data.hint || data.error || '任务失败');
-  const md=data.result?.report?.markdown || JSON.stringify(data.result,null,2);
-  out.innerHTML=window.MarkdownMini.render(md);
+  showGeneratedReport(outId, data);
   await loadTasks();
   await loadReports();
   return data;
 }
 function renderTaskProgress(task, outId){
   const out=$(outId);
+  if(outId === 'aiAnalysisOut'){
+    out.className='report-inline';
+    out.innerHTML = renderAiProcess(task);
+    return;
+  }
   const pct = Math.round(Number(task?.progress || 0) * 100);
   const step = task?.pipeline_step || (task?.status === 'running' ? '大模型处理中，请稍候' : task?.status || '');
-  out.className='report';
+  out.className='report-inline';
   out.innerHTML = `<p><strong>任务 ${esc(task?.status || 'pending')}</strong> · ${esc(pct)}%</p><p>${esc(step)}</p><p class="meta">${esc(task?.id || '')}</p>`;
 }
 async function pollTask(taskId, outId){
@@ -684,9 +1143,10 @@ async function pollTask(taskId, outId){
     const data = await api(`/tasks/${encodeURIComponent(taskId)}`);
     const task = data.task || {};
     if(task.status === 'done'){
-      const md = task.result?.report?.markdown || JSON.stringify(task.result || {}, null, 2);
-      $(outId).className='report';
-      $(outId).innerHTML=window.MarkdownMini.render(md);
+      if(outId === 'aiAnalysisOut'){
+        await playAiCompletionSequence(task, outId);
+      }
+      showGeneratedReport(outId, {result: task.result || {}});
       await loadTasks();
       await loadReports();
       return task;
@@ -702,8 +1162,9 @@ async function pollTask(taskId, outId){
 }
 async function runAiAnalysis(){
   const out=$('aiAnalysisOut');
-  out.className='report';
-  out.innerHTML='<p>正在创建 AI 分析任务...</p>';
+  aiProgressStartedAt = Date.now();
+  out.className='report-inline';
+  out.innerHTML=renderAiProcess({status:'running', progress:0.04, pipeline_step:'正在创建 AI 分析任务'});
   const data=await api('/ai/analyze-top',{method:'POST',body:JSON.stringify({
     package_id:$('package').value,
     since_hours:Number($('hours').value || 24),
@@ -863,21 +1324,27 @@ function closePackageModal(){
   editingPackageId = '';
 }
 async function loadTasks(){
-  const data=await api('/tasks?limit=8');
+  const data=await api('/tasks?limit=12');
   $('tasks').innerHTML = (data.tasks||[]).map(t=>`
-    <div class="task-row"><span>${esc(t.mode)} · <b class="${statusClass(t.status)}">${esc(t.status)}</b></span><span>${esc(t.id)}</span></div>`).join('') || '<div class="empty">暂无任务</div>';
+    <div class="task-row">
+      <div>
+        <div class="task-row__title">${esc(taskModeLabel(t.mode))}</div>
+        <div class="task-row__desc">${esc(taskSummary(t))}</div>
+      </div>
+      <span class="task-row__status ${statusClass(t.status)}">${esc(taskStatusLabel(t.status))}</span>
+      <div class="task-row__meta"><span>${esc(formatDateTime(t.created_at))}</span><span>${esc(t.pipeline_step || '')}</span><span title="${esc(t.id)}">任务号 ${esc(String(t.id || '').slice(-6))}</span></div>
+    </div>`).join('') || '<div class="empty">暂无任务</div>';
 }
 async function loadReports(){
   const data=await api('/reports?limit=20');
+  renderReportLists(data.reports || []);
   $('reportsOut').innerHTML = (data.reports||[]).map(r=>`
     <div class="report-row" data-report="${esc(r.id)}">
       <strong>${esc(r.title)}</strong>
       <div class="meta"><span>${esc(r.kind)}</span><span>${esc(r.created_at)}</span><span>${esc(r.meta?.source || '')}</span></div>
     </div>`).join('') || '<div class="empty">暂无报告，先生成简报、复核或采编计划。</div>';
   document.querySelectorAll('[data-report]').forEach(row=>row.onclick=()=>guard(async()=>{
-    const data=await api(`/reports/${encodeURIComponent(row.dataset.report)}`);
-    $('reportPreview').className='report';
-    $('reportPreview').innerHTML=window.MarkdownMini.render(data.report?.markdown || '');
+    await openReportById(row.dataset.report);
   }, '加载报告'));
 }
 function renderStorageStats(stats){
@@ -984,24 +1451,73 @@ async function saveSettings(){
 }
 
 document.querySelectorAll('.tab').forEach(btn=>btn.onclick=()=>activateTab(btn.dataset.tab));
+document.addEventListener('click', ev=>{
+  const downloadBtn = ev.target.closest?.('[data-report-download]');
+  if(downloadBtn){
+    ev.preventDefault();
+    ev.stopPropagation();
+    guard(async()=>{
+      const data = await api(`/reports/${encodeURIComponent(downloadBtn.dataset.reportDownload)}`);
+      downloadMarkdown(data.report || {});
+    }, '下载报告').catch(()=>{});
+    return;
+  }
+  const reportBtn = ev.target.closest?.('[data-report-open]');
+  if(reportBtn){
+    ev.preventDefault();
+    ev.stopPropagation();
+    guard(()=>openReportById(reportBtn.dataset.reportOpen), '打开报告').catch(()=>{});
+    return;
+  }
+  const link = ev.target.closest?.('a[href]');
+  if(!link) return;
+  const href = link.getAttribute('href') || '';
+  if(!/^https?:\/\//i.test(href)) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  guard(()=>openExternalLink(href), '打开链接').catch(()=>{});
+});
+document.querySelectorAll('[data-tool-tab]').forEach(btn=>btn.onclick=()=>activateToolTab(btn.dataset.toolTab));
+document.querySelectorAll('[data-brief-session]').forEach(btn=>btn.onclick=()=>{
+  const session = btn.dataset.briefSession;
+  $('briefSession').value = session;
+  document.querySelectorAll('[data-brief-session]').forEach(x=>x.classList.toggle('active', x === btn));
+});
+$('briefChannel').onchange=()=>{
+  const target = selectedBriefChannel();
+  if(target.chat_id) $('briefChatId').value = target.chat_id;
+};
+$('closeReportModal').onclick=closeReportModal;
+$('reportModalDownload').onclick=()=>downloadMarkdown(currentModalReport);
+$('reportModalDownloadHtml').onclick=()=>downloadHtml(currentModalReport);
+$('reportModalOpenReports').onclick=()=>{
+  closeReportModal();
+  activateTab('reports');
+};
+$('reportModal').addEventListener('click', ev=>{ if(ev.target.id === 'reportModal') closeReportModal(); });
 $('clearSelection').onclick=()=>setSelected([]);
-$('useTopItems').onclick=()=>setSelected(lastItems.slice(0,3).map(x=>x.id));
+$('useTopItems').onclick=()=>setSelected(lastItems.slice(0,autoSelectLimit()).map(x=>x.id));
 $('ingest').onclick=()=>withBusy($('ingest'),'拉取中...',()=>guard(async()=>{
   const pkg=$('package').value;
   const data=await api('/ingest',{method:'POST',body:JSON.stringify({package_ids:[pkg].filter(Boolean)})});
-  $('verifyOut').innerHTML = `<p>拉取完成：新增 ${esc(data.result?.inserted ?? 0)}，失败源 ${esc(data.result?.failed ?? 0)}。</p>`;
+  const skipped = data.result?.skipped_disabled_packages || [];
+  const skippedNames = skipped.map(packageLabel);
+  if(skippedNames.length){
+    toast(`「${skippedNames.join('、')}」未启用，请先启用后再拉取`, true, 3200);
+  } else {
+    toast(`「${packageLabel(pkg)}」拉取完成：新增 ${data.result?.inserted ?? 0} 条，失败源 ${data.result?.failed ?? 0} 个`);
+  }
+  $('verifyOut').innerHTML = `<p>拉取完成：套餐 ${esc(packageLabel(pkg))}，命中源 ${esc(data.result?.sources ?? 0)}，新增 ${esc(data.result?.inserted ?? 0)}，失败源 ${esc(data.result?.failed ?? 0)}。</p>`;
   renderMetrics({}, data.result || {});
   await refreshHealth(); await loadSources(); await loadTasks(); await runRadar();
 }, '拉取 RSS'));
 $('radar').onclick=()=>withBusy($('radar'),'生成中...',()=>guard(runRadar, '生成雷达'));
 $('aiAnalyze').onclick=()=>withBusy($('aiAnalyze'),'分析中...',()=>guard(runAiAnalysis, 'AI 选题分析'));
 $('briefRefresh').onclick=()=>withBusy($('briefRefresh'),'刷新中...',()=>guard(runRadar, '刷新热点'));
-$('brief').onclick=()=>withBusy($('brief'),'生成中...',()=>guard(()=>runTask('daily_brief',{
-  session:$('briefSession').value,
-  package_id:$('briefPackage').value,
-  since_hours:Number($('briefHours').value || 24),
-  limit:Number($('briefLimit').value || 20)
-},'briefOut'), '生成简报'));
+$('brief').onclick=()=>withBusy($('brief'),'生成中...',()=>guard(runBrief, '生成简报'));
+$('briefLoadChannels').onclick=()=>guard(async()=>{ await loadBriefChannels(); toast('已刷新 IM 通道'); }, '刷新 IM 通道');
+$('briefDownloadHtml').onclick=()=>downloadHtml(currentBriefReport);
+$('briefPushNow').onclick=()=>guard(()=>pushBriefReport(), '推送简报');
 $('verify').onclick=()=>withBusy($('verify'),'生成中...',()=>guard(()=>runTask('verify_pack',{article_ids:selected,topic:$('verifyTopic').value.trim()},'verifyOut'), '生成复核'));
 $('plan').onclick=()=>withBusy($('plan'),'生成中...',()=>guard(()=>runTask('replicate_plan',{
   article_ids:selected,
@@ -1162,6 +1678,8 @@ loadSettings().catch(()=>{});
 loadStorageStats().catch(()=>{});
 loadTasks().catch(()=>{});
 loadReports().catch(()=>{});
+loadBriefChannels().catch(()=>{});
+setBriefPreview(null);
 runRadar().catch(()=>{});
 </script>
 </body>

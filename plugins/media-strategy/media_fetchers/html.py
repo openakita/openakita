@@ -24,13 +24,18 @@ IPs and localhost stay rejected the same way as RSS feeds.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from media_fetchers.rss import FeedItem, UnsafeFeedUrl, validate_feed_url
+from media_fetchers.rss import (
+    FeedItem,
+    UnsafeFeedUrl,
+    _decode_response_text,
+    _infer_date_from_url,
+    validate_feed_url,
+)
 
 try:  # pragma: no cover - optional fast path
     from bs4 import BeautifulSoup, Tag  # type: ignore
@@ -72,10 +77,6 @@ _ARTICLE_PATH_HINTS: tuple[str, ...] = (
     "/tech/",
 )
 _ARTICLE_ID_RE = re.compile(r"/\d{4,}(?:[-/_]\d{2,})*")
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _normalized_text(value: str | None) -> str:
@@ -124,12 +125,7 @@ async def fetch_html_text(
             response = await client.get(current)
             if response.status_code not in {301, 302, 303, 307, 308}:
                 response.raise_for_status()
-                # Some Chinese sites still serve GBK; httpx falls back to ISO-8859-1
-                # when no charset header is sent. Rely on apparent_encoding via
-                # response.encoding=None so .text uses chardet-style guessing.
-                if not response.charset_encoding:
-                    response.encoding = response.apparent_encoding or "utf-8"
-                return str(response.url), response.text
+                return str(response.url), _decode_response_text(response)
             location = response.headers.get("Location", "")
             if not location:
                 response.raise_for_status()
@@ -171,6 +167,9 @@ def _extract_with_selectors(
             continue
         if not (_TITLE_MIN <= len(title) <= 120):
             continue
+        published_at = _infer_date_from_url(absolute)
+        if not published_at:
+            continue
         seen_urls.add(absolute)
         items.append(
             FeedItem(
@@ -178,7 +177,7 @@ def _extract_with_selectors(
                 title=title,
                 url=absolute,
                 summary="",
-                published_at=_utcnow_iso(),
+                published_at=published_at,
                 raw={"parser": "html_explicit"},
             )
         )
@@ -209,6 +208,9 @@ def _extract_heuristic(
         absolute = urljoin(base_url, href)
         if absolute in seen_urls or absolute.rstrip("/") == base_root:
             continue
+        published_at = _infer_date_from_url(absolute)
+        if not published_at:
+            continue
         seen_urls.add(absolute)
         items.append(
             FeedItem(
@@ -216,7 +218,7 @@ def _extract_heuristic(
                 title=text,
                 url=absolute,
                 summary="",
-                published_at=_utcnow_iso(),
+                published_at=published_at,
                 raw={"parser": "html_heuristic"},
             )
         )

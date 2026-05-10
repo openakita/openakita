@@ -950,13 +950,17 @@ class ToolExecutor:
                 except (UnicodeEncodeError, OSError):
                     logger.info(f"[Tool] {tool_name} → (result logged, {len(result_str)} chars)")
 
-                # 捕获交付回执：deliver_artifacts 直接交付；org_accept_deliverable
-                # 作为"中继交付"——父节点验收了下级节点已经带文件的交付物，
-                # receipts 状态为 "relayed"。两者都认为是有效的交付证据，
-                # 让 TaskVerify 不再将中继场景误判为 INCOMPLETE。
+                # 捕获交付回执：deliver_artifacts 直接交付；
+                # org_submit_deliverable 是子节点向上级提交附件；
+                # org_accept_deliverable 是父节点验收下级已带文件的交付物。
+                # 三者都算 TaskVerify 眼里的有效交付证据。
                 if (
                     capture_delivery_receipts
-                    and tool_name in ("deliver_artifacts", "org_accept_deliverable")
+                    and tool_name in (
+                        "deliver_artifacts",
+                        "org_submit_deliverable",
+                        "org_accept_deliverable",
+                    )
                     and result_str
                 ):
                     try:

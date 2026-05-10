@@ -43,6 +43,7 @@ def test_ui_assets_and_iconify_tokens_exist() -> None:
         "/packages/subscribe",
         "/ai/analyze-top",
         "/reports",
+        "/external/open-url",
         "/storage/stats",
         "/storage/open-folder",
         "/storage/list-dir",
@@ -92,10 +93,9 @@ def test_builtin_source_catalog_is_rich() -> None:
 
 
 def test_taiwan_package_includes_new_sources() -> None:
-    from media_models import SOURCE_DEFS
+    from media_models import DEPRECATED_SOURCE_IDS, SOURCE_DEFS
 
     taiwan_sources = {sid for sid, meta in SOURCE_DEFS.items() if "taiwan" in meta["packages"]}
-    # All Taiwan-strait sources default to enabled per editorial policy.
     for required in (
         "xinhua-taiwan",
         "people-taiwan",
@@ -111,7 +111,15 @@ def test_taiwan_package_includes_new_sources() -> None:
         "taihainet-twxw",
     ):
         assert required in taiwan_sources, required
-        assert SOURCE_DEFS[required]["default_enabled"] is True, required
+    assert SOURCE_DEFS["fjsen-taihai"]["default_enabled"] is True
+    for stale_or_broken in (
+        "xinhua-taiwan",
+        "people-taiwan",
+        "udn-cross-strait",
+        "nownews-politics",
+        "taihainet-twxw",
+    ):
+        assert stale_or_broken in DEPRECATED_SOURCE_IDS
 
 
 def test_html_sources_declare_selectors() -> None:
@@ -125,14 +133,16 @@ def test_html_sources_declare_selectors() -> None:
 
 
 def test_default_enabled_strategy_favors_domestic() -> None:
-    from media_models import SOURCE_DEFS
+    from media_models import DEPRECATED_SOURCE_IDS, SOURCE_DEFS
 
-    # Domestic sources are enabled by default; overseas Western outlets are not.
-    assert SOURCE_DEFS["people-politics"]["default_enabled"] is True
-    assert SOURCE_DEFS["yicai-news"]["default_enabled"] is True
-    assert SOURCE_DEFS["rsshub-weibo-hot"]["default_enabled"] is True
+    # Default-enabled sources must be currently fetchable and timestamp-safe.
+    assert SOURCE_DEFS["ithome"]["default_enabled"] is True
+    assert SOURCE_DEFS["qbitai"]["default_enabled"] is True
+    assert SOURCE_DEFS["fjsen-taihai"]["default_enabled"] is True
+    assert "people-politics" in DEPRECATED_SOURCE_IDS
+    assert "yicai-news" in DEPRECATED_SOURCE_IDS
+    assert "rsshub-weibo-hot" in DEPRECATED_SOURCE_IDS
     assert SOURCE_DEFS["bbc-zh"]["default_enabled"] is False
-    assert SOURCE_DEFS["dw-zh"]["default_enabled"] is False
     assert SOURCE_DEFS["reuters-world"]["default_enabled"] is False
 
 
@@ -155,6 +165,43 @@ def test_feed_parser_stdlib_fallback() -> None:
     assert items[0].summary == "摘要"
 
 
+def test_feed_parser_infers_date_from_url_when_feed_date_missing() -> None:
+    from media_fetchers import rss
+
+    body = """<?xml version="1.0"?>
+    <rss version="2.0"><channel><title>x</title>
+      <item><title>国台办：两岸文博交流</title>
+      <link>https://www.xinhuanet.com/tw/2013-10/16/c_125546161.htm</link>
+      <description>摘要</description></item>
+    </channel></rss>"""
+    old = rss.FEEDPARSER_AVAILABLE
+    rss.FEEDPARSER_AVAILABLE = False
+    try:
+        items = rss.parse_feed("demo", body)
+    finally:
+        rss.FEEDPARSER_AVAILABLE = old
+    assert len(items) == 1
+    assert items[0].published_at == "2013-10-16T00:00:00Z"
+
+
+def test_feed_parser_skips_items_without_reliable_time() -> None:
+    from media_fetchers import rss
+
+    body = """<?xml version="1.0"?>
+    <rss version="2.0"><channel><title>x</title>
+      <item><title>没有发布时间的新闻</title>
+      <link>https://example.com/news/latest.html</link>
+      <description>摘要</description></item>
+    </channel></rss>"""
+    old = rss.FEEDPARSER_AVAILABLE
+    rss.FEEDPARSER_AVAILABLE = False
+    try:
+        items = rss.parse_feed("demo", body)
+    finally:
+        rss.FEEDPARSER_AVAILABLE = old
+    assert items == []
+
+
 def test_validate_feed_url_rejects_localhost() -> None:
     from media_fetchers.rss import UnsafeFeedUrl, validate_feed_url
 
@@ -164,6 +211,7 @@ def test_validate_feed_url_rejects_localhost() -> None:
 
 @pytest.mark.asyncio
 async def test_task_manager_seeds_and_upserts_article(tmp_path: Path) -> None:
+    from media_models import DEPRECATED_SOURCE_IDS
     from media_task_manager import MediaTaskManager
 
     tm = MediaTaskManager(tmp_path / "media.sqlite")
@@ -172,8 +220,12 @@ async def test_task_manager_seeds_and_upserts_article(tmp_path: Path) -> None:
         packages = await tm.list_packages()
         assert packages["taiwan"]["enabled"] is True
         sources = await tm.list_sources()
-        assert len(sources) >= 18
-        toggled = await tm.set_source_enabled("cctv-domestic", False)
+        source_ids = {source["id"] for source in sources}
+        assert {"ithome", "qbitai", "fjsen-taihai"}.issubset(source_ids)
+        assert {"xinhua-taiwan", "people-taiwan"}.issubset(source_ids)
+        enabled_source_ids = {source["id"] for source in await tm.list_sources(enabled_only=True)}
+        assert enabled_source_ids.isdisjoint(DEPRECATED_SOURCE_IDS)
+        toggled = await tm.set_source_enabled("ithome", False)
         assert toggled["enabled"] is False
         source = await tm.add_custom_source(
             name="Demo",
@@ -204,6 +256,20 @@ async def test_task_manager_seeds_and_upserts_article(tmp_path: Path) -> None:
         )
         assert inserted2 is False
         assert article2["duplicate_count"] == 2
+
+        await tm.upsert_article(
+            {
+                "source_id": source["id"],
+                "package_ids": ["taiwan"],
+                "url": "https://example.com/old",
+                "title": "十年前旧闻",
+                "published_at": "2013-10-16T00:00:00Z",
+                "fetched_at": "2026-05-10T00:00:00Z",
+                "hot_score": 9.9,
+            }
+        )
+        recent = await tm.recent_articles(since_hours=24, package_id="taiwan", limit=20)
+        assert all(item["title"] != "十年前旧闻" for item in recent)
     finally:
         await tm.close()
 
@@ -274,6 +340,41 @@ async def test_package_crud_and_source_editing(tmp_path: Path) -> None:
         survivors = await tm.list_sources()
         my_src = next(s for s in survivors if s["id"] == src["id"])
         assert custom["id"] not in (my_src.get("package_ids") or [])
+    finally:
+        await tm.close()
+
+
+@pytest.mark.asyncio
+async def test_disabled_package_does_not_show_historical_radar_items(tmp_path: Path) -> None:
+    from media_pipeline import MediaPipeline
+    from media_task_manager import MediaTaskManager
+
+    class DummyApi:
+        def get_brain(self) -> None:
+            return None
+
+    tm = MediaTaskManager(tmp_path / "ms.sqlite")
+    await tm.init()
+    try:
+        await tm.set_package_enabled("taiwan", False)
+        await tm.upsert_article(
+            {
+                "source_id": "demo",
+                "package_ids": ["taiwan"],
+                "url": "https://example.com/taiwan",
+                "title": "台海历史数据",
+                "summary": "应被停用套餐过滤",
+                "published_at": "2026-05-10T00:00:00Z",
+                "fetched_at": "2026-05-10T00:01:00Z",
+                "hot_score": 9.0,
+            }
+        )
+        pipeline = MediaPipeline(tm, DummyApi(), output_dir=tmp_path)
+        radar = await pipeline.hot_radar(
+            {"package_id": "taiwan", "since_hours": 24, "limit": 20}
+        )
+        assert radar["items"] == []
+        assert radar["stats"]["package_disabled"] is True
     finally:
         await tm.close()
 

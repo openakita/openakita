@@ -2135,7 +2135,25 @@ class OrgToolHandler:
                 f"（附带 {len(registered_attachments)} 个文件附件）"
                 if registered_attachments else ""
             )
-            return f"交付物已提交给 {to_node}{tail}，等待验收。"
+            receipts = [
+                {
+                    "status": "submitted",
+                    "filename": f.get("filename", ""),
+                    "file_path": f.get("file_path", ""),
+                    "file_size": f.get("file_size"),
+                    "source_node": node_id,
+                    "submitted_to": to_node,
+                }
+                for f in registered_attachments
+            ]
+            payload = {
+                "ok": True,
+                "submitted_to": to_node,
+                "chain_id": chain_id,
+                "receipts": receipts,
+                "message": f"交付物已提交给 {to_node}{tail}，等待验收。",
+            }
+            return json.dumps(payload, ensure_ascii=False)
         return "提交失败"
 
     async def _handle_org_accept_deliverable(

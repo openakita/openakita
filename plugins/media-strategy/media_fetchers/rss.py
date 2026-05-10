@@ -23,9 +23,21 @@ except Exception:  # noqa: BLE001
     feedparser = None  # type: ignore
     FEEDPARSER_AVAILABLE = False
 
+try:  # pragma: no cover - provided transitively by httpx in most installs
+    from charset_normalizer import from_bytes as _charset_from_bytes
+except Exception:  # noqa: BLE001
+    _charset_from_bytes = None
+
 _MAX_REDIRECTS = 8
 _TAG_RE = re.compile(r"\{[^}]*\}")
 _HTML_RE = re.compile(r"<[^>]+>")
+_URL_DATE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/((?:19|20)\d{2})-(\d{2})/(\d{2})/"),
+    re.compile(r"/((?:19|20)\d{2})-(\d{2})-(\d{2})(?:[^\d]|$)"),
+    re.compile(r"/((?:19|20)\d{2})/(\d{2})/(\d{2})/"),
+    re.compile(r"/((?:19|20)\d{2})/(\d{2})(\d{2})(?:[^\d]|/)"),
+    re.compile(r"(?<!\d)((?:19|20)\d{2})(\d{2})(\d{2})(?!\d)"),
+)
 
 
 @dataclass
@@ -44,8 +56,22 @@ class UnsafeFeedUrl(ValueError):
     """Raised when a feed URL points to a private or unsupported target."""
 
 
-def _utcnow_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _decode_response_text(response: httpx.Response) -> str:
+    if response.charset_encoding:
+        return response.text
+    if _charset_from_bytes is not None:
+        match = _charset_from_bytes(response.content).best()
+        if match and match.encoding:
+            try:
+                return response.content.decode(match.encoding, errors="replace")
+            except LookupError:
+                pass
+    for encoding in ("utf-8", "gb18030", "big5"):
+        try:
+            return response.content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return response.content.decode("utf-8", errors="replace")
 
 
 def _is_private_ip(host: str) -> bool:
@@ -101,7 +127,7 @@ async def fetch_feed_text(
             response = await client.get(current)
             if response.status_code not in {301, 302, 303, 307, 308}:
                 response.raise_for_status()
-                return str(response.url), response.text
+                return str(response.url), _decode_response_text(response)
             location = response.headers.get("Location", "")
             if not location:
                 response.raise_for_status()
@@ -113,7 +139,13 @@ def parse_feed(source_id: str, body: str) -> list[FeedItem]:
     """Parse RSS/Atom text into normalized feed items."""
 
     if FEEDPARSER_AVAILABLE:
-        return _parse_feedparser(source_id, body)
+        try:
+            return _parse_feedparser(source_id, body)
+        except ValueError:
+            # Some legacy feeds declare GBK/GB2312 encodings. feedparser can
+            # reject those on Python's XML path, while the stdlib fallback can
+            # parse the already-decoded text returned by httpx.
+            return _parse_stdlib(source_id, body)
     return _parse_stdlib(source_id, body)
 
 
@@ -135,13 +167,22 @@ def _parse_feedparser(source_id: str, body: str) -> list[FeedItem]:
         if not title or not url:
             continue
         tags = [t.get("term") for t in entry.get("tags", []) if isinstance(t, dict) and t.get("term")]
+        published_at = _best_published_at(
+            entry.get("published_parsed"),
+            entry.get("updated_parsed"),
+            entry.get("published"),
+            entry.get("updated"),
+            url,
+        )
+        if not published_at:
+            continue
         out.append(
             FeedItem(
                 source_id=source_id,
                 title=title,
                 url=url,
                 summary=_strip_html(entry.get("summary") or entry.get("description") or ""),
-                published_at=_struct_to_iso(entry.get("published_parsed") or entry.get("updated_parsed")),
+                published_at=published_at,
                 author=(entry.get("author") or "").strip(),
                 tags=tags,
                 raw={"id": entry.get("id"), "parser": "feedparser"},
@@ -162,18 +203,59 @@ def _parse_date(value: str | None) -> str | None:
     if not value:
         return None
     raw = value.strip()
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+    ):
+        try:
+            return datetime.strptime(raw, fmt).replace(tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            pass
     try:
         dt = parsedate_to_datetime(raw)
     except (TypeError, ValueError):
-        return raw or None
+        return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _infer_date_from_url(url: str | None) -> str | None:
+    for pattern in _URL_DATE_PATTERNS:
+        match = pattern.search(url or "")
+        if not match:
+            continue
+        year, month, day = (int(part) for part in match.groups())
+        try:
+            return datetime(year, month, day, tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            return None
+    return None
+
+
+def _best_published_at(
+    published_struct: Any,
+    updated_struct: Any,
+    published_text: str | None,
+    updated_text: str | None,
+    url: str | None,
+) -> str | None:
+    return (
+        _struct_to_iso(published_struct)
+        or _parse_date(published_text)
+        or _infer_date_from_url(url)
+        or _struct_to_iso(updated_struct)
+        or _parse_date(updated_text)
+    )
+
+
 def _parse_stdlib(source_id: str, body: str) -> list[FeedItem]:
     try:
-        root = ET.fromstring(body.encode("utf-8") if isinstance(body, str) else body)
+        root = ET.fromstring(body)
     except ET.ParseError:
         return []
     root_name = _local(root.tag)
@@ -219,13 +301,16 @@ def _parse_stdlib(source_id: str, body: str) -> list[FeedItem]:
                 if term:
                     tags.append(term)
         if title and link:
+            published_at = published or _infer_date_from_url(link)
+            if not published_at:
+                continue
             out.append(
                 FeedItem(
                     source_id=source_id,
                     title=title,
                     url=link,
                     summary=summary,
-                    published_at=published or _utcnow_iso(),
+                    published_at=published_at,
                     author=author,
                     tags=tags,
                     raw={"id": entry_id, "parser": "stdlib"},

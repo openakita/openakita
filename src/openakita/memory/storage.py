@@ -199,15 +199,15 @@ class MemoryStorage:
         # empty external-content FTS table; firing the generic UPDATE trigger during this
         # migration can make SQLite report a malformed FTS image.
         c.execute("DROP TRIGGER IF EXISTS memories_fts_au")
-        # 旧桌面版通常是单用户本地库。直接把 global/default 隔离会让用户升级后
-        # 看到“记忆清零”。这里保守迁到 user/default，后续可由恢复/诊断入口
-        # 处理真正无法确认归属的数据。
+        # 旧版本把用户事实、测试数据和系统经验都写到 global/空 owner。
+        # 不直接激活到当前用户，避免格式不规范或互相冲突的旧记忆污染检索；
+        # 前端会提示用户通过安全导入流程整理这些 legacy_quarantine 记录。
         c.execute(
             """
             UPDATE memories
-            SET scope = 'user',
+            SET scope = 'legacy_quarantine',
                 scope_owner = '',
-                user_id = COALESCE(NULLIF(user_id, ''), 'default'),
+                user_id = 'legacy',
                 workspace_id = COALESCE(NULLIF(workspace_id, ''), 'default')
             WHERE (scope IS NULL OR scope = 'global')
               AND (scope_owner IS NULL OR scope_owner = '')

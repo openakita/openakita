@@ -39,7 +39,7 @@ def _memory_client(manager: MemoryManager) -> TestClient:
     return TestClient(app)
 
 
-def test_v3_migration_backs_up_and_keeps_legacy_desktop_memory_visible(tmp_path):
+def test_v3_migration_backs_up_and_quarantines_legacy_desktop_memory(tmp_path):
     db_path = tmp_path / "old" / "openakita.db"
     db_path.parent.mkdir(parents=True)
     now = datetime.now().isoformat()
@@ -86,7 +86,7 @@ def test_v3_migration_backs_up_and_keeps_legacy_desktop_memory_visible(tmp_path)
 
     storage = MemoryStorage(db_path)
 
-    rows = storage.load_all(scope="user", scope_owner="", user_id="default")
+    rows = storage.load_all(scope="legacy_quarantine", scope_owner="", user_id="legacy")
     assert [row["content"] for row in rows] == ["legacy desktop memory"]
     assert list(db_path.parent.glob("openakita.db.bak.v2_to_v3.*"))
 
@@ -193,7 +193,7 @@ async def test_context_compression_quick_facts_are_user_scoped(tmp_path):
 def test_memory_migration_status_and_claim_legacy(tmp_path):
     manager = _manager(tmp_path)
     manager.start_session("session-a", user_id="desktop_user")
-    legacy = _memory("旧版用户喜欢中文解释")
+    legacy = _memory("用户喜欢中文解释")
     manager.store.save_semantic(
         legacy,
         scope="legacy_quarantine",
@@ -211,12 +211,56 @@ def test_memory_migration_status_and_claim_legacy(tmp_path):
     claimed = client.post("/api/memories/claim-legacy", json={})
     assert claimed.status_code == 200
     assert claimed.json()["claimed"] == 1
+    assert claimed.json()["rejected"] == 0
 
     listing = client.get("/api/memories")
     assert listing.status_code == 200
     body = listing.json()
     assert body["total"] == 1
-    assert body["memories"][0]["content"] == "旧版用户喜欢中文解释"
+    assert body["memories"][0]["content"] == "用户喜欢中文解释"
+    assert body["memories"][0]["importance_score"] <= 0.65
+
+
+def test_claim_legacy_keeps_unstructured_task_logs_quarantined(tmp_path):
+    manager = _manager(tmp_path)
+    manager.start_session("session-a", user_id="desktop_user")
+    manager.store.save_semantic(
+        _memory("本轮调用了 read_file 并生成测试报告"),
+        scope="legacy_quarantine",
+        user_id="legacy",
+        workspace_id="default",
+        skip_dedup=True,
+    )
+
+    client = _memory_client(manager)
+    claimed = client.post("/api/memories/claim-legacy", json={})
+    assert claimed.status_code == 200
+    assert claimed.json()["claimed"] == 0
+    assert claimed.json()["rejected"] == 1
+    assert client.get("/api/memories").json()["total"] == 0
+
+
+def test_claim_legacy_does_not_override_current_identity_slot(tmp_path):
+    manager = _manager(tmp_path)
+    manager.start_session("session-a", user_id="desktop_user")
+    manager.add_memory(_memory("用户名字是小红", subject="用户", predicate="姓名"), scope="user")
+    manager.store.save_semantic(
+        _memory("用户名字是张三", subject="用户", predicate="姓名"),
+        scope="legacy_quarantine",
+        user_id="legacy",
+        workspace_id="default",
+        skip_dedup=True,
+    )
+
+    client = _memory_client(manager)
+    claimed = client.post("/api/memories/claim-legacy", json={})
+    assert claimed.status_code == 200
+    assert claimed.json()["claimed"] == 0
+    assert claimed.json()["conflict_skipped"] == 1
+
+    body = client.get("/api/memories").json()
+    assert body["total"] == 1
+    assert body["memories"][0]["content"] == "用户名字是小红"
 
 
 def test_memory_graph_is_filtered_by_current_owner(tmp_path):

@@ -110,6 +110,11 @@ const DEFAULT_LOCAL_API_BASE = "http://127.0.0.1:18900";
 const LOCAL_SERVICE_READY_TIMEOUT_MS = 120_000;
 const ONBOARDING_HTTP_READY_TIMEOUT_MS = 180_000;
 const HTTP_READY_POLL_INTERVAL_MS = 2_000;
+// Frontend-side startup hold. Rust boot-grace relies on a pid file, but there is
+// a short window after runtime setup and before pid/HTTP readiness where both
+// pid-based checks can be false. Keep the UI monotonic in "starting" there.
+const BACKEND_STARTUP_HOLD_MS = 180_000;
+const BACKEND_STARTUP_PROBE_HOLD_MS = 30_000;
 
 interface EnvFieldCtx {
   envDraft: EnvMap;
@@ -690,9 +695,25 @@ function MainApp() {
   const heartbeatAliveSuccessCountRef = useRef(0);
   const lastReadinessReadyRef = useRef<boolean | null>(null);
   const wsRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const backendStartupHoldUntilRef = useRef(IS_TAURI ? Date.now() + BACKEND_STARTUP_PROBE_HOLD_MS : 0);
   const [pageVisible, setPageVisible] = useState(true);
   const visibilityGraceRef = useRef(false); // 休眠恢复宽限期
   const lastPluginAppsReadyEventRef = useRef(0);
+  const holdBackendStarting = useCallback((durationMs = BACKEND_STARTUP_HOLD_MS) => {
+    if (!IS_TAURI) return;
+    backendStartupHoldUntilRef.current = Math.max(
+      backendStartupHoldUntilRef.current,
+      Date.now() + durationMs,
+    );
+    heartbeatFailCount.current = 0;
+    setBackendBootPhase("starting");
+  }, []);
+  const clearBackendStartingHold = useCallback(() => {
+    backendStartupHoldUntilRef.current = 0;
+  }, []);
+  const isBackendStartingHeld = useCallback(() => (
+    IS_TAURI && Date.now() < backendStartupHoldUntilRef.current
+  ), []);
   const notifyPluginAppsReady = useCallback(() => {
     const now = Date.now();
     if (now - lastPluginAppsReadyEventRef.current < 30_000) return;
@@ -862,6 +883,7 @@ function MainApp() {
               const readinessReady = readiness.ready !== false;
               const readinessPhase = String(readiness.phase || healthData.startup_phase || "");
               setApiBaseUrl(url);
+              if (readinessReady) clearBackendStartingHold();
               setServiceStatus({
                 running: true,
                 pid: healthData.pid || null,
@@ -887,12 +909,13 @@ function MainApp() {
             } catch { /* 服务未运行 */ }
 
             if (!alreadyConnected && !cancelled) {
-              setBackendBootPhase("starting");
+              holdBackendStarting(BACKEND_STARTUP_PROBE_HOLD_MS);
               let handled = false;
               try {
                 const autoStarting = await invoke<boolean>("is_backend_auto_starting");
                 if (autoStarting) {
                   handled = true;
+                  holdBackendStarting();
                   // 复用同一只 ref：strict mode 第二次 mount 时若 ref 还有
                   // 旧 id，先 dismiss 再创建新的，避免双 toast 叠加。
                   if (autoStartToastRef.current !== null) {
@@ -933,6 +956,7 @@ function MainApp() {
                     if (serviceReady) {
                       notifySuccess(t("topbar.autoStartSuccess"));
                     } else {
+                      clearBackendStartingHold();
                       setServiceStatus({ running: false, pid: null, pidFile: "" });
                       setBackendBootPhase("error");
                       notifyError(t("topbar.autoStartFail"));
@@ -962,7 +986,7 @@ function MainApp() {
                   // 若仍在 boot grace 就保持 "starting"；若真的死了再降级 dead。
                   // 这里保留 unknown，避免 mount 与 spawn 竞态时刺出一个 stopped 帧。
                   setServiceStatus({ running: false, pid: null, pidFile: "" });
-                  // backendBootPhase 保持 unknown / 上一帧；不强制写 stopped
+                  holdBackendStarting(BACKEND_STARTUP_PROBE_HOLD_MS);
                 }
               }
             }
@@ -981,7 +1005,7 @@ function MainApp() {
         autoStartToastRef.current = null;
       }
     };
-  }, [notifyPluginAppsReady]);
+  }, [clearBackendStartingHold, holdBackendStarting, notifyPluginAppsReady]);
 
   // ── 页面可见性监听（休眠/睡眠恢复感知）──
   // Capacitor 环境下 visibilitychange 和 appStateChange 可能同时触发，
@@ -1076,6 +1100,7 @@ function MainApp() {
           } catch { /* ignore */ }
           const wasReady = lastReadinessReadyRef.current;
           lastReadinessReadyRef.current = readinessReady;
+          if (readinessReady) clearBackendStartingHold();
           setServiceStatus(prev => ({
             ...(prev || { pid: null, pidFile: "" }),
             running: true,
@@ -1097,6 +1122,18 @@ function MainApp() {
       } catch {
         // 宽限期内不计入
         if (visibilityGraceRef.current) return;
+        if (isBackendStartingHeld()) {
+          heartbeatFailCount.current = 0;
+          if (heartbeatStateRef.current !== "suspect") {
+            heartbeatStateRef.current = "suspect";
+            setHeartbeatState("suspect");
+          }
+          setBackendBootPhase("starting");
+          setServiceStatus(prev =>
+            prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" }
+          );
+          return;
+        }
 
         // ── 启动宽限：后端 dual-venv hack cold start 实测要 90~120 秒 ──
         // 这段时间内 fetch /api/health 必然失败，但后端正在加载 122 个 skills、
@@ -1120,7 +1157,7 @@ function MainApp() {
           }
           if (stillStarting) {
             heartbeatFailCount.current = 0;
-            if (backendBootPhase !== "starting") setBackendBootPhase("starting");
+            holdBackendStarting(60_000);
             return;
           }
         }
@@ -1162,6 +1199,7 @@ function MainApp() {
           if (IS_TAURI) try { await invoke("set_tray_backend_status", { status: "dead" }); } catch { /* ignore */ }
         }
         setServiceStatus(prev => prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" });
+        clearBackendStartingHold();
         setBackendBootPhase("stopped");
         setBackendVersion(null);
         // 注意：不要在 dead 状态下重置 heartbeatFailCount！
@@ -2387,6 +2425,7 @@ function MainApp() {
               const readiness = healthData?.readiness || {};
               const ready = readiness.ready !== false;
               const phase = String(readiness.phase || healthData.startup_phase || "");
+              if (ready) clearBackendStartingHold();
               setBackendBootPhase(ready ? "running" : "starting");
               setServiceStatus((prev) => ({
                 ...(prev || { pid: healthData.pid || null, pidFile: "" }),
@@ -2403,6 +2442,9 @@ function MainApp() {
           serviceAlive = false;
           setBackendVersion(null);
           if (effectiveDataMode !== "remote") {
+            if (isBackendStartingHeld()) {
+              setBackendBootPhase("starting");
+            }
             setServiceStatus((prev) =>
               prev ? { ...prev, running: false } : { running: false, pid: null, pidFile: "" }
             );
@@ -2672,6 +2714,9 @@ function MainApp() {
             workspaceId: currentWorkspaceId,
           });
           setServiceStatus(ss);
+          if (!ss.running && isBackendStartingHeld()) {
+            setBackendBootPhase("starting");
+          }
           if (ss.running && ss.heartbeatReady === false && ss.heartbeatPhase) {
             setBackendBootPhase("starting");
           }
@@ -2828,7 +2873,7 @@ function MainApp() {
    */
   async function doStartLocalService(effectiveWsId: string) {
     let _busyId = notifyLoading(t("topbar.starting"));
-    setBackendBootPhase("starting");
+    holdBackendStarting();
     try {
       setDataMode("local");
       setApiBaseUrl("http://127.0.0.1:18900");
@@ -2843,6 +2888,7 @@ function MainApp() {
       });
       setServiceStatus(real);
       if (ready && real.running) {
+        clearBackendStartingHold();
         setBackendBootPhase("running");
         notifySuccess(t("connect.success"));
         // forceAliveCheck=true to bypass stale serviceStatus closure
@@ -2863,6 +2909,7 @@ function MainApp() {
         _busyId = notifyLoading(t("topbar.starting") + "…");
         const bgReady = await waitForServiceReady("http://127.0.0.1:18900", LOCAL_SERVICE_READY_TIMEOUT_MS);
         if (bgReady) {
+          clearBackendStartingHold();
           setBackendBootPhase("running");
           notifySuccess(t("connect.success"));
           await refreshStatus("local", "http://127.0.0.1:18900", true);
@@ -2875,15 +2922,18 @@ function MainApp() {
             }
           } catch { /* ignore */ }
         } else {
+          clearBackendStartingHold();
           setBackendBootPhase("error");
           notifyError(t("topbar.startFail") + " (HTTP API not reachable)");
           await refreshStatus("local", "http://127.0.0.1:18900", true);
         }
       } else {
+        clearBackendStartingHold();
         setBackendBootPhase("error");
         notifyError(t("topbar.startFail"));
       }
     } catch (e) {
+      clearBackendStartingHold();
       setBackendBootPhase("error");
       notifyError(String(e));
     } finally {
@@ -2945,6 +2995,7 @@ function MainApp() {
 
   /** Stop the running service: try API shutdown first, then PID kill, then verify. */
   async function doStopService(wsId?: string | null) {
+    clearBackendStartingHold();
     const id = wsId || currentWorkspaceId || workspaces[0]?.id;
     if (!id) throw new Error("No workspace");
     // 1. Try graceful shutdown via HTTP API (works even for externally started services)
@@ -5709,6 +5760,7 @@ function MainApp() {
           dataMode={dataMode}
           busy={busy}
           onDisconnect={() => {
+            clearBackendStartingHold();
             setTauriRemoteMode(false);
             setDataMode("local");
             setApiBaseUrl(DEFAULT_LOCAL_API_BASE);

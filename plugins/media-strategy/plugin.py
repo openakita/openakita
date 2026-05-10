@@ -83,6 +83,16 @@ class AddFeedBody(_StrictBase):
     authority: float | None = None
 
 
+class OpenUrlBody(_StrictBase):
+    url: str
+
+
+class PushReportBody(_StrictBase):
+    channel: str
+    chat_id: str
+    text_only: bool = False
+
+
 class UpdateSourceBody(_StrictBase):
     label_zh: str | None = None
     label_en: str | None = None
@@ -368,6 +378,22 @@ class Plugin(PluginBase):
             except (OSError, FileNotFoundError) as exc:
                 raise HTTPException(status_code=500, detail=f"Cannot open folder: {exc}") from exc
             return {"ok": True, "path": str(target)}
+
+        @router.post("/external/open-url")
+        async def open_external_url(body: OpenUrlBody) -> dict[str, Any]:
+            from urllib.parse import urlparse
+
+            raw_url = body.url.strip()
+            parsed = urlparse(raw_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(status_code=422, detail="Only http/https external URLs are allowed")
+            import webbrowser
+
+            try:
+                opened = webbrowser.open(raw_url, new=2)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=500, detail=f"Cannot open URL: {exc}") from exc
+            return {"ok": True, "opened": bool(opened), "url": raw_url}
 
         @router.get("/storage/list-dir")
         async def list_dir(path: str = "") -> dict[str, Any]:
@@ -699,6 +725,54 @@ class Plugin(PluginBase):
             if row is None:
                 raise HTTPException(status_code=404, detail="report not found")
             return {"report": row}
+
+        @router.get("/scheduler/channels")
+        async def scheduler_channels() -> dict[str, Any]:
+            host = getattr(self._api, "_host", None) or {}
+            api_app = host.get("api_app") if isinstance(host, dict) else None
+            if api_app is None:
+                return {"ok": True, "channels": []}
+            try:
+                from openakita.api.routes.scheduler import list_channels as _host_list_channels  # type: ignore
+            except Exception:  # noqa: BLE001
+                return {"ok": True, "channels": []}
+            from types import SimpleNamespace
+
+            try:
+                payload = await _host_list_channels(SimpleNamespace(app=api_app))  # type: ignore[arg-type]
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "channels": [], "detail": str(exc)}
+            return {"ok": True, "channels": (payload or {}).get("channels") or []}
+
+        @router.get("/available-channels")
+        async def available_channels() -> dict[str, Any]:
+            host = getattr(self._api, "_host", None) or {}
+            gateway = host.get("gateway") if isinstance(host, dict) else None
+            if gateway is None:
+                return {"ok": True, "channels": []}
+            adapters = getattr(gateway, "_adapters", None)
+            if isinstance(adapters, dict):
+                return {"ok": True, "channels": [str(k) for k in adapters.keys()]}
+            return {"ok": True, "channels": []}
+
+        @router.post("/reports/{report_id}/push")
+        async def push_report(report_id: str, body: PushReportBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            row = await self._tm.get_report(report_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="report not found")
+            text = str(row.get("markdown") or "").strip()
+            if not text:
+                raise HTTPException(status_code=422, detail="report markdown is empty")
+            sender = getattr(self._api, "send_message", None)
+            if not callable(sender):
+                raise HTTPException(status_code=503, detail="channel.send is not available")
+            try:
+                sender(channel=body.channel, chat_id=body.chat_id, text=text[:12000])
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            return {"ok": True, "channel": body.channel, "chat_id": body.chat_id}
 
         return router
 
