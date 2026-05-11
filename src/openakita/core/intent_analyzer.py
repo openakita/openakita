@@ -116,7 +116,11 @@ class IntentResult:
     memory_scope: MemoryScope = MemoryScope.RELEVANT
     catalog_scope: list[str] = field(default_factory=list)
     requires_tools: bool = False
+    # P0-2 阶段 2：evidence_required 仅来自 LLM 自评（"我必须调工具才能回答"）
+    # evidence_recommended 是规则启发式建议（"这种问题最好查一下，但不是必须"）
+    # 二者不再 OR 等价；前者驱动重试/警告，后者驱动 prompt 软提示。
     evidence_required: bool = False
+    evidence_recommended: bool = False
     requires_project_context: bool = False
     risk_level_hint: RiskLevelHint = RiskLevelHint.NONE
 
@@ -457,6 +461,7 @@ def _make_tool_action_result(message: str, *, follow_up: bool = False) -> Intent
         memory_scope=MemoryScope.RELEVANT,
         requires_tools=True,
         evidence_required=True,
+        evidence_recommended=True,
         requires_project_context=requires_project_context,
         risk_level_hint=RiskLevelHint.NONE,
     )
@@ -637,7 +642,8 @@ def _make_default(message: str) -> IntentResult:
         fast_query.raw_output = ""
         return fast_query
 
-    evidence_required = _requires_external_evidence(message)
+    # P0-2 阶段 2：规则启发式降级为 evidence_recommended，不再硬等于 evidence_required
+    rule_evidence = _requires_external_evidence(message)
     tool_hints, requires_project_context = _infer_tool_action_hints(message)
     return IntentResult(
         intent=IntentType.TASK,
@@ -654,7 +660,8 @@ def _make_default(message: str) -> IntentResult:
         capability_scope=[],
         catalog_scope=[],
         requires_tools=True,
-        evidence_required=evidence_required,
+        evidence_required=False,
+        evidence_recommended=rule_evidence,
         requires_project_context=requires_project_context,
         risk_level_hint=RiskLevelHint.NONE,
     )
@@ -757,9 +764,22 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
         extracted.get("evidence_required", ""),
         default=False,
     )
-    evidence_required = llm_evidence_required or _requires_external_evidence(message)
+    # P0-2 阶段 2（修正版）：拆开 LLM 判断和规则启发
+    # - evidence_required = LLM 自评（"必须查工具"），驱动 ForceToolCall/重试逻辑
+    # - evidence_recommended = LLM 自评 OR 规则启发（"建议查"），驱动 prompt 软提示
+    # 这样规则误判（如把"算我33岁离60岁还几年"识别为外部证据）只影响 prompt 文案，
+    # 不再触发 ForceToolCall 重试 + text_replace + OrgRuntime 误判 task_failed。
+    evidence_required = llm_evidence_required
+    rule_evidence = _requires_external_evidence(message)
+    evidence_recommended = llm_evidence_required or rule_evidence
     if evidence_required:
         requires_tools = True
+        inferred_hints, inferred_project_context = _infer_tool_action_hints(message)
+        for hint in inferred_hints:
+            if hint not in tool_hints:
+                tool_hints.append(hint)
+    elif evidence_recommended:
+        # 软建议：补充 tool_hints 给 LLM 参考，但不强制 requires_tools
         inferred_hints, inferred_project_context = _infer_tool_action_hints(message)
         for hint in inferred_hints:
             if hint not in tool_hints:
@@ -801,6 +821,7 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
         catalog_scope=catalog_scope,
         requires_tools=requires_tools,
         evidence_required=evidence_required,
+        evidence_recommended=evidence_recommended,
         requires_project_context=requires_project_context,
         risk_level_hint=risk_level_hint,
     )

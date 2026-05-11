@@ -609,6 +609,18 @@ class MemoryHandler:
         if cached is not None:
             return cached + "\n\n（本轮重复查询，已复用缓存结果）"
 
+        # P1-5：在调用召回前显式打日志，记录"本次召回看的是哪个 (user, workspace) 范围"，
+        # 与 manager.start_session 的 tenant 日志配合，可在事后从日志确认是否串了别的用户记忆。
+        try:
+            _u = getattr(mm, "_current_user_id", "default")
+            _w = getattr(mm, "_current_workspace_id", "default")
+            logger.info(
+                f"[search_memory] tenant=(user={_u} workspace={_w}) "
+                f"session={conversation_id or '-'} query={str(query)[:40]!r} type={type_filter or '-'}"
+            )
+        except Exception:
+            pass
+
         # 路径 A: 无类型过滤 → RetrievalEngine 多路召回
         if not type_filter:
             retrieval_engine = getattr(mm, "retrieval_engine", None)
