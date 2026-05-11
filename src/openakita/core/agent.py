@@ -153,25 +153,32 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_force_tool_policy(intent: Any) -> tuple[int | None, bool]:
-    """Return ForceToolCall override and whether a final answer needs tool evidence.
+    """Return (force_tool_retries, tool_evidence_required) for the reasoning engine.
 
-    Plain chat/knowledge queries stay lightweight. Evidence-sensitive requests
-    get one soft nudge to gather tool evidence, avoiding repeated prompts or
-    broad default loop limits.  Non-evidence tasks are allowed to complete with
-    text: the model may still choose tools, but the runtime should not force them.
+    P0-2 阶段 2（修正版）：拆解三种语义，停止把 requires_tools/force_tool 等同于"要证据"
+    -----------------------------------------------------------------------
+    旧逻辑：requires_tools / force_tool / evidence_required 任意一个为 True
+            就 evidence_required=True，触发 ForceToolCall(1) + 重试（已被阶段 1 弱化）
+            + 阶段 0 disclaimer。导致大量"我决定让你用工具"和"我必须有工具证据"的语义混淆。
+
+    新逻辑（语义拆解）：
+    - force_tool=True   → "建议尽量调工具"：允许 2 次 ForceToolCall 提示，但不要求证据
+    - evidence_required → "必须有工具证据才能信"：1 次 soft nudge + 走阶段 0 disclaimer
+    - requires_tools    → "需要工具来执行任务"，但不一定需要证据；不再单独触发硬性策略
+                          （由 force_tool 涵盖典型场景）
+
+    返回 (None, False) 表示完全不强制，让 LLM 自主决定。
     """
     if not intent:
         return None, False
 
-    requires_tools = bool(getattr(intent, "requires_tools", False))
+    evidence_required = bool(getattr(intent, "evidence_required", False))
     force_tool = bool(getattr(intent, "force_tool", False))
-    evidence_required = (
-        bool(getattr(intent, "evidence_required", False)) or requires_tools or force_tool
-    )
 
+    if force_tool:
+        return 2, False  # 允许 2 次 ForceToolCall 重试，但不要求 evidence
     if evidence_required:
-        return 1, True
-
+        return 1, True   # 1 次柔性提示，evidence_required 走阶段 0 disclaimer
     return 0, False
 
 
@@ -3329,6 +3336,18 @@ class Agent:
                         session_context["authorized_intent"] = intent_data
                 except Exception:
                     pass
+                # P0-2 阶段 2：把规则启发式 evidence_recommended 信号传给 prompt builder。
+                # 仅当 intent 自评 evidence_required=False 且规则路径推荐时，
+                # 在 prompt 末尾追加"建议查工具/否则声明来源"的软提示，
+                # 形成 阶段 1 log-only + 阶段 3 来源标签 闭环。
+                try:
+                    if intent is not None:
+                        _ev_required = bool(getattr(intent, "evidence_required", False))
+                        _ev_recommended = bool(getattr(intent, "evidence_recommended", False))
+                        if _ev_recommended and not _ev_required:
+                            session_context["evidence_recommended"] = True
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -3381,6 +3400,7 @@ class Agent:
             tuple(sorted(_intent_tool_hints)),
             tuple(sorted(_mem_keywords)) if _mem_keywords else (),
             _working_facts_cache_key,
+            bool((session_context or {}).get("evidence_recommended", False)),
         )
 
         if (
@@ -4676,6 +4696,9 @@ class Agent:
             if _is_org_coord:
                 _requires_tools = True
 
+            # P0-2 阶段 2：子 Agent 路径不再硬绑定 evidence_required=_requires_tools
+            # _requires_tools 仅表示"任务期望调工具"，不等价于"必须有工具证据才能信"。
+            # 否则纯子 Agent 闲聊/QA 也会被误判为证据敏感，触发阶段 0 disclaimer。
             intent_result = IntentResult(
                 intent=IntentType.TASK,
                 confidence=1.0,
@@ -4685,7 +4708,8 @@ class Agent:
                 memory_keywords=[],
                 force_tool=_requires_tools,
                 requires_tools=_requires_tools,
-                evidence_required=_requires_tools,
+                evidence_required=False,
+                evidence_recommended=_requires_tools,
                 todo_required=False,
             )
             logger.info(

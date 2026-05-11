@@ -1784,6 +1784,21 @@ class OrgRuntime:
                     f"[OrgRuntime] Node {node.id} ended with exit_reason={exit_reason}, "
                     f"root_cause={root_cause_tag}, emitting {event_name} (NOT task_completed)"
                 )
+                # P0-3：子任务失败/终止时关闭 chain，唤醒所有 org_wait_for_deliverable
+                # 等待本 chain 的协程，避免父节点（root）陷入无限轮询死锁。
+                if chain_id:
+                    try:
+                        self._mark_chain_closed(org.id, chain_id)
+                        logger.info(
+                            "[OrgRuntime] auto-closed chain on failure: "
+                            "org=%s chain=%s exit_reason=%s",
+                            org.id, chain_id, exit_reason,
+                        )
+                    except Exception as close_err:
+                        logger.debug(
+                            "[OrgRuntime] mark_chain_closed on failure error: %s",
+                            close_err,
+                        )
             elif is_soft_verify:
                 root_cause_tag = (diagnosis or {}).get(
                     "root_cause", "verify_incomplete_with_children",
@@ -1889,6 +1904,21 @@ class OrgRuntime:
                 })
             except Exception:
                 pass
+            # P0-3：异常路径同样关闭 chain，避免 org_wait_for_deliverable 无限挂起。
+            # 此处覆盖 LLM 调用异常 / quota / circuit_breaker 等所有 catch-all 失败。
+            if chain_id:
+                try:
+                    self._mark_chain_closed(org.id, chain_id)
+                    logger.info(
+                        "[OrgRuntime] auto-closed chain on exception: "
+                        "org=%s chain=%s err=%s",
+                        org.id, chain_id, str(e)[:80],
+                    )
+                except Exception as close_err:
+                    logger.debug(
+                        "[OrgRuntime] mark_chain_closed on exception error: %s",
+                        close_err,
+                    )
             return {"node_id": node.id, "error": str(e)}
 
         finally:
@@ -3826,6 +3856,12 @@ class OrgRuntime:
         # Build a brief recap from the closed subtree (best-effort).
         subtree = self._collect_chain_subtree(tracker.root_chain_id)
         recap_parts: list[str] = []
+        # P1-6：把允许采纳的 chain_id 白名单显式列出来。
+        # _collect_chain_subtree 已经按 root_chain_id 严格做过 BFS，因此 subtree
+        # 与本 command_id 严格一一对应；把 chain_id 暴露给 LLM 作为白名单，
+        # 避免 root 节点的对话历史里残留的"上一条 command 的 deliverable"
+        # 被 LLM 误纳入本次汇总。
+        allowed_chain_ids: list[str] = []
         try:
             from openakita.orgs.project_store import ProjectStore as _PS
             store = _PS(self._manager._org_dir(tracker.org_id))
@@ -3835,22 +3871,33 @@ class OrgRuntime:
                     title = (task.title or "")[:60]
                     assignee = task.assignee_node_id or ""
                     recap_parts.append(
-                        f"- {assignee}: {title} [{task.status.value}]"
+                        f"- chain={cid[:12]} {assignee}: {title} [{task.status.value}]"
                     )
+                    allowed_chain_ids.append(cid)
+                else:
+                    allowed_chain_ids.append(cid)
         except Exception:
             logger.debug(
                 "[PushSummary] project_store recap failed", exc_info=True,
             )
+            allowed_chain_ids = list(subtree)[:10]
 
         recap = "\n".join(recap_parts) if recap_parts else (
             "（无可识别的子任务记录，请直接根据已收到的下级 deliverable 汇总）"
         )
+        whitelist_str = ", ".join(c[:12] for c in allowed_chain_ids) or "（空）"
         body = (
-            "[用户指令最终汇总] 你最初接到的用户指令所触发的所有委派任务均已关闭。"
+            f"[用户指令最终汇总] 用户指令 {tracker.command_id or '(unknown)'} "
+            "所触发的所有委派任务均已关闭。"
             "请基于下级各自交付的成果，向用户输出一份完整的最终汇总——"
             "覆盖每位下级的产出要点、关键文件/链接、已完成程度、"
             "以及任何遗留风险或下一步建议。\n\n"
             "已关闭的子任务概览：\n" + recap + "\n\n"
+            f"⚠️ 严格范围约束：本次汇总只能引用属于 task_chain_id ∈ "
+            f"[{whitelist_str}] 的下级交付物。"
+            "你的对话历史中可能残留着上一条用户指令的 deliverable，"
+            "**严禁**把这些历史交付物纳入本次汇总；如不确定 chain 归属，"
+            "宁可从摘要中剔除也不要张冠李戴。\n\n"
             "重要约束：本次激活只用于产出汇总文本，"
             "禁止再调 org_delegate_task / org_submit_deliverable / "
             "org_wait_for_deliverable 等会重启任务流转的工具，"

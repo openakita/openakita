@@ -552,6 +552,77 @@ def _get_action_claim_re() -> "re.Pattern[str]":
     return pat
 
 
+def _get_action_done_re() -> "re.Pattern[str]":
+    """检测 LLM 文本中"已经查到/已经读到/我刚才执行"等动作完成短语。
+
+    与 `_get_action_claim_re()` 的区别：
+    - `_get_action_claim_re()` 偏外部状态变化（"已发送/已删除/已写入"），用于隐式 REPLY 分支
+    - `_get_action_done_re()` 偏数据获取动作（"已查/已读/已搜/已检"），用于"未调用工具但
+      声称已完成查询/读取"场景的临时兜底（P0-2 阶段 0）
+
+    阶段 3 完成 identity + 后置一致性检测全面上线后，本检测可作为 belt-and-suspenders 保留。
+    """
+    import re as _re
+
+    pat = getattr(_get_action_done_re, "_cached", None)
+    if pat is not None:
+        return pat
+    pat = _re.compile(
+        r"(?:"
+        r"已经?(?:查|读|删|改|发|执行|完成|保存|写|跑|搜|检索|获取|拉取|下载)"
+        r"|我刚(?:才|刚)?(?:执行|完成|查到|读到|跑|发|删|改|写|拉|获取)"
+        r")"
+    )
+    _get_action_done_re._cached = pat  # type: ignore[attr-defined]
+    return pat
+
+
+# 来源标签检测（P0-2 阶段 3：后置一致性检测）
+def _get_source_tag_re() -> "re.Pattern[str]":
+    """匹配 [来源:工具] / [来源:历史] / [来源:常识] / [来源:不确定] 标签。"""
+    import re as _re
+
+    pat = getattr(_get_source_tag_re, "_cached", None)
+    if pat is not None:
+        return pat
+    pat = _re.compile(r"\[来源[:：]\s*(工具|历史|常识|不确定)\s*\]")
+    _get_source_tag_re._cached = pat  # type: ignore[attr-defined]
+    return pat
+
+
+def _check_source_tag_consistency(
+    text: str, tools_executed_count: int
+) -> str | None:
+    """检查回答中的来源标签与实际工具调用次数是否一致。
+
+    P0-2 阶段 3：后置一致性检测。
+
+    返回值：
+    - None：一致，无需任何处理
+    - str：要追加到回答末尾的警告 banner 文本（不替换原文，让用户看到原文+提示）
+    """
+    if not text:
+        return None
+    tag_re = _get_source_tag_re()
+    if "[来源:工具]" in text or "[来源：工具]" in text:
+        if tools_executed_count == 0:
+            return (
+                "\n\n---\n"
+                "⚠️ **系统检测**：本轮回答声明了 `[来源:工具]`，但实际未调用任何工具。"
+                "标注不准确，请将上述结论视为来自训练知识（[来源:常识]）或历史对话，"
+                "如需精确事实请告诉我去查证。"
+            )
+    # 无任何来源标签，但出现"动作完成短语"，且未调用工具 → 隐性"已完成"幻觉
+    if tools_executed_count == 0:
+        if not tag_re.search(text) and _get_action_done_re().search(text):
+            return (
+                "\n\n---\n"
+                "⚠️ **系统提示**：本轮未实际调用任何工具，上述"
+                "\"已查到/已执行/已读到\"等动作完成短语可能不准确，请你核实。"
+            )
+    return None
+
+
 _CLAIMED_TOOL_TO_FRAGMENTS: dict[str, tuple[str, ...]] = {
     "write_file": ("write_file",),
     "edit_file": ("edit_file",),
@@ -7084,68 +7155,108 @@ class ReasoningEngine:
             )
             return clean_llm_response(stripped_text)
 
-        no_tool_call_count += 1
+        # P0-2 阶段 1（修正版）：精简伪重试块
+        # ----------------------------------------------------------------
+        # 旧逻辑：4 种触发条件（evidence_required / ACTION / REPLY 短文本 / 无 intent）
+        #         全都走 ForceToolCall 重试，导致大量 token 浪费 + text_replace 抖动 +
+        #         OrgRuntime 误判 task_failed。
+        # 新逻辑：只对"真幻觉"（LLM 显式声明 [ACTION] 意图但 tool_calls=0）做重试。
+        #         其他三种条件全部降级为 log-only，把 LLM 输出原样返回，由阶段 0 的
+        #         disclaimer 路径 + 阶段 3 的 _check_source_tag_consistency() 后置检测
+        #         给出柔性提示。
+        # ----------------------------------------------------------------
 
-        if no_tool_call_count <= max_no_tool_retries:
-            if stripped_text:
-                working_messages.append(
-                    {
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": stripped_text}],
-                        "reasoning_content": decision.thinking_content or None,
-                    }
-                )
-            if tool_evidence_required:
-                logger.warning(
-                    "[IntentTag] Tool evidence required but final answer had "
-                    f"tool_calls=0 — ForceToolCall retry "
-                    f"({no_tool_call_count}/{max_no_tool_retries})"
-                )
-                retry_msg = (
-                    "[系统] 这个用户请求需要外部证据或工具验证，但你的上一条回复没有调用任何工具。"
-                    "请先调用合适的查询、读取、搜索、API 或 MCP 工具获取证据；"
-                    "如果当前没有可用工具或权限不足，请直接说明无法验证，不要编造结果。"
-                )
-            elif intent == "ACTION":
+        # 真幻觉：ACTION 意图被显式声明 + tool_calls=0 → 重试
+        if intent == "ACTION":
+            no_tool_call_count += 1
+            if no_tool_call_count <= max_no_tool_retries:
                 logger.warning(
                     "[IntentTag] ACTION intent declared but no tool calls — "
-                    "hallucination detected, forcing retry"
+                    "true hallucination, forcing retry "
+                    f"({no_tool_call_count}/{max_no_tool_retries})"
                 )
+                if stripped_text:
+                    working_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": stripped_text}],
+                            "reasoning_content": decision.thinking_content or None,
+                        }
+                    )
                 retry_msg = (
                     "[系统] ⚠️ 你声明了 [ACTION] 意图但没有调用任何工具。"
                     "请立即调用所需的工具来完成用户请求，不要只描述你会做什么。"
                 )
+                working_messages.append({"role": "user", "content": retry_msg})
+                return (
+                    working_messages,
+                    no_tool_call_count,
+                    verify_incomplete_count,
+                    no_confirmation_text_count,
+                    max_no_tool_retries,
+                )
+            # ACTION 重试用尽 → fall-through 到下方 disclaimer 路径
+            logger.warning(
+                "[IntentTag] ACTION retry budget exhausted, "
+                "falling through to disclaimer path"
+            )
+        else:
+            # 三种"非真幻觉"情况：log-only 软提示，不重试，让原文返回
+            if tool_evidence_required:
+                logger.info(
+                    "[ToolEvidence] No tool calls but evidence recommended — "
+                    "softly noted, not retrying (relying on 阶段 3 source-tag check)"
+                )
             elif intent == "REPLY":
-                logger.warning(
-                    f"[IntentTag] REPLY intent but text too short — "
-                    f"ForceToolCall retry ({no_tool_call_count}/{max_no_tool_retries})"
+                logger.info(
+                    f"[IntentTag] REPLY intent with short text "
+                    f"({len(stripped_text or '')} chars), "
+                    f"tool_calls=0 — accepting as-is"
                 )
-                retry_msg = "[系统] 你的回复过于简短，请提供更详细的回答。"
+            elif intent is None and _ACTION_CLAIM_RE.search(_txt or ""):
+                logger.info(
+                    "[IntentTag] No intent + action-claim text + tool_calls=0 — "
+                    "accepting (post-check will warn if claims are unbacked)"
+                )
             else:
-                logger.warning(
-                    f"[IntentTag] No intent tag, short text with action claims, tool_calls=0 — "
-                    f"ForceToolCall retry "
-                    f"({no_tool_call_count}/{max_no_tool_retries})"
+                logger.info(
+                    f"[IntentTag] Edge case (intent={intent or 'NONE'}, "
+                    f"text_len={len(stripped_text or '')}) — accepting as-is"
                 )
-                retry_msg = (
-                    "[系统] ⚠️ 你的上一条回复没有调用任何工具（系统日志确认 tool_calls=0）。"
-                    "文字描述不等于实际执行。请立即调用工具完成用户的请求。"
+
+        # 追问次数用尽。
+        # P0-2 阶段 0（修正版）：不再硬替换 LLM 文本、不再设 _last_exit_reason="tool_evidence_missing"
+        # （那个 exit_reason 会被 OrgRuntime 错误映射为 task_failed 导致组织死锁）。
+        # 改为柔性追加 disclaimer：让 LLM 原文返回 + 末尾追加来源不确定的提示。
+        # 这样组织编排走 normal 路径自然回流，主链不会卡死。
+        # 与阶段 3 的 _check_source_tag_consistency() 形成 belt-and-suspenders。
+        cleaned_text = clean_llm_response(stripped_text) or ""
+        if tool_evidence_required and not tools_executed_in_task:
+            # 上下文敏感的提示文案：动作完成短语用强警告，普通陈述用弱提示
+            if cleaned_text and _get_action_done_re().search(cleaned_text):
+                disclaimer = (
+                    "\n\n---\n"
+                    "⚠️ **系统提示**：本轮未实际调用任何工具，上述声明的"
+                    "\"已执行/已查到/已读取\"等内容可能不准确，请你核实。"
+                    "如需精确数据请告诉我去查。"
                 )
-            working_messages.append({"role": "user", "content": retry_msg})
-            return (
-                working_messages,
-                no_tool_call_count,
-                verify_incomplete_count,
-                no_confirmation_text_count,
-                max_no_tool_retries,
+            else:
+                disclaimer = (
+                    "\n\n---\n"
+                    "（提示：本次回答未调用工具核对外部状态，"
+                    "结论来自训练常识或历史对话；如需最新精确数据请允许我调用相关工具。）"
+                )
+            return cleaned_text + disclaimer if cleaned_text else (
+                "未能就该问题给出可靠回答。请允许我调用读取、搜索或相关工具后再继续核对。"
             )
 
-        # 追问次数用尽。证据敏感任务不继续反复提示，也不把无工具结论包装成已验证结果。
-        if tool_evidence_required and not tools_executed_in_task:
-            self._last_exit_reason = "tool_evidence_missing"
-            return "未执行任何工具，无法验证该结论。请允许我读取、搜索或调用相关工具后再继续核对。"
+        # P0-2 阶段 3：成功路径上的来源标签一致性检测（后置 belt）
+        consistency_warning = _check_source_tag_consistency(
+            cleaned_text, tools_executed_count=0  # 此分支前提就是 tool_calls=0
+        )
+        if consistency_warning:
+            return cleaned_text + consistency_warning
 
-        cleaned_text = clean_llm_response(stripped_text)
         return cleaned_text or (
             "⚠️ 大模型返回异常：未产生可用输出。任务已中断。请重试、或更换端点/模型后再执行。"
         )

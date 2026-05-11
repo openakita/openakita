@@ -85,8 +85,11 @@ _ZONE_OP_MATRIX: dict[Zone, dict[OpType, PolicyDecision]] = {
     },
     Zone.CONTROLLED: {
         OpType.READ: PolicyDecision.ALLOW,
-        OpType.CREATE: PolicyDecision.ALLOW,
-        OpType.EDIT: PolicyDecision.ALLOW,
+        # P0-1：CONTROLLED 区域所有写操作都需要 confirm（不分 CREATE/EDIT/OVERWRITE）。
+        # 用户对桌面/文档/下载等区域的写入应该看得见、可拦截；
+        # yolo 信任模式下 baseline_protection 仍放行，不影响重度信任用户。
+        OpType.CREATE: PolicyDecision.CONFIRM,
+        OpType.EDIT: PolicyDecision.CONFIRM,
         OpType.OVERWRITE: PolicyDecision.CONFIRM,
         OpType.DELETE: PolicyDecision.CONFIRM,
         OpType.RECURSIVE_DELETE: PolicyDecision.DENY,
@@ -252,11 +255,56 @@ def _default_protected_paths() -> list[str]:
 
 def _default_forbidden_paths() -> list[str]:
     """Platform-specific default forbidden paths."""
-    paths = ["~/.ssh/**", "~/.gnupg/**"]
+    paths = ["~/.ssh/**", "~/.gnupg/**", "~/.aws/**", "~/.config/gcloud/**"]
     if platform.system() == "Windows":
-        paths.append("C:/Windows/System32/config/**")
+        paths.extend(
+            [
+                "C:/Windows/System32/config/**",
+                "~/.aws/credentials",
+                "~/AppData/Roaming/gcloud/**",
+            ]
+        )
     else:
         paths.extend(["/etc/shadow", "/etc/gshadow"])
+    return paths
+
+
+def _default_controlled_paths() -> list[str]:
+    """Platform-specific default controlled paths.
+
+    P0-1：用户常用工作区目录（桌面/文档/下载）默认归 CONTROLLED，
+    而非默认 WORKSPACE。这样 smart/cautious 模式下 LLM 主动写入这些目录
+    会触发 risk_confirm；yolo（完全信任）模式下 baseline_protection
+    继续放行，不打断用户。
+    """
+    paths = []
+    if platform.system() == "Windows":
+        paths.extend(
+            [
+                "~/Desktop/**",
+                "~/Documents/**",
+                "~/Downloads/**",
+                "~/Pictures/**",
+                "~/Videos/**",
+                "~/Music/**",
+                "~/桌面/**",
+                "~/文档/**",
+                "~/下载/**",
+                "~/图片/**",
+            ]
+        )
+    else:
+        paths.extend(
+            [
+                "~/Desktop/**",
+                "~/Documents/**",
+                "~/Downloads/**",
+                "~/Pictures/**",
+                "~/Music/**",
+            ]
+        )
+        if platform.system() == "Darwin":
+            paths.extend(["~/Movies/**", "~/Public/**"])
     return paths
 
 
@@ -647,13 +695,20 @@ class PolicyEngine:
     @staticmethod
     def _make_default_config() -> SecurityConfig:
         cwd = str(Path.cwd()).replace("\\", "/")
+        # P0-1：默认 zone 配置策略
+        # - workspace: cwd（项目根目录）
+        # - controlled: 用户常用目录（桌面/文档/下载等）→ smart/cautious 模式下需 confirm
+        # - protected: 系统目录 → 任意模式都拒绝写入
+        # - forbidden: 凭据/密钥目录 → 任意模式都禁止读写
+        # - default_zone = CONTROLLED：未明确列出的路径默认归 CONTROLLED，
+        #   smart/cautious 触发 confirm；yolo 走 baseline_protection 继续放行
         return SecurityConfig(
             zones=ZonePolicyConfig(
                 workspace=[cwd],
-                controlled=[],
+                controlled=_default_controlled_paths(),
                 protected=_default_protected_paths(),
                 forbidden=_default_forbidden_paths(),
-                default_zone=Zone.WORKSPACE,
+                default_zone=Zone.CONTROLLED,
             ),
             confirmation=ConfirmationConfig(mode="yolo", auto_confirm=True),
             command_patterns=CommandPatternConfig(
@@ -1017,6 +1072,16 @@ class PolicyEngine:
                     )
                     self._audit(tool_name, params, result)
                     return result
+                # P0-1：yolo 模式下越界访问（CONTROLLED 区域写操作）不打断，但记录审计
+                if zone == Zone.CONTROLLED and op_type != OpType.READ:
+                    logger.info(
+                        "[Policy] Trust-mode crossing: tool=%s op=%s path=%s zone=%s "
+                        "(yolo 模式放行；如需提示请切换到 smart/cautious 安全模式)",
+                        tool_name,
+                        op_type.value,
+                        path,
+                        zone.value,
+                    )
             return None
 
         if tool_name in ("run_shell", "run_powershell"):

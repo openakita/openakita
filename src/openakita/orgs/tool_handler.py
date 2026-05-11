@@ -1271,6 +1271,36 @@ class OrgToolHandler:
                     f"若需协作可用 org_send_message。禁止继续重试 org_delegate_task。"
                 )
 
+        # P0-3：派发前检查目标节点是否被冻结/下线，避免任务派给"死节点"导致 chain 永远无法完成。
+        # 不修复硬死锁（_mark_chain_closed 已经处理失败回流），但在派发时
+        # 立刻拒绝并给出可执行替代建议，节省 token 浪费。
+        try:
+            from openakita.orgs.models import NodeStatus as _NS
+            target_node = org.get_node(to_node)
+            if target_node is not None:
+                _ts = getattr(target_node, "status", None)
+                if _ts == _NS.FROZEN:
+                    reason_hint = ""
+                    fr_reason = getattr(target_node, "frozen_reason", "") or ""
+                    if fr_reason:
+                        reason_hint = f"（冻结原因：{fr_reason[:80]}）"
+                    return (
+                        f"[org_delegate_task 失败] 目标节点 `{to_node}`"
+                        f"({getattr(target_node, 'role_title', '')}) 已被冻结{reason_hint}，"
+                        "无法派发任务。建议：\n"
+                        "  1) 改派给同级其他节点；\n"
+                        "  2) 自己用 org_submit_deliverable 完成；\n"
+                        "  3) 向用户报告该角色当前不可用。"
+                    )
+                if _ts == _NS.OFFLINE:
+                    return (
+                        f"[org_delegate_task 失败] 目标节点 `{to_node}`"
+                        f"({getattr(target_node, 'role_title', '')}) 已下线，无法派发任务。"
+                        "请改派给同级其他节点或自行完成。"
+                    )
+        except Exception:
+            logger.debug("[ToolHandler] frozen-check failed", exc_info=True)
+
         try:
             from openakita.orgs.models import TaskStatus as _TS
             from openakita.orgs.project_store import ProjectStore
@@ -2465,12 +2495,44 @@ class OrgToolHandler:
         inbox_triggered = inbox_event.is_set()
 
         if not done:
+            # P0-3：超时时返回各 chain 的任务状态快照，让 LLM 看到"具体卡在哪"，
+            # 决定是继续等、放弃此 chain、向用户汇报，避免盲目轮询导致死锁。
+            snapshot_lines: list[str] = []
+            try:
+                from openakita.orgs.project_store import ProjectStore
+
+                _store = ProjectStore(runtime._manager._org_dir(org_id))
+                for c in open_targets[:5]:
+                    task = _store.find_task_by_chain(c)
+                    if task:
+                        t = task[0] if isinstance(task, tuple) else task
+                        status = getattr(t, "status", None) or (
+                            t.get("status") if isinstance(t, dict) else "unknown"
+                        )
+                        assignee = getattr(t, "assignee", None) or (
+                            t.get("assignee") if isinstance(t, dict) else "?"
+                        )
+                        title = getattr(t, "title", None) or (
+                            t.get("title") if isinstance(t, dict) else ""
+                        )
+                        snapshot_lines.append(
+                            f"  - {c[:8]}... [{status}] @{assignee}: {(title or '')[:40]}"
+                        )
+                    else:
+                        snapshot_lines.append(f"  - {c[:8]}... [未找到任务记录]")
+            except Exception as snap_err:
+                logger.debug(
+                    "[wait_for_deliverable] snapshot build failed: %s", snap_err
+                )
+
+            snapshot = "\n".join(snapshot_lines) if snapshot_lines else "  (无法获取任务快照)"
             return (
-                f"[等待超时] {timeout}s 内未收到下级新交付/新消息。"
-                f"未关闭子链：{open_targets[:5]}{'...' if len(open_targets) > 5 else ''}。"
-                "建议：用 org_list_delegated_tasks 查看具体进度，"
-                "或继续 org_wait_for_deliverable 再等一轮；"
-                "若已等待较久且确实需要推进，可向用户输出阶段性汇总。"
+                f"[等待超时] {timeout}s 内未收到下级新交付/新消息。\n"
+                f"未关闭子链快照：\n{snapshot}\n"
+                "建议：\n"
+                "  1) 若任务状态为 in_progress 且有持续进展 → 继续 org_wait_for_deliverable 再等一轮；\n"
+                "  2) 若任务状态为 todo 长期未启动 → 可能下属已僵死，用 org_list_delegated_tasks 复核；\n"
+                "  3) 若已等待较久 → 直接向用户输出阶段性汇总，不要无限轮询。"
             )
 
         parts: list[str] = []
@@ -3033,7 +3095,38 @@ class OrgToolHandler:
 
     async def _handle_org_list_delegated_tasks(
         self, args: dict, org_id: str, node_id: str
-    ) -> list:
+    ) -> list | dict:
+        # P1-7：每个 (org, node, status) 维度的轮询节流。
+        # 实际观察：leader 节点常出现"派完任务 → list → wait_for_deliverable
+        # 立刻返回 → 又 list → 又 wait"的极短时间紧密轮询，每轮要烧好几个 K
+        # 的 prompt token；实际 task 状态在两秒内不会有意义变化。
+        # 这里做：相同 (node, status, limit) 在 BACKOFF_SEC 内重复调用就直接
+        # 返回上次结果 + 提示语，不再查 ProjectStore，不消耗下游 IO。
+        try:
+            import time as _time
+            BACKOFF_SEC = 3.0
+            cache = getattr(self, "_list_delegated_cache", None)
+            if cache is None:
+                cache = {}
+                self._list_delegated_cache = cache  # type: ignore[attr-defined]
+            ck = (org_id, node_id, str(args.get("status") or ""), int(args.get("limit", 10)))
+            now = _time.monotonic()
+            cached = cache.get(ck)
+            if cached and (now - cached["ts"]) < BACKOFF_SEC:
+                tasks = cached["tasks"]
+                return {
+                    "items": tasks,
+                    "cached_age_sec": round(now - cached["ts"], 2),
+                    "hint": (
+                        f"⏱ 距离上次查询仅 {round(now - cached['ts'], 1)}s，"
+                        f"任务状态短期不会变化。建议改用 org_wait_for_deliverable "
+                        f"阻塞等待新交付/状态变化，避免空轮询烧 token。"
+                    ),
+                }
+        except Exception:
+            cache = None
+            ck = None
+
         try:
             from openakita.orgs.project_store import ProjectStore
 
@@ -3041,8 +3134,14 @@ class OrgToolHandler:
             store = ProjectStore(mgr._org_dir(org_id))
             status = args.get("status")
             limit = args.get("limit", 10)
-            tasks = store.all_tasks(delegated_by=node_id, status=status)
-            return list(tasks[:limit])
+            tasks = list(store.all_tasks(delegated_by=node_id, status=status)[:limit])
+            try:
+                if cache is not None and ck is not None:
+                    import time as _time
+                    cache[ck] = {"ts": _time.monotonic(), "tasks": tasks}
+            except Exception:
+                pass
+            return tasks
         except Exception as e:
             logger.debug("org_list_delegated_tasks failed: %s", e)
             return []

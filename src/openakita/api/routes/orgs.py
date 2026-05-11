@@ -36,6 +36,46 @@ _VALID_DECISIONS = {"approve", "reject", "批准", "拒绝"}
 _command_store: dict[str, dict[str, Any]] = {}
 _CMD_TTL = 3600  # purge commands older than 1 hour
 
+# P0-3 D：保证 status/phase 字段在并发更新下的一致性。
+# CPython dict.update 单次调用受 GIL 保护，但跨多个 update 之间可能与
+# 读取（get_command_status）交错，造成 status="done" 但 phase 仍为 "running"
+# 的瞬态。统一通过 _update_command_state 收口，避免出现 status/phase 字段
+# 不一致的窗口期，下游前端凭 status 判断时可拿到与 phase 完全对齐的快照。
+import threading as _threading
+
+_command_store_lock = _threading.Lock()
+
+
+def _update_command_state(
+    command_id: str,
+    *,
+    status: str | None = None,
+    phase: str | None = None,
+    **fields: Any,
+) -> dict[str, Any] | None:
+    """原子更新 _command_store[command_id] 的 status/phase 与其它字段。
+
+    P0-3 D：所有写入 _command_store 的路径必须经此函数，避免 status 与 phase
+    在多线程/异步并发下出现不一致快照。
+
+    传入 status="done" 但未显式传 phase 时，phase 自动跟随 status 一起转 done，
+    保证终态 status/phase 在同一次锁里翻新。
+    """
+    with _command_store_lock:
+        cmd = _command_store.get(command_id)
+        if cmd is None:
+            return None
+        if status is not None:
+            cmd["status"] = status
+            if phase is None and status in ("done", "error"):
+                cmd["phase"] = status
+        if phase is not None:
+            cmd["phase"] = phase
+        for k, v in fields.items():
+            cmd[k] = v
+        cmd["updated_at"] = time.time()
+        return cmd
+
 
 def _safe_int(value: str | None, default: int) -> int:
     """Parse query param to int, returning *default* on failure."""
@@ -722,8 +762,8 @@ async def send_command(request: Request, org_id: str):
                 org_id, target_node, content,
                 command_id=command_id,
             )
-            _command_store[command_id].update(
-                status="done", phase="done", result=result, updated_at=time.time(),
+            _update_command_state(
+                command_id, status="done", phase="done", result=result,
             )
             _bridge_persist_result(sm, org_id, target_node, result)
             try:
@@ -750,8 +790,8 @@ async def send_command(request: Request, org_id: str):
             except Exception:
                 logger.warning("[OrgCmd] broadcast org:command_done failed", exc_info=True)
         except Exception as exc:
-            _command_store[command_id].update(
-                status="error", phase="error", error=str(exc), updated_at=time.time(),
+            _update_command_state(
+                command_id, status="error", phase="error", error=str(exc),
             )
             _bridge_persist_result(sm, org_id, target_node, {"error": str(exc)})
             try:

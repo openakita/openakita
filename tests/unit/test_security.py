@@ -111,10 +111,12 @@ class TestZoneOpMatrix:
         result = engine.assert_tool_allowed("read_file", {"path": path})
         assert result.decision == PolicyDecision.ALLOW
 
-    def test_controlled_create_allowed(self, engine, tmp_workspace):
+    def test_controlled_create_requires_confirm(self, engine, tmp_workspace):
+        # P0-1：CONTROLLED 区域所有写操作（含 CREATE）必须 CONFIRM。
+        # 旧行为是 ALLOW —— 已被复盘判定为放行越界写入，回归即重大隐患。
         path = str(tmp_workspace / "controlled" / "new_file.txt")
         result = engine.assert_tool_allowed("write_file", {"path": path})
-        assert result.decision == PolicyDecision.ALLOW
+        assert result.decision == PolicyDecision.CONFIRM
 
     def test_controlled_delete_needs_confirm(self, engine, tmp_workspace):
         path = str(tmp_workspace / "controlled" / "existing.txt")
@@ -475,10 +477,13 @@ class TestMetadata:
         assert result.metadata.get("needs_sandbox") is True
 
     def test_needs_checkpoint_for_controlled_edit(self, engine, tmp_workspace):
+        # P0-1：CONTROLLED 区 EDIT 由 ALLOW 升级到 CONFIRM；
+        # smart/cautious 模式下用户能看到拦截弹窗。
+        # needs_checkpoint 仍由 metadata 报告，无论决策是 ALLOW/CONFIRM。
         test_file = tmp_workspace / "controlled" / "doc.txt"
         test_file.write_text("hello", encoding="utf-8")
         result = engine.assert_tool_allowed("edit_file", {"path": str(test_file)})
-        assert result.decision == PolicyDecision.ALLOW
+        assert result.decision == PolicyDecision.CONFIRM
         assert result.metadata.get("needs_checkpoint") is True
 
 
