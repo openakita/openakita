@@ -110,6 +110,23 @@ _READONLY_EXPLORATION_TOOLS = frozenset({
 _READONLY_STAGNATION_LIMIT = 3
 
 
+_IM_CONVERSATION_PREFIXES = (
+    "qqbot:",
+    "feishu:",
+    "dingtalk:",
+    "wework_ws:",
+    "telegram:",
+    "onebot:",
+)
+
+
+def _is_im_conversation(conversation_id: str | None) -> bool:
+    """Best-effort detection for IM sessions where there is no reliable UI confirm surface."""
+    if not conversation_id:
+        return False
+    return str(conversation_id).startswith(_IM_CONVERSATION_PREFIXES)
+
+
 def _tool_result_fingerprint(tool_results: list[dict]) -> str:
     parts: list[str] = []
     for result in tool_results:
@@ -4298,72 +4315,90 @@ class ReasoningEngine:
                                 r = f"⚠️ 策略拒绝: {_pr.reason}"
                                 _tool_is_error = True
                             elif _pr.decision == PolicyDecision.CONFIRM:
-                                _risk = _pr.metadata.get("risk_level") or "medium"
-                                _needs_sb = _pr.metadata.get("needs_sandbox", False)
-                                _pe.store_ui_pending(
-                                    t_id,
-                                    t_name,
-                                    t_args if isinstance(t_args, dict) else {},
-                                    session_id=conversation_id or "",
-                                    needs_sandbox=_needs_sb,
-                                )
-                                _pe.prepare_ui_confirm(t_id)
-                                yield {
-                                    "type": "security_confirm",
-                                    "tool": t_name,
-                                    "args": t_args if isinstance(t_args, dict) else {},
-                                    "id": t_id,
-                                    "reason": _pr.reason,
-                                    "risk_level": _risk,
-                                    "needs_sandbox": _needs_sb,
-                                    "timeout_seconds": _pe._config.confirmation.timeout_seconds,
-                                    "default_on_timeout": _pe._config.confirmation.default_on_timeout,
-                                    "options": [
+                                if _is_im_conversation(conversation_id):
+                                    r = (
+                                        f"⚠️ 策略需要桌面确认: {_pr.reason}\n\n"
+                                        "当前请求来自 IM 通道，无法安全完成交互式确认；"
+                                        "该工具调用已中止。若这是可信操作，请在桌面端发起，"
+                                        "或切换到完全信任模式后重试普通风险操作。"
+                                    )
+                                    _tool_is_error = True
+                                    _security_confirm_interrupted_ask = True
+                                    logger.info(
+                                        "[Security] IM confirmation blocked without waiting: "
+                                        "session=%s tool=%s policy=%s",
+                                        conversation_id,
+                                        t_name,
+                                        _pr.policy_name,
+                                    )
+                                else:
+                                    _risk = _pr.metadata.get("risk_level") or "medium"
+                                    _needs_sb = _pr.metadata.get("needs_sandbox", False)
+                                    _pe.store_ui_pending(
+                                        t_id,
+                                        t_name,
+                                        t_args if isinstance(t_args, dict) else {},
+                                        session_id=conversation_id or "",
+                                        needs_sandbox=_needs_sb,
+                                    )
+                                    _pe.prepare_ui_confirm(t_id)
+                                    yield {
+                                        "type": "security_confirm",
+                                        "tool": t_name,
+                                        "args": t_args if isinstance(t_args, dict) else {},
+                                        "id": t_id,
+                                        "reason": _pr.reason,
+                                        "risk_level": _risk,
+                                        "needs_sandbox": _needs_sb,
+                                        "timeout_seconds": _pe._config.confirmation.timeout_seconds,
+                                        "default_on_timeout": _pe._config.confirmation.default_on_timeout,
+                                        "options": [
+                                            "allow_once",
+                                            "allow_session",
+                                            "allow_always",
+                                            "deny",
+                                        ]
+                                        + (["sandbox"] if _needs_sb else []),
+                                    }
+                                    _decision = await _pe.wait_for_ui_resolution(
+                                        t_id,
+                                        float(_pe._config.confirmation.timeout_seconds),
+                                    )
+                                    _pe.cleanup_ui_confirm(t_id)
+                                    if _decision in (
+                                        "allow",
                                         "allow_once",
                                         "allow_session",
                                         "allow_always",
-                                        "deny",
-                                    ]
-                                    + (["sandbox"] if _needs_sb else []),
-                                }
-                                _decision = await _pe.wait_for_ui_resolution(
-                                    t_id,
-                                    float(_pe._config.confirmation.timeout_seconds),
-                                )
-                                _pe.cleanup_ui_confirm(t_id)
-                                if _decision in (
-                                    "allow",
-                                    "allow_once",
-                                    "allow_session",
-                                    "allow_always",
-                                    "sandbox",
-                                ):
-                                    try:
-                                        r = await self._tool_executor.execute_tool_with_policy(
-                                            tool_name=t_name,
-                                            tool_input=t_args if isinstance(t_args, dict) else {},
-                                            policy_result=PolicyResult(
-                                                decision=PolicyDecision.ALLOW,
-                                                reason=f"用户已允许安全确认: {_decision}",
-                                                metadata={
-                                                    "confirmed_bypass": True,
-                                                    "needs_sandbox": _decision == "sandbox" or _needs_sb,
-                                                },
-                                            ),
-                                            session_id=conversation_id,
+                                        "sandbox",
+                                    ):
+                                        try:
+                                            r = await self._tool_executor.execute_tool_with_policy(
+                                                tool_name=t_name,
+                                                tool_input=t_args if isinstance(t_args, dict) else {},
+                                                policy_result=PolicyResult(
+                                                    decision=PolicyDecision.ALLOW,
+                                                    reason=f"用户已允许安全确认: {_decision}",
+                                                    metadata={
+                                                        "confirmed_bypass": True,
+                                                        "needs_sandbox": _decision == "sandbox"
+                                                        or _needs_sb,
+                                                    },
+                                                ),
+                                                session_id=conversation_id,
+                                            )
+                                            r = str(r) if r else ""
+                                            _tool_is_error = False
+                                        except Exception as exc:
+                                            r = f"Tool error after security confirmation: {exc}"
+                                            _tool_is_error = True
+                                    else:
+                                        r = (
+                                            f"用户已拒绝安全确认: {_decision}。"
+                                            "不要再执行该操作，请选择安全替代方案或说明无法继续。"
                                         )
-                                        r = str(r) if r else ""
-                                        _tool_is_error = False
-                                    except Exception as exc:
-                                        r = f"Tool error after security confirmation: {exc}"
                                         _tool_is_error = True
-                                else:
-                                    r = (
-                                        f"用户已拒绝安全确认: {_decision}。"
-                                        "不要再执行该操作，请选择安全替代方案或说明无法继续。"
-                                    )
-                                    _tool_is_error = True
-                                _security_confirm_interrupted_ask = True
+                                    _security_confirm_interrupted_ask = True
                             else:
                                 _tool_is_error = False
                                 try:
@@ -4670,6 +4705,41 @@ class ReasoningEngine:
 
                         if _pr.decision == PolicyDecision.CONFIRM:
                             _actual_tool_calls_for_budget.append(tc)
+                            if _is_im_conversation(conversation_id):
+                                result_text = (
+                                    f"⚠️ 策略需要桌面确认: {_pr.reason}\n\n"
+                                    "当前请求来自 IM 通道，无法安全完成交互式确认；"
+                                    "该工具调用已中止。若这是可信操作，请在桌面端发起，"
+                                    "或切换到完全信任模式后重试普通风险操作。"
+                                )
+                                logger.info(
+                                    "[Security] IM confirmation blocked without waiting: "
+                                    "session=%s tool=%s policy=%s",
+                                    conversation_id,
+                                    tool_name,
+                                    _pr.policy_name,
+                                )
+                                yield {
+                                    "type": "tool_call_end",
+                                    "tool": tool_name,
+                                    "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
+                                    "id": tool_id,
+                                    "is_error": True,
+                                    "result_summary": self._summarize_tool_result(
+                                        tool_name, result_text
+                                    )
+                                    or "",
+                                }
+                                tool_results_for_msg.append(
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": tool_id,
+                                        "content": result_text,
+                                        "is_error": True,
+                                    }
+                                )
+                                continue
+
                             _risk = _pr.metadata.get("risk_level") or "medium"
                             _needs_sb = _pr.metadata.get("needs_sandbox", False)
                             _pe.store_ui_pending(

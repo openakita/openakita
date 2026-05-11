@@ -870,21 +870,11 @@ class PolicyEngine:
             baseline_result = self._check_baseline_protection(tool_name, params)
             if baseline_result:
                 return baseline_result
-            dangerous_reason = _dangerous_tool_reason(tool_name, params)
-            if dangerous_reason:
-                result = PolicyResult(
-                    decision=PolicyDecision.CONFIRM,
-                    reason=f"信任模式下仍需确认高风险操作: {dangerous_reason}",
-                    policy_name="TrustModeDangerousOperation",
-                    metadata={"trust_mode": True, "dangerous_reason": dangerous_reason},
-                )
-                self._audit(tool_name, params, result)
-                return result
             self._on_allow(tool_name, params)
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
-                reason="信任模式放行",
-                metadata={"trust_mode": True},
+                reason="信任模式放行（已通过 baseline 保护）",
+                metadata={"trust_mode": True, "baseline_checked": True},
             )
 
         # Bypass CONFIRM if user approved via any allowlist tier

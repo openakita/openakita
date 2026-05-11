@@ -158,6 +158,44 @@ class TestMessageGatewayBroadcast:
         session_manager.list_sessions.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_trust_mode_im_security_confirm_resolves_without_waiting(self, monkeypatch):
+        class FakePolicyEngine:
+            def __init__(self):
+                self.resolved = None
+
+            def _is_trust_mode(self):
+                return True
+
+            def resolve_ui_confirm(self, confirm_id, decision):
+                self.resolved = (confirm_id, decision)
+                return True
+
+            async def wait_for_ui_resolution(self, *_args, **_kwargs):
+                raise AssertionError("IM trust-mode confirm must not wait for UI resolution")
+
+        fake_pe = FakePolicyEngine()
+        import openakita.core.policy as policy_module
+
+        monkeypatch.setattr(policy_module, "get_policy_engine", lambda: fake_pe)
+
+        gateway = MessageGateway(session_manager=MagicMock())
+        session = create_test_session(channel="qqbot:test", chat_id="chat-1", user_id="user-1")
+        message = create_channel_message(
+            channel="qqbot:test",
+            chat_id="chat-1",
+            user_id="user-1",
+        )
+
+        await gateway._handle_im_security_confirm(
+            session,
+            {"tool": "run_shell", "id": "confirm-1", "reason": "needs confirmation"},
+            adapter=MagicMock(),
+            message=message,
+        )
+
+        assert fake_pe.resolved == ("confirm-1", "deny")
+
+    @pytest.mark.asyncio
     async def test_broadcast_sends_normal_text(self):
         session = MagicMock()
         session.id = "session-1"
