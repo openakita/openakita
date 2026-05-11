@@ -1059,9 +1059,12 @@ class Agent:
 
         # 初始化技能系统 (SKILL.md 规范)
         from ..skills.categories import CategoryRegistry
+        from ..skills.category_store import CategoryStore
 
         self.skill_registry = SkillRegistry()
         self.skill_category_registry = CategoryRegistry()
+        self._category_store = CategoryStore()
+        self.skill_category_registry.set_store(self._category_store)
         self.skill_loader = SkillLoader(
             self.skill_registry,
             category_registry=self.skill_category_registry,
