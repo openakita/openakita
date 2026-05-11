@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from openakita.core.permission import PermissionDecision
 from openakita.core.tool_executor import OVERFLOW_MARKER, ToolExecutor
 from openakita.tools.errors import ErrorType, ToolError
 
@@ -82,6 +83,35 @@ class TestExecuteTool:
 
         assert captured["tool_name"] == "browser_click"
         assert captured["params"]["text"] == "登录"
+
+    async def test_execute_batch_canonicalizes_no_underscore_aliases(self):
+        registry = MagicMock()
+        captured = []
+
+        async def _execute_by_tool(tool_name, params):
+            captured.append((tool_name, params))
+            return f"ok:{tool_name}"
+
+        registry.has_tool.side_effect = lambda name: name in {"run_shell", "tool_search"}
+        registry.execute_by_tool.side_effect = _execute_by_tool
+        registry.get_handler_name_for_tool.return_value = "filesystem"
+        registry.get_permission_check.return_value = None
+        executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+        executor.check_permission = MagicMock(return_value=PermissionDecision(behavior="allow"))
+
+        tool_results, executed, _ = await executor.execute_batch(
+            [
+                {"id": "u1", "name": "runshell", "input": {"command": "echo hi"}},
+                {"id": "u2", "name": "toolsearch", "input": {"query": "shell"}},
+            ]
+        )
+
+        assert executed == ["run_shell", "tool_search"]
+        assert [item[0] for item in captured] == ["run_shell", "tool_search"]
+        assert tool_results[0]["tool_name"] == "run_shell"
+        assert tool_results[0]["content"] == "ok:run_shell"
+        assert tool_results[1]["tool_name"] == "tool_search"
+        assert tool_results[1]["content"] == "ok:tool_search"
 
     def test_todo_tracking_is_not_a_tool_execution_gate(self, executor):
         assert executor._check_todo_required("write_file", "session-needs-plan") is None

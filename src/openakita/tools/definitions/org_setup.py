@@ -99,7 +99,9 @@ ORG_SETUP_TOOLS = [
             "listing existing orgs (list_orgs), viewing an org (get_org), "
             "previewing before creation (preview), creating (create), "
             "creating from template (create_from_template), "
-            "modifying an existing org (update_org), deleting (delete_org). "
+            "modifying an existing org (update_org), deleting (delete_org), "
+            "running an organization task (run_task). "
+            "Use run_task when the user asks for team collaboration, organization development, or an organization to execute a task. "
             "For CREATION: call get_resources first, ask clarifying questions, then create. "
             "For MODIFICATION: call list_orgs to find the org, get_org to see its structure, "
             "then update_org with incremental changes."
@@ -127,6 +129,8 @@ ORG_SETUP_TOOLS = [
             "- **consult** — 咨询，向特定节点请求专业意见\n\n"
             "层级关系由 parent_role_title 管理；"
             "其他三种关系通过 edges（创建时）或 add_edges（修改时）添加。\n\n"
+            "## 任务执行\n\n"
+            "当用户要求团队协作、组织开发或让组织执行任务时，使用 **run_task** 启动组织并下发任务。\n\n"
             "## 关键注意事项\n"
             "- 修改时**必须保留现有节点 ID**，因为 ID 关联了任务、记忆、身份文件\n"
             "- update_org 是**增量更新**：只传要改的字段，未提及的节点原样保留\n"
@@ -143,7 +147,7 @@ ORG_SETUP_TOOLS = [
                     "enum": [
                         "get_resources", "list_orgs", "get_org",
                         "preview", "create", "create_from_template",
-                        "update_org", "delete_org",
+                        "update_org", "delete_org", "run_task",
                     ],
                     "description": (
                         "操作类型："
@@ -154,12 +158,13 @@ ORG_SETUP_TOOLS = [
                         "create=创建组织；"
                         "create_from_template=从模板创建；"
                         "update_org=修改现有组织（增量）；"
-                        "delete_org=删除组织"
+                        "delete_org=删除组织；"
+                        "run_task=启动组织并下发任务"
                     ),
                 },
                 "org_id": {
                     "type": "string",
-                    "description": "组织 ID（get_org/update_org/delete_org 时必填）",
+                    "description": "组织 ID（get_org/update_org/delete_org/run_task 时必填）",
                 },
                 "name": {
                     "type": "string",
@@ -232,6 +237,18 @@ ORG_SETUP_TOOLS = [
                         "组织级字段更新（update_org 时使用），"
                         "如 name、description、core_business、heartbeat_enabled 等"
                     ),
+                },
+                "content": {
+                    "type": "string",
+                    "description": "组织要执行的用户任务/开发需求（run_task 必填）",
+                },
+                "target_node_id": {
+                    "type": "string",
+                    "description": "目标组织节点 ID（run_task 可选；不填由运行时选择根节点）",
+                },
+                "chain_id": {
+                    "type": "string",
+                    "description": "外部链路 ID（run_task 可选）",
                 },
             },
             "required": ["action"],
@@ -309,6 +326,15 @@ ORG_SETUP_TOOLS = [
                     ],
                 },
                 "expected": "在两个子节点之间建立协作连线",
+            },
+            {
+                "scenario": "让组织协作执行开发任务",
+                "params": {
+                    "action": "run_task",
+                    "org_id": "org_xxx",
+                    "content": "请组织团队协作完成登录页重构，并补充必要测试。",
+                },
+                "expected": "启动/恢复组织并向根节点下发任务",
             },
             {
                 "scenario": "删除组织",

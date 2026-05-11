@@ -17,6 +17,37 @@ def scaler(mock_runtime, persisted_org) -> OrgScaler:
     return OrgScaler(mock_runtime)
 
 
+class TestAutoCloneThreshold:
+    async def test_auto_clone_triggers_when_pending_reaches_threshold(
+        self, scaler: OrgScaler, persisted_org, mock_runtime,
+    ):
+        source = persisted_org.get_node("node_dev")
+        source.auto_clone_enabled = True
+        source.auto_clone_threshold = 2
+        source.auto_clone_max = 99
+        source.max_concurrent_tasks = 99
+        persisted_org.max_nodes = 200
+        clone = await scaler.maybe_auto_clone(persisted_org.id, source.id, pending_count=2)
+
+        assert clone is not None
+        assert clone.clone_source == source.id
+        assert clone.max_concurrent_tasks == 99
+        assert clone.auto_clone_threshold == 3
+
+    async def test_auto_clone_does_not_trigger_below_threshold(
+        self, scaler: OrgScaler, persisted_org,
+    ):
+        source = persisted_org.get_node("node_dev")
+        source.auto_clone_enabled = True
+        source.auto_clone_threshold = 2
+        source.auto_clone_max = 99
+        before_count = len(persisted_org.nodes)
+        clone = await scaler.maybe_auto_clone(persisted_org.id, source.id, pending_count=1)
+
+        assert clone is None
+        assert len(persisted_org.nodes) == before_count
+
+
 class TestRequestClone:
     async def test_creates_pending_request(self, scaler: OrgScaler, persisted_org):
         req = await scaler.request_clone(

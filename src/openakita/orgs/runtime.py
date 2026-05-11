@@ -2082,78 +2082,48 @@ class OrgRuntime:
 
         agent = await factory.create(profile)
 
-        from .tool_categories import expand_tool_categories
-
-        _KEEP = frozenset({
-            "get_tool_info",
-            "create_plan",
-            "update_plan_step",
-            "get_plan_status",
-            "complete_plan",
-        })
-
-        # Free-form delegation tools conflict with org_delegate_task
+        # Free-form delegation tools conflict with org_delegate_task and must
+        # not bypass organization dispatch.
         _ORG_CONFLICT_TOOLS = frozenset({
             "delegate_to_agent", "spawn_agent",
             "delegate_parallel", "create_agent",
         })
 
-        allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT_TOOLS
-
-        # E0-4: 节点级"基础文件工具"开关。即便用户没在 external_tools 里勾选
-        # filesystem 类目，只要 enable_file_tools=True（默认），就给节点放行
-        # 一组安全的读写工具，避免出现"角色明明该交文件，但提示词里被告知
-        # 'write_file 不可用' 只能回纯文本"的死循环。这里刻意不包含 run_shell
-        # / delete_file —— 命令执行和删除属高风险，仍要走 external_tools 显式
-        # 授权。文件路径在 agent.file_tool.base_path 处被隔离到 org workspace。
-        if getattr(node, "enable_file_tools", True):
-            allowed_external = allowed_external | {
-                "write_file", "read_file", "edit_file", "list_directory",
-            }
-
         per_node_tools = build_org_node_tools(org, node)
         per_node_by_name: dict[str, dict] = {t["name"]: t for t in per_node_tools}
 
         if hasattr(agent, "tool_catalog"):
+            for tool_name in _ORG_CONFLICT_TOOLS:
+                agent.tool_catalog.remove_tool(tool_name)
             for tool_def in per_node_tools:
                 agent.tool_catalog.add_tool(tool_def)
             if "org_delegate_task" not in per_node_by_name:
                 agent.tool_catalog.remove_tool("org_delegate_task")
-            non_org = [
-                n for n in agent.tool_catalog.list_tools()
-                if not n.startswith("org_") and n not in _KEEP
-                and n not in allowed_external
-            ]
-            for n in non_org:
-                agent.tool_catalog.remove_tool(n)
 
         if hasattr(agent, "_tools"):
             seen: set[str] = set()
             filtered: list[dict] = []
             for t in agent._tools:
                 name = t.get("name", "")
-                if not name:
+                if not name or name in seen:
+                    continue
+                if name in _ORG_CONFLICT_TOOLS:
                     continue
                 if name in per_node_by_name:
-                    if name not in seen:
-                        seen.add(name)
-                        filtered.append(per_node_by_name[name])
+                    seen.add(name)
+                    filtered.append(per_node_by_name[name])
                     continue
                 if name.startswith("org_"):
                     continue
-                if (name in _KEEP or name in allowed_external) and name not in seen:
-                    seen.add(name)
-                    filtered.append(t)
+                seen.add(name)
+                filtered.append(t)
             for name, tool in per_node_by_name.items():
                 if name not in seen:
                     seen.add(name)
                     filtered.append(tool)
             agent._tools = filtered
 
-        _MCP_TOOL_NAMES = {"call_mcp_tool", "list_mcp_servers", "get_mcp_instructions"}
-        if node.mcp_servers and (
-            "mcp" in (node.external_tools or []) or _MCP_TOOL_NAMES & allowed_external
-        ):
+        if node.mcp_servers:
             self._connect_node_mcp_servers(agent, node.mcp_servers)
 
         org_workspace = self._resolve_org_workspace(org)
@@ -2308,13 +2278,13 @@ class OrgRuntime:
         else:
             parts.append(
                 "## 行为准则\n\n"
-                "1. **只使用上述 org_* 工具**。不要调用 write_file、read_file、run_shell 等非组织工具，它们不可用；也不要用 `get_tool_info` 去探查这些被禁用的工具，对你来说一定查不到。\n"
+                "1. **按实际可见工具行动**。组织协作用 org_* 工具；执行类工作使用当前工具清单里可见的外部工具。\n"
                 "2. **简洁回复**。完成工具调用后，用 1-2 句话总结结果即可。\n"
                 "3. **先查再做**。不确定找谁时用 org_find_colleague；不确定流程时用 org_search_policy。\n"
                 "4. **重要信息写黑板**。决策、方案、进度等用 org_write_blackboard 记录，方便同事查阅。\n"
                 "5. **不要重复写入**。写黑板前先用 org_read_blackboard 检查是否已有相似内容。\n"
                 + rule_delivery +
-                "7. **缺少工具时申请**。如果任务需要你没有的工具，用 org_request_tools 向上级申请。"
+                "7. **工具清单优先**。如果运行环境确实没有某个工具，再用 org_request_tools 向上级说明需要。"
             )
 
         parts.append(
@@ -2354,8 +2324,12 @@ class OrgRuntime:
                         name=node.role_title,
                         type=AgentType.DYNAMIC,
                         custom_prompt=org_prompt,
-                        skills=node.skills if node.skills else base.skills,
-                        skills_mode=SkillsMode(node.skills_mode) if node.skills_mode != "all" else base.skills_mode,
+                        skills=[],
+                        skills_mode=SkillsMode.ALL,
+                        tools=[],
+                        tools_mode="all",
+                        mcp_servers=[],
+                        mcp_mode="all",
                         preferred_endpoint=preferred_endpoint,
                         endpoint_policy=endpoint_policy,
                         created_by="org_runtime",
@@ -2370,8 +2344,12 @@ class OrgRuntime:
             id=f"org_node_{node.id}",
             name=node.role_title,
             custom_prompt=org_prompt,
-            skills=node.skills,
-            skills_mode=SkillsMode(node.skills_mode) if node.skills_mode != "all" else SkillsMode.ALL,
+            skills=[],
+            skills_mode=SkillsMode.ALL,
+            tools=[],
+            tools_mode="all",
+            mcp_servers=[],
+            mcp_mode="all",
             preferred_endpoint=node.preferred_endpoint,
             endpoint_policy=node.endpoint_policy,
         )
@@ -2509,6 +2487,7 @@ class OrgRuntime:
         # ---------- 软屏障结束 ----------
 
         active_count = self._node_active_count(org_id, node_id)
+        max_concurrent = self._node_max_concurrent(node)
 
         messenger = self.get_messenger(org_id)
         pending = messenger.get_pending_count(node_id) if messenger else 0
@@ -2527,7 +2506,7 @@ class OrgRuntime:
         # 避免并发场景下共享字典被后到消息覆盖的竞态。
         msg_origin = self._origin_from_msg_type(msg.msg_type)
 
-        if active_count >= self.max_concurrent_per_node:
+        if active_count >= max_concurrent:
             target_clone = self._try_route_to_clone(org, node, msg, pending)
             if target_clone:
                 _mark_dispatched()
@@ -3145,6 +3124,13 @@ class OrgRuntime:
             if k.startswith(f"{node_id}:") and not t.done()
         )
 
+    def _node_max_concurrent(self, node: OrgNode) -> int:
+        """Return the effective per-node concurrency limit."""
+        configured = getattr(node, "max_concurrent_tasks", None)
+        if isinstance(configured, int) and configured > 0:
+            return configured
+        return self.max_concurrent_per_node
+
     async def _drain_node_pending(
         self, org: Organization, node: OrgNode, *, max_msgs: int = 0,
     ) -> int:
@@ -3163,7 +3149,7 @@ class OrgRuntime:
             return 0
 
         active = self._node_active_count(org.id, node.id)
-        slots = self.max_concurrent_per_node - active
+        slots = self._node_max_concurrent(node) - active
         if slots <= 0:
             return 0
         if max_msgs > 0:

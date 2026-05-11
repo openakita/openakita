@@ -136,27 +136,18 @@ class AgentFactory:
         await agent.initialize(start_scheduler=False, lightweight=True)
         agent.configure_runtime_environment(profile)
 
-        self._apply_skill_filter(agent, profile)
-        self._apply_tool_filter(agent, profile)
-        self._apply_mcp_filter(agent, profile)
+        # 能力默认全开，profile 过滤字段仅作为 UI/兼容元数据保留。
+        # 不再按 skills/tools/mcp 收窄运行时能力，避免提示目录与实际工具冲突。
         await self._apply_plugin_filter(agent, profile)
 
         # Sync PromptAssembler catalog references after filtering.
-        # _apply_tool_filter / _apply_mcp_filter may replace agent.tool_catalog /
-        # mcp_catalog with new objects; the PromptAssembler still holds the old refs.
         pa = getattr(agent, "prompt_assembler", None)
         if pa is not None:
             pa._tool_catalog = agent.tool_catalog
             pa._mcp_catalog = agent.mcp_catalog
 
-        # Rebuild the initial system prompt so it reflects the filtered catalogs.
-        # INCLUSIVE 模式无论 skills 是否为空都需要重建（空列表 = 隐藏全部非必要技能）。
-        needs_rebuild = (
-            (profile.tools_mode != "all" and profile.tools)
-            or (profile.mcp_mode != "all" and profile.mcp_servers)
-            or profile.skills_mode == SkillsMode.INCLUSIVE
-            or (profile.skills_mode == SkillsMode.EXCLUSIVE and profile.skills)
-        )
+        # 仅插件过滤可能改变运行时目录；skills/tools/mcp 过滤字段不触发重建。
+        needs_rebuild = profile.plugins_mode != "all" and bool(profile.plugins)
         if needs_rebuild and hasattr(agent, "_context"):
             agent._context.system = agent._build_system_prompt()
 

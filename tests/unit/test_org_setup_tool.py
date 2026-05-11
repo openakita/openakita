@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -319,7 +319,7 @@ class TestToolRegistration:
         from openakita.tools.definitions.org_setup import ORG_SETUP_TOOLS
         tool = ORG_SETUP_TOOLS[0]
         actions = tool["input_schema"]["properties"]["action"]["enum"]
-        for a in ("list_orgs", "get_org", "update_org", "delete_org"):
+        for a in ("list_orgs", "get_org", "update_org", "delete_org", "run_task"):
             assert a in actions, f"Missing action: {a}"
 
     def test_schema_has_org_id(self):
@@ -333,6 +333,13 @@ class TestToolRegistration:
         assert "update_nodes" in props
         assert "remove_nodes" in props
         assert "update_fields" in props
+
+    def test_schema_has_run_task_fields(self):
+        from openakita.tools.definitions.org_setup import ORG_SETUP_TOOLS
+        props = ORG_SETUP_TOOLS[0]["input_schema"]["properties"]
+        assert "content" in props
+        assert "target_node_id" in props
+        assert "chain_id" in props
 
 
 # ============================================================
@@ -656,6 +663,82 @@ class TestUpdateOrg:
         assert any(n.role_title == "全栈工程师" for n in org.nodes)
         assert any(n.role_title == "DevOps" for n in org.nodes)
         assert not any(n.id == "node_qa" for n in org.nodes)
+
+
+class TestRunTask:
+    """Test action=run_task."""
+
+    @pytest.mark.asyncio
+    async def test_run_task_calls_runtime_send_command(self, handler):
+        rt = MagicMock()
+        rt.send_command = AsyncMock(return_value={"result": "完成", "node_id": "root"})
+
+        with patch("openakita.orgs.runtime.get_runtime", return_value=rt):
+            result = await handler._run_task({
+                "org_id": "org1",
+                "content": "开发功能",
+                "target_node_id": "node_root",
+                "chain_id": "chain1",
+            })
+
+        data = json.loads(result)
+        assert data["ok"] is True
+        rt.send_command.assert_awaited_once_with(
+            "org1",
+            "node_root",
+            "开发功能",
+            chain_id="chain1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_dispatches_run_task(self, handler):
+        rt = MagicMock()
+        rt.send_command = AsyncMock(return_value={"result": "完成", "node_id": "root"})
+
+        with patch("openakita.orgs.runtime.get_runtime", return_value=rt):
+            result = await handler.handle("setup_organization", {
+                "action": "run_task",
+                "org_id": "org1",
+                "content": "开发功能",
+            })
+
+        data = json.loads(result)
+        assert data["ok"] is True
+        assert data["org_id"] == "org1"
+        rt.send_command.assert_awaited_once_with(
+            "org1",
+            None,
+            "开发功能",
+            chain_id=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_task_missing_org_id(self, handler):
+        result = await handler._run_task({"content": "开发功能"})
+        assert "❌" in result
+        assert "org_id" in result
+
+    @pytest.mark.asyncio
+    async def test_run_task_missing_content(self, handler):
+        result = await handler._run_task({"org_id": "org1"})
+        assert "❌" in result
+        assert "content" in result
+
+    @pytest.mark.asyncio
+    async def test_run_task_no_runtime(self, handler):
+        with patch("openakita.orgs.runtime.get_runtime", return_value=None):
+            result = await handler._run_task({"org_id": "org1", "content": "开发功能"})
+        assert "组织运行时未初始化" in result
+
+    @pytest.mark.asyncio
+    async def test_run_task_value_error(self, handler):
+        rt = MagicMock()
+        rt.send_command = AsyncMock(side_effect=ValueError("bad"))
+
+        with patch("openakita.orgs.runtime.get_runtime", return_value=rt):
+            result = await handler._run_task({"org_id": "org1", "content": "开发功能"})
+
+        assert "❌ bad" in result
 
 
 class TestDeleteOrg:

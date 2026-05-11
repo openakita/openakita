@@ -117,6 +117,56 @@ def _delegation_notice_title(exit_reason: str) -> str:
     return "任务完成通知"
 
 
+def _canonical_tool_name_for_notice(name: Any) -> str:
+    """规范化通知中的工具名，避免 runpowershell/toolsearch 这类别名漏统计。"""
+    value = str(name or "").strip()
+    if not value:
+        return ""
+    aliases = {
+        "runshell": "run_shell",
+        "run-shell": "run_shell",
+        "runpowershell": "run_powershell",
+        "run-powershell": "run_powershell",
+        "toolsearch": "tool_search",
+        "tool-search": "tool_search",
+        "readfile": "read_file",
+        "read-file": "read_file",
+        "writefile": "write_file",
+        "write-file": "write_file",
+        "editfile": "edit_file",
+        "edit-file": "edit_file",
+    }
+    lowered = value.lower()
+    return aliases.get(value) or aliases.get(lowered) or value
+
+
+def _unique_tool_names(names: list[Any]) -> list[str]:
+    """保持顺序去重并丢弃空工具名。"""
+    unique: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        canonical = _canonical_tool_name_for_notice(name)
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        unique.append(canonical)
+    return unique
+
+
+def _tools_used_from_finalized_trace(agent: Any) -> list[str]:
+    """从已完成 trace 回退提取工具名，供完成通知和上级凭证统计使用。"""
+    trace = getattr(agent, "_last_finalized_trace", None) or []
+    names: list[Any] = []
+    for item in trace:
+        if not isinstance(item, dict):
+            continue
+        for call in item.get("tool_calls", []) or []:
+            if not isinstance(call, dict):
+                continue
+            names.append(call.get("name"))
+    return _unique_tool_names(names)
+
+
 @dataclass
 class DelegationRequest:
     """A request to delegate work to another agent."""
@@ -565,6 +615,7 @@ class AgentOrchestrator:
                 default=(
                     f"⏱️ Agent `{agent_profile_id}` 已终止 — 运行 {elapsed_s:.0f}s 后长时间无新进展"
                 ),
+                from_agent=from_agent,
             )
 
         except asyncio.CancelledError:
@@ -619,6 +670,7 @@ class AgentOrchestrator:
                 agent_profile_id,
                 depth,
                 default=f"❌ Agent `{agent_profile_id}` 处理失败: {e}",
+                from_agent=from_agent,
             )
 
     # ------------------------------------------------------------------
@@ -1072,7 +1124,8 @@ class AgentOrchestrator:
                     elif _last_reason != "normal":
                         exit_reason = _last_reason
 
-                # Collect tools used from agent state
+                # Collect tools used from agent state. 任务结束清理后 state 可能已被 reset，
+                # 因此回退读取 _last_finalized_trace，避免 QQ/IM 通知误报“工具调用: 0 次”。
                 tools_used: list[str] = []
                 try:
                     _state = getattr(agent, "agent_state", None)
@@ -1081,9 +1134,11 @@ class AgentOrchestrator:
                         if _task is None:
                             _task = _state.current_task
                         if _task and _task.tools_executed:
-                            tools_used = list(dict.fromkeys(_task.tools_executed))
+                            tools_used = _unique_tool_names(list(_task.tools_executed))
                 except Exception:
                     pass
+                if not tools_used:
+                    tools_used = _tools_used_from_finalized_trace(agent)
 
                 # Forward artifact delivery receipts from sub-agent so the parent
                 # SSE stream can emit artifact events to the frontend.
@@ -1136,6 +1191,9 @@ class AgentOrchestrator:
                         logger.debug(
                             f"[Orchestrator] Output guard skipped (non-fatal): {_guard_err}"
                         )
+
+                if not is_sub_agent:
+                    return _guarded_text
 
                 delegation_result = DelegationResult(
                     agent_id=getattr(profile, "id", "unknown"),
@@ -1200,6 +1258,7 @@ class AgentOrchestrator:
         depth: int,
         *,
         default: str,
+        from_agent: str | None = None,
     ) -> str:
         """
         If the FallbackResolver says we should degrade, dispatch to the
@@ -1211,11 +1270,12 @@ class AgentOrchestrator:
                 logger.info(
                     f"[Orchestrator] Falling back from {agent_profile_id} to {effective_id}"
                 )
+                fallback_depth = depth + 1 if from_agent else depth
                 return await self._dispatch(
                     session,
                     message,
                     effective_id,
-                    depth + 1,
+                    fallback_depth,
                     from_agent=agent_profile_id,
                 )
         return default
@@ -1624,7 +1684,7 @@ def _persist_sub_agent_record(
             inp_trunc, _ = smart_truncate(inp_str, 400, save_full=False, label="sub_tool_input")
             tools_used.append(
                 {
-                    "name": tc.get("name", ""),
+                    "name": _canonical_tool_name_for_notice(tc.get("name", "")),
                     "input_preview": inp_trunc,
                 }
             )

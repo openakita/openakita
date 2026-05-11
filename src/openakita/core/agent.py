@@ -93,7 +93,6 @@ from ..tools.shell import ShellTool
 from ..tools.web import WebTool
 from .agent_state import AgentState
 from .brain import Brain, Context
-from .confirmation_state import get_confirmation_store
 from .context_manager import ContextManager
 from .context_manager import _CancelledError as _CtxCancelledError
 from .context_utils import get_max_context_tokens as _shared_get_max_context_tokens
@@ -109,7 +108,7 @@ from .response_handler import (
     parse_intent_tag,
     strip_thinking_tags,
 )
-from .risk_intent import RiskIntentResult, RiskLevel, classify_risk_intent
+from .risk_intent import RiskIntentResult, classify_risk_intent
 from .skill_manager import SkillManager
 from .task_monitor import RETROSPECT_PROMPT, TaskMonitor
 from .token_tracking import (
@@ -119,7 +118,6 @@ from .token_tracking import (
     set_tracking_context,
 )
 from .tool_executor import ToolExecutor
-from .trusted_paths import consume_session_trust, is_trusted_workspace_path
 from .user_profile import get_profile_manager
 
 _DESKTOP_AVAILABLE: bool | None = None  # None = not yet checked
@@ -668,97 +666,6 @@ def _classify_risk_intent(intent: Any, message: str) -> RiskIntentResult:
     """Single source of truth for the pre-ReAct risk gate."""
     return classify_risk_intent(message, intent)
 
-
-def _consume_risk_authorization(session: Any, message: str) -> bool:
-    """Check + consume session-level risk authorization.
-
-    When the user previously confirmed a high-risk request that had no
-    controlled execution entry (see ``chat.py::_RiskAuthorizedReplay``),
-    the chat handler stamps the session metadata with::
-
-        risk_authorized_replay = {
-            "expires_at": <epoch_seconds>,
-            "confirmation_id": ...,
-            "original_message": ...,
-        }
-
-    If the current ``message`` matches and the stamp is still fresh, return
-    ``True`` and **consume** the marker (single-use). Otherwise return
-    ``False``.
-
-    Single-use + short TTL (30s) avoids granting blanket future authority.
-    """
-    if session is None or not message:
-        return False
-    try:
-        stamp = session.get_metadata("risk_authorized_replay")
-    except Exception:
-        return False
-    if not isinstance(stamp, dict):
-        return False
-    try:
-        if float(stamp.get("expires_at", 0)) < time.time():
-            session.set_metadata("risk_authorized_replay", None)
-            return False
-    except (TypeError, ValueError):
-        return False
-    if (stamp.get("original_message") or "").strip() != (message or "").strip():
-        return False
-    try:
-        session.set_metadata("risk_authorized_replay", None)
-    except Exception:
-        pass
-    return True
-
-
-def _check_trusted_path_skip(
-    session: Any,
-    message: str,
-    risk_intent: RiskIntentResult | None,
-) -> str | None:
-    """Decide whether the current request can skip the risk gate due to a
-    trusted-path or session-level grant (Fix-11).
-
-    Returns a human-readable reason string when skipped, or ``None`` when the
-    normal risk gate must run. **Never** returns a skip reason for
-    ``RiskLevel.HIGH`` — that bar (sensitive targets / shell hard verbs)
-    requires explicit confirmation regardless of trust state.
-    """
-    if risk_intent is None or not message:
-        return None
-    if risk_intent.risk_level == RiskLevel.HIGH:
-        return None
-
-    try:
-        if is_trusted_workspace_path(message):
-            return "trusted_workspace_path"
-    except Exception:
-        pass
-
-    try:
-        op_value = (
-            risk_intent.operation_kind.value
-            if hasattr(risk_intent.operation_kind, "value")
-            else str(risk_intent.operation_kind)
-        )
-        if consume_session_trust(session, message=message, operation=op_value):
-            return "session_grant"
-    except Exception:
-        pass
-
-    return None
-
-
-def _build_destructive_intent_question(message: str, classification: RiskIntentResult | None = None) -> str:
-    target = (message or "").strip()
-    if len(target) > 240:
-        target = target[:240] + "..."
-    return (
-        f"想跟你确认下：你是要 **{target}**？\n\n"
-        "这个动作可能会改动文件 / 配置 / 权限，做完不一定能撤回，所以我先停一下。\n"
-        "回复 **继续**（或 好 / 是 / yes）就开始执行；\n"
-        "回复 **只查看** 我就只读不改；回复 **取消** 就跳过。"
-    )
 
 # Prompt Compiler 系统提示词（两段式 Prompt 第一阶段）
 PROMPT_COMPILER_SYSTEM = """【角色】
@@ -1328,7 +1235,7 @@ class Agent:
                 len(tools),
             )
         tools = self._dedupe_tools_by_name(tools, source="_effective_tools")
-        if self._is_sub_agent_call:
+        if self._is_sub_agent_call and not self._can_delegate_as_sub_agent():
             tools = [t for t in tools if t.get("name") not in self._agent_tool_names]
 
         cron_disabled = getattr(self, "_cron_disabled_tools", None)
@@ -1483,6 +1390,17 @@ class Agent:
             )
 
         return result
+
+    def _can_delegate_as_sub_agent(self) -> bool:
+        """Return whether this delegated agent may further delegate work.
+
+        Ordinary sub-agents stay leaf executors to avoid accidental recursion.
+        Coordinator profiles are intentionally allowed to fan out work to their
+        specialist team when a parent agent delegates a coordination task to
+        them (for example QQ assistant -> project lead -> five specialists).
+        """
+        profile = getattr(self, "_agent_profile", None)
+        return bool(profile and getattr(profile, "role", "worker") == "coordinator")
 
     def _derive_tool_hints_from_profile(self) -> list[str]:
         """Derive tool category hints from the agent profile's skills list.
@@ -5619,52 +5537,6 @@ class Agent:
             _fast_handled = False
             _allow_lightweight_fast_reply = not endpoint_override
 
-            _risk_intent = _classify_risk_intent(_intent, message) if _intent else None
-            _risk_pre_authorized = _consume_risk_authorization(session, message)
-            if _risk_pre_authorized:
-                logger.info(
-                    "[RiskIntentGate] sync path skipped — user pre-authorized "
-                    "(session=%s, message=%r)",
-                    session_id,
-                    message[:200],
-                )
-            else:
-                _trusted_skip_reason = _check_trusted_path_skip(session, message, _risk_intent)
-                if _trusted_skip_reason:
-                    _risk_pre_authorized = True
-                    logger.info(
-                        "[RiskIntentGate] sync path skipped — trusted (reason=%s, "
-                        "session=%s, message=%r)",
-                        _trusted_skip_reason,
-                        session_id,
-                        message[:200],
-                    )
-            if (
-                mode == "agent"
-                and _intent
-                and not getattr(self, "_is_sub_agent_call", False)
-                and _risk_intent
-                and _risk_intent.requires_confirmation
-                and not _risk_pre_authorized
-            ):
-                response_text = _build_destructive_intent_question(message, _risk_intent)
-                get_confirmation_store().create(
-                    conversation_id=session_id,
-                    original_message=message,
-                    classification=_risk_intent.to_dict(),
-                    request_id=f"{session_id}:sync",
-                )
-                self.reasoning_engine._last_exit_reason = "ask_user"
-                # Fix-14：风险早退路径未发起 LLM 调用，必须显式清空上一轮的
-                # ReAct trace，否则 _finalize_session → _extract_usage_summary
-                # 会读到上轮残留 trace，把上轮 token 用量当成这次的并下发，
-                # 让前端误以为"询问确认这一步也烧了 14 万 token"。
-                try:
-                    self.reasoning_engine._last_react_trace = []
-                except Exception:
-                    pass
-                _fast_handled = True
-
             if (
                 _allow_lightweight_fast_reply
                 and _intent
@@ -6041,81 +5913,6 @@ class Agent:
             from .intent_analyzer import IntentType as _IT
 
             _intent = getattr(self, "_current_intent", None)
-
-            _risk_intent = _classify_risk_intent(_intent, message) if _intent else None
-            _risk_pre_authorized = _consume_risk_authorization(session, message)
-            if _risk_pre_authorized:
-                logger.info(
-                    "[RiskIntentGate] stream path skipped — user pre-authorized "
-                    "(session=%s, conversation=%s, message=%r)",
-                    session_id,
-                    conversation_id,
-                    message[:200],
-                )
-            else:
-                _trusted_skip_reason = _check_trusted_path_skip(session, message, _risk_intent)
-                if _trusted_skip_reason:
-                    _risk_pre_authorized = True
-                    logger.info(
-                        "[RiskIntentGate] stream path skipped — trusted "
-                        "(reason=%s, session=%s, conversation=%s, message=%r)",
-                        _trusted_skip_reason,
-                        session_id,
-                        conversation_id,
-                        message[:200],
-                    )
-            if (
-                mode == "agent"
-                and _intent
-                and not getattr(self, "_is_sub_agent_call", False)
-                and _risk_intent
-                and _risk_intent.requires_confirmation
-                and not _risk_pre_authorized
-            ):
-                pending = get_confirmation_store().create(
-                    conversation_id=conversation_id,
-                    original_message=message,
-                    classification=_risk_intent.to_dict(),
-                    request_id=request_id or f"{conversation_id}:stream",
-                )
-                question_text = _build_destructive_intent_question(message, _risk_intent)
-                _reply_text = question_text
-                self.reasoning_engine._last_exit_reason = "ask_user"
-                # Fix-14：streaming 路径风险早退同样需清空上轮 trace，
-                # 避免 done 事件 usage 字段复用上一轮真实调用的 token 用量。
-                try:
-                    self.reasoning_engine._last_react_trace = []
-                except Exception:
-                    pass
-                logger.warning(
-                    "[RiskIntentGate] blocked free-form streaming execution before ReAct "
-                    "(session=%s, conversation=%s, confirmation=%s, risk=%s, message=%r)",
-                    session_id,
-                    conversation_id,
-                    pending.confirmation_id,
-                    _risk_intent.to_dict(),
-                    message[:200],
-                )
-                yield {
-                    "type": "ask_user",
-                    "question": question_text,
-                    "conversation_id": conversation_id,
-                    "confirmation_id": pending.confirmation_id,
-                    "risk_intent": _risk_intent.to_dict(),
-                    "options": [
-                        {"id": "confirm_continue", "label": "继续"},
-                        {"id": "inspect_only", "label": "只查看"},
-                        {"id": "cancel", "label": "取消"},
-                    ],
-                }
-                yield {"type": "done"}
-                await self._finalize_session(
-                    response_text=_reply_text,
-                    session=session,
-                    session_id=session_id,
-                    task_monitor=task_monitor,
-                )
-                return
 
             # Intent-driven ForceToolCall for streaming path.
             # Simple queries stay lightweight, but evidence-seeking queries must

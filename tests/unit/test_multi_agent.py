@@ -27,6 +27,8 @@ from openakita.agents.orchestrator import (
     AgentMailbox,
     AgentOrchestrator,
     DelegationRequest,
+    DelegationResult,
+    _tools_used_from_finalized_trace,
 )
 from openakita.agents.profile import (
     AgentProfile,
@@ -787,7 +789,8 @@ class TestAgentOrchestrator:
         result = await orchestrator.delegate(
             session, "main", "helper", "do something", reason="testing"
         )
-        assert result == "Agent response"
+        assert "任务完成通知" in result
+        assert "Agent response" in result
         assert len(session.context.handoff_events) == 1
         assert session.context.handoff_events[0]["from_agent"] == "main"
 
@@ -797,6 +800,48 @@ class TestAgentOrchestrator:
         await orchestrator.delegate(session, "main", "helper", "task")
         states = orchestrator.get_sub_agent_states("sess-xyz")
         assert len(states) >= 1
+
+    @pytest.mark.asyncio
+    async def test_sub_agent_fallback_preserves_current_agent_chain(self, orchestrator):
+        orchestrator._profile_store.save(_make_profile("helper-fb", "Helper Fallback"))
+        orchestrator._profile_store.update("helper", {"fallback_profile_id": "helper-fb"})
+        for _ in range(_AUTO_DEGRADE_THRESHOLD):
+            orchestrator._fallback.record_failure("helper")
+
+        async def get_agent(_session_id, profile):
+            agent = MagicMock()
+            agent._is_sub_agent_call = False
+            agent._agent_profile = profile
+            agent._last_finalized_trace = []
+            agent.agent_state = None
+            agent.reasoning_engine = None
+            if profile.id == "helper":
+                agent.chat_with_session = AsyncMock(side_effect=RuntimeError("helper down"))
+            else:
+                agent.chat_with_session = AsyncMock(return_value="fallback done")
+            return agent
+
+        orchestrator._pool.get_or_create = AsyncMock(side_effect=get_agent)
+        session = _make_session()
+
+        result = await orchestrator.delegate(session, "main", "helper", "task")
+
+        assert "任务完成通知" in result
+        assert "fallback done" in result
+        assert session.context.delegation_chain == [
+            {
+                "from": "main",
+                "to": "helper",
+                "depth": 1,
+                "timestamp": session.context.delegation_chain[0]["timestamp"],
+            },
+            {
+                "from": "helper",
+                "to": "helper-fb",
+                "depth": 2,
+                "timestamp": session.context.delegation_chain[1]["timestamp"],
+            },
+        ]
 
     @pytest.mark.asyncio
     async def test_health_tracking_on_success(self, orchestrator):
@@ -1698,6 +1743,60 @@ class TestEdgeCasesAndBugs:
         agent = MagicMock(spec=[])
         tools = AgentOrchestrator._get_tools_executed(agent, "s1")
         assert tools == []
+
+    def test_tools_used_from_finalized_trace_normalizes_aliases(self):
+        """finalized trace 回退统计应规范化并去重工具别名。"""
+        agent = MagicMock()
+        agent._last_finalized_trace = [
+            {"tool_calls": [{"name": "runpowershell"}, {"name": "toolsearch"}]},
+            {"tool_calls": [{"name": "run-powershell"}, {"name": "read-file"}]},
+        ]
+
+        assert _tools_used_from_finalized_trace(agent) == [
+            "run_powershell",
+            "tool_search",
+            "read_file",
+        ]
+
+    def test_delegation_result_notice_reports_trace_tools(self):
+        """完成通知不应在有回退工具统计时显示“工具调用: 0 次”。"""
+        result = DelegationResult(
+            agent_id="qq-dev-assistant",
+            profile_id="qq-dev-assistant",
+            text="done",
+            tools_used=["run_powershell", "tool_search"],
+            elapsed_s=1.2,
+        ).to_tool_response()
+
+        assert "任务完成通知" in result
+        assert "工具调用: 2 次" in result
+        assert "run_powershell" in result
+        assert "tool_search" in result
+        assert "工具调用: 0 次" not in result
+
+    @pytest.mark.asyncio
+    async def test_call_agent_falls_back_to_finalized_trace_tools(self):
+        """agent_state 不可用时，完成通知从 finalized trace 回退统计工具调用。"""
+        session = _make_session(session_id="s1", agent_profile_id="helper")
+        agent = MagicMock()
+        agent._is_sub_agent_call = False
+        agent._agent_profile = _make_profile("helper", "Helper")
+        agent.agent_state = None
+        agent.reasoning_engine = None
+        agent._last_finalized_trace = [
+            {"tool_calls": [{"name": "runpowershell"}, {"name": "toolsearch"}]},
+            {"tool_calls": [{"name": "run-powershell"}]},
+        ]
+        agent.chat_with_session = AsyncMock(return_value="done")
+
+        result = await AgentOrchestrator._call_agent(agent, session, "task")
+
+        assert "任务完成通知" in result
+        assert "工具调用: 2 次" in result
+        assert "run_powershell" in result
+        assert "tool_search" in result
+        assert "工具调用: 0 次" not in result
+        assert agent._last_finalized_trace == []
 
 
 # ================================================================

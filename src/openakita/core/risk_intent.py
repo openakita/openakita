@@ -1,8 +1,8 @@
-"""Structured risk intent classification for user requests.
+"""Structured risk metadata classification for user requests.
 
-The classifier is intentionally deterministic and conservative.  It is the
-single pre-ReAct gate for deciding whether a user message needs an explicit
-confirmation before any free-form tools can run.
+The classifier is intentionally deterministic and conservative. It now records
+risk metadata for logging, routing, and tests only; it no longer drives a
+pre-ReAct user-confirmation gate.
 """
 
 from __future__ import annotations
@@ -94,9 +94,8 @@ _SHELL_CONTEXT_RE = re.compile(
 #   - "把这个技能装上：xxx"
 #
 # 老版本由于带 "装/安装" 等动词 + URL 中带 ".com/" 路径，被
-# `_GENERIC_DO_RE` + `_SHELL_CONTEXT_RE` 间接判定为 EXECUTE/shell_command
-# 而触发高危确认弹窗；用户确认后又因为 classification.action=None 报
-# "该操作尚无受控执行入口"。
+# `_GENERIC_DO_RE` + `_SHELL_CONTEXT_RE` 间接判定为 EXECUTE/shell_command，
+# 导致装技能意图拿不到明确的 action="install_skill" 元数据。
 #
 # 这里在 classify() 入口之前优先识别该类意图，命中即返回低风险 + 明确的
 # action="install_skill"，绕开 EXECUTE 通用路径。
@@ -386,7 +385,7 @@ class RiskIntentClassifier:
                 operation_kind=operation,
                 target_kind=target if target != TargetKind.UNKNOWN else TargetKind.SHELL_COMMAND,
                 access_mode=AccessMode.EXECUTE,
-                requires_confirmation=True,
+                requires_confirmation=False,
                 reason="execute_or_shell_risk",
                 action=None,
                 parameters=self._extract_parameters(text, target),
@@ -407,8 +406,8 @@ class RiskIntentClassifier:
                 operation_kind=operation,
                 target_kind=target,
                 access_mode=AccessMode.WRITE,
-                requires_confirmation=risk in {RiskLevel.MEDIUM, RiskLevel.HIGH},
-                reason="dangerous_write_request",
+                requires_confirmation=False,
+                reason="write_request_metadata",
                 action=self._write_action(operation, target),
                 parameters=self._extract_parameters(text, target),
             )

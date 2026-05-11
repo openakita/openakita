@@ -489,8 +489,15 @@ _CLAIMED_TOOL_TO_FRAGMENTS: dict[str, tuple[str, ...]] = {
 # 执行过；否则按幻觉降级处理。映射只覆盖最常被滥用的高风险动词，避免
 # 误拦低风险描述（如"已分析/已生成"等）。
 _VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
-    "删除": ("delete_file", "delete_memory", "remove", "cancel_scheduled_task"),
-    "删掉": ("delete_file", "delete_memory", "remove"),
+    "删除": (
+        "delete_file",
+        "delete_memory",
+        "remove",
+        "cancel_scheduled_task",
+        "run_shell",
+        "run_powershell",
+    ),
+    "删掉": ("delete_file", "delete_memory", "remove", "run_shell", "run_powershell"),
     "编辑": ("edit_file",),
     "修改": ("edit_file", "update_user_profile", "update_scheduled_task"),
     "覆盖": ("write_file", "edit_file"),

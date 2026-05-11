@@ -346,7 +346,7 @@ class LLMClient:
     async def startup_health_check(self) -> dict[str, str]:
         """启动时对所有端点做轻量健康检查。
 
-        对每个端点发送极小请求（1 token），检测认证和网络问题。
+        对每个端点发送极小请求，检测认证和网络问题。
         认证失败的端点立即加入 _auth_failed_endpoints。
 
         Returns:
@@ -358,7 +358,7 @@ class LLMClient:
                 request = LLMRequest(
                     messages=[Message(role="user", content="hi")],
                     system="Respond with 'ok'",
-                    max_tokens=1,
+                    max_tokens=8,
                 )
                 response = await asyncio.wait_for(provider.chat(request), timeout=15.0)
                 if response.usage.output_tokens > 0 and not response.content:

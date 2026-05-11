@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _VALID_ACTIONS = (
     "get_resources", "list_orgs", "get_org",
     "preview", "create", "create_from_template",
-    "update_org", "delete_org",
+    "update_org", "delete_org", "run_task",
 )
 
 
@@ -52,6 +52,8 @@ class OrgSetupHandler:
             return await self._update_org(params)
         elif action == "delete_org":
             return await self._delete_org(params)
+        elif action == "run_task":
+            return await self._run_task(params)
         return (
             f"❌ Unknown action: {action}. "
             f"Valid: {', '.join(_VALID_ACTIONS)}"
@@ -649,6 +651,50 @@ class OrgSetupHandler:
         except Exception as e:
             logger.error(f"[OrgSetup] Failed to update org: {e}", exc_info=True)
             return f"❌ 修改失败: {e}"
+
+    # ------------------------------------------------------------------
+    # run_task
+    # ------------------------------------------------------------------
+
+    async def _run_task(self, params: dict[str, Any]) -> str:
+        org_id = params.get("org_id", "")
+        if not org_id:
+            return "❌ run_task 需要提供 org_id"
+
+        content = params.get("content", "")
+        if not content:
+            return "❌ run_task 需要提供 content"
+
+        from ...orgs.runtime import get_runtime
+        rt = get_runtime()
+        if rt is None:
+            return "❌ 组织运行时未初始化"
+
+        target_node_id = params.get("target_node_id") or None
+        chain_id = params.get("chain_id") or None
+
+        try:
+            result = await rt.send_command(
+                org_id,
+                target_node_id,
+                content,
+                chain_id=chain_id,
+            )
+            return json.dumps(
+                {
+                    "ok": True,
+                    "org_id": org_id,
+                    "target_node_id": target_node_id,
+                    "result": result,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        except ValueError as e:
+            return f"❌ {e}"
+        except Exception as e:
+            logger.error(f"[OrgSetup] run_task failed: {e}", exc_info=True)
+            return f"❌ 组织任务执行失败: {e}"
 
     # ------------------------------------------------------------------
     # delete_org

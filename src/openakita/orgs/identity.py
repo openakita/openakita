@@ -278,58 +278,33 @@ class OrgIdentity:
                 "- 上面的「AI 效率意识」鼓励你快速行动，但不等于鼓励你越过用户的边界做额外工作"
             )
 
-        has_external = bool(node.external_tools)
-        # E0-4: 节点级"基础文件工具"开关。即便没有勾选 external_tools，只要
-        # enable_file_tools=True（默认），节点也会被注入安全的 write_file /
-        # read_file / edit_file / list_directory；此时 prompt 必须告诉 LLM 这些
-        # 工具是可用的，并指导它在交付物是文档/代码时主动落盘 + 走
-        # org_submit_deliverable(file_attachments=[...])，否则会出现"工具明明
-        # 在但提示词说不可用"的自相矛盾。
-        has_basic_file_tools = getattr(node, "enable_file_tools", True)
-        if has_external:
+        tool_hint = ""
+        if node.external_tools:
             from .tool_categories import TOOL_CATEGORIES, expand_tool_categories
+
             ext_names = expand_tool_categories(node.external_tools)
             cat_labels = [c for c in node.external_tools if c in TOOL_CATEGORIES]
             ext_desc = "、".join(cat_labels) if cat_labels else "、".join(sorted(ext_names)[:5])
-            parts.append(
-                "## 组织工具与行为约束\n"
-                f"你拥有 org_* 组织协作工具和外部执行工具（{ext_desc}）。\n"
-                "协作规则：\n"
-                "- 与同事沟通、委派、汇报用 org_* 工具；搜索、写文件、制定计划等实际执行用外部工具\n"
-                "- 外部工具得到的重要结果，用 org_write_blackboard 写入黑板共享给同事\n"
-                "- 优先通过直接连线关系沟通（上下级、协作伙伴）\n"
-                "- 非必要不跨级沟通\n"
-                "- 回复要简洁，1-3 句话概括行动和结果即可\n\n"
-                + delivery_flow
-            )
-        elif has_basic_file_tools:
-            parts.append(
-                "## 组织工具与行为约束\n"
-                "你拥有 org_* 组织协作工具，以及一组基础文件工具（write_file / "
-                "read_file / edit_file / list_directory），用于把文档/代码/方案"
-                "等结构化交付物落盘到组织 workspace。注意：run_shell、网络爬取、"
-                "MCP 等高级工具未授权给你，需要时通过 org_request_tools 申请。\n"
-                "协作规则：\n"
-                "- 与同事沟通、委派、汇报用 org_* 工具\n"
-                "- 当你的交付物是文档/代码/HTML 等结构化内容时，**先用 write_file "
-                "把文件落盘**，再用 org_submit_deliverable(file_attachments=[…]) "
-                "把附件交给委派人，不要只把全文塞进 deliverable 字段\n"
-                "- 重要决策和方案写入 org_write_blackboard，写之前先 org_read_blackboard 检查避免重复\n"
-                "- 回复要简洁，1-3 句话概括行动和结果即可\n\n"
-                + delivery_flow
-            )
-        else:
-            parts.append(
-                "## 组织工具与行为约束\n"
-                "你**只能**使用 org_* 系列工具。不要调用 write_file、read_file、"
-                "run_shell、call_mcp_tool 等非组织工具，它们不可用。\n"
-                "协作规则：\n"
-                "- 优先通过直接连线关系沟通（上下级、协作伙伴）\n"
-                "- 非必要不跨级沟通\n"
-                "- 重要决策和方案写入 org_write_blackboard，写之前先 org_read_blackboard 检查避免重复\n"
-                "- 回复要简洁，1-3 句话概括行动和结果即可\n\n"
-                + delivery_flow
-            )
+            if ext_desc:
+                tool_hint = f"\n岗位常用/推荐工具类目：{ext_desc}。这些类目用于说明你的岗位偏好，不构成授权边界。"
+
+        parts.append(
+            "## 组织工具与行为约束\n"
+            "你拥有 org_* 组织协作工具和完整外部执行工具（文件、Shell、搜索、浏览器、MCP 等，"
+            "以实际工具列表为准）。"
+            f"{tool_hint}\n"
+            "协作规则：\n"
+            "- 与同事沟通、委派、汇报用 org_* 工具；搜索、写文件、制定计划等实际执行用外部工具\n"
+            "- 当你的交付物是文档/代码/HTML 等结构化内容时，**先用文件工具把文件落盘**，"
+            "再用 org_submit_deliverable(file_attachments=[…]) 把附件交给委派人，"
+            "不要只把全文塞进 deliverable 字段\n"
+            "- 外部工具得到的重要结果、重要决策和方案写入 org_write_blackboard，"
+            "写之前先 org_read_blackboard 检查避免重复\n"
+            "- 优先通过直接连线关系沟通（上下级、协作伙伴）\n"
+            "- 非必要不跨级沟通\n"
+            "- 回复要简洁，1-3 句话概括行动和结果即可\n\n"
+            + delivery_flow
+        )
 
         if getattr(org, "operation_mode", "") == "command" and not project_tasks_summary:
             project_tasks_summary = self._get_project_tasks_summary(org, node)

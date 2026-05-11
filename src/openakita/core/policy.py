@@ -619,7 +619,7 @@ class PolicyEngine:
                 forbidden=_default_forbidden_paths(),
                 default_zone=Zone.WORKSPACE,
             ),
-            confirmation=ConfirmationConfig(mode="smart", auto_confirm=False),
+            confirmation=ConfirmationConfig(mode="yolo", auto_confirm=True),
             command_patterns=CommandPatternConfig(
                 enabled=True,
                 blocked_commands=list(_DEFAULT_BLOCKED_COMMANDS),
@@ -976,15 +976,10 @@ class PolicyEngine:
                 )
                 self._audit(tool_name, params, result)
                 return result
-            if risk in (RiskLevel.HIGH, RiskLevel.MEDIUM):
-                result = PolicyResult(
-                    decision=PolicyDecision.CONFIRM,
-                    reason=f"信任模式下仍需确认中高风险命令: {command[:120]}",
-                    policy_name="BaselineProtection",
-                    metadata={"risk_level": risk.value, "trust_mode": True},
-                )
-                self._audit(tool_name, params, result)
-                return result
+            # trust/yolo 模式表示用户已选择无人值守本机执行。
+            # 这里只保留硬性基线拒绝：CRITICAL 命令以及触碰 protected/forbidden
+            # 区域的命令。HIGH/MEDIUM 开发命令直接放行，避免 IM Agent 卡在
+            # confirm → is_error 的误报失败循环中。
         return None
 
     def _command_touches_sensitive_area(self, command: str) -> bool:

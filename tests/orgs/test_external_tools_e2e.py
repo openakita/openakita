@@ -59,6 +59,36 @@ def _make_tool_call(name: str, input_: dict) -> MockResponse:
     return MockResponse(tool_calls=[{"name": name, "input": input_}])
 
 
+CONFLICT_FREE_AGENT_TOOLS = {
+    "delegate_to_agent",
+    "spawn_agent",
+    "delegate_parallel",
+    "create_agent",
+}
+
+BASIC_EXTERNAL_TOOLS = {
+    "write_file",
+    "read_file",
+    "edit_file",
+    "list_directory",
+    "run_shell",
+    "web_search",
+    "news_search",
+}
+
+BASIC_FILE_TOOLS = {"write_file", "read_file", "edit_file", "list_directory"}
+
+
+def _assert_conflict_tools_removed(tool_names: set[str]) -> None:
+    assert CONFLICT_FREE_AGENT_TOOLS.isdisjoint(tool_names), \
+        f"自由多 Agent 冲突工具不应出现在组织节点工具中: {CONFLICT_FREE_AGENT_TOOLS & tool_names}"
+
+
+def _assert_any_basic_external_tool_visible(tool_names: set[str]) -> None:
+    visible = BASIC_EXTERNAL_TOOLS & tool_names
+    assert visible, f"组织节点应默认保留基础外部执行工具，实际: {sorted(tool_names)}"
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -88,30 +118,23 @@ async def runtime_env(tmp_data_dir: Path):
 class TestToolFilteringE2E:
     """Verify _create_node_agent filters/retains tools based on external_tools."""
 
-    async def test_node_without_external_tools_has_only_org_tools(self, runtime_env):
+    async def test_node_without_external_tools_keeps_external_execution_tools(self, runtime_env):
         runtime, manager = runtime_env
-        # 显式关 enable_file_tools 才能测"纯 org_*"分支：自 2025-04 起，
-        # OrgNode.enable_file_tools 默认为 True，节点会被注入安全的基础文件
-        # 工具（write_file/read_file/edit_file/list_directory）以便交付物落盘。
-        # 本用例的语义是"未授权任何执行类工具"，保留 enable_file_tools=False
-        # 来锁定该协议；新增 test_node_default_has_basic_file_tools 覆盖默认行为。
         org = manager.create(make_org(
             name="纯协作",
-            nodes=[make_node("boss", "Boss", 0, enable_file_tools=False)],
+            nodes=[make_node("boss", "Boss", 0, external_tools=[], enable_file_tools=False)],
             edges=[],
         ).to_dict())
         await runtime.start_org(org.id)
 
         agent = await runtime._create_node_agent(org, org.get_node("boss"))
 
-        _PLAN_TOOLS = {"create_todo", "update_todo_step", "get_todo_status", "complete_todo"}
         tool_names = {t["name"] for t in agent._tools}
-        for name in tool_names:
-            assert name.startswith("org_") or name == "get_tool_info" or name in _PLAN_TOOLS, \
-                f"Unexpected tool '{name}' on node without external_tools"
+        _assert_any_basic_external_tool_visible(tool_names)
+        _assert_conflict_tools_removed(tool_names)
 
     async def test_node_default_has_basic_file_tools(self, runtime_env):
-        """E0-4: 节点默认开启 enable_file_tools=True，应该获得安全的基础文件工具。"""
+        """节点默认保留基础文件工具和全局外部执行工具。"""
         runtime, manager = runtime_env
         org = manager.create(make_org(
             name="默认文件工具",
@@ -122,17 +145,16 @@ class TestToolFilteringE2E:
 
         agent = await runtime._create_node_agent(org, org.get_node("boss"))
         tool_names = {t["name"] for t in agent._tools}
-        # 安全子集应在
-        for expected in ("write_file", "read_file", "edit_file", "list_directory"):
+        for expected in BASIC_FILE_TOOLS:
             assert expected in tool_names, \
-                f"enable_file_tools=True 时应注入 {expected}，实际: {sorted(tool_names)}"
-        # 高风险工具不应在（仍由 external_tools=['filesystem'] 控制）
-        for forbidden in ("run_shell", "delete_file"):
-            assert forbidden not in tool_names, \
-                f"enable_file_tools=True 不应放行高风险工具 {forbidden}"
+                f"默认节点应可见基础文件工具 {expected}，实际: {sorted(tool_names)}"
+        _assert_any_basic_external_tool_visible(tool_names)
+        assert ({"run_shell", "web_search", "news_search"} & tool_names), \
+            f"默认节点应可见全局外部执行工具，实际: {sorted(tool_names)}"
+        _assert_conflict_tools_removed(tool_names)
 
-    async def test_node_with_enable_file_tools_false_has_no_file_tools(self, runtime_env):
-        """E0-4: 显式关 enable_file_tools 时不能再注入文件工具。"""
+    async def test_node_with_enable_file_tools_false_keeps_file_tools(self, runtime_env):
+        """enable_file_tools=False 不再裁剪节点的外部文件能力。"""
         runtime, manager = runtime_env
         org = manager.create(make_org(
             name="禁用文件工具",
@@ -143,16 +165,14 @@ class TestToolFilteringE2E:
 
         agent = await runtime._create_node_agent(org, org.get_node("boss"))
         tool_names = {t["name"] for t in agent._tools}
-        for forbidden in ("write_file", "read_file", "edit_file", "list_directory"):
-            assert forbidden not in tool_names, \
-                f"enable_file_tools=False 时不应注入 {forbidden}"
+        assert BASIC_FILE_TOOLS & tool_names, \
+            f"enable_file_tools=False 不应限制文件工具可见性，实际: {sorted(tool_names)}"
+        _assert_conflict_tools_removed(tool_names)
 
     async def test_node_with_research_tools_retains_web_search(self, runtime_env):
         runtime, manager = runtime_env
         org = manager.create(make_org(
             name="研究团队",
-            # 用例下面的 for 断言要求"工具集 ⊂ research+plan+org+get_tool_info"，
-            # 所以这里关掉 enable_file_tools，避免基础文件工具混入打挂断言。
             nodes=[make_node("researcher", "研究员", 0,
                              external_tools=["research"],
                              enable_file_tools=False)],
@@ -165,14 +185,9 @@ class TestToolFilteringE2E:
         tool_names = {t["name"] for t in agent._tools}
         assert "web_search" in tool_names or "news_search" in tool_names, \
             f"research tools missing, got: {tool_names}"
-        _PLAN_TOOLS = {"create_todo", "update_todo_step", "get_todo_status", "complete_todo"}
-        for name in tool_names:
-            assert (
-                name.startswith("org_")
-                or name == "get_tool_info"
-                or name in expand_tool_categories(["research"])
-                or name in _PLAN_TOOLS
-            ), f"Unexpected tool '{name}'"
+        assert ({"write_file", "read_file", "run_shell"} & tool_names), \
+            f"external_tools 只是推荐，不应裁剪其它外部工具，实际: {sorted(tool_names)}"
+        _assert_conflict_tools_removed(tool_names)
 
     async def test_node_with_multiple_categories(self, runtime_env):
         runtime, manager = runtime_env
@@ -193,6 +208,7 @@ class TestToolFilteringE2E:
                 break
         else:
             pytest.fail(f"None of {expected} found in agent tools: {tool_names}")
+        _assert_conflict_tools_removed(tool_names)
 
     async def test_individual_tool_name_retained(self, runtime_env):
         """external_tools can also contain individual tool names (not just categories)."""
@@ -208,6 +224,7 @@ class TestToolFilteringE2E:
 
         tool_names = {t["name"] for t in agent._tools}
         assert "web_search" in tool_names
+        _assert_conflict_tools_removed(tool_names)
 
 
 class TestPromptInjectionE2E:
@@ -228,11 +245,11 @@ class TestPromptInjectionE2E:
         assert "外部执行工具" in prompt, "Prompt should contain external tools section"
         assert "协作用 org_* 工具" in prompt, "Prompt should contain hybrid guidelines"
 
-    async def test_prompt_without_external_tools_forbids_execution(self, runtime_env):
+    async def test_prompt_without_external_tools_mentions_full_execution_tools(self, runtime_env):
         runtime, manager = runtime_env
         org = manager.create(make_org(
             name="无外部",
-            nodes=[make_node("n", "秘书", 0)],
+            nodes=[make_node("n", "秘书", 0, external_tools=[], enable_file_tools=False)],
             edges=[],
         ).to_dict())
         await runtime.start_org(org.id)
@@ -240,7 +257,9 @@ class TestPromptInjectionE2E:
         agent = await runtime._create_node_agent(org, org.get_node("n"))
 
         prompt = agent._context.system if hasattr(agent, "_context") else ""
-        assert "org_" in prompt
+        assert "完整外部执行工具" in prompt
+        assert "只能使用 org_*" not in prompt
+        assert "高级工具未授权" not in prompt
 
     async def test_prompt_mentions_tool_request(self, runtime_env):
         """Both prompt variants should mention org_request_tools."""
@@ -308,18 +327,18 @@ class TestExternalToolExecutionE2E:
         tool_names = {t["name"] for t in (sent_tools or [])}
         assert "web_search" in tool_names, f"web_search not in LLM tools: {tool_names}"
 
-    async def test_agent_without_tools_cannot_call_web_search(self, runtime_env):
-        """Agent without external_tools should NOT have web_search available."""
+    async def test_agent_without_tools_can_call_web_search(self, runtime_env):
+        """external_tools 只是岗位推荐，不再限制 web_search 等外部工具可见性。"""
         runtime, manager = runtime_env
         org = manager.create(make_org(
             name="无工具测试",
-            nodes=[make_node("n", "秘书", 0)],
+            nodes=[make_node("n", "秘书", 0, external_tools=[])],
             edges=[],
         ).to_dict())
         await runtime.start_org(org.id)
 
         mock_client = MockLLMClient()
-        mock_client.preset_response("好的，我只有组织工具。")
+        mock_client.preset_response("好的，我可以使用完整外部工具。")
 
         original_create = runtime._create_node_agent
 
@@ -337,7 +356,8 @@ class TestExternalToolExecutionE2E:
         assert "result" in result
         sent_tools = mock_client.call_log[0].get("tools", [])
         tool_names = {t["name"] for t in (sent_tools or [])}
-        assert "web_search" not in tool_names
+        assert "web_search" in tool_names or "news_search" in tool_names
+        _assert_conflict_tools_removed(tool_names)
 
 
 class TestOrgToolCallsE2E:
@@ -391,9 +411,7 @@ class TestToolRequestGrantE2E:
             name="申请授权",
             nodes=[
                 make_node("ceo", "CEO", 0, "管理层", external_tools=["research", "planning"]),
-                # 测试场景需要 dev 一开始没有 write_file，等 CEO 授权 filesystem
-                # 才能用。enable_file_tools 默认会把 write_file 注入进来，会让
-                # 这条"申请授权"叙事失效，所以这里显式关掉。
+                # external_tools 仍可作为组织内申请/授权记录，但不再限制实际工具可见性。
                 make_node("dev", "开发", 1, "技术部", enable_file_tools=False),
             ],
             edges=[make_edge("ceo", "dev")],
@@ -405,9 +423,10 @@ class TestToolRequestGrantE2E:
 
         dev_agent_before = await runtime._create_node_agent(org, dev_node)
         dev_tools_before = {t["name"] for t in dev_agent_before._tools}
-        assert "write_file" not in dev_tools_before
+        assert "write_file" in dev_tools_before
+        _assert_conflict_tools_removed(dev_tools_before)
 
-        # Step 1: dev requests filesystem tools via org_request_tools
+        # Step 1: dev requests filesystem tools via org_request_tools（记录/协作语义仍保留）
         result = await runtime.handle_org_tool(
             "org_request_tools",
             {"tools": ["filesystem"], "reason": "需要读写代码文件"},
@@ -445,9 +464,7 @@ class TestToolRequestGrantE2E:
         org = manager.create(make_org(
             name="收回测试",
             nodes=[
-                # 测试目标是"收回 filesystem 后 write_file 应该消失"，因此 worker
-                # 不能再走 enable_file_tools 默认注入路径，否则收回后 write_file
-                # 仍由"基础文件工具"白名单保留，把测试断言打挂。
+                # 收回 external_tools 只更新岗位推荐/申请记录，不再裁剪实际运行时工具。
                 make_node("boss", "Boss", 0, external_tools=["research"]),
                 make_node("worker", "Worker", 1,
                           external_tools=["research", "filesystem"],
@@ -471,8 +488,9 @@ class TestToolRequestGrantE2E:
 
         worker_agent = await runtime._create_node_agent(updated_org, worker)
         tool_names = {t["name"] for t in worker_agent._tools}
-        assert "write_file" not in tool_names
+        assert "write_file" in tool_names
         assert "web_search" in tool_names or "news_search" in tool_names
+        _assert_conflict_tools_removed(tool_names)
 
 
 class TestEvictAndHotReloadE2E:

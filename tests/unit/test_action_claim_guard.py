@@ -1,3 +1,5 @@
+import pytest
+
 from openakita.core.reasoning_engine import (
     _extract_unbacked_verbs,
     _get_action_claim_re,
@@ -86,6 +88,28 @@ def test_successful_delete_call_backs_claim():
     tool_results = [{"tool_name": "delete_file", "is_error": False}]
 
     assert _guard_unbacked_action_claim(text, ["delete_file"], tool_results) == text
+
+
+@pytest.mark.parametrize("tool_name", ["run_shell", "run_powershell"])
+def test_successful_shell_delete_call_backs_delete_claim(tool_name):
+    """shell/powershell 成功执行也可作为删除类动作凭证。"""
+    text = "已删除 token_cost_calc.py。"
+    tool_results = [{"tool_name": tool_name, "is_error": False}]
+
+    assert _guard_unbacked_action_claim(text, [tool_name], tool_results) == text
+
+
+@pytest.mark.parametrize("tool_name", ["run_shell", "run_powershell"])
+def test_failed_shell_delete_call_does_not_back_delete_claim(tool_name):
+    """shell/powershell 失败时不能背书删除类动作。"""
+    text = "已删除 token_cost_calc.py。"
+    tool_results = [{"tool_name": tool_name, "is_error": True}]
+
+    guarded = _guard_unbacked_action_claim(text, [tool_name], tool_results)
+
+    assert text in guarded
+    assert "一致性提示" in guarded
+    assert "删除" in guarded
 
 
 def test_failed_write_file_with_unrelated_success_does_not_back_save_claim():

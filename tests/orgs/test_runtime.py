@@ -10,9 +10,9 @@ import pytest
 
 from openakita.orgs.manager import OrgManager
 from openakita.orgs.runtime import OrgRuntime
-from openakita.orgs.models import NodeStatus, OrgProject, OrgStatus, ProjectTask, ProjectStatus, TaskStatus
+from openakita.orgs.models import MsgType, NodeStatus, OrgMessage, OrgProject, OrgStatus, ProjectTask, ProjectStatus, TaskStatus
 from openakita.orgs.project_store import ProjectStore
-from .conftest import make_org
+from .conftest import make_node, make_org
 
 
 @pytest.fixture()
@@ -333,6 +333,186 @@ class TestResetOrg:
 
             assert runtime.get_blackboard(org.id) is None
             assert org.id not in runtime._active_orgs
+        finally:
+            await runtime.shutdown()
+
+
+class TestNodeConcurrencyLimit:
+    def test_node_max_concurrent_prefers_node_configuration(self, runtime: OrgRuntime):
+        node = make_node(max_concurrent_tasks=99)
+
+        assert runtime._node_max_concurrent(node) == 99
+
+    def test_node_max_concurrent_falls_back_to_runtime_default(self, runtime: OrgRuntime):
+        node = make_node(max_concurrent_tasks=0)
+
+        assert runtime._node_max_concurrent(node) == runtime.max_concurrent_per_node
+
+    async def test_drain_node_pending_uses_node_concurrency_limit(
+        self, runtime: OrgRuntime, org_manager: OrgManager,
+    ):
+        with patch("openakita.orgs.templates.ensure_builtin_templates"):
+            await runtime.start()
+        try:
+            org_data = make_org().to_dict()
+            org_data["nodes"][0]["max_concurrent_tasks"] = 4
+            org = org_manager.create(org_data)
+            await runtime.start_org(org.id)
+            node = runtime.get_org(org.id).get_node("node_ceo")
+            messenger = runtime.get_messenger(org.id)
+            mailbox = messenger.get_mailbox(node.id)
+            for index in range(4):
+                await mailbox.put(
+                    OrgMessage(
+                        org_id=org.id,
+                        from_node="user",
+                        to_node=node.id,
+                        msg_type=MsgType.TASK_ASSIGN,
+                        content=f"任务 {index}",
+                    )
+                )
+
+            with patch.object(runtime, "_activate_and_run", new_callable=AsyncMock) as run_mock:
+                dispatched = await runtime._drain_node_pending(runtime.get_org(org.id), node)
+
+            assert dispatched == 4
+            assert run_mock.await_count == 4
+        finally:
+            await runtime.shutdown()
+
+    async def test_drain_node_pending_dispatches_99_configured_slots(
+        self, runtime: OrgRuntime, org_manager: OrgManager,
+    ):
+        with patch("openakita.orgs.templates.ensure_builtin_templates"):
+            await runtime.start()
+        try:
+            org_data = make_org().to_dict()
+            org_data["nodes"][0]["max_concurrent_tasks"] = 99
+            org = org_manager.create(org_data)
+            await runtime.start_org(org.id)
+            node = runtime.get_org(org.id).get_node("node_ceo")
+            messenger = runtime.get_messenger(org.id)
+            mailbox = messenger.get_mailbox(node.id)
+            for index in range(99):
+                await mailbox.put(
+                    OrgMessage(
+                        org_id=org.id,
+                        from_node="user",
+                        to_node=node.id,
+                        msg_type=MsgType.TASK_ASSIGN,
+                        content=f"并发任务 {index}",
+                    )
+                )
+
+            with patch.object(runtime, "_activate_and_run", new_callable=AsyncMock) as run_mock:
+                dispatched = await runtime._drain_node_pending(runtime.get_org(org.id), node)
+
+            assert dispatched == 99
+            assert run_mock.await_count == 99
+        finally:
+            await runtime.shutdown()
+
+    async def test_drain_node_pending_subtracts_active_tasks(
+        self, runtime: OrgRuntime, org_manager: OrgManager,
+    ):
+        with patch("openakita.orgs.templates.ensure_builtin_templates"):
+            await runtime.start()
+        try:
+            org_data = make_org().to_dict()
+            org_data["nodes"][0]["max_concurrent_tasks"] = 4
+            org = org_manager.create(org_data)
+            await runtime.start_org(org.id)
+            node = runtime.get_org(org.id).get_node("node_ceo")
+            messenger = runtime.get_messenger(org.id)
+            mailbox = messenger.get_mailbox(node.id)
+            runtime._running_tasks[org.id] = {
+                f"{node.id}:active-{index}": asyncio.create_task(asyncio.sleep(60))
+                for index in range(2)
+            }
+            for index in range(4):
+                await mailbox.put(
+                    OrgMessage(
+                        org_id=org.id,
+                        from_node="user",
+                        to_node=node.id,
+                        msg_type=MsgType.TASK_ASSIGN,
+                        content=f"待处理任务 {index}",
+                    )
+                )
+
+            with patch.object(runtime, "_activate_and_run", new_callable=AsyncMock) as run_mock:
+                dispatched = await runtime._drain_node_pending(runtime.get_org(org.id), node)
+
+            assert dispatched == 2
+            assert run_mock.await_count == 2
+            for task in runtime._running_tasks[org.id].values():
+                task.cancel()
+        finally:
+            await runtime.shutdown()
+
+    async def test_on_node_message_uses_node_concurrency_limit(
+        self, runtime: OrgRuntime, org_manager: OrgManager,
+    ):
+        with patch("openakita.orgs.templates.ensure_builtin_templates"):
+            await runtime.start()
+        try:
+            org_data = make_org().to_dict()
+            org_data["nodes"][0]["max_concurrent_tasks"] = 4
+            org = org_manager.create(org_data)
+            await runtime.start_org(org.id)
+            live_org = runtime.get_org(org.id)
+            node = live_org.get_node("node_ceo")
+            runtime._running_tasks[org.id] = {
+                f"{node.id}:active-{index}": asyncio.create_task(asyncio.sleep(60))
+                for index in range(3)
+            }
+            msg = OrgMessage(
+                org_id=org.id,
+                from_node="user",
+                to_node=node.id,
+                msg_type=MsgType.TASK_ASSIGN,
+                content="第四个任务",
+            )
+
+            with patch.object(runtime, "_activate_and_run", new_callable=AsyncMock) as run_mock:
+                await runtime._on_node_message(org.id, node.id, msg)
+
+            assert run_mock.await_count == 1
+            for task in runtime._running_tasks[org.id].values():
+                task.cancel()
+        finally:
+            await runtime.shutdown()
+
+    async def test_on_node_message_blocks_at_node_concurrency_limit(
+        self, runtime: OrgRuntime, org_manager: OrgManager,
+    ):
+        with patch("openakita.orgs.templates.ensure_builtin_templates"):
+            await runtime.start()
+        try:
+            org_data = make_org().to_dict()
+            org_data["nodes"][0]["max_concurrent_tasks"] = 4
+            org = org_manager.create(org_data)
+            await runtime.start_org(org.id)
+            live_org = runtime.get_org(org.id)
+            node = live_org.get_node("node_ceo")
+            runtime._running_tasks[org.id] = {
+                f"{node.id}:active-{index}": asyncio.create_task(asyncio.sleep(60))
+                for index in range(4)
+            }
+            msg = OrgMessage(
+                org_id=org.id,
+                from_node="user",
+                to_node=node.id,
+                msg_type=MsgType.TASK_ASSIGN,
+                content="第五个任务",
+            )
+
+            with patch.object(runtime, "_activate_and_run", new_callable=AsyncMock) as run_mock:
+                await runtime._on_node_message(org.id, node.id, msg)
+
+            assert run_mock.await_count == 0
+            for task in runtime._running_tasks[org.id].values():
+                task.cancel()
         finally:
             await runtime.shutdown()
 

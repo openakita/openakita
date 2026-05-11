@@ -1371,6 +1371,13 @@ class OpenAIProvider(LLMProvider):
                     f"(content was empty, {_out_tokens} output tokens) from {self.name}"
                 )
 
+        # 添加文本内容。必须先把 message.content 变成 TextBlock，再判断是否真的丢内容；
+        # 否则 OpenAI-compatible 代理返回 {"content": "ok"} 时会被误报为 CONTENT LOST。
+        if text_content and not any(
+            isinstance(b, TextBlock) and b.text == text_content for b in content_blocks
+        ):
+            content_blocks.insert(0, TextBlock(text=text_content))
+
         # 仍然为空 → 记录详细诊断信息（帮助定位代理格式变化）
         if not content_blocks and _out_tokens > 0:
             msg_keys = sorted(k for k in message if k != "role")
@@ -1422,12 +1429,6 @@ class OpenAIProvider(LLMProvider):
                 "token_details": _token_details,
                 "usage": usage_data,
             }
-
-        # 添加文本内容
-        if text_content and not any(
-            isinstance(b, TextBlock) and b.text == text_content for b in content_blocks
-        ):
-            content_blocks.insert(0, TextBlock(text=text_content))
 
         # 解析停止原因
         finish_reason = choice.get("finish_reason", "stop")

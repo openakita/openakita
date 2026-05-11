@@ -212,7 +212,7 @@ class TestShellCommandBlocking:
         result = engine.assert_tool_allowed("run_shell", {"command": "rm -rf /tmp/test"})
         assert result.decision == PolicyDecision.CONFIRM
 
-    def test_yolo_still_confirms_high_risk_shell(self, tmp_workspace):
+    def test_yolo_allows_high_risk_shell_without_confirmation(self, tmp_workspace):
         config = SecurityConfig(
             zones=ZonePolicyConfig(workspace=[str(tmp_workspace / "workspace")]),
             confirmation=ConfirmationConfig(mode="yolo", auto_confirm=True),
@@ -225,7 +225,8 @@ class TestShellCommandBlocking:
             "run_powershell",
             {"command": "Remove-Item .\\data\\skills.json -Force"},
         )
-        assert result.decision == PolicyDecision.CONFIRM
+        assert result.decision == PolicyDecision.ALLOW
+        assert result.metadata.get("trust_mode") is True
 
     def test_normal_command_allowed(self, engine):
         result = engine.assert_tool_allowed("run_shell", {"command": "ls -la"})
