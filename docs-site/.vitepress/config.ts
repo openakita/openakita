@@ -121,7 +121,7 @@ export default defineConfig({
     ],
 
     footer: {
-      message: "基于 Apache-2.0 许可发布",
+      message: "基于 AGPL-3.0-only 许可发布",
       copyright: "Copyright © 2024-present OpenAkita",
     },
   },

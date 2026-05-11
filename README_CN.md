@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square" alt="License" height="20" />
+  <img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg?style=flat-square" alt="License" height="20" />
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square" alt="Python Version" height="20" />
   <img src="https://img.shields.io/github/v/release/openakita/openakita?style=flat-square" alt="Release" height="20" />
   <img src="https://img.shields.io/pypi/v/openakita?color=green&style=flat-square" alt="PyPI" height="20" />
@@ -425,7 +425,7 @@ L6  OS 级沙箱       Linux bwrap / macOS seatbelt / Windows MIC
 - **资源预算**：Token / 成本 / 时长 / 迭代 / 工具调用 五维限制
 - **运行时监督**：自动检测工具抖动、推理死循环、Token 异常
 - **数据本地**：记忆、配置、对话全部存在你自己的电脑上
-- **开源透明**：Apache 2.0，代码完全公开
+- **开源透明**：AGPL-3.0-only，代码完全公开
 
 ---
 
@@ -667,7 +667,9 @@ OpenAkita 对国内用户做了全面优化：
 
 ## 许可证
 
-Apache License 2.0 — 详见 [LICENSE](LICENSE)
+OpenAkita 源代码采用 GNU Affero General Public License v3.0 only（AGPL-3.0-only）授权，详见 [LICENSE](LICENSE)。
+
+`OpenAkita` 名称、Logo、图标、截图和其他品牌资产不在 AGPL-3.0-only 授权范围内。品牌使用规则详见 [TRADEMARK.md](TRADEMARK.md)。
 
 第三方许可证详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
