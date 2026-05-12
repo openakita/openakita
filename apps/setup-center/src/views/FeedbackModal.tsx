@@ -88,6 +88,8 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
       setSubmitResult(null);
       setDownloading(false);
       setUploadProgress(null);
+      setPhase("form");
+      submittingRef.current = false;
     }
   }, [open, initialMode]);
 
@@ -223,7 +225,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
       captchaTokenRef.current = "";
       captchaNonceRef.current = "";
     };
-  }, [open, captchaCfg, captchaResetKey]);
+  }, [open, captchaCfg, captchaResetKey, apiBase]);
 
   const addImages = useCallback((files: FileList | File[]) => {
     const newFiles = Array.from(files).filter(
@@ -270,6 +272,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
     setDescription("");
     setSteps("");
     setContactEmail("");
+    setContactWechat("");
     setImageFiles([]);
     setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
     setUploadLogs(true);
@@ -365,6 +368,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
     submittingRef.current = true;
     setSubmitting(true);
     setSubmitResult(null);
+    setPhase("uploading");
     setUploadProgress({ percent: 0, phase: "starting", detail: t("feedback.progressPacking") });
 
     const controller = new AbortController();
@@ -457,15 +461,8 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
                 setPhase("form");
                 setCaptchaResetKey((k) => k + 1);
               } else {
-                const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
-                setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
-                setTitle("");
-                setDescription("");
-                setSteps("");
-                setContactEmail("");
-                setContactWechat("");
-                setImageFiles([]);
-                setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+                resetForm();
+                setPhase("success");
               }
             } else if (eventType === "error") {
               handleSseError(data);
@@ -485,15 +482,8 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
           setPhase("form");
           setCaptchaResetKey((k) => k + 1);
         } else {
-          const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
-          setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
-          setTitle("");
-          setDescription("");
-          setSteps("");
-          setContactEmail("");
-          setContactWechat("");
-          setImageFiles([]);
-          setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+          resetForm();
+          setPhase("success");
         }
       }
     } catch (err: any) {
@@ -523,33 +513,49 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
     abortRef.current?.abort();
     setSubmitResult(null);
     setUploadProgress(null);
+    setPhase("form");
     onClose();
   }, [onClose]);
 
   const isBug = mode === "bug";
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) {
+          if (phase === "uploading") return;
+          if (phase === "success") { onNavigateToMyFeedback?.(); }
+          handleClose();
+        }
+      }}
+    >
       <DialogContent
-        className="sm:max-w-[520px] p-0 gap-0 overflow-hidden"
-        showCloseButton={true}
+        className={`p-0 gap-0 overflow-hidden ${phase === "form" ? "sm:max-w-[520px]" : "sm:max-w-[380px]"}`}
+        showCloseButton={phase !== "uploading"}
+        onPaste={phase === "form" ? handlePaste : undefined}
         onPointerDownOutside={(e) => {
+          if (phase === "uploading") { e.preventDefault(); return; }
           const t = e.target as HTMLElement | null;
           if (t?.closest?.("[class*='aliyunCaptcha'], [id*='aliyunCaptcha'], [id*='aliyun-captcha']")) {
             e.preventDefault();
           }
         }}
         onInteractOutside={(e) => {
+          if (phase === "uploading") { e.preventDefault(); return; }
           const t = e.target as HTMLElement | null;
           if (t?.closest?.("[class*='aliyunCaptcha'], [id*='aliyunCaptcha'], [id*='aliyun-captcha']")) {
             e.preventDefault();
           }
         }}
+        onEscapeKeyDown={(e) => { if (phase === "uploading") e.preventDefault(); }}
       >
-        <DialogHeader className="sr-only">
-          <DialogTitle>{isBug ? t("bugReport.title") : t("featureRequest.title")}</DialogTitle>
-          <DialogDescription>{isBug ? t("bugReport.title") : t("featureRequest.title")}</DialogDescription>
-        </DialogHeader>
+        {phase === "form" && (
+          <>
+            <DialogHeader className="sr-only">
+              <DialogTitle>{isBug ? t("bugReport.title") : t("featureRequest.title")}</DialogTitle>
+              <DialogDescription>{isBug ? t("bugReport.title") : t("featureRequest.title")}</DialogDescription>
+            </DialogHeader>
 
         {/* Tab navigation as header */}
         <div className="flex items-end gap-0 border-b border-border px-5 pt-4 shrink-0">
@@ -822,6 +828,66 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
             </>
           )}
         </div>
+          </>
+        )}
+
+        {phase === "uploading" && (
+          <>
+            <DialogHeader className="px-5 pt-5 pb-0">
+              <DialogTitle className="text-[15px]">{t("feedback.uploadingTitle")}</DialogTitle>
+              <DialogDescription className="sr-only">{t("feedback.uploadingTitle")}</DialogDescription>
+            </DialogHeader>
+            <div className="px-5 py-6 space-y-4">
+              {uploadProgress && (
+                <>
+                  <div className="flex items-center justify-between text-[13px] text-muted-foreground">
+                    <span>{uploadProgress.detail}</span>
+                    <span>{uploadProgress.percent}%</span>
+                  </div>
+                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${uploadProgress.percent}%` }}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="flex justify-end px-5 py-3 border-t border-border">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => { abortRef.current?.abort(); }}
+              >
+                {t("feedback.cancelUpload")}
+              </Button>
+            </div>
+          </>
+        )}
+
+        {phase === "success" && (
+          <>
+            <DialogHeader className="px-5 pt-5 pb-0">
+              <DialogTitle className="text-[15px]">{t("feedback.submitSuccessTitle")}</DialogTitle>
+              <DialogDescription className="sr-only">{t("feedback.submitSuccessTitle")}</DialogDescription>
+            </DialogHeader>
+            <div className="px-5 py-4">
+              <p className="text-[14px] text-muted-foreground leading-relaxed">
+                {t("feedback.submitSuccessMessage")}
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-border">
+              <Button variant="outline" size="sm" onClick={() => { onNavigateToMyFeedback?.(); handleClose(); }}>
+                {t("feedback.close")}
+              </Button>
+              {onNavigateToMyFeedback && (
+                <Button size="sm" onClick={() => { onNavigateToMyFeedback(); handleClose(); }}>
+                  {t("myFeedback.viewFeedback")}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
