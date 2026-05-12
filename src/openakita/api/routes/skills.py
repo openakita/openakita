@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 
 import httpx
@@ -40,11 +41,16 @@ _skills_cache: dict | None = None
 Populated on first request, invalidated via the cross-layer on-change callback
 registered at the bottom of this module."""
 
+_organize_cache: dict | None = None
+_organize_cache_hash: str | None = None
+
 
 def _invalidate_skills_cache() -> None:
     """Clear the cached skill list so the next GET /api/skills re-scans disk."""
-    global _skills_cache
+    global _skills_cache, _organize_cache, _organize_cache_hash
     _skills_cache = None
+    _organize_cache = None
+    _organize_cache_hash = None
 
 
 def _resolve_agent(request: Request):
@@ -55,6 +61,63 @@ def _resolve_agent(request: Request):
     if isinstance(agent, Agent):
         return agent
     return getattr(agent, "_local_agent", None)
+
+
+def _extract_json_object(text: str) -> dict:
+    """Extract a JSON object from plain or fenced LLM output."""
+    raw = (text or "").strip()
+    if not raw:
+        raise ValueError("empty response")
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.S | re.I)
+    if fenced:
+        raw = fenced.group(1)
+    elif not raw.startswith("{"):
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("no JSON object found")
+        raw = raw[start : end + 1]
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("JSON root must be an object")
+    return data
+
+
+def _get_external_skills_from_cache() -> list[dict] | None:
+    """从 _skills_cache 中提取外部技能列表（不触发磁盘扫描）。"""
+    if _skills_cache is None:
+        return None
+    skills = _skills_cache.get("skills")
+    if not skills:
+        return None
+    return [s for s in skills if not s.get("system", False)]
+
+
+async def _load_external_skills_for_organize() -> tuple[list, set[str] | None]:
+    """Load all external skills from disk and return effective allowlist."""
+    from openakita.skills.allowlist_io import read_allowlist
+    from openakita.skills.categories import CategoryRegistry
+    from openakita.skills.category_store import CategoryStore
+    from openakita.skills.loader import SkillLoader
+
+    try:
+        from openakita.config import settings
+
+        base_path = Path(settings.project_root)
+    except Exception:
+        base_path = Path.cwd()
+
+    cat_registry = CategoryRegistry()
+    cat_registry.set_store(CategoryStore())
+    loader = SkillLoader(category_registry=cat_registry)
+    await asyncio.to_thread(loader.load_all, base_path)
+    _, external_allowlist = read_allowlist()
+    try:
+        effective_allowlist = loader.compute_effective_allowlist(external_allowlist)
+    except Exception:
+        effective_allowlist = external_allowlist
+    external_skills = [s for s in loader.registry.list_all() if not getattr(s, "system", False)]
+    return external_skills, effective_allowlist
 
 
 async def _propagate(request: Request, action: str, *, rescan: bool = True) -> None:
@@ -221,6 +284,388 @@ async def list_skills(request: Request):
     return result
 
 
+_ORGANIZE_BATCH_SIZE = 50
+
+
+def _compact(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _compute_skill_list_hash(ids: set[str]) -> str:
+    import hashlib
+    return hashlib.sha256(",".join(sorted(ids)).encode()).hexdigest()[:16]
+
+
+@router.post("/api/skills/organize")
+async def organize_skills(request: Request):
+    """Generate a structured preview for AI skill categorization.
+
+    优化策略：
+    1. 增量整理 — 跳过已绑定分类的技能，只让 LLM 处理未分类技能
+    2. 两阶段并行 — 阶段1生成分类，阶段2分批并行归类，大幅降低总耗时
+    3. 结果缓存 — 相同技能列表直接返回上次结果
+    4. 优先从 _skills_cache 读取（避免磁盘扫描），回退到全量加载
+    """
+    global _organize_cache, _organize_cache_hash
+
+    from openakita.skills.categories import is_valid_category_name
+    from openakita.skills.category_store import CategoryStore
+
+    agent = _resolve_agent(request)
+    if agent is None or not hasattr(agent, "brain"):
+        raise HTTPException(status_code=503, detail="Agent 尚未就绪，无法执行 AI 整理")
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    force = body.get("force", False)
+
+    # ── 获取技能列表 ──
+    cached_skills = _get_external_skills_from_cache()
+    if cached_skills is not None:
+        skill_items = [
+            {
+                "id": s["skill_id"],
+                "name": s.get("name", s["skill_id"]),
+                "desc": s.get("description") or "",
+                "cat": s.get("category") or "",
+            }
+            for s in cached_skills
+        ]
+        known_ids = {s["skill_id"] for s in cached_skills}
+    else:
+        try:
+            external_skills, _ = await _load_external_skills_for_organize()
+        except Exception as e:
+            logger.warning("Failed to load skills for AI organize: %s", e)
+            raise HTTPException(
+                status_code=500, detail="技能列表读取失败，无法生成整理请求"
+            ) from e
+        skill_items = [
+            {
+                "id": s.skill_id,
+                "name": s.name,
+                "desc": s.description or "",
+                "cat": s.category or "",
+            }
+            for s in external_skills
+        ]
+        known_ids = {s.skill_id for s in external_skills}
+
+    total_count = len(skill_items)
+
+    # ── P2: 结果缓存 — 技能列表未变时直接返回 ──
+    current_hash = _compute_skill_list_hash(known_ids)
+    if not force and _organize_cache is not None and _organize_cache_hash == current_hash:
+        logger.info("[organize] cache hit (hash=%s), returning cached result", current_hash)
+        return _organize_cache
+
+    # ── P1: 增量整理 — 只处理未分类技能 ──
+    store = CategoryStore()
+    store.reload()
+    existing_bindings = store.get_bindings()
+    existing_categories = store.list_categories()
+    existing_cat_names = {c["name"] for c in existing_categories}
+
+    unclassified = [s for s in skill_items if s["id"] not in existing_bindings]
+    pre_bound = {
+        sid: cat for sid, cat in existing_bindings.items()
+        if sid in known_ids and cat in existing_cat_names
+    }
+
+    if not unclassified:
+        result = {
+            "categories": existing_categories,
+            "bindings": pre_bound,
+            "summary": {
+                "total": total_count,
+                "included": total_count,
+                "truncated": 0,
+                "category_count": len(existing_categories),
+                "binding_count": len(pre_bound),
+                "unassigned_count": 0,
+                "by_category": {
+                    c["name"]: sum(1 for v in pre_bound.values() if v == c["name"])
+                    for c in existing_categories
+                },
+            },
+        }
+        _organize_cache = result
+        _organize_cache_hash = current_hash
+        return result
+
+    # ── 阶段1: 生成分类（只传 id+name，prompt 更小、输出更少） ──
+    names_lines: list[str] = []
+    for item in sorted(unclassified, key=lambda s: (s["name"], s["id"])):
+        names_lines.append(f"- {item['id']}|{item['name']}")
+
+    existing_hint = ""
+    if existing_cat_names:
+        existing_hint = (
+            f"\n已有分类供参考（可复用）: {', '.join(sorted(existing_cat_names))}\n"
+        )
+
+    phase1_prompt = "\n".join([
+        f"共{len(unclassified)}个待分类技能:",
+        *names_lines,
+        existing_hint,
+        "生成4-12个中文分类（可复用已有分类），返回严格JSON。",
+        '{"categories":[{"name":"X","description":"Y"}]}',
+    ])
+
+    try:
+        phase1_resp = await agent.brain.think_lightweight(
+            phase1_prompt,
+            system="技能分类助手。只返回JSON对象，无其他文本。",
+            max_tokens=800,
+        )
+        phase1_data = _extract_json_object(phase1_resp.content)
+    except Exception as e:
+        logger.warning("AI organize phase1 (category generation) failed: %s", e)
+        raise HTTPException(
+            status_code=502, detail="AI 整理生成失败（阶段1），请检查模型端点后重试"
+        ) from e
+
+    raw_categories = phase1_data.get("categories") or []
+    if not isinstance(raw_categories, list):
+        raise HTTPException(status_code=502, detail="AI 整理结果格式无效（阶段1）")
+
+    categories: list[dict] = []
+    category_names: set[str] = set()
+    for item in raw_categories[:20]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not is_valid_category_name(name) or name in category_names:
+            continue
+        description = _compact(str(item.get("description") or ""), 120)
+        categories.append({"name": name, "description": description})
+        category_names.add(name)
+
+    for ec in existing_categories:
+        if ec["name"] not in category_names:
+            categories.append(ec)
+            category_names.add(ec["name"])
+
+    if not categories:
+        raise HTTPException(status_code=502, detail="AI 整理没有生成有效分类")
+
+    # ── 阶段2: 分批并行归类 ──
+    cat_list_str = ", ".join(sorted(category_names))
+    batches = [
+        unclassified[i : i + _ORGANIZE_BATCH_SIZE]
+        for i in range(0, len(unclassified), _ORGANIZE_BATCH_SIZE)
+    ]
+
+    async def _classify_batch(batch: list[dict]) -> dict[str, str]:
+        lines = "\n".join(
+            f"- {s['id']}|{s['name']}|{_compact(s['desc'], 30)}" for s in batch
+        )
+        prompt = "\n".join([
+            f"可选分类: {cat_list_str}",
+            f"技能({len(batch)}个):",
+            lines,
+            "",
+            "为每个技能选择最合适的分类，返回严格JSON。",
+            "bindings的key必须是上方id，value必须是上方可选分类之一，不要凭空创造。",
+            '{"bindings":{"skill_id":"category_name"}}',
+        ])
+        resp = await agent.brain.think_lightweight(
+            prompt,
+            system="技能分类助手。只返回JSON对象，无其他文本。",
+            max_tokens=1500,
+        )
+        data = _extract_json_object(resp.content)
+        return data.get("bindings") or {}
+
+    try:
+        batch_results = await asyncio.gather(
+            *[_classify_batch(b) for b in batches],
+            return_exceptions=True,
+        )
+    except Exception as e:
+        logger.warning("AI organize phase2 (batch classify) failed: %s", e)
+        raise HTTPException(
+            status_code=502, detail="AI 整理生成失败（阶段2），请检查模型端点后重试"
+        ) from e
+
+    new_bindings: dict[str, str] = {}
+    for i, result in enumerate(batch_results):
+        if isinstance(result, Exception):
+            logger.warning("AI organize batch %d/%d failed: %s", i + 1, len(batches), result)
+            continue
+        if not isinstance(result, dict):
+            continue
+        for sid_raw, cat_raw in result.items():
+            sid = str(sid_raw).strip()
+            cat = str(cat_raw).strip()
+            if sid in known_ids and cat in category_names:
+                new_bindings[sid] = cat
+
+    all_bindings = {**pre_bound, **new_bindings}
+
+    if not all_bindings:
+        raise HTTPException(status_code=502, detail="AI 整理没有生成有效技能归类")
+
+    by_category: dict[str, int] = {cat["name"]: 0 for cat in categories}
+    for cat in all_bindings.values():
+        by_category[cat] = by_category.get(cat, 0) + 1
+
+    result = {
+        "categories": categories,
+        "bindings": all_bindings,
+        "summary": {
+            "total": total_count,
+            "included": len(unclassified),
+            "truncated": 0,
+            "category_count": len(categories),
+            "binding_count": len(all_bindings),
+            "unassigned_count": max(0, total_count - len(all_bindings)),
+            "by_category": by_category,
+        },
+    }
+    _organize_cache = result
+    _organize_cache_hash = current_hash
+    return result
+
+
+@router.post("/api/skills/organize/apply")
+async def apply_skill_organization(request: Request):
+    """Apply a reviewed AI skill categorization preview to CategoryStore."""
+    from openakita.skills.categories import is_valid_category_name
+    from openakita.skills.category_store import CategoryStore
+
+    body = await request.json()
+    categories = body.get("categories") or []
+    bindings = body.get("bindings") or {}
+    rename_map_raw = body.get("rename_map") or {}
+    category_order_raw = body.get("category_order") or []
+    if not isinstance(categories, list) or not isinstance(bindings, dict):
+        raise HTTPException(status_code=400, detail="categories 和 bindings 格式无效")
+    if rename_map_raw is not None and not isinstance(rename_map_raw, dict):
+        raise HTTPException(status_code=400, detail="rename_map 格式无效")
+    if category_order_raw is not None and not isinstance(category_order_raw, list):
+        raise HTTPException(status_code=400, detail="category_order 格式无效")
+
+    try:
+        external_skills, _ = await _load_external_skills_for_organize()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="技能列表读取失败，无法应用整理结果") from e
+
+    known_ids = {s.skill_id for s in external_skills}
+    store = CategoryStore()
+    store.reload()
+
+    valid_categories_ordered: list[tuple[str, str]] = []
+    seen_category_names: set[str] = set()
+    valid_categories: dict[str, str] = {}
+    for item in categories:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not is_valid_category_name(name):
+            continue
+        if name in seen_category_names:
+            continue
+        desc = str(item.get("description") or "").strip()
+        valid_categories_ordered.append((name, desc))
+        valid_categories[name] = desc
+        seen_category_names.add(name)
+
+    if not valid_categories:
+        raise HTTPException(status_code=400, detail="没有有效分类可应用")
+
+    rename_map: dict[str, str] = {}
+    for old_raw, new_raw in rename_map_raw.items():
+        old_name = str(old_raw).strip()
+        new_name = str(new_raw).strip()
+        if not old_name or not new_name or old_name == new_name:
+            continue
+        if not is_valid_category_name(new_name):
+            raise HTTPException(status_code=400, detail=f"重命名目标非法: {new_name}")
+        rename_map[old_name] = new_name
+
+    target_seen: set[str] = set()
+    for target in rename_map.values():
+        if target in target_seen:
+            raise HTTPException(status_code=400, detail="rename_map 存在重名目标冲突")
+        target_seen.add(target)
+
+    for start in rename_map:
+        seen: set[str] = set()
+        cur = start
+        while cur in rename_map:
+            if cur in seen:
+                raise HTTPException(status_code=400, detail="rename_map 存在循环映射")
+            seen.add(cur)
+            cur = rename_map[cur]
+
+    rename_order: list[str] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def _dfs(node: str) -> None:
+        if node in visited:
+            return
+        if node in visiting:
+            raise HTTPException(status_code=400, detail="rename_map 存在循环映射")
+        visiting.add(node)
+        nxt = rename_map.get(node)
+        if nxt and nxt in rename_map:
+            _dfs(nxt)
+        visiting.remove(node)
+        visited.add(node)
+        rename_order.append(node)
+
+    for name in rename_map:
+        _dfs(name)
+
+    for old_name in rename_order:
+        new_name = rename_map[old_name]
+        if not store.has_category(old_name):
+            continue
+        if store.has_category(new_name):
+            raise HTTPException(status_code=400, detail=f"重命名冲突，目标已存在: {new_name}")
+        ok = store.update_category(old_name, new_name=new_name)
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"分类重命名失败: {old_name} -> {new_name}")
+
+    applied_categories = 0
+    for name, desc in valid_categories_ordered:
+        if store.has_category(name):
+            store.update_category(name, description=desc)
+        else:
+            store.create_category(name, desc)
+        applied_categories += 1
+
+    applied_bindings = 0
+    for sid_raw, cat_raw in bindings.items():
+        sid = str(sid_raw).strip()
+        cat = str(cat_raw).strip()
+        if sid not in known_ids or cat not in valid_categories:
+            continue
+        store.bind_skill(sid, cat)
+        applied_bindings += 1
+
+    if category_order_raw:
+        order = [str(x).strip() for x in category_order_raw if str(x).strip()]
+        if order:
+            store.set_category_order(order)
+
+    _invalidate_skills_cache()
+    await _propagate(request, "skill_organize_apply", rescan=True)
+    _invalidate_skills_cache()
+
+    return {
+        "status": "ok",
+        "categories": applied_categories,
+        "bindings": applied_bindings,
+    }
+
+
 @router.post("/api/skills/config")
 async def update_skill_config(request: Request):
     """Persist skill configuration to data/skill_configs.json."""
@@ -376,6 +821,25 @@ async def install_skill(request: Request):
             upsert_skill_ids({new_skill_id})
         except Exception as e:
             logger.warning("Failed to upsert %s into skills.json: %s", new_skill_id, e)
+
+    # 若指定了分类，写入分类归属（由 CategoryStore 落盘到 categories[].skills）
+    if new_skill_id and category:
+        try:
+            agent = _resolve_agent(request)
+            if agent is not None:
+                cat_registry = getattr(agent, "skill_category_registry", None)
+                store = getattr(cat_registry, "store", None) if cat_registry else None
+                if store is not None:
+                    if store.has_category(category):
+                        store.bind_skill(new_skill_id, category)
+                    else:
+                        logger.warning(
+                            "Skip binding newly installed skill %s to unknown category %s",
+                            new_skill_id,
+                            category,
+                        )
+        except Exception as e:
+            logger.warning("Failed to bind %s to category %s: %s", new_skill_id, category, e)
 
     # 统一刷新入口 —— 重扫磁盘 + 重新应用 allowlist + 重建 catalog + 通知 Pool
     await _propagate(request, "install")
