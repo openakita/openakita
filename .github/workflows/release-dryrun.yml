@@ -47,13 +47,11 @@ jobs:
         working-directory: docs-site
         run: |
           npm ci
-          npx vitepress build
-        continue-on-error: true
+          npm run build
 
       - name: Build wheel
         run: |
           pip install build
-          mkdir -p docs-site/.vitepress/dist
           python -m build --wheel
 
       # 同时构建 Plugin SDK wheel 到 dist/，让 [all] extras 验证能从本地解析到
@@ -94,32 +92,39 @@ jobs:
           - platform: windows-latest
             bundles: "nsis"
             suffix: "windows-x64"
+            target_platform: "win-x64"
           # Linux Ubuntu 22.04
           - platform: ubuntu-22.04
             bundles: "deb"
             suffix: "ubuntu22-amd64"
+            target_platform: "linux-x64"
           - platform: ubuntu-22.04-arm
             bundles: "deb"
             suffix: "ubuntu22-arm64"
+            target_platform: "linux-arm64"
           # Linux Ubuntu 24.04
           - platform: ubuntu-24.04
             bundles: "deb"
             suffix: "ubuntu24-amd64"
+            target_platform: "linux-x64"
           - platform: ubuntu-24.04-arm
             bundles: "deb"
             suffix: "ubuntu24-arm64"
+            target_platform: "linux-arm64"
           # macOS - Apple Silicon (arm64)
           - platform: macos-latest
             bundles: "app,dmg"
             args: "--target aarch64-apple-darwin"
             rust_target: "aarch64-apple-darwin"
             suffix: "macos-arm64"
+            target_platform: "mac-arm64"
           # macOS - Intel (x86_64)
           - platform: macos-15-intel
             bundles: "app,dmg"
             args: "--target x86_64-apple-darwin"
             rust_target: "x86_64-apple-darwin"
             suffix: "macos-x64"
+            target_platform: "mac-x64"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -173,13 +178,11 @@ jobs:
         working-directory: docs-site
         run: |
           npm ci
-          npx vitepress build
-        continue-on-error: true
+          npm run build
 
       - name: Install Python project and PyInstaller
         shell: bash
         run: |
-          mkdir -p docs-site/.vitepress/dist
           # 先装 monorepo 内的 SDK（PyPI 版本通常滞后于本地 pyproject.toml），
           # 再装主项目；这样 [all] extras 的 openakita-plugin-sdk 约束会被本地
           # 已装版本满足，不再向 PyPI 索取。
@@ -205,67 +208,36 @@ jobs:
       - name: Package Python backend (PyInstaller)
         run: python build/build_backend.py
 
-      - name: Prepare bootstrap wheel resources
+      - name: Prepare bootstrap resources (wheel + uv + standalone Python seed)
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf build/bootstrap-wheels
-          rm -rf build/bootstrap-uv
-          mkdir -p build/bootstrap-wheels
-          python -m build --wheel --outdir build/bootstrap-wheels
-          python -m pip install --target build/bootstrap-uv --prefer-binary uv
-          python - <<'PY'
-          import hashlib
-          import json
-          import os
-          import shutil
-          import stat
-          from pathlib import Path
+          python build/prepare_bootstrap_resources.py \
+            --commit-resources \
+            --clean-output \
+            --require-real-assets \
+            --target-platform "${{ matrix.target_platform }}"
 
-          root = Path.cwd()
-          bootstrap_dir = root / "apps" / "setup-center" / "src-tauri" / "resources" / "bootstrap"
-          wheel_dir = bootstrap_dir / "wheels"
-          bin_dir = bootstrap_dir / "bin"
-          wheels = sorted((root / "build" / "bootstrap-wheels").glob("openakita-*.whl"))
-          if len(wheels) != 1:
-              raise SystemExit(f"expected exactly one openakita wheel, found {len(wheels)}")
+      - name: Verify bootstrap manifest resources
+        shell: bash
+        run: python build/prepare_bootstrap_resources.py --commit-resources --verify-only
 
-          wheel = wheels[0]
-          wheel_dir.mkdir(parents=True, exist_ok=True)
-          for stale in wheel_dir.glob("openakita-*.whl"):
-              stale.unlink()
-          dest = wheel_dir / wheel.name
-          shutil.copy2(wheel, dest)
-
-          uv_bin_name = "uv.exe" if os.name == "nt" else "uv"
-          uv_candidates = [
-              root / "build" / "bootstrap-uv" / "bin" / uv_bin_name,
-              root / "build" / "bootstrap-uv" / "Scripts" / uv_bin_name,
-          ]
-          uv_src = next((p for p in uv_candidates if p.exists()), None)
-          if uv_src is None:
-              raise SystemExit(f"uv binary not found in bootstrap-uv target: {uv_candidates}")
-          bin_dir.mkdir(parents=True, exist_ok=True)
-          uv_dest = bin_dir / uv_bin_name
-          shutil.copy2(uv_src, uv_dest)
-          uv_dest.chmod(uv_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-          sha256 = hashlib.sha256(dest.read_bytes()).hexdigest()
-          uv_sha256 = hashlib.sha256(uv_dest.read_bytes()).hexdigest()
-          manifest_path = bootstrap_dir / "manifest.json"
-          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-          manifest["wheel"]["name"] = f"wheels/{dest.name}"
-          manifest["wheel"]["sha256"] = sha256
-          manifest.setdefault("uv", {})
-          manifest["uv"]["path"] = "bin/uv"
-          manifest["uv"]["windows_path"] = "bin/uv.exe"
-          manifest["uv"]["sha256"] = uv_sha256
-          manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-          print(f"Bootstrap wheel: {dest}")
-          print(f"sha256: {sha256}")
-          print(f"Bootstrap uv: {uv_dest}")
-          print(f"uv sha256: {uv_sha256}")
-          PY
+      - name: Assert seed Python executable bit (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SEED_DIR="apps/setup-center/src-tauri/resources/bootstrap/python"
+          [ -d "$SEED_DIR" ] || { echo "ERROR: seed dir missing: $SEED_DIR" >&2; exit 1; }
+          fail=0
+          for f in "$SEED_DIR"/bin/*; do
+            [ -e "$f" ] || continue
+            if [ ! -x "$f" ]; then
+              echo "ERROR: missing exec bit: $f" >&2
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
 
       - name: Copy backend to Tauri resources
         shell: bash
@@ -277,8 +249,12 @@ jobs:
           echo "Resources copied:"
           du -sh "$RESOURCE_DIR"/*
 
-      - name: Verify bundled Python contract
-        run: python build/verify_bundled_python_contract.py --backend-dir apps/setup-center/src-tauri/resources/openakita-server
+      - name: Verify bundled Python contract (seed packaged)
+        run: >
+          python build/verify_bundled_python_contract.py
+          --backend-dir apps/setup-center/src-tauri/resources/openakita-server
+          --bootstrap-manifest apps/setup-center/src-tauri/resources/bootstrap/manifest.json
+          --require-seed-packaged
 
       - name: Codesign embedded binaries for macOS notarization
         if: runner.os == 'macOS'
@@ -592,26 +568,39 @@ jobs:
                   [ -f "${DMG_BG:-}" ] && CREATE_DMG_ARGS+=(--background "${DMG_BG}")
 
                   dmg_created=false
-                  for attempt in 1 2 3; do
+                  for attempt in 1 2; do
                     rm -f "${dmg_file}"
+                    # Timeout guard: create-dmg can hang on Intel runners
                     create-dmg "${CREATE_DMG_ARGS[@]}" \
-                      "${dmg_file}" "${DMG_STAGE}/" || true
+                      "${dmg_file}" "${DMG_STAGE}/" &
+                    CREATE_DMG_PID=$!
+                    ( sleep 300 && kill "$CREATE_DMG_PID" 2>/dev/null && echo "create-dmg timed out after 300s" ) &
+                    TIMER_PID=$!
+                    wait "$CREATE_DMG_PID" 2>/dev/null || true
+                    kill "$TIMER_PID" 2>/dev/null || true
+                    wait "$TIMER_PID" 2>/dev/null || true
                     if [ -f "${dmg_file}" ]; then
                       echo "DMG created with custom layout: ${dmg_file}"
                       dmg_created=true
                       break
                     fi
-                    echo "create-dmg attempt ${attempt} failed, retrying in 3s..."
+                    echo "create-dmg attempt ${attempt} failed or timed out, retrying in 3s..."
                     sleep 3
                   done
                   rm -f "${DMG_BG:-}" 2>/dev/null || true
+                  # Clean up temp DMGs left by killed create-dmg (rw.<pid>.<name>.dmg)
+                  find "$(dirname "${dmg_file}")" -maxdepth 1 -name "rw.*.dmg" -delete 2>/dev/null || true
 
                   # Fallback to basic hdiutil if create-dmg failed
                   if [ "${dmg_created}" != "true" ]; then
-                    echo "create-dmg failed; falling back to hdiutil"
-                    ln -s /Applications "${DMG_STAGE}/Applications"
+                    echo "create-dmg failed; falling back to hdiutil (UDRW → convert UDZO)"
+                    ln -sf /Applications "${DMG_STAGE}/Applications"
+                    # Two-step DMG: create uncompressed first (fast), then convert.
+                    # Single-step UDZO can hang on Intel runners with large bundles.
                     hdiutil create -volname "${app_name}" \
-                      -srcfolder "${DMG_STAGE}" -ov -format UDZO "${dmg_file}"
+                      -srcfolder "${DMG_STAGE}" -ov -format UDRW "/tmp/_rw_$$.dmg"
+                    hdiutil convert "/tmp/_rw_$$.dmg" -format UDZO -o "${dmg_file}"
+                    rm -f "/tmp/_rw_$$.dmg"
                   fi
                 else
                   # Fallback: create-dmg not available

@@ -104,3 +104,41 @@ project, licensed under the same [AGPL-3.0-only](LICENSE) terms as the main proj
 **Copyright:** © Sebastián Ramírez (FastAPI), © Encode OSS (Uvicorn)
 
 FastAPI is used as the HTTP API framework, served by Uvicorn as the ASGI server.
+
+---
+
+## Desktop Runtime Toolchain
+
+The desktop application may include or download runtime/toolchain components
+for creating isolated OpenAkita-managed environments. Exact paths, versions,
+hashes, ABI tags, and source metadata are recorded in
+`resources/bootstrap/manifest.json` in packaged builds and in the exported
+`runtime-env-summary.json` diagnostic bundle.
+
+### uv
+
+**Source:** https://github.com/astral-sh/uv
+**License:** Apache License 2.0 OR MIT License
+**Copyright:** © Astral Software Inc. and contributors
+
+uv is used to create and install dependencies into managed Python virtual
+environments.
+
+### CPython / Python
+
+**Source:** https://www.python.org/
+**License:** Python Software Foundation License Version 2
+**Copyright:** © Python Software Foundation
+
+Packaged desktop backends include the Python runtime artifacts produced by
+PyInstaller. Future managed Python seed runtimes must be recorded in the
+bootstrap manifest with version, ABI, source, license, and SHA-256 hash.
+
+### Node.js
+
+**Source:** https://nodejs.org/
+**License:** MIT License
+**Copyright:** © OpenJS Foundation and Node.js contributors
+
+Future managed Node.js seed runtimes used by OpenAkita tools must be recorded
+in the bootstrap manifest with source, license, version, and SHA-256 hash.

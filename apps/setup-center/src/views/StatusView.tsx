@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke, IS_TAURI, logger } from "../platform";
 import { safeFetch } from "../providers";
@@ -22,6 +22,35 @@ import { SkillConflictsPanel } from "../components/SkillConflictsPanel";
 import { ProviderIcon } from "../components/ProviderIcon";
 import type { EnvMap, WorkspaceSummary, ViewId } from "../types";
 import type { UpdateInfo } from "../platform";
+
+type ToolProbe = { available?: boolean; path?: string; version?: string };
+type RuntimeDiagnostics = {
+  summary?: string;
+  environment?: {
+    runtime?: {
+      mode?: string;
+      seed_dirs?: string[];
+      workspace_dependency_cache?: string;
+    };
+    toolchain?: {
+      python?: { abi?: string; wheelTag?: string; managed?: string; agent?: string; seedPackaged?: boolean };
+      node?: {
+        managed_node?: string;
+        managed_bin?: string;
+        seedPackaged?: boolean;
+        node?: ToolProbe;
+        npm?: ToolProbe;
+        corepack?: ToolProbe;
+        pnpm?: ToolProbe;
+        yarn?: ToolProbe;
+        workspace_cache?: string;
+        npm_cache?: string;
+        npm_prefix?: string;
+        corepack_home?: string;
+      };
+    };
+  };
+};
 
 export interface StatusViewProps {
   currentWorkspaceId: string | null;
@@ -102,6 +131,18 @@ export function StatusView(props: StatusViewProps) {
 
   const [healthChecking, setHealthChecking] = useState<string | null>(null);
   const [imChecking, setImChecking] = useState(false);
+  const [runtimeDiag, setRuntimeDiag] = useState<RuntimeDiagnostics | null>(null);
+  const [runtimeDiagChecking, setRuntimeDiagChecking] = useState(false);
+  // Structured runtime error surface (e.g. RUNTIME_PERMISSION_DENIED|...)
+  // —— Rust 端 `ensure_runtime_layout` 等核心 IO 失败时会把带前缀的错误写到
+  // runtime manifest.last_error，本组件读出后渲染指引 banner，让企业 AD /
+  // 杀软误杀场景下的用户知道怎么修，而不是看着空白的"已停止"发呆。
+  const [runtimeLastError, setRuntimeLastError] = useState<{
+    lastError: string | null;
+    legacyMode: boolean;
+    runtimeRoot: string;
+    manifestPath: string;
+  } | null>(null);
   const [logLevelFilter, setLogLevelFilter] = useState<Set<string>>(new Set(["INFO", "WARN", "ERROR", "DEBUG"]));
   const [logAtBottom, setLogAtBottom] = useState(true);
   // Local guard for the "Start backend" button. The parent App.tsx exposes a
@@ -122,6 +163,57 @@ export function StatusView(props: StatusViewProps) {
       setStartingService(false);
     }
   };
+  const refreshRuntimeDiagnostics = async () => {
+    if (!shouldUseHttpApi()) return;
+    setRuntimeDiagChecking(true);
+    try {
+      const res = await safeFetch(`${httpApiBase()}/api/diagnostics`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) setRuntimeDiag(await res.json());
+    } catch (e) {
+      logger.warn("runtime diagnostics failed", String(e));
+    } finally {
+      setRuntimeDiagChecking(false);
+    }
+  };
+  useEffect(() => {
+    if (serviceStatus?.running) {
+      void refreshRuntimeDiagnostics();
+    }
+  }, [serviceStatus?.running]);
+
+  // Poll structured runtime error on every backend stop / error. Cheap: just
+  // reads ~1KB from disk via Tauri.
+  useEffect(() => {
+    if (!IS_TAURI) return;
+    if (serviceStatus?.running && backendBootPhase !== "error") {
+      // 后端已起来且不在错误态：清掉上次残留的提示。
+      setRuntimeLastError(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await invoke<{
+          lastError: string | null;
+          legacyMode: boolean;
+          runtimeRoot: string;
+          manifestPath: string;
+        }>("openakita_runtime_last_error");
+        if (!cancelled) setRuntimeLastError(r);
+      } catch (e) {
+        logger.warn("openakita_runtime_last_error failed", String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceStatus?.running, backendBootPhase]);
+
+  const permissionDenied =
+    !!runtimeLastError?.lastError &&
+    runtimeLastError.lastError.startsWith("RUNTIME_PERMISSION_DENIED|");
   const im = [
     { k: "TELEGRAM_ENABLED", name: "Telegram", required: ["TELEGRAM_BOT_TOKEN"] },
     { k: "FEISHU_ENABLED", name: t("status.feishu"), required: ["FEISHU_APP_ID", "FEISHU_APP_SECRET"] },
@@ -182,6 +274,56 @@ export function StatusView(props: StatusViewProps) {
                     : t("status.backendStartingHint")}
               </div>
             </div>
+          </CardContent>
+        </Card>
+      )}
+      {/* Banner: RUNTIME_PERMISSION_DENIED — 企业 AD / 杀软"勒索软件防护"拦截
+          runtime 目录创建时，给用户一条可操作的指引。在"未启动" banner 前
+          展示，因为这是导致"未启动"的根因，应优先看到。
+
+          走 i18n 的 status.runtimePermissionDenied* 字段；按钮使用专门的
+          openakita_open_runtime_root 命令——它在目录尚未创建时会自动回退到
+          最近一级存在的祖先，避免通用 show_item_in_folder 抛 "Path does not
+          exist"。 */}
+      {IS_TAURI && permissionDenied && runtimeLastError && (
+        <Card className="gap-0 border-rose-500/40 bg-rose-500/10 py-0 shadow-sm">
+          <CardContent className="flex flex-wrap items-center gap-4 px-5 py-4">
+            <div className="text-2xl leading-none text-rose-600">&#9940;</div>
+            <div className="min-w-[200px] flex-1">
+              <div className="mb-1 text-sm font-semibold text-rose-700 dark:text-rose-400">
+                {t("status.runtimePermissionDeniedTitle")}
+              </div>
+              <div className="text-xs text-rose-700/80 dark:text-rose-400/80">
+                {runtimeLastError.lastError?.split("|").slice(1).join("|") ||
+                  t("status.runtimePermissionDeniedHint")}
+              </div>
+              <div className="mt-1 text-[11px] text-rose-700/70 dark:text-rose-400/70 break-all">
+                {runtimeLastError.runtimeRoot}
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                try {
+                  const r = await invoke<{ opened: string; fellBack: boolean }>(
+                    "openakita_open_runtime_root"
+                  );
+                  if (r.fellBack) {
+                    notifySuccess(
+                      t("status.runtimePermissionDeniedFallbackToParent", {
+                        path: r.opened,
+                      })
+                    );
+                  }
+                } catch (e) {
+                  notifyError(String(e));
+                }
+              }}
+            >
+              <FolderOpen size={14} className="mr-1" />
+              {t("status.runtimePermissionDeniedOpen")}
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -271,7 +413,7 @@ export function StatusView(props: StatusViewProps) {
                 const _b = notifyLoading(t("status.restarting"));
                 try {
                   await doStopService(effectiveWsId);
-                  await waitForServiceDown("http://127.0.0.1:18900", 15000);
+                  await waitForServiceDown(httpApiBase(), 15000);
                   dismissLoading(_b);
                   await doStartLocalService(effectiveWsId);
                 } catch (e) { notifyError(String(e)); dismissLoading(_b); }
@@ -313,6 +455,47 @@ export function StatusView(props: StatusViewProps) {
         {(heartbeatState === "dead" && !serviceStatus?.running) && (
           <TroubleshootPanel t={t} />
         )}
+
+        <div className="statusPanelRow">
+          <div className="statusPanelIcon">
+            <Zap size={18} />
+          </div>
+          <div className="statusPanelInfo">
+            <div className="statusPanelTitle">
+              Workspace Dependencies
+              <Badge variant="outline" className="statusBadgeInline">
+                Python / Node
+              </Badge>
+            </div>
+            <div className="statusPanelDesc">
+              Python: {runtimeDiag?.environment?.toolchain?.python?.abi || "unknown"}
+              {" · "}
+              Node: {runtimeDiag?.environment?.toolchain?.node?.node?.version || "not checked"}
+              {" · "}
+              npm: {runtimeDiag?.environment?.toolchain?.node?.npm?.version || "not checked"}
+              {runtimeDiag?.environment?.toolchain?.node?.managed_node ? " · managed Node available" : ""}
+              {runtimeDiag?.environment?.toolchain?.node?.seedPackaged === false ? " · Node seed not packaged" : ""}
+              {runtimeDiag?.environment?.toolchain?.python?.seedPackaged === false ? " · Python seed not packaged" : ""}
+              {runtimeDiag?.environment?.runtime?.seed_dirs?.length ? " · readonly seed enabled" : ""}
+            </div>
+            {runtimeDiag?.environment?.toolchain?.node?.workspace_cache && (
+              <div className="statusPanelDesc">
+                Workspace cache: {runtimeDiag.environment.toolchain.node.workspace_cache}
+              </div>
+            )}
+          </div>
+          <div className="statusPanelActions">
+            <Button size="sm" variant="outline" className="statusBtn" onClick={refreshRuntimeDiagnostics} disabled={runtimeDiagChecking}>
+              {runtimeDiagChecking ? <Loader2 className="animate-spin" size={13} /> : <Activity size={13} />} Check
+            </Button>
+            <Button size="sm" variant="outline" className="statusBtn" onClick={() => setView("skills")}>
+              Skills <ArrowRight size={13} />
+            </Button>
+            <Button size="sm" variant="outline" className="statusBtn" onClick={() => setView("plugins")}>
+              Plugins <ArrowRight size={13} />
+            </Button>
+          </div>
+        </div>
 
         {/* Link diagnostics + per-session cache reset */}
         <LinkDiagnosticsPanel

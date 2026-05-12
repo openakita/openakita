@@ -14,7 +14,6 @@ import importlib
 import json
 import logging
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -27,7 +26,6 @@ from rich.table import Table
 from .config import settings
 from .core.agent import Agent
 from .logging import setup_logging
-from .python_compat import patch_simplejson_jsondecodeerror
 
 # MCP stdio 子进程模式：stdout 专属 JSONRPC 协议，禁止一切控制台日志输出
 _is_mcp_subprocess = "run-mcp-module" in sys.argv
@@ -147,415 +145,11 @@ async def _init_orchestrator():
         logger.warning(f"[Main] Failed to deploy presets on orchestrator init: {e}")
 
 
-# ==================== IM 通道依赖自动安装 ====================
-
-from .channels.deps import CHANNEL_DEPS as _CHANNEL_DEPS
-
-
-def _patch_backports_zstd() -> None:
-    """Patch incomplete ``backports.zstd`` so that ``urllib3 >= 2.3`` can load.
-
-    Some environments (notably PyInstaller bundles) ship an older
-    ``backports-zstd`` that exposes the decompressor but is missing the
-    ``ZstdError`` exception class.  ``urllib3.response`` references this
-    attribute at *class-definition time* in ``BaseHTTPResponse``, so the
-    ``AttributeError`` is raised during ``import urllib3`` — before any
-    user code can catch it.
-
-    We add a thin stub so the import succeeds.  The stub inherits from
-    ``Exception``, which is the correct base class for ``ZstdError``.
-    """
-    try:
-        import backports.zstd as _bzstd
-    except ImportError:
-        return
-
-    if hasattr(_bzstd, "ZstdError"):
-        return
-
-    class _ZstdError(Exception):
-        """Stub ``ZstdError`` for backports.zstd compatibility."""
-
-    _bzstd.ZstdError = _ZstdError
-    logger.debug("Patched backports.zstd: added missing ZstdError stub")
-
-
-def _build_isolated_pip_env(py_path: Path, *, is_frozen: bool) -> dict[str, str]:
-    """Build a sanitized subprocess env for ``python -m pip`` execution."""
-    pip_env = os.environ.copy()
-    for harmful_key in (
-        "PYTHONPATH",
-        "PYTHONHOME",
-        "PYTHONSTARTUP",
-        "VIRTUAL_ENV",
-        "CONDA_PREFIX",
-        "CONDA_DEFAULT_ENV",
-        "CONDA_SHLVL",
-        "CONDA_PYTHON_EXE",
-        "PIP_INDEX_URL",
-        "PIP_TARGET",
-        "PIP_PREFIX",
-        "PIP_USER",
-        "PIP_REQUIRE_VIRTUALENV",
-    ):
-        pip_env.pop(harmful_key, None)
-
-    if is_frozen and py_path.parent.name == "_internal":
-        path_parts = [str(py_path.parent)]
-        for sub in ("Lib", "DLLs"):
-            p = py_path.parent / sub
-            if p.is_dir():
-                path_parts.append(str(p))
-        pip_env["PYTHONPATH"] = os.pathsep.join(path_parts)
-
-    return pip_env
-
-
-def _probe_python_runtime(py: str, env: dict[str, str], *, extra: dict) -> tuple[bool, str]:
-    """Probe whether a Python executable can import encodings/pip normally."""
-    try:
-        result = subprocess.run(
-            [py, "-c", "import encodings, pip; print('ok')"],
-            env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=20,
-            **extra,
-        )
-    except Exception as exc:
-        return False, f"{type(exc).__name__}: {exc}"
-
-    if result.returncode == 0:
-        return True, ""
-    tail = (result.stderr or result.stdout or "").strip()
-    return False, tail[-600:]
-
-
-def _find_bundled_channel_wheels() -> Path | None:
-    """Locate bundled offline wheels for IM deps if present."""
-    exe = Path(sys.executable).resolve()
-    candidates = [
-        exe.parent.parent / "modules" / "channel-deps" / "wheels",
-        exe.parent / "modules" / "channel-deps" / "wheels",
-    ]
-    for p in candidates:
-        if p.is_dir():
-            return p
-    return None
-
-
 def _ensure_channel_deps() -> None:
-    """
-    检查已启用的 IM 通道所需依赖，缺失的自动安装到隔离目录。
+    """检查已启用 IM 通道依赖，并安装到隔离 channel-deps 目录。"""
+    from openakita.runtime_channel_deps import ensure_channel_dependencies
 
-    安装策略：使用 ``pip install --target`` 将缺失依赖安装到
-    ``~/.openakita/modules/channel-deps/site-packages``，与外部 Python
-    环境完全隔离，避免版本冲突。该目录会被 ``inject_module_paths()``
-    自动扫描并注入 sys.path。
-
-    Telegram 为核心依赖，始终包含在安装包中，不需检查。
-    """
-    _patch_backports_zstd()
-    patch_simplejson_jsondecodeerror(logger=logger)
-    try:
-        from openakita.runtime_env import inject_module_paths_runtime
-
-        inject_module_paths_runtime()
-    except Exception:
-        pass
-
-    enabled_channels: list[str] = []
-    if settings.feishu_enabled:
-        enabled_channels.append("feishu")
-    if settings.dingtalk_enabled:
-        enabled_channels.append("dingtalk")
-    if settings.wework_enabled:
-        enabled_channels.append("wework")
-    if settings.wework_ws_enabled:
-        enabled_channels.append("wework_ws")
-    if settings.onebot_enabled:
-        enabled_channels.append("onebot")
-    if settings.qqbot_enabled:
-        enabled_channels.append("qqbot")
-    if settings.wechat_enabled:
-        enabled_channels.append("wechat")
-
-    # 补充从 im_bots 中提取已启用的通道类型，确保依赖检测覆盖 UI 创建的 Bot
-    for bot_cfg in settings.im_bots or []:
-        if bot_cfg.get("enabled", True):
-            channel_type = bot_cfg.get("type", "")
-            if channel_type and channel_type not in enabled_channels:
-                enabled_channels.append(channel_type)
-
-    if not enabled_channels:
-        return
-
-    missing: list[str] = []
-    failed_import_names: list[str] = []
-    for channel in enabled_channels:
-        for import_name, pip_name in _CHANNEL_DEPS.get(channel, []):
-            try:
-                importlib.import_module(import_name)
-            except ImportError as exc:
-                # requests 在检测到 simplejson 时会导入 JSONDecodeError。
-                # 某些旧/损坏的 simplejson 缺失该符号，导致 lark_oapi 导入失败。
-                if (
-                    import_name == "lark_oapi"
-                    and "JSONDecodeError" in str(exc)
-                    and "simplejson" in str(exc)
-                ):
-                    patch_simplejson_jsondecodeerror(logger=logger)
-                    try:
-                        importlib.import_module(import_name)
-                        logger.info(
-                            "lark_oapi import recovered after simplejson compatibility patch"
-                        )
-                        continue
-                    except Exception:
-                        pass
-                if pip_name not in missing:
-                    missing.append(pip_name)
-                failed_import_names.append(import_name)
-            except Exception as e:
-                logger.warning(
-                    f"Import check for {import_name} ({channel}) hit unexpected error: "
-                    f"{type(e).__name__}: {e} — skipping auto-install for this dep"
-                )
-
-    if not missing:
-        return
-
-    pkg_list = ", ".join(missing)
-    logger.info(f"IM 通道依赖自动安装: {pkg_list} ...")
-
-    from openakita.runtime_env import (
-        IS_FROZEN,
-        apply_agent_python_environment,
-        get_app_python_executable,
-        get_channel_deps_dir,
-        get_python_executable,
-        resolve_pip_index,
-    )
-
-    py = get_app_python_executable() or get_python_executable()
-    if not py or (IS_FROZEN and py == sys.executable):
-        logger.warning("未找到项目自带的 Python，无法自动安装依赖")
-        console.print(
-            f"[yellow]⚠[/yellow] 未找到 Python 解释器，无法自动安装: [bold]{pkg_list}[/bold]\n"
-            f"  请前往「设置中心 → Python 环境」点击「一键修复」"
-        )
-        return
-
-    target_dir = get_channel_deps_dir()
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    # 国内镜像多源回退：优先统一 runtime manifest / 设置中心选择。
-    _effective_index = resolve_pip_index()
-    _mirror_sources: list[tuple[str, str]] = [
-        (_effective_index["url"], _effective_index.get("trusted_host", ""))
-    ]
-    _mirror_sources.extend(
-        [
-            ("https://mirrors.aliyun.com/pypi/simple/", "mirrors.aliyun.com"),
-            ("https://pypi.tuna.tsinghua.edu.cn/simple/", "pypi.tuna.tsinghua.edu.cn"),
-            ("https://pypi.mirrors.ustc.edu.cn/simple/", "pypi.mirrors.ustc.edu.cn"),
-            ("https://pypi.org/simple/", "pypi.org"),
-        ]
-    )
-
-    extra: dict = {}
-    if sys.platform == "win32":
-        extra["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-    py_path = Path(py)
-    pip_env = apply_agent_python_environment(_build_isolated_pip_env(py_path, is_frozen=IS_FROZEN))
-
-    # _internal/python.exe 在部分用户机器上会因为 PythonHome 未稳定而报
-    # "No module named encodings"。先做探测，必要时追加 PYTHONHOME 再重试。
-    runtime_ok, probe_err = _probe_python_runtime(py, pip_env, extra=extra)
-    if not runtime_ok and IS_FROZEN and py_path.parent.name == "_internal":
-        pip_env["PYTHONHOME"] = str(py_path.parent)
-        runtime_ok, probe_err = _probe_python_runtime(py, pip_env, extra=extra)
-        if runtime_ok:
-            logger.info("内置 Python 通过 PYTHONHOME 修正后可用: %s", py)
-
-    if not runtime_ok:
-        logger.error("自动安装依赖前的 Python 运行时探测失败: %s", probe_err)
-        console.print(
-            "[red]✗[/red] Python 运行环境异常，无法安装 IM 依赖。\n"
-            "  建议：前往「设置中心 → Python 环境」点击「一键修复」。"
-        )
-        return
-
-    def _on_install_success(source_label: str) -> None:
-        logger.info(f"依赖安装成功 (source={source_label}, target={target_dir}): {pkg_list}")
-        console.print(f"[green]✓[/green] 依赖安装成功: {pkg_list}")
-
-        # 清理之前失败的导入在 sys.modules 中留下的残余条目，
-        # 确保后续 import 能从新安装的路径加载完整模块。
-        stale = [
-            k
-            for k in sys.modules
-            if any(k == n or k.startswith(n + ".") for n in failed_import_names)
-        ]
-        for k in stale:
-            del sys.modules[k]
-        if stale:
-            logger.debug(f"Cleared {len(stale)} stale sys.modules entries: {stale[:10]}")
-
-        importlib.invalidate_caches()
-        target_str = str(target_dir)
-        if target_str not in sys.path:
-            sys.path.append(target_str)
-            logger.info(f"已注入通道依赖路径: {target_str}")
-        try:
-            from openakita.runtime_env import inject_module_paths_runtime
-
-            inject_module_paths_runtime()
-        except Exception:
-            pass
-
-    installed = False
-
-    # 离线优先：若安装包内带了 channel-deps wheels，先走离线安装。
-    bundled_wheels = _find_bundled_channel_wheels() if IS_FROZEN else None
-    if bundled_wheels is not None:
-        console.print(
-            f"[yellow]⏳[/yellow] 自动安装 IM 通道依赖: [bold]{pkg_list}[/bold] "
-            f"(源: offline wheels)"
-        )
-        offline_cmd = [
-            py,
-            "-m",
-            "pip",
-            "install",
-            "--no-index",
-            "--find-links",
-            str(bundled_wheels),
-            "--prefer-binary",
-            *missing,
-        ]
-        try:
-            offline = subprocess.run(
-                offline_cmd,
-                env=pip_env,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=180,
-                **extra,
-            )
-            if offline.returncode == 0:
-                _on_install_success("offline")
-                installed = True
-            else:
-                err_tail = (offline.stderr or offline.stdout or "").strip()[-400:]
-                logger.warning("离线 wheels 安装失败，回退在线镜像: %s", err_tail)
-        except Exception as e:
-            logger.warning(f"离线 wheels 安装异常，回退在线镜像: {e}")
-
-    def _pip_install_via_mirrors(
-        packages: list[str],
-        label_prefix: str = "",
-    ) -> bool:
-        """Try installing *packages* through all mirror sources. Return True on success."""
-        for idx, (index_url, trusted_host) in enumerate(_mirror_sources):
-            source_label = trusted_host or index_url
-            if idx == 0:
-                console.print(
-                    f"[yellow]⏳[/yellow] {label_prefix}自动安装 IM 通道依赖: "
-                    f"[bold]{', '.join(packages)}[/bold] (源: {source_label}) ..."
-                )
-            else:
-                console.print(f"[yellow]⏳[/yellow] 切换镜像源重试: {source_label} ...")
-
-            pip_cmd = [
-                py,
-                "-m",
-                "pip",
-                "install",
-                "-i",
-                index_url,
-                "--prefer-binary",
-                "--timeout",
-                "60",
-                *packages,
-            ]
-            if trusted_host:
-                pip_cmd.extend(["--trusted-host", trusted_host])
-
-            try:
-                result = subprocess.run(
-                    pip_cmd,
-                    env=pip_env,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=120,
-                    **extra,
-                )
-                if result.returncode == 0:
-                    _on_install_success(source_label)
-                    return True
-                else:
-                    err_tail = (result.stderr or result.stdout or "").strip()[-300:]
-                    logger.warning(
-                        f"镜像源 {source_label} 安装失败 (exit {result.returncode}): {err_tail}"
-                    )
-            except subprocess.TimeoutExpired:
-                logger.warning(f"镜像源 {source_label} 安装超时")
-            except Exception as e:
-                logger.warning(f"镜像源 {source_label} 安装异常: {e}")
-        return False
-
-    if not installed:
-        installed = _pip_install_via_mirrors(missing)
-
-    # 批量安装失败且有多个包时，逐个重试——避免一个 C 扩展编译失败拖垮纯 Python 包
-    if not installed and len(missing) > 1:
-        logger.info("批量安装失败，尝试逐个安装 ...")
-        per_pkg_ok: list[str] = []
-        per_pkg_fail: list[str] = []
-        for pkg in missing:
-            if _pip_install_via_mirrors([pkg], label_prefix="[逐个] "):
-                per_pkg_ok.append(pkg)
-            else:
-                per_pkg_fail.append(pkg)
-        if per_pkg_ok:
-            installed = True
-            if per_pkg_fail:
-                fail_list = ", ".join(per_pkg_fail)
-                logger.warning(f"部分依赖安装失败（不影响已安装的包）: {fail_list}")
-                console.print(
-                    f"[yellow]⚠[/yellow] 部分依赖安装失败: {fail_list}\n"
-                    f"  相关功能（如语音转码）可能不可用，核心 IM 通道不受影响"
-                )
-
-    if not installed:
-        logger.error(f"所有镜像源均安装失败: {pkg_list}")
-        console.print(
-            f"[red]✗[/red] 依赖安装失败（已尝试所有镜像源）: {pkg_list}\n"
-            f"  请检查网络连接，或前往「设置中心 → Python 环境」点击「一键修复」"
-        )
-        return
-
-    # 安装后验证：确保模块真正可导入
-    still_broken: list[str] = []
-    for name in failed_import_names:
-        try:
-            importlib.import_module(name)
-        except Exception as exc:
-            logger.error(f"依赖 {name} 安装后仍无法导入: {exc}", exc_info=True)
-            still_broken.append(name)
-    if still_broken:
-        console.print(
-            f"[yellow]⚠[/yellow] 以下依赖安装成功但导入失败: {', '.join(still_broken)}\n"
-            f"  日志中有详细错误信息，请反馈给开发者"
-        )
+    ensure_channel_dependencies(print_fn=console.print)
 
 
 def _create_bot_adapter(
@@ -2040,8 +1634,14 @@ def serve(
     # 让 Tauri 心跳读到 phase=starting/http_ready=false，避免 dual-venv hack
     # 期间（cold start 90~120s）前端因为读不到任何信号而误判 backend 已死。
     # 这一段只用 stdlib，不引入任何新依赖，保证即使后续 import 失败心跳也已落盘。
+    #
+    # 心跳路径优先用 settings.user_workspace_path（Tauri 启动时通过
+    # `--workspace <ws_dir>` 传入，或环境变量 OPENAKITA_USER_WORKSPACE）。
+    # 用 Path.cwd() 作 fallback 仅在 CLI 用户从其它目录跑 `openakita serve`
+    # 时生效；那种场景 Tauri 不读心跳，所以即使落到 cwd 也不会让前端误判。
     try:
-        _early_hb_path = Path.cwd() / "data" / "backend.heartbeat"
+        _hb_root = getattr(settings, "user_workspace_path", None) or Path.cwd()
+        _early_hb_path = Path(_hb_root) / "data" / "backend.heartbeat"
         _early_hb_path.parent.mkdir(parents=True, exist_ok=True)
         _early_hb_tmp = _early_hb_path.with_suffix(".heartbeat.tmp")
         _early_hb_tmp.write_text(
@@ -2084,8 +1684,13 @@ def serve(
     # ── 心跳文件机制 ──
     # 后端进程通过独立守护线程定期写入心跳文件，供 Tauri 侧判断进程真实健康状态。
     # 使用独立线程而非 asyncio task，确保即使 event loop 卡死，心跳也能持续（或停止写入
-    # 以表明进程已卡死）。心跳文件位于 {CWD}/data/backend.heartbeat。
-    _heartbeat_file = Path.cwd() / "data" / "backend.heartbeat"
+    # 以表明进程已卡死）。心跳文件位于 {user_workspace_path}/data/backend.heartbeat
+    # （与上方早期心跳路径对齐，避免 CLI 模式下 cwd 漂移导致写入与读取分裂）。
+    _heartbeat_file = (
+        Path(getattr(settings, "user_workspace_path", None) or Path.cwd())
+        / "data"
+        / "backend.heartbeat"
+    )
     _heartbeat_stop = threading.Event()
     _heartbeat_phase = "starting"  # "starting" | "initializing" | "http_ready" | "starting_im" | "running" | "restarting"
     _heartbeat_http_ready = False
