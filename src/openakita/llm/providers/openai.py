@@ -101,6 +101,30 @@ def _supports_max_reasoning_effort(provider: str, base_url: str, model: str) -> 
     )
 
 
+def _is_minimax_endpoint(provider: str, base_url: str, model: str) -> bool:
+    """Whether this OpenAI-compatible endpoint is MiniMax."""
+    provider_l = (provider or "").lower()
+    base_l = (base_url or "").lower()
+    model_l = (model or "").lower()
+    return (
+        provider_l in {"minimax", "minimax-cn", "minimax-int"}
+        or "minimax" in provider_l
+        or "minimaxi" in base_l
+        or "minimax.io" in base_l
+        or "minimax" in model_l
+    )
+
+
+def _minimax_thinking_depth(depth: str | None) -> str | None:
+    """Map OpenAkita thinking depth to MiniMax's documented low/medium/high enum."""
+    normalized = _normalize_thinking_depth(depth)
+    if not normalized:
+        return None
+    if normalized == "max":
+        return "high"
+    return normalized
+
+
 def _reasoning_effort_for_depth(
     *,
     provider: str,
@@ -945,6 +969,12 @@ class OpenAIProvider(LLMProvider):
         if request.extra_params:
             body.update(request.extra_params)
 
+        is_minimax = _is_minimax_endpoint(
+            self.config.provider,
+            self.base_url,
+            self.config.model,
+        )
+
         # ── 本地端点检测 ──
         # Ollama / LM Studio 等本地推理引擎不支持 OpenAI 风格的
         # thinking: {"type": "enabled"} 嵌套参数，但 Ollama 0.9+ 支持
@@ -1070,6 +1100,15 @@ class OpenAIProvider(LLMProvider):
                 body.pop("reasoning_effort", None)
                 if "thinking" in body:
                     body["thinking"] = {"type": "disabled"}
+
+        # MiniMax accepts only low/medium/high for the top-level thinking_depth
+        # field. OpenAkita's UI exposes "max"; clamp it at the provider boundary.
+        if is_minimax:
+            depth = _minimax_thinking_depth(request.thinking_depth or body.get("thinking_depth"))
+            if depth:
+                body["thinking_depth"] = depth
+            else:
+                body.pop("thinking_depth", None)
 
         # ── 本地端点清理 ──
         # 移除可能通过 extra_params 泄漏的、本地引擎不支持的思考参数。

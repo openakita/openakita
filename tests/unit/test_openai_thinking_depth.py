@@ -88,6 +88,49 @@ def test_generic_openai_compatible_max_does_not_leak_unsupported_effort():
     assert body["reasoning_effort"] == "high"
 
 
+def test_minimax_m27_max_maps_top_level_thinking_depth_to_high():
+    provider = _provider(
+        provider="minimax",
+        model="MiniMax-M2.7",
+        base_url="https://api.minimax.chat/v1",
+    )
+
+    body = provider._build_request_body(_request("max"))
+
+    assert body["thinking_depth"] == "high"
+
+
+def test_minimax_m27_extra_params_max_is_sanitized_to_high():
+    provider = OpenAIProvider(
+        EndpointConfig(
+            name="test",
+            provider="minimax",
+            api_type="openai",
+            base_url="https://api.minimax.chat/v1",
+            api_key="sk-test",
+            model="MiniMax-M2.7",
+            capabilities=["text", "thinking"],
+            extra_params={"thinking_depth": "max"},
+        )
+    )
+
+    body = provider._build_request_body(_request("medium"))
+
+    assert body["thinking_depth"] == "medium"
+
+
+def test_dashscope_hosted_minimax_m27_max_maps_thinking_depth_to_high():
+    provider = _provider(
+        provider="dashscope",
+        model="MiniMax-M2.7",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
+
+    body = provider._build_request_body(_request("xhigh"))
+
+    assert body["thinking_depth"] == "high"
+
+
 def test_deepseek_v4_pro_is_inferred_as_thinking_model():
     caps = infer_capabilities("deepseek-v4-pro", provider_slug="deepseek")
 
