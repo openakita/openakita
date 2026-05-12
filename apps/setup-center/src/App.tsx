@@ -4730,34 +4730,36 @@ function MainApp() {
     );
     const backendStartupVisible = obBackendStartup.phase !== "idle" && obStep !== "ob-progress" && obStep !== "ob-done";
     const backendStartupNotice = backendStartupVisible ? (
-      <Card className={`w-full border text-left text-[13px] ${
+      <div className={`mb-4 w-full rounded-xl border px-3.5 py-2 text-left text-[12px] shadow-sm ${
         obBackendStartup.phase === "error"
           ? "border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-950/30"
           : obBackendStartup.phase === "ready"
             ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-500/40 dark:bg-emerald-950/30"
             : "border-blue-300 bg-blue-50/60 dark:border-blue-500/40 dark:bg-blue-950/30"
       }`}>
-        <CardContent className="py-3 px-4 space-y-1.5">
-          <div className="flex items-center gap-2 font-semibold">
-            {["checking", "starting", "waiting"].includes(obBackendStartup.phase)
-              ? <Loader2 className="size-4 text-blue-500 shrink-0 animate-spin" />
-              : obBackendStartup.phase === "ready"
-                ? <CheckCircle2 className="size-4 text-emerald-500 shrink-0" />
-                : <AlertTriangle className="size-4 text-amber-500 shrink-0" />}
-            {obBackendStartup.phase === "ready"
-              ? t("onboarding.backendStartup.ready")
-              : obBackendStartup.phase === "error"
-                ? t("onboarding.backendStartup.error")
-                : t("onboarding.backendStartup.title")}
+        <div className="flex items-start gap-2">
+          {["checking", "starting", "waiting"].includes(obBackendStartup.phase)
+            ? <Loader2 className="mt-0.5 size-3.5 text-blue-500 shrink-0 animate-spin" />
+            : obBackendStartup.phase === "ready"
+              ? <CheckCircle2 className="mt-0.5 size-3.5 text-emerald-500 shrink-0" />
+              : <AlertTriangle className="mt-0.5 size-3.5 text-amber-500 shrink-0" />}
+          <div className="min-w-0">
+            <div className="font-semibold leading-5">
+              {obBackendStartup.phase === "ready"
+                ? t("onboarding.backendStartup.ready")
+                : obBackendStartup.phase === "error"
+                  ? t("onboarding.backendStartup.error")
+                  : t("onboarding.backendStartup.title")}
+            </div>
+            <p className="leading-5 text-muted-foreground">
+              {obBackendStartup.detail || t("onboarding.backendStartup.desc")}
+              {["checking", "starting", "waiting"].includes(obBackendStartup.phase) && obBackendStartup.elapsedSec > 0
+                ? ` ${t("onboarding.backendStartup.elapsed", { seconds: obBackendStartup.elapsedSec })}`
+                : ""}
+            </p>
           </div>
-          <p className="text-muted-foreground">
-            {obBackendStartup.detail || t("onboarding.backendStartup.desc")}
-            {["checking", "starting", "waiting"].includes(obBackendStartup.phase) && obBackendStartup.elapsedSec > 0
-              ? ` ${t("onboarding.backendStartup.elapsed", { seconds: obBackendStartup.elapsedSec })}`
-              : ""}
-          </p>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     ) : null;
 
     switch (obStep) {

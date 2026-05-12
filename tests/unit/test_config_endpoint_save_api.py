@@ -329,6 +329,34 @@ def test_delete_stt_endpoint_accepts_slash_in_name(monkeypatch):
     }
 
 
+def test_delete_last_chat_endpoint_is_allowed_when_min_endpoint_flag_is_on(monkeypatch):
+    from openakita.core.feature_flags import clear_overrides, set_flag
+
+    clear_overrides()
+    set_flag("llm_view_min_endpoints_v1", True)
+    manager = _FakeEndpointManager()
+    manager.endpoints = [{"name": "solo", "provider": "dashscope", "model": "qwen3"}]
+    monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: manager)
+    monkeypatch.setattr(config_routes, "_trigger_reload", lambda request: {"status": "ok"})
+
+    app = FastAPI()
+    app.include_router(config_routes.router)
+    client = TestClient(app)
+
+    try:
+        response = client.delete("/api/config/endpoint/solo?endpoint_type=endpoints")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        assert manager.deleted_endpoint == {
+            "name": "solo",
+            "endpoint_type": "endpoints",
+            "clean_env": True,
+        }
+    finally:
+        clear_overrides()
+
+
 def test_apply_llm_runtime_config_refreshes_all_runtime_components(tmp_path, monkeypatch):
     config_path = tmp_path / "data" / "llm_endpoints.json"
     config_path.parent.mkdir()
