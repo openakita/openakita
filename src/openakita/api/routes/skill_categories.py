@@ -58,6 +58,43 @@ async def _propagate(request: Request, action: str, *, rescan: bool = True) -> N
         logger.warning("propagate_skill_change(%s) failed: %s", action, e)
 
 
+async def _resolve_skill_for_move(request: Request, skill_id: str) -> tuple[bool, bool]:
+    """解析技能是否存在及是否系统技能。
+
+    优先使用运行时 registry；若未命中则回退到磁盘全量扫描，避免
+    disabled 外部技能被 prune 后出现“列表可见但移动时报不存在”。
+
+    Returns:
+        (exists, is_system)
+    """
+    agent = _resolve_agent(request)
+    if agent is None:
+        return False, False
+
+    skill_registry = getattr(agent, "skill_registry", None)
+    if skill_registry is not None:
+        entry = skill_registry.get(skill_id)
+        if entry is not None:
+            return True, bool(getattr(entry, "system", False))
+
+    # fallback: 从磁盘全量扫描确认（不依赖当前运行时 registry 的 prune 状态）
+    from openakita.skills.loader import SkillLoader
+
+    try:
+        from openakita.config import settings
+
+        base_path = Path(settings.project_root)
+    except Exception:
+        base_path = Path.cwd()
+
+    loader = SkillLoader()
+    await asyncio.to_thread(loader.load_all, base_path)
+    loaded = loader.registry.get(skill_id)
+    if loaded is None:
+        return False, False
+    return True, bool(getattr(loaded, "system", False))
+
+
 # ── GET /api/skill-categories ──────────────────────────────────────────
 
 
@@ -121,6 +158,9 @@ async def list_categories(request: Request):
                 "total": total,
                 "enabled": enabled,
                 "system_readonly": bool(meta.system_readonly) if meta else False,
+                # 是否来自 CategoryStore 的显式分类定义。
+                # False 表示该分类仅来自技能 metadata/frontmatter 的推断聚合。
+                "declared": bool(meta is not None),
             }
         )
 
@@ -397,24 +437,39 @@ async def move_skill(request: Request):
     if not skill_id:
         raise HTTPException(status_code=400, detail="skill_id 必填")
 
+    exists, is_system_skill = await _resolve_skill_for_move(request, skill_id)
+    if not exists:
+        raise HTTPException(status_code=404, detail=f"技能不存在: {skill_id}")
+    if is_system_skill:
+        raise HTTPException(status_code=409, detail="系统技能不可移动")
+
     agent = _resolve_agent(request)
     if agent is None:
         raise HTTPException(status_code=503, detail="Agent 尚未就绪")
-    skill_registry = getattr(agent, "skill_registry", None)
-    if skill_registry is None:
-        raise HTTPException(status_code=503, detail="SkillRegistry 未初始化")
-
-    entry = skill_registry.get(skill_id)
-    if entry is None:
-        raise HTTPException(status_code=404, detail=f"技能不存在: {skill_id}")
-    if getattr(entry, "system", False):
-        raise HTTPException(status_code=409, detail="系统技能不可移动")
 
     store = _resolve_store(request)
     if store is None:
         raise HTTPException(status_code=503, detail="CategoryStore 未初始化")
 
     if target_category:
+        if not store.has_category(target_category):
+            raise HTTPException(status_code=404, detail=f"分类不存在: {target_category}")
+        loader = getattr(agent, "skill_loader", None)
+        if loader is not None:
+            try:
+                for s in loader.registry.list_all():
+                    if (s.category or "Uncategorized") == target_category and getattr(s, "system", False):
+                        raise HTTPException(status_code=409, detail="外部技能不可移动到系统分类")
+            except HTTPException:
+                raise
+            except Exception:
+                # loader 状态异常时回退到下方 registry 标记检查
+                pass
+        cat_registry = getattr(agent, "skill_category_registry", None)
+        if cat_registry is not None:
+            target_entry = cat_registry.get(target_category)
+            if target_entry is not None and target_entry.system_readonly:
+                raise HTTPException(status_code=409, detail="外部技能不可移动到系统分类")
         store.bind_skill(skill_id, target_category)
     else:
         store.unbind_skill(skill_id)

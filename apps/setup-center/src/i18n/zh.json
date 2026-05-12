@@ -370,6 +370,12 @@
     "aiOrganizeModified": "已手动调整 {{count}} 项",
     "aiOrganizeNoSkillsInCategory": "该分类下暂无技能",
     "aiOrganizeSelectCategory": "选择分类",
+    "aiOrganizeCategoryName": "分类名称",
+    "aiOrganizeCategoryDescription": "分类描述",
+    "aiOrganizeCategoryNameRequired": "分类名称不能为空",
+    "aiOrganizeCategoryNameDuplicate": "分类名称不能重复",
+    "aiOrganizeMoveUp": "上移分类",
+    "aiOrganizeMoveDown": "下移分类",
     "loadingContent": "正在加载技能内容...",
     "readOnlyHint": "系统内置技能，不可编辑",
     "filePath": "文件路径",
@@ -428,6 +434,8 @@
       "moveSubtitle": "为「{{name}}」选择目标分类",
       "noCategoriesHint": "暂无自定义分类，请先新建分类",
       "moved": "已移动技能到目标分类",
+      "moveSystemCategoryDenied": "外部技能不允许移动到系统分类",
+      "notDeclaredReadonly": "该分类来自技能元数据，需先调整技能分类后再操作",
       "showSystem": "显示系统技能"
     }
   },

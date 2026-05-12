@@ -370,6 +370,12 @@
     "aiOrganizeModified": "{{count}} manual adjustment(s)",
     "aiOrganizeNoSkillsInCategory": "No skills in this category",
     "aiOrganizeSelectCategory": "Select category",
+    "aiOrganizeCategoryName": "Category name",
+    "aiOrganizeCategoryDescription": "Category description",
+    "aiOrganizeCategoryNameRequired": "Category name is required",
+    "aiOrganizeCategoryNameDuplicate": "Category names must be unique",
+    "aiOrganizeMoveUp": "Move category up",
+    "aiOrganizeMoveDown": "Move category down",
     "loadingContent": "Loading skill content...",
     "readOnlyHint": "Built-in system skill, read-only",
     "filePath": "File Path",
@@ -428,6 +434,8 @@
       "moveSubtitle": "Choose a category for \"{{name}}\"",
       "noCategoriesHint": "No custom categories yet. Create one first.",
       "moved": "Skill moved to target category",
+      "moveSystemCategoryDenied": "External skills cannot be moved to system categories",
+      "notDeclaredReadonly": "This category comes from skill metadata. Adjust skill categories first.",
       "showSystem": "Show system skills"
     }
   },

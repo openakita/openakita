@@ -541,8 +541,14 @@ async def apply_skill_organization(request: Request):
     body = await request.json()
     categories = body.get("categories") or []
     bindings = body.get("bindings") or {}
+    rename_map_raw = body.get("rename_map") or {}
+    category_order_raw = body.get("category_order") or []
     if not isinstance(categories, list) or not isinstance(bindings, dict):
         raise HTTPException(status_code=400, detail="categories 和 bindings 格式无效")
+    if rename_map_raw is not None and not isinstance(rename_map_raw, dict):
+        raise HTTPException(status_code=400, detail="rename_map 格式无效")
+    if category_order_raw is not None and not isinstance(category_order_raw, list):
+        raise HTTPException(status_code=400, detail="category_order 格式无效")
 
     try:
         external_skills, _ = await _load_external_skills_for_organize()
@@ -553,6 +559,8 @@ async def apply_skill_organization(request: Request):
     store = CategoryStore()
     store.reload()
 
+    valid_categories_ordered: list[tuple[str, str]] = []
+    seen_category_names: set[str] = set()
     valid_categories: dict[str, str] = {}
     for item in categories:
         if not isinstance(item, dict):
@@ -560,14 +568,73 @@ async def apply_skill_organization(request: Request):
         name = str(item.get("name") or "").strip()
         if not is_valid_category_name(name):
             continue
+        if name in seen_category_names:
+            continue
         desc = str(item.get("description") or "").strip()
+        valid_categories_ordered.append((name, desc))
         valid_categories[name] = desc
+        seen_category_names.add(name)
 
     if not valid_categories:
         raise HTTPException(status_code=400, detail="没有有效分类可应用")
 
+    rename_map: dict[str, str] = {}
+    for old_raw, new_raw in rename_map_raw.items():
+        old_name = str(old_raw).strip()
+        new_name = str(new_raw).strip()
+        if not old_name or not new_name or old_name == new_name:
+            continue
+        if not is_valid_category_name(new_name):
+            raise HTTPException(status_code=400, detail=f"重命名目标非法: {new_name}")
+        rename_map[old_name] = new_name
+
+    target_seen: set[str] = set()
+    for target in rename_map.values():
+        if target in target_seen:
+            raise HTTPException(status_code=400, detail="rename_map 存在重名目标冲突")
+        target_seen.add(target)
+
+    for start in rename_map:
+        seen: set[str] = set()
+        cur = start
+        while cur in rename_map:
+            if cur in seen:
+                raise HTTPException(status_code=400, detail="rename_map 存在循环映射")
+            seen.add(cur)
+            cur = rename_map[cur]
+
+    rename_order: list[str] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def _dfs(node: str) -> None:
+        if node in visited:
+            return
+        if node in visiting:
+            raise HTTPException(status_code=400, detail="rename_map 存在循环映射")
+        visiting.add(node)
+        nxt = rename_map.get(node)
+        if nxt and nxt in rename_map:
+            _dfs(nxt)
+        visiting.remove(node)
+        visited.add(node)
+        rename_order.append(node)
+
+    for name in rename_map:
+        _dfs(name)
+
+    for old_name in rename_order:
+        new_name = rename_map[old_name]
+        if not store.has_category(old_name):
+            continue
+        if store.has_category(new_name):
+            raise HTTPException(status_code=400, detail=f"重命名冲突，目标已存在: {new_name}")
+        ok = store.update_category(old_name, new_name=new_name)
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"分类重命名失败: {old_name} -> {new_name}")
+
     applied_categories = 0
-    for name, desc in valid_categories.items():
+    for name, desc in valid_categories_ordered:
         if store.has_category(name):
             store.update_category(name, description=desc)
         else:
@@ -582,6 +649,11 @@ async def apply_skill_organization(request: Request):
             continue
         store.bind_skill(sid, cat)
         applied_bindings += 1
+
+    if category_order_raw:
+        order = [str(x).strip() for x in category_order_raw if str(x).strip()]
+        if order:
+            store.set_category_order(order)
 
     _invalidate_skills_cache()
     await _propagate(request, "skill_organize_apply", rescan=True)
@@ -750,7 +822,7 @@ async def install_skill(request: Request):
         except Exception as e:
             logger.warning("Failed to upsert %s into skills.json: %s", new_skill_id, e)
 
-    # 若指定了分类，写入 JSON bindings
+    # 若指定了分类，写入分类归属（由 CategoryStore 落盘到 categories[].skills）
     if new_skill_id and category:
         try:
             agent = _resolve_agent(request)
@@ -758,7 +830,14 @@ async def install_skill(request: Request):
                 cat_registry = getattr(agent, "skill_category_registry", None)
                 store = getattr(cat_registry, "store", None) if cat_registry else None
                 if store is not None:
-                    store.bind_skill(new_skill_id, category)
+                    if store.has_category(category):
+                        store.bind_skill(new_skill_id, category)
+                    else:
+                        logger.warning(
+                            "Skip binding newly installed skill %s to unknown category %s",
+                            new_skill_id,
+                            category,
+                        )
         except Exception as e:
             logger.warning("Failed to bind %s to category %s: %s", new_skill_id, category, e)
 
