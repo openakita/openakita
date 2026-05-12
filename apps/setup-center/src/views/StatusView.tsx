@@ -462,37 +462,37 @@ export function StatusView(props: StatusViewProps) {
           </div>
           <div className="statusPanelInfo">
             <div className="statusPanelTitle">
-              Workspace Dependencies
+              {t("status.workspaceDependencies")}
               <Badge variant="outline" className="statusBadgeInline">
                 Python / Node
               </Badge>
             </div>
             <div className="statusPanelDesc">
-              Python: {runtimeDiag?.environment?.toolchain?.python?.abi || "unknown"}
+              Python: {runtimeDiag?.environment?.toolchain?.python?.abi || t("status.unknown")}
               {" · "}
-              Node: {runtimeDiag?.environment?.toolchain?.node?.node?.version || "not checked"}
+              Node: {runtimeDiag?.environment?.toolchain?.node?.node?.version || t("status.notChecked")}
               {" · "}
-              npm: {runtimeDiag?.environment?.toolchain?.node?.npm?.version || "not checked"}
-              {runtimeDiag?.environment?.toolchain?.node?.managed_node ? " · managed Node available" : ""}
-              {runtimeDiag?.environment?.toolchain?.node?.seedPackaged === false ? " · Node seed not packaged" : ""}
-              {runtimeDiag?.environment?.toolchain?.python?.seedPackaged === false ? " · Python seed not packaged" : ""}
-              {runtimeDiag?.environment?.runtime?.seed_dirs?.length ? " · readonly seed enabled" : ""}
+              npm: {runtimeDiag?.environment?.toolchain?.node?.npm?.version || t("status.notChecked")}
+              {runtimeDiag?.environment?.toolchain?.node?.managed_node ? ` · ${t("status.managedNodeAvailable")}` : ""}
+              {runtimeDiag?.environment?.toolchain?.node?.seedPackaged === false ? ` · ${t("status.nodeSeedNotPackaged")}` : ""}
+              {runtimeDiag?.environment?.toolchain?.python?.seedPackaged === false ? ` · ${t("status.pythonSeedNotPackaged")}` : ""}
+              {runtimeDiag?.environment?.runtime?.seed_dirs?.length ? ` · ${t("status.readonlySeedEnabled")}` : ""}
             </div>
             {runtimeDiag?.environment?.toolchain?.node?.workspace_cache && (
               <div className="statusPanelDesc">
-                Workspace cache: {runtimeDiag.environment.toolchain.node.workspace_cache}
+                {t("status.workspaceCache")}: {runtimeDiag.environment.toolchain.node.workspace_cache}
               </div>
             )}
           </div>
           <div className="statusPanelActions">
             <Button size="sm" variant="outline" className="statusBtn" onClick={refreshRuntimeDiagnostics} disabled={runtimeDiagChecking}>
-              {runtimeDiagChecking ? <Loader2 className="animate-spin" size={13} /> : <Activity size={13} />} Check
+              {runtimeDiagChecking ? <Loader2 className="animate-spin" size={13} /> : <Activity size={13} />} {t("status.check")}
             </Button>
             <Button size="sm" variant="outline" className="statusBtn" onClick={() => setView("skills")}>
-              Skills <ArrowRight size={13} />
+              {t("status.skills")} <ArrowRight size={13} />
             </Button>
             <Button size="sm" variant="outline" className="statusBtn" onClick={() => setView("plugins")}>
-              Plugins <ArrowRight size={13} />
+              {t("status.plugins")} <ArrowRight size={13} />
             </Button>
           </div>
         </div>
