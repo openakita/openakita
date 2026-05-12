@@ -46,7 +46,7 @@ UV_RELEASES = {
 # 上周打的包用了不同 ABI"。升级时调这两个常量并跑全平台 release-dryrun 验证。
 # 当前 pin 与 PyInstaller bundled 后端 (cp311) 严格对齐。
 PBS_RELEASE_TAG = "20250409"
-PBS_PYTHON_VERSION = "3.11.9"
+PBS_PYTHON_VERSION = "3.11.12"
 
 # Map plan-side "target-platform" → python-build-standalone triple.
 # 注意：PBS 的 windows arm64 长期不支持，因此 win-arm64 暂未列入。
