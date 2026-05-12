@@ -3030,6 +3030,22 @@ struct ServicePidEntry {
     started_by: String,
 }
 
+fn can_auto_stop_backend(workspace_id: &str, pid: u32) -> bool {
+    if let Some(data) = read_pid_file(workspace_id) {
+        if data.pid == pid {
+            return data.started_by != "external";
+        }
+        // A different tracked process belongs to this workspace; do not kill a
+        // random healthy backend discovered from the port.
+        return false;
+    }
+
+    // Release builds still need to replace orphaned old packaged backends after
+    // an app upgrade. In dev, an untracked backend is usually a manually started
+    // `python -m openakita serve`, so keep it alive.
+    !cfg!(debug_assertions)
+}
+
 fn list_service_pids() -> Vec<ServicePidEntry> {
     let mut out = Vec::new();
     let dir = run_dir();
@@ -4241,7 +4257,15 @@ fn runtime_wheel_hash_matches_bootstrap() -> bool {
         .unwrap_or(false)
 }
 
-fn stop_backend_for_restart(pid: u32, port: u16) -> VersionCheckResult {
+fn stop_backend_for_restart(workspace_id: &str, pid: u32, port: u16) -> VersionCheckResult {
+    if !can_auto_stop_backend(workspace_id, pid) {
+        log_to_file(&format!(
+            "[version_check] keeping externally owned backend pid={} for ws={}",
+            pid, workspace_id
+        ));
+        return VersionCheckResult::RunningOk;
+    }
+
     if let Err(e) = graceful_stop_pid(pid, Some(port)) {
         eprintln!(
             "Failed to stop old backend (pid={}): {}. Keeping current backend.",
@@ -4297,7 +4321,7 @@ fn healthy_backend_pid(port: u16) -> Option<u32> {
 ///
 /// 此函数合并了「是否有后端在运行」和「版本是否匹配」两个检查，
 /// 只发一次 HTTP 请求，避免 setup 阶段重复探测。
-fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
+fn startup_version_check(workspace_id: &str, app_version: &str, port: u16) -> VersionCheckResult {
     let client = match reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .no_proxy()
@@ -4360,7 +4384,7 @@ fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
             "Runtime wheel changed for version {}. Stopping backend to refresh app-venv...",
             desktop_version
         );
-        return stop_backend_for_restart(pid, port);
+        return stop_backend_for_restart(workspace_id, pid, port);
     }
 
     // 核心防护：检查安装包内 bundled 后端版本。
@@ -4402,7 +4426,7 @@ fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
         }
     };
 
-    stop_backend_for_restart(pid, port)
+    stop_backend_for_restart(workspace_id, pid, port)
 }
 
 /// 启动对账：清理残留锁文件和已死的 PID 文件
@@ -4710,7 +4734,27 @@ fn main() {
             let state = read_state_file();
             if let Some(ref ws_id) = state.current_workspace_id {
                 let port = read_workspace_api_port(ws_id).unwrap_or(18900);
-                let check_result = startup_version_check(&app_version, port);
+                if cfg!(debug_assertions) {
+                    if let Some(pid) = healthy_backend_pid(port) {
+                        let should_adopt = read_pid_file(ws_id)
+                            .map(|data| !is_pid_file_valid(&data))
+                            .unwrap_or(true);
+                        if should_adopt {
+                            match write_pid_file(ws_id, pid, "external") {
+                                Ok(()) => log_to_file(&format!(
+                                    "[auto-start] adopted dev backend pid={} for ws={}",
+                                    pid, ws_id
+                                )),
+                                Err(e) => log_to_file(&format!(
+                                    "[auto-start] failed to adopt dev backend pid={}: {}",
+                                    pid, e
+                                )),
+                            }
+                        }
+                    }
+                }
+
+                let check_result = startup_version_check(ws_id, &app_version, port);
                 let need_start = !matches!(check_result, VersionCheckResult::RunningOk);
                 log_to_file(&format!(
                     "[auto-start] app_version={}, ws_id={}, port={}, need_start={}",
@@ -4736,22 +4780,6 @@ fn main() {
                         AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                         AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
                     });
-                } else if let Some(pid) = healthy_backend_pid(port) {
-                    let should_adopt = read_pid_file(ws_id)
-                        .map(|data| !is_pid_file_valid(&data) || data.pid != pid)
-                        .unwrap_or(true);
-                    if should_adopt {
-                        match write_pid_file(ws_id, pid, "external") {
-                            Ok(()) => log_to_file(&format!(
-                                "[auto-start] adopted healthy backend pid={} for ws={}",
-                                pid, ws_id
-                            )),
-                            Err(e) => log_to_file(&format!(
-                                "[auto-start] failed to adopt healthy backend pid={}: {}",
-                                pid, e
-                            )),
-                        }
-                    }
                 }
             } else {
                 log_to_file("[auto-start] skipped: no current_workspace_id in state");
@@ -4844,7 +4872,7 @@ fn main() {
                         if AUTO_START_IN_PROGRESS.load(Ordering::SeqCst) {
                             continue;
                         }
-                        let check_result = startup_version_check(&app_version_for_hb, port);
+                        let check_result = startup_version_check(&ws_id, &app_version_for_hb, port);
                         let need_start = !matches!(check_result, VersionCheckResult::RunningOk);
                         if !need_start {
                             // 端口又被别人占了或 health 临时抖动 — 重置计数
@@ -5019,11 +5047,11 @@ fn main() {
             //      导致后端沦为孤儿进程。
             //   2. Python 后端已注册 SIGTERM handler，收到信号即可优雅关闭。
             //   3. HTTP API 可能因代理、端口状态等原因不可达，增加不确定性。
+            // 应用退出兜底：杀掉所有 OpenAkita 后端进程（含 external 归属）。
+            // 启动阶段不动手动后端的保护由 startup_version_check 实现；
+            // 应用退出意味着用户已经主动结束会话，留任何后端都没用。
             let entries = list_service_pids();
             for ent in &entries {
-                if ent.started_by == "external" {
-                    continue;
-                }
                 if is_pid_running(ent.pid) {
                     let _ = kill_pid(ent.pid);
                 }
@@ -6177,18 +6205,16 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                // 2. 按 PID 文件逐一处理：tauri 启动的停掉，external 启动的跳过
+                // 2. 按 PID 文件逐一处理：tauri / external 都停掉
+                //    托盘 Quit 是用户明确意图，留任何后端进程都没有意义。
+                //    启动阶段的「不杀手动后端」由 startup_version_check 单独保证。
                 let entries = list_service_pids();
                 for ent in &entries {
-                    if ent.started_by == "external" {
-                        // CLI 启动的后端，不停止
-                        continue;
-                    }
                     let port = read_workspace_api_port(&ent.workspace_id);
                     let _ = stop_service_pid_entry(ent, port);
                 }
 
-                // 3. 兜底扫描孤儿进程（精确匹配）
+                // 3. 兜底扫描孤儿进程（dev/release 都执行）
                 kill_openakita_orphans();
 
                 std::thread::sleep(std::time::Duration::from_millis(600));
@@ -6196,7 +6222,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 // 4. 最终确认
                 let still_pid = list_service_pids()
                     .into_iter()
-                    .filter(|x| x.started_by != "external" && is_pid_running(x.pid))
+                    .filter(|x| is_pid_running(x.pid))
                     .collect::<Vec<_>>();
                 let still_orphans = kill_openakita_orphans();
 

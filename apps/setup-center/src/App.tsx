@@ -1513,7 +1513,7 @@ function MainApp() {
 
           try {
             await doStopService(oldWsId);
-            await waitForServiceDown("http://127.0.0.1:18900", 15000);
+            await waitForServiceDown(apiBaseUrl, 15000);
           } catch { /* stop errors are non-fatal */ }
 
           setRestartOverlay({ phase: "waiting", hint });
@@ -2979,7 +2979,7 @@ function MainApp() {
     try {
       await doStopService(wsId);
       // 轮询等待旧服务完全关闭（端口释放），而非固定延时
-      await waitForServiceDown("http://127.0.0.1:18900", 15000);
+      await waitForServiceDown(apiBaseUrl, 15000);
     } catch { /* ignore stop errors */ }
     dismissLoading(_busyId);
     await doStartLocalService(wsId);
