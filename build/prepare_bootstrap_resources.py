@@ -293,12 +293,12 @@ def _download_pbs_archive(target_platform: str) -> tuple[Path, str]:
     sha_url = url + ".sha256"
 
     if not archive_path.exists():
-        print(f"Downloading {url} → {archive_path}")
+        print(f"Downloading {url} -> {archive_path}")
         with urllib.request.urlopen(url) as resp, archive_path.open("wb") as fh:
             shutil.copyfileobj(resp, fh)
 
     if not sha_path.exists():
-        print(f"Downloading {sha_url} → {sha_path}")
+        print(f"Downloading {sha_url} -> {sha_path}")
         with urllib.request.urlopen(sha_url) as resp, sha_path.open("wb") as fh:
             shutil.copyfileobj(resp, fh)
 
