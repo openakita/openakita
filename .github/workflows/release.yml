@@ -738,9 +738,19 @@ jobs:
             done
           fi
 
-      - name: Notarize macOS artifacts (manual notarytool)
+      - name: Notarize macOS artifacts (notarytool submit + wait)
         if: runner.os == 'macOS'
-        timeout-minutes: 90
+        # Step-level timeout MUST be strictly larger than the inner
+        # NOTARY_TIMEOUT passed to ``notarytool wait``. Previous design
+        # had ``timeout-minutes: 90`` vs script-internal
+        # ``MAX_WAIT_SECONDS=3h`` — when Apple's notary backend queue
+        # was slow (observed 83min on macos-15-intel in v1.27.11
+        # release), GitHub Actions killed the step before the script
+        # could even print the submission ID needed for manual
+        # recovery. Keep 180m (3h) here ≥ 150m NOTARY_TIMEOUT below so
+        # the script always gets a chance to exit gracefully with
+        # recovery hints.
+        timeout-minutes: 180
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -775,70 +785,166 @@ jobs:
             --password "${APPLE_PASSWORD}" \
             --team-id "${APPLE_TEAM_ID}"
 
+          # Two-stage flow replacing the previous "submit + manual info
+          # polling" loop. The old loop had two competing timeout knobs
+          # (step timeout-minutes vs script MAX_WAIT_SECONDS) which got
+          # misaligned (90m vs 180m) and silently killed the step
+          # mid-poll. New flow:
+          #
+          #   stage 1) ``notarytool submit`` (no --wait) — returns
+          #            quickly with the Submission ID, which is logged
+          #            before anything time-consuming starts so manual
+          #            recovery is always possible.
+          #
+          #   stage 2) ``notarytool wait <id> --timeout`` — dedicated
+          #            subcommand that lets Apple's notary service signal
+          #            completion. Single, well-defined timeout boundary.
+          #
+          # NOTARY_TIMEOUT must be strictly < step timeout-minutes (180m)
+          # so the script has room to print recovery hints + fetch
+          # notary log + cleanup before GitHub force-kills the step.
+          # notarytool --timeout format: integer + optional unit suffix
+          # (s/m/h). Combined units like "2h30m" are NOT accepted.
+          NOTARY_TIMEOUT="150m"
+
+          overall_exit=0
+          # Severity ladder: 0 < 75 (transient) < 1 (hard fail).
+          # Never downgrade a hard fail to transient when iterating
+          # multiple artifacts; do upgrade transient→hard if a later
+          # artifact hits a real rejection.
+          escalate_exit() {
+            local new=$1
+            case "${overall_exit}-${new}" in
+              0-*)    overall_exit=$new ;;
+              75-1)   overall_exit=1 ;;
+              *)      : ;;  # already at or above ``new`` severity
+            esac
+          }
+
           for artifact in "${ARTIFACTS[@]}"; do
-            echo "Submitting for notarization: ${artifact}"
+            base="$(basename "${artifact}")"
+            echo "::group::Notarize ${base}"
+
+            # ── stage 1: submit (no --wait) ──
+            # Returns quickly after upload completes (typically <1min).
+            # We MUST log the submission_id before stage 2 so operators
+            # can recover via ``notarytool info/log/stapler`` even if
+            # the step is later force-killed by GitHub.
+            #
+            # ``set +e`` around ``$()`` is required: GitHub Actions
+            # runs ``shell: bash`` which resolves to /bin/bash on macOS
+            # runners (bash 3.2). In bash 3.2 ``var=$(failing-cmd)``
+            # under ``set -e`` aborts the script before we get a chance
+            # to surface a diagnostic message. Wrapping makes the
+            # behaviour deterministic across bash versions and
+            # ``inherit_errexit`` settings.
+            echo "Submitting ${artifact}..."
+            set +e
             submit_json="$(xcrun notarytool submit "${artifact}" \
               --keychain-profile "${PROFILE_NAME}" \
               --output-format json)"
-            submission_id="$(printf '%s' "${submit_json}" | python -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
-            if [ -z "${submission_id}" ]; then
-              echo "Failed to parse notarization submission ID for ${artifact}" >&2
+            submit_exit=$?
+            set -e
+
+            if [ "${submit_exit}" -ne 0 ]; then
+              echo "::error title=Submit failed::notarytool submit exit=${submit_exit} for ${base}"
               echo "${submit_json}" >&2
-              exit 1
+              escalate_exit 1
+              echo "::endgroup::"
+              continue
+            fi
+
+            # ``|| true`` inside ``$()`` neutralises pipefail / set -e
+            # if the JSON is unparseable; the empty-id check below is
+            # the authoritative gate.
+            submission_id="$(printf '%s' "${submit_json}" \
+              | python -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+            if [ -z "${submission_id}" ]; then
+              echo "::error::Failed to parse submission ID for ${base}"
+              echo "${submit_json}" >&2
+              escalate_exit 1
+              echo "::endgroup::"
+              continue
             fi
             echo "Submission ID: ${submission_id}"
+            echo "::notice::Manual recovery (if step is force-killed): xcrun notarytool info ${submission_id} --keychain-profile ${PROFILE_NAME}"
 
-            MAX_WAIT_SECONDS=$((3 * 60 * 60))
-            POLL_INTERVAL_SECONDS=30
-            START_TS=$(date +%s)
-            while true; do
-              if ! info_json="$(xcrun notarytool info "${submission_id}" \
-                --keychain-profile "${PROFILE_NAME}" \
-                --output-format json)"; then
-                echo "Failed to query submission ${submission_id}, retrying in ${POLL_INTERVAL_SECONDS}s..."
-                sleep "${POLL_INTERVAL_SECONDS}"
+            # ── stage 2: wait for completion ──
+            # ``notarytool wait`` is a dedicated subcommand that polls
+            # the Apple notary service server-side and returns on
+            # Accepted / Invalid / Rejected or when --timeout fires.
+            set +e
+            wait_json="$(xcrun notarytool wait "${submission_id}" \
+              --keychain-profile "${PROFILE_NAME}" \
+              --timeout "${NOTARY_TIMEOUT}" \
+              --output-format json)"
+            wait_exit=$?
+            set -e
+
+            if [ "${wait_exit}" -ne 0 ]; then
+              # --timeout fired or network error. Apple service may
+              # still be processing — submission_id is already logged,
+              # operator can finish manually.
+              echo "::warning title=Notarization pending::Did not finish within ${NOTARY_TIMEOUT} for ${base} (notarytool wait exit=${wait_exit})"
+              xcrun notarytool log "${submission_id}" \
+                --keychain-profile "${PROFILE_NAME}" 2>/dev/null || true
+              # EX_TEMPFAIL (75) — distinct from a hard rejection
+              # (exit 1) so downstream automation / humans can tell
+              # "Apple was slow" apart from "Apple rejected the signed
+              # content". The release step's overall failure mode is
+              # therefore actionable.
+              escalate_exit 75
+              echo "::endgroup::"
+              continue
+            fi
+
+            status="$(printf '%s' "${wait_json}" \
+              | python -c 'import json,sys; print(json.load(sys.stdin).get("status","").strip().lower())' 2>/dev/null || true)"
+
+            case "${status}" in
+              accepted)
+                echo "Notarization accepted for ${base}"
+                ;;
+              invalid|rejected)
+                echo "::error title=Notarization rejected::status='${status}' for ${base}"
+                xcrun notarytool log "${submission_id}" \
+                  --keychain-profile "${PROFILE_NAME}" || true
+                escalate_exit 1
+                echo "::endgroup::"
                 continue
-              fi
+                ;;
+              *)
+                echo "::error::Unexpected notarytool wait status '${status:-unknown}' for ${base}"
+                echo "${wait_json}" >&2
+                escalate_exit 1
+                echo "::endgroup::"
+                continue
+                ;;
+            esac
 
-              status="$(printf '%s' "${info_json}" | python -c 'import json,sys; print(json.load(sys.stdin).get("status","").strip().lower())')"
-              NOW_TS=$(date +%s)
-              ELAPSED_SECONDS=$((NOW_TS - START_TS))
-
-              case "${status}" in
-                accepted)
-                  echo "Notarization accepted in ${ELAPSED_SECONDS}s for ${artifact}"
-                  break
-                  ;;
-                invalid|rejected)
-                  echo "Notarization failed with status '${status}' for ${artifact}" >&2
-                  echo "Submission ID: ${submission_id}" >&2
-                  echo "Fetching notarization log..." >&2
-                  xcrun notarytool log "${submission_id}" \
-                    --keychain-profile "${PROFILE_NAME}" || true
-                  exit 1
-                  ;;
-                "in progress")
-                  echo "Current status: In Progress (elapsed ${ELAPSED_SECONDS}s)"
-                  ;;
-                *)
-                  echo "Current status: ${status:-unknown} (elapsed ${ELAPSED_SECONDS}s)"
-                  ;;
-              esac
-
-              if [ "${ELAPSED_SECONDS}" -ge "${MAX_WAIT_SECONDS}" ]; then
-                echo "Timed out waiting ${MAX_WAIT_SECONDS}s for submission ${submission_id}." >&2
-                echo "Apple service may still be processing it. Check later with:" >&2
-                echo "xcrun notarytool info ${submission_id} --keychain-profile ${PROFILE_NAME}" >&2
-                exit 1
-              fi
-
-              sleep "${POLL_INTERVAL_SECONDS}"
-            done
-
+            # Stapling after Accepted is normally trivial (~seconds);
+            # wrap in set +e to isolate failure per-artifact rather
+            # than aborting the whole loop, matching the rest of this
+            # step's "fail-isolated, aggregate via overall_exit" style.
             echo "Stapling ticket: ${artifact}"
+            set +e
             xcrun stapler staple -v "${artifact}"
+            staple_exit=$?
+            set -e
+            if [ "${staple_exit}" -ne 0 ]; then
+              echo "::error title=Stapler failed::stapler staple exit=${staple_exit} for ${base} (notarization was accepted, ticket staple failed)"
+              escalate_exit 1
+              echo "::endgroup::"
+              continue
+            fi
             xcrun stapler validate -v "${artifact}" || true
+
+            echo "::endgroup::"
           done
+
+          if [ "${overall_exit}" -ne 0 ]; then
+            exit "${overall_exit}"
+          fi
 
       - name: List bundle outputs
         shell: bash
