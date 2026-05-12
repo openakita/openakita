@@ -598,6 +598,12 @@ class PluginManager:
             deps_path_entry=deps_path_entry,
             imported_modules=imported_modules,
         )
+        entry = self._state.get_entry(manifest.id)
+        if entry is None or not entry.pending_update_path:
+            self._state.mark_loaded(manifest.id)
+        else:
+            entry.loaded = True
+        self._save_state()
 
         plugin_pending = api._host.pop("_pending_plugin_routers", [])
         if plugin_pending:

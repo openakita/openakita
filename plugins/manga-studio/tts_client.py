@@ -34,7 +34,6 @@ import asyncio
 import logging
 import random
 import struct
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -85,8 +84,8 @@ async def _synth_edge(
         import edge_tts  # type: ignore[import-untyped]
     except ImportError as exc:
         raise VendorError(
-            "Edge-TTS not installed. Install via:\n"
-            f"    {sys.executable} -m pip install edge-tts>=7.0\n"
+            "Edge-TTS is not installed. Reinstall or repair the manga-studio plugin "
+            "dependencies from OpenAkita Setup Center instead of installing into host Python.\n"
             "(it's a free Microsoft TTS package — no API key needed.)",
             kind="dependency",
             retryable=False,
@@ -156,8 +155,8 @@ async def _synth_cosyvoice(
         )
     except ImportError as exc:
         raise VendorError(
-            "CosyVoice-v2 needs the dashscope SDK. Install via:\n"
-            f"    {sys.executable} -m pip install dashscope>=1.20.0\n"
+            "CosyVoice-v2 needs the dashscope SDK. Reinstall or repair the manga-studio "
+            "plugin dependencies from OpenAkita Setup Center instead of installing into host Python.\n"
             "(only the CosyVoice-v2 path needs this — Edge-TTS works "
             "without it.)",
             kind="dependency",
