@@ -337,6 +337,39 @@ _SAFETY_SECTION = """\
 
 
 # ---------------------------------------------------------------------------
+# 信息来源诚实（独立段落，与 _SAFETY_SECTION 同级，永不省略）
+# 防止 SOUL.md 编译丢失或 identity_core 被裁剪导致来源标签机制退化。
+# 与 SOUL.md 的 "Source Honesty" 段落配套，是工具调用场景下的硬性输出格式。
+# ---------------------------------------------------------------------------
+_INFO_SOURCE_HONESTY_SECTION = """\
+## 信息来源诚实（输出格式硬性要求）
+
+涉及具体事实、数据、状态、数字、文件内容、代码细节、外部系统状态时，
+**必须**在结论附近用以下标签之一声明信息来源：
+
+- `[来源:工具]` —— 本轮实际调用过的工具的输出
+- `[来源:历史]` —— 本会话历史对话中已经出现过的内容
+- `[来源:常识]` —— 训练数据中的通用知识（可能过时/不准确）
+- `[来源:不确定]` —— 我不能确定，建议用户自行核实
+
+闲聊、问候、共情、创意写作、纯解释性回答可以不带标签。
+
+### 严禁
+在未实际调用工具的情况下，**绝不**使用下列"动作完成短语"描述外部世界变化：
+- 已查到 / 已读到 / 已读取 / 已搜索 / 已找到 / 已检索
+- 已执行 / 已完成 / 已运行 / 已跑过
+- 已删除 / 已写入 / 已保存 / 已修改 / 已发送
+- 我刚才查 / 我刚才执行 / 我刚才读 / 我刚刚跑了 / 我刚才发
+
+如果想表达计划或推测，改用："如果调用 X 工具，应该可以看到…"、
+"根据常识可能是…[来源:常识]"、"要不要我去查一下？"。
+
+### 一致性自检
+回答前自问：我接下来要说的内容里，有哪些事实性陈述？这些陈述的来源是
+[工具]/[历史]/[常识]/[不确定] 中的哪一个？标签是否准确反映了真实来源？"""
+
+
+# ---------------------------------------------------------------------------
 # AGENTS.md — 项目级开发规范（行业标准，https://agents.md）
 # 从当前工作目录向上查找，自动注入系统提示词。
 # 非代码项目不会有此文件，读取逻辑静默跳过。
@@ -528,6 +561,7 @@ def build_system_prompt(
     # 2. Core Rules — ALWAYS_ON 始终注入；EXTENDED 按 profile/tier 决定
     system_parts.append(_ALWAYS_ON_RULES)
     system_parts.append(_SAFETY_SECTION)
+    system_parts.append(_INFO_SOURCE_HONESTY_SECTION)
     if _profile == PromptProfile.LOCAL_AGENT or (
         _profile != PromptProfile.CONSUMER_CHAT and _tier != PromptTier.SMALL
     ):
@@ -612,6 +646,14 @@ def build_system_prompt(
                 system_parts.append(auth_section)
     except Exception:
         pass
+
+    # 6.58 P0-2 阶段 2：evidence_recommended 软提示
+    # IntentAnalyzer 的规则启发式认为本轮"建议查工具"，但 LLM 自评没要求证据。
+    # 这里给 LLM 一个温和的引导：要么主动查、要么显式声明信息来源标签。
+    # 与 _INFO_SOURCE_HONESTY_SECTION（硬性输出格式）配合形成闭环，避免规则误判
+    # 直接触发 ForceToolCall 浪费 token。
+    if isinstance(session_context, dict) and session_context.get("evidence_recommended"):
+        system_parts.append(_build_evidence_recommended_section())
 
     # 6.6 架构概况（powered by {model}，区分主/子 Agent）
 
@@ -1326,6 +1368,31 @@ def _build_session_metadata_section(
                 lines.append("- **子 Agent 协作记录**: 有（可通过 get_session_context 查询详情）")
 
     return "\n".join(lines)
+
+
+def _build_evidence_recommended_section() -> str:
+    """渲染"本轮建议查工具/否则声明来源"段落（P0-2 阶段 2）。
+
+    触发条件：IntentAnalyzer 规则启发式认为本轮请求涉及外部状态/事实，
+    但 LLM 自评没要求强制证据（即 evidence_recommended=True 且 evidence_required=False）。
+
+    与 _INFO_SOURCE_HONESTY_SECTION 配套：那个段落是硬性输出格式（永远注入），
+    本段落是按需的软提示（只在被推荐时注入），避免对纯闲聊/纯创意任务造成噪音。
+    """
+    return """\
+## 当前请求的证据建议
+
+系统检测：你接下来要回答的问题可能涉及外部状态或事实（如代码、文件、日志、网络、
+数据库、API、Issue、依赖版本等当前真实情况）。
+
+**优先策略**：调用合适的工具（read_file / grep / web_search / run_shell / MCP 等）核对后再回答。
+
+**如果你选择不调用工具**：请在涉及事实的句末用 `[来源:常识]` 或 `[来源:历史]` 标签
+明确声明信息来源，让用户知道这不是经过工具核实的结论。
+
+**严禁**：在未调用工具的情况下使用"已查到/已执行/已读取/已搜索/已发送/已删除"
+等动作完成短语来描述外部世界变化——这等同于欺骗。可以说"如果调用 X 工具，
+我预计会看到……"或"根据训练数据中的常识，应该是…… [来源:常识]"。"""
 
 
 def _build_authorized_intent_section(intent: dict) -> str:
@@ -2445,11 +2512,25 @@ def _retrieve_top_experiences(memory_manager: Any, max_items: int) -> list:
 
 
 def _clean_user_content(raw: str) -> str:
-    """清洗 USER.md：去掉占位符、空 section、HTML 注释。"""
+    """清洗 USER.md：去掉占位符、空 section、HTML 注释。
+
+    P1-4：扩展占位符识别范围。除了 [待学习] 中括号样式，
+    也识别 <to_learn>、`待学习`（无方括号）等同义占位符，
+    避免 LLM 学习到"称呼:[待学习]"这类伪事实。
+    """
     import re
 
     content = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL)
-    content = re.sub(r"^.*\[待学习\].*$", "", content, flags=re.MULTILINE)
+    # 匹配：[待学习]、<to_learn>、`待学习`、(待学习) 等占位符
+    content = re.sub(
+        r"^.*(\[待学习\]|<to_learn>|`待学习`|\(待学习\)|\[待统计\]|\[待补充\]).*$",
+        "",
+        content,
+        flags=re.MULTILINE,
+    )
+    # 删掉只剩占位符不再有内容的 list item
+    content = re.sub(r"^\s*[-*]\s*$", "", content, flags=re.MULTILINE)
+    # 删掉空 section 标题（标题后面紧跟另一个标题或文档结束）
     content = re.sub(r"^(#{1,4}\s+[^\n]+)\n(?=\s*(?:#{1,4}\s|\Z))", "", content, flags=re.MULTILINE)
     content = re.sub(r"^\|[|\s-]*\|$", "", content, flags=re.MULTILINE)
     content = re.sub(r"\n{3,}", "\n\n", content)
@@ -2461,11 +2542,19 @@ def _build_user_section(
     budget_tokens: int,
     identity_dir: Path | None = None,
 ) -> str:
-    """构建 User 层 — 使用编译后的用户档案摘要，不全文注入 USER.md。"""
+    """构建 User 层 — 使用编译后的用户档案摘要，不全文注入 USER.md。
+
+    P1-4：所有 user profile 输出都经 _clean_user_content 过滤，
+    防止 USER.md 编译产物里残留的占位字段（如"称呼: [待学习]"）
+    被 LLM 当作真实用户信息使用，进而覆盖动态学习到的姓名。
+    """
     content = compiled.get("user_profile_core") or compiled.get("user") or ""
     if not content:
         return ""
-    user_result = apply_budget(content, budget_tokens, "user")
+    cleaned = _clean_user_content(content)
+    if not cleaned:
+        return ""
+    user_result = apply_budget(cleaned, budget_tokens, "user")
     return user_result.content
 
 

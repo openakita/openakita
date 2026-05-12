@@ -1,10 +1,15 @@
 OpenAkita
 Copyright 2026 OpenAkita Team
 
-Licensed under the Apache License, Version 2.0.
+Licensed under the GNU Affero General Public License v3.0 only.
 
 This product includes software developed by the OpenAkita Team
 (https://github.com/openakita/openakita).
+
+The OpenAkita name, logos, icons, screenshots, and other brand assets
+are trademarks or brand assets of the OpenAkita project and are not
+licensed under the GNU Affero General Public License v3.0. See
+TRADEMARK.md for the project trademark policy.
 
 Third-party components and their licenses are listed in
 THIRD_PARTY_NOTICES.md.

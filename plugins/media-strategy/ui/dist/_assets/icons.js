@@ -1,5 +1,5 @@
 window.MediaStrategyIcons = {
-  radar: "solar:radar-linear",
-  news: "mdi:newspaper-variant-outline",
+  radar: "game-icons:newspaper",
+  news: "game-icons:newspaper",
   tower: "lucide:radio-tower"
 };

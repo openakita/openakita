@@ -717,6 +717,15 @@ def _auto_assign_avatars(tpl_data: dict) -> None:
             node["avatar"] = get_avatar_for_role(node.get("role_title", ""))
 
 
+def _auto_assign_agent_profiles(tpl_data: dict) -> None:
+    """Fill missing profile bindings so org nodes inherit specialized presets."""
+    from openakita.orgs.models import infer_agent_profile_id_for_node
+
+    for node in tpl_data.get("nodes", []):
+        if not node.get("agent_profile_id"):
+            node["agent_profile_id"] = infer_agent_profile_id_for_node(node)
+
+
 def ensure_builtin_templates(templates_dir: Path) -> None:
     """Install built-in templates if they don't exist."""
     templates_dir.mkdir(parents=True, exist_ok=True)
@@ -726,5 +735,6 @@ def ensure_builtin_templates(templates_dir: Path) -> None:
             tpl_data = dict(tpl)
             tpl_data["policy_template"] = TEMPLATE_POLICY_MAP.get(tid, "default")
             _auto_assign_avatars(tpl_data)
+            _auto_assign_agent_profiles(tpl_data)
             p.write_text(json.dumps(tpl_data, ensure_ascii=False, indent=2), encoding="utf-8")
             logger.info(f"[Templates] Installed built-in template: {tid}")

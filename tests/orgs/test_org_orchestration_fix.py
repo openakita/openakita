@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -25,6 +25,8 @@ from openakita.core.supervisor import (
     RuntimeSupervisor,
 )
 from openakita.orgs.failure_diagnoser import _extract_evidence
+from openakita.orgs.models import MsgType, OrgMessage, OrgProject, ProjectTask, TaskStatus
+from openakita.orgs.project_store import ProjectStore
 from openakita.orgs.runtime import OrgRuntime, UserCommandTracker
 from openakita.orgs.tool_handler import OrgToolHandler
 
@@ -141,6 +143,99 @@ class TestSubmitChainOverride:
         assert handler._link_project_task.called
         called_chain = handler._link_project_task.call_args.args[1]
         assert called_chain == "chain_X"
+
+
+class TestAcceptanceChainResolution:
+    def test_delivered_prompt_includes_full_chain_id(self):
+        rt = OrgRuntime(manager=MagicMock())
+        chain_id = "2026-05-10T07:07:07.107275+00:00:editor-i"
+        prompt = rt._format_incoming_message(
+            OrgMessage(
+                org_id="org",
+                from_node="planner",
+                to_node="editor-in-chief",
+                msg_type=MsgType.TASK_DELIVERED,
+                content="任务交付: 咖啡策划案",
+                metadata={
+                    "task_chain_id": chain_id,
+                    "deliverable": "咖啡策划案",
+                },
+            )
+        )
+
+        assert f'task_chain_id="{chain_id}"' in prompt
+        assert "[任务链: 2026-05-10T0…]" in prompt
+
+    def test_accept_resolves_unique_short_chain_for_delivered_task(
+        self, mock_runtime_full, org_dir, persisted_org,
+    ):
+        store = ProjectStore(org_dir)
+        project = store.create_project(
+            OrgProject(id="proj_accept", org_id=persisted_org.id, name="任务追踪")
+        )
+        full_chain = "2026-05-10T07:07:07.107275+00:00:editor-i"
+        store.add_task(
+            project.id,
+            ProjectTask(
+                title="咖啡沙龙策划案",
+                status=TaskStatus.DELIVERED,
+                assignee_node_id="node_cto",
+                delegated_by="node_ceo",
+                chain_id=full_chain,
+            ),
+        )
+        store.add_task(
+            project.id,
+            ProjectTask(
+                title="旧任务",
+                status=TaskStatus.ACCEPTED,
+                assignee_node_id="node_cto",
+                delegated_by="node_ceo",
+                chain_id="2026-05-10T04:45:22.450261+00:00:editor-i",
+            ),
+        )
+
+        handler = OrgToolHandler(mock_runtime_full)
+        resolved, error = handler._resolve_acceptance_chain_id(
+            persisted_org.id,
+            chain_id="2026-05-10T0",
+            from_node="node_cto",
+            accepted_by="node_ceo",
+        )
+
+        assert error is None
+        assert resolved == full_chain
+
+    def test_accept_short_chain_reports_ambiguous_candidates(
+        self, mock_runtime_full, org_dir, persisted_org,
+    ):
+        store = ProjectStore(org_dir)
+        project = store.create_project(
+            OrgProject(id="proj_ambiguous", org_id=persisted_org.id, name="任务追踪")
+        )
+        for suffix in ("aaa", "bbb"):
+            store.add_task(
+                project.id,
+                ProjectTask(
+                    title=f"咖啡任务 {suffix}",
+                    status=TaskStatus.DELIVERED,
+                    assignee_node_id="node_cto",
+                    delegated_by="node_ceo",
+                    chain_id=f"2026-05-10T07:07:07.{suffix}+00:00:editor-i",
+                ),
+            )
+
+        handler = OrgToolHandler(mock_runtime_full)
+        resolved, error = handler._resolve_acceptance_chain_id(
+            persisted_org.id,
+            chain_id="2026-05-10T07",
+            from_node="node_cto",
+            accepted_by="node_ceo",
+        )
+
+        assert resolved == "2026-05-10T07"
+        assert error is not None
+        assert "匹配到多个候选" in error
 
     @pytest.mark.asyncio
     async def test_submit_uses_current_chain_when_llm_omits(
@@ -414,6 +509,47 @@ class TestUserCommandTrackerSubtree:
         t.register_chain("chain_X")
         t.unregister_chain("chain_X")
         assert "chain_X" not in t.open_chains
+
+
+class TestUserCommandTrackerCommandId:
+    def test_live_snapshot_exposes_command_phase_and_open_chains(self):
+        rt = OrgRuntime(manager=MagicMock())
+        tracker = UserCommandTracker("org", "node_root", command_id="cmd_123")
+        tracker.register_chain("chain_root")
+        tracker.register_chain("chain_child")
+        tracker._last_phase_emitted = "awaiting_summary"
+        rt._active_user_cmd[("org", "node_root")] = tracker
+
+        snapshot = rt.get_command_tracker_snapshot("org", "cmd_123")
+
+        assert snapshot is not None
+        assert snapshot["command_id"] == "cmd_123"
+        assert snapshot["root_node_id"] == "node_root"
+        assert snapshot["phase"] == "awaiting_summary"
+        assert snapshot["open_chains"] == ["chain_child", "chain_root"]
+        assert snapshot["open_chain_count"] == 2
+        assert snapshot["last_progress_elapsed_s"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_cancel_user_command_only_stops_matching_command_id(self):
+        rt = OrgRuntime(manager=MagicMock())
+        rt._soft_stop_org = AsyncMock()
+        event_store = MagicMock()
+        rt.get_event_store = MagicMock(return_value=event_store)
+        first = UserCommandTracker("org", "node_root", command_id="cmd_keep")
+        second = UserCommandTracker("org", "node_other", command_id="cmd_stop")
+        rt._active_user_cmd[("org", "node_root")] = first
+        rt._active_user_cmd[("org", "node_other")] = second
+
+        result = await rt.cancel_user_command("org", "cmd_stop")
+
+        assert result["cancelled_roots"] == ["node_other"]
+        assert first.completed.is_set() is False
+        assert first.user_cancelled is False
+        assert second.completed.is_set() is True
+        assert second.user_cancelled is True
+        assert second.auto_stopped is True
+        event_store.emit.assert_called()
 
 
 class TestRootVisibleResultCapture:

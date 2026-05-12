@@ -906,6 +906,7 @@ async def _stream_chat(
         # 防止前端 fetch 连接因长时间无数据而超时断开（LLM 重试等场景）。
         SSE_KEEPALIVE_INTERVAL = 15.0
         _agent_errored = False
+        _agent_error_msg = ""
         while True:
             try:
                 event = await asyncio.wait_for(_agent_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
@@ -920,9 +921,9 @@ async def _stream_chat(
 
             if event_type == "__agent_error__":
                 _agent_errored = True
+                _agent_error_msg = event.get("__exc_msg__") or "Unknown error"
                 if not _client_disconnected:
-                    _err_msg = event.get("__exc_msg__") or "Unknown error"
-                    yield _sse("error", {"message": _err_msg})
+                    yield _sse("error", {"message": _agent_error_msg, "is_truncated": True})
                     yield _sse("done")
                 break
 
@@ -1186,6 +1187,10 @@ async def _stream_chat(
                     if _ask_user_questions:
                         _ask_user_data["questions"] = _ask_user_questions
                     _msg_meta["ask_user"] = _ask_user_data
+                if _agent_errored:
+                    _msg_meta["is_truncated"] = True
+                    _msg_meta["truncation_reason"] = "mid_stream_failure"
+                    _msg_meta["stream_error"] = _agent_error_msg
                 session.add_message("assistant", assistant_text_to_save, **_msg_meta)
                 if session_manager:
                     session_manager.persist()
@@ -1395,6 +1400,19 @@ async def chat(request: Request, body: ChatRequest):
             },
         )
     if body.endpoint and body.endpoint not in chat_endpoint_names:
+        if body.endpoint_policy == "require":
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "required_endpoint_not_found",
+                    "message": (
+                        f"指定的主聊天端点不存在或不可用: {body.endpoint}。"
+                        "endpoint_policy=require 表示必须严格使用该端点，因此不会自动切换。"
+                    ),
+                    "endpoint": body.endpoint,
+                    "endpoint_policy": body.endpoint_policy,
+                },
+            )
         logger.warning(
             "[Chat API] Ignoring stale chat endpoint %r; falling back to auto selection",
             body.endpoint,

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -243,8 +243,23 @@ class SecuritySandboxUpdate(BaseModel):
 
 
 class SecurityConfirmRequest(BaseModel):
-    confirm_id: str
-    decision: str  # allow_once | allow_session | allow_always | deny | sandbox (legacy: allow)
+    model_config = ConfigDict(populate_by_name=True)
+
+    confirm_id: str = Field(validation_alias=AliasChoices("confirm_id", "confirmation_id"))
+    decision: str = Field(
+        validation_alias=AliasChoices("decision", "choice"),
+        description="allow_once | allow_session | allow_always | deny | sandbox (legacy: allow/cancel/confirm_continue)",
+    )
+
+    def normalized_decision(self) -> str:
+        value = (self.decision or "").strip()
+        return {
+            "cancel": "deny",
+            "confirm_cancel": "deny",
+            "confirm_continue": "allow_once",
+            "continue": "allow_once",
+            "inspect_only": "deny",
+        }.get(value, value)
 
 
 def _normalize_permission_mode(mode: str) -> str:
@@ -1699,17 +1714,18 @@ async def security_confirm(body: SecurityConfirmRequest):
     Calls mark_confirmed() on the policy engine so that the agent's
     subsequent retry of the same tool bypasses the CONFIRM gate.
     """
-    logger.info(f"[Security] Confirmation received: {body.confirm_id} -> {body.decision}")
+    decision = body.normalized_decision()
+    logger.info(f"[Security] Confirmation received: {body.confirm_id} -> {decision}")
     try:
         from openakita.core.policy import get_policy_engine
 
         engine = get_policy_engine()
-        found = engine.resolve_ui_confirm(body.confirm_id, body.decision)
+        found = engine.resolve_ui_confirm(body.confirm_id, decision)
         if not found:
             logger.warning(f"[Security] No pending confirm found for id={body.confirm_id}")
     except Exception as e:
         logger.warning(f"[Security] Failed to resolve confirmation: {e}")
-    return {"status": "ok", "confirm_id": body.confirm_id, "decision": body.decision}
+    return {"status": "ok", "confirm_id": body.confirm_id, "decision": decision}
 
 
 @router.post("/api/config/security/death-switch/reset")

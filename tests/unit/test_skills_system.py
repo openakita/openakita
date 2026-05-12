@@ -80,6 +80,31 @@ class TestSkillLoader:
         count = loader.load_all(skills_dir)
         assert isinstance(count, int)
 
+    def test_run_script_adds_skill_dir_to_pythonpath(self, tmp_path):
+        skill_dir = tmp_path / "skills" / "news-searcher"
+        scripts_dir = skill_dir / "scripts"
+        scripts_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: news-searcher\ndescription: News search\n---\n# News Search\nBody.",
+            encoding="utf-8",
+        )
+        (skill_dir / "news_searcher.py").write_text(
+            "def search():\n    return 'ok-from-skill-dir'\n",
+            encoding="utf-8",
+        )
+        (scripts_dir / "main.py").write_text(
+            "from news_searcher import search\nprint(search())\n",
+            encoding="utf-8",
+        )
+
+        loader = SkillLoader()
+        loader.load_skill(skill_dir)
+
+        success, output = loader.run_script("news-searcher", "scripts/main.py")
+
+        assert success is True
+        assert "ok-from-skill-dir" in output
+
 
 class TestSkillParser:
     def test_parse_skill_file(self, tmp_path):

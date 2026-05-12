@@ -685,6 +685,78 @@ class PluginAPI:
         except RuntimeError:
             self.log("No event loop for send_message", "warning")
 
+    async def send_message_async(self, channel: str, chat_id: str, text: str) -> str:
+        if not self._check_permission("channel.send"):
+            raise PluginPermissionError(
+                f"Plugin '{self._plugin_id}' requires permission 'channel.send'"
+            )
+        gateway = self._host.get("gateway")
+        if gateway is None:
+            raise RuntimeError("No gateway available for send_message")
+        adapter = gateway.get_adapter(channel)
+        if adapter is None:
+            raise RuntimeError(f"No adapter found for channel '{channel}'")
+        return await adapter.send_text(chat_id, text)
+
+    def send_file(
+        self,
+        channel: str,
+        chat_id: str,
+        file_path: str | Path,
+        caption: str | None = None,
+    ) -> bool:
+        if not self._check_permission("channel.send"):
+            return False
+        gateway = self._host.get("gateway")
+        if gateway is None:
+            self.log("No gateway available for send_file", "warning")
+            return False
+        adapter = gateway.get_adapter(channel)
+        if adapter is None:
+            self.log(f"No adapter found for channel '{channel}'", "warning")
+            return False
+        if hasattr(adapter, "has_capability") and not adapter.has_capability("send_file"):
+            self.log(f"Adapter '{channel}' does not support send_file", "warning")
+            return False
+        import asyncio
+
+        path = str(file_path)
+
+        async def _safe_send() -> None:
+            try:
+                await adapter.send_file(chat_id, path, caption)
+            except Exception as e:
+                self.log(f"send_file failed: {e}", "error")
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_safe_send())
+            return True
+        except RuntimeError:
+            self.log("No event loop for send_file", "warning")
+            return False
+
+    async def send_file_async(
+        self,
+        channel: str,
+        chat_id: str,
+        file_path: str | Path,
+        caption: str | None = None,
+    ) -> str:
+        if not self._check_permission("channel.send"):
+            raise PluginPermissionError(
+                f"Plugin '{self._plugin_id}' requires permission 'channel.send'"
+            )
+        gateway = self._host.get("gateway")
+        if gateway is None:
+            raise RuntimeError("No gateway available for send_file")
+        adapter = gateway.get_adapter(channel)
+        if adapter is None:
+            raise RuntimeError(f"No adapter found for channel '{channel}'")
+        if hasattr(adapter, "has_capability") and not adapter.has_capability("send_file"):
+            raise RuntimeError(f"Adapter '{channel}' does not support send_file")
+        return await adapter.send_file(chat_id, str(file_path), caption)
+
     # --- File serving utilities (Plugin 2.0) ---
 
     def create_file_response(

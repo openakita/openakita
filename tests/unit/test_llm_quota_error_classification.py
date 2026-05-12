@@ -5,6 +5,7 @@ from openakita.llm.error_types import FailoverReason
 from openakita.llm.providers.base import LLMProvider, RPMRateLimiter
 from openakita.llm.providers.openai import OpenAIProvider, _humanize_upstream_error
 from openakita.llm.types import EndpointConfig, LLMError
+from openakita.setup_center.bridge import _model_list_headers
 
 DEEPSEEK_INSUFFICIENT_BALANCE = (
     'API error (402): {"error":{"message":"Insufficient Balance",'
@@ -90,6 +91,13 @@ def test_openai_provider_avoids_zstd_accept_encoding():
 
     headers = provider._build_headers()
 
+    assert headers["Accept-Encoding"] == "gzip, deflate"
+
+
+def test_setup_center_model_list_avoids_zstd_accept_encoding():
+    headers = _model_list_headers({"Authorization": "Bearer sk-test"})
+
+    assert headers["Authorization"] == "Bearer sk-test"
     assert headers["Accept-Encoding"] == "gzip, deflate"
 
 

@@ -224,7 +224,7 @@ class AgentMailbox:
     async def receive(self, timeout: float = 300.0) -> dict | None:
         try:
             return await asyncio.wait_for(self._queue.get(), timeout=timeout)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return None
 
     async def drain_all(self) -> list[dict]:
@@ -540,7 +540,7 @@ class AgentOrchestrator:
 
             return result
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             health.failed += 1
             health.last_error = "timeout_idle"
             self._fallback.record_failure(agent_profile_id)
@@ -1036,11 +1036,28 @@ class AgentOrchestrator:
                 from openakita.config import settings as _cfg
 
                 _profile = getattr(agent, "_agent_profile", None)
-                if (
-                    _profile
-                    and getattr(_profile, "role", "worker") == "coordinator"
-                    and getattr(_cfg, "coordinator_mode_enabled", False)
-                ):
+                _profile_role = (
+                    getattr(_profile, "role", "worker") if _profile else "worker"
+                )
+                _coord_enabled = bool(getattr(_cfg, "coordinator_mode_enabled", False))
+                # Two activation paths for coordinator mode:
+                #
+                # 1. User-managed worker→coordinator profiles (existing path):
+                #    require both ``profile.role == "coordinator"`` AND the
+                #    global ``coordinator_mode_enabled`` switch.
+                #
+                # 2. Organization coordinator nodes (always-on, decoupled from
+                #    the global flag): any org node that has direct
+                #    subordinates is structurally a coordinator — its job is
+                #    to delegate, not to execute. ``runtime._create_node_agent``
+                #    sets ``_is_org_coordinator`` based on
+                #    ``bool(org.get_children(node.id))``. We force the
+                #    coordinator prompt here so the editor-in-chief / CEO /
+                #    tech-lead style roots cannot silently bypass delegation
+                #    (regression that caused root nodes to "do the work
+                #    themselves" after force_tool was relaxed).
+                _is_org_coord = bool(getattr(agent, "_is_org_coordinator", False))
+                if (_profile_role == "coordinator" and _coord_enabled) or _is_org_coord:
                     _mode = "coordinator"
             except Exception:
                 pass
@@ -1084,6 +1101,19 @@ class AgentOrchestrator:
                             tools_used = list(dict.fromkeys(_task.tools_executed))
                 except Exception:
                     pass
+                if not tools_used and re_engine is not None:
+                    try:
+                        trace = getattr(re_engine, "_last_react_trace", None) or []
+                        trace_tools: list[str] = []
+                        for iter_entry in trace:
+                            if not isinstance(iter_entry, dict):
+                                continue
+                            for call in iter_entry.get("tool_calls") or ():
+                                if isinstance(call, dict) and call.get("name"):
+                                    trace_tools.append(str(call["name"]))
+                        tools_used = list(dict.fromkeys(trace_tools))
+                    except Exception:
+                        pass
 
                 # Forward artifact delivery receipts from sub-agent so the parent
                 # SSE stream can emit artifact events to the frontend.

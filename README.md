@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=flat-square" alt="License" height="20" />
+  <img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg?style=flat-square" alt="License" height="20" />
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square" alt="Python Version" height="20" />
   <img src="https://img.shields.io/github/v/release/openakita/openakita?color=green&style=flat-square" alt="Version" height="20" />
   <img src="https://img.shields.io/pypi/v/openakita?color=green&style=flat-square" alt="PyPI" height="20" />
@@ -496,7 +496,7 @@ When the policy engine classifies a shell command as **HIGH risk**, it automatic
 - **Resource Budgets**: Token / cost / duration / iteration / tool call limits per task
 - **Runtime Supervision**: Auto-detection of tool thrashing, reasoning loops, token anomalies
 - **Local Data**: Memory, config, and chat history stored on your machine only
-- **Open Source**: Apache 2.0, fully transparent codebase
+- **Open Source**: AGPL-3.0-only, fully transparent codebase
 
 ---
 
@@ -724,7 +724,9 @@ Tracing  ─── AgentTracer(12 SpanTypes) · DecisionTrace · TokenStats
 
 ## License
 
-Apache License 2.0 — See [LICENSE](LICENSE)
+OpenAkita source code is licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only) — See [LICENSE](LICENSE).
+
+The `OpenAkita` name, logos, icons, screenshots, and other brand assets are not licensed under AGPL-3.0-only. See [TRADEMARK.md](TRADEMARK.md) for brand usage rules.
 
 Third-party licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 

@@ -76,6 +76,18 @@ def _tool_rate_limit_key(tool_name: str, tool_args: Any) -> str:
     return f"{tool_name}:{hashlib.md5(param_str.encode()).hexdigest()}"
 
 
+# 同名工具在单轮任务内的硬上限（防止 LLM 把记忆/搜索工具用成循环）。
+# 这里只覆盖"写多了会污染或浪费 token"的工具；read-only 工具仍由
+# _MAX_SAME_TOOL_PER_TASK（同参数）+ readonly_stagnation_limit 控制。
+# 注意：这个限制是按 *同名工具* 计数，无论参数是否不同——
+# 单轮内 9 次 add_memory 即便每次内容不同也几乎肯定是 LLM 失控。
+_PER_TOOL_NAME_TASK_LIMITS: dict[str, int] = {
+    "add_memory": 5,
+    "consolidate_memories": 1,
+    "memory_delete_by_query": 2,
+}
+
+
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
 from .tool_executor import ToolExecutor
 
@@ -96,6 +108,23 @@ _READONLY_EXPLORATION_TOOLS = frozenset({
     "get_session_context",
 })
 _READONLY_STAGNATION_LIMIT = 3
+
+
+_IM_CONVERSATION_PREFIXES = (
+    "qqbot:",
+    "feishu:",
+    "dingtalk:",
+    "wework_ws:",
+    "telegram:",
+    "onebot:",
+)
+
+
+def _is_im_conversation(conversation_id: str | None) -> bool:
+    """Best-effort detection for IM sessions where there is no reliable UI confirm surface."""
+    if not conversation_id:
+        return False
+    return str(conversation_id).startswith(_IM_CONVERSATION_PREFIXES)
 
 
 def _tool_result_fingerprint(tool_results: list[dict]) -> str:
@@ -540,6 +569,77 @@ def _get_action_claim_re() -> "re.Pattern[str]":
     return pat
 
 
+def _get_action_done_re() -> "re.Pattern[str]":
+    """检测 LLM 文本中"已经查到/已经读到/我刚才执行"等动作完成短语。
+
+    与 `_get_action_claim_re()` 的区别：
+    - `_get_action_claim_re()` 偏外部状态变化（"已发送/已删除/已写入"），用于隐式 REPLY 分支
+    - `_get_action_done_re()` 偏数据获取动作（"已查/已读/已搜/已检"），用于"未调用工具但
+      声称已完成查询/读取"场景的临时兜底（P0-2 阶段 0）
+
+    阶段 3 完成 identity + 后置一致性检测全面上线后，本检测可作为 belt-and-suspenders 保留。
+    """
+    import re as _re
+
+    pat = getattr(_get_action_done_re, "_cached", None)
+    if pat is not None:
+        return pat
+    pat = _re.compile(
+        r"(?:"
+        r"已经?(?:查|读|删|改|发|执行|完成|保存|写|跑|搜|检索|获取|拉取|下载)"
+        r"|我刚(?:才|刚)?(?:执行|完成|查到|读到|跑|发|删|改|写|拉|获取)"
+        r")"
+    )
+    _get_action_done_re._cached = pat  # type: ignore[attr-defined]
+    return pat
+
+
+# 来源标签检测（P0-2 阶段 3：后置一致性检测）
+def _get_source_tag_re() -> "re.Pattern[str]":
+    """匹配 [来源:工具] / [来源:历史] / [来源:常识] / [来源:不确定] 标签。"""
+    import re as _re
+
+    pat = getattr(_get_source_tag_re, "_cached", None)
+    if pat is not None:
+        return pat
+    pat = _re.compile(r"\[来源[:：]\s*(工具|历史|常识|不确定)\s*\]")
+    _get_source_tag_re._cached = pat  # type: ignore[attr-defined]
+    return pat
+
+
+def _check_source_tag_consistency(
+    text: str, tools_executed_count: int
+) -> str | None:
+    """检查回答中的来源标签与实际工具调用次数是否一致。
+
+    P0-2 阶段 3：后置一致性检测。
+
+    返回值：
+    - None：一致，无需任何处理
+    - str：要追加到回答末尾的警告 banner 文本（不替换原文，让用户看到原文+提示）
+    """
+    if not text:
+        return None
+    tag_re = _get_source_tag_re()
+    if "[来源:工具]" in text or "[来源：工具]" in text:
+        if tools_executed_count == 0:
+            return (
+                "\n\n---\n"
+                "⚠️ **系统检测**：本轮回答声明了 `[来源:工具]`，但实际未调用任何工具。"
+                "标注不准确，请将上述结论视为来自训练知识（[来源:常识]）或历史对话，"
+                "如需精确事实请告诉我去查证。"
+            )
+    # 无任何来源标签，但出现"动作完成短语"，且未调用工具 → 隐性"已完成"幻觉
+    if tools_executed_count == 0:
+        if not tag_re.search(text) and _get_action_done_re().search(text):
+            return (
+                "\n\n---\n"
+                "⚠️ **系统提示**：本轮未实际调用任何工具，上述"
+                "\"已查到/已执行/已读到\"等动作完成短语可能不准确，请你核实。"
+            )
+    return None
+
+
 _CLAIMED_TOOL_TO_FRAGMENTS: dict[str, tuple[str, ...]] = {
     "write_file": ("write_file",),
     "edit_file": ("edit_file",),
@@ -559,19 +659,36 @@ _CLAIMED_TOOL_TO_FRAGMENTS: dict[str, tuple[str, ...]] = {
 # 执行过；否则按幻觉降级处理。映射只覆盖最常被滥用的高风险动词，避免
 # 误拦低风险描述（如"已分析/已生成"等）。
 _VERB_TO_TOOL_FRAGMENTS: dict[str, tuple[str, ...]] = {
-    "删除": ("delete_file", "delete_memory", "remove", "cancel_scheduled_task"),
-    "删掉": ("delete_file", "delete_memory", "remove"),
+    "删除": (
+        "delete_file",
+        "delete_memory",
+        "remove",
+        "cancel_scheduled_task",
+        "run_shell",
+        "run_powershell",
+    ),
+    "删掉": ("delete_file", "delete_memory", "remove", "run_shell", "run_powershell"),
+    "清空": ("delete_file", "run_shell", "run_powershell"),
     "编辑": ("edit_file",),
     "修改": ("edit_file", "update_user_profile", "update_scheduled_task"),
     "覆盖": ("write_file", "edit_file"),
     "写入": ("write_file", "edit_file"),
-    "保存": ("write_file", "edit_file", "add_memory", "update_user_profile"),
+    "保存": (
+        "write_file",
+        "edit_file",
+        "add_memory",
+        "update_user_profile",
+        "create_plan_file",
+        "create_todo",
+        "schedule_task",
+    ),
     "保存到记忆": ("add_memory", "update_user_profile"),
     "记住": ("add_memory", "update_user_profile"),
-    "记录": ("add_memory", "create_todo"),
+    "记录": ("add_memory", "create_todo", "schedule_task", "create_plan_file"),
     "存入": ("add_memory", "update_user_profile", "write_file"),
-    "创建": ("write_file", "create_todo", "schedule_task", "create_agent"),
+    "创建": ("write_file", "create_todo", "schedule_task", "create_agent", "create_plan_file"),
     "添加": ("add_memory", "create_todo", "schedule_task", "edit_file"),
+    "安排": ("schedule_task", "create_todo"),
     "移动": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
     "移至": ("move_file", "run_shell", "run_powershell", "write_file", "delete_file"),
     "重命名": ("move_file", "run_shell", "run_powershell"),
@@ -612,6 +729,43 @@ def _successful_tool_names(
     return {name for name in executed if name not in seen or name in succeeded}
 
 
+# 历史回溯标记：当声明动词 *附近* 出现这些词，说明 LLM 是在汇总过去动作，
+# 不是在本轮做出新声明，一致性守卫应放行。
+# - 时间戳：`[17:30]` `[2026-05-09 17:30]`
+# - 中文回溯副词：之前 / 刚才 / 历史 / 上文 / 上次 / 早些 / 先前 / 此前
+# - 已在……：已在 17:30 / 已经在历史 / 之前已 ...
+_RECAP_NEAR_RE = __import__("re").compile(
+    r"(?:"
+    r"\[\d{1,2}:\d{2}\]"
+    r"|\[\d{4}-\d{2}-\d{2}[^\]]*\]"
+    r"|(?:之前|刚才|此前|先前|上次|上文|历史(?:记录|中|上)|早些时(?:候)?|早前|前面|"
+    r"过去|本轮之前|前几轮|最近(?:的)?(?:对话|会话|任务)|根据(?:对话|历史)|"
+    r"回顾|总结|复述|汇总|盘点)"
+    r")"
+)
+
+
+def _is_recap_context(text: str, verb_or_tool: str) -> bool:
+    """Return True if the verb/tool mention sits inside a historical-recap window.
+
+    Heuristic: scan a ±48-character window around each occurrence of the verb /
+    tool name. If any window contains a timestamp or recap adverb, treat the
+    whole claim as a historical summary instead of a fresh action.
+    """
+    import re as _re
+
+    if not text or not verb_or_tool:
+        return False
+    half = 48
+    for m in _re.finditer(_re.escape(verb_or_tool), text, _re.IGNORECASE):
+        start = max(0, m.start() - half)
+        end = min(len(text), m.end() + half)
+        window = text[start:end]
+        if _RECAP_NEAR_RE.search(window):
+            return True
+    return False
+
+
 def _extract_unbacked_verbs(
     text: str,
     successful_tools: set[str],
@@ -639,6 +793,10 @@ def _extract_unbacked_verbs(
             continue
         if any(any(frag in t for frag in fragments) for t in successful_tools):
             continue
+        # 历史回溯放行：模型在复述/汇总以前真正发生过的工具调用时
+        # 不应被当成幻觉。
+        if _is_recap_context(text, tool_name):
+            continue
         unbacked.append(f"{tool_name}调用")
 
     for verb, fragments in _VERB_TO_TOOL_FRAGMENTS.items():
@@ -648,6 +806,8 @@ def _extract_unbacked_verbs(
         if not verb_pat.search(text):
             continue
         if any(any(frag in t for frag in fragments) for t in successful_tools):
+            continue
+        if _is_recap_context(text, verb):
             continue
         unbacked.append(verb)
     return unbacked
@@ -674,15 +834,22 @@ def _guard_unbacked_action_claim(
     successful_tools = _successful_tool_names(executed_tool_names, tool_results)
 
     if not executed_tool_names:
-        memory_markers = ("记住", "记忆")
-        if any(marker in text for marker in memory_markers):
-            return (
-                "我会在本轮对话中按这个信息处理，但当前没有检测到长期记忆写入凭证，"
-                "所以不会声称已经保存到记忆。"
-            )
+        # 整段回复是历史汇总（含时间戳/回溯副词且无新动作迹象）→ 守卫不应介入，
+        # 否则用户问"复述一下你做了什么"会被替换成"没有凭证"。
+        if _RECAP_NEAR_RE.search(text):
+            return text
+        unbacked = _extract_unbacked_verbs(text, set())
+        verbs_str = "/".join(unbacked[:3]) if unbacked else "外部动作"
+        memory_hint = (
+            "当前没有检测到长期记忆写入凭证，所以请勿据此认定已写入长期记忆。"
+            if any(v in {"保存", "保存到记忆", "记住", "记录", "存入"} for v in unbacked)
+            or "记忆" in text
+            else "当前没有检测到实际工具执行凭证，因此请勿据此认定外部动作已经完成。"
+        )
         return (
-            "当前没有检测到实际工具执行凭证，因此我不能声称外部动作已经完成。"
-            "我可以继续按你的要求执行，或先给出可执行方案。"
+            text.rstrip()
+            + f"\n\n⚠️ 一致性提示：上文宣称已『{verbs_str}』，但本轮没有成功工具调用凭证。"
+            + memory_hint
         )
 
     unbacked = _extract_unbacked_verbs(text, successful_tools)
@@ -1599,6 +1766,9 @@ class ReasoningEngine:
         tools_executed_in_task = False
         _supervisor_intervened = False
         _tool_call_counter: dict[str, int] = {}
+        # 按 *同名工具* 计数（不区分参数），用于阻止单轮内同工具被 LLM
+        # 调用过多次的失控场景（典型：add_memory 在一轮里写 9 条）。
+        _tool_name_counter: dict[str, int] = {}
         # same_tool_call_limit=0（默认）= 不限同工具同参数重复，调用处需先判 > 0
         _MAX_SAME_TOOL_PER_TASK = max(0, int(getattr(settings, "same_tool_call_limit", 0) or 0))
         # 0=不限/禁用对应检测；LoopBudgetGuard 内部已处理 0 短路
@@ -2449,7 +2619,28 @@ class ReasoningEngine:
                     _tc_args = tc.get("input", tc.get("arguments", {}))
                     _tc_key = _tool_rate_limit_key(_tc_name, _tc_args)
                     _tool_call_counter[_tc_key] = _tool_call_counter.get(_tc_key, 0) + 1
+                    _tool_name_counter[_tc_name] = _tool_name_counter.get(_tc_name, 0) + 1
+                    _per_name_limit = _PER_TOOL_NAME_TASK_LIMITS.get(_tc_name, 0)
                     if (
+                        _per_name_limit > 0
+                        and _tool_name_counter[_tc_name] > _per_name_limit
+                    ):
+                        logger.warning(
+                            f"[RateLimit] Tool '{_tc_name}' called "
+                            f"{_tool_name_counter[_tc_name]} times in this task "
+                            f"(per-name limit={_per_name_limit}), skipping execution"
+                        )
+                        _rate_limited_by_id[tc.get("id", "")] = {
+                            "type": "tool_result",
+                            "tool_use_id": tc.get("id", ""),
+                            "content": (
+                                f"[系统] 工具 {_tc_name} 在本任务已调用 "
+                                f"{_tool_name_counter[_tc_name] - 1} 次，"
+                                f"已达单轮上限 {_per_name_limit}。"
+                                f"请把剩余信息合并到现有调用，或推迟到下一轮。"
+                            ),
+                        }
+                    elif (
                         _MAX_SAME_TOOL_PER_TASK > 0
                         and _tool_call_counter[_tc_key] > _MAX_SAME_TOOL_PER_TASK
                     ):
@@ -3311,6 +3502,7 @@ class ReasoningEngine:
             tools_executed_in_task = False
             _supervisor_intervened = False
             _tool_call_counter: dict[str, int] = {}
+            _tool_name_counter: dict[str, int] = {}
             # same_tool_call_limit=0（默认）= 不限同工具同参数重复，调用处需先判 > 0
             _MAX_SAME_TOOL_PER_TASK = max(0, int(getattr(settings, "same_tool_call_limit", 0) or 0))
             # 0=不限/禁用对应检测；LoopBudgetGuard 内部已处理 0 短路
@@ -4194,72 +4386,90 @@ class ReasoningEngine:
                                 r = f"⚠️ 策略拒绝: {_pr.reason}"
                                 _tool_is_error = True
                             elif _pr.decision == PolicyDecision.CONFIRM:
-                                _risk = _pr.metadata.get("risk_level") or "medium"
-                                _needs_sb = _pr.metadata.get("needs_sandbox", False)
-                                _pe.store_ui_pending(
-                                    t_id,
-                                    t_name,
-                                    t_args if isinstance(t_args, dict) else {},
-                                    session_id=conversation_id or "",
-                                    needs_sandbox=_needs_sb,
-                                )
-                                _pe.prepare_ui_confirm(t_id)
-                                yield {
-                                    "type": "security_confirm",
-                                    "tool": t_name,
-                                    "args": t_args if isinstance(t_args, dict) else {},
-                                    "id": t_id,
-                                    "reason": _pr.reason,
-                                    "risk_level": _risk,
-                                    "needs_sandbox": _needs_sb,
-                                    "timeout_seconds": _pe._config.confirmation.timeout_seconds,
-                                    "default_on_timeout": _pe._config.confirmation.default_on_timeout,
-                                    "options": [
+                                if _is_im_conversation(conversation_id):
+                                    r = (
+                                        f"⚠️ 策略需要桌面确认: {_pr.reason}\n\n"
+                                        "当前请求来自 IM 通道，无法安全完成交互式确认；"
+                                        "该工具调用已中止。若这是可信操作，请在桌面端发起，"
+                                        "或切换到完全信任模式后重试普通风险操作。"
+                                    )
+                                    _tool_is_error = True
+                                    _security_confirm_interrupted_ask = True
+                                    logger.info(
+                                        "[Security] IM confirmation blocked without waiting: "
+                                        "session=%s tool=%s policy=%s",
+                                        conversation_id,
+                                        t_name,
+                                        _pr.policy_name,
+                                    )
+                                else:
+                                    _risk = _pr.metadata.get("risk_level") or "medium"
+                                    _needs_sb = _pr.metadata.get("needs_sandbox", False)
+                                    _pe.store_ui_pending(
+                                        t_id,
+                                        t_name,
+                                        t_args if isinstance(t_args, dict) else {},
+                                        session_id=conversation_id or "",
+                                        needs_sandbox=_needs_sb,
+                                    )
+                                    _pe.prepare_ui_confirm(t_id)
+                                    yield {
+                                        "type": "security_confirm",
+                                        "tool": t_name,
+                                        "args": t_args if isinstance(t_args, dict) else {},
+                                        "id": t_id,
+                                        "reason": _pr.reason,
+                                        "risk_level": _risk,
+                                        "needs_sandbox": _needs_sb,
+                                        "timeout_seconds": _pe._config.confirmation.timeout_seconds,
+                                        "default_on_timeout": _pe._config.confirmation.default_on_timeout,
+                                        "options": [
+                                            "allow_once",
+                                            "allow_session",
+                                            "allow_always",
+                                            "deny",
+                                        ]
+                                        + (["sandbox"] if _needs_sb else []),
+                                    }
+                                    _decision = await _pe.wait_for_ui_resolution(
+                                        t_id,
+                                        float(_pe._config.confirmation.timeout_seconds),
+                                    )
+                                    _pe.cleanup_ui_confirm(t_id)
+                                    if _decision in (
+                                        "allow",
                                         "allow_once",
                                         "allow_session",
                                         "allow_always",
-                                        "deny",
-                                    ]
-                                    + (["sandbox"] if _needs_sb else []),
-                                }
-                                _decision = await _pe.wait_for_ui_resolution(
-                                    t_id,
-                                    float(_pe._config.confirmation.timeout_seconds),
-                                )
-                                _pe.cleanup_ui_confirm(t_id)
-                                if _decision in (
-                                    "allow",
-                                    "allow_once",
-                                    "allow_session",
-                                    "allow_always",
-                                    "sandbox",
-                                ):
-                                    try:
-                                        r = await self._tool_executor.execute_tool_with_policy(
-                                            tool_name=t_name,
-                                            tool_input=t_args if isinstance(t_args, dict) else {},
-                                            policy_result=PolicyResult(
-                                                decision=PolicyDecision.ALLOW,
-                                                reason=f"用户已允许安全确认: {_decision}",
-                                                metadata={
-                                                    "confirmed_bypass": True,
-                                                    "needs_sandbox": _decision == "sandbox" or _needs_sb,
-                                                },
-                                            ),
-                                            session_id=conversation_id,
+                                        "sandbox",
+                                    ):
+                                        try:
+                                            r = await self._tool_executor.execute_tool_with_policy(
+                                                tool_name=t_name,
+                                                tool_input=t_args if isinstance(t_args, dict) else {},
+                                                policy_result=PolicyResult(
+                                                    decision=PolicyDecision.ALLOW,
+                                                    reason=f"用户已允许安全确认: {_decision}",
+                                                    metadata={
+                                                        "confirmed_bypass": True,
+                                                        "needs_sandbox": _decision == "sandbox"
+                                                        or _needs_sb,
+                                                    },
+                                                ),
+                                                session_id=conversation_id,
+                                            )
+                                            r = str(r) if r else ""
+                                            _tool_is_error = False
+                                        except Exception as exc:
+                                            r = f"Tool error after security confirmation: {exc}"
+                                            _tool_is_error = True
+                                    else:
+                                        r = (
+                                            f"用户已拒绝安全确认: {_decision}。"
+                                            "不要再执行该操作，请选择安全替代方案或说明无法继续。"
                                         )
-                                        r = str(r) if r else ""
-                                        _tool_is_error = False
-                                    except Exception as exc:
-                                        r = f"Tool error after security confirmation: {exc}"
                                         _tool_is_error = True
-                                else:
-                                    r = (
-                                        f"用户已拒绝安全确认: {_decision}。"
-                                        "不要再执行该操作，请选择安全替代方案或说明无法继续。"
-                                    )
-                                    _tool_is_error = True
-                                _security_confirm_interrupted_ask = True
+                                    _security_confirm_interrupted_ask = True
                             else:
                                 _tool_is_error = False
                                 try:
@@ -4400,7 +4610,25 @@ class ReasoningEngine:
                         # arguments is valid progress, especially for todo step updates.
                         _tool_key = _tool_rate_limit_key(tool_name, tool_args)
                         _tool_call_counter[_tool_key] = _tool_call_counter.get(_tool_key, 0) + 1
+                        _tool_name_counter[tool_name] = _tool_name_counter.get(tool_name, 0) + 1
+                        _per_name_limit = _PER_TOOL_NAME_TASK_LIMITS.get(tool_name, 0)
+                        _rl_msg = ""
                         if (
+                            _per_name_limit > 0
+                            and _tool_name_counter[tool_name] > _per_name_limit
+                        ):
+                            logger.warning(
+                                f"[RateLimit] Tool '{tool_name}' called "
+                                f"{_tool_name_counter[tool_name]} times in this task "
+                                f"(per-name limit={_per_name_limit}), skipping"
+                            )
+                            _rl_msg = (
+                                f"[系统] 工具 {tool_name} 在本任务已调用 "
+                                f"{_tool_name_counter[tool_name] - 1} 次，"
+                                f"已达单轮上限 {_per_name_limit}。"
+                                f"请把剩余信息合并到现有调用，或推迟到下一轮。"
+                            )
+                        elif (
                             _MAX_SAME_TOOL_PER_TASK > 0
                             and _tool_call_counter[_tool_key] > _MAX_SAME_TOOL_PER_TASK
                         ):
@@ -4414,6 +4642,7 @@ class ReasoningEngine:
                                 f"{_tool_call_counter[_tool_key] - 1} 次，已达上限。"
                                 f"请整合操作或继续下一步。"
                             )
+                        if _rl_msg:
                             yield {
                                 "type": "tool_call_start",
                                 "tool": tool_name,
@@ -4547,6 +4776,41 @@ class ReasoningEngine:
 
                         if _pr.decision == PolicyDecision.CONFIRM:
                             _actual_tool_calls_for_budget.append(tc)
+                            if _is_im_conversation(conversation_id):
+                                result_text = (
+                                    f"⚠️ 策略需要桌面确认: {_pr.reason}\n\n"
+                                    "当前请求来自 IM 通道，无法安全完成交互式确认；"
+                                    "该工具调用已中止。若这是可信操作，请在桌面端发起，"
+                                    "或切换到完全信任模式后重试普通风险操作。"
+                                )
+                                logger.info(
+                                    "[Security] IM confirmation blocked without waiting: "
+                                    "session=%s tool=%s policy=%s",
+                                    conversation_id,
+                                    tool_name,
+                                    _pr.policy_name,
+                                )
+                                yield {
+                                    "type": "tool_call_end",
+                                    "tool": tool_name,
+                                    "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
+                                    "id": tool_id,
+                                    "is_error": True,
+                                    "result_summary": self._summarize_tool_result(
+                                        tool_name, result_text
+                                    )
+                                    or "",
+                                }
+                                tool_results_for_msg.append(
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": tool_id,
+                                        "content": result_text,
+                                        "is_error": True,
+                                    }
+                                )
+                                continue
+
                             _risk = _pr.metadata.get("risk_level") or "medium"
                             _needs_sb = _pr.metadata.get("needs_sandbox", False)
                             _pe.store_ui_pending(
@@ -4752,13 +5016,15 @@ class ReasoningEngine:
                         if _result_summary:
                             yield {"type": "chain_text", "content": _result_summary}
 
-                        # deliver_artifacts 回执收集（与 run() 一致）
-                        # 与 run() 路径对齐：deliver_artifacts 为直接交付，
-                        # org_accept_deliverable 为"中继交付"（父节点验收子节点
-                        # 带文件的交付物，receipts.status == "relayed"），
-                        # 两种都算 TaskVerify 眼里的有效交付证据。
+                        # 交付回执收集（与 run() 一致）：直接交付、子节点提交、
+                        # 父节点验收中继交付，三种 receipts 都算 TaskVerify
+                        # 眼里的有效交付证据。
                         if (
-                            tool_name in ("deliver_artifacts", "org_accept_deliverable")
+                            tool_name in (
+                                "deliver_artifacts",
+                                "org_submit_deliverable",
+                                "org_accept_deliverable",
+                            )
                             and result_text
                         ):
                             try:
@@ -6490,6 +6756,56 @@ class ReasoningEngine:
             assistant_content=assistant_content,
         )
 
+    def _collect_inbound_artifact_receipts(self) -> list[dict]:
+        """从当前 session 的 sub_agent_records 合成"父节点已收到子节点交付物"的回执列表。
+
+        coordinator 多智能体场景下，子 agent 完成后由 orchestrator 调
+        ``_persist_sub_agent_record`` 把 ``output_files`` 写到
+        ``ctx.sub_agent_records[*].output_files``。此处在父节点 ReAct 收尾
+        verify_task_completion 之前把这些已落盘的文件合成 receipt 抄入
+        ``delivery_receipts``，让 trust-but-verify 能：
+          1. 通过 ``_has_produced_files`` 信号触发"方案/策划/计划/报告"等弱
+             关键词的 expects_artifact=True 升级；
+          2. 在父节点真没调 ``deliver_artifacts`` 的情况下让 LLM 复核能看到
+             "上下文已有附件、但本节点没转发给用户"，更准确地判 INCOMPLETE
+             并触发下一轮 deliver_artifacts。
+
+        如果 session 不可用 / 没有 sub_agent_records，安全返回空列表。
+        """
+        try:
+            session = getattr(self._state, "current_session", None)
+            ctx = getattr(session, "context", None) if session is not None else None
+            records = getattr(ctx, "sub_agent_records", None) if ctx is not None else None
+            if not records:
+                return []
+            seen_paths: set[str] = set()
+            receipts: list[dict] = []
+            for rec in records:
+                if not isinstance(rec, dict):
+                    continue
+                files = rec.get("output_files") or []
+                if not isinstance(files, list):
+                    continue
+                for fp in files:
+                    if not isinstance(fp, str) or not fp:
+                        continue
+                    if fp in seen_paths:
+                        continue
+                    seen_paths.add(fp)
+                    receipts.append(
+                        {
+                            "status": "delivered",
+                            "from_sub_agent": rec.get("agent_name") or rec.get("agent_id") or "",
+                            "file_path": fp,
+                            "filename": fp.rsplit("/", 1)[-1].rsplit("\\", 1)[-1],
+                            "summary": f"子节点已交付文件: {fp}",
+                            "source": "sub_agent_record",
+                        }
+                    )
+            return receipts
+        except Exception:
+            return []
+
     @staticmethod
     def _build_fallback_summary(
         executed_tool_names: list[str],
@@ -6616,11 +6932,20 @@ class ReasoningEngine:
                 )
                 # 同时拼装组织级 verify 上下文（B4 由 ValidationContext 消费）
                 org_validation_kwargs = self._build_org_validation_kwargs()
+                # 把子节点已落盘的文件合成回执并入 delivery_receipts，
+                # 避免 coordinator 节点没显式调 deliver_artifacts 时
+                # trust-but-verify 看不到任何"已交付证据"而 INSUFFICIENT。
+                inbound_receipts = self._collect_inbound_artifact_receipts()
+                _verify_receipts = (
+                    list(delivery_receipts) + inbound_receipts
+                    if inbound_receipts
+                    else delivery_receipts
+                )
                 is_completed = await self._response_handler.verify_task_completion(
                     user_request=last_user_request,
                     assistant_response=cleaned_text,
                     executed_tools=executed_tool_names,
-                    delivery_receipts=delivery_receipts,
+                    delivery_receipts=_verify_receipts,
                     tool_results=all_tool_results,
                     conversation_id=conversation_id,
                     bypass=supervisor_intervened or is_summary_round,
@@ -6712,7 +7037,22 @@ class ReasoningEngine:
                     #   而不是再来一段纯文字"我已经做好了"。
                     # - expects_artifact=False：温和复核提示，避免对纯对话场景喷
                     #   "你必须交付文件"的噪音误导。
-                    expects_artifact = request_expects_artifact(last_user_request)
+                    # 子节点已经产出过文件 → "方案/策划/计划/报告"等弱信号
+                    # 词也升级成 expects_artifact=True，提示 LLM 走附件交付。
+                    _has_produced_files_re = (
+                        bool(delivery_receipts)
+                        or bool(self._collect_inbound_artifact_receipts())
+                        or any(
+                            (tr.get("tool_name") or tr.get("name") or "") in {
+                                "write_file", "auto_persist_node_final_answer"
+                            }
+                            for tr in (all_tool_results or [])
+                            if isinstance(tr, dict) and not tr.get("is_error")
+                        )
+                    )
+                    expects_artifact = request_expects_artifact(
+                        last_user_request, has_produced_files=_has_produced_files_re
+                    )
                     if expects_artifact:
                         retry_msg = (
                             "[系统] ⚠️ 用户请求里明确提到附件/文件类交付物，"
@@ -6885,68 +7225,108 @@ class ReasoningEngine:
             )
             return clean_llm_response(stripped_text)
 
-        no_tool_call_count += 1
+        # P0-2 阶段 1（修正版）：精简伪重试块
+        # ----------------------------------------------------------------
+        # 旧逻辑：4 种触发条件（evidence_required / ACTION / REPLY 短文本 / 无 intent）
+        #         全都走 ForceToolCall 重试，导致大量 token 浪费 + text_replace 抖动 +
+        #         OrgRuntime 误判 task_failed。
+        # 新逻辑：只对"真幻觉"（LLM 显式声明 [ACTION] 意图但 tool_calls=0）做重试。
+        #         其他三种条件全部降级为 log-only，把 LLM 输出原样返回，由阶段 0 的
+        #         disclaimer 路径 + 阶段 3 的 _check_source_tag_consistency() 后置检测
+        #         给出柔性提示。
+        # ----------------------------------------------------------------
 
-        if no_tool_call_count <= max_no_tool_retries:
-            if stripped_text:
-                working_messages.append(
-                    {
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": stripped_text}],
-                        "reasoning_content": decision.thinking_content or None,
-                    }
-                )
-            if tool_evidence_required:
-                logger.warning(
-                    "[IntentTag] Tool evidence required but final answer had "
-                    f"tool_calls=0 — ForceToolCall retry "
-                    f"({no_tool_call_count}/{max_no_tool_retries})"
-                )
-                retry_msg = (
-                    "[系统] 这个用户请求需要外部证据或工具验证，但你的上一条回复没有调用任何工具。"
-                    "请先调用合适的查询、读取、搜索、API 或 MCP 工具获取证据；"
-                    "如果当前没有可用工具或权限不足，请直接说明无法验证，不要编造结果。"
-                )
-            elif intent == "ACTION":
+        # 真幻觉：ACTION 意图被显式声明 + tool_calls=0 → 重试
+        if intent == "ACTION":
+            no_tool_call_count += 1
+            if no_tool_call_count <= max_no_tool_retries:
                 logger.warning(
                     "[IntentTag] ACTION intent declared but no tool calls — "
-                    "hallucination detected, forcing retry"
+                    "true hallucination, forcing retry "
+                    f"({no_tool_call_count}/{max_no_tool_retries})"
                 )
+                if stripped_text:
+                    working_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": stripped_text}],
+                            "reasoning_content": decision.thinking_content or None,
+                        }
+                    )
                 retry_msg = (
                     "[系统] ⚠️ 你声明了 [ACTION] 意图但没有调用任何工具。"
                     "请立即调用所需的工具来完成用户请求，不要只描述你会做什么。"
                 )
+                working_messages.append({"role": "user", "content": retry_msg})
+                return (
+                    working_messages,
+                    no_tool_call_count,
+                    verify_incomplete_count,
+                    no_confirmation_text_count,
+                    max_no_tool_retries,
+                )
+            # ACTION 重试用尽 → fall-through 到下方 disclaimer 路径
+            logger.warning(
+                "[IntentTag] ACTION retry budget exhausted, "
+                "falling through to disclaimer path"
+            )
+        else:
+            # 三种"非真幻觉"情况：log-only 软提示，不重试，让原文返回
+            if tool_evidence_required:
+                logger.info(
+                    "[ToolEvidence] No tool calls but evidence recommended — "
+                    "softly noted, not retrying (relying on 阶段 3 source-tag check)"
+                )
             elif intent == "REPLY":
-                logger.warning(
-                    f"[IntentTag] REPLY intent but text too short — "
-                    f"ForceToolCall retry ({no_tool_call_count}/{max_no_tool_retries})"
+                logger.info(
+                    f"[IntentTag] REPLY intent with short text "
+                    f"({len(stripped_text or '')} chars), "
+                    f"tool_calls=0 — accepting as-is"
                 )
-                retry_msg = "[系统] 你的回复过于简短，请提供更详细的回答。"
+            elif intent is None and _ACTION_CLAIM_RE.search(_txt or ""):
+                logger.info(
+                    "[IntentTag] No intent + action-claim text + tool_calls=0 — "
+                    "accepting (post-check will warn if claims are unbacked)"
+                )
             else:
-                logger.warning(
-                    f"[IntentTag] No intent tag, short text with action claims, tool_calls=0 — "
-                    f"ForceToolCall retry "
-                    f"({no_tool_call_count}/{max_no_tool_retries})"
+                logger.info(
+                    f"[IntentTag] Edge case (intent={intent or 'NONE'}, "
+                    f"text_len={len(stripped_text or '')}) — accepting as-is"
                 )
-                retry_msg = (
-                    "[系统] ⚠️ 你的上一条回复没有调用任何工具（系统日志确认 tool_calls=0）。"
-                    "文字描述不等于实际执行。请立即调用工具完成用户的请求。"
+
+        # 追问次数用尽。
+        # P0-2 阶段 0（修正版）：不再硬替换 LLM 文本、不再设 _last_exit_reason="tool_evidence_missing"
+        # （那个 exit_reason 会被 OrgRuntime 错误映射为 task_failed 导致组织死锁）。
+        # 改为柔性追加 disclaimer：让 LLM 原文返回 + 末尾追加来源不确定的提示。
+        # 这样组织编排走 normal 路径自然回流，主链不会卡死。
+        # 与阶段 3 的 _check_source_tag_consistency() 形成 belt-and-suspenders。
+        cleaned_text = clean_llm_response(stripped_text) or ""
+        if tool_evidence_required and not tools_executed_in_task:
+            # 上下文敏感的提示文案：动作完成短语用强警告，普通陈述用弱提示
+            if cleaned_text and _get_action_done_re().search(cleaned_text):
+                disclaimer = (
+                    "\n\n---\n"
+                    "⚠️ **系统提示**：本轮未实际调用任何工具，上述声明的"
+                    "\"已执行/已查到/已读取\"等内容可能不准确，请你核实。"
+                    "如需精确数据请告诉我去查。"
                 )
-            working_messages.append({"role": "user", "content": retry_msg})
-            return (
-                working_messages,
-                no_tool_call_count,
-                verify_incomplete_count,
-                no_confirmation_text_count,
-                max_no_tool_retries,
+            else:
+                disclaimer = (
+                    "\n\n---\n"
+                    "（提示：本次回答未调用工具核对外部状态，"
+                    "结论来自训练常识或历史对话；如需最新精确数据请允许我调用相关工具。）"
+                )
+            return cleaned_text + disclaimer if cleaned_text else (
+                "未能就该问题给出可靠回答。请允许我调用读取、搜索或相关工具后再继续核对。"
             )
 
-        # 追问次数用尽。证据敏感任务不继续反复提示，也不把无工具结论包装成已验证结果。
-        if tool_evidence_required and not tools_executed_in_task:
-            self._last_exit_reason = "tool_evidence_missing"
-            return "未执行任何工具，无法验证该结论。请允许我读取、搜索或调用相关工具后再继续核对。"
+        # P0-2 阶段 3：成功路径上的来源标签一致性检测（后置 belt）
+        consistency_warning = _check_source_tag_consistency(
+            cleaned_text, tools_executed_count=0  # 此分支前提就是 tool_calls=0
+        )
+        if consistency_warning:
+            return cleaned_text + consistency_warning
 
-        cleaned_text = clean_llm_response(stripped_text)
         return cleaned_text or (
             "⚠️ 大模型返回异常：未产生可用输出。任务已中断。请重试、或更换端点/模型后再执行。"
         )

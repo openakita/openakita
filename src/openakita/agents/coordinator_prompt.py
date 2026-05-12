@@ -74,7 +74,27 @@ _COORDINATOR_MODE_RULES = """\
 - 此时**禁止**再调 org_delegate_task / org_submit_deliverable / org_wait_for_deliverable
 - 直接基于已收到的下级 deliverable，用自然语言写一份完整汇总给用户即可
 
-## 5. 失败处理
+## 5. 附件交付硬约束（违反 = 任务未完成）
+
+🚨 **下级用 org_submit_deliverable 提交了 file_attachments / output_files**（典型场景：策划方案、报告、PPT、文档、图片），那么你给用户的最终回复**必须**满足以下条件之一，否则系统会判任务未完成、强制让你重做：
+
+✅ **优先方案：直接 deliver_artifacts**
+- 收到下级附件后，把附件的 `file_path` 整理成 `attachments=[{"file_path": "...", "filename": "..."}]`
+- 调用 `deliver_artifacts({"attachments": [...], "message": "<面向用户的简短说明>"})`
+- 这是唯一让用户在终端/IM 真正看到/下载文件的方式
+
+✅ **退化方案：org_submit_deliverable(file_attachments=...)**
+- 如果你向你的上级（不是终端用户）汇报，使用 `org_submit_deliverable` 并把附件挂在 `file_attachments` 上
+
+❌ **禁止的"空口交付"**
+- ❌ 只在文字里写"已为您整理 / 详见附件 / 文件已生成"——文字不算交付，必须有 deliver_artifacts 的成功回执
+- ❌ 把下级的 markdown 内容复制粘贴进自己的回复里冒充交付——用户的 IM/终端拿不到这是文件
+- ❌ 在 [用户指令最终汇总] 轮里跳过 deliver_artifacts 直接写汇总——附件依然要转发
+
+📋 **快速判断**：
+> 如果下级回执里有 `output_files` / `file_attachments`，而你的最终回复**没**调用 deliver_artifacts，那就是漏交付。
+
+## 6. 失败处理
 
 - 下级 reject / error → 用 org_delegate_task 对同一个下级再发一次修正指令
 - 多次重试仍失败 → 换一个下级或拆得更细，必要时向上级 org_escalate

@@ -331,7 +331,22 @@ class OpenAIResponsesProvider(OpenAIProvider):
             model=data.get("model", self.config.model),
         )
 
-    def _convert_stream_event(self, event: dict) -> dict:
+    @staticmethod
+    def _extract_reasoning_text(value: object) -> str:
+        """Extract visible reasoning summaries from Responses API stream payloads."""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "".join(OpenAIResponsesProvider._extract_reasoning_text(item) for item in value)
+        if isinstance(value, dict):
+            for key in ("text", "delta", "content", "summary_text", "reasoning", "thinking"):
+                if key in value:
+                    extracted = OpenAIResponsesProvider._extract_reasoning_text(value.get(key))
+                    if extracted:
+                        return extracted
+        return ""
+
+    def _convert_stream_event(self, event: dict) -> dict | list[dict]:
         """将 Responses API 流式事件转换为内部统一格式。
 
         Responses API 流式事件结构：
@@ -357,6 +372,20 @@ class OpenAIResponsesProvider(OpenAIProvider):
             return {
                 "type": "content_block_delta",
                 "delta": {"type": "text", "text": event.get("delta", "")},
+            }
+
+        # ── 思考摘要增量 ──
+        # Responses API 不暴露完整 CoT（chain-of-thought，模型内部推理），但会
+        # 对部分 reasoning 模型流式返回 summary text；前端按 thinking_delta 展示。
+        if event_type in (
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_text.delta",
+            "response.reasoning.delta",
+        ):
+            text = self._extract_reasoning_text(event.get("delta"))
+            return {
+                "type": "content_block_delta",
+                "delta": {"type": "thinking", "text": text},
             }
 
         # ── 工具调用：参数增量 ──
@@ -398,8 +427,17 @@ class OpenAIResponsesProvider(OpenAIProvider):
             }
 
         # ── 新 output item（函数调用的首个事件，含 name 和 call_id）──
-        if event_type == "response.output_item.added":
+        if event_type in ("response.output_item.added", "response.output_item.done"):
             item = event.get("item", {})
+            if item.get("type") == "reasoning":
+                text = self._extract_reasoning_text(
+                    item.get("summary") or item.get("content") or item.get("text")
+                )
+                if text:
+                    return {
+                        "type": "content_block_delta",
+                        "delta": {"type": "thinking", "text": text},
+                    }
             if item.get("type") == "function_call":
                 return {
                     "type": "content_block_delta",

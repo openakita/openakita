@@ -320,7 +320,7 @@ function PlanStepRow({
                 type="button"
                 onClick={() => onStepAction("skip", idx, desc)}
                 title={t("chat.plan.skipHint", {
-                  defaultValue: "把「跳过当前步骤」的建议填到输入框，由你确认是否发送",
+                  defaultValue: "在输入框生成「跳过此步」的请求",
                 }) as string}
                 style={planActionBtnStyle}
               >
@@ -332,7 +332,7 @@ function PlanStepRow({
                 type="button"
                 onClick={() => onStepAction("retry", idx, desc)}
                 title={t("chat.plan.retryHint", {
-                  defaultValue: "把「重试该步骤」的建议填到输入框，由你确认是否发送",
+                  defaultValue: "在输入框生成「重试此步」的请求",
                 }) as string}
                 style={planActionBtnStyle}
               >

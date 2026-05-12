@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 
@@ -96,6 +97,48 @@ class MemoryCreateRequest(BaseModel):
     tags: list[str] = []
 
 
+class ClaimLegacyRequest(BaseModel):
+    include_inactive: bool = True
+    include_default_graph_nodes: bool = True
+
+
+IDENTITY_SLOT_ALIASES: dict[str, str] = {
+    "姓名": "user.name",
+    "名字": "user.name",
+    "称呼": "user.name",
+    "name": "user.name",
+    "年龄": "user.age",
+    "age": "user.age",
+    "城市": "user.city",
+    "所在地": "user.city",
+    "位置": "user.city",
+    "居住地": "user.city",
+    "location": "user.city",
+    "city": "user.city",
+    "职业": "user.job",
+    "工作": "user.job",
+    "职位": "user.job",
+    "job": "user.job",
+    "profession": "user.job",
+    "宠物": "user.pet",
+    "pet": "user.pet",
+}
+
+TASK_LOG_PATTERNS = (
+    "本轮",
+    "工具调用",
+    "调用了",
+    "执行了",
+    "读取了",
+    "创建了文件",
+    "写入了文件",
+    "测试报告",
+    "trace_",
+    "llm_request",
+    "llm_response",
+)
+
+
 def _serialize(mem: Any) -> dict:
     return {
         "id": mem.id,
@@ -113,6 +156,306 @@ def _serialize(mem: Any) -> dict:
         "updated_at": mem.updated_at.isoformat() if mem.updated_at else None,
         "last_accessed_at": mem.last_accessed_at.isoformat() if mem.last_accessed_at else None,
         "expires_at": mem.expires_at.isoformat() if mem.expires_at else None,
+        "scope": getattr(mem, "scope", "user"),
+        "scope_owner": getattr(mem, "scope_owner", ""),
+        "user_id": getattr(mem, "user_id", "default"),
+        "workspace_id": getattr(mem, "workspace_id", "default"),
+    }
+
+
+def _current_owner(request: Request) -> tuple[str, str]:
+    mm = _get_manager(request)
+    if mm and hasattr(mm, "_current_owner"):
+        try:
+            return mm._current_owner()
+        except Exception:
+            pass
+    return "default", "default"
+
+
+def _owner_counts(store: Any) -> dict[str, Any]:
+    db = getattr(store, "db", None)
+    conn = getattr(db, "_conn", None)
+    if conn is None:
+        return {"total": 0, "by_scope": {}, "by_owner": []}
+
+    by_scope = {
+        (row[0] or "global"): row[1]
+        for row in conn.execute(
+            "SELECT COALESCE(scope, 'global') AS scope, COUNT(*) FROM memories GROUP BY scope"
+        ).fetchall()
+    }
+    by_owner = [
+        {
+            "scope": row[0] or "global",
+            "scope_owner": row[1] or "",
+            "user_id": row[2] or "default",
+            "workspace_id": row[3] or "default",
+            "count": row[4],
+        }
+        for row in conn.execute(
+            """
+            SELECT COALESCE(scope, 'global'),
+                   COALESCE(scope_owner, ''),
+                   COALESCE(user_id, 'default'),
+                   COALESCE(workspace_id, 'default'),
+                   COUNT(*)
+            FROM memories
+            GROUP BY scope, scope_owner, user_id, workspace_id
+            ORDER BY COUNT(*) DESC
+            """
+        ).fetchall()
+    ]
+    total = sum(by_scope.values())
+    return {"total": total, "by_scope": by_scope, "by_owner": by_owner}
+
+
+def _graph_owner_counts(mm: Any) -> dict[str, Any]:
+    if not mm or not mm._ensure_relational() or not mm.relational_store:
+        return {"total_nodes": 0, "by_owner": []}
+    conn = getattr(mm.relational_store, "_conn", None)
+    if conn is None:
+        return {"total_nodes": 0, "by_owner": []}
+    try:
+        rows = conn.execute(
+            """
+            SELECT COALESCE(user_id, 'default'),
+                   COALESCE(workspace_id, 'default'),
+                   COUNT(*)
+            FROM mdrm_nodes
+            GROUP BY user_id, workspace_id
+            ORDER BY COUNT(*) DESC
+            """
+        ).fetchall()
+    except Exception:
+        return {"total_nodes": 0, "by_owner": []}
+    by_owner = [
+        {"user_id": row[0] or "default", "workspace_id": row[1] or "default", "count": row[2]}
+        for row in rows
+    ]
+    return {"total_nodes": sum(row["count"] for row in by_owner), "by_owner": by_owner}
+
+
+def _claim_graph_nodes(
+    mm: Any,
+    *,
+    memory_ids: set[str],
+    user_id: str,
+    workspace_id: str,
+    include_default_graph_nodes: bool,
+) -> int:
+    if not mm or not mm._ensure_relational() or not mm.relational_store:
+        return 0
+    conn = getattr(mm.relational_store, "_conn", None)
+    if conn is None:
+        return 0
+    updated = 0
+    try:
+        if memory_ids:
+            placeholders = ",".join("?" for _ in memory_ids)
+            cur = conn.execute(
+                f"""
+                UPDATE mdrm_nodes
+                SET user_id = ?, workspace_id = ?
+                WHERE id IN ({placeholders})
+                """,
+                [user_id, workspace_id, *memory_ids],
+            )
+            updated += cur.rowcount if cur.rowcount is not None else 0
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"[MemoryAPI] Claim graph nodes failed: {e}")
+        return updated
+    return updated
+
+
+def _memory_type_value(mem: Any) -> str:
+    return mem.type.value if hasattr(mem.type, "value") else str(mem.type)
+
+
+def _normalize_legacy_tags(mem: Any, *extra: str) -> list[str]:
+    existing = getattr(mem, "tags", None) or []
+    return sorted({str(t) for t in [*existing, *extra] if str(t).strip()})
+
+
+def _is_reviewed_legacy(mem: Any) -> bool:
+    if getattr(mem, "superseded_by", None):
+        return True
+    tags = {str(t) for t in (getattr(mem, "tags", None) or [])}
+    return "legacy_pending_review" in tags or any(t.startswith("legacy_reason:") for t in tags)
+
+
+def _legacy_review_counts(store: Any) -> dict[str, int]:
+    legacy = store.load_all_memories(
+        scope="legacy_quarantine",
+        scope_owner="",
+        user_id="legacy",
+        workspace_id=None,
+        include_inactive=True,
+    )
+    pending = sum(1 for mem in legacy if not _is_reviewed_legacy(mem))
+    reviewed = len(legacy) - pending
+    return {"total": len(legacy), "pending": pending, "reviewed": reviewed}
+
+
+def _identity_slot_for(subject: str, predicate: str) -> str:
+    if (subject or "").strip().lower() not in {"用户", "user", "当前用户", "我"}:
+        return ""
+    pred = (predicate or "").strip().lower()
+    for alias, slot in IDENTITY_SLOT_ALIASES.items():
+        if alias.lower() == pred:
+            return slot
+    if pred.startswith("preference.") or pred.startswith("偏好."):
+        return f"user.preference.{pred.split('.', 1)[1]}"
+    return ""
+
+
+def _infer_legacy_subject_predicate(mem: Any) -> tuple[str, str]:
+    subject = (getattr(mem, "subject", "") or "").strip()
+    predicate = (getattr(mem, "predicate", "") or "").strip()
+    if subject and predicate:
+        return subject, predicate
+    content = (getattr(mem, "content", "") or "").strip()
+    patterns = [
+        (r"^(?:用户|我)(?:叫|名叫|名字是|姓名是)\s*([^，。；\s]{1,30})", "姓名"),
+        (r"^(?:用户|我)(?:年龄是|今年)\s*(\d{1,3})\s*岁?", "年龄"),
+        (r"^(?:用户|我)(?:住在|居住在|所在地是|城市是|来自)\s*([^，。；]{1,30})", "城市"),
+        (r"^(?:用户|我)(?:喜欢|偏好)\s*([^，。；]{1,80})", "偏好"),
+    ]
+    for pattern, pred in patterns:
+        if re.search(pattern, content):
+            return "用户", pred
+    return subject, predicate
+
+
+def _looks_like_task_log(mem: Any) -> bool:
+    content = (getattr(mem, "content", "") or "").strip().lower()
+    if any(p.lower() in content for p in TASK_LOG_PATTERNS):
+        return True
+    if re.search(r"\b(read_file|write_file|run_shell|pytest|npm run|git diff)\b", content):
+        return True
+    return False
+
+
+def _legacy_candidate_reason(mem: Any, subject: str, predicate: str) -> str:
+    content = (getattr(mem, "content", "") or "").strip()
+    if not content:
+        return "empty_content"
+    if len(content) > 800:
+        return "too_long"
+    if _looks_like_task_log(mem):
+        return "task_log"
+    mem_type = _memory_type_value(mem)
+    if mem_type not in {t.value for t in MemoryType}:
+        return "unknown_type"
+    if mem_type == MemoryType.FACT.value and not (subject and predicate):
+        return "unstructured_fact"
+    return ""
+
+
+def _legacy_sort_key(mem: Any) -> tuple[str, str]:
+    updated = getattr(mem, "updated_at", None) or getattr(mem, "created_at", None)
+    created = getattr(mem, "created_at", None)
+    return (
+        updated.isoformat() if hasattr(updated, "isoformat") else str(updated or ""),
+        created.isoformat() if hasattr(created, "isoformat") else str(created or ""),
+    )
+
+
+def _active_slot_index(store: Any, user_id: str, workspace_id: str) -> set[str]:
+    active = store.load_all_memories(
+        scope="user",
+        scope_owner="",
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+    return {
+        slot
+        for mem in active
+        if (slot := _identity_slot_for(getattr(mem, "subject", ""), getattr(mem, "predicate", "")))
+    }
+
+
+def _mark_legacy_reviewed(store: Any, mem: Any, reason: str, superseded_by: str | None = None) -> None:
+    updates: dict[str, Any] = {
+        "tags": _normalize_legacy_tags(mem, "legacy_pending_review", f"legacy_reason:{reason}"),
+    }
+    if superseded_by:
+        updates["superseded_by"] = superseded_by
+    store.db.update_memory(mem.id, updates)
+
+
+def _safe_import_legacy_memories(
+    store: Any,
+    legacy: list[Any],
+    *,
+    user_id: str,
+    workspace_id: str,
+) -> dict[str, Any]:
+    identity_groups: dict[str, list[tuple[Any, str, str]]] = {}
+    accepted_general: list[tuple[Any, str, str]] = []
+    rejected = 0
+    conflict_skipped = 0
+    active_slots = _active_slot_index(store, user_id, workspace_id)
+
+    for mem in legacy:
+        if _is_reviewed_legacy(mem):
+            continue
+        subject, predicate = _infer_legacy_subject_predicate(mem)
+        reason = _legacy_candidate_reason(mem, subject, predicate)
+        if reason:
+            _mark_legacy_reviewed(store, mem, reason)
+            rejected += 1
+            continue
+        slot = _identity_slot_for(subject, predicate)
+        if slot:
+            identity_groups.setdefault(slot, []).append((mem, subject, predicate))
+        else:
+            accepted_general.append((mem, subject, predicate))
+
+    to_promote: list[tuple[Any, str, str]] = []
+    for slot, items in identity_groups.items():
+        items.sort(key=lambda item: _legacy_sort_key(item[0]), reverse=True)
+        winner = items[0]
+        if slot in active_slots:
+            for mem, _subject, _predicate in items:
+                _mark_legacy_reviewed(store, mem, "conflicts_with_current_user")
+                conflict_skipped += 1
+            continue
+        to_promote.append(winner)
+        for mem, _subject, _predicate in items[1:]:
+            _mark_legacy_reviewed(store, mem, "legacy_identity_conflict", superseded_by=winner[0].id)
+            conflict_skipped += 1
+
+    to_promote.extend(accepted_general)
+
+    promoted_ids: set[str] = set()
+    for mem, subject, predicate in to_promote:
+        importance = min(max(float(getattr(mem, "importance_score", 0.5) or 0.5), 0.2), 0.65)
+        updates = {
+            "scope": "user",
+            "scope_owner": "",
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "subject": subject,
+            "predicate": predicate,
+            "importance_score": importance,
+            "priority": _priority_for_importance(
+                mem.type if isinstance(mem.type, MemoryType) else MemoryType(_memory_type_value(mem)),
+                importance,
+            ).value,
+            "confidence": min(float(getattr(mem, "confidence", 0.5) or 0.5), 0.7),
+            "tags": _normalize_legacy_tags(mem, "legacy_imported"),
+        }
+        if store.db.update_memory(mem.id, updates):
+            promoted_ids.add(mem.id)
+
+    return {
+        "promoted_ids": promoted_ids,
+        "promoted": len(promoted_ids),
+        "rejected": rejected,
+        "conflict_skipped": conflict_skipped,
+        "reviewed": len(legacy),
     }
 
 
@@ -149,7 +492,17 @@ async def create_memory(request: Request, body: MemoryCreateRequest):
             tags=body.tags or [],
         )
         apply_retention(mem)
-        mem_id = store.save_semantic(mem)
+        mm = _get_manager(request)
+        if mm and hasattr(mm, "save_user_memory"):
+            mem_id = mm.save_user_memory(mem, scope="user")
+        else:
+            user_id, workspace_id = _current_owner(request)
+            mem_id = store.save_semantic(
+                mem,
+                scope="user",
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
         _sync_json(request)
         return {"status": "ok", "id": mem_id}
     except HTTPException:
@@ -179,10 +532,14 @@ async def list_memories(
     search = search or q
 
     if search:
+        user_id, workspace_id = _current_owner(request)
         results = store.search_semantic(
             search,
             limit=limit,
             filter_type=type,
+            scope="user",
+            user_id=user_id,
+            workspace_id=workspace_id,
             include_inactive=include_inactive,
         )
         return {
@@ -192,6 +549,7 @@ async def list_memories(
             "offset": 0,
         }
 
+    user_id, workspace_id = _current_owner(request)
     results, total = store.query_paged(
         memory_type=type,
         min_importance=min_score if min_score > 0 else None,
@@ -199,8 +557,10 @@ async def list_memories(
         sort_order=sort_order,
         limit=limit,
         offset=offset,
-        scope="global",
+        scope="user",
         scope_owner="",
+        user_id=user_id,
+        workspace_id=workspace_id,
         include_inactive=include_inactive,
     )
     return {
@@ -217,7 +577,13 @@ async def memory_stats(request: Request):
     if not store:
         raise HTTPException(503, "Memory store not available")
 
-    all_mems = store.load_all_memories()
+    user_id, workspace_id = _current_owner(request)
+    all_mems = store.load_all_memories(
+        scope="user",
+        scope_owner="",
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
     by_type: dict[str, int] = {}
     total_score = 0.0
     for m in all_mems:
@@ -229,6 +595,77 @@ async def memory_stats(request: Request):
         "total": len(all_mems),
         "by_type": by_type,
         "avg_score": round(total_score / len(all_mems), 2) if all_mems else 0,
+    }
+
+
+@router.get("/migration-status")
+async def memory_migration_status(request: Request):
+    """Diagnose legacy memory visibility after owner-scoped migration."""
+    store = _get_store(request)
+    if not store:
+        raise HTTPException(503, "Memory store not available")
+
+    user_id, workspace_id = _current_owner(request)
+    current_visible = store.count_memories(
+        scope="user",
+        scope_owner="",
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+    legacy_counts = _legacy_review_counts(store)
+    all_counts = _owner_counts(store)
+    graph_counts = _graph_owner_counts(_get_manager(request))
+    return {
+        "current_owner": {"user_id": user_id, "workspace_id": workspace_id},
+        "current_visible": current_visible,
+        "legacy_quarantine": legacy_counts["total"],
+        "legacy_pending": legacy_counts["pending"],
+        "legacy_reviewed": legacy_counts["reviewed"],
+        "semantic": all_counts,
+        "graph": graph_counts,
+        "has_recoverable_legacy": legacy_counts["pending"] > 0,
+    }
+
+
+@router.post("/claim-legacy")
+async def claim_legacy_memories(request: Request, body: ClaimLegacyRequest | None = None):
+    """Safely import quarantined legacy memories into the current desktop owner."""
+    store = _get_store(request)
+    if not store:
+        raise HTTPException(503, "Memory store not available")
+    body = body or ClaimLegacyRequest()
+    user_id, workspace_id = _current_owner(request)
+    legacy = store.load_all_memories(
+        scope="legacy_quarantine",
+        scope_owner="",
+        user_id="legacy",
+        workspace_id=None,
+        include_inactive=body.include_inactive,
+    )
+    report = _safe_import_legacy_memories(
+        store,
+        legacy,
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+
+    graph_updated = _claim_graph_nodes(
+        _get_manager(request),
+        memory_ids=report["promoted_ids"],
+        user_id=user_id,
+        workspace_id=workspace_id,
+        include_default_graph_nodes=body.include_default_graph_nodes,
+    )
+    _sync_json(request)
+    return {
+        "ok": True,
+        "claimed": report["promoted"],
+        "promoted": report["promoted"],
+        "reviewed": report["reviewed"],
+        "rejected": report["rejected"],
+        "conflict_skipped": report["conflict_skipped"],
+        "graph_nodes_updated": graph_updated,
+        "current_owner": {"user_id": user_id, "workspace_id": workspace_id},
     }
 
 
@@ -344,7 +781,8 @@ async def get_memory_graph(request: Request, limit: int = 500):
     if mode_cfg != "mode1" and mm._ensure_relational() and mm.relational_store:
         rs = mm.relational_store
         mode = "mode2"
-        raw_nodes = rs.get_all_nodes(limit=limit)
+        user_id, workspace_id = _current_owner(request)
+        raw_nodes = rs.get_all_nodes(limit=limit, user_id=user_id, workspace_id=workspace_id)
         node_ids = {n.id for n in raw_nodes}
 
         for n in raw_nodes:
@@ -383,7 +821,13 @@ async def get_memory_graph(request: Request, limit: int = 500):
             import json as _json
             from collections import defaultdict
 
-            all_mems = store.load_all_memories()[:limit]
+            user_id, workspace_id = _current_owner(request)
+            all_mems = store.load_all_memories(
+                scope="user",
+                scope_owner="",
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )[:limit]
             subject_map: dict[str, list[str]] = defaultdict(list)
             for m in all_mems:
                 nodes_out.append(

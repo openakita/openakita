@@ -1111,6 +1111,7 @@ ID: {result.test_id}
             response = await self.brain.think(
                 prompt,
                 system="你是一个系统优化专家。请从错误记录中提取可行的优化建议。只输出 JSON 数组，不要其他内容。",
+                enable_thinking=False,
             )
 
             # 解析 JSON

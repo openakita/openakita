@@ -10,6 +10,7 @@ import inspect
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -172,6 +173,12 @@ class PluginManager:
 
         self._loaded: dict[str, _LoadedPlugin] = {}
         self._failed: dict[str, str] = {}
+        # 失败冷却：记录每个 plugin id 上次加载失败时的 monotonic 时间戳。
+        # ``load_all`` 在 60s 内对同一 plugin 不会再次尝试加载，避免反复刷
+        # ERROR（典型现场：某 plugin 顶层 import 因 numpy / ffmpeg 等环境
+        # 问题崩溃，每次 load_all/auto-restart 都打一行长 traceback）。
+        # 用户主动 ``reload_plugin`` 会重置该时间戳。
+        self._failed_at: dict[str, float] = {}
 
     @staticmethod
     def _filter_host_refs(host_refs: dict[str, Any]) -> dict[str, Any]:
@@ -348,8 +355,25 @@ class PluginManager:
             logger.error("Plugin '%s' %s", cid, msg)
             self._failed[cid] = msg
 
+        # 失败冷却阈值：若某 plugin 在 _failed_at 中且距上次失败 < 该阈值，
+        # 跳过本次加载，仅打一条 debug 日志，避免反复刷 traceback。
+        _PLUGIN_FAILURE_COOLDOWN_SEC = 60.0
+        _now_mono = time.monotonic()
+
         for plugin_dir, manifest in sorted_plugins:
             if not self._check_openakita_version(manifest):
+                continue
+
+            _last_failed = self._failed_at.get(manifest.id)
+            if (
+                _last_failed is not None
+                and (_now_mono - _last_failed) < _PLUGIN_FAILURE_COOLDOWN_SEC
+            ):
+                logger.debug(
+                    "Plugin '%s' in failure cooldown (%.1fs remaining), skipping load",
+                    manifest.id,
+                    _PLUGIN_FAILURE_COOLDOWN_SEC - (_now_mono - _last_failed),
+                )
                 continue
 
             if not self._state.is_enabled(manifest.id):
@@ -393,6 +417,7 @@ class PluginManager:
                 msg = f"load timeout ({manifest.load_timeout}s)"
                 logger.error("Plugin '%s' %s, skipped", manifest.id, msg)
                 self._failed[manifest.id] = msg
+                self._failed_at[manifest.id] = time.monotonic()
                 self._state.record_error(manifest.id, msg)
                 self._record_failure_jsonl(manifest.id, "TimeoutError", msg, "")
             except Exception as e:
@@ -426,6 +451,7 @@ class PluginManager:
                         exc_info=True,
                     )
                 self._failed[manifest.id] = msg
+                self._failed_at[manifest.id] = time.monotonic()
                 self._state.record_error(manifest.id, msg)
                 # PR-P1: 把失败原因 + traceback 落到 jsonl，便于事后排查回放，
                 # 也让前端 PluginManagerView 能展示"上次加载失败 N 个，原因..."。
@@ -1410,6 +1436,8 @@ class PluginManager:
                 return
 
         self._failed.pop(plugin_id, None)
+        # 用户主动 reload 视作"想再试一次"，清除失败冷却时间戳。
+        self._failed_at.pop(plugin_id, None)
         try:
             await asyncio.wait_for(
                 self._load_single(manifest, plugin_dir),
@@ -1420,6 +1448,7 @@ class PluginManager:
             msg = f"{type(e).__name__}: {e}"
             logger.error("Plugin '%s' reload failed: %s", plugin_id, msg)
             self._failed[plugin_id] = msg
+            self._failed_at[plugin_id] = time.monotonic()
         self._save_state()
 
     def _unmount_plugin_ui(self, plugin_id: str) -> None:

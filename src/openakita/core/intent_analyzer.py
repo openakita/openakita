@@ -116,7 +116,11 @@ class IntentResult:
     memory_scope: MemoryScope = MemoryScope.RELEVANT
     catalog_scope: list[str] = field(default_factory=list)
     requires_tools: bool = False
+    # P0-2 阶段 2：evidence_required 仅来自 LLM 自评（"我必须调工具才能回答"）
+    # evidence_recommended 是规则启发式建议（"这种问题最好查一下，但不是必须"）
+    # 二者不再 OR 等价；前者驱动重试/警告，后者驱动 prompt 软提示。
     evidence_required: bool = False
+    evidence_recommended: bool = False
     requires_project_context: bool = False
     risk_level_hint: RiskLevelHint = RiskLevelHint.NONE
 
@@ -317,6 +321,11 @@ _DIRECT_SHORT_ANSWER_RE = re.compile(
     re.IGNORECASE,
 )
 
+_SHORT_EXPLANATION_RE = re.compile(
+    r"^(?:请)?(?:简单|简洁|直接)?(?:解释|说明|介绍)(?:一下)?[，,:：\s]+.{1,40}$",
+    re.IGNORECASE,
+)
+
 # Context-dependent markers: when present the user is referencing prior
 # conversation turns, so the fast (history-free) path MUST be skipped.
 _CONTEXT_DEPENDENT_RE = re.compile(
@@ -362,6 +371,12 @@ _WRITE_CONFIRMATION_RE = re.compile(
     r"(?:写入|保存|记录|读取|验证|文件|内容).{0,12}"
     r"(?:成功|了吗|没有|没看到|看不到|不同|不一致|确认|确定)"
     r"|(?:还是)?没有写入成功|(?:系统中)?没看到(?:该)?文件|和你显示不同",
+    re.IGNORECASE,
+)
+
+_DESKTOP_SCREENSHOT_RE = re.compile(
+    r"(?:桌面|屏幕|电脑|窗口|当前(?:画面|界面)).{0,8}(?:截图|截屏|屏幕截图)"
+    r"|(?:截图|截屏|屏幕截图).{0,8}(?:发我|发给我|发送|传给我|给我|桌面|屏幕|电脑|窗口)",
     re.IGNORECASE,
 )
 
@@ -414,6 +429,8 @@ def _infer_tool_action_hints(message: str) -> tuple[list[str], bool]:
 
     if re.search(r"(?:浏览器|网页)", message):
         add_hint("Browser")
+    if _DESKTOP_SCREENSHOT_RE.search(message):
+        add_hint("Desktop")
     if re.search(r"(?:GitHub|issue|网页|搜索|下载|仓库)", message, flags=re.IGNORECASE):
         add_hint("Web Search")
     if re.search(r"(?:日志|报错|警告|错误|文件|目录|项目|代码|skill|技能|配置|数据库|命令|脚本)", message):
@@ -444,6 +461,7 @@ def _make_tool_action_result(message: str, *, follow_up: bool = False) -> Intent
         memory_scope=MemoryScope.RELEVANT,
         requires_tools=True,
         evidence_required=True,
+        evidence_recommended=True,
         requires_project_context=requires_project_context,
         risk_level_hint=RiskLevelHint.NONE,
     )
@@ -459,7 +477,11 @@ def _try_fast_query_shortcut(message: str) -> IntentResult | None:
         return None
     if _looks_like_tool_action_request(stripped):
         return _make_tool_action_result(stripped)
-    if _QUERY_PATTERNS.match(stripped) or _DIRECT_SHORT_ANSWER_RE.match(stripped):
+    if (
+        _QUERY_PATTERNS.match(stripped)
+        or _DIRECT_SHORT_ANSWER_RE.match(stripped)
+        or _SHORT_EXPLANATION_RE.match(stripped)
+    ):
         logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' matched as QUERY (rule-based)")
         return IntentResult(
             intent=IntentType.QUERY,
@@ -602,8 +624,8 @@ def _make_default(message: str) -> IntentResult:
     工具能力服务到**，否则会出现"明明用户在让 OpenAkita 干活，却被识别成
     chitchat 然后没有任何工具被挂到上下文里"的退步。所以这里：
 
-    * intent 默认 ``TASK``（之前曾经临时被改回 ``QUERY`` + 0 confidence，
-      违反 docstring 与 reasoning_engine 的预期，已修正）；
+    * 明显的知识问答仍走轻量 ``QUERY``，避免简单解释进入 ReAct 工具循环；
+    * 其余情况默认 ``TASK``；
     * confidence 设为 ``0.0`` 让上层知道这不是来自 LLM 的高置信结果；
     * 强制 ``force_tool=True`` + ``requires_tools=True`` —— 兜底必须能
       调用工具，否则就退化成纯文本助手；
@@ -611,7 +633,17 @@ def _make_default(message: str) -> IntentResult:
       一个最小可用的工具集；
     * todo_required 仍然 False（LLM 没说要拆 todo，就别强行拆）。
     """
-    evidence_required = _requires_external_evidence(message)
+    fast_query = _try_fast_query_shortcut(message)
+    if fast_query is not None:
+        fast_query.confidence = 0.0
+        fast_query.prompt_depth = PromptDepth.MINIMAL
+        fast_query.fast_reply = False
+        fast_query.task_definition = message[:600]
+        fast_query.raw_output = ""
+        return fast_query
+
+    # P0-2 阶段 2：规则启发式降级为 evidence_recommended，不再硬等于 evidence_required
+    rule_evidence = _requires_external_evidence(message)
     tool_hints, requires_project_context = _infer_tool_action_hints(message)
     return IntentResult(
         intent=IntentType.TASK,
@@ -628,7 +660,8 @@ def _make_default(message: str) -> IntentResult:
         capability_scope=[],
         catalog_scope=[],
         requires_tools=True,
-        evidence_required=evidence_required,
+        evidence_required=False,
+        evidence_recommended=rule_evidence,
         requires_project_context=requires_project_context,
         risk_level_hint=RiskLevelHint.NONE,
     )
@@ -731,9 +764,22 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
         extracted.get("evidence_required", ""),
         default=False,
     )
-    evidence_required = llm_evidence_required or _requires_external_evidence(message)
+    # P0-2 阶段 2（修正版）：拆开 LLM 判断和规则启发
+    # - evidence_required = LLM 自评（"必须查工具"），驱动 ForceToolCall/重试逻辑
+    # - evidence_recommended = LLM 自评 OR 规则启发（"建议查"），驱动 prompt 软提示
+    # 这样规则误判（如把"算我33岁离60岁还几年"识别为外部证据）只影响 prompt 文案，
+    # 不再触发 ForceToolCall 重试 + text_replace + OrgRuntime 误判 task_failed。
+    evidence_required = llm_evidence_required
+    rule_evidence = _requires_external_evidence(message)
+    evidence_recommended = llm_evidence_required or rule_evidence
     if evidence_required:
         requires_tools = True
+        inferred_hints, inferred_project_context = _infer_tool_action_hints(message)
+        for hint in inferred_hints:
+            if hint not in tool_hints:
+                tool_hints.append(hint)
+    elif evidence_recommended:
+        # 软建议：补充 tool_hints 给 LLM 参考，但不强制 requires_tools
         inferred_hints, inferred_project_context = _infer_tool_action_hints(message)
         for hint in inferred_hints:
             if hint not in tool_hints:
@@ -775,6 +821,7 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
         catalog_scope=catalog_scope,
         requires_tools=requires_tools,
         evidence_required=evidence_required,
+        evidence_recommended=evidence_recommended,
         requires_project_context=requires_project_context,
         risk_level_hint=risk_level_hint,
     )

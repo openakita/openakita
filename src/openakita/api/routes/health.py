@@ -127,11 +127,27 @@ def _get_all_lan_ips() -> list[str]:
 
 @router.get("/api/health")
 async def health(request: Request):
-    """Basic health check - returns 200 if server is running."""
+    """Basic health check - returns 200 if the HTTP API is reachable.
+
+    注意：HTTP API 可访问不等于整个后端业务已完成启动。IM 通道、晚绑定
+    gateway、后台任务可能在 HTTP 之后继续初始化。因此这里同时返回
+    ``readiness``，前端应使用 ``readiness.ready`` / ``readiness.phase`` 展示
+    "启动中 / 部分就绪 / 运行中"，而不是只看 HTTP 200。
+    """
     import os
 
     from openakita import __git_hash__, get_version_string
     from openakita import __version__ as backend_version
+
+    readiness = getattr(request.app.state, "readiness", None)
+    if not isinstance(readiness, dict):
+        gateway = getattr(request.app.state, "gateway", None)
+        readiness = {
+            "phase": getattr(request.app.state, "startup_phase", "http_ready"),
+            "http_ready": True,
+            "im_ready": gateway is not None,
+            "ready": bool(gateway is not None),
+        }
 
     return {
         "status": "ok",
@@ -148,6 +164,8 @@ async def health(request: Request):
         "api_host": os.environ.get("API_HOST", "127.0.0.1"),
         "api_port": _safe_int(os.environ.get("API_PORT", "18900"), 18900),
         "last_link_diagnostic": getattr(request.app.state, "last_link_diagnostic", None),
+        "startup_phase": readiness.get("phase", "http_ready"),
+        "readiness": readiness,
     }
 
 

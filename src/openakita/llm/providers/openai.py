@@ -117,6 +117,29 @@ def _reasoning_effort_for_depth(
     return "high" if _supports_max_reasoning_effort(provider, base_url, model) else normalized
 
 
+def _extract_reasoning_delta(value: object) -> str:
+    """Best-effort extraction for reasoning deltas from OpenAI-compatible gateways."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(_extract_reasoning_delta(item) for item in value)
+    if isinstance(value, dict):
+        for key in (
+            "text",
+            "delta",
+            "content",
+            "reasoning",
+            "reasoning_content",
+            "thinking",
+            "summary_text",
+        ):
+            if key in value:
+                extracted = _extract_reasoning_delta(value.get(key))
+                if extracted:
+                    return extracted
+    return ""
+
+
 def _is_stream_only_error(error: str) -> bool:
     """检测错误是否表明端点仅支持流式请求（stream-only relay/中转站）。"""
     err_lower = error.lower()
@@ -1603,14 +1626,16 @@ class OpenAIProvider(LLMProvider):
         delta = choice.get("delta", {})
         events: list[dict] = []
 
-        # 1) Thinking: reasoning_content (DeepSeek R1, Qwen3) / reasoning (OpenRouter)
-        reasoning = delta.get("reasoning_content") or ""
-        if not reasoning:
-            r = delta.get("reasoning")
-            if isinstance(r, str) and r:
-                reasoning = r
-            elif isinstance(r, dict):
-                reasoning = r.get("content", "") or ""
+        # 1) Thinking: reasoning_content (DeepSeek R1, Qwen3) / reasoning
+        # (OpenRouter) plus common proxy variants.
+        reasoning = (
+            _extract_reasoning_delta(delta.get("reasoning_content"))
+            or _extract_reasoning_delta(delta.get("reasoning"))
+            or _extract_reasoning_delta(delta.get("reasoning_delta"))
+            or _extract_reasoning_delta(delta.get("reasoning_details"))
+            or _extract_reasoning_delta(event.get("reasoning_content"))
+            or _extract_reasoning_delta(event.get("reasoning"))
+        )
         if reasoning:
             events.append(
                 {

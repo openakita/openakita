@@ -154,6 +154,43 @@ class TestSkillsHandlerLoad:
 
 
 # ---------------------------------------------------------------------------
+# SkillsHandler._run_skill_script diagnostics
+# ---------------------------------------------------------------------------
+
+
+class TestSkillsHandlerRunScriptDiagnostics:
+    def test_missing_module_hint_points_to_skill_dir(self, tmp_path, monkeypatch):
+        from openakita.config import settings as real_settings
+        from openakita.tools.handlers.skills import SkillsHandler
+
+        monkeypatch.setattr(real_settings, "project_root", tmp_path, raising=False)
+        skill_dir = tmp_path / "skills" / "news-searcher"
+        skill_dir.mkdir(parents=True)
+        (tmp_path / "news_searcher.py").write_text("# misplaced module\n", encoding="utf-8")
+
+        agent = _make_agent_for_skills_handler()
+        agent.skill_registry.get.return_value = SimpleNamespace(
+            skill_id="news-searcher",
+            skill_dir=skill_dir,
+            python_dependencies=[],
+            python_env="",
+        )
+        agent.skill_loader.run_script.return_value = (
+            False,
+            "STDERR:\nModuleNotFoundError: No module named 'news_searcher'",
+        )
+
+        handler = SkillsHandler(agent)
+        out = handler._run_skill_script(
+            {"skill_name": "news-searcher", "script_name": "scripts/main.py"}
+        )
+
+        assert "Python 模块导入失败" in out
+        assert "工作区根目录" in out
+        assert str(skill_dir / "news_searcher.py") in out
+
+
+# ---------------------------------------------------------------------------
 # SkillsHandler._reload_skill
 # ---------------------------------------------------------------------------
 

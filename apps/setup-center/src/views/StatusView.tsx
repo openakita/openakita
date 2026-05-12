@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, IS_TAURI, logger, relaunchApp } from "../platform";
+import { invoke, IS_TAURI, logger } from "../platform";
 import { safeFetch } from "../providers";
 import { envGet } from "../utils";
 import { notifyLoading, notifyError, notifySuccess, dismissLoading } from "../utils/notify";
@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { TroubleshootPanel } from "../components/TroubleshootPanel";
-import { LinkDiagnosticsPanel } from "../components/LinkDiagnosticsPanel";
+import { LinkDiagnosticsPanel, type LinkDiagnostic } from "../components/LinkDiagnosticsPanel";
 import { SkillConflictsPanel } from "../components/SkillConflictsPanel";
 import { ProviderIcon } from "../components/ProviderIcon";
 import type { EnvMap, WorkspaceSummary, ViewId } from "../types";
@@ -27,7 +27,17 @@ export interface StatusViewProps {
   currentWorkspaceId: string | null;
   workspaces: WorkspaceSummary[];
   envDraft: EnvMap;
-  serviceStatus: { running: boolean; pid: number | null; pidFile: string; port?: number } | null;
+  serviceStatus: {
+    running: boolean;
+    pid: number | null;
+    pidFile: string;
+    port?: number;
+    heartbeatPhase?: string;
+    heartbeatHttpReady?: boolean;
+    heartbeatImReady?: boolean;
+    heartbeatReady?: boolean;
+    lastLinkDiagnostic?: LinkDiagnostic | null;
+  } | null;
   /**
    * 后端启动阶段。区分 "starting"（自动启动中 / 用户刚点启动）与 "stopped"（确认未启动）
    * 是为了避免老 UI 那种"启动中→未启动→运行中"的红色误报闪烁：
@@ -129,8 +139,9 @@ export function StatusView(props: StatusViewProps) {
   });
 
   // ── 启动阶段与"未启动"严格区分 ──
-  // showStartingBanner: 蓝色 spinner banner，表达"正在启动 / 自动启动中"。
-  //   - 后端还没起来（serviceStatus 为 null 或 running:false），但 phase 是 starting
+  // showStartingBanner: 蓝色 spinner banner，表达"正在启动 / 初始化中"。
+  //   - 后端进程还没起来，但 phase 是 starting
+  //   - 或者 HTTP API 已可访问，但 heartbeat/readiness 仍显示 starting/http_ready/starting_im
   //   - 或者 phase 是 unknown 且 serviceStatus 还没探到（首次 mount 的极早期）
   // showNotRunningBanner: 红色"未启动"banner，仅当：
   //   - phase 已经明确转为 stopped 或 error
@@ -138,8 +149,13 @@ export function StatusView(props: StatusViewProps) {
   // 这样就避免了老逻辑里"自动启动到一半 invoke 失败 → setServiceStatus(false)
   // → 红条闪一下 → 后端真起来后又变绿"的诡异闪烁。
   const isRunning = !!serviceStatus?.running;
-  const phaseStarting = backendBootPhase === "starting" || (backendBootPhase === "unknown" && serviceStatus === null);
-  const showStartingBanner = IS_TAURI && !isRunning && phaseStarting && effectiveWsId;
+  const heartbeatPhase = serviceStatus?.heartbeatPhase || "";
+  const phaseStarting =
+    backendBootPhase === "starting" ||
+    (isRunning && serviceStatus?.heartbeatReady === false) ||
+    ["starting", "initializing", "http_ready", "starting_im"].includes(heartbeatPhase) ||
+    (backendBootPhase === "unknown" && serviceStatus === null);
+  const showStartingBanner = IS_TAURI && phaseStarting && effectiveWsId;
   const showNotRunningBanner =
     IS_TAURI &&
     !isRunning &&
@@ -156,10 +172,14 @@ export function StatusView(props: StatusViewProps) {
             <div className="spinner" style={{ width: 22, height: 22, flexShrink: 0, color: "var(--brand)" }} />
             <div className="min-w-[180px] flex-1">
               <div className="mb-1 text-sm font-semibold text-primary">
-                {busy || t("status.backendStarting")}
+                {busy || (isRunning ? "后端正在完成初始化" : t("status.backendStarting"))}
               </div>
               <div className="text-xs text-primary/80">
-                {t("status.backendStartingHint")}
+                {heartbeatPhase === "starting_im"
+                  ? "HTTP API 已就绪，正在启动 IM 通道和后台连接。"
+                  : heartbeatPhase === "http_ready"
+                    ? "HTTP API 已就绪，后台服务仍在继续初始化。"
+                    : t("status.backendStartingHint")}
               </div>
             </div>
           </CardContent>
@@ -215,7 +235,7 @@ export function StatusView(props: StatusViewProps) {
                 : isRunning ? "statusBadgeOk"
                 : "statusBadgeOff"
               }`}>
-                {phaseStarting ? (busy || t("topbar.autoStarting"))
+                {phaseStarting ? (busy || (isRunning ? "初始化中" : t("topbar.autoStarting")))
                 : heartbeatState === "degraded" ? t("status.unresponsive")
                 : isRunning ? t("topbar.running")
                 : t("topbar.stopped")}
@@ -240,7 +260,7 @@ export function StatusView(props: StatusViewProps) {
                 {t("topbar.autoStarting")}
               </Badge>
             )}
-            {serviceStatus?.running && effectiveWsId && (<>
+            {serviceStatus?.running && !phaseStarting && effectiveWsId && (<>
               <Button size="sm" variant="destructive" className="statusBtn" onClick={async () => {
                 const _b = notifyLoading(t("status.stopping"));
                 try {
@@ -253,11 +273,7 @@ export function StatusView(props: StatusViewProps) {
                   await doStopService(effectiveWsId);
                   await waitForServiceDown("http://127.0.0.1:18900", 15000);
                   dismissLoading(_b);
-                  if (IS_TAURI) {
-                    await relaunchApp();
-                  } else {
-                    await doStartLocalService(effectiveWsId);
-                  }
+                  await doStartLocalService(effectiveWsId);
                 } catch (e) { notifyError(String(e)); dismissLoading(_b); }
               }} disabled={!!busy}><RotateCcw size={13} />{t("status.restart")}</Button>
             </>)}
@@ -299,7 +315,10 @@ export function StatusView(props: StatusViewProps) {
         )}
 
         {/* Link diagnostics + per-session cache reset */}
-        <LinkDiagnosticsPanel httpApiBase={httpApiBase} />
+        <LinkDiagnosticsPanel
+          httpApiBase={httpApiBase}
+          initialDiagnostic={serviceStatus?.lastLinkDiagnostic ?? null}
+        />
 
         {/* Skill registration conflicts (multi-source same name detection) */}
         <SkillConflictsPanel httpApiBase={httpApiBase} />

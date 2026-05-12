@@ -338,9 +338,8 @@ _DIAGNOSIS_TEMPLATES: dict[str, dict[str, str]] = {
     "unknown": {
         "headline": "任务非正常结束（exit_reason={exit_reason}）",
         "suggestion": (
-            "未匹配到典型根因模式。\n\n"
-            "**建议**：查看对应的 react_trace JSON 文件（`data/react_traces/<date>/…`）"
-            "了解完整推理过程，或把任务描述改得更明确后重试。"
+            "未匹配到典型根因模式。建议把任务描述改得更明确后重试；"
+            "如需排障，请查看后端日志中的组织运行记录。"
         ),
     },
 }
@@ -430,7 +429,7 @@ def summarize(
                 "iter": 0,
                 "tool": "…",
                 "args_summary": "",
-                "error": f"（还有 {omitted} 条失败记录未展示，请查看完整 react_trace）",
+                "error": f"（还有 {omitted} 条失败记录未展示，请查看后端日志）",
             })
             evidence = trimmed
 
@@ -447,7 +446,7 @@ def summarize(
             "root_cause": "unknown",
             "headline": f"任务非正常结束（exit_reason={safe_reason}）",
             "evidence": [],
-            "suggestion": "诊断模块遇到异常，建议查看 `data/react_traces/` 下的完整 trace。",
+            "suggestion": "诊断模块遇到异常，建议查看后端日志中的组织运行记录。",
             "exit_reason": safe_reason,
         }
 

@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import platform
 import sys
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
+from urllib.parse import quote
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 
@@ -18,10 +22,10 @@ try:
 except Exception:
     pass
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, Response
 from media_fetchers.rss import validate_feed_url
 from media_models import BRAND, DISPLAY_NAME_ZH, PLUGIN_ID, PLUGIN_VERSION, SLOGAN, TOOL_NAMES
-from media_pipeline import MediaPipeline
+from media_pipeline import MediaPipeline, _styled_report_html
 from media_task_manager import MediaTaskManager, utcnow_iso
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +42,250 @@ def _purge_module_cache() -> int:
             sys.modules.pop(name, None)
             removed += 1
     return removed
+
+
+_SCHEDULE_PROMPT_PREFIX: Final[str] = "[media-strategy] "
+_MEDIA_STRATEGY_NAME_PREFIXES: Final[tuple[str, ...]] = ("media-strategy ", "media-strategy:")
+
+
+def _task_name_is_media_strategy(name: str) -> bool:
+    return bool(name) and any(name.startswith(prefix) for prefix in _MEDIA_STRATEGY_NAME_PREFIXES)
+
+
+def _is_media_strategy_schedule(**kwargs: Any) -> bool:
+    task = kwargs.get("task")
+    if task is None:
+        return False
+    name = getattr(task, "name", "") or ""
+    if _task_name_is_media_strategy(name):
+        return True
+    prompt = getattr(task, "prompt", "") or ""
+    return str(prompt).startswith(_SCHEDULE_PROMPT_PREFIX)
+
+
+def _parse_schedule_prompt(prompt: str) -> dict[str, Any]:
+    text = (prompt or "").strip()
+    if text.startswith(_SCHEDULE_PROMPT_PREFIX):
+        text = text[len(_SCHEDULE_PROMPT_PREFIX) :]
+    if not text:
+        raise ValueError("empty prompt")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"not json: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("prompt must decode to an object")
+    return data
+
+
+def _get_active_scheduler() -> Any:
+    try:
+        from openakita.scheduler import get_active_scheduler  # type: ignore
+    except ImportError:
+        return None
+    try:
+        return get_active_scheduler()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _download_filename(title: str, suffix: str) -> str:
+    cleaned = "".join("_" if ch in '\\/:*?"<>|\r\n\t' else ch for ch in title).strip()
+    cleaned = (cleaned or "media-strategy-report")[:80]
+    return f"{cleaned}.{suffix}"
+
+
+def _downloads_dir() -> Path:
+    home = Path.home()
+    for name in ("Downloads", "下载"):
+        candidate = home / name
+        if candidate.exists():
+            return candidate
+    return home
+
+
+def _report_download_content(row: dict[str, Any], fmt: str) -> tuple[str, str, str]:
+    title = str(row.get("title") or row.get("kind") or "报告预览")
+    markdown = str(row.get("markdown") or "")
+    if fmt == "md":
+        return markdown, "text/markdown; charset=utf-8", _download_filename(title, "md")
+    if fmt == "html":
+        content = str(row.get("html") or "")
+        if not content and markdown:
+            content = _styled_report_html(
+                title=title,
+                kind=str(row.get("kind") or ""),
+                markdown=markdown,
+                meta=row.get("meta") if isinstance(row.get("meta"), dict) else {},
+            )
+        if not content:
+            raise HTTPException(status_code=422, detail="report html is empty")
+        return content, "text/html; charset=utf-8", _download_filename(title, "html")
+    raise HTTPException(status_code=400, detail="fmt must be md or html")
+
+
+def _report_push_summary(row: dict[str, Any], *, file_sent: bool) -> str:
+    title = str(row.get("title") or row.get("kind") or "融媒智策报告").strip()
+    markdown = str(row.get("markdown") or "").strip()
+    lines = [
+        line.strip(" #*-")
+        for line in markdown.splitlines()
+        if line.strip() and not line.strip().startswith("|") and not set(line.strip()) <= {"-", "_", "*"}
+    ]
+    highlights = [line for line in lines if line and line != title][:3]
+    prefix = "已发送 PDF 报表附件" if file_sent else "PDF 报表附件发送失败，先发送摘要"
+    body = "\n".join(f"- {item[:120]}" for item in highlights) or "- 请打开报告查看完整内容。"
+    return f"{prefix}：{title}\n{body}"
+
+
+def _bundled_runtime_roots() -> list[Path]:
+    roots: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass))
+    exe_dir = Path(sys.executable).parent
+    candidates = [exe_dir]
+    if exe_dir.name != "_internal":
+        candidates.append(exe_dir / "_internal")
+    for candidate in candidates:
+        if candidate.is_dir() and candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
+def _find_bundled_chromium() -> tuple[str | None, Path | None]:
+    system = platform.system()
+    exe_name = "chrome.exe" if system == "Windows" else "chrome"
+    for root in _bundled_runtime_roots():
+        for browsers_name in ("playwright-browsers", "playwright-browser"):
+            browsers_root = root / browsers_name
+            if not browsers_root.is_dir():
+                continue
+            for chromium_dir in sorted(browsers_root.glob("chromium-*"), reverse=True):
+                candidates: list[Path] = []
+                if system == "Windows":
+                    candidates.extend(
+                        chromium_dir / win_dir / exe_name
+                        for win_dir in ("chrome-win64", "chrome-win")
+                    )
+                elif system == "Darwin":
+                    candidates.extend(
+                        chromium_dir
+                        / mac_dir
+                        / "Chromium.app"
+                        / "Contents"
+                        / "MacOS"
+                        / "Chromium"
+                        for mac_dir in ("chrome-mac-arm64", "chrome-mac")
+                    )
+                else:
+                    candidates.append(chromium_dir / "chrome-linux" / exe_name)
+                for candidate in candidates:
+                    if candidate.is_file():
+                        return str(candidate), browsers_root
+    return None, None
+
+
+def _configure_pdf_playwright_launch() -> dict[str, Any]:
+    launch_kwargs: dict[str, Any] = {"headless": True}
+    executable, browsers_root = _find_bundled_chromium()
+    if browsers_root is not None:
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_root)
+    if executable:
+        launch_kwargs["executable_path"] = executable
+    return launch_kwargs
+
+
+async def _render_report_html_to_pdf(html: str, out_path: Path) -> None:
+    launch_kwargs = _configure_pdf_playwright_launch()
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise RuntimeError("playwright_unavailable") from exc
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(**launch_kwargs)
+        try:
+            page = await browser.new_page()
+            await page.set_content(html, wait_until="load")
+            await page.pdf(
+                path=str(out_path),
+                format="A4",
+                print_background=True,
+                margin={"top": "14mm", "right": "12mm", "bottom": "14mm", "left": "12mm"},
+            )
+            await page.close()
+        finally:
+            await browser.close()
+
+
+async def _write_report_push_pdf(data_dir: Path, row: dict[str, Any]) -> Path:
+    html, _media_type, filename = _report_download_content(row, "html")
+    safe_name = Path(filename).name
+    if safe_name.lower().endswith(".html"):
+        safe_name = safe_name[:-5] + ".pdf"
+    elif not safe_name.lower().endswith(".pdf"):
+        safe_name += ".pdf"
+    report_id = str(row.get("id") or "")
+    safe_report_id = "".join(ch for ch in report_id if ch.isalnum() or ch in "-_")[:12]
+    target_dir = data_dir / "push_exports"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stem = safe_name.rsplit(".", 1)[0]
+    target = target_dir / f"{stem}-{safe_report_id}.pdf" if safe_report_id else target_dir / safe_name
+    await _render_report_html_to_pdf(html, target)
+    return target
+
+
+def _serialize_schedule(task: Any) -> dict[str, Any]:
+    prompt = getattr(task, "prompt", "") or ""
+    try:
+        meta = _parse_schedule_prompt(prompt)
+    except ValueError:
+        meta = {}
+    next_run = getattr(task, "next_run", None)
+    trigger_config = getattr(task, "trigger_config", {}) or {}
+    cron = str(trigger_config.get("cron") or "") if isinstance(trigger_config, dict) else ""
+    return {
+        "id": getattr(task, "id", ""),
+        "name": getattr(task, "name", ""),
+        "description": getattr(task, "description", ""),
+        "cron": cron,
+        "enabled": bool(getattr(task, "enabled", True)),
+        "status": str(getattr(task, "status", "")),
+        "next_run": next_run.isoformat() if hasattr(next_run, "isoformat") else None,
+        "run_count": int(getattr(task, "run_count", 0)),
+        "fail_count": int(getattr(task, "fail_count", 0)),
+        "channel": getattr(task, "channel_id", None),
+        "chat_id": getattr(task, "chat_id", None),
+        "mode": meta.get("mode"),
+        "session": meta.get("session"),
+        "scope": meta.get("scope") or ("preset" if meta.get("session") in {"morning", "noon", "evening"} else "custom"),
+        "package_id": meta.get("package_id"),
+        "since_hours": meta.get("since_hours"),
+        "limit": meta.get("limit"),
+        "min_coverage": meta.get("min_coverage"),
+        "evidence_limit": meta.get("evidence_limit"),
+        "pre_ingest": meta.get("pre_ingest", True),
+        "repeat": meta.get("repeat"),
+    }
+
+
+def _schedule_matches(existing: Any, *, name: str, mode: str, session: str, scope: str) -> bool:
+    if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
+        return False
+    if str(getattr(existing, "name", "") or "") == name:
+        return True
+    try:
+        meta = _parse_schedule_prompt(getattr(existing, "prompt", "") or "")
+    except ValueError:
+        return False
+    existing_scope = str(meta.get("scope") or ("preset" if meta.get("session") in {"morning", "noon", "evening"} else "custom"))
+    return (
+        str(meta.get("mode") or "") == mode
+        and str(meta.get("session") or "") == session
+        and existing_scope == scope
+        and scope == "preset"
+    )
 
 
 class _StrictBase(BaseModel):
@@ -83,6 +331,16 @@ class AddFeedBody(_StrictBase):
     authority: float | None = None
 
 
+class OpenUrlBody(_StrictBase):
+    url: str
+
+
+class PushReportBody(_StrictBase):
+    channel: str
+    chat_id: str
+    text_only: bool = False
+
+
 class UpdateSourceBody(_StrictBase):
     label_zh: str | None = None
     label_en: str | None = None
@@ -97,8 +355,31 @@ class ToggleSourceBody(_StrictBase):
 
 
 class CreateTaskBody(_StrictBase):
-    mode: Literal["ingest", "hot_radar", "daily_brief", "verify_pack", "replicate_plan"]
+    mode: Literal[
+        "ingest",
+        "hot_radar",
+        "daily_brief",
+        "verify_pack",
+        "replicate_plan",
+        "ai_topic_analysis",
+    ]
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class AiTopicAnalysisBody(_StrictBase):
+    package_id: str = ""
+    since_hours: int = Field(default=24, ge=1, le=168)
+    limit: int = Field(default=10, ge=1, le=20)
+    min_coverage: int = Field(default=1, ge=1, le=20)
+    evidence_limit: int = Field(default=5, ge=1, le=8)
+
+
+class TopTopicsBody(_StrictBase):
+    package_id: str = ""
+    since_hours: int = Field(default=24, ge=1, le=168)
+    limit: int = Field(default=5, ge=1, le=20)
+    min_coverage: int = Field(default=1, ge=1, le=20)
+    compact: bool = True
 
 
 class Plugin(PluginBase):
@@ -108,6 +389,7 @@ class Plugin(PluginBase):
         self._tm: MediaTaskManager | None = None
         self._pipeline: MediaPipeline | None = None
         self._init_task: asyncio.Task[Any] | None = None
+        self._hook_registered = False
 
     def on_load(self, api: PluginAPI) -> None:
         removed = _purge_module_cache()
@@ -131,6 +413,11 @@ class Plugin(PluginBase):
         router = self._build_router()
         api.register_api_routes(router)
         api.register_tools(self._tool_definitions(), handler=self._handle_tool)
+        try:
+            api.register_hook("on_schedule", self._on_schedule, match=_is_media_strategy_schedule)
+            self._hook_registered = True
+        except Exception as exc:  # noqa: BLE001
+            api.log(f"{PLUGIN_ID}: register_hook(on_schedule) failed: {exc}", "warning")
         self._init_task = api.spawn_task(self._init(), name=f"plugin:{PLUGIN_ID}:init")
         api.log(f"{DISPLAY_NAME_ZH} loaded (v{PLUGIN_VERSION}, {len(TOOL_NAMES)} tools)")
 
@@ -229,6 +516,100 @@ class Plugin(PluginBase):
             "host_config": cfg,
             "config": {**(settings or {}), **cfg},
         }
+
+    async def _push_report_to_channel(
+        self,
+        row: dict[str, Any],
+        *,
+        channel: str,
+        chat_id: str,
+        text_only: bool = False,
+    ) -> dict[str, Any]:
+        if self._api is None:
+            raise HTTPException(status_code=503, detail="plugin api is not ready")
+        text = str(row.get("markdown") or "").strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="report markdown is empty")
+
+        def _adapter() -> Any:
+            host = getattr(self._api, "_host", None) or {}
+            gateway = host.get("gateway") if hasattr(host, "get") else None
+            if gateway is None:
+                raise RuntimeError("No gateway available for report push")
+            get_adapter = getattr(gateway, "get_adapter", None)
+            adapter = get_adapter(channel) if callable(get_adapter) else None
+            if adapter is None:
+                raise RuntimeError(f"No adapter found for channel '{channel}'")
+            return adapter
+
+        async def _send_text_best_effort(message: str) -> dict[str, Any]:
+            try:
+                adapter = _adapter()
+                if hasattr(adapter, "send_text"):
+                    message_id = await adapter.send_text(chat_id, message)
+                    return {"ok": True, "message_id": message_id, "method": "adapter"}
+            except Exception as exc:  # noqa: BLE001
+                if self._api is not None:
+                    self._api.log(
+                        f"{PLUGIN_ID}: adapter text push failed; trying PluginAPI sender ({exc!r})",
+                        "warning",
+                    )
+            legacy_sender = getattr(self._api, "send_message", None)
+            if callable(legacy_sender):
+                try:
+                    legacy_sender(channel=channel, chat_id=chat_id, text=message)
+                    return {"ok": True, "method": "legacy"}
+                except Exception as exc:  # noqa: BLE001
+                    if self._api is not None:
+                        self._api.log(
+                            f"{PLUGIN_ID}: PluginAPI text push failed ({exc!r})",
+                            "warning",
+                        )
+            raise HTTPException(status_code=503, detail="channel.send is not available")
+
+        if not text_only:
+            data_dir = self._data_dir or self._resolve_data_dir()
+            try:
+                adapter = _adapter()
+                if hasattr(adapter, "has_capability") and not adapter.has_capability("send_file"):
+                    raise RuntimeError(f"Adapter '{channel}' does not support send_file")
+                target = await _write_report_push_pdf(data_dir, row)
+                try:
+                    message_id = await adapter.send_file(chat_id, str(target), caption="")
+                except TypeError as exc:
+                    if "caption" not in str(exc):
+                        raise
+                    message_id = await adapter.send_file(chat_id, str(target))
+                summary_result: dict[str, Any]
+                try:
+                    summary_result = await _send_text_best_effort(_report_push_summary(row, file_sent=True))
+                except Exception as summary_exc:  # noqa: BLE001
+                    summary_result = {"ok": False, "error": str(summary_exc)}
+                return {
+                    "ok": True,
+                    "mode": "file",
+                    "format": "pdf",
+                    "file": str(target),
+                    "message_id": message_id,
+                    "summary_result": summary_result,
+                    "channel": channel,
+                    "chat_id": chat_id,
+                }
+            except Exception as exc:  # noqa: BLE001
+                if self._api is not None:
+                    self._api.log(f"{PLUGIN_ID}: report file push failed; sending summary ({exc!r})", "warning")
+                text_result = await _send_text_best_effort(_report_push_summary(row, file_sent=False))
+                return {
+                    "ok": bool(text_result.get("ok")),
+                    "mode": "summary",
+                    "file_error": str(exc),
+                    "text_result": text_result,
+                    "channel": channel,
+                    "chat_id": chat_id,
+                }
+
+        text_result = await _send_text_best_effort(text[:12000] if text_only else _report_push_summary(row, file_sent=False))
+        return {"ok": True, "mode": "text" if text_only else "summary", "channel": channel, "chat_id": chat_id}
 
     def _build_router(self) -> APIRouter:
         router = APIRouter()
@@ -345,6 +726,38 @@ class Plugin(PluginBase):
             except (OSError, FileNotFoundError) as exc:
                 raise HTTPException(status_code=500, detail=f"Cannot open folder: {exc}") from exc
             return {"ok": True, "path": str(target)}
+
+        @router.post("/external/open-url")
+        async def open_external_url(body: OpenUrlBody) -> dict[str, Any]:
+            from urllib.parse import urlparse
+
+            raw_url = body.url.strip()
+            parsed = urlparse(raw_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(status_code=422, detail="Only http/https external URLs are allowed")
+            import os
+            import subprocess
+            import webbrowser
+
+            try:
+                if sys.platform == "win32":
+                    os.startfile(raw_url)  # type: ignore[attr-defined]
+                    opened = True
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", raw_url])
+                    opened = True
+                else:
+                    subprocess.Popen(["xdg-open", raw_url])
+                    opened = True
+            except Exception as exc:  # noqa: BLE001
+                try:
+                    opened = webbrowser.open(raw_url, new=2)
+                except Exception as fallback_exc:  # noqa: BLE001
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Cannot open URL: {fallback_exc or exc}",
+                    ) from fallback_exc
+            return {"ok": True, "opened": bool(opened), "url": raw_url}
 
         @router.get("/storage/list-dir")
         async def list_dir(path: str = "") -> dict[str, Any]:
@@ -589,6 +1002,8 @@ class Plugin(PluginBase):
         @router.post("/tasks")
         async def create_task(body: CreateTaskBody) -> dict[str, Any]:
             await self._ensure_ready()
+            if body.mode in {"daily_brief", "replicate_plan"}:
+                return await self._create_and_start_background_task(body.mode, body.params)
             return await self._create_and_run_task(body.mode, body.params)
 
         @router.post("/ingest")
@@ -602,6 +1017,9 @@ class Plugin(PluginBase):
             q: str = "",
             since_hours: int = Query(default=24, ge=1, le=168),
             limit: int = Query(default=30, ge=1, le=100),
+            cluster: bool = False,
+            compact: bool = False,
+            min_coverage: int = Query(default=1, ge=1, le=20),
         ) -> dict[str, Any]:
             await self._ensure_ready()
             assert self._pipeline is not None
@@ -610,7 +1028,28 @@ class Plugin(PluginBase):
                     {"q": q, "package_id": package_id, "limit": limit}
                 )
             return await self._pipeline.hot_radar(
-                {"package_id": package_id, "since_hours": since_hours, "limit": limit}
+                {
+                    "package_id": package_id,
+                    "since_hours": since_hours,
+                    "limit": limit,
+                    "cluster": cluster,
+                    "compact": compact,
+                    "min_coverage": min_coverage,
+                }
+            )
+
+        @router.post("/top-topics")
+        async def top_topics(body: TopTopicsBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._pipeline is not None
+            return await self._pipeline.top_topics(body.model_dump())
+
+        @router.post("/ai/analyze-top")
+        async def ai_analyze_top(body: AiTopicAnalysisBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            return await self._create_and_start_background_task(
+                "ai_topic_analysis",
+                body.model_dump(),
             )
 
         @router.get("/tasks")
@@ -651,15 +1090,337 @@ class Plugin(PluginBase):
             row = await self._tm.get_report(report_id)
             if row is None:
                 raise HTTPException(status_code=404, detail="report not found")
+            # Re-render on read so older saved reports benefit from renderer fixes
+            # without needing a data migration.
+            if row.get("markdown"):
+                row["html"] = _styled_report_html(
+                    title=str(row.get("title") or row.get("kind") or "报告预览"),
+                    kind=str(row.get("kind") or ""),
+                    markdown=str(row.get("markdown") or ""),
+                    meta=row.get("meta") if isinstance(row.get("meta"), dict) else {},
+                )
             return {"report": row}
+
+        @router.get("/reports/{report_id}/download.{fmt}")
+        async def download_report(report_id: str, fmt: str) -> Response:
+            await self._ensure_ready()
+            assert self._tm is not None
+            row = await self._tm.get_report(report_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="report not found")
+            content, media_type, filename = _report_download_content(row, fmt)
+            quoted = quote(filename)
+            return Response(
+                content=content,
+                media_type=media_type,
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
+            )
+
+        @router.post("/reports/{report_id}/save.{fmt}")
+        async def save_report(report_id: str, fmt: str) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            row = await self._tm.get_report(report_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="report not found")
+            content, _media_type, filename = _report_download_content(row, fmt)
+            stem = filename.rsplit(".", 1)[0]
+            suffix = filename.rsplit(".", 1)[1]
+            safe_report_id = "".join(ch for ch in report_id if ch.isalnum() or ch in "-_")[:12]
+            target_dir = _downloads_dir() / "OpenAkita" / "media-strategy"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / f"{stem}-{safe_report_id}.{suffix}"
+            if target.exists():
+                target = target_dir / f"{stem}-{safe_report_id}-{int(time.time())}.{suffix}"
+            try:
+                target.write_text(content, encoding="utf-8")
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"Cannot save report: {exc}") from exc
+            return {"ok": True, "path": str(target), "filename": target.name, "format": fmt}
+
+        @router.get("/schedules")
+        async def list_schedules() -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                return {"ok": True, "items": [], "scheduler_ready": False}
+            items = [
+                _serialize_schedule(task)
+                for task in scheduler.list_tasks()
+                if _task_name_is_media_strategy(getattr(task, "name", "") or "")
+            ]
+            return {"ok": True, "items": items, "scheduler_ready": True}
+
+        @router.post("/schedules")
+        async def create_schedule(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                raise HTTPException(status_code=503, detail="scheduler_unavailable")
+            mode = str(payload.get("mode") or "daily_brief").strip()
+            if mode not in {"daily_brief", "ai_topic_analysis"}:
+                raise HTTPException(status_code=400, detail="mode must be daily_brief or ai_topic_analysis")
+            scope = str(payload.get("scope") or "preset").strip()
+            if scope not in {"preset", "custom"}:
+                raise HTTPException(status_code=400, detail="scope must be preset or custom")
+            session = str(payload.get("session") or ("custom" if scope == "custom" else "morning")).strip()
+            if scope == "preset" and session not in {"morning", "noon", "evening"}:
+                raise HTTPException(status_code=400, detail="preset session must be morning|noon|evening")
+            cron = str(payload.get("cron") or payload.get("cron_expression") or "").strip()
+            if not cron:
+                raise HTTPException(status_code=400, detail="cron expression required")
+            channel = str(payload.get("channel") or "").strip()
+            chat_id = str(payload.get("chat_id") or "").strip()
+            if not channel or not chat_id:
+                raise HTTPException(status_code=400, detail="channel and chat_id are required")
+            body = {
+                "mode": mode,
+                "scope": scope,
+                "session": session,
+                "package_id": str(payload.get("package_id") or ""),
+                "since_hours": int(payload.get("since_hours") or 24),
+                "limit": int(payload.get("limit") or 20),
+                "min_coverage": int(payload.get("min_coverage") or 1),
+                "evidence_limit": int(payload.get("evidence_limit") or 5),
+                "pre_ingest": bool(payload.get("pre_ingest", True)),
+                "repeat": str(payload.get("repeat") or "daily"),
+                "channel": channel,
+                "chat_id": chat_id,
+            }
+            try:
+                from openakita.scheduler.task import ScheduledTask  # type: ignore
+            except ImportError as exc:
+                raise HTTPException(status_code=503, detail=f"scheduler module unavailable: {exc}") from exc
+
+            default_name = f"media-strategy {session}-brief" if scope == "preset" else "media-strategy custom-report"
+            name = str(payload.get("name") or "").strip() or default_name
+            if not _task_name_is_media_strategy(name):
+                name = f"media-strategy {name}"
+            removed_ids: list[str] = []
+            for existing in list(scheduler.list_tasks()):
+                if _schedule_matches(existing, name=name, mode=mode, session=session, scope=scope):
+                    existing_id = str(getattr(existing, "id", "") or "")
+                    if existing_id:
+                        outcome = await scheduler.remove_task(existing_id)
+                        if outcome == "ok":
+                            removed_ids.append(existing_id)
+            task = ScheduledTask.create_cron(
+                name=name,
+                description=f"{mode} → {channel}/{chat_id}",
+                cron_expression=cron,
+                prompt=_SCHEDULE_PROMPT_PREFIX + json.dumps(body, ensure_ascii=False),
+                channel_id=channel,
+                chat_id=chat_id,
+                silent=True,
+                metadata={"plugin_id": PLUGIN_ID, "mode": mode, "session": session, "scope": scope},
+            )
+            task.enabled = bool(payload.get("enabled", True))
+            try:
+                task_id = await scheduler.add_task(task)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {"ok": True, "id": task_id, "updated_from": removed_ids, "schedule": _serialize_schedule(task)}
+
+        @router.delete("/schedules/{schedule_id}")
+        async def delete_schedule(schedule_id: str) -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                raise HTTPException(status_code=503, detail="scheduler_unavailable")
+            existing = scheduler.get_task(schedule_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="not_found")
+            if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
+                raise HTTPException(status_code=403, detail="refusing to delete schedule not owned by media-strategy")
+            outcome = await scheduler.remove_task(schedule_id)
+            if outcome != "ok":
+                raise HTTPException(status_code=400, detail=outcome)
+            return {"ok": True, "id": schedule_id, "deleted": True}
+
+        @router.post("/schedules/{schedule_id}/toggle")
+        async def toggle_schedule(schedule_id: str) -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                raise HTTPException(status_code=503, detail="scheduler_unavailable")
+            existing = scheduler.get_task(schedule_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="not_found")
+            if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
+                raise HTTPException(status_code=403, detail="refusing to toggle schedule not owned by media-strategy")
+            if getattr(existing, "enabled", True):
+                await scheduler.disable_task(schedule_id)
+            else:
+                await scheduler.enable_task(schedule_id)
+            updated = scheduler.get_task(schedule_id)
+            return {"ok": True, "id": schedule_id, "schedule": _serialize_schedule(updated) if updated else None}
+
+        @router.post("/schedules/{schedule_id}/trigger")
+        async def trigger_schedule(schedule_id: str) -> dict[str, Any]:
+            scheduler = _get_active_scheduler()
+            if scheduler is None:
+                raise HTTPException(status_code=503, detail="scheduler_unavailable")
+            existing = scheduler.get_task(schedule_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="not_found")
+            if not _task_name_is_media_strategy(getattr(existing, "name", "") or ""):
+                raise HTTPException(status_code=403, detail="refusing to trigger schedule not owned by media-strategy")
+            trigger = getattr(scheduler, "trigger_task", None)
+            if not callable(trigger):
+                raise HTTPException(status_code=501, detail="host scheduler does not expose trigger_task")
+            result = trigger(schedule_id)
+            if hasattr(result, "__await__"):
+                await result
+            return {"ok": True, "id": schedule_id, "triggered": True}
+
+        @router.get("/scheduler/channels")
+        async def scheduler_channels() -> dict[str, Any]:
+            host = getattr(self._api, "_host", None) or {}
+            api_app = host.get("api_app") if hasattr(host, "get") else None
+            if api_app is None:
+                return {"ok": True, "channels": []}
+            try:
+                from openakita.api.routes.scheduler import (
+                    list_channels as _host_list_channels,  # type: ignore
+                )
+            except Exception:  # noqa: BLE001
+                return {"ok": True, "channels": []}
+            from types import SimpleNamespace
+
+            try:
+                payload = await _host_list_channels(SimpleNamespace(app=api_app))  # type: ignore[arg-type]
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "channels": [], "detail": str(exc)}
+            return {"ok": True, "channels": (payload or {}).get("channels") or []}
+
+        @router.get("/available-channels")
+        async def available_channels() -> dict[str, Any]:
+            host = getattr(self._api, "_host", None) or {}
+            gateway = host.get("gateway") if hasattr(host, "get") else None
+            if gateway is None:
+                return {"ok": True, "channels": []}
+            names: list[str] = []
+            adapters = getattr(gateway, "_adapters", None)
+            if isinstance(adapters, dict):
+                names = [str(k) for k in adapters]
+            else:
+                probe = [
+                    "feishu",
+                    "wework",
+                    "wework_ws",
+                    "dingtalk",
+                    "telegram",
+                    "onebot",
+                    "qqbot",
+                    "wechat",
+                    "email",
+                ]
+                get = getattr(gateway, "get_adapter", None)
+                if callable(get):
+                    for name in probe:
+                        try:
+                            if get(name) is not None:
+                                names.append(name)
+                        except Exception:  # noqa: BLE001 - best-effort probe only
+                            continue
+            return {"ok": True, "channels": names}
+
+        @router.post("/reports/{report_id}/push")
+        async def push_report(report_id: str, body: PushReportBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            row = await self._tm.get_report(report_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="report not found")
+            try:
+                return await self._push_report_to_channel(
+                    row,
+                    channel=body.channel,
+                    chat_id=body.chat_id,
+                    text_only=body.text_only,
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         return router
 
+    async def _on_schedule(self, **kwargs: Any) -> dict[str, Any]:
+        task = kwargs.get("task")
+        if task is None or self._tm is None or self._pipeline is None:
+            return {"ok": False, "reason": "pipeline_unavailable"}
+        try:
+            payload = _parse_schedule_prompt(getattr(task, "prompt", "") or "")
+        except ValueError as exc:
+            return {"ok": False, "reason": "prompt_parse_failed", "error": str(exc)}
+        mode = str(payload.get("mode") or "")
+        if mode not in {"daily_brief", "ai_topic_analysis"}:
+            return {"ok": False, "reason": "unknown_mode", "mode": payload.get("mode")}
+        channel = str(payload.get("channel") or "").strip()
+        chat_id = str(payload.get("chat_id") or "").strip()
+        if not channel or not chat_id:
+            return {"ok": False, "reason": "missing_target"}
+        try:
+            if payload.get("pre_ingest", True):
+                package_id = str(payload.get("package_id") or "")
+                await self._pipeline.ingest({"package_ids": [package_id] if package_id else []})
+            internal = await self._tm.create_task(mode, {**payload, "scheduled": True})
+            run_params = {
+                "package_id": str(payload.get("package_id") or ""),
+                "since_hours": int(payload.get("since_hours") or 24),
+                "limit": int(payload.get("limit") or 20),
+                "scheduled": True,
+            }
+            if mode == "daily_brief":
+                run_params["session"] = str(payload.get("session") or "custom")
+            elif mode == "ai_topic_analysis":
+                run_params["min_coverage"] = int(payload.get("min_coverage") or 1)
+                run_params["evidence_limit"] = int(payload.get("evidence_limit") or 5)
+            result = await self._run_existing_task(
+                internal["id"],
+                mode,
+                run_params,
+            )
+            report = (result.get("result") or {}).get("report") or {}
+            dispatched: dict[str, Any] | None = None
+            if report:
+                dispatched = await self._push_report_to_channel(
+                    report,
+                    channel=channel,
+                    chat_id=chat_id,
+                    text_only=bool(payload.get("text_only", False)),
+                )
+            return {"ok": True, "task": result.get("task"), "report": report, "dispatched": dispatched}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "reason": "run_failed", "error": str(exc)}
+
     async def _create_and_run_task(self, mode: str, params: dict[str, Any]) -> dict[str, Any]:
         await self._ensure_ready()
-        assert self._tm is not None and self._pipeline is not None
+        assert self._tm is not None
         task = await self._tm.create_task(mode, params)
         task_id = task["id"]
+        return await self._run_existing_task(task_id, mode, params)
+
+    async def _create_and_start_background_task(
+        self, mode: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        await self._ensure_ready()
+        assert self._tm is not None
+        task = await self._tm.create_task(mode, params)
+        task_id = task["id"]
+        await self._tm.update_task(
+            task_id,
+            status="running",
+            started_at=utcnow_iso(),
+            progress=0.03,
+            pipeline_step="任务已创建，等待执行",
+        )
+        if self._api is None:
+            raise HTTPException(status_code=503, detail="plugin api is not ready")
+        self._api.spawn_task(
+            self._run_existing_task(task_id, mode, params),
+            name=f"plugin:{PLUGIN_ID}:task:{task_id}",
+        )
+        return {"ok": True, "background": True, "task": await self._tm.get_task(task_id)}
+
+    async def _run_existing_task(self, task_id: str, mode: str, params: dict[str, Any]) -> dict[str, Any]:
+        await self._ensure_ready()
+        assert self._tm is not None and self._pipeline is not None
         await self._tm.update_task(task_id, status="running", started_at=utcnow_iso(), progress=0.05)
         try:
             if mode == "ingest":
@@ -672,12 +1433,15 @@ class Plugin(PluginBase):
                 result = await self._pipeline.verify_pack(task_id, params)
             elif mode == "replicate_plan":
                 result = await self._pipeline.replicate_plan(task_id, params)
+            elif mode == "ai_topic_analysis":
+                result = await self._pipeline.ai_topic_analysis(task_id, params)
             else:
                 raise ValueError(f"unsupported mode: {mode}")
             await self._tm.update_task(
                 task_id,
                 status="done",
                 progress=1.0,
+                pipeline_step="已完成",
                 finished_at=utcnow_iso(),
                 result=result,
             )
@@ -702,7 +1466,29 @@ class Plugin(PluginBase):
             _tool("media_strategy_list_sources", "查看套餐、订阅源和健康状态。", {}),
             _tool("media_strategy_ingest", "手动拉取最新 RSS 新闻。", {"package_ids": "array", "limit_sources": "integer"}),
             _tool("media_strategy_hot_radar", "生成热点雷达榜。", {"package_id": "string", "since_hours": "integer", "limit": "integer"}),
+            _tool(
+                "media_strategy_top_topics",
+                "选题推荐：按多源覆盖+权威加权聚合输出 Top 5-10 高权重热点，仅返回标题与原文链接以节省 Token。",
+                {
+                    "package_id": "string",
+                    "since_hours": "integer",
+                    "limit": "integer",
+                    "min_coverage": "integer",
+                    "compact": "boolean",
+                },
+            ),
             _tool("media_strategy_search_news", "按关键词、分类检索新闻。", {"q": "string", "package_id": "string", "limit": "integer"}),
+            _tool(
+                "media_strategy_ai_analyze_topics",
+                "对规则筛选后的 Top N 热点簇调用主程序大模型生成选题分析报告，避免逐条新闻烧模型。",
+                {
+                    "package_id": "string",
+                    "since_hours": "integer",
+                    "limit": "integer",
+                    "min_coverage": "integer",
+                    "evidence_limit": "integer",
+                },
+            ),
             _tool("media_strategy_daily_brief", "生成融媒早报、午报、晚报或专题简报。", {"session": "string", "since_hours": "integer", "limit": "integer"}),
             _tool("media_strategy_verify_pack", "为热点生成信源复核清单。", {"article_ids": "array", "topic": "string"}),
             _tool("media_strategy_replicate_plan", "生成热点复刻、采访、拍摄和制作计划。", {"article_ids": "array", "topic": "string", "target_format": "string", "tone": "string"}),
@@ -730,8 +1516,17 @@ class Plugin(PluginBase):
             return await self._create_and_run_task("ingest", args)
         if name == "media_strategy_hot_radar":
             return {"ok": True, **(await self._pipeline.hot_radar(args))}
+        if name == "media_strategy_top_topics":
+            payload = dict(args)
+            if "limit" not in payload:
+                payload["limit"] = 5
+            if "compact" not in payload:
+                payload["compact"] = True
+            return {"ok": True, **(await self._pipeline.top_topics(payload))}
         if name == "media_strategy_search_news":
             return {"ok": True, **(await self._pipeline.search_news(args))}
+        if name == "media_strategy_ai_analyze_topics":
+            return await self._create_and_run_task("ai_topic_analysis", args)
         if name == "media_strategy_daily_brief":
             return await self._create_and_run_task("daily_brief", args)
         if name == "media_strategy_verify_pack":

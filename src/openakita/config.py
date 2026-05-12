@@ -509,8 +509,12 @@ class Settings(BaseSettings):
         description="多Agent模式 (Beta)，开启后支持多Agent协作、专用Agent、IM多Bot等",
     )
     coordinator_mode_enabled: bool = Field(
-        default=False,
-        description="协调者模式 (CC-3)：启用后，role=coordinator 的 Agent 仅能委派/规划，不能直接执行文件/命令操作",
+        default=True,
+        description=(
+            "协调者模式 (CC-3)：启用后，role=coordinator 的 Agent 仅能委派/规划，"
+            "不能直接执行文件/命令操作。组织模式下的协调者节点（有下级的节点）"
+            "始终启用协调者提示词，与本开关解耦。"
+        ),
     )
 
     # IM 多 Bot 配置（多Agent模式下支持同一通道类型多个Bot实例）
@@ -553,7 +557,7 @@ class Settings(BaseSettings):
     )
 
     # === 活人感引擎配置 ===
-    proactive_enabled: bool = Field(default=True, description="是否启用活人感模式")
+    proactive_enabled: bool = Field(default=False, description="是否启用活人感模式")
     proactive_max_daily_messages: int = Field(default=3, description="每日最多主动消息数")
     proactive_min_interval_minutes: int = Field(
         default=120, description="两条主动消息最短间隔（分钟）"
@@ -820,19 +824,19 @@ class Settings(BaseSettings):
     # 仅用于看门狗：防止组织真正卡死（LLM 挂起、死锁）时命令无限挂起。
     # 任一进度信号（token / 工具完成 / 节点状态切换 / chain 事件）到达
     # 都会让 warn/autostop 计时器归零，因此长时但持续产出的任务不会被误停。
-    # 默认全部关闭：CLI/IM 真人协作场景下，多 Agent 死锁由用户在指挥台手动按【强制终止】处理。
-    # 仅在程序化/无人值守场景需要兜底时，在【组织设置 → 任务看门狗】中打开。
+    # 默认启用软看门狗：只看“连续无真实进展”，不按总时长硬杀。
+    # 真正持续产出的长任务会不断刷新进度，不会被这些阈值中断。
     org_command_stuck_warn_secs: int = Field(
-        default=0,
-        description="无进度多久（秒）向前端发出 stuck_warning 提示，0=禁用（默认）。建议值 600",
+        default=900,
+        description="连续无真实进度多久（秒）记录 stuck_warning，0=禁用。默认 900",
     )
     org_command_stuck_autostop_secs: int = Field(
-        default=0,
-        description="无进度多久（秒）兜底 soft_stop 组织，0=禁用（默认）。建议值 3600",
+        default=3600,
+        description="连续无真实进度多久（秒）兜底 soft_stop 组织，0=禁用。默认 3600",
     )
     org_command_timeout_secs: int = Field(
         default=0,
-        description="单条命令最长运行时间（秒）硬上限，0=不限时（默认）。建议值 10800",
+        description="单条命令最长运行时间（秒）硬上限，0=不限时（默认，不用总时长限制长任务）",
     )
 
     @model_validator(mode="after")

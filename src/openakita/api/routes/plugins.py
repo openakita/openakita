@@ -1072,7 +1072,7 @@ async def get_plugin_icon(plugin_id: str) -> Response:
 
 
 @router.post("/{plugin_id}/_admin/open-folder")
-async def open_plugin_folder(plugin_id: str) -> dict[str, str]:
+async def open_plugin_folder(plugin_id: str) -> dict[str, Any]:
     """Return the absolute path so frontend can open it via Tauri/OS."""
     _check_plugin_id(plugin_id)
     plugin_dir = _plugins_dir() / plugin_id

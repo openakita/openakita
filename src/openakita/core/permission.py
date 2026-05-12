@@ -461,18 +461,31 @@ ASK_MODE_RULESET: Ruleset = from_config(
 COORDINATOR_MODE_RULESET: Ruleset = from_config(
     {
         "*": "deny",
+        # Generic multi-agent delegation (non-org mode)
         "delegate_to_agent": "allow",
         "delegate_parallel": "allow",
         "spawn_agent": "allow",
         "create_agent": "allow",
         "task_stop": "allow",
         "send_agent_message": "allow",
+        # Organization mode delegation / coordination tools.
+        # Without this glob, an org coordinator node entering coordinator mode
+        # would have *every* org_* call denied (regression: 5/9), defeating
+        # the whole point of the mode for org roots like editor-in-chief.
+        # ``org_*`` is the canonical prefix for tools defined in
+        # ``src/openakita/orgs/tools.py`` and is only available to nodes that
+        # have an ``_org_context``; non-org agents never see these tools.
+        "org_*": "allow",
+        # Lightweight planning / todo helpers (coordinator can plan its own
+        # delegation flow but not run files or shell commands directly).
         "create_todo": "allow",
         "update_todo_step": "allow",
         "get_todo_status": "allow",
         "complete_todo": "allow",
         "create_plan_file": "allow",
         "exit_plan_mode": "allow",
+        # Read-only / observational tools the coordinator legitimately needs
+        # to make routing decisions.
         "web_search": "allow",
         "news_search": "allow",
         "search_memory": "allow",

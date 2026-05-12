@@ -124,6 +124,36 @@ def _new_id(prefix: str = "") -> str:
     return f"{prefix}{short}" if prefix else short
 
 
+def infer_agent_profile_id_for_node(data: dict) -> str:
+    """Infer a stable built-in AgentProfile id for legacy org nodes/templates."""
+    node_id = str(data.get("id") or "").lower()
+    title = str(data.get("role_title") or "").lower()
+    dept = str(data.get("department") or "").lower()
+    haystack = f"{node_id} {title} {dept}"
+
+    if any(k in haystack for k in ("architect", "架构", "cto", "技术总监")):
+        return "architect"
+    if any(k in haystack for k in ("devops", "运维", "部署", "ci/cd")):
+        return "devops-engineer"
+    if any(k in haystack for k in ("dev", "engineer", "工程师", "开发", "全栈", "前端", "后端", "qa", "测试")):
+        return "code-assistant"
+    if any(k in haystack for k in ("pm", "project", "项目", "产品", "cpo")):
+        return "project-manager"
+    if any(k in haystack for k in ("marketing", "market", "cmo", "seo", "社媒", "市场", "营销")):
+        return "marketing-planner"
+    if any(k in haystack for k in ("content", "writer", "文案", "内容", "运营", "编辑")):
+        return "content-creator"
+    if any(k in haystack for k in ("hr", "人力")):
+        return "hr-assistant"
+    if any(k in haystack for k in ("legal", "法务", "合规")):
+        return "legal-advisor"
+    if any(k in haystack for k in ("data", "分析", "数据")):
+        return "data-analyst"
+    if any(k in haystack for k in ("support", "客服", "客户")):
+        return "customer-support"
+    return "default"
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -213,6 +243,8 @@ class OrgNode:
     @classmethod
     def from_dict(cls, d: dict) -> OrgNode:
         d = dict(d)
+        if not d.get("agent_profile_id"):
+            d["agent_profile_id"] = infer_agent_profile_id_for_node(d)
         if "status" in d and isinstance(d["status"], str):
             try:
                 d["status"] = NodeStatus(d["status"])

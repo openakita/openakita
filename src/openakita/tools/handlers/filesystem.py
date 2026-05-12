@@ -93,6 +93,7 @@ class FilesystemHandler:
             agent: Agent 实例，用于访问 shell_tool 和 file_tool
         """
         self.agent = agent
+        self._read_file_cache: dict[tuple[str, int, int], str] = {}
 
     def _get_fix_policy(self) -> dict | None:
         """
@@ -557,13 +558,30 @@ class FilesystemHandler:
         from ...core.im_context import get_im_session
 
         if not get_im_session():
-            result += (
-                "\n\n💡 当前为 Desktop 模式，用户无法直接访问服务器文件。"
-                "请将文件的关键内容直接包含在回复中，"
-                "或调用 deliver_artifacts(artifacts=[{type: 'file', path: '"
-                + str(path)
-                + "'}]) 使文件在前端可下载。"
-            )
+            # plan / ask 模式下 deliver_artifacts 是被 mode-guard 拦截的工具，
+            # 这里再主动诱导只会让模型撞墙报"该工具在当前模式不可用"，
+            # 用户体验和审计日志都很差。改成模式自适应：仅在 agent 模式
+            # 才提示 deliver_artifacts，其它模式只引导内联展示文件内容。
+            try:
+                _exec_mode = getattr(
+                    getattr(self.agent, "tool_executor", None), "_current_mode", "agent"
+                )
+            except Exception:
+                _exec_mode = "agent"
+            if _exec_mode == "agent":
+                result += (
+                    "\n\n💡 当前为 Desktop 模式，用户无法直接访问服务器文件。"
+                    "请将文件的关键内容直接包含在回复中，"
+                    "或调用 deliver_artifacts(artifacts=[{type: 'file', path: '"
+                    + str(path)
+                    + "'}]) 使文件在前端可下载。"
+                )
+            else:
+                result += (
+                    "\n\n💡 当前为 Desktop 模式且非 agent 执行模式，"
+                    "请将文件的关键内容直接包含在回复中（如方案大纲/checklist），"
+                    "供用户审阅。本模式下不提供文件下载工具。"
+                )
         return result
 
     # read_file 默认最大行数。运行时可通过 READ_FILE_DEFAULT_LIMIT 调整。
@@ -600,12 +618,19 @@ class FilesystemHandler:
             offset = 1
             limit = int(getattr(settings, "read_file_default_limit", self.READ_FILE_DEFAULT_LIMIT))
 
+        cache_key = (str(self._resolve_to_abs(path)), offset, limit)
+        cached = self._read_file_cache.get(cache_key)
+        if cached is not None:
+            return "♻️ 复用本轮 read_file 缓存结果：\n" + cached
+
         lines = content.split("\n")
         total_lines = len(lines)
 
         # 如果文件在 limit 范围内且从头读取，直接返回全部
         if total_lines <= limit and offset <= 1:
-            return f"文件内容 ({total_lines} 行):\n{content}"
+            result = f"文件内容 ({total_lines} 行):\n{content}"
+            self._remember_read_file_cache(cache_key, result)
+            return result
 
         # 分页截取
         start = offset - 1  # 转为 0-based
@@ -631,7 +656,14 @@ class FilesystemHandler:
                 f"查看后续内容。"
             )
 
+        self._remember_read_file_cache(cache_key, result)
         return result
+
+    def _remember_read_file_cache(self, key: tuple[str, int, int], result: str) -> None:
+        self._read_file_cache[key] = result
+        if len(self._read_file_cache) > 64:
+            oldest = next(iter(self._read_file_cache))
+            self._read_file_cache.pop(oldest, None)
 
     # list_directory 默认最大条目数
     LIST_DIR_DEFAULT_MAX = 200

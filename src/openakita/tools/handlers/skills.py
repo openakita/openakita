@@ -331,6 +331,12 @@ class SkillsHandler:
             output += "**脚本**: instruction-only (no executable scripts)\n"
         else:
             output += f"**可执行脚本**: {', '.join(exposed.scripts)}\n"
+            if exposed.skill_dir:
+                output += f"**脚本默认工作目录**: {exposed.skill_dir}\n"
+                output += (
+                    "**脚本导入规则**: Python 脚本执行时会把技能目录加入 PYTHONPATH；"
+                    "入口脚本依赖的模块应放在该技能目录内，不要依赖工作区根目录的游离 .py 文件。\n"
+                )
         if exposed.references:
             output += f"**参考文档**: {', '.join(exposed.references)}\n"
         output += (
@@ -481,6 +487,16 @@ class SkillsHandler:
                     f"❌ 脚本执行失败:\n{output}\n\n"
                     f"**建议**: Use one of the available scripts listed above."
                 )
+            elif "modulenotfounderror" in output_lower or "no module named" in output_lower:
+                module_hint = self._diagnose_missing_skill_module(skill_entry, output)
+                return (
+                    f"❌ 脚本执行失败:\n{output}\n\n"
+                    f"**建议**: 这是 Python 模块导入失败。"
+                    f"{module_hint}"
+                    f"可复用工具的入口脚本和被导入模块必须放在同一个技能目录内，"
+                    f"例如 `skills/{skill_name}/scripts/main.py` 导入 "
+                    f"`skills/{skill_name}/news_searcher.py`。"
+                )
             elif "not found" in output_lower or "未找到" in output_lower:
                 return (
                     f"❌ 脚本执行失败:\n{output}\n\n"
@@ -507,6 +523,44 @@ class SkillsHandler:
                     f"❌ 脚本执行失败:\n{output}\n\n"
                     f"**建议**: 请检查脚本参数是否正确，或使用 `get_skill_info` 查看技能使用说明"
                 )
+
+    @staticmethod
+    def _diagnose_missing_skill_module(skill_entry: Any, output: str) -> str:
+        """Return a targeted hint when a skill script imports a module outside its skill dir."""
+        match = re.search(r"No module named ['\"]([^'\"]+)['\"]", output)
+        if not match:
+            return ""
+        module_name = match.group(1).split(".")[0]
+        candidate_name = f"{module_name}.py"
+
+        try:
+            from openakita.config import settings
+
+            project_root = Path(settings.project_root)
+        except Exception:
+            project_root = Path.cwd()
+
+        root_candidate = project_root / candidate_name
+        if not root_candidate.exists():
+            return ""
+
+        skill_dir = None
+        try:
+            skill_dir = Path(skill_entry.skill_dir) if skill_entry else None
+        except Exception:
+            skill_dir = None
+
+        if skill_dir:
+            return (
+                f"检测到 `{candidate_name}` 位于工作区根目录 `{project_root}`，"
+                f"但当前脚本从技能目录 `{skill_dir}` 执行，无法稳定导入它。"
+                f"请把该模块移动到 `{skill_dir / candidate_name}`，"
+                f"或把入口脚本改为导入技能目录内的模块。"
+            )
+        return (
+            f"检测到 `{candidate_name}` 位于工作区根目录 `{project_root}`，"
+            "请把它移动到当前技能目录内。"
+        )
 
     def _get_skill_reference(self, params: dict) -> str:
         """获取技能参考文档"""

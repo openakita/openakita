@@ -85,8 +85,11 @@ _ZONE_OP_MATRIX: dict[Zone, dict[OpType, PolicyDecision]] = {
     },
     Zone.CONTROLLED: {
         OpType.READ: PolicyDecision.ALLOW,
-        OpType.CREATE: PolicyDecision.ALLOW,
-        OpType.EDIT: PolicyDecision.ALLOW,
+        # P0-1：CONTROLLED 区域所有写操作都需要 confirm（不分 CREATE/EDIT/OVERWRITE）。
+        # 用户对桌面/文档/下载等区域的写入应该看得见、可拦截；
+        # yolo 信任模式下 baseline_protection 仍放行，不影响重度信任用户。
+        OpType.CREATE: PolicyDecision.CONFIRM,
+        OpType.EDIT: PolicyDecision.CONFIRM,
         OpType.OVERWRITE: PolicyDecision.CONFIRM,
         OpType.DELETE: PolicyDecision.CONFIRM,
         OpType.RECURSIVE_DELETE: PolicyDecision.DENY,
@@ -252,11 +255,56 @@ def _default_protected_paths() -> list[str]:
 
 def _default_forbidden_paths() -> list[str]:
     """Platform-specific default forbidden paths."""
-    paths = ["~/.ssh/**", "~/.gnupg/**"]
+    paths = ["~/.ssh/**", "~/.gnupg/**", "~/.aws/**", "~/.config/gcloud/**"]
     if platform.system() == "Windows":
-        paths.append("C:/Windows/System32/config/**")
+        paths.extend(
+            [
+                "C:/Windows/System32/config/**",
+                "~/.aws/credentials",
+                "~/AppData/Roaming/gcloud/**",
+            ]
+        )
     else:
         paths.extend(["/etc/shadow", "/etc/gshadow"])
+    return paths
+
+
+def _default_controlled_paths() -> list[str]:
+    """Platform-specific default controlled paths.
+
+    P0-1：用户常用工作区目录（桌面/文档/下载）默认归 CONTROLLED，
+    而非默认 WORKSPACE。这样 smart/cautious 模式下 LLM 主动写入这些目录
+    会触发 risk_confirm；yolo（完全信任）模式下 baseline_protection
+    继续放行，不打断用户。
+    """
+    paths = []
+    if platform.system() == "Windows":
+        paths.extend(
+            [
+                "~/Desktop/**",
+                "~/Documents/**",
+                "~/Downloads/**",
+                "~/Pictures/**",
+                "~/Videos/**",
+                "~/Music/**",
+                "~/桌面/**",
+                "~/文档/**",
+                "~/下载/**",
+                "~/图片/**",
+            ]
+        )
+    else:
+        paths.extend(
+            [
+                "~/Desktop/**",
+                "~/Documents/**",
+                "~/Downloads/**",
+                "~/Pictures/**",
+                "~/Music/**",
+            ]
+        )
+        if platform.system() == "Darwin":
+            paths.extend(["~/Movies/**", "~/Public/**"])
     return paths
 
 
@@ -494,6 +542,25 @@ def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
     return OpType.CREATE
 
 
+_MCP_WRITE_HINT_RE = re.compile(
+    r"(write|create|update|delete|remove|insert|set|patch|post|put|send|publish|"
+    r"deploy|install|uninstall|exec|run|修改|写入|创建|删除|移除|更新|发送|发布|部署|安装|卸载|执行)",
+    re.IGNORECASE,
+)
+
+
+def _is_readonly_mcp_tool(params: dict[str, Any]) -> bool:
+    tool_name = str(
+        params.get("tool")
+        or params.get("tool_name")
+        or params.get("name")
+        or ""
+    )
+    if not tool_name:
+        return False
+    return not bool(_MCP_WRITE_HINT_RE.search(tool_name))
+
+
 def _file_operation_targets(tool_name: str, params: dict[str, Any]) -> list[tuple[str, OpType]]:
     """Return file paths and their operation semantics for zone checks."""
     if tool_name == "move_file":
@@ -533,6 +600,23 @@ def _file_operation_targets(tool_name: str, params: dict[str, Any]) -> list[tupl
     if not path:
         return []
     return [(path, _tool_to_optype(tool_name, params))]
+
+
+def _dangerous_tool_reason(tool_name: str, params: dict[str, Any]) -> str | None:
+    """Return a human-readable reason when a tool is too risky to auto-confirm."""
+    if tool_name in ("run_shell", "run_powershell"):
+        return "shell 命令执行"
+    if tool_name == "call_mcp_tool" and not _is_readonly_mcp_tool(params):
+        mcp_tool = params.get("tool") or params.get("tool_name") or params.get("name") or "unknown"
+        return f"MCP 写操作或未知副作用工具 ({mcp_tool})"
+    if tool_name in {"delete_file", "move_file", "rename_file"}:
+        return "文件删除/移动操作"
+    if tool_name == "write_file" and _tool_to_optype(tool_name, params) == OpType.OVERWRITE:
+        return "覆盖写入已有文件"
+    for _path, op_type in _file_operation_targets(tool_name, params):
+        if op_type in (OpType.DELETE, OpType.RECURSIVE_DELETE, OpType.OVERWRITE):
+            return f"{_op_label(op_type)}操作"
+    return None
 
 
 _ZONE_LABELS = {
@@ -611,13 +695,20 @@ class PolicyEngine:
     @staticmethod
     def _make_default_config() -> SecurityConfig:
         cwd = str(Path.cwd()).replace("\\", "/")
+        # P0-1：默认 zone 配置策略
+        # - workspace: cwd（项目根目录）
+        # - controlled: 用户常用目录（桌面/文档/下载等）→ smart/cautious 模式下需 confirm
+        # - protected: 系统目录 → 任意模式都拒绝写入
+        # - forbidden: 凭据/密钥目录 → 任意模式都禁止读写
+        # - default_zone = CONTROLLED：未明确列出的路径默认归 CONTROLLED，
+        #   smart/cautious 触发 confirm；yolo 走 baseline_protection 继续放行
         return SecurityConfig(
             zones=ZonePolicyConfig(
                 workspace=[cwd],
-                controlled=[],
+                controlled=_default_controlled_paths(),
                 protected=_default_protected_paths(),
                 forbidden=_default_forbidden_paths(),
-                default_zone=Zone.WORKSPACE,
+                default_zone=Zone.CONTROLLED,
             ),
             confirmation=ConfirmationConfig(mode="yolo", auto_confirm=True),
             command_patterns=CommandPatternConfig(
@@ -837,8 +928,8 @@ class PolicyEngine:
             self._on_allow(tool_name, params)
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
-                reason="信任模式放行",
-                metadata={"trust_mode": True},
+                reason="信任模式放行（已通过 baseline 保护）",
+                metadata={"trust_mode": True, "baseline_checked": True},
             )
 
         # Bypass CONFIRM if user approved via any allowlist tier
@@ -896,6 +987,17 @@ class PolicyEngine:
             shell_result = self._check_shell_command(tool_name, params)
             if shell_result:
                 return shell_result
+
+        if tool_name == "call_mcp_tool" and not _is_readonly_mcp_tool(params):
+            mcp_tool = params.get("tool") or params.get("tool_name") or params.get("name") or "unknown"
+            result = PolicyResult(
+                decision=PolicyDecision.CONFIRM,
+                reason=f"MCP 工具 '{mcp_tool}' 可能产生写入或外部副作用，执行前需要确认",
+                policy_name="McpToolRisk",
+                metadata={"mcp_tool": str(mcp_tool), "dangerous_reason": "mcp_write_or_unknown"},
+            )
+            self._audit(tool_name, params, result)
+            return result
 
         # L1: Zone × OpType matrix for file operations
         file_tools = {
@@ -960,6 +1062,16 @@ class PolicyEngine:
                     )
                     self._audit(tool_name, params, result)
                     return result
+                # P0-1：yolo 模式下越界访问（CONTROLLED 区域写操作）不打断，但记录审计
+                if zone == Zone.CONTROLLED and op_type != OpType.READ:
+                    logger.info(
+                        "[Policy] Trust-mode crossing: tool=%s op=%s path=%s zone=%s "
+                        "(yolo 模式放行；如需提示请切换到 smart/cautious 安全模式)",
+                        tool_name,
+                        op_type.value,
+                        path,
+                        zone.value,
+                    )
             return None
 
         if tool_name in ("run_shell", "run_powershell"):
@@ -971,6 +1083,17 @@ class PolicyEngine:
                 result = PolicyResult(
                     decision=PolicyDecision.DENY,
                     reason=f"操作被拒绝: 命令触碰系统或密钥保护范围 ({command[:120]})",
+                    policy_name="BaselineProtection",
+                    metadata={"risk_level": risk.value, "trust_mode": True},
+                )
+                self._audit(tool_name, params, result)
+                return result
+            if risk == RiskLevel.HIGH or (
+                risk == RiskLevel.MEDIUM and self._is_destructive_shell_command(command)
+            ):
+                result = PolicyResult(
+                    decision=PolicyDecision.CONFIRM,
+                    reason=f"此命令会修改或删除文件，执行前需要您的确认: {command[:120]}",
                     policy_name="BaselineProtection",
                     metadata={"risk_level": risk.value, "trust_mode": True},
                 )
@@ -989,6 +1112,20 @@ class PolicyEngine:
                 self._audit(tool_name, params, result)
                 return result
         return None
+
+    @staticmethod
+    def _is_destructive_shell_command(command: str) -> bool:
+        """Detect shell commands that can remove, clear, overwrite, or move user data."""
+        return bool(
+            re.search(
+                r"\b("
+                r"rm|del|erase|rd|rmdir|remove-item|clear-content|clear-item|"
+                r"set-content|move-item|mv|move|unlink|truncate"
+                r")\b",
+                command,
+                re.IGNORECASE,
+            )
+        )
 
     def _command_touches_sensitive_area(self, command: str) -> bool:
         """Detect shell commands that operate on protected/forbidden paths in trust mode."""
@@ -1121,7 +1258,8 @@ class PolicyEngine:
                 return result
 
             if decision == PolicyDecision.CONFIRM:
-                if self._config.confirmation.auto_confirm:
+                dangerous_reason = _dangerous_tool_reason(tool_name, params)
+                if self._config.confirmation.auto_confirm and not dangerous_reason:
                     continue
                 result = PolicyResult(
                     decision=PolicyDecision.CONFIRM,
@@ -1134,6 +1272,7 @@ class PolicyEngine:
                         "zone": zone.value,
                         "op_type": op_type.value,
                         "needs_checkpoint": needs_checkpoint,
+                        **({"dangerous_reason": dangerous_reason} if dangerous_reason else {}),
                     },
                 )
                 self._audit(tool_name, params, result)
