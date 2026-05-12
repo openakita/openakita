@@ -1565,8 +1565,12 @@ async def get_feedback_status(report_id: str):
                 data = resp.json()
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
                 replies = data.get("developer_replies", [])
+                external = [
+                    r for r in replies
+                    if r.get("source") != "user_reply"
+                ]
                 last_reply = (
-                    replies[-1].get("created_at") if replies else None
+                    external[-1].get("created_at") if external else None
                 )
                 await feedback_store.update_status(
                     report_id,
@@ -1651,9 +1655,13 @@ async def get_feedback_status_batch():
                         replies = info.get(
                             "developer_replies", []
                         )
+                        external = [
+                            r for r in replies
+                            if r.get("source") != "user_reply"
+                        ]
                         last_reply = (
-                            replies[-1].get("created_at")
-                            if replies
+                            external[-1].get("created_at")
+                            if external
                             else None
                         )
                         await feedback_store.update_status(
@@ -1715,6 +1723,10 @@ async def post_feedback_reply(report_id: str, body: dict):
                 timeout=15,
             )
             if resp.status_code == 200:
+                now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                await feedback_store.update_status(
+                    report_id, last_checked_at=now,
+                )
                 return resp.json()
             try:
                 detail = resp.json().get("error", resp.text[:200])
@@ -1725,6 +1737,109 @@ async def post_feedback_reply(report_id: str, body: dict):
         raise
     except Exception as e:
         logger.error("Reply proxy error for %s: %s", report_id, e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ─── Public feedback browsing endpoints ───
+
+
+@router.get("/api/feedback-public-search")
+async def public_feedback_search(
+    q: str = "",
+    page: int = 1,
+    per_page: int = 20,
+    state: str = "all",
+    type: str = "",
+):
+    """Proxy public feedback search to FC /issues/search."""
+    import httpx
+
+    endpoint = _get_bug_report_endpoint()
+    if not endpoint:
+        return {"items": [], "total_count": 0, "page": 1, "has_next": False}
+
+    params: dict = {"q": q, "page": page, "per_page": per_page, "state": state}
+    if type:
+        params["type"] = type
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{endpoint.rstrip('/')}/issues/search",
+                params=params,
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            logger.warning("FC public search returned %s", resp.status_code)
+    except Exception as e:
+        logger.warning("FC public search failed: %s", e)
+
+    return {"items": [], "total_count": 0, "page": page, "has_next": False}
+
+
+@router.get("/api/feedback-public-issue/{issue_number}")
+async def public_feedback_issue(issue_number: int):
+    """Proxy public issue detail + comments to FC /issues/{number}."""
+    import httpx
+
+    endpoint = _get_bug_report_endpoint()
+    if not endpoint:
+        raise HTTPException(status_code=503, detail="Feedback endpoint not configured")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{endpoint.rstrip('/')}/issues/{issue_number}",
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            try:
+                detail = resp.json().get("error", resp.text[:200])
+            except Exception:
+                detail = resp.text[:200]
+            raise HTTPException(status_code=resp.status_code, detail=detail)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("FC public issue detail failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.post("/api/feedback-public-comment/{issue_number}")
+async def public_feedback_comment(issue_number: int, body: dict):
+    """Proxy community comment to FC /issues/{number}/comment."""
+    import httpx
+
+    comment_text = (body.get("body") or "").strip()
+    if not comment_text:
+        raise HTTPException(status_code=400, detail="Comment body is required")
+    if len(comment_text) > 2000:
+        raise HTTPException(status_code=400, detail="Comment too long (max 2000)")
+
+    endpoint = _get_bug_report_endpoint()
+    if not endpoint:
+        raise HTTPException(status_code=503, detail="Feedback endpoint not configured")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{endpoint.rstrip('/')}/issues/{issue_number}",
+                json={"body": comment_text},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            try:
+                detail = resp.json().get("error", resp.text[:200])
+            except Exception:
+                detail = resp.text[:200]
+            raise HTTPException(status_code=resp.status_code, detail=detail)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("FC public comment proxy failed: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
 
 

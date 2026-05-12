@@ -16,7 +16,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Label } from "../components/ui/label";
 import { Checkbox } from "../components/ui/checkbox";
 
-type FeedbackMode = "bug" | "feature";
+export type FeedbackMode = "bug" | "feature";
 
 type SystemInfo = {
   os?: string;
@@ -29,17 +29,24 @@ type SystemInfo = {
   [key: string]: unknown;
 };
 
+export type FeedbackPrefill = {
+  mode?: FeedbackMode;
+  title?: string;
+  description?: string;
+};
+
 type FeedbackModalProps = {
   open: boolean;
   onClose: () => void;
   apiBase: string;
   initialMode?: FeedbackMode;
+  prefill?: FeedbackPrefill | null;
   onNavigateToMyFeedback?: () => void;
   serviceRunning?: boolean;
   currentWorkspaceId?: string | null;
 };
 
-export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onNavigateToMyFeedback, serviceRunning = true, currentWorkspaceId }: FeedbackModalProps) {
+export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", prefill, onNavigateToMyFeedback, serviceRunning = true, currentWorkspaceId }: FeedbackModalProps) {
   const { t } = useTranslation();
 
   const [mode, setMode] = useState<FeedbackMode>(initialMode);
@@ -86,15 +93,21 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
 
   useEffect(() => {
     if (open) {
-      setMode(initialMode);
       setSubmitResult(null);
       setDownloading(false);
       setUploadProgress(null);
       setPhase("form");
       submittingRef.current = false;
       setCaptchaReady(false);
+      if (prefill) {
+        setMode(prefill.mode ?? initialMode);
+        setTitle(prefill.title ?? "");
+        setDescription(prefill.description ?? "");
+      } else {
+        setMode(initialMode);
+      }
     }
-  }, [open, initialMode]);
+  }, [open, initialMode, prefill]);
 
   const useOfflineIpc = IS_TAURI && !serviceRunning;
 

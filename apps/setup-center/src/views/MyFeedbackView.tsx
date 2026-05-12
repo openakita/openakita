@@ -9,10 +9,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
-  IconRefresh, IconTrash, IconBug, IconZap,
+  IconRefresh, IconTrash, IconBug, IconZap, IconUser,
   IconChevronDown, IconChevronRight, IconLoader, IconMessageCircle,
   IconSend, IconPlus, IconSearch,
 } from "../icons";
+import { useMdModules } from "./chat/hooks/useMdModules";
+import { PublicFeedbackList } from "./PublicFeedbackList";
+
+type FeedbackTab = "mine" | "all";
 
 type FeedbackRecord = {
   report_id: string;
@@ -34,6 +38,8 @@ type DeveloperReply = {
 
 type FeedbackDetail = {
   status: string;
+  summary?: string;
+  created_at?: string;
   developer_replies?: DeveloperReply[];
   labels?: string[];
   source?: string;
@@ -43,10 +49,16 @@ type FeedbackDetail = {
 type FilterTab = "all" | "active" | "resolved" | "unread";
 type SortBy = "date" | "status" | "type";
 
+type FeedbackPrefill = {
+  mode?: "bug" | "feature";
+  title?: string;
+  description?: string;
+};
+
 type MyFeedbackViewProps = {
   apiBaseUrl: string;
   serviceRunning: boolean;
-  onOpenFeedbackModal?: () => void;
+  onOpenFeedbackModal?: (prefill?: FeedbackPrefill) => void;
   refreshTrigger?: number;
 };
 
@@ -80,10 +92,14 @@ function statusKey(status: string): string {
 
 export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal, refreshTrigger }: MyFeedbackViewProps) {
   const { t } = useTranslation();
+  const mdModules = useMdModules();
+  const [activeTab, setActiveTab] = useState<FeedbackTab>("mine");
   const [records, setRecords] = useState<FeedbackRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [publicRefreshing, setPublicRefreshing] = useState(false);
+  const [publicRefreshTrigger, setPublicRefreshTrigger] = useState(0);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Record<string, FeedbackDetail>>({});
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
@@ -109,16 +125,24 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
     setRefreshing(true);
     try {
       await safeFetch(`${apiBaseUrl}/api/feedback-status/batch`, { method: "POST" });
+    } catch {
+      // batch update failed, still refresh local records below
+    }
+    try {
       await fetchRecords();
-      if (expandedId) {
+    } catch {
+      // silently fail
+    }
+    if (expandedIds.size > 0) {
+      for (const eid of expandedIds) {
         try {
-          const res = await safeFetch(`${apiBaseUrl}/api/feedback-status/${expandedId}`);
+          const res = await safeFetch(`${apiBaseUrl}/api/feedback-status/${eid}`);
           const data = await res.json();
-          setDetails((prev) => ({ ...prev, [expandedId]: data }));
+          setDetails((prev) => ({ ...prev, [eid]: data }));
           if (data.status) {
             setRecords((prev) => prev.map((r) =>
-              r.report_id === expandedId
-                ? { ...r, cached_status: data.status, has_unread: false }
+              r.report_id === eid
+                ? { ...r, cached_status: data.status }
                 : r
             ));
           }
@@ -126,12 +150,15 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
           // detail refresh failed, keep stale data
         }
       }
-    } catch {
-      // silently fail
-    } finally {
-      setRefreshing(false);
     }
-  }, [apiBaseUrl, fetchRecords, expandedId]);
+    setRefreshing(false);
+  }, [apiBaseUrl, fetchRecords, expandedIds]);
+
+  const handlePublicRefresh = useCallback(() => {
+    setPublicRefreshing(true);
+    setPublicRefreshTrigger(n => n + 1);
+    setTimeout(() => setPublicRefreshing(false), 1500);
+  }, []);
 
   const batchRefreshRef = useRef(batchRefresh);
   batchRefreshRef.current = batchRefresh;
@@ -169,14 +196,18 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
   }, [apiBaseUrl]);
 
   const toggleExpand = useCallback((reportId: string) => {
-    if (expandedId === reportId) {
-      setExpandedId(null);
-    } else {
-      setExpandedId(reportId);
-      setReplyError(null);
-      if (!details[reportId]) fetchDetail(reportId);
-    }
-  }, [expandedId, details, fetchDetail]);
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(reportId)) {
+        next.delete(reportId);
+      } else {
+        next.add(reportId);
+        setReplyError(null);
+        if (!details[reportId]) fetchDetail(reportId);
+      }
+      return next;
+    });
+  }, [details, fetchDetail]);
 
   const handleDelete = useCallback((reportId: string) => {
     setConfirmDialog({
@@ -185,13 +216,13 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
         try {
           await safeFetch(`${apiBaseUrl}/api/feedback-history/${reportId}`, { method: "DELETE" });
           setRecords((prev) => prev.filter((r) => r.report_id !== reportId));
-          if (expandedId === reportId) setExpandedId(null);
+          setExpandedIds((prev) => { const next = new Set(prev); next.delete(reportId); return next; });
         } catch {
           // silently fail
         }
       },
     });
-  }, [apiBaseUrl, expandedId, t]);
+  }, [apiBaseUrl, t]);
 
   const stats = useMemo(() => {
     let active = 0, unread = 0, resolved = 0;
@@ -239,19 +270,12 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
     setSending(reportId);
     setReplyError(null);
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/feedback-reply/${reportId}`, {
+      await safeFetch(`${apiBaseUrl}/api/feedback-reply/${reportId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: text }),
+        signal: AbortSignal.timeout(30_000),
       });
-      if (res.status === 429) {
-        setReplyError(t("myFeedback.replyRateLimit"));
-        return;
-      }
-      if (!res.ok) {
-        setReplyError(t("myFeedback.replyFailed"));
-        return;
-      }
       setReplyText((prev) => ({ ...prev, [reportId]: "" }));
       const newReply: DeveloperReply = {
         author: "user",
@@ -273,8 +297,13 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
       setTimeout(() => {
         replyEndRef.current[reportId]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }, 50);
-    } catch {
-      setReplyError(t("myFeedback.replyFailed"));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.startsWith("HTTP 429")) {
+        setReplyError(t("myFeedback.replyRateLimit"));
+      } else {
+        setReplyError(t("myFeedback.replyFailed"));
+      }
     } finally {
       setSending(null);
     }
@@ -290,24 +319,40 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
 
   if (loading) {
     return (
-      <div className="p-6 space-y-3">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="h-16 bg-muted rounded-lg animate-pulse" />
-        ))}
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <IconLoader size={28} className="animate-spin text-muted-foreground/60" />
+        <p className="text-muted-foreground text-[13px]">{t("myFeedback.publicLoading")}</p>
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div>
       <div className="flex items-center justify-between mb-5">
-        <h2 className="text-lg font-semibold">{t("myFeedback.title")}</h2>
+        <ToggleGroup
+          type="single"
+          value={activeTab}
+          onValueChange={(v) => { if (v) setActiveTab(v as FeedbackTab); }}
+          variant="outline"
+        >
+          <ToggleGroupItem
+            value="mine"
+            className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+          >
+            {t("myFeedback.tabMine")}
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="all"
+            className="text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary"
+          >
+            {t("myFeedback.tabAll")}
+          </ToggleGroupItem>
+        </ToggleGroup>
         <div className="flex items-center gap-2">
           {onOpenFeedbackModal && (
             <Button
               size="sm"
-              disabled={!serviceRunning}
-              onClick={onOpenFeedbackModal}
+              onClick={() => onOpenFeedbackModal()}
               className="gap-1.5"
             >
               <IconPlus size={14} />
@@ -317,17 +362,21 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
           <Button
             variant="outline"
             size="sm"
-            disabled={refreshing || !serviceRunning}
-            onClick={batchRefresh}
+            disabled={(activeTab === "mine" ? refreshing : publicRefreshing) || !serviceRunning}
+            onClick={activeTab === "mine" ? batchRefresh : handlePublicRefresh}
             className="gap-1.5"
           >
-            {refreshing ? <IconLoader size={14} className="animate-spin" /> : <IconRefresh size={14} />}
+            {(activeTab === "mine" ? refreshing : publicRefreshing)
+              ? <IconLoader size={14} className="animate-spin" />
+              : <IconRefresh size={14} />}
             {t("myFeedback.refresh")}
           </Button>
         </div>
       </div>
 
-      {records.length === 0 ? (
+      {activeTab === "all" ? (
+        <PublicFeedbackList apiBaseUrl={apiBaseUrl} serviceRunning={serviceRunning} refreshTrigger={publicRefreshTrigger} />
+      ) : records.length === 0 ? (
         <div className="text-center py-16">
           <IconMessageCircle size={40} className="mx-auto mb-3 text-muted-foreground/30" />
           <p className="text-muted-foreground text-[15px]">{t("myFeedback.empty")}</p>
@@ -396,17 +445,6 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
             </div>
           </div>
 
-          {/* Stats summary */}
-          {records.length > 0 && (
-            <p className="text-[11px] text-muted-foreground mb-2">
-              {stats.active > 0 && <>{stats.active} {t("myFeedback.statsActive")}</>}
-              {stats.active > 0 && stats.unread > 0 && " · "}
-              {stats.unread > 0 && <span className="text-blue-500">{stats.unread} {t("myFeedback.statsUnread")}</span>}
-              {(stats.active > 0 || stats.unread > 0) && stats.resolved > 0 && " · "}
-              {stats.resolved > 0 && <>{stats.resolved} {t("myFeedback.statsResolved")}</>}
-            </p>
-          )}
-
           {/* Filtered list */}
           {filteredRecords.length === 0 ? (
             <div className="text-center py-10">
@@ -415,7 +453,7 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
           ) : (
         <div className="space-y-2">
           {filteredRecords.map((rec) => {
-            const isExpanded = expandedId === rec.report_id;
+            const isExpanded = expandedIds.has(rec.report_id);
             const detail = details[rec.report_id];
             const isLoadingDetail = detailLoading === rec.report_id;
             const style = STATUS_STYLES[rec.cached_status] ?? STATUS_STYLES.pending;
@@ -437,16 +475,14 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
                       <IconZap size={16} className="text-amber-500" />
                     )}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[14px] font-medium truncate">{rec.title}</span>
-                      {rec.has_unread && (
-                        <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-                      )}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">
-                      {t("myFeedback.submittedAt")} {formatDate(rec.submitted_at)}
-                    </div>
+                  <div className="flex-1 min-w-0 flex items-center gap-2">
+                    <span className="text-[14px] font-medium truncate">{rec.title}</span>
+                    {rec.has_unread && (
+                      <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                    )}
+                    <span className="text-[11px] text-muted-foreground whitespace-nowrap ml-auto">
+                      {formatDate(rec.submitted_at)}
+                    </span>
                   </div>
                   <Badge
                     variant="secondary"
@@ -454,13 +490,11 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
                   >
                     {t(`myFeedback.${statusKey(rec.cached_status)}`)}
                   </Badge>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(rec.report_id); }}
-                    className="shrink-0 p-1 rounded hover:bg-destructive/10 transition-colors text-muted-foreground hover:text-destructive"
-                    title={t("myFeedback.deleteRecord")}
-                  >
-                    <IconTrash size={14} />
-                  </button>
+                  <IconTrash
+                    size={14}
+                    className="shrink-0 cursor-pointer text-muted-foreground/40 hover:text-destructive transition-colors"
+                    onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleDelete(rec.report_id); }}
+                  />
                 </div>
 
                 {/* Expanded detail */}
@@ -477,106 +511,144 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
                         <IconLoader size={14} className="animate-spin" />
                         {t("myFeedback.refreshing")}
                       </div>
-                    ) : detail?.developer_replies && detail.developer_replies.length > 0 ? (
+                    ) : rec.has_token && detail ? (
                       <div className="space-y-3 mt-2">
-                        <p className="text-[13px] font-medium">{t("myFeedback.repliesTitle")}</p>
-                        {detail.developer_replies.map((reply, i) => {
-                          const isUserReply = reply.source === "user_reply";
-                          return isUserReply ? (
-                            <div key={i} className="flex justify-end">
-                              <div className="max-w-[80%]">
-                                <div className="flex items-center justify-end gap-2 text-[12px]">
-                                  <span className="text-muted-foreground">{formatDate(reply.created_at)}</span>
-                                  <span className="font-medium text-blue-600 dark:text-blue-400">{t("myFeedback.you")}</span>
-                                </div>
-                                <div className="mt-1 px-3 py-2 rounded-lg bg-blue-500/10 text-[13px] whitespace-pre-wrap break-words">
-                                  {reply.body}
-                                </div>
+                        {detail.summary && (
+                          <div className="flex justify-end gap-2.5">
+                            <div className="max-w-[80%]">
+                              <div className="flex items-center justify-end gap-2 text-[12px]">
+                                <span className="text-muted-foreground">{detail.created_at ? formatDate(detail.created_at) : formatDate(rec.submitted_at)}</span>
+                                <span className="font-medium text-blue-600 dark:text-blue-400">{t("myFeedback.originalDescription")}</span>
+                              </div>
+                              <div className="mt-1 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-[13px] whitespace-pre-wrap break-words">
+                                {detail.summary}
                               </div>
                             </div>
-                          ) : (
-                            <div key={i} className="flex gap-2.5">
-                              <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">
-                                {reply.author.charAt(0).toUpperCase()}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 text-[12px]">
-                                  <span className="font-medium">{reply.author}</span>
-                                  <span className="text-muted-foreground">{formatDate(reply.created_at)}</span>
-                                </div>
-                                <div className="mt-1 px-3 py-2 rounded-lg bg-muted text-[13px] whitespace-pre-wrap break-words">
-                                  {reply.body}
-                                </div>
-                              </div>
+                            <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                              <IconUser size={14} />
                             </div>
-                          );
-                        })}
+                          </div>
+                        )}
+
+                        {detail.developer_replies && detail.developer_replies.length > 0 ? (
+                          detail.developer_replies.map((reply, i) => {
+                            const isUserReply = reply.source === "user_reply";
+                            return isUserReply ? (
+                              <div key={i} className="flex justify-end gap-2.5">
+                                <div className="max-w-[80%]">
+                                  <div className="flex items-center justify-end gap-2 text-[12px]">
+                                    <span className="text-muted-foreground">{formatDate(reply.created_at)}</span>
+                                    <span className="font-medium text-blue-600 dark:text-blue-400">{t("myFeedback.you")}</span>
+                                  </div>
+                                  <div className="mt-1 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-[13px] whitespace-pre-wrap break-words">
+                                    {reply.body}
+                                  </div>
+                                </div>
+                                <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                                  <IconUser size={14} />
+                                </div>
+                              </div>
+                            ) : (
+                              <div key={i} className="flex gap-2.5">
+                                <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">
+                                  {reply.author.charAt(0).toUpperCase()}
+                                </div>
+                                <div className="max-w-[80%]">
+                                  <div className="flex items-center gap-2 text-[12px]">
+                                    <span className="font-medium">{reply.author}</span>
+                                    <span className="text-muted-foreground">{formatDate(reply.created_at)}</span>
+                                  </div>
+                                  <div className="mt-1 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-border/50 text-[13px] break-words inline-block">
+                                    {mdModules ? (
+                                      <div className="feedbackMdContent">
+                                        <mdModules.ReactMarkdown
+                                          remarkPlugins={mdModules.remarkPlugins}
+                                          rehypePlugins={mdModules.rehypePlugins}
+                                        >
+                                          {reply.body}
+                                        </mdModules.ReactMarkdown>
+                                      </div>
+                                    ) : <span style={{ whiteSpace: "pre-wrap" }}>{reply.body}</span>}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : !detail.summary ? (
+                          <p className="text-[13px] text-muted-foreground">{t("myFeedback.noReplies")}</p>
+                        ) : null}
+
+                        {!TERMINAL_STATUSES.includes(rec.cached_status) &&
+                          (!detail.developer_replies || !detail.developer_replies.some((r) => r.source !== "user_reply")) && (
+                          <p className="text-[11px] text-muted-foreground/70 text-center mt-1">
+                            {t("myFeedback.pendingHint")}
+                          </p>
+                        )}
+
                         <div ref={(el) => { replyEndRef.current[rec.report_id] = el; }} />
                       </div>
                     ) : rec.has_token ? (
-                      <p className="text-[13px] text-muted-foreground py-2">{t("myFeedback.noReplies")}</p>
+                      <div className="py-2">
+                        <p className="text-[13px] text-muted-foreground">{t("myFeedback.noReplies")}</p>
+                      </div>
                     ) : null}
 
-                    {detail?.labels && detail.labels.length > 0 && (
-                      <div className="flex gap-1 flex-wrap mt-2">
-                        {detail.labels.map((label) => (
-                          <Badge key={label} variant="outline" className="text-[10px] px-1.5 py-0">
-                            {label}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
 
-                    {detail?.github_issue_url && (
-                      <div className="mt-2">
-                        <a
-                          href={detail.github_issue_url}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            openExternalUrl(detail.github_issue_url!);
-                          }}
-                          className="inline-flex items-center gap-1 text-[12px] text-blue-500 hover:text-blue-600 hover:underline"
-                        >
-                          {t("myFeedback.viewOnGithub")} ↗
-                        </a>
-                      </div>
-                    )}
 
                     {rec.has_token && !TERMINAL_STATUSES.includes(rec.cached_status) && (
-                      <div className="mt-3 pt-3 border-t border-border">
-                        <div className="flex gap-2">
-                          <textarea
-                            className="flex-1 min-h-[60px] max-h-[120px] px-3 py-2 text-[13px] rounded-md border border-input bg-background resize-y placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                            placeholder={t("myFeedback.replyPlaceholder")}
-                            value={replyText[rec.report_id] || ""}
-                            onChange={(e) => setReplyText((prev) => ({ ...prev, [rec.report_id]: e.target.value }))}
-                            disabled={sending === rec.report_id}
-                            maxLength={2000}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                                e.preventDefault();
-                                sendReply(rec.report_id);
-                              }
-                            }}
-                          />
-                          <Button
-                            size="sm"
-                            disabled={sending === rec.report_id || !(replyText[rec.report_id] || "").trim()}
-                            onClick={() => sendReply(rec.report_id)}
-                            className="self-end gap-1.5"
-                          >
-                            {sending === rec.report_id ? (
-                              <IconLoader size={14} className="animate-spin" />
-                            ) : (
-                              <IconSend size={14} />
+                      <div className="mt-3 mx-6">
+                          <div style={{ position: "relative", borderRadius: 8, border: "1px solid var(--border)", background: "var(--background)", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+                            <textarea
+                              style={{ width: "100%", minHeight: 48, maxHeight: 120, padding: "10px 36px 10px 12px", fontSize: 13, lineHeight: 1.5, background: "transparent", border: "none", outline: "none", boxShadow: "none", resize: "vertical", color: "inherit", fontFamily: "inherit" }}
+                              placeholder={t("myFeedback.replyPlaceholder")}
+                              value={replyText[rec.report_id] || ""}
+                              onChange={(e) => setReplyText((prev) => ({ ...prev, [rec.report_id]: e.target.value }))}
+                              disabled={sending === rec.report_id}
+                              maxLength={2000}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                                  e.preventDefault();
+                                  sendReply(rec.report_id);
+                                }
+                              }}
+                            />
+                            {(() => {
+                              const disabled = sending === rec.report_id || !(replyText[rec.report_id] || "").trim();
+                              return (
+                                <span
+                                  onClick={disabled ? undefined : () => sendReply(rec.report_id)}
+                                  title={t("myFeedback.sendReply")}
+                                  style={{ position: "absolute", right: 14, bottom: 10, cursor: disabled ? "default" : "pointer", color: disabled ? "var(--muted-foreground)" : "#3b82f6", opacity: disabled ? 0.3 : 1, transition: "color 0.15s, opacity 0.15s" }}
+                                >
+                                  {sending === rec.report_id ? (
+                                    <IconLoader size={18} className="animate-spin" />
+                                  ) : (
+                                    <IconSend size={18} />
+                                  )}
+                                </span>
+                              );
+                            })()}
+                            {replyError && sending !== rec.report_id && (
+                              <p style={{ fontSize: 12, color: "var(--destructive)", padding: "0 12px 8px", margin: 0 }}>{replyError}</p>
                             )}
-                            {sending === rec.report_id ? t("myFeedback.sending") : t("myFeedback.sendReply")}
-                          </Button>
-                        </div>
-                        {replyError && sending !== rec.report_id && (
-                          <p className="text-[12px] text-destructive mt-1">{replyError}</p>
-                        )}
+                          </div>
                       </div>
+                    )}
+
+                    {rec.has_token && TERMINAL_STATUSES.includes(rec.cached_status) && onOpenFeedbackModal && (
+                      <p className="mt-2 text-[11px] text-muted-foreground text-center">
+                        {t("myFeedback.resubmitLabel")}{" "}
+                        <span
+                          className="text-blue-500 hover:text-blue-600 cursor-pointer hover:underline"
+                          onClick={() => onOpenFeedbackModal({
+                            mode: rec.type,
+                            title: rec.title,
+                            description: t("myFeedback.resubmitHint", { title: rec.title }),
+                          })}
+                        >
+                          {t("myFeedback.resubmitAction")}
+                        </span>
+                      </p>
                     )}
                   </div>
                 )}

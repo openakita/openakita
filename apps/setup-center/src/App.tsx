@@ -27,7 +27,7 @@ const SkillStoreView = lazy(() => import("./views/SkillStoreView").then(m => ({ 
 const SecurityView = lazy(() => import("./views/SecurityView"));
 const PetView = lazy(() => import("./views/PetView").then(m => ({ default: m.PetView })));
 
-import { FeedbackModal } from "./views/FeedbackModal";
+import { FeedbackModal, type FeedbackPrefill } from "./views/FeedbackModal";
 import { IMConfigView } from "./views/IMConfigView";
 import { AgentSystemView } from "./views/AgentSystemView";
 import { MyFeedbackView } from "./views/MyFeedbackView";
@@ -427,6 +427,7 @@ function MainApp() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 768);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
+  const [feedbackPrefill, setFeedbackPrefill] = useState<FeedbackPrefill | null>(null);
   const [feedbackRefreshKey, setFeedbackRefreshKey] = useState(0);
   const [unreadFeedbackCount, setUnreadFeedbackCount] = useState(0);
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
@@ -5668,7 +5669,10 @@ function MainApp() {
           apiBaseUrl={httpApiBase()}
           serviceRunning={serviceStatus?.running ?? false}
           refreshTrigger={feedbackRefreshKey}
-          onOpenFeedbackModal={() => setBugReportOpen(true)}
+          onOpenFeedbackModal={(prefill) => {
+            setFeedbackPrefill(prefill ?? null);
+            setBugReportOpen(true);
+          }}
         />
       );
     }
@@ -6249,8 +6253,9 @@ function MainApp() {
       {/* Feedback Modal (Bug Report + Feature Request) */}
       <FeedbackModal
         open={bugReportOpen}
-        onClose={() => setBugReportOpen(false)}
+        onClose={() => { setBugReportOpen(false); setFeedbackPrefill(null); }}
         apiBase={httpApiBase()}
+        prefill={feedbackPrefill}
         onNavigateToMyFeedback={() => {
           setFeedbackRefreshKey((key) => key + 1);
           navigateToView("my_feedback");
