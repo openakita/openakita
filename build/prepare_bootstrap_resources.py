@@ -14,6 +14,8 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -122,6 +124,41 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def download_with_retries(url: str, dest: Path, *, attempts: int = 4) -> None:
+    """Download a URL to dest with conservative retries for transient GitHub failures.
+
+    Release packaging downloads a few GitHub assets in parallel across matrix
+    jobs. GitHub occasionally closes a connection mid-request; retry those
+    transient failures, but still fail fast for deterministic 4xx mistakes such
+    as a wrong asset name.
+    """
+    last_error: Exception | None = None
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    for attempt in range(1, attempts + 1):
+        try:
+            tmp.unlink(missing_ok=True)
+            with urllib.request.urlopen(url, timeout=90) as resp, tmp.open("wb") as fh:
+                shutil.copyfileobj(resp, fh)
+            tmp.replace(dest)
+            return
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if 400 <= exc.code < 500:
+                tmp.unlink(missing_ok=True)
+                raise
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+        tmp.unlink(missing_ok=True)
+        if attempt < attempts:
+            wait = min(2 ** attempt, 10)
+            print(
+                f"Download failed ({type(last_error).__name__}: {last_error}); "
+                f"retrying in {wait}s ({attempt}/{attempts})"
+            )
+            time.sleep(wait)
+    raise RuntimeError(f"download failed after {attempts} attempts: {url}: {last_error}")
+
+
 def load_pyproject() -> dict:
     import tomllib
 
@@ -162,7 +199,7 @@ def download_uv(url: str, bin_dir: Path) -> Path:
 
     with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp) / url.rsplit("/", 1)[-1]
-        urllib.request.urlretrieve(url, archive)
+        download_with_retries(url, archive)
         if archive.suffix == ".zip":
             with zipfile.ZipFile(archive) as zf:
                 candidate = next(name for name in zf.namelist() if name.endswith(uv_name))
@@ -294,13 +331,11 @@ def _download_pbs_archive(target_platform: str) -> tuple[Path, str]:
 
     if not archive_path.exists():
         print(f"Downloading {url} -> {archive_path}")
-        with urllib.request.urlopen(url) as resp, archive_path.open("wb") as fh:
-            shutil.copyfileobj(resp, fh)
+        download_with_retries(url, archive_path)
 
     if not sha_path.exists():
         print(f"Downloading {sha_url} -> {sha_path}")
-        with urllib.request.urlopen(sha_url) as resp, sha_path.open("wb") as fh:
-            shutil.copyfileobj(resp, fh)
+        download_with_retries(sha_url, sha_path)
 
     # PBS sha256 files have the form: "<digest>  <archive_name>\n"
     expected = sha_path.read_text(encoding="utf-8").strip().split()[0].lower()
