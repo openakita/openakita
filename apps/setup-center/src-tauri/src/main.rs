@@ -228,6 +228,11 @@ struct PlatformInfo {
     openakita_root_dir: String,
 }
 
+/// 计算"未配置 custom_root 时的"默认 OpenAkita 数据目录字符串。
+///
+/// 注意：日常显示请用 [`openakita_root_dir`] 取真实 root，否则会和后端
+/// 实际写入位置不一致；此函数仅作为兜底/迁移场景的"默认值"语义保留。
+#[allow(dead_code)]
 fn default_openakita_root() -> String {
     let home = home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     home.join(".openakita").to_string_lossy().to_string()
@@ -236,11 +241,16 @@ fn default_openakita_root() -> String {
 #[tauri::command]
 fn get_platform_info() -> PlatformInfo {
     let home = home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    // 用 openakita_root_dir() 而不是 default_openakita_root()，确保前端
+    // 显示的 root（以及拼出的 runtime / venv / logs hint）与后端 Rust /
+    // Python 真正使用的位置完全一致。否则在用户配置了 custom_root 或
+    // 设置了 OPENAKITA_ROOT 环境变量时，面板会指向 ~/.openakita 而真实
+    // runtime 落在另一个磁盘，让人误以为"runtime 没建出来"。
     PlatformInfo {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         home_dir: home.to_string_lossy().to_string(),
-        openakita_root_dir: default_openakita_root(),
+        openakita_root_dir: openakita_root_dir().to_string_lossy().to_string(),
     }
 }
 

@@ -5014,6 +5014,13 @@ function MainApp() {
                               );
                               setObCurrentRoot(info.currentRoot);
                               setObCustomRootApplied(true);
+                              // Root 切换后立即刷新 PlatformInfo，否则后续
+                              // joinPath(info.openakitaRootDir, "venv") / "runtime"
+                              // 等仍指向旧 root，后端会拿到错的 venvDir。
+                              try {
+                                const plat = await invoke<PlatformInfo>("get_platform_info");
+                                setInfo(plat);
+                              } catch { /* ignore: refreshAll will catch up later */ }
                               notifySuccess(t("onboarding.welcome.customRootApplied", { path: info.currentRoot }));
                               obLoadEnvCheck();
                             } catch (e: any) {
@@ -5048,6 +5055,12 @@ function MainApp() {
                               setObCurrentRoot(info.currentRoot);
                               setObCustomRootInput("");
                               setObCustomRootApplied(false);
+                              // 与 apply 分支同理：root 切回默认值后必须刷新
+                              // PlatformInfo，否则 info.openakitaRootDir 仍是旧 root。
+                              try {
+                                const plat = await invoke<PlatformInfo>("get_platform_info");
+                                setInfo(plat);
+                              } catch { /* ignore */ }
                               notifySuccess(t("onboarding.welcome.customRootDefault") + ": " + info.currentRoot);
                               obLoadEnvCheck();
                             } catch (e: any) {
