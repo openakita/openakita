@@ -363,6 +363,46 @@ jobs:
       - name: Package Python backend (PyInstaller)
         run: python build/build_backend.py
 
+      - name: Install frontend dependencies
+        working-directory: apps/setup-center
+        run: npm ci
+
+      - name: Build web frontend assets
+        working-directory: apps/setup-center
+        run: npm run build:web
+
+      - name: Build user docs assets
+        working-directory: docs-site
+        run: |
+          npm ci
+          npm run build
+
+      - name: Prepare bootstrap resources (wheel + uv + standalone Python seed)
+        run: |
+          python build/prepare_bootstrap_resources.py \
+            --commit-resources \
+            --clean-output \
+            --require-real-assets \
+            --target-platform linux-x64
+
+      - name: Verify bootstrap manifest resources
+        run: python build/prepare_bootstrap_resources.py --commit-resources --verify-only
+
+      - name: Assert seed Python executable bit
+        run: |
+          set -euo pipefail
+          SEED_DIR="apps/setup-center/src-tauri/resources/bootstrap/python"
+          [ -d "$SEED_DIR" ] || { echo "ERROR: seed dir missing: $SEED_DIR"; exit 1; }
+          fail=0
+          for f in "$SEED_DIR"/bin/*; do
+            [ -e "$f" ] || continue
+            if [ ! -x "$f" ]; then
+              echo "ERROR: missing exec bit: $f" >&2
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
+
       - name: Copy backend to Tauri resources
         run: |
           RESOURCE_DIR="apps/setup-center/src-tauri/resources"
@@ -370,8 +410,12 @@ jobs:
           rm -rf "$RESOURCE_DIR/openakita-server"
           cp -r dist/openakita-server "$RESOURCE_DIR/openakita-server"
 
-      - name: Verify bundled Python contract
-        run: python build/verify_bundled_python_contract.py --backend-dir apps/setup-center/src-tauri/resources/openakita-server
+      - name: Verify bundled Python contract (seed packaged)
+        run: >
+          python build/verify_bundled_python_contract.py
+          --backend-dir apps/setup-center/src-tauri/resources/openakita-server
+          --bootstrap-manifest apps/setup-center/src-tauri/resources/bootstrap/manifest.json
+          --require-seed-packaged
 
       - name: Create gitignored placeholders
         run: |
@@ -379,10 +423,6 @@ jobs:
           if [ ! -f identity/personas/user_custom.md ]; then
             echo "# User Custom Persona (placeholder)" > identity/personas/user_custom.md
           fi
-
-      - name: Install frontend dependencies
-        working-directory: apps/setup-center
-        run: npm ci
 
       - name: Build Tauri bundles (full build)
         working-directory: apps/setup-center
@@ -397,6 +437,128 @@ jobs:
           find apps/setup-center/src-tauri/target/release/bundle -maxdepth 4 -type f -print || true
           ls -la apps/setup-center/src-tauri/target/release/bundle/deb/*.deb
           echo "Full Tauri build succeeded"
+
+  # ── Unicode 路径 smoke：覆盖 v1.27.10 启动失败收尾修复 §11 ──
+  # 验证 prepare_bootstrap_resources 与 seed Python 在含中文 / 空格 / 非 ASCII
+  # 路径下都能正常工作。这是 enterprise 用户的常见现场（"D:\我的文档\..."），
+  # 既往多次报告 UnicodeDecodeError / [WinError 2 系统找不到指定的文件] 起因
+  # 都是 tarfile 解压 / subprocess args 在 Unicode 路径下行为漂移。
+  #
+  # 与 ASCII 路径用例并行跑（matrix），不延长主流水线时间。
+  # macOS 跑 mac-x64（GitHub-hosted runner 默认 Intel）即可，arm64 由
+  # release-dryrun 实地覆盖。
+  bootstrap_unicode_path_smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target_platform: linux-x64
+            unicode_dir: "测试目录-openakita-${{ github.run_id }}"
+          - os: macos-latest
+            target_platform: mac-arm64
+            unicode_dir: "测试目录-openakita-${{ github.run_id }}"
+          - os: windows-latest
+            target_platform: win-x64
+            unicode_dir: "测试目录-openakita-${{ github.run_id }}"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      # 关键：把 staging output 放到 Unicode 路径下，覆盖 tarfile / pathlib /
+      # subprocess 的 UTF-8 编解码全链路。HOME 在 Linux/macOS 通常 ASCII，
+      # 所以显式构造一个 Unicode 子目录。
+      - name: Prepare Unicode staging directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE="${HOME}/${{ matrix.unicode_dir }}/staging"
+          mkdir -p "${STAGE}"
+          echo "UNICODE_STAGE=${STAGE}" >> "$GITHUB_ENV"
+          ls -la "${HOME}/${{ matrix.unicode_dir }}"
+
+      - name: Build sentinel resources (web + docs placeholders)
+        shell: bash
+        run: |
+          # prepare_bootstrap_resources 校验 force-include 资产；本 smoke 不
+          # 关心前端，直接走 --allow-placeholder-assets 把 .keep 占位文件留下。
+          mkdir -p apps/setup-center/dist-web
+          mkdir -p docs-site/.vitepress/dist
+          : > apps/setup-center/dist-web/.keep
+          : > docs-site/.vitepress/dist/.keep
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+
+      - name: Prepare bootstrap resources at Unicode path
+        shell: bash
+        env:
+          UNICODE_STAGE: ${{ env.UNICODE_STAGE }}
+        run: |
+          set -euo pipefail
+          python build/prepare_bootstrap_resources.py \
+            --output-dir "${UNICODE_STAGE}" \
+            --clean-output \
+            --allow-placeholder-assets \
+            --target-platform "${{ matrix.target_platform }}"
+
+      - name: Verify manifest at Unicode path
+        shell: bash
+        env:
+          UNICODE_STAGE: ${{ env.UNICODE_STAGE }}
+        run: |
+          set -euo pipefail
+          python build/prepare_bootstrap_resources.py \
+            --output-dir "${UNICODE_STAGE}" \
+            --verify-only
+
+      - name: Smoke run seed Python from Unicode path
+        shell: bash
+        env:
+          UNICODE_STAGE: ${{ env.UNICODE_STAGE }}
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            SEED="${UNICODE_STAGE}/python/python.exe"
+          else
+            SEED="${UNICODE_STAGE}/python/bin/python3.11"
+          fi
+          echo "Seed binary: ${SEED}"
+          # 直接调，验证 OS loader 能从 Unicode 路径加载 Python，且 Python 自身
+          # stdlib 在非 ASCII sys.executable 下不崩。
+          "${SEED}" -c "import sys, ssl, sqlite3, hashlib, ctypes, zlib, platform; print('python', platform.python_version()); print('exec', sys.executable)"
+
+      - name: Smoke create venv inside Unicode path via uv
+        shell: bash
+        env:
+          UNICODE_STAGE: ${{ env.UNICODE_STAGE }}
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            UV="${UNICODE_STAGE}/bin/uv.exe"
+            SEED="${UNICODE_STAGE}/python/python.exe"
+          else
+            UV="${UNICODE_STAGE}/bin/uv"
+            SEED="${UNICODE_STAGE}/python/bin/python3.11"
+          fi
+          VENV_DIR="${UNICODE_STAGE}/我的venv"
+          rm -rf "${VENV_DIR}"
+          UV_PYTHON_PREFERENCE=only-managed "${UV}" venv --python "${SEED}" --seed --clear "${VENV_DIR}"
+          # Sanity: venv interpreter starts and pip works.
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            VENV_PY="${VENV_DIR}/Scripts/python.exe"
+          else
+            VENV_PY="${VENV_DIR}/bin/python"
+          fi
+          "${VENV_PY}" -c "import sys; assert sys.prefix != sys.base_prefix, 'venv launcher fell back to base'; import pip; print('pip', pip.__version__)"
 
   # ── Plugin SDK: lint + build + test ──
   plugin_sdk:

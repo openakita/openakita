@@ -104,11 +104,7 @@ jobs:
         working-directory: docs-site
         run: |
           npm ci
-          npx vitepress build
-        continue-on-error: true
-
-      - name: Ensure docs dist dir exists
-        run: mkdir -p docs-site/.vitepress/dist
+          npm run build
 
       - name: Build main package
         run: python -m build --wheel
@@ -187,36 +183,43 @@ jobs:
             bundles: "nsis"
             args: ""
             suffix: "windows-x64"
+            target_platform: "win-x64"
           # Linux Ubuntu 22.04
           - platform: ubuntu-22.04
             bundles: "deb"
             args: ""
             suffix: "ubuntu22-amd64"
+            target_platform: "linux-x64"
           - platform: ubuntu-22.04-arm
             bundles: "deb"
             args: ""
             suffix: "ubuntu22-arm64"
+            target_platform: "linux-arm64"
           # Linux Ubuntu 24.04
           - platform: ubuntu-24.04
             bundles: "deb"
             args: ""
             suffix: "ubuntu24-amd64"
+            target_platform: "linux-x64"
           - platform: ubuntu-24.04-arm
             bundles: "deb"
             args: ""
             suffix: "ubuntu24-arm64"
+            target_platform: "linux-arm64"
           # macOS - Apple Silicon (arm64)
           - platform: macos-latest
             bundles: "app,dmg"
             args: "--target aarch64-apple-darwin"
             rust_target: "aarch64-apple-darwin"
             suffix: "macos-arm64"
+            target_platform: "mac-arm64"
           # macOS - Intel (x86_64)
           - platform: macos-15-intel
             bundles: "app,dmg"
             args: "--target x86_64-apple-darwin"
             rust_target: "x86_64-apple-darwin"
             suffix: "macos-x64"
+            target_platform: "mac-x64"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -272,13 +275,11 @@ jobs:
         working-directory: docs-site
         run: |
           npm ci
-          npx vitepress build
-        continue-on-error: true
+          npm run build
 
       - name: Install Python project and PyInstaller
         shell: bash
         run: |
-          mkdir -p docs-site/.vitepress/dist
           # 先装 monorepo 本地 SDK，避免 desktop 矩阵 job 与 python_release job
           # 之间的 PyPI 索引时序竞争（即使发布顺序已是 SDK→main，索引刷新仍有
           # 数秒延迟；多平台/多 runner 并发起手时不一定都能拿到新版本）。
@@ -304,67 +305,101 @@ jobs:
       - name: Package Python backend (PyInstaller)
         run: python build/build_backend.py
 
-      - name: Prepare bootstrap wheel resources
+      - name: Prepare bootstrap resources (wheel + uv + standalone Python seed)
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf build/bootstrap-wheels
-          rm -rf build/bootstrap-uv
-          mkdir -p build/bootstrap-wheels
-          python -m build --wheel --outdir build/bootstrap-wheels
-          python -m pip install --target build/bootstrap-uv --prefer-binary uv
-          python - <<'PY'
-          import hashlib
-          import json
-          import os
-          import shutil
-          import stat
-          from pathlib import Path
+          python build/prepare_bootstrap_resources.py \
+            --commit-resources \
+            --clean-output \
+            --require-real-assets \
+            --target-platform "${{ matrix.target_platform }}"
 
-          root = Path.cwd()
-          bootstrap_dir = root / "apps" / "setup-center" / "src-tauri" / "resources" / "bootstrap"
-          wheel_dir = bootstrap_dir / "wheels"
-          bin_dir = bootstrap_dir / "bin"
-          wheels = sorted((root / "build" / "bootstrap-wheels").glob("openakita-*.whl"))
-          if len(wheels) != 1:
-              raise SystemExit(f"expected exactly one openakita wheel, found {len(wheels)}")
+      - name: Verify bootstrap manifest resources
+        shell: bash
+        run: python build/prepare_bootstrap_resources.py --commit-resources --verify-only
 
-          wheel = wheels[0]
-          wheel_dir.mkdir(parents=True, exist_ok=True)
-          for stale in wheel_dir.glob("openakita-*.whl"):
-              stale.unlink()
-          dest = wheel_dir / wheel.name
-          shutil.copy2(wheel, dest)
+      - name: Assert seed Python executable bit (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SEED_DIR="apps/setup-center/src-tauri/resources/bootstrap/python"
+          if [ ! -d "$SEED_DIR" ]; then
+            echo "ERROR: seed dir missing: $SEED_DIR" >&2
+            exit 1
+          fi
+          # Verify every binary in bin/ has owner+exec (0o100 = S_IXUSR).
+          fail=0
+          for f in "$SEED_DIR"/bin/*; do
+            [ -e "$f" ] || continue
+            if [ ! -x "$f" ]; then
+              echo "ERROR: missing exec bit: $f" >&2
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ]
 
-          uv_bin_name = "uv.exe" if os.name == "nt" else "uv"
-          uv_candidates = [
-              root / "build" / "bootstrap-uv" / "bin" / uv_bin_name,
-              root / "build" / "bootstrap-uv" / "Scripts" / uv_bin_name,
-          ]
-          uv_src = next((p for p in uv_candidates if p.exists()), None)
-          if uv_src is None:
-              raise SystemExit(f"uv binary not found in bootstrap-uv target: {uv_candidates}")
-          bin_dir.mkdir(parents=True, exist_ok=True)
-          uv_dest = bin_dir / uv_bin_name
-          shutil.copy2(uv_src, uv_dest)
-          uv_dest.chmod(uv_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+      - name: Sign Windows seed Python executable
+        if: runner.os == 'Windows'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: pwsh
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            Write-Host "WINDOWS_CERTIFICATE secret not configured; skipping seed exe codesign."
+            Write-Host "Seed python.exe will be packaged unsigned; SmartScreen/Defender may"
+            Write-Host "delay-flag the installer on first run. Configure WINDOWS_CERTIFICATE"
+            Write-Host "+ WINDOWS_CERTIFICATE_PASSWORD secrets to enable."
+            exit 0
+          }
 
-          sha256 = hashlib.sha256(dest.read_bytes()).hexdigest()
-          uv_sha256 = hashlib.sha256(uv_dest.read_bytes()).hexdigest()
-          manifest_path = bootstrap_dir / "manifest.json"
-          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-          manifest["wheel"]["name"] = f"wheels/{dest.name}"
-          manifest["wheel"]["sha256"] = sha256
-          manifest.setdefault("uv", {})
-          manifest["uv"]["path"] = "bin/uv"
-          manifest["uv"]["windows_path"] = "bin/uv.exe"
-          manifest["uv"]["sha256"] = uv_sha256
-          manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-          print(f"Bootstrap wheel: {dest}")
-          print(f"sha256: {sha256}")
-          print(f"Bootstrap uv: {uv_dest}")
-          print(f"uv sha256: {uv_sha256}")
-          PY
+          $seedExe = "apps/setup-center/src-tauri/resources/bootstrap/python/python.exe"
+          if (-not (Test-Path $seedExe)) {
+            Write-Error "Seed python.exe not found at $seedExe"
+            exit 1
+          }
+
+          $pfxPath = "$env:RUNNER_TEMP/code-signing.pfx"
+          [System.IO.File]::WriteAllBytes(
+            $pfxPath,
+            [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          )
+
+          # signtool ships with VS Build Tools / Windows SDK on GitHub-hosted
+          # windows-latest runners.  Probe well-known paths before falling
+          # back to PATH lookup.
+          $signtool = $null
+          $candidates = @(
+            "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe",
+            "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22000.0\x64\signtool.exe",
+            "C:\Program Files (x86)\Windows Kits\10\bin\10.0.20348.0\x64\signtool.exe"
+          )
+          foreach ($cand in $candidates) {
+            if (Test-Path $cand) { $signtool = $cand; break }
+          }
+          if (-not $signtool) { $signtool = (Get-Command signtool -ErrorAction Stop).Source }
+          Write-Host "Using signtool at: $signtool"
+
+          # Sign with RFC3161 timestamping (DigiCert default) and SHA256 file digest.
+          & "$signtool" sign /fd SHA256 /tr "http://timestamp.digicert.com" /td SHA256 `
+            /f $pfxPath /p $env:WINDOWS_CERTIFICATE_PASSWORD `
+            "$seedExe"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "signtool sign failed for $seedExe"
+            exit 1
+          }
+
+          # Self-verify immediately to catch SD-issue early in CI.
+          & "$signtool" verify /pa /all "$seedExe"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "signtool verify failed for $seedExe"
+            exit 1
+          }
+          Write-Host "Seed python.exe signed and verified."
+
+          Remove-Item $pfxPath -Force
 
       - name: Copy backend to Tauri resources
         shell: bash
@@ -376,8 +411,12 @@ jobs:
           echo "Resources copied:"
           du -sh "$RESOURCE_DIR"/*
 
-      - name: Verify bundled Python contract
-        run: python build/verify_bundled_python_contract.py --backend-dir apps/setup-center/src-tauri/resources/openakita-server
+      - name: Verify bundled Python contract (seed packaged)
+        run: >
+          python build/verify_bundled_python_contract.py
+          --backend-dir apps/setup-center/src-tauri/resources/openakita-server
+          --bootstrap-manifest apps/setup-center/src-tauri/resources/bootstrap/manifest.json
+          --require-seed-packaged
 
       - name: Codesign embedded binaries for macOS notarization
         if: runner.os == 'macOS'

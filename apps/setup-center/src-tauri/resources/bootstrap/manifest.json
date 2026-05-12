@@ -1,19 +1,44 @@
 {
   "schema_version": 1,
   "app_name": "openakita",
-  "app_version": "1.27.9",
-  "python_version": "3.12",
+  "app_version": "1.27.10",
+  "python_version": "3.11",
+  "python_abi": "cp311",
+  "wheel_tag": "py3-none-any",
   "wheel": {
-    "name": "wheels/openakita-1.27.9-py3-none-any.whl",
-    "sha256": "be429deaf30301dcfd13074bed7deaa171e701ebbe5b0cdae89a18e34e14a823"
+    "name": "wheels/openakita-1.27.10-py3-none-any.whl",
+    "sha256": "51ba416953a1f2c59d2fe4bdd23753a386eb9d2d82e4cca8077a58171f5ebcef"
   },
   "uv": {
-    "path": "bin/uv",
+    "path": "bin/uv.exe",
     "windows_path": "bin/uv.exe",
     "version": "",
-    "sha256": "831730243cf7bbd496ff96353dcdba6f5d4dcbd22576af398130381ab44ac160"
+    "sha256": "97d32ea028fb68915fc8112d68c380b98a808f8eab86e7b1cb3542746de3ef26"
   },
-  "python_seed": null,
+  "python_seed": {
+    "packaged": false,
+    "path": "",
+    "note": "Reserved for managed Python seed packaging; release workflows currently create app/agent venvs from bootstrap Python version instead."
+  },
+  "node_seed": {
+    "packaged": false,
+    "path": "",
+    "note": "Reserved for managed Node.js seed packaging; release workflows currently do not bundle Node.js."
+  },
+  "third_party": {
+    "uv": {
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://github.com/astral-sh/uv"
+    },
+    "python": {
+      "license": "Python-2.0",
+      "source": "https://www.python.org/"
+    },
+    "node": {
+      "license": "MIT",
+      "source": "https://nodejs.org/"
+    }
+  },
   "default_pip_index": {
     "id": "aliyun",
     "url": "https://mirrors.aliyun.com/pypi/simple/",

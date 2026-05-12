@@ -99,6 +99,9 @@ apps/**/tsconfig.tsbuildinfo
 apps/setup-center/src-tauri/resources/openakita-server/*
 !apps/setup-center/src-tauri/resources/openakita-server/.gitkeep
 apps/setup-center/src-tauri/resources/modules/
+apps/setup-center/src-tauri/resources/bootstrap/bin/
+apps/setup-center/src-tauri/resources/bootstrap/wheels/
+apps/setup-center/src-tauri/resources/bootstrap/wheelhouse/
 
 # Data (keep structure)
 data/*
