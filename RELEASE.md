@@ -140,13 +140,17 @@ GitHub Actions 页面 → 找到失败的 Release workflow → **"Re-run all job
 
 ---
 
-## 代码签名 secrets（release.yml 硬约束）
+## 代码签名 secrets（建议配置，缺失时优雅跳过）
 
-正式 `release.yml` 在 Windows runner 上**强制**对 seed `python.exe` 做 Authenticode
-签名，缺 secret 直接 fail。这样 SmartScreen / Defender 在用户首次启动安装包时不会
-"软中毒"，且不会把未签名的 build 静默发布出去。
+正式 `release.yml` 在 Windows runner 上会尝试对 seed `python.exe` 做 Authenticode
+签名，避免用户首次启动安装包时被 SmartScreen / Defender 标为"软中毒"。当签名
+secret 未配置时，签名步骤会发出 GitHub Actions warning 并 **优雅跳过**，构建继续，
+产出的是 **未签名** Windows 安装包（与 macOS 公证缺 secret 时 skip 的策略一致）。
 
-### 必需 secrets
+> 强烈建议在条件允许时尽快配齐 Windows 签名证书。未签名 build 会让 Windows 用户
+> 首次启动时见到红色 SmartScreen 警告，体感接近"中毒"，对产品口碑影响很大。
+
+### Windows 代码签名
 
 | Secret | 含义 |
 |---|---|
@@ -154,6 +158,13 @@ GitHub Actions 页面 → 找到失败的 Release workflow → **"Re-run all job
 | `WINDOWS_CERTIFICATE_PASSWORD` | 上述 `.pfx` 的密码 |
 
 配置位置：仓库 `Settings > Secrets and variables > Actions > Repository secrets`。
+配齐后，`release.yml` 的签名步骤会自动激活，无需改 yml。
+
+base64 编码示例（PowerShell）：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\cert.pfx")) | Set-Clipboard
+```
 
 ### macOS 公证
 
@@ -163,15 +174,8 @@ GitHub Actions 页面 → 找到失败的 Release workflow → **"Re-run all job
 | `APPLE_SIGNING_IDENTITY` | 证书的 CN（如 `Developer ID Application: ...`） |
 | `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | App Store Connect / notarytool 凭证 |
 
-macOS 步骤在 `secrets` 缺失时会 skip（保留可调试性），不像 Windows 强 fail；
-如果你做正式发版，请确保 Apple 凭证齐备。
-
-### 紧急绕过
-
-如果遇到 secret 配置故障且必须紧急发版，可以临时把 release.yml 的
-`Sign Windows seed Python executable` 步骤里第一个 `exit 1` 改回 `exit 0`，
-完成发布后立刻 revert。**不要长期保留绕过**——SmartScreen 标记的 build
-会拉低产品口碑。
+与 Windows 一致：缺 secret 时 skip 该步，构建继续，但产出的 dmg 没有公证，
+可能在用户首次启动时被 Gatekeeper 拦截。正式发版请确保凭证齐备。
 
 ### dryrun 不需要 secrets
 

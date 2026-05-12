@@ -271,21 +271,25 @@ jobs:
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         shell: pwsh
         run: |
-          # Release-only hard requirement: a正式 release 必须签名 seed exe，否则
-          # SmartScreen / Defender 会延迟标记安装包导致用户感知"软中毒"。
-          # 缺 secret 直接 fail，确保运维不会在没配置好的情况下静默发布裸装包。
-          # 如需临时跳过（紧急修复 release），请把 release-dryrun.yml 作为构建源，
-          # 或在 yml 里单点切回 `exit 0`（参见 RELEASE.md 的"代码签名 secrets"小节）。
+          # 当 WINDOWS_CERTIFICATE / WINDOWS_CERTIFICATE_PASSWORD 配齐时，对 seed
+          # python.exe 做 Authenticode 签名，避免用户首次启动时 SmartScreen / Defender
+          # 把未签名 build 标记为"软中毒"。
+          #
+          # 在还未购置代码签名证书前，secret 缺失时本步骤优雅跳过（行为对齐 macOS
+          # 公证：缺 secret 时 skip 而非 fail）。这是 release.yml 当前的一致策略。
+          # 配齐 secret 后会自动恢复签名，不需要改 yml；详见 RELEASE.md "代码签名 secrets"。
           if (-not $env:WINDOWS_CERTIFICATE) {
-            Write-Host "ERROR: WINDOWS_CERTIFICATE secret is required for release builds." -ForegroundColor Red
-            Write-Host "Configure WINDOWS_CERTIFICATE + WINDOWS_CERTIFICATE_PASSWORD in" -ForegroundColor Red
-            Write-Host "  Settings > Secrets and variables > Actions  before re-running." -ForegroundColor Red
-            Write-Host "See RELEASE.md section 'codesigning secrets' for the configuration steps." -ForegroundColor Red
-            exit 1
+            Write-Host "::warning::WINDOWS_CERTIFICATE secret is missing; producing unsigned Windows build." -ForegroundColor Yellow
+            Write-Host "Unsigned builds may be flagged by SmartScreen / Defender on first launch." -ForegroundColor Yellow
+            Write-Host "Configure WINDOWS_CERTIFICATE + WINDOWS_CERTIFICATE_PASSWORD in" -ForegroundColor Yellow
+            Write-Host "  Settings > Secrets and variables > Actions  to re-enable signing." -ForegroundColor Yellow
+            Write-Host "See RELEASE.md section 'codesigning secrets' for configuration steps." -ForegroundColor Yellow
+            exit 0
           }
           if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) {
-            Write-Host "ERROR: WINDOWS_CERTIFICATE_PASSWORD secret is empty; refusing to sign with an empty PFX password." -ForegroundColor Red
-            exit 1
+            Write-Host "::warning::WINDOWS_CERTIFICATE is set but WINDOWS_CERTIFICATE_PASSWORD is empty; skipping signing." -ForegroundColor Yellow
+            Write-Host "Refusing to sign with an empty PFX password; configure the password to re-enable signing." -ForegroundColor Yellow
+            exit 0
           }
 
           $seedExe = "apps/setup-center/src-tauri/resources/bootstrap/python/python.exe"
