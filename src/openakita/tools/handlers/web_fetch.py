@@ -6,7 +6,7 @@ Web Fetch 处理器
 
 import logging
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
@@ -241,7 +241,7 @@ class WebFetchHandler:
         try:
             import httpx
         except ImportError:
-            return "❌ web_fetch 需要 httpx 库。请运行: pip install httpx"
+            return "web_fetch 需要 httpx 库。请在设置中心修复 OpenAkita 运行环境，而不是安装到宿主 Python。"
 
         from ...llm.providers.proxy_utils import get_httpx_client_kwargs
 

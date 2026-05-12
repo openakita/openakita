@@ -58,7 +58,9 @@ def _try_import_mcp() -> bool:
         MCP_SDK_AVAILABLE = True
     except ImportError:
         MCP_SDK_AVAILABLE = False
-        logger.warning("MCP SDK not installed. Run: pip install mcp")
+        logger.warning(
+            "MCP SDK not installed. OpenAkita will install it into the isolated channel-deps runtime."
+        )
         return False
 
     try:
@@ -89,9 +91,25 @@ def _auto_install_mcp() -> bool:
     try:
         import subprocess
 
-        exe = sys.executable
+        from openakita.runtime_manager import (
+            apply_runtime_pip_environment,
+            get_agent_python_executable,
+            get_channel_deps_dir,
+            get_python_executable,
+            inject_module_paths_runtime,
+        )
+
+        exe = get_agent_python_executable() or get_python_executable()
+        if not exe:
+            logger.warning(
+                "[MCP] No managed Python runtime is available for MCP SDK auto-install; "
+                "run Setup Center -> Python Environment -> Repair."
+            )
+            return False
+        target_dir = get_channel_deps_dir()
+        target_dir.mkdir(parents=True, exist_ok=True)
         mirrors = [
-            ("pypi", [exe, "-m", "pip", "install", "mcp", "--quiet"]),
+            ("pypi", [exe, "-m", "pip", "install", "--target", str(target_dir), "mcp", "--quiet"]),
             (
                 "tuna",
                 [
@@ -99,6 +117,8 @@ def _auto_install_mcp() -> bool:
                     "-m",
                     "pip",
                     "install",
+                    "--target",
+                    str(target_dir),
                     "mcp",
                     "--quiet",
                     "-i",
@@ -112,6 +132,8 @@ def _auto_install_mcp() -> bool:
                     "-m",
                     "pip",
                     "install",
+                    "--target",
+                    str(target_dir),
                     "mcp",
                     "--quiet",
                     "-i",
@@ -126,9 +148,14 @@ def _auto_install_mcp() -> bool:
                     capture_output=True,
                     text=True,
                     timeout=120,
+                    env=apply_runtime_pip_environment(python_executable=exe),
                 )
                 if result.returncode == 0:
                     logger.info("[MCP] Auto-installed MCP SDK via %s", label)
+                    target_str = str(target_dir)
+                    if target_str not in sys.path:
+                        sys.path.append(target_str)
+                    inject_module_paths_runtime()
                     return _try_import_mcp()
             except Exception as e:
                 logger.debug("[MCP] Install via %s failed: %s", label, e)
@@ -327,9 +354,9 @@ class MCPClient:
             if not ensure_mcp_sdk():
                 msg = (
                     "MCP SDK 未安装且自动安装失败。\n"
-                    "请在 OpenAkita 的 Python 环境中手动安装:\n"
-                    f"  {sys.executable} -m pip install mcp\n"
-                    "安装后重启 OpenAkita 即可生效。"
+                    "OpenAkita 会把 MCP SDK 安装到隔离的 channel-deps 运行时，"
+                    "不会要求你污染宿主 Python。\n"
+                    "请前往「设置中心 → Python 环境」点击「一键修复」，修复后重启 OpenAkita。"
                 )
                 logger.error(msg)
                 return MCPConnectResult(success=False, error=msg)
@@ -485,9 +512,11 @@ class MCPClient:
 
         # macOS GUI 应用的 PATH 不含 Homebrew/NVM/Volta 等用户工具路径，
         # 需要通过 login shell 获取完整 PATH 传递给 MCP 子进程
+        from openakita.runtime_manager import build_user_subprocess_environment
+
         from ..utils.path_helper import get_macos_enriched_env
 
-        subprocess_env: dict | None = dict(config.env) if config.env else None
+        subprocess_env: dict | None = build_user_subprocess_environment(config.env or {})
         subprocess_env = get_macos_enriched_env(subprocess_env)
 
         # Windows PyInstaller: _internal/ 目录下的 python.exe 是裸解释器,
@@ -985,7 +1014,8 @@ class MCPClient:
                 return MCPCallResult(
                     success=False,
                     error=(
-                        f"MCP SDK 未安装且自动安装失败。请运行: {sys.executable} -m pip install mcp"
+                        "MCP SDK 未安装且自动安装失败。请前往「设置中心 → Python 环境」点击「一键修复」；"
+                        "OpenAkita 会安装到隔离的 channel-deps 运行时。"
                     ),
                 )
 
