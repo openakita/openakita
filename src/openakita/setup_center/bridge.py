@@ -145,6 +145,7 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
     def _minimax_fallback_models() -> list[dict]:
         # MiniMax Anthropic/OpenAI 兼容文档仅列出固定模型，且未提供 /models 列表接口。
         ids = [
+            "MiniMax-M2.7",
             "MiniMax-M2.5",
             "MiniMax-M2.5-highspeed",
             "MiniMax-M2.1",
@@ -360,6 +361,7 @@ async def _list_models_anthropic(
 
     def _minimax_fallback_models() -> list[dict]:
         ids = [
+            "MiniMax-M2.7",
             "MiniMax-M2.5",
             "MiniMax-M2.5-highspeed",
             "MiniMax-M2.1",
