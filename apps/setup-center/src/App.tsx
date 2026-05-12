@@ -291,6 +291,27 @@ function MainApp() {
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!IS_TAURI) return;
+    let cancelled = false;
+    invoke<any>("take_startup_recovery_notice")
+      .then((payload) => {
+        if (cancelled || !payload) return;
+        const reason = String(payload.reason || "");
+        const message = reason === "native_frontend_crash"
+          ? "OpenAkita 刚刚从前端异常退出中恢复。后台服务和数据仍然保留，可以继续使用。"
+          : "OpenAkita 刚刚从桌面端崩溃中自动恢复。后台服务和数据仍然保留，可以继续使用。";
+        notifySuccess(message);
+        logger.warn("Boot", "Recovered from previous frontend crash", payload);
+      })
+      .catch(() => {
+        // Older desktop builds do not expose this command.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
 
   // ── Mobile keyboard: track visual viewport for reliable height ──
   useEffect(() => {
