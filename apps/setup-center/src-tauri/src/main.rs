@@ -93,6 +93,67 @@ fn restart_marker_path() -> PathBuf {
     base.join("restart.marker")
 }
 
+fn frontend_session_marker_path() -> PathBuf {
+    let base = home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".openakita");
+    let _ = fs::create_dir_all(&base);
+    base.join("frontend-session.marker")
+}
+
+static STARTUP_RECOVERY_NOTICE: Lazy<Mutex<Option<serde_json::Value>>> =
+    Lazy::new(|| Mutex::new(None));
+
+fn set_startup_recovery_notice(payload: serde_json::Value) {
+    if let Ok(mut guard) = STARTUP_RECOVERY_NOTICE.lock() {
+        *guard = Some(payload);
+    }
+}
+
+#[tauri::command]
+fn take_startup_recovery_notice() -> Option<serde_json::Value> {
+    STARTUP_RECOVERY_NOTICE.lock().ok().and_then(|mut guard| guard.take())
+}
+
+fn record_frontend_session_marker(app_version: &str) {
+    let marker = serde_json::json!({
+        "ts": now_epoch_secs(),
+        "pid": std::process::id(),
+        "app_version": app_version,
+    });
+    let _ = fs::write(
+        frontend_session_marker_path(),
+        serde_json::to_string_pretty(&marker).unwrap_or_else(|_| "{}".into()),
+    );
+}
+
+fn detect_previous_frontend_crash() -> Option<serde_json::Value> {
+    let marker_path = frontend_session_marker_path();
+    let content = fs::read_to_string(&marker_path).ok()?;
+    let previous: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let prev_pid = previous.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    if prev_pid == 0 || prev_pid == std::process::id() || is_pid_running(prev_pid) {
+        return None;
+    }
+    Some(serde_json::json!({
+        "reason": "native_frontend_crash",
+        "previous": previous,
+    }))
+}
+
+fn clear_frontend_session_marker() {
+    let marker_path = frontend_session_marker_path();
+    let should_remove = fs::read_to_string(&marker_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|json| json.get("pid").and_then(|v| v.as_u64()).map(|pid| pid as u32))
+        .map(|pid| pid == std::process::id())
+        .unwrap_or(true);
+    if should_remove {
+        let _ = fs::remove_file(marker_path);
+    }
+}
+
 /// 防止自愈进入无限重启循环：如果短时间内（30s）已经因 panic 自愈过一次，
 /// 再次崩溃则不再 spawn，让用户感知到崩溃并人工介入。
 const SELF_HEAL_COOLDOWN_MS: u64 = 30_000;
@@ -3835,6 +3896,43 @@ fn write_crash_log(message: &str, show_dialog: bool) -> PathBuf {
     crash_path
 }
 
+fn show_main_window(app: &tauri::AppHandle, reason: &str, open_status: bool) {
+    let app_handle = app.clone();
+    let reason = reason.to_string();
+
+    // Windows WebView2/tao can crash if show/focus runs re-entrantly from a
+    // single-instance or tray callback while the hidden window state is changing.
+    #[cfg(target_os = "windows")]
+    {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            show_main_window_now(&app_handle, &reason, open_status);
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        show_main_window_now(&app_handle, &reason, open_status);
+    }
+}
+
+fn show_main_window_now(app: &tauri::AppHandle, reason: &str, open_status: bool) {
+    if let Some(w) = app.get_webview_window("main") {
+        if let Err(e) = w.show() {
+            log_to_file(&format!("[window] show failed ({reason}): {e}"));
+        }
+        let _ = w.unminimize();
+        if let Err(e) = w.set_focus() {
+            log_to_file(&format!("[window] focus failed ({reason}): {e}"));
+        }
+    } else {
+        log_to_file(&format!("[window] main window not found ({reason})"));
+    }
+    if open_status {
+        let _ = app.emit("open_status", serde_json::json!({}));
+    }
+}
+
 fn main() {
     // 自愈接力进程的启动时序兜底：
     // panic hook 在 spawn 新实例时旧进程还没真正退出，
@@ -3903,11 +4001,7 @@ fn main() {
     let app = match tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 第二个实例启动时，聚焦已有窗口并退出自身
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+            show_main_window(app, "single-instance", false);
         }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -3985,6 +4079,13 @@ fn main() {
             let is_first_run_arg = std::env::args().any(|a| a == "--first-run");
             let launch_mode = if is_first_run_arg { "first-run" } else { "normal" };
             app.emit("app-launch-mode", launch_mode).ok();
+            let app_version = app.package_info().version.to_string();
+
+            if let Some(payload) = detect_previous_frontend_crash() {
+                log_to_file("[self-heal] stale frontend session marker recovered");
+                set_startup_recovery_notice(payload);
+            }
+            record_frontend_session_marker(&app_version);
 
             // ── 自愈恢复：检查上次崩溃留下的 restart.marker ──
             // 由 panic hook 在命中 tao#1180 特征时写入；这里读出后立刻删除
@@ -3999,6 +4100,7 @@ fn main() {
                     ));
                     let payload: serde_json::Value =
                         serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+                    set_startup_recovery_notice(payload.clone());
                     app.emit("app-restarted-from-crash", payload).ok();
                 }
                 let _ = fs::remove_file(&marker_path);
@@ -4021,7 +4123,6 @@ fn main() {
             //   - NotRunning  → 端口无响应，需要启动
             //   - RunningOk   → 后端在运行且版本可接受
             //   - Upgraded    → 旧版后端已被终止，需要启动新版
-            let app_version = app.package_info().version.to_string();
             let state = read_state_file();
             if let Some(ref ws_id) = state.current_workspace_id {
                 let port = read_workspace_api_port(ws_id).unwrap_or(18900);
@@ -4291,6 +4392,7 @@ fn main() {
             append_onboarding_log,
             append_onboarding_log_lines,
             append_frontend_log,
+            take_startup_recovery_notice,
             save_log_export,
             register_cli,
             unregister_cli,
@@ -4323,6 +4425,7 @@ fn main() {
             }
         }
         if let tauri::RunEvent::Exit = event {
+            clear_frontend_session_marker();
             // Safety-net: clean up backend processes on ANY exit path
             // (SIGTERM, system shutdown, unexpected termination, etc.)
             // Idempotent — harmless if tray-quit already stopped everything.
@@ -5449,11 +5552,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     app.exit(0);
                 } else {
                     // 仍有残留：阻止退出，提示用户
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.unminimize();
-                        let _ = w.set_focus();
-                    }
+                    show_main_window(app, "quit-failed", false);
                     let mut detail = Vec::new();
                     for x in &still_pid {
                         detail.push(format!("{} (PID={})", x.workspace_id, x.pid));
@@ -5470,10 +5569,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+                show_main_window(app, "tray-show", false);
             }
             "hide" => {
                 if let Some(w) = app.get_webview_window("main") {
@@ -5493,11 +5589,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 { let _ = std::process::Command::new("xdg-open").arg(&url).spawn(); }
             }
             "open_status" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-                let _ = app.emit("open_status", serde_json::json!({}));
+                show_main_window(app, "tray-open-status", true);
             }
             _ => {}
         })
@@ -5508,24 +5600,14 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } => {
                 let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.unminimize();
-                    let _ = w.set_focus();
-                }
-                let _ = app.emit("open_status", serde_json::json!({}));
+                show_main_window(app, "tray-left-click", true);
             }
             TrayIconEvent::DoubleClick {
                 button: MouseButton::Left,
                 ..
             } => {
                 let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.unminimize();
-                    let _ = w.set_focus();
-                }
-                let _ = app.emit("open_status", serde_json::json!({}));
+                show_main_window(app, "tray-double-click", true);
             }
             _ => {}
         })
