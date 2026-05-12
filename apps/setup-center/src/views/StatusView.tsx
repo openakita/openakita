@@ -10,7 +10,7 @@ import {
   IM_LOGO_MAP,
   IconAlertCircle,
 } from "../icons";
-import { Loader2, Play, Square, RotateCcw, Power, PowerOff, FolderOpen, Activity, ArrowRight, Server, Download, Zap } from "lucide-react";
+import { Activity, ArrowRight, Loader2, Play, Square, RotateCcw, Power, PowerOff, FolderOpen, Server, Download, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -22,35 +22,6 @@ import { SkillConflictsPanel } from "../components/SkillConflictsPanel";
 import { ProviderIcon } from "../components/ProviderIcon";
 import type { EnvMap, WorkspaceSummary, ViewId } from "../types";
 import type { UpdateInfo } from "../platform";
-
-type ToolProbe = { available?: boolean; path?: string; version?: string };
-type RuntimeDiagnostics = {
-  summary?: string;
-  environment?: {
-    runtime?: {
-      mode?: string;
-      seed_dirs?: string[];
-      workspace_dependency_cache?: string;
-    };
-    toolchain?: {
-      python?: { abi?: string; wheelTag?: string; managed?: string; agent?: string; seedPackaged?: boolean };
-      node?: {
-        managed_node?: string;
-        managed_bin?: string;
-        seedPackaged?: boolean;
-        node?: ToolProbe;
-        npm?: ToolProbe;
-        corepack?: ToolProbe;
-        pnpm?: ToolProbe;
-        yarn?: ToolProbe;
-        workspace_cache?: string;
-        npm_cache?: string;
-        npm_prefix?: string;
-        corepack_home?: string;
-      };
-    };
-  };
-};
 
 export interface StatusViewProps {
   currentWorkspaceId: string | null;
@@ -131,8 +102,6 @@ export function StatusView(props: StatusViewProps) {
 
   const [healthChecking, setHealthChecking] = useState<string | null>(null);
   const [imChecking, setImChecking] = useState(false);
-  const [runtimeDiag, setRuntimeDiag] = useState<RuntimeDiagnostics | null>(null);
-  const [runtimeDiagChecking, setRuntimeDiagChecking] = useState(false);
   // Structured runtime error surface (e.g. RUNTIME_PERMISSION_DENIED|...)
   // —— Rust 端 `ensure_runtime_layout` 等核心 IO 失败时会把带前缀的错误写到
   // runtime manifest.last_error，本组件读出后渲染指引 banner，让企业 AD /
@@ -163,26 +132,6 @@ export function StatusView(props: StatusViewProps) {
       setStartingService(false);
     }
   };
-  const refreshRuntimeDiagnostics = async () => {
-    if (!shouldUseHttpApi()) return;
-    setRuntimeDiagChecking(true);
-    try {
-      const res = await safeFetch(`${httpApiBase()}/api/diagnostics`, {
-        signal: AbortSignal.timeout(8000),
-      });
-      if (res.ok) setRuntimeDiag(await res.json());
-    } catch (e) {
-      logger.warn("runtime diagnostics failed", String(e));
-    } finally {
-      setRuntimeDiagChecking(false);
-    }
-  };
-  useEffect(() => {
-    if (serviceStatus?.running) {
-      void refreshRuntimeDiagnostics();
-    }
-  }, [serviceStatus?.running]);
-
   // Poll structured runtime error on every backend stop / error. Cheap: just
   // reads ~1KB from disk via Tauri.
   useEffect(() => {
@@ -455,47 +404,6 @@ export function StatusView(props: StatusViewProps) {
         {(heartbeatState === "dead" && !serviceStatus?.running) && (
           <TroubleshootPanel t={t} />
         )}
-
-        <div className="statusPanelRow">
-          <div className="statusPanelIcon">
-            <Zap size={18} />
-          </div>
-          <div className="statusPanelInfo">
-            <div className="statusPanelTitle">
-              {t("status.workspaceDependencies")}
-              <Badge variant="outline" className="statusBadgeInline">
-                Python / Node
-              </Badge>
-            </div>
-            <div className="statusPanelDesc">
-              Python: {runtimeDiag?.environment?.toolchain?.python?.abi || t("status.unknown")}
-              {" · "}
-              Node: {runtimeDiag?.environment?.toolchain?.node?.node?.version || t("status.notChecked")}
-              {" · "}
-              npm: {runtimeDiag?.environment?.toolchain?.node?.npm?.version || t("status.notChecked")}
-              {runtimeDiag?.environment?.toolchain?.node?.managed_node ? ` · ${t("status.managedNodeAvailable")}` : ""}
-              {runtimeDiag?.environment?.toolchain?.node?.seedPackaged === false ? ` · ${t("status.nodeSeedNotPackaged")}` : ""}
-              {runtimeDiag?.environment?.toolchain?.python?.seedPackaged === false ? ` · ${t("status.pythonSeedNotPackaged")}` : ""}
-              {runtimeDiag?.environment?.runtime?.seed_dirs?.length ? ` · ${t("status.readonlySeedEnabled")}` : ""}
-            </div>
-            {runtimeDiag?.environment?.toolchain?.node?.workspace_cache && (
-              <div className="statusPanelDesc">
-                {t("status.workspaceCache")}: {runtimeDiag.environment.toolchain.node.workspace_cache}
-              </div>
-            )}
-          </div>
-          <div className="statusPanelActions">
-            <Button size="sm" variant="outline" className="statusBtn" onClick={refreshRuntimeDiagnostics} disabled={runtimeDiagChecking}>
-              {runtimeDiagChecking ? <Loader2 className="animate-spin" size={13} /> : <Activity size={13} />} {t("status.check")}
-            </Button>
-            <Button size="sm" variant="outline" className="statusBtn" onClick={() => setView("skills")}>
-              {t("status.skills")} <ArrowRight size={13} />
-            </Button>
-            <Button size="sm" variant="outline" className="statusBtn" onClick={() => setView("plugins")}>
-              {t("status.plugins")} <ArrowRight size={13} />
-            </Button>
-          </div>
-        </div>
 
         {/* Link diagnostics + per-session cache reset */}
         <LinkDiagnosticsPanel
