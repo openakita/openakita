@@ -27,27 +27,34 @@ def _save_memory(
         importance_score=0.9,
         confidence=0.8,
     )
-    return manager.store.save_semantic(mem, scope=scope, scope_owner=scope_owner)
+    user_id = "system" if scope == "system" else "user-a"
+    return manager.store.save_semantic(
+        mem,
+        scope=scope,
+        scope_owner=scope_owner,
+        user_id=user_id,
+        workspace_id="default",
+    )
 
 
-def test_injection_context_only_sees_current_session_and_global_memory(tmp_path):
+def test_injection_context_only_sees_current_session_and_user_memory(tmp_path):
     manager = _manager(tmp_path)
-    manager.start_session("session-a")
+    manager.start_session("session-a", user_id="user-a")
 
     _save_memory(manager, "alpha current session detail", scope="session", scope_owner="session-a")
     _save_memory(manager, "alpha other session detail", scope="session", scope_owner="session-b")
-    _save_memory(manager, "alpha global preference", scope="global")
+    _save_memory(manager, "alpha user preference", scope="user")
 
     context = manager.get_injection_context("alpha", max_related=5)
 
     assert "alpha current session detail" in context
-    assert "alpha global preference" in context
+    assert "alpha user preference" in context
     assert "alpha other session detail" not in context
 
 
 def test_episode_retrieval_is_limited_to_current_session(tmp_path):
     manager = _manager(tmp_path)
-    manager.start_session("session-a")
+    manager.start_session("session-a", user_id="user-a")
 
     manager.store.save_episode(
         Episode(
@@ -75,8 +82,9 @@ def test_episode_retrieval_is_limited_to_current_session(tmp_path):
     assert "alpha other episode" not in content
 
 
-def test_legacy_global_search_does_not_leak_session_memories(tmp_path):
+def test_user_search_does_not_leak_session_memories(tmp_path):
     manager = _manager(tmp_path)
+    manager.start_session("session-a", user_id="user-a")
     manager.add_memory(
         SemanticMemory(
             content="alpha current session detail",
@@ -95,14 +103,14 @@ def test_legacy_global_search_does_not_leak_session_memories(tmp_path):
         scope="global",
     )
 
-    global_results = manager.search_memories("alpha", scope="global")
+    user_results = manager.search_memories("alpha", scope="user")
     session_results = manager.search_memories(
         "alpha",
         scope="session",
         scope_owner="session-a",
     )
 
-    assert [m.content for m in global_results] == ["alpha global preference"]
+    assert [m.content for m in user_results] == ["alpha global preference"]
     assert [m.content for m in session_results] == ["alpha current session detail"]
 
 
@@ -112,6 +120,7 @@ def test_manual_cancel_rule_supersedes_related_old_rule(tmp_path):
     from openakita.tools.handlers.memory import MemoryHandler
 
     manager = _manager(tmp_path)
+    manager.start_session("session-a", user_id="user-a")
     old_id = manager.add_memory(
         SemanticMemory(
             content="网页操作偏好：所有浏览器操作优先使用 MCP 工具",
@@ -141,7 +150,7 @@ def test_manual_cancel_rule_supersedes_related_old_rule(tmp_path):
 @pytest.mark.asyncio
 async def test_auto_extracted_memory_is_saved_to_current_session_scope(tmp_path):
     manager = _manager(tmp_path)
-    manager.start_session("session-a")
+    manager.start_session("session-a", user_id="user-a")
 
     memory_id = await manager._save_extracted_item(
         {
@@ -165,7 +174,7 @@ async def test_auto_extraction_dedup_does_not_evolve_other_session_memory(tmp_pa
     manager = _manager(tmp_path)
     _save_memory(manager, "alpha existing in session b", scope="session", scope_owner="session-b")
 
-    manager.start_session("session-a")
+    manager.start_session("session-a", user_id="user-a")
     memory_id = await manager._save_extracted_item(
         {
             "type": "FACT",
@@ -185,11 +194,13 @@ async def test_auto_extraction_dedup_does_not_evolve_other_session_memory(tmp_pa
         "alpha",
         scope="session",
         scope_owner="session-a",
+        user_id="user-a",
     )
     session_b = manager.store.search_semantic(
         "alpha",
         scope="session",
         scope_owner="session-b",
+        user_id="user-a",
     )
     assert len(session_a) == 1
     assert len(session_b) == 1

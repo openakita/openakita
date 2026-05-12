@@ -438,6 +438,16 @@ class TestFileReadWriteSafety:
         assert "[OUTPUT_TRUNCATED]" not in result
         assert "offset=3, limit=2" in result
 
+    async def test_read_file_reuses_same_range_cache(self, handler, tmp_path):
+        target = tmp_path / "cached.txt"
+        target.write_text("first\nsecond", encoding="utf-8")
+
+        first = await handler.handle("read_file", {"path": str(target), "limit": 10})
+        second = await handler.handle("read_file", {"path": str(target), "limit": 10})
+
+        assert "文件内容" in first
+        assert second.startswith("♻️ 复用本轮 read_file 缓存结果")
+
     async def test_write_file_rejects_paginated_read_preview(self, handler, tmp_path):
         target = tmp_path / "safe.txt"
         target.write_text("original", encoding="utf-8")

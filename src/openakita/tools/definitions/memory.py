@@ -33,7 +33,7 @@ MEMORY_TOOLS = [
     {
         "name": "add_memory",
         "category": "Memory",
-        "description": "Record durable information for future conversations: user preferences, persistent rules, reusable patterns, and error lessons. Do not use for one-off task requests, normal task completion reports, temporary file outputs, or current-task parameters. NOTE: For structured user profile fields (name, work_field, os, etc.), use update_user_profile instead. Use add_memory for free-form, unstructured information that doesn't fit profile fields.",
+        "description": "Record durable information for future conversations: user preferences, persistent rules, reusable patterns, and error lessons. Do not use for one-off task requests, normal task completion reports, temporary file outputs, or current-task parameters. NOTE: For structured user profile fields (name, work_field, os, etc.), use update_user_profile instead. Use add_memory for free-form, unstructured information that doesn't fit profile fields. SCOPE RULE: when the user explicitly asks for cross-session / long-term / permanent persistence (e.g. '下次也能查到', '永久保存', '长期记住', 'cross-session'), pass scope=\"global\". When the fact is only useful within the current task / session, pass scope=\"session\". Default scope=\"auto\" lets the system decide.",
         "detail": """记录重要信息到长期记忆。
 
 **适用场景**：
@@ -54,7 +54,14 @@ MEMORY_TOOLS = [
 - rule: 规则约定
 - experience: 可复用经验
 
-**重要性**：0-1 的数值，越高越重要""",
+**重要性**：0-1 的数值，越高越重要
+
+**作用范围 scope**（重要）：
+- `auto`（默认）：由系统启发式判断 global / session
+- `global`：写入跨会话永久记忆。**当用户明确说"永久保存 / 长期记住 / 下次新会话也能查到 / 跨会话 / 一直记着 / 别忘了"时，必须用 global**
+- `session`：仅当前会话内可见。适合任务级临时事实
+
+不要在用户口头要求"长期保存"时仍传 auto——auto 的启发式只能识别少量句式，会漏判。""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -66,6 +73,16 @@ MEMORY_TOOLS = [
                     "default": "fact",
                 },
                 "importance": {"type": "number", "description": "重要性（0-1）", "default": 0.5},
+                "scope": {
+                    "type": "string",
+                    "enum": ["auto", "global", "session"],
+                    "description": (
+                        "作用范围。auto=系统判断（默认）；global=跨会话永久持久化"
+                        "（用户明确要求长期/永久/下次也能查到时必须用 global）；"
+                        "session=仅当前会话可见的任务级事实"
+                    ),
+                    "default": "auto",
+                },
             },
             "required": ["content"],
         },

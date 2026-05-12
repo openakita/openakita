@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link2, RefreshCw, Eraser } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { safeFetch } from "../providers";
 import { notifyError, notifySuccess } from "../utils/notify";
 
-type LinkDiagnostic = {
+export type LinkDiagnostic = {
   requested_url?: string;
   final_url?: string;
   redirect_chain?: string[];
@@ -20,6 +20,7 @@ type ClearResponse = { ok: boolean; cleared?: Record<string, boolean> };
 
 export interface LinkDiagnosticsPanelProps {
   httpApiBase: () => string;
+  initialDiagnostic?: LinkDiagnostic | null;
 }
 
 function shortUrl(url: string | undefined, max = 80): string {
@@ -28,33 +29,38 @@ function shortUrl(url: string | undefined, max = 80): string {
   return url.slice(0, max - 1) + "…";
 }
 
-export function LinkDiagnosticsPanel({ httpApiBase }: LinkDiagnosticsPanelProps) {
+export function LinkDiagnosticsPanel({ httpApiBase, initialDiagnostic }: LinkDiagnosticsPanelProps) {
   const { t } = useTranslation();
-  const [diag, setDiag] = useState<LinkDiagnostic | null>(null);
+  const [diag, setDiag] = useState<LinkDiagnostic | null>(initialDiagnostic ?? null);
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [statusText, setStatusText] = useState("");
 
+  const applyDiagnostic = useCallback((
+    body: LinkDiagnostic | Record<string, never> | null | undefined,
+    showResult: boolean,
+  ) => {
+    if (body && Object.keys(body).length > 0) {
+      setDiag(body as LinkDiagnostic);
+      if (showResult) {
+        setStatusText(t("status.linkDiag.refreshed", { defaultValue: "已刷新，已读取到最近一次链接记录。" }));
+      }
+    } else {
+      setDiag(null);
+      if (showResult) {
+        setStatusText(t("status.linkDiag.refreshedEmpty", { defaultValue: "已刷新，本次会话还没有链接读取记录。" }));
+      }
+    }
+  }, [t]);
+
   const refresh = async (showResult = true) => {
     setLoading(true);
     try {
-      const resp = await safeFetch(`${httpApiBase()}/api/diagnostics/last-link`);
-      if (resp.ok) {
-        const body = (await resp.json()) as LinkDiagnostic | Record<string, never>;
-        if (body && Object.keys(body).length > 0) {
-          setDiag(body as LinkDiagnostic);
-          if (showResult) {
-            setStatusText(t("status.linkDiag.refreshed", { defaultValue: "已刷新，已读取到最近一次链接记录。" }));
-          }
-        } else {
-          setDiag(null);
-          if (showResult) {
-            setStatusText(t("status.linkDiag.refreshedEmpty", { defaultValue: "已刷新，本次会话还没有链接读取记录。" }));
-          }
-        }
-      } else if (showResult) {
-        setStatusText(t("status.linkDiag.refreshFailed", { defaultValue: "刷新失败，请稍后再试。" }));
-      }
+      const resp = await safeFetch(`${httpApiBase()}/api/health`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      const body = await resp.json();
+      applyDiagnostic(body?.last_link_diagnostic || null, showResult);
     } catch (e) {
       if (showResult) {
         setStatusText(t("status.linkDiag.refreshFailedDetail", {
@@ -68,8 +74,8 @@ export function LinkDiagnosticsPanel({ httpApiBase }: LinkDiagnosticsPanelProps)
   };
 
   useEffect(() => {
-    refresh(false);
-  }, []);
+    applyDiagnostic(initialDiagnostic || null, false);
+  }, [applyDiagnostic, initialDiagnostic]);
 
   const onClear = async () => {
     setClearing(true);

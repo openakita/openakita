@@ -467,6 +467,10 @@ class LifecycleManager:
         content = (item.get("content") or "").strip()
         subject = item.get("subject", "")
         predicate = item.get("predicate", "")
+        write_scope = "legacy_quarantine"
+        write_owner = ""
+        write_user = "legacy"
+        write_workspace = "default"
 
         if importance >= 0.85 or mem_type == MemoryType.RULE:
             priority = MemoryPriority.PERMANENT
@@ -477,20 +481,20 @@ class LifecycleManager:
 
         # --- Dedup layer 1: subject+predicate match (always, not only is_update) ---
         if subject and predicate:
-            existing = self.store.find_similar(subject, predicate)
+            existing = self.store.find_similar(
+                subject,
+                predicate,
+                scope=write_scope,
+                scope_owner=write_owner,
+                user_id=write_user,
+                workspace_id=write_workspace,
+            )
             if existing and not existing.superseded_by:
                 updates: dict = {
                     "importance_score": max(existing.importance_score, importance),
                     "confidence": min(1.0, existing.confidence + 0.1),
                 }
-                should_update = (
-                    item.get("is_update")
-                    or importance > existing.importance_score
-                    or (
-                        importance >= existing.importance_score
-                        and len(content) > len(existing.content or "")
-                    )
-                )
+                should_update = bool(content and content != (existing.content or ""))
                 if should_update:
                     updates["content"] = content
                 self.store.update_semantic(existing.id, updates)
@@ -500,7 +504,14 @@ class LifecycleManager:
         # --- Dedup layer 2: content similarity via search backend ---
         if content and len(content) >= 10:
             try:
-                similar = self.store.search_semantic(content, limit=5)
+                similar = self.store.search_semantic(
+                    content,
+                    limit=5,
+                    scope=write_scope,
+                    scope_owner=write_owner,
+                    user_id=write_user,
+                    workspace_id=write_workspace,
+                )
                 for s in similar:
                     if s.superseded_by or s.type != mem_type:
                         continue
@@ -531,7 +542,13 @@ class LifecycleManager:
             tags=[item.get("type", "fact").lower()],
         )
         apply_retention(mem, item.get("duration"))
-        self.store.save_semantic(mem)
+        self.store.save_semantic(
+            mem,
+            scope=write_scope,
+            scope_owner=write_owner,
+            user_id=write_user,
+            workspace_id=write_workspace,
+        )
 
     # ==================================================================
     # Deduplication
@@ -902,6 +919,7 @@ class LifecycleManager:
                 response = await self.extractor.brain.think(
                     prompt,
                     system="你是记忆质量审查专家。只输出 JSON 数组。",
+                    enable_thinking=False,
                 )
                 text = coerce_text(getattr(response, "content", response)).strip()
 
@@ -1128,6 +1146,7 @@ class LifecycleManager:
             response = await self.extractor.brain.think(
                 prompt,
                 system="你是经验归纳专家。只输出 JSON 数组。",
+                enable_thinking=False,
             )
             text = (getattr(response, "content", None) or str(response)).strip()
             json_match = re.search(r"\[[\s\S]*\]", text)
@@ -1150,7 +1169,13 @@ class LifecycleManager:
                 # Dedup: skip if a similar experience already exists
                 dup_target: SemanticMemory | None = None
                 try:
-                    similar = self.store.search_semantic(content, limit=3)
+                    similar = self.store.search_semantic(
+                        content,
+                        limit=3,
+                        scope="legacy_quarantine",
+                        user_id="legacy",
+                        workspace_id="default",
+                    )
                     for s in similar:
                         if s.superseded_by:
                             continue
@@ -1176,7 +1201,12 @@ class LifecycleManager:
                     importance_score=min(1.0, max(0.7, float(synth.get("importance", 0.85)))),
                     confidence=0.8,
                 )
-                self.store.save_semantic(mem)
+                self.store.save_semantic(
+                    mem,
+                    scope="legacy_quarantine",
+                    user_id="legacy",
+                    workspace_id="default",
+                )
                 saved += 1
 
                 # Mark source memories as superseded

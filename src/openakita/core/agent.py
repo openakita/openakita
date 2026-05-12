@@ -153,25 +153,32 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_force_tool_policy(intent: Any) -> tuple[int | None, bool]:
-    """Return ForceToolCall override and whether a final answer needs tool evidence.
+    """Return (force_tool_retries, tool_evidence_required) for the reasoning engine.
 
-    Plain chat/knowledge queries stay lightweight. Evidence-sensitive requests
-    get one soft nudge to gather tool evidence, avoiding repeated prompts or
-    broad default loop limits.  Non-evidence tasks are allowed to complete with
-    text: the model may still choose tools, but the runtime should not force them.
+    P0-2 阶段 2（修正版）：拆解三种语义，停止把 requires_tools/force_tool 等同于"要证据"
+    -----------------------------------------------------------------------
+    旧逻辑：requires_tools / force_tool / evidence_required 任意一个为 True
+            就 evidence_required=True，触发 ForceToolCall(1) + 重试（已被阶段 1 弱化）
+            + 阶段 0 disclaimer。导致大量"我决定让你用工具"和"我必须有工具证据"的语义混淆。
+
+    新逻辑（语义拆解）：
+    - force_tool=True   → "建议尽量调工具"：允许 2 次 ForceToolCall 提示，但不要求证据
+    - evidence_required → "必须有工具证据才能信"：1 次 soft nudge + 走阶段 0 disclaimer
+    - requires_tools    → "需要工具来执行任务"，但不一定需要证据；不再单独触发硬性策略
+                          （由 force_tool 涵盖典型场景）
+
+    返回 (None, False) 表示完全不强制，让 LLM 自主决定。
     """
     if not intent:
         return None, False
 
-    requires_tools = bool(getattr(intent, "requires_tools", False))
+    evidence_required = bool(getattr(intent, "evidence_required", False))
     force_tool = bool(getattr(intent, "force_tool", False))
-    evidence_required = (
-        bool(getattr(intent, "evidence_required", False)) or requires_tools or force_tool
-    )
 
+    if force_tool:
+        return 2, False  # 允许 2 次 ForceToolCall 重试，但不要求 evidence
     if evidence_required:
-        return 1, True
-
+        return 1, True   # 1 次柔性提示，evidence_required 走阶段 0 disclaimer
     return 0, False
 
 
@@ -376,48 +383,114 @@ def _apply_previous_answer_replay_hint(message: str) -> str:
     return f"{_PREVIOUS_ANSWER_REPLAY_HINT}\n\n{message}"
 
 
+_EXTERNAL_TOOL_MARKERS: tuple[str, ...] = (
+    # ---- 直接的"调用工具/读写文件/上网"动作 ----
+    "读取",
+    "读文件",
+    "查看文件",
+    "搜索",
+    "联网",
+    "网页",
+    "下载",
+    "保存",
+    "写入",
+    "创建文件",
+    "生成文件",
+    "附件",
+    "运行",
+    "执行命令",
+    "调用工具",
+    # ---- "做一份/写一份/出一份" 类需要落盘交付的产出动词 ----
+    # 这些动词单独出现就强烈暗示"产出可交付物"——纯模型对话很少使用，
+    # 真正的纯写作场景（"写一首诗"/"翻译一句话"）走 _looks_like_explicit_no_tool_request
+    # 显式排除，或由调用方传 task_type=analysis 覆盖。
+    "做一份",
+    "做个",
+    "做一个",
+    "写一份",
+    "写个",
+    "写一个",
+    "出一份",
+    "出个",
+    "整理一份",
+    "整理出",
+    "汇总一份",
+    "汇总出",
+    "梳理一份",
+    "梳理出",
+    "输出一份",
+    "输出文件",
+    "生成一份",
+    "产出",
+    "交付",
+    # ---- 协作 / 研究 / 报告 类（团队语境的强信号） ----
+    "策划",
+    "排期",
+    "选题",
+    "调研",
+    "竞品",
+    "行业分析",
+    "市场分析",
+    "数据分析",
+    "趋势分析",
+    "可行性",
+    "立项",
+    "需求分析",
+    "评测",
+    "对比",
+    "宣传",
+    "运营",
+    "上线",
+    "发布",
+    # ---- 英文动词 ----
+    "api",
+    "mcp",
+    "read file",
+    "search",
+    "web",
+    "download",
+    "write file",
+    "save",
+    "run command",
+    "call tool",
+    "create a",
+    "make a plan",
+    "draft a",
+    "produce a",
+    "deliver a",
+    "generate a",
+    "write a report",
+    "research",
+    "analyze",
+    "compare",
+)
+
+
 def _looks_like_external_tool_request(message: str) -> bool:
     """Conservative guard for sub-agent delegation.
 
     Sub-agents skip the full IntentAnalyzer for latency.  Only explicit external
     action/evidence requests should force tools; otherwise the model can still
     call tools if useful, but plain writing/analysis is accepted as text.
+
+    History: the original 5/8 keyword list (read file / search / write file /
+    api / mcp …) missed common Chinese phrasings like "做一份 X 计划", "整理
+    一下", "出个报告", which let coordinator nodes silently bypass delegation
+    (root agents would write the deliverable themselves instead of dispatching
+    to subordinates). The expanded list here covers the high-frequency Chinese
+    "produce a deliverable" verbs without forcing tools on plain chit-chat.
+
+    NOTE: organization coordinator nodes are also forced via a separate
+    structural path (``Agent._prepare_session_context`` checks
+    ``_is_org_coordinator``); this keyword check is the secondary safety net
+    for non-org sub-agents.
     """
     text = (message or "").lower()
     if not text.strip():
         return False
     if _looks_like_explicit_no_tool_request(text):
         return False
-    return any(
-        marker in text
-        for marker in (
-            "读取",
-            "读文件",
-            "查看文件",
-            "搜索",
-            "联网",
-            "网页",
-            "下载",
-            "保存",
-            "写入",
-            "创建文件",
-            "生成文件",
-            "附件",
-            "运行",
-            "执行命令",
-            "调用工具",
-            "api",
-            "mcp",
-            "read file",
-            "search",
-            "web",
-            "download",
-            "write file",
-            "save",
-            "run command",
-            "call tool",
-        )
-    )
+    return any(marker in text for marker in _EXTERNAL_TOOL_MARKERS)
 
 
 # ---- 本地图片附件 → data URL（BUG-1 修复） ----
@@ -1153,6 +1226,7 @@ class Agent:
 
         # 用户档案管理器
         self.profile_manager = get_profile_manager()
+        self.memory_manager.profile_manager = self.profile_manager
 
         # ==================== 人格系统 + 活人感 + 表情包 ====================
         from ..tools.sticker import StickerEngine
@@ -1263,6 +1337,13 @@ class Agent:
 
         # Sub-agent call flag: set by orchestrator._call_agent()
         self._is_sub_agent_call = False
+        # Organization coordinator flag: set by ``orgs.runtime._create_node_agent``
+        # iff the node has direct subordinates. Used by
+        # ``_prepare_session_context`` to keep the coordinator strictly in
+        # delegation mode (force_tool=True) and by orchestrator to pick the
+        # coordinator-mode prompt independent of the global
+        # ``coordinator_mode_enabled`` flag.
+        self._is_org_coordinator = False
         # Agent tool names to exclude when running as sub-agent
         self._agent_tool_names = frozenset(
             {"delegate_to_agent", "delegate_parallel", "create_agent", "spawn_agent"}
@@ -1803,13 +1884,15 @@ class Agent:
 
                 logger.info(f"[Tool] {tool_name} → {result_str}")
 
-                # 与 tool_executor 对齐：deliver_artifacts 为直接交付，
-                # org_accept_deliverable 为"中继交付"（父节点验收子节点带文件
-                # 的交付物，receipts.status == "relayed"）。两种场景都让
-                # TaskVerify 看到真实的交付证据。
+                # 与 tool_executor 对齐：直接交付、子节点提交、父节点验收
+                # 中继交付都让 TaskVerify 看到真实的交付证据。
                 if (
                     capture_delivery_receipts
-                    and tool_name in ("deliver_artifacts", "org_accept_deliverable")
+                    and tool_name in (
+                        "deliver_artifacts",
+                        "org_submit_deliverable",
+                        "org_accept_deliverable",
+                    )
                     and result_str
                 ):
                     try:
@@ -2903,24 +2986,35 @@ class Agent:
                 if changed:
                     await self.task_scheduler.save()
 
-        # 任务 3: 活人感心跳（每 30 分钟触发）
+        # 任务 3: 活人感心跳（默认关闭；用户显式启用 proactive_enabled 后注册）
         try:
-            if "system_proactive_heartbeat" not in existing_ids:
-                heartbeat_task = ScheduledTask(
-                    id="system_proactive_heartbeat",
-                    name="活人感心跳",
-                    trigger_type=TriggerType.INTERVAL,
-                    trigger_config={"interval_minutes": 30},
-                    action="system:proactive_heartbeat",
-                    prompt="检查是否需要发送主动消息（问候/提醒/跟进）",
-                    description="定时检查并发送主动消息",
-                    task_type=TaskType.TASK,
-                    enabled=True,
-                    deletable=False,
-                    metadata={"notify_on_start": False, "notify_on_complete": False},
-                )
-                await self.task_scheduler.add_task(heartbeat_task)
-                logger.info("Registered system task: proactive_heartbeat (every 30 min)")
+            heartbeat_task_id = "system_proactive_heartbeat"
+            if settings.proactive_enabled:
+                interval_min = max(120, int(settings.proactive_min_interval_minutes or 120))
+                if heartbeat_task_id not in existing_ids:
+                    heartbeat_task = ScheduledTask(
+                        id=heartbeat_task_id,
+                        name="活人感心跳",
+                        trigger_type=TriggerType.INTERVAL,
+                        trigger_config={"interval_minutes": interval_min},
+                        action="system:proactive_heartbeat",
+                        prompt="检查是否需要发送主动消息（问候/提醒/跟进）",
+                        description="定时检查并发送主动消息",
+                        task_type=TaskType.TASK,
+                        enabled=True,
+                        deletable=False,
+                        metadata={"notify_on_start": False, "notify_on_complete": False},
+                    )
+                    await self.task_scheduler.add_task(heartbeat_task)
+                    logger.info(
+                        "Registered system task: proactive_heartbeat (every %s min)",
+                        interval_min,
+                    )
+            else:
+                existing_heartbeat = self.task_scheduler.get_task(heartbeat_task_id)
+                if existing_heartbeat and existing_heartbeat.enabled:
+                    await self.task_scheduler.disable_task(heartbeat_task_id)
+                    logger.info("Disabled proactive_heartbeat task (feature disabled in settings)")
         except Exception as e:
             logger.warning(f"Failed to register proactive_heartbeat task: {e}")
 
@@ -3242,6 +3336,18 @@ class Agent:
                         session_context["authorized_intent"] = intent_data
                 except Exception:
                     pass
+                # P0-2 阶段 2：把规则启发式 evidence_recommended 信号传给 prompt builder。
+                # 仅当 intent 自评 evidence_required=False 且规则路径推荐时，
+                # 在 prompt 末尾追加"建议查工具/否则声明来源"的软提示，
+                # 形成 阶段 1 log-only + 阶段 3 来源标签 闭环。
+                try:
+                    if intent is not None:
+                        _ev_required = bool(getattr(intent, "evidence_required", False))
+                        _ev_recommended = bool(getattr(intent, "evidence_recommended", False))
+                        if _ev_recommended and not _ev_required:
+                            session_context["evidence_recommended"] = True
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -3294,6 +3400,7 @@ class Agent:
             tuple(sorted(_intent_tool_hints)),
             tuple(sorted(_mem_keywords)) if _mem_keywords else (),
             _working_facts_cache_key,
+            bool((session_context or {}).get("evidence_recommended", False)),
         )
 
         if (
@@ -4480,7 +4587,11 @@ class Agent:
             conversation_safe_id = _memory_key.replace(":", "__")
             conversation_safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", conversation_safe_id)
             if getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id:
-                self.memory_manager.start_session(conversation_safe_id)
+                self.memory_manager.start_session(
+                    conversation_safe_id,
+                    user_id=getattr(session, "user_id", None) if session else None,
+                    workspace_id="default",
+                )
                 if hasattr(self, "_memory_handler"):
                     self._memory_handler.reset_guide()
                 # 1.5 新会话时清空 Scratchpad 工作记忆，避免跨会话泄漏
@@ -4489,7 +4600,9 @@ class Agent:
                     if store and hasattr(store, "save_scratchpad"):
                         from ..memory.types import Scratchpad as _SpClear
 
-                        store.save_scratchpad(_SpClear(user_id="default"))
+                        store.save_scratchpad(
+                            _SpClear(user_id=getattr(session, "user_id", "default") if session else "default")
+                        )
                         logger.debug(
                             f"[Session] Cleared scratchpad for new conversation {conversation_id}"
                         )
@@ -4567,6 +4680,25 @@ class Agent:
         if self._is_sub_agent_call:
             _profile_hints = self._derive_tool_hints_from_profile()
             _requires_tools = _looks_like_external_tool_request(message)
+
+            # Structural override for organization coordinator nodes: any node
+            # that has direct subordinates (set by ``runtime._create_node_agent``
+            # via ``_is_org_coordinator``) must use tools — its only legitimate
+            # outputs are ``org_delegate_task`` / ``org_wait_for_deliverable``
+            # / ``org_accept_deliverable`` / ``org_submit_deliverable``.
+            # Without this override the relaxed force-tool policy (5/8) lets
+            # the editor-in-chief / CEO / tech-lead style root nodes "do the
+            # work themselves" by calling write_file directly, bypassing the
+            # team. Keyword detection alone is not enough because users often
+            # phrase requests as "帮我做一份 X" without any external-tool
+            # marker, so we anchor the contract to the org topology.
+            _is_org_coord = bool(getattr(self, "_is_org_coordinator", False))
+            if _is_org_coord:
+                _requires_tools = True
+
+            # P0-2 阶段 2：子 Agent 路径不再硬绑定 evidence_required=_requires_tools
+            # _requires_tools 仅表示"任务期望调工具"，不等价于"必须有工具证据才能信"。
+            # 否则纯子 Agent 闲聊/QA 也会被误判为证据敏感，触发阶段 0 disclaimer。
             intent_result = IntentResult(
                 intent=IntentType.TASK,
                 confidence=1.0,
@@ -4576,12 +4708,15 @@ class Agent:
                 memory_keywords=[],
                 force_tool=_requires_tools,
                 requires_tools=_requires_tools,
-                evidence_required=_requires_tools,
+                evidence_required=False,
+                evidence_recommended=_requires_tools,
                 todo_required=False,
             )
             logger.info(
                 f"[Session:{session_id}] Sub-agent: skipping IntentAnalyzer, "
-                f"requires_tools={_requires_tools}, profile_tool_hints={_profile_hints}"
+                f"requires_tools={_requires_tools}, "
+                f"is_org_coordinator={_is_org_coord}, "
+                f"profile_tool_hints={_profile_hints}"
             )
         else:
             if not hasattr(self, "_intent_analyzer"):
@@ -6263,43 +6398,123 @@ class Agent:
             _turn_id = turn_id or f"{conversation_id}:{int(time.time() * 1000)}"
             _allow_lightweight_fast_reply = not endpoint_override
 
+            # 决定 fast-path 是否启用思考链：
+            # - thinking_mode == "on"：用户显式开启 → 同步开思维链
+            # - 其它（off/auto/None）：fast-path 仍优先轻量速回，不开思考
+            _fast_enable_think = _thinking_mode == "on"
+
+            async def _run_fast_reply_stream(
+                _system: str,
+                *,
+                log_prefix: str,
+                fallback_text: str | None,
+                result_holder: dict,
+            ):
+                """统一的 fast-reply 流式执行器。
+
+                优先 ``brain.think_lightweight_stream`` 走真流式 token；流式失败或空回
+                时回退到非流式 ``think_lightweight``，确保用户始终能收到回复。
+                由于 async generator 无法 ``return`` 值，最终的 ``text/usage/ok``
+                通过 ``result_holder`` 字典回传给调用方。
+                """
+                _stream_text = ""
+                _stream_failed = False
+                # —— 路径 A：尝试真流式 ——
+                try:
+                    async for _evt in self.brain.think_lightweight_stream(
+                        prompt=message,
+                        system=_system,
+                        enable_thinking=_fast_enable_think,
+                    ):
+                        _et = _evt.get("type")
+                        if _et == "text_delta":
+                            _piece = _evt.get("content", "")
+                            if _piece:
+                                _stream_text += _piece
+                                yield _evt
+                        elif _et in ("thinking_delta", "thinking_end"):
+                            yield _evt
+                        elif _et == "error":
+                            _stream_failed = True
+                            logger.warning(
+                                f"[{log_prefix}] streaming reported error: "
+                                f"{_evt.get('message', '')}"
+                            )
+                        elif _et == "done":
+                            break
+                except Exception as exc:
+                    _stream_failed = True
+                    logger.warning(f"[{log_prefix}] streaming path failed: {exc}")
+
+                _cleaned = clean_llm_response(_stream_text) if _stream_text else ""
+                if _cleaned and not _stream_failed:
+                    result_holder["text"] = _cleaned
+                    result_holder["usage"] = None
+                    result_holder["ok"] = True
+                    return
+
+                # —— 路径 B：流式失败或为空 → 回退到一次性非流式 ——
+                try:
+                    _resp = await self.brain.think_lightweight(
+                        prompt=message,
+                        system=_system,
+                    )
+                    _fb_text = clean_llm_response(_resp.content if _resp.content else "")
+                    if _fb_text:
+                        # 流式没吐过有效字符时才补发整段，避免内容重复
+                        if not _stream_text.strip():
+                            yield {"type": "text_delta", "content": _fb_text}
+                        result_holder["text"] = _fb_text
+                        result_holder["usage"] = _resp.usage
+                        result_holder["ok"] = True
+                        return
+                except Exception as exc:
+                    logger.error(f"[{log_prefix}] non-stream fallback also failed: {exc}")
+
+                # —— 路径 C：所有路径失败 ——
+                if fallback_text:
+                    if not _stream_text.strip():
+                        yield {"type": "text_delta", "content": fallback_text}
+                    result_holder["text"] = fallback_text
+                    result_holder["usage"] = None
+                    result_holder["ok"] = True
+                    return
+                # QUERY 路径要求 fall through 到完整 agent
+                result_holder["text"] = _cleaned or ""
+                result_holder["usage"] = None
+                result_holder["ok"] = False
+
             if (
                 _allow_lightweight_fast_reply
                 and _intent
                 and _intent.intent == _IT.CHAT
                 and getattr(_intent, "fast_reply", False)
             ):
-                # Ultra-fast path: rule-based greeting only, use lightweight model
-                try:
-                    _identity_snippet = ""
-                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
-                        _identity_snippet = (
-                            self.identity.get_system_prompt(include_active_task=False) or ""
-                        )[:500]
+                # Ultra-fast path: rule-based greeting only, use lightweight model.
+                # 改造为流式：用户开启「流式」/「思维链」开关时，问候也走打字机效果。
+                _identity_snippet = ""
+                if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                    _identity_snippet = (
+                        self.identity.get_system_prompt(include_active_task=False) or ""
+                    )[:500]
 
-                    _fast_system = (
-                        f"{_identity_snippet}\n\n"
-                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
-                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
-                    ).strip()
+                _fast_system = (
+                    f"{_identity_snippet}\n\n"
+                    "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                    "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
+                ).strip()
 
-                    _fast_response = await self.brain.think_lightweight(
-                        prompt=message,
-                        system=_fast_system,
-                    )
-                    _fast_usage = _fast_response.usage
-                    _reply_text = clean_llm_response(
-                        _fast_response.content if _fast_response.content else ""
-                    )
-                    if _reply_text:
-                        yield {"type": "text_delta", "content": _reply_text}
-                    else:
-                        yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
-                        _reply_text = "你好！有什么我可以帮你的吗？"
-                except Exception as e:
-                    logger.error(f"[FastReply] Failed: {e}")
-                    yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
-                    _reply_text = "你好！有什么我可以帮你的吗？"
+                _holder: dict = {"text": "", "usage": None, "ok": False}
+                async for _evt in _run_fast_reply_stream(
+                    _fast_system,
+                    log_prefix="FastReply",
+                    fallback_text="你好！有什么我可以帮你的吗？",
+                    result_holder=_holder,
+                ):
+                    yield _evt
+                _reply_text = _holder["text"]
+                _fast_usage = _holder["usage"]
+
                 yield {"type": "done"}
 
                 await self._finalize_session(
@@ -6330,46 +6545,40 @@ class Agent:
                 # Fast-path for simple factual queries (math, date, definitions)
                 # No tools passed → LLM answers directly; empty response falls through
                 # to full agent path below.
-                _query_ok = False
+                _runtime_info = ""
                 try:
-                    _runtime_info = ""
-                    try:
-                        from ..prompt.builder import _build_runtime_section
+                    from ..prompt.builder import _build_runtime_section
 
-                        _runtime_info = _build_runtime_section() or ""
-                    except Exception:
-                        pass
+                    _runtime_info = _build_runtime_section() or ""
+                except Exception:
+                    pass
 
-                    _identity_snippet = ""
-                    if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
-                        _identity_snippet = (
-                            self.identity.get_system_prompt(include_active_task=False) or ""
-                        )[:500]
+                _identity_snippet = ""
+                if hasattr(self, "identity") and hasattr(self.identity, "get_system_prompt"):
+                    _identity_snippet = (
+                        self.identity.get_system_prompt(include_active_task=False) or ""
+                    )[:500]
 
-                    _fast_system = (
-                        f"{_identity_snippet}\n\n"
-                        f"{_runtime_info}\n\n"
-                        "用户提出了一个简单的知识/计算/日期问题。"
-                        "请直接给出准确、简洁的回答。不要使用任何工具。"
-                        "如果涉及日期/时间，请根据上面的运行环境信息回答。"
-                    ).strip()
+                _fast_system = (
+                    f"{_identity_snippet}\n\n"
+                    f"{_runtime_info}\n\n"
+                    "用户提出了一个简单的知识/计算/日期问题。"
+                    "请直接给出准确、简洁的回答。不要使用任何工具。"
+                    "如果涉及日期/时间，请根据上面的运行环境信息回答。"
+                ).strip()
 
-                    logger.info(f"[FastQuery-Stream] Answering '{message}' without tools")
-                    _fast_response = await self.brain.think_lightweight(
-                        prompt=message,
-                        system=_fast_system,
-                    )
-                    _fast_usage = _fast_response.usage
-                    _reply_text = clean_llm_response(
-                        _fast_response.content if _fast_response.content else ""
-                    )
-                    if _reply_text:
-                        yield {"type": "text_delta", "content": _reply_text}
-                        _query_ok = True
-                    else:
-                        logger.warning("[FastQuery-Stream] Empty response, falling back to full agent")
-                except Exception as e:
-                    logger.warning(f"[FastQuery-Stream] Failed ({e}), falling back to full agent")
+                logger.info(f"[FastQuery-Stream] Answering '{message}' without tools")
+                _holder = {"text": "", "usage": None, "ok": False}
+                async for _evt in _run_fast_reply_stream(
+                    _fast_system,
+                    log_prefix="FastQuery-Stream",
+                    fallback_text=None,  # QUERY 失败要 fall through 到完整 agent
+                    result_holder=_holder,
+                ):
+                    yield _evt
+                _reply_text = _holder["text"]
+                _fast_usage = _holder["usage"]
+                _query_ok = _holder["ok"]
 
                 if _query_ok:
                     yield {"type": "done"}

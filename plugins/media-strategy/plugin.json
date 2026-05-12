@@ -48,7 +48,9 @@
       "media_strategy_list_sources",
       "media_strategy_ingest",
       "media_strategy_hot_radar",
+      "media_strategy_top_topics",
       "media_strategy_search_news",
+      "media_strategy_ai_analyze_topics",
       "media_strategy_daily_brief",
       "media_strategy_verify_pack",
       "media_strategy_replicate_plan"
@@ -61,7 +63,7 @@
     "primary_hover": "#0D9488",
     "primary_soft": "#CCFBF1",
     "dark_primary": "#2DD4BF",
-    "iconify": "solar:radar-linear"
+    "iconify": "game-icons:newspaper"
   },
   "ui": {
     "entry": "ui/dist/index.html",

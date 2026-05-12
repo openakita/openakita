@@ -291,6 +291,11 @@ class SemanticMemory:
     # v4: 多 Agent 记忆隔离
     agent_id: str = ""
 
+    # v5: 用户/工作区隔离。用户事实必须有 owner，避免不同用户共享
+    # 同一个 global 命名空间时相互污染。
+    user_id: str = "default"
+    workspace_id: str = "default"
+
     # v2: retention / TTL
     expires_at: datetime | None = None
 
@@ -318,6 +323,8 @@ class SemanticMemory:
             "scope": self.scope,
             "scope_owner": self.scope_owner,
             "agent_id": self.agent_id,
+            "user_id": self.user_id,
+            "workspace_id": self.workspace_id,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
         }
         return d
@@ -350,6 +357,8 @@ class SemanticMemory:
             scope=data.get("scope", "global"),
             scope_owner=data.get("scope_owner", ""),
             agent_id=data.get("agent_id", ""),
+            user_id=data.get("user_id", "default") or "default",
+            workspace_id=data.get("workspace_id", "default") or "default",
             expires_at=datetime.fromisoformat(data["expires_at"])
             if data.get("expires_at")
             else None,

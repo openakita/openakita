@@ -66,18 +66,57 @@ def verify_prompt(items: list[dict[str, Any]], *, topic: str) -> str:
 """
 
 
+def topic_analysis_prompt(topics: list[dict[str, Any]]) -> str:
+    payload = json.dumps(topics, ensure_ascii=False, indent=2)
+    return f"""请基于下面的热点簇生成一份“AI 选题分析报告”。
+
+要求：
+- 只分析给定来源，不补写未给出的事实。
+- 每个热点簇给出：核心判断、为什么值得跟、已有证据、缺口与风险、建议动作。
+- 对单一来源、社交平台热榜、时间滞后的内容明确标注“仅作线索/待复核”。
+- 最后给一个 Top 3 采编优先级排序，说明排序理由。
+- 保留原文链接或 article_id，方便编辑人工复核。
+
+热点簇 JSON：
+{payload}
+"""
+
+
 def replicate_prompt(
     items: list[dict[str, Any]],
     *,
     topic: str,
     target_format: str,
     tone: str,
+    revision_instructions: str = "",
+    annotations: str = "",
+    current_draft: str = "",
 ) -> str:
+    feedback_block = ""
+    if revision_instructions.strip() or annotations.strip() or current_draft.strip():
+        feedback_block = f"""
+
+当前已有采编计划草稿：
+{current_draft.strip() or "（无）"}
+
+用户标注 / 修改意见：
+{revision_instructions.strip() or "（无）"}
+
+用户重点标注片段：
+{annotations.strip() or "（无）"}
+
+请把上面的意见视为本轮“局部修订”约束：
+- 如果用户只批注了某一句、某一段或某一个点，优先只改对应位置及必要的上下文衔接。
+- 没有被批注、没有被整体修改说明点名的问题，尽量保持原草稿的结构、段落顺序、标题和表达。
+- 不要因为局部批注而重写整篇；只有当整体修改说明明确要求“整篇重写/整体改版”时，才允许大范围重组。
+- 输出仍需是一份完整可发布的采编计划，但未改动部分应尽量沿用原草稿。
+"""
     return f"""请基于给定来源生成“热点复刻与采编执行计划”。
 
 主题：{topic or "按给定新闻自动归纳"}
 目标形态：{target_format}
 语气：{tone}
+{feedback_block}
 
 输出结构：
 1. 选题判断：为什么值得做，适合哪个受众。

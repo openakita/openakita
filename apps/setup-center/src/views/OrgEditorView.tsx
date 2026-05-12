@@ -798,7 +798,7 @@ export function OrgEditorView({
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/orgs/templates`);
       const data = await res.json();
-      setTemplates(data);
+      setTemplates(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("Failed to fetch templates:", e);
     }
@@ -952,6 +952,13 @@ export function OrgEditorView({
         }
       } else if (ev === "org:task_complete") {
         triggerEdgeAnimation((d as any).node_id, (d as any).node_id, "#22c55e");
+      } else if (
+        ev === "org:command_done" ||
+        ev === "org:command_phase" ||
+        ev === "org:command_stopped_no_progress"
+      ) {
+        void fetchOrg(orgId);
+        bbPanelRef.current?.refresh();
       } else if (ev === "org:task_cancelled") {
         bbPanelRef.current?.refresh();
       } else if (ev === "org:quota_exhausted") {
@@ -964,7 +971,7 @@ export function OrgEditorView({
         bbPanelRef.current?.refresh();
       }
     });
-  }, [visible, currentOrgId, setNodes, triggerEdgeAnimation, showToast]);
+  }, [visible, currentOrgId, setNodes, triggerEdgeAnimation, showToast, fetchOrg]);
 
   // ── Start/Stop org ──
   const handleStartOrg = useCallback(async () => {
@@ -1241,7 +1248,7 @@ export function OrgEditorView({
       orgCreateBusyRef.current = false;
       setCreatingOrg(false);
     }
-  }, [apiBaseUrl, fetchOrgList, showToast]);
+  }, [apiBaseUrl, fetchOrgList, showToast, t]);
 
   const [confirmDeleteOrgId, setConfirmDeleteOrgId] = useState<string | null>(null);
 
@@ -1317,6 +1324,33 @@ export function OrgEditorView({
     setEdges((prev) => prev.filter((e) => e.source !== selectedNodeId && e.target !== selectedNodeId));
     setSelectedNodeId(null);
   }, [selectedNodeId, setNodes, setEdges]);
+
+  const toggleLayoutLock = useCallback(() => {
+    if (liveMode) {
+      showToast(t("org.editor.runningLocked"), "error");
+      return;
+    }
+    const nextLocked = !layoutLocked;
+    setLayoutLocked(nextLocked);
+    showToast(
+      nextLocked
+        ? t("org.editor.layoutLockedToast", "布局已锁定，节点位置不会被拖动修改")
+        : t("org.editor.layoutUnlockedToast", "布局已解锁，可以继续拖动节点"),
+    );
+  }, [layoutLocked, liveMode, showToast, t]);
+
+  const applyAutoLayout = useCallback(() => {
+    if (isCanvasLocked) {
+      showToast(
+        liveMode
+          ? t("org.editor.runningLocked")
+          : t("org.editor.layoutLockedAutoLayoutHint", "布局已锁定，请先解锁后再自动布局"),
+        "error",
+      );
+      return;
+    }
+    setNodes((prev) => computeTreeLayout(prev, edges));
+  }, [edges, isCanvasLocked, liveMode, setNodes, showToast, t]);
 
   // ── Edge connection ──
 
@@ -1758,6 +1792,9 @@ export function OrgEditorView({
               <div style={{ padding: "0 8px 8px" }}>
                 <div className="card" style={{ padding: 8, fontSize: 12 }}>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("org.editor.createFromTemplateLong")}</div>
+                  {templates.length === 0 && (
+                    <div style={{ color: "var(--muted)", padding: "6px 8px" }}>{t("org.editor.emptyOrgHint")}</div>
+                  )}
                   {templates.map((tpl) => (
                     <div key={tpl.id} onClick={() => handleCreateFromTemplate(tpl.id)}
                       style={{ padding: "6px 8px", borderRadius: "var(--radius-sm)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}
@@ -1910,6 +1947,9 @@ export function OrgEditorView({
           <div style={{ padding: "0 8px 8px" }}>
             <div className="card" style={{ padding: 8, fontSize: 12 }}>
               <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("org.editor.createFromTemplateLong")}</div>
+              {templates.length === 0 && (
+                <div style={{ color: "var(--muted)", padding: "6px 8px" }}>{t("org.editor.emptyOrgHint")}</div>
+              )}
               {templates.map((tpl) => (
                 <div
                   key={tpl.id}
@@ -2133,12 +2173,17 @@ export function OrgEditorView({
                   <button className="org-cvs-btn" onClick={() => setShowNewNodeForm(true)} title={t("org.editor.addNode")}>
                     <IconPlus size={13} /> {t("org.editor.addNode")}
                   </button>
-                  <button className="org-cvs-btn" title={t("org.editor.autoLayout")} onClick={() => { setNodes(computeTreeLayout(nodes, edges)); }}>
+                  <button
+                    className="org-cvs-btn"
+                    title={isCanvasLocked ? t("org.editor.layoutLockedAutoLayoutHint", "布局已锁定，请先解锁后再自动布局") : t("org.editor.autoLayout")}
+                    onClick={applyAutoLayout}
+                    disabled={isCanvasLocked}
+                  >
                     <IconSitemap size={13} /> {t("org.editor.autoLayout")}
                   </button>
                   <button
                     className={`org-cvs-btn${isCanvasLocked ? " org-cvs-btn--active" : ""}`}
-                    onClick={() => setLayoutLocked((v) => !v)}
+                    onClick={toggleLayoutLock}
                     disabled={liveMode}
                     title={liveMode ? t("org.editor.runningLocked") : layoutLocked ? t("org.editor.unlockDrag") : t("org.editor.lockLayout")}
                   >
@@ -2225,8 +2270,26 @@ export function OrgEditorView({
                       <span className="org-ctx-icon"><IconPin size={14} /></span>{t("org.editor.pasteNode")}
                     </button>
                   )}
-                  <button onClick={() => { setNodes(computeTreeLayout(nodes, edges)); setContextMenu(null); }}>
+                  <button
+                    onClick={() => {
+                      applyAutoLayout();
+                      setContextMenu(null);
+                    }}
+                    disabled={isCanvasLocked}
+                    title={isCanvasLocked ? t("org.editor.layoutLockedAutoLayoutHint", "布局已锁定，请先解锁后再自动布局") : t("org.editor.autoLayoutMenu")}
+                  >
                     <span className="org-ctx-icon"><IconShuffle size={14} /></span>{t("org.editor.autoLayoutMenu")}
+                  </button>
+                  <button
+                    onClick={() => {
+                      toggleLayoutLock();
+                      setContextMenu(null);
+                    }}
+                    disabled={liveMode}
+                    title={liveMode ? t("org.editor.runningLocked") : layoutLocked ? t("org.editor.unlockDrag") : t("org.editor.lockLayout")}
+                  >
+                    <span className="org-ctx-icon">{layoutLocked ? <IconUnlock size={14} /> : <IconPin size={14} />}</span>
+                    {layoutLocked ? t("org.editor.unlockDrag") : t("org.editor.lockLayout")}
                   </button>
                   <button
                     onClick={() => {
@@ -2522,6 +2585,11 @@ export function OrgEditorView({
               transition: background 0.15s;
             }
             .org-ctx-menu button:hover { background: var(--hover-bg, rgba(99,102,241,0.15)); }
+            .org-ctx-menu button:disabled {
+              opacity: 0.45;
+              cursor: not-allowed;
+            }
+            .org-ctx-menu button:disabled:hover { background: transparent; }
             .org-ctx-icon { width: 18px; text-align: center; flex-shrink: 0; font-size: 14px; }
 
             /* ── Top bar layout ── */
@@ -2682,6 +2750,11 @@ export function OrgEditorView({
               transition: background 0.15s;
             }
             .org-cvs-btn:hover { background: rgba(99,102,241,0.15); }
+            .org-cvs-btn:disabled {
+              opacity: 0.45;
+              cursor: not-allowed;
+            }
+            .org-cvs-btn:disabled:hover { background: transparent; }
             .org-cvs-btn--active { color: var(--primary, #6366f1); font-weight: 600; }
             .org-cvs-btn--danger { color: #ef4444; }
             .org-cvs-btn--danger:hover { background: rgba(239,68,68,0.15); }

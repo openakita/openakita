@@ -905,24 +905,34 @@ duration 参考:
             return []
 
     async def _call_brain(self, prompt: str, system: str = "", max_tokens: int | None = None):
-        """Call brain with think_lightweight fallback to think."""
+        """Call brain with think_lightweight fallback to think.
+
+        Memory extraction is an auxiliary background task that NEVER needs
+        chain-of-thought. Both paths must force enable_thinking=False to avoid
+        the 4k-7k thinking-token waste seen in dashscope/qwen3 dual-mode setups.
+        """
         kwargs: dict = {"system": system} if system else {}
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
         think_lw = getattr(self.brain, "think_lightweight", None)
         if think_lw and callable(think_lw):
             try:
+                # think_lightweight already enforces enable_thinking=False internally
                 return await think_lw(prompt, **kwargs)
             except Exception:
                 pass
-        return await self.brain.think(prompt, **kwargs)
+        return await self.brain.think(prompt, enable_thinking=False, **kwargs)
 
     async def _call_brain_main(self, prompt: str, system: str = "", max_tokens: int | None = None):
-        """Always use main model — for critical tasks like memory extraction."""
+        """Always use main model — for critical tasks like memory extraction.
+
+        Even when forced onto the main endpoint we keep thinking off:
+        extraction outputs are short JSON, thinking would waste budget.
+        """
         kwargs: dict = {"system": system} if system else {}
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
-        return await self.brain.think(prompt, **kwargs)
+        return await self.brain.think(prompt, enable_thinking=False, **kwargs)
 
     def extract_from_turn(self, turn: ConversationTurn) -> list[Memory]:
         """同步规则提取 (向后兼容)"""
@@ -1067,7 +1077,17 @@ duration 参考:
                 except (ValueError, TypeError):
                     importance = 0.5
 
-                if importance >= 0.85 or mem_type == MemoryType.RULE:
+                # 仅 PERSONA_TRAIT / PREFERENCE / RULE 三类身份层信息
+                # 在高置信度且不像任务流水账时才允许进入 PERMANENT。
+                # 其它类型（FACT / SKILL / ERROR / CONTEXT / EXPERIENCE）
+                # 即便 importance=1.0 也只升到 LONG_TERM，避免任务记录污染
+                # USER.md / MEMORY.md（参见 memory.manager P1-7 修复）。
+                _persona_types = {
+                    MemoryType.PERSONA_TRAIT,
+                    MemoryType.PREFERENCE,
+                    MemoryType.RULE,
+                }
+                if importance >= 0.9 and mem_type in _persona_types:
                     priority = MemoryPriority.PERMANENT
                 elif importance >= 0.6:
                     priority = MemoryPriority.LONG_TERM

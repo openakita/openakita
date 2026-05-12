@@ -83,6 +83,16 @@ async def test_direct_identity_question_uses_fast_query_without_tools():
     assert result.evidence_required is False
 
 
+async def test_desktop_screenshot_request_promotes_desktop_tools_without_llm():
+    result = await IntentAnalyzer(_FailingCompilerBrain()).analyze("帮我把桌面截图发我")
+
+    assert result.intent == IntentType.TASK
+    assert result.force_tool is True
+    assert result.requires_tools is True
+    assert result.tool_hints == ["Desktop"]
+    assert result.requires_project_context is False
+
+
 async def test_one_sentence_explanation_skips_tools_without_blocking_model_answer():
     result = await IntentAnalyzer(_FailingCompilerBrain()).analyze("一句话解释 Docker")
 
@@ -442,7 +452,14 @@ suggest_plan: false
     assert result.force_tool is True
 
 
-def test_tool_required_query_keeps_force_tool_guard():
+def test_tool_required_query_does_not_force_tool_alone():
+    """P0-2 阶段 2：单独的 requires_tools 不再触发 ForceToolCall + evidence_required。
+
+    旧语义把 requires_tools/force_tool/evidence_required 全部 OR 起来，
+    导致简单 QUERY 也被打成"必须工具证据"，触发硬性重试 + disclaimer，
+    被复盘判定为 P0-2 根因之一。新语义：requires_tools 仅是"任务期望调工具"，
+    不强制；force_tool 才驱动 retries=2；evidence_required 才驱动 retries=1+硬证据。
+    """
     result = IntentResult(
         intent=IntentType.QUERY,
         task_type="analysis",
@@ -452,8 +469,10 @@ def test_tool_required_query_keeps_force_tool_guard():
 
     force_retries, evidence_required = _resolve_force_tool_policy(result)
 
-    assert force_retries == 1
-    assert evidence_required is True
+    assert force_retries == 0, "requires_tools 单独不应强制重试"
+    assert evidence_required is False, (
+        "requires_tools 单独不应升级为 evidence_required，否则 P0-2 回归。"
+    )
 
 
 def test_external_evidence_overrides_llm_false_without_changing_user_flow_to_hard_policy():
@@ -538,3 +557,72 @@ def test_sub_agent_external_delegation_still_requires_tools():
     message = "请读取 /tmp/report.md，并根据文件内容总结关键结论。"
 
     assert _looks_like_external_tool_request(message) is True
+
+
+# ---------------------------------------------------------------------------
+# Regression: 5/8 keyword-only delegation guard missed common Chinese
+# "produce-a-deliverable" verbs. Coordinator nodes (editor-in-chief, CEO,
+# tech-lead) ended up self-executing tasks like "做一份 X 计划" instead of
+# delegating because none of "做一份 / 出一份 / 整理 / 宣传 / 调研" matched.
+# These cases lock in the expanded marker list.
+# ---------------------------------------------------------------------------
+
+
+def test_make_a_plan_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("帮我做一份 OpenAkita 的宣传计划") is True
+
+
+def test_compile_a_report_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("整理一份本周项目进展汇总") is True
+
+
+def test_research_competitor_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("调研一下竞品的定价策略") is True
+
+
+def test_publish_announcement_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("写一份本月的产品发布通告") is True
+
+
+def test_english_produce_request_is_treated_as_external_tool_task():
+    assert _looks_like_external_tool_request("Please produce a marketing plan") is True
+
+
+def test_explicit_no_tool_keeps_pure_writing_path():
+    """Even with deliverable-style verbs, an explicit "no tools" rider should
+    still route the request to text-only sub-agent flow (preserves the
+    "扮演 X 写一段 200 字" use case introduced in 5/8)."""
+    message = (
+        "请扮演记者写一份 200 字的产品介绍。直接用纯文本回复，不要调用任何工具。"
+    )
+
+    assert _looks_like_external_tool_request(message) is False
+
+
+def test_org_coordinator_resolves_force_tool_policy_even_for_writing_request():
+    """Even when the message looks like pure writing ("做一份 X 宣传计划"),
+    if the agent is an org coordinator (has subordinates), the sub-agent
+    branch in ``Agent._prepare_session_context`` flips ``requires_tools`` and
+    ``evidence_required`` to True. This locks in that the resulting
+    IntentResult drives ForceToolCall, so the coordinator cannot silently
+    give a final-answer text without delegating.
+
+    P0-2 阶段 2 后语义：
+    - force_tool=True   → (2, False)：允许 2 次 ForceToolCall 重试，不要求硬证据
+    - 单独 evidence_required → (1, True)：1 次柔性提示 + 走阶段 0 disclaimer
+    - 二者同设时，force_tool 优先（更宽松，避免重复重试）
+    """
+    coord_intent = IntentResult(
+        intent=IntentType.TASK,
+        task_type="action",
+        requires_tools=True,
+        evidence_required=True,
+        force_tool=True,
+    )
+
+    force_retries, evidence_required = _resolve_force_tool_policy(coord_intent)
+
+    assert force_retries == 2, "force_tool=True 应使用 2 次重试预算"
+    assert evidence_required is False, (
+        "force_tool 路径不再硬绑定 evidence_required，避免阶段 0 disclaimer 重复触发。"
+    )

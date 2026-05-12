@@ -6,6 +6,7 @@
 """
 
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -869,6 +870,17 @@ class SkillLoader:
             cmd = [str(script_path)] + args
 
         try:
+            run_env = dict(env) if env is not None else os.environ.copy()
+            skill_dir_str = str(skill.skill_dir.resolve())
+            existing_pythonpath = run_env.get("PYTHONPATH", "")
+            pythonpath_parts = [p for p in existing_pythonpath.split(os.pathsep) if p]
+            if skill_dir_str not in pythonpath_parts:
+                run_env["PYTHONPATH"] = (
+                    skill_dir_str
+                    if not pythonpath_parts
+                    else skill_dir_str + os.pathsep + existing_pythonpath
+                )
+
             extra: dict = {}
             if sys.platform == "win32":
                 extra["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -880,7 +892,7 @@ class SkillLoader:
                 cwd=cwd or skill.skill_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=env,
+                env=run_env,
                 **extra,
             )
             try:

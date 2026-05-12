@@ -27,6 +27,16 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
+_MODEL_LIST_ACCEPT_ENCODING = "gzip, deflate"
+
+
+def _model_list_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Avoid zstd responses in model-list probes; some bundles ship broken zstandard."""
+    return {
+        **headers,
+        "Accept-Encoding": _MODEL_LIST_ACCEPT_ENCODING,
+    }
+
 
 def _json_print(obj: Any) -> None:
     sys.stdout.write(json.dumps(obj, ensure_ascii=False))
@@ -259,7 +269,10 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
 
     async with httpx.AsyncClient(**client_kw) as client:
         try:
-            resp = await client.get(url, headers={"Authorization": auth_header})
+            resp = await client.get(
+                url,
+                headers=_model_list_headers({"Authorization": auth_header}),
+            )
             resp.raise_for_status()
             ct = (resp.headers.get("content-type") or "").lower()
             if "json" not in ct:
@@ -458,12 +471,14 @@ async def _list_models_anthropic(
         try:
             resp = await client.get(
                 url,
-                headers={
-                    "x-api-key": api_key,
-                    # 部分 Anthropic 兼容网关仅识别 Bearer。
-                    "Authorization": f"Bearer {api_key}",
-                    "anthropic-version": "2023-06-01",
-                },
+                headers=_model_list_headers(
+                    {
+                        "x-api-key": api_key,
+                        # 部分 Anthropic 兼容网关仅识别 Bearer。
+                        "Authorization": f"Bearer {api_key}",
+                        "anthropic-version": "2023-06-01",
+                    }
+                ),
             )
             resp.raise_for_status()
             data = resp.json()

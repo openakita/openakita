@@ -697,7 +697,8 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const handleExport = async (pluginId: string) => {
     try {
       const url = `${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/export`;
-      await downloadFile(url, `${pluginId}.zip`);
+      const savedPath = await downloadFile(url, `${pluginId}.zip`);
+      await showInFolder(savedPath);
     } catch (e: any) {
       setError(e.message);
     }

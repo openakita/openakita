@@ -37,6 +37,8 @@ class SearchBackend(Protocol):
         filter_type: str | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[tuple[str, float]]:
         """搜索, 返回 [(memory_id, score), ...], score 越高越相关"""
         ...
@@ -87,6 +89,8 @@ class FTS5Backend:
         filter_type: str | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[tuple[str, float]]:
         segmented = self._segment(query)
         results = self._storage.search_fts(
@@ -94,6 +98,8 @@ class FTS5Backend:
             limit=limit * 2,
             scope=scope,
             scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
         )
 
         if filter_type:
@@ -161,6 +167,8 @@ class ChromaDBBackend:
         filter_type: str | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[tuple[str, float]]:
         results = self._vs.search(
             query=query,
@@ -240,6 +248,8 @@ class APIEmbeddingBackend:
         filter_type: str | None = None,
         scope: str | None = None,
         scope_owner: str | None = None,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[tuple[str, float]]:
         query_emb = self._get_embedding(query)
         if query_emb is None:
@@ -249,6 +259,8 @@ class APIEmbeddingBackend:
             memory_type=filter_type,
             scope=scope,
             scope_owner=scope_owner,
+            user_id=user_id,
+            workspace_id=workspace_id,
             limit=200,
         )
         if not memories:

@@ -544,9 +544,29 @@ class TaskScheduler:
                 execution.finish(True, result="No executor configured")
 
             if execution.status == "success":
+                # Fix: 使用"实际预定时间"而非 datetime.now() 作为基准。
+                # 由于调度循环的 advance_seconds=20 让任务比预定时间提前 ~20s 触发，
+                # 任务在「真正预定时刻」之前完成时，若直接用 now 调
+                # trigger.get_next_run_time(now)，CronTrigger 内部会
+                # `start = now + 1 分钟 → replace(s/ms=0)`，对于 cron `0 9 * * *`
+                # 这种整点表达式，得到的"下一次"仍然落在今天 09:00 这个槽位，
+                # 于是 _scheduler_loop 下一轮立刻再触发 → 同一任务连跑两次。
+                # 把基线推到 `now + advance_seconds + 5s` 之外，可保证 cron 必须
+                # 跳到下一个真正的匹配槽位。等价于失败/取消路径用的 _advance_next_run。
                 trigger = self._triggers.get(task.id)
-                next_run = trigger.get_next_run_time(datetime.now()) if trigger else None
+                if trigger:
+                    min_next = datetime.now() + timedelta(seconds=self.advance_seconds + 5)
+                    next_run = trigger.get_next_run_time(min_next)
+                else:
+                    next_run = None
                 task.mark_completed(next_run)
+                # 成功跑完一次后，重置 metadata 里历史累计的 missed_count，
+                # 否则前端会一直显示 "missed=27/29/36" 这种早期版本遗留的体感数字，
+                # 让用户误以为系统在不停漏跑。保留 missed_count_cleared_at 时间戳，
+                # 便于排查历史 missed 行为。
+                if isinstance(task.metadata, dict) and task.metadata.get("missed_count"):
+                    task.metadata["missed_count"] = 0
+                    task.metadata["missed_count_cleared_at"] = datetime.now().isoformat()
                 logger.info(f"Task {task.id} completed successfully")
             else:
                 self._handle_task_failure(task, execution.error or "Unknown error")

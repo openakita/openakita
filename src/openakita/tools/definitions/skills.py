@@ -82,7 +82,7 @@ SKILLS_TOOLS = [
     {
         "name": "run_skill_script",
         "category": "Skills",
-        "description": "Execute a skill's pre-built script file. IMPORTANT: Many skills (xlsx, docx, pptx, pdf, etc.) are instruction-only — they have NO scripts. For those skills, use get_skill_info to read instructions, then write code and execute it with the platform command tool (run_powershell on Windows, run_shell when bash/POSIX semantics are required).",
+        "description": "Execute a skill's pre-built script file. IMPORTANT: reusable tools must live inside the skill directory (skills/<skill-id>/SKILL.md plus scripts or modules in the same directory). Do not treat Python files in the workspace root as installed skill tools.",
         "detail": """运行技能的**预置脚本**。
 
 **⚠️ 重要提醒**：
@@ -101,6 +101,12 @@ SKILLS_TOOLS = [
 1. 先用 get_skill_info 了解可用脚本列表
 2. 仅当技能有可执行脚本时使用本工具
 3. 如果失败提示"no executable scripts"，改用平台命令工具执行代码
+
+**创建可复用工具时的目录规则**：
+- 新工具必须创建为技能目录：`skills/<skill-id>/SKILL.md`
+- 可执行入口放在技能根目录或 `skills/<skill-id>/scripts/` 下
+- 入口脚本导入的 Python 模块必须放在同一个技能目录内
+- 不要把工作区根目录的 `*.py` 当成已安装技能；根目录脚本只能作为临时测试文件
 
 **配置缺失处理**：
 如果脚本因缺少配置（API Key/凭据/路径等）而失败，应主动帮用户完成配置（引导获取、写入配置文件），而不是告诉用户"缺少XX无法使用"。
@@ -182,7 +188,7 @@ SKILLS_TOOLS = [
     {
         "name": "load_skill",
         "category": "Skills",
-        "description": "Load a newly created skill from skills/ directory. Use after creating a skill with skill-creator to make it immediately available.",
+        "description": "Load a newly created skill from skills/ directory. A valid reusable tool must be a directory containing SKILL.md plus any scripts/modules it needs; do not load loose files from the workspace root.",
         "detail": """加载新创建的技能到系统中。
 
 **适用场景**：
@@ -193,10 +199,11 @@ SKILLS_TOOLS = [
 **使用流程**：
 1. 使用 skill-creator 创建 SKILL.md
 2. 保存到 skills/<skill-name>/SKILL.md
-3. 调用 load_skill 加载
-4. 技能立即可用
+3. 将脚本和被导入模块放在同一技能目录内，例如 skills/<skill-name>/scripts/main.py 和 skills/<skill-name>/helper.py
+4. 调用 load_skill 加载
+5. 技能立即可用
 
-**注意**：技能目录必须包含有效的 SKILL.md 文件""",
+**注意**：技能目录必须包含有效的 SKILL.md 文件。不要只在工作区根目录创建 `<name>.py` 后声称技能已安装。""",
         "input_schema": {
             "type": "object",
             "properties": {

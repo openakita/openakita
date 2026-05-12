@@ -7,6 +7,7 @@ import { Check, CornerUpLeft, Pencil, Play, RefreshCw, Trash2, X } from "lucide-
 import { useTranslation } from "react-i18next";
 
 import { safeFetch } from "../providers";
+import { onWsEvent } from "../platform";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
 import { OrgAvatar } from "./OrgAvatars";
 import {
@@ -125,6 +126,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   const projectStripRef = useRef<HTMLDivElement | null>(null);
   const projectTrackRef = useRef<HTMLDivElement | null>(null);
   const projectAddRef = useRef<HTMLDivElement | null>(null);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
@@ -174,6 +176,43 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   }, [orgId, apiBaseUrl, selectedProjectId]);
 
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
+
+  useEffect(() => {
+    const scheduleRefresh = () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        fetchProjects();
+        if (selectedTask?.id) fetchTaskDetail(selectedTask.id);
+      }, 250);
+    };
+
+    const refreshEvents = new Set([
+      "org:task_delegated",
+      "org:task_delivered",
+      "org:task_accepted",
+      "org:task_rejected",
+      "org:task_failed",
+      "org:task_complete",
+      "org:task_cancelled",
+      "org:command_done",
+      "org:command_phase",
+      "org:command_stopped_no_progress",
+    ]);
+
+    const unsubscribe = onWsEvent((event, raw) => {
+      const data = raw as Record<string, unknown> | null;
+      if (!data || data.org_id !== orgId || !refreshEvents.has(event)) return;
+      scheduleRefresh();
+    });
+    return () => {
+      unsubscribe();
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [orgId, fetchProjects, fetchTaskDetail, selectedTask?.id]);
 
   useEffect(() => {
     const rail = projectRailRef.current;

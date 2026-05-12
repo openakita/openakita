@@ -51,6 +51,30 @@ type Stats = {
   avg_score: number;
 };
 
+type MigrationStatus = {
+  current_owner: { user_id: string; workspace_id: string };
+  current_visible: number;
+  legacy_quarantine: number;
+  legacy_pending?: number;
+  legacy_reviewed?: number;
+  semantic: {
+    total: number;
+    by_scope: Record<string, number>;
+    by_owner: Array<{
+      scope: string;
+      scope_owner: string;
+      user_id: string;
+      workspace_id: string;
+      count: number;
+    }>;
+  };
+  graph: {
+    total_nodes: number;
+    by_owner: Array<{ user_id: string; workspace_id: string; count: number }>;
+  };
+  has_recoverable_legacy: boolean;
+};
+
 type ReviewResult = {
   deleted: number;
   updated: number;
@@ -184,6 +208,9 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
+  const [migrationStatus, setMigrationStatus] = useState<MigrationStatus | null>(null);
+  const [claimingLegacy, setClaimingLegacy] = useState(false);
+  const [graphRefreshKey, setGraphRefreshKey] = useState(0);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
@@ -226,10 +253,21 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
     } catch { /* ignore */ }
   }, [serviceRunning, API_BASE]);
 
+  const loadMigrationStatus = useCallback(async () => {
+    if (!serviceRunning) return;
+    try {
+      const res = await safeFetch(`${API_BASE}/api/memories/migration-status`);
+      setMigrationStatus(await res.json());
+    } catch {
+      setMigrationStatus(null);
+    }
+  }, [serviceRunning, API_BASE]);
+
   useEffect(() => {
     loadMemories();
     loadStats();
-  }, [loadMemories, loadStats]);
+    loadMigrationStatus();
+  }, [loadMemories, loadStats, loadMigrationStatus]);
 
   const doDelete = async (id: string) => {
     try {
@@ -266,6 +304,31 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
       toast.error(e.message);
     }
   }, [API_BASE, loadStats]);
+
+  const handleClaimLegacy = async () => {
+    setClaimingLegacy(true);
+    try {
+      const res = await safeFetch(`${API_BASE}/api/memories/claim-legacy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ include_inactive: true, include_default_graph_nodes: true }),
+      });
+      const data = await res.json();
+      toast.success(t("memory.legacyClaimSuccess", {
+        promoted: data.promoted ?? data.claimed ?? 0,
+        reviewed: data.reviewed ?? 0,
+        rejected: data.rejected ?? 0,
+        conflicts: data.conflict_skipped ?? 0,
+        graph: data.graph_nodes_updated ?? 0,
+      }));
+      await Promise.all([loadMemories(), loadStats(), loadMigrationStatus()]);
+      setGraphRefreshKey((v) => v + 1);
+    } catch (e: any) {
+      toast.error(e.message || t("memory.legacyClaimFailed"));
+    } finally {
+      setClaimingLegacy(false);
+    }
+  };
 
   const handleBatchDelete = () => {
     if (selected.size === 0) return;
@@ -421,6 +484,12 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
 
   const isGraph = viewMode === "graph";
   const graphPanelHeight = isMobile ? "max(560px, calc(100vh - 22rem))" : "max(620px, calc(100vh - 18rem))";
+  const currentOwner = migrationStatus?.current_owner;
+  const defaultGraphNodes = migrationStatus?.graph.by_owner.find(
+    (o) => o.user_id === "default" && o.workspace_id === "default"
+  )?.count ?? 0;
+  const pendingLegacy = migrationStatus?.legacy_pending ?? migrationStatus?.legacy_quarantine ?? 0;
+  const showLegacyRecovery = !!migrationStatus && migrationStatus.has_recoverable_legacy && pendingLegacy > 0;
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -449,6 +518,35 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Toolbar */}
+      {showLegacyRecovery && (
+        <Card className="gap-0 border-amber-500/30 bg-amber-500/10 py-0 shadow-sm shrink-0">
+          <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                {t("memory.legacyRecoveryTitle")}
+              </div>
+              <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {t("memory.legacyRecoveryDesc", {
+                  legacy: pendingLegacy,
+                  graph: defaultGraphNodes,
+                  user: currentOwner?.user_id || "default",
+                  workspace: currentOwner?.workspace_id || "default",
+                })}
+              </div>
+            </div>
+            <Button
+              onClick={handleClaimLegacy}
+              disabled={claimingLegacy}
+              className="h-9 shrink-0 bg-amber-500 text-white hover:bg-amber-600"
+            >
+              {claimingLegacy ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : null}
+              {t("memory.legacyClaimAction")}
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -654,7 +752,7 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
             </div>
           }>
             <CardContent className="p-0" style={{ height: graphPanelHeight }}>
-              <MemoryGraph3D apiBaseUrl={API_BASE} searchQuery={searchQuery} />
+              <MemoryGraph3D apiBaseUrl={API_BASE} searchQuery={searchQuery} refreshKey={graphRefreshKey} />
             </CardContent>
           </Suspense>
         </Card>

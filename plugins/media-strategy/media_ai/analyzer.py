@@ -14,6 +14,7 @@ from media_ai.prompts import (
     EDITORIAL_SYSTEM_ZH,
     brief_prompt,
     replicate_prompt,
+    topic_analysis_prompt,
     verify_prompt,
 )
 
@@ -26,6 +27,21 @@ def _brain_content(response: Any) -> str:
     content = getattr(response, "content", None)
     if content is None and isinstance(response, dict):
         content = response.get("content")
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+                continue
+            if isinstance(block, dict):
+                text = block.get("text") or block.get("content")
+                if text:
+                    parts.append(str(text))
+                continue
+            text = getattr(block, "text", None)
+            if text:
+                parts.append(str(text))
+        return "\n".join(part for part in parts if part).strip()
     return str(content or "")
 
 
@@ -54,6 +70,109 @@ def _keyword_score(text: str, package_ids: list[str]) -> float:
         if word in text:
             score += 0.3
     return min(score, 3.0)
+
+
+# Common Chinese newsroom prefixes that should not split otherwise identical
+# topics across sources. Strip them before computing the clustering signature.
+_TITLE_PREFIX_RE = re.compile(
+    r"^\s*[【\[（(]?\s*"
+    r"(?:突发|最新|快讯|独家|首发|实时|直播|更新|快报|视频|图集|多图|组图|专访|分析|评论|社论)"
+    r"\s*[】\]）)]?\s*[:：丨\|·\-—,，]?\s*"
+)
+_RISK_RANK: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
+_RANK_TO_RISK: dict[int, str] = {0: "low", 1: "medium", 2: "high"}
+
+
+def topic_signature(title: str, *, length: int = 24) -> str:
+    """Compute a normalized clustering key for cross-source topic grouping.
+
+    Different outlets often phrase the same event with slightly different
+    titles ("国台办：xxx" vs "国台办回应xxx vs 突发：国台办xxx"). The signature
+    strips common newsroom prefixes and keeps the first ``length`` alnum
+    characters so equivalent topics from different sources collapse into a
+    single cluster.
+    """
+
+    if not title:
+        return ""
+    cleaned = _TITLE_PREFIX_RE.sub("", title.strip()).strip()
+    cleaned = "".join(ch.lower() for ch in cleaned if ch.isalnum())
+    return cleaned[:length]
+
+
+def cluster_topics(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group articles by topic signature and rank by coverage + authority.
+
+    Selection logic (实现图2「选题推荐逻辑优化」):
+    1. 同一选题被多个来源同时报道 → 视为重要，权重越高
+    2. 单条最高 hot_score 仍是排序基底（已含权威权重 + 时新度）
+    3. 覆盖度对数加权，避免热搜聚合源把单一事件刷爆排名
+    """
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        sig = topic_signature(str(item.get("title") or ""))
+        if not sig:
+            sig = f"_id_{item.get('id') or id(item)}"
+        groups.setdefault(sig, []).append(item)
+
+    out: list[dict[str, Any]] = []
+    for sig, members in groups.items():
+        sources_seen: list[str] = []
+        for m in members:
+            sid = str(m.get("source_id") or "")
+            if sid and sid not in sources_seen:
+                sources_seen.append(sid)
+
+        leader = max(members, key=lambda x: float(x.get("hot_score") or 0))
+        max_hot = float(leader.get("hot_score") or 0)
+        sum_hot = sum(float(m.get("hot_score") or 0) for m in members)
+        avg_hot = sum_hot / max(1, len(members))
+
+        risk_max = 0
+        latest_at = ""
+        article_ids: list[str] = []
+        for m in members:
+            risk_max = max(risk_max, _RISK_RANK.get(str(m.get("risk_level") or "medium"), 1))
+            published = str(m.get("published_at") or m.get("fetched_at") or "")
+            if published > latest_at:
+                latest_at = published
+            aid = str(m.get("id") or "")
+            if aid:
+                article_ids.append(aid)
+
+        coverage = max(1, len(sources_seen))
+        # 覆盖加权采用对数：1->2 家 +1.6 分；3 家 +3.2；5 家 +4.6；10 家 +5.7。
+        coverage_bonus = 1.6 * math.log2(coverage + 1)
+        weighted = round(max_hot + coverage_bonus + 0.4 * avg_hot, 2)
+
+        out.append(
+            {
+                "signature": sig,
+                "title": str(leader.get("title") or ""),
+                "url": str(leader.get("url") or ""),
+                "lead_source_id": str(leader.get("source_id") or ""),
+                "source_ids": sources_seen,
+                "sources_count": coverage,
+                "hot_score_max": round(max_hot, 2),
+                "hot_score_avg": round(avg_hot, 2),
+                "weighted_score": weighted,
+                "coverage_bonus": round(coverage_bonus, 2),
+                "article_ids": article_ids,
+                "article_count": len(members),
+                "risk_level": _RANK_TO_RISK[risk_max],
+                "published_at": latest_at or None,
+            }
+        )
+
+    out.sort(
+        key=lambda x: (
+            -float(x["weighted_score"]),
+            -int(x["sources_count"]),
+            -float(x["hot_score_max"]),
+        )
+    )
+    return out
 
 
 def score_article(item: dict[str, Any], source: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -104,8 +223,31 @@ async def call_brain(
 ) -> str:
     if brain is None:
         raise RuntimeError("brain.access not granted")
+
+    # OpenAkita's host Brain exposes think()/messages_create_async(); older
+    # plugin-facing adapters may expose chat(). Try host-native APIs first so
+    # reports use the configured main model instead of silently falling back.
+    if hasattr(brain, "think"):
+        response = await brain.think(
+            prompt,
+            system=EDITORIAL_SYSTEM_ZH,
+            max_tokens=max_tokens,
+            enable_thinking=False,
+        )
+        return _brain_content(response).strip()
+
+    messages = [{"role": "user", "content": prompt}]
+    if hasattr(brain, "messages_create_async"):
+        response = await brain.messages_create_async(
+            messages=messages,
+            system=EDITORIAL_SYSTEM_ZH,
+            max_tokens=max_tokens,
+            use_thinking=False,
+        )
+        return _brain_content(response).strip()
+
     response = await brain.chat(
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
         system=EDITORIAL_SYSTEM_ZH,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -143,6 +285,24 @@ async def build_verify_pack(
         return fallback_brief(items, title=f"{topic or '热点'}信源复核"), "fallback"
 
 
+async def build_topic_analysis(
+    brain: Any,
+    topics: list[dict[str, Any]],
+    *,
+    temperature: float = 0.2,
+) -> tuple[str, str]:
+    try:
+        md = await call_brain(
+            brain,
+            topic_analysis_prompt(topics),
+            max_tokens=2800,
+            temperature=temperature,
+        )
+        return md or _fallback_topic_analysis(topics), "brain"
+    except Exception:
+        return _fallback_topic_analysis(topics), "fallback"
+
+
 async def build_replicate_plan(
     brain: Any,
     items: list[dict[str, Any]],
@@ -150,12 +310,23 @@ async def build_replicate_plan(
     topic: str,
     target_format: str,
     tone: str,
+    revision_instructions: str = "",
+    annotations: str = "",
+    current_draft: str = "",
     temperature: float = 0.2,
 ) -> tuple[str, str]:
     try:
         md = await call_brain(
             brain,
-            replicate_prompt(items, topic=topic, target_format=target_format, tone=tone),
+            replicate_prompt(
+                items,
+                topic=topic,
+                target_format=target_format,
+                tone=tone,
+                revision_instructions=revision_instructions,
+                annotations=annotations,
+                current_draft=current_draft,
+            ),
             max_tokens=2600,
             temperature=temperature,
         )
@@ -198,34 +369,164 @@ def _fallback_plan(items: list[dict[str, Any]], *, topic: str, target_format: st
     return "\n".join(lines)
 
 
-def markdown_to_html(md: str) -> str:
-    """Tiny markdown renderer for plugin reports."""
+def _fallback_topic_analysis(topics: list[dict[str, Any]]) -> str:
+    lines = [
+        "# AI 选题分析报告",
+        "",
+        "以下为规则整理结果；主程序大模型不可用时不会生成深度判断。",
+        "",
+    ]
+    for idx, topic in enumerate(topics, start=1):
+        lines.extend(
+            [
+                f"## {idx}. {topic.get('title') or '未命名热点'}",
+                f"- 原文：{topic.get('url') or '无'}",
+                f"- 覆盖源：{', '.join(topic.get('source_ids') or []) or '未知'}",
+                f"- 加权分：{topic.get('weighted_score', 0)}",
+                f"- 风险等级：{topic.get('risk_level', 'medium')}",
+                "- 复核提示：请打开原文链接确认来源、时间和转引链。",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
 
-    html_lines = []
-    for raw in md.splitlines():
+
+def markdown_to_html(md: str) -> str:
+    """Small markdown renderer for saved plugin reports.
+
+    The reports are generated by an LLM, so we accept the common subset it emits:
+    headings, bold labels, links, tables, ordered/unordered lists and quotes.
+    """
+
+    lines = md.replace("\r\n", "\n").split("\n")
+    out: list[str] = []
+    list_kind: str | None = None
+    table_lines: list[str] = []
+    quote_lines: list[str] = []
+
+    def flush_list() -> None:
+        nonlocal list_kind
+        if list_kind:
+            out.append(f"</{list_kind}>")
+            list_kind = None
+
+    def flush_table() -> None:
+        nonlocal table_lines
+        if table_lines:
+            out.append(_render_table(table_lines))
+            table_lines = []
+
+    def flush_quote() -> None:
+        nonlocal quote_lines
+        if quote_lines:
+            out.append(f"<blockquote>{'<br>'.join(_inline(line) for line in quote_lines)}</blockquote>")
+            quote_lines = []
+
+    def flush_blocks() -> None:
+        flush_table()
+        flush_quote()
+        flush_list()
+
+    for raw in lines:
         line = raw.strip()
         if not line:
-            html_lines.append("")
-        elif line.startswith("# "):
-            html_lines.append(f"<h1>{_esc(line[2:])}</h1>")
-        elif line.startswith("## "):
-            html_lines.append(f"<h2>{_esc(line[3:])}</h2>")
-        elif line.startswith("- "):
-            html_lines.append(f"<li>{_linkify(_esc(line[2:]))}</li>")
-        elif re.match(r"^\d+\. ", line):
-            html_lines.append(f"<p>{_linkify(_esc(line))}</p>")
-        else:
-            html_lines.append(f"<p>{_linkify(_esc(line))}</p>")
-    return "\n".join(html_lines)
+            flush_blocks()
+            continue
+        if re.fullmatch(r"[-*_]{3,}", line):
+            flush_blocks()
+            out.append("<hr>")
+            continue
+        if _is_table_line(line):
+            flush_quote()
+            flush_list()
+            table_lines.append(line)
+            continue
+        flush_table()
+        heading = re.match(r"^(#{1,4})\s+(.+)$", line)
+        if heading:
+            flush_quote()
+            flush_list()
+            level = len(heading.group(1))
+            out.append(f"<h{level}>{_inline(heading.group(2))}</h{level}>")
+            continue
+        if line.startswith(">"):
+            flush_list()
+            quote_lines.append(line.lstrip(">").strip())
+            continue
+        flush_quote()
+        unordered = re.match(r"^[-*]\s+(.+)$", line)
+        ordered = re.match(r"^\d+[.)]\s+(.+)$", line)
+        if unordered or ordered:
+            kind = "ul" if unordered else "ol"
+            if list_kind != kind:
+                flush_list()
+                out.append(f"<{kind}>")
+                list_kind = kind
+            item = (unordered or ordered).group(1)
+            out.append(f"<li>{_inline(item)}</li>")
+            continue
+        flush_list()
+        out.append(f"<p>{_inline(line)}</p>")
+    flush_blocks()
+    return "\n".join(out)
 
 
 def _esc(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _linkify(value: str) -> str:
-    return re.sub(
+def _inline(value: str) -> str:
+    escaped = _esc(value)
+    escaped = re.sub(
+        r"`([^`]+)`",
+        r"<code>\1</code>",
+        escaped,
+    )
+    escaped = re.sub(
         r"\[([^\]]+)\]\((https?://[^)]+)\)",
         r'<a href="\2" target="_blank" rel="noreferrer">\1</a>',
-        value,
+        escaped,
     )
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", escaped)
+    return escaped
+
+
+def _is_table_line(line: str) -> bool:
+    if "|" not in line:
+        return False
+    if re.fullmatch(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?", line):
+        return True
+    return bool(re.match(r"^\|?.+\|.+\|?$", line))
+
+
+def _split_table_row(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_table_separator(line: str) -> bool:
+    cells = _split_table_row(line)
+    return bool(cells) and all(_is_table_separator_cell(cell) for cell in cells)
+
+
+def _is_table_separator_cell(cell: str) -> bool:
+    normalized = re.sub(r"\s+", "", cell.strip().replace("\\-", "-").replace("—", "-").replace("–", "-"))
+    return bool(re.fullmatch(r":?-+:?", normalized))
+
+
+def _render_table(lines: list[str]) -> str:
+    rows = []
+    for line in lines:
+        cells = _split_table_row(line)
+        if _is_table_separator(line) or (cells and all(_is_table_separator_cell(cell) for cell in cells)):
+            continue
+        rows.append(cells)
+    if not rows:
+        return ""
+    header, *body = rows
+    head_html = "".join(f"<th>{_inline(cell)}</th>" for cell in header)
+    body_html = "".join(
+        "<tr>" + "".join(f"<td>{_inline(cell)}</td>" for cell in row) + "</tr>"
+        for row in body
+    )
+    return f"<table><thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>"

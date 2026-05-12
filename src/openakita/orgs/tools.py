@@ -12,7 +12,11 @@ ORG_NODE_TOOLS: list[dict] = [
     {
         "name": "org_send_message",
         "description": (
-            "向指定同事发送消息。优先通过已有连线关系沟通。"
+            "向指定同事发送消息（提问、回答、反馈、握手——非派活）。\n"
+            "⚠️ 重要：本工具不是用来派任务的。如果你想让某节点完成一项工作并"
+            "返回交付物，**必须**使用 org_delegate_task；否则下属会按聊天处理，"
+            "不会建立 chain，也不会触发 deliverable，导致你后续 wait/accept 全部失效。\n"
+            "适合的使用场景：向同事提问、回答同事问题、抄送进展、握手确认。\n"
             "若你正在推进一条任务链且 org_delegate_task 因故不可用（例如返回了"
             "'不能委派给自己'之类的误判），可以将 propagate_chain 设为 true 并"
             "可选传 task_chain_id 把当前任务链 id 接力给接收方，接收方在交付时"

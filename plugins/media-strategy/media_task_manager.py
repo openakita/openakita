@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Any
 
 import aiosqlite
-from media_models import DEFAULT_SETTINGS, PACKAGE_DEFS, SOURCE_DEFS
+from media_models import (
+    DEFAULT_SETTINGS,
+    DEPRECATED_SOURCE_IDS,
+    PACKAGE_DEFS,
+    RESTORED_SOURCE_IDS,
+    SOURCE_DEFS,
+)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS config (
@@ -24,6 +30,7 @@ CREATE TABLE IF NOT EXISTS sources (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL DEFAULT 'rss',
     package_ids_json TEXT NOT NULL DEFAULT '[]',
+    selectors_json TEXT NOT NULL DEFAULT '{}',
     label_zh TEXT NOT NULL,
     label_en TEXT NOT NULL DEFAULT '',
     url TEXT NOT NULL,
@@ -167,6 +174,7 @@ def _row_to_dict(row: aiosqlite.Row | None) -> dict[str, Any] | None:
         "params_json",
         "result_json",
         "package_ids_json",
+        "selectors_json",
         "tags_json",
         "raw_json",
         "meta_json",
@@ -229,9 +237,32 @@ class MediaTaskManager:
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.executescript(SCHEMA_SQL)
+        await self._migrate_sources_schema()
         await self._seed_defaults()
         await self.sync_builtin_sources()
+        await self._enable_restored_sources()
+        await self._disable_deprecated_sources()
         await self._db.commit()
+
+    async def _migrate_sources_schema(self) -> None:
+        """Backfill columns added in later releases for existing user dbs.
+
+        SQLite has no ``ADD COLUMN IF NOT EXISTS`` primitive; we inspect
+        ``PRAGMA table_info`` and additively migrate. This runs on every
+        startup but is idempotent — once the column exists we no-op.
+        """
+
+        db = self._require()
+        cursor = await db.execute("PRAGMA table_info(sources)")
+        try:
+            rows = await cursor.fetchall()
+        finally:
+            await cursor.close()
+        columns = {row[1] for row in rows}
+        if "selectors_json" not in columns:
+            await db.execute(
+                "ALTER TABLE sources ADD COLUMN selectors_json TEXT NOT NULL DEFAULT '{}'"
+            )
 
     async def close(self) -> None:
         if self._db is not None:
@@ -259,13 +290,15 @@ class MediaTaskManager:
             await db.execute(
                 """
                 INSERT OR IGNORE INTO sources(
-                    id, kind, package_ids_json, label_zh, label_en, url, enabled,
-                    authority, custom, created_at, updated_at
-                ) VALUES (?, 'rss', ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                    id, kind, package_ids_json, selectors_json, label_zh, label_en,
+                    url, enabled, authority, custom, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                 """,
                 (
                     source_id,
+                    str(meta.get("kind") or "rss"),
                     json.dumps(meta["packages"], ensure_ascii=False),
+                    json.dumps(meta.get("selectors") or {}, ensure_ascii=False),
                     meta["label_zh"],
                     meta["label_en"],
                     meta["url"],
@@ -321,17 +354,21 @@ class MediaTaskManager:
         now = time.time()
         for source_id, meta in SOURCE_DEFS.items():
             row = await _fetchone(db, "SELECT id, custom FROM sources WHERE id=?", (source_id,))
+            kind = str(meta.get("kind") or "rss")
+            selectors_json = json.dumps(meta.get("selectors") or {}, ensure_ascii=False)
             if row is None:
                 await db.execute(
                     """
                     INSERT INTO sources(
-                        id, kind, package_ids_json, label_zh, label_en, url, enabled,
-                        authority, custom, created_at, updated_at
-                    ) VALUES (?, 'rss', ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                        id, kind, package_ids_json, selectors_json, label_zh, label_en,
+                        url, enabled, authority, custom, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                     """,
                     (
                         source_id,
+                        kind,
                         json.dumps(meta["packages"], ensure_ascii=False),
+                        selectors_json,
                         meta["label_zh"],
                         meta["label_en"],
                         meta["url"],
@@ -346,11 +383,14 @@ class MediaTaskManager:
                 await db.execute(
                     """
                     UPDATE sources
-                    SET package_ids_json=?, label_zh=?, label_en=?, url=?, authority=?, updated_at=?
+                    SET kind=?, package_ids_json=?, selectors_json=?, label_zh=?,
+                        label_en=?, url=?, authority=?, updated_at=?
                     WHERE id=?
                     """,
                     (
+                        kind,
                         json.dumps(meta["packages"], ensure_ascii=False),
+                        selectors_json,
                         meta["label_zh"],
                         meta["label_en"],
                         meta["url"],
@@ -360,8 +400,31 @@ class MediaTaskManager:
                     ),
                 )
                 updated += 1
+        await self._enable_restored_sources()
+        await self._disable_deprecated_sources()
         await db.commit()
         return {"inserted": inserted, "updated": updated}
+
+    async def _enable_restored_sources(self) -> None:
+        restored = sorted(RESTORED_SOURCE_IDS - DEPRECATED_SOURCE_IDS)
+        if not restored:
+            return
+        db = self._require()
+        placeholders = ",".join("?" for _ in restored)
+        await db.execute(
+            f"UPDATE sources SET enabled=1, last_status=NULL, last_error=NULL, updated_at=? WHERE custom=0 AND id IN ({placeholders})",
+            (time.time(), *restored),
+        )
+
+    async def _disable_deprecated_sources(self) -> None:
+        if not DEPRECATED_SOURCE_IDS:
+            return
+        db = self._require()
+        placeholders = ",".join("?" for _ in DEPRECATED_SOURCE_IDS)
+        await db.execute(
+            f"UPDATE sources SET enabled=0, updated_at=? WHERE custom=0 AND id IN ({placeholders})",
+            (time.time(), *sorted(DEPRECATED_SOURCE_IDS)),
+        )
 
     async def get_settings(self) -> dict[str, Any]:
         db = self._require()
@@ -557,12 +620,21 @@ class MediaTaskManager:
         row = await _fetchone(db, "SELECT * FROM sources WHERE id=?", (source_id,))
         return _row_to_dict(row) or {}
 
-    async def list_sources(self, *, enabled_only: bool = False) -> list[dict[str, Any]]:
+    async def list_sources(
+        self, *, enabled_only: bool = False, include_deprecated: bool = False
+    ) -> list[dict[str, Any]]:
         db = self._require()
         sql = "SELECT * FROM sources"
         params: list[Any] = []
+        clauses: list[str] = []
         if enabled_only:
-            sql += " WHERE enabled=1"
+            clauses.append("enabled=1")
+        if not include_deprecated and DEPRECATED_SOURCE_IDS:
+            placeholders = ",".join("?" for _ in DEPRECATED_SOURCE_IDS)
+            clauses.append(f"(custom=1 OR id NOT IN ({placeholders}))")
+            params.extend(sorted(DEPRECATED_SOURCE_IDS))
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY custom ASC, enabled DESC, authority DESC, id ASC"
         rows = await db.execute_fetchall(sql, params)
         return [_row_to_dict(row) or {} for row in rows]
@@ -834,12 +906,12 @@ class MediaTaskManager:
             time.time() - max(1, since_hours) * 3600,
             tz=_dt.UTC,
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
-        sql = "SELECT * FROM articles WHERE fetched_at >= ?"
+        sql = "SELECT * FROM articles WHERE published_at IS NOT NULL AND published_at >= ?"
         params: list[Any] = [cutoff]
         if package_id:
             sql += " AND package_ids_json LIKE ?"
             params.append(f'%"{package_id}"%')
-        sql += " ORDER BY hot_score DESC, COALESCE(published_at, fetched_at) DESC LIMIT ?"
+        sql += " ORDER BY hot_score DESC, published_at DESC LIMIT ?"
         params.append(max(1, min(int(limit), 500)))
         rows = await db.execute_fetchall(sql, params)
         return [_row_to_dict(row) or {} for row in rows]

@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from openakita.orgs.manager import OrgManager
 from openakita.orgs.models import (
     NodeSchedule,
-    Organization,
-    OrgNode,
     OrgStatus,
     ScheduleType,
 )
-from .conftest import make_org, make_node, make_edge
+
+from .conftest import make_edge, make_node, make_org
 
 
 class TestOrgManagerCRUD:
@@ -167,6 +163,26 @@ class TestTemplates:
         assert created.name == "从模板创建"
         assert created.status == OrgStatus.DORMANT
         assert len(created.nodes) == 3
+
+    def test_create_from_template_applies_readable_initial_layout(self, org_manager: OrgManager):
+        nodes = [
+            make_node("root", "负责人", position={"x": 0, "y": 0}),
+            make_node("writer", "写手", position={"x": 0, "y": 0}),
+            make_node("designer", "设计", position={"x": 0, "y": 0}),
+        ]
+        edges = [
+            make_edge("root", "writer"),
+            make_edge("root", "designer"),
+        ]
+        org = org_manager.create(make_org(name="乱坐标模板源", nodes=nodes, edges=edges).to_dict())
+        org_manager.save_as_template(org.id, "messy-template")
+
+        created = org_manager.create_from_template("messy-template")
+        positions = {node.id: node.position for node in created.nodes}
+
+        assert positions["root"] == {"x": 140, "y": 0}
+        assert positions["writer"] == {"x": 0, "y": 180}
+        assert positions["designer"] == {"x": 280, "y": 180}
 
     def test_create_from_nonexistent_template(self, org_manager: OrgManager):
         with pytest.raises(FileNotFoundError):

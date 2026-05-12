@@ -170,7 +170,6 @@ class UserCommandTracker:
 
     def _touch(self) -> None:
         self.last_progress_at = time.monotonic()
-        self.warned_stuck = False
 
     def register_chain(self, chain_id: str) -> None:
         if not chain_id:
@@ -906,6 +905,7 @@ class OrgRuntime:
         content: str,
         *,
         chain_id: str | None = None,
+        command_id: str | None = None,
     ) -> dict:
         """Send a user command to an organization node."""
         org = self._active_orgs.get(org_id)
@@ -968,6 +968,7 @@ class OrgRuntime:
 
         tracker = UserCommandTracker(
             org_id, target.id,
+            command_id=command_id,
             user_command_content=content,
         )
         self._active_user_cmd[tracker_key] = tracker
@@ -1015,6 +1016,7 @@ class OrgRuntime:
 
         if tracker.auto_stopped:
             final_result["stopped_by_watchdog"] = True
+            final_result["status"] = "stopped_no_progress"
             if tracker.user_cancelled:
                 final_result["cancelled_by_user"] = True
                 # 覆盖 warning（即使被前置流程 setdefault 过也要换成"用户主动"文案）
@@ -1468,7 +1470,7 @@ class OrgRuntime:
             if org.id not in self._active_orgs:
                 return {"node_id": node.id, "result": result_text}
 
-            # 区分 task 真实退出原因：normal/ask_user -> 完成；
+            # 区分 task 真实退出原因：normal/ask_user/waiting_user -> 完成或中性收口；
             # loop_terminated -> 被 Supervisor 强制终止；
             # max_iterations -> 超过最大迭代；
             # verify_incomplete -> TaskVerify 判定未完成但重试耗尽
@@ -1505,14 +1507,18 @@ class OrgRuntime:
             #      只会污染 workspace。
             # 任何异常仅 warning，不影响主流程。
             persisted_attachment: dict | None = None
+            files_registered = self._node_files_registered_in_task.get(cache_key, 0)
             try:
-                expects_artifact = request_expects_artifact(prompt)
+                # files_registered>0 时把"方案/策划/计划/报告"等弱信号升级为强：
+                # 子节点已经写过文件，coordinator 必须走 deliver_artifacts 转发。
+                expects_artifact = request_expects_artifact(
+                    prompt, has_produced_files=files_registered > 0
+                )
             except Exception:
                 expects_artifact = False
             auto_persist_enabled = bool(
                 getattr(org, "auto_persist_final_answer", True)
             )
-            files_registered = self._node_files_registered_in_task.get(cache_key, 0)
             if (
                 auto_persist_enabled
                 and expects_artifact
@@ -1615,7 +1621,7 @@ class OrgRuntime:
                 )
                 is_soft_verify = False
 
-            is_normal = exit_reason in ("normal", "ask_user") or is_soft_verify
+            is_normal = exit_reason in ("normal", "ask_user", "waiting_user") or is_soft_verify
             is_terminated = exit_reason == "loop_terminated"
 
             status_reason = "task_completed" if is_normal else (
@@ -1739,6 +1745,8 @@ class OrgRuntime:
                 # 区分"完美完成"vs"提示性完成"的消费者（评测/统计）能识别。
                 # 老前端忽略此字段，行为不变。
                 event_payload["warning"] = True
+            tool_stats = self._collect_tool_stats_from_trace(react_trace)
+            event_payload.update(tool_stats)
             self.get_event_store(org.id).emit(event_name, node.id, event_payload)
 
             await self._broadcast_ws("org:node_status", {
@@ -1755,6 +1763,7 @@ class OrgRuntime:
                 ws_payload["diagnosis"] = diagnosis
             if is_soft_verify:
                 ws_payload["warning"] = True
+            ws_payload.update(tool_stats)
             # 失败/终止类卡片做窗口去重，避免 verify_incomplete 重试或多路径
             # 触发同一节点同一根因被反复 emit 多张相同诊断卡片到聊天气泡。
             # 正常完成（org:task_complete）保持原行为，不做任何抑制。
@@ -1775,6 +1784,21 @@ class OrgRuntime:
                     f"[OrgRuntime] Node {node.id} ended with exit_reason={exit_reason}, "
                     f"root_cause={root_cause_tag}, emitting {event_name} (NOT task_completed)"
                 )
+                # P0-3：子任务失败/终止时关闭 chain，唤醒所有 org_wait_for_deliverable
+                # 等待本 chain 的协程，避免父节点（root）陷入无限轮询死锁。
+                if chain_id:
+                    try:
+                        self._mark_chain_closed(org.id, chain_id)
+                        logger.info(
+                            "[OrgRuntime] auto-closed chain on failure: "
+                            "org=%s chain=%s exit_reason=%s",
+                            org.id, chain_id, exit_reason,
+                        )
+                    except Exception as close_err:
+                        logger.debug(
+                            "[OrgRuntime] mark_chain_closed on failure error: %s",
+                            close_err,
+                        )
             elif is_soft_verify:
                 root_cause_tag = (diagnosis or {}).get(
                     "root_cause", "verify_incomplete_with_children",
@@ -1818,6 +1842,7 @@ class OrgRuntime:
                 "node_id": node.id,
                 "result": result_text,
                 "exit_reason": exit_reason,
+                **tool_stats,
             }
             if diagnosis:
                 return_payload["diagnosis"] = diagnosis
@@ -1879,6 +1904,21 @@ class OrgRuntime:
                 })
             except Exception:
                 pass
+            # P0-3：异常路径同样关闭 chain，避免 org_wait_for_deliverable 无限挂起。
+            # 此处覆盖 LLM 调用异常 / quota / circuit_breaker 等所有 catch-all 失败。
+            if chain_id:
+                try:
+                    self._mark_chain_closed(org.id, chain_id)
+                    logger.info(
+                        "[OrgRuntime] auto-closed chain on exception: "
+                        "org=%s chain=%s err=%s",
+                        org.id, chain_id, str(e)[:80],
+                    )
+                except Exception as close_err:
+                    logger.debug(
+                        "[OrgRuntime] mark_chain_closed on exception error: %s",
+                        close_err,
+                    )
             return {"node_id": node.id, "error": str(e)}
 
         finally:
@@ -2098,7 +2138,13 @@ class OrgRuntime:
             "delegate_parallel", "create_agent",
         })
 
+        is_root = (node.level == 0 or not org.get_parent(node.id))
+        is_coordinator = bool(org.get_children(node.id))
         allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT_TOOLS
+        if is_coordinator:
+            # 管理节点只负责拆解、委派、等待和验收；真实文件/浏览器/命令等
+            # 外部执行工具留给叶子节点，避免 root/lead 单 Agent 演完整场。
+            allowed_external = set()
 
         # E0-4: 节点级"基础文件工具"开关。即便用户没在 external_tools 里勾选
         # filesystem 类目，只要 enable_file_tools=True（默认），就给节点放行
@@ -2106,7 +2152,7 @@ class OrgRuntime:
         # 'write_file 不可用' 只能回纯文本"的死循环。这里刻意不包含 run_shell
         # / delete_file —— 命令执行和删除属高风险，仍要走 external_tools 显式
         # 授权。文件路径在 agent.file_tool.base_path 处被隔离到 org workspace。
-        if getattr(node, "enable_file_tools", True):
+        if getattr(node, "enable_file_tools", True) and not is_coordinator:
             allowed_external = allowed_external | {
                 "write_file", "read_file", "edit_file", "list_directory",
             }
@@ -2160,7 +2206,15 @@ class OrgRuntime:
         agent.file_tool.base_path = org_workspace
         agent.shell_tool.default_cwd = str(org_workspace)
 
-        is_root = (node.level == 0 or not org.get_parent(node.id))
+        # A node is an "org coordinator" iff it has direct subordinates —
+        # ``build_org_node_tools`` already drops ``org_delegate_task`` for
+        # leaf nodes, so this aligns the runtime contract: only nodes that
+        # *can* delegate are forced into coordinator semantics (must use
+        # tools / coordinator-mode prompt). This is the structural identity
+        # we use later in ``orchestrator._run_agent_session`` and
+        # ``Agent._prepare_session_context`` to keep the editor-in-chief /
+        # CEO / tech-lead style nodes from "doing the work themselves"
+        # instead of delegating.
         self._override_system_prompt_for_org(agent, org_context_prompt, org_workspace, is_root=is_root)
 
         agent._org_context = {
@@ -2168,7 +2222,10 @@ class OrgRuntime:
             "node_id": node.id,
             "tool_handler": self._tool_handler,
             "workspace": org_workspace,
+            "is_root": is_root,
+            "is_coordinator": is_coordinator,
         }
+        agent._is_org_coordinator = is_coordinator
 
         if hasattr(agent, "brain") and hasattr(agent.brain, "set_trace_context"):
             agent.brain.set_trace_context({
@@ -2363,8 +2420,23 @@ class OrgRuntime:
                         inherit_from=node.agent_profile_id,
                     )
                     return profile
+                logger.warning(
+                    "[OrgRuntime] Profile %r for node %s (%s) not found; "
+                    "falling back to inline dynamic profile",
+                    node.agent_profile_id,
+                    node.id,
+                    node.role_title,
+                )
             except Exception as e:
                 logger.warning(f"[OrgRuntime] Failed to load profile {node.agent_profile_id}: {e}")
+
+        if not node.agent_profile_id:
+            logger.warning(
+                "[OrgRuntime] Node %s (%s) has no agent_profile_id; "
+                "falling back to inline dynamic profile",
+                node.id,
+                node.role_title,
+            )
 
         return AgentProfile(
             id=f"org_node_{node.id}",
@@ -2641,7 +2713,7 @@ class OrgRuntime:
 
         chain_id = msg.metadata.get("task_chain_id", "")
         if chain_id:
-            prefix += f" [任务链: {chain_id[:12]}]"
+            prefix += f" [任务链: {chain_id[:12]}…]"
 
         extra = ""
         if msg.msg_type == MsgType.TASK_DELIVERED:
@@ -2680,6 +2752,11 @@ class OrgRuntime:
                         lines.append(f"  - **{fname}**{size_str}")
                 if lines:
                     extra += f"\n附件清单（共 {len(attachments)} 个）:\n" + "\n".join(lines)
+            if chain_id:
+                extra += (
+                    "\n验收时请使用完整任务链 ID："
+                    f'task_chain_id="{chain_id}"'
+                )
             extra += "\n请用 org_accept_deliverable 或 org_reject_deliverable 进行验收。"
         elif msg.msg_type == MsgType.TASK_REJECTED:
             reason = msg.metadata.get("rejection_reason", "")
@@ -3364,6 +3441,34 @@ class OrgRuntime:
             )
         self.get_event_store(org_id).emit("soft_stop", "user", {})
 
+    def get_command_tracker_snapshot(
+        self,
+        org_id: str,
+        command_id: str,
+    ) -> dict | None:
+        """Return a compact live snapshot for a running user command."""
+        if not command_id:
+            return None
+        now = time.monotonic()
+        for (oid, root_id), tracker in list(self._active_user_cmd.items()):
+            if oid != org_id or tracker.command_id != command_id:
+                continue
+            return {
+                "command_id": tracker.command_id,
+                "root_node_id": root_id,
+                "phase": tracker._last_phase_emitted or tracker.state or "running",
+                "tracker_state": tracker.state,
+                "root_chain_id": tracker.root_chain_id or "",
+                "open_chains": sorted(tracker.open_chains),
+                "open_chain_count": len(tracker.open_chains),
+                "elapsed_s": round(now - tracker.started_at, 1),
+                "last_progress_elapsed_s": round(now - tracker.last_progress_at, 1),
+                "warned_stuck": tracker.warned_stuck,
+                "auto_stopped": tracker.auto_stopped,
+                "user_cancelled": tracker.user_cancelled,
+            }
+        return None
+
     async def cancel_user_command(
         self,
         org_id: str,
@@ -3372,7 +3477,7 @@ class OrgRuntime:
         """用户主动强制终止当前在跑的用户命令。
 
         语义：
-          - 把该 org 下所有未完成的 ``UserCommandTracker`` 标记为
+          - 把该 org 下匹配 ``command_id`` 的未完成 ``UserCommandTracker`` 标记为
             ``user_cancelled=True`` + ``auto_stopped=True``，并 ``completed.set()``，
             让 ``send_command`` 立刻 unblock 走"stopped_by_watchdog +
             cancelled_by_user"分支返回阶段性结果。
@@ -3382,9 +3487,8 @@ class OrgRuntime:
 
         Args:
             org_id: 目标组织。
-            command_id: 仅用于审计日志；当前实现按 org 粒度终止该 org 下所有
-                未完成 trackers（实际同一 org 同一 root 至多一个 in-flight
-                tracker，故等价于按 command 粒度终止）。
+            command_id: 有值时只终止匹配的用户命令；为空时终止该 org 下所有
+                未完成 trackers（保留旧调用兼容）。
 
         Returns:
             ``{"ok": True, "cancelled_roots": [...], "command_id": ...}``
@@ -3392,6 +3496,8 @@ class OrgRuntime:
         cancelled_roots: list[str] = []
         for (oid, root_id), tracker in list(self._active_user_cmd.items()):
             if oid != org_id:
+                continue
+            if command_id and tracker.command_id != command_id:
                 continue
             if tracker.completed.is_set():
                 continue
@@ -3731,6 +3837,15 @@ class OrgRuntime:
         """
         if tracker.summary_pushed_at > 0:
             return False
+        # If the root never opened a delegation chain we have nothing to
+        # summarise — re-activating it with "[用户指令最终汇总]" would only
+        # invite the LLM to hallucinate a recap of work that never happened
+        # (see regression: trace 2 in 0939300e0183 where the editor-in-chief
+        # fabricated subordinate deliveries because no children were ever
+        # delegated). Bail early so ``_maybe_finalize_tracker`` falls back to
+        # ``completed_no_summary`` and the user gets the root's first answer.
+        if not tracker.root_chain_id:
+            return False
         org = self.get_org(tracker.org_id)
         if not org:
             return False
@@ -3741,6 +3856,12 @@ class OrgRuntime:
         # Build a brief recap from the closed subtree (best-effort).
         subtree = self._collect_chain_subtree(tracker.root_chain_id)
         recap_parts: list[str] = []
+        # P1-6：把允许采纳的 chain_id 白名单显式列出来。
+        # _collect_chain_subtree 已经按 root_chain_id 严格做过 BFS，因此 subtree
+        # 与本 command_id 严格一一对应；把 chain_id 暴露给 LLM 作为白名单，
+        # 避免 root 节点的对话历史里残留的"上一条 command 的 deliverable"
+        # 被 LLM 误纳入本次汇总。
+        allowed_chain_ids: list[str] = []
         try:
             from openakita.orgs.project_store import ProjectStore as _PS
             store = _PS(self._manager._org_dir(tracker.org_id))
@@ -3750,22 +3871,33 @@ class OrgRuntime:
                     title = (task.title or "")[:60]
                     assignee = task.assignee_node_id or ""
                     recap_parts.append(
-                        f"- {assignee}: {title} [{task.status.value}]"
+                        f"- chain={cid[:12]} {assignee}: {title} [{task.status.value}]"
                     )
+                    allowed_chain_ids.append(cid)
+                else:
+                    allowed_chain_ids.append(cid)
         except Exception:
             logger.debug(
                 "[PushSummary] project_store recap failed", exc_info=True,
             )
+            allowed_chain_ids = list(subtree)[:10]
 
         recap = "\n".join(recap_parts) if recap_parts else (
             "（无可识别的子任务记录，请直接根据已收到的下级 deliverable 汇总）"
         )
+        whitelist_str = ", ".join(c[:12] for c in allowed_chain_ids) or "（空）"
         body = (
-            "[用户指令最终汇总] 你最初接到的用户指令所触发的所有委派任务均已关闭。"
+            f"[用户指令最终汇总] 用户指令 {tracker.command_id or '(unknown)'} "
+            "所触发的所有委派任务均已关闭。"
             "请基于下级各自交付的成果，向用户输出一份完整的最终汇总——"
             "覆盖每位下级的产出要点、关键文件/链接、已完成程度、"
             "以及任何遗留风险或下一步建议。\n\n"
             "已关闭的子任务概览：\n" + recap + "\n\n"
+            f"⚠️ 严格范围约束：本次汇总只能引用属于 task_chain_id ∈ "
+            f"[{whitelist_str}] 的下级交付物。"
+            "你的对话历史中可能残留着上一条用户指令的 deliverable，"
+            "**严禁**把这些历史交付物纳入本次汇总；如不确定 chain 归属，"
+            "宁可从摘要中剔除也不要张冠李戴。\n\n"
             "重要约束：本次激活只用于产出汇总文本，"
             "禁止再调 org_delegate_task / org_submit_deliverable / "
             "org_wait_for_deliverable 等会重启任务流转的工具，"
@@ -3999,14 +4131,9 @@ class OrgRuntime:
                 v = default
             return v
 
-        # 默认全部 0 = 所有看门狗判定关闭，对齐 Claude Code 哲学：CLI/IM 真人协作场景
-        # 由用户在指挥台手动按【强制终止】处理死锁。仅当用户在【组织设置 → 任务看门狗】
-        # 主动配置非零值时才启用对应检测。
-        # 注意：即使全部阈值为 0，watchdog 协程仍保留 while 循环并等待 tracker.completed，
-        # 只是循环体内所有判定都 no-op。这样可以保持原有异步调度时序，避免回归测试因
-        # task 立即 return 而出现微妙的 _create_node_agent 计数差异。
-        warn_secs = _cfg("org_command_stuck_warn_secs", 0)
-        autostop_secs = _cfg("org_command_stuck_autostop_secs", 0)
+        # 软看门狗只关注连续无真实进展，不限制有持续产出的长任务。
+        warn_secs = _cfg("org_command_stuck_warn_secs", 900)
+        autostop_secs = _cfg("org_command_stuck_autostop_secs", 3600)
         hard_cap = _cfg("org_command_timeout_secs", 0)
 
         # 启用时仍维持合理下限与顺序约束（避免用户配出反直觉的极小值）
@@ -4081,6 +4208,15 @@ class OrgRuntime:
                         tracker.org_id, tracker.root_node_id, int(idle),
                     )
                     try:
+                        self.get_event_store(tracker.org_id).emit(
+                            "command_stopped_no_progress",
+                            tracker.root_node_id,
+                            {
+                                "command_id": tracker.command_id or "",
+                                "idle_secs": int(idle),
+                                "open_chains": list(tracker.open_chains),
+                            },
+                        )
                         await self._soft_stop_org(tracker.org_id)
                     except Exception:
                         logger.error(
@@ -4748,6 +4884,39 @@ class OrgRuntime:
         except Exception:
             return False
         return False
+
+    @staticmethod
+    def _collect_tool_stats_from_trace(react_trace: list[dict] | None) -> dict:
+        """Return compact tool usage stats for org timeline/UI events."""
+        if not react_trace:
+            return {"tools_used": [], "tools_total": 0}
+        tools: list[dict] = []
+        total = 0
+        try:
+            for iter_entry in react_trace:
+                if not isinstance(iter_entry, dict):
+                    continue
+                results_by_id: dict[str, dict] = {}
+                for r in iter_entry.get("tool_results") or ():
+                    if isinstance(r, dict):
+                        rid = str(r.get("tool_use_id") or r.get("id") or "")
+                        if rid:
+                            results_by_id[rid] = r
+                for call in iter_entry.get("tool_calls") or ():
+                    if not isinstance(call, dict):
+                        continue
+                    name = str(call.get("name") or "")
+                    if not name:
+                        continue
+                    total += 1
+                    result = results_by_id.get(str(call.get("id") or ""), {})
+                    tools.append({
+                        "name": name,
+                        "success": not bool(result.get("is_error")),
+                    })
+        except Exception:
+            return {"tools_used": [], "tools_total": 0}
+        return {"tools_used": tools[:20], "tools_total": total}
 
     @staticmethod
     def _extract_accepted_chain_ids(

@@ -4702,7 +4702,14 @@ class MessageGateway:
         timeout = float(session.get_metadata("security_timeout") or 120)
         pe = get_policy_engine()
         if getattr(pe, "_is_trust_mode", lambda: False)():
-            logger.debug("[Security] Skip IM security confirmation in trust mode")
+            if confirm_id:
+                pe.resolve_ui_confirm(confirm_id, "deny")
+            logger.info(
+                "[Security] Trust-mode IM confirmation resolved without prompting: "
+                "tool=%s confirm_id=%s",
+                tool_name,
+                confirm_id,
+            )
             return
 
         im_adapter = self._adapters.get(session.channel)

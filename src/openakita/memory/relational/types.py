@@ -102,6 +102,8 @@ class MemoryNode:
     project: str = ""
     goal: str = ""
     agent_id: str = ""
+    user_id: str = "default"
+    workspace_id: str = "default"
 
     importance: float = 0.5
     confidence: float = 0.5

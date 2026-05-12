@@ -9,18 +9,18 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class RiskLevel(str, Enum):
+class RiskLevel(StrEnum):
     NONE = "none"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
 
 
-class OperationKind(str, Enum):
+class OperationKind(StrEnum):
     NONE = "none"
     READ = "read"
     EXPLAIN = "explain"
@@ -34,7 +34,7 @@ class OperationKind(str, Enum):
     EXECUTE = "execute"
 
 
-class TargetKind(str, Enum):
+class TargetKind(StrEnum):
     UNKNOWN = "unknown"
     SECURITY_USER_ALLOWLIST = "security_user_allowlist"
     SKILL_EXTERNAL_ALLOWLIST = "skill_external_allowlist"
@@ -42,13 +42,14 @@ class TargetKind(str, Enum):
     DEATH_SWITCH = "death_switch"
     SECURITY_POLICY = "security_policy"
     PROTECTED_FILE = "protected_file"
+    FILE_SYSTEM = "file_system"
     SHELL_COMMAND = "shell_command"
     # 用户给出技能的 URL / 路径，希望通过 `install_skill` 工具装配。
     # 命中此 kind 时跳过 EXECUTE 通用路径，避免被误判为高危 shell。
     SKILL_INSTALL = "skill_install"
 
 
-class AccessMode(str, Enum):
+class AccessMode(StrEnum):
     READ_ONLY = "read_only"
     WRITE = "write"
     EXECUTE = "execute"
@@ -78,9 +79,39 @@ _EXECUTE_RE = re.compile(
 _GENERIC_DO_RE = re.compile(r"(执行|运行|跑一下|跑下|run\b|execute\b)", re.IGNORECASE)
 
 # Shell/命令上下文词；用于判定通用执行动词是否真的指向 shell 命令。
+#
+# 注意：旧实现把裸 "脚本/script" 当 shell 上下文，会把"抖音宣传脚本/视频脚本/
+# 直播脚本/小红书文案脚本"等内容创作语境下的"脚本"误判为 shell。这里要求
+# "脚本/script" 必须紧贴 shell/bash/powershell/python/.sh/.ps1/.bat/.py 等真正
+# 的运行时关键词，避免被内容类"脚本"碰瓷。
 _SHELL_CONTEXT_RE = re.compile(
-    r"(shell|bash|powershell|pwsh|cmd|命令行|脚本|script|"
+    r"(shell|bash|powershell|pwsh|cmd|命令行|"
+    r"(?:shell|bash|powershell|python|node|node\.js|cmd|批处理|sh)\s*脚本|"
+    r"脚本\s*(?:文件|路径|name|执行|运行|跑)|"
+    r"\.(?:sh|ps1|bat|cmd|py|js|ts|rb|pl|zsh|fish)\b|"
+    r"#!\s*/(?:bin|usr)|"
     r"命令\s|这条命令|这段命令|这个命令|run_shell|run_powershell)",
+    re.IGNORECASE,
+)
+
+_FILE_SYSTEM_TARGET_RE = re.compile(
+    r"("
+    r"桌面|下载|文档|图片|照片|视频|音乐|目录|文件夹|文件|路径|盘符|回收站|"
+    r"desktop|downloads?|documents?|pictures?|videos?|music|directory|folder|file|path|"
+    r"[a-zA-Z]:[\\/]|[/\\][\w .\-]+[/\\]|"
+    r"\.(?:txt|md|json|yaml|yml|py|js|ts|tsx|jsx|zip|rar|7z|log|csv|xlsx?|docx?|pptx?|pdf)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# 委派 / 多 Agent 协作上下文：命中即认为"执行"指的是子 Agent 任务的执行，
+# 不是 shell 调用，禁止升级到 HIGH-risk shell。
+# 例：「让 video-planner 写 30 秒脚本，要并发执行」「分发任务给 marketing-planner」
+_DELEGATION_CONTEXT_RE = re.compile(
+    r"(委派|委托|委托给|分发(?:任务|子任务|工作)|交给|派给|让(?:他|她|他们|"
+    r"[a-z0-9_\-]+\s*(?:agent|planner|writer|reviewer|support))|"
+    r"并行(?:执行|跑|做|委托|委派|分发)|并发(?:执行|跑|做|委托|委派|分发)|"
+    r"delegate|delegation|sub[-_]?agent|spawn\s+agent|fan[-_]?out|in\s+parallel)",
     re.IGNORECASE,
 )
 
@@ -327,7 +358,7 @@ class AuthorizedIntent:
         }
 
     @classmethod
-    def from_dict(cls, data: Any) -> "AuthorizedIntent | None":
+    def from_dict(cls, data: Any) -> AuthorizedIntent | None:
         if not isinstance(data, dict):
             return None
         try:
@@ -566,7 +597,11 @@ class RiskIntentClassifier:
             OperationKind.OVERWRITE,
         }:
             risk = RiskLevel.HIGH if self._is_sensitive_target(target) else RiskLevel.MEDIUM
-            if target == TargetKind.UNKNOWN and not self._intent_high_risk_signal(intent):
+            if (
+                operation == OperationKind.WRITE
+                and target == TargetKind.UNKNOWN
+                and not self._intent_high_risk_signal(intent)
+            ):
                 risk = RiskLevel.LOW
             return RiskIntentResult(
                 risk_level=risk,
@@ -611,18 +646,28 @@ class RiskIntentClassifier:
         target: TargetKind,
         operation: OperationKind,
     ) -> bool:
-        if operation == OperationKind.EXECUTE or cls._is_sensitive_target(target):
+        if _ARITHMETIC_OR_COUNT_RE.search(text):
+            return True
+
+        if _NON_ACTION_DISCUSSION_RE.search(text):
+            return True
+
+        if (
+            operation
+            in {
+                OperationKind.DELETE,
+                OperationKind.RESET,
+                OperationKind.DISABLE,
+                OperationKind.OVERWRITE,
+                OperationKind.EXECUTE,
+            }
+            or cls._is_sensitive_target(target)
+        ):
             return False
 
         requires_tools = getattr(intent, "requires_tools", None)
         risk_hint = str(getattr(intent, "risk_level_hint", "") or "").lower()
         if requires_tools is False and risk_hint in {"", "none", "low", "risklevelhint.none", "risklevelhint.low"}:
-            return True
-
-        if _ARITHMETIC_OR_COUNT_RE.search(text):
-            return True
-
-        if _NON_ACTION_DISCUSSION_RE.search(text):
             return True
 
         return False
@@ -645,10 +690,20 @@ class RiskIntentClassifier:
         # 高敏感 shell 动词无条件 EXECUTE
         if _EXECUTE_RE.search(text):
             return OperationKind.EXECUTE
-        # 通用「执行/运行」**仅当**伴随明确 shell 上下文时才升 EXECUTE
-        if _GENERIC_DO_RE.search(text) and _SHELL_CONTEXT_RE.search(text):
+        # 通用「执行/运行」**仅当**伴随明确 shell 上下文，且 *不在* 多 Agent 委派
+        # 语境时才升 EXECUTE。委派语境里的"执行"几乎一定是子 Agent 任务执行，
+        # 不是 shell。
+        if (
+            _GENERIC_DO_RE.search(text)
+            and _SHELL_CONTEXT_RE.search(text)
+            and not _DELEGATION_CONTEXT_RE.search(text)
+        ):
             return OperationKind.EXECUTE
-        if re.search(r"(删除|删掉|移除|delete|remove|drop|truncate)", lowered, re.IGNORECASE):
+        if re.search(
+            r"(删除|删掉|移除|清空|卸载|销毁|delete|remove|clear|uninstall|drop|truncate|destroy)",
+            lowered,
+            re.IGNORECASE,
+        ):
             return OperationKind.DELETE
         if re.search(r"(重置|reset)", lowered, re.IGNORECASE):
             return OperationKind.RESET
@@ -674,8 +729,12 @@ class RiskIntentClassifier:
             return TargetKind.DEATH_SWITCH
         if "安全策略" in lowered or "policies" in lowered or "policy" in lowered:
             return TargetKind.SECURITY_POLICY
+        if _SHELL_CONTEXT_RE.search(lowered) or _EXECUTE_RE.search(lowered):
+            return TargetKind.SHELL_COMMAND
         if any(s in lowered for s in ("identity/", "data/", ".ssh", "hosts")):
             return TargetKind.PROTECTED_FILE
+        if _FILE_SYSTEM_TARGET_RE.search(lowered):
+            return TargetKind.FILE_SYSTEM
         if "allowlist" in lowered or "白名单" in lowered:
             return TargetKind.SECURITY_USER_ALLOWLIST
         return TargetKind.UNKNOWN
@@ -687,6 +746,7 @@ class RiskIntentClassifier:
             TargetKind.DEATH_SWITCH,
             TargetKind.SECURITY_POLICY,
             TargetKind.PROTECTED_FILE,
+            TargetKind.FILE_SYSTEM,
             TargetKind.SHELL_COMMAND,
         }
 
@@ -723,6 +783,13 @@ class RiskIntentClassifier:
                 params["entry_type"] = "tool"
             else:
                 params["entry_type"] = "command"
+        if target == TargetKind.FILE_SYSTEM:
+            path_match = re.search(
+                r"([a-zA-Z]:[\\/][^\s，。；;]+|(?:[/\\][^\s，。；;]+)+|[^\s，。；;]+?\.[A-Za-z0-9]{1,8})",
+                text,
+            )
+            if path_match:
+                params["path_hint"] = path_match.group(1)
         return params
 
 

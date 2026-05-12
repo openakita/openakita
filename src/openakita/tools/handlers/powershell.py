@@ -278,8 +278,8 @@ class PowerShellHandler:
             else:
                 stdout_bytes, stderr_bytes = await communicate
 
-            stdout = self._decode(stdout_bytes)
-            stderr = self._decode(stderr_bytes)
+            stdout = self._strip_clixml_noise(self._decode(stdout_bytes))
+            stderr = self._strip_clixml_noise(self._decode(stderr_bytes))
             rc = process.returncode or 0
 
             logger.info(f"[PowerShell] Exit code: {rc}")
@@ -325,6 +325,21 @@ class PowerShellHandler:
                 return data.decode(f"cp{oem_cp}", errors="replace")
             except Exception:
                 return data.decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _strip_clixml_noise(text: str) -> str:
+        """Remove PowerShell progress CLIXML fragments from captured streams."""
+        if not text or "#< CLIXML" not in text:
+            return text
+        import re
+
+        cleaned = re.sub(r"#< CLIXML\s*<Objs[\s\S]*?</Objs>", "", text)
+        cleaned = re.sub(r"#< CLIXML[\s\S]*?(?=\r?\n(?!<)|$)", "", cleaned)
+        cleaned = re.sub(r"<Obj[^>]*>\s*<TN[^>]*>[\s\S]*?</Obj>", "", cleaned)
+        return "\n".join(
+            line for line in cleaned.splitlines()
+            if line.strip() and not line.lstrip().startswith(("#< CLIXML", "<Objs", "</Objs>"))
+        ).strip()
 
 
 def create_handler(agent: "Agent"):
