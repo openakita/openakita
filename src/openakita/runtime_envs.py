@@ -22,9 +22,13 @@ from pathlib import Path
 from typing import Literal
 
 from .runtime_env import (
+    IS_FROZEN,
+    apply_runtime_pip_environment,
     get_agent_python_executable,
     get_app_python_executable,
+    get_managed_python_seed,
     get_pip_install_args,
+    get_readonly_seed_roots,
     get_runtime_root,
     resolve_pip_index,
     verify_python_executable,
@@ -82,6 +86,16 @@ def get_execution_envs_root() -> Path:
     return get_runtime_root() / "envs"
 
 
+def get_execution_env_seed_roots(scope: ExecutionEnvScope) -> list[Path]:
+    """Readonly pre-provisioned scoped env roots, used before writable cache."""
+    out: list[Path] = []
+    for root in get_readonly_seed_roots():
+        candidate = root / "envs" / f"{scope}s"
+        if candidate.is_dir():
+            out.append(candidate)
+    return out
+
+
 def resolve_agent_env(profile_id: str, deps: list[str] | tuple[str, ...] | None = None) -> ExecutionEnvSpec:
     deps_t = _deps_tuple(deps)
     key = _safe_key(profile_id or "default")
@@ -110,6 +124,32 @@ def resolve_skill_env(skill_id: str, deps: list[str] | tuple[str, ...] | None = 
         dependencies=deps_t,
         deps_hash=_deps_hash(deps_t),
     )
+
+
+def _with_seed_if_available(spec: ExecutionEnvSpec) -> ExecutionEnvSpec:
+    for root in get_execution_env_seed_roots(spec.scope):
+        venv = root / spec.key / ".venv"
+        py = _venv_python(venv)
+        manifest_path = venv.parent / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            manifest = {}
+        if (
+            py.exists()
+            and verify_python_executable(str(py))
+            and manifest.get("deps_hash", spec.deps_hash) == spec.deps_hash
+        ):
+            return ExecutionEnvSpec(
+                scope=spec.scope,
+                key=spec.key,
+                venv_path=venv,
+                python_path=py,
+                bin_path=_venv_bin_dir(venv),
+                dependencies=spec.dependencies,
+                deps_hash=spec.deps_hash,
+            )
+    return spec
 
 
 def resolve_scratch_env(
@@ -163,7 +203,12 @@ def _write_manifest(spec: ExecutionEnvSpec, *, status: str = "ready", error: str
 
 
 def _base_python() -> str | None:
-    return get_app_python_executable() or get_agent_python_executable() or sys.executable
+    managed = get_managed_python_seed() or get_app_python_executable() or get_agent_python_executable()
+    if managed:
+        return managed
+    if IS_FROZEN:
+        return None
+    return sys.executable
 
 
 def _create_venv(spec: ExecutionEnvSpec) -> None:
@@ -179,6 +224,7 @@ def _create_venv(spec: ExecutionEnvSpec) -> None:
 
     logger.info("[runtime_envs] Creating %s env %s with %s", spec.scope, spec.key, cmd[0])
     kwargs: dict = {"capture_output": True, "text": True, "timeout": 600}
+    kwargs["env"] = apply_runtime_pip_environment(python_executable=base_py)
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     result = subprocess.run(cmd, **kwargs)
@@ -191,6 +237,7 @@ def _install_dependencies(spec: ExecutionEnvSpec) -> None:
         return
     cmd = [str(spec.python_path), *get_pip_install_args(list(spec.dependencies))]
     kwargs: dict = {"capture_output": True, "text": True, "timeout": 900}
+    kwargs["env"] = apply_runtime_pip_environment(python_executable=str(spec.python_path))
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     logger.info("[runtime_envs] Installing %d deps into %s env %s", len(spec.dependencies), spec.scope, spec.key)
@@ -202,14 +249,33 @@ def _install_dependencies(spec: ExecutionEnvSpec) -> None:
 def ensure_execution_env(spec: ExecutionEnvSpec) -> ExecutionEnvSpec:
     """Create/update an execution env and install declared dependencies."""
     try:
+        seeded = _with_seed_if_available(spec)
+        if seeded.venv_path != spec.venv_path:
+            logger.info("[runtime_envs] Using readonly seed for %s env %s", spec.scope, spec.key)
+            return seeded
         manifest = _read_manifest(spec)
         old_hash = manifest.get("deps_hash")
         if old_hash and old_hash != spec.deps_hash and spec.venv_path.exists():
+            logger.info(
+                "[runtime_envs] Rebuilding %s env %s because dependencies changed "
+                "(no in-place migration)",
+                spec.scope,
+                spec.key,
+            )
             shutil.rmtree(spec.venv_path, ignore_errors=True)
         if not spec.python_path.exists() or not verify_python_executable(str(spec.python_path)):
             _create_venv(spec)
         if manifest.get("deps_hash") != spec.deps_hash:
-            _install_dependencies(spec)
+            try:
+                _install_dependencies(spec)
+            except Exception:
+                shutil.rmtree(spec.venv_path, ignore_errors=True)
+                _write_manifest(
+                    spec,
+                    status="needs_reinstall",
+                    error="dependency install failed; isolated env removed for rebuild",
+                )
+                raise
         _write_manifest(spec)
         return spec
     except Exception as exc:
