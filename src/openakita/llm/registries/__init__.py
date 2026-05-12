@@ -54,6 +54,7 @@ _CLASS_MODULE_MAP: dict[str, str] = {
     "DashScopeInternationalRegistry": ".dashscope",
     "KimiChinaRegistry": ".kimi",
     "KimiInternationalRegistry": ".kimi",
+    "LiteLLMRegistry": ".litellm",
     "MiniMaxChinaRegistry": ".minimax",
     "MiniMaxInternationalRegistry": ".minimax",
     "DeepSeekRegistry": ".deepseek",
