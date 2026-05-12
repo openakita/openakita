@@ -111,3 +111,15 @@ def test_chat_request_accepts_endpoint_policy():
 
     assert request.endpoint == "glm-endpoint"
     assert request.endpoint_policy == "require"
+
+
+def test_chat_request_accepts_max_thinking_depth_from_ui():
+    request = ChatRequest(message="hello", thinking_mode="on", thinking_depth="max")
+
+    assert request.thinking_depth == "max"
+
+
+def test_chat_request_accepts_xhigh_thinking_depth_alias():
+    request = ChatRequest(message="hello", thinking_mode="on", thinking_depth="xhigh")
+
+    assert request.thinking_depth == "xhigh"

@@ -1,6 +1,7 @@
 from openakita.llm.capabilities import infer_capabilities
 from openakita.llm.providers.anthropic import AnthropicProvider
 from openakita.llm.providers.openai import OpenAIProvider
+from openakita.llm.providers.openai_responses import OpenAIResponsesProvider
 from openakita.llm.types import EndpointConfig, LLMRequest, Message
 
 
@@ -272,6 +273,42 @@ def test_anthropic_compatible_minimax_m27_no_thinking_depth_omits_field():
     body = provider._build_request_body(request)
 
     assert "thinking_depth" not in body
+
+
+def test_openai_responses_max_maps_reasoning_effort_to_high():
+    provider = OpenAIResponsesProvider(
+        EndpointConfig(
+            name="test",
+            provider="openai",
+            api_type="openai-responses",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
+            model="gpt-5.4",
+            capabilities=["text", "thinking"],
+        )
+    )
+
+    body = provider._build_request_body(_request("max"))
+
+    assert body["reasoning"] == {"effort": "high"}
+
+
+def test_openai_responses_xhigh_maps_reasoning_effort_to_high():
+    provider = OpenAIResponsesProvider(
+        EndpointConfig(
+            name="test",
+            provider="openai",
+            api_type="openai-responses",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
+            model="gpt-5.4",
+            capabilities=["text", "thinking"],
+        )
+    )
+
+    body = provider._build_request_body(_request("xhigh"))
+
+    assert body["reasoning"] == {"effort": "high"}
 
 
 def test_deepseek_v4_pro_is_inferred_as_thinking_model():

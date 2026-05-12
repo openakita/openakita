@@ -22,6 +22,7 @@ from ..converters.tools import (
 )
 from ..model_registry import get_model_capabilities, get_thinking_budget
 from ..sse import parse_sse_stream
+from ..thinking import is_minimax_endpoint, minimax_thinking_depth
 from ..types import (
     AuthenticationError,
     EndpointConfig,
@@ -44,32 +45,6 @@ from .proxy_utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _is_minimax_endpoint(provider: str, base_url: str, model: str) -> bool:
-    """Whether this Anthropic-compatible endpoint is MiniMax."""
-    provider_l = (provider or "").lower()
-    base_l = (base_url or "").lower()
-    model_l = (model or "").lower()
-    return (
-        provider_l in {"minimax", "minimax-cn", "minimax-int"}
-        or "minimax" in provider_l
-        or "minimaxi" in base_l
-        or "minimax.io" in base_l
-        or "minimax" in model_l
-    )
-
-
-def _minimax_thinking_depth(depth: object) -> str | None:
-    """Map OpenAkita thinking depth to MiniMax's documented low/medium/high enum."""
-    value = str(depth or "").strip().lower()
-    if value == "xhigh":
-        value = "max"
-    if value == "max":
-        return "high"
-    if value in {"low", "medium", "high"}:
-        return value
-    return None
 
 
 class AnthropicProvider(LLMProvider):
@@ -412,8 +387,8 @@ class AnthropicProvider(LLMProvider):
         # field on BOTH its OpenAI- and Anthropic-compatible endpoints. OpenAkita's
         # UI exposes "max" / "xhigh"; clamp at the provider boundary regardless of
         # whether the value arrived via request.thinking_depth or extra_params.
-        if _is_minimax_endpoint(self.config.provider, self.base_url, self.config.model):
-            depth = _minimax_thinking_depth(request.thinking_depth or body.get("thinking_depth"))
+        if is_minimax_endpoint(self.config.provider, self.base_url, self.config.model):
+            depth = minimax_thinking_depth(request.thinking_depth or body.get("thinking_depth"))
             if depth:
                 body["thinking_depth"] = depth
             else:
