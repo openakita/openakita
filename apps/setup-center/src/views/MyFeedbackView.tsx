@@ -47,6 +47,7 @@ type MyFeedbackViewProps = {
   apiBaseUrl: string;
   serviceRunning: boolean;
   onOpenFeedbackModal?: () => void;
+  refreshTrigger?: number;
 };
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; border?: string }> = {
@@ -77,7 +78,7 @@ function statusKey(status: string): string {
   return map[status] ?? "statusPending";
 }
 
-export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal }: MyFeedbackViewProps) {
+export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal, refreshTrigger }: MyFeedbackViewProps) {
   const { t } = useTranslation();
   const [records, setRecords] = useState<FeedbackRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -145,7 +146,7 @@ export function MyFeedbackView({ apiBaseUrl, serviceRunning, onOpenFeedbackModal
       setLoading(false);
       batchRefreshRef.current();
     });
-  }, [serviceRunning, fetchRecords]);
+  }, [serviceRunning, fetchRecords, refreshTrigger]);
 
   const fetchDetail = useCallback(async (reportId: string) => {
     setDetailLoading(reportId);

@@ -427,6 +427,7 @@ function MainApp() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 768);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
+  const [feedbackRefreshKey, setFeedbackRefreshKey] = useState(0);
   const [unreadFeedbackCount, setUnreadFeedbackCount] = useState(0);
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const multiAgentEnabled = true;
@@ -5666,6 +5667,7 @@ function MainApp() {
         <MyFeedbackView
           apiBaseUrl={httpApiBase()}
           serviceRunning={serviceStatus?.running ?? false}
+          refreshTrigger={feedbackRefreshKey}
           onOpenFeedbackModal={() => setBugReportOpen(true)}
         />
       );
@@ -6249,7 +6251,10 @@ function MainApp() {
         open={bugReportOpen}
         onClose={() => setBugReportOpen(false)}
         apiBase={httpApiBase()}
-        onNavigateToMyFeedback={() => navigateToView("my_feedback")}
+        onNavigateToMyFeedback={() => {
+          setFeedbackRefreshKey((key) => key + 1);
+          navigateToView("my_feedback");
+        }}
         serviceRunning={serviceStatus?.running ?? false}
         currentWorkspaceId={currentWorkspaceId}
       />
