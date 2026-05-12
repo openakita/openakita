@@ -42,6 +42,21 @@ jobs:
       - name: Type check with mypy
         run: mypy src/
 
+  # ── Bootstrap contract 预检 ──
+  # 在 PR 阶段就拦住"PBS pin / uv URL / pyproject Python 版本"的漂移，避免
+  # 合入后 release-dryrun 才暴露。HEAD 请求 ~1 分钟内完成，4xx 立即失败。
+  bootstrap_contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Verify remote bootstrap asset URLs + version pins
+        run: python build/prepare_bootstrap_resources.py --verify-remote-assets
+
   # ── L0 Smoke (每次 Push/PR, <10s, 6 个根因修复回归挡板) ──
   # 直接对应 _exploratory_fix_plan_20260417 的 F1~F4 修复，
   # 任何静默退化（cache 不命中/记忆召回率回到 0/profile 卡白名单等）

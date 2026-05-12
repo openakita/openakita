@@ -1,0 +1,188 @@
+name: 'Desktop build prepare'
+description: >-
+  Set up Python/Node/Rust, build web/docs assets, run PyInstaller, and prepare
+  the bootstrap resources (wheel + uv + standalone Python seed) with cache.
+  Shared between release.yml and release-dryrun.yml so both pipelines exercise
+  the exact same prep path. Signing, notarization, artifact upload, and Tauri
+  bundling stay in the calling workflow.
+
+inputs:
+  target_platform:
+    description: >-
+      Plan-side target platform key. One of win-x64 / linux-x64 / linux-arm64 /
+      mac-x64 / mac-arm64. Forwarded verbatim to
+      build/prepare_bootstrap_resources.py --target-platform.
+    required: true
+  rust_target:
+    description: >-
+      Optional Rust cross-compilation target triple (e.g.
+      aarch64-apple-darwin). Pass empty string to skip `rustup target add`.
+    required: false
+    default: ''
+  rust_cache_prefix:
+    description: >-
+      swatinem/rust-cache prefix-key. Use different prefixes for dryrun vs
+      release so the two pipelines do not share Rust artifact caches.
+    required: true
+  disable_bootstrap_cache:
+    description: >-
+      Pass-through emergency switch from the calling workflow. When the literal
+      string 'true', the PBS download cache step is skipped and the build
+      hits GitHub fresh. Default 'false' (cache enabled).
+    required: false
+    default: 'false'
+  python_version:
+    description: 'Host Python version used to run the prepare scripts.'
+    required: false
+    default: '3.11'
+
+runs:
+  using: composite
+  steps:
+    # GitHub Actions composite step shell defaults differ across runners
+    # (Windows defaults to PowerShell). Every step below pins shell explicitly
+    # so PowerShell does not try to interpret `set -euo pipefail`.
+
+    - name: Install Linux system dependencies (Ubuntu only)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libwebkit2gtk-4.1-dev \
+          libappindicator3-dev \
+          librsvg2-dev \
+          patchelf \
+          libfuse2 \
+          rpm
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Set up Node
+      uses: actions/setup-node@v6
+      with:
+        node-version: "20"
+        cache: npm
+        cache-dependency-path: apps/setup-center/package-lock.json
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Add Rust cross-compilation target
+      if: inputs.rust_target != ''
+      shell: bash
+      run: rustup target add ${{ inputs.rust_target }}
+
+    - name: Rust cache
+      uses: swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          apps/setup-center/src-tauri -> target
+        prefix-key: ${{ inputs.rust_cache_prefix }}
+
+    - name: Build web frontend for remote browser access
+      shell: bash
+      working-directory: apps/setup-center
+      run: |
+        npm ci
+        npm run build:web
+
+    - name: Build user docs (VitePress)
+      shell: bash
+      working-directory: docs-site
+      run: |
+        npm ci
+        npm run build
+
+    - name: Install Python project and PyInstaller
+      shell: bash
+      run: |
+        # 先装 monorepo 本地 SDK，避免 desktop 矩阵 job 与 python_release job
+        # 之间的 PyPI 索引时序竞争（即使发布顺序已是 SDK→main，索引刷新仍有
+        # 数秒延迟；多平台/多 runner 并发起手时不一定都能拿到新版本）。
+        # 非 editable：PyInstaller 必须把 SDK 当作普通 site-packages 条目收集
+        # 进 openakita-server 镜像，editable 安装会让打包遗漏 SDK 代码与 web/
+        # 资源（与 ci.yml 同等位置保持一致）。
+        pip install ./openakita-plugin-sdk
+        pip install -e ".[all]"
+        pip install build "pyinstaller>=6.18.0"
+
+    - name: Clean previous PyInstaller output
+      shell: bash
+      run: |
+        rm -rf dist/
+        rm -rf build/openakita-server
+        rm -rf build/pyinstaller_work
+        rm -rf build/modules
+        # macOS: clear stale PyInstaller temp dirs to avoid PYI-6038 symlink conflicts
+        if [ "$(uname)" = "Darwin" ]; then
+          find "${TMPDIR:-/tmp}" -maxdepth 1 -name "_MEI*" -type d -exec rm -rf {} + 2>/dev/null || true
+        fi
+
+    - name: Package Python backend (PyInstaller)
+      shell: bash
+      run: python build/build_backend.py
+
+    - name: Read bootstrap pins (PBS / uv version)
+      id: bootstrap_pins
+      shell: bash
+      run: |
+        set -euo pipefail
+        # 用 grep 提取常量；不 import 避免在缺依赖的 runner 上失败
+        PBS_TAG=$(grep -E '^PBS_RELEASE_TAG = ' build/prepare_bootstrap_resources.py | head -n1 | cut -d'"' -f2)
+        PBS_VER=$(grep -E '^PBS_PYTHON_VERSION = ' build/prepare_bootstrap_resources.py | head -n1 | cut -d'"' -f2)
+        UV_VER=$(grep -E '^UV_VERSION = ' build/prepare_bootstrap_resources.py | head -n1 | cut -d'"' -f2)
+        if [[ -z "$PBS_TAG" || -z "$PBS_VER" || -z "$UV_VER" ]]; then
+          echo "ERROR: failed to parse pins from build/prepare_bootstrap_resources.py" >&2
+          exit 1
+        fi
+        echo "pbs_release_tag=${PBS_TAG}" >> "$GITHUB_OUTPUT"
+        echo "pbs_python_version=${PBS_VER}" >> "$GITHUB_OUTPUT"
+        echo "uv_version=${UV_VER}" >> "$GITHUB_OUTPUT"
+        echo "Pins: PBS=${PBS_TAG}/${PBS_VER}  uv=${UV_VER}"
+
+    - name: Cache PBS archive (per OS/target/version)
+      # 注意：composite action 的 inputs.* 都是字符串。这里用字符串比较，
+      # 不要写成 `!inputs.disable_bootstrap_cache`——`"false"` 在表达式里依然是
+      # 真值。disable_bootstrap_cache 必须传字符串 'true' 才会跳过缓存。
+      if: ${{ inputs.disable_bootstrap_cache != 'true' }}
+      uses: actions/cache@v4
+      with:
+        # 只缓存原始 tarball + sha256；解压/slim/manifest 写入每平台现场跑，
+        # 这样改 prepare_bootstrap_resources.py 的解压逻辑能立即在下次 build 生效。
+        path: build/bootstrap-python
+        key: bootstrap-pbs-${{ runner.os }}-${{ inputs.target_platform }}-${{ steps.bootstrap_pins.outputs.pbs_release_tag }}-${{ steps.bootstrap_pins.outputs.pbs_python_version }}
+
+    - name: Prepare bootstrap resources (wheel + uv + standalone Python seed)
+      shell: bash
+      run: |
+        set -euo pipefail
+        python build/prepare_bootstrap_resources.py \
+          --commit-resources \
+          --clean-output \
+          --require-real-assets \
+          --target-platform "${{ inputs.target_platform }}"
+
+    - name: Verify bootstrap manifest resources
+      shell: bash
+      run: python build/prepare_bootstrap_resources.py --commit-resources --verify-only
+
+    - name: Assert seed Python executable bit (POSIX)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        SEED_DIR="apps/setup-center/src-tauri/resources/bootstrap/python"
+        [ -d "$SEED_DIR" ] || { echo "ERROR: seed dir missing: $SEED_DIR" >&2; exit 1; }
+        fail=0
+        for f in "$SEED_DIR"/bin/*; do
+          [ -e "$f" ] || continue
+          if [ ! -x "$f" ]; then
+            echo "ERROR: missing exec bit: $f" >&2
+            fail=1
+          fi
+        done
+        [ "$fail" -eq 0 ]

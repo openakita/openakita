@@ -34,13 +34,18 @@ DEFAULT_OUTPUT_ROOT = ROOT / "build" / "bootstrap-output"
 WEB_ASSETS_DIR = ROOT / "apps" / "setup-center" / "dist-web"
 DOCS_ASSETS_DIR = ROOT / "docs-site" / ".vitepress" / "dist"
 
+# uv release pin —— **必须**显式版本号，禁止 `latest`。
+# 原因：CI 缓存 key 需要 uv 版本作为锚点；`latest` 滚动会出现"key 不动、内容变"，
+# 让缓存命中老版本但代码已经升级。升级 uv 时改这里的常量并跑全平台 release-dryrun。
+UV_VERSION = "0.11.13"
+
 UV_RELEASES = {
-    ("Windows", "AMD64"): "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip",
-    ("Windows", "ARM64"): "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-pc-windows-msvc.zip",
-    ("Darwin", "arm64"): "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz",
-    ("Darwin", "x86_64"): "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-apple-darwin.tar.gz",
-    ("Linux", "x86_64"): "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-gnu.tar.gz",
-    ("Linux", "aarch64"): "https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-unknown-linux-gnu.tar.gz",
+    ("Windows", "AMD64"): f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-pc-windows-msvc.zip",
+    ("Windows", "ARM64"): f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-aarch64-pc-windows-msvc.zip",
+    ("Darwin", "arm64"): f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-aarch64-apple-darwin.tar.gz",
+    ("Darwin", "x86_64"): f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-apple-darwin.tar.gz",
+    ("Linux", "x86_64"): f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz",
+    ("Linux", "aarch64"): f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-aarch64-unknown-linux-gnu.tar.gz",
 }
 
 # python-build-standalone release tag and CPython version.
@@ -157,6 +162,146 @@ def download_with_retries(url: str, dest: Path, *, attempts: int = 4) -> None:
             )
             time.sleep(wait)
     raise RuntimeError(f"download failed after {attempts} attempts: {url}: {last_error}")
+
+
+def head_check(url: str, *, attempts: int = 3, timeout: int = 30) -> int:
+    """HEAD request with redirect follow, retry on network/5xx, fail fast on 4xx.
+
+    专为 contract 预检设计：只验证 URL 是否健康，不下载内容。GitHub
+    `releases/download/...` 会 302 重定向到 S3，urllib 的默认 redirect
+    handler 会跟随；S3 上的 HEAD 通常返回 200 + Content-Length。
+
+    返回最终响应的 HTTP 状态码。任何 4xx 立即抛 HTTPError（pin 错或 URL
+    拼错），网络异常 / 5xx 走 backoff 重试，最终仍失败则抛 RuntimeError。
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(url, method="HEAD")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.status
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if 400 <= exc.code < 500:
+                raise
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+        if attempt < attempts:
+            wait = min(2 ** attempt, 8)
+            print(
+                f"HEAD failed ({type(last_error).__name__}: {last_error}); "
+                f"retrying in {wait}s ({attempt}/{attempts})"
+            )
+            time.sleep(wait)
+    raise RuntimeError(f"HEAD failed after {attempts} attempts: {url}: {last_error}")
+
+
+def verify_version_consistency() -> None:
+    """Fail fast if pyproject.toml Python pins disagree with PBS_PYTHON_VERSION.
+
+    真正可能漂移的两处：
+      * [project] requires-python（例如 ">=3.11"）
+      * [tool.mypy] python_version（例如 "3.11"）
+    必须与 PBS_PYTHON_VERSION 的 major.minor 一致。否则会出现
+    "PBS pin 升到 3.12 但 pyproject 还卡在 3.11" 的发布事故。
+    """
+    project_data = load_pyproject()
+    expected_mm = ".".join(PBS_PYTHON_VERSION.split(".")[:2])
+
+    errors: list[str] = []
+
+    project_section = project_data.get("project", {}) or {}
+    requires_python = project_section.get("requires-python")
+    if not requires_python:
+        errors.append("pyproject.toml [project] requires-python is missing")
+    else:
+        digits = "".join(ch for ch in requires_python if ch.isdigit() or ch == ".")
+        digits = digits.strip(".")
+        rp_mm = ".".join(digits.split(".")[:2]) if digits else ""
+        if rp_mm != expected_mm:
+            errors.append(
+                f"pyproject.toml [project] requires-python={requires_python!r} "
+                f"(parsed major.minor={rp_mm!r}) does not match "
+                f"PBS_PYTHON_VERSION major.minor={expected_mm!r}"
+            )
+
+    mypy_section = (project_data.get("tool") or {}).get("mypy") or {}
+    mypy_pv = mypy_section.get("python_version")
+    if mypy_pv is not None:
+        mypy_mm = ".".join(str(mypy_pv).split(".")[:2])
+        if mypy_mm != expected_mm:
+            errors.append(
+                f"pyproject.toml [tool.mypy] python_version={mypy_pv!r} "
+                f"does not match PBS_PYTHON_VERSION major.minor={expected_mm!r}"
+            )
+
+    if errors:
+        detail = "\n  - ".join(errors)
+        raise RuntimeError(
+            "Python version pins disagree with PBS seed:\n  - "
+            + detail
+            + "\nFix by aligning pyproject.toml and build/prepare_bootstrap_resources.py "
+            "PBS_PYTHON_VERSION so all three carry the same major.minor."
+        )
+
+
+def verify_remote_assets() -> None:
+    """Pre-check all PBS / uv asset URLs via HEAD, before any matrix job runs.
+
+    设计目标：在 release-dryrun / release pipeline 的 contract job 里跑这一步，
+    让 "PBS pin 错"（404）或 "uv URL 拼错"立刻在 30 秒内暴露，而不是等 7 个
+    平台 matrix 每个跑到下载步骤才失败。
+
+    与 --verify-only 互斥：那是本地 manifest 校验，根本不发网络请求；本函数
+    只发 HEAD，不读写 manifest，不解压。
+    """
+    print("[contract] verifying remote asset URLs (HEAD only, no downloads)")
+    verify_version_consistency()
+    print(f"[contract] pyproject.toml python pins agree with PBS {PBS_PYTHON_VERSION}")
+
+    failures: list[str] = []
+
+    for target_platform in sorted(PBS_TARGETS.keys()):
+        archive_url = pbs_archive_url(target_platform)
+        sha_url = archive_url + ".sha256"
+        for url, label in ((archive_url, "archive"), (sha_url, "sha256")):
+            try:
+                status = head_check(url)
+                print(f"[contract] OK ({status}) {target_platform} {label}: {url}")
+            except urllib.error.HTTPError as exc:
+                failures.append(
+                    f"{target_platform} {label} HTTP {exc.code} {exc.reason} -> {url}"
+                )
+                print(
+                    f"[contract] FAIL ({exc.code}) {target_platform} {label}: {url}"
+                )
+            except RuntimeError as exc:
+                failures.append(f"{target_platform} {label} unreachable: {exc}")
+                print(f"[contract] FAIL (network) {target_platform} {label}: {url}")
+
+    for (system, machine), uv_url in sorted(UV_RELEASES.items()):
+        label = f"{system}/{machine}"
+        try:
+            status = head_check(uv_url)
+            print(f"[contract] OK ({status}) uv {label}: {uv_url}")
+        except urllib.error.HTTPError as exc:
+            failures.append(f"uv {label} HTTP {exc.code} {exc.reason} -> {uv_url}")
+            print(f"[contract] FAIL ({exc.code}) uv {label}: {uv_url}")
+        except RuntimeError as exc:
+            failures.append(f"uv {label} unreachable: {exc}")
+            print(f"[contract] FAIL (network) uv {label}: {uv_url}")
+
+    if failures:
+        detail = "\n  - ".join(failures)
+        raise RuntimeError(
+            "bootstrap remote asset contract failed:\n  - "
+            + detail
+            + "\nDeterministic 4xx usually means PBS_RELEASE_TAG / PBS_PYTHON_VERSION "
+            "pin is wrong, or PBS_TARGETS / UV_RELEASES has a typo. "
+            "Persistent network failures mean upstream outage; rerun the job."
+        )
+
+    print("[contract] all remote asset URLs reachable")
 
 
 def load_pyproject() -> dict:
@@ -603,6 +748,7 @@ def write_manifest(
     manifest["uv"]["path"] = uv_name
     manifest["uv"]["windows_path"] = "bin/uv.exe"
     manifest["uv"]["sha256"] = sha256(uv)
+    manifest["uv"]["version"] = UV_VERSION
     if python_seed is not None:
         # 显式覆盖（而非 setdefault）：一旦本次 build 决定 seed=packaged=true，
         # 必须把之前可能残留的 false placeholder 真正替换掉。
@@ -697,6 +843,38 @@ def print_output_summary(output_dir: Path, generated: list[Path], *, commit_reso
     else:
         print("Staging output lives under build/ and is ignored; do not commit generated binaries from it.")
 
+    # Manifest summary（ASCII only, 给 CI 日志做 grep / 排障锚点用）：
+    # 让"这次 build 到底打了哪个 seed / uv / Python ABI"在 stdout 直接可见，
+    # 不需要再把 manifest.json 当 artifact 翻出来。
+    manifest_path = output_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[summary] WARN cannot read manifest.json: {exc}")
+        return
+
+    print("---- bootstrap manifest summary ----")
+    print(f"app_version       : {manifest.get('app_version', '?')}")
+    print(f"python_version    : {manifest.get('python_version', '?')}")
+    print(f"python_abi        : {manifest.get('python_abi', '?')}")
+    uv_info = manifest.get("uv") or {}
+    uv_version = uv_info.get("version", "(unpinned)")
+    uv_sha = (uv_info.get("sha256") or "")[:12]
+    print(f"uv.version        : {uv_version}")
+    print(f"uv.sha256(12)     : {uv_sha}")
+    seed = manifest.get("python_seed") or {}
+    if seed.get("packaged"):
+        print(f"python_seed       : packaged=true target={seed.get('target_platform', '?')}")
+        print(f"  version         : {seed.get('version', '?')}")
+        print(f"  release_tag     : {seed.get('release_tag', '?')}")
+        print(f"  sha256(12)      : {(seed.get('sha256') or '')[:12]}")
+        print(f"  path            : {seed.get('path', '?')}")
+    else:
+        print("python_seed       : packaged=false (runtime falls back to managed Python)")
+    print("------------------------------------")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -704,6 +882,16 @@ def main() -> int:
     parser.add_argument("--uv-url", default=os.environ.get("OPENAKITA_UV_URL"))
     parser.add_argument("--download-uv", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument(
+        "--verify-remote-assets",
+        action="store_true",
+        help=(
+            "HEAD-check every PBS archive/sha256 URL and every uv release URL, then exit. "
+            "Used by release/dryrun contract jobs to fail fast on pin drift or wrong URL "
+            "BEFORE the per-platform matrix spins up. Does not read manifest or download "
+            "anything. Mutually exclusive with --verify-only."
+        ),
+    )
     parser.add_argument("--require-real-assets", action="store_true")
     parser.add_argument("--allow-placeholder-assets", action="store_true")
     parser.add_argument(
@@ -743,6 +931,12 @@ def main() -> int:
         parser.error("--require-real-assets and --allow-placeholder-assets are mutually exclusive")
     if args.target_platform and args.auto_detect_target_platform:
         parser.error("--target-platform and --auto-detect-target-platform are mutually exclusive")
+    if args.verify_only and args.verify_remote_assets:
+        parser.error("--verify-only (local manifest) and --verify-remote-assets (remote URLs) are mutually exclusive")
+
+    if args.verify_remote_assets:
+        verify_remote_assets()
+        return 0
 
     output_dir = BOOTSTRAP_DIR if args.commit_resources else (args.output_dir or DEFAULT_OUTPUT_ROOT)
     if args.verify_only:

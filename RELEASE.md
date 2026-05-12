@@ -137,3 +137,43 @@ GitHub Actions 页面 → 找到失败的 Release workflow → **"Re-run all job
 | CI | `.github/workflows/ci.yml` | push/PR to `main`、`v*.x` | lint + test + 完整 Tauri 构建检查 |
 | Release Dry Run | `.github/workflows/release-dryrun.yml` | 手动触发 | 全平台构建预验证，不发布 |
 | Release | `.github/workflows/release.yml` | tag push `v*` | Draft → Build → 渠道检测 → Publish |
+
+---
+
+## 代码签名 secrets（release.yml 硬约束）
+
+正式 `release.yml` 在 Windows runner 上**强制**对 seed `python.exe` 做 Authenticode
+签名，缺 secret 直接 fail。这样 SmartScreen / Defender 在用户首次启动安装包时不会
+"软中毒"，且不会把未签名的 build 静默发布出去。
+
+### 必需 secrets
+
+| Secret | 含义 |
+|---|---|
+| `WINDOWS_CERTIFICATE` | base64 编码的 `.pfx` 代码签名证书内容 |
+| `WINDOWS_CERTIFICATE_PASSWORD` | 上述 `.pfx` 的密码 |
+
+配置位置：仓库 `Settings > Secrets and variables > Actions > Repository secrets`。
+
+### macOS 公证
+
+| Secret | 含义 |
+|---|---|
+| `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` | macOS Developer ID 证书 |
+| `APPLE_SIGNING_IDENTITY` | 证书的 CN（如 `Developer ID Application: ...`） |
+| `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | App Store Connect / notarytool 凭证 |
+
+macOS 步骤在 `secrets` 缺失时会 skip（保留可调试性），不像 Windows 强 fail；
+如果你做正式发版，请确保 Apple 凭证齐备。
+
+### 紧急绕过
+
+如果遇到 secret 配置故障且必须紧急发版，可以临时把 release.yml 的
+`Sign Windows seed Python executable` 步骤里第一个 `exit 1` 改回 `exit 0`，
+完成发布后立刻 revert。**不要长期保留绕过**——SmartScreen 标记的 build
+会拉低产品口碑。
+
+### dryrun 不需要 secrets
+
+`release-dryrun.yml` 完全不引入签名步骤，无 secret 也能跑全平台 build 测试。
+本地手动验签需要通过 `workflow_dispatch` 单独触发 `release.yml` 并配置测试 secret。
