@@ -2267,10 +2267,9 @@ export function ChatView({
     // StreamContext always gets the latest data immediately, while React state is
     // flushed at a bounded cadence. This protects typing from long SSE event bursts.
     //
-    // 80ms ≈ 12fps: lowers WebView2 paint pressure ~37% vs 50ms (20fps) while still
-    // feeling fluid. SSE events themselves are still consumed in real time — only
-    // the visual flush is throttled.
-    const SCREEN_FLUSH_MIN_MS = 80;
+    // 50ms ≈ 20fps: keep perceived streaming responsive. SSE events themselves
+    // are still consumed in real time; only the visual flush is throttled.
+    const SCREEN_FLUSH_MIN_MS = 50;
     let screenFlushRaf = 0;
     let screenFlushTimer: ReturnType<typeof setTimeout> | null = null;
     let lastScreenFlushAt = 0;
@@ -3357,7 +3356,7 @@ export function ChatView({
         // Crash diagnostics: final React state has been queued. If a native
         // WebView2 crash happens during the subsequent paint, this breadcrumb
         // is the last entry to land in frontend.log before the process dies.
-        // Force-flush is critical here: the next 80ms screen flush could be
+        // Force-flush is critical here: the next scheduled screen flush could be
         // the moment the WebView2 process dies, so we must push the line to
         // Rust IPC before then. tauriInvoke is fire-and-forget from JS side
         // and the native side processes it on its own thread.
