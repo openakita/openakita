@@ -10,6 +10,11 @@ from openakita.runtime_envs import (
     resolve_skill_env,
 )
 from openakita.skills.parser import parse_skill
+from openakita.skills.runtime_registry import (
+    mark_skill_loaded,
+    mark_skill_pending_update,
+    read_skill_runtime_registry,
+)
 
 
 def test_agent_profile_runtime_policy_roundtrip():
@@ -108,6 +113,25 @@ metadata:
 
     assert parsed.metadata.python_env == "skill"
     assert parsed.metadata.python_dependencies == ["pandas==2.2.0", "requests"]
+
+
+def test_skill_runtime_registry_tracks_loaded_and_pending_update(monkeypatch, tmp_path):
+    monkeypatch.setattr("openakita.skills.runtime_registry._get_openakita_root", lambda: tmp_path)
+
+    mark_skill_loaded(
+        "data-skill",
+        source_path=str(tmp_path / "skills" / "data-skill"),
+        dependencies=["requests", "pandas==2.2.0"],
+    )
+    mark_skill_pending_update("data-skill", revision="rev-2")
+
+    state = read_skill_runtime_registry()["skills"]["data-skill"]
+    assert state["installed"] is True
+    assert state["loaded"] is True
+    assert state["pending_update_revision"] == "rev-2"
+    assert state["reload_required"] is True
+    assert state["update_policy"] == "disk-only"
+    assert state["deps_hash"]
 
 
 def test_tool_experience_redacts_secrets(tmp_path):
