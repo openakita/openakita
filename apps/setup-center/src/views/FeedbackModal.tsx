@@ -60,7 +60,6 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
   const [uploadLogs, setUploadLogs] = useState(true);
   const [uploadDebug, setUploadDebug] = useState(true);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
-  const [sysInfoExpanded, setSysInfoExpanded] = useState(false);
 
   const [contactEmail, setContactEmail] = useState("");
   const [contactWechat, setContactWechat] = useState("");
@@ -740,24 +739,6 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", pre
                 <IconInfo size={10} className="inline align-[-1px] mr-0.5" />
                 {t("bugReport.debugWarning")}
               </p>
-            </div>
-          )}
-
-          {/* Bug: System info */}
-          {isBug && systemInfo && (
-            <div>
-              <button
-                type="button"
-                onClick={() => setSysInfoExpanded(!sysInfoExpanded)}
-                className="text-[12px] cursor-pointer text-muted-foreground bg-transparent border-0 p-0 select-none hover:text-foreground transition-colors"
-              >
-                {sysInfoExpanded ? "▾" : "▸"} {t("bugReport.systemInfo")}
-              </button>
-              {sysInfoExpanded && (
-                <pre className="text-[11px] bg-muted rounded-md p-2 mt-1 overflow-x-auto max-h-32 whitespace-pre-wrap break-all leading-relaxed">
-                  {JSON.stringify(systemInfo, null, 2)}
-                </pre>
-              )}
             </div>
           )}
 
