@@ -702,6 +702,14 @@ fn modules_dir() -> PathBuf {
 
 /// 获取内嵌 PyInstaller 打包后端的目录
 fn bundled_backend_dir() -> PathBuf {
+    bundled_resource_dir("openakita-server")
+}
+
+fn bootstrap_resource_dir() -> PathBuf {
+    bundled_resource_dir("bootstrap")
+}
+
+fn bundled_resource_dir(resource_name: &str) -> PathBuf {
     let exe_path = std::env::current_exe().ok();
     let exe_dir = exe_path
         .as_ref()
@@ -718,12 +726,12 @@ fn bundled_backend_dir() -> PathBuf {
             let primary = contents_dir
                 .join("Resources")
                 .join("resources")
-                .join("openakita-server");
+                .join(resource_name);
             if primary.exists() {
                 return primary;
             }
             // 兼容可能的简化布局（无额外 resources/ 前缀）
-            let fallback = contents_dir.join("Resources").join("openakita-server");
+            let fallback = contents_dir.join("Resources").join(resource_name);
             if fallback.exists() {
                 return fallback;
             }
@@ -731,7 +739,7 @@ fn bundled_backend_dir() -> PathBuf {
     }
 
     // Windows / Linux: 主路径 — resources 位于 exe 同级目录
-    let primary = exe_dir.join("resources").join("openakita-server");
+    let primary = exe_dir.join("resources").join(resource_name);
     if primary.exists() {
         return primary;
     }
@@ -750,6 +758,8 @@ fn bundled_backend_dir() -> PathBuf {
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
 
         let static_names: &[&str] = &[
+            "OpenAkitaDesktop",       // tauri.conf.json productName used by deb resource dir
+            "OpenAkita Desktop",      // legacy productName with a space
             "openakita-setup-center", // Cargo.toml package name (Tauri 2.x default)
             "openakita-desktop",      // legacy / mainBinaryName override
             "open-akita-desktop",
@@ -757,16 +767,20 @@ fn bundled_backend_dir() -> PathBuf {
 
         // deb 常见布局: /usr/lib/<app-name>/resources/openakita-server/
         if let Some(ref name) = exe_name {
-            candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/openakita-server",
-                name
-            )));
+            candidates.push(
+                Path::new("/usr/lib")
+                    .join(name)
+                    .join("resources")
+                    .join(resource_name),
+            );
         }
         for app_name in static_names {
-            candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/openakita-server",
-                app_name
-            )));
+            candidates.push(
+                Path::new("/usr/lib")
+                    .join(app_name)
+                    .join("resources")
+                    .join(resource_name),
+            );
         }
 
         // 若 exe 在 /usr/bin/，尝试同级 /usr/lib/<app>/
@@ -777,7 +791,7 @@ fn bundled_backend_dir() -> PathBuf {
                         .join("lib")
                         .join(name)
                         .join("resources")
-                        .join("openakita-server"),
+                        .join(resource_name),
                 );
             }
             for app_name in static_names {
@@ -786,7 +800,7 @@ fn bundled_backend_dir() -> PathBuf {
                         .join("lib")
                         .join(app_name)
                         .join("resources")
-                        .join("openakita-server"),
+                        .join(resource_name),
                 );
             }
         }
@@ -800,7 +814,7 @@ fn bundled_backend_dir() -> PathBuf {
                         .join("lib")
                         .join(name)
                         .join("resources")
-                        .join("openakita-server"),
+                        .join(resource_name),
                 );
             }
             for app_name in static_names {
@@ -809,16 +823,17 @@ fn bundled_backend_dir() -> PathBuf {
                         .join("lib")
                         .join(app_name)
                         .join("resources")
-                        .join("openakita-server"),
+                        .join(resource_name),
                 );
             }
-            candidates.push(mount_root.join("resources").join("openakita-server"));
+            candidates.push(mount_root.join("resources").join(resource_name));
         }
 
         for c in &candidates {
             if c.exists() {
                 eprintln!(
-                    "[bundled_backend_dir] found at Linux fallback: {}",
+                    "[bundled_resource_dir] found {} at Linux fallback: {}",
+                    resource_name,
                     c.display()
                 );
                 return c.clone();
@@ -826,93 +841,12 @@ fn bundled_backend_dir() -> PathBuf {
         }
 
         eprintln!(
-            "[bundled_backend_dir] not found. exe_dir={}, exe_name={:?}, checked {} Linux fallback paths",
+            "[bundled_resource_dir] {} not found. exe_dir={}, exe_name={:?}, checked {} Linux fallback paths",
+            resource_name,
             exe_dir.display(),
             exe_name,
             candidates.len()
         );
-    }
-
-    primary
-}
-
-fn bootstrap_resource_dir() -> PathBuf {
-    let exe_path = std::env::current_exe().ok();
-    let exe_dir = exe_path
-        .as_ref()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(contents_dir) = exe_dir.parent() {
-            let primary = contents_dir
-                .join("Resources")
-                .join("resources")
-                .join("bootstrap");
-            if primary.exists() {
-                return primary;
-            }
-            let fallback = contents_dir.join("Resources").join("bootstrap");
-            if fallback.exists() {
-                return fallback;
-            }
-        }
-    }
-
-    let primary = exe_dir.join("resources").join("bootstrap");
-    if primary.exists() {
-        return primary;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let static_names: &[&str] = &[
-            "openakita-setup-center",
-            "openakita-desktop",
-            "open-akita-desktop",
-        ];
-        let exe_name = exe_path
-            .as_ref()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
-        let mut candidates: Vec<PathBuf> = vec![];
-        if let Some(ref name) = exe_name {
-            candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/bootstrap",
-                name
-            )));
-        }
-        for app_name in static_names {
-            candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/bootstrap",
-                app_name
-            )));
-        }
-        if let Some(usr_dir) = exe_dir.parent() {
-            if let Some(ref name) = exe_name {
-                candidates.push(
-                    usr_dir
-                        .join("lib")
-                        .join(name)
-                        .join("resources")
-                        .join("bootstrap"),
-                );
-            }
-            for app_name in static_names {
-                candidates.push(
-                    usr_dir
-                        .join("lib")
-                        .join(app_name)
-                        .join("resources")
-                        .join("bootstrap"),
-                );
-            }
-        }
-        for c in candidates {
-            if c.exists() {
-                return c;
-            }
-        }
     }
 
     primary
