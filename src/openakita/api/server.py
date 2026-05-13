@@ -139,7 +139,7 @@ def _find_docs_dist() -> Path | None:
 
 
 def _deploy_docs(data_dir: Path, app_version: str) -> Path | None:
-    """Deploy bundled docs to data/docs/v{version}/ if not already present.
+    """Deploy bundled docs to data/docs/v{version}/ and refresh same-version assets.
 
     Historical versions are never deleted so users can switch between them.
     """
@@ -153,11 +153,16 @@ def _deploy_docs(data_dir: Path, app_version: str) -> Path | None:
     docs_root = data_dir / "docs"
     version_clean = app_version.split("+")[0]
     version_dir = docs_root / f"v{version_clean}"
+    tmp_dir = docs_root / f".v{version_clean}.tmp"
 
-    if not (version_dir / "index.html").exists():
-        version_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(bundled, version_dir, dirs_exist_ok=True)
-        logger.info(f"Deployed user docs v{version_clean} → {version_dir}")
+    docs_root.mkdir(parents=True, exist_ok=True)
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    shutil.copytree(bundled, tmp_dir)
+    if version_dir.exists():
+        shutil.rmtree(version_dir)
+    tmp_dir.replace(version_dir)
+    logger.info(f"Deployed user docs v{version_clean} → {version_dir}")
 
     versions_file = docs_root / "versions.json"
     try:
@@ -428,8 +433,13 @@ def create_app(
 
         @app.get("/user-docs", include_in_schema=False)
         @app.get("/user-docs/", include_in_schema=False)
-        async def _docs_redirect():
-            return _Redirect(f"/user-docs/v{_docs_ver}/")
+        async def _docs_redirect(request: Request):
+            target = f"/user-docs/v{_docs_ver}/"
+            if request.url.query:
+                target = f"{target}?{request.url.query}"
+            response = _Redirect(target)
+            response.headers["Cache-Control"] = "no-store"
+            return response
 
         app.mount(
             "/user-docs",
