@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from openakita.api.routes import health, memory_repair
-from openakita.api.routes.memory_repair import _file_repair_lock, _memory_dir
+from openakita.api.routes.memory_repair import _file_repair_lock, _memory_dir, _move_triplet
 from openakita.memory.exceptions import MemoryStorageUnavailable
 from openakita.memory.manager import MemoryManager
 from openakita.memory.noop_store import NoopUnifiedStore
@@ -101,6 +101,26 @@ def test_stale_repair_lock_is_ignored(monkeypatch, tmp_path: Path):
         assert lock.exists()
 
     assert not lock.exists()
+
+
+def test_recreate_failure_restores_quarantined_db(monkeypatch, tmp_path: Path):
+    class Settings:
+        data_dir = tmp_path / "data"
+
+    monkeypatch.setattr(memory_repair, "settings", Settings())
+    db = _memory_dir() / "openakita.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.write_bytes(b"original")
+
+    moved = _move_triplet(db, _memory_dir() / ".quarantine.test")
+    try:
+        raise RuntimeError("simulated create failure")
+    except Exception:
+        for path in memory_repair._triplet(db):
+            path.unlink(missing_ok=True)
+        memory_repair._restore_moved_triplet(moved)
+
+    assert db.read_bytes() == b"original"
 
 
 def test_last_shutdown_marker_from_previous_clean_stop_is_clean(monkeypatch, tmp_path: Path):

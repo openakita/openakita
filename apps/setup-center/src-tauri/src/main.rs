@@ -3315,9 +3315,9 @@ fn should_cleanup_stale_heartbeat(heartbeat_stale: Option<bool>, http_healthy: b
 /// 尝试通过 HTTP API 优雅关闭 Python 服务（POST /api/shutdown），
 /// 然后等待进程退出。如果 API 调用失败或超时则回退到 kill。
 /// `port`: 可选端口号，默认 18900
-fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
+fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<bool, String> {
     if !is_pid_running(pid) {
-        return Ok(());
+        return Ok(true);
     }
 
     let effective_port = port.unwrap_or(18900);
@@ -3340,7 +3340,7 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
         // API 调用成功，给 Python 最多 10 秒优雅退出时间
         for _ in 0..50 {
             if !is_pid_running(pid) {
-                return Ok(());
+                return Ok(true);
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
@@ -3364,7 +3364,7 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
             pid
         ))
     } else {
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -6015,8 +6015,8 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
             if mp.workspace_id == workspace_id {
                 let old_pid = mp.pid;
                 let spawn_started_at = mp.started_at.saturating_mul(1000);
-                let _ = graceful_stop_pid(mp.pid, port);
-                if !is_pid_running(old_pid) {
+                let clean_shutdown = graceful_stop_pid(mp.pid, port).unwrap_or(false);
+                if clean_shutdown && !is_pid_running(old_pid) {
                     write_last_clean_shutdown_marker(&workspace_id, old_pid, spawn_started_at);
                 }
                 if is_pid_running(mp.pid) {
@@ -6043,8 +6043,9 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
     let pid = read_pid_file(&workspace_id).map(|d| d.pid);
     if let Some(pid) = pid {
         // 强制杀干净：如果杀不掉，要显式报错（避免 UI 显示“已停止”但后台仍残留）。
-        graceful_stop_pid(pid, port).map_err(|e| format!("failed to stop service: {e}"))?;
-        if !is_pid_running(pid) {
+        let clean_shutdown =
+            graceful_stop_pid(pid, port).map_err(|e| format!("failed to stop service: {e}"))?;
+        if clean_shutdown && !is_pid_running(pid) {
             write_last_clean_shutdown_marker(&workspace_id, pid, 0);
         }
     }

@@ -323,9 +323,15 @@ async def recreate_database(payload: RepairTokenRequest, request: Request):
         db = _db_path()
         stamp = time.strftime("%Y%m%d_%H%M%S")
         quarantine = _memory_dir() / f".quarantine.{stamp}"
-        _move_triplet(db, quarantine)
-        tmp = MemoryStorage(db, _register=False)
-        tmp.close()
+        moved = _move_triplet(db, quarantine)
+        try:
+            tmp = MemoryStorage(db, _register=False)
+            tmp.close()
+        except Exception:
+            for path in _triplet(db):
+                path.unlink(missing_ok=True)
+            _restore_moved_triplet(moved)
+            raise
         return {"ok": True, "status": "repair_completed_restart_required"}
 
     return await _run_repair(request, "recreate", payload.confirmation_token, work)
