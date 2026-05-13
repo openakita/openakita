@@ -414,15 +414,15 @@ class SkillsHandler:
         env_scope = "legacy"
         deps_hash = ""
         try:
-            import os
             import time
 
             deps = list(getattr(skill_entry, "python_dependencies", []) or []) if skill_entry else []
             py_env = (getattr(skill_entry, "python_env", "") or "").strip().lower() if skill_entry else ""
             spec = None
             if skill_entry and (deps or py_env == "skill"):
-                from ...runtime_envs import (
+                from ...runtime_manager import (
                     apply_execution_environment,
+                    build_user_subprocess_environment,
                     ensure_execution_env,
                     resolve_skill_env,
                 )
@@ -431,15 +431,19 @@ class SkillsHandler:
                 env_scope = "skill"
                 deps_hash = spec.deps_hash
                 python_executable = str(spec.python_path)
-                script_env = apply_execution_environment(os.environ.copy(), spec)
+                script_env = apply_execution_environment(build_user_subprocess_environment(), spec)
             elif getattr(self.agent, "_execution_env_spec", None) is not None:
-                from ...runtime_envs import apply_execution_environment, ensure_execution_env
+                from ...runtime_manager import (
+                    apply_execution_environment,
+                    build_user_subprocess_environment,
+                    ensure_execution_env,
+                )
 
                 spec = ensure_execution_env(self.agent._execution_env_spec)
                 env_scope = "agent"
                 deps_hash = spec.deps_hash
                 python_executable = str(spec.python_path)
-                script_env = apply_execution_environment(os.environ.copy(), spec)
+                script_env = apply_execution_environment(build_user_subprocess_environment(), spec)
         except Exception as exc:
             return f"❌ 技能 Python 环境准备失败:\n{exc}"
 

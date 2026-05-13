@@ -800,14 +800,10 @@ class AvatarDashScopeClient(BaseVendorClient):
         except ImportError as e:
             # Cosyvoice-v2 has no synchronous HTTP endpoint — only
             # the official SDK (which wraps a WebSocket stream).
-            # Tell the user to install it into the *same* interpreter
-            # that runs OpenAkita, not a global one — `sys.executable`
-            # makes that interpreter unambiguous (e.g. .venv path).
-            import sys
             raise VendorError(
                 "未安装 cosyvoice-v2 TTS 所需的 dashscope SDK。"
-                f"请在 OpenAkita 运行的 Python 环境中执行：\n"
-                f"    {sys.executable} -m pip install dashscope\n"
+                "请在 OpenAkita 设置中心的插件/运行时修复入口重新安装或修复该插件依赖，"
+                "不要直接污染宿主 Python。\n"
                 "（avatar-studio 仅在调用 cosyvoice-v2 TTS 时才需要此 SDK；"
                 "其他模式与「上传现成音频」流程不受影响。）",
                 status=None,
@@ -857,12 +853,8 @@ class AvatarDashScopeClient(BaseVendorClient):
                 break
         if fmt_const is None:
             # SDK shipped without any expected constant; fall back to the
-            # SDK's own DEFAULT and *force* the file extension to .bin so
-            # we never lie about the codec to the browser later on.
+            # SDK's own DEFAULT instead of guessing an unavailable enum.
             fmt_const = getattr(AudioFormat, "DEFAULT", None)
-            actual_ext = "bin"
-        else:
-            actual_ext = format.lower()
 
         synth = SpeechSynthesizer(
             model=MODEL_COSYVOICE_V2,

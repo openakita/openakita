@@ -137,3 +137,47 @@ GitHub Actions 页面 → 找到失败的 Release workflow → **"Re-run all job
 | CI | `.github/workflows/ci.yml` | push/PR to `main`、`v*.x` | lint + test + 完整 Tauri 构建检查 |
 | Release Dry Run | `.github/workflows/release-dryrun.yml` | 手动触发 | 全平台构建预验证，不发布 |
 | Release | `.github/workflows/release.yml` | tag push `v*` | Draft → Build → 渠道检测 → Publish |
+
+---
+
+## 代码签名 secrets（建议配置，缺失时优雅跳过）
+
+正式 `release.yml` 在 Windows runner 上会尝试对 seed `python.exe` 做 Authenticode
+签名，避免用户首次启动安装包时被 SmartScreen / Defender 标为"软中毒"。当签名
+secret 未配置时，签名步骤会发出 GitHub Actions warning 并 **优雅跳过**，构建继续，
+产出的是 **未签名** Windows 安装包（与 macOS 公证缺 secret 时 skip 的策略一致）。
+
+> 强烈建议在条件允许时尽快配齐 Windows 签名证书。未签名 build 会让 Windows 用户
+> 首次启动时见到红色 SmartScreen 警告，体感接近"中毒"，对产品口碑影响很大。
+
+### Windows 代码签名
+
+| Secret | 含义 |
+|---|---|
+| `WINDOWS_CERTIFICATE` | base64 编码的 `.pfx` 代码签名证书内容 |
+| `WINDOWS_CERTIFICATE_PASSWORD` | 上述 `.pfx` 的密码 |
+
+配置位置：仓库 `Settings > Secrets and variables > Actions > Repository secrets`。
+配齐后，`release.yml` 的签名步骤会自动激活，无需改 yml。
+
+base64 编码示例（PowerShell）：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\cert.pfx")) | Set-Clipboard
+```
+
+### macOS 公证
+
+| Secret | 含义 |
+|---|---|
+| `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` | macOS Developer ID 证书 |
+| `APPLE_SIGNING_IDENTITY` | 证书的 CN（如 `Developer ID Application: ...`） |
+| `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | App Store Connect / notarytool 凭证 |
+
+与 Windows 一致：缺 secret 时 skip 该步，构建继续，但产出的 dmg 没有公证，
+可能在用户首次启动时被 Gatekeeper 拦截。正式发版请确保凭证齐备。
+
+### dryrun 不需要 secrets
+
+`release-dryrun.yml` 完全不引入签名步骤，无 secret 也能跑全平台 build 测试。
+本地手动验签需要通过 `workflow_dispatch` 单独触发 `release.yml` 并配置测试 secret。

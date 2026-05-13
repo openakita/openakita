@@ -900,18 +900,6 @@ async def delete_endpoint_by_name(
 ):
     """Delete an LLM endpoint by name. Cleans up the .env key if no longer used."""
     mgr = _get_endpoint_manager()
-    try:
-        cur_del = mgr.list_endpoints(endpoint_type)
-    except Exception:
-        cur_del = []
-    if endpoint_type == "endpoints" and len(cur_del) > 0:
-        hypo_del = [
-            ep for ep in cur_del if str(ep.get("name") or "").strip() != str(name).strip()
-        ]
-        deny_del = _two_chat_endpoints_denial_reason(hypo_del, endpoint_type)
-        if deny_del:
-            return {"status": "error", "error": deny_del, "name": name}
-
     removed = mgr.delete_endpoint(name, endpoint_type=endpoint_type, clean_env=clean_env)
     if removed is None:
         return {"status": "not_found", "name": name}

@@ -7,8 +7,8 @@ android {
         applicationId "com.openakita.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 12716
-        versionName "1.27.10"
+        versionCode 12717
+        versionName "1.27.11"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

@@ -8,6 +8,19 @@ on:
         required: false
         default: true
         type: boolean
+      matrix_scope:
+        description: "矩阵范围：full（7 平台，发版前必须跑）/ smoke（3 平台 win+linux24+mac-arm64，仅用于快速反馈）。"
+        required: false
+        default: "full"
+        type: choice
+        options:
+          - full
+          - smoke
+      disable_bootstrap_cache:
+        description: "禁用 PBS/uv 下载缓存（用于排查疑似缓存污染或验证从零下载链路）。默认关闭=启用缓存。"
+        required: false
+        default: false
+        type: boolean
   push:
     branches: ['release/**']
 
@@ -19,6 +32,70 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # ── Bootstrap contract 预检（廉价、快速、无 secret 依赖） ──
+  # 在 7 平台矩阵之前先跑 HEAD 校验：PBS archive / sha256 / uv 所有发布 URL +
+  # pyproject.toml 与 PBS pin 的版本一致性。任何 4xx 立即 fail，避免每个 matrix
+  # job 重复踩同一个 pin 错误。失败 30s 内可见，远早于 release dryrun 30+ min。
+  bootstrap_contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Verify remote bootstrap asset URLs + version pins
+        run: python build/prepare_bootstrap_resources.py --verify-remote-assets
+
+  # ── 计算 effective matrix（smoke / full） ──
+  # 单一来源：matrix_scope 输入 → matrix JSON。push 触发或 inputs 缺失时兜底 full，
+  # 避免一不小心跑出空矩阵或漏掉平台。smoke 只跑 win-x64 + mac-arm64 + linux-x64
+  # (ubuntu-24.04)，给"提交后想快速过一下打包"用；full 是发版前必跑。
+  matrix_setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      effective_scope: ${{ steps.set.outputs.scope }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCOPE="${{ inputs.matrix_scope || 'full' }}"
+          echo "scope=${SCOPE}" >> "$GITHUB_OUTPUT"
+          echo "Effective matrix_scope=${SCOPE}"
+
+          # full：与原 7 行 include 等价；smoke：只挑 win-x64 + ubuntu-24.04 +
+          # macos-arm64 三条主推平台。注意 smoke 跳过 ubuntu-22.04（glibc 兼容）
+          # 与 mac-x64 / linux-arm64，发版前必须切回 full 才能信任。
+          FULL='{"include":[
+            {"platform":"windows-latest","bundles":"nsis","suffix":"windows-x64","target_platform":"win-x64"},
+            {"platform":"ubuntu-22.04","bundles":"deb","suffix":"ubuntu22-amd64","target_platform":"linux-x64"},
+            {"platform":"ubuntu-22.04-arm","bundles":"deb","suffix":"ubuntu22-arm64","target_platform":"linux-arm64"},
+            {"platform":"ubuntu-24.04","bundles":"deb","suffix":"ubuntu24-amd64","target_platform":"linux-x64"},
+            {"platform":"ubuntu-24.04-arm","bundles":"deb","suffix":"ubuntu24-arm64","target_platform":"linux-arm64"},
+            {"platform":"macos-latest","bundles":"app,dmg","args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","suffix":"macos-arm64","target_platform":"mac-arm64"},
+            {"platform":"macos-15-intel","bundles":"app,dmg","args":"--target x86_64-apple-darwin","rust_target":"x86_64-apple-darwin","suffix":"macos-x64","target_platform":"mac-x64"}
+          ]}'
+          SMOKE='{"include":[
+            {"platform":"windows-latest","bundles":"nsis","suffix":"windows-x64","target_platform":"win-x64"},
+            {"platform":"ubuntu-24.04","bundles":"deb","suffix":"ubuntu24-amd64","target_platform":"linux-x64"},
+            {"platform":"macos-latest","bundles":"app,dmg","args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","suffix":"macos-arm64","target_platform":"mac-arm64"}
+          ]}'
+
+          if [ "$SCOPE" = "smoke" ]; then
+            MATRIX=$(printf '%s' "$SMOKE" | tr -d '\n')
+          else
+            MATRIX=$(printf '%s' "$FULL" | tr -d '\n')
+          fi
+          # 用 jq 压成单行 JSON 给 fromJSON 用，并验证 JSON 合法
+          MATRIX=$(echo "$MATRIX" | python3 -c "import sys,json; print(json.dumps(json.loads(sys.stdin.read())))")
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+          echo "Matrix JSON: ${MATRIX}"
+
   # ── CLI wheel 构建 + 安装验证 ──
   python_wheel:
     runs-on: ubuntu-latest
@@ -83,161 +160,29 @@ jobs:
           retention-days: 3
 
   # ── Desktop 安装包构建（多平台矩阵） ──
+  # 矩阵从 matrix_setup 动态计算：full 跑 7 行、smoke 跑 3 行。push 触发兜底 full。
   dryrun_build:
+    needs: [bootstrap_contract, matrix_setup]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # Windows
-          - platform: windows-latest
-            bundles: "nsis"
-            suffix: "windows-x64"
-            target_platform: "win-x64"
-          # Linux Ubuntu 22.04
-          - platform: ubuntu-22.04
-            bundles: "deb"
-            suffix: "ubuntu22-amd64"
-            target_platform: "linux-x64"
-          - platform: ubuntu-22.04-arm
-            bundles: "deb"
-            suffix: "ubuntu22-arm64"
-            target_platform: "linux-arm64"
-          # Linux Ubuntu 24.04
-          - platform: ubuntu-24.04
-            bundles: "deb"
-            suffix: "ubuntu24-amd64"
-            target_platform: "linux-x64"
-          - platform: ubuntu-24.04-arm
-            bundles: "deb"
-            suffix: "ubuntu24-arm64"
-            target_platform: "linux-arm64"
-          # macOS - Apple Silicon (arm64)
-          - platform: macos-latest
-            bundles: "app,dmg"
-            args: "--target aarch64-apple-darwin"
-            rust_target: "aarch64-apple-darwin"
-            suffix: "macos-arm64"
-            target_platform: "mac-arm64"
-          # macOS - Intel (x86_64)
-          - platform: macos-15-intel
-            bundles: "app,dmg"
-            args: "--target x86_64-apple-darwin"
-            rust_target: "x86_64-apple-darwin"
-            suffix: "macos-x64"
-            target_platform: "mac-x64"
+      matrix: ${{ fromJSON(needs.matrix_setup.outputs.matrix) }}
 
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Linux system dependencies (Ubuntu only)
-        if: startsWith(matrix.platform, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libfuse2 \
-            rpm
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      # 公共 prep：Python/Node/Rust 安装、web/docs 构建、PyInstaller 后端、
+      # PBS 缓存与 bootstrap 资源准备、seed exec bit 校验。详见
+      # .github/actions/desktop-build-prepare/action.yml。
+      # 注意 inputs 全是字符串，所以 disable_bootstrap_cache 透传为
+      # `'true'/'false'` 字符串，由 action 内部用字符串比较判断。
+      - name: Desktop build prepare
+        uses: ./.github/actions/desktop-build-prepare
         with:
-          python-version: '3.11'
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: apps/setup-center/package-lock.json
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Add Rust cross-compilation target
-        if: matrix.rust_target
-        run: rustup target add ${{ matrix.rust_target }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            apps/setup-center/src-tauri -> target
-          prefix-key: "dryrun-${{ matrix.suffix }}"
-
-      - name: Build web frontend for remote browser access
-        working-directory: apps/setup-center
-        run: |
-          npm ci
-          npm run build:web
-
-      - name: Build user docs (VitePress)
-        working-directory: docs-site
-        run: |
-          npm ci
-          npm run build
-
-      - name: Install Python project and PyInstaller
-        shell: bash
-        run: |
-          # 先装 monorepo 内的 SDK（PyPI 版本通常滞后于本地 pyproject.toml），
-          # 再装主项目；这样 [all] extras 的 openakita-plugin-sdk 约束会被本地
-          # 已装版本满足，不再向 PyPI 索取。
-          # SDK 用非 editable 安装：PyInstaller 需要把 SDK 当成普通 site-packages
-          # 条目收集进 openakita-server 镜像，editable 安装的 .pth 跳转方式会让
-          # 打包遗漏 SDK 的代码与 web/ 资源（与 ci.yml 第 341 行保持一致）。
-          pip install ./openakita-plugin-sdk
-          pip install -e ".[all]"
-          pip install build "pyinstaller>=6.18.0"
-
-      - name: Clean previous PyInstaller output
-        shell: bash
-        run: |
-          rm -rf dist/
-          rm -rf build/openakita-server
-          rm -rf build/pyinstaller_work
-          rm -rf build/modules
-          # macOS: clear stale PyInstaller temp dirs to avoid PYI-6038 symlink conflicts
-          if [ "$(uname)" = "Darwin" ]; then
-            find "${TMPDIR:-/tmp}" -maxdepth 1 -name "_MEI*" -type d -exec rm -rf {} + 2>/dev/null || true
-          fi
-
-      - name: Package Python backend (PyInstaller)
-        run: python build/build_backend.py
-
-      - name: Prepare bootstrap resources (wheel + uv + standalone Python seed)
-        shell: bash
-        run: |
-          set -euo pipefail
-          python build/prepare_bootstrap_resources.py \
-            --commit-resources \
-            --clean-output \
-            --require-real-assets \
-            --target-platform "${{ matrix.target_platform }}"
-
-      - name: Verify bootstrap manifest resources
-        shell: bash
-        run: python build/prepare_bootstrap_resources.py --commit-resources --verify-only
-
-      - name: Assert seed Python executable bit (POSIX)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          SEED_DIR="apps/setup-center/src-tauri/resources/bootstrap/python"
-          [ -d "$SEED_DIR" ] || { echo "ERROR: seed dir missing: $SEED_DIR" >&2; exit 1; }
-          fail=0
-          for f in "$SEED_DIR"/bin/*; do
-            [ -e "$f" ] || continue
-            if [ ! -x "$f" ]; then
-              echo "ERROR: missing exec bit: $f" >&2
-              fail=1
-            fi
-          done
-          [ "$fail" -eq 0 ]
+          target_platform: ${{ matrix.target_platform }}
+          rust_target: ${{ matrix.rust_target || '' }}
+          rust_cache_prefix: "dryrun-${{ matrix.suffix }}"
+          disable_bootstrap_cache: ${{ inputs.disable_bootstrap_cache && 'true' || 'false' }}
 
       - name: Copy backend to Tauri resources
         shell: bash

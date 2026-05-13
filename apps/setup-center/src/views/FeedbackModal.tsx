@@ -16,7 +16,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Label } from "../components/ui/label";
 import { Checkbox } from "../components/ui/checkbox";
 
-type FeedbackMode = "bug" | "feature";
+export type FeedbackMode = "bug" | "feature";
 
 type SystemInfo = {
   os?: string;
@@ -29,17 +29,24 @@ type SystemInfo = {
   [key: string]: unknown;
 };
 
+export type FeedbackPrefill = {
+  mode?: FeedbackMode;
+  title?: string;
+  description?: string;
+};
+
 type FeedbackModalProps = {
   open: boolean;
   onClose: () => void;
   apiBase: string;
   initialMode?: FeedbackMode;
+  prefill?: FeedbackPrefill | null;
   onNavigateToMyFeedback?: () => void;
   serviceRunning?: boolean;
   currentWorkspaceId?: string | null;
 };
 
-export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onNavigateToMyFeedback, serviceRunning = true, currentWorkspaceId }: FeedbackModalProps) {
+export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", prefill, onNavigateToMyFeedback, serviceRunning = true, currentWorkspaceId }: FeedbackModalProps) {
   const { t } = useTranslation();
 
   const [mode, setMode] = useState<FeedbackMode>(initialMode);
@@ -53,7 +60,6 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
   const [uploadLogs, setUploadLogs] = useState(true);
   const [uploadDebug, setUploadDebug] = useState(true);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
-  const [sysInfoExpanded, setSysInfoExpanded] = useState(false);
 
   const [contactEmail, setContactEmail] = useState("");
   const [contactWechat, setContactWechat] = useState("");
@@ -81,15 +87,26 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
   type Phase = "form" | "uploading" | "success";
   const [phase, setPhase] = useState<Phase>("form");
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const [captchaReady, setCaptchaReady] = useState(false);
+  const captchaBoundRef = useRef(false);
 
   useEffect(() => {
     if (open) {
-      setMode(initialMode);
       setSubmitResult(null);
       setDownloading(false);
       setUploadProgress(null);
+      setPhase("form");
+      submittingRef.current = false;
+      setCaptchaReady(false);
+      if (prefill) {
+        setMode(prefill.mode ?? initialMode);
+        setTitle(prefill.title ?? "");
+        setDescription(prefill.description ?? "");
+      } else {
+        setMode(initialMode);
+      }
     }
-  }, [open, initialMode]);
+  }, [open, initialMode, prefill]);
 
   const useOfflineIpc = IS_TAURI && !serviceRunning;
 
@@ -179,16 +196,23 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ captcha_verify_param: captchaVerifyParam }),
-                  signal: AbortSignal.timeout(10000),
+                  signal: AbortSignal.timeout(15000),
                 });
                 const data = await resp.json();
                 if (data.verified) {
                   captchaNonceRef.current = data.nonce || "";
                   return { captchaResult: true, bizResult: true };
                 }
+                captchaTokenRef.current = "";
                 return { captchaResult: false, bizResult: false };
-              } catch {
-                return { captchaResult: true, bizResult: true };
+              } catch (err) {
+                if (err instanceof TypeError) {
+                  // Network-level error: token was never sent to the backend, so
+                  // keep it for the Tauri IPC offline submission path.
+                  return { captchaResult: true, bizResult: true };
+                }
+                captchaTokenRef.current = "";
+                return { captchaResult: false, bizResult: false };
               }
             },
             onBizResultCallback: () => {
@@ -197,7 +221,13 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
             getInstance: (inst: any) => { captchaInstanceRef.current = inst; },
             language: document.documentElement.lang?.startsWith("zh") ? "cn" : "en",
           });
-        } catch { /* init failed, allow submission without captcha */ }
+          if (!destroyed) {
+            captchaBoundRef.current = true;
+            setCaptchaReady(true);
+          }
+        } catch {
+          if (!destroyed) setCaptchaReady(true);
+        }
         return;
       }
       if (!document.querySelector('script[src*="AliyunCaptcha"]')) {
@@ -222,8 +252,10 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
       captchaInstanceRef.current = null;
       captchaTokenRef.current = "";
       captchaNonceRef.current = "";
+      captchaBoundRef.current = false;
+      setCaptchaReady(false);
     };
-  }, [open, captchaCfg, captchaResetKey]);
+  }, [open, captchaCfg, captchaResetKey, apiBase]);
 
   const addImages = useCallback((files: FileList | File[]) => {
     const newFiles = Array.from(files).filter(
@@ -270,6 +302,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
     setDescription("");
     setSteps("");
     setContactEmail("");
+    setContactWechat("");
     setImageFiles([]);
     setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
     setUploadLogs(true);
@@ -294,7 +327,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
     setCaptchaResetKey((k) => k + 1);
   }, [friendlyErrorMsg]);
 
-  const handleSubmitViaIpc = useCallback(async () => {
+  const handleSubmitViaIpc = useCallback(async (captchaToken: string) => {
     const reportId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     const wsId = currentWorkspaceId || "default";
 
@@ -331,7 +364,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
         reportType: mode,
         title: title.trim(),
         summary: description.trim().slice(0, 2000),
-        captchaVerifyParam: captchaTokenRef.current || "none",
+        captchaVerifyParam: captchaToken || "none",
         contactEmail: contactEmail.trim(),
       },
     );
@@ -356,15 +389,18 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
   const handleSubmit = useCallback(async () => {
     if (submittingRef.current) return;
     if (!title.trim() || !description.trim()) return;
-    if (captchaCfg && !captchaTokenRef.current) return;
+    if (captchaCfg && captchaBoundRef.current && !captchaTokenRef.current) return;
 
     // 一次性消费 captcha token：先取出再立即清空，避免任一路径再次进入时复用同一 token。
     const token = captchaTokenRef.current || "none";
+    const captchaNonce = captchaNonceRef.current || "";
     captchaTokenRef.current = "";
+    captchaNonceRef.current = "";
 
     submittingRef.current = true;
     setSubmitting(true);
     setSubmitResult(null);
+    setPhase("uploading");
     setUploadProgress({ percent: 0, phase: "starting", detail: t("feedback.progressPacking") });
 
     const controller = new AbortController();
@@ -374,7 +410,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
       // Offline IPC path: backend is down, submit via Tauri Rust commands
       if (useOfflineIpc) {
         try {
-          await handleSubmitViaIpc();
+          await handleSubmitViaIpc(token);
           setUploadProgress(null);
           resetForm();
           setPhase("success");
@@ -391,8 +427,8 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
       form.append("title", title.trim());
       form.append("description", description.trim());
       form.append("captcha_verify_param", token);
-      if (captchaNonceRef.current) {
-        form.append("captcha_nonce", captchaNonceRef.current);
+      if (captchaNonce) {
+        form.append("captcha_nonce", captchaNonce);
       }
       for (const img of imageFiles) {
         form.append("images", img);
@@ -457,15 +493,8 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
                 setPhase("form");
                 setCaptchaResetKey((k) => k + 1);
               } else {
-                const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
-                setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
-                setTitle("");
-                setDescription("");
-                setSteps("");
-                setContactEmail("");
-                setContactWechat("");
-                setImageFiles([]);
-                setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+                resetForm();
+                setPhase("success");
               }
             } else if (eventType === "error") {
               handleSseError(data);
@@ -485,15 +514,8 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
           setPhase("form");
           setCaptchaResetKey((k) => k + 1);
         } else {
-          const successKey = mode === "bug" ? "bugReport.submitSuccess" : "featureRequest.submitSuccess";
-          setSubmitResult({ ok: true, msg: t(successKey, { id: data.report_id }) });
-          setTitle("");
-          setDescription("");
-          setSteps("");
-          setContactEmail("");
-          setContactWechat("");
-          setImageFiles([]);
-          setImagePreviews((old) => { old.forEach(URL.revokeObjectURL); return []; });
+          resetForm();
+          setPhase("success");
         }
       }
     } catch (err: any) {
@@ -523,33 +545,49 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
     abortRef.current?.abort();
     setSubmitResult(null);
     setUploadProgress(null);
+    setPhase("form");
     onClose();
   }, [onClose]);
 
   const isBug = mode === "bug";
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) {
+          if (phase === "uploading") return;
+          if (phase === "success") { onNavigateToMyFeedback?.(); }
+          handleClose();
+        }
+      }}
+    >
       <DialogContent
-        className="sm:max-w-[520px] p-0 gap-0 overflow-hidden"
-        showCloseButton={true}
+        className={`p-0 gap-0 overflow-hidden ${phase === "form" ? "sm:max-w-[520px]" : "sm:max-w-[380px]"}`}
+        showCloseButton={phase !== "uploading"}
+        onPaste={phase === "form" ? handlePaste : undefined}
         onPointerDownOutside={(e) => {
+          if (phase === "uploading") { e.preventDefault(); return; }
           const t = e.target as HTMLElement | null;
           if (t?.closest?.("[class*='aliyunCaptcha'], [id*='aliyunCaptcha'], [id*='aliyun-captcha']")) {
             e.preventDefault();
           }
         }}
         onInteractOutside={(e) => {
+          if (phase === "uploading") { e.preventDefault(); return; }
           const t = e.target as HTMLElement | null;
           if (t?.closest?.("[class*='aliyunCaptcha'], [id*='aliyunCaptcha'], [id*='aliyun-captcha']")) {
             e.preventDefault();
           }
         }}
+        onEscapeKeyDown={(e) => { if (phase === "uploading") e.preventDefault(); }}
       >
-        <DialogHeader className="sr-only">
-          <DialogTitle>{isBug ? t("bugReport.title") : t("featureRequest.title")}</DialogTitle>
-          <DialogDescription>{isBug ? t("bugReport.title") : t("featureRequest.title")}</DialogDescription>
-        </DialogHeader>
+        {phase === "form" && (
+          <>
+            <DialogHeader className="sr-only">
+              <DialogTitle>{isBug ? t("bugReport.title") : t("featureRequest.title")}</DialogTitle>
+              <DialogDescription>{isBug ? t("bugReport.title") : t("featureRequest.title")}</DialogDescription>
+            </DialogHeader>
 
         {/* Tab navigation as header */}
         <div className="flex items-end gap-0 border-b border-border px-5 pt-4 shrink-0">
@@ -704,24 +742,6 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
             </div>
           )}
 
-          {/* Bug: System info */}
-          {isBug && systemInfo && (
-            <div>
-              <button
-                type="button"
-                onClick={() => setSysInfoExpanded(!sysInfoExpanded)}
-                className="text-[12px] cursor-pointer text-muted-foreground bg-transparent border-0 p-0 select-none hover:text-foreground transition-colors"
-              >
-                {sysInfoExpanded ? "▾" : "▸"} {t("bugReport.systemInfo")}
-              </button>
-              {sysInfoExpanded && (
-                <pre className="text-[11px] bg-muted rounded-md p-2 mt-1 overflow-x-auto max-h-32 whitespace-pre-wrap break-all leading-relaxed">
-                  {JSON.stringify(systemInfo, null, 2)}
-                </pre>
-              )}
-            </div>
-          )}
-
           <div ref={captchaContainerRef} id="aliyun-captcha-element" />
 
           {/* Upload Progress */}
@@ -811,17 +831,79 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug", onN
               <Button
                 id="feedback-submit-btn"
                 size="sm"
-                disabled={submitting || !title.trim() || !description.trim()}
-                onClick={handleSubmit}
+                disabled={submitting || !title.trim() || !description.trim() || (!!captchaCfg && !captchaReady)}
+                onClick={captchaBoundRef.current ? undefined : handleSubmit}
                 className="min-w-[100px]"
               >
                 {submitting
                   ? t("bugReport.submitting")
-                  : isBug ? t("bugReport.submit") : t("featureRequest.submit")}
+                  : (captchaCfg && !captchaReady)
+                    ? t("feedback.captchaLoading", "验证加载中…")
+                    : isBug ? t("bugReport.submit") : t("featureRequest.submit")}
               </Button>
             </>
           )}
         </div>
+          </>
+        )}
+
+        {phase === "uploading" && (
+          <>
+            <DialogHeader className="px-5 pt-5 pb-0">
+              <DialogTitle className="text-[15px]">{t("feedback.uploadingTitle")}</DialogTitle>
+              <DialogDescription className="sr-only">{t("feedback.uploadingTitle")}</DialogDescription>
+            </DialogHeader>
+            <div className="px-5 py-6 space-y-4">
+              {uploadProgress && (
+                <>
+                  <div className="flex items-center justify-between text-[13px] text-muted-foreground">
+                    <span>{uploadProgress.detail}</span>
+                    <span>{uploadProgress.percent}%</span>
+                  </div>
+                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${uploadProgress.percent}%` }}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="flex justify-end px-5 py-3 border-t border-border">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => { abortRef.current?.abort(); }}
+              >
+                {t("feedback.cancelUpload")}
+              </Button>
+            </div>
+          </>
+        )}
+
+        {phase === "success" && (
+          <>
+            <DialogHeader className="px-5 pt-5 pb-0">
+              <DialogTitle className="text-[15px]">{t("feedback.submitSuccessTitle")}</DialogTitle>
+              <DialogDescription className="sr-only">{t("feedback.submitSuccessTitle")}</DialogDescription>
+            </DialogHeader>
+            <div className="px-5 py-4">
+              <p className="text-[14px] text-muted-foreground leading-relaxed">
+                {t("feedback.submitSuccessMessage")}
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-border">
+              <Button variant="outline" size="sm" onClick={() => { onNavigateToMyFeedback?.(); handleClose(); }}>
+                {t("feedback.close")}
+              </Button>
+              {onNavigateToMyFeedback && (
+                <Button size="sm" onClick={() => { onNavigateToMyFeedback(); handleClose(); }}>
+                  {t("myFeedback.viewFeedback")}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

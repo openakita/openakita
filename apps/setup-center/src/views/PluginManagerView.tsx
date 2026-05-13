@@ -56,6 +56,11 @@ interface PluginInfo {
   pending_permissions?: string[];
   granted_permissions?: string[];
   health?: HealthSnapshot;
+  loaded?: boolean;
+  pending_update_revision?: string;
+  pending_update_at?: number;
+  reload_required?: boolean;
+  update_policy?: string;
   // i18n: optional per-language overrides surfaced by the backend.
   // Falls back to `name` / `description` when missing or empty.
   display_name_i18n?: Record<string, string>;
@@ -1009,6 +1014,15 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                             {p.status === "failed" && (
                               <Badge variant="destructive" className="max-w-[96px] shrink overflow-hidden whitespace-nowrap text-ellipsis" title={t("plugins.failed")}>
                                 {t("plugins.failed")}
+                              </Badge>
+                            )}
+                            {p.reload_required && (
+                              <Badge
+                                variant="outline"
+                                className="max-w-[150px] shrink overflow-hidden whitespace-nowrap border-amber-500/40 bg-amber-500/10 text-amber-600 text-ellipsis"
+                                title="Disk-only update staged; reload or restart to activate."
+                              >
+                                Reload required
                               </Badge>
                             )}
                           </div>

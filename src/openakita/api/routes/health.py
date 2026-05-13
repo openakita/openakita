@@ -249,6 +249,36 @@ def _get_llm_client(agent: object):
     return getattr(brain, "_llm_client", None)
 
 
+def _probe_command_version(command: str, *args: str) -> dict[str, str | bool]:
+    import subprocess
+    import sys
+
+    from openakita.runtime_manager import resolve_toolchain_command
+
+    path = resolve_toolchain_command(command)
+    if not path:
+        return {"available": False, "path": "", "version": "unavailable"}
+    kwargs: dict = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": 5,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        proc = subprocess.run([path, *(args or ("--version",))], **kwargs)
+    except Exception as exc:
+        return {"available": False, "path": path, "version": f"probe failed: {exc}"}
+    output = (proc.stdout or proc.stderr or "").strip().splitlines()
+    return {
+        "available": proc.returncode == 0,
+        "path": path,
+        "version": output[-1] if output else f"exit {proc.returncode}",
+    }
+
+
 async def _check_endpoint_readonly(name: str, provider) -> HealthResult:
     """Check an endpoint in dry_run mode: test connectivity without modifying provider state."""
     t0 = time.time()
@@ -293,7 +323,7 @@ async def _check_with_timeout(name: str, provider, timeout: float = 30) -> Healt
             _check_endpoint_readonly(name, provider),
             timeout=timeout,
         )
-    except (asyncio.TimeoutError, TimeoutError):
+    except TimeoutError:
         return HealthResult(
             name=name,
             status="unhealthy",
@@ -347,8 +377,13 @@ async def diagnostics():
     import os
     import platform
     import sys
+    from pathlib import Path
 
     from openakita import __version__ as backend_version
+    from openakita.runtime_manager import (
+        get_runtime_environment_report,
+        get_workspace_dependency_cache_root,
+    )
 
     checks: list[dict] = []
 
@@ -426,6 +461,28 @@ async def diagnostics():
     failing = [c for c in checks if c["status"] not in ("pass", "warn")]
     summary = "broken" if failing else "healthy"
 
+    runtime_report = get_runtime_environment_report()
+    node_toolchain = {
+        "managed_node": runtime_report.get("toolchain_node"),
+        "managed_bin": runtime_report.get("toolchain_node_bin"),
+        "node": _probe_command_version("node"),
+        "npm": _probe_command_version("npm"),
+        "corepack": _probe_command_version("corepack"),
+        "pnpm": _probe_command_version("pnpm"),
+        "yarn": _probe_command_version("yarn"),
+        "npm_prefix": str(get_workspace_dependency_cache_root() / "npm-prefix"),
+        "npm_cache": str(get_workspace_dependency_cache_root() / "npm-cache"),
+        "corepack_home": str(get_workspace_dependency_cache_root() / "corepack"),
+        "workspace_cache": str(get_workspace_dependency_cache_root()),
+    }
+    package_paths: dict[str, str] = {}
+    for mod_name in ("openakita", "pydantic", "pydantic_core", "certifi"):
+        try:
+            mod = __import__(mod_name)
+            package_paths[mod_name] = str(Path(getattr(mod, "__file__", "") or "").resolve())
+        except Exception as exc:
+            package_paths[mod_name] = f"unavailable: {type(exc).__name__}: {exc}"
+
     return {
         "summary": summary,
         "checks": checks,
@@ -435,6 +492,27 @@ async def diagnostics():
             "runtimeType": runtime_type,
             "openakitaVersion": backend_version,
             "pid": os.getpid(),
+            "runtime": runtime_report,
+            "toolchain": {
+                "python": {
+                    "app": runtime_report.get("app_python"),
+                    "agent": runtime_report.get("agent_python"),
+                    "managed": runtime_report.get("toolchain_python"),
+                    "seedPackaged": runtime_report.get("bootstrap_python_seed_packaged"),
+                    "abi": runtime_report.get("python_abi"),
+                    "wheelTag": runtime_report.get("wheel_tag"),
+                },
+                "node": {
+                    **node_toolchain,
+                    "seedPackaged": runtime_report.get("bootstrap_node_seed_packaged"),
+                },
+            },
+            "sysPrefix": sys.prefix,
+            "sysBasePrefix": sys.base_prefix,
+            "sysPathSummary": sys.path[:20],
+            "packagePaths": package_paths,
+            "envTrustSource": os.environ.get("OPENAKITA_ENV_TRUST_SOURCE", ""),
+            "subprocessSecretScrub": os.environ.get("OPENAKITA_SUBPROCESS_SECRET_SCRUB") == "1",
         },
     }
 

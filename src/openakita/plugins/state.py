@@ -28,6 +28,13 @@ class PluginStateEntry:
     # user having to remove + reinstall. URL/git sources are recorded for
     # traceability only and are NOT auto-resynced on reload.
     install_source: str = ""
+    loaded: bool = False
+    pending_update_revision: str = ""
+    pending_update_at: float = 0.0
+    pending_update_path: str = ""
+    pending_update_source: str = ""
+    reload_required: bool = False
+    update_policy: str = "disk-only"
 
 
 _SCHEMA_VERSION = 2
@@ -93,6 +100,36 @@ class PluginState:
         entry.last_error = error
         entry.last_error_time = time.time()
 
+    def mark_loaded(self, plugin_id: str) -> None:
+        entry = self.ensure_entry(plugin_id)
+        entry.loaded = True
+        self.clear_pending_update(plugin_id)
+
+    def mark_pending_update(
+        self,
+        plugin_id: str,
+        revision: str,
+        *,
+        pending_path: str = "",
+        source: str = "",
+    ) -> None:
+        entry = self.ensure_entry(plugin_id)
+        entry.pending_update_revision = revision
+        entry.pending_update_at = time.time()
+        entry.pending_update_path = pending_path
+        entry.pending_update_source = source
+        entry.reload_required = True
+        entry.update_policy = "disk-only"
+
+    def clear_pending_update(self, plugin_id: str) -> None:
+        entry = self.ensure_entry(plugin_id)
+        entry.pending_update_revision = ""
+        entry.pending_update_at = 0.0
+        entry.pending_update_path = ""
+        entry.pending_update_source = ""
+        entry.reload_required = False
+        entry.update_policy = "disk-only"
+
     def set_active_backend(self, slot: str, provider_id: str) -> None:
         self.active_backends[slot] = provider_id
 
@@ -116,6 +153,13 @@ class PluginState:
                     "last_error": e.last_error,
                     "last_error_time": e.last_error_time,
                     "install_source": e.install_source,
+                    "loaded": e.loaded,
+                    "pending_update_revision": e.pending_update_revision,
+                    "pending_update_at": e.pending_update_at,
+                    "pending_update_path": e.pending_update_path,
+                    "pending_update_source": e.pending_update_source,
+                    "reload_required": e.reload_required,
+                    "update_policy": e.update_policy,
                 }
                 for pid, e in self.plugins.items()
             },
@@ -158,6 +202,13 @@ class PluginState:
                 last_error=pdata.get("last_error", ""),
                 last_error_time=pdata.get("last_error_time", 0),
                 install_source=pdata.get("install_source", "") or "",
+                loaded=bool(pdata.get("loaded", False)),
+                pending_update_revision=pdata.get("pending_update_revision", "") or "",
+                pending_update_at=pdata.get("pending_update_at", 0),
+                pending_update_path=pdata.get("pending_update_path", "") or "",
+                pending_update_source=pdata.get("pending_update_source", "") or "",
+                reload_required=bool(pdata.get("reload_required", False)),
+                update_policy=pdata.get("update_policy", "disk-only") or "disk-only",
             )
         state.active_backends = data.get("active_backends", {})
         loaded_dev_mode = data.get("dev_mode", "off")

@@ -219,13 +219,13 @@ class ShellTool:
         spec = getattr(self, "execution_env_spec", None)
         if spec is not None:
             try:
-                from ..runtime_envs import apply_execution_environment, ensure_execution_env
+                from ..runtime_manager import apply_execution_environment, ensure_execution_env
 
                 return apply_execution_environment(env, ensure_execution_env(spec))
             except Exception as exc:
                 logger.warning("Falling back to shared agent Python env: %s", exc)
         try:
-            from ..runtime_env import apply_agent_python_environment
+            from ..runtime_manager import apply_agent_python_environment
 
             return apply_agent_python_environment(env)
         except Exception:
@@ -505,7 +505,7 @@ class ShellTool:
                 await self._kill_process_tree(process)
             raise  # 重新抛出，让上层三路竞速逻辑处理
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             logger.error(f"Command timed out after {cmd_timeout}s")
             if process and process.returncode is None:
                 await self._kill_process_tree(process)
@@ -578,15 +578,14 @@ class ShellTool:
         spec = getattr(self, "execution_env_spec", None)
         if spec is not None:
             try:
-                from openakita.runtime_env import get_pip_install_args
-                from openakita.runtime_envs import ensure_execution_env
+                from openakita.runtime_manager import ensure_execution_env, get_pip_install_args
 
                 ensured = ensure_execution_env(spec)
                 cmd = [str(ensured.python_path), *get_pip_install_args(packages)]
             except Exception as exc:
                 return CommandResult(returncode=-1, stdout="", stderr=str(exc))
         else:
-            from openakita.runtime_env import get_agent_pip_command
+            from openakita.runtime_manager import get_agent_pip_command
 
             cmd = get_agent_pip_command(packages)
         if not cmd:

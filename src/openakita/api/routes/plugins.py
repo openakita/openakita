@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import uuid
 import zipfile
 from io import BytesIO
@@ -31,8 +32,21 @@ router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 _plugin_op_lock = asyncio.Lock()
 
 
+class PendingUpdateApplyError(RuntimeError):
+    """Pending update could not be applied while preserving rollback context."""
+
+    def __init__(self, message: str, *, live_dir: Path | None = None, backup_dir: Path | None = None):
+        super().__init__(message)
+        self.live_dir = live_dir
+        self.backup_dir = backup_dir
+
+
 def _plugins_dir() -> Path:
     return Path(settings.project_root) / "data" / "plugins"
+
+
+def _plugin_updates_dir() -> Path:
+    return Path(settings.project_root) / "data" / "plugin-updates"
 
 
 def _plugin_state_path() -> Path:
@@ -197,6 +211,14 @@ def _build_plugin_list(pm, plugins_dir: Path) -> tuple[list[dict[str, Any]], dic
             is_symlinked = False
         meta["install_source"] = install_source
         meta["is_symlinked"] = is_symlinked
+        if entry:
+            meta["loaded"] = entry.loaded
+            meta["pending_update_revision"] = entry.pending_update_revision
+            meta["pending_update_at"] = entry.pending_update_at
+            meta["pending_update_path"] = entry.pending_update_path
+            meta["pending_update_source"] = entry.pending_update_source
+            meta["reload_required"] = entry.reload_required
+            meta["update_policy"] = entry.update_policy
 
         from ...plugins.manifest import BASIC_PERMISSIONS as _BASIC_PERMS
 
@@ -322,6 +344,13 @@ async def _sync_new_plugins(pm, plugins_dir: Path) -> None:
             continue
         if not state.is_enabled(pid):
             continue
+        entry = state.get_entry(pid)
+        if entry and entry.pending_update_path:
+            logger.info(
+                "Plugin '%s' has a staged pending update; startup/list refresh will not auto-apply it",
+                pid,
+            )
+            continue
         try:
             await pm.reload_plugin(pid)
             logger.info("Hot-loaded new plugin '%s' on refresh", pid)
@@ -422,6 +451,197 @@ def _is_local_plugin_source(source: str) -> bool:
         return False
 
 
+def _safe_plugin_dir_name(plugin_id: str) -> str:
+    _check_plugin_id(plugin_id)
+    return plugin_id
+
+
+def _recorded_install_source(src: str) -> str:
+    recorded_source = src
+    try:
+        local_candidate = Path(src)
+        if (local_candidate / "plugin.json").is_file():
+            recorded_source = str(local_candidate.resolve())
+    except OSError:
+        pass
+    return recorded_source
+
+
+def _pending_revision() -> str:
+    return f"{int(asyncio.get_running_loop().time())}-{uuid.uuid4().hex[:8]}"
+
+
+def _pending_update_root(plugin_id: str, revision: str) -> Path:
+    return _plugin_updates_dir() / _safe_plugin_dir_name(plugin_id) / revision
+
+
+def _install_plugin_source(src: str, plugins_dir: Path, progress: InstallProgress | None, *, dev_mode: bool) -> str:
+    if installer._is_git_url(src):
+        return installer.install_from_git(src, plugins_dir, progress=progress)
+    if src.startswith(("http://", "https://")):
+        return installer.install_from_url(src, plugins_dir, progress=progress)
+    local = Path(src)
+    if (local / "plugin.json").is_file():
+        return installer.install_from_path(local, plugins_dir, dev_mode=dev_mode)
+    return installer.install_bundle(local, plugins_dir)
+
+
+async def _stage_plugin_update(
+    src: str,
+    plugin_id: str,
+    progress: InstallProgress,
+    *,
+    dev_mode: bool,
+) -> tuple[str, Path]:
+    revision = _pending_revision()
+    staging_root = _pending_update_root(plugin_id, revision)
+    shutil.rmtree(staging_root, ignore_errors=True)
+    staging_root.mkdir(parents=True, exist_ok=True)
+    try:
+        staged_id = await asyncio.to_thread(
+            _install_plugin_source,
+            src,
+            staging_root,
+            progress,
+            dev_mode=dev_mode,
+        )
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+    if staged_id != plugin_id:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise PluginInstallError(
+            f"Pending update id mismatch: expected {plugin_id!r}, got {staged_id!r}"
+        )
+    staged_dir = staging_root / _safe_plugin_dir_name(plugin_id)
+    if not staged_dir.is_dir():
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise PluginInstallError(f"Pending update directory missing: {staged_dir}")
+    return revision, staged_dir
+
+
+def _restore_pending_rollback(plugin_id: str, live_dir: Path | None, backup_dir: Path | None) -> bool:
+    if live_dir is None or backup_dir is None:
+        return False
+    try:
+        if live_dir.exists() or live_dir.is_symlink():
+            if live_dir.is_symlink():
+                live_dir.unlink()
+            else:
+                shutil.rmtree(live_dir)
+        if backup_dir.exists() or backup_dir.is_symlink():
+            backup_dir.rename(live_dir)
+            return True
+    except OSError:
+        logger.exception("Failed to restore plugin rollback backup for %s", plugin_id)
+    return False
+
+
+def _commit_pending_update(
+    pm,
+    plugin_id: str,
+    *,
+    backup_dir: Path | None,
+    new_source: str,
+) -> None:
+    entry = pm.state.ensure_entry(plugin_id)
+    if new_source:
+        entry.install_source = new_source
+    pm.state.clear_pending_update(plugin_id)
+    pm.state.save(_plugin_state_path())
+    if backup_dir is not None:
+        shutil.rmtree(backup_dir, ignore_errors=True)
+
+
+def _apply_pending_update(pm, plugin_id: str) -> tuple[str, Path | None, str, Path]:
+    entry = pm.state.get_entry(plugin_id) if pm.state else None
+    if entry is None or not entry.pending_update_path:
+        raise PendingUpdateApplyError("no pending update")
+    pending_dir = Path(entry.pending_update_path)
+    if not pending_dir.is_dir():
+        raise PendingUpdateApplyError(f"pending update path not found: {pending_dir}")
+    live_dir = _plugins_dir() / _safe_plugin_dir_name(plugin_id)
+    backup_dir = live_dir.with_name(f"{live_dir.name}.rollback-{uuid.uuid4().hex[:8]}")
+    try:
+        if live_dir.exists() or live_dir.is_symlink():
+            live_dir.rename(backup_dir)
+        pending_dir.rename(live_dir)
+        return (
+            entry.pending_update_revision,
+            backup_dir if backup_dir.exists() or backup_dir.is_symlink() else None,
+            entry.pending_update_source,
+            pending_dir,
+        )
+    except OSError as exc:
+        logger.exception("Failed to apply pending plugin update for %s", plugin_id)
+        _restore_pending_rollback(plugin_id, live_dir, backup_dir)
+        raise PendingUpdateApplyError(str(exc), live_dir=live_dir, backup_dir=backup_dir) from exc
+
+
+def _move_failed_live_back_to_pending(plugin_id: str, live_dir: Path, pending_dir: Path) -> bool:
+    try:
+        pending_dir.parent.mkdir(parents=True, exist_ok=True)
+        if pending_dir.exists():
+            shutil.rmtree(pending_dir, ignore_errors=True)
+        if live_dir.exists() or live_dir.is_symlink():
+            live_dir.rename(pending_dir)
+            return True
+    except OSError:
+        logger.exception("Failed to move failed live plugin back to pending for %s", plugin_id)
+    return False
+
+
+def _cleanup_pending_updates(plugin_id: str, *, keep_path: Path | None = None) -> None:
+    root = _plugin_updates_dir() / _safe_plugin_dir_name(plugin_id)
+    if not root.exists():
+        return
+    keep_resolved: Path | None = None
+    if keep_path is not None:
+        try:
+            keep_resolved = keep_path.resolve()
+        except OSError:
+            keep_resolved = keep_path
+    for child in root.iterdir():
+        try:
+            child_resolved = child.resolve()
+        except OSError:
+            child_resolved = child
+        if keep_resolved is not None and (
+            child_resolved == keep_resolved
+            or child_resolved in keep_resolved.parents
+            or keep_resolved in child_resolved.parents
+        ):
+            continue
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+    try:
+        next(root.iterdir())
+    except StopIteration:
+        root.rmdir()
+    except (OSError, FileNotFoundError):
+        pass
+
+
+def _promote_staged_plugin_to_live(staged_dir: Path, plugin_id: str, plugins_dir: Path) -> None:
+    live_dir = plugins_dir / _safe_plugin_dir_name(plugin_id)
+    backup_dir = live_dir.with_name(f"{live_dir.name}.backup-{uuid.uuid4().hex[:8]}")
+    try:
+        if live_dir.exists() or live_dir.is_symlink():
+            live_dir.rename(backup_dir)
+        staged_dir.rename(live_dir)
+        shutil.rmtree(staged_dir.parent, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
+    except OSError as exc:
+        try:
+            if not live_dir.exists() and not live_dir.is_symlink() and (backup_dir.exists() or backup_dir.is_symlink()):
+                backup_dir.rename(live_dir)
+        except OSError:
+            logger.exception("Failed to restore plugin backup for %s", plugin_id)
+        raise PluginInstallError(f"Could not promote staged plugin {plugin_id!r}: {exc}") from exc
+
+
 async def _resync_plugin_from_source(pm, plugin_id: str) -> tuple[bool, str]:
     """Re-materialise ``data/plugins/<plugin_id>`` from its recorded source.
 
@@ -466,57 +686,120 @@ async def _resync_plugin_from_source(pm, plugin_id: str) -> tuple[bool, str]:
 
 async def _do_install(src: str, plugins_dir: Path, progress: InstallProgress, request: Request):
     """Core install logic shared by sync and background modes."""
-    if installer._is_git_url(src):
-        plugin_id = await asyncio.to_thread(
-            installer.install_from_git,
-            src,
-            plugins_dir,
-            progress=progress,
-        )
-    elif src.startswith(("http://", "https://")):
-        plugin_id = await asyncio.to_thread(
-            installer.install_from_url,
-            src,
-            plugins_dir,
-            progress=progress,
-        )
-    else:
-        local = Path(src)
-        if (local / "plugin.json").is_file():
-            pm_for_dev = _get_plugin_manager(request)
-            dev_mode_on = bool(
-                pm_for_dev is not None
-                and getattr(pm_for_dev.state, "dev_mode_enabled", False)
-            )
-            plugin_id = await asyncio.to_thread(
-                installer.install_from_path,
-                local,
-                plugins_dir,
-                dev_mode=dev_mode_on,
-            )
-        else:
-            plugin_id = await asyncio.to_thread(installer.install_bundle, local, plugins_dir)
-
     pm = _get_plugin_manager(request)
-    # Persist the install source so the next "Reload" can pull fresh code
-    # from it. We resolve local paths to absolute form so a later cwd change
-    # does not break the resync. For URLs we keep the original string.
-    recorded_source = src
-    try:
-        local_candidate = Path(src)
-        if (local_candidate / "plugin.json").is_file():
-            recorded_source = str(local_candidate.resolve())
-    except OSError:
-        pass
+    dev_mode_on = bool(pm is not None and getattr(pm.state, "dev_mode_enabled", False))
+    recorded_source = _recorded_install_source(src)
+
+    plugin_id: str | None = None
+    if _is_local_plugin_source(src):
+        try:
+            plugin_id = parse_manifest(Path(src)).id
+        except ManifestError as e:
+            raise PluginInstallError(str(e)) from e
+
+    entry = pm.state.get_entry(plugin_id) if pm is not None and plugin_id else None
+    should_stage = bool(entry and entry.loaded and not dev_mode_on)
+
+    if should_stage and plugin_id is not None:
+        revision, staged_dir = await _stage_plugin_update(
+            src,
+            plugin_id,
+            progress,
+            dev_mode=False,
+        )
+        pm.state.mark_pending_update(
+            plugin_id,
+            revision,
+            pending_path=str(staged_dir),
+            source=recorded_source,
+        )
+        pm.state.save(_plugin_state_path())
+        _cleanup_pending_updates(plugin_id, keep_path=staged_dir)
+        logger.info(
+            "Plugin '%s' update staged at %s; reload/restart required to activate",
+            plugin_id,
+            staged_dir,
+        )
+        return plugin_id, False
+
+    if plugin_id is None:
+        revision = _pending_revision()
+        staging_root = _pending_update_root("incoming", revision)
+        shutil.rmtree(staging_root, ignore_errors=True)
+        staging_root.mkdir(parents=True, exist_ok=True)
+        try:
+            plugin_id = await asyncio.to_thread(
+                _install_plugin_source,
+                src,
+                staging_root,
+                progress,
+                dev_mode=False,
+            )
+            staged_dir = staging_root / _safe_plugin_dir_name(plugin_id)
+            entry = pm.state.get_entry(plugin_id) if pm is not None else None
+            if entry and entry.loaded and not dev_mode_on:
+                final_root = _pending_update_root(plugin_id, revision)
+                shutil.rmtree(final_root, ignore_errors=True)
+                final_root.parent.mkdir(parents=True, exist_ok=True)
+                if final_root.exists():
+                    shutil.rmtree(final_root)
+                staging_root.rename(final_root)
+                staged_dir = final_root / _safe_plugin_dir_name(plugin_id)
+                pm.state.mark_pending_update(
+                    plugin_id,
+                    revision,
+                    pending_path=str(staged_dir),
+                    source=recorded_source,
+                )
+                pm.state.save(_plugin_state_path())
+                _cleanup_pending_updates(plugin_id, keep_path=staged_dir)
+                logger.info(
+                    "Plugin '%s' update staged at %s; reload/restart required to activate",
+                    plugin_id,
+                    staged_dir,
+                )
+                return plugin_id, False
+            _promote_staged_plugin_to_live(staged_dir, plugin_id, plugins_dir)
+        except Exception:
+            shutil.rmtree(staging_root, ignore_errors=True)
+            raise
+        _record_install_source(pm, plugin_id, recorded_source)
+        hot_loaded = False
+        if pm is not None:
+            try:
+                await pm.reload_plugin(plugin_id)
+                hot_loaded = True
+            except Exception as e:
+                logger.warning("Plugin '%s' installed but failed to hot-load: %s", plugin_id, e)
+        return plugin_id, hot_loaded
+
+    plugin_id = await asyncio.to_thread(
+        _install_plugin_source,
+        src,
+        plugins_dir,
+        progress,
+        dev_mode=dev_mode_on,
+    )
     _record_install_source(pm, plugin_id, recorded_source)
 
     hot_loaded = False
     if pm is not None:
-        try:
-            await pm.reload_plugin(plugin_id)
-            hot_loaded = True
-        except Exception as e:
-            logger.warning("Plugin '%s' installed but failed to hot-load: %s", plugin_id, e)
+        entry = pm.state.get_entry(plugin_id) if pm.state else None
+        if entry and entry.loaded and dev_mode_on:
+            pm.state.mark_pending_update(
+                plugin_id,
+                _pending_revision(),
+                pending_path="",
+                source=recorded_source,
+            )
+            pm.state.save(_plugin_state_path())
+            logger.info("Plugin '%s' updated from dev source; reload/restart required", plugin_id)
+        else:
+            try:
+                await pm.reload_plugin(plugin_id)
+                hot_loaded = True
+            except Exception as e:
+                logger.warning("Plugin '%s' installed but failed to hot-load: %s", plugin_id, e)
 
     return plugin_id, hot_loaded
 
@@ -535,7 +818,14 @@ async def install_plugin(body: InstallBody, request: Request) -> dict[str, Any]:
             async with _plugin_op_lock:
                 try:
                     plugin_id, hot_loaded = await _do_install(src, plugins_dir, progress, request)
-                    progress.finish(result={"plugin_id": plugin_id, "hot_loaded": hot_loaded})
+                    progress.finish(
+                        result={
+                            "plugin_id": plugin_id,
+                            "hot_loaded": hot_loaded,
+                            "update_policy": "disk-only",
+                            "reload_required": not hot_loaded,
+                        }
+                    )
                 except Exception as e:
                     logger.exception("Background install failed for %s", src)
                     progress.finish(error=str(e))
@@ -574,7 +864,14 @@ async def install_plugin(body: InstallBody, request: Request) -> dict[str, Any]:
                 detail=make_error_response(PluginErrorCode.INTERNAL_ERROR),
             ) from e
 
-        progress.finish(result={"plugin_id": plugin_id, "hot_loaded": hot_loaded})
+        progress.finish(
+            result={
+                "plugin_id": plugin_id,
+                "hot_loaded": hot_loaded,
+                "update_policy": "disk-only",
+                "reload_required": not hot_loaded,
+            }
+        )
         installer._unregister_progress(install_id)
         return {
             "ok": True,
@@ -582,6 +879,8 @@ async def install_plugin(body: InstallBody, request: Request) -> dict[str, Any]:
                 "plugin_id": plugin_id,
                 "hot_loaded": hot_loaded,
                 "install_id": install_id,
+                "update_policy": "disk-only",
+                "reload_required": not hot_loaded,
             },
         }
 
@@ -662,6 +961,7 @@ async def uninstall_plugin(
 
         # 3. Reconcile state with the actual filesystem outcome.
         if result.get("removed"):
+            _cleanup_pending_updates(plugin_id)
             # Code dir is gone — drop state entry entirely. Also forget
             # any in-memory load-failure record, otherwise the UI keeps
             # rendering the ghost error block for a plugin that no
@@ -1004,18 +1304,99 @@ async def reload_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
         pm = _require_manager(request)
         # Step 1: drop modules / handles so the source dir can be rewritten.
         await pm.unload_plugin(plugin_id)
-        # Step 2: rebuild data/plugins/<id> from the recorded source.
-        resynced, resync_info = await _resync_plugin_from_source(pm, plugin_id)
+        entry = pm.state.get_entry(plugin_id)
+        applied_pending = False
+        pending_revision = ""
+        pending_info = ""
+        rollback_backup: Path | None = None
+        pending_source = ""
+        pending_dir_after_apply: Path | None = None
+        if entry and entry.pending_update_path:
+            try:
+                (
+                    pending_revision,
+                    rollback_backup,
+                    pending_source,
+                    pending_dir_after_apply,
+                ) = _apply_pending_update(pm, plugin_id)
+                applied_pending = True
+                pending_info = pending_revision
+            except PendingUpdateApplyError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=make_error_response(
+                        PluginErrorCode.INTERNAL_ERROR,
+                        detail=f"Failed to apply pending update: {exc}",
+                    ),
+                ) from exc
+        # Step 2: rebuild data/plugins/<id> from the recorded source when
+        # there is no staged disk-only update waiting.
+        if applied_pending:
+            resynced, resync_info = False, ""
+        else:
+            resynced, resync_info = await _resync_plugin_from_source(pm, plugin_id)
         # Step 3: re-import & re-mount. ``reload_plugin`` finds the manifest
         # by scanning the on-disk dir, so the freshly-resynced files are
         # what gets loaded.
-        await pm.reload_plugin(plugin_id)
+        try:
+            await pm.reload_plugin(plugin_id)
+        except Exception as exc:
+            rolled_back = False
+            pending_preserved = False
+            if applied_pending:
+                if pending_dir_after_apply is not None:
+                    pending_preserved = _move_failed_live_back_to_pending(
+                        plugin_id,
+                        _plugins_dir() / _safe_plugin_dir_name(plugin_id),
+                        pending_dir_after_apply,
+                    )
+                rolled_back = _restore_pending_rollback(
+                    plugin_id,
+                    _plugins_dir() / _safe_plugin_dir_name(plugin_id),
+                    rollback_backup,
+                )
+                if pending_preserved and pending_dir_after_apply is not None and pending_dir_after_apply.is_dir():
+                    pm.state.mark_pending_update(
+                        plugin_id,
+                        pending_revision,
+                        pending_path=str(pending_dir_after_apply),
+                        source=pending_source,
+                    )
+                else:
+                    pm.state.clear_pending_update(plugin_id)
+                    pm.state.record_error(
+                        plugin_id,
+                        "Pending update package was lost while rolling back a failed reload; "
+                        "please stage the update again.",
+                    )
+                pm.state.save(_plugin_state_path())
+            raise HTTPException(
+                status_code=500,
+                detail=make_error_response(
+                    PluginErrorCode.INTERNAL_ERROR,
+                    detail=(
+                        "Plugin reload failed after pending update; "
+                        f"rolled_back={rolled_back}; pending_preserved={pending_preserved}: {exc}"
+                    ),
+                ),
+            ) from exc
+        if applied_pending:
+            _commit_pending_update(
+                pm,
+                plugin_id,
+                backup_dir=rollback_backup,
+                new_source=pending_source,
+            )
+            _cleanup_pending_updates(plugin_id)
         return {
             "ok": True,
             "data": {
                 "plugin_id": plugin_id,
                 "resynced": resynced,
                 "resync_mode": resync_info if resynced else "",
+                "applied_pending_update": applied_pending,
+                "pending_revision": pending_info if applied_pending else "",
+                "rolled_back": False,
             },
         }
 
@@ -1220,10 +1601,15 @@ async def update_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
     return {
         "ok": False,
+        "data": {
+            "plugin_id": plugin_id,
+            "update_policy": "disk-only",
+            "reload_required": False,
+            "message": "插件市场更新尚未接入；未创建 pending update。请使用安装入口提供真实插件包后再更新。",
+        },
         "error": {
             "code": "NOT_IMPLEMENTED",
-            "message": "一键升级功能将在插件市场上线后可用",
-            "guidance": "当前请手动重新安装最新版本",
+            "message": "Plugin marketplace update is not implemented yet",
         },
     }
 

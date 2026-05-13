@@ -27,6 +27,13 @@ from ..converters.tools import (
     parse_text_tool_calls,
 )
 from ..model_registry import get_model_capabilities, resolve_output_token_budget
+from ..thinking import (
+    is_minimax_endpoint,
+    minimax_thinking_depth,
+    normalize_thinking_depth,
+    reasoning_effort_for_depth,
+    thinking_budget_for_depth,
+)
 from ..types import (
     AuthenticationError,
     EndpointConfig,
@@ -61,60 +68,6 @@ def _safe_dig(data: object, *keys: str) -> object:
         if cur is None:
             return None
     return cur
-
-
-_THINKING_BUDGET_BY_DEPTH = {
-    "low": 1024,
-    "medium": 4096,
-    "high": 16384,
-    # "max" currently maps to the largest broadly-supported token budget for
-    # budget-based providers; provider-specific max efforts are handled below.
-    "max": 16384,
-    "xhigh": 16384,
-}
-
-
-def _normalize_thinking_depth(depth: str | None) -> str | None:
-    """Normalize user-facing thinking depth aliases."""
-    value = (depth or "").strip().lower()
-    if value == "xhigh":
-        return "max"
-    if value in {"low", "medium", "high", "max"}:
-        return value
-    return None
-
-
-def _thinking_budget_for_depth(depth: str | None) -> int | None:
-    """Return a conservative thinking_budget for providers using token budgets."""
-    normalized = _normalize_thinking_depth(depth)
-    return _THINKING_BUDGET_BY_DEPTH.get(normalized or "")
-
-
-def _supports_max_reasoning_effort(provider: str, base_url: str, model: str) -> bool:
-    """Whether this OpenAI-compatible endpoint documents reasoning_effort=max."""
-    provider_l = (provider or "").lower()
-    base_l = (base_url or "").lower()
-    model_l = (model or "").lower()
-    return (
-        model_l == "deepseek-v4-pro"
-        and (provider_l == "deepseek" or "api.deepseek.com" in base_l)
-    )
-
-
-def _reasoning_effort_for_depth(
-    *,
-    provider: str,
-    base_url: str,
-    model: str,
-    depth: str | None,
-) -> str | None:
-    """Map OpenAkita thinking depth to provider-safe reasoning_effort."""
-    normalized = _normalize_thinking_depth(depth)
-    if not normalized:
-        return None
-    if normalized == "max":
-        return "max" if _supports_max_reasoning_effort(provider, base_url, model) else "high"
-    return "high" if _supports_max_reasoning_effort(provider, base_url, model) else normalized
 
 
 def _extract_reasoning_delta(value: object) -> str:
@@ -945,6 +898,12 @@ class OpenAIProvider(LLMProvider):
         if request.extra_params:
             body.update(request.extra_params)
 
+        is_minimax = is_minimax_endpoint(
+            self.config.provider,
+            self.base_url,
+            self.config.model,
+        )
+
         # ── 本地端点检测 ──
         # Ollama / LM Studio 等本地推理引擎不支持 OpenAI 风格的
         # thinking: {"type": "enabled"} 嵌套参数，但 Ollama 0.9+ 支持
@@ -958,7 +917,7 @@ class OpenAIProvider(LLMProvider):
                 ds_thinking = True
             body["enable_thinking"] = ds_thinking
             if ds_thinking and request.thinking_depth:
-                budget = _thinking_budget_for_depth(request.thinking_depth)
+                budget = thinking_budget_for_depth(request.thinking_depth)
                 if budget:
                     body["thinking_budget"] = budget
             elif not ds_thinking:
@@ -994,7 +953,7 @@ class OpenAIProvider(LLMProvider):
                 # 必须清理 extra_params 可能泄漏的 enable_thinking
                 body.pop("enable_thinking", None)
                 if request.thinking_depth:
-                    budget = _thinking_budget_for_depth(request.thinking_depth)
+                    budget = thinking_budget_for_depth(request.thinking_depth)
                     if budget:
                         body["thinking_budget"] = budget
             else:
@@ -1002,7 +961,7 @@ class OpenAIProvider(LLMProvider):
                 body["enable_thinking"] = bool(request.enable_thinking)
                 if request.enable_thinking:
                     if request.thinking_depth:
-                        budget = _thinking_budget_for_depth(request.thinking_depth)
+                        budget = thinking_budget_for_depth(request.thinking_depth)
                         if budget:
                             body["thinking_budget"] = budget
                 else:
@@ -1035,7 +994,7 @@ class OpenAIProvider(LLMProvider):
 
             if request.enable_thinking or is_always_thinking:
                 depth_map = {"low": "low", "medium": "medium", "high": "high", "max": "high"}
-                depth = _normalize_thinking_depth(request.thinking_depth or "medium")
+                depth = normalize_thinking_depth(request.thinking_depth or "medium")
                 effort = depth_map.get(depth or "medium", "medium")
                 body["reasoning"] = {"effort": effort}
             else:
@@ -1058,7 +1017,7 @@ class OpenAIProvider(LLMProvider):
                 if "thinking" not in body:
                     body["thinking"] = {"type": "enabled"}
                 if request.thinking_depth:
-                    effort = _reasoning_effort_for_depth(
+                    effort = reasoning_effort_for_depth(
                         provider=self.config.provider,
                         base_url=self.base_url,
                         model=self.config.model,
@@ -1070,6 +1029,15 @@ class OpenAIProvider(LLMProvider):
                 body.pop("reasoning_effort", None)
                 if "thinking" in body:
                     body["thinking"] = {"type": "disabled"}
+
+        # MiniMax accepts only low/medium/high for the top-level thinking_depth
+        # field. OpenAkita's UI exposes "max"; clamp it at the provider boundary.
+        if is_minimax:
+            depth = minimax_thinking_depth(request.thinking_depth or body.get("thinking_depth"))
+            if depth:
+                body["thinking_depth"] = depth
+            else:
+                body.pop("thinking_depth", None)
 
         # ── 本地端点清理 ──
         # 移除可能通过 extra_params 泄漏的、本地引擎不支持的思考参数。
@@ -1570,7 +1538,6 @@ class OpenAIProvider(LLMProvider):
         """PR-C3: 把无可恢复内容的 raw response 写到 llm_debug 便于排查。"""
         try:
             from datetime import datetime
-            from pathlib import Path
 
             from ...config import settings as _settings
 

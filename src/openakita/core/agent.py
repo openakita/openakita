@@ -105,6 +105,9 @@ from .prompt_assembler import PromptAssembler
 from .ralph import RalphLoop, Task, TaskResult
 from .reasoning_engine import ReasoningEngine
 from .response_handler import (
+    INTERNAL_TRACE_MARKERS,
+    INTERNAL_TRACE_SECTION_PREFIXES,
+    INTERNAL_TRACE_SECTION_TERMINATORS,
     ResponseHandler,
     clean_llm_response,
     parse_intent_tag,
@@ -4913,14 +4916,9 @@ class Agent:
                 )
             history_messages = deduped
 
-        # 同时识别新 marker (<<TOOL_TRACE>> / <<DELEGATION_TRACE>>) 与旧 marker
-        # ([执行摘要] / [子Agent工作总结])，向后兼容已存档的会话历史。
-        _STRIP_MARKERS = [
-            "\n\n<<DELEGATION_TRACE>>",
-            "\n\n<<TOOL_TRACE>>",
-            "\n\n[子Agent工作总结]",
-            "\n\n[执行摘要]",
-        ]
+        # 内部 trace marker 已集中到 ``response_handler.INTERNAL_TRACE_*``，
+        # 此处仅复用常量，保持原有 strip 行为（按 marker 前后切分、按下一段
+        # 起始符寻找右边界）。新增 marker 时改 ``response_handler.py`` 即可。
         _RE_TIME_PREFIX = re.compile(r"^\[\d{1,2}:\d{2}\]\s")
 
         messages: list[dict] = []
@@ -4934,23 +4932,18 @@ class Agent:
             if msg.get("transient_for_llm") or msg.get("transient"):
                 continue
             if role == "assistant":
-                for _marker in _STRIP_MARKERS:
+                for _marker in INTERNAL_TRACE_SECTION_PREFIXES:
                     while _marker in content:
                         idx = content.index(_marker)
                         before = content[:idx]
                         after = content[idx + len(_marker) :]
                         next_section = -1
-                        for sep in ("\n\n[", "\n\n<<", "\n\n##", "\n\n---"):
+                        for sep in INTERNAL_TRACE_SECTION_TERMINATORS:
                             pos = after.find(sep)
                             if pos != -1 and (next_section == -1 or pos < next_section):
                                 next_section = pos
                         content = before + after[next_section:] if next_section != -1 else before
-                if (
-                    content.startswith("<<TOOL_TRACE>>")
-                    or content.startswith("<<DELEGATION_TRACE>>")
-                    or content.startswith("[执行摘要]")
-                    or content.startswith("[子Agent工作总结]")
-                ):
+                if any(content.startswith(m) for m in INTERNAL_TRACE_MARKERS):
                     content = ""
                 # 从 metadata 还原 tool_summary（跨轮工具上下文恢复）
                 _tool_summary = msg.get("tool_summary")
@@ -6942,6 +6935,12 @@ class Agent:
             if ws_section:
                 parts.append(ws_section)
 
+        # NOTE: marker literal ``<<TOOL_TRACE>>`` 必须与
+        # ``response_handler.INTERNAL_TRACE_MARKERS`` 中的字面量完全一致。
+        # 新增 / 重命名 marker 时三处必须同步：
+        #   1) 这里的生成端（``build_tool_trace_summary`` / ``_build_work_summary_section``）
+        #   2) ``response_handler.INTERNAL_TRACE_MARKERS`` 常量
+        #   3) ``agent.py`` 系统提示中告知 LLM 不要模仿的 marker 列表
         parts.append("\n\n<<TOOL_TRACE>>\n" + "\n".join(lines))
 
         return "".join(parts)

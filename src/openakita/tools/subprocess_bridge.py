@@ -19,7 +19,7 @@ import sys
 import textwrap
 from typing import Any
 
-from openakita.runtime_env import get_agent_python_executable
+from openakita.runtime_manager import apply_agent_python_environment, get_agent_python_executable
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +85,7 @@ class SubprocessBridge:
                 "error": "未找到可用的系统 Python 解释器，无法执行子进程任务",
             }
 
-        import os
-
-        env = os.environ.copy()
+        env = apply_agent_python_environment({})
         # _ensure_utf8 已在父进程设置了这些环境变量，os.environ.copy() 会继承。
         # 这里保留 setdefault 作为防御，以防本模块在 _ensure_utf8 之前被使用。
         env.setdefault("PYTHONUTF8", "1")
@@ -124,7 +122,7 @@ class SubprocessBridge:
                     return {"success": True, "data": out_text}
             return {"success": True, "data": None}
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return {"success": False, "error": f"子进程执行超时 ({timeout}s)"}
         except Exception as e:
             return {"success": False, "error": f"子进程执行异常: {e}"}
@@ -212,8 +210,6 @@ asyncio.run(main())
             }
 
         # 以短超时执行启动脚本，等它输出连接信息
-        import os
-
         proc = await asyncio.create_subprocess_exec(
             py,
             "-c",
@@ -221,7 +217,7 @@ asyncio.run(main())
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE,
-            env=os.environ.copy(),
+            env=apply_agent_python_environment({}),
             **_NO_WINDOW_FLAGS,
         )
 
@@ -233,7 +229,7 @@ asyncio.run(main())
                 return {"success": False, "error": info["error"]}
             info["process"] = proc
             return {"success": True, "data": info}
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             proc.kill()
             return {"success": False, "error": "Playwright CDP 服务启动超时"}
         except Exception as e:

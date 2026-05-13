@@ -8,6 +8,7 @@ PyInstaller 打包后 sys.executable 指向 openakita-server.exe 而非 Python �
 import json
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -15,6 +16,68 @@ logger = logging.getLogger(__name__)
 
 IS_FROZEN = getattr(sys, "frozen", False)
 """是否在 PyInstaller 打包环境中运行"""
+
+PYTHON_ENV_BLOCKLIST = {
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "PYTHONSTARTUP",
+    "VIRTUAL_ENV",
+    "CONDA_PREFIX",
+    "CONDA_DEFAULT_ENV",
+    "CONDA_SHLVL",
+    "CONDA_PYTHON_EXE",
+}
+
+PIP_ENV_BLOCKLIST = {
+    "PIP_TARGET",
+    "PIP_PREFIX",
+    "PIP_USER",
+    "PIP_REQUIRE_VIRTUALENV",
+}
+
+TOOLCHAIN_ENV_BLOCKLIST = {
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "NODE_TLS_REJECT_UNAUTHORIZED",
+    "NODE_PATH",
+    "NPM_CONFIG_PREFIX",
+    "NPM_CONFIG_CACHE",
+    "npm_config_prefix",
+    "npm_config_cache",
+    "COREPACK_HOME",
+}
+
+LINUX_DYNAMIC_LIBRARY_ENV_BLOCKLIST = {
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "LIBRARY_PATH",
+    "PKG_CONFIG_PATH",
+}
+
+OPENAKITA_SECRET_ENV_BLOCKLIST = {
+    "OPENAKITA_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENROUTER_API_KEY",
+    "GOOGLE_API_KEY",
+    "AZURE_CLIENT_SECRET",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_URL",
+    "ACTIONS_RUNTIME_TOKEN",
+    "ACTIONS_RUNTIME_URL",
+}
+
+OPENAKITA_SECRET_ENV_PREFIXES = (
+    "OPENAKITA_FORCE_",
+)
 
 
 def _find_python_in_dir(directory: Path) -> Path | None:
@@ -258,6 +321,198 @@ def get_runtime_cache_dir() -> Path:
     return get_runtime_root() / "cache"
 
 
+def get_toolchain_root() -> Path:
+    return _get_openakita_root() / "toolchains"
+
+
+def get_toolchain_cache_root() -> Path:
+    return get_runtime_cache_dir() / "toolchains"
+
+
+def get_readonly_seed_roots() -> list[Path]:
+    """Return readonly seed/cache roots declared by env or bootstrap manifest.
+
+    Seed roots are never written by OpenAkita. They are only used as verified
+    fallback locations for enterprise/offline pre-provisioned resources.
+    """
+    roots: list[Path] = []
+    raw_env = os.environ.get("OPENAKITA_READONLY_SEED_DIRS", "").strip()
+    if raw_env:
+        for item in raw_env.split(os.pathsep):
+            if item.strip():
+                roots.append(Path(item).expanduser())
+
+    manifest = read_bootstrap_manifest()
+    for raw in manifest.get("seed_dirs", []) if isinstance(manifest.get("seed_dirs"), list) else []:
+        if isinstance(raw, str) and raw.strip():
+            path = _resolve_manifest_relative_path(raw.strip()) or Path(raw.strip()).expanduser()
+            roots.append(path)
+
+    bootstrap_manifest = get_bootstrap_manifest_path()
+    if bootstrap_manifest:
+        default_seed = bootstrap_manifest.parent / "seed"
+        if default_seed.exists():
+            roots.append(default_seed)
+
+    seen: set[str] = set()
+    out: list[Path] = []
+    for root in roots:
+        try:
+            resolved = root.resolve()
+        except OSError:
+            resolved = root
+        key = str(resolved)
+        if key not in seen and resolved.exists():
+            seen.add(key)
+            out.append(resolved)
+    return out
+
+
+def _seed_candidates(kind: str, names: list[str]) -> list[Path]:
+    candidates: list[Path] = []
+    for root in get_readonly_seed_roots():
+        for name in names:
+            candidates.extend(
+                [
+                    root / kind / name,
+                    root / name,
+                ]
+            )
+    return candidates
+
+
+def get_bootstrap_manifest_path() -> Path | None:
+    candidates: list[Path] = []
+    exe = Path(sys.executable).resolve()
+    candidates.extend(
+        [
+            exe.parent / "bootstrap" / "manifest.json",
+            exe.parent.parent / "bootstrap" / "manifest.json",
+            exe.parent / "resources" / "bootstrap" / "manifest.json",
+            exe.parent.parent / "resources" / "bootstrap" / "manifest.json",
+        ]
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def read_bootstrap_manifest() -> dict:
+    path = get_bootstrap_manifest_path()
+    if not path:
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _resolve_manifest_relative_path(raw: str | None) -> Path | None:
+    if not raw:
+        return None
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    manifest_path = get_bootstrap_manifest_path()
+    if manifest_path:
+        return manifest_path.parent / path
+    return None
+
+
+def get_managed_python_seed() -> str | None:
+    manifest = read_bootstrap_manifest()
+    seed = manifest.get("python_seed")
+    if isinstance(seed, dict):
+        candidate = _resolve_manifest_relative_path(str(seed.get("path") or ""))
+        if candidate and candidate.exists() and verify_python_executable(str(candidate)):
+            return str(candidate)
+
+    bootstrap_manifest = get_bootstrap_manifest_path()
+    if bootstrap_manifest:
+        base = bootstrap_manifest.parent / "python"
+        candidates = (
+            [base / "python.exe", base / "bin" / "python.exe"]
+            if sys.platform == "win32"
+            else [base / "bin" / "python3", base / "bin" / "python", base / "python3", base / "python"]
+        )
+        for candidate in candidates:
+            if candidate.exists() and verify_python_executable(str(candidate)):
+                return str(candidate)
+    for candidate in _seed_candidates(
+        "python",
+        ["python.exe", "bin/python.exe"]
+        if sys.platform == "win32"
+        else ["bin/python3", "bin/python", "python3", "python"],
+    ):
+        if candidate.exists() and verify_python_executable(str(candidate)):
+            return str(candidate)
+    return None
+
+
+def get_managed_node_seed() -> str | None:
+    manifest = read_bootstrap_manifest()
+    seed = manifest.get("node_seed")
+    if isinstance(seed, dict):
+        candidate = _resolve_manifest_relative_path(str(seed.get("path") or ""))
+        if candidate and candidate.exists():
+            return str(candidate)
+    bootstrap_manifest = get_bootstrap_manifest_path()
+    if bootstrap_manifest:
+        base = bootstrap_manifest.parent / "node"
+        candidates = (
+            [base / "node.exe", base / "bin" / "node.exe"]
+            if sys.platform == "win32"
+            else [base / "bin" / "node", base / "node"]
+        )
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+    for candidate in _seed_candidates(
+        "node",
+        ["node.exe", "bin/node.exe"] if sys.platform == "win32" else ["bin/node", "node"],
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def get_managed_node_bin_dir() -> str | None:
+    node = get_managed_node_seed()
+    if not node:
+        return None
+    return str(Path(node).parent)
+
+
+def get_workspace_dependency_cache_root() -> Path:
+    return get_runtime_cache_dir() / "workspace-deps"
+
+
+def resolve_toolchain_command(command: str) -> str | None:
+    """Resolve a runtime-managed toolchain command before consulting PATH."""
+    normalized = command.lower()
+    suffix = ".exe" if sys.platform == "win32" else ""
+    names = {
+        "node": [f"node{suffix}"],
+        "npm": [f"npm{'.cmd' if sys.platform == 'win32' else ''}", "npm"],
+        "npx": [f"npx{'.cmd' if sys.platform == 'win32' else ''}", "npx"],
+        "corepack": [f"corepack{'.cmd' if sys.platform == 'win32' else ''}", "corepack"],
+        "pnpm": [f"pnpm{'.cmd' if sys.platform == 'win32' else ''}", "pnpm"],
+        "yarn": [f"yarn{'.cmd' if sys.platform == 'win32' else ''}", "yarn"],
+    }.get(normalized, [command])
+
+    node_bin = get_managed_node_bin_dir()
+    if node_bin:
+        for name in names:
+            candidate = Path(node_bin) / name
+            if candidate.exists():
+                return str(candidate)
+    for root in _seed_candidates("node", names):
+        if root.exists():
+            return str(root)
+    return shutil.which(command)
+
+
 def get_app_venv_path() -> Path:
     return get_runtime_root() / "app-venv"
 
@@ -359,6 +614,139 @@ def get_pip_install_args(packages: list[str], *, index_url: str | None = None) -
     return args
 
 
+def sanitize_runtime_environment(
+    env: dict[str, str] | None = None,
+    *,
+    include_pip: bool = True,
+    include_ssl: bool = True,
+    include_dynamic_libraries: bool = False,
+    scrub_secrets: bool = False,
+) -> dict[str, str]:
+    """Return an OpenAkita-managed subprocess environment.
+
+    This is the Python-side counterpart of the Tauri RuntimeManager env
+    builder. It is intentionally copy-returning so call sites do not mutate the
+    long-lived backend process environment while preparing pip/tools/MCP
+    subprocesses.
+    """
+    merged = dict(os.environ if env is None else env)
+    blocklist = set(PYTHON_ENV_BLOCKLIST)
+    if include_pip:
+        blocklist |= PIP_ENV_BLOCKLIST
+    if include_ssl:
+        blocklist |= TOOLCHAIN_ENV_BLOCKLIST
+    if include_dynamic_libraries and sys.platform.startswith("linux"):
+        blocklist |= LINUX_DYNAMIC_LIBRARY_ENV_BLOCKLIST
+    for key in blocklist:
+        merged.pop(key, None)
+    if scrub_secrets:
+        for key in list(merged):
+            if key in OPENAKITA_SECRET_ENV_BLOCKLIST:
+                merged.pop(key, None)
+    merged["PYTHONNOUSERSITE"] = "1"
+    merged["OPENAKITA_ENV_TRUST_SOURCE"] = merged.get("OPENAKITA_ENV_TRUST_SOURCE", "runtime-api")
+    return merged
+
+
+def apply_runtime_pip_environment(
+    env: dict[str, str] | None = None,
+    *,
+    python_executable: str | None = None,
+) -> dict[str, str]:
+    """Environment for venv/pip creation and extension dependency installs."""
+    merged = sanitize_runtime_environment(
+        env,
+        include_pip=True,
+        include_ssl=True,
+        include_dynamic_libraries=True,
+        scrub_secrets=True,
+    )
+    merged["PYTHONUTF8"] = "1"
+    merged["PYTHONIOENCODING"] = "utf-8"
+    merged["OPENAKITA_SUBPROCESS_SECRET_SCRUB"] = "1"
+    pip_index = resolve_pip_index()
+    merged["PIP_INDEX_URL"] = pip_index["url"]
+    merged["UV_INDEX_URL"] = pip_index["url"]
+    if pip_index.get("trusted_host"):
+        merged["PIP_TRUSTED_HOST"] = pip_index["trusted_host"]
+
+    if python_executable:
+        py_path = Path(python_executable)
+        if IS_FROZEN and py_path.parent.name == "_internal":
+            path_parts = [str(py_path.parent)]
+            for sub in ("Lib", "DLLs"):
+                p = py_path.parent / sub
+                if p.is_dir():
+                    path_parts.append(str(p))
+            merged["PYTHONPATH"] = os.pathsep.join(path_parts)
+    return merged
+
+
+def apply_subprocess_secret_scrub(env: dict[str, str]) -> dict[str, str]:
+    """Remove OpenAkita/provider secrets unless explicitly force-injected."""
+    merged: dict[str, str] = {}
+    for key, value in env.items():
+        force_prefix = next((p for p in OPENAKITA_SECRET_ENV_PREFIXES if key.startswith(p)), "")
+        if force_prefix:
+            real_key = key[len(force_prefix):]
+            merged[real_key] = value
+            continue
+        if key in OPENAKITA_SECRET_ENV_BLOCKLIST:
+            continue
+        merged[key] = value
+    merged["OPENAKITA_SUBPROCESS_SECRET_SCRUB"] = "1"
+    return merged
+
+
+def build_user_subprocess_environment(
+    env: dict[str, str] | None = None,
+    *,
+    scrub_secrets: bool = True,
+) -> dict[str, str]:
+    """Environment for user-facing tools, MCP stdio, hooks, and skills.
+
+    This keeps normal shell/project context while applying OpenAkita's minimal
+    Python toolchain injection and default secret scrub policy.
+
+    ``env`` is an overrides map, not a complete environment. User-facing
+    subprocesses need the ordinary host context (PATH, HOME/USERPROFILE,
+    locale, proxy, Git/SSH config), while OpenAkita still scrubs runtime
+    pollution and provider secrets.
+    """
+    base = dict(os.environ)
+    if env:
+        base.update(env)
+    merged = apply_agent_python_environment(base)
+    merged = apply_managed_node_environment(merged)
+    merged["OPENAKITA_ENV_TRUST_SOURCE"] = "user-subprocess"
+    if scrub_secrets:
+        merged = apply_subprocess_secret_scrub(merged)
+    return merged
+
+
+def apply_managed_node_environment(env: dict[str, str]) -> dict[str, str]:
+    """Prefer OpenAkita-managed Node/npm/corepack for agent/tool subprocesses."""
+    merged = dict(env)
+    node = get_managed_node_seed()
+    node_bin = get_managed_node_bin_dir()
+    cache_root = get_workspace_dependency_cache_root()
+    npm_prefix = cache_root / "npm-prefix"
+    npm_cache = cache_root / "npm-cache"
+    corepack_home = cache_root / "corepack"
+    for path in (npm_prefix, npm_cache, corepack_home):
+        path.mkdir(parents=True, exist_ok=True)
+    if node:
+        merged["OPENAKITA_NODE"] = node
+    if node_bin:
+        merged["OPENAKITA_NODE_BIN"] = node_bin
+        merged["PATH"] = node_bin + os.pathsep + merged.get("PATH", "")
+    merged["NPM_CONFIG_PREFIX"] = str(npm_prefix)
+    merged["NPM_CONFIG_CACHE"] = str(npm_cache)
+    merged["COREPACK_HOME"] = str(corepack_home)
+    merged["OPENAKITA_WORKSPACE_DEPS_CACHE"] = str(cache_root)
+    return merged
+
+
 def get_app_python_executable() -> str | None:
     env_py = os.environ.get("OPENAKITA_APP_PYTHON", "").strip()
     if env_py and verify_python_executable(env_py):
@@ -399,7 +787,13 @@ def get_agent_bin_dir() -> str | None:
 
 def apply_agent_python_environment(env: dict[str, str]) -> dict[str, str]:
     """Return env with agent-venv Python/pip naturally preferred."""
-    merged = dict(env)
+    merged = sanitize_runtime_environment(
+        env,
+        include_pip=True,
+        include_ssl=False,
+        include_dynamic_libraries=False,
+        scrub_secrets=True,
+    )
     agent_py = get_agent_python_executable()
     agent_bin = get_agent_bin_dir()
     pip_index = resolve_pip_index()
@@ -418,9 +812,7 @@ def apply_agent_python_environment(env: dict[str, str]) -> dict[str, str]:
     merged["UV_INDEX_URL"] = pip_index["url"]
     if pip_index.get("trusted_host"):
         merged["PIP_TRUSTED_HOST"] = pip_index["trusted_host"]
-    # Keep agent subprocesses isolated from any host/app PYTHONPATH.
-    merged.pop("PYTHONPATH", None)
-    merged["PYTHONNOUSERSITE"] = "1"
+    merged["OPENAKITA_SUBPROCESS_SECRET_SCRUB"] = "1"
     return merged
 
 
@@ -438,6 +830,11 @@ def get_runtime_environment_report() -> dict:
     host_py = get_python_executable()
     pip_index = resolve_pip_index()
     legacy_mode = bool(manifest.get("legacy_mode"))
+    bootstrap_manifest = read_bootstrap_manifest()
+    managed_python = get_managed_python_seed()
+    managed_node = get_managed_node_seed()
+    bootstrap_python_seed = bootstrap_manifest.get("python_seed")
+    bootstrap_node_seed = bootstrap_manifest.get("node_seed")
 
     if legacy_mode:
         mode = "legacy-pyinstaller"
@@ -460,6 +857,23 @@ def get_runtime_environment_report() -> dict:
         "agent_python": agent_py,
         "agent_venv": str(get_agent_venv_path()),
         "agent_bin": get_agent_bin_dir(),
+        "toolchain_manifest": str(get_bootstrap_manifest_path() or ""),
+        "toolchain_python": managed_python,
+        "toolchain_node": managed_node,
+        "toolchain_node_bin": get_managed_node_bin_dir(),
+        "toolchain_cache_root": str(get_toolchain_cache_root()),
+        "workspace_dependency_cache": str(get_workspace_dependency_cache_root()),
+        "seed_dirs": [str(p) for p in get_readonly_seed_roots()],
+        "bootstrap_python_seed": bootstrap_python_seed,
+        "bootstrap_node_seed": bootstrap_node_seed,
+        "bootstrap_python_seed_packaged": bool(
+            isinstance(bootstrap_python_seed, dict) and bootstrap_python_seed.get("packaged")
+        ),
+        "bootstrap_node_seed_packaged": bool(
+            isinstance(bootstrap_node_seed, dict) and bootstrap_node_seed.get("packaged")
+        ),
+        "python_abi": bootstrap_manifest.get("python_abi") or bootstrap_manifest.get("python_version"),
+        "wheel_tag": bootstrap_manifest.get("wheel_tag", ""),
         "pip_install_target": "agent-venv" if agent_py else "unavailable",
         "pip_index_id": pip_index.get("id"),
         "pip_index_url": pip_index.get("url"),
@@ -586,6 +1000,10 @@ def get_channel_deps_dir() -> Path:
     该目录会被 inject_module_paths() 自动扫描并注入到 sys.path。
     """
     return _get_openakita_root() / "modules" / "channel-deps" / "site-packages"
+
+
+def get_channel_deps_seed_dirs() -> list[Path]:
+    return [p for p in _seed_candidates("channel-deps", ["site-packages"]) if p.is_dir()]
 
 
 def ensure_ssl_certs() -> None:
@@ -736,7 +1154,13 @@ def inject_module_paths() -> None:
                 sys.path.append(p)
                 injected.append(Path(p).parent.name)
 
-    # 来源 2：扫描 ~/.openakita/modules/*/site-packages（兜底）
+    # 来源 2：只读 seed/cache 预置依赖（离线/企业分发，不写入）
+    for sp in get_channel_deps_seed_dirs():
+        if str(sp) not in sys.path:
+            sys.path.append(str(sp))
+            injected.append(f"seed:{sp.parent.name}")
+
+    # 来源 3：扫描 ~/.openakita/modules/*/site-packages（兜底）
     # 跳过已内置到 core 包的模块，避免外部旧版本与内置版本冲突
     _BUILTIN_MODULE_IDS = {"browser"}
     modules_base = _get_openakita_root() / "modules"

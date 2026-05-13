@@ -244,6 +244,20 @@ async def list_skills(request: Request):
             except (ValueError, TypeError):
                 relative_path = sid
 
+        runtime_state = {}
+        try:
+            from openakita.skills.runtime_registry import read_skill_runtime_registry
+
+            runtime_state = (
+                read_skill_runtime_registry()
+                .get("skills", {})
+                .get(str(sid), {})
+            )
+            if not isinstance(runtime_state, dict):
+                runtime_state = {}
+        except Exception:
+            runtime_state = {}
+
         skills.append(
             {
                 "skill_id": sid,
@@ -263,6 +277,15 @@ async def list_skills(request: Request):
                 "config": config,
                 "path": relative_path,
                 "source_url": getattr(skill, "source_url", None),
+                "runtime_state": {
+                    "installed": bool(runtime_state.get("installed", True)),
+                    "enabled": is_enabled,
+                    "loaded": bool(runtime_state.get("loaded", True)),
+                    "deps_hash": runtime_state.get("deps_hash", ""),
+                    "pending_update_revision": runtime_state.get("pending_update_revision"),
+                    "reload_required": bool(runtime_state.get("reload_required", False)),
+                    "update_policy": runtime_state.get("update_policy", "disk-only"),
+                },
             }
         )
 

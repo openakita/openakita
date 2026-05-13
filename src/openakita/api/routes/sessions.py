@@ -210,27 +210,22 @@ _NULL_LOCK = _NullLock()
 
 def _history_entry(session, conversation_id: str, original_idx: int, msg: dict) -> dict:
     """Serialize a session message for the chat UI."""
-    _STRIP_MARKERS = [
-        "\n\n<<DELEGATION_TRACE>>",
-        "\n\n<<TOOL_TRACE>>",
-        "\n\n[子Agent工作总结]",
-        "\n\n[执行摘要]",
-    ]
+    # 内部 trace marker 集中于 ``response_handler``，避免和 agent.py
+    # 维护两份列表。lazy import 避开 routes → core 的循环依赖。
+    from openakita.core.response_handler import (
+        INTERNAL_TRACE_MARKERS,
+        INTERNAL_TRACE_SECTION_PREFIXES,
+    )
 
     role = msg.get("role", "user")
     content = msg.get("content", "")
     if not isinstance(content, str):
         content = str(content) if content else ""
     if role == "assistant":
-        for marker in _STRIP_MARKERS:
+        for marker in INTERNAL_TRACE_SECTION_PREFIXES:
             if marker in content:
                 content = content[: content.index(marker)]
-        if (
-            content.startswith("<<TOOL_TRACE>>")
-            or content.startswith("<<DELEGATION_TRACE>>")
-            or content.startswith("[执行摘要]")
-            or content.startswith("[子Agent工作总结]")
-        ):
+        if any(content.startswith(m) for m in INTERNAL_TRACE_MARKERS):
             content = ""
 
     ts = msg.get("timestamp", "")

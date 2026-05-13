@@ -22,6 +22,7 @@ from ..converters.tools import (
 )
 from ..model_registry import get_model_capabilities, get_thinking_budget
 from ..sse import parse_sse_stream
+from ..thinking import is_minimax_endpoint, minimax_thinking_depth
 from ..types import (
     AuthenticationError,
     EndpointConfig,
@@ -381,6 +382,17 @@ class AnthropicProvider(LLMProvider):
             current_max = body.get("max_tokens", 4096)
             if current_max < budget + 1024:
                 body["max_tokens"] = budget + 4096
+
+        # MiniMax accepts only low/medium/high for the top-level thinking_depth
+        # field on BOTH its OpenAI- and Anthropic-compatible endpoints. OpenAkita's
+        # UI exposes "max" / "xhigh"; clamp at the provider boundary regardless of
+        # whether the value arrived via request.thinking_depth or extra_params.
+        if is_minimax_endpoint(self.config.provider, self.base_url, self.config.model):
+            depth = minimax_thinking_depth(request.thinking_depth or body.get("thinking_depth"))
+            if depth:
+                body["thinking_depth"] = depth
+            else:
+                body.pop("thinking_depth", None)
 
         return body
 
