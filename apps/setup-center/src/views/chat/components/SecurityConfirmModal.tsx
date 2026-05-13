@@ -12,18 +12,25 @@ const RISK_LABELS: Record<string, string> = {
   low: "低风险",
 };
 
-// C9a §2: ApprovalClass → 中文 + 颜色（与 v2 11 维分类对齐，见 policy_v2/enums.py）
+// C9a §2: ApprovalClass → 中文 + 颜色（必须与 src/openakita/core/policy_v2/enums.py
+// 的 ApprovalClass StrEnum 字面量逐字对齐——任何漂移都会导致 badge 静默不渲染）。
 const APPROVAL_CLASS_LABELS: Record<string, { label: string; color: string }> = {
-  destructive:      { label: "破坏性操作",   color: "#dc2626" },
-  control_plane:    { label: "控制面",       color: "#9333ea" },
-  mutating_global:  { label: "全局副作用",   color: "#ea580c" },
-  mutating_scoped:  { label: "局部副作用",   color: "#f59e0b" },
-  shell_exec:       { label: "Shell 执行",   color: "#dc2626" },
-  network_egress:   { label: "网络出站",     color: "#0891b2" },
-  interactive:      { label: "交互式",       color: "#3b82f6" },
+  // 只读类
   readonly_scoped:  { label: "局部只读",     color: "#10b981" },
   readonly_global:  { label: "全局只读",     color: "#22c55e" },
-  metadata:         { label: "元数据",       color: "#6b7280" },
+  readonly_search:  { label: "搜索",         color: "#06b6d4" },
+  // 修改类
+  mutating_scoped:  { label: "局部副作用",   color: "#f59e0b" },
+  mutating_global:  { label: "全局副作用",   color: "#ea580c" },
+  destructive:      { label: "破坏性操作",   color: "#dc2626" },
+  // 执行类
+  exec_low_risk:    { label: "低危执行",     color: "#3b82f6" },
+  exec_capable:     { label: "高权执行",     color: "#dc2626" },
+  // 控制 / 交互 / 网络
+  control_plane:    { label: "控制面",       color: "#9333ea" },
+  interactive:      { label: "交互式",       color: "#3b82f6" },
+  network_out:      { label: "网络出站",     color: "#0891b2" },
+  // 兜底
   unknown:          { label: "未分类",       color: "#6b7280" },
 };
 

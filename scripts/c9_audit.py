@@ -207,6 +207,43 @@ def d4_hidden_bugs() -> None:
     print("  #6 dry-run preview ad-hoc engine doesn't replace global: OK")
 
 
+def d6_label_drift() -> None:
+    """C9 re-audit catch: verify SecurityConfirmModal's APPROVAL_CLASS_LABELS
+    keys are a complete + correct mirror of the Python ``ApprovalClass`` enum.
+
+    Found in re-audit: original C9a-2 had ``shell_exec`` / ``network_egress``
+    / ``metadata`` keys that don't exist in the enum, and missed
+    ``readonly_search`` / ``exec_low_risk`` / ``exec_capable`` / ``network_out``.
+    Result: badges silently failed to render for ~30% of v2 tools.
+    """
+    print("\n=== C9 D6 enum<->label drift ===")
+    from openakita.core.policy_v2 import ApprovalClass
+
+    enum_values: set[str] = {ac.value for ac in ApprovalClass}
+
+    modal_src = Path(
+        "apps/setup-center/src/views/chat/components/SecurityConfirmModal.tsx"
+    ).read_text(encoding="utf-8")
+
+    # Extract the labels block (between `APPROVAL_CLASS_LABELS = {` and `};`)
+    block_start = modal_src.index("APPROVAL_CLASS_LABELS")
+    block_end = modal_src.index("};", block_start)
+    block = modal_src[block_start:block_end]
+
+    # Parse keys: lines like "  destructive:      { ... }"
+    import re
+
+    label_keys: set[str] = set()
+    for m in re.finditer(r"^\s+([a-z_]+):\s*\{", block, flags=re.MULTILINE):
+        label_keys.add(m.group(1))
+
+    missing = enum_values - label_keys
+    extra = label_keys - enum_values
+    assert not missing, f"SecurityConfirmModal labels missing enum values: {sorted(missing)}"
+    assert not extra, f"SecurityConfirmModal labels include non-enum keys: {sorted(extra)}"
+    print(f"  All {len(enum_values)} ApprovalClass enum values have a modal label: OK")
+
+
 def d5_compat() -> None:
     print("\n=== C9 D5 compatibility ===")
     # External resolve_ui_confirm callers (gateway, telegram, feishu, cli, api)
@@ -248,7 +285,8 @@ def main() -> None:
     d3_no_whack()
     d4_hidden_bugs()
     d5_compat()
-    print("\nC9 ALL 5 DIMENSIONS PASS")
+    d6_label_drift()
+    print("\nC9 ALL 6 DIMENSIONS PASS")
 
 
 if __name__ == "__main__":
