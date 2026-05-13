@@ -1280,6 +1280,9 @@ const I18N_DICT = {
     "banner.perms.cta": "前往授权",
     "settings.label.apiKey": "ARK API Key",
     "settings.api.placeholder": "输入 Volcengine Ark API Key",
+    "settings.label.baseUrl": "Base URL（中转站地址，可选）",
+    "settings.api.baseUrl.placeholder": "默认: https://ark.cn-beijing.volces.com/api/v3",
+    "settings.api.baseUrl.help": "填写兼容火山 Ark API 的中转站根地址；留空则使用官方地址。",
     "settings.api.show": "显示",
     "settings.api.hide": "隐藏",
     "settings.api.save": "保存",
@@ -1720,6 +1723,9 @@ const I18N_DICT = {
     "banner.perms.cta": "Grant now",
     "settings.label.apiKey": "ARK API Key",
     "settings.api.placeholder": "Paste your Volcengine Ark API Key",
+    "settings.label.baseUrl": "Base URL (relay endpoint, optional)",
+    "settings.api.baseUrl.placeholder": "Default: https://ark.cn-beijing.volces.com/api/v3",
+    "settings.api.baseUrl.help": "Enter a relay endpoint compatible with the Volcengine Ark API. Leave blank to use the official endpoint.",
     "settings.api.show": "Show",
     "settings.api.hide": "Hide",
     "settings.api.save": "Save",
@@ -5157,6 +5163,19 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
             }}>{saving ? t("settings.api.saving") : t("settings.api.save")}</button>
           </div>
           <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.api.help")}</p>
+        </div>
+        <div className="form-row">
+          <label className="label">{t("settings.label.baseUrl")}</label>
+          <div className="flex gap-2">
+            <input className="input flex-1" type="text"
+              value={config.ark_base_url || ""} onChange={e => setConfig({...config, ark_base_url: e.target.value})}
+              placeholder={t("settings.api.baseUrl.placeholder")} />
+            <button className="btn btn-sm btn-primary" disabled={saving} onClick={() => {
+              var baseUrl = (config.ark_base_url || "").trim().replace(/\/+$/, "");
+              save({ark_base_url: baseUrl});
+            }}>{saving ? t("settings.api.saving") : t("settings.api.save")}</button>
+          </div>
+          <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.api.baseUrl.help")}</p>
         </div>
       </div>
 

@@ -188,7 +188,7 @@ def _parse_feedparser(source_id: str, body: str) -> list[FeedItem]:
             entry.get("updated"),
             url,
         )
-        if not published_at:
+        if not published_at or _is_placeholder_date(published_at):
             continue
         out.append(
             FeedItem(
@@ -217,6 +217,13 @@ def _parse_date(value: str | None) -> str | None:
     if not value:
         return None
     raw = value.strip()
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        pass
     for fmt in (
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%d %H:%M",
@@ -236,6 +243,12 @@ def _parse_date(value: str | None) -> str | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _is_placeholder_date(value: str | None) -> bool:
+    if not value:
+        return True
+    return value.startswith(("1970-01-01", "1900-01-01"))
 
 
 def _infer_date_from_url(url: str | None) -> str | None:
@@ -316,7 +329,7 @@ def _parse_stdlib(source_id: str, body: str) -> list[FeedItem]:
                     tags.append(term)
         if title and link:
             published_at = published or _infer_date_from_url(link)
-            if not published_at:
+            if not published_at or _is_placeholder_date(published_at):
                 continue
             out.append(
                 FeedItem(

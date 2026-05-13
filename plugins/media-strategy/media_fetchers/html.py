@@ -23,7 +23,9 @@ IPs and localhost stay rejected the same way as RSS feeds.
 
 from __future__ import annotations
 
+import json
 import re
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -34,6 +36,7 @@ from media_fetchers.rss import (
     UnsafeFeedUrl,
     _decode_response_text,
     _infer_date_from_url,
+    _parse_date,
     validate_feed_url,
 )
 
@@ -77,12 +80,116 @@ _ARTICLE_PATH_HINTS: tuple[str, ...] = (
     "/tech/",
 )
 _ARTICLE_ID_RE = re.compile(r"/\d{4,}(?:[-/_]\d{2,})*")
+_CHINATIMES_DATE_RE = re.compile(r"/(?:realtimenews|newspapers)/((?:19|20)\d{2})(\d{2})(\d{2})")
+_HUANQIU_INLINE_RE = re.compile(
+    r"(?P<id>[0-9A-Za-z]{8,})article"
+    r"(?:(?://[^\s<]+?\.(?:jpg|jpeg|png|webp))?)"
+    r"(?P<title>[^<\n\r]{6,120}?)"
+    r"(?P<domain>(?:taiwan|world|china)\.huanqiu\.com)"
+    r"(?P<ts>\d{13})?",
+    re.IGNORECASE,
+)
+_JSON_LD_TYPES = {"newsarticle", "article", "reportageNewsArticle".lower()}
 
 
 def _normalized_text(value: str | None) -> str:
     if not value:
         return ""
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _iso_from_epoch_ms(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        ts = int(value)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    return datetime.fromtimestamp(ts / 1000, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _infer_chinatimes_date(url: str) -> str | None:
+    match = _CHINATIMES_DATE_RE.search(url)
+    if not match:
+        return None
+    try:
+        return datetime(
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3)),
+            tzinfo=UTC,
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+
+
+def _meta_content(soup: Any, *names: str) -> str:
+    for name in names:
+        node = soup.find("meta", attrs={"property": name}) or soup.find(
+            "meta", attrs={"name": name}
+        )
+        if node is not None:
+            value = _normalized_text(node.get("content"))
+            if value:
+                return value
+    return ""
+
+
+def _json_ld_objects(soup: Any) -> list[dict[str, Any]]:
+    objects: list[dict[str, Any]] = []
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        stack = data if isinstance(data, list) else [data]
+        for item in stack:
+            if isinstance(item, dict) and "@graph" in item and isinstance(item["@graph"], list):
+                stack.extend(item["@graph"])
+            elif isinstance(item, dict):
+                objects.append(item)
+    return objects
+
+
+def _best_json_ld_article(soup: Any) -> dict[str, Any]:
+    for item in _json_ld_objects(soup):
+        raw_type = item.get("@type") or ""
+        types = raw_type if isinstance(raw_type, list) else [raw_type]
+        normalized = {str(t).lower() for t in types}
+        if normalized.intersection(_JSON_LD_TYPES):
+            return item
+    return {}
+
+
+def _summary_from_article_body(soup: Any) -> str:
+    candidates = [
+        "article",
+        ".article",
+        ".content",
+        ".article-content",
+        ".main-content",
+        ".post-content",
+        "#content",
+        "#article",
+    ]
+    for selector in candidates:
+        node = soup.select_one(selector)
+        if node is None:
+            continue
+        text = _normalized_text(node.get_text(" "))
+        if len(text) >= 40:
+            return text[:500]
+    paragraphs = [
+        _normalized_text(p.get_text(" "))
+        for p in soup.find_all("p")
+        if len(_normalized_text(p.get_text(" "))) >= 20
+    ]
+    return _normalized_text(" ".join(paragraphs))[:500]
 
 
 def _looks_like_article(href: str) -> bool:
@@ -102,6 +209,208 @@ def _looks_like_article(href: str) -> bool:
     if _ARTICLE_ID_RE.search(path):
         return True
     return False
+
+
+def parse_huanqiu_channel(
+    source_id: str,
+    html: str,
+    base_url: str,
+    *,
+    max_items: int = _DEFAULT_MAX_ITEMS,
+) -> list[FeedItem]:
+    """Parse Huanqiu channel pages rendered from compact CSR config blobs."""
+
+    out: list[FeedItem] = []
+    seen: set[str] = set()
+    if BS4_AVAILABLE:
+        soup = BeautifulSoup(html, "html.parser")
+        for node in soup.select(".data-container .item"):
+            aid = _normalized_text(
+                node.select_one(".item-aid").get_text(" ") if node.select_one(".item-aid") else ""
+            )
+            addltype = _normalized_text(
+                node.select_one(".item-addltype").get_text(" ")
+                if node.select_one(".item-addltype")
+                else "article"
+            )
+            title = _normalized_text(
+                node.select_one(".item-title").get_text(" ")
+                if node.select_one(".item-title")
+                else ""
+            )
+            host = _normalized_text(
+                node.select_one(".item-cnf-host").get_text(" ")
+                if node.select_one(".item-cnf-host")
+                else urlparse(base_url).netloc
+            )
+            ts = _normalized_text(
+                node.select_one(".item-time").get_text(" ") if node.select_one(".item-time") else ""
+            )
+            if not aid or addltype != "article" or not (_TITLE_MIN <= len(title) <= 120):
+                continue
+            url = f"https://{host}/article/{aid}"
+            if url in seen:
+                continue
+            published_at = _iso_from_epoch_ms(ts)
+            if not published_at:
+                continue
+            seen.add(url)
+            out.append(
+                FeedItem(
+                    source_id=source_id,
+                    title=title,
+                    url=url,
+                    published_at=published_at,
+                    raw={"parser": "huanqiu_csr", "source_final_url": base_url},
+                )
+            )
+            if len(out) >= max_items:
+                break
+    if out:
+        out.sort(key=lambda item: item.published_at or "", reverse=True)
+        return out[:max_items]
+    for match in _HUANQIU_INLINE_RE.finditer(html):
+        title = _normalized_text(match.group("title"))
+        title = re.sub(r"^.*?jpg", "", title, flags=re.IGNORECASE).strip()
+        if not (_TITLE_MIN <= len(title) <= 120):
+            continue
+        domain = match.group("domain")
+        article_id = match.group("id")
+        url = f"https://{domain}/article/{article_id}"
+        if url in seen:
+            continue
+        published_at = _iso_from_epoch_ms(match.group("ts")) or _infer_date_from_url(url)
+        if not published_at:
+            continue
+        seen.add(url)
+        out.append(
+            FeedItem(
+                source_id=source_id,
+                title=title,
+                url=url,
+                published_at=published_at,
+                raw={"parser": "huanqiu_csr", "source_final_url": base_url},
+            )
+        )
+        if len(out) >= max_items:
+            break
+    out.sort(key=lambda item: item.published_at or "", reverse=True)
+    return out
+
+
+def parse_chinatimes_listing(
+    source_id: str,
+    html: str,
+    base_url: str,
+    *,
+    max_items: int = _DEFAULT_MAX_ITEMS,
+) -> list[FeedItem]:
+    """Parse ChinaTimes listing pages with date-bearing article URLs."""
+
+    if not BS4_AVAILABLE:
+        raise RuntimeError("beautifulsoup4 is required for HTML sources")
+    soup = BeautifulSoup(html, "html.parser")
+    items: list[FeedItem] = []
+    seen: set[str] = set()
+    for anchor in soup.find_all("a"):
+        href = (anchor.get("href") or "").strip()
+        if "/realtimenews/" not in href and "/newspapers/" not in href:
+            continue
+        url = urljoin(base_url, href)
+        if url in seen:
+            continue
+        title = _normalized_text(anchor.get_text(" ")) or _normalized_text(anchor.get("title"))
+        if not (_TITLE_MIN <= len(title) <= 120):
+            continue
+        published_at = _infer_date_from_url(url) or _infer_chinatimes_date(url)
+        if not published_at:
+            continue
+        seen.add(url)
+        items.append(
+            FeedItem(
+                source_id=source_id,
+                title=title,
+                url=url,
+                published_at=published_at,
+                raw={"parser": "chinatimes_listing", "source_final_url": base_url},
+            )
+        )
+        if len(items) >= max_items:
+            break
+    items.sort(key=lambda item: item.published_at or "", reverse=True)
+    return items
+
+
+def parse_single_article(
+    source_id: str,
+    html: str,
+    base_url: str,
+    *,
+    allow_fetched_time: bool = False,
+) -> FeedItem:
+    """Parse one public news article page into the same item shape as feeds."""
+
+    if not BS4_AVAILABLE:
+        raise RuntimeError("beautifulsoup4 is required for HTML sources")
+    soup = BeautifulSoup(html, "html.parser")
+    json_article = _best_json_ld_article(soup)
+    title = (
+        _normalized_text(str(json_article.get("headline") or ""))
+        or _meta_content(soup, "og:title", "twitter:title")
+        or _normalized_text(soup.title.get_text(" ") if soup.title else "")
+    )
+    url = (
+        _normalized_text(str(json_article.get("url") or ""))
+        or _meta_content(soup, "og:url")
+        or base_url
+    )
+    summary = (
+        _normalized_text(str(json_article.get("description") or ""))
+        or _meta_content(soup, "description", "og:description", "twitter:description")
+        or _summary_from_article_body(soup)
+    )
+    author = ""
+    raw_author = json_article.get("author") if isinstance(json_article, dict) else None
+    if isinstance(raw_author, dict):
+        author = _normalized_text(str(raw_author.get("name") or ""))
+    elif isinstance(raw_author, list) and raw_author:
+        first = raw_author[0]
+        author = _normalized_text(str(first.get("name") if isinstance(first, dict) else first))
+    elif raw_author:
+        author = _normalized_text(str(raw_author))
+    published_text = (
+        str(json_article.get("datePublished") or json_article.get("dateModified") or "")
+        or _meta_content(
+            soup,
+            "article:published_time",
+            "article:modified_time",
+            "pubdate",
+            "publishdate",
+            "date",
+        )
+    )
+    if not published_text:
+        time_node = soup.find("time")
+        if time_node is not None:
+            published_text = str(time_node.get("datetime") or time_node.get_text(" "))
+    published_at = _parse_date(published_text) or _infer_date_from_url(url)
+    date_source = "page"
+    if not published_at and allow_fetched_time:
+        published_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        date_source = "fetched_at"
+    if not title or not url:
+        raise ValueError("article page does not expose a reliable title or url")
+    if not published_at:
+        raise ValueError("article page does not expose a reliable published time")
+    return FeedItem(
+        source_id=source_id,
+        title=title[:140],
+        url=url,
+        summary=summary,
+        published_at=published_at,
+        author=author,
+        raw={"parser": "single_article", "source_final_url": base_url, "date_source": date_source},
+    )
 
 
 async def fetch_html_text(
@@ -178,7 +487,7 @@ def _extract_with_selectors(
                 url=absolute,
                 summary="",
                 published_at=published_at,
-                raw={"parser": "html_explicit"},
+                raw={"parser": "html_explicit", "source_final_url": base_url, "date_source": "url"},
             )
         )
         if len(items) >= max_items:
@@ -219,7 +528,7 @@ def _extract_heuristic(
                 url=absolute,
                 summary="",
                 published_at=published_at,
-                raw={"parser": "html_heuristic"},
+                raw={"parser": "html_heuristic", "source_final_url": base_url, "date_source": "url"},
             )
         )
         if len(items) >= max_items:
@@ -275,6 +584,39 @@ async def fetch_and_parse_html(
         user_agent=user_agent,
     )
     selectors = source.get("selectors") or {}
-    return final_url, parse_html_listing(
-        str(source["id"]), body, final_url, selectors
+    parser = str(selectors.get("parser") or "").strip()
+    source_id = str(source["id"])
+    if parser == "huanqiu_csr":
+        return final_url, parse_huanqiu_channel(source_id, body, final_url)
+    if parser == "chinatimes_listing":
+        return final_url, parse_chinatimes_listing(source_id, body, final_url)
+    if parser == "news_article":
+        return final_url, [
+            parse_single_article(
+                source_id,
+                body,
+                final_url,
+                allow_fetched_time=bool(selectors.get("allow_fetched_time")),
+            )
+        ]
+    return final_url, parse_html_listing(source_id, body, final_url, selectors)
+
+
+async def fetch_and_parse_article_url(
+    url: str,
+    *,
+    source_id: str = "manual-url",
+    timeout_sec: float,
+    user_agent: str,
+    allow_fetched_time: bool = False,
+) -> tuple[str, FeedItem]:
+    """Fetch one user-supplied news page and parse it as a temporary article."""
+
+    final_url, body = await fetch_html_text(url, timeout_sec=timeout_sec, user_agent=user_agent)
+    item = parse_single_article(
+        source_id,
+        body,
+        final_url,
+        allow_fetched_time=allow_fetched_time,
     )
+    return final_url, item

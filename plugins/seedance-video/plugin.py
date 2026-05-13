@@ -52,6 +52,13 @@ from openakita.plugins.api import PluginAPI, PluginBase
 logger = logging.getLogger(__name__)
 
 
+def _normalize_base_url(value: str | None, *, field: str = "Base URL") -> str:
+    base_url = (value or "").strip().rstrip("/")
+    if base_url and not base_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail=f"{field} 必须以 http:// 或 https:// 开头")
+    return base_url
+
+
 # ── Request / Response models ──
 
 class CreateTaskBody(BaseModel):
@@ -190,9 +197,10 @@ class Plugin(PluginBase):
 
     async def _async_init(self) -> None:
         await self._tm.init()
-        api_key = await self._tm.get_config("ark_api_key")
+        config = await self._tm.get_all_config()
+        api_key = config.get("ark_api_key", "")
         if api_key:
-            self._ark = ArkClient(api_key)
+            self._ark = ArkClient(api_key, base_url=config.get("ark_base_url") or None)
         self._start_polling()
 
     async def on_unload(self) -> None:
@@ -952,6 +960,7 @@ class Plugin(PluginBase):
         async def get_settings() -> dict:
             cfg = await self._tm.get_all_config()
             cfg.setdefault("ark_api_key", "")
+            cfg.setdefault("ark_base_url", "")
             return {"ok": True, "config": cfg}
 
         @router.put("/settings")
@@ -962,6 +971,10 @@ class Plugin(PluginBase):
             # surrounding whitespace and then make Ark calls fail with
             # an opaque "invalid api key" later.
             cleaned: dict[str, str] = {k: (v or "").strip() for k, v in body.updates.items()}
+            if "ark_base_url" in cleaned:
+                cleaned["ark_base_url"] = _normalize_base_url(
+                    cleaned["ark_base_url"], field="ARK Base URL",
+                )
 
             if "ark_api_key" in cleaned and not cleaned["ark_api_key"]:
                 raise HTTPException(
@@ -996,10 +1009,19 @@ class Plugin(PluginBase):
                     "settings.update ark_api_key saved (len=%d, prefix=%s***)",
                     len(key), key[:4],
                 )
+
+            if "ark_api_key" in cleaned or "ark_base_url" in cleaned:
+                key = saved.get("ark_api_key", "")
+                base_url = saved.get("ark_base_url", "") or None
                 if self._ark:
-                    self._ark.update_api_key(key)
-                else:
-                    self._ark = ArkClient(key)
+                    if key:
+                        self._ark.update_api_key(key)
+                        self._ark.update_base_url(base_url)
+                    else:
+                        await self._ark.close()
+                        self._ark = None
+                elif key:
+                    self._ark = ArkClient(key, base_url=base_url)
 
             return {"ok": True, "config": saved}
 

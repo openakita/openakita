@@ -506,6 +506,9 @@ const I18N_DICT = {
     "settings.api.key.save": "保存",
     "settings.api.key.helpPrefix": "获取地址: ",
     "settings.api.key.helpLink": "阿里云百炼控制台",
+    "settings.api.baseUrl.label": "Base URL（中转站地址，可选）",
+    "settings.api.baseUrl.placeholder": "默认: https://dashscope.aliyuncs.com/api/v1",
+    "settings.api.baseUrl.help": "填写兼容 DashScope API 的中转站根地址；留空则使用官方地址。",
     "settings.defaults.title": "默认参数",
     "settings.defaults.model": "默认模型",
     "settings.defaults.size": "默认尺寸",
@@ -663,6 +666,9 @@ const I18N_DICT = {
     "settings.api.key.save": "Save",
     "settings.api.key.helpPrefix": "Get a key at: ",
     "settings.api.key.helpLink": "Alibaba Cloud Bailian Console",
+    "settings.api.baseUrl.label": "Base URL (relay endpoint, optional)",
+    "settings.api.baseUrl.placeholder": "Default: https://dashscope.aliyuncs.com/api/v1",
+    "settings.api.baseUrl.help": "Enter a relay endpoint compatible with the DashScope API. Leave blank to use the official endpoint.",
     "settings.defaults.title": "Default parameters",
     "settings.defaults.model": "Default model",
     "settings.defaults.size": "Default size",
@@ -1932,6 +1938,22 @@ function SettingsTab({ onApiKeyChange }) {
           </div>
           <div className="text-xs text-dim" style={{marginTop: 4}}>
             {t("settings.api.key.helpPrefix")}<a href="https://bailian.console.aliyun.com/#/api-key" target="_blank" rel="noopener" style={{color: "var(--primary)"}}>{t("settings.api.key.helpLink")}</a>
+          </div>
+        </div>
+        <div className="form-row">
+          <div className="label">{t("settings.api.baseUrl.label")}</div>
+          <div className="flex gap-2">
+            <input className="input flex-1" type="text"
+                   value={config.dashscope_base_url || ""}
+                   onChange={e => updateField("dashscope_base_url", e.target.value)}
+                   placeholder={t("settings.api.baseUrl.placeholder")} />
+            <button className="btn btn-sm btn-primary" onClick={() => {
+              const baseUrl = (config.dashscope_base_url || "").trim().replace(/\/+$/, "");
+              save({ dashscope_base_url: baseUrl });
+            }} disabled={saving}>{t("settings.api.key.save")}</button>
+          </div>
+          <div className="text-xs text-dim" style={{marginTop: 4}}>
+            {t("settings.api.baseUrl.help")}
           </div>
         </div>
       </div>

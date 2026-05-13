@@ -12,6 +12,7 @@ import aiosqlite
 
 DEFAULT_CONFIG: dict[str, str] = {
     "dashscope_api_key": "",
+    "dashscope_base_url": "",
     "default_model": "wan27-pro",
     "default_size": "2K",
     "auto_download": "true",
