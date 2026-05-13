@@ -1,0 +1,222 @@
+"""policy_v2 全局引擎单例（C6）。
+
+设计目标
+========
+
+1. **延迟加载（lazy）**：模块 import 时不读 YAML、不构造引擎；首次 ``get_engine_v2()``
+   触发加载，避免 import-time I/O 与启动顺序耦合。
+2. **线程安全**：用 ``threading.Lock`` 保护单例初始化，防止并发首次调用产生两个引擎。
+3. **测试友好**：提供 ``set_engine_v2`` / ``reset_engine_v2``，让 pytest 能在 fixture
+   里替换实例并清理状态。
+4. **Explicit-lookup 注入点**：默认无 ``explicit_lookup``（classifier 仅依赖
+   TOOL_CLASS_MATRIX/启发式）；运行时（如 agent 启动后）可通过 ``rebuild_engine_v2``
+   传入 ``SystemHandlerRegistry.get_tool_class`` 拿到 handler 显式声明的
+   ApprovalClass。
+
+YAML 路径解析
+=============
+
+- 优先 ``settings.identity_path / "POLICIES.yaml"``（与 v1 ``policy.get_policy_engine``
+  对齐）。
+- ``identity_path`` 不可用时退回 ``Path("identity/POLICIES.yaml")``（CLI / 单元测试
+  容错）。
+- ``load_policies_yaml`` 自身已处理"文件不存在 → 默认配置 + WARN log"，所以本模块不再
+  捕获 FileNotFoundError。
+
+为什么不复用 v1 的 ``get_policy_engine``
+========================================
+
+v1 单例构造的是 ``PolicyEngine``（含旧决策逻辑、UI 状态机、session 缓存）；v2 单例只负责
+**决策**（``PolicyEngineV2``）。两个单例并存是 C6 阶段的过渡策略——决策走 v2、UI 状态留
+v1（C9 重建后才能合并到一个）。
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from .engine import PolicyEngineV2, build_engine_from_config
+from .loader import PolicyConfigError, load_policies_yaml
+from .schema import PolicyConfigV2
+
+if TYPE_CHECKING:
+    from .enums import ApprovalClass, DecisionSource
+
+logger = logging.getLogger(__name__)
+
+ExplicitLookup = Callable[[str], "tuple[ApprovalClass, DecisionSource] | None"]
+
+_engine: PolicyEngineV2 | None = None
+_config: PolicyConfigV2 | None = None
+# 注册表 explicit_lookup 必须**跨 reset 存活**：UI Save Settings 走
+# ``api/routes/config.py → reset_policy_engine() → reset_engine_v2()``，
+# 之后 ``get_engine_v2()`` 懒加载若不带 explicit_lookup，138 个 handler
+# 显式声明的 ApprovalClass 会全部退化到启发式分类（C7 二轮 audit 复现）。
+# 这里持久化一份，让任何 rebuild/lazy-load 路径都能恢复。
+_explicit_lookup: ExplicitLookup | None = None
+_lock = threading.Lock()
+
+
+def _resolve_yaml_path() -> Path | None:
+    """识别 POLICIES.yaml 路径。返回 None 时调用方应让 loader 用默认配置。"""
+    try:
+        from ...config import settings
+
+        identity_path = getattr(settings, "identity_path", None)
+        if identity_path is not None:
+            return Path(identity_path) / "POLICIES.yaml"
+    except Exception as exc:
+        logger.debug("[PolicyV2] settings.identity_path unavailable: %s", exc)
+
+    fallback = Path("identity/POLICIES.yaml")
+    if fallback.exists():
+        return fallback
+    return None
+
+
+def _build_default_engine(
+    *,
+    explicit_lookup: ExplicitLookup | None = None,
+) -> tuple[PolicyEngineV2, PolicyConfigV2]:
+    """从 ``identity/POLICIES.yaml``（或默认配置）构造引擎。
+
+    ``explicit_lookup`` 不传时回退到模块级缓存（见 ``_explicit_lookup`` 注释）。
+    """
+    yaml_path = _resolve_yaml_path()
+    try:
+        cfg, report = load_policies_yaml(yaml_path, strict=False)
+        if report.fields_migrated:
+            logger.info(
+                "[PolicyV2] global engine loaded with %d v1 fields migrated",
+                len(report.fields_migrated),
+            )
+    except PolicyConfigError as exc:
+        # strict=False 时 loader 不会抛 PolicyConfigError，但理论上仍可能
+        # 触发（migration pipeline 内部异常）。降级到默认配置 + ERROR log。
+        logger.error(
+            "[PolicyV2] config load failed (%s); falling back to defaults",
+            exc,
+        )
+        cfg = PolicyConfigV2()
+    except Exception as exc:
+        logger.error(
+            "[PolicyV2] unexpected error loading config: %s; using defaults",
+            exc,
+        )
+        cfg = PolicyConfigV2()
+
+    effective_lookup = explicit_lookup if explicit_lookup is not None else _explicit_lookup
+    engine = build_engine_from_config(cfg, explicit_lookup=effective_lookup)
+    return engine, cfg
+
+
+def get_engine_v2() -> PolicyEngineV2:
+    """获取全局 v2 引擎单例（线程安全、延迟加载）。
+
+    首次调用时读取 ``identity/POLICIES.yaml`` 并构造。后续调用直接返回已缓存实例。
+    """
+    global _engine, _config
+    if _engine is not None:
+        return _engine
+    with _lock:
+        if _engine is None:
+            _engine, _config = _build_default_engine()
+    return _engine
+
+
+def get_config_v2() -> PolicyConfigV2:
+    """获取当前生效的 v2 配置。会触发引擎初始化（保证 config 与 engine 同步）。"""
+    get_engine_v2()
+    assert _config is not None
+    return _config
+
+
+def set_engine_v2(engine: PolicyEngineV2, config: PolicyConfigV2 | None = None) -> None:
+    """注入自定义引擎（测试 / 运行时 hot-swap）。
+
+    ``config`` 可选；不传时 ``get_config_v2`` 仍会返回上一次缓存的配置（或
+    ``PolicyConfigV2()`` 默认）。建议测试场景显式传入对应 config 以便断言。
+    """
+    global _engine, _config
+    with _lock:
+        _engine = engine
+        if config is not None:
+            _config = config
+        elif _config is None:
+            _config = PolicyConfigV2()
+
+
+def reset_engine_v2(*, clear_explicit_lookup: bool = False) -> None:
+    """清空单例（测试 fixture 用 / 配置 hot-reload C18）。
+
+    默认**保留** ``_explicit_lookup``：UI Save Settings 走 ``reset_policy_engine``
+    → 这里 → 下次 ``get_engine_v2()`` 懒加载时 ``_build_default_engine`` 会
+    自动用回 handler 注册表的显式查表，避免 138 个工具退化到启发式分类。
+
+    Args:
+        clear_explicit_lookup: 仅测试 fixture 用，需要彻底回到"未注册任何
+            handler"的初始状态时传 ``True``。
+    """
+    global _engine, _config, _explicit_lookup
+    with _lock:
+        _engine = None
+        _config = None
+        if clear_explicit_lookup:
+            _explicit_lookup = None
+
+
+def rebuild_engine_v2(
+    *,
+    explicit_lookup: ExplicitLookup | None = None,
+    yaml_path: Path | str | None = None,
+) -> PolicyEngineV2:
+    """重建全局引擎并返回新实例。
+
+    应用启动后（agent 拿到 ``SystemHandlerRegistry`` 实例后）应调用一次此函数把
+    ``explicit_lookup=registry.get_tool_class`` 注入，让 classifier 拿到 handler
+    显式声明的 ApprovalClass（详见 docs §4.21 cookbook）。
+
+    传入的 ``explicit_lookup`` 会**持久化**到模块缓存，让后续 ``reset_engine_v2()``
+    + 懒加载（如 UI Save Settings 触发的配置 hot-reload）也能恢复显式分类——
+    这是 C7 二轮 audit 修复的回归点。
+
+    Args:
+        explicit_lookup: classifier 用的 tool→ApprovalClass 显式查表。
+        yaml_path: 显式 YAML 路径覆盖（默认走 ``_resolve_yaml_path``）。
+    """
+    global _engine, _config, _explicit_lookup
+    with _lock:
+        path = Path(yaml_path) if yaml_path is not None else _resolve_yaml_path()
+        try:
+            cfg, _ = load_policies_yaml(path, strict=False)
+        except Exception as exc:
+            logger.error(
+                "[PolicyV2] rebuild failed (%s); keeping previous config",
+                exc,
+            )
+            cfg = _config or PolicyConfigV2()
+        if explicit_lookup is not None:
+            _explicit_lookup = explicit_lookup
+        _engine = build_engine_from_config(cfg, explicit_lookup=_explicit_lookup)
+        _config = cfg
+    return _engine
+
+
+def is_initialized() -> bool:
+    """单元测试用——判断单例是否已初始化（不触发懒加载）。"""
+    return _engine is not None
+
+
+__all__ = [
+    "ExplicitLookup",
+    "get_config_v2",
+    "get_engine_v2",
+    "is_initialized",
+    "rebuild_engine_v2",
+    "reset_engine_v2",
+    "set_engine_v2",
+]

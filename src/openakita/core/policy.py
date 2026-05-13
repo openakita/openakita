@@ -2038,7 +2038,14 @@ def set_policy_engine(engine: PolicyEngine) -> None:
 
 
 def reset_policy_engine() -> None:
-    """重置全局策略引擎（重新加载配置时使用）"""
+    """重置全局策略引擎（重新加载配置时使用）。
+
+    C6 起 v1 与 v2 引擎并存（v2 决策 + v1 UI 状态），二者各自缓存
+    ``POLICIES.yaml``。任何让 v1 重读 YAML 的入口必须同步让 v2 重读，否则
+    ``api/routes/config.py`` 通过 UI 修改 trust mode / safety_immune 等设置
+    后，v2 仍按旧配置评估 → 决策与用户预期错位（重现 P1 用户反馈：
+    "信任模式不生效"）。详见 docs/policy_v2_research.md §C6 复审记录。
+    """
     global _global_policy_engine
     previous = _global_policy_engine
     _global_policy_engine = None
@@ -2048,6 +2055,15 @@ def reset_policy_engine() -> None:
         reset_audit_logger()
     except Exception:
         pass
+    try:
+        from .policy_v2.global_engine import reset_engine_v2
+
+        reset_engine_v2()
+    except Exception:
+        logger.warning(
+            "[Policy] failed to reset PolicyEngineV2 singleton; v2 may serve stale config",
+            exc_info=True,
+        )
     if previous is not None:
         refreshed = get_policy_engine()
         refreshed._readonly_mode = previous._readonly_mode

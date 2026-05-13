@@ -4376,11 +4376,14 @@ class ReasoningEngine:
                                 "pet-status-update",
                                 {"status": "tool_execution", "tool_name": t_name},
                             )
-                            # PolicyEngine 检查
+                            # 决策走 v2（C6 起），UI 状态机仍来自 v1 PolicyEngine
+                            # （store_ui_pending / wait_for_ui_resolution / readonly_mode 等
+                            # 留待 C9 SecurityView 重建时一并迁移）。
                             from .policy import PolicyDecision, PolicyResult, get_policy_engine
+                            from .policy_v2.adapter import evaluate_via_v2_to_v1_result
 
                             _pe = get_policy_engine()
-                            _pr = _pe.assert_tool_allowed(
+                            _pr = evaluate_via_v2_to_v1_result(
                                 t_name, t_args if isinstance(t_args, dict) else {}
                             )
                             if _pr.decision == PolicyDecision.DENY:
@@ -4734,12 +4737,15 @@ class ReasoningEngine:
                             {"status": "tool_execution", "tool_name": tool_name},
                         )
 
-                        # PolicyEngine 检查（与 execute_batch 一致）
+                        # PolicyEngine 检查（与 execute_batch 一致）—— C6 起决策走 v2，
+                        # UI 状态（store_ui_pending / readonly_mode 等）仍由 v1 实例提供，
+                        # 待 C9 SecurityView 重建时一并迁移。
                         from .policy import PolicyDecision, PolicyResult, get_policy_engine
+                        from .policy_v2.adapter import evaluate_via_v2_to_v1_result
 
                         _pe = get_policy_engine()
                         _tool_args_dict = tool_args if isinstance(tool_args, dict) else {}
-                        _pr = _pe.assert_tool_allowed(tool_name, _tool_args_dict)
+                        _pr = evaluate_via_v2_to_v1_result(tool_name, _tool_args_dict)
                         if _pr.decision == PolicyDecision.DENY:
                             result_text = f"⚠️ 策略拒绝: {_pr.reason}"
                             _deny_summary = self._summarize_tool_result(tool_name, result_text)

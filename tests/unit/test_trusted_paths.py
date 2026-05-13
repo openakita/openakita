@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from openakita.core.agent import _check_trusted_path_skip
+from openakita.core.agent import _check_trust_mode_skip, _check_trusted_path_skip
 from openakita.core.risk_intent import (
     AccessMode,
     OperationKind,
@@ -20,7 +20,6 @@ from openakita.core.trusted_paths import (
     grant_session_trust,
     is_trusted_workspace_path,
 )
-
 
 # ---------------------------------------------------------------------------
 # Stub session — minimal API used by trusted_paths helpers.
@@ -214,3 +213,77 @@ def test_check_skip_protected_path_in_trusted_message_falls_through():
     msg = "请把 qa_test_2026_05_02/plan.md 删掉，再 rm -rf /etc/passwd"
     reason = _check_trusted_path_skip(s, msg, _risk(RiskLevel.MEDIUM, OperationKind.DELETE))
     assert reason is None
+
+
+# ---------------------------------------------------------------------------
+# _check_trust_mode_skip — 信任模式下放行普通文件操作
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _trust_mode_engine():
+    """临时把 PolicyEngine 切到 yolo（信任）模式。"""
+    from openakita.core.policy import (
+        ConfirmationConfig,
+        get_policy_engine,
+        reset_policy_engine,
+    )
+
+    reset_policy_engine()
+    engine = get_policy_engine()
+    original_mode = engine._config.confirmation.mode
+    original_auto = engine._config.confirmation.auto_confirm
+    engine._config.confirmation = ConfirmationConfig(mode="yolo", auto_confirm=True)
+    yield engine
+    engine._config.confirmation = ConfirmationConfig(
+        mode=original_mode,
+        auto_confirm=original_auto,
+    )
+    reset_policy_engine()
+
+
+def test_trust_mode_skips_overwrite_of_ordinary_file(_trust_mode_engine):
+    risk = _risk(RiskLevel.HIGH, OperationKind.OVERWRITE, TargetKind.FILE_SYSTEM)
+    assert _check_trust_mode_skip(risk) == "trust_mode"
+
+
+def test_trust_mode_skips_unknown_target_write(_trust_mode_engine):
+    risk = _risk(RiskLevel.MEDIUM, OperationKind.WRITE, TargetKind.UNKNOWN)
+    assert _check_trust_mode_skip(risk) == "trust_mode"
+
+
+def test_trust_mode_keeps_confirm_for_shell_command(_trust_mode_engine):
+    risk = _risk(RiskLevel.HIGH, OperationKind.EXECUTE, TargetKind.SHELL_COMMAND)
+    assert _check_trust_mode_skip(risk) is None
+
+
+def test_trust_mode_keeps_confirm_for_security_policy(_trust_mode_engine):
+    risk = _risk(RiskLevel.HIGH, OperationKind.OVERWRITE, TargetKind.SECURITY_POLICY)
+    assert _check_trust_mode_skip(risk) is None
+
+
+def test_trust_mode_keeps_confirm_for_protected_file(_trust_mode_engine):
+    risk = _risk(RiskLevel.HIGH, OperationKind.DELETE, TargetKind.PROTECTED_FILE)
+    assert _check_trust_mode_skip(risk) is None
+
+
+def test_non_trust_mode_does_not_skip():
+    """smart/cautious 模式下，trust mode skip 不会触发。"""
+    from openakita.core.policy import (
+        ConfirmationConfig,
+        get_policy_engine,
+        reset_policy_engine,
+    )
+
+    reset_policy_engine()
+    engine = get_policy_engine()
+    engine._config.confirmation = ConfirmationConfig(mode="smart", auto_confirm=False)
+    try:
+        risk = _risk(RiskLevel.HIGH, OperationKind.OVERWRITE, TargetKind.FILE_SYSTEM)
+        assert _check_trust_mode_skip(risk) is None
+    finally:
+        reset_policy_engine()
+
+
+def test_trust_mode_skip_returns_none_for_no_intent():
+    assert _check_trust_mode_skip(None) is None

@@ -290,15 +290,21 @@ def check_permission(
                 decision_chain=chain,
             )
 
-    # Step 2: PolicyEngine（仅 agent 模式 / mode 规则放行后）
+    # Step 2: PolicyEngine v2（C6 起决策走 v2，UI 状态留 v1，详见 docs §6 + C6 实施记录）
+    #
+    # 调用链：evaluate_via_v2_to_v1_result → policy_v2.adapter.evaluate_via_v2
+    #     → policy_v2.global_engine.get_engine_v2() → PolicyEngineV2.evaluate_tool_call
+    #
+    # 返回值 duck-type 兼容旧 v1 PolicyResult：``.decision`` (PolicyDecision enum)、
+    # ``.reason``、``.policy_name``、``.metadata``。下游 ``execute_tool_with_policy``
+    # 读 ``metadata.needs_sandbox`` / ``needs_checkpoint`` 也由 adapter 冗余写入。
     try:
-        from .policy import get_policy_engine
+        from .policy_v2.adapter import evaluate_via_v2_to_v1_result
 
-        pe = get_policy_engine()
-        pr = pe.assert_tool_allowed(tool_name, tool_input)
+        pr = evaluate_via_v2_to_v1_result(tool_name, tool_input, mode=mode)
         chain.append(
             {
-                "layer": "policy_engine",
+                "layer": "policy_engine_v2",
                 "decision": pr.decision.value,
                 "policy": pr.policy_name,
             }
@@ -312,21 +318,27 @@ def check_permission(
             decision_chain=chain,
         )
     except Exception as e:
-        chain.append({"layer": "policy_engine", "error": str(e)})
+        # adapter 自身已 fail-closed 包过一层（engine 异常→DENY 危险/ALLOW 安全），
+        # 这里捕获的是 import 级 / 调用前置异常（极罕见）。继续保留 v1 一致语义。
+        chain.append({"layer": "policy_engine_v2", "error": str(e)})
         if _should_fail_closed(tool_name):
-            logger.error(f"[Permission] PolicyEngine unavailable, fail-closed for {tool_name}: {e}")
+            logger.error(
+                f"[Permission] PolicyEngineV2 unavailable, fail-closed for {tool_name}: {e}"
+            )
             return PermissionDecision(
                 behavior="deny",
                 reason="安全策略暂时不可用，已阻止高风险操作，请稍后重试。",
-                reason_detail=f"PolicyEngine not available for risky tool: {e}",
-                policy_name="PolicyEngineUnavailable",
+                reason_detail=f"PolicyEngineV2 not available for risky tool: {e}",
+                policy_name="PolicyEngineV2Unavailable",
                 decision_chain=chain,
             )
-        logger.warning(f"[Permission] PolicyEngine unavailable, fail-open for safe read path: {e}")
+        logger.warning(
+            f"[Permission] PolicyEngineV2 unavailable, fail-open for safe read path: {e}"
+        )
         return PermissionDecision(
             behavior="allow",
             reason="",
-            reason_detail=f"PolicyEngine not available: {e}",
+            reason_detail=f"PolicyEngineV2 not available: {e}",
             decision_chain=chain,
         )
 

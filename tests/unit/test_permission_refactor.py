@@ -1,8 +1,40 @@
+"""C6 起 permission.check_permission Step 2 切到 PolicyEngineV2 adapter。
+
+历史背景：
+- C6 之前 mock 点是 ``openakita.core.policy.get_policy_engine``，决策走 v1 PolicyEngine。
+- C6 之后 mock 点切换到 ``openakita.core.policy_v2.global_engine.get_engine_v2``
+  返回的 PolicyEngineV2 实例，或者 patch ``policy_v2.adapter._get_engine``
+  以注入测试 stub。
+
+本套件覆盖：
+- 风险工具引擎不可用 → DENY (fail-closed)
+- 安全工具引擎不可用 → ALLOW (fail-open)
+- plan/ask 模式规则在 policy 调用前就 deny
+- 引擎只调用一次（防止 dual-check 回潮）
+"""
+from __future__ import annotations
+
+from typing import Any
+
 import pytest
 
 from openakita.core.permission import check_permission
 from openakita.core.policy import PolicyDecision, PolicyResult
+from openakita.core.policy_v2 import (
+    ApprovalClass,
+    DecisionAction,
+    PolicyDecisionV2,
+    reset_engine_v2,
+    set_engine_v2,
+)
 from openakita.core.tool_executor import ToolExecutor
+
+
+@pytest.fixture(autouse=True)
+def _reset_v2_engine():
+    """每个 test 用后清理 v2 单例避免互相污染。"""
+    yield
+    reset_engine_v2()
 
 
 class _DummyRegistry:
@@ -26,38 +58,87 @@ class _DummyRegistry:
         return ["read_file"]
 
 
-class _CountingPolicyEngine:
-    def __init__(self) -> None:
-        self.calls = 0
+class _CountingV2Engine:
+    """v2 PolicyEngineV2 的最小测试替身。
 
-    def assert_tool_allowed(self, tool_name: str, tool_input: dict) -> PolicyResult:
+    只实现 evaluate_tool_call —— 足够 adapter 走通；其他方法（evaluate_message_intent
+    等）若真有调用会触发 AttributeError 暴露 bug。
+    """
+
+    def __init__(self, action: DecisionAction = DecisionAction.ALLOW) -> None:
+        self.calls = 0
+        self.action = action
+
+    def evaluate_tool_call(self, event: Any, ctx: Any) -> PolicyDecisionV2:
         self.calls += 1
-        return PolicyResult(decision=PolicyDecision.ALLOW)
+        return PolicyDecisionV2(
+            action=self.action,
+            reason="" if self.action == DecisionAction.ALLOW else "stub deny",
+            approval_class=ApprovalClass.READONLY_SCOPED,
+        )
+
+
+def _install_v2(engine: _CountingV2Engine) -> None:
+    """注入 v2 stub 引擎到全局单例。"""
+    # set_engine_v2 期望 PolicyEngineV2 实例；这里 stub duck-type 通过即可
+    # （adapter 只调 .evaluate_tool_call）。
+    set_engine_v2(engine)  # type: ignore[arg-type]
+
+
+def _patch_engine_to_raise(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    """让 adapter._get_engine() 抛指定异常，模拟引擎不可用。"""
+
+    def _boom() -> Any:
+        raise exc
+
+    monkeypatch.setattr(
+        "openakita.core.policy_v2.adapter._get_engine",
+        _boom,
+    )
+
+
+# ---------------------------------------------------------------------------
+# fail-closed / fail-open 行为
+# ---------------------------------------------------------------------------
 
 
 def test_permission_fail_closed_for_risky_tools(monkeypatch: pytest.MonkeyPatch):
-    def _boom():
-        raise RuntimeError("policy unavailable")
-
-    monkeypatch.setattr("openakita.core.policy.get_policy_engine", _boom)
+    _patch_engine_to_raise(monkeypatch, RuntimeError("policy unavailable"))
     result = check_permission("run_shell", {"command": "echo hi"})
     assert result.behavior == "deny"
     assert "安全策略暂时不可用" in result.reason
+    # 决策链最后一个节点必须是 v2（防止意外回退到 v1）
+    assert any("policy_engine_v2" in step.get("layer", "") for step in result.decision_chain)
 
 
-def test_permission_still_allows_safe_reads_when_policy_unavailable(monkeypatch: pytest.MonkeyPatch):
-    def _boom():
-        raise RuntimeError("policy unavailable")
-
-    monkeypatch.setattr("openakita.core.policy.get_policy_engine", _boom)
+def test_permission_still_allows_safe_reads_when_policy_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _patch_engine_to_raise(monkeypatch, RuntimeError("policy unavailable"))
     result = check_permission("read_file", {"path": "README.md"})
     assert result.behavior == "allow"
 
 
+def test_permission_fail_closed_propagates_v2_exception_string(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """adapter 自己 fail-closed 后 permission 层再 catch 一次：error step 应包含异常详情。"""
+    _patch_engine_to_raise(monkeypatch, RuntimeError("specific-engine-error-XYZ"))
+    result = check_permission("write_file", {"path": "/tmp/x"})
+    assert result.behavior == "deny"
+    # adapter._synthesize_fail_closed 给出的 chain 走 metadata；外层 chain 至少标 v2 layer
+    assert any("policy_engine_v2" in step.get("layer", "") for step in result.decision_chain)
+
+
+# ---------------------------------------------------------------------------
+# execute_batch ↔ v2 adapter 集成
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_execute_batch_only_runs_policy_once_in_non_agent_mode(monkeypatch: pytest.MonkeyPatch):
-    engine = _CountingPolicyEngine()
-    monkeypatch.setattr("openakita.core.policy.get_policy_engine", lambda: engine)
+async def test_execute_batch_only_runs_policy_once_in_non_agent_mode():
+    engine = _CountingV2Engine()
+    _install_v2(engine)
 
     executor = ToolExecutor(_DummyRegistry())
     executor._current_mode = "plan"
@@ -66,15 +147,17 @@ async def test_execute_batch_only_runs_policy_once_in_non_agent_mode(monkeypatch
         [{"id": "tool-1", "name": "read_file", "input": {"path": "README.md"}}]
     )
 
+    # plan 模式下 read_file 由 mode_ruleset 直接 allow，policy 仍会被调用一次
+    # （Step 2 兜底）；防止 dual-check 回潮 → 必须严格 == 1
     assert engine.calls == 1
     assert executed == ["read_file"]
     assert results[0]["content"] == "ok:read_file"
 
 
 @pytest.mark.asyncio
-async def test_execute_batch_blocks_plan_denials_before_policy(monkeypatch: pytest.MonkeyPatch):
-    engine = _CountingPolicyEngine()
-    monkeypatch.setattr("openakita.core.policy.get_policy_engine", lambda: engine)
+async def test_execute_batch_blocks_plan_denials_before_policy():
+    engine = _CountingV2Engine()
+    _install_v2(engine)
 
     executor = ToolExecutor(_DummyRegistry())
     executor._current_mode = "plan"
@@ -83,10 +166,16 @@ async def test_execute_batch_blocks_plan_denials_before_policy(monkeypatch: pyte
         [{"id": "tool-1", "name": "run_shell", "input": {"command": "echo hi"}}]
     )
 
+    # plan 模式 run_shell 被 mode_ruleset deny —— policy 层不应被调用
     assert engine.calls == 0
     assert executed == []
     assert "run_shell" in results[0]["content"]
     assert results[0]["is_error"] is True
+
+
+# ---------------------------------------------------------------------------
+# execute_tool_with_policy 仍然兼容 v1 PolicyResult（reasoning_engine 合成路径）
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -119,3 +208,100 @@ async def test_execute_tool_with_policy_normalizes_tool_aliases():
 
     assert result == "ok:create_todo"
     assert registry.executed == ["create_todo"]
+
+
+# ---------------------------------------------------------------------------
+# v2 stub 引擎 deny → permission.check_permission deny
+# ---------------------------------------------------------------------------
+
+
+def test_permission_propagates_v2_deny():
+    engine = _CountingV2Engine(action=DecisionAction.DENY)
+    _install_v2(engine)
+
+    result = check_permission("write_file", {"path": "/etc/passwd"})
+
+    assert result.behavior == "deny"
+    assert engine.calls == 1
+    # policy_name 应带 v2 前缀，便于审计辨识
+    assert result.policy_name.startswith("policy_v2")
+
+
+def test_permission_propagates_v2_confirm():
+    engine = _CountingV2Engine(action=DecisionAction.CONFIRM)
+    _install_v2(engine)
+
+    result = check_permission("write_file", {"path": "/tmp/x.txt"})
+
+    assert result.behavior == "confirm"
+    assert engine.calls == 1
+
+
+def test_permission_v2_defer_downgrades_to_confirm():
+    """DEFER → CONFIRM 降级（v1 不识别 DEFER；UI 拦截）。"""
+    engine = _CountingV2Engine(action=DecisionAction.DEFER)
+    _install_v2(engine)
+
+    result = check_permission("write_file", {"path": "/tmp/x.txt"})
+
+    # adapter._V2_TO_V1_DECISION: DEFER → "confirm"
+    assert result.behavior == "confirm"
+    assert engine.calls == 1
+
+
+# ---------------------------------------------------------------------------
+# v1 ↔ v2 同步：reset_policy_engine 必须同时清 v2 单例（C6 二轮 audit 修复）
+# ---------------------------------------------------------------------------
+
+
+def test_reset_policy_engine_also_resets_v2_singleton():
+    """C6 二轮 audit 关键回归：
+
+    api/routes/config.py 通过 ``reset_policy_engine()`` 让 v1 重读 YAML（用户
+    在 UI 改了 trust mode / safety_immune / blocked_commands 等），如果不同步
+    清 v2 单例，v2 会继续按旧配置评估，导致用户原始 P1 bug 重现：
+    "我开启了信任模式但还是被拦"。本测试锁死该不变量。
+    """
+    from openakita.core.policy import reset_policy_engine
+    from openakita.core.policy_v2.global_engine import (
+        get_engine_v2,
+        is_initialized,
+    )
+
+    # 触发 v2 懒加载
+    eng_before = get_engine_v2()
+    assert is_initialized()
+
+    reset_policy_engine()
+
+    # reset_policy_engine 必须把 v2 也清掉
+    assert not is_initialized(), (
+        "reset_policy_engine() 没有同步清 v2 单例 —— "
+        "UI 配置 hot-reload 后 v2 仍按旧 YAML 评估，用户体感 trust mode 不生效"
+    )
+
+    # 下次 get_engine_v2 应返回新实例（重读了 YAML）
+    eng_after = get_engine_v2()
+    assert eng_after is not eng_before
+
+
+def test_reset_policy_engine_v2_failure_does_not_break_v1_reset(monkeypatch):
+    """v2 reset 抛异常时不应影响 v1 reset 主流程（防御性编码验证）。"""
+    from openakita.core import policy as policy_mod
+    from openakita.core.policy import reset_policy_engine
+
+    def _boom():
+        raise RuntimeError("v2 module exploded")
+
+    # patch v2 reset 抛错
+    monkeypatch.setattr(
+        "openakita.core.policy_v2.global_engine.reset_engine_v2",
+        _boom,
+    )
+
+    # 应仅 WARN log 不抛
+    reset_policy_engine()
+    # v1 单例确实被清了
+    assert policy_mod._global_policy_engine is None or hasattr(
+        policy_mod._global_policy_engine, "_config"
+    )

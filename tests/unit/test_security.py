@@ -585,6 +585,25 @@ class TestConfirmationMode:
         assert result.decision == PolicyDecision.ALLOW
         assert result.metadata.get("trust_mode") is True
 
+    def test_yolo_mode_allows_ordinary_file_overwrite(self, tmp_path):
+        target = tmp_path / "external" / "report.md"
+        target.parent.mkdir()
+        target.write_text("old", encoding="utf-8")
+        config = SecurityConfig(
+            enabled=True,
+            zones=ZonePolicyConfig(
+                workspace=[str(tmp_path / "workspace")],
+                protected=[str(tmp_path / "protected")],
+                forbidden=[str(tmp_path / "forbidden")],
+                default_zone=Zone.WORKSPACE,
+            ),
+            confirmation=ConfirmationConfig(mode="yolo"),
+        )
+        engine = PolicyEngine(config)
+        result = engine.assert_tool_allowed("write_file", {"path": str(target)})
+        assert result.decision == PolicyDecision.ALLOW
+        assert result.metadata.get("trust_mode") is True
+
     def test_yolo_mode_denies_protected_write(self, tmp_path):
         protected = tmp_path / "protected"
         config = SecurityConfig(
