@@ -107,7 +107,25 @@ type AllowlistData = {
   tools: Array<Record<string, unknown>>;
 };
 
-type TabId = "zones" | "commands" | "sandbox" | "audit" | "checkpoints" | "confirmation" | "selfprotection";
+type TabId = "zones" | "commands" | "sandbox" | "audit" | "checkpoints" | "confirmation" | "selfprotection" | "imowner" | "dryrun";
+
+// C9a §3: per-channel IM owner allowlist (调用 C8a backend)
+type ImOwnerAllowlistEntry = {
+  channel: string;
+  configured: boolean;
+  owners: string[];
+};
+
+// C9a §4: dry-run preview decision row
+type DryRunDecision = {
+  tool: string;
+  params_preview: string;
+  decision: string;
+  reason: string;
+  approval_class: string | null;
+  risk_level: string;
+  safety_immune_match: string | null;
+};
 type PermissionMode = "yolo" | "smart" | "cautious";
 
 export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityViewProps) {
@@ -129,6 +147,11 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   const [refreshingAudit, setRefreshingAudit] = useState(false);
   const [refreshingCheckpoints, setRefreshingCheckpoints] = useState(false);
   const [rewindingId, setRewindingId] = useState<string | null>(null);
+  // C9a §3 / §4 state
+  const [imOwnerEntries, setImOwnerEntries] = useState<ImOwnerAllowlistEntry[]>([]);
+  const [loadingImOwner, setLoadingImOwner] = useState(false);
+  const [dryRunDecisions, setDryRunDecisions] = useState<DryRunDecision[]>([]);
+  const [loadingDryRun, setLoadingDryRun] = useState(false);
   const saving = savingAction !== null;
 
   const api = useCallback(async (path: string, method = "GET", body?: unknown) => {
@@ -238,10 +261,82 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     }
   }, [api, serviceRunning, t]);
 
+  // C9a §3: load IM channels + their owner allowlists (one fetch per channel)
+  const loadImOwnerAllowlist = useCallback(async (showResult = false) => {
+    if (!serviceRunning) return;
+    setLoadingImOwner(true);
+    try {
+      const channelsRes = await api("/api/im/channels");
+      const channels: string[] = (channelsRes?.channels || []).map(
+        (c: { channel?: string }) => String(c?.channel || ""),
+      ).filter(Boolean);
+      const entries: ImOwnerAllowlistEntry[] = await Promise.all(
+        channels.map(async (ch) => {
+          const r = await api(`/api/im/owner-allowlist?channel=${encodeURIComponent(ch)}`);
+          return {
+            channel: ch,
+            configured: Boolean(r?.configured),
+            owners: Array.isArray(r?.owners) ? r.owners.map(String) : [],
+          };
+        }),
+      );
+      setImOwnerEntries(entries);
+      if (showResult) toast.success(t("security.imOwnerRefreshed", "IM owner 列表已刷新"));
+    } catch (err) {
+      if (showResult) toast.error(t("security.refreshFailed", "刷新失败"), {
+        description: errorMessage(err, t("security.refreshFailed", "刷新失败")),
+      });
+    } finally {
+      setLoadingImOwner(false);
+    }
+  }, [api, serviceRunning, t]);
+
+  const saveImOwnerAllowlist = useCallback(
+    async (channel: string, owners: string[] | null) => {
+      setSavingAction(`imowner-${channel}`);
+      try {
+        await api("/api/im/owner-allowlist", "POST", { channel, owners });
+        toast.success(
+          owners === null
+            ? t("security.imOwnerCleared", "已恢复单用户默认（is_owner=true）")
+            : t("security.imOwnerSaved", "IM owner 列表已保存"),
+        );
+        await loadImOwnerAllowlist(false);
+      } catch (err) {
+        toast.error(t("security.saveFailed"), {
+          description: errorMessage(err, t("security.saveFailed")),
+        });
+      } finally {
+        setSavingAction(null);
+      }
+    },
+    [api, loadImOwnerAllowlist, t],
+  );
+
+  // C9a §4: dry-run preview against current persisted policy config
+  const runDryRunPreview = useCallback(async () => {
+    if (!serviceRunning) return;
+    setLoadingDryRun(true);
+    try {
+      const res = await api("/api/config/security/preview", "POST", {});
+      setDryRunDecisions(Array.isArray(res?.decisions) ? res.decisions : []);
+    } catch (err) {
+      toast.error(t("security.dryRunFailed", "预览失败"), {
+        description: errorMessage(err, t("security.dryRunFailed", "预览失败")),
+      });
+    } finally {
+      setLoadingDryRun(false);
+    }
+  }, [api, serviceRunning, t]);
+
   useEffect(() => {
     if (tab === "audit") loadAudit();
     if (tab === "checkpoints") loadCheckpoints();
-  }, [tab, loadAudit, loadCheckpoints]);
+    if (tab === "imowner") loadImOwnerAllowlist();
+    if (tab === "dryrun" && dryRunDecisions.length === 0) runDryRunPreview();
+  // dryRunDecisions intentionally omitted: only trigger initial load when first opening tab
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, loadAudit, loadCheckpoints, loadImOwnerAllowlist, runDryRunPreview]);
 
   const doSave = async (endpoint: string, body: unknown, successKey: string) => {
     setSavingAction(endpoint);
@@ -329,14 +424,16 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     }
   };
 
-  const TABS: { id: TabId; labelKey: string }[] = [
-    { id: "confirmation", labelKey: "security.confirmation" },
-    { id: "zones", labelKey: "security.zones" },
-    { id: "commands", labelKey: "security.commands" },
-    { id: "sandbox", labelKey: "security.sandbox" },
-    { id: "selfprotection", labelKey: "security.selfProtection" },
-    { id: "audit", labelKey: "security.audit" },
-    { id: "checkpoints", labelKey: "security.checkpoints" },
+  const TABS: { id: TabId; labelKey: string; fallback: string }[] = [
+    { id: "confirmation", labelKey: "security.confirmation", fallback: "确认策略" },
+    { id: "zones", labelKey: "security.zones", fallback: "区域" },
+    { id: "commands", labelKey: "security.commands", fallback: "命令" },
+    { id: "sandbox", labelKey: "security.sandbox", fallback: "沙箱" },
+    { id: "selfprotection", labelKey: "security.selfProtection", fallback: "自我保护" },
+    { id: "imowner", labelKey: "security.imOwner", fallback: "IM Owner" },
+    { id: "dryrun", labelKey: "security.dryRun", fallback: "策略预览" },
+    { id: "audit", labelKey: "security.audit", fallback: "审计" },
+    { id: "checkpoints", labelKey: "security.checkpoints", fallback: "快照" },
   ];
   const advancedVisible = permissionMode !== "yolo" || showAdvanced;
   const MODE_CARDS: Array<{ id: PermissionMode; title: string; desc: string; icon: typeof ShieldCheck; tone: string }> = [
@@ -445,9 +542,9 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
               key={tb.id}
               value={tb.id}
               className="h-8 px-3 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-              title={t(tb.labelKey)}
+              title={t(tb.labelKey, tb.fallback)}
             >
-              {t(tb.labelKey)}
+              {t(tb.labelKey, tb.fallback)}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
@@ -836,6 +933,107 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
         </Card>
       )}
 
+      {/* C9a §3: IM Owner Allowlist (per-channel) */}
+      {tab === "imowner" && (
+        <Card className="p-0 gap-0 border-border/50 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50 px-4 py-2.5">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-semibold">{t("security.imOwner", "IM Owner")}</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                {t("security.imOwnerDesc", "限定哪些 IM 用户能调用 CONTROL_PLANE 工具（如 switch_mode、delegate_to_agent 等）。未配置 = 单用户私聊默认（is_owner=true）。")}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => loadImOwnerAllowlist(true)} disabled={loadingImOwner} className="h-8">
+              <RotateCw size={14} className={cn("mr-1.5", loadingImOwner && "animate-spin")} /> {t("security.refresh")}
+            </Button>
+          </CardHeader>
+          <CardContent className="p-4 space-y-3">
+            {imOwnerEntries.length === 0 ? (
+              <div className="flex flex-col items-center py-8 text-center text-sm text-muted-foreground">
+                <ShieldCheck size={32} className="mb-3 opacity-20" />
+                {loadingImOwner
+                  ? t("common.loading", "加载中...")
+                  : t("security.imOwnerNoChannel", "未发现已启用的 IM 渠道")}
+              </div>
+            ) : (
+              imOwnerEntries.map((entry) => (
+                <ImOwnerChannelRow
+                  key={entry.channel}
+                  entry={entry}
+                  saving={savingAction === `imowner-${entry.channel}`}
+                  onSave={saveImOwnerAllowlist}
+                />
+              ))
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* C9a §4: Dry-run preview (current persisted policy decisions for sample tools) */}
+      {tab === "dryrun" && (
+        <Card className="p-0 gap-0 border-border/50 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50 px-4 py-2.5">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-semibold">{t("security.dryRun", "策略预览")}</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                {t("security.dryRunDesc", "用当前已保存的 policy_v2 配置对常见工具进行试运行，确认配置真实效果（不会执行任何工具）。")}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={runDryRunPreview} disabled={loadingDryRun} className="h-8">
+              <RotateCw size={14} className={cn("mr-1.5", loadingDryRun && "animate-spin")} /> {t("security.dryRunRun", "重新运行")}
+            </Button>
+          </CardHeader>
+          <CardContent className="p-0">
+            {dryRunDecisions.length === 0 ? (
+              <div className="flex flex-col items-center py-10 text-center text-sm text-muted-foreground">
+                <Shield size={32} className="mb-3 opacity-20" />
+                {loadingDryRun ? t("common.loading", "加载中...") : t("security.dryRunEmpty", "尚无预览结果")}
+              </div>
+            ) : (
+              <Table>
+                <TableHeader className="bg-muted/30">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="text-xs h-10 px-5 font-medium">{t("security.dryRunTool", "工具")}</TableHead>
+                    <TableHead className="text-xs h-10 px-4 font-medium">{t("security.dryRunArgs", "参数")}</TableHead>
+                    <TableHead className="text-xs h-10 px-4 font-medium">{t("security.dryRunDecision", "决策")}</TableHead>
+                    <TableHead className="hidden md:table-cell text-xs h-10 px-4 font-medium">{t("security.dryRunClass", "分类")}</TableHead>
+                    <TableHead className="hidden lg:table-cell text-xs h-10 px-4 font-medium">{t("security.dryRunReason", "原因")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dryRunDecisions.map((d, i) => (
+                    <TableRow key={i} className="border-b-border/50 hover:bg-muted/20">
+                      <TableCell className="px-5 py-2.5 font-mono text-xs">{d.tool}</TableCell>
+                      <TableCell className="px-4 py-2.5 font-mono text-xs text-muted-foreground truncate max-w-[260px]" title={d.params_preview}>
+                        {d.params_preview}
+                      </TableCell>
+                      <TableCell className="px-4 py-2.5">
+                        <DecisionBadge decision={d.decision} />
+                        {d.safety_immune_match && (
+                          <Badge variant="outline" className="ml-1.5 text-[10px] uppercase border-amber-500/40 text-amber-600">
+                            immune
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell px-4 py-2.5">
+                        {d.approval_class ? (
+                          <Badge variant="secondary" className="text-[10px] font-mono">{d.approval_class}</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell px-4 py-2.5 text-xs text-muted-foreground truncate max-w-[280px]" title={d.reason}>
+                        {d.reason || "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Checkpoints */}
       {tab === "checkpoints" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm overflow-hidden">
@@ -899,6 +1097,97 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
 }
 
 /* ─── Sub-components ─── */
+
+// C9a §3: per-channel IM owner allowlist editor row
+function ImOwnerChannelRow({
+  entry,
+  saving,
+  onSave,
+}: {
+  entry: ImOwnerAllowlistEntry;
+  saving: boolean;
+  onSave: (channel: string, owners: string[] | null) => void;
+}) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState<string>(entry.owners.join("\n"));
+  const [pendingClear, setPendingClear] = useState(false);
+
+  const dirty = draft.trim() !== entry.owners.join("\n").trim();
+
+  const handleSave = () => {
+    const owners = draft.split(/[\n,;\s]+/).map((s) => s.trim()).filter(Boolean);
+    onSave(entry.channel, owners);
+  };
+
+  const handleClear = () => {
+    if (pendingClear) {
+      onSave(entry.channel, null);
+      setPendingClear(false);
+      return;
+    }
+    setPendingClear(true);
+    setTimeout(() => setPendingClear(false), 3000);
+  };
+
+  return (
+    <div className="rounded-md border border-border/50 p-3 space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="font-mono text-xs">{entry.channel}</Badge>
+          {entry.configured ? (
+            <Badge variant="secondary" className="text-xs">
+              {entry.owners.length} {t("security.imOwnerCount", "owner")}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-xs text-muted-foreground border-dashed">
+              {t("security.imOwnerUnconfigured", "未配置（is_owner=true）")}
+            </Badge>
+          )}
+        </div>
+        <div className="flex gap-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleClear}
+            disabled={saving || (!entry.configured && !pendingClear)}
+            className={cn("h-7 text-xs", pendingClear && "text-destructive")}
+          >
+            <IconTrash size={12} className="mr-1" />
+            {pendingClear
+              ? t("security.imOwnerClearConfirm", "再次点击清除")
+              : t("security.imOwnerClear", "清除")}
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            className="h-7 text-xs"
+          >
+            {saving && <Loader2 className="mr-1 size-3 animate-spin" />}
+            <Save size={12} className="mr-1" /> {t("common.save", "保存")}
+          </Button>
+        </div>
+      </div>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={t(
+          "security.imOwnerPlaceholder",
+          "每行一个 user_id（也支持逗号/分号/空格分隔）。空 = 显式锁定（CONTROL_PLANE 全员被拒）",
+        )}
+        rows={Math.max(2, draft.split("\n").length)}
+        className="w-full resize-none rounded-md border border-border/50 bg-background px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none"
+      />
+      <p className="text-[11px] text-muted-foreground">
+        {t(
+          "security.imOwnerHint",
+          "三态语义：未配置 → 单用户默认；空列表 → 显式锁定；非空 → 仅列表内 user_id 可调控制面工具。",
+        )}
+      </p>
+    </div>
+  );
+}
 
 function DecisionBadge({ decision }: { decision: string }) {
   const variant = decision === "deny" ? "destructive" : decision === "confirm" ? "outline" : "secondary";

@@ -4376,13 +4376,15 @@ class ReasoningEngine:
                                 "pet-status-update",
                                 {"status": "tool_execution", "tool_name": t_name},
                             )
-                            # 决策走 v2（C6 起），UI 状态机仍来自 v1 PolicyEngine
-                            # （store_ui_pending / wait_for_ui_resolution / readonly_mode 等
-                            # 留待 C9 SecurityView 重建时一并迁移）。
+                            # 决策走 v2（C6 起），UI 状态机 C9b 后走独立 ui_confirm_bus
+                            # （producer / wait 都用 bus；resolve 仍走 v1 facade 因为
+                            # mark_confirmed 在 C8b 之前还要工作）。
                             from .policy import PolicyDecision, PolicyResult, get_policy_engine
                             from .policy_v2.adapter import evaluate_via_v2_to_v1_result
+                            from .ui_confirm_bus import get_ui_confirm_bus
 
                             _pe = get_policy_engine()
+                            _bus = get_ui_confirm_bus()
                             _pr = evaluate_via_v2_to_v1_result(
                                 t_name, t_args if isinstance(t_args, dict) else {}
                             )
@@ -4400,14 +4402,20 @@ class ReasoningEngine:
                                 _is_im = _is_im_conversation(conversation_id)
                                 _risk = _pr.metadata.get("risk_level") or "medium"
                                 _needs_sb = _pr.metadata.get("needs_sandbox", False)
-                                _pe.store_ui_pending(
+                                # C9a §1: v2 字段（approval_class / policy_version）随 SSE
+                                # 一起下发。SecurityConfirmModal / SecurityView 用 approval_class
+                                # 渲染语义 badge（DESTRUCTIVE/CONTROL_PLANE/...），policy_version=2
+                                # 让前端能区分 v1 兜底事件 vs v2 主决策事件。
+                                # 字段缺失时前端兜回旧路径（risk_level）—— 完全向后兼容。
+                                _approval_class = _pr.metadata.get("approval_class")
+                                _bus.store_pending(
                                     t_id,
                                     t_name,
                                     t_args if isinstance(t_args, dict) else {},
                                     session_id=conversation_id or "",
                                     needs_sandbox=_needs_sb,
                                 )
-                                _pe.prepare_ui_confirm(t_id)
+                                _bus.prepare(t_id)
                                 yield {
                                     "type": "security_confirm",
                                     "tool": t_name,
@@ -4419,6 +4427,8 @@ class ReasoningEngine:
                                     "timeout_seconds": _pe._config.confirmation.timeout_seconds,
                                     "default_on_timeout": _pe._config.confirmation.default_on_timeout,
                                     "channel": "im" if _is_im else "desktop",
+                                    "approval_class": _approval_class,
+                                    "policy_version": 2,
                                     "options": [
                                         "allow_once",
                                         "allow_session",
@@ -4434,11 +4444,11 @@ class ReasoningEngine:
                                 )
                                 if _is_im:
                                     _confirm_timeout = max(_confirm_timeout * 4, 180.0)
-                                _decision = await _pe.wait_for_ui_resolution(
+                                _decision = await _bus.wait_for_resolution(
                                     t_id,
                                     _confirm_timeout,
                                 )
-                                _pe.cleanup_ui_confirm(t_id)
+                                _bus.cleanup(t_id)
                                 if _decision in (
                                     "allow",
                                     "allow_once",
@@ -4737,12 +4747,14 @@ class ReasoningEngine:
                         )
 
                         # PolicyEngine 检查（与 execute_batch 一致）—— C6 起决策走 v2，
-                        # UI 状态（store_ui_pending / readonly_mode 等）仍由 v1 实例提供，
-                        # 待 C9 SecurityView 重建时一并迁移。
+                        # C9b 起 UI confirm 走独立 ui_confirm_bus；readonly_mode 仍在
+                        # v1 PolicyEngine 上（C8b 删 v1 RiskGate 时一并搬迁）。
                         from .policy import PolicyDecision, PolicyResult, get_policy_engine
                         from .policy_v2.adapter import evaluate_via_v2_to_v1_result
+                        from .ui_confirm_bus import get_ui_confirm_bus
 
                         _pe = get_policy_engine()
+                        _bus = get_ui_confirm_bus()
                         _tool_args_dict = tool_args if isinstance(tool_args, dict) else {}
                         _pr = evaluate_via_v2_to_v1_result(tool_name, _tool_args_dict)
                         if _pr.decision == PolicyDecision.DENY:
@@ -4787,14 +4799,16 @@ class ReasoningEngine:
                             _is_im = _is_im_conversation(conversation_id)
                             _risk = _pr.metadata.get("risk_level") or "medium"
                             _needs_sb = _pr.metadata.get("needs_sandbox", False)
-                            _pe.store_ui_pending(
+                            # C9a §1: 见上方 hotspot 同款注释（v2 字段向后兼容下发）
+                            _approval_class = _pr.metadata.get("approval_class")
+                            _bus.store_pending(
                                 tool_id,
                                 tool_name,
                                 _tool_args_dict,
                                 session_id=conversation_id or "",
                                 needs_sandbox=_needs_sb,
                             )
-                            _pe.prepare_ui_confirm(tool_id)
+                            _bus.prepare(tool_id)
                             yield {
                                 "type": "security_confirm",
                                 "tool": tool_name,
@@ -4806,6 +4820,8 @@ class ReasoningEngine:
                                 "timeout_seconds": _pe._config.confirmation.timeout_seconds,
                                 "default_on_timeout": _pe._config.confirmation.default_on_timeout,
                                 "channel": "im" if _is_im else "desktop",
+                                "approval_class": _approval_class,
+                                "policy_version": 2,
                                 "options": ["allow_once", "allow_session", "allow_always", "deny"]
                                 + (["sandbox"] if _needs_sb else []),
                             }
@@ -4814,11 +4830,11 @@ class ReasoningEngine:
                             )
                             if _is_im:
                                 _confirm_timeout = max(_confirm_timeout * 4, 180.0)
-                            _decision = await _pe.wait_for_ui_resolution(
+                            _decision = await _bus.wait_for_resolution(
                                 tool_id,
                                 _confirm_timeout,
                             )
-                            _pe.cleanup_ui_confirm(tool_id)
+                            _bus.cleanup(tool_id)
                             _confirmed_allowed = _decision in (
                                 "allow",
                                 "allow_once",

@@ -115,10 +115,14 @@ def _check_consume_prune_persists() -> None:
 def _check_sse_wait_ownership() -> None:
     """gateway 不再调 prepare/wait/cleanup（避免序列竞争）；
     reasoning_engine 始终 yield SSE（不早退）；
-    prepare_ui_confirm 幂等。"""
+    prepare 幂等。
+
+    C9b update: 幂等逻辑搬到 ``UIConfirmBus.prepare``（不再在 policy.py
+    上）；``policy.py`` 上的 ``prepare_ui_confirm`` 是薄 facade。
+    """
     re_src = Path("src/openakita/core/reasoning_engine.py").read_text(encoding="utf-8")
     gw_src = Path("src/openakita/channels/gateway.py").read_text(encoding="utf-8")
-    pe_src = Path("src/openakita/core/policy.py").read_text(encoding="utf-8")
+    bus_src = Path("src/openakita/core/ui_confirm_bus.py").read_text(encoding="utf-8")
 
     # reasoning_engine 不应包含旧的早退字符串
     assert "IM 通道，无法安全完成交互式确认" not in re_src
@@ -141,12 +145,11 @@ def _check_sse_wait_ownership() -> None:
         "gateway should not own cleanup_ui_confirm (reasoning_engine does)"
     )
 
-    # prepare_ui_confirm 幂等
+    # C9b: 幂等逻辑现在在 UIConfirmBus.prepare 上
     assert (
-        'if existing is not None and confirm_id not in self._ui_confirm_decisions:'
-        in pe_src
-    )
-    print("#5 SSE wait ownership: OK (gateway only renders, reasoning_engine waits/cleans)")
+        "if existing is not None and confirm_id not in self._decisions:" in bus_src
+    ), "UIConfirmBus.prepare must keep its idempotency invariant after C9b"
+    print("#5 SSE wait ownership: OK (gateway renders, reasoning_engine + bus own state)")
 
 
 def main() -> None:

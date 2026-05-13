@@ -1472,6 +1472,88 @@ async def write_security_config(body: SecurityConfigUpdate):
     return {"status": "ok"}
 
 
+# C9a §4: Dry-run preview — let user inspect how their saved policy_v2 config
+# behaves against representative tool calls **without** executing anything.
+# Body=None/{} → use currently persisted config (fast path; no plumbing).
+# Body={"security": {...}} → build PolicyConfigV2 from a proposed security
+# block (in-memory; never written to disk; ad-hoc engine instance).
+# Returns: {"decisions": [{tool, params_preview, decision, reason,
+#                          approval_class, risk_level, safety_immune_match}]}
+_DRY_RUN_SAMPLES: list[tuple[str, dict[str, object]]] = [
+    ("read_file", {"path": "README.md"}),
+    ("write_file", {"path": "data/scratch/note.txt", "content": "x"}),
+    ("write_file", {"path": "/etc/passwd", "content": "x"}),
+    ("write_file", {"path": "identity/SOUL.md", "content": "x"}),
+    ("delete_file", {"path": "data/checkpoints/old.json"}),
+    ("run_shell", {"command": "ls"}),
+    ("run_shell", {"command": "rm -rf /"}),
+    ("delegate_to_agent", {"agent": "researcher"}),
+    ("switch_mode", {"target_mode": "plan"}),
+]
+
+
+@router.post("/api/config/security/preview")
+async def preview_security_config(body: dict | None = None):
+    """Run sample tool decisions against a proposed (or current) policy config."""
+    from pathlib import Path as _P
+
+    from openakita.core.policy_v2 import (
+        PolicyContext,
+        PolicyEngineV2,
+        SessionRole,
+        ToolCallEvent,
+    )
+    from openakita.core.policy_v2.enums import ConfirmationMode
+
+    proposed_security = (body or {}).get("security") if isinstance(body, dict) else None
+
+    try:
+        if proposed_security is not None:
+            from openakita.core.policy_v2.loader import load_policies_from_dict
+
+            cfg, _report = load_policies_from_dict({"security": proposed_security}, strict=False)
+            engine = PolicyEngineV2(config=cfg)
+        else:
+            from openakita.core.policy_v2 import get_engine_v2
+
+            engine = get_engine_v2()
+    except Exception as exc:
+        return {"status": "error", "message": f"构建预览引擎失败: {exc}"}
+
+    ctx = PolicyContext(
+        session_id="dry_run_preview",
+        workspace=_P.cwd(),
+        session_role=SessionRole.AGENT,
+        confirmation_mode=ConfirmationMode.DEFAULT,
+    )
+
+    decisions: list[dict[str, object]] = []
+    for tool, params in _DRY_RUN_SAMPLES:
+        try:
+            d = engine.evaluate_tool_call(ToolCallEvent(tool=tool, params=params), ctx)
+            params_preview = ", ".join(f"{k}={v!s}"[:80] for k, v in params.items())
+            decisions.append({
+                "tool": tool,
+                "params_preview": params_preview,
+                "decision": d.action.value,
+                "reason": d.reason,
+                "approval_class": d.approval_class.value if d.approval_class else None,
+                "risk_level": d.shell_risk_level or "",
+                "safety_immune_match": d.safety_immune_match,
+            })
+        except Exception as exc:
+            decisions.append({
+                "tool": tool,
+                "params_preview": "",
+                "decision": "error",
+                "reason": f"engine error: {exc}",
+                "approval_class": None,
+                "risk_level": "",
+                "safety_immune_match": None,
+            })
+    return {"decisions": decisions, "preview_uses_proposed": proposed_security is not None}
+
+
 @router.get("/api/config/security/zones")
 async def read_security_zones():
     """Read zone path configuration."""

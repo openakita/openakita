@@ -330,6 +330,8 @@ export function ChatView({
     tool: string; args: Record<string, unknown>; reason: string;
     riskLevel: string; needsSandbox: boolean; toolId?: string;
     countdown: number; defaultOnTimeout?: string;
+    // C9a §1: v2 字段（向后兼容，缺失时 modal 隐藏对应 UI 元素）
+    approvalClass?: string | null; policyVersion?: number; channel?: string;
   };
   const [securityConfirm, setSecurityConfirm] = useState<SecurityConfirmData | null>(null);
   const securityQueueRef = useRef<SecurityConfirmData[]>([]);
@@ -2970,6 +2972,9 @@ export function ChatView({
                   toolId: scEvt.id,
                   countdown: (event.timeout_seconds as number) || 120,
                   defaultOnTimeout: (event.default_on_timeout as string) || "deny",
+                  approvalClass: (event.approval_class as string | null | undefined) ?? null,
+                  policyVersion: (event.policy_version as number | undefined) ?? undefined,
+                  channel: (event.channel as string | undefined) ?? undefined,
                 };
                 setSecurityConfirm((prev) => {
                   if (prev) {

@@ -661,8 +661,6 @@ class PolicyEngine:
     def __init__(self, config: SecurityConfig | None = None) -> None:
         self._config = config or self._make_default_config()
         self._audit_log: list[dict[str, Any]] = []
-        self._ui_confirm_events: dict[str, asyncio.Event] = {}
-        self._ui_confirm_decisions: dict[str, str] = {}
         self._consecutive_denials = 0
         self._total_denials = 0
         self._readonly_mode = False
@@ -672,8 +670,6 @@ class PolicyEngine:
         self._session_allowlist: dict[str, dict[str, Any]] = {}
         # P1-5: 并发保护锁
         self._cache_lock = asyncio.Lock()
-        # Pending UI confirmations: tool_id → {tool_name, params, ...}
-        self._pending_ui_confirms: dict[str, dict[str, Any]] = {}
         self._pending_lock = asyncio.Lock()
         # F7: Temporary allowlists granted by skill activation.
         self._skill_allowlists: dict[str, set[str]] = {}
@@ -681,6 +677,12 @@ class PolicyEngine:
         self._frontend_mode: str = self._config.confirmation.mode
         # Smart-mode session trust escalation counter
         self._session_allow_count: int = 0
+        # C9b: UI confirm state moved to ``ui_confirm_bus`` (module-level
+        # singleton, survives engine reset). Push our configured TTL so the
+        # bus's GC matches user settings.
+        from .ui_confirm_bus import get_ui_confirm_bus
+
+        get_ui_confirm_bus().configure_ttl(self._config.confirmation.confirm_ttl)
 
     @property
     def config(self) -> SecurityConfig:
@@ -1836,58 +1838,46 @@ class PolicyEngine:
         session_id: str = "",
         needs_sandbox: bool = False,
     ) -> None:
-        """Store a pending UI confirmation (SSE security_confirm sent)."""
-        import time
+        """C9b: Thin facade — delegate to global ``UIConfirmBus``."""
+        from .ui_confirm_bus import get_ui_confirm_bus
 
-        self._cleanup_expired_confirms()
-        self._pending_ui_confirms[tool_id] = {
-            "tool_name": tool_name,
-            "params": params,
-            "created_at": time.time(),
-            "session_id": session_id,
-            "needs_sandbox": needs_sandbox,
-        }
-
-    def _cleanup_expired_confirms(self) -> None:
-        """Remove pending confirmations older than confirm_ttl seconds."""
-        import time
-
-        ttl = self._config.confirmation.confirm_ttl
-        now = time.time()
-        expired = [
-            k for k, v in self._pending_ui_confirms.items() if now - v.get("created_at", 0) > ttl
-        ]
-        for k in expired:
-            self._pending_ui_confirms.pop(k, None)
+        get_ui_confirm_bus().store_pending(
+            tool_id,
+            tool_name,
+            params,
+            session_id=session_id,
+            needs_sandbox=needs_sandbox,
+        )
 
     def cleanup_session(self, session_id: str) -> None:
-        """Remove all pending confirmations for a session and clear session allowlist."""
-        to_remove = [
-            k for k, v in self._pending_ui_confirms.items() if v.get("session_id") == session_id
-        ]
-        for k in to_remove:
-            self._pending_ui_confirms.pop(k, None)
+        """Remove pending confirms for a session AND clear v1 session
+        allowlist counters.
+
+        C9b split: bus owns pending; ``_session_allowlist`` /
+        ``_session_allow_count`` remain on PolicyEngine until C8b deletes
+        them along with v1 RiskGate.
+        """
+        from .ui_confirm_bus import get_ui_confirm_bus
+
+        get_ui_confirm_bus().cleanup_session(session_id)
         self._session_allowlist.clear()
         self._session_allow_count = 0
 
     def resolve_ui_confirm(self, confirm_id: str, decision: str) -> bool:
-        """Called by the /api/chat/security-confirm endpoint.
+        """C9b: Delegate event/decision/pending lifecycle to bus, then
+        execute v1-only ``mark_confirmed`` follow-up.
 
-        *decision*: ``allow_once`` | ``allow_session`` | ``allow_always`` |
-        ``deny`` | ``sandbox``.  Legacy ``allow`` maps to ``allow_once``.
-        Returns True if the confirm_id was found.
+        Returns ``True`` if a pending sidecar was popped (i.e. the
+        confirm_id was registered via ``store_ui_pending``). Returns
+        ``False`` if no sidecar existed (e.g. the SSE was never
+        emitted, or it was already resolved). The waiter is still
+        woken either way — see ``UIConfirmBus.resolve``.
         """
-        pending = self._pending_ui_confirms.pop(confirm_id, None)
-        if not pending:
+        from .ui_confirm_bus import get_ui_confirm_bus
+
+        resolved = get_ui_confirm_bus().resolve(confirm_id, decision)
+        if resolved is None:
             return False
-
-        # Normalize legacy values
-        if decision == "allow":
-            decision = "allow_once"
-
-        needs_sandbox = pending.get("needs_sandbox", False)
-        if decision == "sandbox":
-            needs_sandbox = True
 
         scope_map = {
             "allow_once": "once",
@@ -1895,20 +1885,14 @@ class PolicyEngine:
             "allow_always": "always",
             "sandbox": "once",
         }
-        scope = scope_map.get(decision)
+        scope = scope_map.get(resolved["decision"])
         if scope:
             self.mark_confirmed(
-                pending["tool_name"],
-                pending["params"],
+                resolved["tool_name"],
+                resolved["params"],
                 scope=scope,
-                needs_sandbox=needs_sandbox,
+                needs_sandbox=resolved["needs_sandbox"],
             )
-        # Also wake up IM card-based waiting path
-        if confirm_id in self._ui_confirm_events and confirm_id not in self._ui_confirm_decisions:
-            self._ui_confirm_decisions[confirm_id] = decision
-            ev = self._ui_confirm_events.get(confirm_id)
-            if ev:
-                ev.set()
         return True
 
     # ----- Audit ------------------------------------------------------------
@@ -1965,63 +1949,34 @@ class PolicyEngine:
         return list(self._audit_log)
 
     def prepare_ui_confirm(self, confirm_id: str) -> None:
-        """为交互式安全确认（卡片 / InlineKeyboard）注册等待事件。
+        """C9b: Thin facade — delegate to global ``UIConfirmBus``.
 
-        **C8 idempotent**：reasoning_engine 与 gateway IM 路径都会调用这个方法
-        （reasoning_engine 在 yield SSE 前 prepare → 等待 resolve；gateway 在
-        ``_handle_im_security_confirm`` 中也 prepare → 派 IM 卡片 → 等待 resolve）。
-        如果第二次调用 silently 替换 ``_ui_confirm_events[id]`` 的 ``asyncio.Event``
-        实例，第一次的 waiter 会卡在已废弃的 Event 上 → 用户点了 IM 卡片 →
-        ``resolve_ui_confirm`` 只 set 第二次注册的 Event → reasoning_engine 永远
-        超时取默认 deny。这是 C8 §2.3 修复 IM 早退 bug 的隐藏前置条件。
-
-        现在的语义：``confirm_id`` 已注册且尚未 resolve 时不动；已 resolve 则
-        清掉旧 decision 重新注册（兼容同 id 第二轮 confirm 的极少见场景）。
+        Idempotency semantics moved to ``UIConfirmBus.prepare`` (see C8a
+        §2.3 fix for context: reasoning_engine + gateway both call
+        prepare for the same confirm_id, second prepare must reuse the
+        first event or the first waiter orphans).
         """
-        if not confirm_id:
-            return
-        existing = self._ui_confirm_events.get(confirm_id)
-        if existing is not None and confirm_id not in self._ui_confirm_decisions:
-            return
-        self._ui_confirm_events[confirm_id] = asyncio.Event()
-        self._ui_confirm_decisions.pop(confirm_id, None)
+        from .ui_confirm_bus import get_ui_confirm_bus
+
+        get_ui_confirm_bus().prepare(confirm_id)
 
     def cleanup_ui_confirm(self, confirm_id: str) -> None:
-        """清理安全确认等待状态（在流程结束或回退到纯文本路径时调用）。"""
-        if not confirm_id:
-            return
-        self._ui_confirm_events.pop(confirm_id, None)
-        self._ui_confirm_decisions.pop(confirm_id, None)
+        """C9b: Thin facade — delegate to global ``UIConfirmBus``."""
+        from .ui_confirm_bus import get_ui_confirm_bus
+
+        get_ui_confirm_bus().cleanup(confirm_id)
 
     async def wait_for_ui_resolution(self, confirm_id: str, timeout: float) -> str:
-        """等待 ``resolve_ui_confirm`` 被调用；超时视为 ``deny``。
+        """C9b: Thin facade — delegate to global ``UIConfirmBus``.
 
-        唤醒路径：任意调用 ``resolve_ui_confirm(confirm_id, decision)``
-        （HTTP endpoint / IM 按钮回调 / IM 纯文本回退）会在内部把
-        ``decision`` 写入 ``_ui_confirm_decisions`` 并 ``set()`` 对应
-        ``_ui_confirm_events[confirm_id]``。
-
-        注意：历史上此处曾短暂出现同名 ``resolve_ui_confirm`` 的"只 set
-        event、不 mark_confirmed"的简化版本，会覆盖真正做 pop +
-        mark_confirmed 的实现，导致 allow_session / allow_always 等
-        scope 全部失效。修复详情见 commit history；当前只保留
-        ``resolve_ui_confirm`` 的单一完整实现。
+        Wakeup paths (gateway IM card click / web modal POST / text
+        fallback / scheduled task auto-resolve) all call
+        ``resolve_ui_confirm`` (or the bus directly), which sets the
+        same ``asyncio.Event`` this method awaits.
         """
-        if not confirm_id:
-            return "deny"
-        ev = self._ui_confirm_events.get(confirm_id)
-        if ev is None:
-            return self._ui_confirm_decisions.get(confirm_id, "deny")
-        try:
-            await asyncio.wait_for(ev.wait(), timeout=timeout)
-        except TimeoutError:
-            if confirm_id not in self._ui_confirm_decisions:
-                # 超时兜底：调用完整的 resolve_ui_confirm("deny")，
-                # 保证任何仍挂在 _pending_ui_confirms 的孤儿也会被 pop
-                # （decision="deny" 不在 scope_map 里，不会误加 allowlist），
-                # 同时唤醒 event 并落下 decision，保持与正常路径一致。
-                self.resolve_ui_confirm(confirm_id, "deny")
-        return self._ui_confirm_decisions.get(confirm_id, "deny")
+        from .ui_confirm_bus import get_ui_confirm_bus
+
+        return await get_ui_confirm_bus().wait_for_resolution(confirm_id, timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -2086,9 +2041,11 @@ def reset_policy_engine() -> None:
         refreshed._total_denials = previous._total_denials
         refreshed._confirmed_cache = previous._confirmed_cache
         refreshed._session_allowlist = previous._session_allowlist
-        refreshed._pending_ui_confirms = previous._pending_ui_confirms
-        refreshed._ui_confirm_events = previous._ui_confirm_events
-        refreshed._ui_confirm_decisions = previous._ui_confirm_decisions
+        # C9b: ``_pending_ui_confirms`` / ``_ui_confirm_events`` /
+        # ``_ui_confirm_decisions`` are no longer engine attributes —
+        # they live on the module-level ``UIConfirmBus`` singleton,
+        # which automatically survives policy engine reset. The
+        # field-by-field copy that used to be here is no longer needed.
         refreshed._skill_allowlists = previous._skill_allowlists
         refreshed._session_allow_count = previous._session_allow_count
 

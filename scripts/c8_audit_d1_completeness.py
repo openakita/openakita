@@ -76,18 +76,23 @@ def main() -> None:
     print(f"#4 consume_session_trust prunes expired: OK ({remaining[0]['operation']!r} kept)")
 
     # ---- #5 IM prefix early-exit gone + idempotent prepare_ui_confirm ----
+    # C9b note: ``_ui_confirm_events`` moved from PolicyEngine to the
+    # module-level UIConfirmBus singleton. Audit reads from bus instead.
     from openakita.core.policy import get_policy_engine, reset_policy_engine
     from openakita.core.reasoning_engine import _is_im_conversation
+    from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
     assert _is_im_conversation("telegram:1234") is True
     print("#5 _is_im_conversation('telegram:1234'): True")
 
     reset_policy_engine()
+    reset_ui_confirm_bus()
     pe = get_policy_engine()
+    bus = get_ui_confirm_bus()
     pe.prepare_ui_confirm("test-id-c8")
-    ev1 = pe._ui_confirm_events["test-id-c8"]
+    ev1 = bus._events["test-id-c8"]
     pe.prepare_ui_confirm("test-id-c8")  # second call must be idempotent
-    ev2 = pe._ui_confirm_events["test-id-c8"]
+    ev2 = bus._events["test-id-c8"]
     assert ev1 is ev2, "prepare_ui_confirm must be idempotent (same Event)"
     print("#5 prepare_ui_confirm idempotent: OK (same Event instance)")
     pe.cleanup_ui_confirm("test-id-c8")

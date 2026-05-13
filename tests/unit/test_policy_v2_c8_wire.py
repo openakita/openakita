@@ -11,7 +11,6 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -440,33 +439,43 @@ class TestConsumeSessionTrustPrunesExpired:
 class TestImPrefixSseFlow:
     def test_prepare_ui_confirm_is_idempotent_when_no_decision(self) -> None:
         """Two prepare calls on the same id must keep the first Event instance
-        so that both reasoning_engine and gateway see the same wakeable."""
+        so that both reasoning_engine and gateway see the same wakeable.
+
+        C9b: state moved from PolicyEngine to UIConfirmBus singleton; PolicyEngine
+        ``prepare_ui_confirm`` is now a thin facade. Test reads from the bus.
+        """
         from openakita.core.policy import get_policy_engine, reset_policy_engine
+        from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
         reset_policy_engine()
+        reset_ui_confirm_bus()
         pe = get_policy_engine()
+        bus = get_ui_confirm_bus()
         pe.prepare_ui_confirm("c8-test-id")
-        ev1 = pe._ui_confirm_events.get("c8-test-id")
+        ev1 = bus._events.get("c8-test-id")
         pe.prepare_ui_confirm("c8-test-id")
-        ev2 = pe._ui_confirm_events.get("c8-test-id")
+        ev2 = bus._events.get("c8-test-id")
         assert ev1 is ev2  # same Event instance — no replacement
         pe.cleanup_ui_confirm("c8-test-id")
 
     def test_prepare_ui_confirm_reissues_after_resolution(self) -> None:
         """If id was already resolved, prepare should issue a fresh Event."""
         from openakita.core.policy import get_policy_engine, reset_policy_engine
+        from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
         reset_policy_engine()
+        reset_ui_confirm_bus()
         pe = get_policy_engine()
+        bus = get_ui_confirm_bus()
         pe.prepare_ui_confirm("c8-second-round")
-        ev1 = pe._ui_confirm_events.get("c8-second-round")
+        ev1 = bus._events.get("c8-second-round")
         # Force a resolution to land in decisions
-        pe._ui_confirm_decisions["c8-second-round"] = "allow_once"
+        bus._decisions["c8-second-round"] = "allow_once"
         # prepare again — must reissue because decision exists from a prior round
         pe.prepare_ui_confirm("c8-second-round")
-        ev2 = pe._ui_confirm_events.get("c8-second-round")
+        ev2 = bus._events.get("c8-second-round")
         assert ev2 is not ev1
-        assert "c8-second-round" not in pe._ui_confirm_decisions
+        assert "c8-second-round" not in bus._decisions
         pe.cleanup_ui_confirm("c8-second-round")
 
     def test_is_im_conversation_helper_still_recognizes_prefixes(self) -> None:

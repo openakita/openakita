@@ -12,6 +12,21 @@ const RISK_LABELS: Record<string, string> = {
   low: "低风险",
 };
 
+// C9a §2: ApprovalClass → 中文 + 颜色（与 v2 11 维分类对齐，见 policy_v2/enums.py）
+const APPROVAL_CLASS_LABELS: Record<string, { label: string; color: string }> = {
+  destructive:      { label: "破坏性操作",   color: "#dc2626" },
+  control_plane:    { label: "控制面",       color: "#9333ea" },
+  mutating_global:  { label: "全局副作用",   color: "#ea580c" },
+  mutating_scoped:  { label: "局部副作用",   color: "#f59e0b" },
+  shell_exec:       { label: "Shell 执行",   color: "#dc2626" },
+  network_egress:   { label: "网络出站",     color: "#0891b2" },
+  interactive:      { label: "交互式",       color: "#3b82f6" },
+  readonly_scoped:  { label: "局部只读",     color: "#10b981" },
+  readonly_global:  { label: "全局只读",     color: "#22c55e" },
+  metadata:         { label: "元数据",       color: "#6b7280" },
+  unknown:          { label: "未分类",       color: "#6b7280" },
+};
+
 function humanizeArgs(tool: string, args: Record<string, unknown>): string {
   if (tool === "run_shell" && args.command) return `即将执行命令：${args.command}`;
   if ((tool === "write_file" || tool === "edit_file") && args.path) return `即将修改文件：${args.path}`;
@@ -34,6 +49,8 @@ export function SecurityConfirmModal({
     tool: string; args: Record<string, unknown>; reason: string;
     riskLevel: string; needsSandbox: boolean; toolId?: string; countdown: number;
     defaultOnTimeout?: string;
+    // C9a §2: v2 字段（缺失时不渲染对应 UI 元素，向后兼容旧 backend）
+    approvalClass?: string | null; policyVersion?: number; channel?: string;
   };
   apiBase: string;
   onClose: (info?: SecurityCloseInfo) => void;
@@ -118,15 +135,41 @@ export function SecurityConfirmModal({
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <IconShield size={24} style={{ color: riskColor }} />
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>
-              {t("chat.securityConfirmTitle", "安全确认")}
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>
+                {t("chat.securityConfirmTitle", "安全确认")}
+              </div>
+              {/* C9a §2: approval_class badge (v2 字段；旧 backend 缺失时不渲染) */}
+              {data.approvalClass && APPROVAL_CLASS_LABELS[data.approvalClass] && (
+                <span
+                  title={`policy_v2 ApprovalClass: ${data.approvalClass}`}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: `${APPROVAL_CLASS_LABELS[data.approvalClass].color}1a`,
+                    color: APPROVAL_CLASS_LABELS[data.approvalClass].color,
+                    border: `1px solid ${APPROVAL_CLASS_LABELS[data.approvalClass].color}55`,
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  {APPROVAL_CLASS_LABELS[data.approvalClass].label}
+                </span>
+              )}
             </div>
-            <div style={{ fontSize: 12, opacity: 0.6 }}>
-              {t("chat.securityRiskLevel", "风险等级")}:{" "}
-              <span style={{ color: riskColor, fontWeight: 700 }}>
-                {RISK_LABELS[data.riskLevel] || data.riskLevel}
+            <div style={{ fontSize: 12, opacity: 0.6, display: "flex", gap: 8, alignItems: "center" }}>
+              <span>
+                {t("chat.securityRiskLevel", "风险等级")}:{" "}
+                <span style={{ color: riskColor, fontWeight: 700 }}>
+                  {RISK_LABELS[data.riskLevel] || data.riskLevel}
+                </span>
               </span>
+              {/* C9a §2: 渠道标识（IM 用户更需要知道是否是远端来源） */}
+              {data.channel === "im" && (
+                <span style={{ opacity: 0.7 }}>· {t("chat.securityChannelIm", "IM 渠道")}</span>
+              )}
             </div>
           </div>
         </div>
