@@ -71,6 +71,15 @@ class TestSessionCreation:
         assert reviewer.session_key == "feishu:reviewer:chat-1:user-1"
         assert writer is not reviewer
 
+    def test_context_focus_terms_are_session_scoped_and_serialized(self):
+        s = Session(id="s1", channel="cli", chat_id="c1", user_id="u1")
+        s.add_message("user", "继续修改 src/openakita/memory/retrieval.py 的 retrieval gate")
+
+        assert "src/openakita/memory/retrieval.py" in s.context.focus_terms
+
+        restored = Session.from_dict(s.to_dict())
+        assert restored.context.focus_terms == s.context.focus_terms
+
 
 class TestSessionState:
     def test_all_states_exist(self):

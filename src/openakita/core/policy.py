@@ -70,6 +70,16 @@ class RiskLevel(StrEnum):
     LOW = "low"
 
 
+class PermissionMode(StrEnum):
+    """产品层权限模式，统一映射到底层确认策略。"""
+
+    PLAN = "plan"
+    DEFAULT = "default"
+    ACCEPT_EDITS = "accept_edits"
+    DONT_ASK = "dont_ask"
+    BYPASS_PERMISSIONS = "bypass_permissions"
+
+
 # ---------------------------------------------------------------------------
 # Zone × OpType permission matrix
 # ---------------------------------------------------------------------------
@@ -345,6 +355,7 @@ class ConfirmationConfig:
     auto_confirm: bool = False
     mode: str = "smart"  # cautious | smart | yolo
     confirm_ttl: float = 120.0  # seconds for single-confirm TTL cache
+    permission_mode: PermissionMode = PermissionMode.DEFAULT
 
 
 @dataclass
@@ -679,6 +690,7 @@ class PolicyEngine:
         self._skill_allowlists: dict[str, set[str]] = {}
         # P3-3: 前端安全模式 (synced to confirmation.mode)
         self._frontend_mode: str = self._config.confirmation.mode
+        self._permission_mode: PermissionMode = self._config.confirmation.permission_mode
         # Smart-mode session trust escalation counter
         self._session_allow_count: int = 0
 
@@ -689,6 +701,35 @@ class PolicyEngine:
     @property
     def readonly_mode(self) -> bool:
         return self._readonly_mode
+
+    @property
+    def permission_mode(self) -> PermissionMode:
+        return self._permission_mode
+
+    def set_permission_mode(self, mode: str | PermissionMode) -> None:
+        """Set product-level permission mode and sync the single confirmation config."""
+        mode_text = str(mode.value if isinstance(mode, PermissionMode) else mode)
+        aliases = {"agent": "default", "ask": "plan"}
+        try:
+            permission_mode = (
+                mode
+                if isinstance(mode, PermissionMode)
+                else PermissionMode(aliases.get(mode_text, mode_text))
+            )
+        except ValueError:
+            permission_mode = PermissionMode.DEFAULT
+        self._permission_mode = permission_mode
+        self._config.confirmation.permission_mode = permission_mode
+        if permission_mode == PermissionMode.PLAN:
+            self._config.confirmation.mode = "cautious"
+            self._config.confirmation.auto_confirm = False
+        elif permission_mode in (PermissionMode.DEFAULT, PermissionMode.ACCEPT_EDITS):
+            self._config.confirmation.mode = "smart"
+            self._config.confirmation.auto_confirm = False
+        elif permission_mode in (PermissionMode.DONT_ASK, PermissionMode.BYPASS_PERMISSIONS):
+            self._config.confirmation.mode = "yolo"
+            self._config.confirmation.auto_confirm = True
+        self._frontend_mode = self._config.confirmation.mode
 
     # ----- default config ---------------------------------------------------
 
@@ -921,6 +962,10 @@ class PolicyEngine:
         if not self._config.enabled:
             return PolicyResult(decision=PolicyDecision.ALLOW, reason="安全策略已禁用")
 
+        mode_result = self._check_permission_mode(tool_name, params)
+        if mode_result:
+            return mode_result
+
         if self._is_trust_mode():
             baseline_result = self._check_baseline_protection(tool_name, params)
             if baseline_result:
@@ -1021,7 +1066,58 @@ class PolicyEngine:
 
     def _is_trust_mode(self) -> bool:
         """Whether only baseline hard protection should apply."""
-        return self._config.confirmation.mode == "yolo" or self._config.confirmation.auto_confirm
+        return self._permission_mode in (
+            PermissionMode.DONT_ASK,
+            PermissionMode.BYPASS_PERMISSIONS,
+        ) or self._config.confirmation.mode == "yolo"
+
+    def _check_permission_mode(self, tool_name: str, params: dict[str, Any]) -> PolicyResult | None:
+        op = _tool_to_optype(tool_name, params)
+        mode = self._permission_mode
+        if mode == PermissionMode.PLAN and op != OpType.READ:
+            result = PolicyResult(
+                decision=PolicyDecision.DENY,
+                reason="当前为 plan 权限模式，只允许读取和规划类操作",
+                policy_name="PermissionMode",
+                metadata={"permission_mode": mode.value, "op_type": op.value},
+            )
+            self._audit(tool_name, params, result)
+            return result
+        if mode == PermissionMode.ACCEPT_EDITS and tool_name in ("run_shell", "run_powershell"):
+            command_preview = str(params.get("command", ""))
+            risk = self.classify_shell_risk(command_preview)
+            if risk in (RiskLevel.HIGH, RiskLevel.CRITICAL):
+                result = PolicyResult(
+                    decision=PolicyDecision.CONFIRM if risk == RiskLevel.HIGH else PolicyDecision.DENY,
+                    reason=f"accept_edits 模式下高风险命令仍需保护: {command_preview[:120]}",
+                    policy_name="PermissionMode",
+                    metadata={"permission_mode": mode.value, "risk_level": risk.value},
+                )
+                self._audit(tool_name, params, result)
+                return result
+        if mode == PermissionMode.ACCEPT_EDITS:
+            file_tools = {
+                "read_file",
+                "write_file",
+                "edit_file",
+                "move_file",
+                "delete_file",
+                "list_directory",
+                "grep",
+                "glob",
+                "search_replace",
+            }
+            if tool_name in file_tools:
+                targets = _file_operation_targets(tool_name, params)
+                if any(self.resolve_zone(path) != Zone.WORKSPACE for path, _op in targets):
+                    return None
+                self._on_allow(tool_name, params)
+                return PolicyResult(
+                    decision=PolicyDecision.ALLOW,
+                    reason="accept_edits 模式放行工作区内文件操作",
+                    metadata={"permission_mode": mode.value, "zone": Zone.WORKSPACE.value},
+                )
+        return None
 
     def _check_baseline_protection(
         self,

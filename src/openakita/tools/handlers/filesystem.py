@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
+from ..path_safety import resolve_within_root
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -129,6 +130,35 @@ class FilesystemHandler:
             except Exception:
                 continue
         return False
+
+    def _allowed_roots(self) -> list[str]:
+        roots = []
+        roots.extend(getattr(self.agent, "allowed_roots", []) or [])
+        roots.append(getattr(self.agent, "default_cwd", None) or str(Path.cwd()))
+        try:
+            roots.append(str(settings.data_dir))
+        except Exception:
+            pass
+        return [str(r) for r in roots if r]
+
+    def _guard_path_boundary(self, raw_path: str, *, op: str) -> str | None:
+        result = resolve_within_root(raw_path, self._allowed_roots())
+        if result.ok:
+            return None
+        try:
+            from ...core.audit_logger import get_audit_logger
+
+            get_audit_logger().log_event(
+                "path_denial",
+                {
+                    "operation": op,
+                    "reason": result.reason,
+                    "path_ref": result.safe_ref,
+                },
+            )
+        except Exception:
+            pass
+        return f"❌ 路径安全边界拒绝 {op}: {result.reason} ({result.safe_ref})"
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """
@@ -529,6 +559,9 @@ class FilesystemHandler:
             return "❌ write_file 缺少必要参数 'path'。请提供文件路径和内容后重试。"
         if content is None:
             return "❌ write_file 缺少必要参数 'content'。请提供文件内容后重试。"
+        guard = self._guard_path_boundary(path, op="write")
+        if guard:
+            return guard
         if self._looks_like_truncated_tool_preview(content):
             return (
                 "❌ write_file 检测到内容里包含工具分页/截断预览标记，已拒绝写入，"
@@ -595,6 +628,9 @@ class FilesystemHandler:
         unc_err = self._check_unc(path)
         if unc_err:
             return f"❌ {unc_err}"
+        guard = self._guard_path_boundary(path, op="read")
+        if guard:
+            return guard
 
         policy = self._get_fix_policy()
         if policy:
@@ -682,6 +718,9 @@ class FilesystemHandler:
             return "❌ edit_file 缺少必要参数 'new_string'。"
         if old_string == new_string:
             return "❌ old_string 和 new_string 相同，无需替换。"
+        guard = self._guard_path_boundary(path, op="edit")
+        if guard:
+            return guard
 
         policy = self._get_fix_policy()
         if policy:
@@ -721,6 +760,9 @@ class FilesystemHandler:
         path = params.get("path", "")
         if not path:
             return "❌ list_directory 缺少必要参数 'path'。"
+        guard = self._guard_path_boundary(path, op="list")
+        if guard:
+            return guard
 
         policy = self._get_fix_policy()
         if policy:
@@ -775,6 +817,9 @@ class FilesystemHandler:
             return "❌ grep 缺少必要参数 'pattern'。"
 
         path = params.get("path", ".")
+        guard = self._guard_path_boundary(path, op="grep")
+        if guard:
+            return guard
         include = params.get("include")
         context_lines = params.get("context_lines", 0)
         max_results = params.get("max_results", 50)
@@ -887,6 +932,9 @@ class FilesystemHandler:
             return "❌ glob 缺少必要参数 'pattern'。"
 
         path = params.get("path", ".")
+        guard = self._guard_path_boundary(path, op="glob")
+        if guard:
+            return guard
 
         # 不以 **/ 开头的 pattern 自动加 **/ 前缀，使其递归搜索
         if not pattern.startswith("**/"):
@@ -954,6 +1002,10 @@ class FilesystemHandler:
             return "❌ move_file 缺少必要参数 'src' 和 'dst'。"
         if "\x00" in src or "\x00" in dst:
             return "❌ move_file 路径包含无效空字符，请去掉不可见字符后重试。"
+        for raw in (src, dst):
+            guard = self._guard_path_boundary(raw, op="move")
+            if guard:
+                return guard
 
         policy = self._get_fix_policy()
         if policy:
@@ -987,6 +1039,9 @@ class FilesystemHandler:
         path = params.get("path", "")
         if not path:
             return "❌ delete_file 缺少必要参数 'path'。"
+        guard = self._guard_path_boundary(path, op="delete")
+        if guard:
+            return guard
 
         policy = self._get_fix_policy()
         if policy:

@@ -27,6 +27,13 @@ class ChatRequest(BaseModel):
     plan_mode: bool = Field(
         False, description="Deprecated: use mode='plan' instead. Kept for backward compatibility."
     )
+    permission_mode: Literal[
+        "plan",
+        "default",
+        "accept_edits",
+        "dont_ask",
+        "bypass_permissions",
+    ] | None = Field(None, description="Product-level permission mode for this turn")
     endpoint: str | None = Field(None, description="Specific endpoint name (null=auto)")
     endpoint_policy: Literal["prefer", "require"] = Field(
         "prefer",

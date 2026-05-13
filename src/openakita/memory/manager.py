@@ -406,6 +406,7 @@ class MemoryManager:
         *,
         user_id: str | None | object = _UNSET_OWNER,
         workspace_id: str | None | object = _UNSET_OWNER,
+        focus_terms: list[str] | None = None,
     ) -> None:
         self._current_session_id = session_id
         if user_id is not _UNSET_OWNER:
@@ -433,6 +434,11 @@ class MemoryManager:
         self._recent_messages = []
         self._session_cited_memories = []
         self._set_retrieval_scope_context()
+        if hasattr(self.retrieval_engine, "set_focus_terms"):
+            self.retrieval_engine.set_focus_terms(focus_terms or [])
+        snapshot = getattr(self, "_precompact_snapshot", None)
+        if isinstance(snapshot, dict) and snapshot.get("session_id") != session_id:
+            self._precompact_snapshot = None
         try:
             self._turn_offset = self.store.get_max_turn_index(session_id)
         except Exception:
@@ -1790,6 +1796,36 @@ class MemoryManager:
             recent_messages=self._recent_messages,
             max_tokens=700,
         )
+
+    def save_precompact_snapshot(self, snapshot: dict) -> None:
+        """Store the latest session-scoped compaction snapshot."""
+        if not isinstance(snapshot, dict):
+            return
+        self._precompact_snapshot = snapshot
+        session_obj = getattr(self, "_current_session_obj", None)
+        context = getattr(session_obj, "context", None)
+        if context is not None and hasattr(context, "precompact_snapshot"):
+            context.precompact_snapshot = snapshot
+
+    def attach_session_context(self, session: object | None) -> None:
+        """Attach current Session object so snapshots can be persisted with SessionContext."""
+        self._current_session_obj = session
+        context = getattr(session, "context", None)
+        snapshot = getattr(context, "precompact_snapshot", None)
+        if isinstance(snapshot, dict) and snapshot.get("facts"):
+            self._precompact_snapshot = snapshot
+
+    def get_precompact_snapshot_context(self, max_chars: int = 1200) -> str:
+        """Return session-scoped compaction facts for prompt injection."""
+        snapshot = getattr(self, "_precompact_snapshot", None)
+        if not isinstance(snapshot, dict):
+            return ""
+        if snapshot.get("session_id") and snapshot.get("session_id") != self._current_session_id:
+            return ""
+        facts = [str(item).strip() for item in snapshot.get("facts", []) if str(item).strip()]
+        if not facts:
+            return ""
+        return "\n".join(f"- {fact}" for fact in facts)[:max_chars]
 
     async def get_injection_context_async(
         self, task_description: str = "", scope: str = "global", scope_owner: str = ""

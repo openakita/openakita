@@ -1293,6 +1293,14 @@ async def run_interactive():
             )
             if cs:
                 agent._cli_session = cs
+                cs.context.focus_terms = list(getattr(cs.context, "focus_terms", []) or [])
+                cs.context.task_checkpoints = list(getattr(cs.context, "task_checkpoints", []) or [])
+                cs.context.delegation_chain = list(getattr(cs.context, "delegation_chain", []) or [])
+                if getattr(cs.context, "precompact_snapshot", None):
+                    try:
+                        agent.memory_manager.save_precompact_snapshot(cs.context.precompact_snapshot)
+                    except Exception:
+                        logger.debug("[CLI] precompact snapshot hydration skipped", exc_info=True)
                 mc = len(cs.context.get_messages())
                 if mc > 0 and not _cli_force_new_session:
                     console.print(f"[green]✓[/green] 已恢复上次会话 ({mc} 条消息)")
@@ -1691,6 +1699,7 @@ def show_skills():
 
 
 _cli_force_new_session = False
+_cli_permission_mode = "default"
 
 
 @app.callback(invoke_without_command=True)
@@ -1698,14 +1707,20 @@ def main(
     ctx: typer.Context,
     version: bool = typer.Option(False, "--version", "-v", help="显示版本信息"),
     new_session: bool = typer.Option(False, "--new", help="强制开启新 CLI 会话，不恢复上次对话"),
+    permission_mode: str = typer.Option(
+        "default",
+        "--permission-mode",
+        help="权限模式: plan/default/accept_edits/dont_ask/bypass_permissions",
+    ),
 ):
     """
     OpenAkita - 全能自进化AI助手
 
     直接运行进入交互模式
     """
-    global _cli_force_new_session
+    global _cli_force_new_session, _cli_permission_mode
     _cli_force_new_session = new_session
+    _cli_permission_mode = permission_mode
 
     if version:
         from . import __version__
@@ -1727,6 +1742,9 @@ def main(
             raise typer.Exit(1)
 
         # 运行交互式 CLI
+        from .core.policy import get_policy_engine
+
+        get_policy_engine().set_permission_mode(_cli_permission_mode)
         asyncio.run(run_interactive())
 
 

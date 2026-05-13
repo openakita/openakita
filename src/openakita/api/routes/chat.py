@@ -1643,6 +1643,12 @@ async def chat(request: Request, body: ChatRequest):
     effective_mode = body.mode
     if body.plan_mode and effective_mode == "agent":
         effective_mode = "plan"
+    try:
+        from ...core.policy import get_policy_engine
+
+        get_policy_engine().set_permission_mode(body.permission_mode or effective_mode or "default")
+    except Exception:
+        logger.debug("[Chat API] Failed to apply permission mode", exc_info=True)
 
     msg_preview = (body.message or "")[:100]
     att_count = len(body.attachments) if body.attachments else 0

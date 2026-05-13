@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-DEFAULT_AUDIT_PATH = "data/audit/policy_decisions.jsonl"
+DEFAULT_AUDIT_PATH = "data/audit/openakita_audit.jsonl"
 
 
 _SENSITIVE_KEYS = frozenset(
@@ -52,6 +52,19 @@ def _mask_sensitive(text: str, max_len: int = 200) -> str:
     return masked
 
 
+def _safe_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in metadata.items():
+        key_text = str(key)
+        if key_text.lower() in _SENSITIVE_KEYS:
+            safe[key_text] = "***MASKED***"
+        elif "path" in key_text.lower() and isinstance(value, str):
+            safe[key_text] = value[-120:]
+        else:
+            safe[key_text] = value
+    return safe
+
+
 class AuditLogger:
     """Append-only JSONL audit logger for policy decisions."""
 
@@ -70,18 +83,26 @@ class AuditLogger:
         params_preview: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        self.log_event(
+            "policy_decision",
+            {
+                "tool": tool_name,
+                "decision": decision,
+                "reason": reason,
+                "policy": policy,
+                "params": _mask_sensitive(params_preview),
+                "meta": _safe_metadata(metadata or {}),
+            },
+        )
+
+    def log_event(self, event_type: str, data: dict[str, Any]) -> None:
         if not self._enabled:
             return
         entry = {
             "ts": time.time(),
-            "tool": tool_name,
-            "decision": decision,
-            "reason": reason,
-            "policy": policy,
-            "params": _mask_sensitive(params_preview),
+            "event": event_type,
         }
-        if metadata:
-            entry["meta"] = metadata
+        entry.update(data)
         try:
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
