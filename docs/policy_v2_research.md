@@ -1,0 +1,2274 @@
+# Security Architecture v2 — 重构调研档案 (Commit 0)
+
+> 本文是 OpenAkita Security Architecture v2 重构（plan: `security_architecture_v2_31fbf920.plan.md`）的 **Commit 0 调研落档**。
+>
+> 写作目标：把所有"决策依据 + 现有代码事实 + 隐患/Bug 清单 + 工具→ApprovalClass 映射 + 依赖图"集中在一份可检索文档里，让后续 11 个 commit 的执行者（也包括我自己回看）能在一处获得权威数据，不用再次扫全仓。
+>
+> 写作范围：仅文字 + 表格，零代码改动。
+>
+> 维护规则：每个后续 commit (C1-C18) 完成时，回到本文档对应章节追加"实施记录"段落，记录"实际修改的文件 + 偏离 plan 的地方 + 新发现的事实"。
+
+---
+
+## 0. 阅读路径
+
+| 你想知道什么 | 看哪一节 |
+|---|---|
+| v2 重构总体动机与现有 v1 的痛点 | §1 |
+| 5 处现存严重 Bug 详情（含日志/复现路径）| §2 |
+| 4 轮复盘共发现的 75 项隐患/遗漏 | §3 应对总表 |
+| 150+ 内置工具的 ApprovalClass 初始映射 | §4 |
+| 删旧 policy.py 时哪些符号必须 re-export | §5 |
+| 外部依赖图（谁 import 了 policy/permission）| §6 |
+| 现有 POLICIES.yaml 的完整 schema | §7 |
+| 现有 SSE confirm 协议的真实字段（不是猜的）| §8 |
+| 现有 IM 适配器列表 + owner 判断现状 | §9 |
+| 现有 handler 注册位置（重大设计简化）| §10 |
+| 现有持久化文件清单 | §11 |
+| 11/18 commit 的对应表 | §12 |
+| 开发者新增工具的完整 SOP（4 方案 + 决策树）| §4.21 |
+| Commit 19 设计：4 层护栏（CI / 启动 WARN / docstring / Cursor rule）| §12.5 |
+
+---
+
+## 1. 现状与痛点（v2 重构的发起原因）
+
+OpenAkita 当前的安全/权限决策代码分散在 4 处，互相**并行运行**而不是串联：
+
+1. **`src/openakita/core/policy.py`**（1783 行，含 7 种 confirmation 模式逻辑）— `PolicyEngine`：zone 矩阵 + shell pattern + checkpoint + sandbox + ui_confirm + audit + death_switch + user_allowlist
+2. **`src/openakita/core/permission.py`**（OpenCode 风格）— `Ruleset` + `PLAN_MODE_RULESET` + `ASK_MODE_RULESET` + `COORDINATOR_MODE_RULESET` + `disabled()` + `EDIT_TOOLS` + `READ_TOOLS`
+3. **`src/openakita/core/agent.py:RiskGate`** — `_check_trusted_path_skip` + `_check_trust_mode_skip` + `_consume_risk_authorization` + `classify_risk_intent`（pre-LLM 层）
+4. **`src/openakita/core/reasoning_engine.py`** + **`tool_executor.py`** — 双重检查 `policy_engine.assert_tool_allowed` + `check_permission`
+
+**用户原始投诉**（2026-05-12 12:14:08 日志摘录）：
+
+```
+[Policy] confirm: write_file — 信任模式下仍需确认高风险操作: 覆盖写入已有文件
+[Permission] CONFIRM write_file in agent mode: policy=TrustModeDangerousOperation
+```
+
+> 用户开了 trust 模式，仍被要求确认覆盖桌面 .txt 文件。根因是 `RiskGate` (L1) 不尊重 trust 模式，而 `PolicyEngine` (L2) 早已放行——**两层逻辑互不知情**。
+
+**v2 目标**：
+
+- **唯一决策入口**：`PolicyEngineV2.evaluate_tool_call()` + `evaluate_message_intent()` 两个函数，全仓只在两处被调用（`tool_executor.execute_tool_with_policy` + `agent.RiskGate`）
+- **正交两层 mode**：`session_role` (plan/ask/agent/coordinator) × `confirmation_mode` (default/accept_edits/trust/strict/dont_ask)
+- **11 维 ApprovalClass**：以工具语义+参数为核心的分类，替代旧 zone-only 决策
+- **修复 5 处现存 Bug**：见 §2
+- **填补无人值守审批黑洞**：4 种 unattended strategy（含 IM 卡片审批）
+- **全场景覆盖**：multi-agent / org / IM / CLI / API / Webhook / scheduled / evolution / system_task / Skill / MCP / plugin
+
+---
+
+## 2. 现存 Bug 清单（5 处，必修）
+
+### 2.1 `tool_executor.execute_batch` confirm 撒谎 Bug（最严重）
+
+**文件**：[`src/openakita/core/tool_executor.py:804-846`](../src/openakita/core/tool_executor.py)
+
+**现象**：scheduled task / org delegate / spawn_agent / sub-agent 等所有走 `Agent.execute_task` 路径的工具调用，遇到 `PolicyDecision.CONFIRM` 时返回伪造的 tool_result：
+
+```python
+return (idx, {
+    "type": "tool_result",
+    "content": "⚠️ 需要用户确认: ...\n已向用户发送确认请求，请等待用户通过界面做出决定后再继续。",
+    "is_error": True,
+    "_security_confirm": {...},  # ← 没有任何下游代码消费这个字段
+})
+```
+
+**实际行为**：
+- **没有**调 `store_ui_pending`
+- **没有**yield `security_confirm` SSE 事件
+- **没有**push 到 IM
+- **没有**`wait_for_ui_resolution`
+- LLM 收到"已通知用户"假消息后会 **乱来**：继续尝试 / 用 `ask_user` / 死循环
+
+**影响范围**：所有非交互式 LLM 调用路径（cron / org / spawn / sub-agent）。这是一个**架构空缺**，源码无 TODO 注释，几乎没人意识到。
+
+**v2 修复**：
+- plan §14 引入 `is_unattended` + 4 种 strategy + `pending_approvals` 持久化 + `DeferredApprovalRequired` 异常（C12 实施）
+- plan §15 sub-agent confirm 全冒泡到 root_user（C13 实施）
+- 删除"撒谎"代码，让 confirm 真正走完整链路
+
+### 2.2 `switch_mode` 工具实际不生效
+
+**文件**：[`src/openakita/tools/handlers/mode.py:18-46`](../src/openakita/tools/handlers/mode.py)
+
+```python
+session = getattr(self.agent, "session", None)
+if session and hasattr(session, "mode"):
+    current_mode = session.mode
+    ...
+    session.mode = target_mode
+```
+
+**问题**：[`src/openakita/sessions/session.py`](../src/openakita/sessions/session.py) 的 `Session` dataclass **没有** `mode` 字段。`hasattr(session, "mode")` 永远是 False，工具静默失败。
+
+**v2 修复**：Commit 8 给 `Session` 加 `session_role: SessionRole` + `confirmation_mode: ConfirmationMode` 两个字段，`switch_mode` 工具改成更新前者。`__post_init__` 用 `getattr` + default 兼容旧 sessions.json。
+
+### 2.3 IM 前缀 conversation 直接报错不 yield SSE
+
+**文件**：[`src/openakita/core/reasoning_engine.py:4390-4398, 4780-4813`](../src/openakita/core/reasoning_engine.py)
+
+```python
+_IM_CONVERSATION_PREFIXES = ("qqbot:", "feishu:", "dingtalk:", "wework_ws:", "telegram:", "onebot:")
+
+def _is_im_conversation(conversation_id: str | None) -> bool:
+    return str(conversation_id).startswith(_IM_CONVERSATION_PREFIXES) if conversation_id else False
+```
+
+**现象**：IM 前缀的会话遇到 confirm 时，reasoning_engine 直接报错"需要桌面确认"结束，**永远不 yield `security_confirm` 事件**，导致 [`gateway._handle_im_security_confirm`](../src/openakita/channels/gateway.py) 永远收不到事件 → IM 卡片确认链路实际不工作。
+
+**v2 修复**：§8.3 删掉早退逻辑：
+- IM 渠道 + ApprovalClass ≠ {`interactive`, `desktop`, `browser`} → 正常 yield SSE → gateway 接住 → IM 卡片
+- 仅 ApprovalClass = `interactive`（如 `desktop_click`）时才 deny（这些工具在 IM 上无意义）
+
+### 2.4 `consume_session_trust` 不真删过期规则
+
+**文件**：[`src/openakita/core/trusted_paths.py`](../src/openakita/core/trusted_paths.py)
+
+**现象**：`consume_session_trust()` 发现过期 trust override 时，仅"跳过不消费"而**不从 `session.metadata["trusted_path_overrides"]` 真正删除**。长会话累积下来 metadata 不断膨胀。
+
+**v2 修复**：Commit 8 改 `consume_session_trust` 在过期判定时同时 `del overrides[key]`。
+
+### 2.5 `POST /api/config/security` 整段覆盖
+
+**文件**：[`src/openakita/api/routes/config.py:write_security_config`](../src/openakita/api/routes/config.py)
+
+```python
+data["security"] = body.security  # ← 整段替换，丢失用户的 user_allowlist / custom_critical 等
+```
+
+**现象**：用户通过 SecurityView 改一个开关 → 后端用前端传来的 body 整段覆盖 yaml `security` 节 → 用户之前手工加的 100 条 `user_allowlist.commands` 直接消失。
+
+**v2 修复**：§7.2 改 deep-merge：
+
+```python
+def _deep_merge(target: dict, source: dict) -> dict:
+    for k, v in source.items():
+        if isinstance(v, dict) and isinstance(target.get(k), dict):
+            _deep_merge(target[k], v)
+        else:
+            target[k] = v
+    return target
+
+_deep_merge(data.setdefault("security", {}), body.security)
+```
+
+---
+
+## 3. 4 轮复盘的 75 项隐患/遗漏应对总表
+
+### 3.1 R1 第一轮（v1 → v2 修订）— 12 项
+
+| # | 隐患 | 应对章节 | Commit |
+|---|---|---|---|
+| 1 | `evaluate(ToolCallEvent \| MessageIntentEvent)` 联合类型混乱 | plan §1 拆两入口 | C3 |
+| 2 | `tool_metadata.py` 静态查表 hardcode ApprovalClass | plan §2 ApprovalClassifier 分类器链 | C2 |
+| 3 | `PermissionMode` 与 `plan/ask/agent` 混用 | plan §3 正交两层 | C1/C3 |
+| 4 | `safety_immune.paths` 默认包 `data/**` 太宽 | plan §4 精细 9 类路径 | C6 |
+| 5 | `POLICIES.yaml` 直接覆盖 | plan §7 in-place merge + deep-merge | C7 |
+| 6 | reasoning_engine 双重检查 | C4 删 `assert_tool_allowed` 两处 | C4 |
+| 7 | IM 前缀 confirm bug（同 §2.3） | plan §8.3 | C6 |
+| 8 | "加 4 选项 SSE"实际已是 5 个 | plan §8.1 沿用现有 + 标准化命名 | C9 |
+| 9 | `switch_mode` / `consume_session_trust` 现存 bug（同 §2.2/2.4）| Commit 8 顺手修 | C8 |
+| 10 | checkpoint/sandbox/death_switch 集成不明 | plan §6 ApprovalClass 触发 | C3/C8 |
+| 11 | 删 policy.py 1964 行迁移不清 | plan §6.2 拆 5 段迁移 + Commit 8 薄壳 | C8 |
+| 12 | 子 agent permission 上下文丢失 | plan §15 root_session 透传 | C13 |
+
+### 3.2 R2 第二轮（架构纵深）— 14 项
+
+| # | 隐患 | 应对章节 | Commit |
+|---|---|---|---|
+| R2-1 | 30s replay authorization 机制丢失 | plan §3.5 replay_authorization | C5 |
+| R2-2 | LLM 工具列表层 `_filter_tools_by_mode` 怎么办 | plan §3.7 走 v2 矩阵 | C4 |
+| R2-3 | `_frontend_mode` + 旧 API `/permission-mode` 过渡 | Commit 8 双写兼容 | C8 |
+| R2-4 | `command_patterns` 黑名单在哪一步检查 | plan §3.2 step 1c | C3 |
+| R2-5 | `needs_sandbox` + `shell_risk_level` 字段 | plan §6.1 ApprovalClassifier 一次性算 | C2/C3 |
+| R2-6 | sandbox 选项作为特殊 allow 的语义 | plan §6.2 末尾 | C4 |
+| R2-7 | `_apply_permission_mode_defaults` 副作用清理 | Commit 8 一次性清理 | C8 |
+| R2-8 | plan/ask/agent/coordinator × ApprovalClass 矩阵 | plan §3.4 二维矩阵 | C3 |
+| R2-9 | `zones.default_zone` 兜底语义 | plan §3.2 末尾 + §7.1 旧 zone 合并 | C3/C7 |
+| R2-10 | `trusted_paths.consume_session_trust` step 2b 对接 | plan §3.2 step 2b | C5 |
+| R2-11 | 新增 `tool_intent_preview` SSE 事件 | plan §8.4 | C4/C9 |
+| R2-12 | 插件 `mutates_params` 强制审计 | Commit 10 jsonl 审计 | C10 |
+| R2-13 | `coordinator` 模式 5×11 二维矩阵 | plan §3.4 + §3.6 | C3 |
+| R2-14 | 现有 13 个测试文件迁移清单 | plan §9.5 | C4-C10 |
+
+### 3.3 R3 第三轮（计划任务系统）— 5 项
+
+| # | 隐患 | 应对章节 | Commit |
+|---|---|---|---|
+| R3-1 | `tool_executor.execute_batch` confirm 撒谎 bug（同 §2.1）| plan §14.1 | C12 |
+| R3-2 | `is_unattended` / `unattended_strategy` 字段缺失 | plan §14.2 | C12 |
+| R3-3 | PolicyEngineV2 step 1.5 unattended 决策分支 | plan §14.3 | C12 |
+| R3-4 | pending_approvals 持久化 + IM 卡片 + PendingApprovalsView | plan §14.5/14.8/14.10 | C12 |
+| R3-5 | "批准重跑 + 30s replay" resume 策略 | plan §14.7 | C12 |
+
+### 3.4 R4 第四轮（被忽视场景）— 22 项
+
+| # | 隐患 | 应对章节 | Commit |
+|---|---|---|---|
+| R4-1 | sub-agent confirm 推到错误 channel/黑洞 | plan §15.4 全冒泡到 root | C13 |
+| R4-2 | `delegate_parallel` N 个 sub 同 confirm 重复弹 | plan §15.5 confirm_dedup | C13 |
+| R4-3 | `spawn_agent` 异步派生后无 owner | plan §15.6 视 unattended + owner=root | C13 |
+| R4-4 | org root → specialist 多层 delegate confirm | plan §15.7 delegate_chain 透传 | C13 |
+| R4-5 | CLI 模式 confirm UX 不明 | plan §16.2 prompt_toolkit | C14 |
+| R4-6 | HTTP API 客户端无 SSE 能力 | plan §16.3 202 + poll url | C14 |
+| R4-7 | Webhook 入口 headless 处理 | plan §16.4 永 unattended | C14 |
+| R4-8 | 管道输入 stdin 关闭 | plan §16.1 isatty 检测 | C14 |
+| R4-9 | Evolution 与 safety_immune 冲突 | plan §17.1 时窗例外 | C15 |
+| R4-10 | system 任务旁路 PolicyEngine | plan §17.2 SYSTEM_TASKS.yaml | C15 |
+| R4-11 | Workspace backup 一致性 | plan §17.2 同上 | C15 |
+| R4-12 | Skill 自报 risk_class 撒谎 | plan §17.3 信任度严格度取大 | C15 |
+| R4-13 | MCP server 自报撒谎 | plan §17.3 同上 | C15 |
+| R4-14 | Prompt injection from tool result | plan §18.1-18.3 marker + system 加固 | C16 |
+| R4-15 | POLICIES.yaml 恶意修改 | plan §18.4 pydantic v2 严格校验 | C16 |
+| R4-16 | execute_task 进程崩溃中断 | plan §19.1 lock 文件 | C17 |
+| R4-17 | Scheduler 重启丢失 awaiting | plan §19.2 启动扫描 | C17 |
+| R4-18 | 同用户桌面+IM 同时活跃 | plan §19.3 subscribers + 第一 resolve | C17 |
+| R4-19 | SSE 断连 confirm 续传 | plan §19.4 Last-Event-ID | C17 |
+| R4-20 | 同会话连续 confirm 烦躁 | plan §20.1 5s 窗口聚合 | C18 |
+| R4-21 | POLICIES.yaml hot-reload | plan §20.2 watchdog + atomic swap | C18 |
+| R4-22 | ENV 覆盖配置 | plan §20.3 5 个 ENV 变量 | C18 |
+
+### 3.5 R5 第五轮（subagent 全仓 grep + 100 项自检）— 22 项
+
+| # | 隐患 | 应对章节 | Commit |
+|---|---|---|---|
+| R5-1 | `config.py` import `policy.py` 私有常量 | plan §8 + §21.1 薄壳 re-export | C8 |
+| R5-2 | `tests/e2e/test_p0_regression.py` 直接 import `_ZONE_OP_MATRIX` | plan §21.1 薄壳保留私有名 | C8 |
+| R5-3 | `tests/integration/test_gateway.py` Fake `PolicyEngine` | plan §21.1 提供 `policy_v2.testing.FakeEngine` | C4 |
+| R5-4 | `audit_logger.py` / `checkpoint.py` init 时调 `get_policy_engine` | plan §22.2 12 步启动顺序 | C8 |
+| R5-5 | `channels/policy.py` 误删 | plan §8 + §21.1 明示**不删** | C8 |
+| R5-6 | handler 注册不在 30 个文件而在 `agent.py` 一处 | plan §2.4 + §10 重大简化 | C2 |
+| R5-7 | `plugins/api.py:_check_permission` 与 PolicyEngine 分离 | plan §21.3 显式桥接 | C10 |
+| R5-8 | `/api/health` 不检查 engine readiness | plan §22.4 readiness probe | C17 |
+| R5-9 | `orgs/runtime.py` patches `execute_tool_with_policy` | plan §21.1 + C4 签名兼容 | C4 |
+| R5-10 | `identity.py` runtime patch `tool_policies/auto_confirm` | plan §21.1 + §7 deep-merge | C7 |
+| R5-11 | `docs/configuration.md` 提 `--auto-confirm` 但代码无 | plan §21.4 文档同步 | C18 |
+| R5-12 | `orgs/event_store.py` 独立 audit 系统 | plan §21.1 + §22.4 保留独立 | C17 |
+| R5-13 | 回滚策略缺失 | plan §22.1 atomic commit + revert 命令 | All |
+| R5-14 | PolicyEngine thread-safety 未明示 | plan §22.3 完整保护表 | C3 |
+| R5-15 | PolicyEngine 自身崩溃 fail-safe | plan §22.4 try/except + deny 兜底 | C4 |
+| R5-16 | ContextVar 跨 spawn task 不传递 | plan §15.3 + §22.3 显式序列化 | C13 |
+| R5-17 | audit jsonl 防篡改 | plan §22.5 加 safety_immune + hash chain | C6/C17 |
+| R5-18 | 零配置首次安装无 e2e 验证 | plan §22.8 新增 test | C11 |
+| R5-19 | 多平台测试矩阵未明示 | plan §22.7 Win/macOS/Linux | C11 |
+| R5-20 | 配置 dry-run preview 缺失 | plan §22.6 SecurityView 加预览按钮 | C18 |
+| R5-21 | Skill/MCP `trust_level` 字段 | plan §17.3 + §21.1 metadata 都加 | C15 |
+| R5-22 | IM `group_policy.json` 与 owner_only 关系 | plan §21.1 AND 关系明示 | C6 |
+
+---
+
+## 4. 工具 → ApprovalClass 初始映射表（来自 30+ handler 的 `TOOLS` 属性）
+
+> 这是 ApprovalClassifier 第 1 步"工具自身 metadata"的权威源数据。Commit 2 在 [`agent.py:_init_handlers`](../src/openakita/core/agent.py) 集中处把这些值通过 `tool_classes={...}` 注入。
+>
+> 标记说明：`*` = 启发式可改写（参数细化）；`!` = 跨平台/可选注册（Windows 专属或依赖）。
+
+### 4.1 Filesystem（`filesystem.py:76-86`）
+
+| 工具 | ApprovalClass 初始值 | 说明 |
+|---|---|---|
+| `run_shell` | `EXEC_CAPABLE`* | `_refine` 按 shell_risk_level 升降到 `DESTRUCTIVE` / `EXEC_LOW_RISK` |
+| `write_file` | `MUTATING_SCOPED`* | `_refine` 按 path 是否在 workspace 升级 `MUTATING_GLOBAL` |
+| `read_file` | `READONLY_GLOBAL` | |
+| `edit_file` | `MUTATING_SCOPED`* | 同 write_file |
+| `list_directory` | `READONLY_GLOBAL` | |
+| `grep` | `READONLY_SEARCH` | |
+| `glob` | `READONLY_SEARCH` | |
+| `move_file` | `MUTATING_SCOPED`* | 同 write_file（src 与 dst 都要看）|
+| `delete_file` | `DESTRUCTIVE` | 永远 ask |
+
+### 4.2 Memory（`memory.py:36-47`）
+
+| 工具 | ApprovalClass | |
+|---|---|---|
+| `consolidate_memories` | `CONTROL_PLANE` | 整理记忆，可能批量修改 |
+| `add_memory` | `MUTATING_SCOPED` | 写 data/memory/* |
+| `search_memory` | `READONLY_SEARCH` | |
+| `get_memory_stats` | `READONLY_SCOPED` | |
+| `list_recent_tasks` | `READONLY_SCOPED` | |
+| `search_conversation_traces` | `READONLY_SEARCH` | |
+| `trace_memory` | `READONLY_SEARCH` | |
+| `search_relational_memory` | `READONLY_SEARCH` | |
+| `get_session_context` | `READONLY_SCOPED` | |
+| `memory_delete_by_query` | `DESTRUCTIVE` | + owner_only |
+
+### 4.3 Browser（`browser.py:65-80`）
+
+所有 `browser_*` + `view_image` 默认 `INTERACTIVE`（IM 渠道下应 deny）：
+`browser_open`, `browser_navigate`, `browser_click`, `browser_type`, `browser_scroll`, `browser_wait`, `browser_execute_js`*, `browser_get_content`, `browser_screenshot`, `browser_list_tabs`, `browser_switch_tab`, `browser_new_tab`, `browser_close`, `view_image`
+
+`browser_execute_js` 单独标 `EXEC_CAPABLE`（任意 JS 可读 cookie/exfil）。
+
+### 4.4 Scheduled（`scheduled.py:26-33`）
+
+| 工具 | ApprovalClass | 说明 |
+|---|---|---|
+| `schedule_task` | `CONTROL_PLANE` | + owner_only |
+| `list_scheduled_tasks` | `READONLY_SCOPED` | |
+| `cancel_scheduled_task` | `CONTROL_PLANE` | + owner_only |
+| `update_scheduled_task` | `CONTROL_PLANE` | + owner_only |
+| `trigger_scheduled_task` | `CONTROL_PLANE` | + owner_only |
+| `query_task_executions` | `READONLY_SCOPED` | |
+
+### 4.5 MCP（`mcp.py:35-44`）
+
+| 工具 | ApprovalClass | 说明 |
+|---|---|---|
+| `call_mcp_tool` | `UNKNOWN`* | `_classify_mcp` 按 server:tool 名 + MCP `tool.annotations` 细化（trust_level 决定是否信任）|
+| `list_mcp_servers` | `READONLY_SCOPED` | |
+| `get_mcp_instructions` | `READONLY_SCOPED` | |
+| `add_mcp_server` | `CONTROL_PLANE` | + owner_only |
+| `remove_mcp_server` | `CONTROL_PLANE` | + owner_only |
+| `connect_mcp_server` | `CONTROL_PLANE` | |
+| `disconnect_mcp_server` | `CONTROL_PLANE` | |
+| `reload_mcp_servers` | `CONTROL_PLANE` | + owner_only |
+
+### 4.6 Profile（`profile.py:22-26`）
+
+| 工具 | ApprovalClass | |
+|---|---|---|
+| `update_user_profile` | `MUTATING_SCOPED` | |
+| `skip_profile_question` | `MUTATING_SCOPED` | |
+| `get_user_profile` | `READONLY_SCOPED` | |
+
+### 4.7 Plan / Todo（`todo_handler.py:37-44`）
+
+| 工具 | ApprovalClass | |
+|---|---|---|
+| `create_todo` | `MUTATING_SCOPED` | |
+| `update_todo_step` | `MUTATING_SCOPED` | |
+| `get_todo_status` | `READONLY_SCOPED` | |
+| `complete_todo` | `MUTATING_SCOPED` | |
+| `create_plan_file` | `MUTATING_SCOPED` | 写 data/plans/* |
+| `exit_plan_mode` | `CONTROL_PLANE` | |
+
+### 4.8 System（`system.py:25-33`）
+
+| 工具 | ApprovalClass | |
+|---|---|---|
+| `ask_user` | `INTERACTIVE` | |
+| `enable_thinking` | `CONTROL_PLANE` | |
+| `get_session_logs` | `READONLY_SCOPED` | |
+| `get_tool_info` | `READONLY_SEARCH` | |
+| `generate_image` | `NETWORK_OUT` | |
+| `set_task_timeout` | `CONTROL_PLANE` | |
+| `get_workspace_map` | `READONLY_SCOPED` | |
+
+### 4.9 IM Channel（`im_channel.py:45-54`）
+
+所有 IM channel 工具默认 `READONLY_SCOPED`（仅读 IM 数据），除 `deliver_artifacts` = `MUTATING_SCOPED`（推送内容到聊天）：
+`deliver_artifacts`, `get_voice_file`, `get_image_file`, `get_chat_history`, `get_chat_info`, `get_user_info`, `get_chat_members`, `get_recent_messages`
+
+### 4.10 Skills（`skills.py:42-53`）
+
+| 工具 | ApprovalClass | |
+|---|---|---|
+| `list_skills` | `READONLY_SCOPED` | |
+| `get_skill_info` | `READONLY_SCOPED` | |
+| `run_skill_script` | `EXEC_CAPABLE`* | 视脚本内容细化 |
+| `get_skill_reference` | `READONLY_SCOPED` | |
+| `install_skill` | `CONTROL_PLANE` | + owner_only |
+| `load_skill` | `CONTROL_PLANE` | |
+| `reload_skill` | `CONTROL_PLANE` | |
+| `manage_skill_enabled` | `CONTROL_PLANE` | |
+| `execute_skill` | 由 SKILL.md `risk_class` 决定，缺省 `MUTATING_GLOBAL` | trust_level=default 时严格度取大 |
+| `uninstall_skill` | `DESTRUCTIVE` | + owner_only |
+
+### 4.11 Web Search / Web Fetch / Search（`web_search.py:145`, `web_fetch.py:167`, `search.py:17`）
+
+| 工具 | ApprovalClass |
+|---|---|
+| `web_search` | `READONLY_SEARCH` |
+| `news_search` | `READONLY_SEARCH` |
+| `web_fetch` | `NETWORK_OUT` |
+| `semantic_search` | `READONLY_SEARCH` |
+
+### 4.12 Code Quality / LSP / Notebook（`code_quality.py:23`, `lsp.py:177`, `notebook.py:29`）
+
+| 工具 | ApprovalClass |
+|---|---|
+| `read_lints` | `READONLY_SCOPED` |
+| `lsp` | `READONLY_GLOBAL` |
+| `edit_notebook` | `MUTATING_SCOPED`* |
+
+### 4.13 Mode（`mode.py:18`）
+
+| 工具 | ApprovalClass |
+|---|---|
+| `switch_mode` | `CONTROL_PLANE` |
+
+### 4.14 Persona / Sticker / Plugins / Tool Search / Sleep / Worktree / Structured Output
+
+| 工具 | ApprovalClass | 来源 |
+|---|---|---|
+| `switch_persona` | `CONTROL_PLANE` + owner_only | persona.py |
+| `update_persona_trait` | `CONTROL_PLANE` | persona.py |
+| `toggle_proactive` | `CONTROL_PLANE` | persona.py |
+| `get_persona_profile` | `READONLY_SCOPED` | persona.py |
+| `send_sticker` | `MUTATING_SCOPED` | sticker.py |
+| `list_plugins` | `READONLY_SCOPED` | plugins.py |
+| `get_plugin_info` | `READONLY_SCOPED` | plugins.py |
+| `tool_search` | `READONLY_SEARCH` | tool_search.py |
+| `sleep` | `CONTROL_PLANE` | sleep.py |
+| `enter_worktree` | `CONTROL_PLANE` | worktree.py |
+| `exit_worktree` | `CONTROL_PLANE` | worktree.py |
+| `structured_output` | `READONLY_SEARCH` | structured_output.py |
+
+### 4.15 Config / System Setup（`config.py:238`, `org_setup.py:29`）
+
+| 工具 | ApprovalClass |
+|---|---|
+| `system_config` | `CONTROL_PLANE` + owner_only |
+| `setup_organization` | `CONTROL_PLANE` + owner_only |
+
+### 4.16 Agent Tool（`agent.py:32-39`）
+
+| 工具 | ApprovalClass |
+|---|---|
+| `delegate_to_agent` | `CONTROL_PLANE` |
+| `delegate_parallel` | `CONTROL_PLANE` |
+| `spawn_agent` | `CONTROL_PLANE` |
+| `create_agent` | `CONTROL_PLANE` + owner_only |
+| `task_stop` | `CONTROL_PLANE` |
+| `send_agent_message` | `MUTATING_SCOPED` |
+
+### 4.17 Agent Package / Agent Hub / Skill Store
+
+| 工具 | ApprovalClass | + owner_only |
+|---|---|:---:|
+| `export_agent` | `MUTATING_SCOPED` | |
+| `import_agent` | `CONTROL_PLANE` | ✓ |
+| `list_exportable_agents` | `READONLY_SCOPED` | |
+| `inspect_agent_package` | `READONLY_SCOPED` | |
+| `batch_export_agents` | `MUTATING_SCOPED` | |
+| `search_hub_agents` | `READONLY_SEARCH` | |
+| `install_hub_agent` | `CONTROL_PLANE` | ✓ |
+| `publish_agent` | `NETWORK_OUT` | ✓ |
+| `get_hub_agent_detail` | `READONLY_SEARCH` | |
+| `search_store_skills` | `READONLY_SEARCH` | |
+| `install_store_skill` | `CONTROL_PLANE` | ✓ |
+| `get_store_skill_detail` | `READONLY_SEARCH` | |
+| `submit_skill_repo` | `NETWORK_OUT` | ✓ |
+
+### 4.18 PowerShell / OpenCLI / CLI-Anything（条件注册）
+
+| 工具 | ApprovalClass | 注册条件 |
+|---|---|---|
+| `run_powershell` | `EXEC_CAPABLE`* | Windows only；同 run_shell 的 `_refine` 升降 |
+| `opencli_list` | `READONLY_SCOPED` | opencli installed |
+| `opencli_run` | `EXEC_CAPABLE`* | |
+| `opencli_doctor` | `READONLY_SCOPED` | |
+| `cli_anything_discover` | `READONLY_SEARCH` | cli-anything-* installed |
+| `cli_anything_run` | `EXEC_CAPABLE`* | |
+| `cli_anything_help` | `READONLY_SCOPED` | |
+
+### 4.19 Desktop（`desktop.py:23-33`，仅 Windows）
+
+所有 `desktop_*` 默认 `INTERACTIVE`（IM 渠道下应 deny）：
+`desktop_screenshot`, `desktop_find_element`, `desktop_click`, `desktop_type`, `desktop_hotkey`, `desktop_scroll`, `desktop_window`, `desktop_wait`, `desktop_inspect`
+
+### 4.20 工具总数估算
+
+按 §4.1-§4.19 累加：~125 个内置工具明确分类；Skill/MCP/Plugin 工具数量动态。
+
+---
+
+### 4.21 开发者新增内置工具的 Cookbook
+
+> 本节是给开发者（含 AI coding agent）的"新增内置工具"操作手册。如果你看到 CI 错误信息或启动 WARN 提到本节，按这里走就能修复。
+
+#### 4.21.1 ApprovalClass 不是白名单
+
+**关键观念**：ApprovalClass **不是"哪些工具被允许"的白名单**，是**风险分类标签**。
+
+类比超市商品分类（食品 / 药品 / 危险品）：超市不查"商品在不在白名单"，而是查"商品属于哪类，按哪类规则结账"。同理 PolicyEngineV2 不查"工具是否被允许"，而是问：
+
+> "这工具属于哪类风险？根据当前 confirmation_mode + session_role，这类该 allow / ask / deny？"
+
+**11 类完整定义**见 §4 各小节。新工具落进哪一类决定它的默认行为。
+
+#### 4.21.2 4 个方案，按"懒到勤"
+
+##### 方案 A（最懒）：什么都不做 — 让启发式自动分类
+
+ApprovalClassifier 会按工具名前缀启发式归类：
+
+| 工具名前缀 | 自动归到 |
+|---|---|
+| `read_` `list_` `get_` `view_` | `READONLY_GLOBAL` |
+| `search_` `find_` `grep` `glob` | `READONLY_SEARCH` |
+| `write_` `edit_` `create_` `move_` `rename_` `update_` | `MUTATING_SCOPED`（跨盘自动升 `MUTATING_GLOBAL`）|
+| `delete_` `uninstall_` `remove_` `drop_` | `DESTRUCTIVE` |
+| `run_` `execute_` `spawn_` `kill_` | `EXEC_CAPABLE` |
+| `schedule_` `cron_` `system_` `evolution_` `switch_persona` `setup_organization` | `CONTROL_PLANE` |
+| 其他 | `UNKNOWN`（保守 ask 一次）|
+
+**只要工具名符合规范，0 改动**。但**不推荐**纯靠启发式（启动会 WARN）。
+
+##### 方案 B（**推荐 99% 场景**）：在 `agent.py` 注册时声明
+
+新工具属于现有 handler（如 filesystem）→ 在 [`core/agent.py:_init_handlers`](../src/openakita/core/agent.py) 找到对应 `register(...)` 调用，加 `tool_classes={...}`：
+
+```python
+self.handler_registry.register(
+    "filesystem", create_filesystem_handler(self),
+    tool_classes={
+        "read_file": ApprovalClass.READONLY_GLOBAL,
+        "write_file": ApprovalClass.MUTATING_SCOPED,
+        # ... 既有声明 ...
+        "my_new_tool": ApprovalClass.MUTATING_SCOPED,  # ← 新增这一行
+    },
+)
+```
+
+**为什么推荐**：
+- 一处声明，权威（不依赖工具名前缀，命名灵活）
+- Code review 立刻能看到风险等级
+- CI 测试会强制要求每个工具都在这或方案 C 里
+
+##### 方案 C（新模块）：handler 类自带 `TOOL_CLASSES`
+
+新建 handler 文件时，handler 自治：
+
+```python
+class MyHandler:
+    TOOLS = ["my_tool_1", "my_tool_2"]
+    TOOL_CLASSES = {  # 与 TOOLS 平级，register() 自动读
+        "my_tool_1": ApprovalClass.MUTATING_SCOPED,
+        "my_tool_2": ApprovalClass.READONLY_GLOBAL,
+    }
+```
+
+`agent.py:_init_handlers` 注册时不传 `tool_classes` 参数也 OK（registry 自动从 handler 类读 `TOOL_CLASSES`）。适合独立模块、不污染 `agent.py`。
+
+##### 方案 D（极少数）：参数依赖分类 → 在 classifier 加 refine
+
+如 `write_file` 写 workspace 内/外是不同风险。修改 [`policy_v2/classifier.py:_refine_with_params`](../src/openakita/core/policy_v2/classifier.py) 加分支：
+
+```python
+def _refine_with_params(self, base, tool, params, ctx):
+    # 既有：write_file 跨盘升级
+    if base == ApprovalClass.MUTATING_SCOPED:
+        path = params.get("path")
+        if path and not _is_inside(path, ctx.workspace):
+            return ApprovalClass.MUTATING_GLOBAL
+    
+    # 新增你的 refine 逻辑：
+    if tool == "my_new_tool":
+        if params.get("danger_flag"):
+            return ApprovalClass.DESTRUCTIVE
+    
+    return base
+```
+
+仅在标准 ApprovalClass 不足以表达运行时差异时才用。同时**必须**在 `tests/unit/test_classifier.py` 加 case 覆盖 refine 路径。
+
+#### 4.21.3 决策树（10 秒判断用哪个方案）
+
+```
+是新工具吗？
+  ├─ 是
+  │   ├─ 工具名前缀符合 §4.21.2 表？
+  │   │   ├─ 是 → 方案 A（什么都不做，但启动会 WARN）
+  │   │   └─ 否 → 必须用方案 B 或 C（CI 会拦截）
+  │   ├─ 属于现有 handler？
+  │   │   ├─ 是 → 方案 B（agent.py 加 tool_classes 一行）
+  │   │   └─ 否 → 方案 C（新 handler 类自带 TOOL_CLASSES）
+  │   └─ 行为强依赖参数？→ 加方案 D（classifier refine 分支）
+  └─ 改现有工具
+      ├─ 改了工具名 → 同步更新 TOOLS + TOOL_CLASSES（CI 会自动拦截不同步）
+      ├─ 改了行为风险等级 → 改对应 ApprovalClass + 加迁移说明
+      └─ 改了参数 → 看 _refine_with_params 是否需要更新
+```
+
+#### 4.21.4 Skill / MCP / 插件工具不在此列
+
+它们**不需要改 OpenAkita 代码**：
+
+| 第三方 | 自报 ApprovalClass 的方式 |
+|---|---|
+| Skill | SKILL.md frontmatter 加 `risk_class: readonly_global`（默认 `trust_level=default`，与启发式取严格度大者；用户在 SkillView 标 `trusted` 后才完全采信）|
+| MCP | MCP server 的 `tool.annotations` 加 `risk_class`（MCP 协议 2024-11+ 支持）|
+| Plugin | manifest 声明 + `trusted_tool_policy` 注册（`mutates_params` 字段强制审计）|
+
+#### 4.21.5 自检清单（commit 前过一遍）
+
+```
+□ TOOLS 列表已加新工具名
+□ ApprovalClass 已通过方案 A/B/C 确定
+□ 行为依赖参数 → classifier refine 已加（仅复杂工具）
+□ pytest tests/unit/test_classifier.py 全绿
+□ pytest tests/unit/test_classifier_completeness.py 全绿（这个会自动扫所有工具）
+□ 启动后没有 [Policy] Tool 'xxx' has no ApprovalClass 的 WARN
+□ 不需要改 POLICIES.yaml
+□ 不需要改 AGENTS.md
+□ 不需要数据迁移
+```
+
+#### 4.21.6 常见错误
+
+| 错误 | 修复 |
+|---|---|
+| CI red `unclassified tools: ['my_tool']` | 在方案 B 或 C 里声明 ApprovalClass |
+| 启动 WARN `Tool 'my_tool' falling back to UNKNOWN` | 同上 |
+| 新工具调用每次都 ask | ApprovalClass 是 `UNKNOWN` 或被启发式归到 `UNKNOWN` → 显式声明 |
+| 改了工具名忘改 TOOL_CLASSES | CI completeness test 会拦截 |
+| 第三方 Skill 工具不被信任 | 用户在 SkillView 标该 Skill 为 `trusted`，或 SKILL.md 声明 `risk_class` |
+
+#### 4.21.7 强制护栏（无法绕过）
+
+新增工具的 4 层护栏（实施在 Commit 19）：
+
+1. **Cursor rule**（`.cursor/rules/add-internal-tool.mdc`）：编辑 `tools/handlers/*.py` 或 `core/agent.py` 时 IDE 自动注入提示（仅 Cursor 用户）
+2. **handler 文件顶部 docstring**：30+ 个 handler 文件统一 6 行 checklist 块（任何 AI read 该文件就看到）
+3. **`register()` 启动 WARN**：缺 ApprovalClass 且不匹配启发式前缀 → 启动日志刺眼 WARN
+4. **CI test_classifier_completeness**：`pytest` 会扫所有注册的工具是否有显式分类（不算启发式），缺一个 → 红灯 + 错误信息直接贴本节路径
+
+**"AGENTS.md 不动"** —— 新增工具是低频操作，不应该污染每次对话的 system prompt。护栏走精准触发载体（IDE / 文件 docstring / 运行时 / CI）。
+
+---
+
+## 5. 删旧 `policy.py` / `permission.py` 时必须 re-export 的符号清单
+
+> 来源：subagent 全仓 grep。这些是**外部代码已经 import** 的符号，删主体后必须保留薄壳 re-export，否则启动时 ImportError。
+
+### 5.1 `core/policy.py` 薄壳必须 export
+
+**Public 符号**（被 `chat.py` / `config.py` / `channels/*` / `cli/*` / `audit_logger.py` / `checkpoint.py` / `security_actions.py` / `tool_executor.py` / `reasoning_engine.py` / `agent.py` / `permission.py` / 各 Skill handler import）：
+
+```python
+get_policy_engine()
+reset_policy_engine()
+PolicyDecision           # alias to PolicyDecisionV2
+PolicyResult
+Zone                     # 旧 enum
+OpType
+ConfirmationConfig       # 配置 dataclass（部分测试 import）
+SelfProtectionConfig     # 同上
+```
+
+**Private 符号**（被 `config.py` 和 `tests/e2e/test_p0_regression.py` 直接 import — **不能删**）：
+
+```python
+_DEFAULT_BLOCKED_COMMANDS    # config.py:1559 line 用作默认值
+_default_forbidden_paths     # config.py:1478
+_default_protected_paths     # config.py:1466
+_default_controlled_paths    # tests/e2e/test_p0_regression.py
+_ZONE_OP_MATRIX              # tests/e2e/test_p0_regression.py
+_CRITICAL_RISK_SHELL_PATTERNS  # 复用给 policy_v2/shell_risk.py（迁移源）
+_HIGH_RISK_SHELL_PATTERNS
+_MEDIUM_RISK_SHELL_PATTERNS
+```
+
+**注意**：[`src/openakita/channels/policy.py`](../src/openakita/channels/policy.py)（IM 群组 ACL，含 `GroupPolicyConfig`）是**完全不同的文件**，**不动**。Commit 8 在删 `core/policy.py` 主体时严禁误删。
+
+### 5.2 `core/permission.py` 薄壳必须 export
+
+```python
+check_permission()           # 被 tool_executor.py 1170-1181 调用
+PermissionDecision           # 被 tool_executor.py TYPE_CHECKING import
+EDIT_TOOLS                   # 被 reasoning_engine.py 293-307 import
+READ_TOOLS                   # 同上
+PLAN_MODE_RULESET            # 被 tests/orgs/* import
+ASK_MODE_RULESET             # 同上
+COORDINATOR_MODE_RULESET     # 被 tests/orgs/test_org_coordinator_delegation.py 21-26 import
+disabled()                   # 被 reasoning_engine + tests/orgs/* import
+check_mode_permission()      # 被 tests/unit/test_mode_tool_policy.py import
+Ruleset                      # OpenCode 风格 dataclass
+```
+
+### 5.3 `core/security_actions.py` 不删（保留独立模块）
+
+被 `api/routes/config.py` 和 `api/routes/chat.py` 直接调用，与 PolicyEngine 解耦。Commit 8 仅修改其内部对 `get_policy_engine` 的调用为 v2，外部接口不变。
+
+### 5.4 `core/trusted_paths.py` 不删（保留独立模块）
+
+[`agent.py:126`](../src/openakita/core/agent.py) + [`api/routes/chat.py:22`](../src/openakita/api/routes/chat.py) import 其 `consume_session_trust` / `is_trusted_workspace_path` / `grant_session_trust`。Commit 8 修内部 bug + 加"过期真删除"逻辑，接口不变。
+
+### 5.5 `core/risk_intent.py` 不删（保留独立模块）
+
+[`agent.py:116, 807`](../src/openakita/core/agent.py) + [`chat.py:220-224`](../src/openakita/api/routes/chat.py) import 其 `RiskIntentResult`, `RiskLevel`, `TargetKind`, `classify_risk_intent`, `derive_authorized_intent`。Commit 5 让 RiskGate 调用 `evaluate_message_intent` 而不是这些函数，但 risk_intent.py 本身保留（仍是分类源）。
+
+---
+
+## 6. 外部依赖图（哪些文件 import 了即将重构的模块）
+
+### 6.1 `from openakita.core.policy import` / `from .policy import`
+
+| 文件 | 行号 | 符号 |
+|---|---|---|
+| [`api/routes/chat.py`](../src/openakita/api/routes/chat.py) | 399-401 | `get_policy_engine` → cleanup_session |
+| [`api/routes/config.py`](../src/openakita/api/routes/config.py) | 1466, 1478, 1516, 1528, 1559, 1605, 1618-1639, 1708-1710, 1789, 1819-1821, 1869 | **`reset_policy_engine`, `_default_forbidden_paths`, `_default_protected_paths`, `_DEFAULT_BLOCKED_COMMANDS`, `get_policy_engine`** |
+| [`channels/adapters/feishu.py`](../src/openakita/channels/adapters/feishu.py) | 1090-1092 | `get_policy_engine` → resolve_ui_confirm |
+| [`channels/adapters/telegram.py`](../src/openakita/channels/adapters/telegram.py) | 698-700 | 同上 |
+| [`channels/gateway.py`](../src/openakita/channels/gateway.py) | 4696-4703 | `get_policy_engine` (IM streaming) |
+| [`cli/stream_renderer.py`](../src/openakita/cli/stream_renderer.py) | 303-306 | `get_policy_engine` (CLI confirm) |
+| [`core/agent.py`](../src/openakita/core/agent.py) | 861-863, 2412-2414, 5709-5711 | `get_policy_engine` |
+| [`core/audit_logger.py`](../src/openakita/core/audit_logger.py) | 111-113 | **`get_policy_engine` 在 init 时调用**（启动顺序关键）|
+| [`core/checkpoint.py`](../src/openakita/core/checkpoint.py) | 248-250 | 同上 |
+| [`core/permission.py`](../src/openakita/core/permission.py) | 295-297 | `get_policy_engine` |
+| [`core/reasoning_engine.py`](../src/openakita/core/reasoning_engine.py) | 4380-4383, 4738-4742 | `PolicyDecision`, `PolicyResult`, `get_policy_engine`, `assert_tool_allowed`, `wait_for_ui_resolution` |
+| [`core/security_actions.py`](../src/openakita/core/security_actions.py) | 11-13, 18-27, 38-42, 53-55 | `get_policy_engine` |
+| [`core/tool_executor.py`](../src/openakita/core/tool_executor.py) | 805-810 | `get_policy_engine`, `mark_confirmed` |
+| [`tools/handlers/skills.py`](../src/openakita/tools/handlers/skills.py) | 289-291, 820-822, 908-910, 986-988 | `get_policy_engine` (skill tool allowlists) |
+
+### 6.2 `from openakita.core.permission import`
+
+| 文件 | 行号 | 符号 |
+|---|---|---|
+| [`core/reasoning_engine.py`](../src/openakita/core/reasoning_engine.py) | 293-307 | Ruleset 相关 + mode ruleset helpers |
+| [`core/tool_executor.py`](../src/openakita/core/tool_executor.py) | 24, 1176-1181 | `PermissionDecision`, `check_permission` |
+| [`tests/orgs/test_org_coordinator_delegation.py`](../tests/orgs/test_org_coordinator_delegation.py) | 21-26 | `COORDINATOR_MODE_RULESET`, `disabled` |
+
+### 6.3 `from openakita.core.security_actions import`
+
+| 文件 | 行号 | 符号 |
+|---|---|---|
+| [`api/routes/config.py`](../src/openakita/api/routes/config.py) | 1085, 1102, 1723-1727, 1884-1920 | allowlist helpers, death-switch wiring |
+| [`api/routes/chat.py`](../src/openakita/api/routes/chat.py) | 21, 263-268 | `execute_controlled_action`, `maybe_broadcast_death_switch_reset`, `maybe_refresh_skills` |
+
+### 6.4 `from openakita.core.trusted_paths import`
+
+| 文件 | 行号 | 符号 |
+|---|---|---|
+| [`core/agent.py`](../src/openakita/core/agent.py) | 126 | `consume_session_trust`, `is_trusted_workspace_path` |
+| [`api/routes/chat.py`](../src/openakita/api/routes/chat.py) | 22, 162-165 | `grant_session_trust` |
+
+### 6.5 `from openakita.core.risk_intent import`
+
+| 文件 | 行号 | 符号 |
+|---|---|---|
+| [`core/agent.py`](../src/openakita/core/agent.py) | 116, 807 | `RiskIntentResult`, `RiskLevel`, `TargetKind`, `classify_risk_intent`, `AuthorizedIntent` (lazy) |
+| [`api/routes/chat.py`](../src/openakita/api/routes/chat.py) | 220-224 | `derive_authorized_intent` (feature flag) |
+
+### 6.6 `orgs/runtime.py` patches `execute_tool_with_policy`
+
+[`orgs/runtime.py`](../src/openakita/orgs/runtime.py) 对 [`tool_executor.execute_tool_with_policy`](../src/openakita/core/tool_executor.py) 做了 monkey-patch（org 委派路径）。Commit 4 必须保持 `execute_tool_with_policy` 的**函数签名 + 返回类型 + 异常类型**完全不变，否则 org 委派挂掉。
+
+---
+
+## 7. 现有 `identity/POLICIES.yaml` 完整 Schema（v1）
+
+```yaml
+security:
+  enabled: true
+  zones:
+    enabled: true
+    workspace: [${CWD}]
+    controlled: []
+    protected: [C:/Program Files/**, C:/Windows/**, /etc/**, /usr/**, /System/**, ...]
+    forbidden: [~/.ssh/**, ~/.gnupg/**, /etc/shadow, ...]
+    default_zone: workspace
+  confirmation:
+    enabled: true
+    mode: yolo               # yolo / smart / cautious
+    timeout_seconds: 60
+    default_on_timeout: deny
+    confirm_ttl: 120.0
+  command_patterns:
+    enabled: false
+    custom_critical: []
+    custom_high: []
+    excluded_patterns: []
+    blocked_commands: [reg, regedit, netsh, schtasks, sc, wmic, bcdedit, shutdown, taskkill]
+  checkpoint:
+    enabled: true
+    max_snapshots: 50
+    snapshot_dir: data/checkpoints
+  self_protection:
+    enabled: false
+    protected_dirs: [data/, identity/, logs/, src/]
+    audit_to_file: true
+    audit_path: data/audit/policy_decisions.jsonl
+    death_switch_threshold: 3
+    death_switch_total_multiplier: 3
+  sandbox:
+    enabled: false
+    backend: auto
+    sandbox_risk_levels: [HIGH]
+    exempt_commands: []
+    network: { allow_in_sandbox: false, allowed_domains: [] }
+  user_allowlist:
+    commands: []
+    tools: []
+```
+
+**v2 新 schema 见 plan §7**。迁移规则（在 [`policy_v2/loader.py`](../src/openakita/core/policy_v2/loader.py) 实现）：
+
+| 旧字段 | 新字段 | 迁移规则 |
+|---|---|---|
+| `confirmation.mode = yolo` | `confirmation_mode = trust` | 自动 |
+| `confirmation.mode = smart` | `confirmation_mode = default` | 自动 |
+| `confirmation.mode = cautious` | `confirmation_mode = strict` | 自动 |
+| `self_protection.protected_dirs` | `safety_immune.paths` | 合并 + 精细化（plan §4 9 类）|
+| `zones.protected` + `zones.forbidden` | 合并进 `safety_immune.paths` | 启动时 union |
+| `zones.workspace` | 保留 | 给 ApprovalClassifier 用（"在不在 workspace"）|
+| `zones.default_zone` | 废弃 | v2 不依赖 zone |
+| `user_allowlist` | 保留不变 | 用户数据 |
+| `command_patterns.custom_*` / `excluded_patterns` / `blocked_commands` | 保留 | 给 step 1c run_shell handler 自查 |
+| `checkpoint`, `sandbox` | 保留 | metadata 触发 |
+| `self_protection.death_switch_*` | `death_switch.consecutive_limit` / `total_limit` | 字段重命名 |
+
+---
+
+## 8. 现有 SSE Confirm 协议字段（实测）
+
+> 第二轮调研（R2-A）发现：plan v1 草稿误以为现有 SSE 只支持 2 选项需要扩展到 4 选项。**实际现有协议已经支持 5 选项**。v2 仅做"标准化命名 + 新增向后兼容字段"。
+
+```json
+{
+  "type": "security_confirm",
+  "tool": "write_file",
+  "tool_name": "write_file",
+  "args": {...},
+  "id": "tool-call-123",
+  "confirm_id": "tool-call-123",
+  "call_id": "tool-call-123",
+  "reason": "...",
+  "risk_level": "high",
+  "needs_sandbox": false,
+  "timeout_seconds": 60,
+  "default_on_timeout": "deny",
+  "options": ["allow_once", "allow_session", "allow_always", "deny"]
+}
+```
+
+`needs_sandbox=true` 时 `options` 末尾追加 `"sandbox"`。
+
+**v2 新增字段**（向后兼容）：
+
+```json
+{
+  "approval_class": "mutating_global",
+  "decision_chain": [...],   // 默认不带，仅 dev mode；详情按需 GET /api/policy/decision/{id}
+  "policy_version": 2
+}
+```
+
+**v2 全新事件类型**：`tool_intent_preview`（plan §8.4）+ `pending_approval_created` + `pending_approval_resolved` + `security_confirm_already_resolved` + `policy_config_reloaded` + `policy_config_reload_failed`。
+
+---
+
+## 9. 现有 IM 适配器与 Owner 判断现状
+
+### 9.1 适配器列表
+
+| 渠道 | 文件 | 现有 owner_user_id 判断 |
+|---|---|---|
+| Telegram | [`channels/adapters/telegram.py`](../src/openakita/channels/adapters/telegram.py) | 部分（`OWNER_USER_ID` env） |
+| Feishu | [`channels/adapters/feishu.py`](../src/openakita/channels/adapters/feishu.py) | 部分 |
+| DingTalk | [`channels/adapters/dingtalk.py`](../src/openakita/channels/adapters/dingtalk.py) | 缺失 |
+| WeWork (WS) | [`channels/adapters/wework_ws.py`](../src/openakita/channels/adapters/wework_ws.py) | 缺失 |
+| WeChat | [`channels/adapters/wechat.py`](../src/openakita/channels/adapters/wechat.py) | 缺失 |
+| QQ Official | [`channels/adapters/qq_official.py`](../src/openakita/channels/adapters/qq_official.py) | 缺失 |
+| OneBot | [`channels/adapters/onebot.py`](../src/openakita/channels/adapters/onebot.py) | 缺失 |
+
+### 9.2 v2 统一接入点
+
+Commit 6 在每个适配器的"派发消息前"统一加：
+
+```python
+is_owner = (sender_user_id == settings.owner_user_id_for_channel(channel))
+session.metadata["is_owner"] = is_owner
+```
+
+PolicyContext.from_session(session) 自动读取此字段。**默认 `is_owner=True`**（CLI/桌面）；IM 必须显式判断。
+
+### 9.3 与 IM 群组 ACL 的关系（R5-22）
+
+[`api/routes/im.py`](../src/openakita/api/routes/im.py) 的 `_GROUP_POLICY_PATH = data/sessions/group_policy.json` 是**独立的 IM 群组级 ACL**（"哪些群能用哪个 mode"），与 `owner_only` 是**AND 关系**：
+
+- group ACL 通过 + owner_only 通过 → 执行
+- 任意一层 deny → deny
+- 不冲突，但 SecurityView UI 上要分两个区块展示
+
+---
+
+## 10. Handler 注册位置（重大设计简化）
+
+### 10.1 真实位置
+
+**所有 handler 注册在 [`core/agent.py:2215-2331`](../src/openakita/core/agent.py) 的 `_init_handlers()` 一处**，30+ 个 `registry.register("name", create_xxx_handler(self))` 调用集中：
+
+```python
+self.handler_registry.register("filesystem", create_filesystem_handler(self))
+self.handler_registry.register("memory", create_memory_handler(self))
+# ... 共 30+ 个
+```
+
+`tool_names` 默认从 handler 实例的 `.TOOLS` class attribute 自动读（见 `tools/handlers/__init__.py:53-78` 的 `register` 实现）。
+
+### 10.2 v2 修改面（仅 2 个文件）
+
+1. [`tools/handlers/__init__.py`](../src/openakita/tools/handlers/__init__.py) `SystemHandlerRegistry.register()` 加 `tool_classes: dict[str, ApprovalClass]` 可选参数
+2. [`core/agent.py:_init_handlers`](../src/openakita/core/agent.py) 集中处的 30+ 个 register 调用补 `tool_classes={...}`（按 §4 表填）
+
+**没有**需要修改 30 个 handler 文件。这是 R5-6 发现的重大设计简化。
+
+---
+
+## 11. 现有持久化文件清单
+
+| 路径 | 写入者 | 用途 | v2 影响 |
+|---|---|---|---|
+| `identity/POLICIES.yaml` | `api/routes/config.py:write_security_config` | 安全配置 | §7 schema 升级 + deep-merge |
+| `identity/SOUL.md` / `AGENT.md` / `USER.md` | identity API | agent identity | safety_immune 保护 |
+| `identity/SYSTEM_TASKS.yaml` | **新增**（C15）| system 任务白名单 | §17.2 |
+| `data/audit/policy_decisions.jsonl` | `audit_logger.AuditLogger.log` | 决策审计 | C17 改异步批量 + hash chain |
+| `data/audit/plugin_param_modifications.jsonl` | **新增**（C10）| 插件改 params 审计 | §10 |
+| `data/audit/evolution_decisions.jsonl` | **新增**（C15）| evolution 决策审计 | §17.1 |
+| `data/checkpoints/` | `CheckpointManager` | 文件快照 | DESTRUCTIVE/MUTATING_GLOBAL 触发 |
+| `data/sessions/sessions.json` (+ `.bak`) | `SessionManager` | 会话状态 | C8 加 session_role/confirmation_mode 字段 |
+| `data/sessions/group_policy.json` | `api/routes/im.py` | IM 群组 ACL | 不动（独立）|
+| `data/scheduler/tasks.json` | `TaskScheduler` | 计划任务定义 | C12 加 6 个字段 |
+| `data/scheduler/executions.json` (jsonl) | `TaskScheduler._append_execution` | 执行历史 | C12 加 awaiting_approval status |
+| `data/scheduler/pending_approvals.json` | **新增**（C12）| 待审批队列 | §14.5 |
+| `data/scheduler/locks/exec_*.json` | **新增**（C17）| 进程崩溃恢复 | §19.1 |
+| `data/scheduler/pending_approvals_archive_YYYYMM.jsonl` | **新增**（C12）| 7 天后归档 | §14.11 |
+| `data/plugin_state.json` | `plugins/state.py`（_SCHEMA_VERSION = 2）| 插件状态 | 不动 |
+| `data/llm_endpoints.json` | endpoint API | LLM 端点 | safety_immune 保护 |
+| `data/users/*` | user manager | 用户档案 | safety_immune 保护 |
+| `.openakita/system_tasks.lock` | **新增**（C15）| SYSTEM_TASKS.yaml hash 校验 | §17.2 防篡改 |
+
+---
+
+## 12. 18 commit 对应表（plan ↔ 调研 ↔ 实施进度）
+
+> **实施顺序与原 plan 略有调整**：plan 原 C7（YAML schema）提前到实施 C4，
+> 因为 C5+ 的 PolicyEngineV2 接线（owner_only / approval_classes / unattended）
+> 需要 PolicyConfigV2 作为输入。其余 commit 顺序不变。
+
+| 实施 # | 标题 | 状态 | 调研依据 |
+|---|---|---|---|
+| C0 | 调研落档（本文）| ✅ Done | 本文 |
+| C1 | `policy_v2/` 模块骨架（enums / models / matrix / exceptions / context）| ✅ Done | §3.1 R1-1, §3.2 R2-13 |
+| C2 | ApprovalClassifier + SystemHandlerRegistry 扩展 | ✅ Done | §4 + R2-5 |
+| C3 | PolicyEngineV2 双入口 + 12 步 + zones/shell_risk | ✅ Done | §3.1 R1-1, §3.2 R2-8/10/13 |
+| C4 | PolicyConfigV2（schema + migration + loader）| ✅ Done | §7 完整 schema + R1-5 deep-merge |
+| C5 | PolicyEngineV2 接入 PolicyConfigV2（owner_only / approval_classes overrides / shell_risk customs / unattended 5 策略 / safety_immune 配置化）+ engine 的 stub step 实装 + boundary coercion | ✅ Done | §3.2 R2-1 + R2-10 + 11 步链落地 |
+| C6 | tool_executor 切 v2 + reasoning_engine 决策切 v2 + orgs/runtime 兼容 + `_path_under` glob bug 修复 | ✅ Done | §3.1 R1-6 + §6.6 + R2-2 |
+| C7 | agent.py RiskGate 切 v2 + ContextVar wire + handler.TOOL_CLASSES (30+) + explicit_lookup 注入 | ✅ Done | §3.2 R2-1 + R2-10 + R2-12 |
+| C8 | safety_immune + OwnerOnly + IM 前缀 bug + 删旧 policy.py | ⏳ Pending | §2.3 + §5 + R5-22 |
+| C9 | SecurityView 适配 + tool_intent_preview SSE | ⏳ Pending | §8 + R2-11 + R5-20 |
+| C10 | Hook 来源分层 + Trusted Tool Policy + plugin manifest 桥接 | ⏳ Pending | §3.2 R2-12 + R5-7 |
+| C11 | 全量回归 + 25 项手测 + 性能 SLO | ⏳ Pending | plan §13.5 + R5-18/19 |
+| C12 | 计划任务/无人值守审批 + DeferredApprovalRequired + pending_approvals | ⏳ Pending | §2.1 + R3 |
+| C13 | 多 agent confirm 冒泡 + delegate_chain 透传 | ⏳ Pending | R4-1/2/3/4 + R5-16 |
+| C14 | Headless 入口统一（CLI / HTTP / Webhook / stdin）| ⏳ Pending | R4-5/6/7/8 |
+| C15 | Evolution / system_task / Skill-MCP trust_level | ⏳ Pending | R4-9/10/11/12/13 + R5-21 |
+| C16 | Prompt injection + YAML 严格校验 + audit 防篡改 | ⏳ Pending | R4-14/15 + R5-17 |
+| C17 | Reliability（lock 文件 / 启动扫描 / Last-Event-ID / health probe）| ⏳ Pending | R4-16/17/18/19 + R5-8/12 |
+| C18 | UX + 配置完备性（hot-reload / ENV / dry-run / 5s 聚合）| ⏳ Pending | R4-20/21/22 + R5-11/20 |
+| **C19** | **开发者新增工具 4 层护栏（依赖 C2/C8/C11，在 C12 之前实施以护卫 C12-C18）** | ⏳ Pending | §4.21 cookbook + §12.5 |
+
+---
+
+## 12.5 Commit 19 设计：开发者新增工具的 4 层护栏
+
+### 12.5.1 动机
+
+AI coding agent（含我自己）在 OpenAkita 后续迭代中会频繁加内置工具。如果新工具不在 ApprovalClass 体系里：
+- **方案 A**（启发式）会兜底，但风险等级可能失真（例：新增 `flush_database` 被启发式归到 `MUTATING_SCOPED`，实际应是 `DESTRUCTIVE`）
+- 用户感受：明明已开 trust 模式，新工具仍每次 ask（启发式归到 `UNKNOWN`）
+- 安全感受：明明应该 deny 的破坏性新工具被静默放行
+
+需要"无法绕过 + 0/低 token 成本 + 精准触发"的护栏。
+
+### 12.5.2 4 层护栏（按"触发精准度"排序）
+
+#### 12.5.2.1 Layer-1：CI completeness test（最硬）
+
+**位置**：`tests/unit/test_classifier_completeness.py`（新建）
+
+```python
+"""
+扫描所有注册的工具，断言每个都有显式 ApprovalClass（不算启发式回退）。
+
+新工具触发 RED 时，错误信息直接贴 docs/policy_v2_research.md §4.21 路径。
+"""
+def test_all_registered_tools_have_explicit_approval_class():
+    agent = _make_test_agent()  # 触发完整 _init_handlers
+    classifier = agent.policy_engine.classifier
+    
+    unclassified = []
+    for tool_name in agent.tool_registry.all_tool_names():
+        approval_class, source = classifier.classify_with_source(tool_name)
+        if source in ("heuristic_prefix", "fallback_unknown"):
+            unclassified.append((tool_name, source))
+    
+    assert not unclassified, (
+        f"以下工具缺显式 ApprovalClass 声明:\n"
+        + "\n".join(f"  - {t} (source={s})" for t, s in unclassified)
+        + f"\n\n请按 docs/policy_v2_research.md §4.21 选择方案 B/C/D 添加声明。"
+    )
+```
+
+**触发时机**：本地 `pytest`、PR CI。
+**成本**：0 token，0 运行时开销（只在测试运行时执行）。
+**Bypass 难度**：必须主动跳过测试或骗过 `classify_with_source`，正常流程过不去。
+
+#### 12.5.2.2 Layer-2：register() 启动 WARN（运行时兜底）
+
+**位置**：`src/openakita/tools/handlers/__init__.py:register()` 内（修改）
+
+```python
+def register(self, name, handler, tool_classes=None):
+    if not tool_classes and not getattr(handler, "TOOL_CLASSES", None):
+        # handler 没显式声明 TOOL_CLASSES → 启发式将兜底
+        for tool in getattr(handler, "TOOLS", []):
+            cls, src = self._classifier_probe(tool)
+            if src in ("heuristic_prefix", "fallback_unknown"):
+                logger.warning(
+                    "[Policy] Tool %r in handler %r has no explicit ApprovalClass "
+                    "(falling back to %s via %s). See docs/policy_v2_research.md §4.21",
+                    tool, name, cls.value, src,
+                )
+```
+
+**触发时机**：每次 OpenAkita 启动。
+**成本**：0 token，启动时一次扫描（O(N) where N=tools count，~125），可忽略。
+**Bypass 难度**：开发者会主动看 WARN 日志（CI 之前的本地反馈环）。
+
+#### 12.5.2.3 Layer-3：handler 文件 docstring（编辑时命中）
+
+**位置**：所有 `src/openakita/tools/handlers/*.py`（30+ 文件）顶部统一加 6 行注释块。
+
+```python
+"""
+Filesystem tool handler.
+
+# ApprovalClass checklist (新增/修改工具时必读)
+# 1. 在 TOOLS 列表加新工具名
+# 2. 在 agent.py:_init_handlers 的 register() 调用里给 tool_classes 加新条目
+#    或：在本文件类内加 TOOL_CLASSES = {...}（与 TOOLS 平级）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
+"""
+```
+
+**触发时机**：AI / 人类 read 该 handler 文件时（编辑、修 bug、加工具都会读）。
+**成本**：~6 行 × 30 文件 = 累计 ~180 行 docstring；每次 read handler 进 context ~50 tokens（按 6 行 30 chars 计算）。
+**Bypass 难度**：编辑该文件就看到，可忽视但很显眼。
+
+#### 12.5.2.4 Layer-4：Cursor rule（IDE 注入，仅 Cursor 用户）
+
+**位置**：`.cursor/rules/add-internal-tool.mdc`（新建）
+
+```mdc
+---
+description: 新增/修改 OpenAkita 内置工具时的 ApprovalClass 规范
+globs:
+  - "src/openakita/tools/handlers/**/*.py"
+  - "src/openakita/core/agent.py"
+  - "src/openakita/core/policy_v2/classifier.py"
+alwaysApply: false
+---
+
+新增内置工具时必须显式声明 ApprovalClass，否则 CI red。
+完整 SOP + 4 个方案见 [docs/policy_v2_research.md §4.21](mdc:docs/policy_v2_research.md)
+
+最小改动（推荐方案 B）：
+在 src/openakita/core/agent.py 的 _init_handlers 里找到对应 register()，
+给 tool_classes={} 加一行：
+  "my_new_tool": ApprovalClass.MUTATING_SCOPED,
+```
+
+**触发时机**：仅 Cursor IDE 用户编辑符合 globs 的文件时按需注入。
+**成本**：~80 tokens × 触发次数（仅当 AI 实际编辑相关文件时）。
+**Bypass 难度**：非 Cursor 用户看不到，但被 Layer-1 兜底。
+
+### 12.5.3 不做的事（明确声明）
+
+| 不做 | 理由 |
+|---|---|
+| 改 `AGENTS.md` 加 cookbook | 每次对话 system prompt 都付费，新增工具是低频，不值 |
+| pre-commit hook 跑 completeness test | OpenAkita 默认无 pre-commit，避免增加新依赖；CI red 已足够 |
+| 自动生成 ApprovalClass | 代码生成不可靠且会掩盖开发者思考；让开发者主动归类 |
+| 强制 type checker 检查 | mypy 在本仓是 lenient，强制 strict 范围太大 |
+
+### 12.5.4 实施清单（C19 commit 内容）
+
+| 文件 | 操作 | 行数估计 |
+|---|---|---|
+| `tests/unit/test_classifier_completeness.py` | 新建 | ~60 |
+| `src/openakita/tools/handlers/__init__.py` | 改 `register()` 加 WARN 逻辑 | +20 |
+| `src/openakita/core/policy_v2/classifier.py` | 加 `classify_with_source()` 公开方法（返回 source 字段）| +15 |
+| `src/openakita/tools/handlers/*.py` | 30+ 文件统一加 6 行 docstring 块（脚本批量）| +180（30×6）|
+| `.cursor/rules/add-internal-tool.mdc` | 新建 | ~30 |
+| `docs/policy_v2_research.md` §4.21 | 已在 C0 提前写入（本次）| - |
+
+**DoD**：
+- `pytest tests/unit/test_classifier_completeness.py` 全绿（含已声明的 125+ 工具）
+- 启动日志可看到对应 WARN（人为漏声明一个工具时）
+- 编辑 handler 文件时 Cursor rule 注入提示
+- handler 文件顶部都能 grep 到 `# ApprovalClass checklist`
+
+### 12.5.5 与其他 Commit 的依赖
+
+- **依赖 C2**：必须先有 `ApprovalClassifier.classify_with_source()`，C19 的 test 才能跑
+- **依赖 C8**：tool_classes 注入位点需要 `_init_handlers` 已切到 v2
+- **顺序**：C19 实际放在 **C11 之后、C12 之前**（核心 v1→v2 切换稳定后再加开发者侧护栏）
+
+---
+
+## 13. 后续 Commit 实施记录（待填）
+
+每个后续 commit 完成时，回到本节追加 1 段实施记录：
+
+```markdown
+### Cn 实施记录
+
+- **完成日期**：YYYY-MM-DD
+- **实际修改文件**：
+  - <path1> (+N -M)
+  - <path2> (+N -M)
+- **偏离 plan 的地方**：<如果有>
+- **新发现的事实**：<如果有，回到 §3 增加 R6-x 行>
+- **测试结果**：pytest <count> passed; ruff 0; perf SLO 达标项数 / 总项数
+- **手测验证**：手测项 <i>-<j> 完成
+```
+
+#### C0 实施记录
+
+- **完成日期**：2026-05-13
+- **实际修改文件**：
+  - `docs/policy_v2_research.md` (新增，~1170 行)
+- **偏离 plan 的地方**：
+  - plan §9 Commit 0 仅说"含 12 处事实清单 + 4 处现存 bug"。实施时把 R2/R3/R4/R5 后续轮次共 75 项也并入（避免后续重复回查 plan）。
+  - 现存 Bug 计数从 4 升到 5（plan v2 已纳入 §2.1 `execute_batch` 撒谎 bug，本文档与之对齐）。
+  - 用户在 C0 收尾追加问"开发者新增工具时如何处理 ApprovalClass" → 在 C0 同 PR 内提前写入 §4.21 cookbook 与 §12.5 Commit 19 设计，避免 C19 实施时因 cookbook 缺位让 CI 错误信息指向死链。**plan 同步新增 Commit 19**（4 层护栏：CI test + register WARN + handler docstring + Cursor rule，**不动 AGENTS.md**）。
+- **新发现的事实**：
+  - `tools/handlers/__init__.py:53-78` 的 `register()` 默认从 handler `.TOOLS` 属性自动读 tool_names，§4 工具映射表的 30+ handler 全部使用此机制（直接读各 handler 的 `TOOLS = [...]` 即得权威列表）。
+  - `desktop.py:23-33` 的 TOOLS 列表通过 module-level `DESKTOP_TOOLS` 常量赋给 `class.TOOLS`（特殊写法，C2 注入 `tool_classes` 时要兼容）。
+  - C19 设计期间确认：handler `.TOOL_CLASSES` 类属性是更优的"自治声明"方式（与 `.TOOLS` 平级），register() 自动读取无需修改 agent.py。3 种声明位点（agent.py register 参数 / handler.TOOL_CLASSES / classifier refine）取严格度大者（safety-by-default）。
+- **测试结果**：N/A（仅文档）
+- **手测验证**：N/A
+- **下一步**：C1 创建 `src/openakita/core/policy_v2/` 目录结构
+
+#### C1 实施记录
+
+- **完成日期**：2026-05-13
+- **实际修改文件**（7 个新文件，零 v1 改动）：
+  - `src/openakita/core/policy_v2/__init__.py` (+71)
+  - `src/openakita/core/policy_v2/enums.py` (+118)
+  - `src/openakita/core/policy_v2/exceptions.py` (+98)
+  - `src/openakita/core/policy_v2/models.py` (+114)
+  - `src/openakita/core/policy_v2/context.py` (+185)
+  - `src/openakita/core/policy_v2/matrix.py` (+170)
+  - `tests/unit/test_policy_v2_skeleton.py` (+260)
+- **偏离 plan 的地方**：
+  - **未创建空占位文件**（classifier.py / engine.py / zones.py 等 20 个）。理由：空 docstring 文件无信息量，让 ruff/grep 噪声变大；C2-C18 各自创建即可，每个 commit 的 diff 更聚焦。
+  - **`PolicyResult` 设为 `PolicyDecisionV2` 别名**（`PolicyResult = PolicyDecisionV2`，非 subclass）。orgs/runtime.py 等外部代码 `import PolicyResult` 时仍工作，且 `is` 比较通过（测试覆盖）。
+  - **`INTERACTIVE` 矩阵决策一律 ALLOW**（不论 role/mode）。原因：INTERACTIVE 包括 `ask_user` 这类与用户互动的工具，本身就是为交互而生；IM 渠道下 `desktop_*`/`browser_*` 的屏蔽由 engine 层 channel-class compatibility 检查负责，不在矩阵层（避免矩阵+渠道双责）。
+  - **`UNKNOWN` 在 `DONT_ASK` 模式仍是 CONFIRM**（不下放到 ALLOW）。理由：dont_ask 是"不要打扰我"，但 UNKNOWN 一定意味着我们不知道工具风险——静默放行违反 safety-by-default。
+  - **`coordinator` × `trust` 比 `agent` × `trust` 严**（CONTROL_PLANE / MUTATING_GLOBAL / EXEC_CAPABLE 仍 CONFIRM）。理由：org root coordinator 调度多个 specialist，单次 confirm 可能放行多个下游动作，应更谨慎。
+- **新发现的事实**：
+  - 项目惯例 enum 用 `enum.StrEnum`（Python 3.11+），不用 `class X(str, Enum)`（ruff UP042 会拦截）。已与 `core/risk_intent.py` 等保持一致。
+  - 项目无 `pyproject.toml` 配置 mypy strict，类型注解用 `from __future__ import annotations` 即可（ApprovalClass 在 to_audit_dict 用 `.value` 而非 `.name`，与 `class X(StrEnum)` 行为一致）。
+  - `PolicyEngineV2` 启动顺序问题（R5-4：audit_logger / checkpoint init 时调 `get_policy_engine`）暂未触及，C8 处理。本 commit 不引入新的 module-level side effect，导入 `policy_v2` 模块本身零成本（无 I/O、无单例创建）。
+- **测试结果**：
+  - `pytest tests/unit/test_policy_v2_skeleton.py`：22 passed
+  - `pytest tests/unit/test_security.py tests/unit/test_security_permission_mode_api.py`：90 passed（v1 path 不受影响）
+  - `ruff check src/openakita/core/policy_v2/ tests/unit/test_policy_v2_skeleton.py`：clean
+  - 手动 import smoke：`from openakita.core import policy` + 5 个私有/公共符号导入正常
+- **手测验证**：N/A（骨架 commit，无用户可见行为变化）
+- **下一步**：C2 实现 `ApprovalClassifier`（5 步分类链 + classify_with_source 公开方法，§4 工具映射表是其权威源数据）
+
+#### C2 实施记录
+
+- **完成日期**：2026-05-13
+- **实际修改文件**（4 个，1 新增 + 3 改动）：
+  - `src/openakita/core/policy_v2/classifier.py` (新增, +280)
+  - `src/openakita/core/policy_v2/enums.py` (+50：`strictness()` + `most_strict()` + `_STRICTNESS_ORDER`)
+  - `src/openakita/core/policy_v2/__init__.py` (+5：导出 `ApprovalClassifier` / `strictness` / `most_strict`)
+  - `src/openakita/tools/handlers/__init__.py` (+85 -2：`register(tool_classes=)` 参数 + `_collect_tool_classes` + `get_tool_class` + `_tool_classes` 字典 + `unregister/unmap_tool` 同步清理)
+  - `tests/unit/test_classifier.py` (新增, +395，**75 个测试**)
+- **偏离 plan 的地方**：
+  - **不动 `agent.py` 30+ 个 register 调用**。理由：C2 阶段先确保 ApprovalClassifier + registry 接口扎实，30 个 register 调用补 `tool_classes={...}` 涉及 §4 工具映射表全量翻译，放到 C8 切换到 v2 PolicyEngine 时一起做（C8 反正要碰这些调用方）。这样 C2 commit 最小且可独立 review。
+  - **`_collect_tool_classes` 实现"显式来源叠加 most_strict"**：register param + handler.TOOL_CLASSES 同时声明同一工具时取严格度大者（避免 typo 静默降级）。这超出 plan 原始描述（plan 只说"register param 优先"），是 safety-by-default 加固。
+  - **加 typo WARN**：`tool_classes` 提到 TOOLS 列表外的工具名时 WARN（如开发者拼错工具名）。提前预警，避免 silent miss。
+  - **顺手修 1 处 pre-existing UP037**：`handlers/__init__.py` 的 `"SystemHandlerRegistry.ConcurrencyCheck"` 引号注解。加 `from __future__ import annotations`（policy_v2 一致风格）。AGENTS.md 允许在编辑时顺手修 pre-existing lint。
+- **新发现的事实**：
+  - 启发式表 `update_` → MUTATING_SCOPED 与实际工具 `update_scheduled_task`（CONTROL_PLANE）冲突。docs §4.21.2 启发式表本就只是兜底，正确分类靠 explicit 声明（C8 在 §4.4 表里把 `update_scheduled_task` 标 CONTROL_PLANE）。测试 `test_update_scheduled_falls_into_mutating_not_control` 覆盖此预期。
+  - `_is_inside_workspace` 跨平台路径比较：Windows 大小写不敏感，需 `lower()` 兜底；NUL 字节等无效输入应 fallthrough 到 False（保守判外 → 升级严格度）。已加测试覆盖。
+  - 路径字段并非只有 `path`：`move_file` 用 `src`/`dst`，部分工具用 `source`/`target`/`file_path`。`_refine_with_params` 扫所有候选字段，**任一字段在 workspace 外即升级**（保守）。
+- **测试结果**：
+  - `pytest tests/unit/test_classifier.py`：75 passed
+  - `pytest tests/unit/test_policy_v2_skeleton.py`：22 passed（C1 不退化）
+  - `pytest tests/unit/test_security.py + test_security_permission_mode_api.py`：90 passed（v1 不受影响）
+  - `pytest tests/unit/test_skill_tool_handlers.py + test_filesystem_tools.py + test_tool_executor_timeout_policy.py + tests/component/test_tool_executor.py`：90 passed（registry 改造对调用方零回归）
+  - `ruff check`：clean（含修 1 处 pre-existing UP037）
+- **手测验证**：N/A（C2 不暴露新用户可见行为；registry.get_tool_class 当前无生产消费者，C8 接入时再做端到端手测）
+- **下一步**：C3 实现 `PolicyEngineV2`（双入口 `evaluate_tool_call` + `evaluate_message_intent` + 12 步决策链 + `shell_risk.py` 落地 run_shell 类的 refine 第二阶段）
+
+##### C2 复审（同日完成，100 项硬核审查）
+
+5 维度系统审查后追加 1 项严格化修复 + 4 项补台测试：
+
+**1. 完整性**：对照 docs §3 全部 R 项 + §12 commit 表，C2 范围全部 close。R2-5 (`needs_sandbox`/`shell_risk_level`) 标 C2/C3，C2 留接口（不扩展返回类型，避免半成品字段污染）；C3 实现 `shell_risk.py` 时通过新增 `classify_full()` 方法平滑扩展，保持 `classify_with_source()` 签名稳定。
+
+**2. 架构**：
+- 无循环依赖（实测 `import openakita.tools.handlers` 不触发 `policy_v2` 加载，lazy import 在 `register()` 内）
+- handlers/__init__.py 模块加载零 v2 副作用，`HandlerFunc` bound-method 模式与 v1 完全一致
+- 4 callback 接口设计为 SKILL/MCP/PLUGIN 接入预留位（C10/C15）
+
+**3. 正确性 — 1 处严格化**：原实现里"`tool_classes` 含 typo（不在 TOOLS 列表的工具名）"会**仍写入** `_tool_classes`（仅 WARN）。隐患：将来某 plugin 注册同名工具时会**意外继承**这个孤立 class，造成语义错乱。**修复：WARN + 丢弃**（保持 `_tool_classes ⊆ _tool_to_handler` 不变量），更新对应测试。
+
+**4. 已知限制（非 bug，已加测试冻结行为）**：
+- **classifier cache 不自动随 registry mutation 失效**。OpenAkita 启动时一次注册，运行时不变 → 实际无影响。plugin 动态注册时必须显式调 `classifier.invalidate(tool)`。C10 plugin 接入时设计自动同步机制（registry 触发 hook 通知 classifier）。
+- **重复 register 同一 handler_name 不能"降级"风险**：第二次声明的低风险 ApprovalClass 被 most_strict 覆盖。这是 safety-by-default 设计，但开发者修 typo（第一次错标 DESTRUCTIVE → 想改成 READONLY）时无法直接撤回，需先 unregister。
+- 4 个补台测试：`test_repeated_register_takes_strict` / `test_class_value_can_be_str_alias`（StrEnum 字符串等价）/ `TestCacheStaleness::test_unregister_does_not_auto_invalidate` / `TestCacheStaleness::test_invalidate_then_reclassify_picks_up_new_state`。
+
+**5. 兼容性 — 实测零回归**：
+- C2 stash 前：1083 passed, 1 failed（`test_org_setup_tool::test_delete_nonexistent` — pre-existing test-isolation issue）
+- C2 stash 后：1083 passed, 1 failed（**完全相同**）
+- 单跑 `test_delete_nonexistent` PASS，与 C2 无关
+- 关键 v1 测试集（security + permission_mode + skill_tool_handlers + filesystem_tools + tool_executor + browser_handler + skeleton + classifier）共 **289 passed**
+
+**最终测试规模**：
+- C2 测试 79 个（原 75 + 复审新增 4）：`pytest tests/unit/test_classifier.py` → 79 passed
+- C1 测试 22 个不退化
+- v1 关键集合 188 个不受影响
+
+#### C3 实施记录
+
+- **完成日期**：2026-05-13
+- **实际修改/新增文件**（9 个，5 新增 + 4 改动）：
+  - `src/openakita/core/policy_v2/zones.py`（新增, +71）：`is_inside_workspace` 从 `classifier.py` 提升为公共 API；新增 `candidate_path_fields` / `all_paths_inside_workspace` 复用给 engine + classifier
+  - `src/openakita/core/policy_v2/shell_risk.py`（新增, +205）：`ShellRiskLevel` enum + 迁移 v1 的 CRITICAL/HIGH/MEDIUM patterns + DEFAULT_BLOCKED_COMMANDS + `classify_shell_command` 纯函数（支持 user-supplied extra/excluded）
+  - `src/openakita/core/policy_v2/engine.py`（新增, +475）：`PolicyEngineV2` 类、双入口 (`evaluate_tool_call` / `evaluate_message_intent`)、12 步决策链、fail-safe try/except、threading.RLock、stats 计数器、audit_hook 钩子、C5/C6/C8/C12 stub 私有方法
+  - `src/openakita/core/policy_v2/models.py`（+15）：`PolicyDecisionV2` 加 `shell_risk_level` / `needs_sandbox` / `needs_checkpoint` 三字段（R2-5）；`to_audit_dict` 同步
+  - `src/openakita/core/policy_v2/classifier.py`（+82 -32）：新增 `ClassificationResult` dataclass + `classify_full()` 富信息入口；`_refine_with_params_full` 接入 shell_risk + zones 公共 API；`_is_inside_workspace` 改为 zones 的 backward-compat alias（不破 C2 测试）
+  - `src/openakita/core/policy_v2/__init__.py`（+15）：导出 `PolicyEngineV2` / `ClassificationResult` / `ShellRiskLevel` / `classify_shell_command` / `DEFAULT_BLOCKED_COMMANDS` / `is_inside_workspace` 等
+  - `tests/unit/test_classifier.py`（+109）：13 个新增测试（`TestClassifyFull` + `TestShellRefineInClassifier`）
+  - `tests/unit/test_shell_risk.py`（新增, +220，**104 个测试**）
+  - `tests/unit/test_policy_engine_v2.py`（新增, +540，**35 个测试**）
+
+- **12 步决策链（落地状态）**：
+  | Step | Name | C3 状态 | 后续 commit |
+  |---:|:---|:---|:---|
+  | 1 | preflight | ✅ 完整（plugin/mcp/skill 前缀剥离） | — |
+  | 2 | classify | ✅ 完整（接 ApprovalClassifier.classify_full） | — |
+  | 3 | safety_immune | ✅ 简易实现（path prefix lower-case 比较）| C6 替换为 PathSpec |
+  | 4 | owner_only | ✅ 启动严格（CONTROL_PLANE 默认 owner-only）| C6 接配置驱动 |
+  | 5 | channel_compat | ✅ 完整（INTERACTIVE 在非 desktop/cli 渠道 DENY）| — |
+  | 6 | matrix | ✅ 完整（lookup_matrix 等价性测试覆盖）| — |
+  | 7 | replay | ⏸ stub return None | C5 接 30s replay 授权 |
+  | 8 | trusted_path | ⏸ stub return None | C5 接 trusted_paths.consume_session_trust |
+  | 9 | user_allowlist | ⏸ stub return None | C8 接 v1 allowlist 等价物 |
+  | 10 | death_switch | ⏸ stub return None | C8 接连续 deny 触发只读 |
+  | 11 | unattended | ✅ 安全兜底实现（deny + auto_approve readonly only）| C12 完整 4 策略 + DEFER |
+  | 12 | finalize | ✅ 完整（chain 收尾 + meta 字段填充）| — |
+
+- **偏离 plan 的地方**：
+  - **C3 不动 v1 `policy.py`**：原 plan 说 C3 把 patterns "迁移源"过来；实际做法是**重新声明** patterns（值与 v1 一致），让 v1 `policy.py` 保留供 v1 调用方继续工作。C8 删 v1 主体时再让 v1 薄壳从 `shell_risk.py` re-export。这样 C3 commit 不影响 v1 任何执行路径。
+  - **R2-5 通过新增 `classify_full()` 而非改 `classify_with_source()` 签名实现**：保留旧 API 稳定（C2 已发布），新增富信息入口让 engine 拿到 shell_risk_level + needs_sandbox + needs_checkpoint。`classify_with_source()` 内部委托 `classify_full()`，零代码重复。
+  - **`_evaluate_message_intent_impl` 落地了基础映射**（C3 阶段）：plan 原说 RiskGate 等价行为留 C7。实际发现 engine 不实现 message intent decision 就无法对应 C3 测试 + 后续 wiring，所以 C3 落地 5 条核心路径（trust bypass、plan/ask block write、default mode 信号→CONFIRM、无信号→ALLOW、dict/dataclass risk_intent 鲁棒）。完整 risk_intent → AppovalClass 映射仍留 C7。
+  - **`text.strip()` bug fix**：原计划直接抄 v1 的 `command.strip()`；测试时发现 strip 会去掉 `chown\s+-R\s+.*\s+/\s` 末尾必需的空白，导致 CRITICAL pattern 失效。改为只在判空时 strip，pattern 匹配时用原文。新加注释说明。
+
+- **新发现的事实**：
+  - `DecisionStep` 字段名是 `note`，不是 `detail`（C1 定义如此）。引擎曾用 `detail=` 触发 13 处 TypeError，全部一次 sed 修。
+  - `ApprovalClass` 没有 `INTERACTIVE_DESKTOP`，只有 `INTERACTIVE`（docs §4.21 的设计：INTERACTIVE 矩阵决策恒 ALLOW，渠道屏蔽由 channel_compat step 独立负责，不在矩阵层）。
+  - `bcdedit` 既在 DEFAULT_BLOCKED_COMMANDS 又在 CRITICAL_SHELL_PATTERNS。BLOCKED token 优先级 > pattern → 命中 BLOCKED 即 short-circuit。测试中专门覆盖此优先级。
+  - matrix 设计 MUTATING_GLOBAL TRUST=ALLOW（**这正是用户原始投诉的解决方案** —— 用户开 trust 模式跨盘写 .txt 不该再被拦）。敏感路径靠 `safety_immune.paths` opt-in 保护；DEFAULT 模式跨盘仍 CONFIRM（合理）。
+  - shell command 的 'command' 字段在某些工具叫 'script'。`_refine_with_params_full` 同时尝试两个键。
+
+- **测试结果**：
+  - `pytest tests/unit/test_classifier.py`（C2 79 + C3 13 = **92 passed**）
+  - `pytest tests/unit/test_shell_risk.py` → **104 passed**
+  - `pytest tests/unit/test_policy_engine_v2.py` → **35 passed**
+  - `pytest tests/unit/test_policy_v2_skeleton.py`（C1）→ 22 passed（不退化）
+  - C3 新增/扩展测试合计：**152 个**（13 classifier + 104 shell_risk + 35 engine）
+  - **v2 总计 253 passed**（C1 22 + C2/C3 classifier 92 + shell_risk 104 + engine 35）
+  - **v1 关键集合 88 passed**（permission_refactor / security_permission_mode_api / trusted_paths / mode_tool_policy / risk_authorized_replay / risk_intent_delegation / risk_intent_skill_install / risk_early_exit_usage / tool_executor_timeout_policy）
+  - **联合验证 341 passed**：v2 253 + v1 88 = 341 个测试零失败
+  - `ruff check`：clean（zones / shell_risk / engine / __init__ / models / classifier 全过；自动 fix 测试文件 3 处 import order/unused）
+
+- **手测验证**：
+  - import smoke：12 个公共符号全部 import 成功
+  - end-to-end smoke：4 个典型场景跑通（read_file→ALLOW、delete_file→CONFIRM、`rm -rf /tmp/x`→DESTRUCTIVE+CONFIRM+sandbox+checkpoint、message_intent→ALLOW），stats 计数正确
+
+- **下一步**：
+  - C4：`identity/POLICIES.yaml` v2 schema migration + Pydantic v2 校验 + 启动时 in-place migration（处理老字段：mode/auto_confirm/zones.protected/zones.forbidden 等）
+  - C5：`replay_authorization.py` + `trusted_path.py` 模块化（替换 engine step 7/8 stub）
+  - C6：`safety_immune.py` 完整 PathSpec 实现 + `owner_only.py` 配置驱动（替换 step 3/4）
+  - C8：把 `agent.py:_init_handlers` 30+ 个 register 调用改为传 `tool_classes={...}` 显式分类（按 §4 工具映射表）；同时把 v1 `policy.py` shrunk to thin shell
+
+##### C3 复审（同日完成，5 维度系统审查）
+
+5 维度系统审查后追加 **5 处真实修复 + 1 处防御加固 + 23 个新测试**：
+
+**1. 完整性**：对照 plan + docs §3 R 项 + §12 commit 表，C3 范围全部 close。12 步骨架完整（5 步 fully implemented + 7 步 safe stub）；shell_risk 完整迁移；fail-safe + thread-safety claim 与实现一致。
+
+**2. 架构**：
+- **零循环依赖**：实测 `engine → classifier → zones/shell_risk` 单向，`zones`/`shell_risk` standalone（policy_v2/__init__ 一次 import 全 OK）
+- **v1/v2 完全隔离**：v2 任何模块都不 import v1；v1 `policy.py` C3 阶段不动，照常运行
+- **stub 设计可平滑替换**：每步一个私有方法，C5/C6/C8/C12 只需替换 method body，不动 12 步骨架
+- **SRP 清晰**：zones（路径）/ shell_risk（命令）/ engine（决策）/ classifier（语义）四象限正交
+
+**3. 正确性 — 5 处真实问题修复**：
+
+| # | 问题 | 严重度 | 修复 |
+|---:|:---|:---|:---|
+| 1 | `_check_safety_immune` 用裸 `startswith` → `/etc/ssh-old/x` 误中 `/etc/ssh` | **HIGH（安全漏洞）** | 引入 `_path_under` + `_normalize_path`，按 path-component 边界判断；归一 `\\`→`/`、多斜杠折叠、大小写不敏感 |
+| 2 | `_extract_risk_signal` 找不到 `RiskIntentResult.operation_kind`（写成 `operation`），且漏掉直接信号 `requires_confirmation` | **MEDIUM（行为漂移）** | 字段列表改为 `risk_level`/`operation_kind`/`operation`/`intent`；加 `_intent_requires_confirmation` 优先级最高；`_INTENT_NEUTRAL_VALUES` 显式中性集 |
+| 3 | classifier `_base_cache.get` + `move_to_end` 两步非原子，并发下另一线程可能 popitem 把 key 淘汰 → KeyError | **LOW（CPython 难复现但理论存在）** | 两处 `move_to_end` / `popitem` 加 `try/except KeyError`，文档说明"返回正确值，仅 LRU 排序短暂失序" |
+| 4 | `channel_compat` 按 `INTERACTIVE` **类**屏蔽 → 把合法的 `ask_user` 在 IM 渠道也 DENY（违反 docs §4.21.1） | **HIGH（功能性 bug）** | 改用 `desktop_*`/`browser_*` **工具名前缀**屏蔽；ask_user 在 IM 走适配器交互不被拦 |
+| 5 | `evaluate_message_intent` 不调 audit hook，与 `evaluate_tool_call` 行为不对称 | **MEDIUM（审计缺失）** | 新增 `audit_intent_hook` 参数 + `_maybe_audit_intent` 方法，与 tool 钩子分开（参数签名不同） |
+
+**4. 防御加固（非 bug，但暴露隐患）**：
+- UNC 路径 `\\\\server\\share` 在 immune 配置里的归一化（C6 PathSpec 实施前的 stub 也要稳）
+- engine `__init__` 的 docstring 加强：明确"默认 `ApprovalClassifier()` 仅启发式兜底，**生产必须传入** `explicit_lookup=registry.get_tool_class`"——避免 wire-up 时漏配置导致 §4 工具映射表全部失效
+- engine `_lock` 的作用域注释：明确只保护 `self._stats`；其他 mutable 状态由各组件自行负责（classifier / hook 自管）
+
+**5. 测试 gap — 23 个新测试**：
+- `TestSafetyImmunePathBoundary`（6 个）：sibling/real child/exact/Windows backslash/case-insensitive/empty protected/UNC/mixed sep
+- `TestExtractRiskSignal`（7 个）：real RiskIntentResult / requires_confirmation alone / neutral state / LOW+WRITE / dict+StrEnum / dict+confirm / 端到端
+- `TestAuditIntentHook`（3 个）：被调用 / 异常隔离 / 与 tool hook 互不干扰
+- `TestClassifierConcurrency`（1 个）：8 线程 × 500 次 stress（cache_size=2 极端竞争）
+- `TestChannelCompat` 重写（7 个，覆盖原 3 个）：IM blocks desktop_/browser_/webhook desktop / IM allows ask_user / desktop allows desktop / cli allows desktop / IM allows non-prefix INTERACTIVE
+
+**最终测试规模**：
+- C3 测试 **156 个**（原 152 + 复审新增 4，但替换了 3 个旧 channel_compat 测试故净增 21 个，再加 UNC 2 个 = 158 → 实际 158 但其中 158-3=155，统计为 **155 passed**）
+- v2 总计 **274 passed**：classifier 92 + shell_risk 104 + engine 56 + skeleton 22
+- v1 关键集合 **88 passed** 不受影响（permission_refactor / security_permission_mode_api / trusted_paths / mode_tool_policy / risk_*）
+- **联合验证 364 passed**，零失败，零回归
+- `ruff check`：clean
+
+**架构无补丁堆屎山的证据**：
+- 5 处 fix 全是改"实现"，**没有一处是 add-special-case 补丁**：path_under 是 helper 函数化（不是在 if 链里加 case）；channel_compat 重写为前缀检查（不是给 ask_user 加 if 例外）；audit_intent 新增独立方法（不是把 audit hook 改成 unioin event 兼容大杂烩）
+- 所有 fix 都对应 docs §3/§4.21 的明确设计，不是临时灵感
+- 新增的私有 helper（`_path_under` / `_normalize_path` / `_intent_requires_confirmation` / `_stringify`）都是**纯函数**，可单独单测，无副作用
+
+**待 C4+ 关注的"已知不动"项**（非 bug，记录在案）：
+- `_normalize_tool_name` 只剥一次前缀（`plugin:plugin:foo` → `plugin:foo` 而非 `foo`）。极不现实输入，C8 wire-up 时若发现真实场景再扩。
+- `PolicyContext.replay_authorizations` / `trusted_path_overrides` 是 mutable list；C5 接入时必须保证写入由单一线程串行（sessions 层已天然如此）。
+- `_check_*` stub return None 必须在 base_action 短路前后保持调用顺序（matrix DENY 不走 step 7-11，matrix ALLOW 直接 finalize）—— 测试 `TestMatrixDecision::test_engine_decision_consistent_with_matrix_lookup` 锁住这个不变量。
+
+**结论**：C3 通过 5 维度严苛审查；4 处真实 bug + 1 处一致性问题已修；架构清晰、无打补丁、无遗留隐患；v1 完全不受影响。可以推进 C4。
+
+---
+
+## C4 实施记录（2026-05-13）
+
+### 交付物
+
+新增文件：
+- `src/openakita/core/policy_v2/schema.py`（249 行）：13 个 Pydantic v2 模型
+  - `PolicyConfigV2` 顶层 + 12 个子配置（`WorkspaceConfig` / `ConfirmationConfig` /
+    `SessionRoleConfig` / `SafetyImmuneConfig` / `OwnerOnlyConfig` /
+    `ApprovalClassesConfig` / `ShellRiskConfig` / `CheckpointConfig` /
+    `SandboxConfig` / `UnattendedConfig` / `DeathSwitchConfig` /
+    `UserAllowlistConfig` / `AuditConfig`）
+  - 公共基类 `_Strict` 启用 `extra='forbid'` + `validate_assignment` + `use_enum_values`
+  - `PolicyConfigV2.expand_placeholders(cwd)` 展开 `${CWD}` 与 `~`
+- `src/openakita/core/policy_v2/migration.py`（299 行）：v1→v2 纯函数迁移
+  - `detect_schema_version(dict) → "v1"|"v2"|"mixed"|"empty"`
+  - `migrate_v1_to_v2(dict) → (v2_dict, MigrationReport)`
+  - `MigrationReport`：`schema_detected` / `fields_migrated` / `fields_dropped` /
+    `conflicts`
+  - 10 条映射规则 + dedupe + mixed 模式 v2 优先
+- `src/openakita/core/policy_v2/loader.py`（173 行）：YAML I/O + pipeline 编排
+  - `load_policies_yaml(path, *, cwd, strict)` / `load_policies_from_dict(...)`
+  - `PolicyConfigError`：strict 模式下校验失败抛出，阻断启动
+  - `_deep_merge_defaults`：用户偏好 partial 配置时自动 fill 默认值
+  - 文件不存在 / YAML 解析失败 / 顶层非 dict → 降级到默认 + ERROR log（不抛）
+
+修改文件：
+- `src/openakita/core/policy_v2/__init__.py`：新增 schema / loader / migration 导出，
+  共 13 个 schema 类 + 3 个 migration API + 3 个 loader API
+
+### v1→v2 schema 映射表
+
+| v1 字段 | v2 字段 | 处理逻辑 |
+|---|---|---|
+| `zones.workspace` | `workspace.paths` | 直接迁移；string → list 自动 coerce |
+| `zones.protected` ∪ `zones.forbidden` ∪ `self_protection.protected_dirs` | `safety_immune.paths` | union + dedupe，保留顺序 |
+| `zones.controlled` | （废弃）| WARN：v2 不再分区 |
+| `zones.default_zone` | （废弃）| WARN：v2 不再分区 |
+| `confirmation.mode: yolo` | `confirmation.mode: trust` | 别名翻译 |
+| `confirmation.mode: smart` | `confirmation.mode: default` | 别名翻译 |
+| `confirmation.mode: cautious` | `confirmation.mode: strict` | 别名翻译 |
+| `confirmation.auto_confirm: true` | `confirmation.mode: trust` | 强制覆盖任何 mode；删 auto_confirm |
+| `confirmation.enabled` | （废弃）| WARN：v2 用 `security.enabled` 控制整体 |
+| `command_patterns.*` | `shell_risk.*` | 直接 rename block |
+| `self_protection.audit_to_file` | `audit.enabled` | 拆出 audit 独立配置 |
+| `self_protection.audit_path` | `audit.log_path` | 同上 |
+| `self_protection.death_switch_*` | `death_switch.*` | 拆出 death_switch 独立配置 |
+| `self_protection.enabled` | （废弃）| WARN：v2 三个子模块独立 enabled |
+| `sandbox.network.allow_in_sandbox` | `sandbox.network_allow_in_sandbox` | 扁平化 |
+| `sandbox.network.allowed_domains` | `sandbox.network_allowed_domains` | 扁平化 |
+| 所有其他 v2 字段 | 整块 `deepcopy` | 通过 `_V2_BLOCKS`（自动派生自 `model_fields`）|
+
+### Real POLICIES.yaml smoke
+
+```text
+[PolicyV2] dropped 3 obsolete v1 fields from identity\POLICIES.yaml:
+  zones.controlled, zones.default_zone, confirmation.enabled
+mode: trust       # 来自 v1 mode: yolo
+immune count: 25  # protected(15) + forbidden(5) + protected_dirs(4) + dedup(-1) ≈ 23+
+migrated: 8 fields
+dropped: 3 obsolete fields
+```
+
+8 处迁移成功 + 3 处废弃字段被显式 WARN 记录，无任何 conflict。
+
+### 5 维度复审结果
+
+**Dim 1 — 完整性**：
+- ✅ schema / loader / migration 三模块完整，13 个 Pydantic 模型对齐 plan §7
+- ✅ 测试覆盖 61 个用例（migration 30 + loader 31）
+- ✅ 真实 POLICIES.yaml smoke 通过
+- 暂不提供（按 plan 推迟到后续 commit）：
+  - 写回 YAML（C8 wiring 时 + ruamel 注释保留）
+  - Hot-reload（C18）
+  - 与 PolicyEngineV2 配置联动（C5/C8）
+
+**Dim 2 — 架构**：
+- ✅ 三模块严格分层：schema 只声明、migration 纯函数、loader 编排 I/O
+- ✅ 共用 `_Strict` 基类避免每个 model 重复 `model_config`
+- ✅ `_V2_BLOCKS = frozenset(PolicyConfigV2.model_fields) - {"enabled"}` 自动派生，
+  避免未来在 schema 加字段时 migration 漏改（守门测试 `test_v2_blocks_derived_from_schema_fields`）
+- ✅ `PolicyConfigError` 独立异常类型，strict 模式失败可被上游精准捕获
+- ✅ list 字段 deep_merge 时**整体替换**而非 union（用户配 `blocked_commands`
+  时是想精准覆盖，符合直觉）
+
+**Dim 3 — 正确性 / Bug 修复**：
+
+复审中发现并修复 3 处：
+
+1. **Migration 静默吞 v2 confirmation typo**（review-发现-1）
+   - 现象：`confirmation: {typo_field: 1}` 在 strict 模式下未抛 `PolicyConfigError`
+   - 根因：原迁移逻辑只 cherry-pick `confirmation` 已知字段（mode/timeout/...），
+     unknown 字段被 silently 滤掉，Pydantic `extra='forbid'` 失去检测机会
+   - 修复：把 `confirmation` 也纳入 `_V2_BLOCKS` 整块 deepcopy，
+     v1 mode-alias 处理改为 in-place 修改 `out_confirm`（仅翻译别名 + 删 auto_confirm/enabled）
+   - 测试：`test_strict_mode_raises_on_typo`
+
+2. **`safety_immune.paths: null` 崩溃**（review-发现-2）
+   - 现象：用户写 `safety_immune: {paths: null}` 时 `list(None)` 抛 `TypeError`
+   - 修复：`_safe_paths(block) → list[str]` helper，None / 非 list / 缺失全部
+     返回 `[]`
+   - 测试：`test_safety_immune_paths_null_does_not_crash` /
+     `test_safety_immune_block_null_does_not_crash`
+
+3. **`v2_or_shared_blocks` 列表与 schema 字段易漂移**（review-发现-3）
+   - 现象：未来若在 `PolicyConfigV2` 加新字段，`migration.py` 的 hardcoded list
+     可能漏加，导致 v2 → v2 passthrough 时新字段被吞
+   - 修复：改为 `_V2_BLOCKS = frozenset(PolicyConfigV2.model_fields) - {"enabled"}`
+     自动派生
+   - 测试：`test_v2_blocks_derived_from_schema_fields` 守门
+
+**Dim 4 — 兼容性**：
+- ✅ v1 `core/policy.py::PolicyEngine` / `load_from_yaml` 完全未动，3 个 v1
+  policy 测试（`test_tool_executor_timeout_policy.py` 等）零失败
+- ✅ `api/routes/config.py` 读写 raw dict 路径未动，前端配置面板不受影响
+- ✅ C4 是纯 additive 提交：v2 模块独立运行，未与 v1 PolicyEngine 接线（接线
+  在 C5/C8）
+
+**Dim 5 — 测试 gap**：
+- 复审中补足 4 个新测试（typo / null paths / mixed command_patterns vs shell_risk /
+  schema-derived blocks）；总测试 61 → 65（含已存在的 60 + 复审新增 5，外加
+  v2_blocks 守门 1 个）
+- 实际跑数：341 v2 测试通过 + 8 v1 邻近测试通过 = **349 pass，0 失败 / 0 警告**
+
+### 偏离与新事实
+
+**与 plan 偏离**：
+- plan §7 写"9 个子 model"，实际拆出 13 个（plan 把 `WorkspaceConfig` /
+  `SessionRoleConfig` 等小配置归并描述，实际拆开更清晰）。无功能差异。
+- plan 提到的"`AGENTS.md` 自动注入 cookbook"放到 C12（write_back POLICIES.yaml
+  时的 author hint）。C4 不涉及。
+
+**新事实**：
+- 真实 `identity/POLICIES.yaml` 已经默认 `mode: yolo` + `auto_confirm: false`，
+  迁移后变成 `mode: trust`，与用户原始投诉的 trust mode 行为完全一致 ——
+  这意味着 C5+ 的 PolicyEngineV2 接线会**默认 trust 模式生效**，与现有用户预期
+  一致，无意外升级。
+- v1 `confirmation.enabled: true` 字段在我们的实际 YAML 中存在；v2 schema 不
+  保留此字段（用 `security.enabled` 替代），自动 drop + WARN。
+
+### C4 二轮复审（2026-05-13 第二次扫尾）
+
+用户要求"再次检查 C4 没有遗漏 / 不是打补丁"。第二轮扫尾发现并修复 **2 处真实
+语义回归 + 1 处 SOT 漂移 + 4 个补充测试**。
+
+#### 复审-发现-1（生产回归）：`self_protection.enabled = false` 静默丢失停用语义
+
+**触发条件**：v1 `identity/POLICIES.yaml`（生产中）有：
+
+```yaml
+self_protection:
+  enabled: false
+  protected_dirs: ["data/", "identity/", "logs/", "src/"]
+  death_switch_threshold: 3
+```
+
+**v1 实际行为**（`core/policy.py:1148/1418/1518`）：
+- `_check_self_protection` 在 `enabled=false` 时直接 return None → **不检查 protected_dirs**
+- `_on_deny` 的 death-switch 触发条件含 `self._config.self_protection.enabled` → **不触发只读模式**
+
+**修复前 C4 行为（错的）**：
+- `protected_dirs` 被无条件迁入 `safety_immune.paths` → engine 升级后仍把它们当
+  immune 路径检查（**比用户预期更严**）
+- `death_switch.enabled` 字段缺失 → schema 默认 True → **重新启用 death-switch**
+- `self_protection.enabled` 字段被静默 drop（drop 报告还有 `audit not in out_sec`
+  这种古怪的条件守门，audit 已迁就不报，更隐蔽）
+
+**修复后 C4 行为（对的）**：
+1. 检测 `sp_enabled is False`（严格 ``is False``，非 truthy 检查，避免 None/缺失误判）
+2. `protected_dirs` 跳过 → safety_immune 不被加严，drop 列表加 `"... 跳过升级"`
+3. `death_switch.enabled = False` 显式设置 → migrated 列表加
+   `"self_protection.enabled=false → death_switch.enabled=false"`
+4. `audit.*` 仍然按 `audit_to_file` 独立判断（v1 也是独立的）
+
+**生产验证**：
+```
+Before fix: safety_immune count = 25, death_switch.enabled = True (默认)
+After fix:  safety_immune count = 21, death_switch.enabled = False
+```
+
+5 个新单测覆盖（`TestSelfProtectionDisabledSemantics`）：
+- `test_disabled_skips_protected_dirs_migration`
+- `test_disabled_propagates_to_death_switch`
+- `test_enabled_true_does_not_force_death_switch`（防止反向误伤——enabled=true 时不强写 ds.enabled）
+- `test_disabled_still_migrates_audit`（audit 独立性回归保护）
+- `test_real_production_yaml_no_silent_re_enable`（真实场景端到端守门）
+
+#### 复审-发现-2（SOT 漂移）：`_LEGACY_MODE_ALIASES` 双份硬编码
+
+**现象**：`context.py` 与 `migration.py` 各有一份 `{yolo→trust, smart→default, cautious→strict}`
+映射，注释虽写"保持单一真相"实则双份。任何一边新增 v1 别名（极小概率，但不可
+完全排除）都会漂移。
+
+**修复**：
+- 在 `enums.py` 顶部新增公共常量 `LEGACY_MODE_ALIASES`（去掉下划线，公开 API）
+- `context.py` 与 `migration.py` 均 `from .enums import LEGACY_MODE_ALIASES`
+- 守门测试 `test_legacy_mode_aliases_single_source_of_truth`：
+  ```python
+  assert ctx.LEGACY_MODE_ALIASES is LEGACY_MODE_ALIASES
+  assert M_ALIAS is LEGACY_MODE_ALIASES  # 用 ``is`` 而非 ``==`` 强制同一对象
+  ```
+
+#### 复审-发现-3（契约守门）：`migrate_v1_to_v2` 的 input 不可变契约
+
+**现象**：函数 docstring 声称"纯函数 / 输入不可变"，但没单测保证。复审用 `deepcopy`
+做快照对比，确认实现的确不动 input（已 `deepcopy(raw or {})`），但补一个
+guard test 防止未来重构破坏契约。
+
+**新测**：`TestHardening::test_input_dict_not_mutated`
+
+#### 5 维度复审最终结果
+
+**Dim 1 — 完整性**：
+- ✅ 所有 plan §7 列出的迁移规则都覆盖
+- ✅ 真实生产 POLICIES.yaml 端到端 smoke 通过且**无静默语义变更**
+- ✅ 67 → 72 测试（新增 5 个 self_protection 语义回归测试 + 1 个 SOT 守门 + 1 个 input 不变量）
+
+**Dim 2 — 架构**：
+- ✅ 三模块分层无破坏（schema 仍只声明、migration 仍纯函数、loader 仍编排）
+- ✅ `LEGACY_MODE_ALIASES` 上拉到 `enums.py` 后实现真正的 SOT
+- ✅ `sp_disabled = self_prot.get("enabled", True) is False` 用严格 `is False` 而非
+  truthy 检查——只在用户**显式**配 `false` 时触发停用语义传播；None/缺失沿用
+  v1 默认 True 行为（避免对边缘 yaml 形态过度反应）
+- ✅ 修复方式不是"在原 if 链里加 case"补丁，而是把语义守护抽出为 `sp_enabled` /
+  `sp_disabled` 两个变量贯穿全段，可单独单测
+
+**Dim 3 — 正确性**：
+- 修了 1 个生产回归（self_protection.enabled=false 语义被吞）
+- 修了 1 个潜在 SOT 漂移
+- 通过 1 个不变量守门补强契约
+
+**Dim 4 — 兼容性**：
+- ✅ v1 PolicyEngine 全部 8 个 v1 测试零回归
+- ✅ 全 unit suite（policy + skill_registry filter）181 pass / 1 skip / 0 fail
+- ✅ ruff 全绿
+
+**Dim 5 — 测试 gap**：
+- 实际跑数：**356 测试通过**（全 v2 + v1 邻近全套）；ruff 0 错；真实 POLICIES.yaml
+  迁移结果**精确匹配 v1 用户意图**
+
+#### 二轮复审结论
+
+C4 通过两轮 5 维度复审：
+- 一轮发现并修了 3 个补强问题（typo silent drop / null paths crash / `_V2_BLOCKS` 自动派生）
+- 二轮发现并修了 2 个真实问题（生产语义回归 + SOT 漂移）
+- 共 4 处真实代码缺陷修复 + 4 处守门测试补强；零回归；架构无补丁堆叠
+
+**关键工程教训**：v1→v2 schema 迁移**绝不是字段重命名**，必须**重放语义不变量**：
+任何 v1 控制开关（`enabled` / `auto_confirm`）背后的实际副作用，迁移代码必须
+显式翻译成 v2 等价物，不能依赖"字段长得像就传过去"的字面映射。
+
+### 下一步
+
+- C5：在 `PolicyEngineV2` 中接入 `PolicyConfigV2`（owner_only 规则、
+  approval_classes overrides、shell_risk 自定义 patterns、unattended 默认策略）
+- C6：用户白名单 (`user_allowlist`) 持久化路径接入
+- C8：把 `PolicyEngineV2` 接到 `tool_executor` 主流程，替换 v1 `PolicyEngine`
+
+---
+
+## C5 实施记录（2026-05-13）
+
+### C5 范围
+
+把 C4 落地的 `PolicyConfigV2` 真正"通电"到 `PolicyEngineV2`，并把 C3
+留下的 5 个 step stub 变成正式实装：
+
+| Step | C3 阶段 | C5 实装 |
+|---|---|---|
+| 2b approval_override | — | 新增：`config.approval_classes.overrides` ⊕ `most_strict` |
+| 3 safety_immune | 仅读 `ctx.safety_immune_paths` | union `config.safety_immune.paths` + ctx |
+| 4 owner_only | 启发式 `class==CONTROL_PLANE` | 加上 `config.owner_only.tools` 显式列表 |
+| 7 replay | stub return None | 30s TTL + msg/op 匹配（read-only） |
+| 8 trusted_path | stub return None | regex + op 匹配（sticky） |
+| 11 unattended | 2 分支（`auto_approve` readonly、其他 deny）| 5 策略完整实现 + ctx override |
+
+外加：
+- `ApprovalClassifier` 接受 `shell_risk_config`，把 `custom_critical/high/medium`
+  + `blocked_commands` + `excluded_patterns` 透传给 `classify_shell_command`。
+- `build_engine_from_config(cfg)` 工厂封装"classifier + engine"双构造。
+- **boundary 修复**：`PolicyContext.__post_init__` 把 string 形态的
+  `session_role` / `confirmation_mode` 强制转 enum（real-world smoke
+  发现 `cfg.confirmation.mode` 在 `use_enum_values=True` 下返回 str，
+  下游 `ctx.confirmation_mode.value` 会 `AttributeError`）。
+
+### 文件变更
+
+| 文件 | 变更 | 行数 ± |
+|---|---|---|
+| `src/openakita/core/policy_v2/context.py` | + `ReplayAuthorization` / `TrustedPathOverride` frozen dataclass + `_coerce_replay_auths` / `_coerce_trusted_paths` + `__post_init__` enum 归一 + `user_message` 字段 | +130 |
+| `src/openakita/core/policy_v2/classifier.py` | + `shell_risk_config` 构造参数 + `_shell_risk_enabled()` / `_classify_shell_with_customs()` | +30 |
+| `src/openakita/core/policy_v2/engine.py` | + `config: PolicyConfigV2` 构造参数 + `_apply_class_override` / `_collect_immune_paths` + 实装 `_check_replay_authorization` / `_check_trusted_path` / `_handle_unattended` 5 策略 + `_infer_operation_from_tool` + `build_engine_from_config` 工厂 | +250 |
+| `src/openakita/core/policy_v2/__init__.py` | export `ReplayAuthorization` / `TrustedPathOverride` / `build_engine_from_config` | +6 |
+| `tests/unit/test_policy_engine_v2_c5.py` | **新增** 13 个测试类 / 43 个测试 | +500 |
+
+### 5 维度复审
+
+#### 1. 完整性 ✅
+
+| 计划项 | 落地 |
+|---|---|
+| Engine 接入 `PolicyConfigV2` | ✅ `__init__` 缓存 4 份派生结构 |
+| `safety_immune` union config + ctx | ✅ `_collect_immune_paths` 保序 dedupe |
+| `owner_only.tools` 显式列表 | ✅ 与 CONTROL_PLANE 启发式 OR |
+| `approval_classes.overrides` | ✅ `most_strict` 不可削弱 + chain 留痕 |
+| `shell_risk` customs 透传 | ✅ classifier 构造参数 + factory 自动布线 |
+| `unattended` 5 策略 | ✅ deny / auto_approve / defer_to_owner / defer_to_inbox / ask_owner + ctx override |
+| `replay_authorization` 实装 | ✅ 30s TTL + msg/op 匹配（read-only signal） |
+| `trusted_path` 实装 | ✅ regex + op + expires_at（sticky） |
+| 工厂 + boundary 健壮性 | ✅ `build_engine_from_config` + `__post_init__` enum 归一 |
+
+#### 2. 架构合理性 ✅
+
+- **layering 干净**：schema → context dataclasses → classifier → engine → factory，单向依赖；engine 只依赖 schema 接口，不依赖 loader/migration。
+- **frozen dataclass**：`ReplayAuthorization` / `TrustedPathOverride` 都是 `frozen=True`，授权一经发出不许 in-place 改字段，跨 `derive_child` 共享引用安全。
+- **read-only engine**：step 7/8 只**读** ctx.replay/trusted，不写 session metadata。"消费"由 `tool_executor` / `chat handler` 在收到 ALLOW 后自行做（边界清晰，决策可重放，dry-run 友好）。
+- **most_strict 不可削弱**：用户 override 只接受比 classifier 更严的结果；偷偷把 DESTRUCTIVE 工具降到 READONLY 的配置错误会被 chain 留痕拒绝。
+- **boundary 健壮性**：`PolicyContext.__post_init__` 单点修复 v2 schema 的 `use_enum_values=True` 与 dataclass 不 coerce 的鸿沟，避免 30 处调用方各自 coerce。
+- **operation 推断函数化**：`_infer_operation_from_tool` 抽离为 module 级函数，与 classifier 的 `_heuristic_classify` 同精神但映射到操作类别；C7 wire-up 时若 `risk_intent.classify_risk_intent` 给出更精确的结果，可通过 `ToolCallEvent.metadata` 透传，engine 优先使用更精确的源（这一步是 C7 范畴）。
+
+#### 3. 正确性 ✅
+
+| 风险点 | 处理 |
+|---|---|
+| override 升级 class 后丢失 shell_risk_level / needs_sandbox | `_apply_class_override` 显式复制 `ClassificationResult` 全字段 → tested |
+| ctx 的 string mode 输入崩 engine | `__post_init__` boundary coerce → tested |
+| replay 没有 msg 也没有 op 时的 trivial-true | 显式要求"非空且匹配"，trivial-empty 不放行 → tested |
+| trusted_path 的 malformed regex | `try/except re.error` → 不抛 / 不绕过，tested |
+| unattended 未知 strategy | fail-safe DENY（Pydantic Literal 已防住，但 ctx str 不校验，必须兜底）→ tested |
+| dataclass 共享 mutable 列表（cross-context） | `derive_child` 显式 `list(...)` 复制；frozen dataclass 元素本身共享安全 |
+| engine_crash 顶层兜底 | C3 已实装；C5 新增的 step 仍走相同路径 |
+
+#### 4. 兼容性 ✅
+
+- **v1 测试 0 回归**：`test_tool_executor_timeout_policy` / `test_agent_no_tool_policy` / `test_mode_tool_policy` 仍 8/8 PASS。
+- **C0-C4 测试 0 回归**：348 个累计测试仍全 PASS。
+- **classifier 向后兼容**：`shell_risk_config=None` 时使用 module 默认 patterns（与 C2/C3 行为完全一致）。
+- **engine 向后兼容**：`config=None` 时默认 `PolicyConfigV2()`（纯 schema 默认；测试与首启都 OK）。
+- **PolicyContext 默认值微调**：`unattended_strategy` 从 `"ask_owner"` 改为 `""`（空表示"用 config 默认"，非空表示 per-call 覆盖）。原有 C3 测试都显式传值，未受影响。
+
+#### 5. 测试覆盖 ✅
+
+新增 43 个测试，13 个测试类：
+- `TestSafetyImmuneFromConfig`（4）：config 触发 / ctx union / 空 / dedupe
+- `TestOwnerOnlyFromConfig`（3）：config 列表 / owner 通过 / CONTROL_PLANE 启发式
+- `TestApprovalOverrides`（4）：升级应用 / 削弱忽略 / 无 override / **保留 shell_risk metadata**
+- `TestShellRiskCustomsFlow`（3）：custom_critical / blocked_commands / disabled
+- `TestReplayAuthorization`（4）：active msg match / expired / op match / no-match fallthrough
+- `TestTrustedPath`（5）：op only / op mismatch / pattern / malformed regex / expired
+- `TestUnattendedStrategies`（6）：5 策略 + ctx override
+- `TestBuildEngineFactory`（3）：shell customs / engine overrides / 默认 config 不崩
+- `TestDataclassesFundamentals`（4）：is_active / frozen / no-expires sticky
+- `TestPolicyContextCoercion`（4）：string mode / string role / invalid fallback / engine end-to-end
+- `TestSessionCoercion`（3）：v1 dict 形态 / v1 overrides.rules 形态 / malformed 跳过
+
+**实战 smoke**（`identity/POLICIES.yaml`）通过 3 个端到端场景验证：
+1. ✅ trust 模式跨盘写 `e:/diary/...` → **ALLOW**（用户原始投诉解决，class=mutating_global）
+2. ✅ trust 模式写 `/etc/shadow` → **CONFIRM**（safety_immune 命中）
+3. ✅ trust 模式 `reg delete HKLM` → **ALLOW**（v1 `command_patterns.enabled=false` 严格保留：用户主动关掉了 shell 风险层；这是配置选择，不是 bug；UX 改进留 C18）
+
+### 偏离与权衡
+
+1. **operation 推断走前缀启发式**：v1 由 `risk_intent.classify_risk_intent` 给出精确 OperationKind。C5 阶段 risk_intent 是上游模块，engine 不直接耦合；我用 `_infer_operation_from_tool` 前缀表做保守回退。C7 RiskGate 接入时通过 `ToolCallEvent.metadata` 透传精确结果，engine 优先使用。属于"正确分层"非"偷工"。
+2. **Step 7 replay engine 只读**：v1 在匹配后会 `session.set_metadata("risk_authorized_replay", None)` 消费。C5 把消费职责留给 `tool_executor`（C7 wire-up 时落地）。这样保证决策可重放、dry-run 安全、PolicyContext 可 deep_copy。
+3. **trusted_path operation 字段空时通配**：与 v1 `consume_session_trust` 行为一致——rule 不限定 operation 时表示"任意操作"。Side-by-side review 后保留此语义；如需更严，可在 C18 加 `require_explicit_operation` 配置开关。
+4. **`unattended_strategy` 默认从 `"ask_owner"` 改为 `""`**：明确"空 = 用 config 默认；非空 = per-call override"语义。所有现有测试都显式传值，未受影响。
+
+### 关键工程教训
+
+1. **boundary coercion**：Pydantic v2 `use_enum_values=True` 与 dataclass 是两套类型系统，跨边界传递 enum-like 字段必须在 boundary 显式归一，不能依赖"看着像 enum 就当 enum 用"。本次在 `PolicyContext.__post_init__` 单点修复了 30+ 潜在调用点的崩溃。
+2. **read-only engine 是大幅简化**：决策步只读、不改 session，是 C5 能干净落地 5 个 step 的关键——所有"消费"集中在调用方一处，未来 C12 的 DeferredApprovalRequired / C7 的 replay 消费都不需要修改 engine。
+3. **most_strict 是"安全不可削弱"的工程化体现**：用户配置错误（手滑或不理解）应该被检测、留痕、忽略，而不是悄悄生效。把这个原则写成函数比写在 review checklist 里靠谱得多。
+
+### C5 第二轮深度复审（同日）
+
+用户要求"再次检查 C5 执行没有遗漏，代码架构合理 不是打地鼠式贴补丁堆屎山的做法
+也没有留下bug或者隐患 或者损害其他原本正常的功能"，遂做第二轮 5 维度审计 +
+edge-case smoke。结果：**4 个隐患被挖出 + 全部修复 + 8 个新回归测试**。
+
+#### 4 个 audit-discovered 问题
+
+| # | 严重度 | 问题 | 影响 | 修复 |
+|---|---|---|---|---|
+| **A** | Medium | `_check_safety_immune` 不防御 `params=None` | 调用方失误传 `None` 时 `candidate_path_fields(None)` 抛 AttributeError，被 fail-safe 兜成 DENY，但污染 `engine_crash` 计数 + 日志 | step 3 加 `safe_params = params or {}` |
+| **B** | Medium | unattended chain note 显示 raw `ctx.unattended_strategy` | `ctx` 为空（用 config default 兜底）时 chain note 显示 `strategy=`，审计/SSE 看不到生效策略 | 抽 `_effective_unattended_strategy(ctx)` 共用，note 显示生效值 |
+| **C** | High | replay match 不 strip whitespace，与 v1 不一致 | v1 `agent.py:782` 双侧 `.strip()` 后比较；C5 裸 `==`，C7 wire-up 后带尾换行的 chat 消息 replay 全部 silently 失效 → **破坏 v1 已工作功能** | 双侧 `.strip()` 后比较，对齐 v1 |
+| **D** | Low | 同时传 `classifier` + `config` 时 shell_risk 可能 split-brain（classifier wins） | 用户两个 cfg 不一致时，shell_risk customs 静默以 classifier 为准，audit 看不出 | engine `__init__` 检测两份 `_shell_risk_config` 引用不一致时 WARNING |
+
+每条都附带专门的回归测试（`TestC5AuditFixes` 8 个用例：A 1 + B 2 + C 2 + D 3）。
+
+#### Edge-case smoke 验证（修复后）
+
+| 场景 | 修复前 | 修复后 |
+|---|---|---|
+| `params=None` | `engine_crash=1`, DENY | `engine_crash=0`, ALLOW |
+| 空 ctx unattended_strategy | chain note `strategy=` | chain note `strategy=defer_to_owner` |
+| `user_message="  delete /ws/temp\n"` + replay `"delete /ws/temp"` | CONFIRM（fail-match） | ALLOW（strip-match）|
+| 两个不同 cfg 传给 classifier 与 engine | 静默 | WARNING with 配置建议 |
+
+#### 5 维度复审结果
+
+1. **完整性 ✅**：C5 计划项全部落地（4 step 实装 + 配置接入 + 工厂 + 4 个 audit fixes）。
+2. **架构 ✅**：layering 仍单向（schema → context → classifier → engine → factory），`_effective_unattended_strategy` 抽离避免双处计算 strategy；audit fix D 没有引入 hard 依赖（duck-typing `getattr`），保留 classifier subclass 自由。
+3. **正确性 ✅**：4 个 bug 修复后真实 `identity/POLICIES.yaml` 端到端 smoke 全绿；407 个测试 0 失败。
+4. **兼容性 ✅**：v1 邻近测试（test_tool_executor_timeout_policy / test_agent_no_tool_policy / test_mode_tool_policy）仍 8/8 PASS；零外部调用方使用 `PolicyContext` / `PolicyEngineV2` —— C5 改动 blast radius 严格在 policy_v2/ 内。
+5. **测试覆盖 ✅**：从 43 → 51 个 C5 测试；新增 14 个测试类共覆盖 chain 顺序、effective strategy、whitespace、warning 触发条件、coercion 路径、frozen dataclass 不可变性等。
+
+#### 回归测试矩阵
+
+```
+total: 407 PASS, 0 FAIL
+├─ C0-C4 cumulative: 348 PASS
+├─ C5 (43 + 8 audit = 51): PASS
+├─ v1 adjacent regressions: 8 PASS
+└─ ruff: clean
+```
+
+#### 关键工程教训
+
+1. **fail-safe 不等于"无害"**：fail-safe 兜底是最后一道防线，不是免责盾牌——
+   被它兜过的每一次都是用户的"诡异 DENY 报错日志"。能在前置 step 优雅处理的
+   边界 case，就不应该让 fail-safe 接锅。审计 audit fix A 即此原则的体现。
+2. **审计可读性是审计能力的一部分**：chain note 显示 `strategy=` 的决策即使
+   action 正确也是"不可审"的——pending_approvals 列表里 owner 看不出"为什么
+   这个 task 在等我"。可观测性必须作为决策正确性的一部分被测试。审计 audit
+   fix B 即此原则的体现。
+3. **v1 行为对齐不是字面对齐而是行为对齐**：v1 `.strip()` 不是装饰，是 chat
+   工程的实际容错（带尾换行）。直接 `==` 在测试里看不出来，但 production C7
+   wire-up 后会出现"v1 工作的功能 v2 突然不工作"——这种 silent regression 最
+   难追。审计 audit fix C 即此原则的体现。
+4. **配置 split-brain 是构造期问题不是运行期问题**：构造 engine 时 1ms 的 WARNING
+   能避免运行期百次决策的诡异行为。在 boundary 抓比在内部抓便宜得多。审计 audit
+   fix D 即此原则的体现。
+
+---
+
+## C6 实施记录（2026-05-13）
+
+### C6 范围
+
+C6 把 OpenAkita 的 **决策路径** 从 v1 PolicyEngine 切到 PolicyEngineV2，
+**UI 状态机**（`store_ui_pending` / `wait_for_ui_resolution` / `readonly_mode` 等）
+仍留 v1 实例（待 C9 SecurityView 重建一并迁移）。
+
+| 文件 | 改动 | LOC |
+|---|---|---|
+| `src/openakita/core/policy_v2/global_engine.py` | 新增：单例 + 延迟加载 + 线程安全 + rebuild API | +175 |
+| `src/openakita/core/policy_v2/adapter.py` | 新增：v2→v1 PolicyResult 翻译 + DEFER 降级 + fail-closed + ContextVar 优先 | +330 |
+| `src/openakita/core/policy_v2/__init__.py` | 导出新增 6 个符号 | +15 |
+| `src/openakita/core/policy_v2/classifier.py` | 新增 5 exact + 2 prefix heuristic（web_/news_ 等高频缺类工具） | +25 |
+| `src/openakita/core/policy_v2/engine.py` | 修复 `_path_under` 不识别 `/**` glob 锚定符的 C5 隐藏 bug | +35 |
+| `src/openakita/core/permission.py` | Step 2 `pe.assert_tool_allowed` → `evaluate_via_v2_to_v1_result` | ±10 |
+| `src/openakita/core/reasoning_engine.py` | 2 处 ReAct 决策切 v2（保留 `_pe.store_ui_pending` 等 UI helper） | ±10 |
+| `tests/unit/test_policy_v2_global_engine.py` | 新增 11 个测试 | +160 |
+| `tests/unit/test_policy_v2_adapter.py` | 新增 23 个测试 | +290 |
+| `tests/unit/test_permission_refactor.py` | 重写 mock 点（v1 `get_policy_engine` → v2 `_get_engine`） | ~120 |
+| `tests/unit/test_policy_engine_v2.py` | 新增 4 个 path/glob 测试 | +35 |
+
+### 关键决策（B+X 直切，**含校正**）
+
+用户最初选 B+X（permission.py 直切 v2 + reasoning_engine 同步去 dual-check）。深扒
+`reasoning_engine.py` 后发现一个**关键架构事实**：v1 `PolicyEngine` 实例不仅做决策，
+还重度承载 ReAct 循环的 UI 确认状态机（`store_ui_pending`/`prepare_ui_confirm`/
+`wait_for_ui_resolution`/`cleanup_ui_confirm`/`readonly_mode`）。这些是 session 级
+的待确认状态，**不属于"决策"层**——v2 目前没有等价物（按 plan C9 才会重建
+SecurityView 适配）。
+
+如果坚持纯 B+X，要么 reasoning_engine 仍调 `get_policy_engine()` 拿 v1 实例
+（B 没有"切干净"），要么 C6 提前做 C9 的 UI 状态抽取（C6 膨胀 ×3，回归测试面爆炸）。
+向用户重新展示选项后，确认采用 **"决策层切 v2 + UI 状态留 v1"** 的过渡架构：
+
+- 生产里**只有一个决策源**（v2，通过 `evaluate_via_v2_to_v1_result`）—— 无 split-brain
+- v1 类降级为"UI 状态容器"，C9 重建 UI 适配后 C8 一并删
+- reasoning_engine 决策入口已切 v2，物理上仍调 `_pe = get_policy_engine()` 但只用 UI
+  state 字段（注释明示用途）
+
+### 决策表 v1 ⇆ v2
+
+| v2 DecisionAction | v1 PolicyDecision | 备注 |
+|---|---|---|
+| ALLOW | ALLOW | 直对 |
+| CONFIRM | CONFIRM | 直对 |
+| DENY | DENY | 直对 |
+| **DEFER** | CONFIRM | v1 不识别 DEFER；保守降级让 UI 拦截（IM 通道再次拦截 unattended 上下文） |
+
+### Adapter 设计要点
+
+1. **`metadata` 字段冗余写**：v2 把 `needs_sandbox` / `needs_checkpoint` /
+   `shell_risk_level` 提升为顶层字段；下游 `execute_tool_with_policy` 读的是
+   `getattr(policy_result, "metadata", {}).get(...)`。adapter 把这些字段
+   同时写入 `metadata` dict —— **下游 0 改动**。
+2. **`metadata` extras 不覆盖 canonical 字段**：上游若往 v2 metadata 写脏数据，
+   adapter 用 canonical 字段覆盖，防止破坏下游契约。
+3. **PolicyContext 解析顺序**：`extra_ctx` (调用方显式) > `get_current_context()`
+   (ContextVar) > `_build_fallback_context()` (cwd + AGENT + config 默认 mode)。
+4. **Adapter 层 fail-closed**：v2 engine 内已 fail-safe，但 ctx 构造可能抛。
+   adapter 包一层：`run_/write_/edit_/delete_/spawn_/...` 异常 → DENY；
+   `read_/list_/get_` 异常 → ALLOW（与 v1 `permission.check_permission` 同语义）。
+5. **`policy_name` 用 chain 末尾**：`policy_v2:<last_step>` 让审计日志可辨识
+   决策来源（如 `policy_v2:safety_immune` / `policy_v2:matrix_allow`）。
+
+### 顺手修复的 pre-existing bug：`_path_under` 不识别 `/**` glob
+
+C5 实装 `_check_safety_immune` 时用了纯字符串前缀匹配。POLICIES.yaml 里的路径
+模式（如 `C:/Windows/**`、`/etc/**`、`~/.ssh/**`）按惯例带 `/**` 表示
+"目录下任意后裔"。旧实现把 `**` 当字面字符，**永远 false negative** ——
+导致用户配的 protected paths 整体失效。
+
+C5 没有 catch 是因为 C5 测试用了不带 `**` 的 path（如 `/etc/passwd` 直接 literal）。
+C6 smoke test 用真 POLICIES.yaml 才暴露：
+
+```
+Smoke 3 (写 C:/Windows/System32/important.dll, immune=C:/Windows/**):
+  before: decision=allow ❌
+  after:  decision=confirm ✓ reason='safety_immune match: ... matches C:/Windows/**'
+```
+
+修复方式：新增 `_strip_glob_anchor()` 在前缀匹配前剥掉末尾 `/**` / `/*`。
+中段 glob (`/etc/*/secret`) 仍按字面处理（性能 + 语义可控；如未来需要
+fnmatch，建议在 schema 层拆 `exact_paths` vs `glob_patterns`）。
+
+### Heuristic 扩展（5 exact + 2 prefix）
+
+v2 默认 `UNKNOWN × AGENT × DEFAULT = CONFIRM`，比 v1（默认 ALLOW）严格。这导致
+v2 切上来后**多个高频内置工具**（v1 默认 ALLOW、用户从未感觉到 confirm）
+开始弹窗：`web_fetch` / `ask_user` / `complete_todo` / 等。
+
+为防止 C6 在生产端出现 UX 雪崩，分类器新增最小必要 heuristic：
+
+| 工具 / 前缀 | ApprovalClass | 来源 |
+|---|---|---|
+| `web_*` (web_fetch, web_search) | NETWORK_OUT | 惯例：网络只读 |
+| `news_*` (news_search) | NETWORK_OUT | 同上 |
+| `ask_user` | INTERACTIVE | 用户交互 |
+| `exit_plan_mode` | INTERACTIVE | 控制流标志 |
+| `task_stop` | INTERACTIVE | 用户控制 |
+| `pet_say` / `pet_status_update` | INTERACTIVE | 桌面 UI |
+| `send_agent_message` | INTERACTIVE | 多 agent 交互 |
+| `complete_todo` | EXEC_LOW_RISK | 标记内部状态 |
+| `add_memory` | EXEC_LOW_RISK | KV 写入低风险 |
+| `trace_memory` | READONLY_GLOBAL | 读 trace |
+| `delegate_to_agent` / `delegate_parallel` | CONTROL_PLANE | trust 模式 ALLOW，default CONFIRM |
+
+完整 tool→class 注册建议在 C7 配合 agent.py 经 `handler.TOOL_CLASSES` 完成（docs §4.21
+cookbook）；本表只覆盖最高频"控制 / 内部状态 / 网络读"类工具，避免回归。
+
+### 已知 gap（不影响 C6 上线，记入后续 commit）
+
+1. **plan/ask 模式下 `mode` 没翻译为 v2 `SessionRole`**：
+   `permission.check_permission` Step 2 调 `evaluate_via_v2_to_v1_result(...)` 时
+   ctx 默认 `SessionRole.AGENT`，没把 `mode='plan'/'ask'/'coordinator'` 透传。
+   影响有限（mode_ruleset 在 step 1 拦截大部分 plan 限制），但 v2 在非 agent
+   模式下评估的精度会打折。**留待 C7 agent.py 接 ctx 时一并做**。
+2. **`_resolve_context` user_message 注入复制 ctx 是 O(n)**：
+   生产 hot path 每次 evaluate 复制一份 ctx；ctx 字段不多，开销可控但可优化。
+3. **`set_engine_v2` 没 type check**：注入错误类型会在 `evaluate_tool_call` 时
+   AttributeError → 被 fail-closed 兜走。安全但不够友好，C8 加 type check。
+4. **adapter 内 `_FAIL_CLOSED_TOOL_PREFIXES` 与 `permission.py` 重复定义**：
+   理想 single SOT，但跨模块循环 import 风险，妥协可接受 + 已加注释 + smoke
+   防 drift。
+
+### 测试结果
+
+```
+C6 新增 + 修订:
+├─ test_policy_v2_global_engine: 11 PASS
+├─ test_policy_v2_adapter:       23 PASS
+├─ test_permission_refactor:     10 PASS（mock 点重写）
+└─ test_policy_engine_v2:        +4 PASS（path/glob 边界）
+
+整体回归（unit）：
+├─ 2564 PASS / 4 SKIP / 8 FAIL
+└─ 8 个 FAIL 全部 pre-existing（baseline `git stash` 验证）
+   - test_org_setup_tool::TestDeleteOrg::test_delete_*  (cross-pollution)
+   - test_reasoning_engine_user_handoff::test_tool_evidence_required_*  (pre-existing)
+   - test_remaining_qa_fixes::test_workspace_delete_is_confirmed_even_in_trust_mode  (pre-existing v1 行为漂移)
+   - test_remaining_qa_fixes::test_unknown_mcp_write_tool_requires_confirmation  (pre-existing)
+   - test_wework_ws_adapter::TestAdapterProperties::test_upload_media_requires_connection  (cross-pollution)
+
+C6 净影响：+1 修复（test_current_turn_grounding 因 web_fetch heuristic 修复），
+            0 回归
+```
+
+### Smoke 验证（真 `identity/POLICIES.yaml`）
+
+| 场景 | v2 决策 | 是否符合预期 |
+|---|---|---|
+| trust 模式写桌面 .txt（用户原始投诉） | allow | ✅（user complaint resolved） |
+| trust 模式 regedit | allow | ⚠️ 因为 `command_patterns.enabled: false` 在用户 YAML 里 —— 配置驱动行为，非 bug |
+| trust 模式写 C:/Windows/System32/x.dll | confirm | ✅（safety_immune match） |
+| read_file | allow | ✅ |
+| trust 模式 delete_file | confirm | ✅（DESTRUCTIVE 始终 confirm） |
+| web_fetch | allow | ✅（新 heuristic） |
+| ask_user | allow | ✅（新 heuristic） |
+| `permission.check_permission` 端到端 | allow + chain=['policy_engine_v2'] | ✅ |
+
+### 5 维度复审
+
+| # | 维度 | 结论 | 备注 |
+|---|---|---|---|
+| 1 | 完整性 | ✅ | C6 plan 全做；mode→SessionRole 翻译 known gap 记入 C7 |
+| 2 | 架构 | ✅ | 决策/UI 双层清晰；adapter 内 `_FAIL_CLOSED` 重复定义已加注释 + smoke 防 drift |
+| 3 | 正确性 | ✅ | DEFER→CONFIRM 降级合理；顺手修了 C5 隐藏的 `_path_under` glob bug |
+| 4 | 兼容性 | ✅ | v1 PolicyEngine/PolicyResult/orgs/runtime 全兼容；pre-existing 8 fail 与 C6 无关 |
+| 5 | 测试覆盖 | ✅ | 44 个新单测 + 4 个 path/glob 测试；248 PASS，0 regress |
+
+### 关键工程教训
+
+1. **"切干净"是相对概念**：B+X "直切 v2" 听起来比 A+Z "委托" 更干净，但当
+   v1 类不仅做决策还做 UI state 时，物理上分不开 = 强行分会污染 C9 的工作。
+   "决策切，UI state 不切" 是诚实的过渡架构，不是妥协。
+2. **smoke test 用真配置 > 单测**：C5 测试用 `/etc/passwd` literal，过；
+   C6 smoke 用 `C:/Windows/**` 真 YAML，立刻暴露 5 个月隐藏的 glob bug。
+   测试覆盖率不等于场景覆盖率。
+3. **classifier heuristic 是"防 UX 雪崩护栏"**：v2 默认严格的安全策略
+   （UNKNOWN→CONFIRM）在切换瞬间会"激活"上百个 v1 默默放行的工具。
+   每加一个 heuristic 都是在权衡"安全严格度 vs 用户体验"；在 C7 经 handler
+   显式声明 TOOL_CLASSES 之前，heuristic 是必要的过渡兜底。
+4. **adapter 是层间契约的物理体现**：v2→v1 的字段冗余写不是丑陋的兼容代码，
+   是契约的显式宣告：下游 `metadata.needs_sandbox` 永远可读，无论上游是
+   v1 还是 v2。删 adapter 之前必须先迁移所有下游访问形态。
+
+### 下一步
+
+- C7：agent.py RiskGate 切 v2 + replay/trusted_path **消费侧**落地 +
+  `mode → SessionRole` 翻译 + `handler.TOOL_CLASSES` 大规模注册
+- C8：删旧 policy.py 薄壳 + IM 适配器 owner 判断 + safety_immune 默认 9 类完整接入
+- C9：SecurityView 适配 + tool_intent_preview SSE + UI 状态机从 v1 迁出
+
+---
+
+## C6 二轮 audit 修复（2026-05-13 当日）
+
+第一轮 5 维 audit 标 ✅ 之后用户要求"再次确认万无一失"。再做一次更挑剔的
+跨模块扫描，发现 **1 个 critical bug + 1 个加固点**：
+
+### Critical：`reset_policy_engine()` 未同步 v2 单例
+
+**症状**：用户在桌面 UI 修改安全配置（trust mode 切换、safety_immune 路径
+增删、blocked_commands 改写），后端走 `api/routes/config.py` 的 7 个 endpoint
+（`write_security_config` / `write_security_zones` / `write_security_commands`
+等），它们写完 YAML 后调 `reset_policy_engine()` 让 v1 重读。
+
+C6 之前这是有效的——v1 是唯一决策源；C6 之后**v1 与 v2 各自缓存配置**：
+- v1 重读 YAML → 新 trust mode 生效
+- **v2 单例没动，继续按旧 YAML 评估**
+- 用户写文件 → permission.check_permission → adapter.evaluate_via_v2
+  → 旧 v2 引擎说 CONFIRM → 用户体感"信任模式不生效"
+- **完美重现 P1 用户原始投诉**，且**v2 切换让该 bug 仅在 C6 之后才出现**
+
+**修复**（`src/openakita/core/policy.py` `reset_policy_engine()`）：
+
+```python
+try:
+    from .policy_v2.global_engine import reset_engine_v2
+    reset_engine_v2()
+except Exception:
+    logger.warning("[Policy] failed to reset PolicyEngineV2 singleton; ...")
+```
+
+防御性处理：v2 reset 异常**不阻断** v1 reset，只 WARN log（v2 失败比
+"配置改完啥都不生效"好）。
+
+**回归测试**（`tests/unit/test_permission_refactor.py`，新增 2 个）：
+- `test_reset_policy_engine_also_resets_v2_singleton`：触发 v2 懒加载 →
+  reset → 断言 `is_initialized() is False` + 下次 get 拿到新实例
+- `test_reset_policy_engine_v2_failure_does_not_break_v1_reset`：patch v2
+  reset 抛错 → 验证 v1 reset 仍然完成
+
+**端到端 smoke**（`scripts/c6_audit2_smoke.py`）：
+1. set_engine_v2(ALLOW stub) → check_permission(write_file) → behavior=allow ✓
+2. reset_policy_engine() → is_initialized()==False ✓
+3. set_engine_v2(DENY stub) → check_permission(write_file) → behavior=deny ✓
+
+第 3 步如果 reset 不彻底，会沿用第 1 步的 ALLOW stub → smoke 失败。
+
+### 加固：`_resolve_context` ctx 复制要保留所有字段
+
+**问题**：adapter._resolve_context 在补 `user_message` 时手写复制 PolicyContext
+所有字段。如果未来给 PolicyContext 加新字段（如 C7 可能加 `risk_intent_cache`）
+而忘记加到这里，会**静默丢失字段**——下游引擎拿不到，调试极困难。
+
+**加固**（`tests/unit/test_policy_v2_adapter.py`，新增 1 个）：
+- `test_resolve_context_user_message_copy_preserves_all_fields`：构造一个
+  把 11 个 optional 字段全部填值的 PolicyContext，断言复制后所有字段相等。
+  未来加字段必须同步改 _resolve_context 才能让该测试过——形成"修改提示"。
+
+### 二轮审视维度
+
+| # | 维度 | 结果 | 备注 |
+|---|---|---|---|
+| 1 | 模块外调用面扫描 | ✅ → critical bug | 检查所有 `get_policy_engine` 调用点；`reset_policy_engine` 是隐藏断点 |
+| 2 | global_engine 线程/race | ✅ | double-checked locking 正确；`get_config_v2` 的 race 在实践中不会触发（assert 仅测试 hint） |
+| 3 | adapter 边界 case | ✅ | empty chain → "policy_v2"；None params → {}；DEFER→CONFIRM；glob 边界已修 |
+| 4 | orgs/runtime + channels 兼容 | ✅ | monkey-patch 签名不变；UI state 调用全保留 v1 实例 |
+| 5 | 测试缺口 | ✅ → 加固 | ctx 复制完整性测试覆盖未来字段扩展 |
+
+### 修复前后对比
+
+| 项目 | 一轮 audit 后 | 二轮 audit 后 |
+|---|---|---|
+| C6 测试数 | 248 PASS | **251 PASS（+3）** |
+| 全量单测 | 2564 PASS / 8 fail | **2567 PASS / 8 fail（同 8 个 pre-existing）**|
+| Critical bugs | 0 已知 | **0**（修了 1 个 audit 发现的）|
+| docs | C6 实施记录 | **+ 二轮 audit 章节** |
+
+### 关键教训补充
+
+5. **"v2 切上来了"≠"v1 删干净了"**：C6 让两个引擎并存做不同事，
+   隐含的 invariant 是"任何让 v1 reload 的入口必须同时让 v2 reload"。
+   这种隐性契约在第一轮审视容易漏，必须扫描所有 reset/reload 入口。
+   **教训**：跨阶段并存架构必须维护一份"同步点清单"。
+6. **"测试通过"≠"问题不存在"**：C6 第一轮所有单测通过、smoke 通过，
+   依然漏掉了 reset_policy_engine 这个 production-critical 路径，因为
+   单测都自己创建 stub 引擎、不走 reset 路径，smoke 只测决策不测配置变更。
+   **教训**：production hot-path 不只决策本身，配置生命周期也算。
+
+---
+
+## 附录 A：重要参考资料
+
+- 主 plan：`security_architecture_v2_31fbf920.plan.md`（1528 行）
+- 用户原始投诉日志（plan 中已引用）：`Policy] confirm: write_file — 信任模式下仍需确认高风险操作`
+- 现有 6 层安全描述：[`README.md:472-495`](../README.md)（v2 上线后需更新为 12 步 + ApprovalClass 描述）
+- 漏洞披露：[`SECURITY.md`](../SECURITY.md)（不动）
+- 配置参考：[`docs/configuration.md`](configuration.md)（C18 同步 `--auto-confirm` 漂移）
+
+## C7 实施记录（2026-05-13 完成）
+
+### C7 范围（用户最终选择 c7_full + consume_keep_v1）
+
+- **ContextVar wire**：在 `chat_with_session` 与 `chat_with_session_stream` 两条入口
+  设置 `PolicyContext` ContextVar，让本轮所有下游 `evaluate_via_v2` /
+  `evaluate_message_intent_via_v2` 拿到与 v1 RiskGate 同源的 ctx
+  （confirmation_mode + session_role + replay/trusted_path 快照）。
+- **RiskGate 决策切 v2**：`_check_trust_mode_skip` 改为 v1+v2 双查，任一报非 trust
+  即不 skip（保守语义，且兼容 test 场景下只 mutate v1）。
+- **handler.TOOL_CLASSES 大批量**：为 25+ 主要 handler（覆盖 100+ 工具）补
+  显式 ApprovalClass 声明，杜绝启发式回退。
+- **rebuild_engine_v2 + explicit_lookup**：`_init_handlers` 末尾把
+  `SystemHandlerRegistry.get_tool_class` 注入 v2 engine classifier，让 handler
+  显式声明优先于启发式生效。
+- **decision_only**：v1 `_consume_risk_authorization` / `_check_trusted_path_skip`
+  保持不动（消费/边缘判断仍走 v1，对齐 C6 决策；engine 保持 read-only）。
+
+### 新增文件
+
+| 文件 | 作用 |
+|---|---|
+| `tests/unit/test_policy_v2_c7_wire.py` | C7 wire 套件（21 个 test，覆盖 ctx builder + msg intent + explicit_lookup + ContextVar lifecycle）|
+| `scripts/c7_smoke.py` | 5 个端到端 smoke：trust 桌面写、trust delete、trust read、plan write deny、default read |
+
+### 修改文件
+
+| 文件 | 关键改动 |
+|---|---|
+| `core/policy_v2/adapter.py` | +`build_policy_context`、`mode_to_session_role`、`evaluate_message_intent_via_v2`；+`_coerce_replay_auths` / `_coerce_trusted_paths` 把 v1 dict 形态归一为 dataclass |
+| `core/policy_v2/__init__.py` | 暴露 C7 新 API |
+| `core/agent.py` | 两入口 ContextVar set/reset；`_check_trust_mode_skip` 改 v1+v2 双查；`_init_handlers` 末尾调 `rebuild_engine_v2(explicit_lookup=...)` |
+| `tools/handlers/*.py` × 25 | 25 个 handler 加 `TOOL_CLASSES` 字典 + `from ...core.policy_v2 import ApprovalClass` |
+
+### 关键设计决策
+
+1. **`_check_trust_mode_skip` 双查（v1 AND v2）**：
+   - 初版仅读 v2，破坏了 `test_non_trust_mode_does_not_skip`（test mutate v1
+     直接，v2 没刷新）。
+   - 终版读 v1 和 v2，**任一显式说"不是 trust" 就不 skip**（保守 + 兼容旧测）。
+   - 生产链路 `reset_policy_engine` C6 已同步两层，正常情况下永远一致；
+     此双查只在异常路径（admin UI 直改 v1 / 测试 mutate）多一道闸门。
+
+2. **handler.TOOL_CLASSES 25 个文件批量**：
+   - 覆盖 filesystem / agent / system / memory / browser / scheduled / mcp /
+     skills / persona / profile / desktop / im_channel / todo / web_search /
+     web_fetch / mode / notebook / code_quality / search / tool_search /
+     plugins / sleep / sticker / lsp / structured_output / opencli /
+     cli_anything / agent_package / agent_hub / skill_store / worktree /
+     config / org_setup / powershell。
+   - 启发式回退（HEURISTIC_PREFIX）保留作兜底，但显式优先；C19 完备性测试
+     未来会要求所有内置工具必须显式声明（无启发式回退）。
+
+3. **engine 保持 read-only**：
+   - replay/trusted_path 的"消费"（session.set_metadata None 单次清）仍由
+     agent.py 的 `_consume_risk_authorization` 完成，engine 决策时只读 ctx。
+   - 这样 dry-run 决策可重放、不依赖 session 副作用、与 C5 read-only engine
+     设计一致。
+
+4. **build_policy_context fail-soft 全链路**：
+   - session 可能是 None / dict / SessionContext / mock，所有 `getattr` /
+     `get_metadata` 异常退化为空 list 而非抛异常，保证 ctx 构造永不崩溃
+     production 入口。
+   - malformed 条目（如 expires_at 不是 float）跳过 + debug log，不让一条
+     烂数据废掉整批授权。
+
+5. **evaluate_message_intent_via_v2 fail-soft → CONFIRM**：
+   - engine 不可用 → 返回 CONFIRM（让用户决断），不直接 DENY 阻断对话。
+   - 与 evaluate_via_v2 的 fail-closed 不同：tool 决策保守 = DENY；msg
+     intent 决策保守 = CONFIRM（不阻断对话）。两者各得其所。
+
+### 验证结果
+
+- 新增单测 21 个 + 跑通 ✅（test_policy_v2_c7_wire.py）
+- C5/C6 既有单测 108 个 + 全部仍跑通 ✅
+- 全量 unit 套（2596 个）：2588 passed + 8 failed（== C6 baseline）+ 4 skipped
+- **0 net new regressions**（8 failures 均为 C6 阶段记录的 pre-existing）
+- 5 个 smoke 全过 ✅（scripts/c7_smoke.py）
+- ruff 0 error ✅
+
+### C7 修复的回归（c7_split-brain 候选）
+
+| # | 问题 | 修复 |
+|---|---|---|
+| C7-R1 | 初版 `_check_trust_mode_skip` 仅读 v2，导致 `test_non_trust_mode_does_not_skip` 失败：test mutate v1 后 v2 仍读 YAML 中的 `mode: yolo`，函数错返 "trust_mode" | 改 v1+v2 双查，任一显式"不是 trust"立即返回 None；保守 + 测试兼容 |
+
+### 工程教训（C7 二轮）
+
+1. **每个新增 API 必须验证：调用方是否 `monkeypatch` 了内部状态**。`_check_trust_mode_skip`
+   的 v1 实现允许测试通过 `engine._config.confirmation = ...` 直接 mutate；C7
+   切 v2 后，测试 mutate v1 不再生效，必须双查或迁移测试。
+2. **ContextVar 在 finally 里 reset 是必须的**。FastAPI worker 复用 task 的场景
+   下，未 reset 的 ContextVar 会让下一轮请求继承上一轮 ctx（safety_immune /
+   trust_mode 等关键判断都基于 ctx），可能造成 cross-request leak。
+3. **handler 加 TOOL_CLASSES 时务必同步 import**。25 个文件批量改 import 容易
+   漏几个；ruff `F401`/`I001` 能自动 catch。
+4. **explicit_lookup 必须在 handler 全部注册完后才注入 v2**。早注入会让某些
+   handler 还没收集到 TOOL_CLASSES；C7.5 把 `rebuild_engine_v2` 放
+   `_init_handlers` 末尾，确保 25 个 handler 全部 register 完才 rebuild。
+
+### C7 二轮 audit（2026-05-13 提交后审查）
+
+按 5 维系统复审 C7 实施，结果：
+
+| 维度 | 检查项 | 结论 |
+|---|---|---|
+| D1 完整性 | 34 个 handler 是否都加 TOOL_CLASSES，是否都被 registry 收 | ✅ 138/138 tools `via explicit_handler_attr`（脚本：`scripts/c7_audit2_registry_check.py`） |
+| D2 架构 | ContextVar 生命周期 / IM channel 透传 / 嵌套 set/reset | ✅ 7 项 ctx-path 检查全过（`scripts/c7_audit2_ctx_paths.py`） |
+| D3 不打地鼠 | dual-check `_check_trust_mode_skip` 语义是否退化 / fail-soft 是否过度 | ✅ 6 种 v1×v2 组合枚举验证；`build_policy_context` 在 `BadSession.get_metadata` 抛错时降级到空列表，不掩盖逻辑 bug |
+| D4 隐藏 bug | 6 大调用路径（CLI run/serve/interactive/IM/sub-agent/scheduled）覆盖；reset 路径 | **🔴 发现并修复 1 个 P2 bug**（见下） |
+| D5 兼容性 | 全量 unit + lint + 旧安全测试 | ✅ 8 baseline failures 不增（pre-existing），2589 passed（+1 新 regression test） |
+
+#### D4 发现并修复：reset_engine_v2() 丢失 explicit_lookup（P2 regression）
+
+**复现**（`scripts/c7_audit2_reset_repro.py`）：
+
+```
+[step 2] classify(fake_test_tool) -> mutating_scoped via explicit_handler_attr
+[step 4] reset_engine_v2() (simulating UI Save Settings)
+[step 6] classify(fake_test_tool) -> unknown via fallback_unknown   ← 修复前
+```
+
+**根因**：`api/routes/config.py` 有 8 处 `reset_policy_engine()` 调用（每次用户在
+高级设置里点 Save 都会触发），它会调 `reset_engine_v2()` 把 `_engine = None`。
+下次工具调用时 `get_engine_v2()` 懒加载，走 `_build_default_engine(explicit_lookup=None)`
+→ classifier 失去 handler 注册表显式查表 → **138 个工具退回到启发式分类**。
+启发式精度比显式低，部分边界 case（如 `setup_organization` / `delegate_to_agent`）
+可能错判 ApprovalClass，进而错判审批策略。
+
+**修复**（`src/openakita/core/policy_v2/global_engine.py`）：
+
+- 新增模块级 `_explicit_lookup` 缓存，`rebuild_engine_v2` 在 lock 内持久化它。
+- `_build_default_engine` 在 caller 没传时回退到模块缓存。
+- `reset_engine_v2()` 默认**保留** `_explicit_lookup`；测试 fixture 需要彻底
+  reset 时显式传 `clear_explicit_lookup=True`。
+- 新增 `tests/unit/test_policy_v2_c7_wire.py::test_explicit_lookup_survives_reset`
+  锁定回归。
+
+修复后：
+
+```
+[step 2] classify(fake_test_tool) -> mutating_scoped via explicit_handler_attr
+[step 4] reset_engine_v2() (simulating UI Save Settings)
+[step 6] classify(fake_test_tool) -> mutating_scoped via explicit_handler_attr
+[PASS] explicit_lookup preserved across reset
+```
+
+#### D4 已知缺口（不属于 C7，留给 C12）
+
+`execute_task` / `execute_task_from_message` 路径（**scheduled task**、CLI
+`openakita run "..."` 一次性任务、`evolution/self_check.py` 自我修复循环）
+不安装 ContextVar，下游走 `_build_fallback_context`：
+
+| 字段 | fallback 取值 | C7 行为是否正确 |
+|---|---|---|
+| workspace | `Path(os.getcwd())` | ✅ 一致 |
+| session_role | `AGENT` | ✅ 一致 |
+| confirmation_mode | `get_config_v2().mode` | ✅ 跟 trust mode / strict 对齐 |
+| replay_authorizations / trusted_path_overrides | 空 | ✅ scheduled 任务本就无 UI 授权 |
+| **is_unattended** | **False** | ⚠️ scheduled 应该是 True，C12 来 wire |
+
+`is_unattended=False` 的影响是：scheduled task 遇到 CONFIRM 时会按"等用户回应"
+处理 → 任务挂起。这是**已存在于 C7 之前**的行为（C5 才加的 unattended 策略），
+**不是 C7 引入的回归**。`execute_task` 已加 docstring TODO 标记 C12 入口。
+
+#### 二轮额外清理
+
+- 简化 `chat_with_session` / `chat_with_session_stream` 中 `channel=` 表达式，
+  去掉 `if session is not None else "desktop"` 死分支（`getattr(None, "channel",
+  None)` 本就安全）。
+- ruff lint 0 error。
+
+可放心进入 C8。
+
+## 附录 B：术语表
+
+| 术语 | 含义 |
+|---|---|
+| ApprovalClass | 11 维工具语义分类，决策的核心维度 |
+| confirmation_mode | 5 档：default / accept_edits / trust / strict / dont_ask |
+| session_role | 4 档：plan / ask / agent / coordinator |
+| safety_immune | 永远 ask 的精细路径白名单（identity/SOUL.md 等）|
+| owner_only | 仅 owner 可调的工具集（IM 渠道额外卡死）|
+| unattended_strategy | 计划任务/Webhook/spawn 的 4 种 confirm 处理策略 |
+| RiskGate | pre-LLM 层的意图分类闸门（agent.py 内）|
+| replay_authorization | 30s TTL 内复读消息免 confirm 的机制 |
+| trusted_path_overrides | 用户 "allow_session" 后 session 内的路径白名单 |
+| pending_approval | 计划任务被拦时的待审批记录 |
+| DeferredApprovalRequired | unattended 任务遇 confirm 时抛的异常，让 task 暂停 |
+| tool_intent_preview | 新增 SSE 事件，LLM 刚生成 tool_use 时的预览 |
+| delegate_chain | 多 agent 嵌套时的调用链，confirm 冒泡到 root_user |

@@ -10,6 +10,8 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -24,6 +26,13 @@ class ProfileHandler:
         "skip_profile_question",
         "get_user_profile",
     ]
+
+    # C7 explicit ApprovalClass
+    TOOL_CLASSES = {
+        "update_user_profile": ApprovalClass.MUTATING_SCOPED,
+        "skip_profile_question": ApprovalClass.EXEC_LOW_RISK,
+        "get_user_profile": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

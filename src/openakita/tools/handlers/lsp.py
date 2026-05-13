@@ -18,6 +18,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -175,6 +177,10 @@ class LSPHandler:
     """LSP 工具处理器"""
 
     TOOLS = ["lsp"]
+    # LSP 工具支持多种命令（completion / hover / definition / references / ...），
+    # 多数为只读查询；保守归 READONLY_GLOBAL（如有写操作命令未来可在 classifier
+    # _refine_with_params 按 params.command 升级到 MUTATING_SCOPED）
+    TOOL_CLASSES = {"lsp": ApprovalClass.READONLY_GLOBAL}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

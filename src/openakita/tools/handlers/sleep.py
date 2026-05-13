@@ -9,6 +9,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -19,6 +21,7 @@ MAX_SLEEP = 300  # 5 minutes
 
 class SleepHandler:
     TOOLS = ["sleep"]
+    TOOL_CLASSES = {"sleep": ApprovalClass.EXEC_LOW_RISK}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

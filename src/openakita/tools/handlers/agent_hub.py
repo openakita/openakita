@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 from openakita.memory.types import normalize_tags
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -25,6 +27,14 @@ class AgentHubHandler:
         "publish_agent",
         "get_hub_agent_detail",
     ]
+
+    # C7 explicit ApprovalClass — install / publish 修改本地 agents/ 或上传内容
+    TOOL_CLASSES = {
+        "search_hub_agents": ApprovalClass.NETWORK_OUT,
+        "install_hub_agent": ApprovalClass.CONTROL_PLANE,
+        "publish_agent": ApprovalClass.CONTROL_PLANE,
+        "get_hub_agent_detail": ApprovalClass.NETWORK_OUT,
+    }
 
     def __init__(self, agent: Agent):
         self.agent = agent

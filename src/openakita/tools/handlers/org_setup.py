@@ -11,6 +11,8 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -27,6 +29,8 @@ class OrgSetupHandler:
     """Handles the setup_organization tool with sub-actions."""
 
     TOOLS = ["setup_organization"]
+    # setup_organization 是 multi-agent 控制平面（创建/删除组织 = control plane）
+    TOOL_CLASSES = {"setup_organization": ApprovalClass.CONTROL_PLANE}
 
     def __init__(self, agent: Agent):
         self.agent = agent

@@ -11,6 +11,8 @@ import random
 import urllib.parse
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -21,6 +23,7 @@ class StickerHandler:
     """表情包处理器"""
 
     TOOLS = ["send_sticker"]
+    TOOL_CLASSES = {"send_sticker": ApprovalClass.INTERACTIVE}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

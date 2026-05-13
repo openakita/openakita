@@ -13,6 +13,8 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -37,6 +39,16 @@ class AgentToolHandler:
         "task_stop",
         "send_agent_message",
     ]
+
+    # C7 explicit ApprovalClass — multi-agent control plane
+    TOOL_CLASSES = {
+        "delegate_to_agent": ApprovalClass.CONTROL_PLANE,
+        "delegate_parallel": ApprovalClass.CONTROL_PLANE,
+        "spawn_agent": ApprovalClass.CONTROL_PLANE,
+        "create_agent": ApprovalClass.CONTROL_PLANE,
+        "task_stop": ApprovalClass.INTERACTIVE,
+        "send_agent_message": ApprovalClass.INTERACTIVE,
+    }
 
     def __init__(self, agent: Agent):
         self.agent = agent

@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
 from ...core.tool_executor import MAX_TOOL_RESULT_CHARS, OVERFLOW_MARKER, save_overflow
 from ...skills.catalog import SKILL_INSTRUCTION_ADVISORY
 from ...skills.events import SkillEvent
@@ -51,6 +52,20 @@ class SkillsHandler:
         "execute_skill",
         "uninstall_skill",
     ]
+
+    # C7 explicit ApprovalClass — skills installation modifies skills/ dir
+    TOOL_CLASSES = {
+        "list_skills": ApprovalClass.READONLY_GLOBAL,
+        "get_skill_info": ApprovalClass.READONLY_GLOBAL,
+        "run_skill_script": ApprovalClass.EXEC_CAPABLE,
+        "get_skill_reference": ApprovalClass.READONLY_GLOBAL,
+        "install_skill": ApprovalClass.CONTROL_PLANE,
+        "load_skill": ApprovalClass.CONTROL_PLANE,
+        "reload_skill": ApprovalClass.CONTROL_PLANE,
+        "manage_skill_enabled": ApprovalClass.CONTROL_PLANE,
+        "execute_skill": ApprovalClass.EXEC_CAPABLE,
+        "uninstall_skill": ApprovalClass.DESTRUCTIVE,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

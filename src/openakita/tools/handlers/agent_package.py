@@ -8,6 +8,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -35,6 +37,15 @@ class AgentPackageHandler:
         "inspect_agent_package",
         "batch_export_agents",
     ]
+
+    # C7 explicit ApprovalClass — import 是引入外部代码到工作区
+    TOOL_CLASSES = {
+        "export_agent": ApprovalClass.MUTATING_SCOPED,
+        "import_agent": ApprovalClass.CONTROL_PLANE,
+        "list_exportable_agents": ApprovalClass.READONLY_GLOBAL,
+        "inspect_agent_package": ApprovalClass.READONLY_GLOBAL,
+        "batch_export_agents": ApprovalClass.MUTATING_SCOPED,
+    }
 
     def __init__(self, agent: Agent):
         self.agent = agent

@@ -113,7 +113,7 @@ from .response_handler import (
     parse_intent_tag,
     strip_thinking_tags,
 )
-from .risk_intent import RiskIntentResult, RiskLevel, classify_risk_intent
+from .risk_intent import RiskIntentResult, RiskLevel, TargetKind, classify_risk_intent
 from .skill_manager import SkillManager
 from .task_monitor import RETROSPECT_PROMPT, TaskMonitor
 from .token_tracking import (
@@ -829,6 +829,73 @@ def _consume_risk_authorization(session: Any, message: str) -> bool:
                     pass
                 consumed_any = True
     return consumed_any
+
+
+# Targets that still require RiskGate confirmation even under trust (yolo) mode.
+#普通用户文件 / 桌面文件 / 未知目标 在信任模式下放行；
+# 安全策略 / 死亡开关 / 安全白名单 / shell 命令 / 已知受保护文件 仍要 confirm。
+# 真正的系统/密钥目录与 CRITICAL shell 由 PolicyEngine baseline 兜底拦截。
+_TRUST_MODE_MUST_CONFIRM_TARGETS = frozenset(
+    {
+        TargetKind.SECURITY_USER_ALLOWLIST,
+        TargetKind.SECURITY_POLICY,
+        TargetKind.DEATH_SWITCH,
+        TargetKind.PROTECTED_FILE,
+        TargetKind.SHELL_COMMAND,
+    }
+)
+
+
+def _check_trust_mode_skip(risk_intent: RiskIntentResult | None) -> str | None:
+    """Skip the pre-LLM RiskGate confirm when the user has chosen trust mode
+    and the intent only touches ordinary user data (e.g. desktop files).
+
+    Sensitive targets (security policy, allowlists, shell commands, protected
+    files) still go through the normal confirm flow even in trust mode.
+
+    C7：保守语义 —— **必须 v1 和 v2 都报 TRUST 才 skip**。
+    - 正常生产链路：reset_policy_engine 已同步 v1+v2（C6），两层值始终一致
+    - 异常链路：若任一层（如 admin UI 直接改 v1 但 v2 还没刷新）报非 trust，
+      宁可让用户多确认一次，也不要在策略不一致时静默放行
+    - v2 不可用：退化到 v1（v1 缺失才返回 None，等同未启用 trust）
+    """
+    if risk_intent is None:
+        return None
+    if risk_intent.target_kind in _TRUST_MODE_MUST_CONFIRM_TARGETS:
+        return None
+
+    v1_trust: bool | None = None
+    try:
+        from .policy import get_policy_engine
+
+        engine = get_policy_engine()
+        is_trust = getattr(engine, "_is_trust_mode", None)
+        if callable(is_trust):
+            v1_trust = bool(is_trust())
+    except Exception:
+        v1_trust = None
+
+    v2_trust: bool | None = None
+    try:
+        from .policy_v2 import ConfirmationMode
+        from .policy_v2.global_engine import get_config_v2
+
+        cfg = get_config_v2()
+        mode_value = cfg.confirmation.mode
+        v2_trust = mode_value == ConfirmationMode.TRUST or str(mode_value) == "trust"
+    except Exception:
+        v2_trust = None
+
+    # 两层都失败 → 当作未启用 trust（保守）
+    if v1_trust is None and v2_trust is None:
+        return None
+    # 任一层显式说"不是 trust" → 不 skip（保守 + 兼容旧测试 mutate v1 only）
+    if v1_trust is False or v2_trust is False:
+        return None
+    # 至少一层说 trust 且无人反对 → skip
+    if v1_trust is True or v2_trust is True:
+        return "trust_mode"
+    return None
 
 
 def _check_trusted_path_skip(
@@ -2291,6 +2358,26 @@ class Agent:
         logger.info(
             f"Initialized {len(self.handler_registry._handlers)} handlers with {len(self.handler_registry._tool_to_handler)} tools"
         )
+
+        # C7：handler 全部注册完毕 → 让 PolicyEngineV2 classifier 拿到
+        # SystemHandlerRegistry.get_tool_class 作 explicit_lookup。这样 handler
+        # 类的 TOOL_CLASSES 显式声明（C7.6 大批量补的）会优先于启发式生效。
+        # rebuild_engine_v2 会重新读 YAML + 重建 classifier；只调一次即可。
+        try:
+            from .policy_v2.global_engine import rebuild_engine_v2
+
+            rebuild_engine_v2(explicit_lookup=self.handler_registry.get_tool_class)
+            logger.info(
+                "[PolicyV2] global engine rebuilt with explicit_lookup "
+                "(%d tools have explicit ApprovalClass)",
+                len(self.handler_registry._tool_classes),
+            )
+        except Exception as exc:
+            logger.warning(
+                "[PolicyV2] failed to inject explicit_lookup: %s — "
+                "classifier will fall back to heuristics",
+                exc,
+            )
 
     async def _load_installed_skills(self) -> None:
         """
@@ -5797,6 +5884,30 @@ class Agent:
             llm_client.reset_all_cooldowns(force_all=True)
 
         im_tokens = None
+        # C7: 安装 PolicyContext ContextVar，让本轮所有下游 evaluate_via_v2
+        # 调用（permission.check_permission / reasoning_engine 双路径）拿到
+        # 与 v1 RiskGate 同源的 ctx：confirmation_mode（trust/strict/...）+
+        # session_role（mode→role）+ replay/trusted_path 快照（engine 只读，
+        # 消费仍由 _consume_risk_authorization 在 agent.py 完成）。
+        _policy_ctx_token = None
+        try:
+            from .policy_v2 import set_current_context as _pv2_set_ctx
+            from .policy_v2.adapter import build_policy_context as _pv2_build_ctx
+
+            _policy_ctx = _pv2_build_ctx(
+                session=session,
+                session_id=conversation_id or session_id or "",
+                mode=mode,
+                user_message=message,
+                channel=getattr(session, "channel", None) or "desktop",
+            )
+            _policy_ctx_token = _pv2_set_ctx(_policy_ctx)
+        except Exception as _ctx_exc:
+            logger.debug(
+                "[PolicyV2] failed to install ContextVar (sync path): %s; "
+                "downstream evaluate_via_v2 will use fallback ctx",
+                _ctx_exc,
+            )
         try:
             # 准备阶段前检查：仅捕获 prepare 开始前一刻的取消信号
             if self._is_session_cancelled(session_id):
@@ -5898,6 +6009,19 @@ class Agent:
                         session_id,
                         message[:200],
                     )
+                else:
+                    _trust_mode_reason = _check_trust_mode_skip(_risk_intent)
+                    if _trust_mode_reason:
+                        _risk_pre_authorized = True
+                        logger.info(
+                            "[RiskIntentGate] sync path skipped — %s "
+                            "(session=%s, target=%s, op=%s, message=%r)",
+                            _trust_mode_reason,
+                            session_id,
+                            getattr(_risk_intent.target_kind, "value", _risk_intent.target_kind),
+                            getattr(_risk_intent.operation_kind, "value", _risk_intent.operation_kind),
+                            message[:200],
+                        )
             if (
                 mode == "agent"
                 and _intent
@@ -6061,6 +6185,18 @@ class Agent:
                 status="aborted",
             )
             self._cleanup_session_state(im_tokens)
+            # C7: 清 PolicyContext ContextVar（避免跨 task 泄漏；FastAPI worker
+            # 复用 task 时若不 reset，下一轮会读到上轮 ctx 数据）
+            if _policy_ctx_token is not None:
+                try:
+                    from .policy_v2 import reset_current_context as _pv2_reset_ctx
+
+                    _pv2_reset_ctx(_policy_ctx_token)
+                except Exception:
+                    logger.debug(
+                        "[PolicyV2] failed to reset ContextVar (sync path)",
+                        exc_info=True,
+                    )
 
     async def chat_with_session_stream(
         self,
@@ -6170,6 +6306,26 @@ class Agent:
 
         im_tokens = None
         _reply_text = ""
+        # C7: 安装 PolicyContext ContextVar（streaming 路径，与 sync 路径
+        # 同源；详见 chat_with_session 同名块注释）
+        _policy_ctx_token = None
+        try:
+            from .policy_v2 import set_current_context as _pv2_set_ctx
+            from .policy_v2.adapter import build_policy_context as _pv2_build_ctx
+
+            _policy_ctx = _pv2_build_ctx(
+                session=session,
+                session_id=conversation_id or session_id or "",
+                mode=mode,
+                user_message=message,
+                channel=getattr(session, "channel", None) or "desktop",
+            )
+            _policy_ctx_token = _pv2_set_ctx(_policy_ctx)
+        except Exception as _ctx_exc:
+            logger.debug(
+                "[PolicyV2] failed to install ContextVar (stream path): %s",
+                _ctx_exc,
+            )
         try:
             # 立即发送心跳，让前端知道请求已被接收（准备阶段可能包含多个 LLM 调用）
             yield {"type": "heartbeat"}
@@ -6323,6 +6479,20 @@ class Agent:
                         conversation_id,
                         message[:200],
                     )
+                else:
+                    _trust_mode_reason = _check_trust_mode_skip(_risk_intent)
+                    if _trust_mode_reason:
+                        _risk_pre_authorized = True
+                        logger.info(
+                            "[RiskIntentGate] stream path skipped — %s "
+                            "(session=%s, conversation=%s, target=%s, op=%s, message=%r)",
+                            _trust_mode_reason,
+                            session_id,
+                            conversation_id,
+                            getattr(_risk_intent.target_kind, "value", _risk_intent.target_kind),
+                            getattr(_risk_intent.operation_kind, "value", _risk_intent.operation_kind),
+                            message[:200],
+                        )
             if (
                 mode == "agent"
                 and _intent
@@ -6675,6 +6845,17 @@ class Agent:
                 status="aborted",
             )
             self._cleanup_session_state(im_tokens)
+            # C7: 清 PolicyContext ContextVar（streaming 路径）
+            if _policy_ctx_token is not None:
+                try:
+                    from .policy_v2 import reset_current_context as _pv2_reset_ctx
+
+                    _pv2_reset_ctx(_policy_ctx_token)
+                except Exception:
+                    logger.debug(
+                        "[PolicyV2] failed to reset ContextVar (stream path)",
+                        exc_info=True,
+                    )
 
     def _handle_plan_exit_pending(
         self,
@@ -8188,6 +8369,18 @@ class Agent:
 
         Returns:
             TaskResult
+
+        Note (C7→C12 known gap)
+        -----------------------
+        本路径不安装 PolicyContext ContextVar。下游 ``check_permission`` 走
+        ``policy_v2.adapter._build_fallback_context`` 拿到的 ctx：
+        workspace=cwd / role=AGENT / confirmation_mode=get_config_v2().mode /
+        ``is_unattended=False``。
+
+        前三项足以让 trust mode、safety_immune 等“决策”行为与交互会话一致；
+        ``is_unattended=False`` 则会让 scheduled / CLI batch / evolution self-fix
+        在遇到 CONFIRM 时按“等用户回应”处理 → 任务挂起。这是已知缺口，由
+        C12（无人值守审批 + scheduler ContextVar wire）补齐，不属于 C7 范围。
         """
         import time
 

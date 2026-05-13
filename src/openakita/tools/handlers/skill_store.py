@@ -7,6 +7,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -22,6 +24,14 @@ class SkillStoreHandler:
         "get_store_skill_detail",
         "submit_skill_repo",
     ]
+
+    # C7 explicit ApprovalClass
+    TOOL_CLASSES = {
+        "search_store_skills": ApprovalClass.NETWORK_OUT,
+        "install_store_skill": ApprovalClass.CONTROL_PLANE,
+        "get_store_skill_detail": ApprovalClass.NETWORK_OUT,
+        "submit_skill_repo": ApprovalClass.CONTROL_PLANE,
+    }
 
     def __init__(self, agent: Agent):
         self.agent = agent

@@ -14,6 +14,7 @@ import shutil
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -33,6 +34,11 @@ class OpenCLIHandler:
     """OpenCLI 处理器 — 复用用户 Chrome 登录态操作网站。"""
 
     TOOLS = ["opencli_list", "opencli_run", "opencli_doctor"]
+    TOOL_CLASSES = {
+        "opencli_list": ApprovalClass.READONLY_GLOBAL,
+        "opencli_run": ApprovalClass.EXEC_CAPABLE,
+        "opencli_doctor": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

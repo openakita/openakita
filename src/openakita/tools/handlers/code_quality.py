@@ -13,6 +13,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -21,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class CodeQualityHandler:
     TOOLS = ["read_lints"]
+    TOOL_CLASSES = {"read_lints": ApprovalClass.READONLY_GLOBAL}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent
@@ -114,7 +117,7 @@ class CodeQualityHandler:
                 lines.append(f"  ... and {len(issues) - 50} more")
             return "\n".join(lines)
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return "[ruff] Timed out after 30s"
         except Exception as e:
             logger.warning(f"ruff failed: {e}")
@@ -172,7 +175,7 @@ class CodeQualityHandler:
                 lines.append(f"  ... and {total - 50} more")
             return header + "\n" + "\n".join(lines)
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return "[eslint] Timed out after 60s"
         except Exception as e:
             logger.warning(f"eslint failed: {e}")

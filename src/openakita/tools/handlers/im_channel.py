@@ -18,6 +18,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...channels.base import ChannelAdapter
     from ...core.agent import Agent
@@ -52,6 +54,19 @@ class IMChannelHandler:
         "get_chat_members",
         "get_recent_messages",
     ]
+
+    # C7 explicit ApprovalClass — deliver = sends to user (interactive);
+    # everything else is read-only IM metadata
+    TOOL_CLASSES = {
+        "deliver_artifacts": ApprovalClass.INTERACTIVE,
+        "get_voice_file": ApprovalClass.READONLY_GLOBAL,
+        "get_image_file": ApprovalClass.READONLY_GLOBAL,
+        "get_chat_history": ApprovalClass.READONLY_GLOBAL,
+        "get_chat_info": ApprovalClass.READONLY_GLOBAL,
+        "get_user_info": ApprovalClass.READONLY_GLOBAL,
+        "get_chat_members": ApprovalClass.READONLY_GLOBAL,
+        "get_recent_messages": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

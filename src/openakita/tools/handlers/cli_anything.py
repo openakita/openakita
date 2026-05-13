@@ -15,6 +15,7 @@ import shutil
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -29,6 +30,11 @@ class CLIAnythingHandler:
     """CLI-Anything 处理器 — 通过 CLI 控制桌面软件。"""
 
     TOOLS = ["cli_anything_discover", "cli_anything_run", "cli_anything_help"]
+    TOOL_CLASSES = {
+        "cli_anything_discover": ApprovalClass.READONLY_GLOBAL,
+        "cli_anything_run": ApprovalClass.EXEC_CAPABLE,
+        "cli_anything_help": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

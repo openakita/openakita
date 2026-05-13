@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -165,6 +167,7 @@ async def _fetch_with_redirects(
 
 class WebFetchHandler:
     TOOLS = ["web_fetch"]
+    TOOL_CLASSES = {"web_fetch": ApprovalClass.NETWORK_OUT}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

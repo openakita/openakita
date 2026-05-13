@@ -16,6 +16,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
 from ..mcp_workspace import (
     add_server_to_workspace,
     reload_all_servers,
@@ -42,6 +43,19 @@ class MCPHandler:
         "disconnect_mcp_server",
         "reload_mcp_servers",
     ]
+
+    # C7 explicit ApprovalClass —— call_mcp_tool 是任意外部代码执行入口
+    # （MCP server 由用户自行配置，不可信任为只读），归 EXEC_CAPABLE
+    TOOL_CLASSES = {
+        "call_mcp_tool": ApprovalClass.EXEC_CAPABLE,
+        "list_mcp_servers": ApprovalClass.READONLY_GLOBAL,
+        "get_mcp_instructions": ApprovalClass.READONLY_GLOBAL,
+        "add_mcp_server": ApprovalClass.CONTROL_PLANE,
+        "remove_mcp_server": ApprovalClass.DESTRUCTIVE,
+        "connect_mcp_server": ApprovalClass.CONTROL_PLANE,
+        "disconnect_mcp_server": ApprovalClass.CONTROL_PLANE,
+        "reload_mcp_servers": ApprovalClass.CONTROL_PLANE,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

@@ -11,6 +11,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -49,6 +51,7 @@ class ToolSearchHandler:
     """ToolSearch 工具处理器"""
 
     TOOLS = ["tool_search"]
+    TOOL_CLASSES = {"tool_search": ApprovalClass.READONLY_SEARCH}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

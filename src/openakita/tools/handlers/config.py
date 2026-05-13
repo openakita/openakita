@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -236,6 +238,8 @@ class ConfigHandler:
     """系统配置处理器"""
 
     TOOLS = ["system_config"]
+    # system_config 是修改 .env / 端点配置的入口，归 CONTROL_PLANE
+    TOOL_CLASSES = {"system_config": ApprovalClass.CONTROL_PLANE}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

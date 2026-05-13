@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
 from .todo_state import (
     _session_handlers,
     force_close_plan,
@@ -42,6 +43,16 @@ class PlanHandler:
         "create_plan_file",
         "exit_plan_mode",
     ]
+
+    # C7 explicit ApprovalClass — todo / plan 都是 agent 内部状态机
+    TOOL_CLASSES = {
+        "create_todo": ApprovalClass.EXEC_LOW_RISK,
+        "update_todo_step": ApprovalClass.EXEC_LOW_RISK,
+        "get_todo_status": ApprovalClass.READONLY_GLOBAL,
+        "complete_todo": ApprovalClass.EXEC_LOW_RISK,
+        "create_plan_file": ApprovalClass.MUTATING_SCOPED,
+        "exit_plan_mode": ApprovalClass.INTERACTIVE,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

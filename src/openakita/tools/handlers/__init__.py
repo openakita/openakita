@@ -5,9 +5,14 @@
 每个处理器对应一类系统工具（如 browser, filesystem, memory 等）。
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from openakita.core.policy_v2 import ApprovalClass, DecisionSource
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +53,11 @@ class SystemHandlerRegistry:
         self._handlers: dict[str, HandlerFunc] = {}
         self._tool_to_handler: dict[str, str] = {}  # tool_name -> handler_name
         self._permission_checks: dict[str, ToolPermissionCheck] = {}  # tool_name -> check fn
-        self._concurrency_checks: dict[str, "SystemHandlerRegistry.ConcurrencyCheck"] = {}
+        self._concurrency_checks: dict[str, SystemHandlerRegistry.ConcurrencyCheck] = {}
+        # tool_name -> (ApprovalClass, DecisionSource) — populated from
+        # explicit register(tool_classes=) param and handler.TOOL_CLASSES attr.
+        # Used by policy_v2.ApprovalClassifier via .get_tool_class() lookup.
+        self._tool_classes: dict[str, tuple[Any, Any]] = {}
 
     def register(
         self,
@@ -56,6 +65,7 @@ class SystemHandlerRegistry:
         handler: HandlerFunc,
         tool_names: list[str] | None = None,
         check_permissions: ToolPermissionCheck | None = None,
+        tool_classes: dict[str, ApprovalClass] | None = None,
     ) -> None:
         """
         注册处理器
@@ -69,6 +79,11 @@ class SystemHandlerRegistry:
             check_permissions: Optional per-tool permission callback.
                 Invoked by ToolExecutor.check_permission() after mode+policy
                 checks pass.  Returns PermissionDecision or None.
+            tool_classes: Optional explicit ApprovalClass per tool. Takes
+                priority over handler's TOOL_CLASSES class attribute (if both
+                are present, ``most_strict`` is used to pick the safer one).
+                When omitted, the registry will try ``handler.__self__.TOOL_CLASSES``.
+                See docs/policy_v2_research.md §4.21 for the developer cookbook.
         """
         self._handlers[handler_name] = handler
 
@@ -96,11 +111,81 @@ class SystemHandlerRegistry:
             for tool_name in tool_names:
                 self._permission_checks[tool_name] = check_permissions
 
+        # ApprovalClass collection — opt-in: only does anything when caller
+        # passes tool_classes= or handler defines TOOL_CLASSES. Importing
+        # policy_v2 lazily to avoid bootstrap cycle from handlers/__init__.py.
+        self._collect_tool_classes(handler, tool_names or [], tool_classes)
+
         logger.info(
             "Registered handler: %s (%d tools)",
             handler_name,
             len(tool_names or []),
         )
+
+    def _collect_tool_classes(
+        self,
+        handler: HandlerFunc,
+        tool_names: list[str],
+        register_param: dict[str, ApprovalClass] | None,
+    ) -> None:
+        """Merge register(tool_classes=) + handler.TOOL_CLASSES into ``self._tool_classes``.
+
+        If both sources name the same tool, ``most_strict`` is applied so the
+        safer classification wins. Repeated registrations of the same handler
+        (rare, but possible) also fold via ``most_strict`` against the existing
+        entry — never accidentally relax an already-strict label.
+        """
+        owner = getattr(handler, "__self__", None)
+        handler_attr = (
+            getattr(owner, "TOOL_CLASSES", None) if owner is not None else None
+        )
+
+        if not register_param and not handler_attr:
+            return
+
+        # Lazy import to avoid handlers ↔ policy_v2 bootstrap cycle.
+        from openakita.core.policy_v2 import DecisionSource, most_strict
+
+        new_entries: dict[str, tuple[Any, Any]] = {}
+
+        if register_param:
+            for tool, klass in register_param.items():
+                new_entries[tool] = (klass, DecisionSource.EXPLICIT_REGISTER_PARAM)
+
+        if handler_attr:
+            for tool, klass in handler_attr.items():
+                attr_entry = (klass, DecisionSource.EXPLICIT_HANDLER_ATTR)
+                existing = new_entries.get(tool)
+                new_entries[tool] = (
+                    most_strict([existing, attr_entry]) if existing else attr_entry
+                )
+
+        # Filter out tools that don't actually belong to this handler — likely
+        # a typo or stale entry. Storing them anyway would cause a silent
+        # "phantom" classification that a future plugin could inadvertently
+        # inherit. WARN + drop is safer than WARN + keep.
+        if tool_names:
+            tool_names_set = set(tool_names)
+            stray = [t for t in new_entries if t not in tool_names_set]
+            for tool in stray:
+                logger.warning(
+                    "[Registry] tool_classes lists %r which is not in this "
+                    "handler's TOOLS list — dropping (possible typo)",
+                    tool,
+                )
+                new_entries.pop(tool, None)
+
+        for tool, entry in new_entries.items():
+            existing = self._tool_classes.get(tool)
+            self._tool_classes[tool] = (
+                most_strict([existing, entry]) if existing else entry
+            )
+
+    def get_tool_class(
+        self, tool_name: str
+    ) -> tuple[ApprovalClass, DecisionSource] | None:
+        """ApprovalClassifier explicit_lookup callback."""
+        return self._tool_classes.get(tool_name)
 
     def unregister(self, handler_name: str) -> bool:
         """
@@ -114,10 +199,16 @@ class SystemHandlerRegistry:
         """
         if handler_name in self._handlers:
             del self._handlers[handler_name]
-            # 清理 tool_to_handler 映射
+            removed_tools = {
+                tool
+                for tool, mapped in self._tool_to_handler.items()
+                if mapped == handler_name
+            }
             self._tool_to_handler = {
                 k: v for k, v in self._tool_to_handler.items() if v != handler_name
             }
+            for tool in removed_tools:
+                self._tool_classes.pop(tool, None)
             logger.info(f"Unregistered system handler: {handler_name}")
             return True
         return False
@@ -219,6 +310,7 @@ class SystemHandlerRegistry:
         """
         if tool_name in self._tool_to_handler:
             del self._tool_to_handler[tool_name]
+            self._tool_classes.pop(tool_name, None)
             return True
         return False
 
@@ -247,7 +339,7 @@ class SystemHandlerRegistry:
         return self._tool_to_handler.get(tool_name)
 
     def set_concurrency_check(
-        self, handler_name: str, check: "SystemHandlerRegistry.ConcurrencyCheck"
+        self, handler_name: str, check: SystemHandlerRegistry.ConcurrencyCheck
     ) -> None:
         """Register a per-handler concurrency safety callback.
 

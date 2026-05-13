@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -84,6 +85,21 @@ class FilesystemHandler:
         "move_file",
         "delete_file",
     ]
+
+    # C7：v2 PolicyEngine 显式分类（避免启发式回退到 UNKNOWN）。
+    # 跨盘 / 工作区外路径的升级（MUTATING_SCOPED → MUTATING_GLOBAL）由
+    # classifier._refine_with_params 处理；此处声明 base class 即可。
+    TOOL_CLASSES = {
+        "run_shell": ApprovalClass.EXEC_CAPABLE,
+        "write_file": ApprovalClass.MUTATING_SCOPED,
+        "read_file": ApprovalClass.READONLY_SCOPED,
+        "edit_file": ApprovalClass.MUTATING_SCOPED,
+        "list_directory": ApprovalClass.READONLY_GLOBAL,
+        "grep": ApprovalClass.READONLY_SEARCH,
+        "glob": ApprovalClass.READONLY_SEARCH,
+        "move_file": ApprovalClass.MUTATING_SCOPED,
+        "delete_file": ApprovalClass.DESTRUCTIVE,
+    }
 
     def __init__(self, agent: "Agent"):
         """

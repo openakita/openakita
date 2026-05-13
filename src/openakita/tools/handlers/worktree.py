@@ -10,6 +10,8 @@ import os
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -18,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 class WorktreeHandler:
     TOOLS = ["enter_worktree", "exit_worktree"]
+    TOOL_CLASSES = {
+        "enter_worktree": ApprovalClass.CONTROL_PLANE,
+        "exit_worktree": ApprovalClass.CONTROL_PLANE,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

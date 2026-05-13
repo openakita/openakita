@@ -11,6 +11,7 @@ import traceback
 from typing import Any
 
 from ...config import settings
+from ...core.policy_v2 import ApprovalClass
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,10 @@ class WebSearchHandler:
     """Web Search 处理器"""
 
     TOOLS = ["web_search", "news_search"]
+    TOOL_CLASSES = {
+        "web_search": ApprovalClass.NETWORK_OUT,
+        "news_search": ApprovalClass.NETWORK_OUT,
+    }
 
     def __init__(self, agent: Any = None):
         self.agent = agent

@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...agents.lock_manager import LockManager
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -78,6 +79,25 @@ class BrowserHandler:
         "browser_close",
         "view_image",
     ]
+
+    # C7 explicit ApprovalClass — 浏览器是真实执行环境，写入 cookie / 执行 JS
+    # 都属于 EXEC_CAPABLE；只读类（截图/列 tab）归 READONLY_GLOBAL
+    TOOL_CLASSES = {
+        "browser_open": ApprovalClass.EXEC_CAPABLE,
+        "browser_navigate": ApprovalClass.EXEC_CAPABLE,
+        "browser_click": ApprovalClass.EXEC_CAPABLE,
+        "browser_type": ApprovalClass.EXEC_CAPABLE,
+        "browser_scroll": ApprovalClass.EXEC_LOW_RISK,
+        "browser_wait": ApprovalClass.EXEC_LOW_RISK,
+        "browser_execute_js": ApprovalClass.EXEC_CAPABLE,
+        "browser_get_content": ApprovalClass.READONLY_GLOBAL,
+        "browser_screenshot": ApprovalClass.READONLY_GLOBAL,
+        "browser_list_tabs": ApprovalClass.READONLY_GLOBAL,
+        "browser_switch_tab": ApprovalClass.EXEC_LOW_RISK,
+        "browser_new_tab": ApprovalClass.EXEC_LOW_RISK,
+        "browser_close": ApprovalClass.EXEC_LOW_RISK,
+        "view_image": ApprovalClass.READONLY_GLOBAL,
+    }
 
     # browser_get_content 默认最大字符数
     CONTENT_DEFAULT_MAX_LENGTH = 32000

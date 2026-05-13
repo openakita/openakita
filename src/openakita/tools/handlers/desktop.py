@@ -17,6 +17,8 @@ import logging
 import sys
 from typing import Any
 
+from ...core.policy_v2 import ApprovalClass
+
 logger = logging.getLogger(__name__)
 
 # 桌面工具列表
@@ -37,6 +39,19 @@ class DesktopHandler:
     """桌面自动化工具处理器"""
 
     TOOLS = DESKTOP_TOOLS
+
+    # C7 explicit ApprovalClass — desktop interactions are real-world side effects
+    TOOL_CLASSES = {
+        "desktop_screenshot": ApprovalClass.READONLY_GLOBAL,
+        "desktop_find_element": ApprovalClass.READONLY_GLOBAL,
+        "desktop_click": ApprovalClass.EXEC_CAPABLE,
+        "desktop_type": ApprovalClass.EXEC_CAPABLE,
+        "desktop_hotkey": ApprovalClass.EXEC_CAPABLE,
+        "desktop_scroll": ApprovalClass.EXEC_LOW_RISK,
+        "desktop_window": ApprovalClass.EXEC_CAPABLE,
+        "desktop_wait": ApprovalClass.EXEC_LOW_RISK,
+        "desktop_inspect": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent):
         self.agent = agent

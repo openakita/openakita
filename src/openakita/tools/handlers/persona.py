@@ -12,6 +12,8 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -52,6 +54,14 @@ class PersonaHandler:
         "toggle_proactive",
         "get_persona_profile",
     ]
+
+    # C7 explicit ApprovalClass — persona 切换是 control plane operation
+    TOOL_CLASSES = {
+        "switch_persona": ApprovalClass.CONTROL_PLANE,
+        "update_persona_trait": ApprovalClass.MUTATING_SCOPED,
+        "toggle_proactive": ApprovalClass.CONTROL_PLANE,
+        "get_persona_profile": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

@@ -14,6 +14,8 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -31,6 +33,16 @@ class ScheduledHandler:
         "trigger_scheduled_task",
         "query_task_executions",
     ]
+
+    # C7 explicit ApprovalClass — scheduling = control plane mutation
+    TOOL_CLASSES = {
+        "schedule_task": ApprovalClass.CONTROL_PLANE,
+        "list_scheduled_tasks": ApprovalClass.READONLY_GLOBAL,
+        "cancel_scheduled_task": ApprovalClass.CONTROL_PLANE,
+        "update_scheduled_task": ApprovalClass.CONTROL_PLANE,
+        "trigger_scheduled_task": ApprovalClass.CONTROL_PLANE,
+        "query_task_executions": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

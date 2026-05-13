@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
 from ...skills.exposure import get_skill_source_roots
 
 if TYPE_CHECKING:
@@ -31,6 +32,19 @@ class SystemHandler:
         "set_task_timeout",
         "get_workspace_map",
     ]
+
+    # C7 explicit ApprovalClass
+    TOOL_CLASSES = {
+        "ask_user": ApprovalClass.INTERACTIVE,
+        "enable_thinking": ApprovalClass.EXEC_LOW_RISK,
+        "get_session_logs": ApprovalClass.READONLY_GLOBAL,
+        "get_tool_info": ApprovalClass.READONLY_GLOBAL,
+        # generate_image 是网络出站调用 + 写盘（image gen API），归 NETWORK_OUT；
+        # 实际写文件路径在 cwd，不算 mutating（不是用户文件）
+        "generate_image": ApprovalClass.NETWORK_OUT,
+        "set_task_timeout": ApprovalClass.CONTROL_PLANE,
+        "get_workspace_map": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

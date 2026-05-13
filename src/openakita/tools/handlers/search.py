@@ -7,6 +7,8 @@ Semantic Search 处理器
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -15,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 class SearchHandler:
     TOOLS = ["semantic_search"]
+    TOOL_CLASSES = {"semantic_search": ApprovalClass.READONLY_SEARCH}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

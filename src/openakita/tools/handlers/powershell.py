@@ -17,6 +17,7 @@ import subprocess
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -183,6 +184,7 @@ class PowerShellHandler:
     """PowerShell 工具处理器"""
 
     TOOLS = ["run_powershell"]
+    TOOL_CLASSES = {"run_powershell": ApprovalClass.EXEC_CAPABLE}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -27,6 +29,7 @@ LANGUAGE_TO_KERNEL = {
 
 class NotebookHandler:
     TOOLS = ["edit_notebook"]
+    TOOL_CLASSES = {"edit_notebook": ApprovalClass.MUTATING_SCOPED}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent
