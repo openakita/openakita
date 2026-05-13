@@ -10,6 +10,7 @@
 - 线程安全
 """
 
+import contextvars
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -74,7 +75,10 @@ class SessionLogBuffer:
         self._max_sessions = max_sessions
         self._buffers: dict[str, deque[LogEntry]] = {}
         self._buffer_lock = threading.Lock()
-        self._current_session_id: str | None = None
+        self._current_session_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+            "openakita_log_session_id",
+            default=None,
+        )
         self._initialized = True
 
     def set_current_session(self, session_id: str) -> None:
@@ -84,11 +88,15 @@ class SessionLogBuffer:
         Args:
             session_id: 会话 ID
         """
-        self._current_session_id = session_id
+        self._current_session_id_var.set(session_id)
 
     def get_current_session(self) -> str | None:
         """获取当前活跃的 session_id"""
-        return self._current_session_id
+        return self._current_session_id_var.get()
+
+    def clear_current_session(self) -> None:
+        """清除当前任务上下文中的 session_id。"""
+        self._current_session_id_var.set(None)
 
     def add_log(
         self,
@@ -109,7 +117,7 @@ class SessionLogBuffer:
             timestamp: 时间戳（如果为 None，使用当前时间）
         """
         # 确定 session_id
-        sid = session_id or self._current_session_id or "_global"
+        sid = session_id or self.get_current_session() or "_global"
 
         # 创建日志条目
         entry = LogEntry(
@@ -149,7 +157,7 @@ class SessionLogBuffer:
         Returns:
             日志列表（最新的在最后）
         """
-        sid = session_id or self._current_session_id or "_global"
+        sid = session_id or self.get_current_session() or "_global"
         count = min(count, self._max_entries)
 
         logs = []
@@ -210,7 +218,7 @@ class SessionLogBuffer:
 
         保留 _global 和 keep_sid，淘汰最不活跃的 session。
         """
-        protected = {"_global", keep_sid, self._current_session_id or ""}
+        protected = {"_global", keep_sid, self.get_current_session() or ""}
         candidates = [(sid, buf) for sid, buf in self._buffers.items() if sid not in protected]
         if not candidates:
             return
@@ -248,7 +256,7 @@ class SessionLogBuffer:
             return {
                 "total_sessions": len(self._buffers),
                 "sessions": {sid: len(buf) for sid, buf in self._buffers.items()},
-                "current_session": self._current_session_id,
+                "current_session": self.get_current_session(),
             }
 
 

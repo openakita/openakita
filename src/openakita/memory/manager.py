@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -59,6 +60,66 @@ _UNSET_OWNER = object()
 
 class MemoryManager:
     """记忆管理器 (v2)"""
+
+    @property
+    def _current_session_id(self) -> str | None:
+        return self._current_session_id_var.get()
+
+    @_current_session_id.setter
+    def _current_session_id(self, value: str | None) -> None:
+        self._current_session_id_var.set(value)
+
+    @property
+    def _current_user_id(self) -> str:
+        return self._current_user_id_var.get()
+
+    @_current_user_id.setter
+    def _current_user_id(self, value: str) -> None:
+        self._current_user_id_var.set(value or "default")
+
+    @property
+    def _current_workspace_id(self) -> str:
+        return self._current_workspace_id_var.get()
+
+    @_current_workspace_id.setter
+    def _current_workspace_id(self, value: str) -> None:
+        self._current_workspace_id_var.set(value or "default")
+
+    @property
+    def _session_turns(self) -> list[ConversationTurn]:
+        turns = self._session_turns_var.get()
+        if turns is None:
+            turns = []
+            self._session_turns_var.set(turns)
+        return turns
+
+    @_session_turns.setter
+    def _session_turns(self, value: list[ConversationTurn]) -> None:
+        self._session_turns_var.set(value)
+
+    @property
+    def _recent_messages(self) -> list[dict]:
+        messages = self._recent_messages_var.get()
+        if messages is None:
+            messages = []
+            self._recent_messages_var.set(messages)
+        return messages
+
+    @_recent_messages.setter
+    def _recent_messages(self, value: list[dict]) -> None:
+        self._recent_messages_var.set(value)
+
+    @property
+    def _session_cited_memories(self) -> list[dict]:
+        memories = self._session_cited_memories_var.get()
+        if memories is None:
+            memories = []
+            self._session_cited_memories_var.set(memories)
+        return memories
+
+    @_session_cited_memories.setter
+    def _session_cited_memories(self, value: list[dict]) -> None:
+        self._session_cited_memories_var.set(value)
 
     def __init__(
         self,
@@ -123,6 +184,29 @@ class MemoryManager:
         self.memories_file = self.data_dir / "memories.json"
         self._memories: dict[str, Memory] = {}
         self._memories_lock = threading.RLock()
+
+        self._current_session_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+            f"openakita_memory_session_id_{id(self)}",
+            default=None,
+        )
+        self._current_user_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+            f"openakita_memory_user_id_{id(self)}",
+            default="default",
+        )
+        self._current_workspace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+            f"openakita_memory_workspace_id_{id(self)}",
+            default="default",
+        )
+        self._session_turns_var: contextvars.ContextVar[list[ConversationTurn] | None] = (
+            contextvars.ContextVar(f"openakita_memory_session_turns_{id(self)}", default=None)
+        )
+        self._recent_messages_var: contextvars.ContextVar[list[dict] | None] = contextvars.ContextVar(
+            f"openakita_memory_recent_messages_{id(self)}",
+            default=None,
+        )
+        self._session_cited_memories_var: contextvars.ContextVar[list[dict] | None] = (
+            contextvars.ContextVar(f"openakita_memory_cited_{id(self)}", default=None)
+        )
 
         self._current_session_id: str | None = None
         self._current_user_id: str = "default"

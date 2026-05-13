@@ -330,6 +330,7 @@ class Session:
     channel: str  # 来源通道
     chat_id: str  # 聊天 ID（群/私聊）
     user_id: str  # 用户 ID
+    bot_instance_id: str = ""  # 机器人实例 ID（为空时兼容旧数据，回退 channel）
     thread_id: str | None = None  # 话题/线程 ID（飞书话题等）
     chat_type: str = "private"  # "group" | "private"
     display_name: str = ""  # 用户昵称（用于 UI 展示）
@@ -355,6 +356,7 @@ class Session:
         channel: str,
         chat_id: str,
         user_id: str,
+        bot_instance_id: str = "",
         thread_id: str | None = None,
         config: SessionConfig | None = None,
         chat_type: str = "private",
@@ -370,6 +372,7 @@ class Session:
             channel=channel,
             chat_id=chat_id,
             user_id=user_id,
+            bot_instance_id=bot_instance_id or channel,
             thread_id=thread_id,
             chat_type=chat_type,
             display_name=display_name,
@@ -471,7 +474,8 @@ class Session:
     @property
     def session_key(self) -> str:
         """会话唯一标识"""
-        key = f"{self.channel}:{self.chat_id}:{self.user_id}"
+        namespace = self.bot_instance_id or self.channel
+        key = f"{namespace}:{self.chat_id}:{self.user_id}"
         if self.thread_id:
             key += f":{self.thread_id}"
         return key
@@ -682,6 +686,7 @@ class Session:
         return {
             "id": self.id,
             "channel": self.channel,
+            "bot_instance_id": self.bot_instance_id or self.channel,
             "chat_id": self.chat_id,
             "user_id": self.user_id,
             "thread_id": self.thread_id,
@@ -720,6 +725,7 @@ class Session:
         return cls(
             id=data["id"],
             channel=data["channel"],
+            bot_instance_id=data.get("bot_instance_id") or data.get("channel", ""),
             chat_id=data["chat_id"],
             user_id=data["user_id"],
             thread_id=data.get("thread_id"),

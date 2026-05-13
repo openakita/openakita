@@ -358,6 +358,7 @@ class UnifiedMessage:
     chat_id: str  # 聊天 ID（私聊/群组）
     chat_type: str = "private"  # 聊天类型: private/group/channel
     thread_id: str | None = None  # 话题/线程 ID
+    bot_instance_id: str = ""  # 机器人实例 ID，用于多 Bot 会话隔离
 
     # 内容
     message_type: MessageType = MessageType.TEXT
@@ -389,6 +390,7 @@ class UnifiedMessage:
         channel_user_id: str,
         chat_id: str,
         content: MessageContent,
+        bot_instance_id: str = "",
         **kwargs,
     ) -> "UnifiedMessage":
         """创建统一消息"""
@@ -399,6 +401,7 @@ class UnifiedMessage:
             user_id=user_id,
             channel_user_id=channel_user_id,
             chat_id=chat_id,
+            bot_instance_id=bot_instance_id,
             message_type=content.message_type,
             content=content,
             **kwargs,

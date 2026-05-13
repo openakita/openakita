@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from datetime import datetime
 from types import SimpleNamespace
@@ -106,6 +107,45 @@ def test_two_users_do_not_see_each_other_long_term_memory(tmp_path):
     manager.start_session("session-a", user_id="user-a")
     user_a_results = manager.search_memories("用户住在", scope="user")
     assert [m.content for m in user_a_results] == ["用户住在苏州"]
+
+
+def test_same_user_different_bot_workspaces_do_not_share_memory(tmp_path):
+    manager = _manager(tmp_path)
+
+    manager.start_session("writer-session", user_id="user-a", workspace_id="feishu:writer")
+    manager.add_memory(_memory("用户喜欢写长文"), scope="global")
+
+    manager.start_session("reviewer-session", user_id="user-a", workspace_id="feishu:reviewer")
+    manager.add_memory(_memory("用户喜欢严格审稿"), scope="global")
+
+    reviewer_results = manager.search_memories("用户喜欢", scope="user")
+    assert [m.content for m in reviewer_results] == ["用户喜欢严格审稿"]
+
+    manager.start_session("writer-session", user_id="user-a", workspace_id="feishu:writer")
+    writer_results = manager.search_memories("用户喜欢", scope="user")
+    assert [m.content for m in writer_results] == ["用户喜欢写长文"]
+
+
+@pytest.mark.asyncio
+async def test_memory_scope_context_is_task_local(tmp_path):
+    manager = _manager(tmp_path)
+
+    async def run_session(session_id: str, workspace_id: str):
+        manager.start_session(session_id, user_id="user-a", workspace_id=workspace_id)
+        await asyncio.sleep(0)
+        return (
+            manager._current_session_id,
+            manager._current_user_id,
+            manager._current_workspace_id,
+        )
+
+    writer, reviewer = await asyncio.gather(
+        run_session("writer-session", "feishu:writer"),
+        run_session("reviewer-session", "feishu:reviewer"),
+    )
+
+    assert writer == ("writer-session", "user-a", "feishu:writer")
+    assert reviewer == ("reviewer-session", "user-a", "feishu:reviewer")
 
 
 def test_legacy_quarantine_is_not_in_default_retrieval(tmp_path):
