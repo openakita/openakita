@@ -4632,11 +4632,22 @@ fn show_main_window(app: &tauri::AppHandle, reason: &str, open_status: bool) {
 
     // Windows WebView2/tao can crash if show/focus runs re-entrantly from a
     // single-instance or tray callback while the hidden window state is changing.
+    // Keep the delay off-thread, but marshal the actual window operations back to
+    // Tauri's main event loop; WebView/window APIs are not safe to poke directly
+    // from an arbitrary worker thread.
     #[cfg(target_os = "windows")]
     {
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(120));
-            show_main_window_now(&app_handle, &reason, open_status);
+            let app_for_ui = app_handle.clone();
+            let reason_for_log = reason.clone();
+            if let Err(e) = app_handle.run_on_main_thread(move || {
+                show_main_window_now(&app_for_ui, &reason, open_status);
+            }) {
+                log_to_file(&format!(
+                    "[window] run_on_main_thread failed ({reason_for_log}): {e}"
+                ));
+            }
         });
     }
 
