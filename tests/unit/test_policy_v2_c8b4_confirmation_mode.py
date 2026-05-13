@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import pytest
 
-from openakita.core.policy import PolicyEngine
 from openakita.core.policy_v2 import (
     coerce_v1_label_to_v2_mode,
     read_permission_mode_label,
@@ -91,65 +90,73 @@ class TestCoerceV1LabelToV2Mode:
 
 
 class TestPolicyEngineFieldsDeleted:
-    """C8b-4 删除的 v1 字段不应再出现。"""
+    """C8b-4 删除的 v1 字段不应再出现。
 
-    def test_frontend_mode_field_gone(self) -> None:
-        engine = PolicyEngine()
-        assert not hasattr(engine, "_frontend_mode"), (
-            "PolicyEngine still has _frontend_mode after C8b-4"
+    C8b-6b：v1 ``policy.py`` 整文件已删；最强断言就是模块不可导入。
+    扫描"借尸还魂"则需要剥离 docstring/注释（v2 模块的设计 doc 中仍合法引用
+    旧字段名作为历史记录），用 `_strip_comments_and_doc` 共享 helper。
+    """
+
+    @staticmethod
+    def _strip_comments_and_doc(text: str) -> str:
+        out: list[str] = []
+        in_doc = False
+        for raw in text.splitlines():
+            triple_count = raw.count('"""') + raw.count("'''")
+            if triple_count % 2 == 1:
+                in_doc = not in_doc
+                continue
+            if triple_count >= 2 and not in_doc:
+                continue
+            if in_doc:
+                continue
+            if raw.lstrip().startswith("#"):
+                continue
+            out.append(raw)
+        return "\n".join(out)
+
+    @classmethod
+    def _read_executable_v2_sources(cls) -> str:
+        from pathlib import Path
+
+        src_root = Path(__file__).resolve().parents[2] / "src" / "openakita"
+        chunks: list[str] = []
+        for py in sorted(src_root.rglob("*.py")):
+            chunks.append(cls._strip_comments_and_doc(py.read_text(encoding="utf-8")))
+        return "\n".join(chunks)
+
+    def test_v1_module_fully_deleted(self) -> None:
+        with pytest.raises(ModuleNotFoundError):
+            __import__("openakita.core.policy")
+
+    def test_frontend_mode_field_assignment_gone(self) -> None:
+        body = self._read_executable_v2_sources()
+        assert "self._frontend_mode" not in body, (
+            "self._frontend_mode 仍出现在可执行代码中"
         )
 
     def test_session_allow_count_field_gone(self) -> None:
-        engine = PolicyEngine()
-        assert not hasattr(engine, "_session_allow_count"), (
-            "PolicyEngine still has _session_allow_count after C8b-4"
-        )
+        body = self._read_executable_v2_sources()
+        assert "self._session_allow_count" not in body
+        assert "_session_allow_count +=" not in body
 
     def test_smart_escalation_threshold_class_const_gone(self) -> None:
-        assert not hasattr(PolicyEngine, "_SMART_ESCALATION_THRESHOLD"), (
-            "PolicyEngine still has _SMART_ESCALATION_THRESHOLD after C8b-4"
-        )
+        body = self._read_executable_v2_sources()
+        assert "_SMART_ESCALATION_THRESHOLD" not in body
 
 
 class TestSmartEscalationDeleted:
-    """v1 smart-mode 的 MEDIUM 风险自动升信任路径完全删除。"""
+    """v1 smart-mode MEDIUM 风险自动升信任路径完全删除。
 
-    def test_on_allow_does_not_increment_phantom_counter(self) -> None:
-        """``_on_allow`` 应只重置 consecutive_denials，不再自增任何 escalation
-        计数（_session_allow_count 字段已删）。"""
-        from openakita.core.policy import (
-            ConfirmationConfig,
-            SecurityConfig,
-        )
+    C8b-6b：原本通过实例化 PolicyEngine + 调 ``_on_allow`` 验证；v1 类已删，
+    改为静态 + 整源码扫描（剥离 docstring/注释）确保 escalation 路径完全清除。
+    """
 
-        engine = PolicyEngine(
-            SecurityConfig(
-                enabled=True,
-                confirmation=ConfirmationConfig(mode="smart"),
-            )
-        )
-        # 多次 _on_allow 不应抛 AttributeError（即使字段已删）
-        for _ in range(10):
-            engine._on_allow("write_file")
-        assert engine._consecutive_denials == 0
-        assert not hasattr(engine, "_session_allow_count")
-
-    def test_smart_escalation_runtime_constants_removed(self) -> None:
-        """动态守卫：PolicyEngine 上不再有 escalation 相关的可执行符号。
-
-        本测试**不**做源码 grep（doc comment 里仍会提及已删字段名作为历史
-        参考）；改为查类字典里没有这些 attribute / class const。
-        """
-        # Class-level
-        assert not hasattr(PolicyEngine, "_SMART_ESCALATION_THRESHOLD")
-        # Instance-level after __init__
-        engine = PolicyEngine()
-        assert not hasattr(engine, "_session_allow_count")
-
-        # Smoke: assert the deleted field truly cannot be accessed
-        # (confirms it's not an instance attribute swallowed by __getattr__)
-        with pytest.raises(AttributeError):
-            engine._session_allow_count  # noqa: B018
+    def test_no_smart_escalation_artifacts(self) -> None:
+        body = TestPolicyEngineFieldsDeleted._read_executable_v2_sources()
+        # smart_escalation 字符串作为 metadata key 不应出现
+        assert "smart_escalation" not in body
+        assert "_SMART_ESCALATION_THRESHOLD" not in body
 
 
 class TestPermissionModeEndpointE2E:

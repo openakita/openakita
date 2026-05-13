@@ -14,8 +14,9 @@ from __future__ import annotations
 
 
 def run() -> int:
+    # C8b-6b：v1 ``reset_policy_engine`` facade 已删；改用 v2 唯一入口
+    # ``reset_policy_v2_layer``（同时清 engine + audit logger，hot-reload 契约）。
     from openakita.core.permission import check_permission
-    from openakita.core.policy import reset_policy_engine
     from openakita.core.policy_v2 import (
         ApprovalClass,
         DecisionAction,
@@ -23,6 +24,9 @@ def run() -> int:
         is_initialized,
         set_engine_v2,
     )
+    from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
+
+    reset_policy_engine = reset_policy_v2_layer  # noqa: N806 — keep local name for clarity
 
     failures: list[str] = []
 

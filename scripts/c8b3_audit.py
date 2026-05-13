@@ -55,32 +55,30 @@ def d1_completeness() -> None:
 
 
 def d2_single_source_of_truth() -> None:
-    print("\n=== C8b-3 D2 single source of truth ===")
+    print("\n=== C8b-3 D2 single source of truth (C8b-6b updated) ===")
     src = ROOT / "src" / "openakita"
 
-    pe_src = (src / "core" / "policy.py").read_text(encoding="utf-8")
-    # 7 facade methods + mark_confirmed all gone from PolicyEngine
-    for gone in (
-        "def store_ui_pending",
-        "def prepare_ui_confirm",
-        "def cleanup_ui_confirm",
-        "async def wait_for_ui_resolution",
-        "def resolve_ui_confirm",
-        "def cleanup_session",
-        "def mark_confirmed",
-    ):
-        assert gone not in pe_src, f"PolicyEngine still has '{gone}'"
-    print("  6 facade methods + mark_confirmed: all deleted from policy.py")
+    # C8b-6b: v1 ``policy.py`` 整文件已删 → 7 facade + 2 fields 自然不可能存在。
+    # 改为反向断言模块完全不可导入；扫描 src/ 防止任何 v2 模块"借尸还魂"重新
+    # 出现 v1 facade 命名的字段初始化。
+    try:
+        __import__("openakita.core.policy")
+        raise AssertionError(
+            "openakita.core.policy 仍可导入——C8b-6b 应已删除 v1 模块"
+        )
+    except ModuleNotFoundError:
+        pass
+    print("  v1 policy.py module fully deleted (C8b-6b): OK")
 
-    # 2 v1 fields gone (only doc-comment mentions remain)
     for field_assign in (
         "self._confirmed_cache: dict",
         "self._session_allowlist: dict",
     ):
-        assert field_assign not in pe_src, (
-            f"PolicyEngine still initializes {field_assign}"
-        )
-    print("  _confirmed_cache + _session_allowlist field initializations: deleted")
+        for py in src.rglob("*.py"):
+            assert field_assign not in py.read_text(encoding="utf-8"), (
+                f"v1 field '{field_assign}' resurrected in {py.relative_to(src.parent.parent)}"
+            )
+    print("  _confirmed_cache + _session_allowlist absent from all v2 modules: OK")
 
     # SessionAllowlistManager is the single owner of session allow state
     sa_assigns = 0

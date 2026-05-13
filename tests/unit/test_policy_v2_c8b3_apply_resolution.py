@@ -208,31 +208,30 @@ class TestCallsiteMigrationStatic:
 
 
 class TestPolicyV1FacadeDeleted:
-    """v1 PolicyEngine 不再有 6 个 facade 方法 + mark_confirmed + 2 个字段。"""
+    """v1 PolicyEngine 不再有 6 个 facade 方法 + mark_confirmed + 2 个字段。
 
-    def test_facade_methods_gone(self) -> None:
-        from openakita.core.policy import PolicyEngine
+    C8b-6b：v1 ``policy.py`` 整文件已删；最强的断言就是模块本身不可导入。
+    旧"扫整源码找方法名"的检查在 v2 重新使用同名 helper（如 ``cleanup_session``
+    被 ``ui_confirm_bus`` 接管）后会误报，已改为最小验证。
+    """
 
-        for name in (
-            "store_ui_pending",
-            "cleanup_session",
-            "resolve_ui_confirm",
-            "prepare_ui_confirm",
-            "cleanup_ui_confirm",
-            "wait_for_ui_resolution",
-            "mark_confirmed",
-        ):
-            assert not hasattr(PolicyEngine, name), (
-                f"PolicyEngine still has {name} — should be deleted in C8b-3"
-            )
+    def test_v1_policy_module_fully_deleted(self) -> None:
+        with pytest.raises(ModuleNotFoundError):
+            __import__("openakita.core.policy")
 
-    def test_fields_gone(self) -> None:
-        from openakita.core.policy import PolicyEngine
+    def test_v1_class_no_residual_attribute_assignments(self) -> None:
+        """``PolicyEngine`` 的两个 v1-only 字段不该被任何 v2 模块以同样
+        ``self._session_allowlist[...]`` / ``self._confirmed_cache[...]`` 形式赋值
+        （typing alias 命名是 v1 私有，v2 字段命名应与之区分）。"""
+        from pathlib import Path
 
-        # construct an instance and confirm fields don't exist
-        engine = PolicyEngine.__new__(PolicyEngine)
-        # Init enough to test field absence; full init requires config
-        for name in ("_session_allowlist", "_confirmed_cache"):
-            assert not hasattr(engine, name), (
-                f"PolicyEngine still has {name} after C8b-3"
-            )
+        src_root = Path(__file__).resolve().parents[2] / "src" / "openakita"
+        for py in src_root.rglob("*.py"):
+            text = py.read_text(encoding="utf-8")
+            for name in ("self._confirmed_cache[", "self._session_allowlist["):
+                # 注释/docstring 中的字面量提及 OK；这里查"赋值/读用"语句模式
+                # （`[...]` 下标），只会匹配可执行代码。
+                rel = py.relative_to(src_root.parent.parent)
+                assert name not in text, (
+                    f"v1 field-style access '{name}' resurrected in {rel}"
+                )

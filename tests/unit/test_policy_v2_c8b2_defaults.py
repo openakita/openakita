@@ -28,28 +28,36 @@ from openakita.core.policy_v2.shell_risk import (
 )
 
 
-class TestDefaultsParityWithV1:
-    """确保 v2 defaults.py 与 v1 policy.py 旧导出完全等价。"""
+class TestDefaultsContainExpectedEntries:
+    """v2 defaults.py 包含预期的关键路径与命令（C8b-6b：原 ``TestDefaultsParityWithV1``
+    通过 ``import _default_*_paths from policy`` 与 v1 对比；v1 ``policy.py`` 已删，
+    改为锁死语义层不变量）。"""
 
-    def test_default_protected_paths_parity(self) -> None:
-        from openakita.core.policy import _default_protected_paths
+    def test_default_protected_paths_contains_critical_dirs(self) -> None:
+        paths = [p.lower() for p in default_protected_paths()]
+        blob = "|".join(paths)
+        assert any(k in blob for k in ("identity", "data")), "protected 必须涵盖 identity/data"
 
-        assert default_protected_paths() == _default_protected_paths()
+    def test_default_forbidden_paths_contains_system_dirs(self) -> None:
+        paths = [p.lower() for p in default_forbidden_paths()]
+        blob = "|".join(paths)
+        assert any(
+            k in blob for k in ("windows", "system32", "/etc/", "/sys/", "/proc/")
+        ), "forbidden 必须涵盖系统目录"
 
-    def test_default_forbidden_paths_parity(self) -> None:
-        from openakita.core.policy import _default_forbidden_paths
+    def test_default_controlled_paths_contains_user_dirs(self) -> None:
+        paths = [p.lower() for p in default_controlled_paths()]
+        blob = "|".join(paths)
+        assert any(k in blob for k in ("desktop", "桌面")), "桌面缺失"
+        assert any(k in blob for k in ("documents", "文档")), "文档目录缺失"
+        assert any(k in blob for k in ("downloads", "下载")), "下载目录缺失"
 
-        assert default_forbidden_paths() == _default_forbidden_paths()
-
-    def test_default_controlled_paths_parity(self) -> None:
-        from openakita.core.policy import _default_controlled_paths
-
-        assert default_controlled_paths() == _default_controlled_paths()
-
-    def test_default_blocked_commands_parity_v1_constant(self) -> None:
-        from openakita.core.policy import _DEFAULT_BLOCKED_COMMANDS
-
-        assert default_blocked_commands() == _DEFAULT_BLOCKED_COMMANDS
+    def test_default_blocked_commands_contains_destructive(self) -> None:
+        cmds = [c.lower() for c in default_blocked_commands()]
+        # 至少涵盖 Windows 注册表 + 启动配置 + 系统关停三类高危命令
+        assert "regedit" in cmds, "regedit 缺失：注册表写入未拦截"
+        assert "bcdedit" in cmds, "bcdedit 缺失：启动配置未拦截"
+        assert "shutdown" in cmds or "taskkill" in cmds, "系统级关停命令未拦截"
 
     def test_default_blocked_commands_single_source_of_truth(self) -> None:
         """defaults.DEFAULT_BLOCKED_COMMANDS 直接从 shell_risk 重导出。"""

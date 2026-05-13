@@ -107,9 +107,9 @@ def d3_no_defensive_v1_fallback() -> None:
 
 
 def d4_v1_v2_equivalence() -> None:
-    print("\n=== C8b-5 D4 v1↔v2 equivalence on trust mode ===")
-
-    from openakita.core.policy import PolicyEngine
+    print("\n=== C8b-5 D4 v2 trust mode label correctness (C8b-6b updated) ===")
+    # C8b-6b：v1 ``policy.py`` 已删，原 v1↔v2 等价检查无 v1 一侧。改为单独
+    # 锁死 v2 ``read_permission_mode_label`` 在 5 档 mode 下的正确性。
     from openakita.core.policy_v2 import (
         PolicyConfigV2,
         build_engine_from_config,
@@ -122,72 +122,44 @@ def d4_v1_v2_equivalence() -> None:
     )
     from openakita.core.policy_v2.schema import ConfirmationConfig
 
-    # Trust mode
-    cfg_trust = PolicyConfigV2(
-        confirmation=ConfirmationConfig(mode=ConfirmationMode.TRUST)
-    )
-    set_engine_v2(build_engine_from_config(cfg_trust), cfg_trust)
-    try:
-        from openakita.core.policy import (
-            ConfirmationConfig as V1Conf,
-        )
-        from openakita.core.policy import (
-            SecurityConfig,
-        )
-
-        v1_eng = PolicyEngine(
-            SecurityConfig(enabled=True, confirmation=V1Conf(mode="yolo", auto_confirm=True))
-        )
-        v2_label_is_trust = read_permission_mode_label() == "yolo"
-        v1_method_is_trust = v1_eng._is_trust_mode()
-        assert v2_label_is_trust is True
-        assert v1_method_is_trust is True
-        assert v2_label_is_trust == v1_method_is_trust
-        print("  trust mode: v1 == v2 == True: OK")
-    finally:
-        reset_engine_v2()
-
-    # Strict mode
-    cfg_strict = PolicyConfigV2(
-        confirmation=ConfirmationConfig(mode=ConfirmationMode.STRICT)
-    )
-    set_engine_v2(build_engine_from_config(cfg_strict), cfg_strict)
-    try:
-        from openakita.core.policy import (
-            ConfirmationConfig as V1Conf,
-        )
-        from openakita.core.policy import (
-            SecurityConfig,
-        )
-
-        v1_eng = PolicyEngine(
-            SecurityConfig(enabled=True, confirmation=V1Conf(mode="cautious", auto_confirm=False))
-        )
-        v2_label_is_trust = read_permission_mode_label() == "yolo"
-        v1_method_is_trust = v1_eng._is_trust_mode()
-        assert v2_label_is_trust is False
-        assert v1_method_is_trust is False
-        assert v2_label_is_trust == v1_method_is_trust
-        print("  strict mode: v1 == v2 == False: OK")
-    finally:
-        reset_engine_v2()
+    matrix = [
+        (ConfirmationMode.TRUST, "yolo"),
+        (ConfirmationMode.DEFAULT, "smart"),
+        (ConfirmationMode.STRICT, "cautious"),
+        (ConfirmationMode.ACCEPT_EDITS, "smart"),
+        (ConfirmationMode.DONT_ASK, "yolo"),
+    ]
+    for mode, expected_label in matrix:
+        cfg = PolicyConfigV2(confirmation=ConfirmationConfig(mode=mode))
+        set_engine_v2(build_engine_from_config(cfg), cfg)
+        try:
+            actual = read_permission_mode_label()
+            assert actual == expected_label, (
+                f"{mode} → expected {expected_label!r}, got {actual!r}"
+            )
+        finally:
+            reset_engine_v2()
+    print(f"  all {len(matrix)} v2 mode labels correct: OK")
 
     print("D4 PASS")
 
 
 def d5_v1_internal_caller_still_works() -> None:
-    print("\n=== C8b-5 D5 v1 assert_tool_allowed compat ===")
+    print("\n=== C8b-5 D5 v1 module fully deleted (C8b-6b updated) ===")
+    # C8b-6b: 反向断言——v1 ``policy.py`` 模块完全不可导入；v2 ``evaluate_via_v2``
+    # 是工具决策的唯一入口。
+    try:
+        __import__("openakita.core.policy")
+        raise AssertionError("openakita.core.policy 仍可导入——C8b-6b 应已删除")
+    except ModuleNotFoundError:
+        pass
+    print("  v1 policy.py module fully deleted: OK")
 
-    from openakita.core.policy import PolicyEngine
+    from openakita.core.policy_v2.adapter import evaluate_via_v2
 
-    # _is_trust_mode is internally called by assert_tool_allowed; smoke-test
-    # the path is intact.
-    eng = PolicyEngine()
-    result = eng.assert_tool_allowed("read_file", {"path": "/tmp/test.txt"})
-    assert result is not None, "assert_tool_allowed broken after isolating _is_trust_mode"
-    # _is_trust_mode method still present (v1-private)
-    assert hasattr(eng, "_is_trust_mode"), "_is_trust_mode method removed prematurely"
-    print("  v1 assert_tool_allowed + internal _is_trust_mode access intact: OK")
+    decision = evaluate_via_v2("read_file", {"path": "/tmp/test.txt"})
+    assert decision is not None, "v2 evaluate_via_v2 broken"
+    print("  v2 evaluate_via_v2 main entry healthy: OK")
 
     print("D5 PASS")
 

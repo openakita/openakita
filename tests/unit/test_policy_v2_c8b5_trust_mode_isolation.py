@@ -112,68 +112,41 @@ def v2_engine_factory():
     reset_engine_v2()
 
 
-class TestV1V2TrustEquivalence:
-    """v1 ``_is_trust_mode()`` and v2 ``read_permission_mode_label() == "yolo"``
-    must agree on every confirmation mode."""
+class TestV2TrustModeMapping:
+    """v2 ``read_permission_mode_label() == "yolo"`` correctly tracks
+    ``ConfirmationMode.TRUST`` across all 5 supported modes.
+
+    C8b-6b：原 ``TestV1V2TrustEquivalence`` 验证 v1 ``_is_trust_mode()`` 与 v2
+    helper 等价；v1 ``policy.py`` 整文件已删，只验证 v2 一侧的正确性。
+    """
 
     @pytest.mark.parametrize(
-        "v2_mode_str,v1_mode_str,v1_auto_confirm,expected_trust",
+        "v2_mode_str,expected_trust",
         [
-            ("trust", "yolo", True, True),
-            ("default", "smart", False, False),
-            ("strict", "cautious", False, False),
+            ("trust", True),
+            ("default", False),
+            ("strict", False),
+            ("accept_edits", False),
+            ("dont_ask", True),
         ],
     )
-    def test_equivalence(
+    def test_v2_trust_label_matches_mode(
         self,
         v2_engine_factory,
         v2_mode_str: str,
-        v1_mode_str: str,
-        v1_auto_confirm: bool,
         expected_trust: bool,
     ) -> None:
-        from openakita.core.policy import (
-            ConfirmationConfig as V1Conf,
-        )
-        from openakita.core.policy import (
-            PolicyEngine,
-            SecurityConfig,
-        )
         from openakita.core.policy_v2 import read_permission_mode_label
         from openakita.core.policy_v2.enums import ConfirmationMode
 
         v2_engine_factory(ConfirmationMode(v2_mode_str))
-
-        v1_eng = PolicyEngine(
-            SecurityConfig(
-                enabled=True,
-                confirmation=V1Conf(mode=v1_mode_str, auto_confirm=v1_auto_confirm),
-            )
-        )
-
-        v2_is_trust = read_permission_mode_label() == "yolo"
-        v1_is_trust = v1_eng._is_trust_mode()
-        assert v1_is_trust == expected_trust
-        assert v2_is_trust == expected_trust
-        assert v1_is_trust == v2_is_trust
+        assert (read_permission_mode_label() == "yolo") == expected_trust
 
 
-class TestV1MethodStillInternal:
-    """``_is_trust_mode`` v1 method retained for internal v1 ``assert_tool_allowed``
-    use; not yet deletable until C8b-6."""
+class TestV1ModuleFullyDeleted:
+    """C8b-6b：v1 ``core/policy.py`` 整文件已删；任何残余 import 都应抛
+    ``ModuleNotFoundError``。"""
 
-    def test_method_still_present_on_engine(self) -> None:
-        from openakita.core.policy import PolicyEngine
-
-        eng = PolicyEngine()
-        assert hasattr(eng, "_is_trust_mode")
-        assert callable(eng._is_trust_mode)
-
-    def test_assert_tool_allowed_still_uses_internal_method(self) -> None:
-        """smoke test: v1 ``assert_tool_allowed`` does not break after the
-        external isolation."""
-        from openakita.core.policy import PolicyEngine
-
-        eng = PolicyEngine()
-        result = eng.assert_tool_allowed("read_file", {"path": "/tmp/test.txt"})
-        assert result is not None
+    def test_v1_policy_module_not_importable(self) -> None:
+        with pytest.raises(ModuleNotFoundError):
+            __import__("openakita.core.policy")

@@ -1,11 +1,18 @@
-"""C6 — policy_v2.adapter 翻译 / fail-closed / metadata 冗余写测试。"""
+"""C6 — policy_v2.adapter 翻译 / fail-closed / metadata 冗余写测试。
+
+C8b-6b：v1 ``policy.py`` 整文件删除后，``decision_to_v1_result`` /
+``evaluate_via_v2_to_v1_result`` / ``_v2_action_to_v1_decision`` 三个 v1 桥接
+helper 同步删除（无生产 caller）。本文件原 ``TestV2ToV1DecisionMapping`` /
+``TestDecisionToV1Result`` / ``TestEvaluateViaV2ToV1Result`` 三个测试类一并
+清理；保留 metadata flatten / fallback context / engine fail-closed 等仍有效的
+adapter 测试。
+"""
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
 
-from openakita.core.policy import PolicyDecision, PolicyResult
 from openakita.core.policy_v2 import (
     ApprovalClass,
     ConfirmationMode,
@@ -14,9 +21,7 @@ from openakita.core.policy_v2 import (
     PolicyContext,
     PolicyDecisionV2,
     SessionRole,
-    decision_to_v1_result,
     evaluate_via_v2,
-    evaluate_via_v2_to_v1_result,
     reset_current_context,
     reset_engine_v2,
     set_current_context,
@@ -28,7 +33,6 @@ from openakita.core.policy_v2.adapter import (
     _build_policy_name,
     _resolve_context,
     _shell_risk_to_v1_risk_level,
-    _v2_action_to_v1_decision,
 )
 
 
@@ -53,23 +57,35 @@ class _StubEngine:
 
 
 # ---------------------------------------------------------------------------
-# v2 → v1 decision mapping
+# v2 4-档 decision string mapping (C8b-6b: 取代删除的 _v2_action_to_v1_decision)
 # ---------------------------------------------------------------------------
 
 
-class TestV2ToV1DecisionMapping:
+class TestV2ToV1DecisionStringMap:
+    """``V2_TO_V1_DECISION`` 是 C8b-6a 公开的 4 档 enum→string 映射，给
+    permission.PermissionDecision.behavior 字段用。原 ``_v2_action_to_v1_decision``
+    返回 v1 ``PolicyDecision`` enum，C8b-6b 删；同 dict 仍生效，本套件验证。"""
+
     def test_allow(self):
-        assert _v2_action_to_v1_decision(DecisionAction.ALLOW) == PolicyDecision.ALLOW
+        from openakita.core.policy_v2.adapter import V2_TO_V1_DECISION
+
+        assert V2_TO_V1_DECISION[DecisionAction.ALLOW] == "allow"
 
     def test_confirm(self):
-        assert _v2_action_to_v1_decision(DecisionAction.CONFIRM) == PolicyDecision.CONFIRM
+        from openakita.core.policy_v2.adapter import V2_TO_V1_DECISION
+
+        assert V2_TO_V1_DECISION[DecisionAction.CONFIRM] == "confirm"
 
     def test_deny(self):
-        assert _v2_action_to_v1_decision(DecisionAction.DENY) == PolicyDecision.DENY
+        from openakita.core.policy_v2.adapter import V2_TO_V1_DECISION
+
+        assert V2_TO_V1_DECISION[DecisionAction.DENY] == "deny"
 
     def test_defer_downgrades_to_confirm(self):
-        # v1 不识别 DEFER；adapter 保守降为 CONFIRM
-        assert _v2_action_to_v1_decision(DecisionAction.DEFER) == PolicyDecision.CONFIRM
+        from openakita.core.policy_v2.adapter import V2_TO_V1_DECISION
+
+        # v2 4 档 enum 没有 DEFER；adapter 保守降为 "confirm"，UI 拦截
+        assert V2_TO_V1_DECISION[DecisionAction.DEFER] == "confirm"
 
 
 # ---------------------------------------------------------------------------
@@ -128,22 +144,14 @@ class TestMetadataFlatten:
 
 
 # ---------------------------------------------------------------------------
-# decision_to_v1_result
+# build_policy_name (C8b-6b: 取代删除的 decision_to_v1_result)
 # ---------------------------------------------------------------------------
 
 
-class TestDecisionToV1Result:
-    def test_basic_allow(self):
-        d = PolicyDecisionV2(
-            action=DecisionAction.ALLOW,
-            reason="ok",
-            approval_class=ApprovalClass.READONLY_SCOPED,
-        )
-        r = decision_to_v1_result(d)
-        assert isinstance(r, PolicyResult)
-        assert r.decision == PolicyDecision.ALLOW
-        assert r.reason == "ok"
-        assert r.policy_name.startswith("policy_v2")
+class TestBuildPolicyName:
+    """``_build_policy_name`` (public ``build_policy_name``) 抽 chain 末步骤名
+    生成 v1 兼容的 ``policy_name`` 字符串。permission.PermissionDecision 仍消费
+    ``"policy_v2:<step_name>"`` 格式做审计辨识。"""
 
     def test_policy_name_uses_last_chain_step(self):
         d = PolicyDecisionV2(
@@ -283,32 +291,6 @@ class TestFailClosed:
         )
         decision = evaluate_via_v2("run_shell", {"command": "echo hi"})
         assert decision.action == DecisionAction.DENY
-
-
-# ---------------------------------------------------------------------------
-# evaluate_via_v2_to_v1_result（一步式）
-# ---------------------------------------------------------------------------
-
-
-class TestEvaluateViaV2ToV1Result:
-    def test_returns_v1_shaped_result(self):
-        engine = _StubEngine(
-            PolicyDecisionV2(
-                action=DecisionAction.ALLOW,
-                reason="all good",
-                needs_sandbox=True,
-                approval_class=ApprovalClass.MUTATING_SCOPED,
-            )
-        )
-        set_engine_v2(engine)  # type: ignore[arg-type]
-
-        r = evaluate_via_v2_to_v1_result("write_file", {"path": "/tmp/x"})
-        assert isinstance(r, PolicyResult)
-        assert r.decision == PolicyDecision.ALLOW
-        assert r.reason == "all good"
-        # downstream execute_tool_with_policy uses metadata.needs_sandbox
-        assert r.metadata["needs_sandbox"] is True
-        assert r.metadata["v2_origin"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -65,20 +65,19 @@ def _check_v1_yaml_migration_with_builtin_union() -> None:
     print(f"D5 #2 v1 yaml + builtin union: OK ({len(immune)} unique paths)")
 
 
-def _check_v1_policy_engine_still_imports() -> None:
-    from openakita.core.policy import (
-        PolicyResult,
-        get_policy_engine,
-        reset_policy_engine,
+def _check_v1_policy_engine_fully_deleted() -> None:
+    """C8b-6b：v1 ``policy.py`` 整文件已删；任何残余 import 都应抛
+    ``ModuleNotFoundError``。原 ``_check_v1_policy_engine_still_imports``（C8 阶段
+    验证 v1 facade 仍可调用）取反：现在反向证明 v1 已彻底切除。
+    """
+    try:
+        __import__("openakita.core.policy")
+    except ModuleNotFoundError:
+        print("D5 #3 v1 PolicyEngine 已删除（C8b-6b）: OK")
+        return
+    raise AssertionError(
+        "openakita.core.policy 仍可导入——v1 模块未被 C8b-6b 删除"
     )
-
-    reset_policy_engine()
-    engine = get_policy_engine()
-    assert engine is not None
-    # v1 API still callable
-    result = engine.assert_tool_allowed("read_file", {"path": "README.md"})
-    assert isinstance(result, PolicyResult)
-    print(f"D5 #3 v1 PolicyEngine API: OK ({result.decision.value})")
 
 
 def _check_independent_acl_files() -> None:
@@ -116,7 +115,7 @@ def _check_minimal_engine_smoke() -> None:
 def main() -> None:
     _check_old_session_dict()
     _check_v1_yaml_migration_with_builtin_union()
-    _check_v1_policy_engine_still_imports()
+    _check_v1_policy_engine_fully_deleted()
     _check_independent_acl_files()
     _check_minimal_engine_smoke()
     print()

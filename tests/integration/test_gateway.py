@@ -159,24 +159,29 @@ class TestMessageGatewayBroadcast:
 
     @pytest.mark.asyncio
     async def test_trust_mode_im_security_confirm_resolves_without_waiting(self, monkeypatch):
-        class FakePolicyEngine:
-            def __init__(self):
-                self.resolved = None
+        """C8b-6b: gateway IM trust-mode 检测自 C8b-5 起改读 v2
+        ``read_permission_mode_label`` （v1 ``_is_trust_mode`` 已删）。本测试改为
+        mock v2 helper 返回 "yolo" + spy v2 ``apply_resolution`` 来锁死 trust 模式
+        下 IM confirm 应立即 deny 不等待 UI。"""
+        resolved: list[tuple[str, str]] = []
 
-            def _is_trust_mode(self):
-                return True
+        from openakita.core.policy_v2 import (
+            apply_resolution as _apply_resolution_real,  # noqa: F401
+        )
 
-            def resolve_ui_confirm(self, confirm_id, decision):
-                self.resolved = (confirm_id, decision)
-                return True
+        def _spy_apply(confirm_id, decision):
+            resolved.append((confirm_id, decision))
+            return True
 
-            async def wait_for_ui_resolution(self, *_args, **_kwargs):
-                raise AssertionError("IM trust-mode confirm must not wait for UI resolution")
+        # gateway._handle_im_security_confirm 内部 `from ..core.policy_v2 import
+        # read_permission_mode_label` + `from ..core.policy_v2 import apply_resolution`
+        # 都是 module-level lazy import，patch policy_v2 模块即可拦截。
+        import openakita.core.policy_v2 as policy_v2_module
 
-        fake_pe = FakePolicyEngine()
-        import openakita.core.policy as policy_module
-
-        monkeypatch.setattr(policy_module, "get_policy_engine", lambda: fake_pe)
+        monkeypatch.setattr(
+            policy_v2_module, "read_permission_mode_label", lambda: "yolo"
+        )
+        monkeypatch.setattr(policy_v2_module, "apply_resolution", _spy_apply)
 
         gateway = MessageGateway(session_manager=MagicMock())
         session = create_test_session(channel="qqbot:test", chat_id="chat-1", user_id="user-1")
@@ -193,7 +198,7 @@ class TestMessageGatewayBroadcast:
             message=message,
         )
 
-        assert fake_pe.resolved == ("confirm-1", "deny")
+        assert resolved == [("confirm-1", "deny")]
 
     @pytest.mark.asyncio
     async def test_broadcast_sends_normal_text(self):

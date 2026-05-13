@@ -68,40 +68,31 @@ def d1_completeness() -> None:
 
 
 def d2_architecture() -> None:
-    print("\n=== C9 D2 architecture ===")
-    pe_src = Path("src/openakita/core/policy.py").read_text(encoding="utf-8")
-
-    # PolicyEngine no longer owns the dicts
-    for attr in ["self._ui_confirm_events", "self._ui_confirm_decisions",
-                 "self._pending_ui_confirms"]:
-        assert f"{attr}: dict" not in pe_src and f"{attr} = " not in pe_src, (
-            f"PolicyEngine must not own {attr} after C9b — moved to bus"
+    print("\n=== C9 D2 architecture (C8b-6b updated) ===")
+    # C8b-6b: v1 ``policy.py`` 已删 → "PolicyEngine 不再拥有 X" 自然成立。
+    # 改为反向断言模块不可导入（最强）。
+    try:
+        __import__("openakita.core.policy")
+        raise AssertionError(
+            "openakita.core.policy 仍可导入——C8b-6b 应已删除 v1 模块"
         )
-    print("  PolicyEngine no longer owns _ui_confirm_* / _pending_ui_confirms: OK")
+    except ModuleNotFoundError:
+        pass
+    print("  v1 policy.py module fully deleted (C8b-6b): OK")
 
-    # C8b-3: 6 facade methods on PolicyEngine were thin wrappers around the
-    # bus; production callsites (CLI / web / IM / agent cleanup) now go
-    # directly to the bus or ``policy_v2.confirm_resolution.apply_resolution``.
-    # The audit therefore inverts: assert the wrappers are GONE.
-    for gone in (
-        "def store_ui_pending",
-        "def prepare_ui_confirm",
-        "def cleanup_ui_confirm",
-        "async def wait_for_ui_resolution",
-        "def resolve_ui_confirm",
-        "def cleanup_session",
-        "def mark_confirmed",
+    # C8b-6b: 原 reset_policy_engine 字段复制检查目标已不存在；改为全 src/ 扫描
+    # 防止"借尸还魂"——任何 v2 模块都不该出现 v1 字段复制语句。
+    src_root = Path("src/openakita")
+    for legacy in (
+        "_pending_ui_confirms = previous._pending_ui_confirms",
+        "_ui_confirm_events = previous._ui_confirm_events",
+        "_ui_confirm_decisions = previous._ui_confirm_decisions",
     ):
-        assert gone not in pe_src, (
-            f"C8b-3 expects PolicyEngine.{gone} to be deleted, still present"
-        )
-    print("  6 facade methods + mark_confirmed deleted from PolicyEngine: OK")
-
-    # reset_policy_engine no longer copies UI confirm fields
-    assert "_pending_ui_confirms = previous._pending_ui_confirms" not in pe_src
-    assert "_ui_confirm_events = previous._ui_confirm_events" not in pe_src
-    assert "_ui_confirm_decisions = previous._ui_confirm_decisions" not in pe_src
-    print("  reset_policy_engine no longer copies bus fields: OK (singleton survives)")
+        for py in src_root.rglob("*.py"):
+            assert legacy not in py.read_text(encoding="utf-8"), (
+                f"v1 legacy copy '{legacy}' resurrected in {py}"
+            )
+    print("  no module copies v1 bus fields after reset: OK (bus singleton owns state)")
 
 
 def d3_no_whack() -> None:
@@ -122,31 +113,36 @@ def d3_no_whack() -> None:
         assert n == 1, f"expected exactly 1 assignment of `{k}`, found {n}"
     print("  3 bus state dicts each assigned exactly once (in ui_confirm_bus.py): OK")
 
-    # Belt-and-suspenders: confirm policy.py no longer assigns the legacy fields
-    pe_src = Path("src/openakita/core/policy.py").read_text(encoding="utf-8")
+    # C8b-6b: v1 ``policy.py`` 整文件已删 → 三个 legacy 字段从源码消失即天然成立。
+    # 再做一次全 src/ 扫描兜底（防止 v2 模块"借尸还魂"重新出现这些字段）。
     for legacy in [
         "self._ui_confirm_events: dict",
         "self._ui_confirm_decisions: dict",
         "self._pending_ui_confirms: dict",
     ]:
-        assert legacy not in pe_src, f"PolicyEngine still owns {legacy} after C9b"
-    print("  PolicyEngine no longer types the legacy state attrs: OK")
+        for py in repo_src.rglob("*.py"):
+            assert legacy not in py.read_text(encoding="utf-8"), (
+                f"v1 legacy field {legacy} resurrected in {py.relative_to(Path.cwd())}"
+            )
+    print("  v1 legacy state attrs absent from all v2 modules: OK")
 
 
 def d4_hidden_bugs() -> None:
     print("\n=== C9 D4 hidden bugs ===")
-    from openakita.core.policy import get_policy_engine, reset_policy_engine
+    # C8b-6b：v1 ``reset_policy_engine`` facade 已删；hot-reload 入口改 v2 唯一
+    # ``reset_policy_v2_layer``（同时清 engine + audit logger）。
+    from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
     from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
     # #1 bus survives engine reset (C8b-3: store via bus directly, not v1 facade)
-    reset_policy_engine()
+    reset_policy_v2_layer()
     reset_ui_confirm_bus()
     bus = get_ui_confirm_bus()
     bus.store_pending("d4-1", "write_file", {"p": "x"}, session_id="s")
-    reset_policy_engine()
+    reset_policy_v2_layer()
     bus_after = get_ui_confirm_bus()
     assert any(p["id"] == "d4-1" for p in bus_after.list_pending())
-    print("  #1 bus survives engine reset: OK")
+    print("  #1 bus survives v2 engine reset: OK")
 
     # #2 idempotent prepare
     reset_ui_confirm_bus()

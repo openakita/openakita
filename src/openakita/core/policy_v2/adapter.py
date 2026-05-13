@@ -1,50 +1,50 @@
-"""policy_v2 → v1 PolicyResult adapter（C6）。
+"""policy_v2 决策入口 adapter（C6 引入 / C8b-6b 完成 v1 解耦）。
 
-桥接 v2 决策引擎与 v1 PolicyResult 形状，让 ``permission.check_permission`` /
-``reasoning_engine`` 在 C6 阶段按 **决策走 v2、UI 状态留 v1** 的过渡架构平滑切换：
+C8b-6a 之后所有生产 caller（permission.py / reasoning_engine.py × 2）已直接
+消费 ``PolicyDecisionV2``。本模块当前只剩两类 helper：
 
 公共 API
 ========
 
 - ``evaluate_via_v2(tool, params, *, mode='agent', extra_ctx=None)``
-  执行 v2 评估，返回 ``PolicyDecisionV2``。
-- ``decision_to_v1_result(d)``
-  把 v2 ``PolicyDecisionV2`` 翻译成 v1 ``PolicyResult`` shape（``decision``
-  + ``reason`` + ``policy_name`` + ``metadata``）。
-- ``evaluate_via_v2_to_v1_result(...)``
-  原地替换 ``v1 pe.assert_tool_allowed(tool, params)`` 的便捷入口。
+  执行 v2 工具决策评估，返回 ``PolicyDecisionV2``。
+- ``evaluate_message_intent_via_v2(message, risk_intent, ...)``
+  执行 v2 消息层 RiskGate 评估，返回 ``PolicyDecisionV2``。
+- ``V2_TO_V1_DECISION`` / ``build_policy_name`` / ``build_metadata_for_legacy_callers``
+  C8b-6a 公开的 4 档语义翻译 helper，给 ``permission.PermissionDecision``
+  保留 v1 4 档 behavior 字符串契约（"allow" / "deny" / "confirm" / "sandbox"）+
+  policy_name 字符串格式（``"policy_v2:<step_name>"``）。
+- ``mode_to_session_role(mode)``：v1 mode → v2 SessionRole 映射。
+- ``build_policy_context(...)``：构造 PolicyContext 的便捷入口。
 
 设计要点
 ========
 
-1. **DEFER → CONFIRM 降级**：v1 不识别 ``DEFER``；保守降为 ``CONFIRM``，让 UI 拦截。
-   reasoning_engine 在 unattended/IM 上下文下会进一步走 ``_is_im_conversation``
-   分支（reasoning_engine.py:4390）拒绝执行，所以即使降级也不会绕过 unattended 策略。
+1. **DEFER → CONFIRM 降级**：v2 ``DecisionAction.DEFER`` 是 unattended/IM 场景特有；
+   ``V2_TO_V1_DECISION`` 把它降为 ``"confirm"``，permission.py 桥接到 4 档 enum。
 
-2. **metadata 字段冗余写**：v2 把 ``needs_sandbox`` / ``needs_checkpoint`` /
-   ``shell_risk_level`` 等提升为顶层字段，但下游 ``execute_tool_with_policy``
-   读的是 ``getattr(policy_result, "metadata", {}).get(...)``。adapter 把这些
-   字段同时写入 ``metadata`` dict，**保证下游 0 改动**。
-
-3. **Adapter 层 fail-closed**：v2 ``PolicyEngineV2._evaluate_tool_call_impl``
+2. **Adapter 层 fail-closed**：v2 ``PolicyEngineV2._evaluate_tool_call_impl``
    已有 top-level fail-safe（exception → DENY），但 ``get_engine_v2()`` /
    ctx 构造仍可能抛。adapter 包一层 fail-closed：风险工具异常 → DENY；
    安全工具（read 类前缀）异常 → ALLOW（与 v1 ``permission.check_permission``
    同语义，避免 read_file 被引擎 bug 拖死）。
 
-4. **mode 翻译**：plan/ask/coordinator 由 ``permission.check_mode_permission``
+3. **mode 翻译**：plan/ask/coordinator 由 ``permission.check_mode_permission``
    先拦截，所以 adapter 通常只需处理 ``mode='agent'``。non-agent mode 仍传给
    v2，但当前不影响决策（v2 的 SessionRole 来自 ctx，与 v1 mode 不耦合）。
-   未来 C12 会把 mode → SessionRole 完整映射。
 
-5. **PolicyContext 来源**：
+4. **PolicyContext 来源**：
    - 优先 ``get_current_context()`` ContextVar（C7 由 agent 入口设置）。
    - 缺省时构造一个 minimal ctx：workspace=cwd、role=AGENT、mode=config 默认。
-   - 显式 ``extra_ctx`` 字段允许调用方覆盖（如 reasoning_engine 想强制
-     ``user_message=...``）。
+   - 显式 ``extra_ctx`` 字段允许调用方覆盖。
 
-6. **v1 ``PolicyDecision`` 与 v2 ``DecisionAction``** 都是 StrEnum，``decision.value``
-   都是 ``"allow"/"deny"/"confirm"``，方便对齐。
+历史 helper（C8b-6b 已删）
+========================
+
+- ``decision_to_v1_result`` / ``evaluate_via_v2_to_v1_result`` /
+  ``_v2_action_to_v1_decision``：C6→C8b-6a 的过渡桥接，把 v2 ``PolicyDecisionV2``
+  翻译成 v1 ``PolicyResult`` shape。C8b-6a 后所有 caller 直接消费 v2 类型，
+  C8b-6b 随 v1 ``policy.py`` 整文件一起删。git history 留供 archaeologist。
 """
 
 from __future__ import annotations
@@ -527,11 +527,8 @@ _V2_TO_V1_DECISION: dict[DecisionAction, str] = {
 }
 
 
-def _v2_action_to_v1_decision(action: DecisionAction):
-    """v2 DecisionAction → v1 PolicyDecision enum 实例。"""
-    from ..policy import PolicyDecision  # 延迟导入避免循环
-
-    return PolicyDecision(_V2_TO_V1_DECISION[action])
+# C8b-6b：``_v2_action_to_v1_decision`` 已删（仅 ``decision_to_v1_result`` 调，
+# 同步删除）。C8b-6a public alias ``V2_TO_V1_DECISION`` 提供同等映射给 permission.py。
 
 
 def _build_metadata(decision: PolicyDecisionV2) -> dict[str, Any]:
@@ -606,54 +603,18 @@ def _build_policy_name(decision: PolicyDecisionV2) -> str:
     return f"policy_v2:{last.name}"
 
 
-def decision_to_v1_result(decision: PolicyDecisionV2):
-    """把 v2 ``PolicyDecisionV2`` 翻译成 v1 ``PolicyResult``。
-
-    返回的对象 duck-type 兼容下游所有 ``getattr(pr, 'metadata', {}).get(...)``
-    / ``pr.decision`` / ``pr.reason`` / ``pr.policy_name`` 调用点。
-    """
-    from ..policy import PolicyResult  # 延迟导入避免循环
-
-    return PolicyResult(
-        decision=_v2_action_to_v1_decision(decision.action),
-        reason=decision.reason,
-        policy_name=_build_policy_name(decision),
-        metadata=_build_metadata(decision),
-    )
-
-
-def evaluate_via_v2_to_v1_result(
-    tool_name: str,
-    tool_input: dict[str, Any] | None = None,
-    *,
-    mode: str = "agent",
-    extra_ctx: PolicyContext | None = None,
-    user_message: str = "",
-    handler_name: str | None = None,
-):
-    """便捷入口：``evaluate_via_v2`` + ``decision_to_v1_result``。
-
-    用于原地替换 v1 ``pe.assert_tool_allowed(tool, params)`` 调用：
-
-    ```python
-    # before
-    _pe = get_policy_engine()
-    _pr = _pe.assert_tool_allowed(tool, params)
-
-    # after
-    from .policy_v2.adapter import evaluate_via_v2_to_v1_result
-    _pr = evaluate_via_v2_to_v1_result(tool, params, mode=mode)
-    ```
-    """
-    decision = evaluate_via_v2(
-        tool_name,
-        tool_input,
-        mode=mode,
-        extra_ctx=extra_ctx,
-        user_message=user_message,
-        handler_name=handler_name,
-    )
-    return decision_to_v1_result(decision)
+# C8b-6b：``decision_to_v1_result`` + ``evaluate_via_v2_to_v1_result`` 已删。
+# 这两个 helper 在 C6→C8b-6a 阶段把 v2 决策结果翻译成 v1 ``PolicyResult`` shape，
+# 让生产代码可以渐进式迁移。C8b-6a 完成后所有生产 caller（permission.py /
+# reasoning_engine.py × 2）都已直接消费 ``PolicyDecisionV2``，无人再用 v1
+# ``PolicyResult``。C8b-6b 删 v1 ``PolicyResult`` 类（policy.py 整文件删）+ 同步
+# 删 adapter 这两个 helper。git history 留着供 archaeologist 查 v1→v2 桥接逻辑。
+#
+# 内部 ``_v2_action_to_v1_decision`` 同步删（仅由 ``decision_to_v1_result`` 调）。
+# ``_V2_TO_V1_DECISION`` dict + ``_build_metadata`` + ``_build_policy_name``
+# 保留 —— 已在 C8b-6a 提为 public ``V2_TO_V1_DECISION`` /
+# ``build_metadata_for_legacy_callers`` / ``build_policy_name``，被 permission.py
+# 跨模块消费（v1 4 档 enum 语义层翻译）。
 
 
 # ---------------------------------------------------------------------------
@@ -733,9 +694,7 @@ __all__ = [
     "build_metadata_for_legacy_callers",
     "build_policy_context",
     "build_policy_name",
-    "decision_to_v1_result",
     "evaluate_message_intent_via_v2",
     "evaluate_via_v2",
-    "evaluate_via_v2_to_v1_result",
     "mode_to_session_role",
 ]

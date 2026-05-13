@@ -222,24 +222,27 @@ def test_check_skip_protected_path_in_trusted_message_falls_through():
 
 @pytest.fixture
 def _trust_mode_engine():
-    """临时把 PolicyEngine 切到 yolo（信任）模式。"""
-    from openakita.core.policy import (
-        ConfirmationConfig,
-        get_policy_engine,
-        reset_policy_engine,
-    )
+    """临时把 v2 layer 切到 TRUST（即 v1 yolo）模式。
 
-    reset_policy_engine()
-    engine = get_policy_engine()
-    original_mode = engine._config.confirmation.mode
-    original_auto = engine._config.confirmation.auto_confirm
-    engine._config.confirmation = ConfirmationConfig(mode="yolo", auto_confirm=True)
-    yield engine
-    engine._config.confirmation = ConfirmationConfig(
-        mode=original_mode,
-        auto_confirm=original_auto,
+    C8b-6b：v1 ``policy.py`` 已删；``_check_trust_mode_skip`` 自 C8b-5 起直读
+    v2 ``ConfirmationMode``，本 fixture 改 mutate v2 layer。
+    """
+    from openakita.core.policy_v2 import (
+        PolicyConfigV2,
+        build_engine_from_config,
     )
-    reset_policy_engine()
+    from openakita.core.policy_v2.enums import ConfirmationMode
+    from openakita.core.policy_v2.global_engine import (
+        reset_engine_v2,
+        set_engine_v2,
+    )
+    from openakita.core.policy_v2.schema import ConfirmationConfig
+
+    cfg = PolicyConfigV2(confirmation=ConfirmationConfig(mode=ConfirmationMode.TRUST))
+    engine = build_engine_from_config(cfg)
+    set_engine_v2(engine, cfg)
+    yield engine
+    reset_engine_v2()
 
 
 def test_trust_mode_skips_overwrite_of_ordinary_file(_trust_mode_engine):

@@ -48,32 +48,30 @@ def d1_completeness() -> None:
 
 
 def d2_single_source_of_truth() -> None:
-    print("\n=== C8b-4 D2 single source of truth ===")
-    pe_src = (ROOT / "src" / "openakita" / "core" / "policy.py").read_text(encoding="utf-8")
-
-    # v1 字段 + class const 全部不再被赋值（doc 注释里仍可能提到名字作为历史，
-    # 但赋值语句本身不应存在）
+    print("\n=== C8b-4 D2 single source of truth (C8b-6b updated) ===")
+    # C8b-6b：v1 ``policy.py`` 整文件已删 → 8 个 v1 字段/常量自然不可能存在。
+    # 改为全 src/ 扫描，确保它们没有"借尸还魂"出现在任何 v2 模块。
+    src_root = ROOT / "src" / "openakita"
     for stmt in (
         "self._frontend_mode: str = ",
         "self._frontend_mode = cc.mode",
-        "self._frontend_mode = self._config.confirmation.mode",
         "self._session_allow_count: int = 0",
         "self._session_allow_count += 1",
-        "self._session_allow_count >= self._SMART_ESCALATION_THRESHOLD",
         "_SMART_ESCALATION_THRESHOLD: int = 3",
-        "refreshed._session_allow_count = previous._session_allow_count",
     ):
-        assert stmt not in pe_src, f"policy.py still has '{stmt}'"
-    print("  8 escalation/shim statements all removed from policy.py: OK")
+        for py in src_root.rglob("*.py"):
+            assert stmt not in py.read_text(encoding="utf-8"), (
+                f"v1 statement '{stmt}' resurrected in {py.relative_to(ROOT)}"
+            )
+    print("  5 escalation/shim statement signatures absent from all v2 modules: OK")
 
-    # Runtime side: PolicyEngine instances don't have these attrs
-    from openakita.core.policy import PolicyEngine
-
-    eng = PolicyEngine()
-    for attr in ("_frontend_mode", "_session_allow_count"):
-        assert not hasattr(eng, attr), f"PolicyEngine instance still has {attr}"
-    assert not hasattr(PolicyEngine, "_SMART_ESCALATION_THRESHOLD")
-    print("  PolicyEngine runtime confirms 3 deleted attrs: OK")
+    # v1 ``policy.py`` 模块本身完全不可导入
+    try:
+        __import__("openakita.core.policy")
+        raise AssertionError("openakita.core.policy 仍可导入——C8b-6b 应已删除")
+    except ModuleNotFoundError:
+        pass
+    print("  v1 policy.py module fully deleted: OK")
 
     print("D2 PASS")
 
@@ -145,17 +143,20 @@ def d4_v2_to_v1_label_mapping() -> None:
 
 
 def d5_v1_assert_tool_allowed_still_works() -> None:
-    print("\n=== C8b-4 D5 v1 assert_tool_allowed compat ===")
-    from openakita.core.policy import PolicyEngine
+    print("\n=== C8b-4 D5 v1 assert_tool_allowed compat (C8b-6b updated) ===")
+    # C8b-6b: v1 ``assert_tool_allowed`` 已随 ``policy.py`` 整文件删除；
+    # 等价语义由 v2 ``evaluate_via_v2`` 承载。改为对 v2 主入口做 smoke。
+    from openakita.core.policy_v2.adapter import evaluate_via_v2
+    from openakita.core.policy_v2.enums import DecisionAction
 
-    eng = PolicyEngine()
-    # Just verify no AttributeError on _on_allow / _check_command_risk paths
-    for _ in range(5):
-        eng._on_allow("read_file")
-    # _check_command_risk indirectly via assert_tool_allowed for a HIGH command
-    result = eng.assert_tool_allowed("run_shell", {"command": "ls -la"})
-    assert result is not None, "assert_tool_allowed should not raise on basic command"
-    print("  v1 _on_allow + assert_tool_allowed work without _session_allow_count: OK")
+    decision = evaluate_via_v2("read_file", {"path": "README.md"})
+    assert decision is not None
+    assert decision.action in (
+        DecisionAction.ALLOW,
+        DecisionAction.CONFIRM,
+        DecisionAction.DENY,
+    )
+    print("  v2 evaluate_via_v2 main entry returns 3-action decision: OK")
 
     print("D5 PASS")
 

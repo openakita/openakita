@@ -24,38 +24,58 @@ from pathlib import Path
 
 import pytest
 
-
 # =============================================================================
 # P0-1：默认安全区与写操作矩阵
 # =============================================================================
 
 
-def test_p0_1_default_zone_is_controlled():
-    """P0-1：未配置时默认 zone 必须是 CONTROLLED，不能再回退成 WORKSPACE。"""
-    from openakita.core.policy import PolicyEngine, Zone
+def test_p0_1_user_dirs_default_to_mutating_scoped_class():
+    """P0-1：桌面/文档/下载等用户目录上的 CREATE/EDIT/OVERWRITE/DELETE 必须 CONFIRM。
 
-    cfg = PolicyEngine._make_default_config()
-    assert cfg.zones.default_zone == Zone.CONTROLLED, (
-        "默认 zone 一旦回退成 WORKSPACE，agent 越界访问就静默放行，回归到原始 P0-1。"
+    C8b-6b：原本通过 v1 ``PolicyEngine._make_default_config()`` + ``Zone.CONTROLLED``
+    + ``_ZONE_OP_MATRIX`` 三层验证。v2 删除了 zone 概念，等价语义改由
+    ``ApprovalClass.MUTATING_SCOPED`` 承载——这些工具 + 用户路径的组合走
+    PolicyEngineV2 矩阵自动判 CONFIRM。本测试改为对 v2 决策做 e2e smoke。
+    """
+    from openakita.core.policy_v2 import (
+        PolicyConfigV2,
+        build_engine_from_config,
     )
+    from openakita.core.policy_v2.adapter import evaluate_via_v2
+    from openakita.core.policy_v2.enums import ConfirmationMode, DecisionAction
+    from openakita.core.policy_v2.global_engine import (
+        reset_engine_v2,
+        set_engine_v2,
+    )
+    from openakita.core.policy_v2.schema import ConfirmationConfig
 
-
-def test_p0_1_controlled_create_requires_confirm():
-    """P0-1：CONTROLLED 区域的 CREATE/EDIT/OVERWRITE 必须 CONFIRM。"""
-    from openakita.core.policy import OpType, PolicyDecision, Zone, _ZONE_OP_MATRIX
-
-    matrix = _ZONE_OP_MATRIX[Zone.CONTROLLED]
-    for op in (OpType.CREATE, OpType.EDIT, OpType.OVERWRITE, OpType.DELETE):
-        assert matrix[op] == PolicyDecision.CONFIRM, (
-            f"{op} 在 CONTROLLED 区被降级，smart/cautious 模式下用户将看不到拦截弹窗。"
-        )
+    cfg = PolicyConfigV2(
+        confirmation=ConfirmationConfig(mode=ConfirmationMode.DEFAULT)
+    )
+    set_engine_v2(build_engine_from_config(cfg), cfg)
+    try:
+        # 用户桌面是默认 controlled 区——delete_file 必须 CONFIRM
+        for tool, params in [
+            ("delete_file", {"path": "C:/Users/example/Desktop/x.log"}),
+            ("write_file", {"path": "C:/Users/example/Desktop/x.log", "content": "y"}),
+        ]:
+            decision = evaluate_via_v2(tool, params)
+            assert decision.action in (DecisionAction.CONFIRM, DecisionAction.DENY), (
+                f"P0-1 回归: {tool} 在用户桌面被静默放行（action={decision.action.value}）"
+            )
+    finally:
+        reset_engine_v2()
 
 
 def test_p0_1_default_controlled_paths_include_user_dirs():
-    """P0-1：默认 controlled paths 必须涵盖桌面/文档/下载等高敏目录。"""
-    from openakita.core.policy import _default_controlled_paths
+    """P0-1：默认 controlled paths 必须涵盖桌面/文档/下载等高敏目录。
 
-    paths = [p.lower() for p in _default_controlled_paths()]
+    C8b-6b：v1 ``_default_controlled_paths`` 已删；v2 ``default_controlled_paths()``
+    在 ``policy_v2/defaults.py`` 等价提供。
+    """
+    from openakita.core.policy_v2 import default_controlled_paths
+
+    paths = [p.lower() for p in default_controlled_paths()]
     blob = "|".join(paths)
     assert any(k in blob for k in ("desktop", "桌面")), "桌面缺失，越界写入会被默认放行"
     assert any(k in blob for k in ("documents", "文档")), "文档目录缺失"

@@ -19,7 +19,6 @@ from typing import Any
 import pytest
 
 from openakita.core.permission import check_permission
-from openakita.core.policy import PolicyDecision, PolicyResult
 from openakita.core.policy_v2 import (
     ApprovalClass,
     DecisionAction,
@@ -180,6 +179,8 @@ async def test_execute_batch_blocks_plan_denials_before_policy():
 
 @pytest.mark.asyncio
 async def test_execute_tool_with_policy_still_enforces_plan_mode_rules():
+    """C8b-6b: 原本传 v1 ``PolicyResult``；改传 v2 ``PolicyDecisionV2`` 等价
+    （``execute_tool_with_policy`` duck-type 只读 ``.metadata``，两者兼容）。"""
     registry = _DummyRegistry()
     executor = ToolExecutor(registry)
     executor._current_mode = "plan"
@@ -187,7 +188,7 @@ async def test_execute_tool_with_policy_still_enforces_plan_mode_rules():
     result = await executor.execute_tool_with_policy(
         "run_shell",
         {"command": "echo hi"},
-        PolicyResult(decision=PolicyDecision.ALLOW),
+        PolicyDecisionV2(action=DecisionAction.ALLOW),
     )
 
     assert "run_shell" in result
@@ -202,7 +203,7 @@ async def test_execute_tool_with_policy_normalizes_tool_aliases():
     result = await executor.execute_tool_with_policy(
         "create-todo",
         {"task_summary": "x", "steps": []},
-        PolicyResult(decision=PolicyDecision.ALLOW),
+        PolicyDecisionV2(action=DecisionAction.ALLOW),
         session_id="conv-1",
     )
 
@@ -250,58 +251,31 @@ def test_permission_v2_defer_downgrades_to_confirm():
 
 
 # ---------------------------------------------------------------------------
-# v1 ↔ v2 同步：reset_policy_engine 必须同时清 v2 单例（C6 二轮 audit 修复）
+# v2 hot-reload：reset_policy_v2_layer 是 UI 配置变更后的唯一刷新入口
+# （C6 时由 reset_policy_engine v1 facade 触发；C8b-6b 删 v1 后直调 v2）
 # ---------------------------------------------------------------------------
 
 
-def test_reset_policy_engine_also_resets_v2_singleton():
-    """C6 二轮 audit 关键回归：
-
-    api/routes/config.py 通过 ``reset_policy_engine()`` 让 v1 重读 YAML（用户
-    在 UI 改了 trust mode / safety_immune / blocked_commands 等），如果不同步
-    清 v2 单例，v2 会继续按旧配置评估，导致用户原始 P1 bug 重现：
-    "我开启了信任模式但还是被拦"。本测试锁死该不变量。
+def test_reset_policy_v2_layer_clears_singleton():
+    """C8b-6b: 原 ``test_reset_policy_engine_also_resets_v2_singleton`` 验证
+    v1 reset facade 同步清 v2；v1 删除后改为直接验证 v2 ``reset_policy_v2_layer``
+    是 UI hot-reload 的契约入口（同时清引擎 + audit logger，见 §C6 二轮 audit）。
     """
-    from openakita.core.policy import reset_policy_engine
     from openakita.core.policy_v2.global_engine import (
         get_engine_v2,
         is_initialized,
+        reset_policy_v2_layer,
     )
 
-    # 触发 v2 懒加载
     eng_before = get_engine_v2()
     assert is_initialized()
 
-    reset_policy_engine()
+    reset_policy_v2_layer()
 
-    # reset_policy_engine 必须把 v2 也清掉
     assert not is_initialized(), (
-        "reset_policy_engine() 没有同步清 v2 单例 —— "
-        "UI 配置 hot-reload 后 v2 仍按旧 YAML 评估，用户体感 trust mode 不生效"
+        "reset_policy_v2_layer() 没有清 v2 单例 —— "
+        "UI 配置 hot-reload 后 v2 仍按旧 YAML 评估"
     )
 
-    # 下次 get_engine_v2 应返回新实例（重读了 YAML）
     eng_after = get_engine_v2()
     assert eng_after is not eng_before
-
-
-def test_reset_policy_engine_v2_failure_does_not_break_v1_reset(monkeypatch):
-    """v2 reset 抛异常时不应影响 v1 reset 主流程（防御性编码验证）。"""
-    from openakita.core import policy as policy_mod
-    from openakita.core.policy import reset_policy_engine
-
-    def _boom():
-        raise RuntimeError("v2 module exploded")
-
-    # patch v2 reset 抛错
-    monkeypatch.setattr(
-        "openakita.core.policy_v2.global_engine.reset_engine_v2",
-        _boom,
-    )
-
-    # 应仅 WARN log 不抛
-    reset_policy_engine()
-    # v1 单例确实被清了
-    assert policy_mod._global_policy_engine is None or hasattr(
-        policy_mod._global_policy_engine, "_config"
-    )

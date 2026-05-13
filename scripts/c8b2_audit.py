@@ -123,47 +123,20 @@ print("  defaults.py has no reverse dep to v1 policy.py: OK")
 
 # ---------------------------------------------------------------------------
 # D3 — v1 functions degraded to thin re-export
+# C8b-6b：v1 ``policy.py`` 整文件已删除，"thin re-export" 检查无对象。改为反向
+# 验证 v1 模块完全不可导入（确保 v2 是唯一 source of truth）。
 # ---------------------------------------------------------------------------
 print()
-print("=== C8b-2 D3 v1 degraded to re-export ===")
+print("=== C8b-2 D3 v1 degraded to re-export (C8b-6b updated) ===")
 
-policy_v1_text = (ROOT / "src" / "openakita" / "core" / "policy.py").read_text(
-    encoding="utf-8"
-)
-# v1 内的 _default_protected_paths 函数应只剩一行 return，不再含 platform.system 判断
-# 简单 marker：函数体中应该 import _v2_default_protected_paths
-assert "_v2_default_protected_paths" in policy_v1_text, (
-    "v1 policy.py _default_protected_paths not delegated to v2"
-)
-assert "_v2_default_forbidden_paths" in policy_v1_text, (
-    "v1 policy.py _default_forbidden_paths not delegated to v2"
-)
-assert "_v2_default_controlled_paths" in policy_v1_text, (
-    "v1 policy.py _default_controlled_paths not delegated to v2"
-)
-# v1 _DEFAULT_BLOCKED_COMMANDS 也应该是 derived from v2
-assert "_V2_DEFAULT_BLOCKED_COMMANDS" in policy_v1_text, (
-    "v1 _DEFAULT_BLOCKED_COMMANDS not derived from v2"
-)
-print("  v1 _default_*_paths + _DEFAULT_BLOCKED_COMMANDS are thin re-exports: OK")
-
-# parity check：runtime 行为完全一致
-from openakita.core.policy import (  # noqa: E402
-    _DEFAULT_BLOCKED_COMMANDS,
-    _default_controlled_paths,
-    _default_forbidden_paths,
-    _default_protected_paths,
-)
-
-assert _default_protected_paths() == default_protected_paths(), (
-    "v1 _default_protected_paths() != v2 default_protected_paths()"
-)
-assert _default_forbidden_paths() == default_forbidden_paths(), "forbidden paths drift"
-assert _default_controlled_paths() == default_controlled_paths(), "controlled paths drift"
-assert default_blocked_commands() == _DEFAULT_BLOCKED_COMMANDS, (
-    "blocked commands drift between v1 / v2"
-)
-print("  runtime parity v1 == v2 for all 4 defaults: OK")
+try:
+    __import__("openakita.core.policy")
+    raise AssertionError(
+        "openakita.core.policy 仍可导入——C8b-6b 应已删除 v1 模块"
+    )
+except ModuleNotFoundError:
+    pass
+print("  v1 policy.py 模块已彻底删除（C8b-6b）: OK")
 
 # ---------------------------------------------------------------------------
 # D4 — audit_logger / checkpoint read v2 config end-to-end

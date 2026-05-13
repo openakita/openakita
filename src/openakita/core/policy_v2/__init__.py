@@ -18,10 +18,8 @@
 
 from .adapter import (
     build_policy_context,
-    decision_to_v1_result,
     evaluate_message_intent_via_v2,
     evaluate_via_v2,
-    evaluate_via_v2_to_v1_result,
     mode_to_session_role,
 )
 from .classifier import ApprovalClassifier, ClassificationResult
@@ -180,12 +178,10 @@ __all__ = [
     "reset_engine_v2",
     "reset_policy_v2_layer",
     "set_engine_v2",
-    # adapter (C6/C7)
+    # adapter (C6/C7; C8b-6b 删 v1 桥接 helper)
     "build_policy_context",
-    "decision_to_v1_result",
     "evaluate_message_intent_via_v2",
     "evaluate_via_v2",
-    "evaluate_via_v2_to_v1_result",
     "mode_to_session_role",
     # zones
     "all_paths_inside_workspace",
