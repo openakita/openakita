@@ -27,7 +27,7 @@ const SkillStoreView = lazy(() => import("./views/SkillStoreView").then(m => ({ 
 const SecurityView = lazy(() => import("./views/SecurityView"));
 const PetView = lazy(() => import("./views/PetView").then(m => ({ default: m.PetView })));
 
-import { FeedbackModal } from "./views/FeedbackModal";
+import { FeedbackModal, type FeedbackPrefill } from "./views/FeedbackModal";
 import { IMConfigView } from "./views/IMConfigView";
 import { AgentSystemView } from "./views/AgentSystemView";
 import { MyFeedbackView } from "./views/MyFeedbackView";
@@ -43,7 +43,7 @@ import {
   IconCheckCircle, IconXCircle, IconInfo,
   IconLightbulb, IconAlertCircle, IconCheck, IconPartyPopper,
 } from "./icons";
-import { ChevronRight, ChevronDown, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Activity, ChevronRight, ChevronDown, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -115,6 +115,35 @@ const HTTP_READY_POLL_INTERVAL_MS = 2_000;
 // pid-based checks can be false. Keep the UI monotonic in "starting" there.
 const BACKEND_STARTUP_HOLD_MS = 180_000;
 const BACKEND_STARTUP_PROBE_HOLD_MS = 30_000;
+
+type ToolProbe = { available?: boolean; path?: string; version?: string };
+type RuntimeDiagnostics = {
+  summary?: string;
+  environment?: {
+    runtime?: {
+      mode?: string;
+      seed_dirs?: string[];
+      workspace_dependency_cache?: string;
+    };
+    toolchain?: {
+      python?: { abi?: string; wheelTag?: string; managed?: string; agent?: string; seedPackaged?: boolean };
+      node?: {
+        managed_node?: string;
+        managed_bin?: string;
+        seedPackaged?: boolean;
+        node?: ToolProbe;
+        npm?: ToolProbe;
+        corepack?: ToolProbe;
+        pnpm?: ToolProbe;
+        yarn?: ToolProbe;
+        workspace_cache?: string;
+        npm_cache?: string;
+        npm_prefix?: string;
+        corepack_home?: string;
+      };
+    };
+  };
+};
 
 interface EnvFieldCtx {
   envDraft: EnvMap;
@@ -262,6 +291,27 @@ function MainApp() {
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!IS_TAURI) return;
+    let cancelled = false;
+    invoke<any>("take_startup_recovery_notice")
+      .then((payload) => {
+        if (cancelled || !payload) return;
+        const reason = String(payload.reason || "");
+        const message = reason === "native_frontend_crash"
+          ? "OpenAkita 刚刚从前端异常退出中恢复。后台服务和数据仍然保留，可以继续使用。"
+          : "OpenAkita 刚刚从桌面端崩溃中自动恢复。后台服务和数据仍然保留，可以继续使用。";
+        notifySuccess(message);
+        logger.warn("Boot", "Recovered from previous frontend crash", payload);
+      })
+      .catch(() => {
+        // Older desktop builds do not expose this command.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
 
   // ── Mobile keyboard: track visual viewport for reliable height ──
   useEffect(() => {
@@ -377,6 +427,8 @@ function MainApp() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 768);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [bugReportOpen, setBugReportOpen] = useState(false);
+  const [feedbackPrefill, setFeedbackPrefill] = useState<FeedbackPrefill | null>(null);
+  const [feedbackRefreshKey, setFeedbackRefreshKey] = useState(0);
   const [unreadFeedbackCount, setUnreadFeedbackCount] = useState(0);
   const [disabledViews, setDisabledViews] = useState<string[]>([]);
   const multiAgentEnabled = true;
@@ -643,6 +695,9 @@ function MainApp() {
   const [pypiVersions, setPypiVersions] = useState<string[]>([]);
   const [pypiVersionsLoading, setPypiVersionsLoading] = useState(false);
   const [selectedPypiVersion, setSelectedPypiVersion] = useState<string>(""); // "" = 推荐同版本
+  const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(false);
+  const [runtimeDiag, setRuntimeDiag] = useState<RuntimeDiagnostics | null>(null);
+  const [runtimeDiagChecking, setRuntimeDiagChecking] = useState(false);
 
   // providers & models
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -1513,7 +1568,7 @@ function MainApp() {
 
           try {
             await doStopService(oldWsId);
-            await waitForServiceDown("http://127.0.0.1:18900", 15000);
+            await waitForServiceDown(apiBaseUrl, 15000);
           } catch { /* stop errors are non-fatal */ }
 
           setRestartOverlay({ phase: "waiting", hint });
@@ -1961,6 +2016,27 @@ function MainApp() {
     if (IS_WEB || IS_CAPACITOR) return apiBaseUrl || window.location.origin;
     return dataMode === "remote" ? apiBaseUrl : "http://127.0.0.1:18900";
   }
+
+  const refreshRuntimeDiagnostics = useCallback(async () => {
+    if (!shouldUseHttpApi()) return;
+    setRuntimeDiagChecking(true);
+    try {
+      const res = await safeFetch(`${httpApiBase()}/api/diagnostics`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) setRuntimeDiag(await res.json());
+    } catch (e) {
+      logger.warn("runtime diagnostics failed", String(e));
+    } finally {
+      setRuntimeDiagChecking(false);
+    }
+  }, [serviceStatus?.running, dataMode, apiBaseUrl]);
+
+  useEffect(() => {
+    if (view === "status" && serviceStatus?.running) {
+      void refreshRuntimeDiagnostics();
+    }
+  }, [view, serviceStatus?.running, refreshRuntimeDiagnostics]);
 
   // ── Disabled views management ──
   const fetchDisabledViews = useCallback(async () => {
@@ -2979,7 +3055,7 @@ function MainApp() {
     try {
       await doStopService(wsId);
       // 轮询等待旧服务完全关闭（端口释放），而非固定延时
-      await waitForServiceDown("http://127.0.0.1:18900", 15000);
+      await waitForServiceDown(apiBaseUrl, 15000);
     } catch { /* ignore stop errors */ }
     dismissLoading(_busyId);
     await doStartLocalService(wsId);
@@ -3256,6 +3332,24 @@ function MainApp() {
     const appVenvHint = joinPath(runtimeRoot, "app-venv");
     const agentVenvHint = joinPath(runtimeRoot, "agent-venv");
     const runtimeLogHint = joinPath(joinPath(runtimeRoot, "logs"), "bootstrap.log");
+    const nodeInfo = runtimeDiag?.environment?.toolchain?.node;
+    const pythonInfo = runtimeDiag?.environment?.toolchain?.python;
+    const dependencySummary = [
+      `Python ${pythonInfo?.abi || t("status.unknown")}`,
+      `Node ${nodeInfo?.node?.version || t("status.notChecked")}`,
+      `npm ${nodeInfo?.npm?.version || t("status.notChecked")}`,
+    ];
+    if (nodeInfo?.managed_node) dependencySummary.push(t("status.managedNodeAvailable"));
+    if (nodeInfo?.seedPackaged === false) dependencySummary.push(t("status.nodeSeedNotPackaged"));
+    if (pythonInfo?.seedPackaged === false) dependencySummary.push(t("status.pythonSeedNotPackaged"));
+    if (runtimeDiag?.environment?.runtime?.seed_dirs?.length) dependencySummary.push(t("status.readonlySeedEnabled"));
+    const runtimeDetailItems = [
+      ["App venv", appVenvHint],
+      ["Agent venv", agentVenvHint],
+      ["默认镜像", indexUrl || "https://mirrors.aliyun.com/pypi/simple/"],
+      ["日志路径", runtimeLogHint],
+      ...(nodeInfo?.workspace_cache ? [[t("status.workspaceCache"), nodeInfo.workspace_cache]] : []),
+    ];
 
     // "修复" 真正干活：调 Tauri repair_runtime_env 把 app-venv/agent-venv/manifest 删掉重建，
     // 否则 ensure_venv 的早期健康检查会被残骸 launcher 蒙混通过，怎么点都修不好。
@@ -3277,15 +3371,22 @@ function MainApp() {
 
     return (
       <div className="mx-auto w-full max-w-6xl px-6 pt-5">
-        <div className="card border border-blue-200/70 bg-blue-50/50 dark:border-blue-500/30 dark:bg-blue-950/20">
-          <div className="flex items-start justify-between gap-4">
-            <div>
+        <div className="card border border-blue-200/70 bg-blue-50/50 py-3 dark:border-blue-500/30 dark:bg-blue-950/20">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-[220px] flex-1">
               <h3 className="text-base font-bold tracking-tight">OpenAkita 运行环境准备</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                桌面端会优先创建 app runtime venv 和 agent tools venv；失败时回退到 legacy PyInstaller 兼容模式。
-              </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={refreshRuntimeDiagnostics}
+                disabled={runtimeDiagChecking || !serviceStatus?.running}
+                title={t("status.workspaceDependencies")}
+              >
+                {runtimeDiagChecking ? <Loader2 className="mr-1 animate-spin" size={14} /> : <Activity className="mr-1" size={14} />}
+                {t("status.check")}
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -3305,19 +3406,52 @@ function MainApp() {
               </Button>
             </div>
           </div>
-          <div className="mt-4 h-2 rounded-full bg-blue-100 dark:bg-blue-950 overflow-hidden">
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            桌面端会优先创建 app runtime venv 和 agent tools venv；失败时回退到 legacy PyInstaller 兼容模式。
+          </p>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-blue-100 dark:bg-blue-950">
             <div
               className="h-full bg-blue-500 transition-all"
               style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
             />
           </div>
-          <div className="mt-3 grid gap-2 text-sm text-muted-foreground md:grid-cols-2">
-            <div>当前阶段：<span className="font-medium text-foreground">{stage}</span></div>
-            <div>默认镜像：<span className="font-mono text-xs">{indexUrl || "https://mirrors.aliyun.com/pypi/simple/"}</span></div>
-            <div>App venv：<span className="font-mono text-xs">{appVenvHint}</span></div>
-            <div>Agent venv：<span className="font-mono text-xs">{agentVenvHint}</span></div>
-            <div>日志路径：<span className="font-mono text-xs">{runtimeLogHint}</span></div>
-            <div>状态：<span className="font-medium">{venvStatus || (backendReady ? "后端运行中" : serviceStatus?.running ? "后端初始化中" : "尚未启动")}</span></div>
+          <div className="mt-2.5 rounded-xl border border-blue-200/60 bg-white/60 px-3 py-2 shadow-sm dark:border-blue-500/20 dark:bg-slate-950/20">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <Badge variant="outline" className="border-blue-300/70 bg-blue-500/10 text-blue-700 dark:text-blue-300">{stage}</Badge>
+              <span className="font-medium text-foreground">
+                {venvStatus || (backendReady ? "后端运行中" : serviceStatus?.running ? "后端初始化中" : "尚未启动")}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground" title={dependencySummary.join(" · ")}>
+                {dependencySummary.join(" · ")}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-2 text-xs"
+                onClick={() => setRuntimeDetailsOpen((v) => !v)}
+              >
+                {runtimeDetailsOpen ? "隐藏详情" : "查看详情"}
+                {runtimeDetailsOpen ? <ChevronDown className="ml-1" size={13} /> : <ChevronRight className="ml-1" size={13} />}
+              </Button>
+            </div>
+            {runtimeDetailsOpen && (
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                {runtimeDetailItems.map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2"
+                    title={value}
+                  >
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {label}
+                    </div>
+                    <div className="mt-1 truncate font-mono text-[11px] text-foreground/80">
+                      {value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           {installLiveLog && (
             <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-200">
@@ -4730,34 +4864,36 @@ function MainApp() {
     );
     const backendStartupVisible = obBackendStartup.phase !== "idle" && obStep !== "ob-progress" && obStep !== "ob-done";
     const backendStartupNotice = backendStartupVisible ? (
-      <Card className={`w-full border text-left text-[13px] ${
+      <div className={`mb-4 w-full rounded-xl border px-3.5 py-2 text-left text-[12px] shadow-sm ${
         obBackendStartup.phase === "error"
           ? "border-amber-300 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-950/30"
           : obBackendStartup.phase === "ready"
             ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-500/40 dark:bg-emerald-950/30"
             : "border-blue-300 bg-blue-50/60 dark:border-blue-500/40 dark:bg-blue-950/30"
       }`}>
-        <CardContent className="py-3 px-4 space-y-1.5">
-          <div className="flex items-center gap-2 font-semibold">
-            {["checking", "starting", "waiting"].includes(obBackendStartup.phase)
-              ? <Loader2 className="size-4 text-blue-500 shrink-0 animate-spin" />
-              : obBackendStartup.phase === "ready"
-                ? <CheckCircle2 className="size-4 text-emerald-500 shrink-0" />
-                : <AlertTriangle className="size-4 text-amber-500 shrink-0" />}
-            {obBackendStartup.phase === "ready"
-              ? t("onboarding.backendStartup.ready")
-              : obBackendStartup.phase === "error"
-                ? t("onboarding.backendStartup.error")
-                : t("onboarding.backendStartup.title")}
+        <div className="flex items-start gap-2">
+          {["checking", "starting", "waiting"].includes(obBackendStartup.phase)
+            ? <Loader2 className="mt-0.5 size-3.5 text-blue-500 shrink-0 animate-spin" />
+            : obBackendStartup.phase === "ready"
+              ? <CheckCircle2 className="mt-0.5 size-3.5 text-emerald-500 shrink-0" />
+              : <AlertTriangle className="mt-0.5 size-3.5 text-amber-500 shrink-0" />}
+          <div className="min-w-0">
+            <div className="font-semibold leading-5">
+              {obBackendStartup.phase === "ready"
+                ? t("onboarding.backendStartup.ready")
+                : obBackendStartup.phase === "error"
+                  ? t("onboarding.backendStartup.error")
+                  : t("onboarding.backendStartup.title")}
+            </div>
+            <p className="leading-5 text-muted-foreground">
+              {obBackendStartup.detail || t("onboarding.backendStartup.desc")}
+              {["checking", "starting", "waiting"].includes(obBackendStartup.phase) && obBackendStartup.elapsedSec > 0
+                ? ` ${t("onboarding.backendStartup.elapsed", { seconds: obBackendStartup.elapsedSec })}`
+                : ""}
+            </p>
           </div>
-          <p className="text-muted-foreground">
-            {obBackendStartup.detail || t("onboarding.backendStartup.desc")}
-            {["checking", "starting", "waiting"].includes(obBackendStartup.phase) && obBackendStartup.elapsedSec > 0
-              ? ` ${t("onboarding.backendStartup.elapsed", { seconds: obBackendStartup.elapsedSec })}`
-              : ""}
-          </p>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     ) : null;
 
     switch (obStep) {
@@ -4878,6 +5014,13 @@ function MainApp() {
                               );
                               setObCurrentRoot(info.currentRoot);
                               setObCustomRootApplied(true);
+                              // Root 切换后立即刷新 PlatformInfo，否则后续
+                              // joinPath(info.openakitaRootDir, "venv") / "runtime"
+                              // 等仍指向旧 root，后端会拿到错的 venvDir。
+                              try {
+                                const plat = await invoke<PlatformInfo>("get_platform_info");
+                                setInfo(plat);
+                              } catch { /* ignore: refreshAll will catch up later */ }
                               notifySuccess(t("onboarding.welcome.customRootApplied", { path: info.currentRoot }));
                               obLoadEnvCheck();
                             } catch (e: any) {
@@ -4912,6 +5055,12 @@ function MainApp() {
                               setObCurrentRoot(info.currentRoot);
                               setObCustomRootInput("");
                               setObCustomRootApplied(false);
+                              // 与 apply 分支同理：root 切回默认值后必须刷新
+                              // PlatformInfo，否则 info.openakitaRootDir 仍是旧 root。
+                              try {
+                                const plat = await invoke<PlatformInfo>("get_platform_info");
+                                setInfo(plat);
+                              } catch { /* ignore */ }
                               notifySuccess(t("onboarding.welcome.customRootDefault") + ": " + info.currentRoot);
                               obLoadEnvCheck();
                             } catch (e: any) {
@@ -5532,7 +5681,11 @@ function MainApp() {
         <MyFeedbackView
           apiBaseUrl={httpApiBase()}
           serviceRunning={serviceStatus?.running ?? false}
-          onOpenFeedbackModal={() => setBugReportOpen(true)}
+          refreshTrigger={feedbackRefreshKey}
+          onOpenFeedbackModal={(prefill) => {
+            setFeedbackPrefill(prefill ?? null);
+            setBugReportOpen(true);
+          }}
         />
       );
     }
@@ -6113,9 +6266,13 @@ function MainApp() {
       {/* Feedback Modal (Bug Report + Feature Request) */}
       <FeedbackModal
         open={bugReportOpen}
-        onClose={() => setBugReportOpen(false)}
+        onClose={() => { setBugReportOpen(false); setFeedbackPrefill(null); }}
         apiBase={httpApiBase()}
-        onNavigateToMyFeedback={() => navigateToView("my_feedback")}
+        prefill={feedbackPrefill}
+        onNavigateToMyFeedback={() => {
+          setFeedbackRefreshKey((key) => key + 1);
+          navigateToView("my_feedback");
+        }}
         serviceRunning={serviceStatus?.running ?? false}
         currentWorkspaceId={currentWorkspaceId}
       />

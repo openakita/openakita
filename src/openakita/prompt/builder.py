@@ -1181,7 +1181,7 @@ def _build_runtime_section_uncached() -> str:
     import sys as _sys
 
     from ..config import settings
-    from ..runtime_env import (
+    from ..runtime_manager import (
         IS_FROZEN,
         get_runtime_environment_report,
         verify_python_executable,

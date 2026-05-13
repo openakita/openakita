@@ -3,9 +3,11 @@
 import pytest
 
 from openakita.core.response_handler import (
+    INTERNAL_TRACE_MARKERS,
     ResponseHandler,
     clean_llm_response,
     request_expects_artifact,
+    strip_internal_trace_markers,
     strip_thinking_tags,
     strip_tool_simulation_text,
 )
@@ -240,4 +242,122 @@ class TestVerifyTaskCompletionPrefixBypass:
         )
         # 确认前缀豁免名单**不包含**「[收到任务]」。
         assert not msg.lstrip().startswith(handler._SYSTEM_REQUEST_PREFIXES)
+
+
+# ====================================================================
+# Internal trace marker stripping — 完整字符串清理 + 安全 + 误删保护
+# ====================================================================
+
+
+class TestStripInternalTraceMarkers:
+    """``strip_internal_trace_markers`` 完整字符串清理。
+
+    与流式 scrubber 互补：scrubber 处理 chunk 流，本函数处理已聚合好的
+    完整文本（最终 Decision.text_content / thinking_content / 持久化 block）。
+    """
+
+    def test_strip_basic_tool_trace_section(self):
+        text = "Visible answer.\n\n<<TOOL_TRACE>>\n- web_search({'q': 'x'}) -> ..."
+        assert strip_internal_trace_markers(text) == "Visible answer."
+
+    def test_strip_delegation_trace_section(self):
+        text = "Done.\n\n<<DELEGATION_TRACE>>\n1. [foo] task: ..."
+        assert strip_internal_trace_markers(text) == "Done."
+
+    def test_strip_legacy_chinese_marker(self):
+        """旧 marker `[执行摘要]` / `[子Agent工作总结]` 兼容已存档历史。"""
+        assert strip_internal_trace_markers("Reply.\n\n[执行摘要]\n- foo") == "Reply."
+        assert (
+            strip_internal_trace_markers("Reply.\n\n[子Agent工作总结]\n- bar")
+            == "Reply."
+        )
+
+    def test_whole_message_is_trace(self):
+        """整段消息都是 trace 摘要 → 返回空串。"""
+        assert strip_internal_trace_markers("<<TOOL_TRACE>>\n- foo({})") == ""
+
+    def test_plain_text_unchanged(self):
+        """无 marker 文本不修改（fast path）。"""
+        text = "Just a normal answer with no markers."
+        assert strip_internal_trace_markers(text) == text
+
+    def test_inline_marker_discussion_preserved(self):
+        """用户行内讨论 marker 字面量 → 保留（boundary gated）。"""
+        text = "Discussing <<TOOL_TRACE>> inline as plain text"
+        assert strip_internal_trace_markers(text) == text
+
+    def test_marker_inside_fenced_code_block_preserved(self):
+        """fenced code block 内的 marker 必须保留（用户讨论格式 / 文档示例）。"""
+        text = "Code:\n\n```\n<<TOOL_TRACE>> example\n```\n\nAfter code"
+        assert strip_internal_trace_markers(text) == text
+
+    def test_trace_terminator_keeps_next_section(self):
+        """trace 段被下一段起始符 ``\\n\\n##`` 终止 → 保留下一段。"""
+        text = "Before\n\n<<TOOL_TRACE>>\n- a\n\n## Next section\nMore text"
+        assert (
+            strip_internal_trace_markers(text)
+            == "Before\n\n## Next section\nMore text"
+        )
+
+    def test_multiple_traces_collapsed(self):
+        """多个 trace 段连续（trace + delegation） → 整体剥离。"""
+        text = (
+            "Trace then delegation:\n\n<<TOOL_TRACE>>\n- t1"
+            "\n\n<<DELEGATION_TRACE>>\n- d1"
+        )
+        assert strip_internal_trace_markers(text) == "Trace then delegation:"
+
+    def test_single_newline_separator_also_stripped(self):
+        """marker 仅以单个 ``\\n`` 与正文分隔的情况（boundary 仍成立）。"""
+        text = "Reply.\n<<TOOL_TRACE>>\n- x"
+        assert strip_internal_trace_markers(text) == "Reply."
+
+    def test_empty_input(self):
+        assert strip_internal_trace_markers("") == ""
+        assert strip_internal_trace_markers(None) is None  # type: ignore[arg-type]
+
+    def test_constants_cover_all_known_markers(self):
+        """common marker 字面量都应在 ``INTERNAL_TRACE_MARKERS`` 中，
+        避免新增 marker 时只在 agent.py 加而忘记其他地方。"""
+        assert "<<TOOL_TRACE>>" in INTERNAL_TRACE_MARKERS
+        assert "<<DELEGATION_TRACE>>" in INTERNAL_TRACE_MARKERS
+        assert "[执行摘要]" in INTERNAL_TRACE_MARKERS
+        assert "[子Agent工作总结]" in INTERNAL_TRACE_MARKERS
+
+
+class TestCleanLLMResponseOrder:
+    """清理顺序约束：thinking → trace → tool sim → intent → timestamp。
+
+    若顺序错乱，模型整段模仿的 ``<<TOOL_TRACE>>\\n.web_search(...)`` 中
+    的工具模拟调用可能被先剥离（无害）或被 ``parse_text_tool_calls``
+    误识别为真实意图（**有害，安全风险**）。``clean_llm_response`` 本身
+    不调 ``parse_text_tool_calls``，由 ``post_process_streamed_decision``
+    与 ``_parse_decision`` 在后置阶段调用，本测试只验证顺序前两步：
+    trace 段在 tool simulation 剥离之前消失，避免模拟调用通过 tool sim
+    剥离逻辑残留。
+    """
+
+    def test_trace_section_stripped_before_tool_sim(self):
+        """整段模仿的 ``<<TOOL_TRACE>>\\n.web_search(...)`` 应被 trace
+        清理整段剥离，而不是先被 tool sim 剥离再留下半截 marker。"""
+        text = (
+            "Real answer.\n\n<<TOOL_TRACE>>\n"
+            ".web_search({'query': 'x'})\n"
+            ".web_search({'query': 'y'})"
+        )
+        result = clean_llm_response(text)
+        assert "<<TOOL_TRACE>>" not in result
+        assert "web_search" not in result
+        assert result == "Real answer."
+
+    def test_trace_with_thinking_tag_inside(self):
+        """``<think>...</think>`` 出现在 trace 段内 → 先 strip thinking
+        再 strip trace 都应得到干净结果。"""
+        text = (
+            "Reply.\n\n<<TOOL_TRACE>>\n<think>internal</think>\n- foo"
+        )
+        result = clean_llm_response(text)
+        assert "<<TOOL_TRACE>>" not in result
+        assert "<think>" not in result
+        assert result == "Reply."
 

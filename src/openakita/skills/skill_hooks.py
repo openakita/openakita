@@ -13,10 +13,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+from openakita.runtime_manager import build_user_subprocess_environment, get_agent_python_executable
 
 logger = logging.getLogger(__name__)
 
@@ -102,17 +105,25 @@ class SkillHookRunner:
             logger.warning("[SkillHook] %s (%s)", msg, self._skill_id)
             return {"ok": False, "output": msg, "exit_code": None}
 
-        import os as _os
-
-        env = dict(_os.environ)
+        env: dict[str, str] = dict(os.environ)
         env["OPENAKITA_SKILL_ID"] = self._skill_id
         env["OPENAKITA_HOOK_NAME"] = hook_name
         if env_extra:
             env.update(env_extra)
+        run_env = build_user_subprocess_environment(env)
+        skill_dir_str = str(self._skill_dir)
+        existing_pythonpath = run_env.get("PYTHONPATH", "")
+        pythonpath_parts = [p for p in existing_pythonpath.split(os.pathsep) if p]
+        if skill_dir_str not in pythonpath_parts:
+            run_env["PYTHONPATH"] = (
+                skill_dir_str
+                if not pythonpath_parts
+                else skill_dir_str + os.pathsep + existing_pythonpath
+            )
 
         suffix = script_path.suffix.lower()
         if suffix == ".py":
-            cmd = [sys.executable, str(script_path)]
+            cmd = [get_agent_python_executable() or sys.executable, str(script_path)]
         elif suffix in (".sh", ".bash"):
             cmd = ["bash", str(script_path)]
         elif suffix in (".bat", ".cmd"):
@@ -123,12 +134,16 @@ class SkillHookRunner:
             cmd = [str(script_path)]
 
         try:
+            extra: dict[str, Any] = {}
+            if sys.platform == "win32":
+                extra["creationflags"] = subprocess.CREATE_NO_WINDOW
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 cwd=str(self._skill_dir),
-                env=env,
+                env=run_env,
+                **extra,
             )
             try:
                 stdout, _ = proc.communicate(timeout=_HOOK_TIMEOUT)

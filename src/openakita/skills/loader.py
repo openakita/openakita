@@ -539,6 +539,18 @@ class SkillLoader:
                 return None
 
             self._loaded_skills[sid] = skill
+            try:
+                from .runtime_registry import mark_skill_loaded
+
+                deps = getattr(skill.metadata, "python_dependencies", []) or []
+                mark_skill_loaded(
+                    sid,
+                    source_path=str(skill_dir),
+                    enabled=True,
+                    dependencies=deps,
+                )
+            except Exception:
+                logger.debug("Failed to update skill runtime registry for %s", sid, exc_info=True)
             logger.info(f"Loaded skill: {sid} (name={skill.metadata.name})")
             return skill
 
@@ -794,7 +806,7 @@ class SkillLoader:
         if script_path.suffix == ".py":
             # Prefer the caller-provided managed env. Fall back to the legacy
             # packaged/source interpreter for backwards compatibility.
-            from openakita.runtime_env import get_python_executable
+            from openakita.runtime_manager import get_python_executable
 
             py = python_executable or get_python_executable()
             if not py:
@@ -828,7 +840,9 @@ class SkillLoader:
             cmd = [str(script_path)] + args
 
         try:
-            run_env = dict(env) if env is not None else os.environ.copy()
+            from openakita.runtime_manager import build_user_subprocess_environment
+
+            run_env = build_user_subprocess_environment(env)
             skill_dir_str = str(skill.skill_dir.resolve())
             existing_pythonpath = run_env.get("PYTHONPATH", "")
             pythonpath_parts = [p for p in existing_pythonpath.split(os.pathsep) if p]

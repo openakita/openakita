@@ -1370,7 +1370,8 @@ class WeChatAdapter(ChannelAdapter):
             import pilk  # type: ignore[import-untyped]
         except ImportError as e:
             raise ImportError(
-                "发送微信语音需要 pilk。请运行: pip install pilk（或安装 qqbot optional extra）"
+                "发送微信语音需要 pilk。请在设置中心修复 OpenAkita 运行环境"
+                "（或在源码开发环境安装 qqbot optional extra），不要直接污染宿主 Python。"
             ) from e
         raw_bytes = src.read_bytes()
         pcm_data: bytes

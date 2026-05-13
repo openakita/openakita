@@ -2266,6 +2266,9 @@ export function ChatView({
     // ── Per-session helpers: write to StreamContext, sync to screen only if active ──
     // StreamContext always gets the latest data immediately, while React state is
     // flushed at a bounded cadence. This protects typing from long SSE event bursts.
+    //
+    // 50ms ≈ 20fps: keep perceived streaming responsive. SSE events themselves
+    // are still consumed in real time; only the visual flush is throttled.
     const SCREEN_FLUSH_MIN_MS = 50;
     let screenFlushRaf = 0;
     let screenFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2443,6 +2446,23 @@ export function ChatView({
       }
 
       resetIdleTimer(); // Start idle timer before fetch
+
+      // Crash diagnostics: record desensitized task start before the SSE fetch.
+      // Field set is intentionally narrow — no message content, no API keys.
+      // Force-flush so a native WebView2 crash during/after the request still
+      // leaves this breadcrumb on disk; logger.flush is internally re-entrant
+      // safe and swallows IPC errors.
+      logger.info("Chat", "task_started", {
+        convId,
+        mode: effectiveMode,
+        endpoint: typeof selectedEndpoint === "string" ? selectedEndpoint : "auto",
+        thinkingMode,
+        thinkingDepth: thinkingMode !== "off" ? thinkingDepth : null,
+        attachments: pendingAttachments.length,
+        textLen: text.length,
+        orgMode: Boolean(orgMode && selectedOrgId),
+      });
+      void logger.flush();
 
       const response = await safeFetch(`${apiBase}/api/chat`, {
         method: "POST",
@@ -3216,6 +3236,20 @@ export function ChatView({
                 break;
               case "done":
                 gracefulDone = true;
+                // Crash diagnostics: backend signalled end-of-stream. Only metadata,
+                // never content. Use info level so it survives in production builds.
+                logger.info("Chat", "sse_done", {
+                  convId,
+                  iters: chainGroups.length,
+                  tools: currentToolCalls.length,
+                  artifacts: currentArtifacts.length,
+                  sources: currentSources.length,
+                  mcp: currentMcpCalls.length,
+                  contentLen: currentContent.length,
+                  thinkingLen: currentThinking.length,
+                  hasError: currentError !== null,
+                });
+                void logger.flush();
                 if (event.usage) {
                   // Fix-13：后端同时下发新旧字段，优先读取语义更清晰的新名字。
                   const ctxTokens = event.usage.history_context_tokens ?? event.usage.context_tokens;
@@ -3319,6 +3353,24 @@ export function ChatView({
             : m
         ));
 
+        // Crash diagnostics: final React state has been queued. If a native
+        // WebView2 crash happens during the subsequent paint, this breadcrumb
+        // is the last entry to land in frontend.log before the process dies.
+        // Force-flush is critical here: the next scheduled screen flush could be
+        // the moment the WebView2 process dies, so we must push the line to
+        // Rust IPC before then. tauriInvoke is fire-and-forget from JS side
+        // and the native side processes it on its own thread.
+        logger.info("Chat", "task_completed", {
+          convId,
+          gracefulDone,
+          durationMs: Date.now() - streamStartedAt,
+          contentLen: currentContent.length,
+          tools: currentToolCalls.length,
+          iters: chainGroups.length,
+          artifacts: currentArtifacts.length,
+        });
+        void logger.flush();
+
         if (!gracefulDone && convId) {
           // SSE 连接被中断（未收到 "done" 事件），后端可能仍在运行，启动持续轮询恢复
           attemptRecovery(3000);
@@ -3333,7 +3385,13 @@ export function ChatView({
               if (!rows.length) return;
               setMessages((prev) => {
                 const patched = patchMessagesWithBackend(prev, rows);
-                if (patched === prev) return prev;
+                const noop = patched === prev;
+                logger.info("Chat", "history_patch", {
+                  convId,
+                  rows: rows.length,
+                  applied: !noop,
+                });
+                if (noop) return prev;
                 const liveCtx = streamContexts.current.get(thisConvId);
                 if (liveCtx) liveCtx.messages = patched;
                 try { saveMessagesToStorage(STORAGE_KEY_MSGS_PREFIX + thisConvId, patched); } catch { /* quota */ }

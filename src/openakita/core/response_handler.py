@@ -15,6 +15,43 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+# ==================== 内部 trace marker 常量 ====================
+#
+# OpenAkita 通过 `build_tool_trace_summary()` 注入到历史回放上下文里的内部
+# 摘要 marker。用 `<<...>>` 这种自然中文几乎不会出现的强格式，是有意为之
+# 的反模仿设计——见 ``agent.py::build_tool_trace_summary`` 的 docstring。
+#
+# 这些 marker 不应作为用户可见正文流式打印，也不应被持久化进 assistant
+# content。集中放在这里是为了让流式 scrubber、最终文本清理、历史 → LLM
+# 上下文 strip（`agent.py`）、历史 → UI strip（`sessions.py`）共用同一份
+# 来源，避免日后任一处遗漏新 marker。
+#
+# 新增 marker 时只动这一处。
+
+# 完整 marker 字面量，按出现频率排序（命中早终止用）。
+INTERNAL_TRACE_MARKERS: tuple[str, ...] = (
+    "<<TOOL_TRACE>>",
+    "<<DELEGATION_TRACE>>",
+    "[执行摘要]",
+    "[子Agent工作总结]",
+)
+
+# 历史回放 / UI strip 用的"带 \n\n 前缀"版本：用于在 assistant content
+# 中查找 marker section 起点。保持与旧 _STRIP_MARKERS 列表行为等价。
+INTERNAL_TRACE_SECTION_PREFIXES: tuple[str, ...] = tuple(
+    "\n\n" + m for m in INTERNAL_TRACE_MARKERS
+)
+
+# marker section 结束分隔符（下一段的起始符），用于 strip 时判断 trace
+# section 的右边界。与现有 `_STRIP_MARKERS` 切断策略保持一致。
+INTERNAL_TRACE_SECTION_TERMINATORS: tuple[str, ...] = (
+    "\n\n[",
+    "\n\n<<",
+    "\n\n##",
+    "\n\n---",
+)
+
+
 # ==================== 文本清理函数 ====================
 
 
@@ -145,20 +182,96 @@ def strip_tool_simulation_text(text: str) -> str:
 _LEADING_TIMESTAMP_RE = re.compile(r"^\s*\[\d{1,2}:\d{2}\]\s*")
 
 
+# 完整字符串内部 trace marker 清理用的正则。
+# 匹配："消息开头" 或 "段落边界（一个或多个 \n + 可选空白）" 之后的
+# marker，一直到字符串末尾或下一段起始符（``\n\n[`` / ``\n\n<<`` /
+# ``\n\n##`` / ``\n\n---``，对齐 ``INTERNAL_TRACE_SECTION_TERMINATORS``）。
+#
+# boundary 用 ``\n+[ \t]*`` 而非 ``\n[ \t]*``：原文中 marker 通常以
+# ``\n\n`` 段落分隔形式出现，必须把全部 leading newlines 一起消耗掉，
+# 否则 ``.sub("", ...)`` 后会残留单个 ``\n`` 与后续段落粘连成 ``\n\n\n``。
+_INTERNAL_TRACE_SECTION_RE = re.compile(
+    r"(?:\A|\n+[ \t]*)"
+    r"(?:" + "|".join(re.escape(m) for m in INTERNAL_TRACE_MARKERS) + r")"
+    r".*?"
+    r"(?=\Z|"
+    + "|".join(re.escape(t) for t in INTERNAL_TRACE_SECTION_TERMINATORS)
+    + r")",
+    re.DOTALL,
+)
+
+# fenced code block 检测：匹配整段 ``` ... ``` 以便在清理时跳过。
+_FENCED_CODE_RE = re.compile(r"```.*?```", re.DOTALL)
+
+
+def strip_internal_trace_markers(text: str) -> str:
+    """
+    从完整文本中剥离内部 trace marker section。
+
+    覆盖两种位置：
+
+    1. 消息开头即为 trace（整段都是 ``<<TOOL_TRACE>>`` 摘要）→ 返回空串。
+    2. 正文后拼接 ``\\n\\n<<TOOL_TRACE>>...`` → 保留正文，剥离 marker 起到
+       下一段起始符（或字符串末尾）之间的内容。
+
+    安全约束：
+
+    - 只在消息开头 / 行首 / 段落边界识别 marker（流式 scrubber 同口径），
+      避免误删用户讨论 ``<<TOOL_TRACE>>`` 字面量的合法文本。
+    - 在 fenced code block (``` ... ```) 内出现的 marker 一律保留，不剥离
+      （便于排障 / 文档示例 / 用户讨论格式时贴出 marker）。
+    - 末尾 ``rstrip``，去除 marker 之前 ``\\n\\n`` 留下的尾部空白。
+
+    新增 marker 字面量请改 ``INTERNAL_TRACE_MARKERS`` 常量，不要再在此处
+    硬编码。
+    """
+    if not text:
+        return text
+
+    # 没有任何 marker 字面量出现 → 快路径返回原文。
+    if not any(m in text for m in INTERNAL_TRACE_MARKERS):
+        return text
+
+    # 用占位符保护 fenced code block，避免代码示例里的 marker 被误删。
+    placeholders: list[str] = []
+
+    def _stash(match: re.Match) -> str:
+        placeholders.append(match.group(0))
+        return f"\x00FENCED_CODE_{len(placeholders) - 1}\x00"
+
+    masked = _FENCED_CODE_RE.sub(_stash, text)
+    cleaned = _INTERNAL_TRACE_SECTION_RE.sub("", masked)
+
+    # 还原 fenced code block。
+    for i, original in enumerate(placeholders):
+        cleaned = cleaned.replace(f"\x00FENCED_CODE_{i}\x00", original)
+
+    return cleaned.rstrip()
+
+
 def clean_llm_response(text: str) -> str:
     """
     清理 LLM 响应文本。
 
     依次应用:
     1. strip_thinking_tags - 移除思考标签
-    2. strip_tool_simulation_text - 移除模拟工具调用
-    3. strip_intent_tag - 移除意图声明标记
-    4. strip leading [HH:MM] timestamp leaked from historical message formatting
+    2. strip_internal_trace_markers - 移除内部 trace marker section
+    3. strip_tool_simulation_text - 移除模拟工具调用
+    4. strip_intent_tag - 移除意图声明标记
+    5. strip leading [HH:MM] timestamp leaked from historical message formatting
+
+    清理顺序约束（**关键安全不变量**）：
+    ``strip_thinking_tags`` → ``strip_internal_trace_markers`` →
+    ``strip_tool_simulation_text``。若先做工具模拟剥离，模型整段模仿的
+    ``<<TOOL_TRACE>>\\n- web_search({...})`` 中的工具调用会被误当成真实
+    意图保留下来，反向污染下游解析（``parse_text_tool_calls`` 可能将其
+    转成真实工具调用并触发执行）。
     """
     if not text:
         return text
 
     cleaned = strip_thinking_tags(text)
+    cleaned = strip_internal_trace_markers(cleaned)
     cleaned = strip_tool_simulation_text(cleaned)
     _, cleaned = parse_intent_tag(cleaned)
     cleaned = _LEADING_TIMESTAMP_RE.sub("", cleaned)

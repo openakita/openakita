@@ -93,6 +93,67 @@ fn restart_marker_path() -> PathBuf {
     base.join("restart.marker")
 }
 
+fn frontend_session_marker_path() -> PathBuf {
+    let base = home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".openakita");
+    let _ = fs::create_dir_all(&base);
+    base.join("frontend-session.marker")
+}
+
+static STARTUP_RECOVERY_NOTICE: Lazy<Mutex<Option<serde_json::Value>>> =
+    Lazy::new(|| Mutex::new(None));
+
+fn set_startup_recovery_notice(payload: serde_json::Value) {
+    if let Ok(mut guard) = STARTUP_RECOVERY_NOTICE.lock() {
+        *guard = Some(payload);
+    }
+}
+
+#[tauri::command]
+fn take_startup_recovery_notice() -> Option<serde_json::Value> {
+    STARTUP_RECOVERY_NOTICE.lock().ok().and_then(|mut guard| guard.take())
+}
+
+fn record_frontend_session_marker(app_version: &str) {
+    let marker = serde_json::json!({
+        "ts": now_epoch_secs(),
+        "pid": std::process::id(),
+        "app_version": app_version,
+    });
+    let _ = fs::write(
+        frontend_session_marker_path(),
+        serde_json::to_string_pretty(&marker).unwrap_or_else(|_| "{}".into()),
+    );
+}
+
+fn detect_previous_frontend_crash() -> Option<serde_json::Value> {
+    let marker_path = frontend_session_marker_path();
+    let content = fs::read_to_string(&marker_path).ok()?;
+    let previous: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let prev_pid = previous.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    if prev_pid == 0 || prev_pid == std::process::id() || is_pid_running(prev_pid) {
+        return None;
+    }
+    Some(serde_json::json!({
+        "reason": "native_frontend_crash",
+        "previous": previous,
+    }))
+}
+
+fn clear_frontend_session_marker() {
+    let marker_path = frontend_session_marker_path();
+    let should_remove = fs::read_to_string(&marker_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|json| json.get("pid").and_then(|v| v.as_u64()).map(|pid| pid as u32))
+        .map(|pid| pid == std::process::id())
+        .unwrap_or(true);
+    if should_remove {
+        let _ = fs::remove_file(marker_path);
+    }
+}
+
 /// 防止自愈进入无限重启循环：如果短时间内（30s）已经因 panic 自愈过一次，
 /// 再次崩溃则不再 spawn，让用户感知到崩溃并人工介入。
 const SELF_HEAL_COOLDOWN_MS: u64 = 30_000;
@@ -167,6 +228,11 @@ struct PlatformInfo {
     openakita_root_dir: String,
 }
 
+/// 计算"未配置 custom_root 时的"默认 OpenAkita 数据目录字符串。
+///
+/// 注意：日常显示请用 [`openakita_root_dir`] 取真实 root，否则会和后端
+/// 实际写入位置不一致；此函数仅作为兜底/迁移场景的"默认值"语义保留。
+#[allow(dead_code)]
 fn default_openakita_root() -> String {
     let home = home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     home.join(".openakita").to_string_lossy().to_string()
@@ -175,11 +241,16 @@ fn default_openakita_root() -> String {
 #[tauri::command]
 fn get_platform_info() -> PlatformInfo {
     let home = home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    // 用 openakita_root_dir() 而不是 default_openakita_root()，确保前端
+    // 显示的 root（以及拼出的 runtime / venv / logs hint）与后端 Rust /
+    // Python 真正使用的位置完全一致。否则在用户配置了 custom_root 或
+    // 设置了 OPENAKITA_ROOT 环境变量时，面板会指向 ~/.openakita 而真实
+    // runtime 落在另一个磁盘，让人误以为"runtime 没建出来"。
     PlatformInfo {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         home_dir: home.to_string_lossy().to_string(),
-        openakita_root_dir: default_openakita_root(),
+        openakita_root_dir: openakita_root_dir().to_string_lossy().to_string(),
     }
 }
 
@@ -3030,6 +3101,22 @@ struct ServicePidEntry {
     started_by: String,
 }
 
+fn can_auto_stop_backend(workspace_id: &str, pid: u32) -> bool {
+    if let Some(data) = read_pid_file(workspace_id) {
+        if data.pid == pid {
+            return data.started_by != "external";
+        }
+        // A different tracked process belongs to this workspace; do not kill a
+        // random healthy backend discovered from the port.
+        return false;
+    }
+
+    // Release builds still need to replace orphaned old packaged backends after
+    // an app upgrade. In dev, an untracked backend is usually a manually started
+    // `python -m openakita serve`, so keep it alive.
+    !cfg!(debug_assertions)
+}
+
 fn list_service_pids() -> Vec<ServicePidEntry> {
     let mut out = Vec::new();
     let dir = run_dir();
@@ -4241,7 +4328,15 @@ fn runtime_wheel_hash_matches_bootstrap() -> bool {
         .unwrap_or(false)
 }
 
-fn stop_backend_for_restart(pid: u32, port: u16) -> VersionCheckResult {
+fn stop_backend_for_restart(workspace_id: &str, pid: u32, port: u16) -> VersionCheckResult {
+    if !can_auto_stop_backend(workspace_id, pid) {
+        log_to_file(&format!(
+            "[version_check] keeping externally owned backend pid={} for ws={}",
+            pid, workspace_id
+        ));
+        return VersionCheckResult::RunningOk;
+    }
+
     if let Err(e) = graceful_stop_pid(pid, Some(port)) {
         eprintln!(
             "Failed to stop old backend (pid={}): {}. Keeping current backend.",
@@ -4297,7 +4392,7 @@ fn healthy_backend_pid(port: u16) -> Option<u32> {
 ///
 /// 此函数合并了「是否有后端在运行」和「版本是否匹配」两个检查，
 /// 只发一次 HTTP 请求，避免 setup 阶段重复探测。
-fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
+fn startup_version_check(workspace_id: &str, app_version: &str, port: u16) -> VersionCheckResult {
     let client = match reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .no_proxy()
@@ -4360,7 +4455,7 @@ fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
             "Runtime wheel changed for version {}. Stopping backend to refresh app-venv...",
             desktop_version
         );
-        return stop_backend_for_restart(pid, port);
+        return stop_backend_for_restart(workspace_id, pid, port);
     }
 
     // 核心防护：检查安装包内 bundled 后端版本。
@@ -4402,7 +4497,7 @@ fn startup_version_check(app_version: &str, port: u16) -> VersionCheckResult {
         }
     };
 
-    stop_backend_for_restart(pid, port)
+    stop_backend_for_restart(workspace_id, pid, port)
 }
 
 /// 启动对账：清理残留锁文件和已死的 PID 文件
@@ -4520,6 +4615,43 @@ fn write_crash_log(message: &str, show_dialog: bool) -> PathBuf {
     crash_path
 }
 
+fn show_main_window(app: &tauri::AppHandle, reason: &str, open_status: bool) {
+    let app_handle = app.clone();
+    let reason = reason.to_string();
+
+    // Windows WebView2/tao can crash if show/focus runs re-entrantly from a
+    // single-instance or tray callback while the hidden window state is changing.
+    #[cfg(target_os = "windows")]
+    {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            show_main_window_now(&app_handle, &reason, open_status);
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        show_main_window_now(&app_handle, &reason, open_status);
+    }
+}
+
+fn show_main_window_now(app: &tauri::AppHandle, reason: &str, open_status: bool) {
+    if let Some(w) = app.get_webview_window("main") {
+        if let Err(e) = w.show() {
+            log_to_file(&format!("[window] show failed ({reason}): {e}"));
+        }
+        let _ = w.unminimize();
+        if let Err(e) = w.set_focus() {
+            log_to_file(&format!("[window] focus failed ({reason}): {e}"));
+        }
+    } else {
+        log_to_file(&format!("[window] main window not found ({reason})"));
+    }
+    if open_status {
+        let _ = app.emit("open_status", serde_json::json!({}));
+    }
+}
+
 fn main() {
     // 自愈接力进程的启动时序兜底：
     // panic hook 在 spawn 新实例时旧进程还没真正退出，
@@ -4588,11 +4720,7 @@ fn main() {
     let app = match tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 第二个实例启动时，聚焦已有窗口并退出自身
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+            show_main_window(app, "single-instance", false);
         }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -4670,6 +4798,13 @@ fn main() {
             let is_first_run_arg = std::env::args().any(|a| a == "--first-run");
             let launch_mode = if is_first_run_arg { "first-run" } else { "normal" };
             app.emit("app-launch-mode", launch_mode).ok();
+            let app_version = app.package_info().version.to_string();
+
+            if let Some(payload) = detect_previous_frontend_crash() {
+                log_to_file("[self-heal] stale frontend session marker recovered");
+                set_startup_recovery_notice(payload);
+            }
+            record_frontend_session_marker(&app_version);
 
             // ── 自愈恢复：检查上次崩溃留下的 restart.marker ──
             // 由 panic hook 在命中 tao#1180 特征时写入；这里读出后立刻删除
@@ -4684,6 +4819,7 @@ fn main() {
                     ));
                     let payload: serde_json::Value =
                         serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+                    set_startup_recovery_notice(payload.clone());
                     app.emit("app-restarted-from-crash", payload).ok();
                 }
                 let _ = fs::remove_file(&marker_path);
@@ -4706,11 +4842,30 @@ fn main() {
             //   - NotRunning  → 端口无响应，需要启动
             //   - RunningOk   → 后端在运行且版本可接受
             //   - Upgraded    → 旧版后端已被终止，需要启动新版
-            let app_version = app.package_info().version.to_string();
             let state = read_state_file();
             if let Some(ref ws_id) = state.current_workspace_id {
                 let port = read_workspace_api_port(ws_id).unwrap_or(18900);
-                let check_result = startup_version_check(&app_version, port);
+                if cfg!(debug_assertions) {
+                    if let Some(pid) = healthy_backend_pid(port) {
+                        let should_adopt = read_pid_file(ws_id)
+                            .map(|data| !is_pid_file_valid(&data))
+                            .unwrap_or(true);
+                        if should_adopt {
+                            match write_pid_file(ws_id, pid, "external") {
+                                Ok(()) => log_to_file(&format!(
+                                    "[auto-start] adopted dev backend pid={} for ws={}",
+                                    pid, ws_id
+                                )),
+                                Err(e) => log_to_file(&format!(
+                                    "[auto-start] failed to adopt dev backend pid={}: {}",
+                                    pid, e
+                                )),
+                            }
+                        }
+                    }
+                }
+
+                let check_result = startup_version_check(ws_id, &app_version, port);
                 let need_start = !matches!(check_result, VersionCheckResult::RunningOk);
                 log_to_file(&format!(
                     "[auto-start] app_version={}, ws_id={}, port={}, need_start={}",
@@ -4736,22 +4891,6 @@ fn main() {
                         AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
                         AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
                     });
-                } else if let Some(pid) = healthy_backend_pid(port) {
-                    let should_adopt = read_pid_file(ws_id)
-                        .map(|data| !is_pid_file_valid(&data) || data.pid != pid)
-                        .unwrap_or(true);
-                    if should_adopt {
-                        match write_pid_file(ws_id, pid, "external") {
-                            Ok(()) => log_to_file(&format!(
-                                "[auto-start] adopted healthy backend pid={} for ws={}",
-                                pid, ws_id
-                            )),
-                            Err(e) => log_to_file(&format!(
-                                "[auto-start] failed to adopt healthy backend pid={}: {}",
-                                pid, e
-                            )),
-                        }
-                    }
                 }
             } else {
                 log_to_file("[auto-start] skipped: no current_workspace_id in state");
@@ -4844,7 +4983,7 @@ fn main() {
                         if AUTO_START_IN_PROGRESS.load(Ordering::SeqCst) {
                             continue;
                         }
-                        let check_result = startup_version_check(&app_version_for_hb, port);
+                        let check_result = startup_version_check(&ws_id, &app_version_for_hb, port);
                         let need_start = !matches!(check_result, VersionCheckResult::RunningOk);
                         if !need_start {
                             // 端口又被别人占了或 health 临时抖动 — 重置计数
@@ -4978,6 +5117,7 @@ fn main() {
             append_onboarding_log,
             append_onboarding_log_lines,
             append_frontend_log,
+            take_startup_recovery_notice,
             save_log_export,
             register_cli,
             unregister_cli,
@@ -5010,6 +5150,7 @@ fn main() {
             }
         }
         if let tauri::RunEvent::Exit = event {
+            clear_frontend_session_marker();
             // Safety-net: clean up backend processes on ANY exit path
             // (SIGTERM, system shutdown, unexpected termination, etc.)
             // Idempotent — harmless if tray-quit already stopped everything.
@@ -5019,11 +5160,11 @@ fn main() {
             //      导致后端沦为孤儿进程。
             //   2. Python 后端已注册 SIGTERM handler，收到信号即可优雅关闭。
             //   3. HTTP API 可能因代理、端口状态等原因不可达，增加不确定性。
+            // 应用退出兜底：杀掉所有 OpenAkita 后端进程（含 external 归属）。
+            // 启动阶段不动手动后端的保护由 startup_version_check 实现；
+            // 应用退出意味着用户已经主动结束会话，留任何后端都没用。
             let entries = list_service_pids();
             for ent in &entries {
-                if ent.started_by == "external" {
-                    continue;
-                }
                 if is_pid_running(ent.pid) {
                     let _ = kill_pid(ent.pid);
                 }
@@ -6177,18 +6318,16 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                // 2. 按 PID 文件逐一处理：tauri 启动的停掉，external 启动的跳过
+                // 2. 按 PID 文件逐一处理：tauri / external 都停掉
+                //    托盘 Quit 是用户明确意图，留任何后端进程都没有意义。
+                //    启动阶段的「不杀手动后端」由 startup_version_check 单独保证。
                 let entries = list_service_pids();
                 for ent in &entries {
-                    if ent.started_by == "external" {
-                        // CLI 启动的后端，不停止
-                        continue;
-                    }
                     let port = read_workspace_api_port(&ent.workspace_id);
                     let _ = stop_service_pid_entry(ent, port);
                 }
 
-                // 3. 兜底扫描孤儿进程（精确匹配）
+                // 3. 兜底扫描孤儿进程（dev/release 都执行）
                 kill_openakita_orphans();
 
                 std::thread::sleep(std::time::Duration::from_millis(600));
@@ -6196,7 +6335,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 // 4. 最终确认
                 let still_pid = list_service_pids()
                     .into_iter()
-                    .filter(|x| x.started_by != "external" && is_pid_running(x.pid))
+                    .filter(|x| is_pid_running(x.pid))
                     .collect::<Vec<_>>();
                 let still_orphans = kill_openakita_orphans();
 
@@ -6205,11 +6344,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     app.exit(0);
                 } else {
                     // 仍有残留：阻止退出，提示用户
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.unminimize();
-                        let _ = w.set_focus();
-                    }
+                    show_main_window(app, "quit-failed", false);
                     let mut detail = Vec::new();
                     for x in &still_pid {
                         detail.push(format!("{} (PID={})", x.workspace_id, x.pid));
@@ -6226,10 +6361,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+                show_main_window(app, "tray-show", false);
             }
             "hide" => {
                 if let Some(w) = app.get_webview_window("main") {
@@ -6249,11 +6381,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 { let _ = std::process::Command::new("xdg-open").arg(&url).spawn(); }
             }
             "open_status" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-                let _ = app.emit("open_status", serde_json::json!({}));
+                show_main_window(app, "tray-open-status", true);
             }
             _ => {}
         })
@@ -6264,24 +6392,14 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } => {
                 let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.unminimize();
-                    let _ = w.set_focus();
-                }
-                let _ = app.emit("open_status", serde_json::json!({}));
+                show_main_window(app, "tray-left-click", true);
             }
             TrayIconEvent::DoubleClick {
                 button: MouseButton::Left,
                 ..
             } => {
                 let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.unminimize();
-                    let _ = w.set_focus();
-                }
-                let _ = app.emit("open_status", serde_json::json!({}));
+                show_main_window(app, "tray-double-click", true);
             }
             _ => {}
         })

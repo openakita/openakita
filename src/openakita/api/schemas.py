@@ -39,9 +39,9 @@ class ChatRequest(BaseModel):
         None,
         description="Thinking mode override: 'auto'(system decides), 'on'(force enable), 'off'(force disable). null=use system default.",
     )
-    thinking_depth: Literal["low", "medium", "high"] | None = Field(
+    thinking_depth: Literal["low", "medium", "high", "max", "xhigh"] | None = Field(
         None,
-        description="Thinking depth: 'low', 'medium', 'high'. Only effective when thinking is enabled.",
+        description="Thinking depth: 'low', 'medium', 'high', 'max'. Only effective when thinking is enabled.",
     )
     agent_profile_id: str | None = Field(
         None,

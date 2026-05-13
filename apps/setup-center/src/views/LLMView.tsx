@@ -1157,10 +1157,14 @@ export function LLMView(props: LLMViewProps) {
     if (!ensureEndpointConfigApiReady()) return;
     const _busyId = notifyLoading("删除端点...");
     try {
-      await safeFetch(
+      const res = await safeFetch(
         `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(name)}?endpoint_type=${endpointType}`,
         { method: "DELETE" },
       );
+      const data = await res.json();
+      if (data.status !== "ok") {
+        throw new Error(data.error || data.message || "删除失败");
+      }
       await syncEndpointConfigChange(endpointType);
       notifySuccess(`已删除端点：${name}`);
     } catch (e) {

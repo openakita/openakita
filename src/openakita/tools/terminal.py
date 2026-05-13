@@ -145,12 +145,13 @@ class TerminalSession:
         if working_directory:
             self.cwd = str(Path(working_directory).resolve())
 
-        cmd_env = os.environ.copy()
-        cmd_env.update(self.env)
+        from ..runtime_manager import build_user_subprocess_environment
+
+        cmd_env = build_user_subprocess_environment(self.env)
 
         if self.execution_env_spec is not None:
             try:
-                from ..runtime_envs import apply_execution_environment, ensure_execution_env
+                from ..runtime_manager import apply_execution_environment, ensure_execution_env
 
                 cmd_env = apply_execution_environment(
                     cmd_env, ensure_execution_env(self.execution_env_spec)
@@ -158,14 +159,14 @@ class TerminalSession:
             except Exception as exc:
                 logger.warning("Terminal falling back to shared agent Python env: %s", exc)
                 try:
-                    from ..runtime_env import apply_agent_python_environment
+                    from ..runtime_manager import apply_agent_python_environment
 
                     cmd_env = apply_agent_python_environment(cmd_env)
                 except Exception:
                     pass
         else:
             try:
-                from ..runtime_env import apply_agent_python_environment
+                from ..runtime_manager import apply_agent_python_environment
 
                 cmd_env = apply_agent_python_environment(cmd_env)
             except Exception:
@@ -278,7 +279,7 @@ class TerminalSession:
                 pid=pid,
             )
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             # Timeout — collector task continues running (protected by shield)
             self._bg_task = collector_task
             return _make_bg_result(

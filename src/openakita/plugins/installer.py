@@ -62,22 +62,12 @@ def _pip_output_excerpt(proc: subprocess.CompletedProcess[str], *, limit: int = 
 def _pip_subprocess_env(python_executable: str) -> dict[str, str]:
     """Environment for plugin dependency installs.
 
-    Keep this local to the installer instead of changing process-wide env:
-    plugin installs should be UTF-8 and isolated from a user's shell
-    ``PYTHONPATH``, but the running OpenAkita process should not be mutated.
+    Delegates to the runtime manager env builder so plugin installs share the
+    same Python/Conda/pip/SSL isolation rules as channel and skill installs.
     """
-    env = os.environ.copy()
-    env["PYTHONUTF8"] = "1"
-    env["PYTHONIOENCODING"] = "utf-8"
-    env["PYTHONNOUSERSITE"] = "1"
-    env.pop("PYTHONPATH", None)
+    from openakita.runtime_manager import apply_runtime_pip_environment
 
-    py_path = Path(python_executable)
-    if getattr(sys, "frozen", False) and py_path.parent.name == "_internal":
-        # The embedded Python used by the desktop build can need PYTHONHOME
-        # to find encodings/importlib when launched directly for ``-m pip``.
-        env.setdefault("PYTHONHOME", str(py_path.parent))
-    return env
+    return apply_runtime_pip_environment(python_executable=python_executable)
 
 
 def _pip_install_context(
@@ -535,6 +525,8 @@ def _finalize_install(plugin_dir: Path, *, remove_on_failure: bool = True) -> st
             shutil.rmtree(plugin_dir, ignore_errors=True)
         raise PluginInstallError(
             f"Plugin {manifest.id!r} installed but pip dependencies failed. "
+            "OpenAkita does not migrate plugin dependency directories in place; "
+            "the isolated plugin directory was removed and reinstall/rebuild is required. "
             "See openakita.plugins.installer logs for the pip error excerpt."
         )
     return manifest.id

@@ -24,6 +24,7 @@ from ..converters.tools import (
     parse_text_tool_calls,
 )
 from ..model_registry import resolve_output_token_budget
+from ..thinking import reasoning_effort_for_depth
 from ..types import (
     AuthenticationError,
     EndpointConfig,
@@ -235,7 +236,14 @@ class OpenAIResponsesProvider(OpenAIProvider):
         # 思考模式 (reasoning)
         if request.enable_thinking and self.config.has_capability("thinking"):
             if request.thinking_depth:
-                body["reasoning"] = {"effort": request.thinking_depth}
+                effort = reasoning_effort_for_depth(
+                    provider=self.config.provider,
+                    base_url=self.base_url,
+                    model=self.config.model,
+                    depth=request.thinking_depth,
+                    allow_max_effort=False,
+                )
+                body["reasoning"] = {"effort": effort or "medium"}
             else:
                 body["reasoning"] = {"effort": "medium"}
 

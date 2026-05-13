@@ -441,6 +441,14 @@ MODEL_CAPABILITIES = {
             "thinking_only": True,
         },
         # DashScope 第三方模型 — MiniMax（thinking-only，不接受 enable_thinking=False）
+        "MiniMax-M2.7": {
+            "text": True,
+            "vision": False,
+            "video": False,
+            "tools": True,
+            "thinking": True,
+            "thinking_only": True,
+        },
         "MiniMax-M2.5": {
             "text": True,
             "vision": False,

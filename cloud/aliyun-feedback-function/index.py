@@ -17,6 +17,9 @@ Endpoints:
   POST /reply/{id}        — User reply via bot proxy (token + rate limit + GitHub comment)
   POST /webhook/github    — Receive GitHub Issue events (comment/close/label)
   GET  /unsubscribe/{id}  — Email unsubscribe
+  GET  /issues/search     — Public feedback search/browse (no auth required)
+  GET  /issues/{number}   — Public issue detail + comments (sanitized, no system info)
+  POST /issues/{number}   — Community comment on public issue (rate limited)
   GET  /health            — Health check
 
 Environment variables (set in FC console, never in source code):
@@ -270,6 +273,8 @@ def _verify_captcha_nonce(nonce: str) -> bool:
 def _create_github_issue(
     report_id: str, report_type: str, title: str,
     summary: str, system_info: str, oss_path: str,
+    contact_email: str = "",
+    contact_wechat: str = "",
 ) -> str | None:
     token = os.environ.get("GITHUB_TOKEN", "")
     repo = os.environ.get("GITHUB_REPO", "")
@@ -304,6 +309,15 @@ def _create_github_issue(
         f"- **Report ID:** `{report_id}`",
         f"- **Type:** {report_type}",
         f"- **Created:** {datetime.now(timezone.utc).isoformat()}",
+    ]
+    contact_parts = []
+    if contact_email:
+        contact_parts.append(f"Email: {html.escape(contact_email)}")
+    if contact_wechat:
+        contact_parts.append(f"WeChat: {html.escape(contact_wechat)}")
+    if contact_parts:
+        body_parts.append(f"- **Contact:** `{' | '.join(contact_parts)}`")
+    body_parts += [
         "",
         "## Description",
         summary or "(No description provided)",
@@ -490,6 +504,7 @@ def _sanitize_status(metadata: dict) -> dict:
         "title": metadata.get("title", ""),
         "type": metadata.get("type", "bug"),
         "status": metadata.get("status", "open"),
+        "summary": metadata.get("summary", ""),
         "labels": metadata.get("labels", []),
         "created_at": metadata.get("created_at", ""),
         "completed_at": metadata.get("completed_at"),
@@ -529,6 +544,379 @@ def _json_response(data: dict, status: int = 200) -> dict:
 
 def _error(msg: str, status: int) -> dict:
     return _json_response({"error": msg}, status)
+
+
+# ---------------------------------------------------------------------------
+# Public issue browsing helpers
+# ---------------------------------------------------------------------------
+
+_SEARCH_RATE_LIMIT = 10  # per minute per IP
+_COMMENT_DAILY_LIMIT = 5  # per day per IP
+
+_GH_HEADERS_TMPL: dict[str, str] | None = None
+
+
+def _gh_headers() -> dict[str, str]:
+    """Reusable GitHub API request headers."""
+    global _GH_HEADERS_TMPL
+    if _GH_HEADERS_TMPL is None:
+        _GH_HEADERS_TMPL = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+    token = os.environ.get("GITHUB_TOKEN", "")
+    h = dict(_GH_HEADERS_TMPL)
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
+def _check_search_rate_limit(ip: str) -> bool:
+    """Return True if within search rate limit, False if exceeded."""
+    bucket = _get_bucket()
+    minute = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+    key = f"_ratelimit/search/{ip}/{minute}.txt"
+    try:
+        result = bucket.get_object(key)
+        count = int(result.read().decode().strip())
+    except oss2.exceptions.NoSuchKey:
+        count = 0
+    except Exception:
+        count = 0
+    if count >= _SEARCH_RATE_LIMIT:
+        return False
+    bucket.put_object(key, str(count + 1).encode())
+    return True
+
+
+def _check_comment_rate_limit(ip: str) -> bool:
+    """Return True if within daily comment limit, False if exceeded."""
+    bucket = _get_bucket()
+    date = _today()
+    key = f"_ratelimit/comment/{ip}/{date}.txt"
+    try:
+        result = bucket.get_object(key)
+        count = int(result.read().decode().strip())
+    except oss2.exceptions.NoSuchKey:
+        count = 0
+    except Exception:
+        count = 0
+    if count >= _COMMENT_DAILY_LIMIT:
+        return False
+    bucket.put_object(key, str(count + 1).encode())
+    return True
+
+
+def _map_issue_status(issue: dict) -> str:
+    """Map GitHub issue state + labels to internal status string."""
+    state = issue.get("state", "open")
+    labels = [lb.get("name", "") for lb in issue.get("labels", [])]
+    if state == "closed":
+        return "wontfix" if "status:wontfix" in labels else "resolved"
+    for lb in labels:
+        if lb == "status:in_progress":
+            return "confirmed"
+    return "open"
+
+
+def _map_issue_type(issue: dict) -> str:
+    """Map GitHub issue labels to bug/feature type."""
+    labels = [lb.get("name", "") for lb in issue.get("labels", [])]
+    if "enhancement" in labels:
+        return "feature"
+    return "bug"
+
+
+def _extract_description(body: str) -> str:
+    """Extract the ## Description section from an issue body, stripping sensitive
+    sections like System Info and Attachments."""
+    if not body:
+        return ""
+    match = re.search(
+        r"## Description\s*\n(.*?)(?=\n## |\Z)",
+        body, re.DOTALL,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _classify_comment(comment: dict) -> dict | None:
+    """Classify a GitHub issue comment. Returns sanitized dict or None to skip."""
+    user = comment.get("user", {})
+    login = user.get("login", "unknown")
+    body_text = comment.get("body", "")
+
+    if user.get("type") == "Bot" or login.endswith("[bot]"):
+        return None
+
+    # Prefix checks MUST come before PAT login filter: User Reply and
+    # Community Reply are posted by the PAT account, so filtering PAT first
+    # would hide them all.
+    if body_text.startswith("**[User Reply]**"):
+        source = "user_reply"
+        body_text = body_text[len("**[User Reply]**"):].strip()
+    elif body_text.startswith("**[Community Reply]**"):
+        source = "community"
+        body_text = body_text[len("**[Community Reply]**"):].strip()
+    else:
+        source = "developer"
+        pat_login = os.environ.get("GITHUB_PAT_LOGIN", "")
+        if pat_login and login == pat_login:
+            return None
+
+    return {
+        "author": login,
+        "body": body_text,
+        "created_at": comment.get("created_at", ""),
+        "source": source,
+    }
+
+
+def _sanitize_issue_item(issue: dict) -> dict:
+    """Convert a GitHub issue to a safe public-facing dict (no body)."""
+    return {
+        "number": issue.get("number"),
+        "title": re.sub(r"^\[(Bug|Feature)\]\s*", "", issue.get("title", "")),
+        "type": _map_issue_type(issue),
+        "status": _map_issue_status(issue),
+        "created_at": issue.get("created_at", ""),
+        "updated_at": issue.get("updated_at", ""),
+        "comments_count": issue.get("comments", 0),
+        "html_url": issue.get("html_url", ""),
+        "labels": [lb.get("name", "") for lb in issue.get("labels", [])],
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /issues/search — public feedback search / browse
+# ---------------------------------------------------------------------------
+
+
+def _handle_issues_search(evt: dict) -> dict:
+    client_ip = _get_client_ip(evt)
+    if not _check_search_rate_limit(client_ip):
+        return _error("Search rate limit exceeded", 429)
+
+    qs = evt.get("queryParameters", {}) or {}
+    q = (qs.get("q", "") or "").strip()
+    try:
+        page = max(1, min(int(qs.get("page", "1")), 50))
+    except (ValueError, TypeError):
+        page = 1
+    try:
+        per_page = max(1, min(int(qs.get("per_page", "20")), 30))
+    except (ValueError, TypeError):
+        per_page = 20
+    state_filter = qs.get("state", "all")
+    type_filter = qs.get("type", "")
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repo = os.environ.get("GITHUB_REPO", "")
+    if not token or not repo:
+        return _error("GitHub integration not configured", 503)
+
+    headers = _gh_headers()
+
+    try:
+        if q:
+            search_q = f"repo:{repo} is:issue label:source:feedback {q}"
+            if state_filter in ("open", "closed"):
+                search_q += f" state:{state_filter}"
+            if type_filter == "bug":
+                search_q += " label:bug"
+            elif type_filter == "feature":
+                search_q += " label:enhancement"
+
+            resp = requests.get(
+                "https://api.github.com/search/issues",
+                headers=headers,
+                params={"q": search_q, "per_page": per_page, "page": page,
+                        "sort": "created", "order": "desc"},
+                timeout=10,
+            )
+        else:
+            labels = "source:feedback"
+            if type_filter == "bug":
+                labels += ",bug"
+            elif type_filter == "feature":
+                labels += ",enhancement"
+            params: dict = {
+                "labels": labels,
+                "per_page": per_page, "page": page,
+                "sort": "created", "direction": "desc",
+            }
+            if state_filter in ("open", "closed"):
+                params["state"] = state_filter
+            else:
+                params["state"] = "all"
+
+            resp = requests.get(
+                f"https://api.github.com/repos/{repo}/issues",
+                headers=headers, params=params, timeout=10,
+            )
+
+        if resp.status_code != 200:
+            logger.error("GitHub API error in search: %s %s", resp.status_code, resp.text[:300])
+            return _error(f"GitHub API error ({resp.status_code})", 502)
+
+        data = resp.json()
+
+        if q:
+            items = [_sanitize_issue_item(it) for it in data.get("items", [])]
+            total_count = data.get("total_count", 0)
+        else:
+            raw_items = data if isinstance(data, list) else []
+            items = [_sanitize_issue_item(it) for it in raw_items
+                     if not it.get("pull_request")]
+            link_header = resp.headers.get("Link", "")
+            has_next = 'rel="next"' in link_header
+            total_count = None  # Issues API doesn't return total_count
+            if not has_next and page == 1:
+                total_count = len(items)
+
+        return _json_response({
+            "items": items,
+            "total_count": total_count,
+            "page": page,
+            "per_page": per_page,
+            "has_next": len(items) == per_page,
+        })
+
+    except requests.Timeout:
+        return _error("GitHub API timeout", 504)
+    except Exception as e:
+        logger.error("Issues search error: %s", e)
+        return _error(f"Search failed: {e}", 500)
+
+
+# ---------------------------------------------------------------------------
+# GET /issues/{number} — public issue detail + comments
+# ---------------------------------------------------------------------------
+
+
+def _handle_issue_detail(evt: dict, issue_number: int) -> dict:
+    client_ip = _get_client_ip(evt)
+    if not _check_search_rate_limit(client_ip):
+        return _error("Rate limit exceeded", 429)
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repo = os.environ.get("GITHUB_REPO", "")
+    if not token or not repo:
+        return _error("GitHub integration not configured", 503)
+
+    headers = _gh_headers()
+
+    try:
+        issue_resp = requests.get(
+            f"https://api.github.com/repos/{repo}/issues/{issue_number}",
+            headers=headers, timeout=10,
+        )
+        if issue_resp.status_code == 404:
+            return _error("Issue not found", 404)
+        if issue_resp.status_code != 200:
+            return _error(f"GitHub API error ({issue_resp.status_code})", 502)
+
+        issue = issue_resp.json()
+
+        label_names = [lb.get("name", "") for lb in issue.get("labels", [])]
+        if "source:feedback" not in label_names:
+            return _error("Not a feedback issue", 403)
+
+        summary = _extract_description(issue.get("body", "") or "")
+
+        comments: list[dict] = []
+        comments_url = issue.get("comments_url", "")
+        if comments_url and issue.get("comments", 0) > 0:
+            cm_resp = requests.get(
+                comments_url,
+                headers=headers,
+                params={"per_page": 100},
+                timeout=10,
+            )
+            if cm_resp.status_code == 200:
+                for raw_cm in cm_resp.json():
+                    classified = _classify_comment(raw_cm)
+                    if classified:
+                        comments.append(classified)
+
+        return _json_response({
+            "number": issue.get("number"),
+            "title": re.sub(r"^\[(Bug|Feature)\]\s*", "", issue.get("title", "")),
+            "type": _map_issue_type(issue),
+            "status": _map_issue_status(issue),
+            "summary": summary,
+            "created_at": issue.get("created_at", ""),
+            "updated_at": issue.get("updated_at", ""),
+            "html_url": issue.get("html_url", ""),
+            "labels": label_names,
+            "comments": comments,
+        })
+
+    except requests.Timeout:
+        return _error("GitHub API timeout", 504)
+    except Exception as e:
+        logger.error("Issue detail error: %s", e)
+        return _error(f"Detail fetch failed: {e}", 500)
+
+
+# ---------------------------------------------------------------------------
+# POST /issues/{number}/comment — community reply on public issue
+# ---------------------------------------------------------------------------
+
+
+def _handle_issue_comment(evt: dict, issue_number: int) -> dict:
+    body = _parse_json_body(evt)
+    text = (body.get("body", "") or "").strip()
+    if not text:
+        return _error("Comment body is required", 400)
+    if len(text) > 2000:
+        return _error("Comment too long (max 2000 characters)", 400)
+
+    client_ip = _get_client_ip(evt)
+    if not _check_comment_rate_limit(client_ip):
+        return _error("Comment rate limit exceeded (max 5/day)", 429)
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repo = os.environ.get("GITHUB_REPO", "")
+    if not token or not repo:
+        return _error("GitHub integration not configured", 503)
+
+    headers = _gh_headers()
+
+    try:
+        issue_resp = requests.get(
+            f"https://api.github.com/repos/{repo}/issues/{issue_number}",
+            headers=headers, timeout=10,
+        )
+        if issue_resp.status_code == 404:
+            return _error("Issue not found", 404)
+        if issue_resp.status_code != 200:
+            return _error(f"GitHub API error ({issue_resp.status_code})", 502)
+
+        issue = issue_resp.json()
+        label_names = [lb.get("name", "") for lb in issue.get("labels", [])]
+        if "source:feedback" not in label_names:
+            return _error("Not a feedback issue", 403)
+
+        comment_text = f"**[Community Reply]**\n\n{text}"
+        cm_resp = requests.post(
+            f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments",
+            headers=headers,
+            json={"body": comment_text},
+            timeout=15,
+        )
+        if cm_resp.status_code == 201:
+            return _json_response({
+                "status": "ok",
+                "comment_url": cm_resp.json().get("html_url"),
+            })
+        logger.error("GitHub comment failed: %s %s", cm_resp.status_code, cm_resp.text[:300])
+        return _error(f"GitHub API error ({cm_resp.status_code})", 502)
+
+    except requests.Timeout:
+        return _error("GitHub API timeout", 504)
+    except Exception as e:
+        logger.error("Issue comment error: %s", e)
+        return _error(f"Comment failed: {e}", 500)
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +970,17 @@ def handler(event, context):
     unsubscribe_match = re.match(r"^/unsubscribe/([a-zA-Z0-9_-]+)$", path)
     if unsubscribe_match and method == "GET":
         return _handle_unsubscribe(evt, unsubscribe_match.group(1))
+
+    if path == "/issues/search" and method == "GET":
+        return _handle_issues_search(evt)
+
+    issue_match = re.match(r"^/issues/(\d+)$", path)
+    if issue_match:
+        num = int(issue_match.group(1))
+        if method == "GET":
+            return _handle_issue_detail(evt, num)
+        if method == "POST":
+            return _handle_issue_comment(evt, num)
 
     return _error("Not found", 404)
 
@@ -772,6 +1171,8 @@ def _handle_complete(evt: dict, report_id: str) -> dict:
         summary=metadata.get("summary", ""),
         system_info=metadata.get("system_info", ""),
         oss_path=zip_key,
+        contact_email=metadata.get("contact_email", ""),
+        contact_wechat=metadata.get("contact_wechat", ""),
     )
 
     if issue_url:
@@ -970,6 +1371,11 @@ def _handle_github_webhook(evt: dict) -> dict:
         if comment_body.startswith("**[User Reply]**"):
             return _json_response({
                 "status": "ignored", "reason": "user reply echo skipped",
+            })
+
+        if comment_body.startswith("**[Community Reply]**"):
+            return _json_response({
+                "status": "ignored", "reason": "community reply echo skipped",
             })
 
         pat_login = os.environ.get("GITHUB_PAT_LOGIN", "")

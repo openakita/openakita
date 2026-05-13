@@ -44,6 +44,7 @@ from .response_handler import (
     clean_llm_response,
     parse_intent_tag,
     request_expects_artifact,
+    strip_internal_trace_markers,
     strip_thinking_tags,
 )
 from .supervisor import TOKEN_ANOMALY_THRESHOLD, RuntimeSupervisor
@@ -6674,6 +6675,35 @@ class ReasoningEngine:
                     tc_dict["provider_extra"] = block.provider_extra
                 tool_calls.append(tc_dict)
                 assistant_content.append({"type": "tool_use", **tc_dict})
+
+        # 内部 trace marker 清理 —— 必须在下面的 ``parse_text_tool_calls``
+        # 之前。模型可能整段模仿 ``<<TOOL_TRACE>>\n- web_search({...})``，
+        # 若先做工具调用提取，模仿的调用会被误识别为本轮真实意图而触发
+        # 额外工具执行（安全风险）。
+        #
+        # 同步清理：
+        # - text_content：避免泄露到用户可见正文
+        # - thinking_content：避免下一轮 reasoning_content 回灌再被复读
+        # - assistant_content text/thinking block：避免持久化后下一轮回放
+        #   再次拼回 LLM 上下文
+        if text_content:
+            _trace_cleaned = strip_internal_trace_markers(text_content)
+            if _trace_cleaned != text_content:
+                logger.info(
+                    "[_parse_decision] Stripped internal trace marker(s) from text_content "
+                    f"({len(text_content) - len(_trace_cleaned)} chars removed)"
+                )
+            text_content = _trace_cleaned
+        if thinking_content:
+            thinking_content = strip_internal_trace_markers(thinking_content)
+        for _block in assistant_content:
+            if not isinstance(_block, dict):
+                continue
+            _btype = _block.get("type")
+            if _btype == "text" and _block.get("text"):
+                _block["text"] = strip_internal_trace_markers(_block["text"])
+            elif _btype == "thinking" and _block.get("thinking"):
+                _block["thinking"] = strip_internal_trace_markers(_block["thinking"])
 
         # 防御层：如果 provider 层未能从 thinking 内容中提取嵌入的工具调用，
         # 在此做最后一次检查（MiniMax-M2.5 已知会将 <minimax:tool_call> 嵌入 thinking 块）
