@@ -1,0 +1,14 @@
+{
+  "name": "openakita-ppt-maker-renderer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "description": "Optional PptxGenJS renderer for OpenAkita ppt-maker.",
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  },
+  "scripts": {
+    "render": "node render.js"
+  }
+}
+

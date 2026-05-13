@@ -2257,6 +2257,27 @@
                     </label>
                   </div>
                 </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <div className="text-xs text-muted">生成质量模式</div>
+                    <select className="input select" value={settings.quality_mode || "standard"} onChange={(e) => saveSettings({ quality_mode: e.target.value }).catch(setError)}>
+                      <option value="draft">快速草稿（速度优先）</option>
+                      <option value="standard">标准商务（默认）</option>
+                      <option value="deep_design">深度设计（更强版式与审计）</option>
+                    </select>
+                  </div>
+                  <div className="form-row">
+                    <div className="text-xs text-muted">输出 / 导出模式</div>
+                    <select className="input select" value={settings.output_mode || "editable"} onChange={(e) => saveSettings({ output_mode: e.target.value }).catch(setError)}>
+                      <option value="editable">可编辑 PPTX（默认）</option>
+                      <option value="creative_image">创意图片模式（视觉优先，可编辑性有限）</option>
+                    </select>
+                    <select className="input select" value={settings.exporter || "python-pptx"} onChange={(e) => saveSettings({ exporter: e.target.value }).catch(setError)}>
+                      <option value="python-pptx">Python fallback 导出器</option>
+                      <option value="pptxgenjs">PptxGenJS 高级导出器（需安装 Node 依赖）</option>
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <div className="setting-section">

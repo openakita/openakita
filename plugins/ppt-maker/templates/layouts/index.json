@@ -1,0 +1,102 @@
+{
+  "cover": {
+    "description": "Opening title slide with optional hero visual.",
+    "best_for": ["deck opening", "product launch", "executive report"],
+    "avoid_when": ["mid-deck supporting content"],
+    "content_schema": ["title", "subtitle", "presenter", "date", "image_query"],
+    "density_limit": 0.25,
+    "asset_slots": ["image"],
+    "renderer": "cover"
+  },
+  "agenda": {
+    "description": "Numbered navigation list for the beginning of a deck.",
+    "best_for": ["table of contents", "meeting flow"],
+    "avoid_when": ["non-linear story", "very short deck"],
+    "content_schema": ["items", "icon_query"],
+    "density_limit": 0.45,
+    "asset_slots": ["icon"],
+    "renderer": "agenda"
+  },
+  "conclusion_first": {
+    "description": "Strong takeaway title with supporting evidence cards.",
+    "best_for": ["executive summary", "consulting insight", "recommendation"],
+    "avoid_when": ["raw data table", "timeline"],
+    "content_schema": ["headline", "body", "bullets", "evidence"],
+    "density_limit": 0.6,
+    "asset_slots": ["icon"],
+    "renderer": "summary"
+  },
+  "three_cards": {
+    "description": "Three equally weighted cards for pillars, benefits, or options.",
+    "best_for": ["three key points", "feature highlights", "capability pillars"],
+    "avoid_when": ["more than five points", "continuous process"],
+    "content_schema": ["cards", "speaker_note"],
+    "density_limit": 0.55,
+    "asset_slots": ["icon"],
+    "renderer": "metric_cards"
+  },
+  "split_image_text": {
+    "description": "Asymmetric image and text split with one visual anchor.",
+    "best_for": ["concept explanation", "case study", "product value"],
+    "avoid_when": ["no visual asset", "dense table"],
+    "content_schema": ["body", "bullets", "image_query"],
+    "density_limit": 0.5,
+    "asset_slots": ["image"],
+    "renderer": "content"
+  },
+  "comparison": {
+    "description": "Two-column before/after or option comparison.",
+    "best_for": ["A vs B", "before vs after", "current vs target"],
+    "avoid_when": ["three or more competing options"],
+    "content_schema": ["left", "right", "summary"],
+    "density_limit": 0.65,
+    "asset_slots": [],
+    "renderer": "comparison"
+  },
+  "timeline": {
+    "description": "Milestone sequence for roadmaps and implementation plans.",
+    "best_for": ["roadmap", "project timeline", "phased rollout"],
+    "avoid_when": ["non-sequential ideas"],
+    "content_schema": ["milestones", "body"],
+    "density_limit": 0.55,
+    "asset_slots": [],
+    "renderer": "timeline"
+  },
+  "metric_cards": {
+    "description": "KPI cards plus compact explanatory bullets.",
+    "best_for": ["metric overview", "data report", "performance summary"],
+    "avoid_when": ["no measurable values"],
+    "content_schema": ["metrics", "bullets"],
+    "density_limit": 0.5,
+    "asset_slots": ["chart"],
+    "renderer": "metric_cards"
+  },
+  "chart": {
+    "description": "Chart with side notes and source caveats.",
+    "best_for": ["trend", "comparison", "composition"],
+    "avoid_when": ["no data categories or series"],
+    "content_schema": ["chart_title", "chart_type", "categories", "series", "bullets"],
+    "density_limit": 0.65,
+    "asset_slots": ["chart"],
+    "renderer": "chart"
+  },
+  "data_table": {
+    "description": "Compact evidence table for textual or mixed data.",
+    "best_for": ["raw evidence", "feature matrix", "comparison table"],
+    "avoid_when": ["more than 8 columns unless split"],
+    "content_schema": ["headers", "rows", "bullets"],
+    "density_limit": 0.75,
+    "asset_slots": ["table"],
+    "renderer": "data_table"
+  },
+  "insight_summary": {
+    "description": "Findings and risks side-by-side.",
+    "best_for": ["data interpretation", "risk summary", "executive takeaway"],
+    "avoid_when": ["opening slide"],
+    "content_schema": ["findings", "risks"],
+    "density_limit": 0.6,
+    "asset_slots": [],
+    "renderer": "insight_summary"
+  }
+}
+

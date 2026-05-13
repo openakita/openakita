@@ -1,0 +1,39 @@
+{
+  "tech_business": {
+    "label": "Tech Business",
+    "summary": "Clean technology-business deck for product, roadmap, and architecture topics.",
+    "primary_color": "#3457D5",
+    "secondary_color": "#172033",
+    "accent_color": "#FFB000",
+    "density": "balanced",
+    "keywords": ["technology", "business", "roadmap", "architecture"]
+  },
+  "consulting": {
+    "label": "Consulting Report",
+    "summary": "Conclusion-first executive style for strategy, diagnosis, and implementation decks.",
+    "primary_color": "#143D59",
+    "secondary_color": "#1F2937",
+    "accent_color": "#F4B41A",
+    "density": "airy",
+    "keywords": ["consulting", "strategy", "executive", "MECE"]
+  },
+  "data_insight": {
+    "label": "Data Insight",
+    "summary": "Evidence-driven style for metrics, charts, and analytical reporting.",
+    "primary_color": "#0F766E",
+    "secondary_color": "#134E4A",
+    "accent_color": "#F97316",
+    "density": "balanced",
+    "keywords": ["data", "metrics", "insight", "chart"]
+  },
+  "creative_pitch": {
+    "label": "Creative Pitch",
+    "summary": "High-impact pitch style with stronger hero visuals and concise copy.",
+    "primary_color": "#7C3AED",
+    "secondary_color": "#111827",
+    "accent_color": "#EC4899",
+    "density": "airy",
+    "keywords": ["pitch", "launch", "creative", "hero"]
+  }
+}
+

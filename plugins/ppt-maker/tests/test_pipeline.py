@@ -68,6 +68,9 @@ async def test_pipeline_generates_export_after_confirmed_gates(tmp_path) -> None
     assert updated is not None
     assert updated.status == ProjectStatus.READY
     assert len(slides) == 3
+    assert (tmp_path / "projects" / project.id / "brief.json").exists()
+    assert (tmp_path / "projects" / project.id / "render_model.json").exists()
+    assert (tmp_path / "projects" / project.id / "repair_plan.json").exists()
 
 
 @dataclass
