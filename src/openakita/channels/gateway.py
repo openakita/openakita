@@ -4765,15 +4765,19 @@ class MessageGateway:
         现在 gateway 只**渲染**卡片，``wait_for_ui_resolution`` 留给 reasoning_engine
         在 yield 之后自行 await，gateway 当前调用立即返回让 ``__anext__`` 接力。
         """
-        from ..core.policy import get_policy_engine
-
         tool_name = event.get("tool", "")
         reason = event.get("reason", "")
         risk = event.get("risk_level", "HIGH")
         confirm_id = (event.get("id") or "") or ""
         timeout = float(session.get_metadata("security_timeout") or 120)
-        pe = get_policy_engine()
-        if getattr(pe, "_is_trust_mode", lambda: False)():
+        # C8b-5: 之前用 v1 ``pe._is_trust_mode()`` 做 IM 渠道 trust-mode 自动
+        # 拒绝。v2 ``read_permission_mode_label() == "yolo"`` 是 SoT 等价读，
+        # v1 ``_is_trust_mode`` method 在 C8b-6 删除前仍存在但仅供内部 v1
+        # ``assert_tool_allowed`` 使用——外部 caller 全部切到 v2 helper。
+        from ..core.policy_v2 import read_permission_mode_label
+
+        is_trust_mode = read_permission_mode_label() == "yolo"
+        if is_trust_mode:
             if confirm_id:
                 from ..core.policy_v2 import apply_resolution
 

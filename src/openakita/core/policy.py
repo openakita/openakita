@@ -951,7 +951,14 @@ class PolicyEngine:
         return PolicyResult(decision=PolicyDecision.ALLOW)
 
     def _is_trust_mode(self) -> bool:
-        """Whether only baseline hard protection should apply."""
+        """Whether only baseline hard protection should apply.
+
+        C8b-5: external callers (``agent.py:_check_trust_mode_skip`` +
+        ``channels/gateway.py``) migrated to ``policy_v2.read_permission_mode_label``
+        — this method is now strictly **internal** to v1 ``assert_tool_allowed``
+        path and will be deleted in C8b-6 alongside ``assert_tool_allowed``
+        itself. Do not add new callers.
+        """
         return self._config.confirmation.mode == "yolo" or self._config.confirmation.auto_confirm
 
     def _check_baseline_protection(

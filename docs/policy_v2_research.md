@@ -958,7 +958,8 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C8b-2 | 配置常量与 SecurityConfig 子段读取迁移：`policy_v2/defaults.py` + `reset_policy_v2_layer` + audit_logger/checkpoint 改读 v2 | ✅ Done | §6.6 + 「C8b-2 实施记录」 |
 | C8b-3 | UI confirm facade 完成切换 + confirmed_cache 决策：`policy_v2/session_allowlist.py` + `policy_v2/confirm_resolution.py` + 7 callsite 直连 v2 + `policy.py` 删 6 facade + `mark_confirmed` + 2 字段 + tool_executor 改 `tool_use_id` 去重 | ✅ Done | 「C8b-3 实施记录」 |
 | C8b-4 | permission-mode shim 替换 + smart-mode 删除：`policy_v2/confirmation_mode.py` + 2 endpoint 直读 v2 + `policy.py` 删 `_frontend_mode` / `_session_allow_count` / `_SMART_ESCALATION_THRESHOLD` / smart-mode escalation block | ✅ Done | 「C8b-4 实施记录」 |
-| C8b-5 | （未启动）v1 `assert_tool_allowed` + RiskGate 整体删除 / PolicyEngine class 仅留 helper / v1-only 测试清理 | ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划 §F · C8b-5」|
+| C8b-5 | `_is_trust_mode` 外部 caller 切 v2：agent.py + gateway.py 2 callsite → `read_permission_mode_label() == "yolo"`；`_check_trust_mode_skip` 简化为纯 v2 单查；`_is_trust_mode` v1 method 隔离为 v1-private | ✅ Done | 「C8b-5 实施记录」 |
+| C8b-6 | （未启动）`assert_tool_allowed` + 30+ `_check_*` helper 删除 / skill_allowlists × 5 + user_allowlists × 5 + reasoning_engine × 2 callsite 切 v2 manager / `policy.py` 文件最终删除 / v1-only 测试清理 | ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划 §F · C8b-5」（原 §F C8b-5 拆出）|
 | C9a | SecurityView v2 适配（approval_class badge + IM owner UI + dry-run preview） | ✅ Done | §8 + R5-20 |
 | C9b | UI confirm bus 抽出（`core/ui_confirm_bus.py`），让 C8b 能安全删 v1 | ✅ Done | §6.6 + R5-22 |
 | C9c | tool_intent_preview / pending_approval_* / policy_config_reloaded SSE 事件（推迟到 C12 一起做） | ⏳ Deferred | §8 + R2-11 |
@@ -3248,6 +3249,64 @@ git stash 后跑同样 5 个仍失败，确认是 baseline 问题。`test_org_se
 5. **v1 单测的灰色地带**：`test_security.py:TestYAMLNewFields` 这种单测既测 v1 配置加载又测内部字段。删字段时改成只测 SoT (`config.confirmation.mode`)，保留配置加载行为覆盖，删字段断言。这种"窄改"比"全部 skip"更优——保留覆盖率。
 
 C8b-4 完成。**v1 `_frontend_mode` shim + `_session_allow_count` + smart-mode escalation 100% 删除**。可进入 **C8b-5（v1 `assert_tool_allowed` + RiskGate 整体删除 + PolicyEngine class 仅留 helper）** —— 详见「C8b 粒度化执行计划 §F · C8b-5」。
+
+
+---
+
+## C8b-5 实施记录
+
+依据：「C8b 粒度化执行计划 §F · C8b-5（原 §F C8b-4 RiskGate 删除）」**拆分版**。
+
+### 1. 范围决策（commit 前）
+
+原 §F C8b-4 计划 = "agent.py RiskGate 删除"（删 `_consume_risk_authorization` / `_check_trust_mode_skip` / `_check_trusted_path_skip` 三函数 + ~166 行 + +150 v2 / -350 v1 + 1.5 天 + HIGH risk）。原 §F C8b-5 = "PolicyEngine class 删除 + policy.py 文件删除"（-1700 v1 + 1 天）。
+
+实施时发现 v1 `_is_trust_mode` 仍有 2 处生产 caller（agent.py:872 + gateway.py:4776），属于"先删 RiskGate 但 v1 字段还被读"的反模式（违反 §G #1）。决定**拆分**：
+- **C8b-5（本 commit）**：先把 2 处外部 caller 切到 v2 `read_permission_mode_label()`，让 v1 `_is_trust_mode` method **完全隔离**到 `policy.py` 内部（仅供 `assert_tool_allowed` 自用），消除"agent/gateway → v1 policy"反向耦合。**风险：低**。
+- **C8b-6（下一 commit）**：删除 `assert_tool_allowed` + 30+ `_check_*` helper + 迁移 5 处 skill_allowlist / 5 处 user_allowlist / 2 处 reasoning_engine callsite + 删 policy.py 整文件。原 §F C8b-4 + C8b-5 的合并实施。**风险：中-高**。
+
+### 2. 实施步骤
+
+1. **`agent.py:_check_trust_mode_skip` 简化**：删除 v1+v2 双查 + "保守优先"逻辑 (~30 行) → 纯 v2 单查（`get_config_v2().confirmation.mode == ConfirmationMode.TRUST`）。失败时 fail-soft 回 None（"未启用 trust"），与原行为一致。
+2. **`gateway.py` IM trust-mode bypass**：`getattr(pe, "_is_trust_mode", lambda: False)()` → `read_permission_mode_label() == "yolo"`。同时删除 `from ..core.policy import get_policy_engine` 局部 import。
+3. **`policy.py:_is_trust_mode` 加 docstring 警告**：明确标注为"v1-private, do not add new callers, will be removed in C8b-6"——给后续 reviewer 信号。
+
+### 3. 行为变化（用户可感知）
+
+| 场景 | C8b-4 之后 | C8b-5 之后 |
+|---|---|---|
+| `_check_trust_mode_skip` v1+v2 不一致 | "保守优先"——任一层非 trust → 不 skip | v2 是 SoT，单查；v1 已无字段可 desync |
+| v2 layer 异常时 trust skip | 退化到 v1（v1 也异常才 None） | 直接 None（"未启用 trust"，更保守） |
+| IM 渠道 trust-mode 决策延迟 | v1 method 调用（~1 attribute lookup） | v2 helper 调用（~1 dict lookup + enum compare） |
+
+**安全方向**：v2 layer 异常时直接 fail-safe 到"未启用 trust"——比 v1 fallback 更保守。生产环境 v2 layer 启动后即可用，正常路径行为不变。
+
+### 4. 验证
+
+| 项目 | 结果 |
+|---|---|
+| 新单测 `test_policy_v2_c8b5_trust_mode_isolation.py` | 8 PASS |
+| C8b 系列 + risk gate + IM 单测 sweep（10 个文件） | 255 PASS, 12 SKIP（C8b-3 v1-only 仍 skip） |
+| 全 channel 单测（5 个文件） | 26 PASS |
+| `c8b5_audit.py` D1-D5 | ALL 5 PASS |
+| 全 11 audit 脚本 × 40 维度 | ALL PASS |
+| ruff（agent/policy/gateway/test/audit） | ALL CLEAN |
+
+### 5. Bug 清单（实施过程中）
+
+1. **静态守卫单测假阳性（重复踩坑）**：`test_agent_py_no_v1_is_trust_mode_call` 全文 grep `pe._is_trust_mode(` 命中我的 doc 注释里的反引号引用。**修复**：抽出 `_strip_comments_and_doc()` helper 跳过 `#` 开头行 + 三引号块内行。这是 C8b-3/C8b-4 都遇过的同一类问题——doc 注释保留历史名字 vs source-grep 太严格。**模式总结**：删除符号时静态测试用 `hasattr` / `pytest.raises(AttributeError)` 优先于源码 grep。
+2. **f-string 无 placeholder（ruff F541）**：audit 错误信息字符串误加 `f` 前缀。`ruff check --fix` 自动修。
+3. **import 块未排序（ruff I001）**：audit 函数体内的局部 import 按字母序写但 ruff 期望分组。`ruff check --fix` 自动修。
+
+### 6. 工程教训
+
+1. **"先删依赖再删被依赖"是反模式**：v1 字段（`_frontend_mode` C8b-4 / `_is_trust_mode` C8b-5）若仍有外部 caller，先迁 caller 再删字段。强行先删字段会让 reviewer 看到"agent.py 调一个不存在的方法"那一刻状态不一致。
+2. **拆分大 commit 比一次塞**：原 §F C8b-4 设计为"删 RiskGate 三函数 + 166 行"，但实际依赖链更广（v1 method × 2 callsite + skill/user_allowlist 2 大组共 10 callsite + reasoning_engine × 2）。一次性删等于把 4 件不相关的事件强耦合到一个 commit；rollback 困难、reviewer 难以审查。本次拆 C8b-5 / C8b-6 两 commit，每个都能独立 release。
+3. **doc-comment 历史符号保留 vs 静态测试**：保留 doc 注释里删除字段的名字（"C8b-4: ``_session_allow_count`` removed"）让 reviewer 能 grep 找到删除决策。但静态测试得用动态守卫，不能靠源码 grep。两者权衡——用 helper 函数（`_strip_comments_and_doc`）一次解决。
+4. **fail-soft 默认值的安全方向**：v2 helper 拉取失败回 `"yolo"` 是 UI fallback 用途（避免端点 500）；但 trust-mode skip 这种安全决策必须 fail-safe（异常 → 当未启用 trust，强制 confirm）。同一个 helper 的返回值在不同语义下用法不同——caller 自己处理 try/except 比 helper 内做"全局 fallback"更精准。
+5. **"小步快跑"也要严格 audit**：本 commit 只动 ~50 行，但仍跑全 11 audit + 全 channel + risk + IM 单测 sweep，确保 0 regression。**audit 是"删一行 v1 字段是否破坏其他模块"的唯一可靠保证**——不能因为 commit 小就跳过。
+
+C8b-5 完成。**v1 `_is_trust_mode` 已完全隔离到 `policy.py` 内部**（仅供 `assert_tool_allowed` 自用）。可进入 **C8b-6（v1 `assert_tool_allowed` + 30+ `_check_*` helper + skill_allowlist / user_allowlist 5+5 callsite + reasoning_engine × 2 + `policy.py` 文件最终删除）** —— 详见「C8b 粒度化执行计划 §F · C8b-5」（原计划与本次拆分后的合并实施）。
 
 
 ---

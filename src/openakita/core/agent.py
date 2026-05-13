@@ -864,36 +864,24 @@ def _check_trust_mode_skip(risk_intent: RiskIntentResult | None) -> str | None:
     if risk_intent.target_kind in _TRUST_MODE_MUST_CONFIRM_TARGETS:
         return None
 
-    v1_trust: bool | None = None
-    try:
-        from .policy import get_policy_engine
-
-        engine = get_policy_engine()
-        is_trust = getattr(engine, "_is_trust_mode", None)
-        if callable(is_trust):
-            v1_trust = bool(is_trust())
-    except Exception:
-        v1_trust = None
-
-    v2_trust: bool | None = None
+    # C8b-5: 之前用 v1 ``pe._is_trust_mode()`` + v2 双查 + "保守优先"。
+    # C8b-4 后 v2 ``read_permission_mode_label()`` 已是 SoT，v1
+    # ``_frontend_mode`` 字段已删，二者不再可能 desync——双查无意义。
+    # v2 helper 自带 fail-soft fallback (v2 layer 未初始化时回 "yolo")，
+    # 故失败时退化为"未启用 trust"（fallback 是 "yolo" 但属于 fail-safe，
+    # 真正 v2 异常时不应该误信任）：用显式 try/except 区分 normal vs error。
     try:
         from .policy_v2 import ConfirmationMode
         from .policy_v2.global_engine import get_config_v2
 
-        cfg = get_config_v2()
-        mode_value = cfg.confirmation.mode
-        v2_trust = mode_value == ConfirmationMode.TRUST or str(mode_value) == "trust"
+        mode_value = get_config_v2().confirmation.mode
+        is_trust = (
+            mode_value == ConfirmationMode.TRUST or str(mode_value) == "trust"
+        )
     except Exception:
-        v2_trust = None
+        return None  # v2 不可用 → 当作未启用 trust（保守）
 
-    # 两层都失败 → 当作未启用 trust（保守）
-    if v1_trust is None and v2_trust is None:
-        return None
-    # 任一层显式说"不是 trust" → 不 skip（保守 + 兼容旧测试 mutate v1 only）
-    if v1_trust is False or v2_trust is False:
-        return None
-    # 至少一层说 trust 且无人反对 → skip
-    if v1_trust is True or v2_trust is True:
+    if is_trust:
         return "trust_mode"
     return None
 
