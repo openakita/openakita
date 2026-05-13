@@ -1,0 +1,64 @@
+---
+description: 为初学者提供详细的技术名词解释和架构说明，帮助理解工程系统
+alwaysApply: true
+---
+
+# 面向初学者的详细解释规则
+
+在与用户交流时，请始终遵循以下原则，帮助用户理解技术概念和本工程架构。
+
+## 1. 技术名词解释
+
+当回复中涉及以下类别的专业术语时，首次出现需用括号或简短句子给出通俗解释：
+
+- **后端概念**：API、路由(route)、中间件(middleware)、WebSocket、REST、CORS、认证(auth)、序列化等
+- **前端概念**：组件(component)、状态管理、打包(build)、热更新(HMR)、SSR/CSR、路由等
+- **Python 生态**：虚拟环境(venv)、pip、pyproject.toml、Pydantic、FastAPI、Typer、异步(async/await)等
+- **前端生态**：Vite、React、Tailwind CSS、Tauri、Capacitor、npm/pnpm、TypeScript 等
+- **AI/LLM 概念**：Provider、Token、Prompt、ReAct、Agent、Tool Calling、MCP、上下文窗口等
+- **DevOps 概念**：Docker、CI/CD、镜像(image)、容器(container)、GitHub Actions、部署(deploy)等
+- **Git 概念**：分支(branch)、提交(commit)、合并(merge)、远程(remote)、暂存区(staging)等
+
+## 2. OpenAkita 工程架构说明
+
+当涉及本工程的模块时，简要说明该模块在整体架构中的位置和作用：
+
+### 后端 (`src/openakita/`)
+- `main.py` — CLI 入口，用 Typer 框架实现命令行，如 `openakita serve` 启动服务
+- `config.py` — 全局配置，用 Pydantic Settings 管理环境变量和 .env 文件
+- `api/` — HTTP 接口层，基于 FastAPI 框架，端口 18900
+- `core/` — 核心引擎：Agent（智能体）、Brain（推理大脑）、ReasoningEngine（ReAct 推理循环）、ContextManager（上下文管理）
+- `agents/` — 多智能体协作：AgentOrchestrator 编排多个 Agent 协同工作
+- `channels/` — IM 消息网关：统一接入飞书/钉钉/企微/Telegram 等各平台
+- `llm/` — 大模型调用层：统一封装 Anthropic/OpenAI 等多家 API，含故障切换
+- `tools/` — Agent 可用的工具集：Shell 命令、文件操作、浏览器、桌面控制、MCP 等
+- `memory/` — 长期记忆存储与检索
+- `scheduler/` — 定时任务系统：支持一次性/间隔/cron 表达式触发
+- `sessions/` — 会话管理：维护每个对话的状态
+- `skills/` — 技能系统：可扩展的能力模块
+- `mcp_servers/` — 内置的 MCP 服务器实现
+
+### 前端 (`apps/setup-center/`)
+- 技术栈：Vite + React + TypeScript + Tailwind CSS
+- 桌面端通过 Tauri（Rust 框架）打包为原生应用
+- 移动端通过 Capacitor 打包为 Android/iOS 应用
+- 构建产物 `dist-web` 会被打包进 Python wheel，由后端 FastAPI 静态服务
+
+### 数据流
+用户输入 → Channels 网关 → Sessions 会话 → Core Agent 推理 → LLM 模型调用 → Tools 工具执行 → 返回结果
+
+## 3. 回复风格要求
+
+- 修改代码时，说明**为什么**要改这里，这个文件/函数在系统中**承担什么角色**
+- 遇到报错时，先**用通俗语言解释**错误含义，再给解决方案
+- 涉及构建/打包/部署操作时，解释每一步**命令的作用**和**为什么需要这一步**
+- 提到配置项时，说明该配置**影响系统的哪个行为**
+- 如果需要安装依赖，解释该依赖**是什么、做什么用的**
+- 使用类比或生活化比喻帮助理解抽象概念（如"中间件就像门卫，所有请求进出都要经过它"）
+
+## 4. 格式建议
+
+- 复杂流程用编号步骤拆解
+- 模块关系用箭头（→）表示数据/调用方向
+- 对比性内容用表格呈现
+- 关键文件路径用代码块标注
