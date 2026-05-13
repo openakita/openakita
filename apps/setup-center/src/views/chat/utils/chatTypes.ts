@@ -65,6 +65,9 @@ export type QueuedMessage = {
 /** SSE stream event union — synced with Python openakita.events / src/streamEvents.ts */
 export type StreamEvent =
   | { type: "heartbeat"; ts?: number }
+  | { type: "org_command_started"; org_id: string; command_id: string; root_node_id?: string }
+  | { type: "org_progress"; org_id: string; command_id: string; event?: string; summary: string; data?: Record<string, unknown> }
+  | { type: "org_command_done"; org_id: string; command_id: string; result?: Record<string, unknown>; error?: string }
   | { type: "iteration_start"; iteration: number }
   | { type: "context_compressed"; before_tokens: number; after_tokens: number }
   | { type: "thinking_start" }

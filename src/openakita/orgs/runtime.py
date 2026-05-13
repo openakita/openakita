@@ -4635,6 +4635,11 @@ class OrgRuntime:
 
     async def _broadcast_ws(self, event: str, data: dict) -> None:
         try:
+            from openakita.orgs.event_router import route_org_event
+            await route_org_event(event, data)
+        except Exception:
+            logger.debug("[OrgRuntime] route_org_event failed: %s %s", event, data, exc_info=True)
+        try:
             from openakita.api.routes.websocket import broadcast_event
             await broadcast_event(event, data)
         except Exception:
