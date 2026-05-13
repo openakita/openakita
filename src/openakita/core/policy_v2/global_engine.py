@@ -211,6 +211,33 @@ def is_initialized() -> bool:
     return _engine is not None
 
 
+def reset_policy_v2_layer() -> None:
+    """C8b-2: 一次性重置 v2 引擎单例 + 关联子系统（audit_logger）。
+
+    背景：``api/routes/config.py`` UI Save Settings 后需要让全部 v2 配置消费者
+    重读 YAML。v2 全局引擎自身由 ``reset_engine_v2()`` 重置；audit_logger 持
+    有的 path/enabled 字段是从 ``PolicyConfigV2.audit`` 派生的（C8b-2 起改读
+    v2，详见 ``audit_logger.get_audit_logger``），同样需要重置。
+
+    Pre-C8b-2：config.py 直接调 v1 ``reset_policy_engine()``，后者内部级联调
+    v2 reset + audit reset。C8b-2 之后 config.py 改调本函数，把"reset 谁"的
+    决策从 v1 移到 v2 层，让 C8b-5 删 v1 时不需要重新串联。
+
+    fail-safe：audit_logger 模块未导入时静默跳过（特殊 import 路径下可能尚
+    未初始化）。
+    """
+    reset_engine_v2()
+    try:
+        from ..audit_logger import reset_audit_logger
+
+        reset_audit_logger()
+    except Exception:
+        logger.debug(
+            "[PolicyV2] audit_logger reset skipped (module not available)",
+            exc_info=True,
+        )
+
+
 def make_preview_engine(
     cfg: PolicyConfigV2 | None = None,
 ) -> PolicyEngineV2:
@@ -248,5 +275,6 @@ __all__ = [
     "make_preview_engine",
     "rebuild_engine_v2",
     "reset_engine_v2",
+    "reset_policy_v2_layer",
     "set_engine_v2",
 ]

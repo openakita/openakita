@@ -1463,9 +1463,9 @@ async def write_security_config(body: SecurityConfigUpdate):
     if not _write_policies_yaml(data):
         return {"status": "error", "message": "配置写入失败"}
     try:
-        from openakita.core.policy import reset_policy_engine
+        from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_engine()
+        reset_policy_v2_layer()
     except Exception:
         pass
     logger.info("[Config API] Updated security policy")
@@ -1562,7 +1562,10 @@ async def preview_security_config(body: dict | None = None):
 @router.get("/api/config/security/zones")
 async def read_security_zones():
     """Read zone path configuration."""
-    from openakita.core.policy import _default_forbidden_paths, _default_protected_paths
+    from openakita.core.policy_v2.defaults import (
+        default_forbidden_paths,
+        default_protected_paths,
+    )
 
     data = _read_policies_yaml() or {}
     sec = data.get("security", {})
@@ -1573,10 +1576,10 @@ async def read_security_zones():
         "controlled": zones.get("controlled", []),
         "protected": zones.get("protected")
         if zones.get("protected") is not None
-        else _default_protected_paths(),
+        else default_protected_paths(),
         "forbidden": zones.get("forbidden")
         if zones.get("forbidden") is not None
-        else _default_forbidden_paths(),
+        else default_forbidden_paths(),
         "default_zone": zones.get("default_zone", "workspace" if mode == "yolo" else "controlled"),
     }
 
@@ -1600,9 +1603,9 @@ async def write_security_zones(body: SecurityZonesUpdate):
         z["default_zone"] = body.default_zone
     _write_policies_yaml(data)
     try:
-        from openakita.core.policy import reset_policy_engine
+        from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_engine()
+        reset_policy_v2_layer()
     except Exception:
         pass
     logger.info("[Config API] Updated security zones")
@@ -1612,7 +1615,7 @@ async def write_security_zones(body: SecurityZonesUpdate):
 @router.get("/api/config/security/commands")
 async def read_security_commands():
     """Read command pattern configuration."""
-    from openakita.core.policy import _DEFAULT_BLOCKED_COMMANDS
+    from openakita.core.policy_v2.defaults import default_blocked_commands
 
     data = _read_policies_yaml() or {}
     cp = data.get("security", {}).get("command_patterns", {})
@@ -1622,7 +1625,7 @@ async def read_security_commands():
         "excluded_patterns": cp.get("excluded_patterns", []),
         "blocked_commands": cp.get("blocked_commands")
         if cp.get("blocked_commands") is not None
-        else list(_DEFAULT_BLOCKED_COMMANDS),
+        else default_blocked_commands(),
     }
 
 
@@ -1643,9 +1646,9 @@ async def write_security_commands(body: SecurityCommandsUpdate):
     cp["blocked_commands"] = body.blocked_commands
     _write_policies_yaml(data)
     try:
-        from openakita.core.policy import reset_policy_engine
+        from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_engine()
+        reset_policy_v2_layer()
     except Exception:
         pass
     logger.info("[Config API] Updated security commands")
@@ -1689,9 +1692,9 @@ async def write_security_sandbox(body: SecuritySandboxUpdate):
         sb["exempt_commands"] = body.exempt_commands
     _write_policies_yaml(data)
     try:
-        from openakita.core.policy import reset_policy_engine
+        from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_engine()
+        reset_policy_v2_layer()
     except Exception:
         pass
     logger.info("[Config API] Updated security sandbox")
@@ -1723,7 +1726,10 @@ async def write_permission_mode(body: _PermissionModeBody):
     if mode not in ("cautious", "smart", "yolo"):
         return {"status": "error", "message": f"无效的安全模式: {mode}"}
     try:
-        from openakita.core.policy import get_policy_engine, reset_policy_engine
+        # ``get_policy_engine`` 仍保留：``_frontend_mode`` shim 是 v1 attribute，
+        # Q2 决议保留独立直到 C8b-5 才折叠 / 删除。reset 改用 v2 helper。
+        from openakita.core.policy import get_policy_engine
+        from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
         # Persist to YAML
         data = _read_policies_yaml()
@@ -1733,7 +1739,7 @@ async def write_permission_mode(body: _PermissionModeBody):
         _apply_permission_mode_defaults(sec, mode)
         if not _write_policies_yaml(data):
             return {"status": "error", "message": "配置写入失败，安全模式未切换"}
-        reset_policy_engine()
+        reset_policy_v2_layer()
         pe = get_policy_engine()
         pe._frontend_mode = mode
         logger.info(f"[Config API] Permission mode set to: {mode}")
@@ -1873,9 +1879,9 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
         conf["confirm_ttl"] = body.confirm_ttl
     _write_policies_yaml(data)
     try:
-        from openakita.core.policy import reset_policy_engine
+        from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_engine()
+        reset_policy_v2_layer()
     except Exception:
         pass
     return {"status": "ok"}
@@ -1953,9 +1959,9 @@ async def write_self_protection(body: _SelfProtectionUpdate):
         sp["audit_path"] = body.audit_path
     _write_policies_yaml(data)
     try:
-        from openakita.core.policy import reset_policy_engine
+        from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_engine()
+        reset_policy_v2_layer()
     except Exception:
         pass
     return {"status": "ok"}

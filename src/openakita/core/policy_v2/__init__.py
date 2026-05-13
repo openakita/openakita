@@ -38,6 +38,12 @@ from .death_switch import (
     get_death_switch_tracker,
     reset_death_switch_tracker,
 )
+from .defaults import (
+    default_blocked_commands,
+    default_controlled_paths,
+    default_forbidden_paths,
+    default_protected_paths,
+)
 from .engine import PolicyEngineV2, build_engine_from_config
 from .enums import (
     ApprovalClass,
@@ -61,6 +67,7 @@ from .global_engine import (
     make_preview_engine,
     rebuild_engine_v2,
     reset_engine_v2,
+    reset_policy_v2_layer,
     set_engine_v2,
 )
 from .loader import (
@@ -161,6 +168,7 @@ __all__ = [
     "make_preview_engine",
     "rebuild_engine_v2",
     "reset_engine_v2",
+    "reset_policy_v2_layer",
     "set_engine_v2",
     # adapter (C6/C7)
     "build_policy_context",
@@ -213,4 +221,9 @@ __all__ = [
     "get_skill_allowlist_manager",
     "reset_death_switch_tracker",
     "reset_skill_allowlist_manager",
+    # C8b-2 defaults (UI/config 兜底值，迁自 v1 ``policy.py``)
+    "default_blocked_commands",
+    "default_controlled_paths",
+    "default_forbidden_paths",
+    "default_protected_paths",
 ]

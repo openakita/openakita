@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import logging
-import platform
 import re
 from dataclasses import dataclass, field
 from datetime import UTC
@@ -204,108 +203,40 @@ _MEDIUM_RISK_SHELL_PATTERNS: list[str] = [
 ]
 
 # Default blocked shell commands (direct DENY)
-_DEFAULT_BLOCKED_COMMANDS: list[str] = [
-    "reg",
-    "regedit",
-    "netsh",
-    "schtasks",
-    "sc",
-    "wmic",
-    "bcdedit",
-    "shutdown",
-    "taskkill",
-]
+# ---------------------------------------------------------------------------
+# Default zone paths per platform — C8b-2 后已迁到 ``policy_v2/defaults.py``。
+# 本模块仍保留同名 / 同形状的导出，作为 thin re-export，避免 v1 内部以及
+# 未迁完的旧 callsite（test_security.py / test_permission_refactor.py 等）
+# 立即 break。C8b-5 删除整个 policy.py 时一起去除。
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Default zone paths per platform
-# ---------------------------------------------------------------------------
+from .policy_v2.defaults import DEFAULT_BLOCKED_COMMANDS as _V2_DEFAULT_BLOCKED_COMMANDS
+from .policy_v2.defaults import default_controlled_paths as _v2_default_controlled_paths
+from .policy_v2.defaults import default_forbidden_paths as _v2_default_forbidden_paths
+from .policy_v2.defaults import default_protected_paths as _v2_default_protected_paths
+
+# 暴露为 list 而非 tuple，与 v1 形状保持完全一致（v1 是 ``list[str]``）。
+# 每次 import 时拷一份，避免本模块用户 ``.append`` 改到 v2 immutable tuple。
+_DEFAULT_BLOCKED_COMMANDS: list[str] = list(_V2_DEFAULT_BLOCKED_COMMANDS)
 
 
 def _default_protected_paths() -> list[str]:
-    """Platform-specific default protected paths."""
-    paths = []
-    if platform.system() == "Windows":
-        paths.extend(
-            [
-                "C:/Program Files/**",
-                "C:/Program Files (x86)/**",
-                "C:/Windows/**",
-                "C:/ProgramData/**",
-            ]
-        )
-    else:
-        paths.extend(
-            [
-                "/usr/**",
-                "/bin/**",
-                "/sbin/**",
-                "/lib/**",
-                "/lib64/**",
-                "/boot/**",
-                "/etc/**",
-                "/dev/**",
-                "/proc/**",
-                "/sys/**",
-            ]
-        )
-        if platform.system() == "Darwin":
-            paths.extend(["/System/**", "/Library/**"])
-    return paths
+    """Thin re-export from ``policy_v2.defaults.default_protected_paths``.
+
+    保留下划线前缀让 v1 内部 / 未迁 caller 继续工作；新代码请直接 import
+    ``policy_v2.defaults.default_protected_paths``。
+    """
+    return _v2_default_protected_paths()
 
 
 def _default_forbidden_paths() -> list[str]:
-    """Platform-specific default forbidden paths."""
-    paths = ["~/.ssh/**", "~/.gnupg/**", "~/.aws/**", "~/.config/gcloud/**"]
-    if platform.system() == "Windows":
-        paths.extend(
-            [
-                "C:/Windows/System32/config/**",
-                "~/.aws/credentials",
-                "~/AppData/Roaming/gcloud/**",
-            ]
-        )
-    else:
-        paths.extend(["/etc/shadow", "/etc/gshadow"])
-    return paths
+    """Thin re-export from ``policy_v2.defaults.default_forbidden_paths``."""
+    return _v2_default_forbidden_paths()
 
 
 def _default_controlled_paths() -> list[str]:
-    """Platform-specific default controlled paths.
-
-    P0-1：用户常用工作区目录（桌面/文档/下载）默认归 CONTROLLED，
-    而非默认 WORKSPACE。这样 smart/cautious 模式下 LLM 主动写入这些目录
-    会触发 risk_confirm；yolo（完全信任）模式下 baseline_protection
-    继续放行，不打断用户。
-    """
-    paths = []
-    if platform.system() == "Windows":
-        paths.extend(
-            [
-                "~/Desktop/**",
-                "~/Documents/**",
-                "~/Downloads/**",
-                "~/Pictures/**",
-                "~/Videos/**",
-                "~/Music/**",
-                "~/桌面/**",
-                "~/文档/**",
-                "~/下载/**",
-                "~/图片/**",
-            ]
-        )
-    else:
-        paths.extend(
-            [
-                "~/Desktop/**",
-                "~/Documents/**",
-                "~/Downloads/**",
-                "~/Pictures/**",
-                "~/Music/**",
-            ]
-        )
-        if platform.system() == "Darwin":
-            paths.extend(["~/Movies/**", "~/Public/**"])
-    return paths
+    """Thin re-export from ``policy_v2.defaults.default_controlled_paths``."""
+    return _v2_default_controlled_paths()
 
 
 # ---------------------------------------------------------------------------

@@ -105,15 +105,24 @@ _global_audit: AuditLogger | None = None
 
 
 def get_audit_logger() -> AuditLogger:
+    """Return the lazily-constructed global AuditLogger.
+
+    C8b-2: 改读 ``policy_v2.AuditConfig``。v2 把 v1 ``self_protection.audit_*``
+    拆出独立 ``audit`` section，字段名从 ``audit_path``/``audit_to_file`` 变
+    为 ``log_path``/``enabled``。``loader.migrate_v1_to_v2`` 已自动转换旧
+    YAML，所以本函数读 v2 配置即可拿到最新值。
+
+    fail-safe：v2 加载异常 → 退化到 ``AuditLogger()`` 默认（与 v1 同行为）。
+    """
     global _global_audit
     if _global_audit is None:
         try:
-            from .policy import get_policy_engine
+            from .policy_v2.global_engine import get_config_v2
 
-            cfg = get_policy_engine().config.self_protection
+            cfg = get_config_v2().audit
             _global_audit = AuditLogger(
-                path=cfg.audit_path or DEFAULT_AUDIT_PATH,
-                enabled=cfg.audit_to_file,
+                path=cfg.log_path or DEFAULT_AUDIT_PATH,
+                enabled=cfg.enabled,
             )
         except Exception:
             _global_audit = AuditLogger()

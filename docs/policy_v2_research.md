@@ -955,7 +955,8 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C7 | agent.py RiskGate 切 v2 + ContextVar wire + handler.TOOL_CLASSES (30+) + explicit_lookup 注入 | ✅ Done | §3.2 R2-1 + R2-10 + R2-12 |
 | C8a | safety_immune 9 类 + OwnerOnly 配置驱动 + switch_mode 真生效 + consume_session_trust 真删 + IM 前缀 SSE bug | ✅ Done | §2.3 + §5 + R5-22 |
 | C8b-1 | v2 补能：UserAllowlist + SkillAllowlist + DeathSwitch + step 9/10 实装 | ✅ Done | §6.6 + 「C8b-1 实施记录」 |
-| C8b-2..5 | （未启动）配置常量迁移 / UI confirm 切换 / RiskGate 删除 / PolicyEngine class 删除 | ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划」|
+| C8b-2 | 配置常量与 SecurityConfig 子段读取迁移：`policy_v2/defaults.py` + `reset_policy_v2_layer` + audit_logger/checkpoint 改读 v2 | ✅ Done | §6.6 + 「C8b-2 实施记录」 |
+| C8b-3..5 | （未启动）UI confirm 切换 / RiskGate 删除 / PolicyEngine class 删除 | ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划」|
 | C9a | SecurityView v2 适配（approval_class badge + IM owner UI + dry-run preview） | ✅ Done | §8 + R5-20 |
 | C9b | UI confirm bus 抽出（`core/ui_confirm_bus.py`），让 C8b 能安全删 v1 | ✅ Done | §6.6 + R5-22 |
 | C9c | tool_intent_preview / pending_approval_* / policy_config_reloaded SSE 事件（推迟到 C12 一起做） | ⏳ Deferred | §8 + R2-11 |
@@ -2889,6 +2890,116 @@ C8b 开工前应先跑：
 5. **`make_preview_engine` 模式可推广**：今后任何"我要在不污染全局状态的前提下评估"场景都应该走 ad-hoc engine + 显式 flag，不要 mutate global singleton 再恢复（race 隐患）。
 
 C8b-1 完成，可进入 **C8b-2（配置常量与 SecurityConfig 子段读取迁移）**。
+
+---
+
+## C8b-2 实施记录
+
+时间：C8b-1 之后下一步。
+依据：「C8b 粒度化执行计划 §F · C8b-2 — 配置常量与 SecurityConfig 子段读取迁移（low risk）」。
+
+### 0. Recon（最终 scope 收敛）
+
+| 维度 | 状态 |
+|---|---|
+| `_default_protected_paths` / `_default_forbidden_paths` / `_default_controlled_paths` 在 v1 `policy.py` | 3 个 platform-specific 函数 |
+| `_DEFAULT_BLOCKED_COMMANDS` 在 v1 `policy.py` | 1 个 list constant |
+| `policy_v2/shell_risk.py` 已有 `DEFAULT_BLOCKED_COMMANDS` | 同等内容！意外发现的重复定义 → 必须合并到单一 SoT |
+| `config.py` 私有符号 import | × 3 处（`_default_forbidden_paths` / `_default_protected_paths` / `_DEFAULT_BLOCKED_COMMANDS`） |
+| `config.py` 调 `reset_policy_engine` | × 6 处（每个 SecurityConfig PATCH endpoint 一处） |
+| `config.py` 调 `get_policy_engine` | × 4 处，留到 C8b-5 折叠 `_frontend_mode` shim 时一起处理 |
+| `audit_logger.py:113` | 读 v1 `pe.config.self_protection.audit_path/audit_to_file` → 改读 v2 `cfg.audit.log_path/enabled`（v2 已拆出独立 `AuditConfig`，字段名不同需 inline） |
+| `checkpoint.py:250` | 读 v1 `pe.config.checkpoint` → 改读 v2 `cfg.checkpoint`（同名同字段，零 rename） |
+| `config.py:1888` self-protection CRUD endpoint | UI 仍读 v1 schema，是 SecurityView v1 部分 → **留到 C9c 一起重做**，本 commit 不动 |
+| YAML migration | `policy_v2/migration.py:207-212` 已自动转换 `audit_to_file→enabled` / `audit_path→log_path`，旧 YAML 无需手改 |
+
+### 1. 实施步骤
+
+1. **新增 `core/policy_v2/defaults.py`**（5.6 KB）—— 4 个公开符号：
+   - `default_protected_paths()` / `default_forbidden_paths()` / `default_controlled_paths()` —— 平台相关函数（每次返回 fresh list 防共享 mutate）
+   - `default_blocked_commands()` + `DEFAULT_BLOCKED_COMMANDS` tuple —— **重导出自 `shell_risk`，单一 SoT**
+
+2. **v1 `core/policy.py` 三个函数 + 一个 list 退化为 thin re-export**（135 行 → 27 行）：
+   ```python
+   from .policy_v2.defaults import default_protected_paths as _v2_default_protected_paths
+   _DEFAULT_BLOCKED_COMMANDS: list[str] = list(_V2_DEFAULT_BLOCKED_COMMANDS)
+   def _default_protected_paths() -> list[str]:
+       return _v2_default_protected_paths()
+   ```
+   旧 caller（`tests/e2e/test_p0_regression.py` 等）继续工作，C8b-5 删 v1 时一起去除。
+
+3. **新增 `core/policy_v2/global_engine.reset_policy_v2_layer()`** —— C8b-2 起 config.py 用此 helper 替代 v1 `reset_policy_engine`。语义：
+   - `reset_engine_v2()` 清 v2 单例
+   - `reset_audit_logger()` 清 audit_logger 单例（C8b-2 起 audit 改读 v2，必须一并失效）
+   - fail-safe：audit_logger 模块未加载时静默 skip
+
+4. **`config.py` × 8 处 callsite 迁移**：
+   - 6 处 `reset_policy_engine()` → `reset_policy_v2_layer()`（自动 grep 替换全 6 处）
+   - 1 处 `from openakita.core.policy import _default_forbidden_paths, _default_protected_paths` → `from openakita.core.policy_v2.defaults import default_forbidden_paths, default_protected_paths`
+   - 1 处 `from openakita.core.policy import _DEFAULT_BLOCKED_COMMANDS` → `from openakita.core.policy_v2.defaults import default_blocked_commands`
+   - permission-mode endpoint 单独处理：`get_policy_engine` 留（用于设 `_frontend_mode`）+ `reset_policy_engine` 改 `reset_policy_v2_layer`
+
+5. **`audit_logger.get_audit_logger()` 改读 v2**：
+   ```python
+   from .policy_v2.global_engine import get_config_v2
+   cfg = get_config_v2().audit
+   _global_audit = AuditLogger(path=cfg.log_path or DEFAULT_AUDIT_PATH, enabled=cfg.enabled)
+   ```
+   inline rename `audit_path → log_path`、`audit_to_file → enabled`。
+
+6. **`checkpoint.get_checkpoint_manager()` 改读 v2**：
+   ```python
+   from .policy_v2.global_engine import get_config_v2
+   cfg = get_config_v2().checkpoint
+   ```
+   字段名同 v1，零 rename。
+
+7. **`policy_v2/__init__.py` 导出**：4 个 default 函数 + `reset_policy_v2_layer`。
+
+### 2. 测试
+
+新增 `tests/unit/test_policy_v2_c8b2_defaults.py`（16 tests）：
+- **TestDefaultsParityWithV1** × 5 —— 4 个 default 函数与 v1 私有 `_default_*` 完全等价；`DEFAULT_BLOCKED_COMMANDS` 与 `shell_risk` 单一 SoT
+- **TestDefaultsListMutationSafety** × 4 —— 每次返回 fresh list（防 v1 `.append` 习惯污染）
+- **TestSubsystemsReadV2Config** × 3 —— audit_logger / checkpoint 在"v2 已配置 + v1 PolicyEngine 未初始化"环境下能正确初始化
+- **TestResetPolicyV2Layer** × 2 —— hot-reload 契约：v2 engine + audit_logger 都被清
+- **TestConfigPyDoesNotImportV1Internals** × 2 —— 静态扫描 config.py 不再 import v1 私有 / 废弃符号
+
+新增 `scripts/c8b2_audit.py`（6 dimensions）：
+- D1 完整性、D2 单一 SoT、D3 v1 退化为 re-export、D4 子系统读 v2、D5 config.py 解耦、D6 reset 契约
+→ **6 维全 PASS**。
+
+### 3. 验证
+
+```
+$ python scripts/c8b2_audit.py
+=== C8b-2 D1 completeness ===  ... OK
+=== C8b-2 D2 single source of truth ===  ... OK
+=== C8b-2 D3 v1 degraded to re-export ===  ... OK
+=== C8b-2 D4 subsystems read v2 ===  ... OK
+=== C8b-2 D5 config.py decoupled ===  ... OK
+=== C8b-2 D6 reset_policy_v2_layer hot-reload ===  ... OK
+C8b-2 ALL 6 DIMENSIONS PASS
+
+$ pytest tests/unit/
+2691 passed, 4 skipped, 8 failed (all pre-existing, identical to C8b-1 baseline)
+# +16 = 16 new C8b-2 tests, 0 new regressions
+```
+
+**所有 23 维度 audit（C8 D1-D5 + C9 D1-D6 + C8b-1 D1-D6 + C8b-2 D1-D6）全 PASS。**
+
+### 4. Bug fixes during implementation
+
+无新发现 P1/P2 bug。Recon 阶段提前发现的潜在重复定义（`shell_risk.DEFAULT_BLOCKED_COMMANDS` vs. 新 `defaults.DEFAULT_BLOCKED_COMMANDS`）在落地前主动消解为单一 SoT，audit D2 强制不允许重新出现 list literal 重复。
+
+### 5. 工程教训
+
+1. **新增模块前先 grep 整个 package 是否已存在同语义符号**：本次发现 `shell_risk.DEFAULT_BLOCKED_COMMANDS` 与计划新增的常量同等内容，因此重导出而非重新定义，避免 v1→v2→v3 时的"3 处都要更新"陷阱。
+2. **Hot-reload 契约要在 helper 函数里固化**：v1 `reset_policy_engine` 把"reset v2 + reset audit"两件事打包成一个 entry——C8b-2 起这个职责显式归到 v2 自己（`reset_policy_v2_layer`），避免删 v1 后 callsite 散落到处叫多个 reset。
+3. **重命名不要做隐式映射**：`audit_to_file → enabled` 这种字段名变化，迁移层（`migration.py`）和读取层（`audit_logger.py`）必须同时改，否则会在 hot-reload 路径下产生静默 fallback 到默认值。本次保留了 v1 老 YAML 的自动迁移路径，新代码只读 v2 字段名。
+4. **测试静态扫描 import 的价值**：`TestConfigPyDoesNotImportV1Internals` × 2 用文本断言守住"config.py 不再 import v1 私有符号"——这是普通 unit test 抓不到的"代码质量"维度，但又是删 v1 的硬前置。
+
+C8b-2 完成，可进入 **C8b-3（UI confirm facade 完成切换 + confirmed_cache 决策）**：新增 `policy_v2/session_allowlist.py`；7 个 IM/CLI/web callsite 直连 `get_ui_confirm_bus()` + `SessionAllowlistManager`；`tool_executor.py:807-810` retry-confirm 改用 `tool_use_id` 去重；`policy.py` 删除 6 个 facade 方法 + `mark_confirmed` + `_session_allowlist` + `_confirmed_cache`。详见「C8b 粒度化执行计划 §F · C8b-3」。
 
 ---
 
