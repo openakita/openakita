@@ -2066,6 +2066,33 @@ class Agent:
             except Exception as e:
                 logger.debug(f"on_init hook dispatch error: {e}")
 
+        # C10：handler/skill/mcp/plugin 全部加载完毕 → 让 ApprovalClassifier 拿到
+        # 4 个 lookup。explicit_lookup 已由 _register_default_handlers 注入到模块缓存，
+        # 这里只补 skill/mcp/plugin，不需要重传 explicit_lookup（global_engine
+        # 缓存语义保证）。失败降级到启发式分类，**绝不**让一个坏 manifest /
+        # SKILL.md 拖垮 agent 启动。
+        try:
+            from .policy_v2.global_engine import rebuild_engine_v2
+
+            rebuild_engine_v2(
+                skill_lookup=self.skill_registry.get_tool_class,
+                mcp_lookup=self.mcp_client.get_tool_class,
+                plugin_lookup=(
+                    self._plugin_manager.get_tool_class
+                    if hasattr(self, "_plugin_manager") and self._plugin_manager is not None
+                    else None
+                ),
+            )
+            logger.info(
+                "[PolicyV2] global engine rebuilt with skill/mcp/plugin lookups (C10)"
+            )
+        except Exception as exc:
+            logger.warning(
+                "[PolicyV2] failed to inject skill/mcp/plugin lookups: %s — "
+                "those sources will fall back to handler/heuristic classification",
+                exc,
+            )
+
         # 启动记忆会话
         session_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
         self.memory_manager.start_session(session_id)
@@ -2216,6 +2243,7 @@ class Agent:
             self.reasoning_engine._plugin_hooks = self._plugin_manager.hook_registry
         if hasattr(self, "tool_executor") and self.tool_executor:
             self.tool_executor._plugin_hooks = self._plugin_manager.hook_registry
+            self.tool_executor._plugin_manager = self._plugin_manager
 
         from ..plugins.catalog import PluginCatalog
 

@@ -22,6 +22,7 @@ from ..core.capabilities import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from ..core.policy_v2.enums import ApprovalClass, DecisionSource
     from .parser import ParsedSkill
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,11 @@ class SkillEntry:
     # remote: 从第三方 URL/Git 安装的技能（不可信）
     trust_level: str = "local"
 
+    # C10：技能自报 ApprovalClass（policy_v2.ApprovalClass.value）。
+    # ``None`` 时分类器回退到 handler.TOOL_CLASSES / 启发式（与 v1 行为一致）。
+    # 详见 docs/policy_v2_research.md §4.21.4。
+    approval_class: str | None = None
+
     # 全局启用 / 禁用标记
     # 用户通过 UI / skills.json 禁用的技能在注册表中保留但标记 disabled=True，
     # 这样 SkillCatalog 和 list_skills 工具会过滤它们，
@@ -282,6 +288,7 @@ class SkillEntry:
             hooks=dict(meta.hooks) if meta.hooks else {},
             model=meta.model,
             fallback_for_toolsets=list(meta.fallback_for_toolsets),
+            approval_class=meta.approval_class,
             trust_level=trust_level,
             skill_path=str(skill.path),
             source_url=source_url,
@@ -337,8 +344,22 @@ class SkillEntry:
                 "plugin_source": self.plugin_source or "",
                 "python_env": self.python_env,
                 "python_dependencies": list(self.python_dependencies),
+                "approval_class": self.approval_class or "",
             },
         )
+
+    def get_exposed_tool_name(self) -> str:
+        """Return the tool name surfaced to the LLM for this skill.
+
+        Mirrors :meth:`to_tool_schema` exactly so that ``SkillRegistry``'s
+        ApprovalClass lookup keys line up with whatever the model actually
+        calls. Centralising the rule here avoids the C7 lesson — silent
+        drift between schema name and lookup key — re-emerging.
+        """
+        if self.system and self.tool_name:
+            return self.tool_name
+        safe = re.sub(r"[^a-zA-Z0-9_]", "_", self.skill_id)
+        return f"skill_{safe}"
 
     def to_tool_schema(self) -> dict:
         """
@@ -951,6 +972,45 @@ class SkillRegistry:
             技能列表
         """
         return [s for s in self._skills.values() if s.handler == handler]
+
+    def get_tool_class(
+        self, tool_name: str
+    ) -> tuple["ApprovalClass", "DecisionSource"] | None:
+        """C10：技能 → ApprovalClass 查表（PolicyEngineV2 ``skill_lookup`` 入口）。
+
+        匹配顺序：
+        1) 系统技能：``tool_name`` 等于 ``SkillEntry.tool_name``
+        2) 外部技能：``tool_name`` 形如 ``skill_<safe-id>``，反查 ``skill_id``
+
+        都未命中或技能未声明 ``approval_class`` 时返回 ``None``，分类器按
+        chain 继续往下走（mcp/plugin/handler/启发式）。**绝不抛异常**——
+        SKILL.md 是用户文件，错误必须降级而非崩溃 PolicyEngine 启动。
+        """
+        try:
+            from ..core.policy_v2.enums import ApprovalClass, DecisionSource
+        except Exception:
+            return None
+
+        entry: SkillEntry | None = None
+        for s in self._skills.values():
+            if s.system and s.tool_name == tool_name:
+                entry = s
+                break
+        if entry is None and tool_name.startswith("skill_"):
+            for s in self._skills.values():
+                if s.system:
+                    continue
+                if s.get_exposed_tool_name() == tool_name:
+                    entry = s
+                    break
+        if entry is None or not entry.approval_class:
+            return None
+
+        try:
+            klass = ApprovalClass(entry.approval_class)
+        except ValueError:
+            return None
+        return klass, DecisionSource.SKILL_METADATA
 
     @property
     def count(self) -> int:

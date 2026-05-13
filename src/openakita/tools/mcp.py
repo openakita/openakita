@@ -210,6 +210,10 @@ class MCPTool:
     name: str
     description: str
     input_schema: dict = field(default_factory=dict)
+    # C10：MCP 协议 2024-11+ ``tool.annotations`` 字段透传。
+    # 解析阶段不做 ApprovalClass 校验（懒校验在 ``MCPClient.get_tool_class``）；
+    # 协议升级 / 厂商扩展加新字段不会破坏 dataclass。
+    annotations: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -739,10 +743,20 @@ class MCPClient:
         # 获取工具
         tools_result = await client.list_tools()
         for tool in tools_result.tools:
+            annotations_raw = getattr(tool, "annotations", None) or {}
+            if hasattr(annotations_raw, "model_dump"):
+                annotations = annotations_raw.model_dump(exclude_none=True)
+            elif hasattr(annotations_raw, "dict"):
+                annotations = annotations_raw.dict()
+            elif isinstance(annotations_raw, dict):
+                annotations = dict(annotations_raw)
+            else:
+                annotations = {}
             self._tools[f"{server_name}:{tool.name}"] = MCPTool(
                 name=tool.name,
                 description=tool.description or "",
                 input_schema=tool.inputSchema or {},
+                annotations=annotations,
             )
 
         # 获取资源（可选）
@@ -1307,12 +1321,92 @@ class MCPClient:
             server_name = key.split(":")[0]
             schemas.append(
                 {
-                    "name": f"mcp_{server_name}_{tool.name}".replace("-", "_"),
+                    "name": self._format_tool_name(server_name, tool.name),
                     "description": f"[MCP:{server_name}] {tool.description}",
                     "input_schema": tool.input_schema,
                 }
             )
         return schemas
+
+    @staticmethod
+    def _format_tool_name(server_name: str, tool_name: str) -> str:
+        """LLM-facing 工具名归一规则。
+
+        与 ``get_tool_schemas`` 必须保持一致——任何分歧都会让
+        ``ApprovalClassifier`` 的 mcp_lookup 查不到。集中在一处也方便
+        ``get_tool_class`` 反向解析。
+        """
+        return f"mcp_{server_name}_{tool_name}".replace("-", "_")
+
+    def get_tool_class(
+        self, tool_name: str
+    ) -> tuple[Any, Any] | None:
+        """C10：MCP 工具 → ApprovalClass 查表（PolicyEngineV2 ``mcp_lookup``）。
+
+        识别策略（按 MCP 协议 2024-11+ ``tool.annotations``）：
+        1. ``annotations.risk_class`` / ``annotations.approval_class``：直接
+           当 :class:`ApprovalClass` 值（必须 lowercase，与 enum value 一致）。
+        2. ``annotations.destructiveHint=True`` → ``DESTRUCTIVE``
+        3. ``annotations.openWorldHint=True`` 且 ``readOnlyHint=False`` →
+           ``MUTATING_GLOBAL``
+        4. ``annotations.readOnlyHint=True`` → ``READONLY_SCOPED``
+
+        多个 server 暴露同名工具 / 多种 hint 同时命中时取严
+        （``most_strict``）。命中失败返回 ``None``，让 classifier 走启发式
+        回退（与现有 v1 行为一致——绝大多数 MCP server 当前没填 hints）。
+        """
+        try:
+            from ..core.policy_v2.enums import (
+                ApprovalClass,
+                DecisionSource,
+                most_strict,
+            )
+        except Exception:
+            return None
+
+        candidates: list[tuple[Any, Any]] = []
+        for key, tool in self._tools.items():
+            server_name = key.split(":", 1)[0]
+            exposed = self._format_tool_name(server_name, tool.name)
+            if exposed != tool_name:
+                continue
+
+            ann = tool.annotations or {}
+
+            explicit = ann.get("approval_class") or ann.get("risk_class")
+            if isinstance(explicit, str):
+                try:
+                    candidates.append(
+                        (ApprovalClass(explicit.strip().lower()), DecisionSource.MCP_ANNOTATION)
+                    )
+                    continue  # explicit 优先，hints 不再叠加
+                except ValueError:
+                    logger.warning(
+                        "MCP tool '%s' declares unknown approval_class=%r in annotations; "
+                        "falling back to hint-based inference",
+                        exposed,
+                        explicit,
+                    )
+
+            destructive = ann.get("destructiveHint")
+            read_only = ann.get("readOnlyHint")
+            open_world = ann.get("openWorldHint")
+            if destructive is True:
+                candidates.append(
+                    (ApprovalClass.DESTRUCTIVE, DecisionSource.MCP_ANNOTATION)
+                )
+            elif open_world is True and read_only is not True:
+                candidates.append(
+                    (ApprovalClass.MUTATING_GLOBAL, DecisionSource.MCP_ANNOTATION)
+                )
+            elif read_only is True:
+                candidates.append(
+                    (ApprovalClass.READONLY_SCOPED, DecisionSource.MCP_ANNOTATION)
+                )
+
+        if not candidates:
+            return None
+        return most_strict(candidates)
 
 
 # 全局客户端

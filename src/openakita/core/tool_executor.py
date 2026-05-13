@@ -181,6 +181,9 @@ class ToolExecutor:
         self._handler_registry = handler_registry
         self._agent_ref: Any = None  # set by Agent after construction
         self._plugin_hooks: Any = None  # HookRegistry, set by Agent after construction
+        # C10: PluginManager set by Agent.late_wire — needed for
+        # mutates_params authorization in on_before_tool_use audit.
+        self._plugin_manager: Any = None
 
         # 并行控制
         self._semaphore = asyncio.Semaphore(max(1, max_parallel))
@@ -477,14 +480,112 @@ class ToolExecutor:
         return await self._execute_tool_impl(tool_name, tool_input)
 
     async def _dispatch_hook(self, hook_name: str, **kwargs) -> None:
-        """Fire a plugin hook if a HookRegistry is attached. Never raises."""
+        """Fire a plugin hook if a HookRegistry is attached. Never raises.
+
+        ``on_before_tool_use`` 走 :meth:`_dispatch_before_tool_use_hook` 走专门
+        的 mutates_params 审计 + revert 路径（C10 / R2-12）。其他 hook 透传。
+        """
         hooks = self._plugin_hooks
         if hooks is None:
+            return
+        if hook_name == "on_before_tool_use":
+            await self._dispatch_before_tool_use_hook(**kwargs)
             return
         try:
             await hooks.dispatch(hook_name, **kwargs)
         except Exception as e:
             logger.debug(f"[ToolExecutor] {hook_name} hook error (ignored): {e}")
+
+    async def _dispatch_before_tool_use_hook(
+        self, *, tool_name: str, tool_input: Any
+    ) -> None:
+        """C10：on_before_tool_use 专用 dispatch + R2-12 强制审计。
+
+        步骤：
+        1. 用 ``ParamMutationAuditor.snapshot`` deep-copy 一份 ``tool_input``。
+        2. 派发 hook（HookRegistry 现状为并行 ``asyncio.gather``）。
+        3. diff before vs after：无差异 → 跳过审计静默返回。
+        4. 收集 ``on_before_tool_use`` 注册的 plugin_id 列表作为 attribution
+           候选。
+        5. 任一候选 plugin 在 ``manifest.mutates_params`` 列出该 tool → ``allowed``，
+           否则 ``revert``。
+        6. 写 jsonl 审计；revert 时把 ``tool_input`` 原地恢复为 snapshot。
+
+        所有异常都吃掉只 WARN——hook / 审计绝不能阻止 tool 执行。
+        """
+        hooks = self._plugin_hooks
+        if hooks is None:
+            return
+
+        from .policy_v2.param_mutation_audit import get_default_auditor
+
+        auditor = get_default_auditor()
+        before_snapshot = auditor.snapshot(tool_input)
+
+        try:
+            await hooks.dispatch(
+                "on_before_tool_use", tool_name=tool_name, tool_input=tool_input
+            )
+        except Exception as e:
+            logger.debug(
+                f"[ToolExecutor] on_before_tool_use hook error (ignored): {e}"
+            )
+
+        if not isinstance(tool_input, dict):
+            # Hook 不会原地改非 dict，diff 没意义
+            return
+
+        candidate_plugin_ids: list[str] = []
+        try:
+            for cb in hooks.get_hooks("on_before_tool_use"):
+                pid = getattr(cb, "__plugin_id__", "") or ""
+                if pid and pid not in candidate_plugin_ids:
+                    candidate_plugin_ids.append(pid)
+        except Exception as exc:
+            logger.debug(
+                "[ToolExecutor] failed to enumerate on_before_tool_use callbacks: %s",
+                exc,
+            )
+
+        plugin_manager = getattr(self, "_plugin_manager", None)
+        if plugin_manager is not None and hasattr(
+            plugin_manager, "plugin_allows_param_mutation"
+        ):
+            is_authorized = plugin_manager.plugin_allows_param_mutation
+        else:
+            def is_authorized(_plugin_id: str, _tool: str) -> bool:
+                return False
+
+        outcome = auditor.evaluate(
+            tool_name=tool_name,
+            before=before_snapshot,
+            after=tool_input,
+            candidate_plugin_ids=candidate_plugin_ids,
+            is_plugin_authorized=is_authorized,
+        )
+        if not outcome.has_changes:
+            return
+
+        if not outcome.allowed:
+            # Revert：把 tool_input 原地恢复——不能 reassign，因为外层调用
+            # 持有同一个 dict 引用。
+            try:
+                tool_input.clear()
+                tool_input.update(before_snapshot)
+            except Exception as exc:
+                logger.warning(
+                    "[ToolExecutor] failed to revert on_before_tool_use mutation "
+                    "for tool=%s: %s",
+                    tool_name,
+                    exc,
+                )
+
+        auditor.write(
+            tool_name=tool_name,
+            outcome=outcome,
+            before=before_snapshot,
+            after=tool_input if outcome.allowed else before_snapshot,
+        )
 
     async def _execute_tool_impl(
         self,

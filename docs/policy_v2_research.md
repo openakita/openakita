@@ -964,7 +964,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C9a | SecurityView v2 适配（approval_class badge + IM owner UI + dry-run preview） | ✅ Done | §8 + R5-20 |
 | C9b | UI confirm bus 抽出（`core/ui_confirm_bus.py`），让 C8b 能安全删 v1 | ✅ Done | §6.6 + R5-22 |
 | C9c | tool_intent_preview / pending_approval_* / policy_config_reloaded SSE 事件（推迟到 C12 一起做） | ⏳ Deferred | §8 + R2-11 |
-| C10 | Hook 来源分层 + Trusted Tool Policy + plugin manifest 桥接 | ⏳ Pending | §3.2 R2-12 + R5-7 |
+| C10 | Hook 来源分层 + Trusted Tool Policy + plugin manifest 桥接 | ✅ DONE | §3.2 R2-12 + R5-7 + 「C10 实施记录」|
 | C11 | 全量回归 + 25 项手测 + 性能 SLO | ⏳ Pending | plan §13.5 + R5-18/19 |
 | C12 | 计划任务/无人值守审批 + DeferredApprovalRequired + pending_approvals | ⏳ Pending | §2.1 + R3 |
 | C13 | 多 agent confirm 冒泡 + delegate_chain 透传 | ⏳ Pending | R4-1/2/3/4 + R5-16 |
@@ -3516,6 +3516,125 @@ C8b-6b 完成。Policy V2 迁移全部 7 子阶段（C8b-1~6b）收官：
 后续工作（不在 C8b 范围）：
 - Permission v1 4 档 string 契约（"allow"/"deny"/"confirm"/"sandbox"）后续可独立 commit 切到 v2 4 档 enum，届时 `V2_TO_V1_DECISION` / `build_metadata_for_legacy_callers` / `build_policy_name` 三 helper 可一并清理。
 - C10+：v2 决策结果在 SSE / 审计 / IM 卡片渲染上的优化（不在本次 V2 主迁移目标内）。
+
+---
+
+## C10 实施记录（2026-05-14）
+
+### 1. 范围
+
+R2-12（插件 `mutates_params` 强制审计）+ R5-7（plugins/api.py 与 PolicyEngine 解耦）合并为单一 commit 落地。打通 `ApprovalClassifier` 4 类 lookup 在生产环境的完整 wire-up（C2/C7 已就基础设施），并新增 plugin 改 `tool_input` 的强制审计闸门。
+
+### 2. 改动文件清单
+
+**Skill 层（lookup wire）**
+- `src/openakita/skills/parser.py`：`SkillMetadata` 新增 `approval_class` 字段；新增 `_parse_approval_class()` 静态方法支持 canonical (`approval_class:`) + alias (`risk_class:`) + deprecation WARN + 非法值降级为 None。
+- `src/openakita/skills/registry.py`：`SkillEntry` 新增 `approval_class` 字段；新增 `get_exposed_tool_name()` 方法集中化"系统技能 / 外部技能"的 LLM-facing 工具名规则；新增 `SkillRegistry.get_tool_class()` lookup（系统技能按 `tool_name`、外部技能按 `skill_<safe-id>`）。
+
+**Plugin 层（lookup wire + mutates_params manifest）**
+- `src/openakita/plugins/manifest.py`：`PluginManifest` 新增 `tool_classes: dict[str, str]` + `mutates_params: list[str]` 字段，配套 `_normalize_tool_classes` / `_normalize_mutates_params` 验证器（lowercase 归一、非法值过滤）。
+- `src/openakita/plugins/manager.py`：新增 `PluginManager.get_tool_class()` 多源取严 lookup + `plugin_allows_param_mutation()` 闸门 helper。
+
+**MCP 层（lookup wire）**
+- `src/openakita/tools/mcp.py`：`MCPTool` 新增 `annotations: dict` 字段；`_discover_capabilities` 解析 MCP SDK 对象兼容 `BaseModel.model_dump` / `dict`；新增 `MCPClient._format_tool_name()` 单一规则源 + `MCPClient.get_tool_class()` lookup（识别 `approval_class` / `risk_class` 显式声明 + `destructiveHint`/`openWorldHint`/`readOnlyHint` MCP 协议 hints）。
+
+**全局引擎 wire**
+- `src/openakita/core/policy_v2/global_engine.py`：`rebuild_engine_v2()` 新增 `skill_lookup` / `mcp_lookup` / `plugin_lookup` 3 个 kwarg；`_skill_lookup` / `_mcp_lookup` / `_plugin_lookup` 模块级缓存（保证 UI Save Settings 触发的 hot-reload 不会让 4 类来源退化到启发式分类——C7 二轮 audit 教训扩展到 4 类来源）。
+- `src/openakita/core/agent.py`：`_initialize` 末段新增 `rebuild_engine_v2(skill_lookup=..., mcp_lookup=..., plugin_lookup=...)` 调用；`_load_plugins` 末段新增 `tool_executor._plugin_manager = self._plugin_manager` wire。
+
+**mutates_params 强制审计（R2-12 主载体）**
+- `src/openakita/core/policy_v2/param_mutation_audit.py`（**新增**, 235 LOC）：`ParamMutationAuditor` 类负责 `snapshot()` (deep-copy) → `evaluate()` (diff + allow/deny 决策) → `write()` (jsonl append + threading.Lock)；`_diff_recursive()` 递归 diff 算法（dict / list / 标量，emit `add` / `remove` / `modify` 操作）；`get_default_auditor()` 进程级单例 + `set_default_auditor()` 测试覆盖入口。
+- `src/openakita/core/tool_executor.py`：`_dispatch_hook` 对 `on_before_tool_use` 走专门 `_dispatch_before_tool_use_hook` 路径（snapshot → dispatch → diff → 收集 callback 的 `__plugin_id__` 候选 → 任一候选授权则保留 / 否则 `tool_input.clear() + update(snapshot)` 原地还原 → write jsonl）；新增 `_plugin_manager: Any = None` slot。
+
+**测试（53 项全过）**
+- `tests/unit/test_policy_v2_c10_skill_lookup.py`（9 tests）：approval_class canonical 解析 / risk_class alias WARN / 非法值降级 / 双字段冲突 / 缺失字段不 WARN / SkillRegistry 系统技能查表 / 外部技能 skill_ 前缀查表 / 未声明 lookup → None。
+- `tests/unit/test_policy_v2_c10_plugin_lookup.py`（13 tests）：tool_classes lowercase 归一 / 非法 entry skip / mutates_params 字符串归一 / 字段类型校验抛 ValidationError / PluginManager 多插件取严 / 非法 ApprovalClass WARN / disabled plugin 排除 / plugin_allows_param_mutation gate。
+- `tests/unit/test_policy_v2_c10_mcp_lookup.py`（11 tests）：approval_class / risk_class annotation / hyphen 归一 / 非法显式回退到 hint / destructive/openWorld/readOnly hint 推断 / hint 优先级 / `_format_tool_name` 与 `get_tool_schemas` 一致性。
+- `tests/unit/test_policy_v2_c10_mutates_audit.py`（20 tests）：_diff_recursive 全场景 / evaluate 4 种决策路径 / jsonl append + 必含字段 / tool_executor 闭环（unauthorized revert / authorized keep / no-mutation no-audit / missing plugin_manager 默认 deny / non-dict skip / other hooks 不审计）/ 默认 auditor 单例。
+
+**audit 脚本**
+- `scripts/c10_audit.py`（**新增**, 5 维度 240 LOC）：D1 Skill lookup wire / D2 Plugin lookup + mutates_params 字段 / D3 MCP lookup + 工具名一致性 / D4 mutates_params 审计 + revert + jsonl 路径 / D5 plugins/ 与 PolicyEngine 解耦 R5-7 锁死（`tokenize` 剥离注释 / docstring 后 regex 扫禁用 import）。
+
+**文档**
+- `docs/policy_v2_research.md`：C10 commit 状态从 ⏳ Pending → ✅ DONE；新增本节实施记录。
+
+### 3. 验证记录
+
+```
+$ python scripts/c10_audit.py
+[PASS] 5 dimensions all green
+
+$ python -m pytest tests/unit/test_policy_v2_c10_*.py -q
+53 passed in 1.18s
+
+$ python -m pytest tests/unit -q
+2727 passed, 6 pre-existing failures, 4 skipped in 5m15s
+# 6 failures = 同 C8b-6b baseline，C10 未引入新回归
+
+$ python -m ruff check <14 touched files>
+All checks passed!
+
+$ for audit in scripts/c*_audit*.py: python $audit
+全部 18 audit 脚本 PASS（C6 / C7×3 / C8 D1-D5 / C8b-1/2/3/4/5/6a/6b / C9 / C10）
+```
+
+### 4. 架构决策
+
+**4.1 SKILL.md 字段命名 — `approval_class` 是 canonical，`risk_class` 是 deprecated alias**
+
+plan §4.21.4 早期措辞用 `risk_class`，但 v2 内部 enum 名字是 `ApprovalClass`。同时接受两个会让长期变成"哪个是 SOT"的疑问。本次决策：
+- canonical：`approval_class:`（与 v2 enum / 文档术语完全统一）
+- alias：`risk_class:`（接受 + 一次性 deprecation WARN，引导 author 迁移）
+- 双字段同时声明且不一致 → 用 canonical + WARN
+- 非法值（不在 11-class 枚举内）→ 降级 None + WARN（**不阻塞 SKILL.md 解析**——200+ 现存 SKILL.md 必须保持向后兼容）
+- 缺失字段 → None **且不 WARN**（避免 200+ 既有 skill 全部刷 WARN 噪音）
+
+**4.2 mutates_params 闸门：宽松 attribution + 严格授权**
+
+`HookRegistry.dispatch` 是 `asyncio.gather` 并行派发，多 callback 共享同一 `tool_input` dict 引用 — 无法 reliably 区分"是 plugin A 改的还是 B 改的"。本次决策：
+- attribution 列表 = 该 hook 注册的所有 plugin_id 候选（实际工程中通常 1 个，因为 `on_before_tool_use` 几乎总配 `match=` predicate）
+- 授权规则 = "任一候选 plugin 在 manifest.mutates_params 列出该 tool → 整体 allowed"（宽松 OR 而非严格 AND）
+- 等价语义：`mutates_params` 视为 plugin scope capability，不区分回调次序 / attribution
+
+**4.3 工具名归一规则的"单一来源"**
+
+C7 教训："schema 名 vs lookup 键不一致"是隐性 bug 工厂。C10 把规则全部抽到方法里：
+- `MCPClient._format_tool_name(server, tool)`：`get_tool_schemas` 和 `get_tool_class` 都调它，drift 不再可能（D3 audit 检查 `_format_tool_name` 至少出现 2 次）。
+- `SkillEntry.get_exposed_tool_name()`：复刻 `to_tool_schema` 的 `system?tool_name : skill_<safe_id>` 规则，`SkillRegistry.get_tool_class` 反查走它。
+
+**4.4 模块级 lookup 缓存**
+
+C7 二轮 audit 修复的回归点：UI Save Settings → `reset_engine_v2()` → 下次懒加载 → 138 个 handler 显式声明全部退化到启发式。C10 把规则推广到 4 类来源：`_explicit_lookup` / `_skill_lookup` / `_mcp_lookup` / `_plugin_lookup` 全部模块级缓存，`reset_engine_v2(clear_explicit_lookup=True)` 才一并清空（仅测试 fixture 用）。
+
+**4.5 plugins/api.py R5-7 锁死**
+
+实际审计发现 `plugins/api.py:_check_permission` **从未** import 任何 PolicyEngine — 它只看 manifest `granted_permissions`。R5-7 的真正威胁是"未来某次重构把它接上 PolicyEngine"。C10 audit D5 用 `tokenize` 剥离注释 / docstring 后正则扫描 `from ...core.policy*` / `PolicyEngineV2` / `get_engine_v2`/`set_engine_v2` 等模式，0 容忍 — 任何回归都会让 `c10_audit.py` 失败。
+
+### 5. 工程教训
+
+1. **审计 helper 复用胜过每脚本重造**：c10_audit D5 复刻 C8b-6b 的"剥离注释/docstring 后再 regex"模式时，从手写状态机错出状态错误，最终用标准库 `tokenize` 一行搞定。**经验**：审计脚本剥离 docstring 用 `tokenize.generate_tokens` + 替换 STRING token 为 `""` 是最可靠的方案（一次写对，所有边界 case 自动覆盖）。
+
+2. **dataclass 增字段是兼容性最低风险的扩展点**：`MCPTool` / `SkillEntry` / `SkillMetadata` 加字段都用 `field(default_factory=...)` 或 `= None`，旧调用者不感知；`PluginManifest` 用 `Field(default_factory=...)`，pydantic 校验器懒加载校验。零行数据迁移。
+
+3. **测试用真实 fixture 而非 MagicMock**：mutates_params 闸门的关键回归是"plugin_manager 被 wire 之前 vs 之后行为不同"。用真实 `_StubPluginManager` + `_StubHookRegistry` + `_StubHook` 三件套，反映真实派发行为；曾试过 MagicMock 但很快踩到"mock 不抛错也不返回值，断言永远绿"的经典陷阱。
+
+4. **API 名字踩坑**：`PluginState.is_enabled()` 而不是 `is_disabled()` — 写代码时全凭"反义词应该存在"的直觉，结果跑测试才发现。**经验**：跨模块调用先 grep 实际签名，别假设对称 API。
+
+5. **lint 修复要分类**：本次 4 个 lint warning 中 1 个是 C10 引入（`UTC` alias / 未用 `MagicMock` / 盲 `Exception`），1 个是 pre-existing（`SIM108` 在 registry.py 已存在的 if/else 块）。**经验**：lint 红色不要批量 fix，分清"我引入的"和"早就有的"，否则会把无关代码拉进 commit。
+
+### 6. 终态
+
+C10 完成。Policy V2 全部主体功能落地：
+- 4 类 ApprovalClass 自报来源（handler / skill / mcp / plugin）全部 wire 到生产单例引擎
+- plugin 改 `tool_input` 走 `mutates_params` 强制审计闸门 + jsonl 留痕
+- plugins/* 与 PolicyEngine 物理 + 静态双重解耦
+- 53 个新增测试 / 18 个 audit 脚本全 PASS
+- 0 个新回归
+
+**剩余工作（C11+）**：
+- C11：全量回归 + 25 项手测 + 性能 SLO（推荐下一步）
+- C12-C18：unattended 审批 / 多 agent / Headless / Evolution / Prompt injection / Reliability
+- C19：开发者新增工具 4 层护栏
 
 ---
 

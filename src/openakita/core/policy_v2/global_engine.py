@@ -49,6 +49,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ExplicitLookup = Callable[[str], "tuple[ApprovalClass, DecisionSource] | None"]
+SkillLookup = Callable[[str], "tuple[ApprovalClass, DecisionSource] | None"]
+McpLookup = Callable[[str], "tuple[ApprovalClass, DecisionSource] | None"]
+PluginLookup = Callable[[str], "tuple[ApprovalClass, DecisionSource] | None"]
 
 _engine: PolicyEngineV2 | None = None
 _config: PolicyConfigV2 | None = None
@@ -58,6 +61,11 @@ _config: PolicyConfigV2 | None = None
 # 显式声明的 ApprovalClass 会全部退化到启发式分类（C7 二轮 audit 复现）。
 # 这里持久化一份，让任何 rebuild/lazy-load 路径都能恢复。
 _explicit_lookup: ExplicitLookup | None = None
+# C10：skill / mcp / plugin lookup 也持久化到模块缓存，原因同上。
+# UI hot-reload 不应让"插件 / 技能 / MCP 自报 ApprovalClass"全部退化。
+_skill_lookup: SkillLookup | None = None
+_mcp_lookup: McpLookup | None = None
+_plugin_lookup: PluginLookup | None = None
 _lock = threading.Lock()
 
 
@@ -81,6 +89,9 @@ def _resolve_yaml_path() -> Path | None:
 def _build_default_engine(
     *,
     explicit_lookup: ExplicitLookup | None = None,
+    skill_lookup: SkillLookup | None = None,
+    mcp_lookup: McpLookup | None = None,
+    plugin_lookup: PluginLookup | None = None,
 ) -> tuple[PolicyEngineV2, PolicyConfigV2]:
     """从 ``identity/POLICIES.yaml``（或默认配置）构造引擎。
 
@@ -109,8 +120,17 @@ def _build_default_engine(
         )
         cfg = PolicyConfigV2()
 
-    effective_lookup = explicit_lookup if explicit_lookup is not None else _explicit_lookup
-    engine = build_engine_from_config(cfg, explicit_lookup=effective_lookup)
+    effective_explicit = explicit_lookup if explicit_lookup is not None else _explicit_lookup
+    effective_skill = skill_lookup if skill_lookup is not None else _skill_lookup
+    effective_mcp = mcp_lookup if mcp_lookup is not None else _mcp_lookup
+    effective_plugin = plugin_lookup if plugin_lookup is not None else _plugin_lookup
+    engine = build_engine_from_config(
+        cfg,
+        explicit_lookup=effective_explicit,
+        skill_lookup=effective_skill,
+        mcp_lookup=effective_mcp,
+        plugin_lookup=effective_plugin,
+    )
     return engine, cfg
 
 
@@ -153,42 +173,54 @@ def set_engine_v2(engine: PolicyEngineV2, config: PolicyConfigV2 | None = None) 
 def reset_engine_v2(*, clear_explicit_lookup: bool = False) -> None:
     """清空单例（测试 fixture 用 / 配置 hot-reload C18）。
 
-    默认**保留** ``_explicit_lookup``：UI Save Settings 走 ``reset_policy_engine``
-    → 这里 → 下次 ``get_engine_v2()`` 懒加载时 ``_build_default_engine`` 会
-    自动用回 handler 注册表的显式查表，避免 138 个工具退化到启发式分类。
+    默认**保留** ``_explicit_lookup`` / ``_skill_lookup`` / ``_mcp_lookup`` /
+    ``_plugin_lookup``：UI Save Settings 走 ``reset_policy_engine`` → 这里 →
+    下次 ``get_engine_v2()`` 懒加载时 ``_build_default_engine`` 会自动用回
+    各注册表的查表，避免显式声明的 ApprovalClass 退化到启发式分类。
 
     Args:
         clear_explicit_lookup: 仅测试 fixture 用，需要彻底回到"未注册任何
-            handler"的初始状态时传 ``True``。
+            handler / skill / mcp / plugin"的初始状态时传 ``True``——会一并
+            清空 4 个 lookup 缓存。
     """
-    global _engine, _config, _explicit_lookup
+    global _engine, _config, _explicit_lookup, _skill_lookup, _mcp_lookup, _plugin_lookup
     with _lock:
         _engine = None
         _config = None
         if clear_explicit_lookup:
             _explicit_lookup = None
+            _skill_lookup = None
+            _mcp_lookup = None
+            _plugin_lookup = None
 
 
 def rebuild_engine_v2(
     *,
     explicit_lookup: ExplicitLookup | None = None,
+    skill_lookup: SkillLookup | None = None,
+    mcp_lookup: McpLookup | None = None,
+    plugin_lookup: PluginLookup | None = None,
     yaml_path: Path | str | None = None,
 ) -> PolicyEngineV2:
     """重建全局引擎并返回新实例。
 
-    应用启动后（agent 拿到 ``SystemHandlerRegistry`` 实例后）应调用一次此函数把
-    ``explicit_lookup=registry.get_tool_class`` 注入，让 classifier 拿到 handler
-    显式声明的 ApprovalClass（详见 docs §4.21 cookbook）。
+    应用启动后（agent 拿到 ``SystemHandlerRegistry`` / SkillRegistry /
+    PluginManager / MCPClient 实例后）应调用一次此函数把 4 个 lookup 全部
+    注入，让 classifier 拿到 handler / skill / mcp / plugin 各自声明的
+    ApprovalClass（详见 docs §4.21 cookbook + C10）。
 
-    传入的 ``explicit_lookup`` 会**持久化**到模块缓存，让后续 ``reset_engine_v2()``
-    + 懒加载（如 UI Save Settings 触发的配置 hot-reload）也能恢复显式分类——
-    这是 C7 二轮 audit 修复的回归点。
+    传入的 lookup 会**持久化**到模块缓存，让后续 ``reset_engine_v2()`` +
+    懒加载（如 UI Save Settings 触发的配置 hot-reload）也能恢复显式分类——
+    这是 C7 二轮 audit 修复的回归点，C10 把规则推广到全部 4 类来源。
 
     Args:
-        explicit_lookup: classifier 用的 tool→ApprovalClass 显式查表。
+        explicit_lookup: handler.TOOL_CLASSES → ApprovalClass。
+        skill_lookup: SKILL.md ``approval_class:`` → ApprovalClass（C10）。
+        mcp_lookup: MCP ``tool.annotations`` → ApprovalClass（C10）。
+        plugin_lookup: plugin.json ``tool_classes`` → ApprovalClass（C10）。
         yaml_path: 显式 YAML 路径覆盖（默认走 ``_resolve_yaml_path``）。
     """
-    global _engine, _config, _explicit_lookup
+    global _engine, _config, _explicit_lookup, _skill_lookup, _mcp_lookup, _plugin_lookup
     with _lock:
         path = Path(yaml_path) if yaml_path is not None else _resolve_yaml_path()
         try:
@@ -201,7 +233,19 @@ def rebuild_engine_v2(
             cfg = _config or PolicyConfigV2()
         if explicit_lookup is not None:
             _explicit_lookup = explicit_lookup
-        _engine = build_engine_from_config(cfg, explicit_lookup=_explicit_lookup)
+        if skill_lookup is not None:
+            _skill_lookup = skill_lookup
+        if mcp_lookup is not None:
+            _mcp_lookup = mcp_lookup
+        if plugin_lookup is not None:
+            _plugin_lookup = plugin_lookup
+        _engine = build_engine_from_config(
+            cfg,
+            explicit_lookup=_explicit_lookup,
+            skill_lookup=_skill_lookup,
+            mcp_lookup=_mcp_lookup,
+            plugin_lookup=_plugin_lookup,
+        )
         _config = cfg
     return _engine
 
