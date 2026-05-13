@@ -40,6 +40,13 @@ from tongyi_task_manager import TaskManager
 logger = logging.getLogger(__name__)
 
 
+def _normalize_base_url(value: str | None, *, field: str = "Base URL") -> str:
+    base_url = (value or "").strip().rstrip("/")
+    if base_url and not base_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail=f"{field} 必须以 http:// 或 https:// 开头")
+    return base_url
+
+
 def _safe_log(data: dict, max_len: int = 500) -> str:
     """Truncate dict repr for safe logging."""
     import json as _json
@@ -166,9 +173,12 @@ class Plugin(PluginBase):
 
     async def _async_init(self) -> None:
         await self._tm.init()
-        api_key = await self._tm.get_config("dashscope_api_key")
+        config = await self._tm.get_all_config()
+        api_key = config.get("dashscope_api_key", "")
         if api_key:
-            self._client = DashScopeClient(api_key)
+            self._client = DashScopeClient(
+                api_key, base_url=config.get("dashscope_base_url") or None,
+            )
         self._start_polling()
 
     async def on_unload(self) -> None:
@@ -792,18 +802,28 @@ class Plugin(PluginBase):
         @router.get("/settings")
         async def get_settings() -> dict:
             cfg = await self._tm.get_all_config()
+            cfg.setdefault("dashscope_api_key", "")
+            cfg.setdefault("dashscope_base_url", "")
             return {"ok": True, "config": cfg}
 
         @router.put("/settings")
         async def update_settings(body: ConfigUpdateBody) -> dict:
-            await self._tm.set_configs(body.updates)
-            if "dashscope_api_key" in body.updates and body.updates["dashscope_api_key"]:
-                key = body.updates["dashscope_api_key"]
-                if self._client:
-                    self._client.update_api_key(key)
-                else:
-                    self._client = DashScopeClient(key)
+            cleaned: dict[str, str] = {k: (v or "").strip() for k, v in body.updates.items()}
+            if "dashscope_base_url" in cleaned:
+                cleaned["dashscope_base_url"] = _normalize_base_url(
+                    cleaned["dashscope_base_url"], field="DashScope Base URL",
+                )
+            await self._tm.set_configs(cleaned)
             saved = await self._tm.get_all_config()
+
+            if "dashscope_api_key" in cleaned or "dashscope_base_url" in cleaned:
+                key = saved.get("dashscope_api_key", "")
+                base_url = saved.get("dashscope_base_url", "") or None
+                if self._client is not None:
+                    await self._client.close()
+                    self._client = None
+                if key:
+                    self._client = DashScopeClient(key, base_url=base_url)
             return {"ok": True, "config": saved}
 
         @router.get("/models")

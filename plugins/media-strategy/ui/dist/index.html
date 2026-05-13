@@ -384,6 +384,11 @@
     #items.empty-fill { min-height:0; }
     #tab-radar .workspace-card .tool-panel { flex:1; min-height:0; overflow:auto; padding-right:3px; }
     #tasks { max-height:min(420px,calc(100vh - 360px)); overflow:auto; }
+    .manual-url-panel { border:1px dashed var(--border); border-radius:12px; background:var(--bg-card); padding:10px 14px; }
+    .manual-url-panel summary { cursor:pointer; font-weight:650; color:var(--primary); }
+    .manual-url-panel__body { margin-top:10px; display:grid; gap:10px; }
+    .manual-url-preview { border:1px solid var(--border); border-radius:10px; padding:10px; background:var(--bg-soft); }
+    .manual-url-preview h3 { margin:0 0 6px; font-size:14px; }
     #reportPreview { flex:1; min-height:260px; }
     #briefOut { min-height:0; }
     #planOut { min-height:auto; max-height:260px; overflow:auto; }
@@ -426,6 +431,19 @@
         <button id="ingest" class="btn">拉取选中套餐</button>
         <button id="radar" class="btn btn-primary">刷新热点榜</button>
       </div>
+      <details id="manualUrlPanel" class="manual-url-panel">
+        <summary>补充网页链接：没有合适自动源时，临时粘贴新闻网页进入雷达分析</summary>
+        <div class="manual-url-panel__body">
+          <div class="form-grid">
+            <div class="field" style="grid-column:span 2"><label for="manualUrl">新闻网页 URL</label><input id="manualUrl" class="input" placeholder="https://example.com/news/article.html"></div>
+            <div class="field"><label for="manualPackage">归属套餐</label><select id="manualPackage" class="input"><option value="">跟随当前雷达套餐</option></select></div>
+            <div class="field"><label for="manualNote">备注（可选）</label><input id="manualNote" class="input" placeholder="例如：海峡导报临时补充"></div>
+          </div>
+          <label class="meta"><input id="manualAllowFetchedTime" type="checkbox"> 解析不到发布时间时，使用当前抓取时间作为临时时间</label>
+          <div class="toolbar"><button id="manualPreview" class="btn">解析预览</button><button id="manualImport" class="btn btn-primary">导入到雷达</button></div>
+          <div id="manualPreviewOut" class="manual-url-preview empty">尚未解析。请粘贴公开新闻网页链接后点击“解析预览”。</div>
+        </div>
+      </details>
       <div class="summary-grid" id="metrics">
         <div class="metric"><strong>-</strong><span>热点数</span></div>
         <div class="metric"><strong>-</strong><span>已启用源</span></div>
@@ -692,7 +710,7 @@
         <div id="packagesOut" class="package-row"><div class="empty">加载中…</div></div>
       </div>
       <div class="card">
-        <h2 class="oa-section-title">添加 RSS 源</h2>
+        <h2 class="oa-section-title">添加长期信源</h2>
         <details class="bing-builder">
           <summary><span class="bing-builder__title">Bing 新闻搜索 RSS</span><span class="bing-builder__hint">输入关键词即可生成可保存的自定义 RSS</span></summary>
           <div class="bing-builder__body">
@@ -708,7 +726,8 @@
         </details>
         <div class="form-grid">
           <div class="field"><label for="feedName">源名称</label><input id="feedName" class="input" placeholder="例如：人民网 时政"></div>
-          <div class="field" style="grid-column:span 2"><label for="feedUrl">RSS URL</label><input id="feedUrl" class="input" placeholder="https://example.com/feed.xml"></div>
+          <div class="field"><label for="feedKind">来源类型</label><select id="feedKind" class="input"><option value="rss">RSS 订阅</option><option value="html">新闻栏目页</option></select></div>
+          <div class="field" style="grid-column:span 2"><label for="feedUrl">来源 URL</label><input id="feedUrl" class="input" placeholder="https://example.com/feed.xml 或新闻栏目页"></div>
         </div>
         <div class="field">
           <label>所属套餐（可多选）</label>
@@ -887,6 +906,7 @@ let PACKAGES_CACHE = {};
 let SOURCES_CACHE = [];
 let selected = [];
 let lastItems = [];
+let lastManualPreview = null;
 let lastHealth = null;
 let toastTimer = null;
 let currentFolderPath = "";
@@ -991,7 +1011,7 @@ function rebuildPackageSelects(){
   const optHtml = (withAll=true) =>
     (withAll ? '<option value="">全部套餐</option>' : '') +
     opts.map(([id,label])=>`<option value="${esc(id)}">${esc(label)}</option>`).join('');
-  ['package','briefPackage','customSchedulePackage'].forEach(id=>{
+  ['package','manualPackage','briefPackage','customSchedulePackage'].forEach(id=>{
     const el=$(id); if(!el) return;
     const cur=el.value;
     el.innerHTML = optHtml(true);
@@ -1188,6 +1208,45 @@ function renderItemSummary(item){
   const text = item.ai_summary || item.summary || '';
   if(text) return `<p>${esc(text)}</p>`;
   return '<p class="item-summary-empty">该来源未提供摘要，仅保留标题和原文链接。</p>';
+}
+function manualPackageIds(){
+  const chosen = $('manualPackage')?.value || $('package')?.value || '';
+  return chosen ? [chosen] : [];
+}
+function manualUrlPayload(){
+  const url = $('manualUrl').value.trim();
+  if(!url) throw new Error('请先粘贴新闻网页 URL');
+  return {
+    url,
+    package_ids: manualPackageIds(),
+    note: $('manualNote')?.value.trim() || '',
+    allow_fetched_time: !!$('manualAllowFetchedTime')?.checked,
+  };
+}
+function renderManualPreview(article, inserted=null){
+  lastManualPreview = article || null;
+  const el = $('manualPreviewOut');
+  if(!article){
+    el.className = 'manual-url-preview empty';
+    el.textContent = '尚未解析。请粘贴公开新闻网页链接后点击“解析预览”。';
+    return;
+  }
+  el.className = 'manual-url-preview';
+  el.innerHTML = `<h3><a href="${esc(article.url)}" data-external-link>${esc(article.title)}</a></h3>
+    <div class="meta"><span>${esc(article.source_id || '用户补充')}</span><span>${esc(article.published_at || '')}</span>${inserted===null?'':`<span>${inserted?'已新增':'已存在，已更新重复计数'}</span>`}</div>
+    <p>${esc(article.summary || '该网页未提供摘要，导入后仍可基于标题和原文链接参与分析。')}</p>`;
+}
+async function previewManualUrl(){
+  const data = await api('/radar/parse-url',{method:'POST',body:JSON.stringify(manualUrlPayload())});
+  renderManualPreview(data.article);
+  toast('网页解析完成，请确认后导入到雷达');
+}
+async function importManualUrl(){
+  const data = await api('/radar/import-url',{method:'POST',body:JSON.stringify(manualUrlPayload())});
+  renderManualPreview(data.article, data.inserted);
+  toast('已导入到雷达');
+  await runRadar();
+  if(data.article?.id) setSelected([data.article.id, ...selected]);
 }
 function renderMetrics(radarStats={}, ingestStats=null){
   const enabled = lastHealth?.sources_enabled ?? '-';
@@ -2508,6 +2567,8 @@ $('useBingRss').onclick=()=>guard(async()=>{
 $('verify').onclick=()=>withBusy($('verify'),'生成中...',()=>guard(()=>runTask('verify_pack',{article_ids:selected,topic:$('verifyTopic').value.trim()},'verifyOut'), '生成复核'));
 $('plan').onclick=()=>withBusy($('plan'),'生成中...',()=>guard(runPlan, '生成采编计划'));
 $('planRevise').onclick=()=>withBusy($('planRevise'),'重写中...',()=>guard(runPlan, '重新处理采编计划'));
+$('manualPreview').onclick=()=>withBusy($('manualPreview'),'解析中...',()=>guard(previewManualUrl, '解析网页链接'));
+$('manualImport').onclick=()=>withBusy($('manualImport'),'导入中...',()=>guard(importManualUrl, '导入网页链接'));
 $('addFeed').onclick=()=>guard(async()=>{
   const package_ids = getChipPickerValue($('feedPackages'));
   if(!package_ids.length){ throw new Error('请至少选择一个套餐'); }
@@ -2517,12 +2578,13 @@ $('addFeed').onclick=()=>guard(async()=>{
     url: $('feedUrl').value,
     package_ids,
     enabled: true,
+    kind: $('feedKind')?.value || 'rss',
   };
   if(advanced) payload.authority = Number($('feedAuthority').value);
   await api('/feeds',{method:'POST',body:JSON.stringify(payload)});
-  $('feedName').value=''; $('feedUrl').value='';
+  $('feedName').value=''; $('feedUrl').value=''; if($('feedKind')) $('feedKind').value='rss';
   renderChipPicker($('feedPackages'), []);
-  toast('RSS 源已添加');
+  toast('长期信源已添加');
   await loadSources(); refreshHealth().catch(()=>{});
 }, '添加 RSS');
 $('syncSources').onclick=()=>guard(async()=>{ await api('/sources/sync',{method:'POST'}); toast('内置信源已同步'); await loadSources(); refreshHealth().catch(()=>{}); }, '同步信源');

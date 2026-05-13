@@ -646,21 +646,26 @@ class MediaTaskManager:
         url: str,
         package_ids: list[str],
         enabled: bool = True,
+        kind: str = "rss",
+        selectors: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         db = self._require()
         now = time.time()
         source_id = "custom-" + hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
         labels = name.strip() or url
+        normalized_kind = kind if kind in {"rss", "html", "newsnow"} else "rss"
         await db.execute(
             """
             INSERT OR REPLACE INTO sources(
-                id, kind, package_ids_json, label_zh, label_en, url, enabled,
+                id, kind, package_ids_json, selectors_json, label_zh, label_en, url, enabled,
                 authority, custom, created_at, updated_at
-            ) VALUES (?, 'rss', ?, ?, ?, ?, ?, 0.45, 1, COALESCE((SELECT created_at FROM sources WHERE id=?), ?), ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.45, 1, COALESCE((SELECT created_at FROM sources WHERE id=?), ?), ?)
             """,
             (
                 source_id,
+                normalized_kind,
                 json.dumps(package_ids, ensure_ascii=False),
+                json.dumps(selectors or {}, ensure_ascii=False),
                 labels,
                 labels,
                 url,
@@ -684,6 +689,8 @@ class MediaTaskManager:
         package_ids: list[str] | None = None,
         authority: float | None = None,
         enabled: bool | None = None,
+        kind: str | None = None,
+        selectors: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         db = self._require()
         row = await _fetchone(db, "SELECT * FROM sources WHERE id=?", (source_id,))
@@ -704,6 +711,13 @@ class MediaTaskManager:
         if url is not None:
             sets.append("url=?")
             values.append(url.strip())
+        if kind is not None and bool(row["custom"]):
+            normalized_kind = kind if kind in {"rss", "html", "newsnow"} else "rss"
+            sets.append("kind=?")
+            values.append(normalized_kind)
+        if selectors is not None and bool(row["custom"]):
+            sets.append("selectors_json=?")
+            values.append(json.dumps(selectors, ensure_ascii=False))
         if package_ids is not None:
             sets.append("package_ids_json=?")
             values.append(json.dumps(package_ids, ensure_ascii=False))

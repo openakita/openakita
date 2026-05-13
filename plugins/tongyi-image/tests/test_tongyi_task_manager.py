@@ -415,6 +415,7 @@ def test_default_config_has_safe_empty_values() -> None:
     in shipped binaries; non-empty defaults must remain to avoid forcing
     every user to fill in obvious fields."""
     assert DEFAULT_CONFIG["dashscope_api_key"] == ""
+    assert DEFAULT_CONFIG["dashscope_base_url"] == ""
     assert DEFAULT_CONFIG["output_dir"] == ""
     # Sensible defaults that should NOT be empty.
     assert DEFAULT_CONFIG["default_model"]

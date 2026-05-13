@@ -135,6 +135,8 @@ class MediaPipeline:
                         timeout_sec=timeout,
                         user_agent=user_agent,
                     )
+                if not items:
+                    raise ValueError(f"empty_source: no usable items parsed from {source['id']}")
                 inserted_count = 0
                 for item in items:
                     payload = {
@@ -758,6 +760,8 @@ def _brief_theme(session: str) -> dict[str, str]:
 
 
 def _fetch_error_message(exc: Exception) -> str:
+    if isinstance(exc, ValueError) and str(exc).startswith("empty_source:"):
+        return str(exc)
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
         url = str(exc.request.url)

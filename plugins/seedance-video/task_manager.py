@@ -66,6 +66,7 @@ CREATE INDEX IF NOT EXISTS idx_assets_task ON assets(task_id);
 
 DEFAULT_CONFIG = {
     "ark_api_key": "",
+    "ark_base_url": "",
     "output_dir": "",
     "assets_dir": "",
     "cache_dir": "",

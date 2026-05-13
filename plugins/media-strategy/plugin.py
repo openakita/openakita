@@ -23,6 +23,8 @@ except Exception:
     pass
 
 from fastapi import APIRouter, Body, HTTPException, Query, Response
+from media_ai.analyzer import score_article
+from media_fetchers.html import fetch_and_parse_article_url
 from media_fetchers.rss import validate_feed_url
 from media_models import BRAND, DISPLAY_NAME_ZH, PLUGIN_ID, PLUGIN_VERSION, SLOGAN, TOOL_NAMES
 from media_pipeline import MediaPipeline, _styled_report_html
@@ -329,6 +331,8 @@ class AddFeedBody(_StrictBase):
     package_ids: list[str] = Field(default_factory=list)
     enabled: bool = True
     authority: float | None = None
+    kind: Literal["rss", "html"] = "rss"
+    parser: str = ""
 
 
 class OpenUrlBody(_StrictBase):
@@ -348,6 +352,15 @@ class UpdateSourceBody(_StrictBase):
     package_ids: list[str] | None = None
     authority: float | None = None
     enabled: bool | None = None
+    kind: Literal["rss", "html"] | None = None
+    parser: str | None = None
+
+
+class RadarUrlBody(_StrictBase):
+    url: str
+    package_ids: list[str] = Field(default_factory=list)
+    allow_fetched_time: bool = False
+    note: str = ""
 
 
 class ToggleSourceBody(_StrictBase):
@@ -962,6 +975,8 @@ class Plugin(PluginBase):
                     package_ids=body.package_ids,
                     authority=body.authority,
                     enabled=body.enabled,
+                    kind=body.kind,
+                    selectors={"parser": body.parser} if body.parser is not None else None,
                 )
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=f"unknown source: {source_id}") from exc
@@ -992,12 +1007,70 @@ class Plugin(PluginBase):
                 url=url,
                 package_ids=body.package_ids,
                 enabled=body.enabled,
+                kind=body.kind,
+                selectors={"parser": body.parser} if body.parser else {},
             )
             if body.authority is not None:
                 source = await self._tm.update_source(
                     source["id"], authority=body.authority
                 )
             return {"ok": True, "source": source}
+
+        async def _parse_radar_url(body: RadarUrlBody) -> tuple[str, Any]:
+            settings = await self._tm.get_settings()
+            timeout = float(settings.get("fetch_timeout_sec") or 15)
+            user_agent = str(settings.get("user_agent") or "OpenAkita-MediaStrategy/0.1")
+            try:
+                return await fetch_and_parse_article_url(
+                    body.url,
+                    source_id="manual-url",
+                    timeout_sec=timeout,
+                    user_agent=user_agent,
+                    allow_fetched_time=body.allow_fetched_time,
+                )
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        @router.post("/radar/parse-url")
+        async def parse_radar_url(body: RadarUrlBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            final_url, item = await _parse_radar_url(body)
+            return {
+                "ok": True,
+                "final_url": final_url,
+                "article": {
+                    "source_id": item.source_id,
+                    "title": item.title,
+                    "url": item.url,
+                    "summary": item.summary,
+                    "published_at": item.published_at,
+                    "author": item.author,
+                    "raw": item.raw,
+                },
+            }
+
+        @router.post("/radar/import-url")
+        async def import_radar_url(body: RadarUrlBody) -> dict[str, Any]:
+            await self._ensure_ready()
+            assert self._tm is not None
+            _final_url, item = await _parse_radar_url(body)
+            package_ids = body.package_ids or []
+            payload = {
+                "source_id": "manual-url",
+                "package_ids": package_ids,
+                "url": item.url,
+                "title": item.title,
+                "summary": item.summary,
+                "author": item.author,
+                "tags": item.tags,
+                "published_at": item.published_at,
+                "fetched_at": utcnow_iso(),
+                "raw": {**item.raw, "note": body.note, "manual": True},
+            }
+            payload.update(score_article(payload, {"authority": 0.5, "packages": package_ids}))
+            article, inserted = await self._tm.upsert_article(payload)
+            return {"ok": True, "article": article, "inserted": inserted}
 
         @router.post("/tasks")
         async def create_task(body: CreateTaskBody) -> dict[str, Any]:
@@ -1462,7 +1535,7 @@ class Plugin(PluginBase):
     def _tool_definitions(self) -> list[dict[str, Any]]:
         return [
             _tool("media_strategy_subscribe_package", "订阅或取消融媒智策 RSS 套餐。", {"package_id": "string", "enabled": "boolean"}),
-            _tool("media_strategy_add_feed", "添加自定义 RSS 源并做安全校验。", {"name": "string", "url": "string", "package_ids": "array"}),
+            _tool("media_strategy_add_feed", "添加自定义长期新闻源并做安全校验，支持 RSS 或 HTML 栏目页。", {"name": "string", "url": "string", "package_ids": "array", "kind": "string"}),
             _tool("media_strategy_list_sources", "查看套餐、订阅源和健康状态。", {}),
             _tool("media_strategy_ingest", "手动拉取最新 RSS 新闻。", {"package_ids": "array", "limit_sources": "integer"}),
             _tool("media_strategy_hot_radar", "生成热点雷达榜。", {"package_id": "string", "since_hours": "integer", "limit": "integer"}),
@@ -1478,6 +1551,7 @@ class Plugin(PluginBase):
                 },
             ),
             _tool("media_strategy_search_news", "按关键词、分类检索新闻。", {"q": "string", "package_id": "string", "limit": "integer"}),
+            _tool("media_strategy_import_article_url", "导入用户补充的单篇新闻网页 URL 到雷达文章库。", {"url": "string", "package_ids": "array", "allow_fetched_time": "boolean"}),
             _tool(
                 "media_strategy_ai_analyze_topics",
                 "对规则筛选后的 Top N 热点簇调用主程序大模型生成选题分析报告，避免逐条新闻烧模型。",
@@ -1503,11 +1577,15 @@ class Plugin(PluginBase):
             return {"ok": True, "packages": packages}
         if name == "media_strategy_add_feed":
             url = validate_feed_url(str(args.get("url") or ""))
+            kind = str(args.get("kind") or "rss").lower()
+            if kind not in {"rss", "html"}:
+                kind = "rss"
             source = await self._tm.add_custom_source(
                 name=str(args.get("name") or "自定义 RSS"),
                 url=url,
                 package_ids=[str(x) for x in args.get("package_ids") or []],
                 enabled=bool(args.get("enabled", True)),
+                kind=kind,
             )
             return {"ok": True, "source": source}
         if name == "media_strategy_list_sources":
@@ -1525,6 +1603,35 @@ class Plugin(PluginBase):
             return {"ok": True, **(await self._pipeline.top_topics(payload))}
         if name == "media_strategy_search_news":
             return {"ok": True, **(await self._pipeline.search_news(args))}
+        if name == "media_strategy_import_article_url":
+            body = RadarUrlBody(
+                url=str(args.get("url") or ""),
+                package_ids=[str(x) for x in args.get("package_ids") or []],
+                allow_fetched_time=bool(args.get("allow_fetched_time", False)),
+            )
+            settings = await self._tm.get_settings()
+            _final_url, item = await fetch_and_parse_article_url(
+                body.url,
+                source_id="manual-url",
+                timeout_sec=float(settings.get("fetch_timeout_sec") or 15),
+                user_agent=str(settings.get("user_agent") or "OpenAkita-MediaStrategy/0.1"),
+                allow_fetched_time=body.allow_fetched_time,
+            )
+            payload = {
+                "source_id": "manual-url",
+                "package_ids": body.package_ids,
+                "url": item.url,
+                "title": item.title,
+                "summary": item.summary,
+                "author": item.author,
+                "tags": item.tags,
+                "published_at": item.published_at,
+                "fetched_at": utcnow_iso(),
+                "raw": {**item.raw, "manual": True},
+            }
+            payload.update(score_article(payload, {"authority": 0.5, "packages": body.package_ids}))
+            article, inserted = await self._tm.upsert_article(payload)
+            return {"ok": True, "article": article, "inserted": inserted}
         if name == "media_strategy_ai_analyze_topics":
             return await self._create_and_run_task("ai_topic_analysis", args)
         if name == "media_strategy_daily_brief":
