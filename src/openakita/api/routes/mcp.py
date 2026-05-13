@@ -11,6 +11,8 @@ Provides HTTP API for the frontend to manage MCP servers:
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -18,6 +20,7 @@ from pydantic import BaseModel
 from openakita.tools.mcp_catalog import MCPConfigField
 from openakita.tools.mcp_workspace import (
     add_server_to_workspace,
+    probe_server_connection,
     remove_server_from_workspace,
     sync_tools_after_connect,
 )
@@ -69,6 +72,7 @@ def _serialize_config_schema(schema: list[MCPConfigField]) -> list[dict]:
 
 
 router = APIRouter()
+_SERVER_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def _get_agent(request: Request):
@@ -112,12 +116,54 @@ class MCPServerAddRequest(BaseModel):
     auto_connect: bool = False
 
 
+class MCPServerTestRequest(BaseModel):
+    name: str = ""
+    transport: str = "stdio"
+    command: str = ""
+    args: list[str] = []
+    env: dict[str, str] = {}
+    url: str = ""
+    headers: dict[str, str] = {}
+    description: str = ""
+
+
+class MCPServerTestResponse(BaseModel):
+    success: bool
+    message: str
+    latency_ms: int | None = None
+    error: str | None = None
+    tool_count: int = 0
+
+
 class MCPToggleRequest(BaseModel):
     enabled: bool
 
 
 class MCPConnectRequest(BaseModel):
     server_name: str
+
+
+def _validate_server_payload(
+    *,
+    name: str = "",
+    transport: str,
+    command: str,
+    url: str,
+    require_name: bool,
+    valid_transports: set[str],
+) -> str | None:
+    normalized_name = name.strip()
+    if require_name and not normalized_name:
+        return "服务器名称不能为空"
+    if require_name and not _SERVER_NAME_RE.match(normalized_name):
+        return "服务器名称只能包含字母、数字、连字符和下划线"
+    if transport not in valid_transports:
+        return f"不支持的传输协议: {transport}（支持: {', '.join(sorted(valid_transports))}）"
+    if transport == "stdio" and not command.strip():
+        return "stdio 模式需要填写启动命令"
+    if transport in ("streamable_http", "sse") and not url.strip():
+        return f"{transport} 模式需要填写 URL"
+    return None
 
 
 @router.get("/api/mcp/servers")
@@ -295,24 +341,18 @@ async def get_mcp_instructions(request: Request, server_name: str):
 @router.post("/api/mcp/servers/add")
 async def add_mcp_server(request: Request, body: MCPServerAddRequest):
     """Add a new MCP server config (persisted to workspace data/mcp/servers/)."""
-    import re
-    from pathlib import Path
-
     from openakita.tools.mcp import VALID_TRANSPORTS
 
-    if not body.name.strip():
-        return {"status": "error", "message": "服务器名称不能为空"}
-    if not re.match(r"^[a-zA-Z0-9_-]+$", body.name.strip()):
-        return {"status": "error", "message": "服务器名称只能包含字母、数字、连字符和下划线"}
-    if body.transport not in VALID_TRANSPORTS:
-        return {
-            "status": "error",
-            "message": f"不支持的传输协议: {body.transport}（支持: {', '.join(sorted(VALID_TRANSPORTS))}）",
-        }
-    if body.transport == "stdio" and not body.command.strip():
-        return {"status": "error", "message": "stdio 模式需要填写启动命令"}
-    if body.transport in ("streamable_http", "sse") and not body.url.strip():
-        return {"status": "error", "message": f"{body.transport} 模式需要填写 URL"}
+    validation_err = _validate_server_payload(
+        name=body.name,
+        transport=body.transport,
+        command=body.command,
+        url=body.url,
+        require_name=True,
+        valid_transports=VALID_TRANSPORTS,
+    )
+    if validation_err:
+        return {"status": "error", "message": validation_err}
 
     client = _get_mcp_client(request)
     catalog = _get_mcp_catalog(request)
@@ -339,6 +379,45 @@ async def add_mcp_server(request: Request, body: MCPServerAddRequest):
     )
 
     return result
+
+
+@router.post("/api/mcp/servers/test")
+async def test_mcp_server(request: Request, body: MCPServerTestRequest) -> MCPServerTestResponse:
+    """Test an MCP server connection without persisting workspace metadata."""
+    from openakita.tools.mcp import VALID_TRANSPORTS
+
+    validation_err = _validate_server_payload(
+        transport=body.transport,
+        command=body.command,
+        url=body.url,
+        require_name=False,
+        valid_transports=VALID_TRANSPORTS,
+    )
+    if validation_err:
+        return MCPServerTestResponse(success=False, message="测试连接失败", error=validation_err)
+
+    client = _get_mcp_client(request)
+    if not client:
+        return MCPServerTestResponse(
+            success=False,
+            message="测试连接失败",
+            error="Agent not initialized",
+        )
+
+    from openakita.config import settings
+
+    probe_result = await probe_server_connection(
+        transport=body.transport,
+        command=body.command.strip(),
+        args=body.args,
+        env=body.env,
+        url=body.url.strip(),
+        description=body.description.strip() or body.name.strip(),
+        headers=body.headers or None,
+        search_bases=[settings.project_root, Path.cwd()],
+        client=client,
+    )
+    return MCPServerTestResponse(**probe_result)
 
 
 @router.post("/api/mcp/servers/{server_name}/toggle")
