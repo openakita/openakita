@@ -4640,6 +4640,34 @@ class Agent:
 
     # ==================== 会话流水线: 共享准备 / 收尾 / 入口 ====================
 
+    @staticmethod
+    def _resolve_memory_workspace_id(session: Any | None) -> str:
+        """Choose the memory workspace for a session.
+
+        IM sessions use the bot namespace so multiple bots do not share long-term
+        memory by accident. Desktop/API/CLI keep the historical "default"
+        workspace unless an explicit metadata override is set.
+        """
+        if session is None:
+            return "default"
+
+        metadata = getattr(session, "metadata", {}) or {}
+        explicit = metadata.get("memory_workspace_id")
+        if explicit:
+            return str(explicit)
+
+        channel = str(getattr(session, "channel", "") or "")
+        if channel in {"desktop", "api", "cli", "web"}:
+            return "default"
+
+        namespace = (
+            getattr(session, "bot_instance_id", None)
+            or metadata.get("bot_instance_id")
+            or channel
+            or "default"
+        )
+        return str(namespace)
+
     async def _prepare_session_context(
         self,
         message: str,
@@ -4695,12 +4723,18 @@ class Agent:
             )
             conversation_safe_id = _memory_key.replace(":", "__")
             conversation_safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", conversation_safe_id)
-            if getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id:
+            memory_workspace_id = self._resolve_memory_workspace_id(session)
+            if (
+                getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id
+                or getattr(self.memory_manager, "_current_workspace_id", None) != memory_workspace_id
+            ):
                 self.memory_manager.start_session(
                     conversation_safe_id,
                     user_id=getattr(session, "user_id", None) if session else None,
-                    workspace_id="default",
+                    workspace_id=memory_workspace_id,
                 )
+                if session is not None:
+                    session.set_metadata("memory_workspace_id", memory_workspace_id)
                 if hasattr(self, "_memory_handler"):
                     self._memory_handler.reset_guide()
                 # 1.5 新会话时清空 Scratchpad 工作记忆，避免跨会话泄漏
@@ -5800,6 +5834,10 @@ class Agent:
             self._pending_cancels.pop(_sid, None)
         if self._current_conversation_id:
             self._pending_cancels.pop(self._current_conversation_id, None)
+        with contextlib.suppress(Exception):
+            from ..logging import get_session_log_buffer
+
+            get_session_log_buffer().clear_current_session()
         self._current_session_id = None
         self._current_conversation_id = None
 

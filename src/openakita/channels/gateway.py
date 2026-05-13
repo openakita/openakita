@@ -1005,7 +1005,7 @@ class MessageGateway:
 
         # ==================== 群聊上下文缓冲区 ====================
         # 缓存被过滤的群聊消息（未 @ 时），供后续 @ 消息注入上下文
-        # key: "channel:chat_id", value: deque of context entries
+        # key: "bot_instance_id:chat_id", value: deque of context entries
         self._group_context_buffer: dict[str, collections.deque] = {}
         self._GROUP_CONTEXT_MAX_ITEMS = 20
         self._GROUP_CONTEXT_TTL = 600  # 10 分钟
@@ -1203,11 +1203,12 @@ class MessageGateway:
             chat_id=message.chat_id,
             user_id=message.user_id,
             thread_id=message.thread_id,
+            bot_instance_id=self._get_message_bot_instance_id(message),
         )
         if not session:
             return "❌ 无法获取会话"
 
-        self._apply_bot_agent_profile(session, message.channel)
+        self._apply_bot_agent_profile(session, self._get_message_bot_instance_id(message))
 
         t = user_text.strip().lower()
 
@@ -1359,29 +1360,67 @@ class MessageGateway:
         return f"✅ 已重置为 **{reset_target}**"
 
     def _get_bot_default_agent(self, channel: str) -> str:
-        """Return the agent_profile_id configured on the adapter for *channel*."""
+        """Return the agent_profile_id configured for a bot namespace."""
         adapter = self._adapters.get(channel)
+        if adapter is None:
+            adapter = next(
+                (
+                    candidate
+                    for candidate in self._adapters.values()
+                    if getattr(candidate, "bot_instance_id", "") == channel
+                ),
+                None,
+            )
         if adapter and hasattr(adapter, "agent_profile_id"):
             return adapter.agent_profile_id
         return "default"
 
-    def _apply_bot_agent_profile(self, session: Session, channel: str) -> None:
+    def _apply_bot_agent_profile(self, session: Session, bot_instance_id: str) -> None:
         """For multi-bot setups, apply the adapter's bound agent_profile_id
         to a newly-created session so the orchestrator routes to the correct agent.
-        Only runs once per session (guard: ``_bot_default_agent`` metadata).
         """
-        if session.get_metadata("_bot_default_agent") is not None:
+        expected_namespace = bot_instance_id or session.channel
+        if (session.bot_instance_id or session.channel) != expected_namespace:
+            logger.warning(
+                "[IM] Refusing to reuse session across bot namespaces: "
+                f"session={session.session_key}, expected={expected_namespace}"
+            )
             return
-        bot_agent = self._get_bot_default_agent(channel)
+
+        session.set_metadata("bot_instance_id", expected_namespace)
+        bot_agent = self._get_bot_default_agent(expected_namespace)
+        previous_default = session.get_metadata("_bot_default_agent")
+        if previous_default == bot_agent:
+            return
         session.set_metadata("_bot_default_agent", bot_agent)
-        if bot_agent != "default" and not session.context.agent_switch_history:
+
+        has_manual_switch = any(
+            item.get("source") != "bot_default"
+            for item in (session.context.agent_switch_history or [])
+            if isinstance(item, dict)
+        )
+        if not has_manual_switch:
+            previous_profile = session.context.agent_profile_id
             session.context.agent_profile_id = bot_agent
+            if previous_profile != bot_agent:
+                session.context.agent_switch_history.append(
+                    {
+                        "from": previous_profile,
+                        "to": bot_agent,
+                        "source": "bot_default",
+                        "bot_instance_id": expected_namespace,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
             self.session_manager.mark_dirty()
             logger.info(f"[IM] Applied bot default agent: {bot_agent} for {session.session_key}")
 
     def _desktop_mirror_id_for_im(self, session: Session) -> str:
         """Return a stable desktop conversation id for an IM chat."""
-        raw_key = f"{session.channel}:{session.chat_id}:{session.user_id}"
+        raw_key = (
+            f"{session.bot_instance_id or session.channel}:"
+            f"{session.chat_id}:{session.user_id}:{session.thread_id or ''}"
+        )
         digest = hashlib.sha1(raw_key.encode("utf-8", errors="ignore")).hexdigest()[:12]
         platform = re.sub(r"[^A-Za-z0-9_-]+", "_", session.channel.split(":", 1)[0])[:20]
         return f"im_{platform}_{digest}"
@@ -1438,6 +1477,7 @@ class MessageGateway:
         )
         mirror.context.agent_profile_id = session.context.agent_profile_id
         mirror.set_metadata("source_channel", session.channel)
+        mirror.set_metadata("source_bot_instance_id", session.bot_instance_id or session.channel)
         mirror.set_metadata("source_chat_id", session.chat_id)
         mirror.set_metadata("source_user_id", session.user_id)
         mirror.set_metadata("source_session_key", session.session_key)
@@ -1452,6 +1492,7 @@ class MessageGateway:
         meta: dict = {
             "source": "im_mirror",
             "source_channel": session.channel,
+            "source_bot_instance_id": session.bot_instance_id or session.channel,
             "source_session_key": session.session_key,
         }
         if source_message_id:
@@ -1532,6 +1573,15 @@ class MessageGateway:
                 except ValueError:
                     pass
         adapter = self._adapters.get(channel)
+        if adapter is None:
+            adapter = next(
+                (
+                    candidate
+                    for candidate in self._adapters.values()
+                    if getattr(candidate, "bot_instance_id", "") == channel
+                ),
+                None,
+            )
         per_bot = getattr(adapter, "_group_response_mode", None)
         if per_bot:
             try:
@@ -1549,6 +1599,15 @@ class MessageGateway:
     def _get_group_allowlist(self, channel: str) -> set[str]:
         """获取群聊白名单（Per-Bot 配置 > 全局配置）"""
         adapter = self._adapters.get(channel)
+        if adapter is None:
+            adapter = next(
+                (
+                    candidate
+                    for candidate in self._adapters.values()
+                    if getattr(candidate, "bot_instance_id", "") == channel
+                ),
+                None,
+            )
         per_bot = getattr(adapter, "_group_allowlist", None)
         if per_bot:
             return set(per_bot) if not isinstance(per_bot, set) else per_bot
@@ -1569,10 +1628,10 @@ class MessageGateway:
     ) -> None:
         """将被过滤的群聊消息缓存到上下文缓冲区。
 
-        key 为 ``channel:chat_id``（群聊级），每条记录包含时间戳、用户、文本。
+        key 为 ``bot_instance_id:chat_id``（群聊级），每条记录包含时间戳、用户、文本。
         超出 TTL 或最大条数的旧条目自动淘汰。
         """
-        buf_key = f"{message.channel}:{message.chat_id}"
+        buf_key = f"{self._get_message_bot_instance_id(message)}:{message.chat_id}"
         buf = self._group_context_buffer.get(buf_key)
         if buf is None:
             buf = collections.deque(maxlen=self._GROUP_CONTEXT_MAX_ITEMS)
@@ -1602,10 +1661,11 @@ class MessageGateway:
         channel: str,
         chat_id: str,
         *,
+        bot_instance_id: str | None = None,
         max_items: int = 10,
     ) -> list[dict]:
         """获取群聊上下文缓冲区中的近期消息（已过期的自动淘汰）。"""
-        buf_key = f"{channel}:{chat_id}"
+        buf_key = f"{bot_instance_id or channel}:{chat_id}"
         buf = self._group_context_buffer.get(buf_key)
         if not buf:
             return []
@@ -2200,6 +2260,23 @@ class MessageGateway:
         """列出所有适配器"""
         return list(self._adapters.keys())
 
+    def _get_message_bot_instance_id(self, message: UnifiedMessage) -> str:
+        """Resolve the stable bot namespace for a message."""
+        explicit = (getattr(message, "bot_instance_id", "") or "").strip()
+        if explicit:
+            return explicit
+        adapter = self._adapters.get(message.channel)
+        if adapter is not None:
+            resolved = (getattr(adapter, "bot_instance_id", "") or "").strip()
+            if resolved:
+                return resolved
+        return message.channel
+
+    def _ensure_message_bot_instance_id(self, message: UnifiedMessage) -> str:
+        bot_instance_id = self._get_message_bot_instance_id(message)
+        message.bot_instance_id = bot_instance_id
+        return bot_instance_id
+
     # ==================== 消息处理 ====================
 
     async def _on_message(self, message: UnifiedMessage) -> None:
@@ -2216,6 +2293,8 @@ class MessageGateway:
                 f"[Shutdown] Message rejected (drain mode): {message.channel}/{message.user_id}"
             )
             return
+
+        self._ensure_message_bot_instance_id(message)
 
         if self._plugin_hooks:
             try:
@@ -2256,7 +2335,7 @@ class MessageGateway:
                 # 群聊响应模式过滤（防止未 @ 的群消息通过中断路径注入上下文）
                 if message.chat_type == "group" and not message.is_direct_message:
                     _irq_mode = self._get_group_response_mode(
-                        message.channel, message.chat_id, message.user_id
+                        self._get_message_bot_instance_id(message), message.chat_id, message.user_id
                     )
                     if _irq_mode == GroupResponseMode.MENTION_ONLY and not message.is_mentioned:
                         _is_stop_or_skip = (
@@ -2277,7 +2356,19 @@ class MessageGateway:
                 _agent_ref = (
                     getattr(self.agent_handler, "_agent_ref", None) if self.agent_handler else None
                 )
-                _resolved_sid = self._resolve_task_session_id(session_key, _agent_ref)
+                _active_session = self.session_manager.get_session(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    user_id=message.user_id,
+                    thread_id=message.thread_id,
+                    bot_instance_id=self._get_message_bot_instance_id(message),
+                    create_if_missing=False,
+                )
+                _resolved_sid = self._resolve_task_session_id(
+                    session_key,
+                    _agent_ref,
+                    preferred_session_id=getattr(_active_session, "id", None),
+                )
                 _session_matches = _resolved_sid is not None
 
                 logger.debug(
@@ -2327,6 +2418,7 @@ class MessageGateway:
                             chat_id=message.chat_id,
                             user_id=message.user_id,
                             thread_id=message.thread_id,
+                            bot_instance_id=self._get_message_bot_instance_id(message),
                         )
                         if _ins_session:
                             _ins_session.add_message(
@@ -2553,19 +2645,26 @@ class MessageGateway:
 
     def _get_session_key(self, message: UnifiedMessage) -> str:
         """获取会话标识（话题消息会追加 thread_id 实现话题级隔离）"""
-        key = f"{message.channel}:{message.chat_id}:{message.user_id}"
-        if message.thread_id:
-            key += f":{message.thread_id}"
-        return key
+        return self.session_manager.build_session_key(
+            message.channel,
+            message.chat_id,
+            message.user_id,
+            message.thread_id,
+            bot_instance_id=self._get_message_bot_instance_id(message),
+        )
 
     @staticmethod
-    def _resolve_task_session_id(session_key: str, agent_ref: object) -> str | None:
+    def _resolve_task_session_id(
+        session_key: str,
+        agent_ref: object,
+        preferred_session_id: str | None = None,
+    ) -> str | None:
         """
         根据 gateway session_key 找到 AgentState._tasks 中匹配的 task session_id。
 
         session_key 格式:
-          三段式: "telegram:1241684312:tg_1241684312"  (channel:chat_id:user_id)
-          四段式: "telegram:1241684312:tg_1241684312:thread_abc"  (channel:chat_id:user_id:thread_id)
+          旧格式: "telegram:1241684312:tg_1241684312"  (channel:chat_id:user_id)
+          新格式: "feishu:writer:chat:user"  (bot_instance_id:chat_id:user_id)
 
         task key 格式为 _resolve_conversation_id 的返回值（即传入的 session_id）:
           IM 路径: session.id 格式 "telegram_1241684312_20260219031213_xxx"（下划线分隔）
@@ -2576,32 +2675,43 @@ class MessageGateway:
         agent_state = getattr(agent_ref, "agent_state", None)
         if not agent_state:
             return None
-        parts = session_key.split(":")
-        channel = parts[0] if parts else ""
-        chat_id = parts[1] if len(parts) >= 2 else ""
-        thread_id = parts[3] if len(parts) >= 4 else ""
-        if not channel or not chat_id:
-            return None
-
         tasks = getattr(agent_state, "_tasks", {})
 
         if session_key in tasks:
             return session_key
+        if preferred_session_id:
+            preferred_task = tasks.get(preferred_session_id)
+            if preferred_task is not None:
+                return preferred_session_id
 
-        prefix_underscore = f"{channel}_"
-        chat_id_seg_underscore = f"_{chat_id}_"
-        prefix_colon = f"{channel}:"
-        chat_id_seg_colon = f":{chat_id}:"
+        parts = session_key.split(":")
+        if len(parts) < 3:
+            return None
+
+        candidates: list[tuple[str, str, str]] = []
+        # No thread_id: namespace may itself contain ":".
+        candidates.append((":".join(parts[:-2]), parts[-2], ""))
+        # With thread_id: support both legacy and bot-instance namespaces.
+        if len(parts) >= 4:
+            candidates.append((":".join(parts[:-3]), parts[-3], parts[-1]))
+
+        def _namespace_prefixes(namespace: str) -> tuple[str, ...]:
+            platform = namespace.split(":", 1)[0]
+            return tuple(
+                value
+                for value in (namespace, platform)
+                if value
+            )
 
         def _match_key(key: str) -> bool:
-            base_matched = (
-                key.startswith(prefix_underscore) and chat_id_seg_underscore in key
-            ) or (key.startswith(prefix_colon) and chat_id_seg_colon in key)
-            if not base_matched:
-                return False
-            if thread_id:
-                return thread_id in key
-            return True
+            for namespace, chat_id, thread_id in candidates:
+                for prefix in _namespace_prefixes(namespace):
+                    base_matched = (
+                        key.startswith(f"{prefix}_") and f"_{chat_id}_" in key
+                    ) or (key.startswith(f"{prefix}:") and f":{chat_id}:" in key)
+                    if base_matched and (not thread_id or thread_id in key):
+                        return True
+            return False
 
         for key in tasks:
             task = tasks[key]
@@ -2729,11 +2839,13 @@ class MessageGateway:
         """
         处理单条消息
         """
+        bot_namespace = self._get_message_bot_instance_id(message)
         session_key = self._get_session_key(message)
         user_text = message.plain_text.strip() if message.plain_text else ""
 
         logger.info(
-            f"[IM] <<< 收到消息: channel={message.channel}, user={message.user_id}, "
+            f"[IM] <<< 收到消息: channel={message.channel}, bot={bot_namespace}, "
+            f"user={message.user_id}, "
             f'text="{user_text[:100]}"'
         )
 
@@ -2743,7 +2855,7 @@ class MessageGateway:
             # ==================== 群聊响应过滤 ====================
             if message.chat_type == "group" and not message.is_direct_message:
                 mode = self._get_group_response_mode(
-                    message.channel, message.chat_id, message.user_id
+                    bot_namespace, message.chat_id, message.user_id
                 )
 
                 if mode == GroupResponseMode.DISABLED:
@@ -2755,7 +2867,7 @@ class MessageGateway:
 
                     gp_config = GroupPolicyConfig(
                         policy=GroupPolicyType.ALLOWLIST,
-                        allowlist=self._get_group_allowlist(message.channel),
+                        allowlist=self._get_group_allowlist(bot_namespace),
                     )
                     gp_result = check_group_policy(message.chat_id, gp_config)
                     if not gp_result.allowed:
@@ -2815,6 +2927,7 @@ class MessageGateway:
                     chat_id=message.chat_id,
                     user_id=message.user_id,
                     thread_id=message.thread_id,
+                    bot_instance_id=bot_namespace,
                 )
                 response_text = await self._thinking_cmd_handler.handle_command(
                     session_key,
@@ -2883,6 +2996,7 @@ class MessageGateway:
                         chat_id=message.chat_id,
                         user_id=message.user_id,
                         thread_id=message.thread_id,
+                        bot_instance_id=self._get_message_bot_instance_id(message),
                     )
                     resp = await self._handle_agent_switch(_switch_session, f"/切换 {arg}")
                 else:
@@ -2900,6 +3014,7 @@ class MessageGateway:
                     chat_id=message.chat_id,
                     user_id=message.user_id,
                     thread_id=message.thread_id,
+                    bot_instance_id=self._get_message_bot_instance_id(message),
                 )
                 if _reset_session:
                     _old_count = len(_reset_session.context.messages)
@@ -2940,9 +3055,10 @@ class MessageGateway:
             # ==================== 正常消息处理流程 ====================
 
             # 0. Bot 开关检查（必须在 typing 之前，避免禁用会话触发 typing）
-            if not self.bot_config.is_enabled(message.channel, message.chat_id, message.user_id):
+            bot_namespace = self._get_message_bot_instance_id(message)
+            if not self.bot_config.is_enabled(bot_namespace, message.chat_id, message.user_id):
                 logger.debug(
-                    f"[Gateway] Bot disabled for {message.channel}:{message.chat_id}:{message.user_id}, skipping"
+                    f"[Gateway] Bot disabled for {bot_namespace}:{message.chat_id}:{message.user_id}, skipping"
                 )
                 return
 
@@ -2969,6 +3085,7 @@ class MessageGateway:
                 chat_id=message.chat_id,
                 user_id=message.user_id,
                 thread_id=message.thread_id,
+                bot_instance_id=bot_namespace,
                 chat_type=message.chat_type or "private",
                 display_name=_msg_sender_name,
                 chat_name=_msg_chat_name,
@@ -3002,7 +3119,7 @@ class MessageGateway:
             )
 
             # 4.1 多Bot绑定：将 adapter 配置的 agent_profile_id 写入新 session
-            self._apply_bot_agent_profile(session, message.channel)
+            self._apply_bot_agent_profile(session, bot_namespace)
 
             # 4.2 注入 IM 环境上下文（平台、聊天类型、机器人身份、能力列表）
             adapter = self._adapters.get(message.channel)
@@ -3013,6 +3130,7 @@ class MessageGateway:
                     "chat_id": message.chat_id,
                     "thread_id": message.thread_id,
                     "bot_id": getattr(adapter, "_bot_open_id", None),
+                    "bot_instance_id": bot_namespace,
                     "capabilities": getattr(adapter, "_capabilities", []),
                 }
                 session.set_metadata("_im_environment", im_env)
@@ -3092,6 +3210,7 @@ class MessageGateway:
                     _ctx_items = self._get_group_context(
                         message.channel,
                         message.chat_id,
+                        bot_instance_id=bot_namespace,
                         max_items=10,
                     )
                     if _ctx_items:
@@ -3102,7 +3221,7 @@ class MessageGateway:
                             f"for {session_key}"
                         )
                         # 注入后清空缓冲区，避免重复注入
-                        _buf_key = f"{message.channel}:{message.chat_id}"
+                        _buf_key = f"{bot_namespace}:{message.chat_id}"
                         self._group_context_buffer.pop(_buf_key, None)
                 except Exception as _ctx_err:
                     logger.debug(f"[IM] Group context injection failed (non-critical): {_ctx_err}")
@@ -3113,6 +3232,7 @@ class MessageGateway:
                 content=message.plain_text,
                 message_id=message.id,
                 channel_message_id=message.channel_message_id,
+                bot_instance_id=bot_namespace,
             )
             self._mirror_im_message_to_desktop(
                 session,
@@ -3125,6 +3245,7 @@ class MessageGateway:
                 "im:new_message",
                 {
                     "channel": message.channel,
+                    "bot_instance_id": bot_namespace,
                     "role": "user",
                     "session_id": session.session_key,
                     "chat_type": session.chat_type,
@@ -3170,7 +3291,7 @@ class MessageGateway:
                         logger.debug(f"[Gateway] Tool trace summary ({len(_tool_summary)} chars)")
             except Exception:
                 pass
-            _msg_meta: dict = {}
+            _msg_meta: dict = {"bot_instance_id": bot_namespace}
             if _chain_summary:
                 _msg_meta["chain_summary"] = _chain_summary
             if _tool_summary:
@@ -3188,6 +3309,7 @@ class MessageGateway:
                 "im:new_message",
                 {
                     "channel": message.channel,
+                    "bot_instance_id": bot_namespace,
                     "role": "assistant",
                     "session_id": session.session_key,
                     "chat_type": session.chat_type,
