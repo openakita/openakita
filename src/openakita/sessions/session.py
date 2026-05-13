@@ -349,6 +349,17 @@ class Session:
     # 元数据
     metadata: dict = field(default_factory=dict)
 
+    # PolicyV2 正交两层 mode（C8 §2.2 新增）
+    # ``session_role``: SessionRole 枚举字符串 ("agent" / "plan" / "ask" / "coordinator")
+    # ``confirmation_mode_override``: 若非 None，覆盖全局 ConfirmationMode（"default"
+    # / "trust" / "strict" / "accept_edits" / "dont_ask"）。switch_mode 工具写入
+    # ``session_role``；UI/handler 后续可对个别 session 单独覆盖 confirmation_mode。
+    # 用 ``str`` 而非 ``Enum`` 是为了让旧 sessions.json（无字段）反序列化时可
+    # ``getattr(session, "session_role", "agent")`` 兼容；adapter.build_policy_context
+    # 把字符串 coerce 回 SessionRole 枚举。
+    session_role: str = "agent"
+    confirmation_mode_override: str | None = None
+
     @classmethod
     def create(
         cls,
@@ -701,6 +712,8 @@ class Session:
                 "auto_summarize": self.config.auto_summarize,
             },
             "metadata": serializable_metadata,
+            "session_role": self.session_role,
+            "confirmation_mode_override": self.confirmation_mode_override,
         }
 
     def _is_json_serializable(self, value: Any) -> bool:
@@ -717,6 +730,12 @@ class Session:
     def from_dict(cls, data: dict) -> "Session":
         """反序列化"""
         config_data = data.get("config", {})
+        # C8: session_role / confirmation_mode_override 旧 sessions.json 没有，
+        # 走默认 "agent" / None。读取时容错任意非法值（None/类型错） → 默认。
+        sr_raw = data.get("session_role", "agent")
+        session_role = sr_raw if isinstance(sr_raw, str) and sr_raw else "agent"
+        cm_raw = data.get("confirmation_mode_override")
+        confirmation_mode_override = cm_raw if isinstance(cm_raw, str) and cm_raw else None
         return cls(
             id=data["id"],
             channel=data["channel"],
@@ -739,4 +758,6 @@ class Session:
                 auto_summarize=config_data.get("auto_summarize", True),
             ),
             metadata=data.get("metadata", {}),
+            session_role=session_role,
+            confirmation_mode_override=confirmation_mode_override,
         )

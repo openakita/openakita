@@ -56,6 +56,7 @@ from .models import (
     PolicyDecisionV2,
     ToolCallEvent,
 )
+from .safety_immune_defaults import expand_builtin_immune_paths
 from .schema import PolicyConfigV2
 from .shell_risk import ShellRiskLevel
 from .zones import candidate_path_fields
@@ -149,7 +150,14 @@ class PolicyEngineV2:
         }
 
         # 配置派生缓存（避免每次决策访问嵌套 attr；冻结成不可变结构）
-        self._immune_paths_from_config: tuple[str, ...] = tuple(self._config.safety_immune.paths)
+        # C8: builtin 9-category immune paths 永远在前；用户 config 只能 ADD，不能 REMOVE。
+        # _path_under 在 _check_safety_immune 里已 dedupe（命中即返回，重复无副作用），
+        # 这里用 list 拼接保留顺序，让审计日志能直观看到"是 builtin 命中还是用户命中"。
+        _builtin_immune = expand_builtin_immune_paths()
+        self._immune_paths_from_config: tuple[str, ...] = (
+            *_builtin_immune,
+            *(p for p in self._config.safety_immune.paths if p not in _builtin_immune),
+        )
         self._owner_only_tools: frozenset[str] = frozenset(self._config.owner_only.tools)
         self._approval_overrides: dict[str, ApprovalClass] = {
             k: ApprovalClass(v) if isinstance(v, str) else v

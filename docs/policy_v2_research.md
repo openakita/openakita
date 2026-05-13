@@ -2255,6 +2255,149 @@ except Exception:
 
 可放心进入 C8。
 
+## C8a 实施记录（2026-05-13 完成）
+
+### C8 范围分拆与最终选择
+
+C8 调研期初步包含 7 个 sub-task，但与 C9（SecurityView 重建）有强依赖：
+- **#6 v1 RiskGate 删除** 需要 C9 的 SecurityView 完成 `pending_approval`
+  迁移后才能安全摘除（否则 IM owner 审批 / desktop confirm 会失去去重屏障）。
+- **#7 删除 src/openakita/core/policy.py** 同样需要 C9 完成 `prepare_ui_confirm`
+  / `wait_for_ui_resolution` 的 v2 化（v1 engine 当前仍是 SSE 等待中枢）。
+
+用户最终选择 **C8a = #1–#5**（不动决策中枢），#6/#7 推迟到 C9 完成后作为 C8b
+独立 commit。本次 C8a 五项均为**非破坏性补强**（additive defaults / 配置驱动 /
+新字段 / 真删过期 / SSE bug 修复），无 v1→v2 决策权切换，回归风险最低。
+
+### 五项 sub-task 与改动
+
+| # | 标题 | 关键文件 | 摘要 |
+|---|---|---|---|
+| #1 | safety_immune 9 类精细路径接入 POLICIES.yaml | `core/policy_v2/safety_immune_defaults.py`（新）+ `engine.py` | 9 类 builtin 路径（identity/audit/keyring/git/tauri/python venv/node_modules/system/lockfile）通过 `expand_builtin_immune_paths()` 与用户配置 **加性 union**，永远兜底保护 |
+| #2 | OwnerOnly 配置驱动 + IM owner 接入 ctx | `channels/gateway.py` + `api/routes/im.py` + `core/policy_v2/adapter.py` | IM `_handle_message` 注入 `session.metadata["is_owner"]`；新增 `/api/im/owner-allowlist` 持久化（`data/sessions/im_owner_allowlist.json`）；`build_policy_context` 透传 `is_owner` 给 OwnerOnly 决策 |
+| #3 | switch_mode 真生效 | `sessions/session.py` + `tools/handlers/mode.py` + `adapter.py` | Session dataclass 新增 `session_role: str = "agent"` + `confirmation_mode_override: str | None = None`；`switch_mode` 写 `session.session_role`；`build_policy_context` 优先读 session 字段覆盖默认 |
+| #4 | consume_session_trust 真删过期规则 | `core/trusted_paths.py` | 调用时 split `surviving / pruned`，pruned 非空时 `session.set_metadata(SESSION_KEY, surviving)` 持久化（之前只是 in-memory 跳过，元数据无界增长） |
+| #5 | IM 前缀 conversation 早退不 yield SSE | `core/reasoning_engine.py` + `core/policy.py` + `channels/gateway.py` | 删除两处 `_is_im_conversation` 早退分支；IM 通道 `_confirm_timeout = max(orig*4, 180s)`；SSE event 加 `"channel": "im" / "desktop"`；`prepare_ui_confirm` 改幂等（避免 gateway 与 reasoning_engine 互踩 asyncio.Event） |
+
+### 新增文件
+
+| 文件 | 作用 |
+|---|---|
+| `core/policy_v2/safety_immune_defaults.py` | 9 类 builtin 路径常量 + `expand_builtin_immune_paths()`（解析 `${CWD}` / `~`） |
+| `tests/unit/test_policy_v2_c8_wire.py` | 12 个 test，覆盖 5 项 sub-task 的核心断言 + 边界 |
+| `scripts/c8_audit_d1_completeness.py` | D1 完整性审计 |
+| `scripts/c8_audit_d2_architecture.py` | D2 架构正确性审计 |
+| `scripts/c8_audit_d3_no_whack_a_mole.py` | D3 不打地鼠（独立性 / fail-safe / 无隐藏耦合） |
+| `scripts/c8_audit_d4_hidden_bugs.py` | D4 隐藏 bug 探针（CWD / from_dict 健壮性 / 元数据写入 / round-trip） |
+| `scripts/c8_audit_d5_compat.py` | D5 兼容性（旧 sessions.json / v1 yaml 迁移 / v1 API / 独立 ACL 文件 / 默认构造 smoke） |
+
+### 关键设计决策
+
+1. **builtin safety_immune 加性 union（不是覆盖）**：用户在 `POLICIES.yaml`
+   里配的 `safety_immune.paths` 与 9 类 builtin 取并集，且 builtin 永远在
+   前——即使用户配置为空 list，9 类系统关键路径仍受保护。这是"安全加性"
+   原则：用户能放宽自己的代码区，但**不能关掉系统底线**。
+
+2. **`Session.from_dict` 三重健壮性**（D4 探针专门验证）：
+   - 缺字段 → 默认值（`session_role="agent"`, `confirmation_mode_override=None`）
+   - 空字符串 / 错误类型 → fallback 到默认
+   - 旧 sessions.json 直接反序列化即可，无需 migration 脚本
+
+3. **`prepare_ui_confirm` 幂等**：原实现每次都新建 `asyncio.Event`，导致
+   gateway（IM 渠道）与 reasoning_engine 同时 prepare 同一 confirm_id 时
+   后注册者覆盖前者的 event，前者 `wait_for_ui_resolution` 永远超时。
+   改为：若已存在 event 且 decision 未到，**复用**已有 event。
+
+4. **IM confirm timeout 4×（最少 180s）**：桌面默认 60s 对 IM 用户太短
+   （需要切群、看通知、审阅 card）。`max(orig*4, 180s)` 给到至少 3 分钟，
+   同时保留管理员调长 `confirm_timeout` 时的倍数关系。
+
+5. **OwnerOnly 在 v2 engine 内决策，gateway 只负责注入 `is_owner`**：
+   gateway 通过 `_get_owner_user_ids` + `_apply_persisted_owner_allowlist`
+   读 `im_owner_allowlist.json` 解析当前消息发送者是否 owner，写入
+   `session.metadata["is_owner"]`；engine 决策时 `build_policy_context`
+   透传，`OwnerOnly` 工具被非 owner 调用时 → DENY。**职责分离**：
+   gateway 不懂决策、engine 不懂 IM。
+
+6. **`consume_session_trust` 真删 vs in-memory skip**：原实现在迭代时遇
+   到 expired 跳过，但**留在 metadata 里**。长 session 下规则数无界增长，
+   且每次 trust 检查 O(n) 扫描成本递增。新实现 in-place pruning，仅在
+   pruned 非空时写一次 metadata，避免无谓 IO。
+
+### 修改文件清单
+
+| 文件 | 关键改动 |
+|---|---|
+| `core/policy_v2/engine.py` | `__init__` 接 `expand_builtin_immune_paths()` + 用户配置 union |
+| `core/policy_v2/__init__.py` | 暴露 `expand_builtin_immune_paths` / `BUILTIN_SAFETY_IMMUNE_PATHS` |
+| `core/policy_v2/adapter.py` | `build_policy_context` 读 `session.session_role` / `confirmation_mode_override` / `metadata["is_owner"]` |
+| `core/trusted_paths.py` | `consume_session_trust` 真删过期 + 持久化 |
+| `core/policy.py` | `prepare_ui_confirm` 幂等（已存在 event 则复用） |
+| `core/reasoning_engine.py` | 删 IM 早退分支 × 2；IM `_confirm_timeout` 4× / ≥180s；SSE event 加 `channel` 字段 |
+| `channels/gateway.py` | `_handle_im_security_confirm` 不再消费 resolution（只渲染 + 转发选择，实际 wait 由 reasoning_engine 处理）；新增 `_get_owner_user_ids` + `_apply_persisted_owner_allowlist`；`_handle_message` 写 `session.metadata["is_owner"]`；`start()` 调 `_apply_persisted_owner_allowlist()` |
+| `api/routes/im.py` | 新增 `GET/POST /api/im/owner-allowlist` + `_load_owner_allowlist` / `_save_owner_allowlist`（`data/sessions/im_owner_allowlist.json`，`None=未配置`，`[]=显式锁定`） |
+| `sessions/session.py` | 新增 `session_role: str = "agent"` + `confirmation_mode_override: str | None = None`；`to_dict` / `from_dict` 加序列化 + 三重健壮性 |
+| `tools/handlers/mode.py` | `_switch_mode` 改写 `session.session_role`（原写不存在的 `session.mode`，C8 之前**完全失效**） |
+| `tests/unit/test_policy_engine_v2.py` | 边界 path test 改用 `/private_test_lab/ssh` / `D:/TestLab/OpenAkita` 等合成路径，避免与 builtin `/etc/**` 冲突 |
+
+### 5 维 audit 结果
+
+| 维度 | 检查项数 | 结论 |
+|---|---|---|
+| D1 完整性 | safety_immune 9 类 / OwnerOnly wire / session_role 字段 / consume 删除 / IM SSE yield | ✅ 全过 |
+| D2 架构正确性 | builtin 加性 union / `is_owner` 透传链 / `session_role` 优先级 / `prepare_ui_confirm` 幂等 / IM confirm fanout | ✅ 全过 |
+| D3 不打地鼠 | 5 项独立性（互不耦合）/ fail-safe（缺字段降级）/ 无隐藏副作用（gateway 不消费 resolution）| ✅ 全过 |
+| D4 隐藏 bug | CWD 展开 / `is_owner` 默认 / `from_dict` 健壮性 / 不写 spurious metadata / safety_immune 多次实例化稳定 / owner_allowlist round-trip（临时文件路径，不污染生产） | ✅ 全过 |
+| D5 兼容性 | 旧 sessions.json 反序列化 / v1 POLICIES.yaml 迁移 + builtin union / v1 PolicyEngine API / `group_policy.json` ⊥ `im_owner_allowlist.json` / 默认构造 smoke | ✅ 全过 |
+
+### 验证结果
+
+- C8 wire 单测 12 个 ✅（`tests/unit/test_policy_v2_c8_wire.py`）
+- 全量 unit 套（2622 个）：2614 passed + 8 failed（== C6/C7 baseline）+ 4 skipped
+- **0 net new regressions**（8 failures 均为 C6/C7 阶段记录的 pre-existing）
+- 5 个 audit 脚本（D1–D5）全过 ✅
+- ruff（C8 触及文件 100% pass）✅
+
+### C8a 修复的回归 / 隐藏 bug
+
+| # | 问题 | 修复 |
+|---|---|---|
+| C8-R1 | `switch_mode` 工具写 `session.mode`（不存在的字段），实际**完全失效**——LLM 切换 plan/ask 模式后 PolicyContext 仍按 agent 决策 | Session 加 `session_role` 字段，`switch_mode` 改写新字段，`build_policy_context` 优先读 |
+| C8-R2 | IM 渠道 `_handle_im_security_confirm` 与 reasoning_engine 互相 `prepare_ui_confirm` 同一 confirm_id，**后者覆盖前者的 asyncio.Event**，gateway 永远等不到 resolution | gateway 不再 prepare/wait，只渲染卡片转发选择；`prepare_ui_confirm` 幂等保险 |
+| C8-R3 | IM 对话遇 confirm 直接打印 "无法安全完成交互式确认" 早退，**SSE event 不 yield**，gateway 拿不到事件就无法发卡片 | 删除两处早退分支，统一走 yield；IM 通道 timeout 拉长到 ≥180s |
+| C8-R4 | `consume_session_trust` 遇过期规则只跳过不删，session.metadata 中规则无界增长 | 真删过期 + 持久化，仅在 pruned 非空时写 1 次 |
+| C8-R5 | OwnerOnly 工具策略**完全无人调用 is_owner**——engine 有判断逻辑但 gateway 从不写入 `session.metadata["is_owner"]`，等于永远 False（任何人都拒）或永远 True（取决于默认） | gateway 注入 + adapter 透传 + `im_owner_allowlist.json` 持久化 |
+
+### 工程教训（C8）
+
+1. **"配置项存在 ≠ 配置项生效"**——`OwnerOnly` 在 `PolicyConfigV2` 里
+   定义了一年，没人调；`switch_mode` 工具改 `session.mode` 字段一年，
+   字段根本不存在。验收 v2 配置时必须**反向追**：从决策点出发，确认
+   每个配置项都有调用方。
+2. **builtin defaults 必须加性，不能覆盖**——用户配置 `safety_immune.paths: []`
+   时，builtin 仍生效。"用户配置覆盖默认" 是常识，但安全场景反过来：
+   "默认覆盖用户" 才是安全加性。
+3. **IM confirm timeout 桌面同款 = bug**——人在桌面前 60s 够看 dialog，
+   人在手机/工位散步时 60s 不够看群消息。timeout 应**按渠道分类**，不按
+   "全局默认" 分。
+4. **gateway 与 engine 不要双重消费 SSE event**——同一 confirm_id 只能
+   有一个 owner 处理 resolution，否则资源竞争。C8 把所有权统一在
+   reasoning_engine（最先 yield 的那个），gateway 只是中继。
+5. **`Session.from_dict` 必须假设 payload 是脏的**——旧 sessions.json /
+   人工编辑 / 字段类型漂移都可能让 `from_dict` 崩。新字段必须三重防御
+   （缺字段 / 错类型 / 空值）+ 默认。
+
+### 推迟到 C8b 的项（C9 完成后）
+
+- **#6 删除 v1 RiskGate**（`agent.py` 中的 `_check_trust_mode_skip` /
+  `_consume_risk_authorization` / `_check_trusted_path_skip`）：当前仍是
+  pre-LLM 闸门 + replay 消费的执行点，C9 SecurityView 接管后再砍。
+- **#7 删除 `src/openakita/core/policy.py`**：当前仍是 SSE 等待中枢
+  （`prepare_ui_confirm` / `wait_for_ui_resolution` / `cleanup_ui_confirm`），
+  C9 把这三个函数迁到 SecurityView 后才能安全删除。
+
+可放心进入 C9（SecurityView 重建），C8b 在 C9 完成后作为独立 commit。
+
 ## 附录 B：术语表
 
 | 术语 | 含义 |

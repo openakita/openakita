@@ -75,6 +75,11 @@ from .models import (
     PolicyResult,
     ToolCallEvent,
 )
+from .safety_immune_defaults import (
+    BUILTIN_SAFETY_IMMUNE_BY_CATEGORY,
+    BUILTIN_SAFETY_IMMUNE_PATHS,
+    expand_builtin_immune_paths,
+)
 from .schema import (
     ApprovalClassesConfig,
     AuditConfig,
@@ -182,4 +187,8 @@ __all__ = [
     "MigrationReport",
     "detect_schema_version",
     "migrate_v1_to_v2",
+    # safety_immune defaults (C8)
+    "BUILTIN_SAFETY_IMMUNE_BY_CATEGORY",
+    "BUILTIN_SAFETY_IMMUNE_PATHS",
+    "expand_builtin_immune_paths",
 ]

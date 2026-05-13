@@ -37,12 +37,16 @@ class ModeHandler:
             return f"❌ 无效模式: '{target_mode}'。可选: {', '.join(valid_modes)}"
 
         session = getattr(self.agent, "session", None)
-        if session and hasattr(session, "mode"):
-            current_mode = session.mode
+        # C8 §2.2 fix: ``Session`` dataclass 没有 ``mode`` 字段，老实现 hasattr
+        # 永远 False → switch_mode 静默失败。改写 ``session.session_role``，
+        # adapter.build_policy_context 把它 coerce 成 SessionRole 注入下一轮
+        # PolicyContext.session_role，让矩阵决策真用上新 mode。
+        if session is not None and hasattr(session, "session_role"):
+            current_mode = session.session_role or "agent"
             if current_mode == target_mode:
                 return f"Already in {target_mode} mode."
 
-            session.mode = target_mode
+            session.session_role = target_mode
             logger.info(
                 f"Mode switched: {current_mode} → {target_mode}"
                 + (f" (reason: {reason})" if reason else "")

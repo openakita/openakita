@@ -1680,6 +1680,55 @@ class MessageGateway:
         except Exception as e:
             logger.warning(f"[Gateway] Failed to load group policy: {e}")
 
+    def _get_owner_user_ids(self, channel: str) -> set[str] | None:
+        """C8 §9.2 + R5-22：返回某 IM 渠道的 owner user_id 集合。
+
+        语义：
+        - ``None`` → 该渠道没配 owner allowlist；保持单用户假设（``is_owner=True``），
+          向后兼容现有部署
+        - ``set()`` 空集 → 显式声明"该渠道无人是 owner"；CONTROL_PLANE 工具全员
+          被拒（适合"机器人对外公测但不暴露管理面"场景）
+        - 非空 set → 仅集合内 user_id 视为 owner；其余 IM 用户 CONTROL_PLANE 被拒
+        """
+        adapter = self._adapters.get(channel)
+        per_bot = getattr(adapter, "_owner_user_ids", None)
+        if per_bot is not None:
+            return set(per_bot) if not isinstance(per_bot, set) else per_bot
+        return None
+
+    def _apply_persisted_owner_allowlist(self) -> None:
+        """Load persisted IM owner allowlist from JSON and apply to adapters.
+
+        Storage：``data/sessions/im_owner_allowlist.json`` =
+        ``{"telegram": {"owners": ["123", "456"]}, ...}``。
+        独立于 ``group_policy.json``，因为 owner 是 user-level ACL（CONTROL_PLANE
+        工具的最后一道闸），group_policy 是 chat-level（哪些群可以接消息）；
+        两者 §9.3 是 AND 关系，但配置面分离。
+        """
+        import json
+        from pathlib import Path
+
+        policy_path = Path("data/sessions/im_owner_allowlist.json")
+        if not policy_path.exists():
+            return
+        try:
+            data = json.loads(policy_path.read_text(encoding="utf-8"))
+            applied = 0
+            for channel, cfg in data.items():
+                adapter = self._adapters.get(channel)
+                if adapter is None:
+                    continue
+                owners = cfg.get("owners")
+                if isinstance(owners, list):
+                    adapter._owner_user_ids = {str(uid) for uid in owners}
+                    applied += 1
+            if applied:
+                logger.info(
+                    f"[Gateway] Applied persisted owner allowlist for {applied} channel(s)"
+                )
+        except Exception as e:
+            logger.warning(f"[Gateway] Failed to load owner allowlist: {e}")
+
     async def start(self) -> None:
         """启动网关"""
         self._running = True
@@ -1705,6 +1754,7 @@ class MessageGateway:
         self._failed_adapter_reasons = failed_reasons
 
         self._apply_persisted_group_policy()
+        self._apply_persisted_owner_allowlist()
 
         _notify_im_event(
             "im:channel_status",
@@ -2948,6 +2998,17 @@ class MessageGateway:
                 }
                 session.set_metadata("_im_environment", im_env)
                 session.set_metadata("chat_type", message.chat_type)
+
+            # 4.2.1 C8 §9.2：判定本次消息发送者是否为本渠道 owner，写入 session.metadata。
+            # adapter.build_policy_context 会读这个字段供 OwnerOnly 检查使用
+            # （CONTROL_PLANE 工具仅 owner 可调）。
+            #
+            # 三态语义见 ``_get_owner_user_ids`` docstring；这里把"未配 allowlist"
+            # 翻译成 ``True`` 以维持单用户私聊默认体验，把"配了 allowlist 但用户不在"
+            # 翻译成 ``False`` 以真正卡死非 owner 调控制面工具的能力。
+            owner_ids = self._get_owner_user_ids(message.channel)
+            is_owner = True if owner_ids is None else (str(message.user_id) in owner_ids)
+            session.set_metadata("is_owner", is_owner)
 
             # 4.5 推送未送达的自检报告（每天第一条消息时触发，最多一次）
             await self._maybe_deliver_pending_selfcheck_report(message)
@@ -4690,8 +4751,19 @@ class MessageGateway:
     ) -> None:
         """Handle security_confirm events in IM streaming.
 
-        Send a confirmation card/text to the user, then wait for their reply
-        via the interrupt queue.
+        Send a confirmation card/text to the user. The reasoning_engine
+        generator is the authoritative waiter for ``wait_for_ui_resolution``;
+        this gateway hook only renders the card / waits-for-text and forwards
+        the user's choice back via ``pe.resolve_ui_confirm``.
+
+        **C8 §2.3 fix**：旧实现这里也调 ``prepare_ui_confirm`` + ``wait_for_ui_resolution`` +
+        ``cleanup_ui_confirm``，与 reasoning_engine 的 wait 形成"序列竞争"——
+        async generator 的 ``yield`` 暂停后，gateway 处理事件时把 resolution
+        "提前消费 + 清理"了，等 ``__anext__`` 恢复 reasoning_engine 时，
+        ev/decisions 都已被 pop，reasoning_engine 的 ``wait_for_ui_resolution``
+        永远拿不到决策，回退默认 deny → IM 用户点了卡片但 agent 仍以 deny 行动。
+        现在 gateway 只**渲染**卡片，``wait_for_ui_resolution`` 留给 reasoning_engine
+        在 yield 之后自行 await，gateway 当前调用立即返回让 ``__anext__`` 接力。
         """
         from ..core.policy import get_policy_engine
 
@@ -4712,15 +4784,6 @@ class MessageGateway:
             )
             return
 
-        im_adapter = self._adapters.get(session.channel)
-        interactive_attempt = bool(
-            im_adapter
-            and hasattr(im_adapter, "build_simple_card")
-            and hasattr(im_adapter, "send_card")
-        )
-        if interactive_attempt and confirm_id:
-            pe.prepare_ui_confirm(confirm_id)
-
         try:
             sent_interactive = await self.send_security_confirm(
                 session,
@@ -4730,18 +4793,19 @@ class MessageGateway:
                 confirm_id=confirm_id,
             )
         except Exception:
-            if interactive_attempt and confirm_id:
-                pe.cleanup_ui_confirm(confirm_id)
+            # 渲染卡片失败：让 reasoning_engine 的 wait 走默认 deny（不在这里
+            # 主动 resolve，避免与 reasoning_engine 的 cleanup 形成另一条 race）。
             raise
 
         if sent_interactive and confirm_id:
-            await pe.wait_for_ui_resolution(confirm_id, timeout)
-            pe.cleanup_ui_confirm(confirm_id)
+            # 卡片已渲染。IM 适配器会在用户点卡时调 resolve_ui_confirm，
+            # 唤醒 reasoning_engine 当前的 wait。我们直接 return，让上层
+            # ``__anext__`` 立即接力，由 reasoning_engine 拥有 wait 与 cleanup。
             return
 
-        if interactive_attempt and confirm_id:
-            pe.cleanup_ui_confirm(confirm_id)
-
+        # ---------- text fallback：交互式发送失败时退回纯文本提示 + 等待回复 ----------
+        # 此分支同样不调 prepare/cleanup —— reasoning_engine 已经 prepare，
+        # 我们只负责拿到用户文字、parse 出 decision、调 resolve_ui_confirm。
         try:
             reply_msg = await asyncio.wait_for(
                 self._wait_for_interrupt(session.session_key),

@@ -355,6 +355,35 @@ def build_policy_context(
     trusted_paths: list[TrustedPathOverride] = []
     safety_immune: tuple[str, ...] = ()
 
+    # C8: session-level 字段优先级
+    # - session.session_role 覆盖入参 ``mode``（switch_mode 写过的话）
+    # - session.confirmation_mode_override 覆盖全局 confirmation_mode（per-session 模式）
+    # - session.metadata["is_owner"] 覆盖入参 ``is_owner``（IM gateway 写过的话）
+    effective_mode = mode
+    effective_is_owner = is_owner
+    if session is not None:
+        try:
+            sr = getattr(session, "session_role", None)
+            if isinstance(sr, str) and sr:
+                effective_mode = sr
+        except Exception:
+            pass
+        try:
+            cm_override = getattr(session, "confirmation_mode_override", None)
+            if isinstance(cm_override, str) and cm_override:
+                try:
+                    confirmation_mode = ConfirmationMode(cm_override)
+                except ValueError:
+                    pass
+        except Exception:
+            pass
+        try:
+            owner_meta = session.get_metadata("is_owner")
+            if isinstance(owner_meta, bool):
+                effective_is_owner = owner_meta
+        except Exception:
+            pass
+
     if session is not None:
         try:
             stamp = session.get_metadata("risk_authorized_replay")
@@ -382,9 +411,9 @@ def build_policy_context(
         session_id=session_id or "policy_v2_ctx",
         workspace=ws_path,
         channel=channel,
-        is_owner=is_owner,
+        is_owner=effective_is_owner,
         root_user_id=root_user_id,
-        session_role=mode_to_session_role(mode),
+        session_role=mode_to_session_role(effective_mode),
         confirmation_mode=confirmation_mode,
         is_unattended=is_unattended,
         delegate_chain=list(delegate_chain or []),

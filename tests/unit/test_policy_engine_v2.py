@@ -592,25 +592,38 @@ class TestPathRefineThroughEngine:
 class TestSafetyImmunePathBoundary:
     """C3 复审 fix：safety_immune 必须按路径组件边界匹配，不能裸 startswith。
 
-    隐患示例：``safety_immune_paths = ('/etc/ssh',)``，攻击者构造路径
-    ``/etc/ssh-old/x.txt``——裸 startswith 会误中，把无关目录强制升 CONFIRM。
-    极端情况下也可能造成"安全错觉"或拒绝合法请求，构成可利用的策略漂移。
+    隐患示例：``safety_immune_paths = ('/private_test_lab/ssh',)``，攻击者
+    构造路径 ``/private_test_lab/ssh-old/x.txt``——裸 startswith 会误中，把
+    无关目录强制升 CONFIRM。极端情况下也可能造成"安全错觉"或拒绝合法
+    请求，构成可利用的策略漂移。
+
+    **C8 注**：早期版本用 ``/etc/ssh`` 与 ``C:\\ProgramData\\OpenAkita`` 做
+    fixture，C8 引入 ``BUILTIN_SAFETY_IMMUNE_PATHS`` 后这些路径已被 ``/etc/**``
+    与 ``C:/ProgramData/**`` 内置覆盖，会让"sibling not matched"误成 PASS。
+    改用合成命名空间（``/private_test_lab/...`` / ``D:/TestLab/...``）保留
+    boundary 语义验证，与 builtin 解耦。
     """
 
     def test_sibling_directory_not_matched(self, tmp_path: Path) -> None:
         engine = PolicyEngineV2()
-        ctx = _ctx(tmp_path, safety_immune_paths=("/etc/ssh",))
+        ctx = _ctx(tmp_path, safety_immune_paths=("/private_test_lab/ssh",))
         d = engine.evaluate_tool_call(
-            ToolCallEvent(tool="write_file", params={"path": "/etc/ssh-old/x.txt"}),
+            ToolCallEvent(
+                tool="write_file",
+                params={"path": "/private_test_lab/ssh-old/x.txt"},
+            ),
             ctx,
         )
         assert d.safety_immune_match is None
 
     def test_real_child_matched(self, tmp_path: Path) -> None:
         engine = PolicyEngineV2()
-        ctx = _ctx(tmp_path, safety_immune_paths=("/etc/ssh",))
+        ctx = _ctx(tmp_path, safety_immune_paths=("/private_test_lab/ssh",))
         d = engine.evaluate_tool_call(
-            ToolCallEvent(tool="write_file", params={"path": "/etc/ssh/sshd_config"}),
+            ToolCallEvent(
+                tool="write_file",
+                params={"path": "/private_test_lab/ssh/sshd_config"},
+            ),
             ctx,
         )
         assert d.safety_immune_match is not None
@@ -618,20 +631,20 @@ class TestSafetyImmunePathBoundary:
 
     def test_exact_path_matched(self, tmp_path: Path) -> None:
         engine = PolicyEngineV2()
-        ctx = _ctx(tmp_path, safety_immune_paths=("/etc/ssh",))
+        ctx = _ctx(tmp_path, safety_immune_paths=("/private_test_lab/ssh",))
         d = engine.evaluate_tool_call(
-            ToolCallEvent(tool="write_file", params={"path": "/etc/ssh"}),
+            ToolCallEvent(tool="write_file", params={"path": "/private_test_lab/ssh"}),
             ctx,
         )
         assert d.safety_immune_match is not None
 
     def test_windows_backslash_normalized(self, tmp_path: Path) -> None:
         engine = PolicyEngineV2()
-        ctx = _ctx(tmp_path, safety_immune_paths=("C:\\ProgramData\\OpenAkita",))
+        ctx = _ctx(tmp_path, safety_immune_paths=("D:\\TestLab\\OpenAkita",))
         d = engine.evaluate_tool_call(
             ToolCallEvent(
                 tool="write_file",
-                params={"path": "C:\\ProgramData\\OpenAkita\\config.yaml"},
+                params={"path": "D:\\TestLab\\OpenAkita\\config.yaml"},
             ),
             ctx,
         )

@@ -1965,8 +1965,23 @@ class PolicyEngine:
         return list(self._audit_log)
 
     def prepare_ui_confirm(self, confirm_id: str) -> None:
-        """为交互式安全确认（卡片 / InlineKeyboard）注册等待事件。"""
+        """为交互式安全确认（卡片 / InlineKeyboard）注册等待事件。
+
+        **C8 idempotent**：reasoning_engine 与 gateway IM 路径都会调用这个方法
+        （reasoning_engine 在 yield SSE 前 prepare → 等待 resolve；gateway 在
+        ``_handle_im_security_confirm`` 中也 prepare → 派 IM 卡片 → 等待 resolve）。
+        如果第二次调用 silently 替换 ``_ui_confirm_events[id]`` 的 ``asyncio.Event``
+        实例，第一次的 waiter 会卡在已废弃的 Event 上 → 用户点了 IM 卡片 →
+        ``resolve_ui_confirm`` 只 set 第二次注册的 Event → reasoning_engine 永远
+        超时取默认 deny。这是 C8 §2.3 修复 IM 早退 bug 的隐藏前置条件。
+
+        现在的语义：``confirm_id`` 已注册且尚未 resolve 时不动；已 resolve 则
+        清掉旧 decision 重新注册（兼容同 id 第二轮 confirm 的极少见场景）。
+        """
         if not confirm_id:
+            return
+        existing = self._ui_confirm_events.get(confirm_id)
+        if existing is not None and confirm_id not in self._ui_confirm_decisions:
             return
         self._ui_confirm_events[confirm_id] = asyncio.Event()
         self._ui_confirm_decisions.pop(confirm_id, None)
