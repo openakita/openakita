@@ -3631,10 +3631,101 @@ C10 完成。Policy V2 全部主体功能落地：
 - 53 个新增测试 / 18 个 audit 脚本全 PASS
 - 0 个新回归
 
+### 7. C10 二轮加固（2026-05-14）
+
+用户复审要求"再次检查没有遗漏 / 不是打地鼠 / 没留下 bug 隐患 / 不损害正常功能"。
+6 维度系统审查后追加 2 项严格化修复 + 5 个补台测试：
+
+**1. 真实 gap A：classifier LRU cache 不随 plugin/mcp/skill 运行时 mutation 失效**
+
+C2 的 audit 已经记下"plugin 动态注册时必须显式调 `classifier.invalidate(tool)`，
+C10 plugin 接入时设计自动同步机制"，但 C10 一轮把 lookup wire 全部做完之后忘了
+做这件事。具体场景：
+
+- 用户在 UI install plugin → reload，新 manifest 把 `read_safe_file` 从
+  `readonly_scoped` 改成 `destructive`；旧 cache 还指 readonly_scoped → 下次
+  调用绕过 confirmation。
+- 用户 disconnect MCP server → 同名 tool 后续被另一服务器以不同
+  annotation 注册时也会拿到陈旧分类。
+
+**修复**：
+
+- 新增 `core/policy_v2/global_engine.invalidate_classifier_cache(tool=None)`
+  作为公共失效入口（引擎未初始化静默 no-op，异常吞掉绝不阻塞调用方）。
+- Wire 4 类 mutator：
+    - `PluginManager.unload_plugin` / `reload_plugin`：全清（不知道具体 tool 名）
+    - `SkillRegistry.register` / `unregister`：仅清 `entry.get_exposed_tool_name()`
+    - `MCPClient.disconnect` / `refresh` / `reset` / `remove_server`：全清
+- audit `c10_audit.py` D6 静态扫这 4 处 wire 是否还在。
+
+**2. 真实 gap B：`ParamMutationAuditor.snapshot()` deepcopy 失败时静默放过任意修改**
+
+`copy.deepcopy` 失败时旧实现"返回原 ref + WARN log"，但因为 before/after 是
+**同一引用**，`_diff_recursive(ref, ref)` 永远返回 `[]`，evaluate 视为"无修改"
+直接 allow——任意 hook 可以在这种场景下绕过 mutates_params 闸门。
+
+**修复**：
+
+- snapshot 降级链改成 `deepcopy → json roundtrip(default=str) → SNAPSHOT_FAILED sentinel`。
+- evaluate 检测到 sentinel 时强制 `allowed=False` + `snapshot_failed=True`，
+  无论候选 plugin 是否在 `mutates_params` 列出。
+- `tool_executor._dispatch_before_tool_use_hook` 区分 sentinel 路径：
+  无法 revert（没有可信 snapshot）→ **fail-closed clear 整个 tool_input**，
+  让下游 handler 因缺参直接拒，远优于带未审计 mutation 进 tool 执行。
+- jsonl 多记一个 `snapshot_failed` 字段，方便 reviewer grep。
+
+**3. 顺手发现 + 修：`scripts/c10_audit.py` 的 `_strip_comments_and_docstrings` 错位**
+
+写 C10 一轮 audit 时改的 tokenize 实现把多行 docstring 替换成单行 `""`
+但**没补回缺失的换行**——对 D5 的"按 line number 跨 AST/regex 比对白名单"
+逻辑是个潜伏的 off-by-N bug（C10 一轮没发现因为 D5 还没用 line number 关联）。
+二轮 D5 引入 `invalidate_classifier_cache` 白名单时立刻暴露：line 1282 的
+import 在 stripped body 里跳到 line 2457，AST whitelist 覆盖不到。
+
+**修复**：rewrite 成 grid-based span wipe（按行扫，对每个 STRING / COMMENT
+span 在原行上原地涂白 + 起始位置插 `""` marker），输出行数严格等于输入。
+现在 AST `lineno` ↔ regex match 行号 1:1 映射，多行 import 也能精确白名单。
+
+**4. 验证**
+
+- `scripts/c10_audit.py` 6 维度 PASS（多了 D6 + D5 二轮收紧 import 白名单）
+- 新增 5 个补台测试覆盖：snapshot json fallback / sentinel 强制 deny /
+  tool_input fail-closed clear / classifier cache 双 wire 静态检查 /
+  MCPClient 静态检查
+- 全部 18 个 audit 脚本 PASS
+- 全量单测 2681 passed / 4 failed (同 baseline 既有 flakies 数量未变)
+- `tests/unit/test_policy_v2_c10_*.py` 4 文件 58 tests（53 一轮 + 5 二轮）全 PASS
+- 0 个新回归（无新 lint，pre-existing `SIM108` 仍记账不在 C10 修）
+
+### 8. 二轮经验
+
+1. **"已知限制"是 living 工程债，commit 完成时要回头清**：C2 audit 早就明确写
+   过 cache 失效缺口，但 C10 一轮聚焦 lookup wire 时把这条遗忘了。**经验**：
+   commit 收尾时要再扫一遍前序 commit 的"已知限制"，逐项判断当前 commit 是否
+   该一并兑现承诺。
+
+2. **静默 fallback 是 attack surface 的最爱**：第一轮 snapshot 失败时返回原 ref
+   + WARN，看似"温和降级"，实际把 audit 子系统变成 NOP。任何 audit / security
+   组件遇到无法继续的失败状态，**不能"温和"——必须 fail-closed 或 explicit
+   sentinel + 上层路径区分处理**。
+
+3. **audit 脚本本身也可能有 bug**：`_strip_comments_and_docstrings` 的多行 string
+   行号偏移在一轮没暴露因为 D5 还没用 line number。二轮新增白名单逻辑触发了它。
+   **经验**：测试覆盖率不只看生产代码，audit / 工具脚本同等重要。
+
+4. **whitelist 要 AST 不要 regex**：第一轮 D5 用 regex match 单行 import，二轮
+   引入跨多行的 wrapped import 立刻挂——所有"挑出某些合法用法跳过"的逻辑
+   都该走 AST 而不是 regex。
+
+C10 二轮加固完成。
+
 **剩余工作（C11+）**：
 - C11：全量回归 + 25 项手测 + 性能 SLO（推荐下一步）
 - C12-C18：unattended 审批 / 多 agent / Headless / Evolution / Prompt injection / Reliability
 - C19：开发者新增工具 4 层护栏
+- 可延后到 C19/security 加固包：untrusted skill `approval_class` 与启发式
+  `most_strict` 合并（plan §4.21.4 design intent；当前由
+  `_RESTRICTED_TOOLS_FOR_UNTRUSTED` 部分覆盖；改协议影响面大不在 C10 修）
 
 ---
 

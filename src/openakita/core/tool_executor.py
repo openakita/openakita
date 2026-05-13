@@ -568,17 +568,39 @@ class ToolExecutor:
 
         if not outcome.allowed:
             # Revert：把 tool_input 原地恢复——不能 reassign，因为外层调用
-            # 持有同一个 dict 引用。
-            try:
-                tool_input.clear()
-                tool_input.update(before_snapshot)
-            except Exception as exc:
-                logger.warning(
-                    "[ToolExecutor] failed to revert on_before_tool_use mutation "
-                    "for tool=%s: %s",
+            # 持有同一个 dict 引用。snapshot_failed 时 before_snapshot 是
+            # sentinel（不是 dict），无法恢复——只能 fail closed 清空
+            # tool_input，让下游 handler 因缺参直接拒绝执行（远优于带着
+            # 未审计的 mutation 继续）。
+            if outcome.snapshot_failed:
+                try:
+                    tool_input.clear()
+                except Exception as exc:
+                    logger.error(
+                        "[ToolExecutor] snapshot failed for tool=%s and "
+                        "tool_input.clear() also failed: %s — mutation "
+                        "remains; downstream handler MUST treat input as "
+                        "untrusted",
+                        tool_name,
+                        exc,
+                    )
+                logger.error(
+                    "[ToolExecutor] on_before_tool_use snapshot failed for "
+                    "tool=%s; cleared tool_input as fail-closed (audit "
+                    "record snapshot_failed=True)",
                     tool_name,
-                    exc,
                 )
+            else:
+                try:
+                    tool_input.clear()
+                    tool_input.update(before_snapshot)
+                except Exception as exc:
+                    logger.warning(
+                        "[ToolExecutor] failed to revert on_before_tool_use "
+                        "mutation for tool=%s: %s",
+                        tool_name,
+                        exc,
+                    )
 
         auditor.write(
             tool_name=tool_name,

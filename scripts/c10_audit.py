@@ -1,6 +1,6 @@
 """C10 audit: Hook 来源分层 + Trusted Tool Policy + plugin manifest 桥接.
 
-审计 5 个维度（与 docs §3.2 R2-12 + R5-7 对齐）：
+审计 6 个维度（与 docs §3.2 R2-12 + R5-7 对齐）：
 
 D1 — Skill 层 lookup wire-up 完整性：
     - SkillMetadata / SkillEntry 持有 ``approval_class`` 字段
@@ -20,6 +20,7 @@ D3 — MCP 层 lookup：
 
 D4 — mutates_params 强制审计（R2-12）：
     - param_mutation_audit.py 模块存在 + ParamMutationAuditor 类
+    - SNAPSHOT_FAILED sentinel + json roundtrip 兜底（C10 二轮加固）
     - tool_executor._dispatch_hook 对 ``on_before_tool_use`` 走专门路径
     - jsonl 默认路径为 ``data/audit/plugin_param_modifications.jsonl``
 
@@ -27,6 +28,13 @@ D5 — R5-7 plugin/PolicyEngine 解耦锁死：
     - plugins/api.py 不依赖 core.policy（已删）也不直接 import
       policy_v2.PolicyEngineV2 / get_engine_v2 等内核类
     - plugins/manager.py 对 PolicyEngine 的访问只走 hook 间接调用
+    - 例外白名单：``invalidate_classifier_cache``（public helper，C10 二轮新增）
+
+D6 — Classifier cache 失效 wire-up（C10 二轮加固）：
+    - global_engine.invalidate_classifier_cache helper 存在
+    - PluginManager.unload_plugin / reload_plugin 调用 invalidate
+    - SkillRegistry.register / unregister 调用 invalidate
+    - MCPClient 在 disconnect / refresh / reset / remove_server 调用 invalidate
 """
 
 from __future__ import annotations
@@ -220,49 +228,112 @@ _FORBIDDEN_PLUGIN_IMPORTS = (
 
 
 def _strip_comments_and_docstrings(source: str) -> str:
-    """Remove ``#`` comments and string literals using ``tokenize``.
+    """Mask string literals + ``#`` comments while preserving line numbers.
 
-    Same trick C8b audits use to avoid false positives from prose mentioning
-    forbidden symbols inside docstrings or comments. Returns a code-only
-    skeleton suitable for grep-style pattern matching.
+    Strategy: walk the source line-by-line, then use ``tokenize`` to find
+    every STRING / COMMENT span. For each span, replace the characters
+    *in-place* with spaces (and append a literal ``""`` marker on the start
+    line so the regex still sees a non-empty token). Output line count
+    exactly matches the input, so AST line numbers map 1:1 to regex match
+    line numbers — a hard requirement for the whitelist logic.
     """
     import io
     import tokenize
 
-    out: list[str] = []
-    last_end = (1, 0)
+    lines = source.splitlines(keepends=True)
+    # Convert to a list of mutable char lists for in-place editing
+    grid = [list(ln) for ln in lines]
+
+    def _wipe(srow: int, scol: int, erow: int, ecol: int, marker: bool) -> None:
+        """Replace [srow,scol)–[erow,ecol) (1-based row, 0-based col) with spaces.
+
+        When ``marker`` is True, plant a literal ``""`` at the start so the
+        token site remains visible to grep (otherwise an entire line could
+        become whitespace and confuse multiline regex).
+        """
+        for row in range(srow, erow + 1):
+            if row < 1 or row > len(grid):
+                continue
+            row_chars = grid[row - 1]
+            col_lo = scol if row == srow else 0
+            col_hi = ecol if row == erow else len(row_chars)
+            for c in range(col_lo, min(col_hi, len(row_chars))):
+                if row_chars[c] != "\n":
+                    row_chars[c] = " "
+        if marker and srow >= 1 and srow <= len(grid):
+            row_chars = grid[srow - 1]
+            # Place "" at the original start col if there's room
+            if scol + 1 < len(row_chars) and row_chars[scol] == " ":
+                row_chars[scol] = '"'
+                row_chars[scol + 1] = '"'
+
     try:
         tokens = tokenize.generate_tokens(io.StringIO(source).readline)
         for tok in tokens:
-            tok_type, tok_str, start, end, _ = tok
-            if start > last_end:
-                if start[0] > last_end[0]:
-                    out.append("\n" * (start[0] - last_end[0]))
-                    out.append(" " * start[1])
-                else:
-                    out.append(" " * (start[1] - last_end[1]))
+            tok_type, _tok_str, start, end, _ = tok
             if tok_type == tokenize.COMMENT:
-                pass
+                _wipe(start[0], start[1], end[0], end[1], marker=False)
             elif tok_type == tokenize.STRING:
-                # Replace string literals with empty marker preserving line shape
-                out.append('""')
-            else:
-                out.append(tok_str)
-            last_end = end
+                _wipe(start[0], start[1], end[0], end[1], marker=True)
     except tokenize.TokenizeError:
-        return source  # fall back to raw on syntactically odd files
-    return "".join(out)
+        return source  # syntactically odd — return raw, regex will get
+                       # a few false positives but won't crash
+
+    return "".join("".join(row) for row in grid)
 
 
 def d5_plugin_policy_decoupled() -> None:
     plugins_dir = SRC / "plugins"
     offenders: list[tuple[str, str]] = []
+    # C10 二轮：whitelist the public cache-invalidation helper. It is
+    # intentionally exported so registries can broadcast lifecycle events
+    # without coupling to engine internals (PolicyEngineV2 / get_engine_v2).
+    # Use AST to recognise both single-line and parenthesised multi-line forms.
+    import ast
+
+    def _import_only_invalidate(py_path: Path) -> set[int]:
+        """Return line numbers of allowed `import invalidate_classifier_cache` statements."""
+        try:
+            tree = ast.parse(py_path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            return set()
+        allowed_lines: set[int] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            mod = node.module or ""
+            # match `..core.policy_v2.global_engine` (level=2) or
+            # `core.policy_v2.global_engine` (level=0)
+            if not (
+                mod.endswith("core.policy_v2.global_engine")
+                or mod == "core.policy_v2.global_engine"
+            ):
+                continue
+            names = {alias.name for alias in node.names}
+            if names == {"invalidate_classifier_cache"}:
+                # Cover all logical lines of the (possibly wrapped) statement
+                start = node.lineno
+                end = getattr(node, "end_lineno", start)
+                allowed_lines.update(range(start, end + 1))
+        return allowed_lines
+
     for py in plugins_dir.rglob("*.py"):
         if py.name == "__init__.py":
             continue
-        body = _strip_comments_and_docstrings(py.read_text(encoding="utf-8"))
+        raw_text = py.read_text(encoding="utf-8")
+        allowed_lines = _import_only_invalidate(py)
+        body = _strip_comments_and_docstrings(raw_text)
         for pattern in _FORBIDDEN_PLUGIN_IMPORTS:
             for m in pattern.finditer(body):
+                # Compute line number of the match (1-based) using byte-offset
+                # mapping. Stripped body keeps newlines so `\n` count works.
+                line_no = body.count("\n", 0, m.start()) + 1
+                # The wrapped import may span multiple lines; consider the
+                # match line plus 4 surrounding lines (handles parens style).
+                if any(
+                    (line_no + delta) in allowed_lines for delta in range(-1, 5)
+                ):
+                    continue
                 snippet = body[max(0, m.start() - 20) : m.end() + 20].replace(
                     "\n", "\\n"
                 )
@@ -287,6 +358,76 @@ def d5_plugin_policy_decoupled() -> None:
     _ok("D5", "plugins/ 与 PolicyEngine 完全解耦（R5-7 锁死）")
 
 
+def d6_classifier_cache_invalidation() -> None:
+    """C10 二轮加固：plugin / mcp / skill 变更时 classifier 缓存必须失效。
+
+    检查 5 件事：
+    1. global_engine.invalidate_classifier_cache helper 存在
+    2. PluginManager.unload_plugin + reload_plugin 调用 invalidate
+    3. SkillRegistry.register + unregister 通过 _invalidate_policy_classifier_cache
+    4. MCPClient 在 disconnect / refresh / reset / remove_server wire
+    5. SNAPSHOT_FAILED sentinel 路径 wire 在 tool_executor
+    """
+    ge_src = _read("core/policy_v2/global_engine.py")
+    if "def invalidate_classifier_cache" not in ge_src:
+        _fail("D6", "global_engine.invalidate_classifier_cache helper 缺失")
+
+    pm_src = _read("plugins/manager.py")
+    for fn in ("unload_plugin", "reload_plugin"):
+        # The fn body must reach invalidate_classifier_cache (string match
+        # within a window of ~2KB after the def line is sufficient).
+        idx = pm_src.find(f"async def {fn}")
+        if idx < 0:
+            _fail("D6", f"PluginManager.{fn} 未找到")
+        # Look at next 8K chars to scope the body window
+        window = pm_src[idx : idx + 8000]
+        if "invalidate_classifier_cache" not in window:
+            _fail("D6", f"PluginManager.{fn} 没调 invalidate_classifier_cache")
+
+    sr_src = _read("skills/registry.py")
+    if "_invalidate_policy_classifier_cache" not in sr_src:
+        _fail("D6", "SkillRegistry 没有 _invalidate_policy_classifier_cache helper")
+    # Both register and unregister must reach the helper
+    for fn in ("def register(", "def unregister("):
+        idx = sr_src.find(fn)
+        if idx < 0:
+            _fail("D6", f"SkillRegistry.{fn.strip('def (').strip()} 未找到")
+        window = sr_src[idx : idx + 4000]
+        if "_invalidate_policy_classifier_cache" not in window:
+            _fail("D6", f"SkillRegistry.{fn.strip('def (').strip()} 没 wire invalidate")
+
+    mcp_src = _read("tools/mcp.py")
+    if "_invalidate_policy_classifier_cache" not in mcp_src:
+        _fail("D6", "MCPClient 没有 _invalidate_policy_classifier_cache helper")
+    for marker in (
+        "Disconnected from MCP server",  # disconnect path
+        "result = await self.connect(server_name)",  # refresh clears-then-reconnects
+        "async def reset(self) -> None:",
+        "def remove_server(self, name: str) -> None:",
+    ):
+        idx = mcp_src.find(marker)
+        if idx < 0:
+            _fail("D6", f"MCPClient marker 未找到: {marker[:40]}")
+        # Search +/- 1000 chars window for invalidate
+        window = mcp_src[max(0, idx - 1500) : idx + 1500]
+        if "_invalidate_policy_classifier_cache" not in window:
+            _fail(
+                "D6",
+                f"MCPClient mutation site '{marker[:40]}...' 没 wire invalidate",
+            )
+
+    pma_src = _read("core/policy_v2/param_mutation_audit.py")
+    for token in ("SNAPSHOT_FAILED", "snapshot_failed", "json.dumps"):
+        if token not in pma_src:
+            _fail("D6", f"param_mutation_audit 缺 SNAPSHOT_FAILED 兜底: {token}")
+
+    te_src = _read("core/tool_executor.py")
+    if "outcome.snapshot_failed" not in te_src:
+        _fail("D6", "tool_executor 没处理 outcome.snapshot_failed → fail-closed clear()")
+
+    _ok("D6", "classifier cache 失效 wire-up 完整 + SNAPSHOT_FAILED 兜底锁死")
+
+
 # --------------------------------------------------------------------------- main
 
 def main() -> int:
@@ -298,8 +439,9 @@ def main() -> int:
     d3_mcp_lookup()
     d4_mutates_params_audit()
     d5_plugin_policy_decoupled()
+    d6_classifier_cache_invalidation()
     print("=" * 60)
-    print("[PASS] 5 dimensions all green")
+    print("[PASS] 6 dimensions all green")
     print("=" * 60)
     return 0
 

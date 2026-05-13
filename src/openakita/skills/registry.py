@@ -558,6 +558,13 @@ class SkillRegistry:
             )
 
         self._skills[entry.skill_id] = entry
+        # C10: this skill's exposed tool name may have a freshly-declared
+        # approval_class. Invalidate the classifier's cached entry (if any)
+        # so the next classify() picks up SKILL_METADATA instead of a stale
+        # heuristic / FALLBACK_UNKNOWN result. Per-tool invalidation is
+        # cheap and keeps other tools' caches warm.
+        if entry.approval_class:
+            self._invalidate_policy_classifier_cache(entry.get_exposed_tool_name())
         logger.info(f"Registered skill: {entry.skill_id} (name={entry.name})")
         return True
 
@@ -626,7 +633,13 @@ class SkillRegistry:
         """
         sid = self._resolve_id(key)
         if sid is not None:
+            entry = self._skills[sid]
             del self._skills[sid]
+            # C10: drop classifier cache for this skill's exposed tool name
+            # so a future re-registration (e.g., uninstall→install with a
+            # changed approval_class) is reflected immediately.
+            if entry.approval_class:
+                self._invalidate_policy_classifier_cache(entry.get_exposed_tool_name())
             logger.info(f"Unregistered skill: {sid}")
             return True
         return False
@@ -1011,6 +1024,21 @@ class SkillRegistry:
         except ValueError:
             return None
         return klass, DecisionSource.SKILL_METADATA
+
+    @staticmethod
+    def _invalidate_policy_classifier_cache(tool_name: str | None = None) -> None:
+        """C10：技能注册 / 注销时通知 PolicyEngineV2 classifier 失效。
+
+        per-tool 失效（不全清）保持其它工具缓存温度，热路径无负担。
+        引擎未初始化时静默 no-op；任何异常吞掉——技能注册不能被 audit
+        子系统拖垮。
+        """
+        try:
+            from ..core.policy_v2.global_engine import invalidate_classifier_cache
+
+            invalidate_classifier_cache(tool_name)
+        except Exception as exc:
+            logger.debug("Skill classifier invalidate skipped: %s", exc)
 
     @property
     def count(self) -> int:

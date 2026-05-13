@@ -255,6 +255,36 @@ def is_initialized() -> bool:
     return _engine is not None
 
 
+def invalidate_classifier_cache(tool: str | None = None) -> None:
+    """C10：通知 ApprovalClassifier 清掉 ``tool``（或全部）的缓存。
+
+    背景：``ApprovalClassifier`` 用 LRU 缓存 base classification（5 步链）的
+    结果。运行时 plugin / MCP server / skill 注册或卸载时，4 类 lookup 的
+    返回值会变，但缓存里的旧条目仍然有效——下次同名工具被分类时拿到的是
+    陈旧结果（典型现场：reload plugin，新 manifest 把 tool 从
+    ``readonly_scoped`` 改 ``destructive``，但缓存还指向 readonly_scoped）。
+
+    本 helper 是这种动态变更场景的"广播失效"入口。设计要点：
+
+    - 引擎未初始化（典型测试 / 启动前）：no-op，不强制构造单例
+    - ``tool=None``：清空整个 LRU 缓存（最保守，所有 mutator 默认走这里）
+    - ``tool=<name>``：精准清除单个条目（registry 层若知道具体 tool 名可用）
+    - 任何异常静默吞掉（注册路径不能被 audit 子系统拖垮）
+    """
+    global _engine
+    if _engine is None:
+        return
+    classifier = getattr(_engine, "_classifier", None)
+    if classifier is None or not hasattr(classifier, "invalidate"):
+        return
+    try:
+        classifier.invalidate(tool)
+    except Exception as exc:
+        logger.debug(
+            "[PolicyV2] invalidate_classifier_cache(%r) failed: %s", tool, exc
+        )
+
+
 def reset_policy_v2_layer() -> None:
     """C8b-2: 一次性重置 v2 引擎单例 + 关联子系统（audit_logger）。
 

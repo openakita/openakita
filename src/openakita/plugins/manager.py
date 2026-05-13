@@ -1273,6 +1273,18 @@ class PluginManager:
         self._unload_plugin_skills(loaded)
         self._unmount_plugin_ui(plugin_id)
 
+        # C10: this plugin's manifest.tool_classes contributions are gone, so
+        # the ApprovalClassifier's LRU cache may hold stale (klass, source)
+        # entries for those tool names. Broadcast a clear so the next
+        # classification falls through the lookup chain again. Cheap and
+        # idempotent — engine may not exist yet (in which case it's a no-op).
+        try:
+            from ..core.policy_v2.global_engine import invalidate_classifier_cache
+
+            invalidate_classifier_cache()
+        except Exception as exc:
+            logger.debug("Plugin '%s' classifier invalidate skipped: %s", plugin_id, exc)
+
         logger.info("Plugin '%s' unloaded", plugin_id)
         return True
 
@@ -1507,6 +1519,22 @@ class PluginManager:
                 timeout=manifest.load_timeout,
             )
             logger.info("Plugin '%s' reloaded after permission grant", plugin_id)
+            # C10: reloaded plugin's manifest.tool_classes may have changed
+            # (typical reload trigger is permission grant — but author may have
+            # also tweaked approval_class for a tool). Invalidate so next
+            # classify() picks up the new declaration instead of the cache.
+            try:
+                from ..core.policy_v2.global_engine import (
+                    invalidate_classifier_cache,
+                )
+
+                invalidate_classifier_cache()
+            except Exception as exc:
+                logger.debug(
+                    "Plugin '%s' post-reload classifier invalidate skipped: %s",
+                    plugin_id,
+                    exc,
+                )
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
             logger.error("Plugin '%s' reload failed: %s", plugin_id, msg)

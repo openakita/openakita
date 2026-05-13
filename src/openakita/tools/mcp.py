@@ -839,6 +839,7 @@ class MCPClient:
             self._prompts = {
                 k: v for k, v in self._prompts.items() if not k.startswith(f"{server_name}:")
             }
+            self._invalidate_policy_classifier_cache()
             logger.info(f"Disconnected from MCP server: {server_name}")
 
     @staticmethod
@@ -994,6 +995,7 @@ class MCPClient:
         self._tools = {k: v for k, v in self._tools.items() if not k.startswith(prefix)}
         self._resources = {k: v for k, v in self._resources.items() if not k.startswith(prefix)}
         self._prompts = {k: v for k, v in self._prompts.items() if not k.startswith(prefix)}
+        self._invalidate_policy_classifier_cache()
 
         result = await self.connect(server_name)
         if result.success:
@@ -1271,6 +1273,7 @@ class MCPClient:
         self._tools = {k: v for k, v in self._tools.items() if not k.startswith(prefix)}
         self._resources = {k: v for k, v in self._resources.items() if not k.startswith(prefix)}
         self._prompts = {k: v for k, v in self._prompts.items() if not k.startswith(prefix)}
+        self._invalidate_policy_classifier_cache()
 
     async def reset(self) -> None:
         """断开所有连接并清空全部状态（用于重载配置）"""
@@ -1284,6 +1287,24 @@ class MCPClient:
         self._tools.clear()
         self._resources.clear()
         self._prompts.clear()
+        self._invalidate_policy_classifier_cache()
+
+    @staticmethod
+    def _invalidate_policy_classifier_cache() -> None:
+        """C10: 通知 PolicyEngineV2 classifier LRU 缓存失效。
+
+        MCP server 注册 / 断开 / 重置都会改变 ``mcp_lookup`` 的返回值，
+        若 classifier 已经为同名工具缓存过旧的 base classification（典型
+        现场：reset → 旧 server 的 readonly tool 让位给新 server 的
+        destructive tool），下次 classify 会拿到陈旧 (klass, source)。
+        引擎未初始化或 classifier 没有 invalidate 方法时静默 no-op。
+        """
+        try:
+            from ..core.policy_v2.global_engine import invalidate_classifier_cache
+
+            invalidate_classifier_cache()
+        except Exception as exc:
+            logger.debug("MCP classifier invalidate skipped: %s", exc)
 
     def list_servers(self) -> list[str]:
         """列出所有配置的服务器"""

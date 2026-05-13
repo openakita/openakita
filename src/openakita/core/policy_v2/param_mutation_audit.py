@@ -77,10 +77,29 @@ class ParamAuditOutcome:
     allowed: bool
     candidate_plugin_ids: list[str]
     revert_reason: str = ""
+    snapshot_failed: bool = False  # C10 二轮：标识快照不可信
 
     @property
     def has_changes(self) -> bool:
         return bool(self.diffs)
+
+
+class _SnapshotFailedSentinel:
+    """C10 二轮：deepcopy + json roundtrip 全部失败时返回的 sentinel。
+
+    评估时它代替 ``before`` 参与 diff——和真实 ``after`` 永远不相等，所以
+    一定产生 1 条整体 ``modify`` diff，触发授权检查与显式 audit 记录。
+    避免"snapshot 返回原 ref → before==after → 静默放过 plugin 任意修改"
+    的隐蔽 bypass 路径。
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - 仅日志
+        return "<SNAPSHOT_FAILED>"
+
+
+SNAPSHOT_FAILED: _SnapshotFailedSentinel = _SnapshotFailedSentinel()
 
 
 def _diff_recursive(
@@ -143,16 +162,30 @@ class ParamMutationAuditor:
         必须在 dispatch hook **之前**调用——hook 可能就地修改 ``tool_input``。
         非 dict 输入（罕见，但 LLM 偶尔会发字符串）原样返回，差异计算阶段
         会按 ``!=`` 比较。
+
+        C10 二轮加固：deepcopy 失败时不再静默返回原 ref（会让 diff 永远为空，
+        plugin 任意修改静默放过）。降级链：
+
+        1. ``copy.deepcopy`` —— 99% 情况
+        2. ``json.loads(json.dumps(default=str))`` —— 兜底处理含
+           thread.Lock / 文件句柄等不可 deepcopy 但 JSON 可序列化的对象
+        3. 都失败 → 返回 ``SNAPSHOT_FAILED`` sentinel；evaluate 阶段
+           会把它当作"和任何 after 都不等"，强制走授权检查 + 写 audit
         """
         try:
             return copy.deepcopy(tool_input)
-        except Exception as exc:  # pragma: no cover —— 保护性兜底
-            logger.warning(
-                "ParamMutationAuditor.snapshot deepcopy failed (%s); "
-                "diff disabled for this call",
-                exc,
-            )
-            return tool_input
+        except Exception as deepcopy_exc:
+            try:
+                return json.loads(json.dumps(tool_input, default=str))
+            except Exception as json_exc:
+                logger.error(
+                    "ParamMutationAuditor.snapshot failed: deepcopy=%s, "
+                    "json fallback=%s; using sentinel — any mutation will be "
+                    "audited as 'snapshot_failed' and treated as unauthorized",
+                    deepcopy_exc,
+                    json_exc,
+                )
+                return SNAPSHOT_FAILED
 
     def evaluate(
         self,
@@ -168,13 +201,27 @@ class ParamMutationAuditor:
         ``is_plugin_authorized``: ``Callable[[plugin_id, tool_name], bool]``。
         典型实现 = ``PluginManager.plugin_allows_param_mutation``，但也接受
         测试用 lambda——所以这里只声明 callable 而不强类型耦合。
+
+        C10 二轮：若 ``before`` 是 :data:`SNAPSHOT_FAILED` sentinel，diff 阶段
+        必然产生整体 ``modify`` 一条，授权评估走 deny-by-default——快照不可
+        信时绝不允许"沉默放行"。
         """
+        snapshot_failed = isinstance(before, _SnapshotFailedSentinel)
         diffs = _diff_recursive(before, after)
-        if not diffs:
+        if not diffs and not snapshot_failed:
             return ParamAuditOutcome(
                 diffs=[],
                 allowed=True,
                 candidate_plugin_ids=candidate_plugin_ids,
+            )
+
+        if snapshot_failed:
+            return ParamAuditOutcome(
+                diffs=diffs or [ParamDiff("<root>", before, after, "modify")],
+                allowed=False,
+                candidate_plugin_ids=candidate_plugin_ids,
+                revert_reason="snapshot failed; cannot verify mutation safely",
+                snapshot_failed=True,
             )
 
         allowed = False
@@ -224,6 +271,7 @@ class ParamMutationAuditor:
             "candidate_plugin_ids": outcome.candidate_plugin_ids,
             "allowed": outcome.allowed,
             "revert_reason": outcome.revert_reason,
+            "snapshot_failed": outcome.snapshot_failed,
             "before": before,
             "after": after,
             "diffs": [
