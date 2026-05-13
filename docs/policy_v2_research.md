@@ -954,7 +954,8 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C6 | tool_executor 切 v2 + reasoning_engine 决策切 v2 + orgs/runtime 兼容 + `_path_under` glob bug 修复 | ✅ Done | §3.1 R1-6 + §6.6 + R2-2 |
 | C7 | agent.py RiskGate 切 v2 + ContextVar wire + handler.TOOL_CLASSES (30+) + explicit_lookup 注入 | ✅ Done | §3.2 R2-1 + R2-10 + R2-12 |
 | C8a | safety_immune 9 类 + OwnerOnly 配置驱动 + switch_mode 真生效 + consume_session_trust 真删 + IM 前缀 SSE bug | ✅ Done | §2.3 + §5 + R5-22 |
-| C8b | 删 v1 RiskGate + 删 `core/policy.py`（依赖 C9 完成） | ⏳ Pending | §6.6 + §10 |
+| C8b-1 | v2 补能：UserAllowlist + SkillAllowlist + DeathSwitch + step 9/10 实装 | ✅ Done | §6.6 + 「C8b-1 实施记录」 |
+| C8b-2..5 | （未启动）配置常量迁移 / UI confirm 切换 / RiskGate 删除 / PolicyEngine class 删除 | ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划」|
 | C9a | SecurityView v2 适配（approval_class badge + IM owner UI + dry-run preview） | ✅ Done | §8 + R5-20 |
 | C9b | UI confirm bus 抽出（`core/ui_confirm_bus.py`），让 C8b 能安全删 v1 | ✅ Done | §6.6 + R5-22 |
 | C9c | tool_intent_preview / pending_approval_* / policy_config_reloaded SSE 事件（推迟到 C12 一起做） | ⏳ Deferred | §8 + R2-11 |
@@ -2578,6 +2579,318 @@ C8 的 D1-D5 audit 同步更新（`scripts/c8_audit_d1_*.py` / `_d3_*.py` 改读
 
 C9 完成，可以进入 **C8b（删 v1 RiskGate + 删 `core/policy.py`）**，
 随后是 **C10**（Hook 来源分层 + Trusted Tool Policy）。
+
+---
+
+## C8b 粒度化执行计划（recon-only · 不改生产代码）
+
+> 本节是 **C8b 实施前的调研产物**，不含代码改动。目的是把"删 v1"
+> 这个看起来一句话的任务拆成 5 个独立 commit，每个独立可 rollback、
+> 风险显式可见。
+>
+> 起因：用户 review 发现 C8/C9 一开始定义不清晰，差点出现"删了 RiskGate
+> 但 PolicyEngine 还活着"或"v2 stub 没填就动 v1"的尴尬中间态。
+>
+> 输出于：C9 完成后、C8b 开工前。
+
+### §A — `core/policy.py` 出口符号清单（1766 行）
+
+按用途分组（删 v1 时这就是迁移单元）：
+
+| 组 | 符号 | 主要消费者 | 数量 |
+|---|---|---|---|
+| **A. 决策入口** | `PolicyEngine` class（`assert_tool_allowed` / `_check_*` 等 30+ 方法）| `reasoning_engine`（已切 v2 adapter）/ `permission` shim | 1 个类 ~1330 行 |
+|  | `get_policy_engine` / `set_policy_engine` / `reset_policy_engine` | 25+ callsite | 3 函数 |
+|  | `PolicyResult` dataclass | reasoning_engine / tool_executor 直接 import | 1 |
+|  | `PolicyDecision` enum | reasoning_engine / tool_executor 直接 import | 1 |
+| **B. 配置常量** | `_default_protected_paths` / `_default_forbidden_paths` / `_default_controlled_paths` | `config.py` (× 2) | 3 |
+|  | `_DEFAULT_BLOCKED_COMMANDS` | `config.py` (× 1) | 1 |
+|  | `SecurityConfig` / `ConfirmationConfig` / `SandboxConfig` 等 dataclass | v2 已有等价；纯遗留 | ~10 |
+| **C. UI confirm facade**（C9b 后已为薄壳） | `store_ui_pending` / `cleanup_session` / `resolve_ui_confirm` / `prepare_ui_confirm` / `cleanup_ui_confirm` / `wait_for_ui_resolution` | 7 处外部 caller（IM × 2 / CLI / config / chat / gateway × 2） | 6 |
+| **D. UserAllowlist CRUD** | `mark_confirmed` / `_save_user_allowlist` / `remove_allowlist_entry` / `get_user_allowlist` / `_check_allowlists` / `_check_persistent_allowlist` | `security_actions.py` × 4 / `tool_executor.py:810` | 6 |
+| **E. Skill allowlist** | `add_skill_allowlist` / `remove_skill_allowlist` / `clear_skill_allowlists` / `_is_skill_allowed` | `skills.py` × 4 / `agent.py:2463` | 4 |
+| **F. Death switch / readonly mode** | `readonly_mode` 属性 / `reset_readonly_mode` / `_consecutive_denials` / `_total_denials` | `config.py:1903` / `security_actions.py:55` | 4 |
+| **G. Frontend mode shim** | `_frontend_mode` 字段 | `config.py:1700-1733` permission-mode API | 1 |
+
+> ⚠️ `channels/gateway.py:2754` 的 `from .policy import GroupPolicy*` 是
+> `channels/policy.py` 不是 `core/policy.py`，**与 C8b 无关**，跳过。
+
+### §B — Callsite × Method 矩阵（v1 vs v2 能力对比）
+
+按"v2 是否已具备等价能力"分类：
+
+#### B1. v2 **已等价** —— 可直接换 import（low effort）
+
+| 文件:行 | 调用 | 替换为 |
+|---|---|---|
+| `agent.py:5760` | `_pe.cleanup_session()` | `get_ui_confirm_bus().cleanup_session()` |
+| `chat.py:401` | `pe.cleanup_session()` | 同上 |
+| `cli/stream_renderer.py:305-306` | `engine.resolve_ui_confirm()` | `bus.resolve()`（需先在 bus 上加 mark_confirmed-equivalent — 见 D 节）|
+| `config.py:1792` | `engine.resolve_ui_confirm()` | 同上 |
+| `gateway.py:4778, 4842` (× 2) | `pe.resolve_ui_confirm()` | 同上 |
+| `telegram.py:700` | `get_policy_engine().resolve_ui_confirm()` | 同上 |
+| `feishu.py:1090` | （读取 `_is_trust_mode`/类似）| `get_config_v2().confirmation.mode == TRUST` |
+| `checkpoint.py:250` | `engine.config.checkpoint` | `get_config_v2().checkpoint` |
+| `audit_logger.py:113` | `engine.config.self_protection.audit_path` | `get_config_v2().self_protection.audit_path` |
+| `config.py:1466,1598,1641,1687,1871,1951` (× 6) | `reset_policy_engine()` | `reset_engine_v2()` |
+| `config.py:1560` | `_default_protected_paths` / `_default_forbidden_paths` | 移到 `policy_v2/defaults.py` |
+| `config.py:1610` | `_DEFAULT_BLOCKED_COMMANDS` | 同上 |
+
+#### B2. v2 **部分等价** —— 需要 v2 补 method 才能换（medium effort）
+
+| 文件:行 | 调用 | v2 缺什么 |
+|---|---|---|
+| `agent.py:871` | `engine._is_trust_mode()` (RiskGate fallback) | v2 有 ConfirmationMode.TRUST 但没有 `is_trust_mode()` 便捷函数；可加 helper 或 inline 比较 |
+| `agent.py:2463` | `engine.clear_skill_allowlists()` | v2 完全无 skill_allowlist 概念 |
+| `skills.py:306, 837` (× 2) | `engine.add_skill_allowlist(skill_id, tools)` | 同上 |
+| `skills.py:925, 1003` (× 2) | `engine.remove_skill_allowlist(skill_id)` | 同上 |
+| `tool_executor.py:807-810` | `_confirm_cache_key` + `mark_confirmed` (retry-allow) | v2 没有 confirmed_cache 概念 |
+| `config.py:1903` | `pe.readonly_mode` | v2 `_check_death_switch` 是 stub return None |
+| `security_actions.py:11, 18, 38, 55` (× 4) | `get_user_allowlist` / `remove_allowlist_entry` / `_save_user_allowlist` / `reset_readonly_mode` | v2 配置里有 user_allowlist 但**无运行时 CRUD API**；reset_readonly_mode 同 readonly_mode |
+
+#### B3. v2 **完全无等价** —— 需要先在 v2 上**新增功能**（high effort）
+
+| 功能 | 当前 v1 实现 | 删除前必须做 |
+|---|---|---|
+| skill allowlist 注入 | `_skill_allowlists: dict[skill_id → set[tool]]` 字段 + 运行时 add/remove + `_is_skill_allowed` 纳入 `_check_allowlists` | v2 加 `SkillAllowlistManager`（可独立模块）+ 在 `_check_user_allowlist` step 集成 |
+| user allowlist 持久化 | `_save_user_allowlist()` 写 `identity/POLICIES.yaml` | v2 加 `policy_v2/yaml_writer.py` 或在 loader 上加 round-trip 写入 |
+| `_check_user_allowlist` step | v1 `_check_allowlists` + `_check_persistent_allowlist` 完整逻辑 | v2 engine.py:748 stub return None **必须先填实** |
+| `_check_death_switch` step | v1 连续 deny → readonly_mode 切换 + `_consecutive_denials` 计数 | v2 engine.py:756 stub return None **必须先填实** + 加 ContextVar 或 PolicyEngineV2 字段持有计数 |
+| confirmed_cache（retry-allow） | `mark_confirmed` 写 cache，`_confirm_cache_key(tool, params)` 查 cache | **决策保留与否**：方案 A 在 v2 加同等机制；方案 B 删除（每次 retry 重新决策）；方案 C 仅保留 session_allowlist 部分 |
+
+### §C — 3 个 v1 RiskGate 函数 — 删除前提
+
+`agent.py:750-936` 的 3 个函数实现 pre-LLM 闸门，删除依赖关系：
+
+| v1 函数 | LOC | v2 已实现的部分 | v2 缺的部分（删前必补）|
+|---|---|---|---|
+| `_consume_risk_authorization` | 81 | v2 `_check_replay_authorization`（read-only，已 wired in C7）| chat handler 仍需把 `risk_authorized_intent` 注入 `PolicyContext.replay_authorizations`；mutation 侧（清空 metadata）保留在 chat handler 即可 |
+| `_check_trust_mode_skip` | 49 | v2 matrix `(role, mode, class) → action` 已覆盖 trust 语义 | **风险点**：v1 用 `RiskIntentResult.target_kind` 区分 5 种"敏感 target 仍 confirm"；v2 用 `ApprovalClass` + `_check_safety_immune` 复合达成。需 audit 验证 5 个 v1 必 confirm target（`SECURITY_USER_ALLOWLIST` / `SECURITY_POLICY` / `DEATH_SWITCH` / `PROTECTED_FILE` / `SHELL_COMMAND`）在 v2 trust mode 下也产出 CONFIRM。已知 `SECURITY_USER_ALLOWLIST` 对应 v2 `CONTROL_PLANE` class，trust mode 下 matrix 是 CONFIRM ✓。其余需逐项验证 |
+| `_check_trusted_path_skip` | 36 | v2 `_check_trusted_path`（read-only 等价已 wired）+ C8a `consume_session_trust` prune | 已具备 |
+
+**结论**：3 个函数都可以删，但 agent.py 的 pre-LLM 入口（`_run_security_pre_check`-类调用方）必须先切到 v2 evaluate。这是 **C8b-4 的核心架构变更**，不是 inline 替换。
+
+### §D — `mark_confirmed` 路径与 confirmed_cache 决策
+
+`mark_confirmed` 当前职责（policy.py:1660-1690）：
+1. 写 `_session_allowlist[session_id]`（用户选 "allow_session" 后该 session 内不再 confirm）
+2. 写 `_confirmed_cache[(tool, params_hash)]`（同一 tool+params 的 retry 自动 allow）
+
+C8b 必须三选一：
+
+- **方案 A — v2 完整对等**：在 v2 加 `SessionAllowlistManager` + `ConfirmedCache`，对应 `mark_confirmed` 行为。优点：零行为变化。缺点：把 v1 的设计原样搬运到 v2，污染 v2 的"无状态决策引擎"原则。
+- **方案 B — 完全删除**：UI confirm 后不再缓存。每次 retry 都重新走决策。优点：v2 干净。缺点：用户可能看到"我刚 allow 了为啥又问"——尤其 retry-on-error 场景。
+- **方案 C — 仅保留 session_allowlist（推荐）**：v2 加 `SessionAllowlistManager`（可独立模块或 PolicyContext.session_grants 字段），承载 "allow_session" 后的 sticky 放行。retry-allow 缓存删除（reasoning_engine 的 retry 路径已经能自己识别"上次 allow 过的 tool_use_id"）。
+
+**推荐方案 C**，理由：retry-allow 在 v2 架构下其实是 reasoning_engine 的事（同一 tool_use_id 不应再触发决策），不该是 PolicyEngine 的职责。
+
+### §E — 测试打架成本
+
+| 文件 | LOC | v1 import 数 | 处理代价 |
+|---|---|---|---|
+| `tests/unit/test_security.py` | 705 | 22 | **重写**：测的几乎全是 v1 PolicyEngine 行为，需对照 v2 测试拆分保留/删除 |
+| `tests/unit/test_permission_refactor.py` | 224 | 20 | **大改**：测 permission shim 与 v1 engine 协作 |
+| `tests/unit/test_trusted_paths.py` | 216 | 12 | **小改**：测 `trusted_paths.py` 模块本身（v1/v2 共用）|
+| `tests/unit/test_remaining_qa_fixes.py` | 157 | 5 | **小改**：少量 v1 import |
+| `tests/unit/test_chat_clear_runtime.py` | 34 | 2 | **小改**：cleanup_session facade 已通 |
+| `tests/e2e/test_p0_regression.py` | 198 | 3 | **小改**：1-2 处 |
+| `tests/integration/test_gateway.py` | 314 | 2 | **小改**：1-2 处 IM trust mode |
+
+合计**约 70-100 个 test case** 需要 review/迁移。其中 ~30 个能通过 facade 不变，~50 个需要重写 to v2 调用，~20 个 v1-only 测试可直接删除。
+
+### §F — 推荐 sub-task 拆分（5 个 commit，每个独立可 rollback）
+
+#### **C8b-1 — v2 补能（preparation, no v1 deletion）**
+
+- v2 `_check_user_allowlist` 实现 v1 `_check_allowlists` 等价（matching + persistent）
+- v2 `_check_death_switch` 实现连续 deny → readonly_mode 计数 + 切换
+- 新增 `policy_v2/user_allowlist.py`：`UserAllowlistManager`（add/remove/save_to_yaml/load_from_yaml）
+- 新增 `policy_v2/skill_allowlist.py`：`SkillAllowlistManager`（add/remove/clear/check）
+- v1 不动；C8b-3 ~ C8b-5 才有迁移目标
+- **风险**：低（纯加 v2 代码，v1 路径不变）
+- **LOC**：+400 v2 / 0 v1 / 测试 +200
+- **预计**：1-1.5 天
+- **commit 边界**：所有 v2 stub 全部填实；新增 manager 单测 100% 覆盖；v1 测试全绿
+
+#### **C8b-2 — 配置常量与 SecurityConfig 子段读取迁移（low risk）**
+
+- 新增 `policy_v2/defaults.py`：把 `_default_*_paths` / `_DEFAULT_BLOCKED_COMMANDS` 移过去
+- `config.py` × 6 import 改 `from policy_v2.defaults import ...`
+- `config.py` × 6 `reset_policy_engine` callsite 改 `reset_engine_v2`（保留 v1 reset 为兼容）
+- `checkpoint.py:250` 改读 `get_config_v2().checkpoint`
+- `audit_logger.py:113` 改读 `get_config_v2().self_protection`
+- **风险**：低（纯重命名 + 移位）
+- **LOC**：+150 v2 / -120 v1（policy.py 仍未删，但常量移出）
+- **预计**：半天
+- **commit 边界**：config.py / checkpoint.py / audit_logger.py 不再 import policy.py 内部符号
+
+#### **C8b-3 — UI confirm facade 完成切换 + confirmed_cache 决策（medium risk）**
+
+- 实施推荐方案 C：新增 `policy_v2/session_allowlist.py`：`SessionAllowlistManager`
+- `cli/stream_renderer.py` / `config.py:1792` / `chat.py:401` / `gateway.py:4778,4842` / `telegram.py:700` / `feishu.py:1090` × 7 callsite 全部改成直接调 `get_ui_confirm_bus()` + `SessionAllowlistManager`
+- `tool_executor.py:807-810` retry-confirm 逻辑改为：通过 `tool_use_id` 去重（不再用 confirmed_cache）
+- `policy.py` 删除 6 个 facade 方法（`store_ui_pending` / `cleanup_session` / `resolve_ui_confirm` / `prepare_ui_confirm` / `cleanup_ui_confirm` / `wait_for_ui_resolution`）
+- `policy.py` 删除 `mark_confirmed` / `_session_allowlist` / `_confirmed_cache`
+- **风险**：中（涉及 5+ 个 IM 适配器；retry-allow 行为变化用户可能感知）
+- **LOC**：+200 v2 / -150 v1
+- **预计**：1 天
+- **commit 边界**：policy.py 不再有 UI confirm 任何代码；所有 callsite 直连 bus
+
+#### **C8b-4 — agent.py RiskGate 删除（high risk）**
+
+- 删除 `_consume_risk_authorization` / `_check_trust_mode_skip` / `_check_trusted_path_skip` 三个函数（共 ~166 行）
+- pre-LLM 闸门入口（agent.py 内调用这些函数的地方）改成调 `evaluate_via_v2(message_intent_event, ctx)`
+- chat handler 在 user 确认 risky message 后写 `PolicyContext.replay_authorizations`（C7 已加字段）
+- 必须新增 audit：5 个 v1 "敏感 target 仍 confirm" 在 v2 trust mode 下确实产出 CONFIRM
+- **风险**：高（用户可见行为：trust mode 是否生效、replay 是否记忆、trusted path skip 是否一致）
+- **LOC**：+150 v2 / -350 v1
+- **预计**：1.5 天 + 1 天测试 / audit
+- **commit 边界**：agent.py 不再 import policy.py；trust mode + replay + trusted path 三组场景测试全绿；audit D7 (RiskGate parity) 全 PASS
+
+#### **C8b-5 — PolicyEngine class 删除 + policy.py 文件删除（cleanup commit）**
+
+- `agent.py:2463` `clear_skill_allowlists` 调 v2 `SkillAllowlistManager`
+- `skills.py` × 4 callsite 调 v2 `SkillAllowlistManager`
+- `security_actions.py` × 4 callsite 调 v2 `UserAllowlistManager` / death_switch helper
+- 删除 `core/policy.py` 整文件
+- 删除/迁移 `tests/unit/test_security.py` v1-only cases
+- **风险**：中-高（删除即不可逆，需所有 callsite 迁完才能跑）
+- **LOC**：-1700 v1 / +50 callsite 调整
+- **预计**：1 天
+- **commit 边界**：`grep -r "core.policy" src/ tests/` 全部命中只有 v2/policy_v2 文件
+
+**总预计**：5-6 天有效工作；分成 5 个 commit；每个 commit 都能独立 rollback；中间任何一个 commit 后 release 都不会引入 regression。
+
+### §G — 不要做的事（教训提醒）
+
+1. **不要做"先删 RiskGate 再删 PolicyEngine"** —— RiskGate `_check_trust_mode_skip` 还依赖 v1 `_is_trust_mode`；孤立删 RiskGate 后 PolicyEngine 反而更难删。必须按 1→5 顺序。
+2. **不要做"v1 改成 thin wrapper 再删"** —— C9b 已经把 UI bus 部分薄壳化；其余 v1 代码（决策路径、user/skill allowlist）若再做一次 thin wrapper 等于打地鼠，浪费 1 个 commit 不带来任何价值。
+3. **不要做"按文件删"** —— 比如先删 `tool_executor.py` 里 mark_confirmed 调用，会留下"删了 confirmed_cache 但 PolicyEngine 还在写"的孤立中间态。按**功能 group**（A/B/C/D/E/F/G）切，每个 commit 关闭一组。
+4. **不要做"v2 stub 没填就删 v1"** —— C8b-1 必须先做完。否则 `_check_death_switch` / `_check_user_allowlist` v2 仍 return None，删 v1 = 直接关掉这两个安全护栏。
+5. **不要在 C8b 期间做风格调整** —— ruff fix / 命名优化 全部往 C18 cleanup 推；C8b 的每个 commit 都应该 100% 是"删 v1 / 加 v2 等价"，让 reviewer/git bisect 一眼能看清。
+
+### §H — 选择题：用户在 C8b-1 开工前要决定的 3 件事
+
+1. **confirmed_cache 命运**：方案 A（v2 完整对等）/ B（删）/ **C（仅保留 session_allowlist，推荐）**
+2. **`_frontend_mode` shim 命运**：保留为 v2 配置外的独立 UI 状态字段 / 折叠到 `ConfirmationMode` 枚举（"yolo" → "trust"，"normal" → "default"）
+3. **5 个 commit 是否需要中间版本号**：每个 commit 独立 release / 5 个 commit 整体作为一个 minor version
+
+### §I — 给 C8b 起跑前的 health check
+
+C8b 开工前应先跑：
+- `python scripts/c8_audit_d1_completeness.py` ~ `_d5_compat.py`：确认 C8a/C9 不变量都还在
+- `python scripts/c9_audit.py`：确认 C9a/C9b 不变量都还在
+- `pytest tests/unit/test_policy_v2_*.py tests/unit/test_security.py`：v2 + v1 都绿（容许 8 个 pre-existing failure）
+- `ruff check src/openakita/core/`：基线干净
+
+完成 C8b-1 后必须再补 audit：
+- 新增 `scripts/c8b_audit_d7_riskgate_parity.py`：枚举 v1 RiskGate 5 个必 confirm target，断言 v2 在 trust mode 下也产出 CONFIRM
+- 新增 `scripts/c8b_audit_d8_state_isolation.py`：断言 `SessionAllowlistManager` / `UserAllowlistManager` / `SkillAllowlistManager` 三个 manager 不互相 import 也不被 PolicyEngineV2 直接耦合（解耦要求）
+
+---
+
+## C8b-1 实施记录
+
+> Phase: v2 补能（preparation, no v1 deletion）
+> Outcome: ✅ Done · all 17 audits PASS · unit 2675 passed (+60) · 0 net new regressions
+> 用户决策（§H 三选项）: Q1=方案 C / Q2=保留独立 / Q3=每 commit 独立
+
+### 实施范围
+
+按「C8b 粒度化执行计划 §F」的 C8b-1 切片实施：
+
+1. **`policy_v2/user_allowlist.py`** — `UserAllowlistManager`（engine-scoped）
+   - `match(tool, params)` 等价于 v1 `_check_persistent_allowlist`（命令双 fnmatch + tool name 完全匹配）
+   - `add_entry` / `add_raw_entry` / `remove_entry` / `snapshot` 取代 v1 `_persist_allowlist_entry` / `get_user_allowlist` / `remove_allowlist_entry`
+   - `save_to_yaml(path=None)` 取代 v1 `_save_user_allowlist`，分离 mutate 与 IO（测试 / dry-run / batch save 都受益）
+   - `replace_config(ua)` 给 C18 hot-reload 留接口
+   - `command_to_pattern(cmd)` 提到模块级（v1 是 `PolicyEngine` static method）
+
+2. **`policy_v2/skill_allowlist.py`** — `SkillAllowlistManager`（**module 级 singleton**，仿 `UIConfirmBus`）
+   - `add(skill_id, tools)` / `remove(skill_id)` / `clear()` / `is_allowed(tool)` 等价于 v1 `_skill_allowlists` 字段 + 4 方法
+   - 新增 `granted_by(tool)` / `snapshot()` 给审计用
+   - 不持久化（与 v1 一致）
+   - `get_skill_allowlist_manager()` / `reset_skill_allowlist_manager()`
+
+3. **`policy_v2/death_switch.py`** — `DeathSwitchTracker`（**module 级 singleton**）
+   - `record_decision(action, tool_name, enabled, threshold, total_multiplier)` 取代 v1 `_on_deny` + `_on_allow` 计数逻辑
+   - `is_readonly_mode()` / `reset()` 取代 v1 `readonly_mode` 属性 + `reset_readonly_mode`
+   - `set_broadcast_hook(callable)` **解耦 v2→api 反向耦合**：v1 直接 `from openakita.api.routes.websocket import broadcast_event`；v2 用 hook 注入（启动时由 api/routes/websocket 调一次）
+   - `_NON_RESETTING_READ_TOOLS = {read_file, list_directory, grep, glob}` —— 与 v1 `_on_allow` 行为对齐
+
+4. **`PolicyEngineV2._check_user_allowlist`（step 9 实装）**
+   - 先查 engine-scoped `UserAllowlistManager.match`
+   - 再查 process-wide `get_skill_allowlist_manager().is_allowed`
+   - 任一命中 → relax CONFIRM → ALLOW
+   - **bypass 边界**已由 step 调用顺序保证：safety_immune (3) / owner_only (4) / channel_compat (5) / matrix DENY (6) 都在前面
+
+5. **`PolicyEngineV2._check_death_switch`（step 10 实装）**
+   - 配置 disabled → 跳过
+   - tracker.is_readonly_mode() == False → 跳过
+   - readonly + class ∈ READONLY_CLASSES → 跳过（read 工具不被 readonly 拦）
+   - 否则 → DENY
+
+6. **`PolicyEngineV2.evaluate_tool_call` 末尾计数 hook**
+   - 决策落定后调 `tracker.record_decision`，把决策结果反馈给 tracker
+   - **engine-level flag `count_in_death_switch`**（默认 True）：dry-run preview engine 置 False 跳过计数
+
+7. **`global_engine.make_preview_engine(cfg=None)`** —— **C8b-1 中发现的 P1 bug 修复**
+   - 用 deepcopy(get_config_v2()) 或显式 cfg 构造 fresh engine
+   - 自动 `count_in_death_switch = False`
+   - 复用模块级 `_explicit_lookup`（避免 preview 与生产分类器漂移）
+   - 取代 `/api/config/security/preview` 直接拿 global engine 的危险用法（详见下方"深度复审发现的 P1 bug"）
+
+8. **`tests/conftest.py` autouse fixture `_isolate_policy_v2_singletons`**
+   - 每个 test 前后调 `reset_death_switch_tracker()` + `reset_skill_allowlist_manager()`
+   - 不能用 `.reset()` / `.clear()`：`DeathSwitchTracker.reset()` 故意保留 `total_denials`（v1 parity），test 间会污染
+   - fail-soft：模块未导入时静默 yield（policy_v2 不在所有 test 范围内）
+
+### 深度复审发现的 P1 bug
+
+**Bug**: `/api/config/security/preview` endpoint 在 C9a §4 引入时，"use current config" 分支直接拿 `engine = get_engine_v2()` 即**全局 engine**。C8b-1 给 engine 加了 `record_decision` 调用后：
+- preview 默认 sample 含 `("write_file", "/etc/passwd")` / `("run_shell", "rm -rf /")` 等会 DENY 的样本
+- 用户每次按 "策略预览" 按钮，全局 tracker 计数 +6（共 9 个 sample，约 6 个会 DENY）
+- 用户连按 1 次预览按钮就可能让真实 agent 进 readonly mode
+
+**严重性**：P1 用户可见。任何用户尝试预览策略效果就把自己的 agent 卡死。
+
+**修复**：
+- 新增 `make_preview_engine(cfg=None)` helper，强制 `count_in_death_switch=False` + `deepcopy(cfg)`
+- preview endpoint 两条分支都改用 `make_preview_engine`（proposed 和 current 都构造 ad-hoc engine）
+- 新增 D6 audit dimension（`scripts/c8b1_audit.py`）专门防漂——任何后续改动若让 preview 重新走 global engine 立即 audit 失败
+- 新增 2 个回归测试（`TestC8b1PreviewIsolation`）
+
+**为什么之前没发现**：C9a 时 step 10 还是 stub return None，preview engine DENY 也不计数。C8b-1 启用计数后才暴露。属于"两个独立改动叠加产生的隐藏 bug"——单独看每个 commit 都没问题。教训：**新增 cross-cutting 副作用（如 record_decision）后必须 grep 一下所有创建 engine 的地方**。
+
+### 测试结果
+
+- `pytest tests/unit/`: **2675 passed** / 8 failed / 4 skipped
+- 8 失败 = baseline 同批 8 个 pre-existing failures（test_org_setup_tool / test_reasoning_engine_user_handoff / test_remaining_qa_fixes / test_wework_ws_adapter）
+- **+60 new tests** 全部 passing（`tests/unit/test_policy_v2_c8b1_managers.py`）
+- 17 audits 全 PASS：C8 D1-D5 + C9 D1-D6 + C8b-1 D1-D6
+- ruff：所有改动文件 PASS
+
+### 给 C8b-2 留的接口
+
+- `make_preview_engine` 可被 C8b-2 配置常量迁移阶段沿用（不需要再做新的 preview adapter）
+- conftest autouse fixture 已经覆盖 SkillAllowlist + DeathSwitch；C8b-3 引入 `SessionAllowlistManager` 时按同模式扩展
+- `UserAllowlistManager.save_to_yaml(path)` 可让 C8b-5 删除 v1 `security_actions.add_security_allowlist_entry` 时无缝迁移
+
+### 工程教训
+
+1. **process-wide singleton 在 test 中是定时炸弹**：`DeathSwitchTracker` / `SkillAllowlistManager` 一旦没 autouse fixture 隔离，1 个测试的 deny 会让后续 16 个测试看到 readonly = StopIteration 链式爆炸。教训：新增任何 module singleton **同步加 conftest 隔离**，否则该 PR 必有"测试在我机器上能过"的诡异 race。
+
+2. **`reset()` ≠ "干净 fixture"**：v1 parity 让 `reset()` 故意保留 `total_denials`，但 test 间隔离需要彻底清空。两种语义不能混用——production 用 `reset()`，test 用 `reset_*_tracker()` 重新构造 singleton。
+
+3. **加 cross-cutting 副作用前先扫所有 caller**：把 `record_decision` 加到 `evaluate_tool_call` 末尾"看起来"是单一改动，但任何对 engine 的"借用调用"（如 preview）瞬间被波及。grep `evaluate_tool_call(` 是新增任何这种 hook 前的必做动作。
+
+4. **架构边界要在代码里强制**：`death_switch.py` 用 broadcast hook 而不是直接 import api 模块——audit D2.4 检查"v2→api 反向耦合"会自动失败。这种边界靠"约定"维持迟早会破，靠 grep audit 才稳。
+
+5. **`make_preview_engine` 模式可推广**：今后任何"我要在不污染全局状态的前提下评估"场景都应该走 ad-hoc engine + 显式 flag，不要 mutate global singleton 再恢复（race 隐患）。
+
+C8b-1 完成，可进入 **C8b-2（配置常量与 SecurityConfig 子段读取迁移）**。
+
+---
 
 ## 附录 B：术语表
 

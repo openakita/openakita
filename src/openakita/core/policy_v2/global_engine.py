@@ -211,11 +211,41 @@ def is_initialized() -> bool:
     return _engine is not None
 
 
+def make_preview_engine(
+    cfg: PolicyConfigV2 | None = None,
+) -> PolicyEngineV2:
+    """为 dry-run preview / 单次评估场景创建一次性引擎（C8b-1）。
+
+    特点：
+    - **不污染全局 death_switch tracker**：``count_in_death_switch = False``，
+      预览的 DENY sample 不会让真实用户进 readonly mode
+    - **复用 explicit_lookup**：与 global engine 用同一份 handler→class 映射，
+      避免预览结果与生产决策出现"分类器漂移"
+    - **隔离 user_allowlist**：preview 引擎拿自己的 ``UserAllowlistManager``
+      （持有 cfg 的 user_allowlist 子段），不会改到全局配置
+
+    Args:
+        cfg: 预览用的配置；不传时复制当前 global config（不持有引用，避免
+            preview 调用方意外 mutate global state）。
+
+    Note:
+        与 ``get_engine_v2()`` / ``rebuild_engine_v2()`` 不同，本函数不写
+        模块级 ``_engine``——返回的引擎只对调用方可见，gc 后即销毁。
+    """
+    from copy import deepcopy
+
+    effective_cfg = cfg if cfg is not None else deepcopy(get_config_v2())
+    engine = build_engine_from_config(effective_cfg, explicit_lookup=_explicit_lookup)
+    engine.count_in_death_switch = False
+    return engine
+
+
 __all__ = [
     "ExplicitLookup",
     "get_config_v2",
     "get_engine_v2",
     "is_initialized",
+    "make_preview_engine",
     "rebuild_engine_v2",
     "reset_engine_v2",
     "set_engine_v2",

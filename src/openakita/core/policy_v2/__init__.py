@@ -33,6 +33,11 @@ from .context import (
     reset_current_context,
     set_current_context,
 )
+from .death_switch import (
+    DeathSwitchTracker,
+    get_death_switch_tracker,
+    reset_death_switch_tracker,
+)
 from .engine import PolicyEngineV2, build_engine_from_config
 from .enums import (
     ApprovalClass,
@@ -53,6 +58,7 @@ from .global_engine import (
     get_config_v2,
     get_engine_v2,
     is_initialized,
+    make_preview_engine,
     rebuild_engine_v2,
     reset_engine_v2,
     set_engine_v2,
@@ -101,6 +107,12 @@ from .shell_risk import (
     ShellRiskLevel,
     classify_shell_command,
 )
+from .skill_allowlist import (
+    SkillAllowlistManager,
+    get_skill_allowlist_manager,
+    reset_skill_allowlist_manager,
+)
+from .user_allowlist import UserAllowlistManager, command_to_pattern
 from .zones import (
     all_paths_inside_workspace,
     candidate_path_fields,
@@ -146,6 +158,7 @@ __all__ = [
     "get_config_v2",
     "get_engine_v2",
     "is_initialized",
+    "make_preview_engine",
     "rebuild_engine_v2",
     "reset_engine_v2",
     "set_engine_v2",
@@ -191,4 +204,13 @@ __all__ = [
     "BUILTIN_SAFETY_IMMUNE_BY_CATEGORY",
     "BUILTIN_SAFETY_IMMUNE_PATHS",
     "expand_builtin_immune_paths",
+    # C8b-1 managers (preparation for v1 deletion)
+    "DeathSwitchTracker",
+    "SkillAllowlistManager",
+    "UserAllowlistManager",
+    "command_to_pattern",
+    "get_death_switch_tracker",
+    "get_skill_allowlist_manager",
+    "reset_death_switch_tracker",
+    "reset_skill_allowlist_manager",
 ]

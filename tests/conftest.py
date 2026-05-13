@@ -94,3 +94,44 @@ def mock_response_factory():
         )
     return _create
 
+
+# ---------------------------------------------------------------------------
+# C8b-1: 自动隔离 process-wide policy v2 singletons across tests.
+#
+# ``DeathSwitchTracker`` 累积 consecutive_denials；不重置时一个 test 的连续
+# DENY 会让后续 test 误中 readonly_mode（StopIteration / 误 DENY）。
+# ``SkillAllowlistManager`` 同理——一个 test 给 'foo' skill 加了 'bar' tool
+# 之后下个 test 期待 'bar' is_allowed 仍 False。
+#
+# Bus（``UIConfirmBus``）已有 reset 路径但目前由各 test 自己管理；这里只统
+# 一管理 C8b-1 新加的两个 singleton，避免污染其他 test 既有的 UIConfirmBus
+# 显式 setup/teardown。
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _isolate_policy_v2_singletons():
+    """每个 test 前后清空 DeathSwitch + SkillAllowlist singleton 状态。
+
+    fail-soft：模块未导入时静默跳过（policy_v2 不在所有 test 范围内）。
+    """
+    try:
+        from openakita.core.policy_v2.death_switch import (
+            reset_death_switch_tracker,
+        )
+        from openakita.core.policy_v2.skill_allowlist import (
+            reset_skill_allowlist_manager,
+        )
+    except Exception:
+        yield
+        return
+
+    # 用 reset_*_singleton() 而非 .reset() / .clear()，因为 .reset() 故意保留
+    # ``total_denials`` 作为 lifetime 计数（与 v1 parity）；test 之间需要完全
+    # 隔离否则一个测试的 10 个 deny 会被下个测试看到。
+    reset_death_switch_tracker()
+    reset_skill_allowlist_manager()
+    try:
+        yield
+    finally:
+        reset_death_switch_tracker()
+        reset_skill_allowlist_manager()
+

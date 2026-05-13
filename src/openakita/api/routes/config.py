@@ -1494,16 +1494,23 @@ _DRY_RUN_SAMPLES: list[tuple[str, dict[str, object]]] = [
 
 @router.post("/api/config/security/preview")
 async def preview_security_config(body: dict | None = None):
-    """Run sample tool decisions against a proposed (or current) policy config."""
+    """Run sample tool decisions against a proposed (or current) policy config.
+
+    C8b-1: ``make_preview_engine()`` ensures dry-run never pollutes the global
+    death_switch tracker (DENY samples like ``rm -rf /`` no longer drive a
+    real user into readonly mode after 3 saves). Both the proposed-config and
+    current-config branches now produce a fresh ad-hoc engine; the global
+    singleton is never mutated.
+    """
     from pathlib import Path as _P
 
     from openakita.core.policy_v2 import (
         PolicyContext,
-        PolicyEngineV2,
         SessionRole,
         ToolCallEvent,
     )
     from openakita.core.policy_v2.enums import ConfirmationMode
+    from openakita.core.policy_v2.global_engine import make_preview_engine
 
     proposed_security = (body or {}).get("security") if isinstance(body, dict) else None
 
@@ -1512,11 +1519,9 @@ async def preview_security_config(body: dict | None = None):
             from openakita.core.policy_v2.loader import load_policies_from_dict
 
             cfg, _report = load_policies_from_dict({"security": proposed_security}, strict=False)
-            engine = PolicyEngineV2(config=cfg)
+            engine = make_preview_engine(cfg)
         else:
-            from openakita.core.policy_v2 import get_engine_v2
-
-            engine = get_engine_v2()
+            engine = make_preview_engine()
     except Exception as exc:
         return {"status": "error", "message": f"构建预览引擎失败: {exc}"}
 

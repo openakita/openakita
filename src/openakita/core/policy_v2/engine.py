@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 from .classifier import ApprovalClassifier, ClassificationResult
 from .context import PolicyContext, ReplayAuthorization, TrustedPathOverride
+from .death_switch import get_death_switch_tracker
 from .enums import (
     ApprovalClass,
     ConfirmationMode,
@@ -59,6 +60,8 @@ from .models import (
 from .safety_immune_defaults import expand_builtin_immune_paths
 from .schema import PolicyConfigV2
 from .shell_risk import ShellRiskLevel
+from .skill_allowlist import get_skill_allowlist_manager
+from .user_allowlist import UserAllowlistManager
 from .zones import candidate_path_fields
 
 if TYPE_CHECKING:
@@ -166,6 +169,14 @@ class PolicyEngineV2:
         # ``unattended.default_strategy`` 是 Pydantic Literal，已校验过合法值
         self._unattended_default: str = str(self._config.unattended.default_strategy)
 
+        # C8b-1: user allowlist manager 与 engine 一对一（持久化白名单 CRUD）。
+        # skill allowlist / death switch 是 process-wide singleton，不随 engine 实例变。
+        self._user_allowlist = UserAllowlistManager(self._config)
+        # C8b-1: ``count_in_death_switch`` flag 让 dry-run preview 引擎可以跳过计数
+        # （preview API 构造的 ad-hoc engine 不应污染全局 readonly_mode 计数）。
+        # 默认 True；preview API 在构造后显式置 False。
+        self.count_in_death_switch: bool = True
+
     # ============================================================
     # Public API
     # ============================================================
@@ -202,6 +213,17 @@ class PolicyEngineV2:
             )
 
         self._maybe_audit(decision, event, ctx)
+        # C8b-1: 决策落定后才记入 death_switch tracker；
+        # dry-run preview engine 把 ``count_in_death_switch`` 置 False 跳过计数。
+        if self.count_in_death_switch:
+            ds_cfg = self._config.death_switch
+            get_death_switch_tracker().record_decision(
+                action=decision.action.value,
+                tool_name=event.tool,
+                enabled=ds_cfg.enabled,
+                threshold=ds_cfg.threshold,
+                total_multiplier=ds_cfg.total_multiplier,
+            )
         return decision
 
     def evaluate_message_intent(
@@ -245,6 +267,15 @@ class PolicyEngineV2:
     def stats(self) -> dict[str, int]:
         with self._lock:
             return dict(self._stats)
+
+    # ------------------------------------------------------------------
+    # Manager 访问入口（C8b-1）
+    # ------------------------------------------------------------------
+
+    @property
+    def user_allowlist(self) -> UserAllowlistManager:
+        """Engine-scoped 持久化白名单 manager。"""
+        return self._user_allowlist
 
     # ============================================================
     # evaluate_tool_call: 12-step decision chain
@@ -750,7 +781,29 @@ class PolicyEngineV2:
         event: ToolCallEvent,
         ctx: PolicyContext,
     ) -> str | None:
-        """Step 9 stub —— C8 接入 v1 _check_allowlists 的等价物。"""
+        """Step 9（C8b-1）—— 持久化用户白名单 + 临时 skill 授权。
+
+        命中即放行（CONFIRM → ALLOW relax），与 v1 ``_check_allowlists`` +
+        ``_is_skill_allowed`` 行为一致。**bypass 边界**已由调用顺序保证：
+        - safety_immune（step 3）/ owner_only（step 4）/ channel_compat
+          （step 5）/ matrix DENY（step 6 短路）都在本步之前，不可绕过
+        - shell DENY 由 classifier shell_risk + matrix 提前拦截（step 6）
+        - death_switch 在本步之后，但 readonly 时 step 10 直接 DENY
+          所以 user_allowlist relax 只在 base_action == CONFIRM 时被调用
+        """
+        del ctx  # 持久化白名单只看 (tool, params)，与上下文无关
+        # 持久化白名单
+        entry = self._user_allowlist.match(event.tool, event.params)
+        if entry is not None:
+            needs_sb = bool(entry.get("needs_sandbox", False))
+            return f"persistent_allowlist match (needs_sandbox={needs_sb})"
+
+        # 临时 skill 授权（process-wide singleton）
+        skill_mgr = get_skill_allowlist_manager()
+        if skill_mgr.is_allowed(event.tool):
+            granted_by = skill_mgr.granted_by(event.tool)
+            return f"skill_allowlist by {','.join(granted_by) or '<anon>'}"
+
         return None
 
     def _check_death_switch(
@@ -758,8 +811,24 @@ class PolicyEngineV2:
         ctx: PolicyContext,
         klass: ApprovalClass,
     ) -> DecisionAction | None:
-        """Step 10 stub —— C8 接入连续 deny 触发只读。"""
-        return None
+        """Step 10（C8b-1）—— 连续 deny 触发只读模式。
+
+        命中条件：tracker.is_readonly_mode() == True 且 ApprovalClass 是
+        mutating/destructive 类（read 类放行——v1 ``_readonly_mode`` 检查同样
+        只 DENY 非 READ op）。
+
+        计数侧：见 ``_evaluate_tool_call_impl`` 末尾对 tracker.record_decision
+        的调用——决策落定后才计数，避免 step 10 自己刚 DENY 就立刻自我放大。
+        """
+        del ctx  # death_switch 是 process-wide 状态，与 ctx 无关
+        if not self._config.death_switch.enabled:
+            return None
+        if not get_death_switch_tracker().is_readonly_mode():
+            return None
+        # 只对会改状态的类 DENY；read 类（含 search）放行
+        if klass in _READONLY_CLASSES_FOR_DEATH_SWITCH:
+            return None
+        return DecisionAction.DENY
 
     def _effective_unattended_strategy(self, ctx: PolicyContext) -> str:
         """计算生效 unattended strategy：ctx override > config default。
@@ -913,6 +982,12 @@ _READONLY_CLASSES: frozenset[ApprovalClass] = frozenset(
         ApprovalClass.READONLY_SEARCH,
     }
 )
+
+# C8b-1: death_switch step 在 readonly 模式下应放行的类。
+# 与 v1 行为对齐——v1 ``_readonly_mode`` 检查只 DENY 非 READ op
+# （``OpType.READ`` 通过 ``_tool_to_optype``）。v2 用 ApprovalClass，把
+# READONLY_SEARCH 也算入（v1 没单独区分但行为一致：grep/glob/search 都属 READ）。
+_READONLY_CLASSES_FOR_DEATH_SWITCH: frozenset[ApprovalClass] = _READONLY_CLASSES
 
 
 def _is_readonly_class(klass: ApprovalClass) -> bool:
