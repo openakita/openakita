@@ -2785,6 +2785,127 @@ class MessageGateway:
             except Exception as e:
                 logger.error(f"Error handling message: {e}", exc_info=True)
 
+    def _parse_org_command(self, text: str, session: Session | None = None) -> tuple[str, str] | None:
+        stripped = (text or "").strip()
+        if not stripped:
+            return None
+        lowered = stripped.lower()
+        for prefix in ("/org ", "/组织 "):
+            if lowered.startswith(prefix):
+                rest = stripped[len(prefix):].strip()
+                if not rest:
+                    return None
+                if rest.lower().startswith("bind ") or rest.lower().startswith("绑定 "):
+                    return None
+                parts = rest.split(maxsplit=1)
+                if len(parts) < 2:
+                    return None
+                return parts[0], parts[1].strip()
+        for prefix in ("@组织 ", "@org "):
+            if lowered.startswith(prefix):
+                org_id = session.get_metadata("bound_org_id") if session else ""
+                task = stripped[len(prefix):].strip()
+                if org_id and task:
+                    return str(org_id), task
+        return None
+
+    async def _try_handle_org_command(
+        self,
+        message: UnifiedMessage,
+        session: Session,
+        user_text: str,
+    ) -> bool:
+        text = (user_text or "").strip()
+        lowered = text.lower()
+        if lowered.startswith(("/org bind ", "/组织 绑定 ")):
+            parts = text.split(maxsplit=2)
+            if len(parts) < 3:
+                await self._send_response(message, "用法：/org bind <org_id>")
+                return True
+            session.set_metadata("bound_org_id", parts[2].strip())
+            self.session_manager.mark_dirty()
+            await self._send_response(message, f"已绑定组织：{parts[2].strip()}")
+            return True
+        if lowered in ("/org unbind", "/组织 解绑"):
+            session.set_metadata("bound_org_id", "")
+            self.session_manager.mark_dirty()
+            await self._send_response(message, "已取消当前 IM 会话的组织绑定。")
+            return True
+        if lowered in ("/org status", "/组织 状态"):
+            org_id = session.get_metadata("bound_org_id") or ""
+            await self._send_response(message, f"当前绑定组织：{org_id or '未绑定'}")
+            return True
+
+        parsed = self._parse_org_command(text, session)
+        if parsed is None:
+            return False
+        org_id, task = parsed
+
+        try:
+            from openakita.orgs.command_service import (
+                OrgCommandRequest,
+                OrgCommandSource,
+                OrgCommandSurface,
+                default_scope_for_surface,
+                get_command_service,
+            )
+
+            svc = get_command_service()
+            if svc is None:
+                await self._send_response(message, "组织命令服务尚未初始化，请稍后再试。")
+                return True
+
+            chat_type = message.chat_type or "private"
+            started = svc.submit(
+                OrgCommandRequest(
+                    org_id=org_id,
+                    content=task,
+                    source=OrgCommandSource(
+                        channel=message.channel,
+                        chat_id=message.chat_id,
+                        user_id=message.user_id,
+                        thread_id=message.thread_id,
+                        display_name=(message.metadata or {}).get("sender_name", ""),
+                    ),
+                    origin_surface=OrgCommandSurface.IM,
+                    output_scope=default_scope_for_surface(OrgCommandSurface.IM, chat_type=chat_type),
+                )
+            )
+            command_id = started["command_id"]
+            queue = svc.subscribe_summary(
+                command_id,
+                surface="im",
+                target=f"{message.channel}:{message.chat_id}:{message.user_id}",
+            )
+            try:
+                if chat_type != "group":
+                    await self._send_response(message, f"已向组织 {org_id} 下发指令，命令 ID：{command_id}")
+                while True:
+                    item = await queue.get()
+                    if item.get("type") == "org_progress":
+                        summary = item.get("summary") or ""
+                        if summary and chat_type != "group":
+                            await self._send_response(message, f"组织进度：{summary}")
+                        continue
+                    if item.get("type") == "org_command_done":
+                        result = item.get("result")
+                        error = item.get("error")
+                        if isinstance(result, dict):
+                            final_text = str(result.get("result") or result.get("error") or result)
+                        else:
+                            final_text = str(error or result or "组织命令已完成")
+                        session.add_message("user", text, message_id=message.id)
+                        session.add_message("assistant", final_text)
+                        self.session_manager.mark_dirty()
+                        await self._send_response(message, final_text)
+                        return True
+            finally:
+                svc.unsubscribe_summary(command_id, queue)
+        except Exception as exc:
+            logger.warning("[IM] org command failed: %s", exc, exc_info=True)
+            await self._send_response(message, f"组织命令提交失败：{_format_user_error(exc)}")
+            return True
+
     async def _handle_message(self, message: UnifiedMessage) -> None:
         """
         处理单条消息
@@ -3048,6 +3169,10 @@ class MessageGateway:
                 session.display_name = _msg_sender_name
             if _msg_chat_name and session.chat_name != _msg_chat_name:
                 session.chat_name = _msg_chat_name
+
+            org_handled = await self._try_handle_org_command(message, session, user_text)
+            if org_handled:
+                return
 
             # 4.1 多Bot绑定：将 adapter 配置的 agent_profile_id 写入新 session
             self._apply_bot_agent_profile(session, bot_namespace)

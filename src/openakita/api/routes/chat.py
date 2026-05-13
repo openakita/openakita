@@ -8,6 +8,7 @@ Chat route: POST /api/chat (SSE streaming)
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -1316,6 +1317,144 @@ async def _stream_chat(
                 )
 
 
+async def _stream_org_command_chat(
+    chat_request: ChatRequest,
+    *,
+    request: Request,
+    conversation_id: str,
+    client_id: str,
+    busy_generation: int,
+) -> AsyncIterator[str]:
+    """Stream a desktop-chat initiated org command as summarized SSE events."""
+
+    def _sse(event_type: str, data: dict | None = None) -> str:
+        from ...events import normalize_stream_event
+
+        payload = normalize_stream_event({"type": event_type, **(data or {})})
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    svc = getattr(request.app.state, "org_command_service", None)
+    session_manager = getattr(request.app.state, "session_manager", None)
+    org_id = chat_request.org_id or ""
+    target_node_id = chat_request.org_node_id or None
+    queue = None
+    command_id = ""
+
+    try:
+        if session_manager:
+            session = session_manager.get_session(
+                channel="desktop",
+                chat_id=conversation_id,
+                user_id="desktop_user",
+                create_if_missing=True,
+            )
+            if session:
+                session.set_metadata(
+                    "ui_org_state",
+                    {
+                        "orgMode": bool(chat_request.org_mode and chat_request.org_id),
+                        "orgId": org_id,
+                        "orgNodeId": target_node_id or "",
+                    },
+                )
+                if chat_request.message:
+                    session.add_message("user", chat_request.message)
+                session_manager.mark_dirty()
+
+        if svc is None:
+            yield _sse("error", {"message": "OrgCommandService not initialized"})
+            yield _sse("done")
+            return
+
+        from openakita.orgs.command_service import (
+            OrgCommandError,
+            OrgCommandRequest,
+            OrgCommandSource,
+            OrgCommandSurface,
+            default_scope_for_surface,
+        )
+
+        try:
+            started = svc.submit(
+                OrgCommandRequest(
+                    org_id=org_id,
+                    content=chat_request.message or "",
+                    target_node_id=target_node_id,
+                    source=OrgCommandSource(
+                        channel="desktop",
+                        chat_id=conversation_id,
+                        user_id="desktop_user",
+                        client_id=client_id,
+                    ),
+                    origin_surface=OrgCommandSurface.DESKTOP_CHAT,
+                    output_scope=default_scope_for_surface(OrgCommandSurface.DESKTOP_CHAT),
+                )
+            )
+        except OrgCommandError as exc:
+            yield _sse("error", {"message": str(exc), "org_id": org_id})
+            yield _sse("done")
+            return
+
+        command_id = started["command_id"]
+        queue = svc.subscribe_summary(
+            command_id,
+            surface="desktop_chat",
+            target=conversation_id,
+        )
+        yield _sse("org_command_started", {
+            "org_id": org_id,
+            "command_id": command_id,
+            "root_node_id": started.get("root_node_id", ""),
+        })
+
+        final_text = ""
+        progress_lines: list[str] = []
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30)
+            except TimeoutError:
+                yield _sse("heartbeat", {"org_id": org_id, "command_id": command_id})
+                continue
+
+            if item.get("type") == "org_progress":
+                summary = item.get("summary") or ""
+                if summary:
+                    progress_lines.append(str(summary))
+                    yield _sse("org_progress", item)
+                continue
+
+            if item.get("type") == "org_command_done":
+                result = item.get("result")
+                error = item.get("error")
+                if isinstance(result, dict):
+                    final_text = str(result.get("result") or result.get("error") or "")
+                if error:
+                    final_text = str(error)
+                yield _sse("org_command_done", item)
+                if final_text:
+                    progress_text = "\n".join(f"> {line}" for line in progress_lines)
+                    display_text = f"{progress_text}\n\n---\n\n{final_text}" if progress_text else final_text
+                    yield _sse("text_replace", {"content": display_text})
+                    if session_manager:
+                        session = session_manager.get_session(
+                            channel="desktop",
+                            chat_id=conversation_id,
+                            user_id="desktop_user",
+                            create_if_missing=True,
+                        )
+                        if session:
+                            session.add_message("assistant", final_text)
+                            session_manager.mark_dirty()
+                yield _sse("done")
+                return
+    finally:
+        if queue is not None and command_id and svc is not None:
+            svc.unsubscribe_summary(command_id, queue)
+        if client_id:
+            with contextlib.suppress(Exception):
+                await get_lifecycle_manager().finish(conversation_id, generation=busy_generation)
+
+
 @router.post("/api/chat")
 async def chat(request: Request, body: ChatRequest):
     """
@@ -1387,6 +1526,52 @@ async def chat(request: Request, body: ChatRequest):
     elif pending_response is not None:
         return pending_response
 
+    # ── Busy-lock check (via lifecycle manager) ──
+    lifecycle = get_lifecycle_manager()
+    busy_gen = 0
+    if client_id:
+        try:
+            conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
+        except Exception as exc:
+            return _chat_startup_error_response(
+                exc,
+                conversation_id=conversation_id,
+                request_id=request_id,
+                stage="conversation_lifecycle",
+            )
+        if conflict is not None:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "conversation_busy",
+                    "conversation_id": conversation_id,
+                    "busy_client_id": conflict.client_id,
+                    "busy_since": conflict.start_time,
+                    "message": "该会话正在其他终端进行中，请新建会话或稍后再试",
+                },
+            )
+
+    if body.org_mode and body.org_id:
+        body.conversation_id = conversation_id
+        sse_gen = _stream_org_command_chat(
+            body,
+            request=request,
+            conversation_id=conversation_id,
+            client_id=client_id,
+            busy_generation=busy_gen,
+        )
+        if is_dual_loop():
+            sse_gen = engine_stream(sse_gen)
+        return StreamingResponse(
+            sse_gen,
+            media_type="text/event-stream; charset=utf-8",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     chat_endpoint_names = _chat_endpoint_names()
     if not chat_endpoint_names:
         return JSONResponse(
@@ -1419,31 +1604,6 @@ async def chat(request: Request, body: ChatRequest):
         )
         body.endpoint = None
         body.endpoint_policy = "prefer"
-
-    # ── Busy-lock check (via lifecycle manager) ──
-    lifecycle = get_lifecycle_manager()
-    busy_gen = 0
-    if client_id:
-        try:
-            conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
-        except Exception as exc:
-            return _chat_startup_error_response(
-                exc,
-                conversation_id=conversation_id,
-                request_id=request_id,
-                stage="conversation_lifecycle",
-            )
-        if conflict is not None:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "error": "conversation_busy",
-                    "conversation_id": conversation_id,
-                    "busy_client_id": conflict.client_id,
-                    "busy_since": conflict.start_time,
-                    "message": "该会话正在其他终端进行中，请新建会话或稍后再试",
-                },
-            )
 
     if body.agent_profile_id:
         from openakita.agents.presets import SYSTEM_PRESETS

@@ -352,6 +352,11 @@ def create_app(
     app.state.org_manager = org_manager
     org_runtime = OrgRuntime(org_manager)
     app.state.org_runtime = org_runtime
+    from openakita.orgs.command_service import OrgCommandService, set_command_service
+
+    org_command_service = OrgCommandService(org_runtime, session_manager)
+    set_command_service(org_command_service)
+    app.state.org_command_service = org_command_service
 
     # Mount routes
     app.include_router(auth_routes.router, tags=["认证"])

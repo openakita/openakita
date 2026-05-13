@@ -1899,276 +1899,36 @@ export function ChatView({
       }
     }
 
-    if (endpoints.length === 0) {
-      notifyError(t("chat.noChatEndpointConfigured"));
-      return;
-    }
-
-    // @org: 前缀或组织模式 — 路由到组织 API
+    // @org: 前缀或组织模式 — 统一交给 /api/chat 的组织 SSE 摘要路径。
+    // 注意：这里不能再直接订阅全量 org:* WebSocket，否则聊天会泄露指挥台内部交互。
     const orgPrefixMatch = text.match(/^@org:(\S+?)(?:\/(\S+?))?\s+([\s\S]+)/);
-    if (orgPrefixMatch || (orgMode && selectedOrgId)) {
+    let orgRouteOverride: { orgId: string; nodeId: string | null; content: string } | null = null;
+    if (orgPrefixMatch) {
       let targetOrgId = selectedOrgId;
       let targetNodeId = selectedOrgNodeId;
       let msgContent = text;
-      if (orgPrefixMatch) {
-        const orgRef = orgPrefixMatch[1];
-        targetNodeId = orgPrefixMatch[2] || null;
-        msgContent = orgPrefixMatch[3];
-        const match = orgList.find(o => o.name.includes(orgRef) || o.id === orgRef);
-        if (match) {
-          targetOrgId = match.id;
-        } else {
-          notifyError(`未找到组织「${orgRef}」，请检查名称是否正确`);
-          return;
-        }
+      const orgRef = orgPrefixMatch[1];
+      targetNodeId = orgPrefixMatch[2] || null;
+      msgContent = orgPrefixMatch[3];
+      const match = orgList.find(o => o.name.includes(orgRef) || o.id === orgRef);
+      if (match) {
+        targetOrgId = match.id;
+      } else {
+        notifyError(`未找到组织「${orgRef}」，请检查名称是否正确`);
+        return;
       }
       if (targetOrgId) {
+        orgRouteOverride = { orgId: targetOrgId, nodeId: targetNodeId || null, content: msgContent };
         setOrgMode(true);
         setSelectedOrgId(targetOrgId);
         setSelectedOrgNodeId(targetNodeId || null);
-        const orgUserMsg: ChatMessage = { id: genId(), role: "user", content: text, timestamp: Date.now() };
-        const placeholderId = genId();
-        const orgOrgName = orgList.find(o => o.id === targetOrgId)?.name || targetOrgId;
-        const orgConvId = activeConvId;
-        const orgMsgsSnapshot: ChatMessage[] = [...messages, orgUserMsg, {
-          id: placeholderId, role: "assistant" as const,
-          content: "", streaming: true, timestamp: Date.now(),
-        }];
-        let orgMsgsLive = orgMsgsSnapshot;
-
-        const updateOrgMessages = (updater: (msgs: ChatMessage[]) => ChatMessage[]) => {
-          orgMsgsLive = updater(orgMsgsLive);
-          if (activeConvIdRef.current === orgConvId) {
-            setMessages(orgMsgsLive);
-          }
-        };
-
-        setMessages(orgMsgsSnapshot);
-        setInputValue("");
-        orgCommandPendingRef.current = true;
-        setOrgCommandPending(true);
-
-        const progressLines: string[] = [];
-        // 进度行 1s 去重：兜底 WebSocket 事件 fan-out（platform 已做事件级
-        // 去重，这里再加一层 UI 级保险，避免相邻同行被重复 push 到气泡）。
-        let lastProgressLine = "";
-        let lastProgressAtMs = 0;
-        let lastProgressAt = Date.now();
-        const PROGRESS_DEDUPE_MS = 1000;
-        const pushProgress = (line: string) => {
-          const now = Date.now();
-          if (line === lastProgressLine && now - lastProgressAtMs < PROGRESS_DEDUPE_MS) {
-            return;
-          }
-          lastProgressLine = line;
-          lastProgressAtMs = now;
-          lastProgressAt = now;
-          progressLines.push(line);
-          const preview = progressLines.slice(-8).map(l => `> ${l}`).join("\n");
-          updateOrgMessages((prev) => prev.map(m =>
-            m.id === placeholderId ? { ...m, content: preview } : m
-          ));
-        };
-
-        // Reset org flow panel for new command
-        setOrgNodeStates(new Map());
-        setOrgDelegations([]);
-        setOrgFlowPanelOpen(true);
-
-        const unsub = onWsEvent((event, raw) => {
-          const d = raw as Record<string, unknown> | null;
-          if (!d || d.org_id !== targetOrgId) return;
-          const nodeId = (d.node_id || d.from_node || "") as string;
-          const toNode = (d.to_node || "") as string;
-          if (event === "org:node_status") {
-            const st = d.status as string;
-            const task = (d.current_task || "") as string;
-            // Update node state for flow panel
-            setOrgNodeStates(prev => {
-              const m = new Map(prev);
-              m.set(nodeId, { status: st, task: task || undefined, ts: Date.now() });
-              return m;
-            });
-            if (st === "busy") {
-              pushProgress(`● **${nodeId}** 开始处理${task ? `：${task.slice(0, 60)}` : ""}`);
-            } else if (st === "idle") {
-              pushProgress(`✓ **${nodeId}** 完成`);
-            } else if (st === "error") {
-              pushProgress(`✗ **${nodeId}** 出错`);
-            }
-          } else if (event === "org:task_delegated") {
-            const task = (d.task || "") as string;
-            setOrgDelegations(prev => [...prev.slice(-20), { from: nodeId, to: toNode, task, ts: Date.now() }]);
-            pushProgress(`→ **${nodeId}** → **${toNode}** 分配任务：${(task as string).slice(0, 50)}`);
-          } else if (event === "org:message") {
-            const msgType = d.msg_type as string || "消息";
-            pushProgress(`→ **${nodeId}** → **${toNode}** ${msgType}`);
-          } else if (event === "org:escalation") {
-            pushProgress(`↑ **${nodeId}** 向上汇报`);
-          } else if (event === "org:blackboard_update") {
-            pushProgress(`~ **${nodeId}** 更新黑板`);
-          } else if (event === "org:task_complete") {
-            setOrgNodeStates(prev => {
-              const m = new Map(prev);
-              m.set(nodeId, { status: "done", ts: Date.now() });
-              return m;
-            });
-            pushProgress(`✓ **${nodeId}** 任务完成`);
-          } else if (event === "org:task_delivered") {
-            pushProgress(`⇢ **${nodeId}** 向 **${toNode || "上级"}** 提交交付物`);
-          } else if (event === "org:task_accepted") {
-            const acceptedBy = (d.accepted_by || "") as string;
-            pushProgress(`✓ **${acceptedBy || "上级"}** 已验收 **${nodeId}** 的交付物`);
-          } else if (event === "org:task_rejected") {
-            const rejectedBy = (d.rejected_by || "") as string;
-            const reason = ((d.reason || d.feedback || "") as string).slice(0, 80);
-            pushProgress(`! **${rejectedBy || "上级"}** 打回 **${nodeId}** 的交付物${reason ? `：${reason}` : ""}`);
-          } else if (event === "org:task_failed") {
-            const exitReason = (d.exit_reason || "") as string;
-            if (isSoftOrgExitReason(exitReason)) return;
-            const reason =
-              exitReason === "max_iterations" ? "达到迭代上限" :
-              exitReason === "loop_terminated" ? "被系统终止" :
-              "执行未完成";
-            pushProgress(`✗ **${nodeId}** ${reason}`);
-          } else if (event === "org:command_phase") {
-            const activeCmd = activeOrgCommandRef.current;
-            const eventCommandId = (d.command_id || "") as string;
-            if (!eventCommandId || !activeCmd || eventCommandId === activeCmd.commandId) {
-              pushProgress(`… ${formatOrgCommandPhase((d.phase || "") as string)}`);
-            }
-          } else if (event === "org:command_stuck_warning") {
-            const idleSecs = Number(d.idle_secs || 0);
-            pushProgress(`! 组织 ${idleSecs > 0 ? `${Math.round(idleSecs)} 秒` : "一段时间"}无新进展，仍在等待收口`);
-          } else if (event === "org:task_timeout") {
-            setOrgNodeStates(prev => {
-              const m = new Map(prev);
-              m.set(nodeId, { status: "timeout", ts: Date.now() });
-              return m;
-            });
-            pushProgress(`! **${nodeId}** 任务超时`);
-          }
-        });
-
-        try {
-          const submitRes = await safeFetch(`${apiBaseUrl}/api/orgs/${targetOrgId}/command`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: msgContent, target_node_id: targetNodeId }),
-          });
-          const submitData = await submitRes.json();
-          const commandId = submitData.command_id as string | undefined;
-
-          if (!commandId) {
-            const resultText = submitData.result || submitData.error || JSON.stringify(submitData);
-            const progressSummary = progressLines.length > 0
-              ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
-              : "";
-            updateOrgMessages((prev) => prev.map(m =>
-              m.id === placeholderId
-                ? { ...m, content: `${progressSummary}**[${orgOrgName}]** ${resultText}`, streaming: false }
-                : m
-            ));
-          } else {
-            activeOrgCommandRef.current = { orgId: targetOrgId, commandId };
-            let resolved = false;
-            const onDone = onWsEvent((evt, raw) => {
-              const d = raw as Record<string, unknown> | null;
-              if (evt !== "org:command_done" || !d || d.command_id !== commandId) return;
-              resolved = true;
-              const result = d.result as Record<string, unknown> | null;
-              const error = d.error as string | undefined;
-              const resultText = (result && (result.result || result.error)) || error || JSON.stringify(d);
-              const progressSummary = progressLines.length > 0
-                ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
-                : "";
-              updateOrgMessages((prev) => prev.map(m =>
-                m.id === placeholderId
-                  ? { ...m, content: `${progressSummary}**[${orgOrgName}]** ${resultText}`, streaming: false }
-                  : m
-              ));
-            });
-
-            const pollInterval = 5_000;
-            const stallThreshold = 60_000;
-            let lastPhase = "";
-
-            const pollStartTime = Date.now();
-            const MAX_POLL_WAIT_MS = 10 * 60 * 1000;
-
-            while (!resolved && (Date.now() - pollStartTime < MAX_POLL_WAIT_MS)) {
-              await new Promise(r => setTimeout(r, pollInterval));
-              if (resolved) break;
-              try {
-                const pollRes = await safeFetch(
-                  `${apiBaseUrl}/api/orgs/${targetOrgId}/commands/${commandId}`
-                );
-                const pollData = await pollRes.json();
-                const phase = (pollData.phase || pollData.status || "") as string;
-                const openChainCount = typeof pollData.open_chain_count === "number"
-                  ? pollData.open_chain_count
-                  : undefined;
-                if (pollData.status === "running" && phase && phase !== lastPhase) {
-                  lastPhase = phase;
-                  pushProgress(`… ${formatOrgCommandPhase(phase, openChainCount)}`);
-                }
-                if (pollData.warned_stuck && !lastPhase.includes("stuck")) {
-                  lastPhase = `${phase}:stuck`;
-                  pushProgress("! 组织长时间无新进展，仍在等待下级任务或最终汇总");
-                }
-                if (pollData.status === "done" || pollData.status === "error") {
-                  if (!resolved) {
-                    resolved = true;
-                    const resultText = pollData.result?.result || pollData.result?.error || pollData.error || JSON.stringify(pollData);
-                    const progressSummary = progressLines.length > 0
-                      ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
-                      : "";
-                    updateOrgMessages((prev) => prev.map(m =>
-                      m.id === placeholderId
-                        ? { ...m, content: `${progressSummary}**[${orgOrgName}]** ${resultText}`, streaming: false }
-                        : m
-                    ));
-                  }
-                }
-              } catch { /* poll failed, retry next cycle */ }
-
-              if (!resolved && Date.now() - lastProgressAt > stallThreshold) {
-                pushProgress("... 执行时间较长，组织仍在处理中...");
-                lastProgressAt = Date.now();
-              }
-            }
-
-            if (!resolved) {
-              resolved = true;
-              const progressSummary = progressLines.length > 0
-                ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
-                : "";
-              updateOrgMessages((prev) => prev.map(m =>
-                m.id === placeholderId
-                  ? { ...m, content: `${progressSummary}**[${orgOrgName}]** 命令执行超时（已等待 10 分钟），请稍后手动检查结果。`, streaming: false }
-                  : m
-              ));
-            }
-
-            onDone();
-          }
-        } catch (e: any) {
-          updateOrgMessages((prev) => prev.map(m =>
-            m.id === placeholderId
-              ? { ...m, content: `组织命令失败: ${e.message || e}`, streaming: false, role: "system" as const }
-              : m
-          ));
-        } finally {
-          unsub();
-          activeOrgCommandRef.current = null;
-          orgCommandPendingRef.current = false;
-          setOrgCommandPending(false);
-          if (orgConvId) {
-            saveMessagesToStorage(STORAGE_KEY_MSGS_PREFIX + orgConvId, orgMsgsLive);
-          }
-        }
-        return;
       }
+    }
+
+    const orgRouteActive = Boolean(orgRouteOverride || (orgMode && selectedOrgId));
+    if (endpoints.length === 0 && !orgRouteActive) {
+      notifyError(t("chat.noChatEndpointConfigured"));
+      return;
     }
 
     // 创建用户消息
@@ -2413,8 +2173,10 @@ export function ChatView({
 
     try {
       const effectiveMode = modeOverride ?? chatMode;
+      const effectiveOrgId = orgRouteOverride?.orgId || (orgMode && selectedOrgId ? selectedOrgId : null);
+      const effectiveOrgNodeId = orgRouteOverride ? orgRouteOverride.nodeId : (orgMode && selectedOrgId ? selectedOrgNodeId : null);
       const body: Record<string, unknown> = {
-        message: text,
+        message: orgRouteOverride?.content || text,
         conversation_id: convId,
         mode: effectiveMode,
         plan_mode: effectiveMode === "plan",
@@ -2423,9 +2185,9 @@ export function ChatView({
         thinking_mode: thinkingMode !== "auto" ? thinkingMode : null,
         thinking_depth: thinkingMode !== "off" ? thinkingDepth : null,
         agent_profile_id: selectedAgent,
-        org_mode: Boolean(orgMode && selectedOrgId),
-        org_id: orgMode && selectedOrgId ? selectedOrgId : null,
-        org_node_id: orgMode && selectedOrgId ? selectedOrgNodeId : null,
+        org_mode: Boolean(effectiveOrgId),
+        org_id: effectiveOrgId,
+        org_node_id: effectiveOrgNodeId,
         client_id: getClientId(),
       };
 
@@ -2583,6 +2345,31 @@ export function ChatView({
                   ));
                 }
                 continue;
+              case "org_command_started": {
+                const orgId = (event as any).org_id as string | undefined;
+                const commandId = (event as any).command_id as string | undefined;
+                if (orgId && commandId) {
+                  activeOrgCommandRef.current = { orgId, commandId };
+                  orgCommandPendingRef.current = true;
+                  setOrgCommandPending(true);
+                }
+                currentStreamStatus = t("chat.orgProcessing", "组织正在处理中...");
+                break;
+              }
+              case "org_progress": {
+                const summary = ((event as any).summary || "") as string;
+                if (summary) {
+                  currentStreamStatus = null;
+                  currentContent += `${currentContent ? "\n" : ""}> ${summary}`;
+                }
+                break;
+              }
+              case "org_command_done": {
+                activeOrgCommandRef.current = null;
+                orgCommandPendingRef.current = false;
+                setOrgCommandPending(false);
+                break;
+              }
               case "user_insert": {
                 const insertContent = (event.content || "").trim();
                 if (insertContent) {
