@@ -46,6 +46,116 @@ class RetrievalCandidate:
     raw_data: dict = field(default_factory=dict)
 
 
+@dataclass
+class RetrievalInput:
+    """Sanitized retrieval input shared by all retrieval paths."""
+
+    query: str
+    recent_messages: list[dict]
+    skip: bool = False
+    skip_reason: str = ""
+
+
+class MemoryQueryPreprocessor:
+    """Cheap query cleanup and retrieval gate before any DB/LLM work."""
+
+    _INJECTION_BLOCK_PATTERNS = (
+        r"(?is)##\s*相关记忆.*?(?=\n##|\Z)",
+        r"(?is)##\s*核心记忆.*?(?=\n##|\Z)",
+        r"(?is)##\s*关系型记忆.*?(?=\n##|\Z)",
+        r"(?is)<vault-context>.*?</vault-context>",
+        r"(?is)<memory>.*?</memory>",
+        r"(?is)\[系统提示\].*?(?=\n\n|\Z)",
+    )
+    _CONTROL_ONLY = frozenset(
+        {
+            "好",
+            "好的",
+            "可以",
+            "继续",
+            "嗯",
+            "收到",
+            "ok",
+            "yes",
+            "no",
+            "stop",
+            "停止",
+            "/stop",
+            "/cancel",
+            "/abort",
+        }
+    )
+    _KEEP_SHORT_HINTS = (
+        "这个",
+        "那个",
+        "刚才",
+        "上次",
+        "继续",
+        "文件",
+        "图片",
+        ".py",
+        ".ts",
+        ".md",
+        ".json",
+    )
+
+    @classmethod
+    def prepare(
+        cls,
+        query: str,
+        recent_messages: list[dict] | None = None,
+        *,
+        max_query_chars: int = 1200,
+        max_recent: int = 4,
+    ) -> RetrievalInput:
+        cleaned = cls.clean_query(query, max_chars=max_query_chars)
+        recent = cls.clean_recent_messages(recent_messages, max_recent=max_recent)
+        skip, reason = cls.should_skip_retrieval(cleaned, recent)
+        return RetrievalInput(query=cleaned, recent_messages=recent, skip=skip, skip_reason=reason)
+
+    @classmethod
+    def clean_query(cls, query: str, *, max_chars: int = 1200) -> str:
+        text = str(query or "")
+        for pattern in cls._INJECTION_BLOCK_PATTERNS:
+            text = re.sub(pattern, " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(text) > max_chars:
+            text = text[-max_chars:].strip()
+        return text
+
+    @classmethod
+    def clean_recent_messages(
+        cls,
+        recent_messages: list[dict] | None,
+        *,
+        max_recent: int = 4,
+        max_chars_per_message: int = 240,
+    ) -> list[dict]:
+        cleaned: list[dict] = []
+        for msg in (recent_messages or [])[-max_recent:]:
+            content = msg.get("content", "") if isinstance(msg, dict) else ""
+            if not isinstance(content, str) or not content.strip():
+                continue
+            text = cls.clean_query(content, max_chars=max_chars_per_message)
+            if text:
+                cleaned.append({"role": msg.get("role", ""), "content": text})
+        return cleaned
+
+    @classmethod
+    def should_skip_retrieval(cls, query: str, recent_messages: list[dict] | None = None) -> tuple[bool, str]:
+        text = (query or "").strip()
+        if not text:
+            return True, "empty"
+        lowered = text.lower()
+        if lowered in cls._CONTROL_ONLY:
+            return True, "control_only"
+        if len(text) <= 3 and not any(h in text for h in cls._KEEP_SHORT_HINTS):
+            return True, "too_short"
+        if len(text) <= 12 and not recent_messages and not any(h in lowered for h in cls._KEEP_SHORT_HINTS):
+            return True, "short_without_context"
+        return False, ""
+
+
 class RetrievalEngine:
     """多路召回 + 重排序的记忆检索引擎"""
 
@@ -80,6 +190,16 @@ class RetrievalEngine:
         self._scope_pairs: list[tuple[str, str, str, str]] = [
             ("user", "", "default", "default")
         ]
+        self._focus_terms: list[str] = []
+
+    def set_focus_terms(self, terms: list[str] | None) -> None:
+        """Set task-local session focus terms used only for reranking."""
+        seen: list[str] = []
+        for term in terms or []:
+            value = str(term).strip()
+            if value and value not in seen:
+                seen.append(value)
+        self._focus_terms = seen[:12]
 
     def set_scope_context(self, scope_pairs: list[tuple] | None = None) -> None:
         """Set the visible memory scopes for this retrieval engine."""
@@ -114,6 +234,13 @@ class RetrievalEngine:
         Returns:
             格式化的记忆文本, 适合注入 system prompt
         """
+        prepared = MemoryQueryPreprocessor.prepare(query, recent_messages)
+        if prepared.skip:
+            logger.debug("[Retrieval] skipped (%s): %r", prepared.skip_reason, query)
+            return ""
+
+        query = prepared.query
+        recent_messages = prepared.recent_messages
         decomposed = self._decompose_query(query, recent_messages)
         search_keywords = decomposed.get("keywords", [])
         intent = decomposed.get("intent", "general")
@@ -150,6 +277,13 @@ class RetrievalEngine:
         limit: int = 20,
     ) -> list[RetrievalCandidate]:
         """Return raw ranked candidates without formatting."""
+        prepared = MemoryQueryPreprocessor.prepare(query, recent_messages)
+        if prepared.skip:
+            logger.debug("[Retrieval] skipped candidates (%s): %r", prepared.skip_reason, query)
+            return []
+
+        query = prepared.query
+        recent_messages = prepared.recent_messages
         decomposed = self._decompose_query(query, recent_messages)
         search_keywords = decomposed.get("keywords", [])
         intent = decomposed.get("intent", "general")
@@ -848,6 +982,7 @@ class RetrievalEngine:
         query: str,
         persona: str | None = None,
     ) -> list[RetrievalCandidate]:
+        focus_terms = [t.lower() for t in self._focus_terms if t]
         for c in candidates:
             c.score = (
                 c.relevance * self.W_RELEVANCE
@@ -855,6 +990,11 @@ class RetrievalEngine:
                 + c.importance_score * self.W_IMPORTANCE
                 + c.access_frequency_score * self.W_ACCESS
             )
+            if focus_terms:
+                content_lower = c.content.lower()
+                focus_hits = sum(1 for term in focus_terms if term.lower() in content_lower)
+                if focus_hits:
+                    c.score *= min(1.35, 1.0 + 0.08 * focus_hits)
             if persona and persona in ("tech_expert", "jarvis"):
                 if c.memory_type in ("skill", "error"):
                     c.score *= 1.2

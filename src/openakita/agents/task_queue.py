@@ -38,6 +38,13 @@ class QueuedTask:
     session_key: str = field(default="", compare=False)
     payload: dict = field(default_factory=dict, compare=False)
     cancelled: bool = field(default=False, compare=False)
+    status: str = field(default="queued", compare=False)
+    parent_task_id: str = field(default="", compare=False)
+    blocked_by: list[str] = field(default_factory=list, compare=False)
+    locked_by: str = field(default="", compare=False)
+    locked_at: float = field(default=0.0, compare=False)
+    lease_expires_at: float = field(default=0.0, compare=False)
+    failure_reason: str = field(default="", compare=False)
 
 
 class TaskQueue:
@@ -66,10 +73,30 @@ class TaskQueue:
         self._total_completed = 0
         self._total_failed = 0
         self._total_cancelled = 0
+        self._task_index: dict[str, QueuedTask] = {}
 
     def set_handler(self, handler: Callable[[QueuedTask], Awaitable[Any]]) -> None:
         """Set the function that processes each task."""
         self._handler = handler
+
+    @staticmethod
+    def _audit_task(event: str, task: QueuedTask, reason: str = "") -> None:
+        try:
+            from openakita.core.audit_logger import get_audit_logger
+
+            get_audit_logger().log_event(
+                "task_transition",
+                {
+                    "transition": event,
+                    "task_id": task.task_id,
+                    "session_key": task.session_key,
+                    "agent_profile_id": task.agent_profile_id,
+                    "status": task.status,
+                    "reason": reason,
+                },
+            )
+        except Exception:
+            pass
 
     async def start(self) -> None:
         """Start the queue worker."""
@@ -127,11 +154,29 @@ class TaskQueue:
         )
         async with self._lock:
             heapq.heappush(self._heap, task)
+            self._task_index[task.task_id] = task
             self._results[task.task_id] = asyncio.get_running_loop().create_future()
             self._total_enqueued += 1
         self._not_empty.set()
+        self._audit_task("queued", task)
         logger.debug(f"[TaskQueue] Enqueued {task.task_id} (priority={priority.name})")
         return task.task_id
+
+    def mark_done(self, task_id: str, *, reason: str = "") -> bool:
+        task = self._task_index.get(task_id)
+        if not task:
+            return False
+        unfinished_children = [
+            child.task_id
+            for child in self._task_index.values()
+            if child.parent_task_id == task_id and child.status not in ("done", "failed", "cancelled")
+        ]
+        if unfinished_children:
+            task.blocked_by = unfinished_children
+            return False
+        task.status = "done"
+        self._audit_task("done", task, reason)
+        return True
 
     async def cancel(self, task_id: str) -> bool:
         """Cancel a queued or active task."""
@@ -139,15 +184,22 @@ class TaskQueue:
             for t in self._heap:
                 if t.task_id == task_id and not t.cancelled:
                     t.cancelled = True
+                    t.status = "cancelled"
+                    t.failure_reason = "cancelled"
                     self._total_cancelled += 1
                     fut = self._results.get(task_id)
                     if fut and not fut.done():
                         fut.cancel()
+                    self._audit_task("cancelled", t, "queued_cancelled")
                     return True
         # Check active tasks
         active = self._active.get(task_id)
         if active and not active.done():
             active.cancel()
+            if task := self._task_index.get(task_id):
+                task.status = "cancelled"
+                task.failure_reason = "cancelled"
+                self._audit_task("cancelled", task, "active_cancelled")
             self._total_cancelled += 1
             return True
         return False
@@ -176,6 +228,7 @@ class TaskQueue:
                 continue  # Go back and check heap under lock
 
             if task.cancelled:
+                task.status = "cancelled"
                 fut = self._results.pop(task.task_id, None)
                 if fut and not fut.done():
                     fut.cancel()
@@ -199,17 +252,30 @@ class TaskQueue:
         try:
             if self._handler is None:
                 raise RuntimeError("No handler set")
+            task.status = "running"
+            task.locked_by = "task_queue_worker"
+            task.locked_at = time.time()
+            task.lease_expires_at = task.locked_at + 300
+            self._audit_task("running", task)
             result = await self._handler(task)
             if fut and not fut.done():
                 fut.set_result(result)
+            task.status = "done"
+            self._audit_task("done", task)
             self._total_completed += 1
         except asyncio.CancelledError:
             if fut and not fut.done():
                 fut.cancel()
+            task.status = "cancelled"
+            task.failure_reason = "cancelled"
+            self._audit_task("cancelled", task)
             self._total_cancelled += 1
         except Exception as e:
             if fut and not fut.done():
                 fut.set_exception(e)
+            task.status = "failed"
+            task.failure_reason = str(e)
+            self._audit_task("failed", task, str(e))
             self._total_failed += 1
             logger.error(f"[TaskQueue] Task {task.task_id} failed: {e}")
 
@@ -223,4 +289,9 @@ class TaskQueue:
             "total_failed": self._total_failed,
             "total_cancelled": self._total_cancelled,
             "max_concurrent": self._max_concurrent,
+            "stale_leases": sum(
+                1
+                for task in self._task_index.values()
+                if task.status == "running" and task.lease_expires_at and task.lease_expires_at < time.time()
+            ),
         }

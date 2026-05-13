@@ -1755,6 +1755,23 @@ async def chat(request: Request, body: ChatRequest):
     effective_mode = body.mode
     if body.plan_mode and effective_mode == "agent":
         effective_mode = "plan"
+    if session is not None and body.permission_mode:
+        # v1.27.x introduced per-turn product permission_mode via the old
+        # PolicyEngine singleton. Policy V2 keeps that state on the session
+        # so build_policy_context can consume it without reviving core.policy.
+        _mode_map = {
+            "plan": "strict",
+            "default": "default",
+            "accept_edits": "accept_edits",
+            "dont_ask": "dont_ask",
+            "bypass_permissions": "trust",
+        }
+        session.confirmation_mode_override = _mode_map.get(body.permission_mode, "default")
+        if session_manager is not None:
+            try:
+                session_manager.mark_dirty()
+            except Exception:
+                logger.debug("[Chat API] Failed to persist permission mode override", exc_info=True)
 
     msg_preview = (body.message or "")[:100]
     att_count = len(body.attachments) if body.attachments else 0

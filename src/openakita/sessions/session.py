@@ -9,6 +9,7 @@ Session 代表一个独立的对话上下文，包含:
 """
 
 import logging
+import re
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -149,6 +150,9 @@ class SessionContext:
     # Task checkpoints — emitted by reasoning_engine.reason_stream for resume / timeline
     # 上限由 append_task_checkpoint 控制，避免长会话无限增长。
     task_checkpoints: list[dict] = field(default_factory=list)
+    focus_terms: list[str] = field(default_factory=list)
+    focus_updated_at: str | None = None
+    precompact_snapshot: dict[str, Any] = field(default_factory=dict)
     _msg_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     _DEDUP_TIME_WINDOW_SECONDS = 30
@@ -189,7 +193,66 @@ class SessionContext:
                     **metadata,
                 }
             )
+            if role == "user" and content:
+                self.update_focus_terms(content)
             return True
+
+    _FOCUS_FILE_RE = re.compile(
+        r"(?:[A-Za-z]:[\\/][^\s\"'<>|]+|[\w./\\-]+\.(?:py|ts|tsx|js|jsx|md|json|yaml|yml|toml|rs|go))"
+    )
+    _FOCUS_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}|[\u4e00-\u9fff]{2,12}")
+    _FOCUS_STOP_WORDS = {
+        "帮我",
+        "这个",
+        "那个",
+        "一下",
+        "继续",
+        "看看",
+        "请问",
+        "如何",
+        "怎么",
+        "需要",
+        "实现",
+        "修改",
+        "the",
+        "and",
+        "for",
+        "with",
+    }
+
+    def update_focus_terms(self, content: str, *, max_terms: int = 12) -> None:
+        """Update lightweight session focus terms; never writes long-term memory."""
+        text = content.strip()
+        if not text:
+            return
+        if len(self.messages) - self.current_topic_start <= 1:
+            self.focus_terms = []
+
+        candidates: list[str] = []
+        candidates.extend(m.group(0).strip(".,，。;；") for m in self._FOCUS_FILE_RE.finditer(text))
+        for match in self._FOCUS_WORD_RE.finditer(text):
+            term = match.group(0).strip()
+            if len(term) < 2 or term.lower() in self._FOCUS_STOP_WORDS:
+                continue
+            if (
+                any(ch.isupper() for ch in term)
+                or "_" in term
+                or "-" in term
+                or "/" in term
+                or any(
+                    keyword in term
+                    for keyword in ("任务", "记忆", "权限", "审计", "会话", "路径", "压缩", "队列")
+                )
+            ):
+                candidates.append(term)
+
+        merged: list[str] = []
+        for term in [*candidates, *self.focus_terms]:
+            if term and term not in merged:
+                merged.append(term)
+        self.focus_terms = merged[:max_terms]
+        if candidates:
+            self.focus_updated_at = datetime.now().isoformat()
 
     def mark_topic_boundary(self) -> None:
         """在当前消息位置标记话题边界。
@@ -199,6 +262,8 @@ class SessionContext:
         boundary_idx = len(self.messages)
         self.topic_boundaries.append(boundary_idx)
         self.current_topic_start = boundary_idx
+        self.focus_terms = []
+        self.focus_updated_at = datetime.now().isoformat()
 
     def get_current_topic_messages(self) -> list[dict]:
         """获取当前话题的消息（从最后一个边界开始）。"""
@@ -291,6 +356,9 @@ class SessionContext:
             "delegation_chain": self.delegation_chain,
             "sub_agent_records": self.sub_agent_records,
             "task_checkpoints": self.task_checkpoints,
+            "focus_terms": self.focus_terms,
+            "focus_updated_at": self.focus_updated_at,
+            "precompact_snapshot": self.precompact_snapshot,
         }
 
     @classmethod
@@ -312,6 +380,9 @@ class SessionContext:
             delegation_chain=data.get("delegation_chain", []),
             sub_agent_records=data.get("sub_agent_records", []),
             task_checkpoints=data.get("task_checkpoints", []),
+            focus_terms=data.get("focus_terms", []),
+            focus_updated_at=data.get("focus_updated_at"),
+            precompact_snapshot=data.get("precompact_snapshot", {}),
         )
 
 

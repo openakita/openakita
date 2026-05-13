@@ -904,6 +904,14 @@ async def run_interactive():
                 except Exception:
                     pass
                 agent._cli_session = cs
+                cs.context.focus_terms = list(getattr(cs.context, "focus_terms", []) or [])
+                cs.context.task_checkpoints = list(getattr(cs.context, "task_checkpoints", []) or [])
+                cs.context.delegation_chain = list(getattr(cs.context, "delegation_chain", []) or [])
+                if getattr(cs.context, "precompact_snapshot", None):
+                    try:
+                        agent.memory_manager.save_precompact_snapshot(cs.context.precompact_snapshot)
+                    except Exception:
+                        logger.debug("[CLI] precompact snapshot hydration skipped", exc_info=True)
                 mc = len(cs.context.get_messages())
                 if mc > 0 and not _cli_force_new_session:
                     console.print(f"[green]✓[/green] 已恢复上次会话 ({mc} 条消息)")
@@ -1302,6 +1310,7 @@ def show_skills():
 
 
 _cli_force_new_session = False
+_cli_permission_mode = "default"
 
 
 def _apply_auto_confirm_flag(*, enabled: bool) -> None:
@@ -1352,14 +1361,23 @@ def main(
             "(mutating_global) and safety_immune paths still require confirm."
         ),
     ),
+    permission_mode: str = typer.Option(
+        "default",
+        "--permission-mode",
+        help=(
+            "权限模式兼容参数。Policy V2 以 POLICIES.yaml confirmation.mode "
+            "为准；自动化场景请优先使用 --auto-confirm。"
+        ),
+    ),
 ):
     """
     OpenAkita - 全能自进化AI助手
 
     直接运行进入交互模式
     """
-    global _cli_force_new_session
+    global _cli_force_new_session, _cli_permission_mode
     _cli_force_new_session = new_session
+    _cli_permission_mode = permission_mode
 
     # C18 Phase D: translate the CLI flag into the Phase C ENV var.
     # MUST happen before any policy_v2 import in a sub-command, hence we
@@ -1403,6 +1421,12 @@ def main(
                 "  • [bold]openakita serve[/bold] - 启动 API 服务并通过 /api/chat 调用"
             )
             raise typer.Exit(1)
+
+        if _cli_permission_mode != "default":
+            console.print(
+                "[yellow]--permission-mode 是旧 Policy V1 兼容参数；"
+                "当前 Policy V2 请通过配置页或 POLICIES.yaml 调整 confirmation.mode。[/yellow]"
+            )
 
         # 运行交互式 CLI
         asyncio.run(run_interactive())

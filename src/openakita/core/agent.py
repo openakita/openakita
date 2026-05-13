@@ -4732,7 +4732,11 @@ class Agent:
                     conversation_safe_id,
                     user_id=getattr(session, "user_id", None) if session else None,
                     workspace_id=memory_workspace_id,
+                    focus_terms=getattr(getattr(session, "context", None), "focus_terms", None),
                 )
+                attach_session = getattr(self.memory_manager, "attach_session_context", None)
+                if callable(attach_session):
+                    attach_session(session)
                 if session is not None:
                     session.set_metadata("memory_workspace_id", memory_workspace_id)
                 if hasattr(self, "_memory_handler"):

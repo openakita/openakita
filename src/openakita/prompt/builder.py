@@ -2091,6 +2091,15 @@ def _build_memory_section(
     if pinned_only:
         return "\n\n".join(parts)
 
+    snapshot_getter = getattr(memory_manager, "get_precompact_snapshot_context", None)
+    if snapshot_getter:
+        try:
+            snapshot_text = snapshot_getter(max_chars=1000)
+            if snapshot_text:
+                parts.append(f"## 压缩保护快照\n\n{snapshot_text}")
+        except Exception as exc:
+            logger.debug(f"[Memory] Precompact snapshot injection skipped: {exc}")
+
     # Layer 2: Core Memory (MEMORY.md — 用户基本信息 + 永久规则)
     from openakita.memory.types import MEMORY_MD_MAX_CHARS as _MD_MAX
 
