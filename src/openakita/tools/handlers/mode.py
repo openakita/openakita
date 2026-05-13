@@ -36,11 +36,15 @@ class ModeHandler:
         if target_mode not in valid_modes:
             return f"❌ 无效模式: '{target_mode}'。可选: {', '.join(valid_modes)}"
 
-        session = getattr(self.agent, "session", None)
-        # C8 §2.2 fix: ``Session`` dataclass 没有 ``mode`` 字段，老实现 hasattr
-        # 永远 False → switch_mode 静默失败。改写 ``session.session_role``，
-        # adapter.build_policy_context 把它 coerce 成 SessionRole 注入下一轮
-        # PolicyContext.session_role，让矩阵决策真用上新 mode。
+        # C8a §2.2 fix: Agent 对外暴露的当前 session 字段是 ``_current_session``
+        # (TLS-keyed property, see agent.py:1140)，**不是** ``session``。原实现
+        # ``getattr(self.agent, "session", None)`` 在生产环境永远返回 None，
+        # 导致 switch_mode 总是走下面的 ``_pending_mode_switch`` 死路径
+        # （而那个 flag 全代码库无人消费）。
+        # 现在直读 ``_current_session``，确保 session_role 真的落到 Session
+        # 对象上，下一轮 evaluate_via_v2 调 ``build_policy_context(session=...)``
+        # 时就会把它 coerce 成 SessionRole 注入 PolicyContext.session_role。
+        session = getattr(self.agent, "_current_session", None)
         if session is not None and hasattr(session, "session_role"):
             current_mode = session.session_role or "agent"
             if current_mode == target_mode:
@@ -59,9 +63,18 @@ class ModeHandler:
                 msg += f"\n原因: {reason}"
             return msg
 
-        logger.warning("No session found for mode switch, setting flag for next iteration")
-        self.agent._pending_mode_switch = target_mode
-        return f"Mode switch to '{target_mode}' will take effect on the next iteration."
+        # session 真不存在（一次性 task / 测试环境 / 早期 init）：明确告知
+        # 用户而非假装"下一轮生效"——之前的死分支就是写一个无人读的 flag
+        # 然后欺骗用户，C8a 删除。
+        logger.warning(
+            "switch_mode: no current session bound to agent; mode change cannot be "
+            "applied. Caller must invoke from within chat_with_session(_stream) so "
+            "Agent._current_session is set."
+        )
+        return (
+            f"⚠️ 无法切换到 '{target_mode}' 模式：当前没有活动 session "
+            f"绑定到 agent。请在对话上下文中调用此工具。"
+        )
 
 
 def create_handler(agent: "Agent"):

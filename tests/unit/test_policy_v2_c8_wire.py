@@ -305,18 +305,46 @@ class TestSwitchModeWriteThrough:
 
     @pytest.mark.asyncio
     async def test_switch_mode_handler_writes_session_role(self) -> None:
-        """ModeHandler._switch_mode should set session.session_role (not .mode)."""
+        """ModeHandler._switch_mode should set ``_current_session.session_role``
+        (which is the actual TLS-keyed property on Agent, see agent.py:1140).
+        Earlier C8a draft mistakenly used ``agent.session`` and only passed
+        because MagicMock invents attributes — production has no ``.session``.
+        """
         from openakita.sessions.session import Session
         from openakita.tools.handlers.mode import ModeHandler
 
-        agent = MagicMock()
-        agent.session = Session.create(channel="cli", chat_id="c", user_id="u")
-        handler = ModeHandler(agent)
+        # MagicMock(spec=...) would require importing Agent and is overkill;
+        # we use a plain object so attribute access is realistic (no auto-mock).
+        class _FakeAgent:
+            _current_session = None
+
+        fake_agent = _FakeAgent()
+        fake_agent._current_session = Session.create(channel="cli", chat_id="c", user_id="u")
+        handler = ModeHandler(fake_agent)
 
         result = await handler._switch_mode({"target_mode": "plan", "reason": "test"})
 
-        assert agent.session.session_role == "plan"
+        assert fake_agent._current_session.session_role == "plan"
         assert "Plan" in result
+
+    @pytest.mark.asyncio
+    async def test_switch_mode_no_session_bound_returns_clear_error(self) -> None:
+        """When agent._current_session is None (e.g. one-shot task before
+        chat_with_session binds), switch_mode must return a clear error
+        instead of silently writing a flag nobody reads (the pre-C8a
+        ``_pending_mode_switch`` dead branch)."""
+        from openakita.tools.handlers.mode import ModeHandler
+
+        class _FakeAgent:
+            _current_session = None
+
+        fake_agent = _FakeAgent()
+        handler = ModeHandler(fake_agent)
+
+        result = await handler._switch_mode({"target_mode": "plan"})
+
+        assert "无法切换" in result
+        assert not hasattr(fake_agent, "_pending_mode_switch")
 
     def test_build_policy_context_honors_session_session_role(
         self, tmp_path: Path
