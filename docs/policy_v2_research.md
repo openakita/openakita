@@ -957,7 +957,8 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C8b-1 | v2 补能：UserAllowlist + SkillAllowlist + DeathSwitch + step 9/10 实装 | ✅ Done | §6.6 + 「C8b-1 实施记录」 |
 | C8b-2 | 配置常量与 SecurityConfig 子段读取迁移：`policy_v2/defaults.py` + `reset_policy_v2_layer` + audit_logger/checkpoint 改读 v2 | ✅ Done | §6.6 + 「C8b-2 实施记录」 |
 | C8b-3 | UI confirm facade 完成切换 + confirmed_cache 决策：`policy_v2/session_allowlist.py` + `policy_v2/confirm_resolution.py` + 7 callsite 直连 v2 + `policy.py` 删 6 facade + `mark_confirmed` + 2 字段 + tool_executor 改 `tool_use_id` 去重 | ✅ Done | 「C8b-3 实施记录」 |
-| C8b-3..5 | （未启动）UI confirm 切换 / RiskGate 删除 / PolicyEngine class 删除 | ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划」|
+| C8b-4 | permission-mode shim 替换 + smart-mode 删除：`policy_v2/confirmation_mode.py` + 2 endpoint 直读 v2 + `policy.py` 删 `_frontend_mode` / `_session_allow_count` / `_SMART_ESCALATION_THRESHOLD` / smart-mode escalation block | ✅ Done | 「C8b-4 实施记录」 |
+| C8b-5 | （未启动）v1 `assert_tool_allowed` + RiskGate 整体删除 / PolicyEngine class 仅留 helper / v1-only 测试清理 | ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划 §F · C8b-5」|
 | C9a | SecurityView v2 适配（approval_class badge + IM owner UI + dry-run preview） | ✅ Done | §8 + R5-20 |
 | C9b | UI confirm bus 抽出（`core/ui_confirm_bus.py`），让 C8b 能安全删 v1 | ✅ Done | §6.6 + R5-22 |
 | C9c | tool_intent_preview / pending_approval_* / policy_config_reloaded SSE 事件（推迟到 C12 一起做） | ⏳ Deferred | §8 + R2-11 |
@@ -3153,6 +3154,100 @@ $ pytest tests/unit/
 5. **静态扫描 callsite 的 audit 价值**：`TestCallsiteMigrationStatic` 7 个静态测试 + `c8b3_audit.py D3` 同样的检查，双层守护——unit test 跑得快但 grep 命中可能漏；audit 跑得慢但能精确定位文件，两者互补。
 
 C8b-3 完成。**v1 `policy.py` UI confirm 状态机 100% 切除**（仅余 v1 RiskGate + assert_tool_allowed 路径，C8b-4 / C8b-5 处理）。可进入 **C8b-4（permission-mode `_frontend_mode` shim 替换 + 配合 `_session_allow_count` smart-mode 删除）** —— 详见「C8b 粒度化执行计划 §F · C8b-4 / C8b-5」。
+
+
+---
+
+## C8b-4 实施记录
+
+依据：「C8b 粒度化执行计划 §F · C8b-4 — permission-mode shim 替换 + smart-mode 删除（low-medium risk）」。
+
+### 1. Recon 摘要（commit 前）
+
+| 删除目标 | 数量 | 位置 |
+|---|---|---|
+| `_frontend_mode` 字段写 | 3 | `policy.py:609` (init), `:741` (YAML reload), `:832` (legacy load) |
+| `_frontend_mode` 字段读 | 2 | `config.py:1711` (GET), `:1744` (POST shim) |
+| `_session_allow_count` 字段写 | 3 | `policy.py:611` (init), `:1480` (`_on_allow` increment), `:1867` (reset_engine 复制) |
+| `_session_allow_count` 字段读 | 1 | `policy.py:1331` (smart-mode escalation 判断) |
+| `_SMART_ESCALATION_THRESHOLD` class const | 1 | `policy.py:590` |
+| smart-mode escalation 路径 | 1 | `policy.py:1330-1336`（`_check_command_risk` 内） |
+
+**关键发现**：
+- `_frontend_mode` 是单向同步字段——v1 YAML reload 三处写入只为让 GET endpoint 能读到，**v2 已经有 `PolicyConfigV2.confirmation.mode` 作为 SoT**，多余。
+- `_session_allow_count` smart-mode escalation 逻辑（连续 3 次 ALLOW → 第 4 次 MEDIUM 命令自动允许）**v2 完全没有对应概念**——v2 `MUTATING_SCOPED` 始终走 CONFIRM，无 escalation。删除即与 v2 行为对齐。
+- `assert_tool_allowed` 仅剩单测调用（生产代码无 caller，C8a 完成后已切到 v2）。删除 escalation 不影响生产功能。
+
+### 2. 实施步骤（按顺序）
+
+1. **新增 `policy_v2/confirmation_mode.py`**：
+   - `read_permission_mode_label() -> Literal["cautious"|"smart"|"yolo"]`：从 `get_config_v2().confirmation.mode` 拉取 v2 enum，按 `_V2_TO_V1_LABEL` dict 反向映射回 v1 product label。`ACCEPT_EDITS` 归并到 `"smart"`、`DONT_ASK` 归并到 `"yolo"`，避免 v2-only mode 把 UI 打崩。
+   - `coerce_v1_label_to_v2_mode(label: str) -> ConfirmationMode`：v1 → v2 正向映射（含 alias `yolo`/`trust`、`smart`/`default`、`cautious`/`strict`）。fail-safe 默认 `DEFAULT`。
+   - `read_permission_mode_label` fail-soft fallback：v2 layer 拉取失败 → 回到 `"yolo"`，避免 startup 早期 endpoint 直接 500。
+
+2. **`policy_v2/__init__.py`**：导出 2 个新 helper（`coerce_v1_label_to_v2_mode` + `read_permission_mode_label`）。
+
+3. **`api/routes/config.py` 端点迁移**：
+   - GET `/api/config/permission-mode`：去掉 `from openakita.core.policy import get_policy_engine` + `getattr(pe, "_frontend_mode", "yolo")`；改用 `read_permission_mode_label()` 直读 v2。
+   - POST `/api/config/permission-mode`：删除 `pe._frontend_mode = mode` 二次写。POST 流程依靠"YAML 持久化 → `reset_policy_v2_layer()` 触发 lazy re-load"链路，v2 自然看到新值。
+
+4. **`policy.py` 字段删除**（共 8 处可执行语句）：
+   - `_SMART_ESCALATION_THRESHOLD: int = 3` class const → 删
+   - `self._frontend_mode: str = self._config.confirmation.mode` (init) → 删
+   - `self._session_allow_count: int = 0` (init) → 删
+   - `self._frontend_mode = cc.mode` (YAML reload) → 删
+   - `self._frontend_mode = self._config.confirmation.mode` (legacy load) → 删
+   - smart-mode escalation 块 (line 1330-1336) → 删，留 doc 注释解释行为变化
+   - `self._session_allow_count += 1` in `_on_allow` → 删，保留 `_consecutive_denials = 0` 重置
+   - `refreshed._session_allow_count = previous._session_allow_count` in `reset_policy_engine` → 删
+   - **次生**：`mode = self._config.confirmation.mode` 局部变量（escalation 删除后变 unused）→ 删 + ruff 验证
+
+5. **`tests/unit/test_security.py`**：2 个 v1 单测（`test_default_frontend_mode_matches_trust_mode` / `test_load_confirmation_mode`）改为只断言 `engine.config.confirmation.mode`（v1 SoT），不再 assert `_frontend_mode`。
+
+### 3. 行为变化（用户可感知）
+
+| 场景 | C8b-3 之前（v1 + smart-mode） | C8b-4 之后 |
+|---|---|---|
+| smart 模式连续 3 次 ALLOW 后跑 `npm install` | 第 4 次自动 ALLOW（escalation 触发） | 始终 CONFIRM（与 v2 行为对齐） |
+| permission-mode endpoint GET 时 v2 lazy load 还没初始化 | 读 v1 `_frontend_mode` 字段（init 时已设） | 读 v2 helper，fail-soft 回 `"yolo"` |
+| permission-mode endpoint POST | YAML 写 + reset_v2 + 二次写 v1 字段 | YAML 写 + reset_v2（v1 字段已删） |
+| `assert_tool_allowed` MEDIUM 命令在 smart 模式 | escalation 触发条件下偶尔 ALLOW | 一律 CONFIRM |
+
+**安全方向**：smart-mode escalation 删除 = 收紧安全（连续 ALLOW 不再"奖励"自动信任）。生产代码无 caller，影响仅限 v1 单测路径。
+
+### 4. 验证
+
+| 验证维度 | 项目 | 结果 |
+|---|---|---|
+| 新单测 | `test_policy_v2_c8b4_confirmation_mode.py` | 21 PASS |
+| 全 v2 + chat 单测 | 9 个测试文件 | 291 PASS, 12 SKIP（C8b-3 v1-only 已 skip） |
+| 全 unit 套件 | `tests/unit/` | 2741 PASS, 16 SKIP, **5 pre-existing failures**（与 C8b-4 无关，已 baseline 验证） |
+| audit | `c8b4_audit.py` D1-D6 | ALL 6 PASS |
+| 全 audit | 10 脚本 × 35 维度 | ALL PASS |
+| ruff | `policy.py` + `confirmation_mode.py` + `__init__.py` + `config.py` + 3 测试/audit | ALL CLEAN |
+
+**Pre-existing failures（与 C8b-4 无关）**：
+- `test_remaining_qa_fixes.py::test_workspace_delete_is_confirmed_even_in_trust_mode`
+- `test_remaining_qa_fixes.py::test_unknown_mcp_write_tool_requires_confirmation`
+- `test_reasoning_engine_user_handoff.py::test_tool_evidence_required_blocks_implicit_long_reply_without_tools` 等 3 个
+
+git stash 后跑同样 5 个仍失败，确认是 baseline 问题。`test_org_setup_tool::TestDeleteOrg` + `test_wework_ws_adapter::TestAdapterProperties::test_upload_media_requires_connection` 是 order-dependent flaky test（隔离跑 PASS）。
+
+### 5. Bug 清单（实施过程中）
+
+1. **`mode` 局部变量未用**（ruff F841）：smart-mode escalation 块删除后 `mode = self._config.confirmation.mode` 变 dead code。原本只在 escalation 判断里读，escalation 删了变量也无用。修复：删变量 + 加注释解释删除原因。
+2. **C8b-4 audit grep 假阳性**：`assert "pe._frontend_mode = mode" not in cfg_src` 命中 docstring 里的反引号引用文本。修复：用正则 `r"^\s+pe\._frontend_mode\s*=\s*"` 限定为 Python 语句级匹配（开头空白 + 非反引号包裹）。
+3. **C8b-4 单测假阳性**：`test_smart_escalation_block_source_removed` 同样 grep 命中 doc 注释。修复：改为运行时 `hasattr` + `pytest.raises(AttributeError)` 的动态守卫，而不是源码 grep。
+
+### 6. 工程教训
+
+1. **删除 v1 字段前先核实 SoT 与依赖**：`_frontend_mode` 删之前确认 v2 `PolicyConfigV2.confirmation.mode` 已是 SoT；`_session_allow_count` 删之前确认 v2 没有对应 escalation 概念。两个删除都不影响 v2 决策正确性。
+2. **smart-mode escalation 是"安全 vs UX"的隐式权衡**：v1 设计为了"少打扰用户"加了自动升信任，但实质上是**用安全换 UX**。v2 设计明确选择"安全优先"——MUTATING 始终 CONFIRM。本次删除让 v1 行为追赶 v2，**统一安全模型**。
+3. **doc 注释会污染 source-grep**：6 行注释 + 删除字段时记得动态测试（hasattr / runtime check）比源码 grep 更可靠。grep 适合 "这个 import 还在不在"，不适合 "这个赋值语句还在不在"。
+4. **fail-soft fallback 的成本**：`read_permission_mode_label` 加了 `try/except` 默认回 `"yolo"`——单测里 monkeypatch v2 让其抛异常验证 fallback。生产 startup 早期或测试场景下 v2 layer 可能未初始化，没有 fallback endpoint 就直接 500。
+5. **v1 单测的灰色地带**：`test_security.py:TestYAMLNewFields` 这种单测既测 v1 配置加载又测内部字段。删字段时改成只测 SoT (`config.confirmation.mode`)，保留配置加载行为覆盖，删字段断言。这种"窄改"比"全部 skip"更优——保留覆盖率。
+
+C8b-4 完成。**v1 `_frontend_mode` shim + `_session_allow_count` + smart-mode escalation 100% 删除**。可进入 **C8b-5（v1 `assert_tool_allowed` + RiskGate 整体删除 + PolicyEngine class 仅留 helper）** —— 详见「C8b 粒度化执行计划 §F · C8b-5」。
 
 
 ---

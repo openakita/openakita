@@ -587,8 +587,6 @@ class PolicyEngine:
     所有判定都会记录到审计系统。
     """
 
-    _SMART_ESCALATION_THRESHOLD: int = 3
-
     def __init__(self, config: SecurityConfig | None = None) -> None:
         self._config = config or self._make_default_config()
         self._audit_log: list[dict[str, Any]] = []
@@ -600,15 +598,16 @@ class PolicyEngine:
         # ``policy_v2.session_allowlist.SessionAllowlistManager`` 承担；TTL 缓
         # 存层 v2 弃用（"allow_once" 由 reasoning_engine 一次性放行处理，无需
         # 中间缓存）。
+        # C8b-4: ``_frontend_mode`` shim 已删除——permission-mode endpoint 直读
+        # ``policy_v2.read_permission_mode_label()``。``_session_allow_count`` +
+        # ``_SMART_ESCALATION_THRESHOLD`` + smart-mode escalation 一并删除
+        # （v2 没有 escalation 概念，MUTATING_SCOPED 始终 CONFIRM；v1 路径仅供
+        # ``assert_tool_allowed`` 单测使用，C8b-5 删 v1 RiskGate 时一起清理）。
         # P1-5: 并发保护锁
         self._cache_lock = asyncio.Lock()
         self._pending_lock = asyncio.Lock()
         # F7: Temporary allowlists granted by skill activation.
         self._skill_allowlists: dict[str, set[str]] = {}
-        # P3-3: 前端安全模式 (synced to confirmation.mode)
-        self._frontend_mode: str = self._config.confirmation.mode
-        # Smart-mode session trust escalation counter
-        self._session_allow_count: int = 0
         # C9b: UI confirm state moved to ``ui_confirm_bus`` (module-level
         # singleton, survives engine reset). Push our configured TTL so the
         # bus's GC matches user settings.
@@ -738,7 +737,6 @@ class PolicyEngine:
                 # backward compat: auto_confirm boolean → mode
                 cc.auto_confirm = c.get("auto_confirm", False)
                 cc.mode = "yolo" if cc.auto_confirm else "smart"
-            self._frontend_mode = cc.mode
 
         # command_patterns
         cp = sec.get("command_patterns", {})
@@ -829,7 +827,6 @@ class PolicyEngine:
         auto = data.get("auto_confirm", False)
         self._config.confirmation.auto_confirm = auto
         self._config.confirmation.mode = "yolo" if auto else "smart"
-        self._frontend_mode = self._config.confirmation.mode
 
     # ----- Main entry point -------------------------------------------------
 
@@ -1314,8 +1311,9 @@ class PolicyEngine:
             self._on_deny(tool_name, params, result)
             return result
 
-        mode = self._config.confirmation.mode
-
+        # C8b-4: ``mode = self._config.confirmation.mode`` 删除——以前用于 smart
+        # mode escalation 分支判断，escalation 路径已与 ``_session_allow_count``
+        # 一并清除，本变量也成了 unused。
         if risk == RiskLevel.HIGH:
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,
@@ -1327,13 +1325,9 @@ class PolicyEngine:
             return result
 
         if risk == RiskLevel.MEDIUM:
-            if mode == "smart":
-                if self._session_allow_count >= self._SMART_ESCALATION_THRESHOLD:
-                    self._on_allow(tool_name, params)
-                    return PolicyResult(
-                        decision=PolicyDecision.ALLOW,
-                        metadata={"risk_level": risk.value, "auto_approved": "smart_escalation"},
-                    )
+            # C8b-4: smart-mode 自动升信任路径已删除——v2 没有 escalation 概念
+            # （MUTATING_SCOPED 始终 CONFIRM）。v1 ``mode == "smart"`` 现在与
+            # cautious/yolo 一样：MEDIUM 风险一律走 CONFIRM。
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,
                 reason=f"此命令可能修改系统配置或安装软件，需要确认: {command[:120]}",
@@ -1475,9 +1469,11 @@ class PolicyEngine:
         self._audit(tool_name, params, result)
 
     def _on_allow(self, tool_name: str, params: dict[str, Any] | None = None) -> None:
+        # C8b-4: ``_session_allow_count += 1`` removed alongside smart-mode
+        # escalation (no more "after 3 allows, auto-escalate trust"). v2 never
+        # had this counter; v1 ``assert_tool_allowed`` simply does not escalate.
         if tool_name not in ("read_file", "list_directory", "grep", "glob"):
             self._consecutive_denials = 0
-            self._session_allow_count += 1
         if params is not None:
             result = PolicyResult(decision=PolicyDecision.ALLOW, reason="", policy_name="")
             self._audit(tool_name, params, result)
@@ -1864,5 +1860,6 @@ def reset_policy_engine() -> None:
         # which automatically survives policy engine reset. The
         # field-by-field copy that used to be here is no longer needed.
         refreshed._skill_allowlists = previous._skill_allowlists
-        refreshed._session_allow_count = previous._session_allow_count
+        # C8b-4: ``_session_allow_count`` deleted along with smart-mode
+        # escalation (no more cross-instance counter to preserve).
 

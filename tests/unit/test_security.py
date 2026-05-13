@@ -745,10 +745,11 @@ class TestDeathSwitchMultiplier:
 
 class TestYAMLNewFields:
     def test_default_frontend_mode_matches_trust_mode(self):
+        """C8b-4: ``_frontend_mode`` shim deleted; rely on
+        ``_config.confirmation.mode`` (single source of truth in v1) and the
+        v2 ``read_permission_mode_label`` reverse-mapping for product label."""
         engine = PolicyEngine()
-
         assert engine.config.confirmation.mode == "yolo"
-        assert engine._frontend_mode == "yolo"
 
     def test_load_confirmation_mode(self, tmp_path):
         yaml_path = tmp_path / "POLICIES.yaml"
@@ -762,7 +763,6 @@ security:
         engine.load_from_yaml(yaml_path)
         assert engine.config.confirmation.mode == "yolo"
         assert engine.config.confirmation.confirm_ttl == 300.0
-        assert engine._frontend_mode == "yolo"
 
     def test_auto_confirm_backward_compat(self, tmp_path):
         yaml_path = tmp_path / "POLICIES.yaml"

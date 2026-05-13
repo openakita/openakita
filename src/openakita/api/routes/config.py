@@ -1703,12 +1703,16 @@ async def write_security_sandbox(body: SecuritySandboxUpdate):
 
 @router.get("/api/config/permission-mode")
 async def read_permission_mode():
-    """读取当前安全模式（前端 cautious/smart/trust 与后端同步）。"""
-    try:
-        from openakita.core.policy import get_policy_engine
+    """读取当前安全模式（前端 cautious/smart/trust 与后端同步）。
 
-        pe = get_policy_engine()
-        mode = _normalize_permission_mode(getattr(pe, "_frontend_mode", "yolo"))
+    C8b-4：从 v2 ``PolicyConfigV2.confirmation.mode`` 直读，并用
+    ``read_permission_mode_label`` 反向映射到 v1 product label——v1
+    ``_frontend_mode`` shim 已删除。
+    """
+    try:
+        from openakita.core.policy_v2 import read_permission_mode_label
+
+        mode = read_permission_mode_label()
         return {"mode": mode, "label": _permission_label(mode)}
     except Exception as e:
         logger.debug(f"[Config API] permission-mode read fallback: {e}")
@@ -1721,17 +1725,19 @@ class _PermissionModeBody(BaseModel):
 
 @router.post("/api/config/permission-mode")
 async def write_permission_mode(body: _PermissionModeBody):
-    """设置安全模式并持久化到 YAML。"""
+    """设置安全模式并持久化到 YAML。
+
+    C8b-4：v1 ``pe._frontend_mode = mode`` 二次写已删除。POST 流程完全靠
+    "YAML 持久化 → reset_policy_v2_layer() 触发 lazy re-load"链路：v2 lazy
+    load 会重新读 YAML 并构造新的 ``PolicyConfigV2.confirmation.mode``，
+    后续 ``read_permission_mode_label()`` 自然看到新值。
+    """
     mode = _normalize_permission_mode(body.mode)
     if mode not in ("cautious", "smart", "yolo"):
         return {"status": "error", "message": f"无效的安全模式: {mode}"}
     try:
-        # ``get_policy_engine`` 仍保留：``_frontend_mode`` shim 是 v1 attribute，
-        # Q2 决议保留独立直到 C8b-5 才折叠 / 删除。reset 改用 v2 helper。
-        from openakita.core.policy import get_policy_engine
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        # Persist to YAML
         data = _read_policies_yaml()
         if data is None:
             return {"status": "error", "message": "无法读取当前配置文件，安全模式未切换"}
@@ -1740,8 +1746,6 @@ async def write_permission_mode(body: _PermissionModeBody):
         if not _write_policies_yaml(data):
             return {"status": "error", "message": "配置写入失败，安全模式未切换"}
         reset_policy_v2_layer()
-        pe = get_policy_engine()
-        pe._frontend_mode = mode
         logger.info(f"[Config API] Permission mode set to: {mode}")
         return {"status": "ok", "mode": mode, "label": _permission_label(mode)}
     except Exception as e:

@@ -26,6 +26,10 @@ from .adapter import (
 )
 from .classifier import ApprovalClassifier, ClassificationResult
 from .confirm_resolution import apply_resolution
+from .confirmation_mode import (
+    coerce_v1_label_to_v2_mode,
+    read_permission_mode_label,
+)
 from .context import (
     PolicyContext,
     ReplayAuthorization,
@@ -237,4 +241,7 @@ __all__ = [
     "apply_resolution",
     "get_session_allowlist_manager",
     "reset_session_allowlist_manager",
+    # C8b-4 v1 _frontend_mode shim replacement
+    "coerce_v1_label_to_v2_mode",
+    "read_permission_mode_label",
 ]
