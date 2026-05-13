@@ -10,7 +10,7 @@ import {
   IM_LOGO_MAP,
   IconAlertCircle,
 } from "../icons";
-import { Activity, ArrowRight, Loader2, Play, Square, RotateCcw, Power, PowerOff, FolderOpen, Server, Download, Zap } from "lucide-react";
+import { Activity, ArrowRight, Loader2, Play, Square, RotateCcw, Power, PowerOff, FolderOpen, Server, Download, Zap, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -120,6 +120,13 @@ export function StatusView(props: StatusViewProps) {
   // multiple times in parallel and each one queues its own loading toast,
   // producing the "toast spam" the user complained about.
   const [startingService, setStartingService] = useState(false);
+  const [memorySubsystem, setMemorySubsystem] = useState<{
+    status: string;
+    reason?: string | null;
+    details?: string | null;
+    repair_available?: boolean;
+  } | null>(null);
+  const [repairOpen, setRepairOpen] = useState(false);
 
   const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
   const ws = workspaces.find((w) => w.id === effectiveWsId) || workspaces[0] || null;
@@ -160,9 +167,36 @@ export function StatusView(props: StatusViewProps) {
     };
   }, [serviceStatus?.running, backendBootPhase]);
 
+  useEffect(() => {
+    if (!serviceStatus?.running) {
+      setMemorySubsystem(null);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await safeFetch(`${httpApiBase()}/api/health`, { signal: AbortSignal.timeout(3000) });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setMemorySubsystem(data.memory_subsystem || null);
+      } catch {
+        // health polling is best-effort; main heartbeat owns service state
+      }
+    };
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [serviceStatus?.running, httpApiBase]);
+
   const permissionDenied =
     !!runtimeLastError?.lastError &&
     runtimeLastError.lastError.startsWith("RUNTIME_PERMISSION_DENIED|");
+  const memoryDegraded = memorySubsystem?.status === "degraded";
+  const memoryRepairRestartRequired =
+    memorySubsystem?.status === "repair_completed_restart_required";
   const im = [
     { k: "TELEGRAM_ENABLED", name: "Telegram", required: ["TELEGRAM_BOT_TOKEN"] },
     { k: "FEISHU_ENABLED", name: t("status.feishu"), required: ["FEISHU_APP_ID", "FEISHU_APP_SECRET"] },
@@ -225,6 +259,56 @@ export function StatusView(props: StatusViewProps) {
             </div>
           </CardContent>
         </Card>
+      )}
+      {(memoryDegraded || memoryRepairRestartRequired) && (
+        <Card className="gap-0 border-amber-500/40 bg-amber-500/10 py-0 shadow-sm">
+          <CardContent className="flex flex-wrap items-center gap-4 px-5 py-4">
+            <Wrench className="h-5 w-5 shrink-0 text-amber-600" />
+            <div className="min-w-[200px] flex-1">
+              <div className="mb-1 text-sm font-semibold text-amber-700 dark:text-amber-400">
+                {memoryRepairRestartRequired
+                  ? t("status.memoryRepairRestartTitle")
+                  : t("status.memoryDegradedTitle")}
+              </div>
+              <div className="text-xs text-amber-700/80 dark:text-amber-400/80">
+                {memoryRepairRestartRequired
+                  ? t("status.memoryRepairRestartDesc")
+                  : t("status.memoryDegradedDesc", {
+                      reason: memorySubsystem?.reason || t("status.unknown"),
+                    })}
+              </div>
+            </div>
+            {memoryRepairRestartRequired ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  if (effectiveWsId) {
+                    await doStopService(effectiveWsId);
+                    await doStartLocalService(effectiveWsId);
+                  }
+                }}
+              >
+                {t("status.restart")}
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setRepairOpen(true)}>
+                {t("status.memoryRepairButton")}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      {repairOpen && (
+        <MemoryRepairDialog
+          apiBase={httpApiBase()}
+          onClose={() => setRepairOpen(false)}
+          onDone={async () => {
+            setRepairOpen(false);
+            await refreshStatus();
+          }}
+          t={t}
+        />
       )}
       {/* Banner: RUNTIME_PERMISSION_DENIED — 企业 AD / 杀软"勒索软件防护"拦截
           runtime 目录创建时，给用户一条可操作的指引。在"未启动" banner 前
@@ -780,6 +864,163 @@ export function StatusView(props: StatusViewProps) {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+function MemoryRepairDialog({
+  apiBase,
+  onClose,
+  onDone,
+  t,
+}: {
+  apiBase: string;
+  onClose: () => void;
+  onDone: () => Promise<void> | void;
+  t: (key: string, vars?: Record<string, unknown>) => string;
+}) {
+  const [status, setStatus] = useState<any>(null);
+  const [selected, setSelected] = useState<string>("");
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+
+  const loadStatus = async () => {
+    const res = await safeFetch(`${apiBase}/api/memory/repair/status`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    setStatus(data);
+    const first = [...(data.backups || []), ...(data.snapshots || [])].find(
+      (x: any) => x.integrity === "ok",
+    );
+    if (first && !selected) setSelected(first.filename);
+  };
+
+  useEffect(() => {
+    loadStatus().catch((e) => notifyError(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBase]);
+
+  const runAction = async (action: "restore" | "recreate" | "run-recover") => {
+    if (!status?.confirmation_token) return;
+    if (action === "restore" && !selected) {
+      notifyError(t("status.memoryRepairSelectBackup"));
+      return;
+    }
+    const confirmed = window.confirm(
+      action === "recreate"
+        ? t("status.memoryRepairConfirmRecreate")
+        : t("status.memoryRepairConfirm"),
+    );
+    if (!confirmed) return;
+    setBusyAction(action);
+    const toastId = notifyLoading(t("status.memoryRepairRunning"));
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (IS_TAURI) {
+        headers["X-OpenAkita-Desktop-Token"] =
+          await invoke<string>("openakita_desktop_session_token");
+      }
+      const body =
+        action === "restore"
+          ? { source: selected, confirmation_token: status.confirmation_token }
+          : { confirmation_token: status.confirmation_token };
+      const res = await safeFetch(`${apiBase}/api/memory/repair/${action}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      notifySuccess(t("status.memoryRepairDone"));
+      await onDone();
+    } catch (e) {
+      notifyError(t("status.memoryRepairFailed", { err: String(e) }));
+      await loadStatus().catch(() => undefined);
+    } finally {
+      dismissLoading(toastId);
+      setBusyAction(null);
+    }
+  };
+
+  const candidates = [...(status?.backups || []), ...(status?.snapshots || [])];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <Card className="w-full max-w-2xl border-border/80 shadow-xl">
+        <CardHeader>
+          <CardTitle>{t("status.memoryRepairTitle")}</CardTitle>
+          <CardDescription>{t("status.memoryRepairDesc")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!status ? (
+            <div className="text-sm text-muted-foreground">
+              <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
+              {t("status.checking")}
+            </div>
+          ) : (
+            <>
+              <div className="rounded border border-border/60 bg-muted/30 p-3 text-xs">
+                <div>{t("status.memoryRepairReason")}: {status.reason || "-"}</div>
+                <div className="break-all">DB: {status.db_path}</div>
+              </div>
+              <div className="max-h-56 overflow-auto rounded border border-border/60">
+                {candidates.length === 0 ? (
+                  <div className="p-3 text-sm text-muted-foreground">
+                    {t("status.memoryRepairNoBackups")}
+                  </div>
+                ) : (
+                  candidates.map((b: any) => (
+                    <label key={b.filename} className="flex cursor-pointer items-center gap-3 border-b border-border/40 px-3 py-2 text-sm last:border-b-0">
+                      <input
+                        type="radio"
+                        name="memory-backup"
+                        checked={selected === b.filename}
+                        onChange={() => setSelected(b.filename)}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{b.filename}</span>
+                      <Badge variant={b.integrity === "ok" ? "default" : "destructive"}>
+                        {b.integrity}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {Math.round((b.size_bytes || 0) / 1024)} KB
+                      </span>
+                    </label>
+                  ))
+                )}
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="outline" onClick={onClose} disabled={!!busyAction}>
+                  {t("config.cancel")}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => runAction("restore")}
+                  disabled={!!busyAction || !selected}
+                >
+                  {busyAction === "restore" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {t("status.memoryRepairRestore")}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => runAction("run-recover")}
+                  disabled={!!busyAction || status.recover_method === "unavailable"}
+                >
+                  {busyAction === "run-recover" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {t("status.memoryRepairRecover")}
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => runAction("recreate")}
+                  disabled={!!busyAction}
+                >
+                  {busyAction === "recreate" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {t("status.memoryRepairRecreate")}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

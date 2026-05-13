@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import sqlite3
 import threading
@@ -26,6 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .exceptions import MemoryStorageUnavailable
 from .types import normalize_tags
 
 logger = logging.getLogger(__name__)
@@ -49,8 +51,29 @@ def get_shared_storage(db_path: str | Path) -> MemoryStorage:
         return inst
 
 
+def checkpoint_and_close_all_storages(timeout_mode: bool = True) -> None:
+    """Best-effort WAL checkpoint + close for all process-level storages."""
+    with _instance_lock:
+        storages = list(_instance_registry.values())
+    for storage in storages:
+        try:
+            storage.checkpoint_and_close(truncate=timeout_mode)
+        except Exception as e:
+            logger.warning("[MemoryStorage] Checkpoint/close failed for %s: %s", storage._db_path, e)
+
+
 def _is_db_locked(e: Exception) -> bool:
     return isinstance(e, sqlite3.OperationalError) and "locked" in str(e).lower()
+
+
+def _is_corruption_error(e: Exception) -> bool:
+    msg = str(e).lower()
+    return (
+        "malformed" in msg
+        or "corrupt" in msg
+        or "not a database" in msg
+        or "database disk image is malformed" in msg
+    )
 
 
 class MemoryStorage:
@@ -82,23 +105,77 @@ class MemoryStorage:
     # ======================================================================
 
     def _init_db(self) -> None:
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
-
+        conn: sqlite3.Connection | None = None
         try:
+            if self._is_sync_folder_path() and os.environ.get("OPENAKITA_ALLOW_SYNC_FOLDER_DB") != "1":
+                raise MemoryStorageUnavailable(
+                    "path_in_sync_folder",
+                    details=str(self._db_path),
+                )
+            conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            conn.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            self._conn = conn
+
+            self.quick_check_or_raise()
             current_version = self._get_schema_version()
+            if current_version > _SCHEMA_VERSION:
+                raise MemoryStorageUnavailable(
+                    "schema_too_new",
+                    details=f"database schema v{current_version} is newer than supported v{_SCHEMA_VERSION}",
+                    extra={"schema_version": current_version, "supported_version": _SCHEMA_VERSION},
+                )
             if current_version < _SCHEMA_VERSION:
                 self._migrate_schema(current_version)
             else:
                 self._create_tables()
+        except MemoryStorageUnavailable:
+            self._cleanup_failed_init(conn)
+            raise
+        except sqlite3.DatabaseError as e:
+            self._cleanup_failed_init(conn)
+            if _is_corruption_error(e):
+                raise MemoryStorageUnavailable("schema_corrupt", details=str(e)) from e
+            msg = str(e).lower()
+            if "disk i/o error" in msg or "disk is full" in msg:
+                raise MemoryStorageUnavailable("disk_full", details=str(e)) from e
+            raise MemoryStorageUnavailable("unknown_db_error", details=str(e)) from e
+        except OSError as e:
+            self._cleanup_failed_init(conn)
+            if getattr(e, "errno", None) == 13:
+                raise MemoryStorageUnavailable("permission_denied", details=str(e)) from e
+            if getattr(e, "errno", None) == 28:
+                raise MemoryStorageUnavailable("disk_full", details=str(e)) from e
+            raise MemoryStorageUnavailable("filesystem_error", details=str(e)) from e
         except Exception as e:
+            self._cleanup_failed_init(conn)
             logger.error(f"[MemoryStorage] Schema init failed: {e}", exc_info=True)
             raise
 
         logger.debug(f"MemoryStorage initialized: {self._db_path} (schema v{_SCHEMA_VERSION})")
+
+    def _cleanup_failed_init(self, conn: sqlite3.Connection | None) -> None:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        self._conn = None
+
+    def quick_check_or_raise(self) -> None:
+        if self._conn is None:
+            raise MemoryStorageUnavailable("not_open", details="database connection is not open")
+        try:
+            row = self._conn.execute("PRAGMA quick_check").fetchone()
+        except sqlite3.DatabaseError as e:
+            if _is_corruption_error(e):
+                raise MemoryStorageUnavailable("schema_corrupt", details=str(e)) from e
+            raise
+        result = str(row[0] if row else "").strip().lower()
+        if result != "ok":
+            raise MemoryStorageUnavailable("schema_corrupt", details=result or "quick_check failed")
 
     def _get_schema_version(self) -> int:
         try:
@@ -108,15 +185,29 @@ class MemoryStorage:
             cur = self._conn.execute("SELECT value FROM _schema_meta WHERE key = 'version'")
             row = cur.fetchone()
             return int(row[0]) if row else 0
-        except Exception:
+        except sqlite3.DatabaseError as e:
+            if _is_corruption_error(e):
+                raise MemoryStorageUnavailable("schema_corrupt", details=str(e)) from e
+            logger.warning(f"[MemoryStorage] Could not read schema version, assuming v0: {e}")
+            return 0
+        except Exception as e:
+            logger.warning(f"[MemoryStorage] Could not read schema version, assuming v0: {e}")
             return 0
 
-    def _set_schema_version(self, version: int) -> None:
-        self._conn.execute(
+    def _set_schema_version(
+        self,
+        version: int,
+        conn: sqlite3.Connection | None = None,
+        *,
+        commit: bool = True,
+    ) -> None:
+        c = conn or self._conn
+        c.execute(
             "INSERT OR REPLACE INTO _schema_meta (key, value) VALUES ('version', ?)",
             (str(version),),
         )
-        self._conn.commit()
+        if commit:
+            c.commit()
 
     def _migrate_schema(self, from_version: int) -> None:
         """Migrate from old schema to current version.
@@ -127,23 +218,38 @@ class MemoryStorage:
         """
         logger.info(f"[MemoryStorage] Migrating schema v{from_version} → v{_SCHEMA_VERSION}")
 
+        mig_conn: sqlite3.Connection | None = None
         try:
             self._backup_before_migration(from_version)
-            self._create_tables()
+            mig_conn = sqlite3.connect(str(self._db_path), isolation_level=None)
+            mig_conn.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
+            mig_conn.execute("PRAGMA foreign_keys=ON")
+            mig_conn.execute("BEGIN IMMEDIATE")
+
+            self._create_tables(mig_conn, commit=False, include_fts=False)
 
             if from_version < 2:
-                self._migrate_v1_to_v2()
+                self._migrate_v1_to_v2(mig_conn, commit=False)
             if from_version < 3:
-                self._migrate_v2_to_v3()
+                self._migrate_v2_to_v3(mig_conn, commit=False)
 
-            self._set_schema_version(_SCHEMA_VERSION)
+            self._set_schema_version(_SCHEMA_VERSION, conn=mig_conn, commit=False)
+            mig_conn.execute("COMMIT")
+            self._create_fts_objects()
             logger.info("[MemoryStorage] Schema migration complete")
         except Exception:
             try:
-                self._conn.rollback()
+                if mig_conn is not None:
+                    mig_conn.execute("ROLLBACK")
             except Exception:
                 pass
             raise
+        finally:
+            if mig_conn is not None:
+                try:
+                    mig_conn.close()
+                except Exception:
+                    pass
 
     def _backup_before_migration(self, from_version: int) -> Path | None:
         """Create a best-effort SQLite backup before schema/data migration."""
@@ -157,19 +263,33 @@ class MemoryStorage:
             with sqlite3.connect(str(backup_path)) as dst:
                 self._conn.backup(dst)
             logger.info(f"[MemoryStorage] Pre-migration backup created: {backup_path}")
+            self._prune_backups(
+                pattern=f"{self._db_path.name}.bak.v*_to_v*.*",
+                keep=3,
+            )
             return backup_path
         except Exception as e:
             logger.warning(f"[MemoryStorage] SQLite backup API failed: {e}")
             try:
                 shutil.copy2(self._db_path, backup_path)
                 logger.info(f"[MemoryStorage] Pre-migration file backup created: {backup_path}")
+                self._prune_backups(
+                    pattern=f"{self._db_path.name}.bak.v*_to_v*.*",
+                    keep=3,
+                )
                 return backup_path
             except Exception as copy_error:
                 logger.warning(f"[MemoryStorage] Pre-migration backup skipped: {copy_error}")
                 return None
 
-    def _migrate_v1_to_v2(self) -> None:
+    def _migrate_v1_to_v2(
+        self,
+        conn: sqlite3.Connection | None = None,
+        *,
+        commit: bool = True,
+    ) -> None:
         """Add v2 columns to existing memories table."""
+        c = conn or self._conn
         new_columns = [
             ("subject", "TEXT DEFAULT ''"),
             ("predicate", "TEXT DEFAULT ''"),
@@ -181,14 +301,20 @@ class MemoryStorage:
         ]
         for col_name, col_def in new_columns:
             try:
-                self._conn.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_def}")
+                c.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_def}")
             except sqlite3.OperationalError:
                 pass  # column already exists
-        self._conn.commit()
+        if commit:
+            c.commit()
 
-    def _migrate_v2_to_v3(self) -> None:
+    def _migrate_v2_to_v3(
+        self,
+        conn: sqlite3.Connection | None = None,
+        *,
+        commit: bool = True,
+    ) -> None:
         """Add owner columns without making legacy desktop memories disappear."""
-        c = self._conn
+        c = conn or self._conn
         for col, default in [("user_id", "'default'"), ("workspace_id", "'default'")]:
             try:
                 c.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT DEFAULT {default}")
@@ -223,9 +349,16 @@ class MemoryStorage:
             END""")
         except sqlite3.OperationalError:
             pass
-        self._conn.commit()
+        if commit:
+            c.commit()
 
-    def _create_tables(self) -> None:
+    def _create_tables(
+        self,
+        conn: sqlite3.Connection | None = None,
+        *,
+        commit: bool = True,
+        include_fts: bool = True,
+    ) -> None:
         """Create all tables, indexes, FTS virtual tables and triggers.
 
         Execution is split into strict phases so that no index / trigger
@@ -235,7 +368,7 @@ class MemoryStorage:
           Phase 2 – CREATE INDEX  (all indexes, including cross-table)
           Phase 3 – FTS5 virtual tables + sync triggers (best-effort)
         """
-        c = self._conn
+        c = conn or self._conn
 
         # ==============================================================
         # Phase 1: CREATE TABLE — all regular tables first
@@ -298,39 +431,6 @@ class MemoryStorage:
             "ON memories(workspace_id, user_id, scope, scope_owner)"
         )
 
-        # --- FTS5 full-text index ---
-        try:
-            c.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-                    content, subject, predicate, tags,
-                    content=memories, content_rowid=rowid,
-                    tokenize='unicode61'
-                )
-            """)
-        except sqlite3.OperationalError as e:
-            logger.warning(f"[MemoryStorage] FTS5 creation skipped: {e}")
-
-        # FTS5 sync triggers
-        for trigger_sql in [
-            """CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
-                INSERT INTO memories_fts(rowid, content, subject, predicate, tags)
-                VALUES (new.rowid, new.content, new.subject, new.predicate, new.tags);
-            END""",
-            """CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, content, subject, predicate, tags)
-                VALUES ('delete', old.rowid, old.content, old.subject, old.predicate, old.tags);
-            END""",
-            """CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, content, subject, predicate, tags)
-                VALUES ('delete', old.rowid, old.content, old.subject, old.predicate, old.tags);
-                INSERT INTO memories_fts(rowid, content, subject, predicate, tags)
-                VALUES (new.rowid, new.content, new.subject, new.predicate, new.tags);
-            END""",
-        ]:
-            try:
-                c.execute(trigger_sql)
-            except sqlite3.OperationalError:
-                pass
         c.execute("""
             CREATE TABLE IF NOT EXISTS episodes (
                 id TEXT PRIMARY KEY,
@@ -492,10 +592,15 @@ class MemoryStorage:
         c.execute("CREATE INDEX IF NOT EXISTS idx_attach_direction ON attachments(direction)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_attach_created ON attachments(created_at)")
 
-        # ==============================================================
-        # Phase 3: FTS5 virtual tables + sync triggers (best-effort)
-        # ==============================================================
+        if include_fts:
+            self._create_fts_objects(c)
 
+        if commit:
+            c.commit()
+
+    def _create_fts_objects(self, conn: sqlite3.Connection | None = None) -> None:
+        """Create FTS5 virtual tables and sync triggers on an already-valid schema."""
+        c = conn or self._conn
         try:
             c.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -552,8 +657,6 @@ class MemoryStorage:
                 c.execute(trigger_sql)
             except sqlite3.OperationalError:
                 pass
-
-        c.commit()
 
     # ======================================================================
     # Semantic Memory CRUD
@@ -1917,6 +2020,86 @@ class MemoryStorage:
         with _instance_lock:
             if _instance_registry.get(key) is self:
                 del _instance_registry[key]
+
+    def checkpoint_and_close(self, *, truncate: bool = True) -> None:
+        with self._lock:
+            conn = self._conn
+            if conn is None:
+                return
+            try:
+                mode = "TRUNCATE" if truncate else "PASSIVE"
+                conn.execute(f"PRAGMA wal_checkpoint({mode})")
+            finally:
+                conn.close()
+                self._conn = None
+        key = str(self._db_path.resolve())
+        with _instance_lock:
+            if _instance_registry.get(key) is self:
+                del _instance_registry[key]
+
+    def create_snapshot_incremental(
+        self,
+        *,
+        max_size_bytes: int = 500 * 1024 * 1024,
+        keep: int = 7,
+    ) -> Path | None:
+        if self._conn is None or not self._db_path.exists():
+            return None
+        if self._is_sync_folder_path() and os.environ.get("OPENAKITA_FORCE_SNAPSHOT") != "1":
+            logger.warning("[MemoryStorage] Snapshot skipped for sync folder path: %s", self._db_path)
+            return None
+        size = self._db_path.stat().st_size
+        if size > max_size_bytes:
+            logger.warning(
+                "[MemoryStorage] Snapshot skipped because db is too large: %s bytes", size
+            )
+            return None
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        snapshot = self._db_path.with_name(f"{self._db_path.name}.snapshot.{timestamp}")
+        tmp = snapshot.with_suffix(snapshot.suffix + ".tmp")
+        with self._lock:
+            try:
+                dst = sqlite3.connect(str(tmp))
+                try:
+                    self._conn.backup(dst)
+                    dst.commit()
+                finally:
+                    dst.close()
+                tmp.replace(snapshot)
+                check_conn = sqlite3.connect(str(snapshot))
+                try:
+                    row = check_conn.execute("PRAGMA quick_check").fetchone()
+                    if str(row[0] if row else "").lower() != "ok":
+                        snapshot.unlink(missing_ok=True)
+                        raise MemoryStorageUnavailable("schema_corrupt", "snapshot quick_check failed")
+                finally:
+                    check_conn.close()
+                self._prune_backups(pattern=f"{self._db_path.name}.snapshot.*", keep=keep)
+                return snapshot
+            except Exception as e:
+                logger.warning("[MemoryStorage] Snapshot failed: %s", e)
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return None
+
+    def _is_sync_folder_path(self) -> bool:
+        text = str(self._db_path).lower()
+        sync_markers = ("onedrive", "dropbox", "google drive", "googledrive")
+        return any(marker in text for marker in sync_markers) or text.startswith("\\\\")
+
+    def _prune_backups(self, *, pattern: str, keep: int) -> None:
+        try:
+            candidates = sorted(
+                self._db_path.parent.glob(pattern),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for path in candidates[keep:]:
+                path.unlink(missing_ok=True)
+        except Exception as e:
+            logger.debug("[MemoryStorage] Backup prune skipped: %s", e)
 
     # ======================================================================
     # Helpers

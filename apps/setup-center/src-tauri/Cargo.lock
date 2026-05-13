@@ -2849,6 +2849,7 @@ dependencies = [
  "base64 0.22.1",
  "dirs-next",
  "flate2",
+ "getrandom 0.3.4",
  "libc",
  "once_cell",
  "reqwest 0.12.28",

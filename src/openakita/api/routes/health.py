@@ -8,8 +8,11 @@ POST /api/health/check 使用 dry_run=True 模式执行只读检测，
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 
@@ -18,6 +21,64 @@ from ..schemas import HealthCheckRequest, HealthResult
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_memory_repair_restart_required = False
+
+
+def mark_memory_repair_completed_restart_required() -> None:
+    global _memory_repair_restart_required
+    _memory_repair_restart_required = True
+
+
+def clear_memory_repair_restart_required() -> None:
+    global _memory_repair_restart_required
+    _memory_repair_restart_required = False
+
+
+def _memory_subsystem_status(request: Request) -> dict:
+    try:
+        agent = getattr(request.app.state, "agent", None)
+        mm = getattr(agent, "memory_manager", None) if agent is not None else None
+        if _memory_repair_restart_required or getattr(mm, "repair_completed_restart_required", False):
+            return {
+                "status": "repair_completed_restart_required",
+                "reason": None,
+                "details": "Memory database repair completed; restart backend to reopen storage.",
+                "repair_available": False,
+            }
+        if mm is not None and getattr(mm, "degraded", False):
+            return {
+                "status": "degraded",
+                "reason": getattr(mm, "degraded_reason", "unknown"),
+                "details": getattr(mm, "degraded_details", None),
+                "repair_available": True,
+            }
+        if mm is not None:
+            return {"status": "healthy", "reason": None, "details": None, "repair_available": False}
+    except Exception as e:
+        logger.debug("[Health] memory_subsystem status skipped: %s", e)
+    return {"status": "unknown", "reason": None, "details": None, "repair_available": False}
+
+
+def _read_last_shutdown_marker() -> dict:
+    try:
+        from openakita.config import settings
+
+        marker = Path(settings.project_root) / "data" / "memory" / ".last_clean_shutdown"
+        if not marker.exists():
+            return {"status": "unclean", "reason": "marker_missing"}
+        data = json.loads(marker.read_text("utf-8"))
+        current_spawn_raw = os.environ.get("OPENAKITA_SPAWN_STARTED_AT_MS")
+        marker_ts = int(data.get("ts", 0) or 0)
+        if not current_spawn_raw:
+            return {"status": "clean", **data}
+        current_spawn = int(current_spawn_raw)
+        if marker_ts and marker_ts <= current_spawn:
+            return {"status": "clean", **data}
+        return {"status": "unclean", "reason": "marker_written_after_current_spawn", **data}
+    except Exception as e:
+        logger.debug("[Health] last shutdown marker unreadable: %s", e)
+        return {"status": "unknown"}
 
 
 _lan_ip_cache: tuple[str, float] | None = None
@@ -166,6 +227,8 @@ async def health(request: Request):
         "last_link_diagnostic": getattr(request.app.state, "last_link_diagnostic", None),
         "startup_phase": readiness.get("phase", "http_ready"),
         "readiness": readiness,
+        "memory_subsystem": _memory_subsystem_status(request),
+        "last_shutdown": _read_last_shutdown_marker(),
     }
 
 

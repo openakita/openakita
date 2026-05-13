@@ -43,6 +43,7 @@ static AUTO_START_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// 用于 ``is_backend_auto_starting`` 的超时兜底：超过 ``AUTO_START_TIMEOUT_MS``
 /// 视为后台 spawn 线程已经死掉/卡死，强制返回 false 防止前端 toast 永久卡住。
 static AUTO_START_STARTED_AT_MS: AtomicU64 = AtomicU64::new(0);
+static DESKTOP_SESSION_TOKEN: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 const AUTO_START_TIMEOUT_MS: u64 = 180_000;
 
 /// 后端启动宽限期（秒）。Backend cold-start 在 dual-venv hack 下：
@@ -492,6 +493,58 @@ fn log_to_file(msg: &str) {
         .append(true)
         .open(&path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+}
+
+fn desktop_session_token() -> String {
+    let mut guard = DESKTOP_SESSION_TOKEN.lock().unwrap();
+    if let Some(token) = guard.as_ref() {
+        return token.clone();
+    }
+    let mut seed = [0u8; 32];
+    if getrandom::fill(&mut seed).is_err() {
+        let fallback = format!(
+            "{}:{}:{:?}",
+            now_epoch_secs(),
+            std::process::id(),
+            std::thread::current().id()
+        );
+        let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(fallback.as_bytes());
+        *guard = Some(token.clone());
+        return token;
+    }
+    let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(seed);
+    *guard = Some(token.clone());
+    token
+}
+
+#[tauri::command]
+fn openakita_desktop_session_token() -> String {
+    desktop_session_token()
+}
+
+fn tail_serve_log_to_autostart(log_path: &Path, max_bytes: usize) {
+    let Ok(mut file) = fs::File::open(log_path) else {
+        return;
+    };
+    let Ok(meta) = file.metadata() else {
+        return;
+    };
+    let len = meta.len();
+    let start = len.saturating_sub(max_bytes as u64);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return;
+    }
+    let mut buf = Vec::new();
+    if file.read_to_end(&mut buf).is_err() {
+        return;
+    }
+    let text = String::from_utf8_lossy(&buf);
+    log_to_file(&format!(
+        "[serve_log_tail] path={} bytes={}\n{}",
+        log_path.display(),
+        buf.len(),
+        text
+    ));
 }
 
 /// 开始写入安装配置日志，创建带日期的日志文件。返回完整路径供前端展示。
@@ -2995,6 +3048,30 @@ fn service_pid_file(workspace_id: &str) -> PathBuf {
     run_dir().join(format!("openakita-{}.pid", workspace_id))
 }
 
+fn last_clean_shutdown_marker(workspace_id: &str) -> PathBuf {
+    workspace_dir(workspace_id)
+        .join("data")
+        .join("memory")
+        .join(".last_clean_shutdown")
+}
+
+fn write_last_clean_shutdown_marker(workspace_id: &str, pid: u32, spawn_started_at: u64) {
+    let marker = last_clean_shutdown_marker(workspace_id);
+    if let Some(parent) = marker.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let payload = serde_json::json!({
+        "ts": now_epoch_secs().saturating_mul(1000),
+        "pid": pid,
+        "version": env!("CARGO_PKG_VERSION"),
+        "spawn_started_at": spawn_started_at,
+    });
+    let _ = fs::write(
+        &marker,
+        serde_json::to_string_pretty(&payload).unwrap_or_default(),
+    );
+}
+
 // ── PID 文件 JSON 格式 ──
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct PidFileData {
@@ -3260,8 +3337,8 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
         .unwrap_or(false);
 
     if api_ok {
-        // API 调用成功，给 Python 最多 5 秒优雅退出时间
-        for _ in 0..25 {
+        // API 调用成功，给 Python 最多 10 秒优雅退出时间
+        for _ in 0..50 {
             if !is_pid_running(pid) {
                 return Ok(());
             }
@@ -3272,8 +3349,8 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
     // 第二步：进程仍然存活，强制 kill
     if is_pid_running(pid) {
         kill_pid(pid)?;
-        // 等待最多 2s 确认退出
-        for _ in 0..10 {
+        // 等待最多 3s 确认退出
+        for _ in 0..15 {
             if !is_pid_running(pid) {
                 break;
             }
@@ -5047,6 +5124,7 @@ fn main() {
             export_python_diagnostic_report,
             check_python_for_pip,
             openakita_runtime_last_error,
+            openakita_desktop_session_token,
             openakita_open_runtime_root,
             install_bundled_python,
             create_venv,
@@ -5794,6 +5872,12 @@ fn openakita_service_start_impl(
     cmd.env("PYTHONUNBUFFERED", "1");
     // Disable colored / styled output to avoid ANSI escape codes in log files.
     cmd.env("NO_COLOR", "1");
+    let spawn_started_at_ms = now_epoch_secs().saturating_mul(1000);
+    cmd.env("OPENAKITA_DESKTOP_SESSION_TOKEN", desktop_session_token());
+    cmd.env(
+        "OPENAKITA_SPAWN_STARTED_AT_MS",
+        spawn_started_at_ms.to_string(),
+    );
 
     // .env 由 Python 端的 load_dotenv(override=True) 自行加载，
     // 不再由 Rust 注入，避免编码/BOM 问题导致 Key 丢失或损坏值抢占。
@@ -5893,6 +5977,7 @@ fn openakita_service_start_impl(
             }
         }
         let _ = fs::remove_file(&pid_file);
+        tail_serve_log_to_autostart(&log_path, 8 * 1024);
         let tail = fs::read_to_string(&log_path)
             .ok()
             .and_then(|s| {
@@ -5928,7 +6013,12 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
         let mut guard = MANAGED_CHILD.lock().unwrap();
         if let Some(mut mp) = guard.take() {
             if mp.workspace_id == workspace_id {
+                let old_pid = mp.pid;
+                let spawn_started_at = mp.started_at.saturating_mul(1000);
                 let _ = graceful_stop_pid(mp.pid, port);
+                if !is_pid_running(old_pid) {
+                    write_last_clean_shutdown_marker(&workspace_id, old_pid, spawn_started_at);
+                }
                 if is_pid_running(mp.pid) {
                     let _ = mp.child.kill();
                     let _ = mp.child.wait();
@@ -5954,6 +6044,9 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
     if let Some(pid) = pid {
         // 强制杀干净：如果杀不掉，要显式报错（避免 UI 显示“已停止”但后台仍残留）。
         graceful_stop_pid(pid, port).map_err(|e| format!("failed to stop service: {e}"))?;
+        if !is_pid_running(pid) {
+            write_last_clean_shutdown_marker(&workspace_id, pid, 0);
+        }
     }
     let _ = fs::remove_file(&pid_file);
     remove_heartbeat_file(&workspace_id);

@@ -44,6 +44,7 @@ from .routes import (
     logs,
     mcp,
     memory,
+    memory_repair,
     orgs,
     qqbot_onboard,
     scheduler,
@@ -375,6 +376,7 @@ def create_app(
     app.include_router(logs.router, tags=["日志"])
     app.include_router(mcp.router, tags=["MCP"])
     app.include_router(memory.router, tags=["记忆"])
+    app.include_router(memory_repair.router, tags=["记忆修复"])
     app.include_router(scheduler.router, tags=["定时任务"])
     app.include_router(sessions.router, tags=["会话"])
     app.include_router(skills.router, tags=["技能"])
@@ -493,6 +495,15 @@ def create_app(
             logger.warning("Failed to import pending feedback: %s", exc)
             pending.unlink(missing_ok=True)
 
+    @app.on_event("startup")
+    async def _cleanup_memory_recovery_pending():
+        try:
+            from .routes.memory_repair import _cleanup_old_recovery_pending
+
+            await asyncio.to_thread(_cleanup_old_recovery_pending)
+        except Exception as e:
+            logger.debug("[Startup] Memory recovery pending cleanup skipped: %s", e)
+
     @app.post("/api/shutdown", tags=["系统"])
     async def shutdown(request: Request):
         """Gracefully shut down the OpenAkita service process.
@@ -583,6 +594,20 @@ def create_app(
                 await to_engine(app.state.org_runtime.shutdown())
             except Exception as e:
                 logger.warning(f"OrgRuntime shutdown error: {e}")
+
+    @app.on_event("shutdown")
+    async def _shutdown_memory_storage():
+        try:
+            from openakita.memory.storage import checkpoint_and_close_all_storages
+
+            await asyncio.wait_for(
+                asyncio.to_thread(checkpoint_and_close_all_storages),
+                timeout=3.0,
+            )
+        except TimeoutError:
+            logger.warning("[Shutdown] Memory checkpoint timeout (3s), proceeding")
+        except Exception as e:
+            logger.warning("[Shutdown] Memory checkpoint skipped: %s", e)
 
     return app
 
@@ -736,7 +761,7 @@ async def start_api_server(
     proxy_task = asyncio.create_task(_proxy())
     # Keep a handle to the app so the serve process can update late-bound
     # runtime references such as the IM gateway after HTTP is already online.
-    setattr(proxy_task, "_openakita_api_app", app)
+    proxy_task._openakita_api_app = app
     return proxy_task
 
 

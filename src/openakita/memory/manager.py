@@ -33,10 +33,12 @@ from pathlib import Path
 
 from ..core.log_health import record_health_event
 from .consolidator import MemoryConsolidator
+from .exceptions import MemoryStorageUnavailable
 from .extractor import MemoryExtractor
 from .json_utils import coerce_text
 from .retention import apply_retention
 from .retrieval import RetrievalEngine
+from .telemetry import emit_memory_health_event
 from .types import (
     Attachment,
     AttachmentDirection,
@@ -98,20 +100,6 @@ class MemoryManager:
         else:
             self.vector_store = None
 
-        # v2: Unified Store + Search Backend
-        db_path = self.data_dir / "openakita.db"
-        self.store = UnifiedStore(
-            db_path,
-            vector_store=self.vector_store,
-            backend_type=search_backend,
-            api_provider=embedding_api_provider,
-            api_key=embedding_api_key,
-            api_model=embedding_api_model,
-        )
-
-        # v2: Retrieval Engine (with brain for LLM query decomposition)
-        self.retrieval_engine = RetrievalEngine(self.store, brain=brain)
-
         # v3: Relational Memory (Mode 2) — initialized lazily on first use
         self.relational_store = None
         self.relational_encoder = None
@@ -142,8 +130,72 @@ class MemoryManager:
         # Plugin-provided memory backends (shared dict from host_refs)
         self._plugin_backends: dict | None = None
 
-        # Load existing memories
-        self._load_memories()
+        self.degraded: bool = False
+        self.degraded_reason: str | None = None
+        self.degraded_details: str | None = None
+        self.repair_completed_restart_required: bool = False
+
+        # v2: Unified Store + Search Backend
+        db_path = self.data_dir / "openakita.db"
+        try:
+            self.store = UnifiedStore(
+                db_path,
+                vector_store=self.vector_store,
+                backend_type=search_backend,
+                api_provider=embedding_api_provider,
+                api_key=embedding_api_key,
+                api_model=embedding_api_model,
+            )
+            # v2: Retrieval Engine (with brain for LLM query decomposition)
+            self.retrieval_engine = RetrievalEngine(self.store, brain=brain)
+            # Load existing memories
+            self._load_memories()
+            self._maybe_schedule_snapshot()
+        except MemoryStorageUnavailable as e:
+            from .noop_store import NoopRetrievalEngine, NoopUnifiedStore
+
+            logger.error(
+                "[MemoryManager] Entering degraded mode: reason=%s details=%s",
+                e.reason,
+                e.details,
+                exc_info=True,
+            )
+            self.store = NoopUnifiedStore()
+            self.retrieval_engine = NoopRetrievalEngine()
+            self.degraded = True
+            self.degraded_reason = e.reason
+            self.degraded_details = e.details
+            with contextlib.suppress(Exception):
+                record_health_event("memory_degraded", {"reason": e.reason})
+            emit_memory_health_event("degraded", {"reason": e.reason})
+
+    def _maybe_schedule_snapshot(self) -> None:
+        try:
+            marker = self.data_dir / ".last_memory_snapshot"
+            now = datetime.now()
+            if marker.exists():
+                last = datetime.fromtimestamp(marker.stat().st_mtime)
+                if now - last < timedelta(hours=24):
+                    return
+
+            async def _snapshot():
+                try:
+                    snapshot = await asyncio.to_thread(self.store.db.create_snapshot_incremental)
+                    if snapshot is not None:
+                        marker.touch()
+                except Exception as e:
+                    logger.debug("[Memory] Snapshot skipped: %s", e)
+
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(_snapshot())
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
+        except RuntimeError:
+            # No running loop during sync construction; snapshot is optional and
+            # must never block startup.
+            return
+        except Exception as e:
+            logger.debug("[Memory] Snapshot scheduling skipped: %s", e)
 
     def _stamp_agent_id(self, mem: Memory) -> Memory:
         """Set agent_id on a memory if not already set."""
