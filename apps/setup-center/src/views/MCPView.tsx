@@ -45,7 +45,7 @@ type MCPServer = {
   config_complete: boolean;
 };
 
-type ServerBusyAction = "connect" | "disconnect" | "delete" | "add" | "test" | null;
+type ServerBusyAction = "connect" | "disconnect" | "delete" | "add" | null;
 type MCPStatusFilter = "all" | "connected" | "disconnected" | "needs_config" | "error";
 type MCPSourceFilter = "all" | "builtin" | "workspace";
 type MCPSortBy = "recent" | "name" | "status";
@@ -696,47 +696,6 @@ export function MCPView({
     setBusyAction(null);
   };
 
-  const testAddServerConnection = async () => {
-    const name = form.name.trim();
-    if (!name) { showMsg(t("mcp.nameRequired"), false); return; }
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) { showMsg(t("mcp.nameInvalid"), false); return; }
-    if (form.transport === "stdio" && !form.command.trim()) { showMsg(t("mcp.commandRequired"), false); return; }
-    if ((form.transport === "streamable_http" || form.transport === "sse") && !form.url.trim()) { showMsg(t("mcp.urlRequired", { transport: form.transport === "sse" ? "SSE" : "HTTP" }), false); return; }
-
-    setBusyTarget("add");
-    setBusyAction("test");
-    try {
-      const envObj = parseKeyValueLines(form.env);
-      const headersObj = parseKeyValueLines(form.headers);
-      const parsedArgs = parseArgs(form.args);
-      const res = await safeFetch(`${apiBaseUrl}/api/mcp/servers/test`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(60_000),
-        body: JSON.stringify({
-          name,
-          transport: form.transport,
-          command: form.command.trim(),
-          args: parsedArgs,
-          env: envObj,
-          url: form.url.trim(),
-          headers: Object.keys(headersObj).length > 0 ? headersObj : undefined,
-          description: form.description.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        showMsg(data.message || t("mcp.testConnectSuccessNoSave"), true);
-      } else {
-        showMsg(`${t("mcp.testConnectFailedNoSave")}: ${data.error || data.message || t("mcp.unknownError")}`, false);
-      }
-    } catch (e) {
-      showMsg(`${t("mcp.testConnectFailedNoSave")}: ${e}`, false);
-    }
-    setBusyTarget(null);
-    setBusyAction(null);
-  };
-
   const loadInstructions = async (name: string) => {
     if (instructions[name]) return;
     try {
@@ -967,11 +926,7 @@ export function MCPView({
               <Button variant="outline" onClick={() => { setShowAdd(false); setForm({ ...emptyForm }); }}>
                 {t("common.cancel")}
               </Button>
-              <Button variant="outline" onClick={testAddServerConnection} disabled={busyAction === "add" || busyAction === "test"}>
-                {busyAction === "test" ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
-                {t("mcp.testConnect")}
-              </Button>
-              <Button onClick={addServer} disabled={busyAction === "add" || busyAction === "test"}>
+              <Button onClick={addServer} disabled={busyAction === "add"}>
                 {busyAction === "add" && <Loader2 className="animate-spin" size={14} />}
                 {t("mcp.add")}
               </Button>

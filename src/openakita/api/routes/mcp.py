@@ -20,7 +20,6 @@ from pydantic import BaseModel
 from openakita.tools.mcp_catalog import MCPConfigField
 from openakita.tools.mcp_workspace import (
     add_server_to_workspace,
-    probe_server_connection,
     remove_server_from_workspace,
     sync_tools_after_connect,
 )
@@ -114,25 +113,6 @@ class MCPServerAddRequest(BaseModel):
     headers: dict[str, str] = {}
     description: str = ""
     auto_connect: bool = False
-
-
-class MCPServerTestRequest(BaseModel):
-    name: str = ""
-    transport: str = "stdio"
-    command: str = ""
-    args: list[str] = []
-    env: dict[str, str] = {}
-    url: str = ""
-    headers: dict[str, str] = {}
-    description: str = ""
-
-
-class MCPServerTestResponse(BaseModel):
-    success: bool
-    message: str
-    latency_ms: int | None = None
-    error: str | None = None
-    tool_count: int = 0
 
 
 class MCPToggleRequest(BaseModel):
@@ -379,45 +359,6 @@ async def add_mcp_server(request: Request, body: MCPServerAddRequest):
     )
 
     return result
-
-
-@router.post("/api/mcp/servers/test")
-async def test_mcp_server(request: Request, body: MCPServerTestRequest) -> MCPServerTestResponse:
-    """Test an MCP server connection without persisting workspace metadata."""
-    from openakita.tools.mcp import VALID_TRANSPORTS
-
-    validation_err = _validate_server_payload(
-        transport=body.transport,
-        command=body.command,
-        url=body.url,
-        require_name=False,
-        valid_transports=VALID_TRANSPORTS,
-    )
-    if validation_err:
-        return MCPServerTestResponse(success=False, message="测试连接失败", error=validation_err)
-
-    client = _get_mcp_client(request)
-    if not client:
-        return MCPServerTestResponse(
-            success=False,
-            message="测试连接失败",
-            error="Agent not initialized",
-        )
-
-    from openakita.config import settings
-
-    probe_result = await probe_server_connection(
-        transport=body.transport,
-        command=body.command.strip(),
-        args=body.args,
-        env=body.env,
-        url=body.url.strip(),
-        description=body.description.strip() or body.name.strip(),
-        headers=body.headers or None,
-        search_bases=[settings.project_root, Path.cwd()],
-        client=client,
-    )
-    return MCPServerTestResponse(**probe_result)
 
 
 @router.post("/api/mcp/servers/{server_name}/toggle")

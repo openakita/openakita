@@ -11,9 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-import uuid
 from pathlib import Path
-from time import perf_counter
 
 from .mcp import MCPClient, MCPServerConfig
 from .mcp_catalog import MCPCatalog
@@ -188,64 +186,6 @@ async def add_server_to_workspace(
         "path": str(server_dir),
         "connect_result": connect_result,
     }
-
-
-async def probe_server_connection(
-    *,
-    transport: str,
-    command: str,
-    args: list[str],
-    env: dict[str, str],
-    url: str,
-    description: str,
-    headers: dict[str, str] | None = None,
-    search_bases: list[Path],
-    client: MCPClient,
-) -> dict:
-    """Test MCP connectivity without persisting server metadata to disk."""
-    probe_name = f"__probe_{uuid.uuid4().hex[:12]}"
-    resolved_args = _resolve_stdio_args(args, search_bases) if transport == "stdio" else list(args)
-    probe_config = MCPServerConfig(
-        name=probe_name,
-        command=command,
-        args=resolved_args,
-        env=env,
-        description=description,
-        transport=transport,
-        url=url,
-        headers=headers or {},
-    )
-    client.add_server(probe_config)
-
-    start = perf_counter()
-    try:
-        await prepare_chrome_devtools_args(client, probe_name)
-        result = await client.connect(probe_name)
-        latency_ms = int((perf_counter() - start) * 1000)
-        if result.success:
-            return {
-                "success": True,
-                "message": "测试连接成功（未保存）",
-                "latency_ms": latency_ms,
-                "error": None,
-                "tool_count": result.tool_count,
-            }
-        return {
-            "success": False,
-            "message": "测试连接失败",
-            "latency_ms": latency_ms,
-            "error": result.error or "连接失败（未知原因）",
-            "tool_count": result.tool_count,
-        }
-    finally:
-        try:
-            if client.is_connected(probe_name):
-                await client.disconnect(probe_name)
-        except Exception as e:
-            logger.warning("Probe cleanup disconnect failed for %s: %s", probe_name, e)
-        finally:
-            client.remove_server(probe_name)
-            _injected_browser_urls.pop(probe_name, None)
 
 
 async def remove_server_from_workspace(
