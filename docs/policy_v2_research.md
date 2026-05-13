@@ -959,7 +959,8 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C8b-3 | UI confirm facade 完成切换 + confirmed_cache 决策：`policy_v2/session_allowlist.py` + `policy_v2/confirm_resolution.py` + 7 callsite 直连 v2 + `policy.py` 删 6 facade + `mark_confirmed` + 2 字段 + tool_executor 改 `tool_use_id` 去重 | ✅ Done | 「C8b-3 实施记录」 |
 | C8b-4 | permission-mode shim 替换 + smart-mode 删除：`policy_v2/confirmation_mode.py` + 2 endpoint 直读 v2 + `policy.py` 删 `_frontend_mode` / `_session_allow_count` / `_SMART_ESCALATION_THRESHOLD` / smart-mode escalation block | ✅ Done | 「C8b-4 实施记录」 |
 | C8b-5 | `_is_trust_mode` 外部 caller 切 v2：agent.py + gateway.py 2 callsite → `read_permission_mode_label() == "yolo"`；`_check_trust_mode_skip` 简化为纯 v2 单查；`_is_trust_mode` v1 method 隔离为 v1-private | ✅ Done | 「C8b-5 实施记录」 |
-| C8b-6 | （未启动）`assert_tool_allowed` + 30+ `_check_*` helper 删除 / skill_allowlists × 5 + user_allowlists × 5 + reasoning_engine × 2 callsite 切 v2 manager / `policy.py` 文件最终删除 / v1-only 测试清理 | ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划 §F · C8b-5」（原 §F C8b-5 拆出）|
+| C8b-6a | callsite 迁移 + permission.py v2_native：`agent.py:2449` + `skills.py × 4` → `SkillAllowlistManager`；`security_actions.py × 4` → `UserAllowlistManager` + `DeathSwitchTracker`；`config.py:1917` → `DeathSwitchTracker.is_readonly_mode()`；`reasoning_engine.py × 2` → 直接消费 `PolicyDecisionV2` + `DecisionAction` + `get_config_v2()`；`permission.py` 改用 `evaluate_via_v2()` + `V2_TO_V1_DECISION` 映射。`policy.py` 文件保留待 C8b-6b 删除（仅 `policy_v2/adapter.py` 内 2 处延迟 import 仍依赖 v1 类型） | ✅ DONE | §6.6 + §10 + 「C8b 实施记录 · C8b-6a」 |
+| C8b-6b | （未启动）删 `policy.py` 整文件（assert_tool_allowed + 30+ `_check_*` helper + `_is_trust_mode` + 各 dataclass）；`policy_v2/adapter.py` 删 `decision_to_v1_result` + `evaluate_via_v2_to_v1_result`；`policy_v2/models.py` 已存 `PolicyDecisionV2 → PolicyResult` 别名；v1-only 测试文件直接删除（`test_security.py` ~40 testcase / `test_remaining_qa_fixes.py` / `test_trusted_paths.py` / `test_permission_refactor.py` 部分）| ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划 §F · C8b-6b」 |
 | C9a | SecurityView v2 适配（approval_class badge + IM owner UI + dry-run preview） | ✅ Done | §8 + R5-20 |
 | C9b | UI confirm bus 抽出（`core/ui_confirm_bus.py`），让 C8b 能安全删 v1 | ✅ Done | §6.6 + R5-22 |
 | C9c | tool_intent_preview / pending_approval_* / policy_config_reloaded SSE 事件（推迟到 C12 一起做） | ⏳ Deferred | §8 + R2-11 |
@@ -3307,6 +3308,120 @@ C8b-4 完成。**v1 `_frontend_mode` shim + `_session_allow_count` + smart-mode 
 5. **"小步快跑"也要严格 audit**：本 commit 只动 ~50 行，但仍跑全 11 audit + 全 channel + risk + IM 单测 sweep，确保 0 regression。**audit 是"删一行 v1 字段是否破坏其他模块"的唯一可靠保证**——不能因为 commit 小就跳过。
 
 C8b-5 完成。**v1 `_is_trust_mode` 已完全隔离到 `policy.py` 内部**（仅供 `assert_tool_allowed` 自用）。可进入 **C8b-6（v1 `assert_tool_allowed` + 30+ `_check_*` helper + skill_allowlist / user_allowlist 5+5 callsite + reasoning_engine × 2 + `policy.py` 文件最终删除）** —— 详见「C8b 粒度化执行计划 §F · C8b-5」（原计划与本次拆分后的合并实施）。
+
+
+---
+
+## C8b-6a 实施记录
+
+依据：「C8b 粒度化执行计划 §F · C8b-6（拆分实施第 1/2 步）」。原 §F C8b-6 设计为单 commit 一次性删 policy.py + 13 callsite 迁移 + v1 测试清理（~2000 LOC 净改）。本次再拆为 6a/6b 两 commit：
+
+- **C8b-6a（本 commit）**：callsite 迁移 + permission.py 走 v2_native，`policy.py` 整文件保留
+- **C8b-6b（下 commit）**：policy.py 删除 + adapter.py 清理 + v1-only 测试文件删除
+
+理由：拆分让中间态 reviewable —— 6a 可独立验证（"v1 文件还在但生产代码不再 import 它"），6b 才做物理删除（删动作纯 mechanical 且 grep 可 100% 验证无 caller）。
+
+### 1. Recon 摘要（commit 前）
+
+| 类别 | 数量 | 位置 |
+|---|---|---|
+| `core.policy` 生产 import | 13 | `agent.py:2449` / `skills.py × 4` (304/835/923/1001) / `security_actions.py × 4` (11/18/38/53) / `config.py:1917` / `reasoning_engine.py × 2` (4383/4753) / `permission.py:302` |
+| `policy_v2.adapter` 内 v1 类型延迟 import | 2 | `adapter.py:532` `PolicyDecision` / `:615` `PolicyResult`（C8b-6b 随 `decision_to_v1_result` 一起删）|
+| 受影响生产文件 | 6 | agent.py / skills.py / security_actions.py / config.py / reasoning_engine.py / permission.py |
+| v2 等价 API | 全部就绪 | `SkillAllowlistManager` (C8b-1) / `UserAllowlistManager` (C8b-1) / `DeathSwitchTracker` (C8b-1) / `evaluate_via_v2()` (adapter) / `PolicyDecisionV2` (models) / `get_config_v2()` (loader) |
+
+**关键发现**：
+- `evaluate_via_v2_to_v1_result` 是 v1→v2 兼容层；让 reasoning_engine + permission.py 直接消费 v2 `PolicyDecisionV2` 后，该 helper 仅余 `tests/unit/test_policy_v2_adapter.py` 一处调用，可在 6b 删除。
+- v2 `PolicyDecisionV2.action` 是 `DecisionAction` enum（含 `DEFER`），v1 `PolicyDecision` 没有 `DEFER`。permission.py 必须经 `_V2_TO_V1_DECISION` 映射（DEFER → "confirm" 降级），否则会把 `behavior="defer"` 透传给 caller。
+- v2 `PolicyDecisionV2.approval_class` 替代 v1 `policy_name` 语义不完整：v1 `policy_name` 来自决策链末步骤名（如 `"policy_v2:matrix_check"`），v2 需通过 `_build_policy_name(decision)` 抽 `chain[-1].name`。
+- `tool_executor.py:execute_tool_with_policy` 仅 duck-type 读 `getattr(policy_result, "metadata", {})`——v1/v2 对象都接受，迁移 reasoning_engine 时无需再造 v1 PolicyResult。
+
+### 2. 实施步骤（按顺序）
+
+1. **`agent.py:2441-2453` `_cleanup_skill_resources`**：
+   - 旧：`from .policy import get_policy_engine; get_policy_engine().clear_skill_allowlists()`
+   - 新：`from .policy_v2 import get_skill_allowlist_manager; get_skill_allowlist_manager().clear()`
+
+2. **`tools/handlers/skills.py × 4` 迁移**：
+   - `:304` `add_skill` 注入：`get_policy_engine().add_skill_allowlist(...)` → `get_skill_allowlist_manager().add(...)`
+   - `:835` fork 执行注入：同上
+   - `:923` `_cleanup_fork_allowlist`：`get_policy_engine().remove_skill_allowlist(...)` → `get_skill_allowlist_manager().remove(...)`
+   - `:1001` `_uninstall_skill`：同上
+
+3. **`security_actions.py × 4` 重写**（直接整段替换 4 个函数）：
+   - `list_security_allowlist`：`pe.get_user_allowlist()` → `get_engine_v2().user_allowlist.snapshot()`
+   - `remove_security_allowlist_entry`：`pe.remove_allowlist_entry()` → `manager.remove_entry() + manager.save_to_yaml()`（v1 自动写盘 → v2 显式 save，与 `add_security_allowlist_entry` 对齐）
+   - `add_security_allowlist_entry`：`pe._config.user_allowlist.append() + pe._save_user_allowlist()` → `manager.add_raw_entry(entry_type, entry) + manager.save_to_yaml()`（绕过私有字段访问）
+   - `reset_death_switch`：`pe.reset_readonly_mode()` → `get_death_switch_tracker().reset()`
+
+4. **`api/routes/config.py:1917` `read_self_protection`**：
+   - 旧：`pe = get_policy_engine(); readonly = pe.readonly_mode`
+   - 新：`readonly = get_death_switch_tracker().is_readonly_mode()`
+   - 保留 `try/except` 兜底（v2 layer 启动期仍可能失败 → 默认 False，与 v1 行为一致）
+
+5. **`reasoning_engine.py × 2` v2_native 改写**（两处对称的 hotspot：execute_batch + 单 tool 执行）：
+   - 旧：`from .policy import PolicyDecision, PolicyResult, get_policy_engine` + `from .policy_v2.adapter import evaluate_via_v2_to_v1_result`
+   - 新：`from .policy_v2 import get_config_v2[, get_death_switch_tracker]` + `from .policy_v2.adapter import evaluate_via_v2` + `from .policy_v2.enums import DecisionAction`
+   - `_pe._config.confirmation.timeout_seconds` → `get_config_v2().confirmation.timeout_seconds`（同 default_on_timeout）
+   - `_pe.readonly_mode` → `get_death_switch_tracker().is_readonly_mode()`（第二处 hotspot 用）
+   - `_pr.decision == PolicyDecision.DENY/CONFIRM` → `_pr.action == DecisionAction.DENY/CONFIRM`
+   - 用户 `allow_session/allow_always` 后 `policy_result=PolicyResult(decision=PolicyDecision.ALLOW, ...)` → `policy_result=PolicyDecisionV2(action=DecisionAction.ALLOW, ...)`（duck-typed via `tool_executor.py` 的 `getattr(.metadata)`）
+   - 净效果：reasoning_engine 0 处 v1 `PolicyDecision` / `PolicyResult` / `_pe.` token
+
+6. **`permission.py` Step 2 v2_native 改写**：
+   - 旧：`evaluate_via_v2_to_v1_result(...)` 返回 v1 `PolicyResult` shim → 读 `pr.decision.value` / `pr.policy_name` / `pr.metadata`
+   - 新：`evaluate_via_v2(...)` 返回 v2 `PolicyDecisionV2` → 经 `V2_TO_V1_DECISION[decision.action]` 映射 behavior + `build_policy_name(decision)` 抽 chain 末步骤名 + `build_metadata_for_legacy_callers(decision)` 平铺 metadata
+   - 保留 try/except + `_should_fail_closed(tool_name)` fail-closed 逻辑不变
+
+7. **`policy_v2/adapter.py` 公开 3 个 helper**：
+   - `_V2_TO_V1_DECISION` → public alias `V2_TO_V1_DECISION`
+   - `_build_policy_name` → `build_policy_name`
+   - `_build_metadata` → `build_metadata_for_legacy_callers`（名字含 `_for_legacy_callers` 暗示 6b 后该 helper 也可清理）
+   - 加入 `__all__` 暴露给跨模块 caller（permission.py 是首个 caller）
+
+### 3. 行为变更（用户可感知）
+
+| 场景 | 旧行为 | C8b-6a 行为 |
+|---|---|---|
+| `/api/config/security/self-protection` GET 端点 | 读 v1 `PolicyEngine.readonly_mode`（process-wide instance var） | 读 v2 `DeathSwitchTracker.is_readonly_mode()`（process-wide singleton）—— **同源**，无差异 |
+| `add_security_allowlist_entry` API | mutate v1 `pe._config.user_allowlist.commands.append()` + `pe._save_user_allowlist()` | mutate v2 `manager.add_raw_entry()` + `manager.save_to_yaml()` —— **同源**（v2 manager.commands 即 `_config.user_allowlist.commands`），写盘路径一致 |
+| `remove_security_allowlist_entry` API | mutate v1 + 自动写盘 | mutate v2 + **显式** `save_to_yaml()`（必须显式调，与 add 对齐）—— 行为等价 |
+| `reset_death_switch` API | `pe.reset_readonly_mode()` 清 v1 instance var + 不广播（v1 无 hook） | `tracker.reset()` 清 singleton + 触发 `_maybe_broadcast({"active": False})`（C8b-1 加的 hook）—— **新增**：reset 后 SecurityView 实时刷新 |
+| skill 安装/卸载注入 allowlist | 写 v1 `pe._skill_allowlists` dict | 写 v2 `SkillAllowlistManager._allowlists`（`frozenset` 包装防外部 mutate）—— 决策语义完全等价 |
+| `permission.py` `behavior="defer"` 罕见情况 | adapter 已经 DEFER → "confirm" 降级 | 同样降级（permission.py 现在直接用 `V2_TO_V1_DECISION` 映射）—— 等价 |
+| reasoning_engine SSE `timeout_seconds` 字段 | 读 v1 `pe._config.confirmation.timeout_seconds` | 读 v2 `get_config_v2().confirmation.timeout_seconds` —— v1/v2 config 自 C6 起同步加载，**等价** |
+
+**无破坏性变更**。所有变化都是 SoT（数据来源）从 v1 字段切到 v2 manager / config，行为完全等价。
+
+### 4. 验证矩阵
+
+| 检查项 | 结果 |
+|---|---|
+| v2 unit tests（c8b3/4/5/adapter/permission_refactor/c8_wire/policy_engine_v2/c8b1）| 231 PASS |
+| `tests/unit/test_trusted_paths.py` (33 tests) | 33 PASS（修了 `test_non_trust_mode_does_not_skip` 一处 v1-mutation 测试，改为 mutate v2 layer——见 Bug 清单 #2）|
+| 全量单测（除 4 个 pre-existing 失败文件） | 2628 PASS / 16 skip |
+| 4 个 pre-existing 失败文件 baseline | C8b-6a 后仍 5 failed / 125 passed —— **与 C8b-5 HEAD 完全一致，0 新回归** |
+| `c8b6a_audit.py` D1-D6 | ALL 6 PASS |
+| 全 12 audit 脚本 × 46 维度 | ALL PASS |
+| ruff（agent/policy/security_actions/permission/reasoning_engine/adapter/config/skills/audit）| ALL CLEAN（1 处 F541 自动修）|
+
+### 5. Bug 清单（实施过程中）
+
+1. **`test_permission_propagates_v2_deny` policy_name 前缀回归**：起初我把 `policy_name` 直接拼成 `f"policy_engine_v2/{decision.approval_class.value}"`，但单测期望 `policy_name.startswith("policy_v2")`（v2 adapter `_build_policy_name` 用 `f"policy_v2:{chain[-1].name}"` 格式）。**修复**：复用 adapter 的 `_build_policy_name`（提升为 public `build_policy_name`），保留 chain 末步骤名语义。
+2. **`test_permission_v2_defer_downgrades_to_confirm` DEFER 透传**：v2 `DecisionAction.DEFER` 是 v2-only 概念，v1 不识别。我直接 `decision.action.value` 把 `"defer"` 透传给 PermissionDecision.behavior，但 caller `tool_executor.py` 等下游模块只认 4 档 v1 enum (`allow/deny/confirm/sandbox`)。**修复**：复用 adapter 的 `_V2_TO_V1_DECISION` dict（提升为 public `V2_TO_V1_DECISION`），DEFER → "confirm" 降级。
+3. **`test_non_trust_mode_does_not_skip` 测试 v1 mutation 失效**（C8b-5 遗留 + C8b-6a 暴露）：`test_trusted_paths.py:270` mutate v1 `engine._config.confirmation = ConfirmationConfig(mode="smart")` 后调 `_check_trust_mode_skip`，但 C8b-5 已让该函数直读 v2 layer，v1 mutation 不再生效。其余 `_trust_mode_engine` fixture 测试（`mode="yolo"`）巧合通过——v2 默认也是 yolo。**修复**：把该测试改为 mutate v2 layer（`set_engine_v2(build_engine_from_config(PolicyConfigV2(confirmation=ConfirmationConfig(mode=ConfirmationMode.DEFAULT))), cfg)`），其他 4 个 v1-mutation 测试保留（巧合通过 + C8b-6b 一并删 `test_trusted_paths.py`）。
+4. **C8b-6a audit `_strip_comments` 漏处理单行 docstring**：`security_actions.py` 函数体首行 `"""C8b-6a: v1 ``pe.get_user_allowlist()`` → ..."""` 是单行三引号 docstring（triple_count=2，偶数）。原 helper 仅切换 `in_doc` 状态，不会跳过该行 → assert 误报命中。**修复**：扩展 helper：`if triple_count >= 2 and not in_doc: continue`（单行 doc 即 strip 该行）。
+5. **ruff F541**（audit 脚本错误信息字符串无 placeholder）：`f"... still uses v1 {v1_method}"` 在 v1_method 是空字符串时空 f-string——其实有 placeholder，是 ruff 误判。`ruff check --fix` 自动修。
+
+### 6. 工程教训
+
+1. **"复用现成 helper"vs"重写"权衡**：起初我重写 `permission.py` 用 `decision.action.value` + `decision.approval_class.value` 拼新格式，结果踩 2 个回归（policy_name 前缀 + DEFER 透传）。adapter 的 `_V2_TO_V1_DECISION` + `_build_policy_name` 已经把这些边界处理好了——直接复用 + 提升为 public 才是正解。**经验**：迁移到 v2 时优先复用 adapter helper，不要重写。
+2. **"测试巧合通过"是定时炸弹**：`test_trusted_paths.py` 4 个 `_trust_mode_engine` 测试在 C8b-5 后巧合通过（v2 默认 yolo），唯独 `test_non_trust_mode_does_not_skip` 显式测 non-yolo 才暴露问题。**经验**：v1 mutation 类测试在 v1 路径删除时必须**所有**测试都重新审视，不能只看是否 PASS。
+3. **拆分 commit 用于 reviewer 友好**：6a 完成后 reviewer 能独立验证"生产代码 0 处 import core.policy"（grep 即可），6b 才做删除（删后 grep 仍然 0 → 验证 grep 可重复）。一次性删 policy.py 等于让 reviewer 同时看 callsite 迁移 + 物理删除两件事，回滚也复杂。
+4. **adapter 公开 helper 命名**：把 `_V2_TO_V1_DECISION` 提为 `V2_TO_V1_DECISION` 时纠结要不要叫 `LEGACY_V2_TO_V1_BEHAVIOR`。最终选简洁名 + 在 `__all__` 注释明示"C8b-6b 后会随 v1 PolicyDecision 一起 deprecate"。**经验**：临时性 public helper 用注释标记生命周期，不要把 deprecation 暗号编码到名字里（太啰嗦）。
+5. **静态 audit 帮我抓到迁移漏网之鱼**：`c8b6a_audit.py D2`（无 v1 import）+ `D3` (skill 5 callsite) + `D4` (user manager) + `D5` (death tracker) + `D6` (reasoning_engine + permission v2_native) 五维交叉验证——比单独跑 unit test 早一步发现 reasoning_engine 第二处 hotspot 漏改的 `_pe._config.confirmation.timeout_seconds`。
+
+C8b-6a 完成。**生产代码 0 处 `from openakita.core.policy import` 或 `from .policy import`**（除 `policy_v2/adapter.py` 内 2 处延迟 import 等待 6b 一并删）。可进入 **C8b-6b（删 `policy.py` 整文件 + adapter.py 清理 + v1-only 测试文件删除）** —— 详见「C8b 粒度化执行计划 §F · C8b-6b」。
 
 
 ---

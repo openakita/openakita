@@ -8,14 +8,18 @@ from typing import Any
 
 
 def list_security_allowlist() -> dict[str, Any]:
-    from openakita.core.policy import get_policy_engine
+    """C8b-6a: v1 ``pe.get_user_allowlist()`` → v2 ``UserAllowlistManager.snapshot()``。"""
+    from openakita.core.policy_v2.global_engine import get_engine_v2
 
-    data = get_policy_engine().get_user_allowlist()
+    data = get_engine_v2().user_allowlist.snapshot()
     return {"status": "ok", "kind": "security_user_allowlist", **data}
 
 
 def remove_security_allowlist_entry(entry_type: str = "command", index: int = -1) -> dict[str, Any]:
-    from openakita.core.policy import get_policy_engine
+    """C8b-6a: v1 ``pe.remove_allowlist_entry()`` → v2 ``UserAllowlistManager.remove_entry()``
+    + ``save_to_yaml()``（v1 自动写盘 → v2 显式 save，与 add_security_allowlist_entry 对齐）。
+    """
+    from openakita.core.policy_v2.global_engine import get_engine_v2
 
     entry_type = "tool" if entry_type == "tool" else "command"
     if index < 0:
@@ -24,7 +28,10 @@ def remove_security_allowlist_entry(entry_type: str = "command", index: int = -1
             "kind": "security_user_allowlist",
             "message": "缺少有效索引",
         }
-    ok = get_policy_engine().remove_allowlist_entry(entry_type, index)
+    manager = get_engine_v2().user_allowlist
+    ok = manager.remove_entry(entry_type, index)
+    if ok:
+        manager.save_to_yaml()
     return {
         "status": "ok" if ok else "error",
         "kind": "security_user_allowlist",
@@ -35,24 +42,23 @@ def remove_security_allowlist_entry(entry_type: str = "command", index: int = -1
 
 
 def add_security_allowlist_entry(entry_type: str = "command", entry: dict[str, Any] | None = None) -> dict[str, Any]:
-    from openakita.core.policy import get_policy_engine
+    """C8b-6a: v1 ``pe._config.user_allowlist.append() + pe._save_user_allowlist()``
+    → v2 ``UserAllowlistManager.add_raw_entry() + save_to_yaml()``。
+    """
+    from openakita.core.policy_v2.global_engine import get_engine_v2
 
     entry_type = "tool" if entry_type == "tool" else "command"
-    item = dict(entry or {})
-    pe = get_policy_engine()
-    al = pe._config.user_allowlist
-    if entry_type == "command":
-        al.commands.append(item)
-    else:
-        al.tools.append(item)
-    pe._save_user_allowlist()
+    manager = get_engine_v2().user_allowlist
+    manager.add_raw_entry(entry_type, dict(entry or {}))
+    manager.save_to_yaml()
     return {"status": "ok", "kind": "security_user_allowlist", "entry_type": entry_type}
 
 
 def reset_death_switch() -> dict[str, Any]:
-    from openakita.core.policy import get_policy_engine
+    """C8b-6a: v1 ``pe.reset_readonly_mode()`` → v2 ``DeathSwitchTracker.reset()``。"""
+    from openakita.core.policy_v2 import get_death_switch_tracker
 
-    get_policy_engine().reset_readonly_mode()
+    get_death_switch_tracker().reset()
     return {"status": "ok", "kind": "security_death_switch", "readonly_mode": False}
 
 

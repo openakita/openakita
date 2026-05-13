@@ -268,21 +268,33 @@ def test_trust_mode_keeps_confirm_for_protected_file(_trust_mode_engine):
 
 
 def test_non_trust_mode_does_not_skip():
-    """smart/cautious 模式下，trust mode skip 不会触发。"""
-    from openakita.core.policy import (
-        ConfirmationConfig,
-        get_policy_engine,
-        reset_policy_engine,
-    )
+    """smart/cautious 模式下，trust mode skip 不会触发。
 
-    reset_policy_engine()
-    engine = get_policy_engine()
-    engine._config.confirmation = ConfirmationConfig(mode="smart", auto_confirm=False)
+    C8b-5 后 ``_check_trust_mode_skip`` 直读 v2 ``ConfirmationMode``，v1 ``engine
+    ._config.confirmation`` mutation 不再生效。本测试同步 mutate v2 layer 触发
+    non-trust 状态；C8b-6b 删 v1 ``policy.py`` 后整个 test_trusted_paths.py
+    会一并清理。
+    """
+    from openakita.core.policy_v2 import (
+        PolicyConfigV2,
+        build_engine_from_config,
+    )
+    from openakita.core.policy_v2.enums import ConfirmationMode
+    from openakita.core.policy_v2.global_engine import (
+        reset_engine_v2,
+        set_engine_v2,
+    )
+    from openakita.core.policy_v2.schema import ConfirmationConfig
+
+    cfg = PolicyConfigV2(
+        confirmation=ConfirmationConfig(mode=ConfirmationMode.DEFAULT)
+    )
+    set_engine_v2(build_engine_from_config(cfg), cfg)
     try:
         risk = _risk(RiskLevel.HIGH, OperationKind.OVERWRITE, TargetKind.FILE_SYSTEM)
         assert _check_trust_mode_skip(risk) is None
     finally:
-        reset_policy_engine()
+        reset_engine_v2()
 
 
 def test_trust_mode_skip_returns_none_for_no_intent():

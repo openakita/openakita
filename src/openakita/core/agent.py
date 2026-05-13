@@ -2446,9 +2446,9 @@ class Agent:
         if hasattr(self, "_skill_activation"):
             self._skill_activation.clear()
         try:
-            from .policy import get_policy_engine
+            from .policy_v2 import get_skill_allowlist_manager
 
-            get_policy_engine().clear_skill_allowlists()
+            get_skill_allowlist_manager().clear()
         except Exception:
             pass
 

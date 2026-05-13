@@ -301,9 +301,9 @@ class SkillsHandler:
         # F7: inject allowed_tools into policy engine
         if skill.allowed_tools:
             try:
-                from openakita.core.policy import get_policy_engine
+                from openakita.core.policy_v2 import get_skill_allowlist_manager
 
-                get_policy_engine().add_skill_allowlist(skill.skill_id, skill.allowed_tools)
+                get_skill_allowlist_manager().add(skill.skill_id, skill.allowed_tools)
             except Exception as e:
                 logger.warning("Failed to inject skill allowlist for %s: %s", skill.skill_id, e)
 
@@ -832,9 +832,9 @@ class SkillsHandler:
         # F7: inject temporary tool allowlist
         if skill.allowed_tools:
             try:
-                from openakita.core.policy import get_policy_engine
+                from openakita.core.policy_v2 import get_skill_allowlist_manager
 
-                get_policy_engine().add_skill_allowlist(skill.skill_id, skill.allowed_tools)
+                get_skill_allowlist_manager().add(skill.skill_id, skill.allowed_tools)
             except Exception as e:
                 logger.warning(
                     "Failed to inject allowlist for fork skill %s: %s", skill.skill_id, e
@@ -920,9 +920,9 @@ class SkillsHandler:
         """Clean up temporary tool allowlist injected for fork execution."""
         if skill.allowed_tools:
             try:
-                from openakita.core.policy import get_policy_engine
+                from openakita.core.policy_v2 import get_skill_allowlist_manager
 
-                get_policy_engine().remove_skill_allowlist(skill.skill_id)
+                get_skill_allowlist_manager().remove(skill.skill_id)
             except Exception:
                 pass
 
@@ -998,9 +998,9 @@ class SkillsHandler:
 
         # Clean up policy allowlists
         try:
-            from openakita.core.policy import get_policy_engine
+            from openakita.core.policy_v2 import get_skill_allowlist_manager
 
-            get_policy_engine().remove_skill_allowlist(skill_id)
+            get_skill_allowlist_manager().remove(skill_id)
         except Exception:
             pass
 

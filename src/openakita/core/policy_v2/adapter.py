@@ -718,8 +718,21 @@ def evaluate_message_intent_via_v2(
         )
 
 
+# C8b-6a: public aliases for the v2→v1 helpers used by ``permission.py`` (and
+# any other future caller). Underscored names retained as module internals;
+# the public aliases are stable contracts. C8b-6b will collapse the two when
+# v1 PolicyDecision/PolicyResult are gone (then ``decision_to_v1_result`` /
+# ``evaluate_via_v2_to_v1_result`` disappear with them).
+V2_TO_V1_DECISION = _V2_TO_V1_DECISION
+build_policy_name = _build_policy_name
+build_metadata_for_legacy_callers = _build_metadata
+
+
 __all__ = [
+    "V2_TO_V1_DECISION",
+    "build_metadata_for_legacy_callers",
     "build_policy_context",
+    "build_policy_name",
     "decision_to_v1_result",
     "evaluate_message_intent_via_v2",
     "evaluate_via_v2",

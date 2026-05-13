@@ -1913,11 +1913,12 @@ async def read_self_protection():
     sec = data.get("security", {})
     mode = _mode_from_security(sec)
     sp = sec.get("self_protection", {})
+    # C8b-6a: v1 ``pe.readonly_mode`` → v2 ``DeathSwitchTracker.is_readonly_mode()``
+    # （process-wide singleton；与 reasoning_engine death-switch 通知同源）。
     try:
-        from openakita.core.policy import get_policy_engine
+        from openakita.core.policy_v2 import get_death_switch_tracker
 
-        pe = get_policy_engine()
-        readonly = pe.readonly_mode
+        readonly = get_death_switch_tracker().is_readonly_mode()
     except Exception:
         readonly = False
     return {

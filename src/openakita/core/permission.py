@@ -290,31 +290,38 @@ def check_permission(
                 decision_chain=chain,
             )
 
-    # Step 2: PolicyEngine v2（C6 起决策走 v2，UI 状态留 v1，详见 docs §6 + C6 实施记录）
+    # Step 2: PolicyEngine v2（C6 起决策走 v2，C8b-6a 后直接消费 v2 类型）
     #
-    # 调用链：evaluate_via_v2_to_v1_result → policy_v2.adapter.evaluate_via_v2
-    #     → policy_v2.global_engine.get_engine_v2() → PolicyEngineV2.evaluate_tool_call
+    # 调用链：evaluate_via_v2 → policy_v2.global_engine.get_engine_v2()
+    #     → PolicyEngineV2.evaluate_tool_call → PolicyDecisionV2(action, reason, ...)
     #
-    # 返回值 duck-type 兼容旧 v1 PolicyResult：``.decision`` (PolicyDecision enum)、
-    # ``.reason``、``.policy_name``、``.metadata``。下游 ``execute_tool_with_policy``
-    # 读 ``metadata.needs_sandbox`` / ``needs_checkpoint`` 也由 adapter 冗余写入。
+    # 通过 ``adapter._V2_TO_V1_DECISION`` 做语义映射（DEFER→"confirm" 降级 + 标准
+    # 4 档），以及 ``_build_policy_name`` 抽 chain 末尾步骤名。这两个 helper 是
+    # adapter 层的语义契约，未来 PermissionDecision 完全 v2 化时一起搬迁。
     try:
-        from .policy_v2.adapter import evaluate_via_v2_to_v1_result
+        from .policy_v2.adapter import (
+            V2_TO_V1_DECISION,
+            build_metadata_for_legacy_callers,
+            build_policy_name,
+            evaluate_via_v2,
+        )
 
-        pr = evaluate_via_v2_to_v1_result(tool_name, tool_input, mode=mode)
+        decision = evaluate_via_v2(tool_name, tool_input, mode=mode)
+        _behavior = V2_TO_V1_DECISION[decision.action]
+        _policy_label = build_policy_name(decision)
         chain.append(
             {
                 "layer": "policy_engine_v2",
-                "decision": pr.decision.value,
-                "policy": pr.policy_name,
+                "decision": _behavior,
+                "policy": _policy_label,
             }
         )
         return PermissionDecision(
-            behavior=pr.decision.value,
-            reason=pr.reason,
-            reason_detail=f"policy={pr.policy_name}",
-            policy_name=pr.policy_name,
-            metadata=pr.metadata,
+            behavior=_behavior,
+            reason=decision.reason,
+            reason_detail=f"policy={_policy_label}",
+            policy_name=_policy_label,
+            metadata=build_metadata_for_legacy_callers(decision),
             decision_chain=chain,
         )
     except Exception as e:

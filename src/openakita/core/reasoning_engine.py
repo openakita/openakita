@@ -4380,19 +4380,23 @@ class ReasoningEngine:
                             # C8b-3 后 resolve 路径也完全脱离 v1（IM/web/CLI 都直接调
                             # ``policy_v2.apply_resolution`` 写 SessionAllowlistManager
                             # + UserAllowlistManager，bus 只负责唤醒 waiter）。
-                            from .policy import PolicyDecision, PolicyResult, get_policy_engine
-                            from .policy_v2.adapter import evaluate_via_v2_to_v1_result
+                            # C8b-6a: 直接消费 v2 ``PolicyDecisionV2`` + ``DecisionAction``，
+                            # 不再过 v1 PolicyResult/PolicyDecision shim；config 读 v2
+                            # ``get_config_v2().confirmation``。
+                            from .policy_v2 import get_config_v2
+                            from .policy_v2.adapter import evaluate_via_v2
+                            from .policy_v2.enums import DecisionAction
                             from .ui_confirm_bus import get_ui_confirm_bus
 
-                            _pe = get_policy_engine()
+                            _v2_conf = get_config_v2().confirmation
                             _bus = get_ui_confirm_bus()
-                            _pr = evaluate_via_v2_to_v1_result(
+                            _pr = evaluate_via_v2(
                                 t_name, t_args if isinstance(t_args, dict) else {}
                             )
-                            if _pr.decision == PolicyDecision.DENY:
+                            if _pr.action == DecisionAction.DENY:
                                 r = f"⚠️ 策略拒绝: {_pr.reason}"
                                 _tool_is_error = True
-                            elif _pr.decision == PolicyDecision.CONFIRM:
+                            elif _pr.action == DecisionAction.CONFIRM:
                                 # C8 §2.3 fix：取消 IM 渠道早退。reasoning_engine 永远 yield
                                 # ``security_confirm`` SSE，让 gateway._consume_stream 把事件
                                 # 路由到 ``_handle_im_security_confirm``：桌面端走 SecurityView
@@ -4425,8 +4429,8 @@ class ReasoningEngine:
                                     "reason": _pr.reason,
                                     "risk_level": _risk,
                                     "needs_sandbox": _needs_sb,
-                                    "timeout_seconds": _pe._config.confirmation.timeout_seconds,
-                                    "default_on_timeout": _pe._config.confirmation.default_on_timeout,
+                                    "timeout_seconds": _v2_conf.timeout_seconds,
+                                    "default_on_timeout": _v2_conf.default_on_timeout,
                                     "channel": "im" if _is_im else "desktop",
                                     "approval_class": _approval_class,
                                     "policy_version": 2,
@@ -4440,9 +4444,7 @@ class ReasoningEngine:
                                 }
                                 # IM 用户响应延迟更高：卡片走 IM 通道 + 用户切回看消息往往
                                 # >60s。给 IM 多 4 倍时长（最少 180s 兜底），桌面端沿用配置。
-                                _confirm_timeout = float(
-                                    _pe._config.confirmation.timeout_seconds
-                                )
+                                _confirm_timeout = float(_v2_conf.timeout_seconds)
                                 if _is_im:
                                     _confirm_timeout = max(_confirm_timeout * 4, 180.0)
                                 _decision = await _bus.wait_for_resolution(
@@ -4458,11 +4460,16 @@ class ReasoningEngine:
                                     "sandbox",
                                 ):
                                     try:
+                                        # C8b-6a: pass v2 PolicyDecisionV2 directly;
+                                        # ``execute_tool_with_policy`` only reads ``.metadata``
+                                        # via ``getattr``——duck-typed across v1/v2.
+                                        from .policy_v2.models import PolicyDecisionV2 as _PD2
+
                                         r = await self._tool_executor.execute_tool_with_policy(
                                             tool_name=t_name,
                                             tool_input=t_args if isinstance(t_args, dict) else {},
-                                            policy_result=PolicyResult(
-                                                decision=PolicyDecision.ALLOW,
+                                            policy_result=_PD2(
+                                                action=DecisionAction.ALLOW,
                                                 reason=f"用户已允许安全确认: {_decision}",
                                                 metadata={
                                                     "confirmed_bypass": True,
@@ -4748,17 +4755,24 @@ class ReasoningEngine:
                         )
 
                         # PolicyEngine 检查（与 execute_batch 一致）—— C6 起决策走 v2，
-                        # C9b 起 UI confirm 走独立 ui_confirm_bus；readonly_mode 仍在
-                        # v1 PolicyEngine 上（C8b 删 v1 RiskGate 时一并搬迁）。
-                        from .policy import PolicyDecision, PolicyResult, get_policy_engine
-                        from .policy_v2.adapter import evaluate_via_v2_to_v1_result
+                        # C9b 起 UI confirm 走独立 ui_confirm_bus；C8b-1 起 readonly
+                        # 由 ``DeathSwitchTracker`` 承载（process-wide singleton），与
+                        # v1 ``pe.readonly_mode`` 同源。
+                        # C8b-6a: 直接消费 v2 ``PolicyDecisionV2`` + ``DecisionAction``。
+                        from .policy_v2 import (
+                            get_config_v2,
+                            get_death_switch_tracker,
+                        )
+                        from .policy_v2.adapter import evaluate_via_v2
+                        from .policy_v2.enums import DecisionAction
                         from .ui_confirm_bus import get_ui_confirm_bus
 
-                        _pe = get_policy_engine()
+                        _v2_conf = get_config_v2().confirmation
+                        _ds_tracker = get_death_switch_tracker()
                         _bus = get_ui_confirm_bus()
                         _tool_args_dict = tool_args if isinstance(tool_args, dict) else {}
-                        _pr = evaluate_via_v2_to_v1_result(tool_name, _tool_args_dict)
-                        if _pr.decision == PolicyDecision.DENY:
+                        _pr = evaluate_via_v2(tool_name, _tool_args_dict)
+                        if _pr.action == DecisionAction.DENY:
                             result_text = f"⚠️ 策略拒绝: {_pr.reason}"
                             _deny_summary = self._summarize_tool_result(tool_name, result_text)
                             yield {
@@ -4771,10 +4785,11 @@ class ReasoningEngine:
                             }
                             if _deny_summary:
                                 yield {"type": "chain_text", "content": _deny_summary}
-                            if _pe.readonly_mode and not _death_switch_notified:
+                            _readonly_now = _ds_tracker.is_readonly_mode()
+                            if _readonly_now and not _death_switch_notified:
                                 yield {"type": "death_switch", "active": True, "reason": _pr.reason}
                                 _death_switch_notified = True
-                            if _pe.readonly_mode:
+                            if _readonly_now:
                                 result_text = (
                                     f"{result_text}\n\n"
                                     "[DEATH SWITCH] Agent 已进入只读模式，所有非只读操作将被拒绝。"
@@ -4793,7 +4808,7 @@ class ReasoningEngine:
 
                         _executed_tool_calls_for_budget.append(tc)
 
-                        if _pr.decision == PolicyDecision.CONFIRM:
+                        if _pr.action == DecisionAction.CONFIRM:
                             _actual_tool_calls_for_budget.append(tc)
                             # C8 §2.3 fix：取消 IM 渠道早退（同上方 hotspot），让 IM 走
                             # gateway 卡片确认链路。timeout 对 IM 放宽 4×（最少 180s）。
@@ -4818,17 +4833,15 @@ class ReasoningEngine:
                                 "reason": _pr.reason,
                                 "risk_level": _risk,
                                 "needs_sandbox": _needs_sb,
-                                "timeout_seconds": _pe._config.confirmation.timeout_seconds,
-                                "default_on_timeout": _pe._config.confirmation.default_on_timeout,
+                                "timeout_seconds": _v2_conf.timeout_seconds,
+                                "default_on_timeout": _v2_conf.default_on_timeout,
                                 "channel": "im" if _is_im else "desktop",
                                 "approval_class": _approval_class,
                                 "policy_version": 2,
                                 "options": ["allow_once", "allow_session", "allow_always", "deny"]
                                 + (["sandbox"] if _needs_sb else []),
                             }
-                            _confirm_timeout = float(
-                                _pe._config.confirmation.timeout_seconds
-                            )
+                            _confirm_timeout = float(_v2_conf.timeout_seconds)
                             if _is_im:
                                 _confirm_timeout = max(_confirm_timeout * 4, 180.0)
                             _decision = await _bus.wait_for_resolution(
@@ -4845,11 +4858,15 @@ class ReasoningEngine:
                             )
                             if _confirmed_allowed:
                                 try:
+                                    # C8b-6a: pass v2 PolicyDecisionV2 directly (duck-typed
+                                    # with v1 PolicyResult on ``.metadata``).
+                                    from .policy_v2.models import PolicyDecisionV2 as _PD2
+
                                     result_text = await self._tool_executor.execute_tool_with_policy(
                                         tool_name=tool_name,
                                         tool_input=_tool_args_dict,
-                                        policy_result=PolicyResult(
-                                            decision=PolicyDecision.ALLOW,
+                                        policy_result=_PD2(
+                                            action=DecisionAction.ALLOW,
                                             reason=f"用户已允许安全确认: {_decision}",
                                             metadata={
                                                 "confirmed_bypass": True,
