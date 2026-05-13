@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse
 from ppt_activity_log import PptActivityLogger
 from ppt_audit import PptAudit
 from ppt_brain_adapter import PptBrainAdapter
+from ppt_creative_exporter import CreativeImageExporter
 from ppt_design import DesignBuilder
 from ppt_exporter import PptxExporter, PptxExportError
 from ppt_ir import SlideIrBuilder
@@ -35,6 +36,9 @@ from ppt_maker_inline.upload_preview import register_upload_preview_routes
 from ppt_models import DeckMode, ProjectCreate, ProjectStatus, SourceStatus
 from ppt_outline import OutlineBuilder
 from ppt_pipeline import PptPipeline
+from ppt_pptxgenjs_exporter import PptxGenJsExporter
+from ppt_repair import PptRepair
+from ppt_render_model import save_generation_artifacts
 from ppt_source_loader import MissingDependencyError, SourceLoader, SourceParseError
 from ppt_table_analyzer import TableAnalyzer
 from ppt_task_manager import PptTaskManager
@@ -844,6 +848,17 @@ class Plugin(PluginBase):
                     template_id=project.template_id,
                     layout_map=layout_map,
                 )
+                settings = _load_settings(data_dir)
+                save_generation_artifacts(
+                    project=project,
+                    settings=settings,
+                    outline=outline["outline"],
+                    spec_lock=design["spec_lock"],
+                    slides_ir=ir,
+                    output_dir=project_dir(data_dir, project_id),
+                    table_insights=table_insights,
+                    chart_specs=chart_specs,
+                )
                 path = SlideIrBuilder().save(ir, project_dir(data_dir, project_id))
                 slides = await manager.replace_slides(project_id, ir["slides"])
             return {"ok": True, "slides_ir": ir, "path": str(path), "slides": slides}
@@ -869,6 +884,25 @@ class Plugin(PluginBase):
             path = PptAudit().save(report, project_dir(data_dir, project_id))
             return {"ok": True, "audit": report, "path": str(path)}
 
+        @router.post("/projects/{project_id}/repair")
+        async def repair_project(project_id: str) -> dict[str, Any]:
+            slides_ir = _project_json(data_dir, project_id, "slides_ir.json")
+            if slides_ir is None:
+                raise HTTPException(status_code=409, detail="Generate slides first")
+            audit = PptAudit().run(slides_ir)
+            repaired, repair_plan = PptRepair().repair(slides_ir, audit)
+            repair_path = PptRepair().save(repair_plan, project_dir(data_dir, project_id))
+            ir_path = SlideIrBuilder().save(repaired, project_dir(data_dir, project_id))
+            async with PptTaskManager(data_dir / "ppt_maker.db") as manager:
+                await manager.replace_slides(project_id, repaired.get("slides", []))
+            return {
+                "ok": True,
+                "slides_ir": repaired,
+                "repair_plan": repair_plan,
+                "repair_path": str(repair_path),
+                "path": str(ir_path),
+            }
+
         @router.get("/projects/{project_id}/audit")
         async def get_audit(project_id: str) -> dict[str, Any]:
             report = _project_json(data_dir, project_id, "audit_report.json")
@@ -886,7 +920,18 @@ class Plugin(PluginBase):
             output_name = _format_output_filename(project_id, "pptx", settings)
             output_path = out_dir / output_name
             try:
-                export_path = PptxExporter().export(slides_ir, output_path)
+                if settings.get("output_mode") == "creative_image":
+                    export_path = CreativeImageExporter().export(slides_ir, output_path)
+                elif settings.get("exporter") == "pptxgenjs":
+                    render_model = _project_json(data_dir, project_id, "render_model.json") or {}
+                    export_path = PptxGenJsExporter().export(
+                        render_model=render_model,
+                        legacy_slides_ir=slides_ir,
+                        output_path=output_path,
+                        allow_fallback=True,
+                    )
+                else:
+                    export_path = PptxExporter().export(slides_ir, output_path)
             except PptxExportError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             audit = PptAudit().run(slides_ir, export_path)
@@ -1041,6 +1086,25 @@ class Plugin(PluginBase):
                 report = PptAudit().run(slides_ir)
                 path = PptAudit().save(report, project_dir(data_dir, str(arguments["project_id"])))
                 return json.dumps({"ok": True, "audit": report, "path": str(path)}, ensure_ascii=False)
+            if tool_name == "ppt_repair":
+                project_id = str(arguments["project_id"])
+                slides_ir = _project_json(data_dir, project_id, "slides_ir.json")
+                if slides_ir is None:
+                    return json.dumps({"ok": False, "error": "Generate slides first"}, ensure_ascii=False)
+                audit = PptAudit().run(slides_ir)
+                repaired, repair_plan = PptRepair().repair(slides_ir, audit)
+                repair_path = PptRepair().save(repair_plan, project_dir(data_dir, project_id))
+                ir_path = SlideIrBuilder().save(repaired, project_dir(data_dir, project_id))
+                await manager.replace_slides(project_id, repaired.get("slides", []))
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "repair_plan": repair_plan,
+                        "repair_path": str(repair_path),
+                        "path": str(ir_path),
+                    },
+                    ensure_ascii=False,
+                )
             if tool_name == "ppt_cancel":
                 project_id = str(arguments.get("project_id") or "")
                 count = await manager.cancel_project_tasks(project_id)
@@ -1101,6 +1165,7 @@ def _tool_definitions() -> list[dict[str, Any]]:
         ("ppt_generate_deck", "Generate slide IR and export a PPT deck."),
         ("ppt_revise_slide", "Revise one slide or part of a PPT project."),
         ("ppt_audit", "Audit a generated PPT project."),
+        ("ppt_repair", "Apply deterministic repair hints to a generated PPT project."),
         ("ppt_export", "Export a PPT project."),
         ("ppt_list_projects", "List PPT projects."),
         ("ppt_cancel", "Cancel a running PPT task."),
@@ -1352,6 +1417,9 @@ def _default_settings() -> dict[str, str]:
         "language": "zh-CN",
         "single_shot_mode": "false",
         "web_search_enabled": "false",
+        "quality_mode": "standard",
+        "output_mode": "editable",
+        "exporter": "python-pptx",
         # Image / icon resolution (consumed by PptAssetProvider)
         "image_provider": "none",
         "pexels_api_key": "",
