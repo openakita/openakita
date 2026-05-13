@@ -1792,16 +1792,17 @@ async def rewind_checkpoint(body: dict):
 async def security_confirm(body: SecurityConfirmRequest):
     """Handle security confirmation from UI.
 
-    Calls mark_confirmed() on the policy engine so that the agent's
-    subsequent retry of the same tool bypasses the CONFIRM gate.
+    C8b-3：调 ``policy_v2.apply_resolution``——它统一负责（1）唤醒
+    reasoning_engine 上的 ``wait_for_resolution`` waiter；（2）按 decision
+    类型写 SessionAllowlistManager / UserAllowlistManager（替代 v1
+    ``mark_confirmed``）。
     """
     decision = body.normalized_decision()
     logger.info(f"[Security] Confirmation received: {body.confirm_id} -> {decision}")
     try:
-        from openakita.core.policy import get_policy_engine
+        from openakita.core.policy_v2 import apply_resolution
 
-        engine = get_policy_engine()
-        found = engine.resolve_ui_confirm(body.confirm_id, decision)
+        found = apply_resolution(body.confirm_id, decision)
         if not found:
             logger.warning(f"[Security] No pending confirm found for id={body.confirm_id}")
     except Exception as e:

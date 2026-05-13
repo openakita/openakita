@@ -5754,13 +5754,18 @@ class Agent:
                 self.agent_state.reset_task(session_id=_ct_key)
 
         # P1-7: 清理 PolicyEngine 会话状态 + ToolExecutor 待确认缓存
+        # C8b-3：v1 ``pe.cleanup_session()`` 拆为 v2 两件事
+        # （bus 删 pending + SessionAllowlistManager 清 session 临时白名单）
         try:
-            from .policy import get_policy_engine
+            from .policy_v2 import get_session_allowlist_manager
+            from .ui_confirm_bus import get_ui_confirm_bus
 
-            _pe = get_policy_engine()
+            _bus = get_ui_confirm_bus()
+            _sess_mgr = get_session_allowlist_manager()
             for _clean_id in (_sid, _conv_id):
                 if _clean_id:
-                    _pe.cleanup_session(_clean_id)
+                    _bus.cleanup_session(_clean_id)
+            _sess_mgr.clear()
         except Exception:
             pass
         if hasattr(self, "tool_executor") and hasattr(self.tool_executor, "_pending_confirms"):

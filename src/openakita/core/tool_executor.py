@@ -802,48 +802,73 @@ class ToolExecutor:
                 )
 
             if perm_decision.behavior == "confirm":
-                from .policy import get_policy_engine
-
-                policy_engine = get_policy_engine()
-                confirm_key = policy_engine._confirm_cache_key(tool_name, tool_input)
-                if confirm_key in self._pending_confirms:
-                    policy_engine.mark_confirmed(tool_name, tool_input)
-                    del self._pending_confirms[confirm_key]
-                    logger.info(f"[Security] Auto-allowed retry of confirmed tool: {tool_name}")
-                else:
-                    self._pending_confirms[confirm_key] = {
-                        "tool_name": tool_name,
-                        "params": tool_input,
-                        "metadata": perm_decision.metadata,
-                        "ts": time.time(),
-                    }
-                    risk = perm_decision.metadata.get("risk_level", "")
-                    sandbox_hint = ""
-                    if perm_decision.metadata.get("needs_sandbox"):
-                        sandbox_hint = "\n注意: 此命令将在沙箱中执行以保护系统安全。"
-
+                # C8b-3：dedup key 从 hash(tool, command, path) 改为 tool_use_id。
+                #
+                # 旧实现命中 dedup 后调 ``mark_confirmed`` 写 v1 _session_allowlist——
+                # 这是"用户没在 UI 真的确认 → tool_executor 自作主张允许"的安全
+                # 漏洞。新行为：tool_use_id 是 LLM 单次 tool block 的唯一 id；
+                # 正常 LLM retry 会生成新 id（命中不到本分支，会重新走 confirm
+                # 流程让用户再决策一次）。本 dedup 只防御"reasoning_engine 因
+                # bug 重复消费同一 tool_use 块"的极端场景：直接返回 idle 错误，
+                # **不**触发 _security_confirm metadata（避免 reasoning_engine
+                # 重发 SSE 给 UI 弹两次卡片）。
+                #
+                # 真正的"session 内同一工具免 confirm"语义由 SessionAllowlistManager
+                # 在 PolicyEngineV2 step 9 提供——用户点 "allow_session" 后第二次
+                # 调用走 ALLOW 直接绕过本 confirm 分支。
+                if tool_use_id and tool_use_id in self._pending_confirms:
+                    logger.info(
+                        "[Security] tool_use_id %s already pending—suppress dup "
+                        "confirm SSE (tool=%s)",
+                        tool_use_id[:8],
+                        tool_name,
+                    )
                     return (
                         idx,
                         {
                             "type": "tool_result",
                             "tool_use_id": tool_use_id,
-                            "content": (
-                                f"⚠️ 需要用户确认: {perm_decision.reason}"
-                                f"{sandbox_hint}\n"
-                                "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
-                                "不要使用 ask_user 工具重复询问。"
-                            ),
+                            "content": "⚠️ 该工具调用的确认已在等待中，请勿重复触发。",
                             "is_error": True,
-                            "_security_confirm": {
-                                "tool_name": tool_name,
-                                "params": tool_input,
-                                "risk_level": risk,
-                                "needs_sandbox": perm_decision.metadata.get("needs_sandbox", False),
-                            },
                         },
                         None,
                         None,
                     )
+
+                if tool_use_id:
+                    self._pending_confirms[tool_use_id] = {
+                        "tool_name": tool_name,
+                        "params": tool_input,
+                        "metadata": perm_decision.metadata,
+                        "ts": time.time(),
+                    }
+                risk = perm_decision.metadata.get("risk_level", "")
+                sandbox_hint = ""
+                if perm_decision.metadata.get("needs_sandbox"):
+                    sandbox_hint = "\n注意: 此命令将在沙箱中执行以保护系统安全。"
+
+                return (
+                    idx,
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": (
+                            f"⚠️ 需要用户确认: {perm_decision.reason}"
+                            f"{sandbox_hint}\n"
+                            "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
+                            "不要使用 ask_user 工具重复询问。"
+                        ),
+                        "is_error": True,
+                        "_security_confirm": {
+                            "tool_name": tool_name,
+                            "params": tool_input,
+                            "risk_level": risk,
+                            "needs_sandbox": perm_decision.metadata.get("needs_sandbox", False),
+                        },
+                    },
+                    None,
+                    None,
+                )
 
             # Auto-promote deferred tools (formerly blind-call guard).
             #

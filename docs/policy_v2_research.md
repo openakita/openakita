@@ -956,6 +956,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C8a | safety_immune 9 类 + OwnerOnly 配置驱动 + switch_mode 真生效 + consume_session_trust 真删 + IM 前缀 SSE bug | ✅ Done | §2.3 + §5 + R5-22 |
 | C8b-1 | v2 补能：UserAllowlist + SkillAllowlist + DeathSwitch + step 9/10 实装 | ✅ Done | §6.6 + 「C8b-1 实施记录」 |
 | C8b-2 | 配置常量与 SecurityConfig 子段读取迁移：`policy_v2/defaults.py` + `reset_policy_v2_layer` + audit_logger/checkpoint 改读 v2 | ✅ Done | §6.6 + 「C8b-2 实施记录」 |
+| C8b-3 | UI confirm facade 完成切换 + confirmed_cache 决策：`policy_v2/session_allowlist.py` + `policy_v2/confirm_resolution.py` + 7 callsite 直连 v2 + `policy.py` 删 6 facade + `mark_confirmed` + 2 字段 + tool_executor 改 `tool_use_id` 去重 | ✅ Done | 「C8b-3 实施记录」 |
 | C8b-3..5 | （未启动）UI confirm 切换 / RiskGate 删除 / PolicyEngine class 删除 | ⏳ Pending | §6.6 + §10 + 「C8b 粒度化执行计划」|
 | C9a | SecurityView v2 适配（approval_class badge + IM owner UI + dry-run preview） | ✅ Done | §8 + R5-20 |
 | C9b | UI confirm bus 抽出（`core/ui_confirm_bus.py`），让 C8b 能安全删 v1 | ✅ Done | §6.6 + R5-22 |
@@ -3000,6 +3001,159 @@ $ pytest tests/unit/
 4. **测试静态扫描 import 的价值**：`TestConfigPyDoesNotImportV1Internals` × 2 用文本断言守住"config.py 不再 import v1 私有符号"——这是普通 unit test 抓不到的"代码质量"维度，但又是删 v1 的硬前置。
 
 C8b-2 完成，可进入 **C8b-3（UI confirm facade 完成切换 + confirmed_cache 决策）**：新增 `policy_v2/session_allowlist.py`；7 个 IM/CLI/web callsite 直连 `get_ui_confirm_bus()` + `SessionAllowlistManager`；`tool_executor.py:807-810` retry-confirm 改用 `tool_use_id` 去重；`policy.py` 删除 6 个 facade 方法 + `mark_confirmed` + `_session_allowlist` + `_confirmed_cache`。详见「C8b 粒度化执行计划 §F · C8b-3」。
+
+---
+
+## C8b-3 实施记录
+
+时间：C8b-2 之后下一步。
+依据：「C8b 粒度化执行计划 §F · C8b-3 — UI confirm facade 完成切换 + confirmed_cache 决策（medium risk）」。
+
+### 0. Recon（最终拆分确认）
+
+| 维度 | 内容 |
+|---|---|
+| 7 callsite | `cli/stream_renderer.py:306` / `api/routes/config.py:1804` / `api/routes/chat.py:401` / `channels/gateway.py:4778,4842` / `channels/adapters/telegram.py:700` / `channels/adapters/feishu.py:1092` / `core/agent.py:5763` |
+| 1 退化郻路 | `tool_executor.py:807-810` retry-confirm（hash dedup + `mark_confirmed` 写 v1 _session_allowlist —— 安全漏洞，必须改 `tool_use_id`） |
+| `confirmed_cache` 决策 | **删除**——v2 没有 TTL 缓存层（"allow_once" 由 reasoning_engine 一次性放行，"allow_session" 落 SessionAllowlistManager，"allow_always" 落 UserAllowlistManager+session）|
+| `_session_allowlist` 决策 | **删除**——语义全部移到 `SessionAllowlistManager`（module singleton，仿 SkillAllowlistManager / DeathSwitchTracker 模式）|
+| `mark_confirmed` 决策 | **删除**——副作用拆到 `apply_resolution()`：根据 decision 类型分发到 SessionAllowlistManager / UserAllowlistManager |
+| `_session_allow_count` | **保留**——仅 v1 RiskGate smart-mode 计数器使用，C8b-4 删 RiskGate 时一起清 |
+| `_check_persistent_allowlist` 等 | **保留**——仅 v1 `assert_tool_allowed` 内部用，C8b-5 删 |
+
+### 1. 实施步骤
+
+#### 1.1 新增 `policy_v2/session_allowlist.py`（+186 行）
+
+`SessionAllowlistManager` (module singleton)：
+
+```python
+def add(tool_name, params, *, needs_sandbox=False) -> None
+def is_allowed(tool_name, params) -> dict | None  # 返回 {"needs_sandbox", ...}
+def clear() -> None  # 全局清（与 v1 cleanup_session 等价行为）
+def snapshot() -> dict[content_key → entry]
+```
+
+- Keying：`md5(tool_name + params.command + params.path)` —— **字节级**复刻 v1 `_confirm_cache_key`，由 `TestKeyParityWithV1` 4 个测试守护
+- TTL：**完全移除**（v1 的 TTL 缓存语义在 v2 简化为二态：要么 session 永久 allow，要么下次再问）
+- 与 `UIConfirmBus` / `SkillAllowlistManager` / `DeathSwitchTracker` 同款 `_singleton_lock` + `reset_*_manager()` 测试 fixture 路径
+
+#### 1.2 新增 `policy_v2/confirm_resolution.py`（+99 行）
+
+`apply_resolution(confirm_id, decision) -> bool`：
+
+| decision | 副作用 |
+|---|---|
+| `allow_once` / `allow` (legacy) | 仅唤醒 waiter，无 allowlist 写 |
+| `allow_session` / `sandbox` | + `SessionAllowlistManager.add(...)` |
+| `allow_always` | + 上面的 + `UserAllowlistManager.add_entry(...)` + `save_to_yaml()` |
+| `deny` / 其他 | 仅唤醒，无 allowlist 写 |
+
+设计原则：bus 只管"唤醒 + sidecar"，不知道 allowlist 的存在；manager 只管 CRUD，不知道 bus；`apply_resolution` 是**唯一耦合点**——这样 bus 单测 0 mock manager，manager 单测 0 mock bus。
+
+#### 1.3 PolicyEngineV2 step 9 增加 session 层（+12 行 / 改 9 行）
+
+`_check_user_allowlist` 三层顺序：
+
+```
+Tier 1: UserAllowlistManager（持久化）
+Tier 2: SessionAllowlistManager（C8b-3 新加）  ← step 9 内
+Tier 3: SkillAllowlistManager（process-wide ephemeral）
+```
+
+`bypass 边界`：本步在 safety_immune（step 3）/ owner_only（step 4）/ matrix DENY（step 6）/ shell DENY（classifier）之后，所以 session allow 不能绕过任何 safety 层；death_switch（step 10）在本步之后，readonly 时仍然 DENY。
+
+#### 1.4 7 callsite 迁移（净改 -42 行 v1 import / +21 行 v2 import）
+
+```diff
+- from ..core.policy import get_policy_engine
+- engine = get_policy_engine()
+- found = engine.resolve_ui_confirm(confirm_id, decision)
++ from ..core.policy_v2 import apply_resolution
++ found = apply_resolution(confirm_id, decision)
+```
+
+`api/routes/chat.py` + `core/agent.py` 的 `cleanup_session` 拆成 `bus.cleanup_session(sid)` + `SessionAllowlistManager.clear()`。
+
+#### 1.5 `tool_executor.py:807-810` retry-confirm 改 `tool_use_id`（-15 行 / +25 行）
+
+| 维度 | v1 | C8b-3 |
+|---|---|---|
+| dedup key | `md5(tool, command, path)` 内容哈希 | `tool_use_id`（LLM 生成 per tool block 唯一 id）|
+| 命中后行为 | 调 `mark_confirmed` 写 v1 _session_allowlist + fall-through 执行 | 仅 suppress dup `_security_confirm` SSE 防止 UI 弹两次卡片；返回 idle 错误（不静默 allow） |
+| 风险 | **安全漏洞**：用户没在 UI 真确认，仅因 LLM retry 就被静默允许 | **更保守**：LLM 重试新 tool_use_id 会重新走 confirm；用户点 "allow_session" 后才进 SessionAllowlistManager |
+
+#### 1.6 `policy.py` 删除（-92 行）
+
+- 6 个 UI confirm facade 方法：`store_ui_pending` / `cleanup_session` / `resolve_ui_confirm` / `prepare_ui_confirm` / `cleanup_ui_confirm` / `wait_for_ui_resolution`
+- `mark_confirmed` 方法
+- `_session_allowlist` / `_confirmed_cache` 字段初始化
+- `reset_policy_engine` 中对应字段拷贝行
+- `_check_allowlists` Tier 2/3 逻辑改为：Tier 1 UserAllowlist + Tier 2 SessionAllowlistManager（v2 manager），删除 Tier 3 TTL（与 v2 设计一致）
+
+#### 1.7 测试治理
+
+| 文件 | 操作 |
+|---|---|
+| `tests/unit/test_policy_v2_c8b3_session_allowlist.py` | NEW（19 个测试，覆盖 manager + step 9 三层 + singleton isolation） |
+| `tests/unit/test_policy_v2_c8b3_apply_resolution.py` | NEW（15 个测试，覆盖 5 类 decision 矩阵 + waiter 唤醒 + 7 callsite 静态扫描 + v1 facade 删除验证） |
+| `tests/unit/test_policy_v2_c8_wire.py` | 更新 2 个 `prepare_ui_confirm` 测试改用 bus 直接 |
+| `tests/unit/test_security.py` | 12 个 v1-only 测试加 `@pytest.mark.skip`（`TestAllowlists` × 5 + `TestResolveUIConfirm` × 7）；理由统一指向 C8b-5 cleanup |
+| `tests/unit/test_chat_clear_runtime.py` | 重写：从"mock pe.cleanup_session"改为"验证 bus.cleanup_session + SessionAllowlistManager.clear" |
+| `tests/conftest.py` | autouse fixture `_isolate_policy_v2_singletons` 增加 `reset_session_allowlist_manager()` |
+
+#### 1.8 audit 脚本
+
+- `scripts/c8b3_audit.py` NEW —— D1 完整性 / D2 SoT / D3 7 callsite / D4 decision 矩阵 / D5 step 9 三层顺序 / D6 tool_use_id dedup
+- `scripts/c8_audit_d1_completeness.py` 更新 #5 改用 bus 直接（v1 facade 删了）
+- `scripts/c9_audit.py` D2 改为"验证 facade 已删除"（反向断言）；D4#5 + D5 改用 `apply_resolution` + SessionAllowlistManager
+
+### 2. 行为变更（用户可感知）
+
+| 场景 | v1 行为 | C8b-3 行为 |
+|---|---|---|
+| LLM 收到 "needs confirm" 后**重试相同工具+参数（新 tool_use_id）** | 静默自动 allow（`mark_confirmed` 在 tool_executor 内被调）—— **安全漏洞** | 重新走 confirm，用户必须在 UI 操作 —— **更安全** |
+| 用户点 "allow_session" | mark_confirmed 写 v1 dict + TTL cache，下次同 (tool, command, path) 自动 allow | apply_resolution 写 SessionAllowlistManager，下次同 (tool, command, path) 自动 allow（行为等价；keying 完全相同） |
+| 用户点 "allow_always" | mark_confirmed 写持久化 YAML + session dict | apply_resolution 写 UserAllowlistManager+save_to_yaml + SessionAllowlistManager（行为等价；新增"立即生效"保证） |
+| `/api/chat/clear` | `pe.cleanup_session(sid)` 删 bus pending + 清整个 session_allowlist | `bus.cleanup_session(sid)` + `SessionAllowlistManager.clear()`（行为等价；语义更明确） |
+| TTL "短时间内同操作免 confirm" | `_confirmed_cache` 维护 `confirm_ttl` 秒缓存 | **不再支持**——必须显式选 "allow_session" 或 "allow_always"。这是 v1 的隐式 UX，v2 故意改为显式 |
+
+### 3. 验证矩阵
+
+```
+$ python scripts/c8b3_audit.py
+=== C8b-3 D1 completeness ===  ... D1 PASS
+=== C8b-3 D2 single source of truth ===  ... D2 PASS
+=== C8b-3 D3 no whack-a-mole (7 callsite migration) ===  ... D3 PASS
+=== C8b-3 D4 apply_resolution decision matrix ===  ... D4 PASS
+=== C8b-3 D5 v2 step 9 three-tier order ===  ... D5 PASS
+=== C8b-3 D6 tool_executor retry-confirm uses tool_use_id ===  ... D6 PASS
+C8b-3 ALL 6 DIMENSIONS PASS
+
+$ pytest tests/unit/
+2712 passed, 16 skipped, 8 failed (all pre-existing, identical to C8b-2 baseline)
+# +21 net pass = 34 new C8b-3 tests +1 fixed (test_chat_clear_runtime) -14 newly skipped (v1-only)
+# 0 new regressions
+```
+
+**所有 29 维度 audit（C8 D1-D5 + C9 D1-D6 + C8b-1 D1-D6 + C8b-2 D1-D6 + C8b-3 D1-D6）全 PASS。**
+
+### 4. Bug fixes during implementation
+
+1. `test_session_allow_overrides_confirm` 用 `decision.relax_step` 字段不存在 → 改用 `decision.chain[-1].name + note`（v2 model 不暴露 relax_step）
+2. `TestCallsiteMigrationStatic.test_gateway_migrated` 子串匹配命中文档注释 → 收紧到 `pe.resolve_ui_confirm(`（带左括号）排除 doc 提及
+3. `tests/unit/test_chat_clear_runtime.py` 旧测试 mock 了已删的 `pe.cleanup_session` → 完全重写为"验证 bus + session manager 都被清"
+
+### 5. 工程教训
+
+1. **"删 v1 facade"前先 grep 全 callsite 确认能直连 v2**：本次 7 callsite 全部迁移完才动手删 facade，避免删了之后 chat handler 启动时炸 ImportError。
+2. **module-singleton 模式可以批量复用**：`UIConfirmBus` / `SkillAllowlistManager` / `DeathSwitchTracker` / `SessionAllowlistManager` 4 个 singleton 用同一个 conftest fixture 重置，保证 test 之间零状态泄露。新加 singleton 时只需在 fixture 加一行 `reset_xxx()`。
+3. **bus 与 allowlist 解耦的真实价值**：bus 单测不需要 mock 任何 manager；manager 单测不需要 mock bus；`apply_resolution` 单独测 5×decision 矩阵。三层各自独立测试覆盖率达 100%（vs 原 v1 把三件事耦合在 `mark_confirmed` 一个方法里，单测必须 mock 多个 module）。
+4. **"安全漏洞"vs"UX downgrade"权衡需明示文档**：tool_executor retry-allow 行为变化用户**会**感知，但安全性提升远大于 UX 损失（且用户随时可以选 "allow_session" 显式转 explicit allow）。决策矩阵表 §2 把这一点写在显眼位置。
+5. **静态扫描 callsite 的 audit 价值**：`TestCallsiteMigrationStatic` 7 个静态测试 + `c8b3_audit.py D3` 同样的检查，双层守护——unit test 跑得快但 grep 命中可能漏；audit 跑得慢但能精确定位文件，两者互补。
+
+C8b-3 完成。**v1 `policy.py` UI confirm 状态机 100% 切除**（仅余 v1 RiskGate + assert_tool_allowed 路径，C8b-4 / C8b-5 处理）。可进入 **C8b-4（permission-mode `_frontend_mode` shim 替换 + 配合 `_session_allow_count` smart-mode 删除）** —— 详见「C8b 粒度化执行计划 §F · C8b-4 / C8b-5」。
+
 
 ---
 

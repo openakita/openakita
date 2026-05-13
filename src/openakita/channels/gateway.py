@@ -4775,7 +4775,9 @@ class MessageGateway:
         pe = get_policy_engine()
         if getattr(pe, "_is_trust_mode", lambda: False)():
             if confirm_id:
-                pe.resolve_ui_confirm(confirm_id, "deny")
+                from ..core.policy_v2 import apply_resolution
+
+                apply_resolution(confirm_id, "deny")
             logger.info(
                 "[Security] Trust-mode IM confirmation resolved without prompting: "
                 "tool=%s confirm_id=%s",
@@ -4839,7 +4841,9 @@ class MessageGateway:
 
         if confirm_id:
             try:
-                pe.resolve_ui_confirm(confirm_id, decision)
+                from ..core.policy_v2 import apply_resolution
+
+                apply_resolution(confirm_id, decision)
             except Exception as exc:
                 logger.warning(f"[Security] IM confirm resolve failed: {exc}")
 

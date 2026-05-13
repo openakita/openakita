@@ -25,6 +25,7 @@ from .adapter import (
     mode_to_session_role,
 )
 from .classifier import ApprovalClassifier, ClassificationResult
+from .confirm_resolution import apply_resolution
 from .context import (
     PolicyContext,
     ReplayAuthorization,
@@ -108,6 +109,11 @@ from .schema import (
     UnattendedConfig,
     UserAllowlistConfig,
     WorkspaceConfig,
+)
+from .session_allowlist import (
+    SessionAllowlistManager,
+    get_session_allowlist_manager,
+    reset_session_allowlist_manager,
 )
 from .shell_risk import (
     DEFAULT_BLOCKED_COMMANDS,
@@ -226,4 +232,9 @@ __all__ = [
     "default_controlled_paths",
     "default_forbidden_paths",
     "default_protected_paths",
+    # C8b-3 session allowlist + UI confirm resolution helper
+    "SessionAllowlistManager",
+    "apply_resolution",
+    "get_session_allowlist_manager",
+    "reset_session_allowlist_manager",
 ]

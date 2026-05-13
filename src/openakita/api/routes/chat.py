@@ -394,11 +394,19 @@ async def clear_chat(request: Request):
 
 
 def _cleanup_chat_runtime_state(request: Request, conversation_id: str) -> None:
-    """Clear runtime state that should not survive /api/chat/clear."""
-    try:
-        from ...core.policy import get_policy_engine
+    """Clear runtime state that should not survive /api/chat/clear.
 
-        get_policy_engine().cleanup_session(conversation_id)
+    C8b-3：v1 ``pe.cleanup_session()`` 拆成两件事——
+    (1) ``UIConfirmBus.cleanup_session(sid)`` 删本会话的 pending confirms
+    (2) ``SessionAllowlistManager.clear()`` 清 session 临时白名单（v1 行为
+        也是不论 sid 全清，C8b-3 暂保持一致）
+    """
+    try:
+        from ...core.policy_v2 import get_session_allowlist_manager
+        from ...core.ui_confirm_bus import get_ui_confirm_bus
+
+        get_ui_confirm_bus().cleanup_session(conversation_id)
+        get_session_allowlist_manager().clear()
     except Exception:
         pass
 

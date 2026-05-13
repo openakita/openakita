@@ -117,6 +117,9 @@ def _isolate_policy_v2_singletons():
         from openakita.core.policy_v2.death_switch import (
             reset_death_switch_tracker,
         )
+        from openakita.core.policy_v2.session_allowlist import (
+            reset_session_allowlist_manager,
+        )
         from openakita.core.policy_v2.skill_allowlist import (
             reset_skill_allowlist_manager,
         )
@@ -127,11 +130,16 @@ def _isolate_policy_v2_singletons():
     # 用 reset_*_singleton() 而非 .reset() / .clear()，因为 .reset() 故意保留
     # ``total_denials`` 作为 lifetime 计数（与 v1 parity）；test 之间需要完全
     # 隔离否则一个测试的 10 个 deny 会被下个测试看到。
+    # C8b-3: SessionAllowlistManager 同样是 process-wide ephemeral，必须按 test
+    # 隔离——否则一个 test ``apply_resolution(allow_session)`` 的副作用会让
+    # 下一个 test 期待"该工具仍需 confirm"的断言失败。
     reset_death_switch_tracker()
     reset_skill_allowlist_manager()
+    reset_session_allowlist_manager()
     try:
         yield
     finally:
         reset_death_switch_tracker()
         reset_skill_allowlist_manager()
+        reset_session_allowlist_manager()
 

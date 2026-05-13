@@ -595,10 +595,11 @@ class PolicyEngine:
         self._consecutive_denials = 0
         self._total_denials = 0
         self._readonly_mode = False
-        # TTL confirmation cache: key → {expiry, needs_sandbox}
-        self._confirmed_cache: dict[str, dict[str, Any]] = {}
-        # Session allowlist: cache_key → {needs_sandbox, pattern}
-        self._session_allowlist: dict[str, dict[str, Any]] = {}
+        # C8b-3: ``_confirmed_cache`` (TTL bypass) + ``_session_allowlist``
+        # 已删除——session 临时白名单语义全部由
+        # ``policy_v2.session_allowlist.SessionAllowlistManager`` 承担；TTL 缓
+        # 存层 v2 弃用（"allow_once" 由 reasoning_engine 一次性放行处理，无需
+        # 中间缓存）。
         # P1-5: 并发保护锁
         self._cache_lock = asyncio.Lock()
         self._pending_lock = asyncio.Lock()
@@ -1588,35 +1589,11 @@ class PolicyEngine:
             return f"{parts[0]} {parts[1]}*"
         return f"{parts[0]}*"
 
-    def mark_confirmed(
-        self,
-        tool_name: str,
-        params: dict[str, Any],
-        *,
-        scope: str = "once",
-        needs_sandbox: bool = False,
-    ) -> None:
-        """Record that the user confirmed a specific tool call.
-
-        *scope*: ``"once"`` (TTL cache), ``"session"`` (session lifetime),
-        or ``"always"`` (persisted to YAML allowlist).
-        """
-        import time
-
-        key = self._confirm_cache_key(tool_name, params)
-        ttl = self._config.confirmation.confirm_ttl
-        entry = {"needs_sandbox": needs_sandbox}
-
-        if scope == "always":
-            self._persist_allowlist_entry(tool_name, params, needs_sandbox)
-            self._session_allowlist[key] = entry
-        elif scope == "session":
-            self._session_allowlist[key] = entry
-        # Always write TTL cache as well for immediate bypass
-        self._confirmed_cache[key] = {
-            "expiry": time.time() + ttl,
-            "needs_sandbox": needs_sandbox,
-        }
+    # C8b-3: ``mark_confirmed`` 已删除——session/persistent allowlist 写入
+    # 由 ``policy_v2.confirm_resolution.apply_resolution`` 统一调度（写
+    # ``SessionAllowlistManager`` + ``UserAllowlistManager``）。``_persist_allowlist_entry``
+    # / ``_save_user_allowlist`` 仍然保留作为 v1 ``_check_persistent_allowlist``
+    # 的内部支撑，等 C8b-5 删 v1 ``assert_tool_allowed`` 时一起清理。
 
     def _persist_allowlist_entry(
         self,
@@ -1723,12 +1700,15 @@ class PolicyEngine:
         tool_name: str,
         params: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Check all three allowlist tiers: persistent → session → TTL.
+        """Check persistent allowlist + v2 session allowlist + v2 skill allowlist.
+
+        C8b-3: v1 ``_session_allowlist`` / ``_confirmed_cache`` 已删除——session
+        和 TTL 缓存的语义全部由 ``policy_v2.session_allowlist.SessionAllowlistManager``
+        承担。本方法保留只为 v1 ``assert_tool_allowed`` 仍能跑（生产路径已切 v2，
+        v1 入口仅 v1-only 单测使用）；C8b-5 删 ``assert_tool_allowed`` 时一起删。
 
         Returns metadata dict (with ``needs_sandbox``) if allowed, else None.
         """
-        import time
-
         # Tier 1: Persistent allowlist
         persistent = self._check_persistent_allowlist(tool_name, params)
         if persistent is not None:
@@ -1737,94 +1717,28 @@ class PolicyEngine:
                 "needs_sandbox": persistent.get("needs_sandbox", False),
             }
 
-        key = self._confirm_cache_key(tool_name, params)
+        # Tier 2: Session allowlist (v2 SessionAllowlistManager)
+        try:
+            from .policy_v2.session_allowlist import get_session_allowlist_manager
 
-        # Tier 2: Session allowlist
-        session_entry = self._session_allowlist.get(key)
-        if session_entry is not None:
-            return {
-                "confirmed_bypass": True,
-                "needs_sandbox": session_entry.get("needs_sandbox", False),
-            }
-
-        # Tier 3: TTL cache
-        cache_entry = self._confirmed_cache.get(key)
-        if cache_entry:
-            expiry = cache_entry.get("expiry", 0)
-            if time.time() < expiry:
+            session_entry = get_session_allowlist_manager().is_allowed(tool_name, params)
+            if session_entry is not None:
                 return {
                     "confirmed_bypass": True,
-                    "needs_sandbox": cache_entry.get("needs_sandbox", False),
+                    "needs_sandbox": session_entry.get("needs_sandbox", False),
                 }
-            self._confirmed_cache.pop(key, None)
+        except Exception:
+            pass
 
         return None
 
-    def store_ui_pending(
-        self,
-        tool_id: str,
-        tool_name: str,
-        params: dict[str, Any],
-        *,
-        session_id: str = "",
-        needs_sandbox: bool = False,
-    ) -> None:
-        """C9b: Thin facade — delegate to global ``UIConfirmBus``."""
-        from .ui_confirm_bus import get_ui_confirm_bus
-
-        get_ui_confirm_bus().store_pending(
-            tool_id,
-            tool_name,
-            params,
-            session_id=session_id,
-            needs_sandbox=needs_sandbox,
-        )
-
-    def cleanup_session(self, session_id: str) -> None:
-        """Remove pending confirms for a session AND clear v1 session
-        allowlist counters.
-
-        C9b split: bus owns pending; ``_session_allowlist`` /
-        ``_session_allow_count`` remain on PolicyEngine until C8b deletes
-        them along with v1 RiskGate.
-        """
-        from .ui_confirm_bus import get_ui_confirm_bus
-
-        get_ui_confirm_bus().cleanup_session(session_id)
-        self._session_allowlist.clear()
-        self._session_allow_count = 0
-
-    def resolve_ui_confirm(self, confirm_id: str, decision: str) -> bool:
-        """C9b: Delegate event/decision/pending lifecycle to bus, then
-        execute v1-only ``mark_confirmed`` follow-up.
-
-        Returns ``True`` if a pending sidecar was popped (i.e. the
-        confirm_id was registered via ``store_ui_pending``). Returns
-        ``False`` if no sidecar existed (e.g. the SSE was never
-        emitted, or it was already resolved). The waiter is still
-        woken either way — see ``UIConfirmBus.resolve``.
-        """
-        from .ui_confirm_bus import get_ui_confirm_bus
-
-        resolved = get_ui_confirm_bus().resolve(confirm_id, decision)
-        if resolved is None:
-            return False
-
-        scope_map = {
-            "allow_once": "once",
-            "allow_session": "session",
-            "allow_always": "always",
-            "sandbox": "once",
-        }
-        scope = scope_map.get(resolved["decision"])
-        if scope:
-            self.mark_confirmed(
-                resolved["tool_name"],
-                resolved["params"],
-                scope=scope,
-                needs_sandbox=resolved["needs_sandbox"],
-            )
-        return True
+    # C8b-3: 6 个 UI confirm facade 方法（``store_ui_pending`` /
+    # ``cleanup_session`` / ``resolve_ui_confirm`` / ``prepare_ui_confirm`` /
+    # ``cleanup_ui_confirm`` / ``wait_for_ui_resolution``）已删除。生产
+    # callsite 全部直连 ``policy_v2.confirm_resolution.apply_resolution`` /
+    # ``policy_v2.session_allowlist.get_session_allowlist_manager`` /
+    # ``ui_confirm_bus.get_ui_confirm_bus``。详见 docs/policy_v2_research.md
+    # 「C8b-3 实施记录」§1。
 
     # ----- Audit ------------------------------------------------------------
 
@@ -1878,36 +1792,6 @@ class PolicyEngine:
 
     def get_audit_log(self) -> list[dict[str, Any]]:
         return list(self._audit_log)
-
-    def prepare_ui_confirm(self, confirm_id: str) -> None:
-        """C9b: Thin facade — delegate to global ``UIConfirmBus``.
-
-        Idempotency semantics moved to ``UIConfirmBus.prepare`` (see C8a
-        §2.3 fix for context: reasoning_engine + gateway both call
-        prepare for the same confirm_id, second prepare must reuse the
-        first event or the first waiter orphans).
-        """
-        from .ui_confirm_bus import get_ui_confirm_bus
-
-        get_ui_confirm_bus().prepare(confirm_id)
-
-    def cleanup_ui_confirm(self, confirm_id: str) -> None:
-        """C9b: Thin facade — delegate to global ``UIConfirmBus``."""
-        from .ui_confirm_bus import get_ui_confirm_bus
-
-        get_ui_confirm_bus().cleanup(confirm_id)
-
-    async def wait_for_ui_resolution(self, confirm_id: str, timeout: float) -> str:
-        """C9b: Thin facade — delegate to global ``UIConfirmBus``.
-
-        Wakeup paths (gateway IM card click / web modal POST / text
-        fallback / scheduled task auto-resolve) all call
-        ``resolve_ui_confirm`` (or the bus directly), which sets the
-        same ``asyncio.Event`` this method awaits.
-        """
-        from .ui_confirm_bus import get_ui_confirm_bus
-
-        return await get_ui_confirm_bus().wait_for_resolution(confirm_id, timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -1970,8 +1854,10 @@ def reset_policy_engine() -> None:
         refreshed._readonly_mode = previous._readonly_mode
         refreshed._consecutive_denials = previous._consecutive_denials
         refreshed._total_denials = previous._total_denials
-        refreshed._confirmed_cache = previous._confirmed_cache
-        refreshed._session_allowlist = previous._session_allowlist
+        # C8b-3: ``_confirmed_cache`` / ``_session_allowlist`` deleted. Session
+        # allowlist state lives on the module-level
+        # ``policy_v2.session_allowlist.SessionAllowlistManager`` singleton
+        # which automatically survives engine reset; no field copy required.
         # C9b: ``_pending_ui_confirms`` / ``_ui_confirm_events`` /
         # ``_ui_confirm_decisions`` are no longer engine attributes —
         # they live on the module-level ``UIConfirmBus`` singleton,

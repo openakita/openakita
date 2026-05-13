@@ -488,34 +488,40 @@ class TestMetadata:
 
 # ---------------------------------------------------------------------------
 # Three-tier allowlists (TTL / session / persistent)
+#
+# C8b-3：v1 ``mark_confirmed`` / ``_session_allowlist`` / ``_confirmed_cache``
+# 已删除。Persistent 仍走 v1 ``_check_persistent_allowlist``（C8b-5 一起删）；
+# session/TTL 移到 ``policy_v2.session_allowlist.SessionAllowlistManager``，
+# 由 ``tests/unit/test_policy_v2_c8b3_session_allowlist.py`` 覆盖。
+#
+# 下面 5 个 mark_confirmed-based 测试整体 skip——C8b-5 删整个 v1 RiskGate 时
+# 一起去除。Persistent 两个 (test_persistent_allowlist_*) 仍可 run。
 # ---------------------------------------------------------------------------
 
+import pytest as _pytest_for_c8b3_skip
+
+
 class TestAllowlists:
+    @_pytest_for_c8b3_skip.mark.skip(
+        reason="C8b-3: v1 mark_confirmed deleted; session-allow tested via "
+        "test_policy_v2_c8b3_session_allowlist.py; cleanup deferred to C8b-5"
+    )
     def test_ttl_cache_allow_once(self, engine):
-        """mark_confirmed with scope='once' creates a TTL entry that bypasses."""
-        params = {"command": "npm install lodash"}
-        engine.mark_confirmed("run_shell", params, scope="once")
-        result = engine.assert_tool_allowed("run_shell", params)
-        assert result.decision == PolicyDecision.ALLOW
-        assert result.metadata.get("confirmed_bypass") is True
+        pass
 
+    @_pytest_for_c8b3_skip.mark.skip(
+        reason="C8b-3: v1 mark_confirmed deleted; session-allow tested via "
+        "test_policy_v2_c8b3_session_allowlist.py; cleanup deferred to C8b-5"
+    )
     def test_session_allowlist(self, engine):
-        """mark_confirmed with scope='session' creates session-lived entry."""
-        params = {"command": "npm install express"}
-        engine.mark_confirmed("run_shell", params, scope="session")
-        result = engine.assert_tool_allowed("run_shell", params)
-        assert result.decision == PolicyDecision.ALLOW
-        assert result.metadata.get("confirmed_bypass") is True
+        pass
 
+    @_pytest_for_c8b3_skip.mark.skip(
+        reason="C8b-3: v1 cleanup_session facade deleted; coverage moved to "
+        "test_policy_v2_c8b3_session_allowlist.py; cleanup deferred to C8b-5"
+    )
     def test_session_allowlist_cleared_on_cleanup(self, engine):
-        """cleanup_session clears session allowlist."""
-        params = {"command": "npm install express"}
-        engine.mark_confirmed("run_shell", params, scope="session")
-        engine.cleanup_session("sess-1")
-        # Session allowlist is cleared, but TTL cache still has entry
-        # so it still passes (both session and TTL written in mark_confirmed)
-        result = engine.assert_tool_allowed("run_shell", params)
-        assert result.decision == PolicyDecision.ALLOW  # TTL still alive
+        pass
 
     def test_persistent_allowlist_command_pattern(self, engine):
         """Persistent command patterns should match via glob."""
@@ -537,21 +543,19 @@ class TestAllowlists:
         assert result.decision == PolicyDecision.ALLOW
         assert result.metadata.get("confirmed_bypass") is True
 
+    @_pytest_for_c8b3_skip.mark.skip(
+        reason="C8b-3: v1 _confirmed_cache (TTL) deleted; v2 has no TTL cache "
+        "by design (allow_once = single-shot). Cleanup deferred to C8b-5."
+    )
     def test_needs_sandbox_preserved_in_ttl(self, engine):
-        """needs_sandbox flag should survive the confirmation cache."""
-        params = {"command": "rm -rf /tmp/test"}
-        engine.mark_confirmed("run_shell", params, scope="once", needs_sandbox=True)
-        result = engine.assert_tool_allowed("run_shell", params)
-        assert result.decision == PolicyDecision.ALLOW
-        assert result.metadata.get("needs_sandbox") is True
+        pass
 
+    @_pytest_for_c8b3_skip.mark.skip(
+        reason="C8b-3: v1 mark_confirmed deleted; covered by "
+        "test_policy_v2_c8b3_session_allowlist.py"
+    )
     def test_needs_sandbox_preserved_in_session(self, engine):
-        """needs_sandbox flag should survive the session allowlist."""
-        params = {"command": "rm -rf /tmp/test"}
-        engine.mark_confirmed("run_shell", params, scope="session", needs_sandbox=True)
-        result = engine.assert_tool_allowed("run_shell", params)
-        assert result.decision == PolicyDecision.ALLOW
-        assert result.metadata.get("needs_sandbox") is True
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -682,75 +686,26 @@ class TestConfirmationMode:
 
 # ---------------------------------------------------------------------------
 # resolve_ui_confirm with extended decisions
+#
+# C8b-3：``engine.store_ui_pending`` / ``engine.resolve_ui_confirm`` 6 个 v1
+# facade 全部删除；语义现在由 ``policy_v2.confirm_resolution.apply_resolution``
+# 提供，由 ``tests/unit/test_policy_v2_c8b3_apply_resolution.py`` 覆盖。
+# 整个 ``TestResolveUIConfirm`` 类 skip——C8b-5 删 v1 时一起去除。
 # ---------------------------------------------------------------------------
 
+
+@_pytest_for_c8b3_skip.mark.skip(
+    reason="C8b-3: 6 个 v1 UI confirm facade 方法全部删除；coverage 移到 "
+    "test_policy_v2_c8b3_apply_resolution.py；cleanup 推到 C8b-5"
+)
 class TestResolveUIConfirm:
-    def test_allow_once_scope(self, engine):
-        engine.store_ui_pending("t1", "run_shell", {"command": "npm test"})
-        found = engine.resolve_ui_confirm("t1", "allow_once")
-        assert found is True
-        # TTL cache should have entry
-        result = engine.assert_tool_allowed("run_shell", {"command": "npm test"})
-        assert result.decision == PolicyDecision.ALLOW
-
-    def test_allow_session_scope(self, engine):
-        engine.store_ui_pending("t2", "run_shell", {"command": "npm run build"})
-        found = engine.resolve_ui_confirm("t2", "allow_session")
-        assert found is True
-        assert len(engine._session_allowlist) > 0
-
-    def test_deny_does_not_cache(self, engine):
-        engine.store_ui_pending("t3", "run_shell", {"command": "rm -rf /tmp"})
-        found = engine.resolve_ui_confirm("t3", "deny")
-        assert found is True
-        assert len(engine._confirmed_cache) == 0
-
-    def test_sandbox_preserves_needs_sandbox(self, engine):
-        engine.store_ui_pending("t4", "run_shell", {"command": "wget evil"}, needs_sandbox=True)
-        found = engine.resolve_ui_confirm("t4", "sandbox")
-        assert found is True
-        result = engine.assert_tool_allowed("run_shell", {"command": "wget evil"})
-        assert result.decision == PolicyDecision.ALLOW
-        assert result.metadata.get("needs_sandbox") is True
-
-    def test_legacy_allow_maps_to_allow_once(self, engine):
-        engine.store_ui_pending("t5", "run_shell", {"command": "echo hi"})
-        found = engine.resolve_ui_confirm("t5", "allow")
-        assert found is True
-
-    def test_nonexistent_returns_false(self, engine):
-        assert engine.resolve_ui_confirm("nonexistent", "allow_once") is False
-
-    def test_resolve_ui_confirm_not_shadowed_by_duplicate_def(self, engine):
-        """Regression guard: policy.py 曾因 backport 合并引入同名 ``resolve_ui_confirm``
-        的简化版本，覆盖掉真正做 ``pop`` + ``mark_confirmed`` 的老实现，
-        导致 IM 卡片确认后 allow_session / allow_always / sandbox 全部
-        失效（只 set event 不写 allowlist）。这里从静态和运行时双向守卫。
-
-        - 静态：PolicyEngine 类字典里只能有一个 ``resolve_ui_confirm``；
-          Python 类里后定义的同名方法会覆盖前面的，一旦再次有人复制
-          粘贴同名 def，这里不会命中——但 test_allow_once_scope 等
-          会因返回 None 而 FAIL，作为第二道护栏。
-        - 运行时：调用必须返回 ``bool``（True/False），而不是 None。
-        """
-        # 单一定义守卫：类字典里 resolve_ui_confirm 只能来自 PolicyEngine
-        # 自身（不是被子类或其他地方重写）；且必须是 callable 且返回 bool。
-        method = type(engine).__dict__.get("resolve_ui_confirm")
-        assert method is not None, "resolve_ui_confirm 必须在 PolicyEngine 上定义"
-        assert callable(method)
-
-        # 运行时守卫：返回值必须是 bool（老版本契约），不是 None。
-        engine.store_ui_pending("t_guard", "run_shell", {"command": "echo guard"})
-        result = engine.resolve_ui_confirm("t_guard", "allow_session")
-        assert result is True, (
-            "resolve_ui_confirm 返回 None 说明老版本 def 已被覆盖；"
-            "检查 core/policy.py 是否有第二个同名 def"
-        )
-        # 并且副作用要生效：session allowlist 里应该有东西
-        assert len(engine._session_allowlist) > 0, (
-            "resolve_ui_confirm 副作用失效：mark_confirmed 没被调用；"
-            "意味着老版本定义被新版本覆盖了"
-        )
+    def test_allow_once_scope(self, engine): pass
+    def test_allow_session_scope(self, engine): pass
+    def test_deny_does_not_cache(self, engine): pass
+    def test_sandbox_preserves_needs_sandbox(self, engine): pass
+    def test_legacy_allow_maps_to_allow_once(self, engine): pass
+    def test_nonexistent_returns_false(self, engine): pass
+    def test_resolve_ui_confirm_not_shadowed_by_duplicate_def(self, engine): pass
 
 
 # ---------------------------------------------------------------------------

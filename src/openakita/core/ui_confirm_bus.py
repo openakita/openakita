@@ -9,12 +9,11 @@ This module isolates the **UI confirmation state machine** from the v1
    global event/decision/pending registry without depending on
    ``core/policy.py`` (which is being phased out in C8b).
 
-2. ``policy.py`` becomes a **thin facade** that forwards
-   ``prepare_ui_confirm`` / ``wait_for_ui_resolution`` / ``store_ui_pending``
-   / ``resolve_ui_confirm`` / ``cleanup_ui_confirm`` /
-   ``cleanup_session`` to the bus. After C8b removes the v1 RiskGate
-   (and the ``_confirmed_cache`` it backs), the facade can be deleted
-   entirely and callers can switch to ``get_ui_confirm_bus()`` directly.
+2. ``policy.py`` no longer exposes any UI confirm facade methods (C8b-3).
+   Production callers (CLI, web, IM adapters) call
+   ``policy_v2.confirm_resolution.apply_resolution`` for resolve-with-side-effects
+   or use ``get_ui_confirm_bus()`` directly for prepare/wait. The bus stays
+   minimal — no allowlist writes here, by design.
 
 3. The bus is a **module-level singleton** — it survives ``reset_policy_engine``
    automatically, fixing the C7 audit-2 regression where the v1 engine
@@ -30,18 +29,19 @@ State owned by the bus
   ``resolve()`` and read by ``wait_for_resolution()``.
 - ``_pending: dict[str, dict]`` — sidecar payload (tool_name, params,
   session_id, needs_sandbox, created_at) registered by ``store_pending()``;
-  consumed by ``resolve()`` to be returned to the caller for any v1
-  ``mark_confirmed`` follow-up (kept in policy.py for now, deleted in C8b).
+  consumed by ``resolve()`` and returned to the caller so
+  ``policy_v2.confirm_resolution.apply_resolution`` can decide whether to
+  also write to ``SessionAllowlistManager`` / ``UserAllowlistManager``
+  based on the user's choice.
 
-Coupling note (transitional)
-============================
+Coupling note
+=============
 
-``policy.py`` still owns ``mark_confirmed`` (writes to v1 ``_confirmed_cache``
-+ ``_session_allowlist`` + persisted YAML allowlist). The bus's
-``resolve()`` therefore returns the pending dict so the policy.py facade
-can call ``mark_confirmed(...)`` itself. After C8b removes
-``mark_confirmed``, the bus's ``resolve()`` callers can ignore the
-return value and the bus becomes fully decoupled.
+C8b-3: the bus is fully decoupled from any allowlist manager. ``resolve()``
+just wakes the waiter and returns the pending dict; the side-effect of
+"this user choice should be remembered for the session/forever" is the
+job of ``policy_v2.confirm_resolution.apply_resolution``, which the
+production resolve callsites all funnel through.
 """
 
 from __future__ import annotations
@@ -161,9 +161,10 @@ class UIConfirmBus:
         effective ``needs_sandbox``), or ``None`` if no pending was
         registered (the SSE was never emitted, or already resolved).
 
-        The caller is expected to use the returned dict to do any v1
-        bookkeeping (``mark_confirmed`` on PolicyEngine). After C8b
-        removes that v1 path, callers can ignore the return value.
+        Callers usually call ``policy_v2.confirm_resolution.apply_resolution``
+        instead of this method directly — that helper threads the returned
+        dict into ``SessionAllowlistManager`` / ``UserAllowlistManager``
+        based on the user's choice.
         """
         pending = self._pending.pop(confirm_id, None)
 

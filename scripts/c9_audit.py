@@ -79,19 +79,23 @@ def d2_architecture() -> None:
         )
     print("  PolicyEngine no longer owns _ui_confirm_* / _pending_ui_confirms: OK")
 
-    # Facade methods delegate to bus
-    for verb, bus_call in [
-        ("def store_ui_pending", "get_ui_confirm_bus().store_pending"),
-        ("def prepare_ui_confirm", "get_ui_confirm_bus().prepare"),
-        ("def cleanup_ui_confirm", "get_ui_confirm_bus().cleanup"),
-        ("async def wait_for_ui_resolution", "get_ui_confirm_bus().wait_for_resolution"),
-        ("def resolve_ui_confirm", "get_ui_confirm_bus().resolve"),
-        ("def cleanup_session", "get_ui_confirm_bus().cleanup_session"),
-    ]:
-        assert verb in pe_src and bus_call in pe_src, (
-            f"PolicyEngine.{verb} must delegate to {bus_call}"
+    # C8b-3: 6 facade methods on PolicyEngine were thin wrappers around the
+    # bus; production callsites (CLI / web / IM / agent cleanup) now go
+    # directly to the bus or ``policy_v2.confirm_resolution.apply_resolution``.
+    # The audit therefore inverts: assert the wrappers are GONE.
+    for gone in (
+        "def store_ui_pending",
+        "def prepare_ui_confirm",
+        "def cleanup_ui_confirm",
+        "async def wait_for_ui_resolution",
+        "def resolve_ui_confirm",
+        "def cleanup_session",
+        "def mark_confirmed",
+    ):
+        assert gone not in pe_src, (
+            f"C8b-3 expects PolicyEngine.{gone} to be deleted, still present"
         )
-    print("  6 facade methods all delegate to bus: OK")
+    print("  6 facade methods + mark_confirmed deleted from PolicyEngine: OK")
 
     # reset_policy_engine no longer copies UI confirm fields
     assert "_pending_ui_confirms = previous._pending_ui_confirms" not in pe_src
@@ -134,14 +138,14 @@ def d4_hidden_bugs() -> None:
     from openakita.core.policy import get_policy_engine, reset_policy_engine
     from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
-    # #1 bus survives engine reset
+    # #1 bus survives engine reset (C8b-3: store via bus directly, not v1 facade)
     reset_policy_engine()
     reset_ui_confirm_bus()
-    pe = get_policy_engine()
-    pe.store_ui_pending("d4-1", "write_file", {"p": "x"}, session_id="s")
-    reset_policy_engine()
     bus = get_ui_confirm_bus()
-    assert any(p["id"] == "d4-1" for p in bus.list_pending())
+    bus.store_pending("d4-1", "write_file", {"p": "x"}, session_id="s")
+    reset_policy_engine()
+    bus_after = get_ui_confirm_bus()
+    assert any(p["id"] == "d4-1" for p in bus_after.list_pending())
     print("  #1 bus survives engine reset: OK")
 
     # #2 idempotent prepare
@@ -184,16 +188,25 @@ def d4_hidden_bugs() -> None:
     asyncio.run(_t4())
     print("  #4 resolve-without-pending still wakes waiter: OK")
 
-    # #5 mark_confirmed still triggered via facade resolve_ui_confirm
-    reset_policy_engine()
+    # #5 (C8b-3): apply_resolution writes to v2 SessionAllowlistManager.
+    # Replaces the v1 ``pe.resolve_ui_confirm → mark_confirmed → _session_allowlist``
+    # path; v1 facades + storage all gone.
+    from openakita.core.policy_v2 import (
+        apply_resolution,
+        get_session_allowlist_manager,
+    )
+
     reset_ui_confirm_bus()
-    pe = get_policy_engine()
-    pe.store_ui_pending("d4-5", "write_file", {"path": "f.txt"}, session_id="s")
-    ok = pe.resolve_ui_confirm("d4-5", "allow_session")
+    get_session_allowlist_manager().clear()
+    bus5 = get_ui_confirm_bus()
+    bus5.store_pending("d4-5", "write_file", {"path": "f.txt"}, session_id="s")
+    bus5.prepare("d4-5")
+    ok = apply_resolution("d4-5", "allow_session")
     assert ok
-    # mark_confirmed should have written to v1 _session_allowlist
-    assert len(pe._session_allowlist) >= 1
-    print("  #5 facade still wires mark_confirmed (v1 cache): OK")
+    assert get_session_allowlist_manager().is_allowed(
+        "write_file", {"path": "f.txt"}
+    ) is not None
+    print("  #5 apply_resolution writes SessionAllowlistManager: OK")
 
     # #6 dry-run preview API does not corrupt global engine
     from openakita.core.policy_v2 import get_engine_v2
@@ -246,21 +259,26 @@ def d6_label_drift() -> None:
 
 def d5_compat() -> None:
     print("\n=== C9 D5 compatibility ===")
-    # External resolve_ui_confirm callers (gateway, telegram, feishu, cli, api)
-    # must continue to work via facade
-    from openakita.core.policy import get_policy_engine, reset_policy_engine
-    from openakita.core.ui_confirm_bus import reset_ui_confirm_bus
+    # C8b-3: External callers (gateway / telegram / feishu / cli / api)
+    # all migrated to ``policy_v2.confirm_resolution.apply_resolution``;
+    # verify the new entry point still wakes the bus + writes session allow.
+    from openakita.core.policy_v2 import (
+        apply_resolution,
+        get_session_allowlist_manager,
+    )
+    from openakita.core.ui_confirm_bus import get_ui_confirm_bus, reset_ui_confirm_bus
 
-    reset_policy_engine()
     reset_ui_confirm_bus()
-    pe = get_policy_engine()
+    get_session_allowlist_manager().clear()
+    bus = get_ui_confirm_bus()
 
-    # Scenario: gateway path — store via facade, resolve via facade,
-    # decision propagates to v1 mark_confirmed
-    pe.store_ui_pending("d5-1", "run_shell", {"command": "ls"}, session_id="g1")
-    ok = pe.resolve_ui_confirm("d5-1", "allow_always")
+    # Scenario: gateway-style flow — bus.store_pending + apply_resolution
+    bus.store_pending("d5-1", "run_shell", {"command": "ls"}, session_id="g1")
+    bus.prepare("d5-1")
+    ok = apply_resolution("d5-1", "allow_session")
     assert ok
-    print("  External callers still work via facade: OK")
+    assert get_session_allowlist_manager().is_allowed("run_shell", {"command": "ls"}) is not None
+    print("  External callers (apply_resolution path) still work: OK")
 
     # Old SSE event consumers (no approval_class) — verify backward compat
     # (event shape is unchanged; new fields are additive)

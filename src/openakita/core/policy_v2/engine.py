@@ -792,13 +792,23 @@ class PolicyEngineV2:
           所以 user_allowlist relax 只在 base_action == CONFIRM 时被调用
         """
         del ctx  # 持久化白名单只看 (tool, params)，与上下文无关
-        # 持久化白名单
+        # Tier 1: 持久化白名单
         entry = self._user_allowlist.match(event.tool, event.params)
         if entry is not None:
             needs_sb = bool(entry.get("needs_sandbox", False))
             return f"persistent_allowlist match (needs_sandbox={needs_sb})"
 
-        # 临时 skill 授权（process-wide singleton）
+        # Tier 2: session 临时白名单（C8b-3）—— v1 ``_session_allowlist`` 等价
+        from .session_allowlist import get_session_allowlist_manager
+
+        session_entry = get_session_allowlist_manager().is_allowed(
+            event.tool, event.params
+        )
+        if session_entry is not None:
+            needs_sb = bool(session_entry.get("needs_sandbox", False))
+            return f"session_allowlist match (needs_sandbox={needs_sb})"
+
+        # Tier 3: 临时 skill 授权（process-wide singleton）
         skill_mgr = get_skill_allowlist_manager()
         if skill_mgr.is_allowed(event.tool):
             granted_by = skill_mgr.granted_by(event.tool)

@@ -4376,9 +4376,10 @@ class ReasoningEngine:
                                 "pet-status-update",
                                 {"status": "tool_execution", "tool_name": t_name},
                             )
-                            # 决策走 v2（C6 起），UI 状态机 C9b 后走独立 ui_confirm_bus
-                            # （producer / wait 都用 bus；resolve 仍走 v1 facade 因为
-                            # mark_confirmed 在 C8b 之前还要工作）。
+                            # 决策走 v2（C6 起），UI 状态机 C9b 后走独立 ui_confirm_bus，
+                            # C8b-3 后 resolve 路径也完全脱离 v1（IM/web/CLI 都直接调
+                            # ``policy_v2.apply_resolution`` 写 SessionAllowlistManager
+                            # + UserAllowlistManager，bus 只负责唤醒 waiter）。
                             from .policy import PolicyDecision, PolicyResult, get_policy_engine
                             from .policy_v2.adapter import evaluate_via_v2_to_v1_result
                             from .ui_confirm_bus import get_ui_confirm_bus
@@ -4396,7 +4397,7 @@ class ReasoningEngine:
                                 # ``security_confirm`` SSE，让 gateway._consume_stream 把事件
                                 # 路由到 ``_handle_im_security_confirm``：桌面端走 SecurityView
                                 # 弹窗，IM 端走卡片 / 文本回退。两条路径最终都会调
-                                # ``pe.resolve_ui_confirm``，唤醒此处 ``wait_for_ui_resolution``。
+                                # ``policy_v2.apply_resolution``，唤醒此处的 bus.wait_for_resolution。
                                 # 旧实现在 IM CONFIRM 时直接 abort（伪装成"请到桌面确认"），
                                 # 让 gateway 的 IM 卡片链路成为永远不会触发的死代码。
                                 _is_im = _is_im_conversation(conversation_id)
