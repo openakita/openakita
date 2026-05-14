@@ -138,11 +138,18 @@ class Plugin(PluginBase):
                 "name": "tongyi_image_create",
                 "description": (
                     "Create a Tongyi (DashScope) image generation task. "
+                    "Blocks until the image is ready (DashScope async tasks "
+                    "are polled internally for up to ~3 minutes), so the "
+                    "returned JSON already carries the produced asset_ids "
+                    "and local_paths in the common case — no need to call "
+                    "tongyi_image_status afterwards. "
                     "Returns JSON: {ok, task_id, status, mode, image_urls, "
                     "local_paths, asset_ids}. Generated images are auto-downloaded "
                     "to the plugin data dir and published to the Asset Bus, so the "
                     "returned asset_ids can be fed into downstream workbenches "
-                    "(e.g. seedance_create.from_asset_ids) without rehosting."
+                    "(e.g. seedance_create.from_asset_ids) without rehosting. "
+                    "If status is still 'running' on return (very rare, only "
+                    "when DashScope is unusually slow), poll tongyi_image_status."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -353,8 +360,126 @@ class Plugin(PluginBase):
             if refreshed:
                 task = refreshed
             self._broadcast_update(task["id"], "succeeded")
+            return task
+
+        # ── 异步分支 ───────────────────────────────────────────────
+        # 老实现：提交后立即返回 status="running"，让 LLM 自己 poll
+        # tongyi_image_status。但工作台节点上的 LLM 不会自觉 poll，常常
+        # 看到 ok=true 就直接 submit_deliverable 把空 asset_ids 当作交付，
+        # 下游 seedance 拿不到分镜图。改为同步等待：在工具内部按短间隔
+        # poll DashScope 任务状态，最多等 internal_wait 秒；等到 SUCCEEDED
+        # 就当场下载 + publish，等到 FAILED 就回写错误，超时就保留
+        # status=running 让后台 _poll_loop 接力，并在返回里告诉 LLM
+        # 必须 poll tongyi_image_status。
+        if is_async and api_task_id:
+            await self._wait_for_async_task(
+                task_id=task["id"], api_task_id=api_task_id,
+                prompt=prompt,
+            )
+            refreshed = await self._tm.get_task(task["id"])
+            if refreshed:
+                task = refreshed
 
         return task
+
+    # 单次轮询间隔（秒）。DashScope 通用图任务一般 10–60s 完成；间隔太短会
+    # 浪费配额，太长会让节点白等。3s 起步、给 dashscope 第一拍准备时间。
+    _ASYNC_WAIT_INITIAL_DELAY = 3.0
+    _ASYNC_WAIT_INTERVAL = 5.0
+    # 工具内部最多等多少秒。180s 覆盖 wan27-pro 慢任务（typical 60–120s）。
+    # 超过的极少数情况下回退到后台 _poll_loop + LLM tongyi_image_status。
+    _ASYNC_WAIT_TIMEOUT = 180.0
+
+    async def _wait_for_async_task(
+        self,
+        *,
+        task_id: str,
+        api_task_id: str,
+        prompt: str,
+    ) -> None:
+        """Block in-tool until the DashScope async task settles, or the
+        internal timeout fires.
+
+        Side effects mirror what the background ``_poll_loop`` would do
+        once a task transitions: update the local task row, download +
+        Asset-Bus-publish the produced images on success, broadcast the
+        WS update so the workbench UI flips to its terminal status. The
+        background poller still runs as a safety net for tasks that
+        outlive the in-tool window.
+        """
+        if not self._client:
+            return
+        await asyncio.sleep(self._ASYNC_WAIT_INITIAL_DELAY)
+        deadline = time.monotonic() + self._ASYNC_WAIT_TIMEOUT
+        attempt = 0
+        while time.monotonic() < deadline:
+            attempt += 1
+            try:
+                result = await self._client.get_task(api_task_id)
+            except DashScopeError as exc:
+                logger.info(
+                    "tongyi_image_create wait: get_task(%s) DashScope error %s",
+                    api_task_id, exc,
+                )
+                await asyncio.sleep(self._ASYNC_WAIT_INTERVAL)
+                continue
+            except Exception as exc:
+                logger.info(
+                    "tongyi_image_create wait: get_task(%s) network error %s",
+                    api_task_id, exc,
+                )
+                await asyncio.sleep(self._ASYNC_WAIT_INTERVAL)
+                continue
+            output = result.get("output", {}) if isinstance(result, dict) else {}
+            status = (output.get("task_status") or "").upper()
+            if status == "SUCCEEDED":
+                image_urls = self._extract_image_urls(result)
+                logger.info(
+                    "tongyi_image_create wait: task %s SUCCEEDED after %d polls, %d images",
+                    task_id, attempt, len(image_urls),
+                )
+                await self._tm.update_task(
+                    task_id, status="succeeded",
+                    image_urls=image_urls,
+                    usage=result.get("usage", {}),
+                )
+                if image_urls:
+                    try:
+                        await self._download_and_publish_images(
+                            task_id, image_urls, prompt=prompt,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "tongyi_image_create wait: download failed for %s",
+                            task_id,
+                        )
+                self._broadcast_update(task_id, "succeeded")
+                return
+            if status == "FAILED":
+                error_msg = (
+                    output.get("message")
+                    or output.get("error_message")
+                    or "DashScope reported FAILED without a message"
+                )
+                logger.info(
+                    "tongyi_image_create wait: task %s FAILED — %s",
+                    task_id, error_msg,
+                )
+                await self._tm.update_task(
+                    task_id, status="failed", error_message=str(error_msg),
+                )
+                self._broadcast_update(task_id, "failed")
+                return
+            await asyncio.sleep(self._ASYNC_WAIT_INTERVAL)
+        # Timeout: leave task as running, the background _poll_loop will
+        # finish it. The caller's tool payload will carry status="running"
+        # and an empty asset list, plus the description tells the LLM that
+        # in this case it must call tongyi_image_status to finish the job.
+        logger.info(
+            "tongyi_image_create wait: task %s still running after %.0fs, "
+            "handing off to background poller",
+            task_id, self._ASYNC_WAIT_TIMEOUT,
+        )
 
     async def _dispatch_api_call(
         self, mode: str, model_info: Any, params: dict
