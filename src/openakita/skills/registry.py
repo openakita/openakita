@@ -998,8 +998,22 @@ class SkillRegistry:
         都未命中或技能未声明 ``approval_class`` 时返回 ``None``，分类器按
         chain 继续往下走（mcp/plugin/handler/启发式）。**绝不抛异常**——
         SKILL.md 是用户文件，错误必须降级而非崩溃 PolicyEngine 启动。
+
+        C15 §17.3 strictness rule
+        -------------------------
+        Once a declared class is parsed, route it through
+        :func:`policy_v2.declared_class_trust.compute_effective_class`.
+        Trusted sources (``trust_level ∈ {builtin, local, marketplace}``)
+        honor the declaration verbatim; untrusted sources (``remote``)
+        take ``most_strict([declared, heuristic(tool_name)])`` so a
+        skill claiming ``readonly_global`` for a tool named
+        ``delete_workspace`` still ends up :class:`ApprovalClass.DESTRUCTIVE`.
         """
         try:
+            from ..core.policy_v2.declared_class_trust import (
+                compute_effective_class,
+                infer_skill_declared_trust,
+            )
             from ..core.policy_v2.enums import ApprovalClass, DecisionSource
         except Exception:
             return None
@@ -1020,10 +1034,43 @@ class SkillRegistry:
             return None
 
         try:
-            klass = ApprovalClass(entry.approval_class)
+            declared = ApprovalClass(entry.approval_class)
         except ValueError:
             return None
-        return klass, DecisionSource.SKILL_METADATA
+
+        # C15 §17.3 — pick the right name for the heuristic check:
+        #
+        # - System skills' exposed name **is** the underlying tool name
+        #   (e.g. ``write_file`` for a built-in filesystem skill), so the
+        #   heuristic prefix table fires directly on ``tool_name``.
+        # - External skills are namespaced ``skill_<safe_id>``; running
+        #   the heuristic on that prefix would never match because every
+        #   tool starts with ``skill_``. Use the skill_id transformed to
+        #   underscore form so a tool whose skill_id is
+        #   ``delete-everything`` still trips the ``delete_`` heuristic.
+        #
+        # This keeps the audit/source value as SKILL_METADATA — the
+        # declaration is still the origin; the heuristic is only the
+        # safety floor.
+        heuristic_name = (
+            tool_name if entry.system else entry.skill_id.replace("-", "_").lower()
+        )
+
+        trust = infer_skill_declared_trust(trust_level=entry.trust_level)
+        try:
+            return compute_effective_class(
+                heuristic_name,
+                declared,
+                trust,
+                source=DecisionSource.SKILL_METADATA,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(
+                "[C15] compute_effective_class failed for skill tool %s: %s",
+                tool_name,
+                exc,
+            )
+            return declared, DecisionSource.SKILL_METADATA
 
     @staticmethod
     def _invalidate_policy_classifier_cache(tool_name: str | None = None) -> None:

@@ -252,6 +252,20 @@ class MCPServerConfig:
     headers: dict[str, str] = field(default_factory=dict)
     cwd: str = ""  # stdio 模式的工作目录（为空则继承父进程）
 
+    # C15 §17.3 R4-13 / R5-21
+    # ----------------------------------------------------------------
+    # ``trust_level`` 控制 PolicyEngineV2 是否采信 MCP server
+    # ``tool.annotations.approval_class`` 的自报值：
+    #
+    # - ``"default"``（默认 + 历史配置）：自报 class 与 prefix/exact-name
+    #   启发式取严格度大者，防止 server 声明 ``readonly_global`` 但实际
+    #   暴露 ``delete_*`` 类工具。
+    # - ``"trusted"``：operator 在 setup-center 显式标记后采信自报。
+    #
+    # JSON schema 兼容：旧 mcp_servers.json 无本字段时 dataclass 默认值
+    # ``"default"`` 自动套用 —— 比 v1 行为更保守，不存在向后回归。
+    trust_level: str = "default"
+
 
 @dataclass
 class MCPCallResult:
@@ -332,6 +346,7 @@ class MCPClient:
                     transport=transport,
                     url=server_data.get("url", ""),
                     headers=server_data.get("headers", {}),
+                    trust_level=str(server_data.get("trust_level", "default")),
                 )
                 self.add_server(config)
 
@@ -1375,8 +1390,24 @@ class MCPClient:
         多个 server 暴露同名工具 / 多种 hint 同时命中时取严
         （``most_strict``）。命中失败返回 ``None``，让 classifier 走启发式
         回退（与现有 v1 行为一致——绝大多数 MCP server 当前没填 hints）。
+
+        C15 §17.3 strictness rule
+        -------------------------
+        Each candidate is post-processed by
+        :func:`policy_v2.declared_class_trust.compute_effective_class`
+        using the originating server's :pyattr:`MCPServerConfig.trust_level`.
+        Untrusted servers (the default) cannot smuggle a too-lax class
+        through ``annotations.approval_class`` — the heuristic floor
+        will still apply. ``destructiveHint`` / ``readOnlyHint`` derived
+        candidates are exempt: those reflect MCP-protocol-level
+        annotations the server runtime sets, not a self-reported
+        ``approval_class``, so they were never the smuggling vector.
         """
         try:
+            from ..core.policy_v2.declared_class_trust import (
+                compute_effective_class,
+                infer_mcp_declared_trust,
+            )
             from ..core.policy_v2.enums import (
                 ApprovalClass,
                 DecisionSource,
@@ -1397,10 +1428,7 @@ class MCPClient:
             explicit = ann.get("approval_class") or ann.get("risk_class")
             if isinstance(explicit, str):
                 try:
-                    candidates.append(
-                        (ApprovalClass(explicit.strip().lower()), DecisionSource.MCP_ANNOTATION)
-                    )
-                    continue  # explicit 优先，hints 不再叠加
+                    declared = ApprovalClass(explicit.strip().lower())
                 except ValueError:
                     logger.warning(
                         "MCP tool '%s' declares unknown approval_class=%r in annotations; "
@@ -1408,6 +1436,30 @@ class MCPClient:
                         exposed,
                         explicit,
                     )
+                else:
+                    # C15: gate the self-declared class by the originating
+                    # server's trust_level before adding to candidates.
+                    # Heuristic check runs against ``tool.name`` (the
+                    # server-side identifier — e.g. ``delete_all``), NOT
+                    # the namespaced exposed form (``mcp_<server>_<tool>``)
+                    # because the latter always starts with ``mcp_`` and
+                    # would never trip a heuristic prefix.
+                    server_cfg = self._servers.get(server_name)
+                    server_trust = getattr(server_cfg, "trust_level", None)
+                    mcp_trust = infer_mcp_declared_trust(
+                        server_trust_level=server_trust
+                    )
+                    try:
+                        effective, src = compute_effective_class(
+                            tool.name,
+                            declared,
+                            mcp_trust,
+                            source=DecisionSource.MCP_ANNOTATION,
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        effective, src = declared, DecisionSource.MCP_ANNOTATION
+                    candidates.append((effective, src))
+                    continue  # explicit 优先，hints 不再叠加
 
             destructive = ann.get("destructiveHint")
             read_only = ann.get("readOnlyHint")

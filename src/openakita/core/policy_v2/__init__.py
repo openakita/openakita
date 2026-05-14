@@ -41,6 +41,12 @@ from .death_switch import (
     get_death_switch_tracker,
     reset_death_switch_tracker,
 )
+from .declared_class_trust import (
+    DeclaredClassTrust,
+    compute_effective_class,
+    infer_mcp_declared_trust,
+    infer_skill_declared_trust,
+)
 from .defaults import (
     default_blocked_commands,
     default_controlled_paths,
@@ -253,4 +259,9 @@ __all__ = [
     # C8b-4 v1 _frontend_mode shim replacement
     "coerce_v1_label_to_v2_mode",
     "read_permission_mode_label",
+    # C15 §17.3 Skill/MCP declared_class trust rule
+    "DeclaredClassTrust",
+    "compute_effective_class",
+    "infer_mcp_declared_trust",
+    "infer_skill_declared_trust",
 ]

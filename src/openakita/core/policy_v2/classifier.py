@@ -410,6 +410,16 @@ def _heuristic_classify(tool: str) -> ApprovalClass | None:
     return None
 
 
+# Public alias of the heuristic classifier (C15 §17.3).
+# ``declared_class_trust.compute_effective_class`` calls into this when
+# a default-trusted Skill / MCP declaration must be cross-checked with
+# the prefix/exact-name heuristic. Re-exporting under the public name
+# avoids reaching into a private symbol from a sibling module.
+def heuristic_classify(tool: str) -> ApprovalClass | None:
+    """Public re-export of :func:`_heuristic_classify` (C15)."""
+    return _heuristic_classify(tool)
+
+
 # Backward-compat alias — old tests import classifier._is_inside_workspace.
 # Canonical implementation moved to ``zones.is_inside_workspace`` in C3.
 # Kept here as a re-export so test_classifier.py 不需重写一大片，并避免外部
