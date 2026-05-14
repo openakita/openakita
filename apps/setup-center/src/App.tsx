@@ -5868,7 +5868,9 @@ function MainApp() {
           </div>
           <div style={{ display: view === "org_editor" ? undefined : "none", flex: 1, minHeight: 0 }}>
             <ErrorBoundary>
-              <OrgEditorView apiBaseUrl={apiBaseUrl} visible={view === "org_editor"} />
+              <Suspense fallback={<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", opacity: 0.5 }}><div className="spinner" style={{ width: 24, height: 24 }} /></div>}>
+                <OrgEditorView apiBaseUrl={apiBaseUrl} visible={view === "org_editor"} />
+              </Suspense>
             </ErrorBoundary>
           </div>
           <div

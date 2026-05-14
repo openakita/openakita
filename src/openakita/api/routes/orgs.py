@@ -653,6 +653,7 @@ async def send_command(request: Request, org_id: str):
                 origin_surface=OrgCommandSurface.ORG_CONSOLE,
                 output_scope=OrgOutputScope.CONSOLE_FULL,
                 replace_existing=bool(body.get("replace_existing")),
+                continue_previous=bool(body.get("continue_previous")),
             )
         )
     except OrgCommandConflict as exc:

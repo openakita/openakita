@@ -25,6 +25,9 @@ env_any:
 ## 工具 / Tools
 
 - `seedance_create({prompt, model?, mode?, ratio?, duration?, resolution?, ...})`
+- `seedance_edit({prompt, source_video_url, model?, duration?, ratio?, resolution?})`
+- `seedance_extend({prompt, source_video_url, model?, duration?, ratio?, resolution?})`
+- `seedance_transition({prompt, source_video_url, next_scene_prompt?, model?, duration?, ratio?, resolution?})`
 - `seedance_status({task_id})`
 - `seedance_list({limit?})`
 
@@ -52,9 +55,17 @@ prompt + (可选 image/video/audio) → Ark POST → task_id →
 ```
 故事脚本 → LLM 分镜拆解(decompose_storyboard) → N 段分镜 →
   串行模式: 上一段末帧 → 下一段首帧参考 (视觉连贯)
+  云端续写模式: 上一段 video_url → Seedance extend 生成下一段/过渡段
   并行模式: 各段独立生成 →
     ffmpeg concat → 最终长视频(含转场)
 ```
+
+## 编辑 / 延长 / 过渡
+
+- `edit` 和 `extend` 必须使用 Seedance 任务返回的公网 `video_url`，通过 `source_video_url` 传入。
+- 不要把本地视频路径、`/api/plugins/...` 预览地址或 base64 视频当作源视频传给 `edit` / `extend`；Ark 无法访问这些本地资源。
+- `seedance_transition` 表示“云端生成过渡/续写片段”，不是 ffmpeg 拼接。若需要最终长片，先生成过渡片段，再用本地 concat 合成。
+- `/long-video/concat` 是本地合成：`none` 是硬拼接，`crossfade` 是本地 xfade 重编码，不等于 Seedance 云端 AI 过渡。
 
 ## Quality Gates (G1–G3)
 
@@ -78,6 +89,7 @@ prompt + (可选 image/video/audio) → Ark POST → task_id →
 - **API Key 没填**: 所有请求 502 → UI 提示去 Settings 配置
 - **Ark content moderation**: 敏感内容（含人脸）会触发安全审核直接 fail — 改 prompt 重试
 - **视频 URL 过期**: 必须开 `auto_download=true`（默认开）才能离线复用
+- **编辑/延长只能用云端 URL**: 必须传上游任务返回的 `video_url`，不能传本地 mp4
 - **长时间任务排队**: 默认 poll 间隔 10s，繁忙时段可能等几分钟 — 不会卡 UI
 - **串行长视频人脸限制**: Seedance 不接受含人脸的参考图，串行链接会回退到纯文本生成，连续性下降 — 优先使用动画角色/动物/风景
 - **ffmpeg 依赖**: 长视频拼接需要系统安装 ffmpeg — 缺失时 UI 会提示

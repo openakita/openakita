@@ -90,7 +90,14 @@ class TestAigcVideoStudioTemplate:
         tpl = AIGC_VIDEO_STUDIO
         expected = {
             "tongyi-image": {"tongyi_image_create", "tongyi_image_status", "tongyi_image_list"},
-            "seedance-video": {"seedance_create", "seedance_status", "seedance_list"},
+            "seedance-video": {
+                "seedance_create",
+                "seedance_edit",
+                "seedance_extend",
+                "seedance_transition",
+                "seedance_status",
+                "seedance_list",
+            },
         }
         for node in tpl["nodes"]:
             po = node.get("plugin_origin")
