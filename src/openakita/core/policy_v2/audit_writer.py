@@ -75,6 +75,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 
 from .audit_chain import ChainedJsonlWriter, get_writer
@@ -113,8 +114,13 @@ class AsyncBatchAuditWriter:
         max_batch_delay_ms: float = DEFAULT_MAX_BATCH_DELAY_MS,
         queue_maxsize: int = DEFAULT_QUEUE_MAXSIZE,
     ) -> None:
-        self._path = path
-        self._writer: ChainedJsonlWriter = get_writer(path)
+        # Normalise the path so callers comparing string forms — notably
+        # ``AuditLogger.log`` which does ``str(Path(self._path))`` — see
+        # the same value regardless of OS separator. Without this the
+        # singleton path lookup fails on Windows because ``Path(...)``
+        # stringifies with ``\`` while the caller passed ``/``.
+        self._path = str(Path(path))
+        self._writer: ChainedJsonlWriter = get_writer(self._path)
         self._max_batch_size = max(1, max_batch_size)
         self._max_batch_delay_s = max_batch_delay_ms / 1000.0
         self._queue_maxsize = max(1, queue_maxsize)
@@ -181,34 +187,55 @@ class AsyncBatchAuditWriter:
             queue = self._queue
             task = self._worker_task
 
-        # Signal end-of-stream via a sentinel. ``None`` works because
-        # records are required to be ``dict``; tests assert this.
+        # Split the budget: at most half goes to *delivering* the
+        # sentinel; the rest waits for the worker to drain + exit.
+        # This bounds the worst-case stop() runtime to ``timeout`` even
+        # if the queue is full AND the worker is stuck on filelock —
+        # otherwise ``await queue.put(None)`` could hang indefinitely
+        # while ``wait_for(task, ...)`` never gets a chance to run.
+        sentinel_budget = max(min(timeout / 2.0, 5.0), 0.1)
+        worker_budget = max(timeout - sentinel_budget, 0.5)
+
+        sentinel_delivered = False
         try:
             queue.put_nowait(None)  # type: ignore[arg-type]
+            sentinel_delivered = True
         except asyncio.QueueFull:
-            # Worker can't catch up — abandon the loop. Records currently
-            # in the queue will be processed if the worker drains in
-            # time; the sentinel will be in the *back* of the queue
-            # after the existing records, so it'll fire after they're
-            # done.
-            await queue.put(None)  # type: ignore[arg-type]
-
-        try:
-            await asyncio.wait_for(task, timeout=timeout)
-        except TimeoutError:
-            logger.error(
-                "[audit_writer] worker stop timed out after %.1fs for %s; "
-                "%d records may be lost",
-                timeout,
-                self._path,
-                queue.qsize(),
-            )
-            task.cancel()
-            # Best-effort cancellation; don't re-raise — caller is in
-            # shutdown and we shouldn't propagate.
             try:
-                await task
-            except (asyncio.CancelledError, Exception):
+                await asyncio.wait_for(
+                    queue.put(None), timeout=sentinel_budget  # type: ignore[arg-type]
+                )
+                sentinel_delivered = True
+            except TimeoutError:
+                logger.error(
+                    "[audit_writer] could not deliver stop sentinel within "
+                    "%.1fs for %s; cancelling worker (queued records will "
+                    "be lost)",
+                    sentinel_budget,
+                    self._path,
+                )
+
+        if sentinel_delivered:
+            try:
+                await asyncio.wait_for(task, timeout=worker_budget)
+            except TimeoutError:
+                logger.error(
+                    "[audit_writer] worker stop timed out after %.1fs for %s; "
+                    "%d records may be lost",
+                    worker_budget,
+                    self._path,
+                    queue.qsize(),
+                )
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=2.0)
+                except (asyncio.CancelledError, TimeoutError, Exception):
+                    pass
+        else:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError, Exception):
                 pass
 
         with self._state_lock:
@@ -297,13 +324,26 @@ class AsyncBatchAuditWriter:
                 self._do_sync_append(record, reason="queue_full")
                 return
 
-        # Foreign thread (FastAPI worker, gateway thread, sync CLI):
-        # asyncio.Queue is NOT thread-safe so we must marshal via
-        # ``call_soon_threadsafe``. We deliberately do NOT block the
-        # producer waiting for the loop to confirm — that would erase
-        # the latency win. Best-effort qsize() check first; if the
-        # queue is clearly full we sync-fallback in THIS thread (so
-        # the loop never blocks on filelock).
+        # Foreign thread (engine loop calling AuditLogger.log, FastAPI
+        # worker, sync CLI, gateway thread): asyncio.Queue is NOT
+        # thread-safe so we must marshal via ``call_soon_threadsafe``.
+        # We deliberately do NOT block the producer waiting for the
+        # loop to confirm — that would erase the latency win.
+        #
+        # Two backpressure cases:
+        #
+        # 1. ``qsize() >= maxsize`` *now* → producer-thread sync write
+        #    (caller pays the filelock cost, loop unaffected). This is
+        #    the steady-state backpressure path.
+        # 2. qsize() saw room but the queue filled in the ~µs window
+        #    before our ``call_soon_threadsafe`` callback runs on the
+        #    loop. The loop-side fallback ``_put_or_fallback`` does a
+        #    sync write — yes, that briefly blocks the loop, but this
+        #    is rare (qsize check + scheduling is µs-level) and the
+        #    alternative is *dropping* an audit record, which is
+        #    worse: audit data integrity is a contractual obligation
+        #    here. Operators can monitor ``stats['sync_fallback']``
+        #    and raise ``OPENAKITA_AUDIT_QUEUE_MAX`` if it climbs.
         try:
             if queue.qsize() >= queue.maxsize:
                 self._do_sync_append(record, reason="queue_full")
@@ -313,8 +353,6 @@ class AsyncBatchAuditWriter:
                 self._stat_enqueued += 1
             return
         except RuntimeError:
-            # Loop closed mid-call (race during shutdown). Sync-write
-            # so the record isn't lost.
             self._do_sync_append(record, reason="loop_unavailable")
             return
 
@@ -324,15 +362,16 @@ class AsyncBatchAuditWriter:
         Tries the queue first; if it filled in the ~µs gap between
         qsize check and this callback, sync-writes inline. The sync
         write WILL briefly block the loop on filelock acquisition,
-        but that only happens in the tiny window where qsize was
-        stale — degraded mode, not steady state.
+        but only in the tiny race window — degraded mode, not steady
+        state. We log at WARNING so operators can detect chronic
+        backpressure and bump ``OPENAKITA_AUDIT_QUEUE_MAX``.
         """
         if self._queue is None:
             return
         try:
             self._queue.put_nowait(record)
         except asyncio.QueueFull:
-            self._do_sync_append(record, reason="queue_full")
+            self._do_sync_append(record, reason="queue_full_on_loop_race")
 
     def _do_sync_append(self, record: dict[str, Any], *, reason: str) -> None:
         """Bypass the queue and write the record synchronously.
@@ -500,21 +539,29 @@ def get_async_audit_writer(path: str | None = None) -> AsyncBatchAuditWriter | N
     :class:`AuditLogger`) can fall back to synchronous writes when no
     async writer has been started. This makes the async path opt-in
     via :func:`start_global_audit_writer` rather than implicit.
+
+    Path comparison is normalised through ``pathlib.Path`` so callers
+    passing ``"a/b.jsonl"`` and ``"a\\b.jsonl"`` (Windows) hit the same
+    singleton. Without normalisation the Windows AuditLogger always
+    fell through to sync because its stringified ``Path`` used ``\\``
+    while ``start_global_audit_writer`` was called with ``/``.
     """
     with _GLOBAL_WRITER_LOCK:
         if _GLOBAL_WRITER is None:
             return None
-        if path is not None and _GLOBAL_WRITER._path != path:
-            # Path mismatch — likely a misconfiguration. Don't silently
-            # write to the wrong file; the caller will fall back to
-            # sync to its own path.
-            logger.warning(
-                "[audit_writer] singleton path=%s does not match requested %s; "
-                "returning None so caller sync-writes",
-                _GLOBAL_WRITER._path,
-                path,
-            )
-            return None
+        if path is not None:
+            try:
+                requested_norm = str(Path(path))
+            except Exception:
+                requested_norm = path
+            if _GLOBAL_WRITER._path != requested_norm:
+                logger.warning(
+                    "[audit_writer] singleton path=%s does not match requested %s; "
+                    "returning None so caller sync-writes",
+                    _GLOBAL_WRITER._path,
+                    requested_norm,
+                )
+                return None
         return _GLOBAL_WRITER
 
 
@@ -527,18 +574,19 @@ async def start_global_audit_writer(
 ) -> AsyncBatchAuditWriter:
     """Start (or replace) the process-wide async audit writer."""
     global _GLOBAL_WRITER
+    try:
+        path_norm = str(Path(path))
+    except Exception:
+        path_norm = path
     with _GLOBAL_WRITER_LOCK:
         existing = _GLOBAL_WRITER
     if existing is not None:
-        # If same path, treat as idempotent start. If different path,
-        # stop the old writer first to avoid silently writing to the
-        # wrong file.
-        if existing._path == path and existing.is_running():
+        if existing._path == path_norm and existing.is_running():
             return existing
         await existing.stop()
 
     new_writer = AsyncBatchAuditWriter(
-        path=path,
+        path=path_norm,
         max_batch_size=max_batch_size,
         max_batch_delay_ms=max_batch_delay_ms,
         queue_maxsize=queue_maxsize,

@@ -674,6 +674,62 @@ def create_app(
         except Exception as e:
             logger.warning("[Shutdown] Memory checkpoint skipped: %s", e)
 
+    @app.on_event("startup")
+    async def _start_async_audit_writer():
+        """C22 P3-2 follow-up: wire the async audit writer to the API loop.
+
+        Without this hook the writer is dead code — ``AuditLogger.log()``
+        always sees ``get_async_audit_writer(...)`` returning ``None`` and
+        falls back to the per-row filelock sync path. After this hook the
+        same code path coalesces writes into batches transparently.
+
+        Fail-safe: any exception here logs WARNING and leaves the system
+        on the sync path; nothing downstream relies on the async writer
+        being up.
+        """
+        try:
+            from openakita.core.audit_logger import DEFAULT_AUDIT_PATH
+            from openakita.core.policy_v2.audit_writer import (
+                start_global_audit_writer,
+            )
+
+            try:
+                from openakita.core.policy_v2.global_engine import get_config_v2
+
+                cfg = get_config_v2().audit
+                path = cfg.log_path if (cfg and cfg.enabled) else None
+            except Exception:
+                path = None
+            if not path:
+                path = DEFAULT_AUDIT_PATH
+
+            await start_global_audit_writer(path)
+            logger.info("[Startup] AsyncBatchAuditWriter started for %s", path)
+        except Exception as e:
+            logger.warning(
+                "[Startup] AsyncBatchAuditWriter not started; sync fallback "
+                "remains active: %s",
+                e,
+            )
+
+    @app.on_event("shutdown")
+    async def _shutdown_async_audit_writer():
+        """Drain + stop the async audit writer.
+
+        Bounded by ``stop()``'s internal timeout (split between sentinel
+        delivery and worker drain); anything still queued past that
+        deadline is logged + dropped rather than blocking shutdown.
+        """
+        try:
+            from openakita.core.policy_v2.audit_writer import (
+                stop_global_audit_writer,
+            )
+
+            await stop_global_audit_writer()
+            logger.info("[Shutdown] AsyncBatchAuditWriter stopped")
+        except Exception as e:
+            logger.warning("[Shutdown] AsyncBatchAuditWriter stop error: %s", e)
+
     return app
 
 

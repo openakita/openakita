@@ -481,3 +481,213 @@ def test_module_exports_match_all() -> None:
 def test_append_batch_exported_from_audit_chain() -> None:
     """Public ChainedJsonlWriter must expose append_batch."""
     assert hasattr(audit_chain.ChainedJsonlWriter, "append_batch")
+
+
+# ---------------------------------------------------------------------------
+# 10. Post-audit refinements (F1, F2, path normalization)
+# ---------------------------------------------------------------------------
+
+
+class TestPathNormalization:
+    """C22 follow-up: ``AsyncBatchAuditWriter._path`` must be normalised
+    so callers passing forward-slash vs back-slash variants land on the
+    same singleton.
+
+    Bug history: on Windows, ``AuditLogger.__init__`` stores
+    ``Path(path)`` and ``log()`` calls ``get_async_audit_writer(str(self._path))``
+    — ``str(Path("a/b"))`` becomes ``"a\\b"``. Meanwhile
+    ``start_global_audit_writer(DEFAULT_AUDIT_PATH)`` was called with
+    the slash form. The singleton was registered under one form,
+    queried under another, and ALWAYS returned None → sync fallback.
+    Whole async path was silently dead on Windows.
+    """
+
+    def test_writer_path_is_normalised(self) -> None:
+        """Forward and back slashes produce the same stored ``_path``."""
+        w_fwd = AsyncBatchAuditWriter("data/audit/x.jsonl")
+        w_back = AsyncBatchAuditWriter("data\\audit\\x.jsonl")
+        assert w_fwd._path == w_back._path, (
+            f"Path normalization broken: fwd={w_fwd._path!r} vs "
+            f"back={w_back._path!r}. On Windows these should both "
+            "resolve to the same os.path form."
+        )
+
+    @pytest.mark.asyncio
+    async def test_singleton_lookup_resilient_to_separator(
+        self, tmp_path: Path
+    ) -> None:
+        """``get_async_audit_writer`` accepts either slash form."""
+        path_str = str(tmp_path / "x.jsonl")
+        await start_global_audit_writer(path_str)
+        try:
+            assert aw_mod.get_async_audit_writer(path_str) is not None
+            assert (
+                aw_mod.get_async_audit_writer(path_str.replace("\\", "/"))
+                is not None
+            ), (
+                "After F1/F3 fix, callers passing the slash-flipped form "
+                "must still get the singleton — that's the whole point "
+                "of normalising in __init__."
+            )
+        finally:
+            await stop_global_audit_writer()
+
+
+class TestStopHangPrevention:
+    """F2 (post-audit): ``stop()`` must NOT hang indefinitely even if
+    the worker is stuck and the queue is full.
+
+    Original bug: when the queue was full, ``stop()`` did
+    ``await queue.put(None)`` with no timeout. If the worker was blocked
+    on filelock (other process holding it), put() blocked forever, and
+    the subsequent ``wait_for(task, timeout=...)`` never got to run.
+    Result: shutdown hang, requiring SIGKILL on the uvicorn worker.
+
+    The fix splits the timeout budget: a bounded portion is given to
+    sentinel delivery, the rest to worker drain. If the sentinel can't
+    be delivered, we cancel() the worker outright.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_with_blocked_worker_does_not_hang_forever(
+        self, audit_path: Path
+    ) -> None:
+        """The originally-broken case: queue full + worker blocked in
+        an ``await``. Without the F2 fix, ``stop()`` did
+        ``await queue.put(None)`` with no timeout and hung indefinitely
+        waiting for the worker to free a slot. With the fix, stop()
+        bounds the total wait via its ``timeout`` arg.
+
+        We block the worker in an ``await`` (not sync sleep) because
+        sync I/O isn't interruptible by ``task.cancel()`` — that's a
+        Python language limitation, not something this fix can paper
+        over. Real filelock blocks are bounded by the filelock library's
+        own timeout (5s), so the realistic worst case here is
+        bounded too; the test pins the bounded-shutdown invariant.
+        """
+        w = AsyncBatchAuditWriter(
+            str(audit_path),
+            max_batch_size=2,
+            max_batch_delay_ms=5.0,
+            queue_maxsize=4,
+        )
+        await w.start()
+
+        # Replace the sync append_batch with a coroutine wrapped in
+        # asyncio.run_coroutine_threadsafe — actually simpler: replace
+        # the synchronous batch flush with a function that loops on
+        # asyncio.sleep via the writer's own loop. We can't easily run
+        # async code from the sync writer, so instead we instrument the
+        # worker loop directly: monkey-patch ``_worker_main`` to wait
+        # on an Event that we never set.
+
+        block_event = asyncio.Event()
+
+        async def stuck_worker() -> None:
+            # Simulate a worker that's wedged on a long await (e.g.
+            # waiting for the filelock to release).
+            try:
+                await block_event.wait()
+            except asyncio.CancelledError:
+                # stop() should reach here via task.cancel() inside
+                # the timeout budget.
+                raise
+
+        # Tear down the existing worker we started so we can swap in
+        # the stuck one with all the writer's other state intact.
+        if w._worker_task is not None and not w._worker_task.done():
+            w._worker_task.cancel()
+            try:
+                await asyncio.wait_for(w._worker_task, timeout=1.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+        # Re-create state as start() would, but with our stuck worker.
+        assert w._loop is not None and w._queue is not None
+        w._stopped = False
+        w._worker_task = w._loop.create_task(stuck_worker())
+
+        # Fill queue past maxsize so sentinel can't be put_nowait().
+        for i in range(8):
+            try:
+                w._queue.put_nowait({"ts": float(i), "tool": "x"})
+            except asyncio.QueueFull:
+                break
+
+        import time
+
+        t0 = time.perf_counter()
+        await w.stop(timeout=1.5)
+        elapsed = time.perf_counter() - t0
+        # Budget: 1.5s for stop() + small cleanup overhead. Without F2
+        # the queue.put(None) would block forever.
+        assert elapsed < 4.0, (
+            f"stop() took {elapsed:.2f}s with a stuck worker + full "
+            "queue. F2 regression: sentinel delivery timeout is not "
+            "bounding the total stop() runtime."
+        )
+
+    @pytest.mark.asyncio
+    async def test_stop_normal_path_unchanged(self, audit_path: Path) -> None:
+        """Sanity: when not in the pathological case, stop() still
+        drains records (F2 fix didn't trade drain correctness for hang
+        safety)."""
+        w = AsyncBatchAuditWriter(str(audit_path), queue_maxsize=64)
+        await w.start()
+        for i in range(5):
+            w.enqueue({"ts": float(i), "tool": f"t{i}", "decision": "allow"})
+        await w.stop(timeout=5.0)
+
+        # All 5 should have been flushed before stop returned
+        result = verify_chain(audit_path)
+        assert result.ok
+        assert result.total == 5, (
+            f"Normal stop should drain queued records; got {result.total}/5."
+        )
+
+
+class TestServerLifecycleWiring:
+    """F1 (post-audit): ``api/server.py`` must register the writer's
+    startup/shutdown hooks. Without this the writer is dead code —
+    AuditLogger.log() always sees None and falls back to sync.
+
+    Grep-based structural guard: pulls the server module source and
+    asserts both hooks reference the writer API.
+    """
+
+    def test_server_registers_writer_startup_hook(self) -> None:
+        import inspect
+
+        from openakita.api import server as srv_mod
+
+        src = inspect.getsource(srv_mod)
+        assert "start_global_audit_writer" in src, (
+            "api/server.py must call start_global_audit_writer in a "
+            "startup hook — otherwise the C22 async audit path is dead "
+            "code and every audit row pays the per-row filelock cost."
+        )
+        assert "stop_global_audit_writer" in src, (
+            "api/server.py must call stop_global_audit_writer in a "
+            "shutdown hook — otherwise queued records may be lost on "
+            "shutdown, and the writer's worker task leaks."
+        )
+
+    def test_server_uses_audit_logger_default_path_for_writer(self) -> None:
+        """The path passed to start_global_audit_writer must match the
+        path AuditLogger uses by default, otherwise the singleton
+        lookup in AuditLogger.log() will path-mismatch and fall back
+        to sync forever. F1 + F3 (path normalisation) together fix
+        this."""
+        import inspect
+
+        from openakita.api import server as srv_mod
+
+        src = inspect.getsource(srv_mod)
+        # Must reference DEFAULT_AUDIT_PATH or cfg.log_path so the
+        # singleton is registered under the AuditLogger-canonical path.
+        assert (
+            "DEFAULT_AUDIT_PATH" in src or "cfg.log_path" in src
+        ), (
+            "Startup hook must use DEFAULT_AUDIT_PATH (or v2 cfg.log_path) "
+            "so AuditLogger.log() finds the singleton. Hard-coding a "
+            "different path here would silently disable the optimisation."
+        )
