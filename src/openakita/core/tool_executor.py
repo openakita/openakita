@@ -944,13 +944,26 @@ class ToolExecutor:
                 #      ``DeferredApprovalRequired`` and halt the task
                 #      cleanly (instead of letting LLM re-try / use ask_user)
                 if perm_decision.metadata.get("is_unattended_path"):
+                    # C17 Phase A.4: scheduler 触发 unattended 路径时，
+                    # 多数子调用 ``state.task_id`` 是 None（Agent.execute_task
+                    # 没走 ``begin_task`` 注册）。退化到读 scheduler
+                    # ContextVar，让 pending_approval 永远带正确 task_id，
+                    # 而不是 30% 的 PendingApproval 行 task_id=None 让恢复
+                    # 链路无从匹配。
+                    state_task_id = getattr(state, "task_id", None) if state else None
+                    if state_task_id is None:
+                        try:
+                            from ..scheduler.locks import get_current_scheduled_task_id
+                            state_task_id = get_current_scheduled_task_id()
+                        except Exception:
+                            state_task_id = None
                     pending_marker = await self._defer_unattended_confirm(
                         tool_use_id=tool_use_id,
                         tool_name=tool_name,
                         tool_input=tool_input,
                         perm_decision=perm_decision,
                         session_id=session_id or "",
-                        task_id=getattr(state, "task_id", None) if state else None,
+                        task_id=state_task_id,
                     )
                     return (idx, pending_marker, None, None)
 

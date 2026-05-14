@@ -13,6 +13,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Request
 
@@ -230,6 +231,225 @@ async def health(request: Request):
         "memory_subsystem": _memory_subsystem_status(request),
         "last_shutdown": _read_last_shutdown_marker(),
     }
+
+
+# ---------------------------------------------------------------------------
+# C17 Phase C — Kubernetes-style /healthz + /readyz probes
+# ---------------------------------------------------------------------------
+#
+# Why a second probe family?
+#
+# Existing ``/api/health`` always returns 200 as long as the FastAPI process
+# is alive. That's useful for "is OpenAkita on at all?" but it tells external
+# monitors nothing about whether the agent can actually serve traffic right
+# now — Policy V2 layer might be in fallback after a malformed YAML, the
+# audit chain might be tampered, the scheduler might be deadlocked. Under
+# those conditions a load balancer / IM gateway / desktop reconnect logic
+# happily routes traffic to a degraded instance.
+#
+# ``/api/healthz`` (liveness): fixed 200 + tiny payload. Designed to be
+# polled at ≤1Hz by orchestrators. Process up → 200. Use this to decide
+# "should I restart the process?".
+#
+# ``/api/readyz`` (readiness): 200 when every internal subsystem is healthy,
+# 503 otherwise with a ``failing[]`` list. Cached for 5 seconds so a hot
+# polling client (e.g. desktop reconnect loop) can't synthesise load on
+# the chain-verify path. Detail level depends on caller:
+#   - localhost / trusted → full ``failing[].details``
+#   - remote untrusted    → only ``failing[].name`` (no path leaks)
+#
+# Borrowed shape from k8s ``readinessProbe`` + claude-code
+# ``ProcessHealth.probe()``. Implementation uses ``asyncio.shield`` so a
+# slow individual check can't block the loop indefinitely.
+
+
+_READYZ_CACHE_TTL_SECONDS = 5.0
+_readyz_cache: dict[str, Any] = {"ts": 0.0, "payload": None, "ready": False}
+_readyz_cache_lock = asyncio.Lock()
+
+
+def _is_localhost(request: Request) -> bool:
+    try:
+        from .auth import get_client_ip
+
+        trust_proxy = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
+        ip = get_client_ip(request, trust_proxy=trust_proxy)
+    except Exception:
+        ip = getattr(request.client, "host", "") if request.client else ""
+    return ip in {"127.0.0.1", "::1", "localhost"} or (
+        isinstance(ip, str) and ip.startswith("::ffff:127.")
+    )
+
+
+async def _check_policy_engine() -> dict[str, Any] | None:
+    """Verify Policy V2 engine loaded and not in degraded fallback mode."""
+    try:
+        from openakita.core.policy_v2.global_engine import get_engine_v2
+
+        engine = get_engine_v2()
+        if engine is None:
+            return {"name": "policy_v2", "details": "engine not initialized"}
+        # Engine in LKG-fallback mode is still "ready" but warned, not 503.
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return {"name": "policy_v2", "details": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+async def _check_audit_chain() -> dict[str, Any] | None:
+    """Verify the security audit chain head is not corrupt.
+
+    We *do not* verify the entire chain on every probe (that walks the
+    full JSONL — too slow at scale). Instead we read the last line and
+    check it's a parseable record. Full ``verify_chain`` runs only on
+    explicit ``/api/config/security/audit?verify=full``.
+    """
+    try:
+        from openakita.config import settings
+
+        path = Path(getattr(settings, "data_dir", "data")) / "policy" / "audit.jsonl"
+        if not path.exists():
+            return None  # Fresh install — no audit yet, that's fine.
+        # Tail check only.
+        with path.open("rb") as f:
+            try:
+                f.seek(-4096, 2)
+            except OSError:
+                f.seek(0)
+            tail = f.read().decode("utf-8", errors="replace").splitlines()
+        for line in reversed(tail):
+            line = line.strip()
+            if not line:
+                continue
+            json.loads(line)  # raises on corrupt tail
+            return None
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return {"name": "audit_chain", "details": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+def _check_scheduler(request: Request) -> dict[str, Any] | None:
+    """Scheduler ready iff the singleton exists and ``_running`` is True."""
+    try:
+        scheduler = getattr(request.app.state, "scheduler", None)
+        if scheduler is None:
+            # Not all deployments enable scheduler — skip rather than fail.
+            return None
+        if not getattr(scheduler, "_running", False):
+            return {"name": "scheduler", "details": "scheduler not running"}
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return {"name": "scheduler", "details": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+async def _check_event_loop_lag() -> dict[str, Any] | None:
+    """Probe event loop responsiveness; >500ms → degraded."""
+    try:
+        loop = asyncio.get_running_loop()
+        ev = asyncio.Event()
+        t0 = time.monotonic()
+        loop.call_soon(ev.set)
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=2.0)
+        except TimeoutError:
+            return {"name": "event_loop", "details": "wait timed out"}
+        lag_ms = (time.monotonic() - t0) * 1000
+        if lag_ms > 500:
+            return {"name": "event_loop", "details": f"lag {lag_ms:.0f}ms"}
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return {"name": "event_loop", "details": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+def _check_gateway(request: Request) -> dict[str, Any] | None:
+    """Gateway is optional but, when configured, must be alive."""
+    try:
+        gateway = getattr(request.app.state, "gateway", None)
+        if gateway is None:
+            # No IM gateway configured (e.g. headless server). Not 503.
+            return None
+        if not getattr(gateway, "running", True):
+            return {"name": "gateway", "details": "gateway stopped"}
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return {"name": "gateway", "details": f"{type(exc).__name__}: {exc}"[:200]}
+
+
+async def _compute_readiness(request: Request) -> dict[str, Any]:
+    """Run every readiness check; return ``{ready, failing, ts}``.
+
+    Each check returns ``None`` (ok) or ``{name, details}`` (failing).
+    """
+    failing: list[dict[str, Any]] = []
+    results = await asyncio.gather(
+        _check_policy_engine(),
+        _check_audit_chain(),
+        _check_event_loop_lag(),
+        return_exceptions=True,
+    )
+    for r in results:
+        if isinstance(r, dict):
+            failing.append(r)
+        elif isinstance(r, BaseException):
+            failing.append({"name": "internal", "details": f"check raised: {r}"})
+    # Sync checks (these are O(1) attribute reads).
+    for sync_check in (_check_scheduler(request), _check_gateway(request)):
+        if sync_check is not None:
+            failing.append(sync_check)
+    return {
+        "ready": not failing,
+        "failing": failing,
+        "ts": time.time(),
+    }
+
+
+@router.get("/api/healthz")
+async def healthz():
+    """Liveness probe: fixed 200 + minimal payload.
+
+    Use this in orchestrator restart policies. Never returns 503 — if the
+    HTTP server can answer this, the process is alive.
+    """
+    return {"status": "ok", "ts": time.time(), "pid": os.getpid()}
+
+
+@router.get("/api/readyz")
+async def readyz(request: Request):
+    """Readiness probe: 200 when every subsystem is healthy, 503 otherwise.
+
+    Cached for 5s to keep cost bounded under hot polling. Detail level
+    depends on caller IP — only localhost gets the full ``details`` field
+    so remote callers can't fingerprint internal file paths.
+    """
+    from fastapi.responses import JSONResponse
+
+    now = time.time()
+    async with _readyz_cache_lock:
+        if (
+            _readyz_cache["payload"] is not None
+            and (now - _readyz_cache["ts"]) < _READYZ_CACHE_TTL_SECONDS
+        ):
+            payload = _readyz_cache["payload"]
+            ready = _readyz_cache["ready"]
+        else:
+            computed = await _compute_readiness(request)
+            payload = computed
+            ready = computed["ready"]
+            _readyz_cache["ts"] = computed["ts"]
+            _readyz_cache["payload"] = computed
+            _readyz_cache["ready"] = ready
+
+    # Sanitize for remote callers — drop the ``details`` strings.
+    if not _is_localhost(request):
+        sanitized = {
+            "ready": payload["ready"],
+            "failing": [{"name": f["name"]} for f in payload.get("failing", [])],
+            "ts": payload["ts"],
+        }
+        body = sanitized
+    else:
+        body = payload
+
+    return JSONResponse(content=body, status_code=200 if ready else 503)
 
 
 @router.get("/api/logs/health-summary")

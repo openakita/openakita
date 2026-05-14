@@ -971,7 +971,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C14 | Headless 入口统一（CLI / HTTP / Webhook / stdin）| ✅ DONE | R4-5/6/7/8 + 「C14 实施记录」|
 | C15 | Evolution / system_task / Skill-MCP trust_level | ✅ DONE | R4-9/10/11/12/13 + R5-21 + 「C15 实施记录」|
 | C16 | Prompt injection + YAML 严格校验 + audit 防篡改 | ✅ DONE | R4-14/15 + R5-17 + 「C16 实施记录」|
-| C17 | Reliability（lock 文件 / 启动扫描 / Last-Event-ID / health probe）| ⏳ Pending | R4-16/17/18/19 + R5-8/12 |
+| C17 | Reliability（lock 文件 / 启动扫描 / Last-Event-ID / health probe）| ✅ DONE | R4-16/17/18/19 + R5-8/12 + 「C17 实施记录」|
 | C18 | UX + 配置完备性（hot-reload / ENV / dry-run / 5s 聚合）| ⏳ Pending | R4-20/21/22 + R5-11/20 |
 | **C19** | **开发者新增工具 4 层护栏（依赖 C2/C8/C11，在 C12 之前实施以护卫 C12-C18）** | ✅ DONE | §4.21 cookbook + §12.5 + 「C19 实施记录」|
 
@@ -4881,3 +4881,212 @@ B 依赖 A/C 的接口而反过来 A/C 不依赖 B）。
   LKG，但 watchdog/inotify trigger 尚未实现（C18）。
 - **``ParamMutationAuditor`` 接入哈希链**：保留自身 schema + 锁，C17 视统一
   审计架构再迁。
+
+---
+
+## C17 实施记录（2026-05-14）
+
+C17 是 Policy V2 Reliability 里程碑，聚焦"系统持久运行 + 异常恢复 + 多端
+协同"——把 C13/C16 已经搭好的安全/审计骨架硬化到可以在生产长跑、多机器
+部署、网络抖动下持续工作的状态。覆盖 6 个核心 R 条目 + 3 个 C16 follow-up。
+
+### Phase A — Scheduler 崩溃恢复 + per-task 执行锁（R4-16/17 + R5-12 部分）
+
+**问题**：
+1. `_execute_task` 期间进程崩溃 → 重启后任务卡在 RUNNING 永远跑不动。
+2. `awaiting_approval` 任务重启丢失：`pending_approval.task_id` 总是 None。
+3. 一波 missed_tasks 在重启瞬间一次性触发 → 雷群。
+4. 多进程 / 同进程二次 `serve` 命令意外抢同一个任务 → 重复执行。
+
+**方案**：
+- 新增 [`scheduler/locks.py`](file:src/openakita/scheduler/locks.py)：
+  - `acquire_exec_lock(task_id, lock_dir, expected_runtime_s)`：`os.O_EXCL` 独
+    占创建 `exec_<task_id>.json`，记录 `pid`、`hostname`、`execution_id`、
+    `acquired_at`、`heartbeat_at`、`lease_until`。
+  - `is_stale()` 判定四类失效原因：`malformed`、`lease_expired`、`pid_dead`、
+    `heartbeat_stalled`（心跳停滞超过 `HEARTBEAT_INTERVAL_SECONDS *
+    HEARTBEAT_STALE_FACTOR`）。
+  - `heartbeat_exec_lock(lock, expected_runtime_s)`：长任务运行期每 N 秒推进
+    `heartbeat_at` + `lease_until`，包含 execution_id 防重入校验。
+  - `scan_orphaned_locks(lock_dir)`：startup 时返回所有 stale 锁的
+    `OrphanLock` 列表。
+  - ContextVar 桥：`set_current_scheduled_task_id` / `reset_…` /
+    `get_…`，让深层调用栈（不用穿参）也能拿到当前 task_id。
+- 修改 [`scheduler/scheduler.py`](file:src/openakita/scheduler/scheduler.py) `_execute_task`：
+  1. `mark_running` 之后立刻 `_save_tasks()`——崩溃也能从持久化恢复。
+  2. 周期任务先 `_update_next_run` + persist，**再**执行：保证"至多每窗口
+     执行一次"，崩溃不会重跑同一窗口。
+  3. `acquire_exec_lock` 失败 → 跳过本次（典型场景：另一个进程已经在跑）。
+  4. 起 `_heartbeat_loop` asyncio.Task，每 `HEARTBEAT_INTERVAL_SECONDS`
+     调一次 `heartbeat_exec_lock`；返回 False（lease 被别人接管）就停心跳。
+  5. `set_current_scheduled_task_id(task.id)` → tool_executor 在
+     `pending_approval` 流程兜底 fallback 这里。
+  6. `finally`：cancel heartbeat task + `release_exec_lock` +
+     `reset_current_scheduled_task_id`，异常路径也清干净。
+- 新增 [`scheduler.start()`](file:src/openakita/scheduler/scheduler.py) 三步 startup：
+  - `_rescan_orphaned_runs()`：扫描 `lock_dir`，把 RUNNING 但锁 stale 的任务
+    force-reset 回 SCHEDULED，记 `recovery.jsonl`（原因 / pid / 时间戳）。
+  - `_reconcile_awaiting_approval()`：扫 `pending_approvals.json`，标记
+    `task.status = AWAITING_APPROVAL` 的恢复回继续等。
+  - `_stagger_missed_tasks(missed, now)`：超过 `MAX_MISSED_PER_RESTART=10`
+    的任务按 `STAGGER_INTERVAL_S=30` 顺延，避免重启瞬间 100 个任务一起跑。
+- 修改 [`core/tool_executor.py`](file:src/openakita/core/tool_executor.py) 的 `_defer_unattended_confirm` 调用点：
+  `state.task_id` 为 None 时回退到 `get_current_scheduled_task_id()`——
+  scheduler 跑出的 confirm 现在带得到正确的 `task_id`。
+
+**单测**：[`tests/unit/test_c17_scheduler_lock_recovery.py`](file:tests/unit/test_c17_scheduler_lock_recovery.py) 24 个用例，覆盖
+O_EXCL/stale/heartbeat/rescan/stagger/ContextVar 隔离/`_execute_task` 端到端。
+
+### Phase B — SSE Last-Event-ID 续传 + 多端 confirm 广播（R4-18 + R4-19）
+
+**问题**：
+1. `/api/chat` SSE 客户端断线重连时丢掉断点前后的事件（`text_delta`、
+   `tool_call_start`、`done`），UI 上像"答了一半就消失"。
+2. 同账户两端（desktop + IM）同时活跃时，两端各弹一个 confirm 卡片，第二
+   端不知道第一端已经在确认。
+
+**方案**：
+- 新增 [`core/sse_replay.py`](file:src/openakita/core/sse_replay.py)：
+  - `SSESession`：per-conversation 单调 seq + `deque(maxlen=100)` ringbuffer
+    + 5min idle TTL + `replay_from(last_seq)` 边界处理（None / 0 / 太老 /
+    太新都不抛）。
+  - `SSESessionRegistry`：进程级 OrderedDict 单例，`MAX_SESSIONS=1024` LRU
+    evict 防 memory growth，`gc_idle_sessions()` 周期清理。
+  - `parse_last_event_id(header)`：宽容解析，非整数 / 0 / 负数都返回 None。
+  - `format_sse_frame(event, data_json)`：标准 `id: <seq>\ndata: …\n\n` 帧。
+- 修改 [`api/routes/chat.py`](file:src/openakita/api/routes/chat.py) `_stream_chat`：
+  1. 入口处 `parse_last_event_id(request.headers["Last-Event-ID"])`。
+  2. `_sse_session = registry.get_or_create(conversation_id)`。
+  3. `try:` 块第一件事 `replay_from(last_seq)` 把 buffer 中错过的事件先
+     flush 出去。
+  4. `_sse(...)` helper 改为：先 `session.add_event` 入 buffer，再
+     `format_sse_frame` 出帧；没有 conversation_id 时回退到旧行为。
+- 修改 [`core/ui_confirm_bus.py`](file:src/openakita/core/ui_confirm_bus.py)：
+  - `set_broadcast_hook(hook)` + `_broadcast(event_type, payload)`：异常隔
+    离，hook 报错不影响 bus 主流程。
+  - `store_pending` 末尾 `_broadcast("confirm_initiated", {...})`，故意**不
+    包含** `params` 字段（防止 shell command / 文件路径泄露到广播平面）。
+  - `resolve` 在"第一次成功决议"上 `_broadcast("confirm_revoked", {...})`，
+    重复 `resolve` 是 no-op 不会广播两次。
+  - `active_confirms_for_session(session_id)`：第二端打开 UI 主动拉取本会话
+    还在等待的 confirm（同样脱敏不带 params）。
+- 修改 [`api/server.py`](file:src/openakita/api/server.py)：startup 时把
+  `UIConfirmBus.set_broadcast_hook` 接到现有的 `websocket.fire_event` 通
+  道——和 PendingApprovalsStore 走同一条路。
+- 修改 [`api/routes/sessions.py`](file:src/openakita/api/routes/sessions.py)：新增
+  `GET /api/sessions/{conv}/active_confirms`。
+- 修改 [`apps/setup-center/src/views/ChatView.tsx`](file:apps/setup-center/src/views/ChatView.tsx)：
+  - `lastSeqByConv: Map<string, number>` + `seenSeqsByConv: Map<string,
+    Set<number>>` ref，重连时把最后 seq 当 `Last-Event-ID` header 带回去。
+  - SSE 解析循环增加 `id: <num>` 行识别 + `seenSeqs.has(seq)` dedup，避免
+    replay 跟 active 流重叠时同一事件被消费两次。
+  - `seenSeqs` 容量上限 256，超出按 insertion order drop 旧的——网络抖动
+    不会让内存无界增长。
+
+**单测**：[`tests/unit/test_c17_sse_replay.py`](file:tests/unit/test_c17_sse_replay.py) 27 个用例，覆盖 seq monotonic /
+maxlen evict / replay 边界 / LRU evict / GC / parse_last_event_id 异常 /
+ConfirmBus 广播 / 多 session 隔离。
+
+### Phase C — `/api/healthz` + `/api/readyz` Kubernetes-style probe（R5-8）
+
+**问题**：旧 `/api/health` 永远返回 200，HTTP 服务可达不代表后端能服务请求；
+LB / 监控脚本 / IM gateway / desktop reconnect 决定路由时拿不到细粒度信号。
+
+**方案**：[`api/routes/health.py`](file:src/openakita/api/routes/health.py)
+- `/api/healthz`：always 200，payload 只有 `{status, ts, pid}`，故意不依赖任
+  何 app.state（policy / audit / gateway 全坏也答 200）→ 适合
+  orchestrator restart policy。
+- `/api/readyz`：5s 缓存的 readiness probe，并行跑 5 个 check：
+  - `_check_policy_engine`：`get_engine_v2()` 返回 None 或异常 → fail
+  - `_check_audit_chain`：tail-only JSON parse（不全文 verify，O(1)），损
+    坏 → fail
+  - `_check_event_loop_lag`：`loop.call_soon` 测量回环，> 500ms → fail
+  - `_check_scheduler`：scheduler 单例存在且 `_running=True` 才算 ready
+  - `_check_gateway`：gateway 已配置时必须 `running=True`
+  - 任何 check 抛出 → fail with `name="internal"`。
+- 远程脱敏：`_is_localhost(request)` 通过 `auth.get_client_ip` +
+  `TRUST_PROXY` 判定；非 localhost 只返回 `failing[].name` 不带 `details`
+  字符串（防止内部路径 / 异常堆栈泄露）。
+
+**单测**：[`tests/unit/test_c17_healthz_readyz.py`](file:tests/unit/test_c17_healthz_readyz.py) 11 个用例，覆盖 healthz
+不受 broken policy 影响 / readyz 各子系统失败 / 远程脱敏 / 缓存生效 + 失效。
+
+### Phase D — OrgEventStore 锁 + 非密码学审计标注（R5-12）
+
+**问题**：`orgs/event_store.py` 是独立于 policy_v2 的运营事件流，之前用裸
+`open(..., "a")`：同进程多线程并发 emit 期间被 query 撕裂行；多 worker
+serve 跨进程并发会丢行。
+
+**方案**：[`orgs/event_store.py`](file:src/openakita/orgs/event_store.py)
+- `threading.Lock` 保护 emit 调用。
+- `filelock.FileLock` (位于 `events/.write.lock`) 保护跨进程 emit；timeout
+  默认 2s，超时 fallback 单进程写并 warning log。
+- 模块顶 docstring 显式标注"⚠️ 非密码学操作记录"，对比 `ChainedJsonlWriter`
+  的密码学审计，提醒维护者：合规场景请用 `audit_chain`，不要把
+  shell/permission 决策落到这里。
+
+### Phase E.1 — ChainedJsonlWriter 跨进程链锁（C16 follow-up）
+
+**问题**：C16 留的已知 limit——多进程同写一个 `audit.jsonl` 时两 writer
+在同一 `prev_hash` 上分叉，verify_chain 会报 tamper。
+
+**方案**：[`core/policy_v2/audit_chain.py`](file:src/openakita/core/policy_v2/audit_chain.py)
+- 每个 writer 在 sidecar 路径 `<file>.lock` 上挂 `filelock.FileLock`。
+- 新增 `_reload_last_hash_from_disk()`：在 filelock 内部 tail-read 最后一
+  行的 `row_hash`，确保拿到的是另一个进程刚提交的链头。
+- `append()` 流程：进程锁 → filelock (`_FILELOCK_TIMEOUT_SECONDS=5`，超时
+  抛 OSError 拒绝写而非分叉) → reload tail → 计算 prev_hash + row_hash →
+  写文件 → 释放 filelock → 释放进程锁。
+- 多进程单测真起 `subprocess` 跑 2×10 个并发 append，全程
+  `verify_chain.ok=True` + 20 行齐全。
+
+### Phase E.2 — ParamMutationAuditor 接入链 + sanitize（C16 follow-up）
+
+**问题**：C16 时 `ParamMutationAuditor` 用 `json.dumps(default=str)` 写裸
+JSONL；链式 hashing 需要 canonical form（不接 default=），并且 `before` /
+`after` 可能含 `Path` / `datetime` / `Exception` / 循环引用，直接进
+ChainedJsonlWriter 会 TypeError。
+
+**方案**：[`core/policy_v2/param_mutation_audit.py`](file:src/openakita/core/policy_v2/param_mutation_audit.py)
+- 新增 `_sanitize_for_chain(value, depth=0)`：递归把任意 Python 对象转成
+  JSON-native（dict / list / str / int / float / bool / None），常见类型
+  特殊处理：
+  - `Path` → `str(path)`
+  - `datetime` / `date` → ISO 8601
+  - `set` / `tuple` / `frozenset` → list
+  - `Exception` → `f"<{type}: {value}>"`
+  - 其他对象 → `repr` fallback
+- 边界：`_SANITIZE_MAX_DEPTH=32`、`_SANITIZE_MAX_STR_LEN=8192`、
+  `_SANITIZE_MAX_LIST_LEN=1024`——循环引用 / 深嵌套 / 巨型字符串都被截到
+  确定性 stub 字符串，hashing 不卡。
+- `write()` 改用 `audit_chain.get_writer(self._audit_path).append(record)`，
+  跟 `security_audit.jsonl` 共享同一套跨进程锁 + 哈希链 + tamper 检测。
+
+**单测**：[`tests/unit/test_c17_audit_chain_hardening.py`](file:tests/unit/test_c17_audit_chain_hardening.py) 18 个用例，覆盖
+`_reload_last_hash_from_disk` / 多 writer 同文件交错 / 无 filelock 降级 /
+真实 subprocess 2-process append / sanitize 所有边界类型 / 循环引用 /
+ParamMutationAuditor → ChainedJsonlWriter 集成。
+
+### 审计 + 测试
+
+- [`scripts/c17_audit.py`](file:scripts/c17_audit.py)：A..G 七段 audit，运行
+  `python scripts/c17_audit.py` 验证所有 C17 修改 + C14/C15/C16 不回归。
+- 新增单测文件 4 个，合计 80 个用例：
+  - `test_c17_scheduler_lock_recovery.py` (24)
+  - `test_c17_sse_replay.py` (27)
+  - `test_c17_healthz_readyz.py` (11)
+  - `test_c17_audit_chain_hardening.py` (18)
+- C16 audit 在 C17 完成后继续 100% 绿；`test_policy_v2_c10_mutates_audit.py`
+  （30 个用例）在 ParamMutationAuditor 迁移后继续全绿。
+
+### 已知 follow-up（推到 C18）
+
+- **POLICIES.yaml hot-reload**：C16 LKG 已就位，watchdog/inotify trigger
+  仍未实现。
+- **Audit rotation**：日志按天/按尺寸 rotate + 跨文件链头嵌入暂未实现，
+  audit jsonl 持续累积。C17 的跨进程锁 + 单测里的多进程并发证明跨进程链
+  正确，rotation 推 C18。
+- **SSE event_type 行**：当前 `format_sse_frame` 不写 `event:` 行；如果未
+  来需要按 SSE event type 分发（而不是 JSON `type` 字段），需要补。
+- **Health probe 集成监控**：`/readyz` 503 时 systemd / k8s readiness 自
+  动摘除节点的端到端集成测试推 C18 部署体验里程碑。

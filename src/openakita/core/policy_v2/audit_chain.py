@@ -11,10 +11,14 @@ Design constraints
 
 * Single-writer-per-file (per process). A process-level
   ``threading.Lock`` plus a singleton-per-path map (``_WRITERS``) keeps
-  intra-process appends consistent. Multi-process writes against the same
-  file will produce two chains rooted at the same ``prev_hash`` — verifier
-  will flag this. The fix (cross-process ``fcntl`` / Windows mutex) is
-  tracked under C17.
+  intra-process appends consistent.
+* **C17 Phase E.1**: ``filelock.FileLock`` now provides cross-process
+  serialization. Each ``append()`` acquires the filelock, re-reads the
+  last row_hash from disk (since a sibling process may have appended in
+  the gap between our last write and now), enriches the new row, writes,
+  and releases. The lock file lives next to the JSONL with ``.lock``
+  suffix. When ``filelock`` is unavailable (very rare) we fall back to
+  process-only locking with a warning.
 * Crash recovery: if the previous run died mid-write, the file may end on
   a partial JSON line. ``ChainedJsonlWriter`` detects this on open,
   truncates the partial bytes (only when the file does *not* end in
@@ -59,6 +63,24 @@ logger = logging.getLogger(__name__)
 GENESIS_HASH: str = "0" * 64
 
 _FSYNC_ENV: str = "OPENAKITA_AUDIT_FSYNC"
+
+# C17 Phase E.1: cross-process append serialization. ``filelock`` is in
+# pyproject deps so this should always import successfully — if it doesn't
+# we degrade to in-process locking only.
+try:
+    from filelock import FileLock
+    from filelock import Timeout as _FileLockTimeout
+    _HAS_FILELOCK = True
+except Exception:  # pragma: no cover
+    _HAS_FILELOCK = False
+    _FileLockTimeout = Exception  # type: ignore[assignment, misc]
+
+# Bound how long we'll wait for the cross-process lock per append.
+# Audit appends are O(ms); a 5s wait is generous. On timeout we log and
+# raise — the caller chooses fallback. We deliberately do NOT silently
+# write without the lock; for an audit chain a torn write is worse than
+# a missing event.
+_FILELOCK_TIMEOUT_SECONDS: float = 5.0
 
 _WRITERS: dict[Path, ChainedJsonlWriter] = {}
 _WRITERS_LOCK = threading.Lock()
@@ -127,6 +149,12 @@ class ChainedJsonlWriter:
         self._lock = lock or threading.Lock()
         self._last_hash: str = GENESIS_HASH
         self._truncated_tail_recovered: bool = False
+        # C17 Phase E.1: cross-process filelock sibling of the audit file.
+        # ``filelock`` 0.12+ is happy with str paths on Windows + POSIX.
+        self._filelock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        self._filelock = (
+            FileLock(str(self._filelock_path)) if _HAS_FILELOCK else None
+        )
         self._bootstrap()
 
     # ------------------------------------------------------------------
@@ -209,11 +237,68 @@ class ChainedJsonlWriter:
     # Append
     # ------------------------------------------------------------------
 
+    def _reload_last_hash_from_disk(self) -> None:
+        """Re-read the last full line's ``row_hash`` from disk.
+
+        Called under the cross-process filelock right before computing the
+        next ``prev_hash``. Without this step, two processes that both
+        bootstrapped from the same on-disk tail would each compute
+        ``prev_hash = X`` and write a fork — the verifier would flag the
+        second one as a prev_hash mismatch. By re-reading inside the
+        filelock we always chain off the latest committed tail, whichever
+        process wrote it.
+        """
+        if not self.path.exists():
+            self._last_hash = GENESIS_HASH
+            return
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return
+        if size == 0:
+            self._last_hash = GENESIS_HASH
+            return
+        tail_window = min(size, 65536)
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(size - tail_window)
+                tail = fh.read()
+        except OSError:
+            return
+        if not tail.endswith(b"\n"):
+            # A foreign torn write — caller bootstrap repaired its own
+            # process at init time; we don't try to truncate someone
+            # else's bytes here.
+            last_nl = tail.rfind(b"\n")
+            if last_nl < 0:
+                return
+            tail = tail[: last_nl + 1]
+        lines = tail.rstrip(b"\n").split(b"\n")
+        if not lines or not lines[-1]:
+            return
+        try:
+            obj = json.loads(lines[-1].decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return
+        if isinstance(obj, dict) and isinstance(obj.get("row_hash"), str):
+            self._last_hash = obj["row_hash"]
+
     def append(self, record: dict[str, Any]) -> dict[str, Any]:
         """Append ``record`` with ``prev_hash`` + ``row_hash`` populated.
 
         Returns the augmented record so callers (e.g. tests) can inspect
         what was actually written.
+
+        Locking order (C17 Phase E.1):
+
+        1. Acquire process-local ``threading.Lock`` (cheap, blocks other
+           threads in this interpreter).
+        2. Acquire ``filelock.FileLock`` with a bounded timeout (blocks
+           other processes).
+        3. Re-read the on-disk tail to refresh ``_last_hash`` — a sibling
+           process may have appended while we were waiting.
+        4. Build enriched record + write + fsync (optional).
+        5. Release filelock, then process lock.
         """
         if not isinstance(record, dict):
             raise TypeError(f"record must be a dict, got {type(record).__name__}")
@@ -224,26 +309,55 @@ class ChainedJsonlWriter:
             )
 
         with self._lock:
-            enriched = {**record, "prev_hash": self._last_hash}
-            row_hash = _compute_row_hash(enriched)
-            enriched["row_hash"] = row_hash
+            # 2 + 3: cross-process serialization + read fresh tail. We do
+            # this work *inside* the filelock so two processes can't both
+            # observe the same _last_hash and fork the chain.
+            acquired_cross = False
+            if self._filelock is not None:
+                try:
+                    self._filelock.acquire(timeout=_FILELOCK_TIMEOUT_SECONDS)
+                    acquired_cross = True
+                except _FileLockTimeout as exc:
+                    logger.error(
+                        "[audit_chain] cross-process filelock timed out "
+                        "after %.1fs for %s; refusing to append",
+                        _FILELOCK_TIMEOUT_SECONDS,
+                        self.path,
+                    )
+                    raise OSError(
+                        f"audit_chain filelock timeout on {self.path}"
+                    ) from exc
 
-            line = _canonical_dumps(enriched) + "\n"
             try:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                with open(self.path, "a", encoding="utf-8") as fh:
-                    fh.write(line)
-                    if os.getenv(_FSYNC_ENV) == "1":
-                        fh.flush()
-                        os.fsync(fh.fileno())
-            except OSError as exc:
-                logger.error(
-                    "[audit_chain] Failed to append to %s: %s", self.path, exc
-                )
-                raise
+                # Critical: re-read tail under the filelock, not before.
+                self._reload_last_hash_from_disk()
 
-            self._last_hash = row_hash
-            return enriched
+                enriched = {**record, "prev_hash": self._last_hash}
+                row_hash = _compute_row_hash(enriched)
+                enriched["row_hash"] = row_hash
+
+                line = _canonical_dumps(enriched) + "\n"
+                try:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self.path, "a", encoding="utf-8") as fh:
+                        fh.write(line)
+                        if os.getenv(_FSYNC_ENV) == "1":
+                            fh.flush()
+                            os.fsync(fh.fileno())
+                except OSError as exc:
+                    logger.error(
+                        "[audit_chain] Failed to append to %s: %s", self.path, exc
+                    )
+                    raise
+
+                self._last_hash = row_hash
+                return enriched
+            finally:
+                if acquired_cross and self._filelock is not None:
+                    try:
+                        self._filelock.release()
+                    except Exception:  # pragma: no cover
+                        pass
 
     @property
     def last_hash(self) -> str:

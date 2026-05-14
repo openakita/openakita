@@ -741,6 +741,38 @@ async def _stream_chat(
                 pass
         return False
 
+    # ── C17 Phase B.1/B.2: SSE replay session ──
+    # 每个 conversation_id 对应一个 SSESession（per-session ringbuffer +
+    # 单调 seq）。客户端断线后 ``fetch /api/chat`` 带 ``Last-Event-ID``
+    # header 时，我们先 flush ringbuffer 里 seq > last_seq 的事件再接
+    # active 流。新连接（没带 Last-Event-ID）则 seq 从已有计数继续累加，
+    # 客户端要么从 0 开始接（首次 fetch），要么自己处理 dedup。
+    # 注意：``conversation_id`` 在下方 try 块里才会被赋值（包含 uuid 补全
+    # 逻辑），这里直接读 ``chat_request.conversation_id``——足够当 session
+    # key；如果用户传空字符串就降级回不带 replay 的旧行为。
+    from ...core.sse_replay import (
+        format_sse_frame,
+        parse_last_event_id,
+    )
+    from ...core.sse_replay import (
+        get_registry as _get_sse_registry,
+    )
+
+    _sse_conv_key = chat_request.conversation_id or ""
+    _sse_session = (
+        _get_sse_registry().get_or_create(_sse_conv_key)
+        if _sse_conv_key
+        else None
+    )
+
+    _last_event_id_header = None
+    if http_request is not None:
+        try:
+            _last_event_id_header = http_request.headers.get("last-event-id")
+        except Exception:
+            _last_event_id_header = None
+    _last_event_id = parse_last_event_id(_last_event_id_header)
+
     def _sse(event_type: str, data: dict | None = None) -> str:
         nonlocal _reply_chars, _reply_preview, _full_reply, _chain_reply, _done_sent
         if event_type == "done":
@@ -772,7 +804,16 @@ async def _stream_chat(
             chunk = data["content"]
             _reply_chars += len(chunk)
             _chain_reply += chunk
-        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        data_json = json.dumps(payload, ensure_ascii=False)
+        # When the SSE session is bound, record the event into the
+        # ringbuffer and emit an ``id: <seq>`` line so Last-Event-ID
+        # replay works after disconnect. Without a session (no
+        # conversation_id), fall back to the legacy frame so the existing
+        # contract holds.
+        if _sse_session is not None:
+            evt = _sse_session.add_event(event_type, payload)
+            return format_sse_frame(evt, data_json=data_json)
+        return f"data: {data_json}\n\n"
 
     _disconnect_watcher_task: asyncio.Task | None = None
     _agent_task: asyncio.Task | None = None
@@ -783,6 +824,29 @@ async def _stream_chat(
     conversation_id = chat_request.conversation_id or ""
 
     try:
+        # ── C17 Phase B.2: replay buffered events for reconnecting clients ──
+        # When the client sets ``Last-Event-ID``, flush ringbuffer events
+        # with ``seq > last_seq`` **before** anything new. These frames
+        # carry their original seq so the client can dedup based on
+        # ``seenSequenceNums``; we don't push them back into the buffer
+        # (they're already there) and don't bump _reply_chars / preview
+        # (those state vars only reflect the *new* turn we're about to
+        # generate).
+        if _sse_session is not None and _last_event_id is not None:
+            _missed = _sse_session.replay_from(_last_event_id)
+            if _missed:
+                logger.info(
+                    "[Chat API] replaying %d SSE event(s) for conv=%s after "
+                    "Last-Event-ID=%s",
+                    len(_missed),
+                    conversation_id,
+                    _last_event_id,
+                )
+                for evt in _missed:
+                    yield format_sse_frame(
+                        evt, data_json=json.dumps(evt.payload, ensure_ascii=False)
+                    )
+
         actual_agent = _resolve_agent(agent)
         if actual_agent is None:
             yield _sse("error", {"message": "Agent not initialized"})

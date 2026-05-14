@@ -527,6 +527,21 @@ def create_app(
         except Exception as e:
             logger.warning("[Startup] PendingApprovals SSE wire failed: %s", e)
 
+        # C17 Phase B.4：把 UIConfirmBus 的 confirm_initiated /
+        # confirm_revoked 广播绑到同一条 fire_event 通道，让多端 UI 共享
+        # confirm 生命周期信号。
+        try:
+            from openakita.api.routes.websocket import fire_event
+            from openakita.core.ui_confirm_bus import get_ui_confirm_bus
+
+            def _confirm_hook(event_type: str, payload: dict) -> None:
+                fire_event(event_type, payload)
+
+            get_ui_confirm_bus().set_broadcast_hook(_confirm_hook)
+            logger.info("[Startup] UIConfirmBus broadcast hook wired")
+        except Exception as e:
+            logger.warning("[Startup] UIConfirmBus broadcast wire failed: %s", e)
+
     @app.post("/api/shutdown", tags=["系统"])
     async def shutdown(request: Request):
         """Gracefully shut down the OpenAkita service process.

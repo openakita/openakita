@@ -34,11 +34,17 @@ predicate 使用，同一工具同一时刻只有 1 个候选 callback，所以 
 线程 / 进程 / 重入安全
 ========================
 
-- 文件追加用 ``threading.Lock``，多协程并发 dispatch 时不会出现 jsonl 乱码。
-- 跨进程并发（多 worker）由文件系统 append 原子性兜底——单行 jsonl 远小于
-  PIPE_BUF（4096 字节），POSIX 保证不交错；Windows 下 RotatingFileHandler
-  级别的并发被避免（每个 ParamMutationAuditor 单实例 lock）。
+- 文件追加用 :class:`audit_chain.ChainedJsonlWriter`（C17 Phase E.2 迁
+  移）：进程内 ``threading.Lock`` + 跨进程 ``filelock.FileLock``，并且每行
+  带 ``prev_hash``/``row_hash`` 哈希链，篡改 / 漏行 / 重排会被
+  ``verify_chain`` 检测出来——和 ``security_audit.jsonl`` 共享同一套
+  保障机制。
 - 重入：``snapshot/diff`` 都是纯函数，不持有状态。
+- 写入前所有 ``before/after/diffs`` 走 :func:`_sanitize_for_chain` 转
+  成 JSON-native（dict/list/str/int/float/bool/None）：``ChainedJsonlWriter``
+  的 canonical hashing 不支持 ``default=str`` 兜底，必须先把
+  ``datetime``/``Path``/``Exception``/自定义类等都展开成 str/dict，
+  否则计算 row_hash 时会抛 TypeError。
 """
 
 from __future__ import annotations
@@ -57,6 +63,87 @@ logger = logging.getLogger(__name__)
 # 默认审计文件位置；测试 fixture 通过构造函数注入临时目录覆盖。
 DEFAULT_AUDIT_DIR = Path("data/audit")
 DEFAULT_AUDIT_FILENAME = "plugin_param_modifications.jsonl"
+
+
+# C17 Phase E.2: bound sanitization recursion so a circular structure
+# (``a["self"] = a``) or pathologically deep nesting cannot stall an audit
+# write. Anything past the cap collapses to a stub string with the type
+# name and depth — verifier still sees a deterministic value to hash.
+_SANITIZE_MAX_DEPTH: int = 32
+_SANITIZE_MAX_STR_LEN: int = 8192
+_SANITIZE_MAX_LIST_LEN: int = 1024
+
+
+def _sanitize_for_chain(value: Any, *, depth: int = 0) -> Any:
+    """Make ``value`` deterministically JSON-serializable for hashing.
+
+    ``ChainedJsonlWriter`` cannot use ``json.dumps(default=str)`` because
+    the hash is computed before serialization and ``default=`` is opaque
+    to the canonical-form contract. We instead pre-walk the value and:
+
+    - leave primitives (``None``/``bool``/``int``/``float``/``str``) alone
+    - convert ``Path`` to ``str(path)`` (POSIX-style on POSIX, Windows-style
+      on Windows — matches what callers already see in logs)
+    - convert ``datetime`` / ``date`` to ISO 8601 ``str``
+    - convert ``set`` / ``tuple`` to ``list``
+    - recurse into ``dict`` (cast every key to ``str`` so the canonical
+      form is well-defined for ``json.dumps(sort_keys=True)``)
+    - cap recursion at :data:`_SANITIZE_MAX_DEPTH` (stub past that)
+    - cap string length at :data:`_SANITIZE_MAX_STR_LEN`
+    - cap list/tuple length at :data:`_SANITIZE_MAX_LIST_LEN`
+    - everything else collapses to ``f"<unhashable {type}>"``
+
+    The result is a tree composed exclusively of JSON-native values, so
+    ``audit_chain._canonical_dumps`` succeeds without a ``default=``
+    fallback and the resulting ``row_hash`` is stable across processes
+    and CPython versions.
+    """
+    if depth >= _SANITIZE_MAX_DEPTH:
+        return f"<truncated depth={depth} type={type(value).__name__}>"
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        if len(value) > _SANITIZE_MAX_STR_LEN:
+            return value[:_SANITIZE_MAX_STR_LEN] + f"…<truncated {len(value)} chars>"
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    # datetime / date — keep import local so we don't pay it at import time.
+    try:
+        from datetime import date as _date
+        from datetime import datetime as _datetime
+
+        if isinstance(value, (_datetime, _date)):
+            return value.isoformat()
+    except Exception:  # pragma: no cover
+        pass
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            # Force keys to str so sort_keys=True canonicalization works.
+            try:
+                key = str(k)
+            except Exception:
+                key = f"<unhashable-key {type(k).__name__}>"
+            out[key] = _sanitize_for_chain(v, depth=depth + 1)
+        return out
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = list(value)
+        if len(items) > _SANITIZE_MAX_LIST_LEN:
+            items = items[:_SANITIZE_MAX_LIST_LEN] + [
+                f"<truncated {len(items)} items>"
+            ]
+        return [_sanitize_for_chain(v, depth=depth + 1) for v in items]
+    if isinstance(value, BaseException):
+        return f"<{type(value).__name__}: {value}>"
+    # Last-resort stringify so the chain stays consistent rather than
+    # crashing on weird third-party types (pandas DataFrame, numpy array …).
+    try:
+        return f"<{type(value).__name__}: {value!r}>"[:_SANITIZE_MAX_STR_LEN]
+    except Exception:
+        return f"<{type(value).__name__} repr-failed>"
 
 
 @dataclass(frozen=True)
@@ -258,43 +345,59 @@ class ParamMutationAuditor:
         before: Any,
         after: Any,
     ) -> None:
-        """把审计记录追加到 jsonl 文件。
+        """把审计记录追加到 jsonl 文件（C17 Phase E.2 起走 ChainedJsonlWriter）。
 
-        发生异常（磁盘满、权限错）只 WARN log 不抛——audit 永远不应该让
-        tool 调用失败。
+        发生异常（磁盘满、权限错、filelock 抢占超时）只 WARN log 不抛——
+        audit 永远不应该让 tool 调用失败。
         """
         if not outcome.has_changes:
             return
-        record = {
-            "ts": datetime.now(UTC).isoformat(),
-            "tool_name": tool_name,
-            "candidate_plugin_ids": outcome.candidate_plugin_ids,
-            "allowed": outcome.allowed,
-            "revert_reason": outcome.revert_reason,
-            "snapshot_failed": outcome.snapshot_failed,
-            "before": before,
-            "after": after,
-            "diffs": [
+        # 显式做一次 sanitize；ChainedJsonlWriter 不接 default= 兜底，必须
+        # 喂 JSON-native 值进去（见模块 docstring "线程 / 进程 / 重入安全"）。
+        try:
+            sanitized_before = _sanitize_for_chain(before)
+            sanitized_after = _sanitize_for_chain(after)
+            sanitized_diffs = [
                 {
                     "path": d.path,
                     "op": d.op,
-                    "before": d.before,
-                    "after": d.after,
+                    "before": _sanitize_for_chain(d.before),
+                    "after": _sanitize_for_chain(d.after),
                 }
                 for d in outcome.diffs
-            ],
-        }
-        try:
-            with self._lock:
-                self._audit_dir.mkdir(parents=True, exist_ok=True)
-                with self._audit_path.open("a", encoding="utf-8") as fp:
-                    fp.write(json.dumps(record, ensure_ascii=False, default=str))
-                    fp.write("\n")
+            ]
         except Exception as exc:
             logger.warning(
-                "ParamMutationAuditor.write failed (%s); audit record dropped: %r",
+                "ParamMutationAuditor._sanitize_for_chain failed (%s); "
+                "dropping audit record for tool=%s",
                 exc,
-                record,
+                tool_name,
+            )
+            return
+
+        record = {
+            "ts": datetime.now(UTC).isoformat(),
+            "tool_name": tool_name,
+            "candidate_plugin_ids": list(outcome.candidate_plugin_ids),
+            "allowed": bool(outcome.allowed),
+            "revert_reason": outcome.revert_reason,
+            "snapshot_failed": bool(outcome.snapshot_failed),
+            "before": sanitized_before,
+            "after": sanitized_after,
+            "diffs": sanitized_diffs,
+        }
+        try:
+            self._audit_dir.mkdir(parents=True, exist_ok=True)
+            # Local import avoids a module-load cycle (audit_chain → ...).
+            from .audit_chain import get_writer
+
+            writer = get_writer(self._audit_path)
+            writer.append(record)
+        except Exception as exc:
+            logger.warning(
+                "ParamMutationAuditor.write failed (%s); audit record dropped: keys=%s",
+                exc,
+                list(record.keys()),
             )
 
 

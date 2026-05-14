@@ -49,6 +49,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,20 @@ logger = logging.getLogger(__name__)
 # Default TTL for pending UI confirms; ``configure_ttl`` lets the policy
 # engine push the user-configured ``confirmation.confirm_ttl`` value in.
 _DEFAULT_TTL_SECONDS: int = 300
+
+
+# C17 Phase B.4: late-binding broadcast hook so multi-end clients can
+# discover/cancel sibling confirms.
+#
+# ``hook(event_type, payload)`` is fired (best-effort) on:
+#   - ``confirm_initiated`` after :meth:`UIConfirmBus.store_pending`
+#   - ``confirm_revoked``  after :meth:`UIConfirmBus.resolve` / TTL expiry
+#
+# The hook is wired by ``api/server.py`` at startup via the same
+# ``fire_event`` channel that PendingApprovalsStore uses. The bus must
+# remain importable without a hook (CLI / tests) — set_broadcast_hook
+# is optional and the bus tolerates a missing hook.
+ConfirmEventHook = Callable[[str, dict[str, Any]], None]
 
 
 class UIConfirmBus:
@@ -77,6 +92,34 @@ class UIConfirmBus:
         # follower deregisters, ``deregister_follower`` flushes these.
         self._pending_cleanup: set[str] = set()
         self._ttl_seconds = ttl_seconds
+        # C17 Phase B.4：broadcast hook（optional）。
+        self._broadcast_hook: ConfirmEventHook | None = None
+
+    # ----- C17 Phase B.4: broadcast hook plumbing --------------------------
+
+    def set_broadcast_hook(self, hook: ConfirmEventHook | None) -> None:
+        """Late-binding hook called on confirm_initiated / confirm_revoked.
+
+        Wired by api/server.py to the WebSocket fire_event helper so other
+        connected clients (web UI on a second device, IM gateway) see
+        live confirm lifecycle and can render readonly badges / cancel
+        their own pending UI cards. Idempotent.
+        """
+        self._broadcast_hook = hook
+
+    def _broadcast(self, event_type: str, payload: dict[str, Any]) -> None:
+        hook = self._broadcast_hook
+        if hook is None:
+            return
+        try:
+            hook(event_type, payload)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "[UIConfirmBus] broadcast hook raised for %s; payload keys=%s",
+                event_type,
+                list(payload.keys()),
+                exc_info=True,
+            )
 
     # ----- TTL configuration ------------------------------------------------
 
@@ -123,6 +166,22 @@ class UIConfirmBus:
             "needs_sandbox": needs_sandbox,
             "dedup_key": dedup_key,
         }
+        # C17 Phase B.4：广播 confirm_initiated 给所有 WS 订阅者。借鉴
+        # claude-code ``sendControlCancelRequest`` 的 "request lifecycle
+        # broadcast"——多端 UI 看到同一个 confirm_id 时，第二端渲染
+        # readonly "另一端正在确认"，避免双弹窗。Payload 故意不包含
+        # ``params`` 全文（防隐私泄露到看板上）；前端只用 tool_name +
+        # session_id 做幂等渲染。
+        self._broadcast(
+            "confirm_initiated",
+            {
+                "confirm_id": tool_id,
+                "tool_name": tool_name,
+                "session_id": session_id,
+                "needs_sandbox": needs_sandbox,
+                "created_at": self._pending[tool_id]["created_at"],
+            },
+        )
 
     # C13 §15.5: dedup helpers ----------------------------------------------
 
@@ -181,6 +240,31 @@ class UIConfirmBus:
     def list_pending(self) -> list[dict[str, Any]]:
         """Diagnostic accessor (SecurityView debug panel / tests)."""
         return [{"id": k, **v} for k, v in self._pending.items()]
+
+    def active_confirms_for_session(self, session_id: str) -> list[dict[str, Any]]:
+        """C17 Phase B.4: list non-expired pending confirms for a session.
+
+        Used by ``GET /api/sessions/{sid}/active_confirms`` so a second
+        client (e.g. user opens the web UI on phone after the desktop
+        already showed a card) can fetch the current pending confirms
+        and render their readonly state without waiting for the next
+        ``confirm_initiated`` event. Strips ``params`` payload — only
+        ``tool_name`` + identity + sandbox bit leak out.
+        """
+        self._cleanup_expired()
+        out: list[dict[str, Any]] = []
+        for cid, p in self._pending.items():
+            if p.get("session_id") != session_id:
+                continue
+            out.append(
+                {
+                    "confirm_id": cid,
+                    "tool_name": p.get("tool_name"),
+                    "needs_sandbox": p.get("needs_sandbox", False),
+                    "created_at": p.get("created_at"),
+                }
+            )
+        return out
 
     def cleanup_session(self, session_id: str) -> None:
         """Drop all pending confirms tied to the given session.
@@ -263,6 +347,10 @@ class UIConfirmBus:
         instead of this method directly — that helper threads the returned
         dict into ``SessionAllowlistManager`` / ``UserAllowlistManager``
         based on the user's choice.
+
+        C17 Phase B.4：成功 pop / 第一次 wake 时广播 ``confirm_revoked``，
+        让多端 UI 同步消失 / 隐藏对应卡片。重复调用是 no-op（pending 已
+        None + decision 已设），不会广播两次。
         """
         pending = self._pending.pop(confirm_id, None)
 
@@ -270,6 +358,7 @@ class UIConfirmBus:
         if decision == "allow":
             decision = "allow_once"
 
+        first_resolution = False
         # Ensure waiter wakes regardless of whether a pending sidecar
         # existed (gateway / API may resolve a confirm whose pending
         # was already GC'd, but a wait_for_resolution coroutine could
@@ -279,6 +368,19 @@ class UIConfirmBus:
             ev = self._events.get(confirm_id)
             if ev is not None:
                 ev.set()
+            first_resolution = True
+
+        if first_resolution or pending is not None:
+            # 至少有一次状态推进（pending pop 或 waiter wake）。
+            self._broadcast(
+                "confirm_revoked",
+                {
+                    "confirm_id": confirm_id,
+                    "decision": decision,
+                    "tool_name": (pending or {}).get("tool_name"),
+                    "session_id": (pending or {}).get("session_id"),
+                },
+            )
 
         if pending is None:
             return None

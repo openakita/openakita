@@ -475,6 +475,43 @@ export function ChatView({
   const activeConvIdRef = useRef(activeConvId);
   const isCurrentConvStreaming = streamContexts.current.get(activeConvId ?? "")?.isStreaming ?? false;
 
+  // C17 Phase B.3: SSE Last-Event-ID dedup state per conversation.
+  //   - lastSeqByConv: max seq we've already processed (sent as
+  //     ``Last-Event-ID`` header on the next /api/chat fetch).
+  //   - seenSeqsByConv: ringbuffer of recently-seen seqs to drop
+  //     duplicates that may arrive during replay→live overlap.
+  // Both are refs (no re-render needed); only the streaming loop reads them.
+  const lastSeqByConv = useRef<Map<string, number>>(new Map());
+  const seenSeqsByConv = useRef<Map<string, Set<number>>>(new Map());
+  const SEEN_SEQ_CAP = 256;  // cap memory per conv
+
+  const rememberSeq = useCallback((convId: string, seq: number) => {
+    if (!convId || !Number.isFinite(seq) || seq <= 0) return;
+    const prev = lastSeqByConv.current.get(convId) ?? 0;
+    if (seq > prev) lastSeqByConv.current.set(convId, seq);
+    let seen = seenSeqsByConv.current.get(convId);
+    if (!seen) {
+      seen = new Set();
+      seenSeqsByConv.current.set(convId, seen);
+    }
+    seen.add(seq);
+    // Cap the dedup set; drop oldest by iteration order (insertion order).
+    if (seen.size > SEEN_SEQ_CAP) {
+      const it = seen.values();
+      const drop = seen.size - SEEN_SEQ_CAP;
+      for (let i = 0; i < drop; i++) {
+        const v = it.next().value;
+        if (typeof v === "number") seen.delete(v);
+      }
+    }
+  }, []);
+
+  const hasSeenSeq = useCallback((convId: string, seq: number): boolean => {
+    if (!convId || !Number.isFinite(seq) || seq <= 0) return false;
+    const seen = seenSeqsByConv.current.get(convId);
+    return seen ? seen.has(seq) : false;
+  }, []);
+
   // ── Multi-device busy lock ──
   const clientIdRef = useRef(() => {
     let id = sessionStorage.getItem("openakita_client_id");
@@ -2466,9 +2503,16 @@ export function ChatView({
       });
       void logger.flush();
 
+      // C17 Phase B.3: Last-Event-ID 让后端把断点后的事件 replay 给我们。
+      // 首次 fetch 没有 last seq 就不带 header，后端正常推进 seq；重连
+      // 时带上最后看到的 seq，后端 SSE writer 会先 flush 缓冲事件再接
+      // active 流。``lastSeqByConv`` 是 ref，跨重渲染保留。
+      const _lastSeq = thisConvId ? lastSeqByConv.current.get(thisConvId) ?? 0 : 0;
+      const _headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (_lastSeq > 0) _headers["Last-Event-ID"] = String(_lastSeq);
       const response = await safeFetch(`${apiBase}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: _headers,
         body: JSON.stringify(body),
         signal: abort.signal,
       });
@@ -2584,14 +2628,34 @@ export function ChatView({
           buffer = lines.pop() || "";
         }
 
+        // C17 Phase B.3：SSE 帧由 ``id: <seq>\ndata: {json}\n\n`` 组成。
+        // 收到 id 行就记下来；下一条 data 行用该 seq 做 dedup。Spec 允许
+        // ``id`` 是空字符串 → 重置上次 lastEventId，但我们用 0 表示
+        // "本帧没 id"。如果同一 buffer 行里只看到 data 没看到前置 id，
+        // ``pendingSeq=0`` 让 dedup 走 no-op（向后兼容老服务端无 id 帧）。
+        let pendingSeq = 0;
         for (const line of lines) {
+          if (line.startsWith("id: ")) {
+            const v = Number.parseInt(line.slice(4).trim(), 10);
+            pendingSeq = Number.isFinite(v) && v > 0 ? v : 0;
+            continue;
+          }
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6).trim();
           if (data === "[DONE]") continue;
 
+          // Dedup before parsing: if we already processed this seq, skip.
+          if (pendingSeq > 0 && thisConvId && hasSeenSeq(thisConvId, pendingSeq)) {
+            pendingSeq = 0;
+            continue;
+          }
           try {
             const event: StreamEvent = JSON.parse(data);
             sseParseFailures = 0;
+            if (pendingSeq > 0 && thisConvId) {
+              rememberSeq(thisConvId, pendingSeq);
+              pendingSeq = 0;
+            }
 
             switch (event.type) {
               case "heartbeat":
