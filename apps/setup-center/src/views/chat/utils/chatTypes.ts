@@ -74,6 +74,10 @@ export type StreamEvent =
   | { type: "text_delta"; content: string }
   | { type: "text_replace"; content: string }
   | { type: "tool_call_start"; tool: string; tool_name?: string; args: Record<string, unknown>; id?: string; call_id?: string; protocol_version?: number }
+  // C23 P2-3: tool_executor 在执行任何工具前先批量发这个事件，
+  // 让前端能在敏感操作真正开始前给用户一个非阻塞 toast 提示。
+  // 后端 schema 见 src/openakita/core/tool_executor.py:_emit_tool_intent_previews
+  | { type: "tool_intent_preview"; tool_use_id?: string; tool_name?: string; params?: Record<string, unknown>; approval_class?: string; session_id?: string | null; batch_size?: number; batch_idx?: number; ts?: number }
   | { type: "tool_call_end"; tool: string; tool_name?: string; result: string; id?: string; call_id?: string; is_error?: boolean; skipped?: boolean; protocol_version?: number }
   | { type: "source_used"; tool_name?: string; tool_use_id?: string; requested_url: string; final_url: string; hostname?: string; redirected?: boolean; from_cache?: boolean; status?: string; hint?: string; protocol_version?: number }
   | { type: "mcp_call"; tool_use_id?: string; server: string; tool: string; status?: "ok" | "error" | string; auto_connected?: boolean; reconnected?: boolean; error?: string; protocol_version?: number }

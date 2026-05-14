@@ -9,6 +9,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProviderIcon } from "../components/ProviderIcon";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { toast } from "sonner";
 import { setThemePref } from "../theme";
 import type { Theme } from "../theme";
 import { invoke, downloadFile, openFileWithDefault, showInFolder, readFileBase64, onDragDrop, IS_TAURI, IS_WEB, IS_MOBILE_BROWSER, onWsEvent, logger, getAssetUrl } from "../platform";
@@ -2864,6 +2865,48 @@ export function ChatView({
                 currentStreamStatus = null;
                 currentContent = event.content ?? "";
                 break;
+              case "tool_intent_preview": {
+                // C23 P2-3: tool_executor 在跑批之前先发这个事件，每个 tool_call
+                // 一条，告知 approval_class。
+                // 这里只对"有副作用"的类弹 toast：纯只读 / 搜索 / 交互问询不打扰
+                // 用户。toast id 用 tool_use_id 让同一工具多次预览不会叠多个气泡。
+                const previewClass = String(event.approval_class || "unknown");
+                const noisyClasses = new Set([
+                  "readonly_scoped",
+                  "readonly_global",
+                  "readonly_search",
+                  "interactive",
+                  "unknown",
+                ]);
+                if (!noisyClasses.has(previewClass)) {
+                  const previewTool = String(event.tool_name || "");
+                  const previewId = String(event.tool_use_id || `intent_${previewTool}_${Date.now()}`);
+                  // 取一个 param 摘要给用户看（command / path / url 三选一），
+                  // 避免把整个 params dump 进 toast。
+                  const previewParams = (event.params || {}) as Record<string, unknown>;
+                  const previewSummary =
+                    (typeof previewParams.command === "string" && (previewParams.command as string)) ||
+                    (typeof previewParams.path === "string" && (previewParams.path as string)) ||
+                    (typeof previewParams.url === "string" && (previewParams.url as string)) ||
+                    "";
+                  const previewLabel = previewSummary
+                    ? `${previewTool} · ${previewSummary.length > 80 ? previewSummary.slice(0, 80) + "…" : previewSummary}`
+                    : previewTool;
+                  toast.message(
+                    t("chat.toolIntentPreview", "即将执行：{{label}}", { label: previewLabel }),
+                    {
+                      id: previewId,
+                      duration: 2500,
+                      description: t(
+                        "chat.toolIntentPreviewClass",
+                        "类型：{{cls}}",
+                        { cls: previewClass },
+                      ),
+                    },
+                  );
+                }
+                break;
+              }
               case "tool_call_start": {
                 currentStreamStatus = null;
                 const toolName = event.tool_name || event.tool;
