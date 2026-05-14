@@ -21,10 +21,26 @@ from openakita.core.policy_v2 import env_overrides as eo
 from openakita.core.policy_v2.schema import PolicyConfigV2
 
 
-@pytest.fixture
-def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure each test starts without OPENAKITA_AUTO_CONFIRM set."""
+@pytest.fixture(autouse=True)
+def clean_env(monkeypatch: pytest.MonkeyPatch):
+    """Ensure each test starts AND finishes without OPENAKITA_AUTO_CONFIRM set.
+
+    C21 fix: autouse + explicit post-yield pop. ``monkeypatch.delenv`` only
+    undoes its own mutations; it does NOT clean up arbitrary
+    ``os.environ[X] = Y`` that production code (``_apply_auto_confirm_flag``
+    at ``main.py:1330``) performs when a test invokes the CLI runner with
+    ``--auto-confirm``. The explicit ``os.environ.pop`` after ``yield``
+    catches those direct mutations.
+
+    Pre-C21 only some tests used this fixture and only as setup, so the
+    ``CliRunner`` tests (which exercise the real flag path) leaked the
+    env var into the full pytest run and broke ``test_policy_v2_loader.py``
+    / ``test_c18_env_overrides.py`` downstream — verified
+    reproducible on commit 07139e11 before any C21 change.
+    """
     monkeypatch.delenv("OPENAKITA_AUTO_CONFIRM", raising=False)
+    yield
+    os.environ.pop("OPENAKITA_AUTO_CONFIRM", None)
 
 
 class TestApplyAutoConfirmFlag:
