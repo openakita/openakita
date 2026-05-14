@@ -22,6 +22,14 @@ from .adapter import (
     evaluate_via_v2,
     mode_to_session_role,
 )
+from .audit_chain import (
+    GENESIS_HASH,
+    ChainedJsonlWriter,
+    ChainVerifyResult,
+    get_writer,
+    reset_writers_for_testing,
+    verify_chain,
+)
 from .classifier import ApprovalClassifier, ClassificationResult
 from .confirm_resolution import apply_resolution
 from .confirmation_mode import (
@@ -120,6 +128,11 @@ from .models import (
     PolicyDecisionV2,
     PolicyResult,
     ToolCallEvent,
+)
+from .prompt_hardening import (
+    TOOL_RESULT_HARDENING_RULES,
+    is_marker_present,
+    wrap_external_content,
 )
 from .safety_immune_defaults import (
     BUILTIN_SAFETY_IMMUNE_BY_CATEGORY,
@@ -324,4 +337,15 @@ __all__ = [
     "reset_windows",
     "set_active_fix_id",
     "snapshot_window",
+    # C16 Phase A — prompt injection hardening
+    "TOOL_RESULT_HARDENING_RULES",
+    "is_marker_present",
+    "wrap_external_content",
+    # C16 Phase C — audit jsonl hash chain
+    "ChainVerifyResult",
+    "ChainedJsonlWriter",
+    "GENESIS_HASH",
+    "get_writer",
+    "reset_writers_for_testing",
+    "verify_chain",
 ]

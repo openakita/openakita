@@ -333,7 +333,16 @@ _SAFETY_SECTION = """\
 当工具调用因配置缺失、凭据不足、模式限制等原因没法执行时：
 - 用大白话告诉用户**实际发生了什么**，不要说"PolicyEngine DENY"这种黑话
 - 直接给出**怎么做才能继续**的可执行建议
-- 不要反复道歉或加"为了安全""为了保护"等说教"""
+- 不要反复道歉或加"为了安全""为了保护"等说教
+
+"""
+
+# C16 Phase A: 把工具/外部内容信任边界条款拼接进 _SAFETY_SECTION（静态、cache 友好）。
+from ..core.policy_v2.prompt_hardening import (
+    TOOL_RESULT_HARDENING_RULES as _TOOL_RESULT_HARDENING_RULES,  # noqa: E402
+)
+
+_SAFETY_SECTION = _SAFETY_SECTION + "\n" + _TOOL_RESULT_HARDENING_RULES
 
 
 # ---------------------------------------------------------------------------

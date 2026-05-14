@@ -303,9 +303,9 @@ def record_decision(
         if win.extra:
             record.setdefault("window_extra", dict(win.extra))
     try:
-        audit_path.parent.mkdir(parents=True, exist_ok=True)
-        with audit_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        from .audit_chain import get_writer
+
+        get_writer(audit_path).append(record)
     except OSError as exc:
         logger.warning(
             "[C15 evolution_window] failed to append evolution audit "
@@ -314,6 +314,26 @@ def record_decision(
             fix_id,
             exc,
         )
+    except Exception as exc:  # noqa: BLE001 — best-effort audit append
+        logger.warning(
+            "[C16 evolution_window] chain append failed for %s fix_id=%s: %s; "
+            "falling back to raw append.",
+            audit_path,
+            fix_id,
+            exc,
+        )
+        try:
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
+            with audit_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError as fallback_exc:
+            logger.warning(
+                "[C15 evolution_window] fallback raw append also failed for "
+                "%s fix_id=%s: %s",
+                audit_path,
+                fix_id,
+                fallback_exc,
+            )
 
 
 def default_audit_path(workspace: Path) -> Path:

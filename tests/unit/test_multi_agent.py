@@ -1152,7 +1152,12 @@ class TestAgentToolHandler:
                 "extra_skills": ["web_scrape"],
                 "custom_prompt_overlay": "Focus on performance",
             })
-            assert result == "spawned result"
+            # C16: spawn_agent return is wrapped with EXTERNAL_CONTENT_*
+            # markers so the sub-agent's text cannot inject instructions
+            # into the parent's transcript. The payload itself stays
+            # unchanged; we just assert it survives the wrap.
+            assert "spawned result" in result
+            assert "EXTERNAL_CONTENT_BEGIN" in result
             mock_orch.delegate.assert_awaited_once()
             # Verify ephemeral profile was created
             ephemeral_profiles = mock_store.list_all(include_ephemeral=True)
@@ -1647,7 +1652,11 @@ class TestEdgeCasesAndBugs:
                 },
             )
 
-        assert result == "ok"
+        # C16 Phase A: spawn_agent return wrapped with EXTERNAL_CONTENT_*
+        # markers (anti-injection). Assert payload reached the parent
+        # transcript, not the literal wrap-free form.
+        assert "ok" in result
+        assert "EXTERNAL_CONTENT_BEGIN" in result
         spawned_id = mock_orch.delegate.await_args.kwargs["to_agent"]
         spawned = store.get(spawned_id)
         assert spawned is not None

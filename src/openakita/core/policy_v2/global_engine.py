@@ -68,6 +68,66 @@ _mcp_lookup: McpLookup | None = None
 _plugin_lookup: PluginLookup | None = None
 _lock = threading.Lock()
 
+# C16 Phase B：last-known-good (LKG) 缓存。
+# 当 POLICIES.yaml 校验失败时（攻击者篡改 / 操作员 typo），下一次加载会优先
+# 用 LKG 而不是回退到 PolicyConfigV2() 全 default——后者会让 safety_immune /
+# approval_classes / shell_risk 等用户精心配置的字段全部消失。
+# 首次启动校验失败时仍走 default fallback，保留"操作员第一次启动有 typo 也
+# 不会被锁死"的体验。
+# 锁是独立的 ``_LKG_LOCK``，避免和 ``_lock`` 形成嵌套（rebuild 已持 ``_lock``）。
+_LAST_KNOWN_GOOD: PolicyConfigV2 | None = None
+_LKG_LOCK = threading.Lock()
+
+
+def _set_last_known_good(cfg: PolicyConfigV2) -> None:
+    global _LAST_KNOWN_GOOD
+    with _LKG_LOCK:
+        _LAST_KNOWN_GOOD = cfg
+
+
+def _get_last_known_good() -> PolicyConfigV2 | None:
+    with _LKG_LOCK:
+        return _LAST_KNOWN_GOOD
+
+
+def _clear_last_known_good() -> None:
+    global _LAST_KNOWN_GOOD
+    with _LKG_LOCK:
+        _LAST_KNOWN_GOOD = None
+
+
+def _recover_from_load_failure(exc: Exception, *, source: str) -> PolicyConfigV2:
+    """C16 Phase B: pick a config when YAML validation / loading fails.
+
+    Order of preference:
+
+    1. **Last-known-good** if a previous load on this process succeeded.
+       Logged as ERROR so operators see it; the *previously* valid config
+       keeps protecting them while they fix the file.
+    2. ``PolicyConfigV2()`` defaults otherwise (first-load failure: the
+       process has nothing else to fall back to; this matches pre-C16
+       behaviour and avoids locking out operators with typos at first
+       run).
+
+    Returns the chosen config so the caller can build an engine.
+    """
+    lkg = _get_last_known_good()
+    if lkg is not None:
+        logger.error(
+            "[PolicyV2] POLICIES.yaml failed validation at %s: %s. "
+            "Keeping last-known-good config (security settings preserved).",
+            source,
+            exc,
+        )
+        return lkg
+    logger.error(
+        "[PolicyV2] POLICIES.yaml failed validation at %s: %s. "
+        "No last-known-good available; falling back to defaults.",
+        source,
+        exc,
+    )
+    return PolicyConfigV2()
+
 
 def _resolve_yaml_path() -> Path | None:
     """识别 POLICIES.yaml 路径。返回 None 时调用方应让 loader 用默认配置。"""
@@ -98,27 +158,35 @@ def _build_default_engine(
     ``explicit_lookup`` 不传时回退到模块级缓存（见 ``_explicit_lookup`` 注释）。
     """
     yaml_path = _resolve_yaml_path()
+    # C16 Phase B：用 strict=True 让 ValidationError 抛上来——loader 在
+    # strict=False 模式下会静默把整个 config 回退到 defaults，这正是 R4-15
+    # "篡改 yaml → 失去 safety_immune" 的攻击落地点。我们改在这里捕获，
+    # 让 _recover_from_load_failure 优先用 LKG。
     try:
-        cfg, report = load_policies_yaml(yaml_path, strict=False)
+        cfg, report = load_policies_yaml(yaml_path, strict=True)
         if report.fields_migrated:
             logger.info(
                 "[PolicyV2] global engine loaded with %d v1 fields migrated",
                 len(report.fields_migrated),
             )
+        if report.unknown_security_keys:
+            logger.warning(
+                "[PolicyV2] POLICIES.yaml has unknown keys under 'security' "
+                "(typo or attack?): %s",
+                ", ".join(report.unknown_security_keys),
+            )
+        # C16 Phase B：成功加载 → 记到 LKG，后续 ValidationError 才有救生圈。
+        _set_last_known_good(cfg)
     except PolicyConfigError as exc:
-        # strict=False 时 loader 不会抛 PolicyConfigError，但理论上仍可能
-        # 触发（migration pipeline 内部异常）。降级到默认配置 + ERROR log。
-        logger.error(
-            "[PolicyV2] config load failed (%s); falling back to defaults",
+        cfg = _recover_from_load_failure(
             exc,
+            source=str(yaml_path) if yaml_path else "<no path>",
         )
-        cfg = PolicyConfigV2()
     except Exception as exc:
-        logger.error(
-            "[PolicyV2] unexpected error loading config: %s; using defaults",
+        cfg = _recover_from_load_failure(
             exc,
+            source=str(yaml_path) if yaml_path else "<no path>",
         )
-        cfg = PolicyConfigV2()
 
     effective_explicit = explicit_lookup if explicit_lookup is not None else _explicit_lookup
     effective_skill = skill_lookup if skill_lookup is not None else _skill_lookup
@@ -224,13 +292,18 @@ def rebuild_engine_v2(
     with _lock:
         path = Path(yaml_path) if yaml_path is not None else _resolve_yaml_path()
         try:
-            cfg, _ = load_policies_yaml(path, strict=False)
+            cfg, report = load_policies_yaml(path, strict=True)
+            if report.unknown_security_keys:
+                logger.warning(
+                    "[PolicyV2] POLICIES.yaml rebuild: unknown keys under "
+                    "'security' (typo or attack?): %s",
+                    ", ".join(report.unknown_security_keys),
+                )
+            _set_last_known_good(cfg)
         except Exception as exc:
-            logger.error(
-                "[PolicyV2] rebuild failed (%s); keeping previous config",
-                exc,
+            cfg = _recover_from_load_failure(
+                exc, source=str(path) if path else "<no path>"
             )
-            cfg = _config or PolicyConfigV2()
         if explicit_lookup is not None:
             _explicit_lookup = explicit_lookup
         if skill_lookup is not None:
@@ -309,6 +382,10 @@ def reset_policy_v2_layer(scope: str = "all") -> None:
     error: Exception | None = None
     try:
         reset_engine_v2()
+        # C16 Phase B：scope="all"（默认）也清掉 LKG——操作员"reset to defaults"
+        # 的语义就是想从零开始，不能让上一次成功加载的 cache 把意图盖掉。
+        # 测试 fixture 调用本函数后也能拿到干净状态。
+        _clear_last_known_good()
         try:
             from ..audit_logger import reset_audit_logger
 

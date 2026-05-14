@@ -22,12 +22,87 @@ silently 忽略（avoid v1 时代 schema drift 调试苦）。
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, Strict, field_validator
 
 from .enums import ApprovalClass, ConfirmationMode, SessionRole
+
+# C16 Phase B：所有从 YAML 来的 bool 字段一律走严格模式——拒绝 `"yes"` / `"no"`
+# / `1` / `0` 这种隐式 coercion，防止 v1 时代 ``bool("no") = True`` 的静默错。
+# pydantic v2 的 ``Strict()`` 元数据让该字段只接受 ``True`` / ``False`` 字面量。
+_StrictBool = Annotated[bool, Strict()]
+
+_MAX_REGEX_LEN: int = 200
+_MAX_REGEX_LIST_LEN: int = 64
+_MAX_PATH_LEN: int = 4096
+
+
+def _validate_regex_list(patterns: list[str]) -> list[str]:
+    """Compile every pattern + cap length / count.
+
+    Tightens the ``shell_risk.custom_*`` and ``excluded_patterns`` surface:
+    a malformed regex (``[unclosed`` etc.) would historically crash deep
+    inside the classifier at first match; we'd rather fail at load time
+    with a clean ValidationError. Length / count caps act as a ReDoS
+    budget — operators with hostile inputs are not the threat model, but
+    a 10k-char nested-group regex copied from the internet still hangs
+    the classifier.
+    """
+    if len(patterns) > _MAX_REGEX_LIST_LEN:
+        raise ValueError(
+            f"regex list has {len(patterns)} entries (max {_MAX_REGEX_LIST_LEN})"
+        )
+    for idx, pat in enumerate(patterns):
+        if not isinstance(pat, str):
+            raise ValueError(f"entry {idx} is not a string: {type(pat).__name__}")
+        if len(pat) > _MAX_REGEX_LEN:
+            raise ValueError(
+                f"entry {idx} has length {len(pat)} (max {_MAX_REGEX_LEN}): {pat[:40]}…"
+            )
+        try:
+            re.compile(pat)
+        except re.error as exc:
+            raise ValueError(f"entry {idx} is not a valid regex: {pat!r} ({exc})") from exc
+    return patterns
+
+
+def _validate_safe_path(value: str) -> str:
+    """C16 Phase B：拒绝 ``..`` 段 + 拒绝异常长度。
+
+    用于 ``audit.log_path`` / ``checkpoint.snapshot_dir`` 等"输出到固定根下"
+    的字段。``workspace.paths`` / ``safety_immune.paths`` **不**用这个验证器，
+    它们允许操作员指向父目录 / 兄弟项目。
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"must be a string, got {type(value).__name__}")
+    if not value:
+        raise ValueError("must be non-empty")
+    if len(value) > _MAX_PATH_LEN:
+        raise ValueError(f"path length {len(value)} exceeds {_MAX_PATH_LEN}")
+    parts = value.replace("\\", "/").split("/")
+    if ".." in parts:
+        raise ValueError(
+            f"path traversal segment '..' is not allowed in this field: {value!r}"
+        )
+    return value
+
+
+def _validate_loose_path(value: str) -> str:
+    """C16 Phase B：宽松路径验证（非空 + 长度上限），允许 ``..``。
+
+    用于 ``workspace.paths`` / ``safety_immune.paths``——操作员合法理由要
+    指向父目录或工作区外的位置（共享代码库、兄弟项目）。
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"must be a string, got {type(value).__name__}")
+    if not value:
+        raise ValueError("must be non-empty")
+    if len(value) > _MAX_PATH_LEN:
+        raise ValueError(f"path length {len(value)} exceeds {_MAX_PATH_LEN}")
+    return value
 
 # ---------------------------------------------------------------------------
 # Sub-models
@@ -62,6 +137,12 @@ class WorkspaceConfig(_Strict):
             return ["${CWD}"]
         return list(v)
 
+    @field_validator("paths", mode="after")
+    @classmethod
+    def _validate_each_path(cls, v: list[str]) -> list[str]:
+        # C16 Phase B：workspace.paths 允许 .. （父目录场景），仅长度限制。
+        return [_validate_loose_path(p) for p in v]
+
 
 class ConfirmationConfig(_Strict):
     """确认门配置（v2 mode 只有 5 档，详见 enums.ConfirmationMode）。"""
@@ -86,6 +167,11 @@ class SafetyImmuneConfig(_Strict):
     """
 
     paths: list[str] = Field(default_factory=list)
+
+    @field_validator("paths", mode="after")
+    @classmethod
+    def _validate_each_path(cls, v: list[str]) -> list[str]:
+        return [_validate_loose_path(p) for p in v]
 
 
 class OwnerOnlyConfig(_Strict):
@@ -113,7 +199,7 @@ class ApprovalClassesConfig(_Strict):
 class ShellRiskConfig(_Strict):
     """Shell 命令风险分类配置（替代 v1 ``command_patterns``）。"""
 
-    enabled: bool = True
+    enabled: _StrictBool = True
     custom_critical: list[str] = Field(default_factory=list)
     custom_high: list[str] = Field(default_factory=list)
     custom_medium: list[str] = Field(default_factory=list)
@@ -132,25 +218,42 @@ class ShellRiskConfig(_Strict):
         ]
     )
 
+    @field_validator(
+        "custom_critical",
+        "custom_high",
+        "custom_medium",
+        "excluded_patterns",
+        mode="after",
+    )
+    @classmethod
+    def _check_regex_lists(cls, v: list[str]) -> list[str]:
+        # C16 Phase B：编译每条 regex、限制长度 / 条数（ReDoS 兜底）。
+        return _validate_regex_list(v)
+
 
 class CheckpointConfig(_Strict):
     """文件快照配置。"""
 
-    enabled: bool = True
+    enabled: _StrictBool = True
     max_snapshots: int = Field(default=50, ge=0, le=10000)
     snapshot_dir: str = "data/checkpoints"
+
+    @field_validator("snapshot_dir", mode="after")
+    @classmethod
+    def _check_snapshot_dir(cls, v: str) -> str:
+        return _validate_safe_path(v)
 
 
 class SandboxConfig(_Strict):
     """沙箱配置（v1 ``sandbox.network.*`` 在 v2 扁平化为 ``network_*``）。"""
 
-    enabled: bool = False
+    enabled: _StrictBool = False
     backend: Literal["auto", "docker", "firejail", "wsl", "none"] = "auto"
     sandbox_risk_levels: list[Literal["MEDIUM", "HIGH", "CRITICAL"]] = Field(
         default_factory=lambda: ["HIGH"]
     )
     exempt_commands: list[str] = Field(default_factory=list)
-    network_allow_in_sandbox: bool = False
+    network_allow_in_sandbox: _StrictBool = False
     network_allowed_domains: list[str] = Field(default_factory=list)
 
 
@@ -169,13 +272,18 @@ class UnattendedConfig(_Strict):
 class DeathSwitchConfig(_Strict):
     """连续 deny 触发只读模式（替代 v1 ``self_protection.death_switch_*``）。"""
 
-    enabled: bool = True
+    enabled: _StrictBool = True
     threshold: int = Field(default=3, ge=1, le=1000)
     total_multiplier: int = Field(default=3, ge=1, le=100)
 
 
 class UserAllowlistConfig(_Strict):
-    """用户持久化白名单（与 v1 同名同结构，C8 接入）。"""
+    """用户持久化白名单（与 v1 同名同结构，C8 接入）。
+
+    C16 Phase B：保持 ``list[dict[str, Any]]`` 不变——这两个列表是 C8 持久化
+    的 user grant，schema 由 C8 自管理，不在 C16 收紧范围。后续把它换成
+    结构化模型时一起改 C8 的写入路径。
+    """
 
     commands: list[dict[str, Any]] = Field(default_factory=list)
     tools: list[dict[str, Any]] = Field(default_factory=list)
@@ -184,10 +292,20 @@ class UserAllowlistConfig(_Strict):
 class AuditConfig(_Strict):
     """审计日志（v1 ``self_protection.audit_*`` 拆出来，独立配置）。"""
 
-    enabled: bool = True
+    enabled: _StrictBool = True
     log_path: str = "data/audit/policy_decisions.jsonl"
-    include_chain: bool = False
-    """dev only：把 12-step decision chain 也写入审计；生产关掉省 disk + perf。"""
+    include_chain: _StrictBool = True
+    """C16: 每条记录附 ``prev_hash`` + ``row_hash``，使任何后续篡改可被检测。
+
+    历史上这个字段曾被规划成"是否写 12-step decision chain"，但从未真正
+    被消费。C16 复用为审计链开关，默认开启；既有审计文件没有 chain 字段
+    的"legacy prefix"会被 verifier 单独标记，不会触发 tamper 告警。
+    """
+
+    @field_validator("log_path", mode="after")
+    @classmethod
+    def _check_log_path(cls, v: str) -> str:
+        return _validate_safe_path(v)
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +323,7 @@ class PolicyConfigV2(_Strict):
       字符串自动 coerce，错值直接抛 ValidationError
     """
 
-    enabled: bool = True
+    enabled: _StrictBool = True
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     confirmation: ConfirmationConfig = Field(default_factory=ConfirmationConfig)
     session_role: SessionRoleConfig = Field(default_factory=SessionRoleConfig)

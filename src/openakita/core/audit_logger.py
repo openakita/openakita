@@ -53,11 +53,28 @@ def _mask_sensitive(text: str, max_len: int = 200) -> str:
 
 
 class AuditLogger:
-    """Append-only JSONL audit logger for policy decisions."""
+    """Append-only JSONL audit logger for policy decisions.
 
-    def __init__(self, path: str = DEFAULT_AUDIT_PATH, enabled: bool = True) -> None:
+    C16 Phase C: when ``include_chain=True`` (the default), each row gains
+    ``prev_hash`` + ``row_hash`` via :class:`policy_v2.audit_chain.ChainedJsonlWriter`,
+    making post-hoc edits detectable. ``safety_immune`` is also promoted
+    to a top-level boolean (read from ``metadata.safety_immune_match``)
+    while keeping the original nested ``meta.safety_immune_match`` copy
+    so existing readers do not break.
+
+    Operators who explicitly disable chain (``audit.include_chain=false``)
+    keep the pre-C16 raw-append behaviour.
+    """
+
+    def __init__(
+        self,
+        path: str = DEFAULT_AUDIT_PATH,
+        enabled: bool = True,
+        include_chain: bool = True,
+    ) -> None:
         self._enabled = enabled
         self._path = Path(path or DEFAULT_AUDIT_PATH)
+        self._include_chain = include_chain
         if self._enabled:
             self._path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -82,6 +99,23 @@ class AuditLogger:
         }
         if metadata:
             entry["meta"] = metadata
+            # C16: promote safety_immune to top-level so SecurityView /
+            # verifier can filter without parsing meta. Nested copy stays
+            # for backward compat (any external consumer still sees it).
+            si = metadata.get("safety_immune_match")
+            if si is not None:
+                entry["safety_immune"] = bool(si)
+
+        if self._include_chain:
+            try:
+                from .policy_v2.audit_chain import get_writer
+
+                get_writer(self._path).append(entry)
+                return
+            except Exception as e:
+                logger.warning(
+                    "[Audit] Chain write failed, falling back to raw append: %s", e
+                )
         try:
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -123,6 +157,7 @@ def get_audit_logger() -> AuditLogger:
             _global_audit = AuditLogger(
                 path=cfg.log_path or DEFAULT_AUDIT_PATH,
                 enabled=cfg.enabled,
+                include_chain=getattr(cfg, "include_chain", True),
             )
         except Exception:
             _global_audit = AuditLogger()

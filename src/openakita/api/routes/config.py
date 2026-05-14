@@ -1755,12 +1755,36 @@ async def write_permission_mode(body: _PermissionModeBody):
 
 @router.get("/api/config/security/audit")
 async def read_security_audit():
-    """Read recent audit log entries."""
+    """Read recent audit log entries + chain verification status (C16).
+
+    The ``chain_verification`` field surfaces whether the audit JSONL is
+    tamper-free. ``ok=True`` means every chained line verifies; ``ok=False``
+    points at the first bad line. ``legacy_prefix_lines`` counts pre-C16
+    rows (no ``row_hash``) which are reported but not flagged as tamper.
+    SecurityView can render this as a badge.
+    """
     try:
         from openakita.core.audit_logger import get_audit_logger
+        from openakita.core.policy_v2.audit_chain import verify_chain
 
-        entries = get_audit_logger().tail(50)
-        return {"entries": entries}
+        logger_instance = get_audit_logger()
+        entries = logger_instance.tail(50)
+        try:
+            result = verify_chain(logger_instance._path)
+            chain_verification = {
+                "ok": result.ok,
+                "total": result.total,
+                "legacy_prefix_lines": result.legacy_prefix_lines,
+                "truncated_tail_recovered": result.truncated_tail_recovered,
+                "first_bad_line": result.first_bad_line,
+                "reason": result.reason,
+            }
+        except Exception as verify_exc:  # noqa: BLE001 — UI-only field
+            chain_verification = {
+                "ok": None,
+                "error": f"verify failed: {verify_exc}",
+            }
+        return {"entries": entries, "chain_verification": chain_verification}
     except Exception as e:
         return {"entries": [], "error": str(e)}
 

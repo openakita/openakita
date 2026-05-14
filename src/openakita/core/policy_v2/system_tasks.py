@@ -583,20 +583,41 @@ def _params_match_globs(
 
 
 def _append_audit(audit_path: Path, record: dict[str, Any]) -> None:
-    """Append a single JSON record + newline to the audit jsonl.
+    """Append a single JSON record to the audit jsonl with hash chain.
 
-    Failures are logged at WARNING but never raised — losing one
-    audit line is preferable to crashing the bypass path. C16 will
-    add hash-chained integrity; for Phase B simple append is enough
-    to support post-hoc forensic.
+    C16 wired this to :class:`policy_v2.audit_chain.ChainedJsonlWriter` —
+    every line carries ``prev_hash`` + ``row_hash`` so any post-hoc edit
+    breaks the chain at that exact line. Failures are logged at WARNING
+    but never raised — losing one audit line is preferable to crashing
+    the bypass path. On chain-write error we fall back to raw append
+    (defensive: do not lose evidence if the chain writer itself blows up).
     """
+    try:
+        from .audit_chain import get_writer
+
+        get_writer(audit_path).append(record)
+        return
+    except OSError as exc:
+        logger.warning(
+            "[C15 system_tasks] failed to append audit %s: %s",
+            audit_path,
+            exc,
+        )
+        return
+    except Exception as exc:  # noqa: BLE001 — best-effort audit append
+        logger.warning(
+            "[C16 system_tasks] chain append failed for %s: %s; "
+            "falling back to raw append.",
+            audit_path,
+            exc,
+        )
     try:
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         with audit_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except OSError as exc:
         logger.warning(
-            "[C15 system_tasks] failed to append audit %s: %s",
+            "[C15 system_tasks] fallback raw append failed %s: %s",
             audit_path,
             exc,
         )

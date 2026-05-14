@@ -5052,6 +5052,9 @@ class Agent:
                 _tool_summary = msg.get("tool_summary")
                 if _tool_summary and isinstance(_tool_summary, str) and content:
                     _tool_summary = self._sanitize_replayed_tool_summary(_tool_summary)
+                    from .policy_v2.prompt_hardening import wrap_external_content
+
+                    _tool_summary = wrap_external_content(_tool_summary, source="tool_trace")
                     content = content.rstrip() + "\n\n" + _tool_summary
             if role in ("user", "assistant") and content:
                 if isinstance(content, str) and not _RE_TIME_PREFIX.match(content):
@@ -5078,12 +5081,17 @@ class Agent:
         if session and hasattr(session, "context"):
             sub_records = getattr(session.context, "sub_agent_records", None)
             if sub_records and messages:
+                from .policy_v2.prompt_hardening import wrap_external_content
+
                 summary_parts = []
                 for r in sub_records:
                     name = r.get("agent_name", "unknown")
                     preview = r.get("result_preview", "")
                     if preview:
-                        summary_parts.append(f"- {name}: {preview[:500]}")
+                        wrapped_preview = wrap_external_content(
+                            preview[:500], source=f"sub_agent_preview:{name}"
+                        )
+                        summary_parts.append(f"- {name}:\n{wrapped_preview}")
                 if summary_parts:
                     delegation_summary = "\n\n[委派任务执行记录]\n" + "\n".join(summary_parts)
                     for i in range(len(messages) - 1, -1, -1):

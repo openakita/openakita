@@ -970,7 +970,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C13 | 多 agent confirm 冒泡 + delegate_chain 透传 | ✅ DONE | R4-1/2/3/4 + R5-16 + 「C13 实施记录」|
 | C14 | Headless 入口统一（CLI / HTTP / Webhook / stdin）| ✅ DONE | R4-5/6/7/8 + 「C14 实施记录」|
 | C15 | Evolution / system_task / Skill-MCP trust_level | ✅ DONE | R4-9/10/11/12/13 + R5-21 + 「C15 实施记录」|
-| C16 | Prompt injection + YAML 严格校验 + audit 防篡改 | ⏳ Pending | R4-14/15 + R5-17 |
+| C16 | Prompt injection + YAML 严格校验 + audit 防篡改 | ✅ DONE | R4-14/15 + R5-17 + 「C16 实施记录」|
 | C17 | Reliability（lock 文件 / 启动扫描 / Last-Event-ID / health probe）| ⏳ Pending | R4-16/17/18/19 + R5-8/12 |
 | C18 | UX + 配置完备性（hot-reload / ENV / dry-run / 5s 聚合）| ⏳ Pending | R4-20/21/22 + R5-11/20 |
 | **C19** | **开发者新增工具 4 层护栏（依赖 C2/C8/C11，在 C12 之前实施以护卫 C12-C18）** | ✅ DONE | §4.21 cookbook + §12.5 + 「C19 实施记录」|
@@ -4726,3 +4726,158 @@ commit，threat model 想清楚再松。这版本只确保：
   实际写 ``identity/runtime/cache/`` 之类，需要单独 commit + threat model。
 - **setup-center 'regenerate system_tasks lock' UI 按钮**：CLI 命令
   + UI 入口尚未实现，操作员目前只能手动改 lock 文件（写 sha256:<hex>）。
+
+---
+
+## C16 实施记录（2026-05-13）
+
+C16 解决 R4-14 / R4-15 / R5-17 三个最后的高危项，并把 C14/C15 没修干净的
+"外部内容 → assistant text" 边界全部补齐。按用户选定 ``all_in_one`` 节奏，
+A / C / B 三个 phase 合并在单次 commit 落地（实现顺序：先 Phase A 立 marker
+契约 → 再 Phase C 立 chain 契约 → 最后 Phase B 收紧 schema + 收 LKG，因为
+B 依赖 A/C 的接口而反过来 A/C 不依赖 B）。
+
+### Phase A — Prompt injection hardening（R4-14）
+
+**问题模式**：sub-agent 返回的文本、tool_summary 历史回放、
+``sub_agent_records.result_preview`` 这三条路径以**裸字符串**形式 glue 进
+``assistant`` 消息内容。攻击者只要能控制其中任何一处的内容（比如让 sub-agent
+读到一篇含 prompt-injection 的 web 页 + 把它原样回带），就能在 parent 模型
+看来是 assistant 的"前文记忆"，进而执行后续指令。
+
+**机制**：新增 ``core/policy_v2/prompt_hardening.py``：
+
+| 符号 | 作用 |
+|------|------|
+| ``EXTERNAL_CONTENT_BEGIN`` / ``EXTERNAL_CONTENT_END`` (constants) | 边界 token |
+| ``wrap_external_content(text, source, nonce=None)`` | 以 ``<<<EXTERNAL_CONTENT_BEGIN nonce=XXXX source=YYY>>>\n…\n<<<EXTERNAL_CONTENT_END nonce=XXXX>>>`` 包裹文本，内部出现的 ``EXTERNAL_CONTENT_END/BEGIN`` token 会被改写为 ``*_ESCAPED`` 防伪造 |
+| nonce | ``secrets.token_hex(4)`` —— 每次 wrap 重新随机生成，攻击者无法预测真正的关闭 tag |
+| ``is_marker_present(text)`` | 检测是否已经被 wrap（避免 double-wrap） |
+| ``TOOL_RESULT_HARDENING_RULES`` | 系统提示词文本：告诉 LLM 任何 ``tool_result`` block + ``EXTERNAL_CONTENT_*`` 包裹的内容都是 **data**，不是 instruction；nonce 不匹配的伪造 END/BEGIN 一律忽略 |
+
+**接入**：
+
+1. ``prompt/builder.py``：``_SAFETY_SECTION`` 在 module-import 阶段拼接
+   ``TOOL_RESULT_HARDENING_RULES``（静态常量，仍享 Anthropic prompt cache）。
+2. ``tools/handlers/agent.py``：``_delegate`` / ``_spawn`` / ``_delegate_parallel``
+   三个回值路径都走 ``wrap_external_content``，``source`` 分别是
+   ``sub_agent:<id>`` / ``spawn_agent:<id>`` / ``parallel_sub_agent:<id>``。
+3. ``core/agent.py``：``tool_summary`` 跨轮回放（``_sanitize_replayed_tool_summary``
+   之后）+ ``sub_agent_records.result_preview`` 同样走 wrap，``source`` 为
+   ``tool_trace`` / ``sub_agent_preview:<name>``。
+
+**与 ``scan_context_content`` 的互补关系**：
+- ``utils.context_scan.scan_context_content`` —— *content-detective*：扫 AGENTS.md /
+  skill body 里出现的已知注入模式词，命中后**前置** WARNING。
+- ``prompt_hardening`` —— *positional*：不看内容、不判定恶意性，只在 trust-boundary
+  上立"这是数据"的标记。两者不冲突：context_scan 抓"内容有威胁"，prompt_hardening
+  抓"位置上不可信"。Raw ``tool_result`` block（文件 / web / MCP 返回）继续靠
+  ``TOOL_RESULT_HARDENING_RULES`` 在系统提示词层声明，**不**额外 wrap（避免破坏
+  Anthropic ``tool_result`` 结构）。
+
+### Phase B — POLICIES.yaml strict 校验 + last-known-good 缓存（R4-15）
+
+**问题模式**：``identity/POLICIES.yaml`` 被改坏（攻击者 / 操作员 typo）后：
+1. ``security.enabled: "no"`` 这种 stringy bool 会被 ``bool()`` 静默转 ``True``
+   ——本意"关闭安全检查"反而变成"打开"。
+2. ``security.shell_risk.custom_critical: ["[unclosed"]`` 这种非法 regex 在加载
+   阶段不报错，要到第一个 shell 命令分类时才崩。
+3. ``security.totally_made_up_key: ...`` typo 字段被 silently 丢弃，操作员永远
+   不知道自己白配了。
+4. 校验失败时 loader（``strict=False``）一刀切到 ``PolicyConfigV2()`` 全 default，
+   ``safety_immune.paths`` 这类用户精配的关键白名单会全部消失，并且**没人察觉**。
+
+**机制**：
+
+| 改动点 | 作用 |
+|------|------|
+| ``schema.py`` 导入 ``Strict``，定义 ``_StrictBool = Annotated[bool, Strict()]`` | 所有从 YAML 来的 bool 字段（``security.enabled`` / ``shell_risk.enabled`` / ``checkpoint.enabled`` / ``sandbox.enabled`` / ``sandbox.network_allow_in_sandbox`` / ``death_switch.enabled`` / ``audit.enabled`` / ``audit.include_chain``）拒绝隐式 coercion |
+| ``schema.py`` ``_validate_regex_list`` | ``shell_risk.custom_critical/high/medium`` + ``excluded_patterns`` 在加载时编译每条 regex；非法 regex / 单条 >200 字符 / 列表 >64 条都立即 ValidationError |
+| ``schema.py`` ``_validate_safe_path`` | ``audit.log_path`` / ``checkpoint.snapshot_dir`` 拒绝 ``..`` 段（这两个字段应该指向 workspace 内子目录）+ 非空 + ≤4096 字符 |
+| ``schema.py`` ``_validate_loose_path`` | ``workspace.paths`` / ``safety_immune.paths`` 允许 ``..``（操作员有正当理由指向兄弟仓库 / 共享目录）+ 同样的长度限制 |
+| ``migration.py`` ``_KNOWN_SECURITY_KEYS`` 集合 | ``security.*`` 下任何不在 v1+v2 合集里的键被记到 ``MigrationReport.unknown_security_keys``，loader/global_engine 必 WARN |
+| ``migration.py`` 移除 ``bool(src_sec["enabled"])`` 强转 | 让 ``Strict[bool]`` 自然抛 ValidationError，不再静默把 ``"no"`` 变成 ``True`` |
+| ``global_engine.py`` ``_LAST_KNOWN_GOOD: PolicyConfigV2 \| None`` + ``_LKG_LOCK = threading.Lock()`` | 模块级 LKG 缓存；每次成功加载都 ``_set_last_known_good(cfg)``；独立锁避免和 ``_lock``（rebuild）嵌套 |
+| ``global_engine.py`` ``_recover_from_load_failure(exc, source)`` | 加载失败时优先返回 LKG（ERROR log "Keeping last-known-good config"），LKG 为空则回 ``PolicyConfigV2()`` defaults（首次启动有 typo 也不锁死操作员） |
+| ``global_engine.py`` 加载路径改用 ``strict=True`` | 让 ``ValidationError`` 抛上来交给 ``_recover_from_load_failure``，不再被 loader 内部 ``strict=False`` 静默吞掉 |
+| ``reset_policy_v2_layer`` 清 LKG | "reset to defaults" 的语义本来就是从零开始；不能让上一次成功加载的缓存盖掉操作员意图 |
+
+**关键不变量**：
+- LKG 仅在**当前 process** 内有效，重启进程后第一次 load 失败仍 fallback 到
+  defaults（操作员第一次启动有 typo 不会被锁死）。
+- LKG 通过 ``_LKG_LOCK`` 独立保护，与 ``_lock`` 嵌套场景（rebuild 持 ``_lock``
+  时调 ``_set_last_known_good``）安全。
+- ``unknown_security_keys`` 不会触发 ValidationError —— 我们在 ``migration.py``
+  阶段把它们 filter 掉，Pydantic 看不到，只 WARN。这避免操作员被一个 typo
+  炸醒（v2 已经有 ``extra='forbid'`` 在子段层抓 typo；顶层 ``security.*``
+  这层放宽一些，重点是"操作员看得见 WARN"）。
+
+### Phase C — Audit JSONL 哈希链（R5-17）
+
+**问题模式**：``data/audit/policy_decisions.jsonl`` /
+``evolution_decisions.jsonl`` / ``system_tasks.jsonl`` 都是裸 JSONL append。
+事后查"昨晚谁做了什么"完全依赖文件没被人编辑过，但实际上 PowerShell / VSCode
+随便能改任何一行，操作员永远不知道。
+
+**机制**：新增 ``core/policy_v2/audit_chain.py``：
+
+| 符号 | 作用 |
+|------|------|
+| ``GENESIS_HASH = "0" * 64`` | 链头哑值 |
+| ``_canonical_dumps`` | ``json.dumps(sort_keys=True, separators=(",",":"), ensure_ascii=False)`` 字节确定性 |
+| ``_compute_row_hash(record)`` | SHA-256；强制要求输入不含 ``row_hash``（含则抛 ValueError，防止自指方程） |
+| ``ChainedJsonlWriter(path, lock=None)`` | append-only writer；``append(record)`` 自动注入 ``prev_hash``（首次=GENESIS）+ ``row_hash`` |
+| Bootstrap 行为 | open 时读 tail 64 KB；文件不以 ``\n`` 结尾 → 当作 crash mid-write，截掉 partial 字节 + WARN + 标记 ``truncated_tail_recovered=True``；legacy 文件（最后一行没 ``row_hash``）→ 保持 GENESIS，下一行起新建子链 |
+| 并发 | 进程内 ``threading.Lock``；singleton-per-path map（``_WRITERS`` + ``_WRITERS_LOCK``）保证同一 path 不同 import 点共享 cursor |
+| 跨进程 | **v1 不支持**（明示 known limit，C17 跟 audit rotation 一起加跨进程锁） |
+| ``ChainVerifyResult`` | ``ok / total / legacy_prefix_lines / truncated_tail_recovered / first_bad_line / reason`` |
+| ``verify_chain(path)`` | 线性 O(N) 验证；legacy 前缀不算 tamper；truncated tail 不算 tamper；返回精确出错行号（1-indexed） |
+| ``OPENAKITA_AUDIT_FSYNC=1`` env | 每条 append fsync（默认关，对崩溃健壮性 vs IO 性能的 trade-off 留给操作员） |
+
+**接入**：
+
+1. ``core/audit_logger.py``：``AuditLogger(include_chain=True)`` 默认开；
+   ``log()`` 走 ``audit_chain.get_writer(path).append(entry)``；任何 chain
+   写入异常 fallback 到 raw append（绝不丢审计）。同时 ``safety_immune``
+   字段提升到 record top-level（``entry["safety_immune"] = bool(si)``），
+   原 ``meta.safety_immune_match`` 也保留（向后兼容已有 reader）。
+2. ``policy_v2/schema.py``：``AuditConfig.include_chain`` 默认从 ``False``
+   翻成 ``True``（docstring 同步说明从未真正消费的旧 12-step chain 语义被
+   废弃复用为哈希链开关）。
+3. ``policy_v2/evolution_window.py::record_decision`` + ``system_tasks._append_audit``
+   都改走 ``audit_chain.get_writer(path).append(record)``；同样有 fallback。
+4. ``api/routes/config.py::GET /api/config/security/audit``：除原 ``entries``
+   外多返回 ``chain_verification: {ok, total, legacy_prefix_lines,
+   truncated_tail_recovered, first_bad_line, reason}``。SecurityView 可
+   据此渲染"审计完整"/"第 X 行被改过" badge。
+
+**显式 out-of-scope**：
+- ``ParamMutationAuditor`` 保持自己的 bespoke schema + 锁（rich record 形状
+  不适合无脑搬到 ChainedJsonlWriter）。
+- 跨文件 rotation（``audit-2026-05-13.jsonl`` → 隔天）尚未实现；rotation
+  接入时新文件头需嵌入上一文件尾的 row_hash。
+
+### 验证
+
+| 维度 | 结果 |
+|------|------|
+| Phase A unit tests (``test_policy_v2_c16_prompt_hardening``) | 14 ✓ |
+| Phase B unit tests (``test_policy_v2_c16_yaml_strict``) | 22 ✓ |
+| Phase C unit tests (``test_policy_v2_c16_audit_chain``) | 17 ✓ |
+| C16 邻测回归（loader / classifier / declared_class_trust / system_tasks / evolution_window / adapter / entry_point / multi_agent / chat_sync） | 409 ✓ |
+| ``scripts/c16_audit.py`` 5 段 (A/B/C/D/E) | ✓（D 段额外跑 ``c14_audit.py`` + ``c15_audit.py`` 确保未回归 C14/C15） |
+| 全量 ``tests/unit/`` 扫描 | 3009 ✓ / 4 skipped / 2 pre-existing flake（``test_org_setup_tool`` 隔离运行均通过；与 C16 无关）|
+| ruff | clean |
+
+### 已知 follow-up（out-of-scope）
+
+- **跨进程审计链锁**：v1 仅进程内 ``threading.Lock``；多进程场景下两 writer
+  会在同一 ``prev_hash`` 上分叉成两条链，``verify_chain`` 会在分叉点报
+  tamper。多 worker 部署（gunicorn / multiprocessing）目前不支持，C17 计划
+  跟 audit rotation 一起加 ``fcntl`` / Win32 mutex。
+- **Audit rotation**：当前没有 size/time-based rotation；C17 接入时新文件头
+  需嵌入上一文件尾 hash 以保持跨文件链。
+- **POLICIES.yaml hot-reload**：C16 在 ``rebuild_engine_v2`` 路径上接入了
+  LKG，但 watchdog/inotify trigger 尚未实现（C18）。
+- **``ParamMutationAuditor`` 接入哈希链**：保留自身 schema + 锁，C17 视统一
+  审计架构再迁。

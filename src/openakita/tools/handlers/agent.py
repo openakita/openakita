@@ -125,7 +125,9 @@ class AgentToolHandler:
                 message=isolated_message,
                 reason=reason,
             )
-            return str(result)
+            from ...core.policy_v2.prompt_hardening import wrap_external_content
+
+            return wrap_external_content(str(result), source=f"sub_agent:{agent_id}")
         except Exception as e:
             logger.error(f"[AgentToolHandler] Delegation failed: {e}", exc_info=True)
             return f"❌ Delegation to {agent_id} failed: {e}"
@@ -310,6 +312,8 @@ class AgentToolHandler:
         # Clean up ephemeral clones that the orchestrator didn't already clean
         self._cleanup_ephemeral_ids(ephemeral_ids, store)
 
+        from ...core.policy_v2.prompt_hardening import wrap_external_content
+
         _art_marker = "\n\n__ARTIFACT_RECEIPTS__\n"
         all_receipt_blocks: list[str] = []
         parts = []
@@ -328,7 +332,10 @@ class AgentToolHandler:
                     block = result[block_start:] if eol < 0 else result[block_start:eol]
                     all_receipt_blocks.append(block)
                     result = result[:idx] + (result[block_start + len(block) :] if eol >= 0 else "")
-                parts.append(f"## Agent: {display_id}\n{result}")
+                wrapped = wrap_external_content(
+                    result, source=f"parallel_sub_agent:{display_id}"
+                )
+                parts.append(f"## Agent: {display_id}\n{wrapped}")
         combined = "\n\n---\n\n".join(parts)
         # Re-append all receipt blocks as a single merged JSON array at the end
         if all_receipt_blocks:
@@ -437,7 +444,9 @@ class AgentToolHandler:
                 message=message,
                 reason=reason or f"Spawned from {inherit_from}",
             )
-            return str(result)
+            from ...core.policy_v2.prompt_hardening import wrap_external_content
+
+            return wrap_external_content(str(result), source=f"spawn_agent:{ephemeral_id}")
         except Exception as e:
             logger.error(f"[AgentToolHandler] Spawn delegation failed: {e}", exc_info=True)
             store.remove_ephemeral(ephemeral_id)

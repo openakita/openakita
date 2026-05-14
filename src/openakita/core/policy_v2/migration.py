@@ -30,6 +30,17 @@ from .schema import PolicyConfigV2
 # ``enabled`` 单独处理（在主流程上方），其余字段全部走 wholesale 拷贝。
 _V2_BLOCKS: frozenset[str] = frozenset(PolicyConfigV2.model_fields) - {"enabled"}
 
+# C16 Phase B：所有在 ``security.*`` 顶层合法的键（v2 + v1 兼容）。
+# 任何不在这个集合里的键被识别为"未知"——可能是 typo，也可能是攻击者
+# 注入的伪字段。loader 会把它们记到 ``MigrationReport.unknown_security_keys``
+# 并打 WARN，不静默丢。
+_V1_LEGACY_KEYS: frozenset[str] = frozenset(
+    {"zones", "command_patterns", "self_protection"}
+)
+_KNOWN_SECURITY_KEYS: frozenset[str] = (
+    frozenset(PolicyConfigV2.model_fields) | _V1_LEGACY_KEYS
+)
+
 
 @dataclass(slots=True)
 class MigrationReport:
@@ -41,6 +52,12 @@ class MigrationReport:
     """废弃字段（zones.controlled / zones.default_zone / confirmation.auto_confirm）。"""
     conflicts: list[str] = field(default_factory=list)
     """mixed schema 时同义槽位双声明的冲突列表。"""
+    unknown_security_keys: list[str] = field(default_factory=list)
+    """C16 Phase B：``security.*`` 下出现的未知顶层键。
+
+    旧实现会被 ``_V2_BLOCKS`` filter 静默丢弃；现在显式记录，loader 必 WARN，
+    操作员能发现 typo / 攻击者塞进来的字段。
+    """
 
     def has_changes(self) -> bool:
         return bool(self.fields_migrated or self.fields_dropped)
@@ -126,9 +143,18 @@ def migrate_v1_to_v2(
     src_sec = src.get("security", {}) or {}
     out_sec: dict[str, Any] = {}
 
-    # enabled (both schemas)
+    # C16 Phase B：扫一遍 src_sec.keys()，把不在 _KNOWN_SECURITY_KEYS 的全部
+    # 记到 unknown_security_keys。loader 会 WARN，schema Pydantic 不会看到
+    # 它们（因为我们下面只拷贝已知字段），所以也不会触发 extra='forbid'。
+    if isinstance(src_sec, dict):
+        for k in src_sec:
+            if k not in _KNOWN_SECURITY_KEYS:
+                report.unknown_security_keys.append(f"security.{k}")
+
+    # enabled (both schemas) — C16: 不再 bool() 强转。原 `bool("no") = True` 的
+    # 静默错误现在交给 schema 的 Strict[bool] 让 ValidationError 自然抛出。
     if "enabled" in src_sec:
-        out_sec["enabled"] = bool(src_sec["enabled"])
+        out_sec["enabled"] = src_sec["enabled"]
 
     # v2 字段直接复制（mixed 模式下 v2 优先）。
     # 注意：``confirmation`` 也在这里整块复制——避免下方 v1 mode-alias 特殊处理
