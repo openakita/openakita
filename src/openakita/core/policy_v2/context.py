@@ -179,12 +179,31 @@ class PolicyContext:
 
         C1 阶段 Session 还没加 session_role / confirmation_mode 字段，本方法
         用 getattr + default 占位；C8 给 Session 加字段后会无缝读取。
+
+        C21 P1-1 修复：``Session`` 在 C8 给"会话级 confirmation_mode 覆盖"
+        起的字段名是 ``confirmation_mode_override``（None 表示"用全局"），
+        而本方法原先只读 ``getattr(session, "confirmation_mode", ...)``——
+        production 主路径 ``build_policy_context`` (policy_v2/adapter.py)
+        早就显式 honor 了 override，但 ``from_session`` 残留导致：
+
+        - 直接调用方拿不到 session 的 override，永远走全局默认
+        - 测试假 Session 用 ``confirmation_mode`` 字段名通过，掩盖了 prod 不一致
+
+        正确顺序：``confirmation_mode_override``（C8 字段名，优先）→
+        ``confirmation_mode``（兼容假 Session）→ ``None``（走 _coerce_mode
+        的 DEFAULT 默认）。
         """
         session_id = (
             getattr(session, "id", None) or getattr(session, "session_id", None) or "unknown"
         )
         workspace_raw = getattr(session, "workspace", None) or "."
         meta = dict(getattr(session, "metadata", {}) or {})
+
+        confirmation_raw = (
+            getattr(session, "confirmation_mode_override", None)
+            if getattr(session, "confirmation_mode_override", None) is not None
+            else getattr(session, "confirmation_mode", None)
+        )
 
         ctx = cls(
             session_id=str(session_id),
@@ -193,7 +212,7 @@ class PolicyContext:
             is_owner=bool(meta.get("is_owner", True)),
             root_user_id=meta.get("root_user_id"),
             session_role=_coerce_role(getattr(session, "session_role", None)),
-            confirmation_mode=_coerce_mode(getattr(session, "confirmation_mode", None)),
+            confirmation_mode=_coerce_mode(confirmation_raw),
             # C12 §14.2: prefer first-class Session fields (added in C12) but
             # fall back to metadata for back-compat with sessions persisted
             # before promotion. ``getattr`` chain returns False/"" if absent →
