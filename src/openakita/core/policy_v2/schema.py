@@ -308,6 +308,48 @@ class AuditConfig(_Strict):
         return _validate_safe_path(v)
 
 
+class HotReloadConfig(_Strict):
+    """POLICIES.yaml 文件热更新（C18 Phase A）。
+
+    监听 ``identity/POLICIES.yaml`` mtime，变化时尝试重建 PolicyEngineV2。
+    新配置校验失败 → 保留 last-known-good，写 ``audit.policy_decisions.jsonl``
+    一条 ``policy_hot_reload`` 事件（``ok=false`` + reason）。
+
+    默认 **关闭**：参考 4 个邻近开源项目（claude-code / hermes / QwenPaw /
+    openclaw）的实践，没有一个把"文件即改即生效"作为默认——突变行为对
+    既有用户体验风险高，应当 opt-in。运维场景（k8s configmap mount、CI
+    rolling）打开即可。
+    """
+
+    enabled: _StrictBool = False
+    poll_interval_seconds: float = 5.0
+    """轮询间隔（秒）。fs 写入到 ``rebuild_engine_v2`` 的最大延迟 = 此值；
+    设过小会浪费 CPU（stat 调用），设过大 reload 体感慢。默认 5s 平衡。"""
+
+    debounce_seconds: float = 0.5
+    """检测到 mtime 变化后等多久再读文件——避开编辑器"先 truncate 再写"
+    中间态。参考 openclaw chokidar ``awaitWriteFinish`` 的 200ms 阈值，
+    Python 这边给一点余量。"""
+
+    @field_validator("poll_interval_seconds", mode="after")
+    @classmethod
+    def _check_poll(cls, v: float) -> float:
+        if v < 0.5:
+            raise ValueError("poll_interval_seconds must be >= 0.5")
+        if v > 3600:
+            raise ValueError("poll_interval_seconds must be <= 3600")
+        return v
+
+    @field_validator("debounce_seconds", mode="after")
+    @classmethod
+    def _check_debounce(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("debounce_seconds must be >= 0")
+        if v > 60:
+            raise ValueError("debounce_seconds must be <= 60")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Top-level model
 # ---------------------------------------------------------------------------
@@ -337,6 +379,7 @@ class PolicyConfigV2(_Strict):
     death_switch: DeathSwitchConfig = Field(default_factory=DeathSwitchConfig)
     user_allowlist: UserAllowlistConfig = Field(default_factory=UserAllowlistConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
+    hot_reload: HotReloadConfig = Field(default_factory=HotReloadConfig)
 
     def expand_placeholders(self, *, cwd: Path | None = None) -> PolicyConfigV2:
         """展开 ``${CWD}`` / ``~`` 等占位符，返回新实例（不可变约定）。
@@ -365,6 +408,7 @@ __all__ = [
     "CheckpointConfig",
     "ConfirmationConfig",
     "DeathSwitchConfig",
+    "HotReloadConfig",
     "OwnerOnlyConfig",
     "PolicyConfigV2",
     "SafetyImmuneConfig",

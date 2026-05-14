@@ -542,6 +542,24 @@ def create_app(
         except Exception as e:
             logger.warning("[Startup] UIConfirmBus broadcast wire failed: %s", e)
 
+        # C18 Phase A：POLICIES.yaml hot-reload。默认 disabled；用户在
+        # POLICIES.yaml 的 ``hot_reload.enabled: true`` opt-in 即生效。
+        # 失败安全：``start_hot_reloader`` 内部全 try/except，未启动也不
+        # 影响 server 启动。
+        try:
+            from openakita.core.policy_v2.hot_reload import start_hot_reloader
+
+            reloader = start_hot_reloader()
+            if reloader is not None:
+                logger.info("[Startup] PolicyHotReloader started")
+            else:
+                logger.debug(
+                    "[Startup] PolicyHotReloader not started "
+                    "(disabled or no POLICIES.yaml)"
+                )
+        except Exception as e:
+            logger.warning("[Startup] PolicyHotReloader wire failed: %s", e)
+
     @app.post("/api/shutdown", tags=["系统"])
     async def shutdown(request: Request):
         """Gracefully shut down the OpenAkita service process.
@@ -632,6 +650,15 @@ def create_app(
                 await to_engine(app.state.org_runtime.shutdown())
             except Exception as e:
                 logger.warning(f"OrgRuntime shutdown error: {e}")
+
+    @app.on_event("shutdown")
+    async def _shutdown_policy_hot_reloader():
+        try:
+            from openakita.core.policy_v2.hot_reload import stop_hot_reloader
+
+            stop_hot_reloader(timeout=2.0)
+        except Exception as e:
+            logger.debug("[Shutdown] PolicyHotReloader stop skipped: %s", e)
 
     @app.on_event("shutdown")
     async def _shutdown_memory_storage():
