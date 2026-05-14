@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import mimetypes
 import time
@@ -361,6 +362,7 @@ class Plugin(PluginBase):
         if tool_name == "seedance_create":
             try:
                 task = await self._create_task_internal(args)
+                task = await self._maybe_wait_for_tool_task(task, args)
             except HTTPException as e:
                 return _json.dumps(
                     {
@@ -382,6 +384,7 @@ class Plugin(PluginBase):
                 mode = "edit" if tool_name == "seedance_edit" else "extend"
                 task_args = self._build_video_url_create_args(args, mode=mode)
                 task = await self._create_task_internal(task_args)
+                task = await self._maybe_wait_for_tool_task(task, args)
                 payload = self._task_to_tool_payload(task)
                 if tool_name == "seedance_transition":
                     payload["transition_strategy"] = "seedance_extend"
@@ -464,6 +467,36 @@ class Plugin(PluginBase):
             base["prompt"] = (task.get("prompt") or "")[:200]
             base["created_at"] = task.get("created_at")
         return base
+
+    async def _maybe_wait_for_tool_task(self, task: dict, args: dict) -> dict:
+        """Wait for LLM/workbench tool calls to finish before returning.
+
+        REST/UI callers still get an immediate running task from `/tasks`;
+        this helper is only used by the LLM-facing tool handler.  Without it,
+        org workbench nodes can create a Seedance job, return `running`, and
+        then remain busy forever if the model does not keep polling.
+        """
+        if args.get("wait_for_completion") is False:
+            return task
+        task_id = task.get("id")
+        if not task_id or task.get("status") not in ("pending", "running"):
+            return task
+
+        timeout_s = int(args.get("wait_timeout_s") or 900)
+        deadline = time.time() + max(30, timeout_s)
+        while time.time() < deadline:
+            await self._poll_running_tasks()
+            latest = await self._tm.get_task(task_id)
+            if latest:
+                task = latest
+                if latest.get("status") not in ("pending", "running"):
+                    return latest
+            await asyncio.sleep(10)
+
+        task = await self._tm.get_task(task_id) or task
+        task = dict(task)
+        task["error_message"] = task.get("error_message") or "等待 Seedance 任务完成超时"
+        return task
 
     @staticmethod
     def _is_terminal_create_error(exc: HTTPException) -> bool:
@@ -549,6 +582,85 @@ class Plugin(PluginBase):
             )
         return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _request_signature(params: dict) -> str:
+        """Stable fingerprint for single create/edit/extend requests."""
+        relevant = {
+            "prompt": (params.get("prompt") or "").strip(),
+            "mode": params.get("mode", "t2v"),
+            "model": params.get("model", "2.0"),
+            "ratio": params.get("ratio", "16:9"),
+            "duration": params.get("duration", 5),
+            "resolution": params.get("resolution", "720p"),
+            "from_asset_ids": list(params.get("from_asset_ids") or []),
+            "content": params.get("content") or [],
+        }
+        raw = json.dumps(relevant, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _infer_duration_from_prompt(prompt: str, *, asset_count: int, current: Any) -> int:
+        """Recover per-shot duration when an org prompt says 30s/3 shots.
+
+        LLM tool calls often omit `duration`, which would fall back to the
+        plugin's UI default of 5 seconds. In org video workflows the task text
+        usually carries the real shot duration, so infer the safer value.
+        """
+        try:
+            current_int = int(current)
+        except (TypeError, ValueError):
+            current_int = 5
+        if current_int not in (0, 5):
+            return current_int
+
+        text = prompt or ""
+        import re
+
+        ranges = re.findall(r"(\d{1,3})\s*[-~—到至]\s*(\d{1,3})\s*秒", text)
+        durations = [max(0, int(end) - int(start)) for start, end in ranges]
+        durations = [d for d in durations if d > 0]
+        if asset_count <= 1 and durations:
+            return durations[0]
+
+        each_match = re.search(r"(?:每(?:个|段|镜头).*?|单(?:个|段|镜头).*?)(\d{1,3})\s*秒", text)
+        if each_match:
+            return int(each_match.group(1))
+
+        total_match = re.search(r"(?:总时长|合计|共|生成)?\s*(\d{1,3})\s*秒", text)
+        shot_match = re.search(r"(\d{1,2})\s*个镜头", text)
+        if total_match and shot_match:
+            shots = max(1, int(shot_match.group(1)))
+            return max(1, round(int(total_match.group(1)) / shots))
+
+        return current_int or 5
+
+    async def _find_recent_duplicate_task(self, request_signature: str) -> dict | None:
+        if not request_signature:
+            return None
+        try:
+            listed = await self._tm.list_tasks(limit=80)
+        except Exception:
+            logger.debug("duplicate lookup skipped: list_tasks failed", exc_info=True)
+            return None
+        if isinstance(listed, tuple) and len(listed) >= 1:
+            tasks = listed[0]
+        elif isinstance(listed, list):
+            tasks = listed
+        else:
+            return None
+        now = time.time()
+        for task in tasks:
+            params = task.get("params") or {}
+            if params.get("request_signature") != request_signature:
+                continue
+            # Keep the duplicate window short so deliberate re-renders remain possible.
+            created_at = float(task.get("created_at") or 0)
+            if created_at and now - created_at > 30 * 60:
+                continue
+            if task.get("status") in ("pending", "running", "succeeded"):
+                return task
+        return None
+
     async def _run_chain_bg(
         self,
         group_id: str,
@@ -598,6 +710,7 @@ class Plugin(PluginBase):
     # ── Internal task creation ──
 
     async def _create_task_internal(self, params: dict) -> dict:
+        params = dict(params)
         if not self._ark:
             raise HTTPException(
                 status_code=400,
@@ -662,7 +775,7 @@ class Plugin(PluginBase):
             #   i2v_end    → first_frame (0), last_frame (1+)
             #   multimodal → first_frame (0), reference_image (1+)
             #   其他       → reference_image
-            from_asset_ids = params.pop("from_asset_ids", None) or []
+            from_asset_ids = params.get("from_asset_ids") or []
             if from_asset_ids and isinstance(from_asset_ids, list):
                 expanded = await self._expand_from_asset_ids(from_asset_ids, mode)
                 if expanded:
@@ -789,6 +902,29 @@ class Plugin(PluginBase):
                 return normalized
 
             content = _normalize_content_roles(content)
+            params["content"] = content
+            if from_asset_ids:
+                params["from_asset_ids"] = list(from_asset_ids)
+
+            inferred_duration = self._infer_duration_from_prompt(
+                params.get("prompt", ""),
+                asset_count=len(from_asset_ids) if isinstance(from_asset_ids, list) else 0,
+                current=params.get("duration", 5),
+            )
+            params["duration"] = max(
+                model_info.duration_range[0],
+                min(model_info.duration_range[1], inferred_duration),
+            )
+
+            request_signature = self._request_signature(params)
+            existing_duplicate = await self._find_recent_duplicate_task(request_signature)
+            if existing_duplicate:
+                logger.info(
+                    "create_task deduped by request_signature=%s task=%s",
+                    request_signature, existing_duplicate.get("id"),
+                )
+                return existing_duplicate
+            params["request_signature"] = request_signature
 
             for item in content:
                 if not isinstance(item, dict) or item.get("type") != "video_url":

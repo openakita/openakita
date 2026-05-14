@@ -29,6 +29,7 @@ import {
   Position,
   MarkerType,
   Panel,
+  ReactFlowProvider,
   type OnConnect,
   type ConnectionLineComponentProps,
 } from "@xyflow/react";
@@ -974,10 +975,13 @@ export function OrgEditorView({
         triggerEdgeAnimation((d as any).node_id, (d as any).node_id, "#22c55e");
       } else if (
         ev === "org:command_done" ||
-        ev === "org:command_phase" ||
         ev === "org:command_stopped_no_progress"
       ) {
         void fetchOrg(orgId);
+        bbPanelRef.current?.refresh();
+      } else if (ev === "org:command_phase") {
+        // command_phase is emitted by polling/diagnostics and can arrive every few seconds.
+        // Avoid reloading the whole canvas here; node_status/task events already update live state.
         bbPanelRef.current?.refresh();
       } else if (ev === "org:task_cancelled") {
         bbPanelRef.current?.refresh();
@@ -1164,13 +1168,14 @@ export function OrgEditorView({
     try {
       const nodes: Array<{ id: string; role_title?: string; plugin_origin?: unknown }> =
         (payload as any).nodes || [];
-      const edges: Array<{ source: string; target: string }> = (payload as any).edges || [];
+      const edges: Array<{ source: string; target: string; edge_type?: string }> =
+        (payload as any).edges || [];
       const workbenchIds = new Set(
         nodes.filter((n) => !!n.plugin_origin).map((n) => n.id),
       );
       const offending: string[] = [];
       for (const e of edges) {
-        if (workbenchIds.has(e.source)) {
+        if ((e.edge_type || "hierarchy") === "hierarchy" && workbenchIds.has(e.source)) {
           const n = nodes.find((x) => x.id === e.source);
           offending.push((n?.role_title || e.source) as string);
         }
@@ -2240,6 +2245,7 @@ export function OrgEditorView({
             </div>
           ) : (
           <div style={{ flex: 1, position: "relative" }} onContextMenu={(e) => e.preventDefault()}>
+            <ReactFlowProvider>
             <ReactFlow
               onInit={(instance) => {
                 reactFlowRef.current = instance;
@@ -2355,6 +2361,7 @@ export function OrgEditorView({
                 </Panel>
               )}
             </ReactFlow>
+            </ReactFlowProvider>
             {/* ── Context menu (portal to body to avoid clipping) ── */}
             {contextMenu && createPortal(
               <div
