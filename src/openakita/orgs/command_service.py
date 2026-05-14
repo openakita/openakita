@@ -557,9 +557,7 @@ class OrgCommandService:
             pass
 
         try:
-            from openakita.orgs.project_store import ProjectStore
-
-            store = ProjectStore(self._runtime._manager._org_dir(org_id))
+            store = self._runtime.get_project_store(org_id)
             tasks = store.all_tasks()
             unfinished = [
                 t for t in tasks

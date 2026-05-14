@@ -838,6 +838,19 @@ class Settings(BaseSettings):
         default=0,
         description="单条命令最长运行时间（秒）硬上限，0=不限时（默认，不用总时长限制长任务）",
     )
+    # ── 死锁早停（独立于 stuck_warn / stuck_autostop） ──
+    # 当组织"看似空跑"持续 N 秒后立即收口，不必等 autostop_secs 兜底。
+    # 触发条件：没有忙节点 + 没有待处理 mailbox + root 节点 IDLE + 仍有未关闭 chain。
+    # 这种状态下没有任何 agent 在工作，也没有消息会再来唤醒任何节点，再等下去
+    # 100% 是空跑。比 autostop_secs（默认 3600s）更激进，但比 warn_secs（默认
+    # 900s）更温和。
+    org_command_deadlock_grace_secs: int = Field(
+        default=90,
+        description=(
+            "全员 IDLE + 无消息 + 仍有 open chain 持续多久（秒）后判定为死锁并立即收口，"
+            "0=禁用。默认 90"
+        ),
+    )
 
     @model_validator(mode="after")
     def _enforce_min_max_iterations(self) -> "Settings":

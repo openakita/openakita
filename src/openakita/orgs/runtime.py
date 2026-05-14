@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core.response_handler import request_expects_artifact
 from .blackboard import OrgBlackboard
+from .command_tracker import UserCommandTracker
 from .event_store import OrgEventStore
 from .failure_diagnoser import format_human_summary
 from .failure_diagnoser import is_soft_verify_incomplete as _is_soft_verify_incomplete
@@ -33,8 +34,30 @@ from .models import (
     OrgStatus,
     _now_iso,
 )
+from .plugin_assets import (
+    PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S as _PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S,
+)
+from .plugin_assets import (
+    PLUGIN_ASSET_MAX_BYTES as _PLUGIN_ASSET_MAX_BYTES,
+)
+from .plugin_assets import (
+    copy_to_workspace as _plugin_copy_to_workspace,
+)
+from .plugin_assets import (
+    download_to_workspace as _plugin_download_to_workspace,
+)
+from .plugin_assets import (
+    ext_for_url as _plugin_ext_for_url,
+)
+from .plugin_assets import (
+    safe_asset_filename as _plugin_safe_asset_filename,
+)
 from .tool_handler import OrgToolHandler
 from .tools import build_org_node_tools
+
+# Re-exported for backward compatibility — external callers still do
+# ``from openakita.orgs.runtime import UserCommandTracker``.
+__all__ = ["OrgRuntime", "UserCommandTracker", "get_runtime"]
 
 if TYPE_CHECKING:
     from .heartbeat import OrgHeartbeat
@@ -80,111 +103,6 @@ class _CachedAgent:
     @property
     def expired(self) -> bool:
         return (time.monotonic() - self.last_used) > AGENT_CACHE_TTL
-
-
-class UserCommandTracker:
-    """Track the lifecycle of a single user command across its delegation chains.
-
-    A user command is considered **truly complete** when:
-      - all chains that were opened *by or under this command's root* are closed
-        (accepted / rejected / cancelled), AND
-      - the root node is IDLE, AND
-      - the root's inbox has no pending messages, AND
-      - no other nodes under this org are still BUSY/WAITING with pending work, AND
-      - (when ``org_root_post_summary`` is enabled) the root has produced a
-        post-summary ReAct after being woken up by the auto-pushed
-        ``task_complete`` notification.
-
-    This tracker is event-driven: `register_chain`/`unregister_chain` are called
-    from `_handle_org_delegate_task` and `_mark_chain_closed` respectively.
-    Completion is signalled via :pyattr:`completed`.
-
-    The :pyattr:`last_progress_at` timestamp is refreshed by `_touch()` whenever
-    any progress signal fires (node status change, org tool call, messenger
-    dispatch, chain event). It is consumed **only** by the command watchdog to
-    decide whether to emit a stuck warning or to soft-stop the organization.
-    It does **not** participate in completion judgement.
-
-    State machine (when ``org_root_post_summary`` enabled):
-      ``running`` → (subtree closed + root idle) → ``awaiting_summary``
-      ``awaiting_summary`` → (root re-activated and back to idle) → ``done``
-    When ``org_root_post_summary`` disabled the tracker behaves like before:
-    once the subtree is closed and root is idle, ``completed`` is set directly
-    (state stays ``running`` for compatibility).
-    """
-
-    __slots__ = (
-        "org_id",
-        "root_node_id",
-        "command_id",
-        "open_chains",
-        "root_chain_id",
-        "completed",
-        "last_progress_at",
-        "started_at",
-        "warned_stuck",
-        "auto_stopped",
-        # 区分 auto_stopped 的来源：True 表示由用户主动调用
-        # `cancel_user_command` 强制终止；False 表示由 _command_watchdog
-        # 卡死兜底触发。仅影响 send_command 终态文案，不改变流程。
-        "user_cancelled",
-        "state",
-        "summary_pushed_at",
-        # BUG-3：保存当前命令的用户原始指令内容，供子节点 system prompt
-        # 渲染（identity.build_org_context_prompt）和 _handle_org_delegate_task
-        # 注入"父任务硬边界"时取用。命令结束时 tracker 一并被 pop，自动失效。
-        "user_command_content",
-        # BUG-5：finalize phase 事件去重，避免同 phase 重复 emit。
-        "_last_phase_emitted",
-    )
-
-    def __init__(
-        self,
-        org_id: str,
-        root_node_id: str,
-        command_id: str | None = None,
-        user_command_content: str = "",
-    ) -> None:
-        self.org_id = org_id
-        self.root_node_id = root_node_id
-        self.command_id = command_id
-        self.open_chains: set[str] = set()
-        # The first chain opened under this command (typically created by
-        # the root node's first `org_delegate_task`). Used by the subtree
-        # walker in ``_maybe_finalize_tracker`` as the root of the chain
-        # tree. ``None`` when the root has not delegated anything yet.
-        self.root_chain_id: str | None = None
-        self.completed: asyncio.Event = asyncio.Event()
-        now = time.monotonic()
-        self.last_progress_at: float = now
-        self.started_at: float = now
-        self.warned_stuck: bool = False
-        self.auto_stopped: bool = False
-        self.user_cancelled: bool = False
-        # See class docstring for state machine details.
-        self.state: str = "running"
-        # monotonic time when summary inbox push happened (debounce).
-        self.summary_pushed_at: float = 0.0
-        self.user_command_content: str = user_command_content or ""
-        self._last_phase_emitted: str | None = None
-
-    def _touch(self) -> None:
-        self.last_progress_at = time.monotonic()
-
-    def register_chain(self, chain_id: str) -> None:
-        if not chain_id:
-            return
-        self.open_chains.add(chain_id)
-        if self.root_chain_id is None:
-            self.root_chain_id = chain_id
-        self._touch()
-        self.completed.clear()
-
-    def unregister_chain(self, chain_id: str) -> None:
-        if not chain_id:
-            return
-        self.open_chains.discard(chain_id)
-        self._touch()
 
 
 class OrgRuntime:
@@ -1027,14 +945,24 @@ class OrgRuntime:
 
         if tracker.auto_stopped:
             final_result["stopped_by_watchdog"] = True
-            final_result["status"] = "stopped_no_progress"
             if tracker.user_cancelled:
+                final_result["status"] = "cancelled_by_user"
                 final_result["cancelled_by_user"] = True
                 # 覆盖 warning（即使被前置流程 setdefault 过也要换成"用户主动"文案）
                 final_result["warning"] = (
                     "已按用户请求强制终止当前任务，可立即发送新指令。"
                 )
+            elif tracker.deadlock_stopped:
+                final_result["status"] = "stopped_deadlock"
+                final_result["deadlock_stopped"] = True
+                # 覆盖 warning：死锁早停语义和"长时间无进度"不同——
+                # 这里是确认了"全员 IDLE 但还有未关闭 chain"，再等也不会动。
+                final_result["warning"] = (
+                    "组织所有节点都已空闲，但仍有任务链没收到关闭信号；"
+                    "已立即停止以避免空跑。可点击「继续之前任务」或重新下发指令。"
+                )
             else:
+                final_result["status"] = "stopped_no_progress"
                 final_result.setdefault(
                     "warning",
                     "组织长时间无进度，已自动暂停，此为已有阶段性结果。",
@@ -1640,14 +1568,15 @@ class OrgRuntime:
             is_normal = exit_reason in ("normal", "ask_user", "waiting_user") or is_soft_verify
             is_terminated = exit_reason == "loop_terminated"
             plugin_failure = self._node_plugin_failures_in_task.get(cache_key)
+            # 仅排除"已经在 ReAct 内通过 submit_deliverable 显式上报失败"
+            # 的情况——其它路径（包括 user_command 让 root 直接调插件、
+            # delivery_followup 重活路径）都应让 task 视为失败而非 success。
             submit_called_for_failure = self._react_trace_has_tool(
                 react_trace, "org_submit_deliverable",
             )
             if (
                 is_normal
                 and plugin_failure
-                and activation_origin == "task_assign"
-                and chain_id
                 and not submit_called_for_failure
             ):
                 exit_reason = "plugin_tool_failed"
@@ -2994,9 +2923,20 @@ class OrgRuntime:
 
     def get_event_store(self, org_id: str) -> OrgEventStore:
         if org_id not in self._event_stores:
-            org_dir = self._manager._org_dir(org_id)
+            org_dir = self._manager.get_org_dir(org_id)
             self._event_stores[org_id] = OrgEventStore(org_dir, org_id)
         return self._event_stores[org_id]
+
+    def get_project_store(self, org_id: str):
+        """构造一个新的 :class:`ProjectStore` 指向给定组织的目录。
+
+        ProjectStore 内部不缓存连接、随用随建，所以这里不做共享池——
+        每个调用方拿到自己的 store 实例。这是 :pyfunc:`get_event_store`、
+        :pyfunc:`get_blackboard` 之外推荐的"按 org 取数据"统一入口，
+        外部代码不需要再去戳 ``self._manager._org_dir`` 私访。
+        """
+        from openakita.orgs.project_store import ProjectStore
+        return ProjectStore(self._manager.get_org_dir(org_id))
 
     # ------------------------------------------------------------------
     # Verify-context accessors (B4 - 给 reasoning_engine 提供组织视角信号)
@@ -4412,6 +4352,11 @@ class OrgRuntime:
         warn_secs = _cfg("org_command_stuck_warn_secs", 900)
         autostop_secs = _cfg("org_command_stuck_autostop_secs", 3600)
         hard_cap = _cfg("org_command_timeout_secs", 0)
+        # 死锁早停：全员 IDLE + 无消息 + 仍有 open chain 持续多久后立即收口。
+        # 比 autostop 更激进——后者要等 1 小时；deadlock 路径默认 90 秒就能
+        # 把"chain 漏关 / mailbox 路径异常 / root 没收到 task_complete"这类
+        # 真正的死循环识别出来，避免用户对着指挥台干瞪眼。
+        deadlock_grace = _cfg("org_command_deadlock_grace_secs", 90)
 
         # 启用时仍维持合理下限与顺序约束（避免用户配出反直觉的极小值）
         if warn_secs > 0:
@@ -4420,8 +4365,10 @@ class OrgRuntime:
             autostop_secs = max(
                 (warn_secs + 60) if warn_secs > 0 else 60, autostop_secs
             )
+        if deadlock_grace > 0:
+            deadlock_grace = max(15, deadlock_grace)
 
-        active = [t for t in (warn_secs, autostop_secs, hard_cap) if t > 0]
+        active = [t for t in (warn_secs, autostop_secs, hard_cap, deadlock_grace) if t > 0]
         poll_interval = (
             max(5.0, min(30.0, min(active) / 3.0)) if active else 30.0
         )
@@ -4503,6 +4450,32 @@ class OrgRuntime:
                     finally:
                         tracker.completed.set()
                     return
+
+                # ── 死锁早停（独立分支） ─────────────────────────────
+                # autostop 默认 1 小时太久，让用户对着指挥台干瞪眼。
+                # 这里识别"看似空跑"——所有 agent 都不在干活、mailbox 全空、
+                # root 节点也 IDLE，但 tracker 还在 open_chains 里挂着没关。
+                # 这种状态再等下去，也不会有任何信号回来唤醒任何节点。
+                if (
+                    deadlock_grace > 0
+                    and not tracker.deadlock_stopped
+                    and self._is_tracker_quiet_deadlock(tracker)
+                ):
+                    if tracker._quiet_deadlock_since <= 0:
+                        tracker._quiet_deadlock_since = now
+                        logger.info(
+                            "[CmdWatchdog] org=%s root=%s entered quiet-deadlock "
+                            "watch window",
+                            tracker.org_id, tracker.root_node_id,
+                        )
+                    elif (now - tracker._quiet_deadlock_since) >= deadlock_grace:
+                        await self._trigger_deadlock_stop(
+                            tracker, int(now - tracker._quiet_deadlock_since),
+                        )
+                        return
+                else:
+                    if tracker._quiet_deadlock_since > 0:
+                        tracker._quiet_deadlock_since = 0.0
         except asyncio.CancelledError:
             return
         except Exception:
@@ -4510,6 +4483,96 @@ class OrgRuntime:
                 "[CmdWatchdog] unexpected error, exiting watchdog",
                 exc_info=True,
             )
+
+    def _is_tracker_quiet_deadlock(self, tracker: UserCommandTracker) -> bool:
+        """Return True if tracker looks like a "silent deadlock".
+
+        Conditions（必须全部满足）：
+          1. 还有未关闭 chain（subtree 视角）；否则会被 _maybe_finalize_tracker
+             正常收口，不需要 deadlock 路径。
+          2. 没有 BUSY/WAITING 节点（除 root 外）。
+          3. 没有任何节点 mailbox 有待处理消息。
+          4. root 节点 status == IDLE。
+          5. 当前不处于 awaiting_summary 状态——summary push 已经唤醒过 root，
+             如果它正在生成最终汇总就不能误杀。
+        """
+        try:
+            blockers = self._collect_tracker_blockers(tracker)
+        except Exception:
+            logger.debug(
+                "[CmdWatchdog] _collect_tracker_blockers failed",
+                exc_info=True,
+            )
+            return False
+        if tracker.state == "awaiting_summary":
+            return False
+        open_subtree = blockers.get("open_subtree_chains") or []
+        if not open_subtree:
+            return False
+        if blockers.get("busy_nodes"):
+            return False
+        if blockers.get("pending_mailbox"):
+            return False
+        root_status = blockers.get("root_status") or ""
+        if root_status and root_status != NodeStatus.IDLE.value:
+            return False
+        return True
+
+    async def _trigger_deadlock_stop(
+        self, tracker: UserCommandTracker, quiet_secs: int,
+    ) -> None:
+        """Mark tracker as deadlock-stopped and tear down the org-side state.
+
+        Distinct from the no-progress autostop path:
+        - sets ``deadlock_stopped`` (in addition to ``auto_stopped``) so the
+          finalizer in ``send_command`` can surface a different warning;
+        - emits a separate event ``command_deadlock_stopped`` for forensic
+          replay (event store + WS broadcast).
+        """
+        tracker.auto_stopped = True
+        tracker.deadlock_stopped = True
+        logger.warning(
+            "[CmdWatchdog] org=%s root=%s deadlock detected, soft-stopping "
+            "(quiet=%ds, open_chains=%d)",
+            tracker.org_id,
+            tracker.root_node_id,
+            quiet_secs,
+            len(tracker.open_chains),
+        )
+        try:
+            self.get_event_store(tracker.org_id).emit(
+                "command_deadlock_stopped",
+                tracker.root_node_id,
+                {
+                    "command_id": tracker.command_id or "",
+                    "quiet_secs": quiet_secs,
+                    "open_chains": list(tracker.open_chains),
+                },
+            )
+        except Exception:
+            logger.debug(
+                "[CmdWatchdog] emit deadlock event failed", exc_info=True,
+            )
+        try:
+            await self._broadcast_ws("org:command_deadlock_stopped", {
+                "org_id": tracker.org_id,
+                "root_node_id": tracker.root_node_id,
+                "command_id": tracker.command_id or "",
+                "quiet_secs": quiet_secs,
+                "open_chains": list(tracker.open_chains),
+            })
+        except Exception:
+            logger.debug(
+                "[CmdWatchdog] broadcast deadlock event failed", exc_info=True,
+            )
+        try:
+            await self._soft_stop_org(tracker.org_id)
+        except Exception:
+            logger.error(
+                "[CmdWatchdog] soft_stop on deadlock failed", exc_info=True,
+            )
+        finally:
+            tracker.completed.set()
 
     async def _wait_delegation_completion(
         self, org_id: str, root_node_id: str, timeout: int = 300,
@@ -4965,6 +5028,12 @@ class OrgRuntime:
                 return await tool_handler.handle(tool_name, tool_input, org_id, node_id)
             is_plugin_tool = self._is_plugin_tool(agent, tool_name)
             if is_plugin_tool:
+                # Plugin 工具往往是长 poll（通义生图分钟级、Seedance 视频
+                # 5–10 分钟）。如果不在工具入口/出口主动 _touch tracker，
+                # 节点会一直 BUSY、无 mailbox 派发、无 org_* 调用，watchdog
+                # 误把"正在等远端结果"判成 stuck（默认 900s warn / 3600s
+                # autostop），多镜头串行很容易触发。
+                self._touch_trackers_for_org(org_id)
                 await self._broadcast_ws("org:workbench_tool_status", {
                     "org_id": org_id,
                     "node_id": node_id,
@@ -4982,6 +5051,7 @@ class OrgRuntime:
                 )
             except Exception as exc:
                 if is_plugin_tool:
+                    self._touch_trackers_for_org(org_id)
                     await self._broadcast_ws("org:workbench_tool_status", {
                         "org_id": org_id,
                         "node_id": node_id,
@@ -5037,6 +5107,7 @@ class OrgRuntime:
                         "[OrgRuntime] failed to record plugin asset output",
                         exc_info=True,
                     )
+                self._touch_trackers_for_org(org_id)
                 if plugin_ok:
                     await self._broadcast_ws("org:workbench_tool_status", {
                         "org_id": org_id,
@@ -5539,10 +5610,10 @@ class OrgRuntime:
     # Workbench (plugin) node asset bridging
     # ------------------------------------------------------------------
 
-    # 单个文件最大下载尺寸（防止恶意 URL 拖垮节点磁盘）。50 MB 与
-    # seedance-video 上传体积上限一致。
-    _PLUGIN_ASSET_MAX_BYTES: int = 50 * 1024 * 1024
-    _PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S: float = 120.0
+    # 这两个常量从 plugin_assets 模块 re-export 以兼容外部测试，旧模块属性
+    # （如 ``OrgRuntime._PLUGIN_ASSET_MAX_BYTES``）一直是"事实公开 API"。
+    _PLUGIN_ASSET_MAX_BYTES: int = _PLUGIN_ASSET_MAX_BYTES
+    _PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S: float = _PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S
 
     def _is_plugin_tool(self, agent: Any, tool_name: str) -> bool:
         """Return True iff ``tool_name`` was registered by a loaded plugin
@@ -5594,129 +5665,26 @@ class OrgRuntime:
             return ""
         return ""
 
+    # 以下四个 helper 现在只是对 plugin_assets 子模块的薄包装，保留方法名是
+    # 为了不破坏内部调用方 / 外部老测试（它们直接 patch 这些方法）。
     @staticmethod
     def _safe_asset_filename(raw: str, default_ext: str = ".bin") -> str:
-        """Strip path separators and dangerous chars from a candidate filename.
-
-        We never trust an LLM- or plugin-supplied filename to be safe;
-        always resolve under a known parent and reject path traversal.
-        """
-        import re
-
-        cleaned = (raw or "").strip().replace("\\", "/").split("/")[-1]
-        cleaned = re.sub(r"[\x00-\x1f<>:\"|?*]", "_", cleaned)
-        if not cleaned:
-            cleaned = f"asset{default_ext}"
-        # cap length so freakishly long filenames cannot blow up file systems
-        if len(cleaned) > 120:
-            stem, dot, ext = cleaned.rpartition(".")
-            if dot and len(ext) <= 8:
-                cleaned = stem[: 120 - len(ext) - 1] + "." + ext
-            else:
-                cleaned = cleaned[:120]
-        return cleaned
+        return _plugin_safe_asset_filename(raw, default_ext)
 
     @staticmethod
     def _ext_for_url(url: str, fallback: str = ".bin") -> str:
-        """Pick a file extension based on URL path (last `.xxx`)."""
-        import re
-        from urllib.parse import urlparse
+        return _plugin_ext_for_url(url, fallback)
 
-        try:
-            path = urlparse(url).path
-        except Exception:
-            return fallback
-        m = re.search(r"\.([A-Za-z0-9]{1,8})$", path or "")
-        if not m:
-            return fallback
-        return "." + m.group(1).lower()
-
-    async def _download_to_workspace(
-        self,
-        url: str,
-        dest: Path,
-    ) -> bool:
-        """Stream-download ``url`` into ``dest`` using httpx, with size cap.
-
-        Returns True on success, False on any failure (network error, 4xx/5xx,
-        oversize, IO error). Never raises.
-        """
-        if not url:
-            return False
-        try:
-            import httpx
-        except Exception:
-            logger.debug("[OrgRuntime] httpx unavailable, cannot download %s", url)
-            return False
-
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(dest.suffix + ".part")
-        total = 0
-        try:
-            async with (
-                httpx.AsyncClient(
-                    follow_redirects=True,
-                    timeout=self._PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S,
-                ) as client,
-                client.stream("GET", url) as resp,
-            ):
-                if resp.status_code != 200:
-                    logger.info(
-                        "[OrgRuntime] download %s returned HTTP %s",
-                        url, resp.status_code,
-                    )
-                    return False
-                with open(tmp, "wb") as fh:
-                    async for chunk in resp.aiter_bytes():
-                        total += len(chunk)
-                        if total > self._PLUGIN_ASSET_MAX_BYTES:
-                            logger.warning(
-                                "[OrgRuntime] download %s aborted, "
-                                "exceeded %d bytes",
-                                url, self._PLUGIN_ASSET_MAX_BYTES,
-                            )
-                            tmp.unlink(missing_ok=True)
-                            return False
-                        fh.write(chunk)
-            import os as _os
-            _os.replace(str(tmp), str(dest))
-            return dest.exists() and dest.stat().st_size > 0
-        except Exception as exc:
-            logger.info(
-                "[OrgRuntime] download %s failed: %s", url, exc,
-            )
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
-            return False
+    async def _download_to_workspace(self, url: str, dest: Path) -> bool:
+        return await _plugin_download_to_workspace(
+            url, dest,
+            max_bytes=self._PLUGIN_ASSET_MAX_BYTES,
+            timeout_s=self._PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S,
+        )
 
     @staticmethod
     def _copy_to_workspace(src: Path, dest: Path) -> bool:
-        """Hard-link or copy a local file into ``dest``.
-
-        Hard-link first (cheap, atomic on same volume); fall back to copy
-        when hard-linking is not possible (e.g. across volumes on Windows).
-        Returns True on success.
-        """
-        import shutil
-
-        try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if dest.exists():
-                return True
-            try:
-                import os as _os
-                _os.link(str(src), str(dest))
-                return True
-            except OSError:
-                shutil.copy2(str(src), str(dest))
-                return True
-        except Exception as exc:
-            logger.debug(
-                "[OrgRuntime] copy %s -> %s failed: %s", src, dest, exc,
-            )
-            return False
+        return _plugin_copy_to_workspace(src, dest)
 
     async def _record_plugin_asset_output(
         self,
