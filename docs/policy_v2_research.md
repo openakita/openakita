@@ -5079,6 +5079,80 @@ ParamMutationAuditor → ChainedJsonlWriter 集成。
 - C16 audit 在 C17 完成后继续 100% 绿；`test_policy_v2_c10_mutates_audit.py`
   （30 个用例）在 ParamMutationAuditor 迁移后继续全绿。
 
+### C17 二轮 audit 修复（自审 + 子代理 review 暴露的真 bug）
+
+C17 主提交后做了一轮自审 + 4 个独立子代理静态审查，定位了几条真 bug
+并立刻修掉。这次修复偏向"audit 自身正确性 + 加固"，不是新功能：
+
+**P0 真 bug**
+
+- **`/api/readyz` 的 `_check_audit_chain` 探错路径**：C17 主 patch 硬编
+  码 `data/policy/audit.jsonl`，但实际 audit 文件在
+  `data/audit/policy_decisions.jsonl`（`AuditConfig.log_path` 默认）。
+  文件永远不存在 → readyz 永远把 audit_chain 当 OK。修复：改用
+  `get_audit_logger()._path`，跟 writer / verifier 共享同一来源。
+- **tail 全空行也假绿**：文件存在、非零字节，但 tail 全是 `\n\n…`
+  （编辑器截断 / 半写）也曾被当 OK。修复：区分"无内容" vs "tail
+  全空行" vs "可解析的最后一行"，前两种现在都报 fail。
+- **`_reload_last_hash_from_disk` 用 64 KiB 死窗口**：
+  `ParamMutationAuditor` 带大 `before`/`after` 的单行 audit 记录（经
+  `_sanitize_for_chain` 后仍可能上百 KB）超过 64 KiB 时，tail 读不到
+  完整行 → `_last_hash` 不更新 → 下次 append 用 stale prev_hash 写出
+  fork，`verify_chain` 报 mismatch。修复：抽出
+  `_read_last_complete_line` helper，从 64 KiB 起按倍扩窗到 16 MiB；
+  单行超过 16 MiB 才放弃（日志 warn）。`_bootstrap` 和
+  `_reload_last_hash_from_disk` 共享同一份扩窗逻辑。
+- **`OrgEventStore.query` / `get_last_pending` 不持锁**：原版与 `emit`
+  并发可能读到撕裂行（理论上小记录通常原子，但读取竞争窗口存在）。
+  修复：抽 `_read_jsonl_safely(path)`，短暂持 `_lock` 单次读取文件，
+  避免读到 mid-write 的半行。跨进程仍不持 filelock，让长 query 不
+  阻塞 sibling worker 的 emit。
+
+**P1 加固**
+
+- **`OrgEventStore.clear()` 删了 `.write.lock`**：之前
+  `shutil.rmtree(events_dir)` 把跨进程协调锁也一并删了，sibling
+  worker 的 filelock 句柄变成"指向已删除 inode"，再 release 时
+  pathological 情况下两 emit 可能 re-enter。修复：clear 改为遍历
+  `events_dir.iterdir()` 显式跳过 `.write.lock`，只删 `*.jsonl` 和子目
+  录。
+- **`_sanitize_for_chain` 对 set/frozenset 走原始迭代顺序**：同一逻辑
+  set 不同插入顺序 → 序列化结果不同 → row_hash 跨进程不一致。修复：
+  对 set/frozenset 按 `repr(_sanitize_for_chain(x))` 排序后再输出；
+  异构 set（`{str, int, tuple}`）也不会因 `sorted` 类型比较失败而
+  crash，fallback 走 insertion order + 单次发射内一致即可。
+- **`evolution_window` / `system_tasks` 的 `except OSError` 不 fallback
+  到 raw append**：filelock timeout 时 `audit_chain.append` 抛
+  `OSError`，老分支只 warn 不 retry，audit 记录被静默丢弃（违反
+  "losing an audit line is preferable to crashing"）。修复：合并
+  `OSError` 与 `Exception` 分支，任何 chain 写失败都 fall through 到
+  raw `open(..., "a")` 兜底。
+- **`/api/readyz` 的 `_check_event_loop_lag` 跟其它 check 并发**：lag
+  在 `asyncio.gather` 里跟 audit/policy I/O check 并发跑，gather 自身
+  调度耗时被算进 lag → 假阳性。修复：gather 只跑 I/O check，lag 单独
+  在 gather 之后顺序跑，测的是 "其它工作完成后" 静态 lag。
+- **ChatView 同 `id:` 后多 `data:` 行 dedup 失效**：SSE spec 允许同
+  `id` 下多个 `data:` 行；老前端在第一条 data 处理后立即 `pendingSeq =
+  0`，第二条 data 跳过 dedup。修复：`pendingSeq` 只在空行（SSE 帧分
+  隔符）或下一条 `id:` 行被覆盖时清零，"同 id 重复 data" 的 replay 也
+  能被正确 drop。
+
+**文档**：`audit_chain.py` 顶部 docstring 删除了过时的
+"ParamMutationAuditor 未迁移"句子（C17 主 patch 已经迁移），并补充
+"C17 二轮 audit tail-window 修复"小节解释 16 MiB 扩窗设计。
+
+**新增单测**：[`tests/unit/test_c17_second_pass_audit.py`](file:tests/unit/test_c17_second_pass_audit.py) 14 个用例，每条都
+对应上面一条 bug：
+- readyz 探路径 / corrupt tail / blank-only tail / 禁用 / 文件缺失（5）
+- 200 KiB 单行 reload + 超过 cap 时显式拒绝（2）
+- 4 writer × 1 reader 撕裂行压测 + clear 保留 lockfile（2）
+- set/frozenset/heterogeneous 排序确定性（3）
+- evolution_window OSError fallback 实测（1）
+- readyz lag 隔离测量（slow audit check 不污染 lag）（1）
+
+C17 二轮修复总计：6 个源文件 + 1 个新测试文件，14 个新测试全绿，C17
+主 patch 的 94 个测试 + C10/C15/C16 共 107 个回归测试继续全绿。
+
 ### 已知 follow-up（推到 C18）
 
 - **POLICIES.yaml hot-reload**：C16 LKG 已就位，watchdog/inotify trigger

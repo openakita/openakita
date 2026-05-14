@@ -80,12 +80,43 @@ class OrgEventStore:
         )
 
     def clear(self) -> None:
-        """Remove all event files (used during org reset)."""
+        """Remove all event files (used during org reset).
+
+        C17 二轮: previously ``shutil.rmtree(self._events_dir)`` also wiped
+        ``.write.lock``, which any sibling worker process was holding for
+        cross-process serialization. After the dir was recreated, the
+        sibling's open file handle pointed at a deleted (or stale) inode
+        and its next ``release()`` raced with whoever recreated the file —
+        in pathological cases two writers could re-enter emit on the same
+        day_file. Now we delete individual ``*.jsonl`` files instead and
+        leave the lockfile intact.
+        """
         import shutil
-        for d in (self._events_dir, self._logs_dir):
-            if d.exists():
-                shutil.rmtree(d, ignore_errors=True)
-                d.mkdir(parents=True, exist_ok=True)
+
+        # Logs dir has no lockfile concern; safe to rmtree.
+        if self._logs_dir.exists():
+            shutil.rmtree(self._logs_dir, ignore_errors=True)
+        self._logs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Events dir: keep the .write.lock and other dotfiles, only blow
+        # away the actual jsonl payload files.
+        if self._events_dir.exists():
+            for child in self._events_dir.iterdir():
+                if child.name == ".write.lock":
+                    continue
+                try:
+                    if child.is_dir():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.warning(
+                        "[EventStore] clear() failed to remove %s: %s",
+                        child,
+                        exc,
+                    )
+        else:
+            self._events_dir.mkdir(parents=True, exist_ok=True)
 
     def emit(
         self,
@@ -144,6 +175,22 @@ class OrgEventStore:
 
         return event
 
+    def _read_jsonl_safely(self, path: Path) -> list[str]:
+        """Read a JSONL day file under ``self._lock`` so we don't see a
+        torn line if another thread is mid-``emit``.
+
+        We acquire only the *in-process* lock, not the filelock — a long
+        query shouldn't block sibling worker processes from writing. Tiny
+        appends (<PIPE_BUF / SafeFileWrite on Windows) are effectively
+        atomic on the OS level, so cross-process torn reads are
+        vanishingly rare for our event sizes (a few hundred bytes).
+        """
+        with self._lock:
+            try:
+                return path.read_text(encoding="utf-8").strip().split("\n")
+            except OSError:
+                return []
+
     def query(
         self,
         event_type: str | None = None,
@@ -171,8 +218,8 @@ class OrgEventStore:
                 if day > until.replace("-", "")[:8]:
                     continue
 
+            lines = self._read_jsonl_safely(f)
             try:
-                lines = f.read_text(encoding="utf-8").strip().split("\n")
                 for line in reversed(lines):
                     if not line.strip():
                         continue
@@ -196,7 +243,7 @@ class OrgEventStore:
                     if len(results) >= limit:
                         return results
             except Exception as e:
-                logger.warning(f"[EventStore] Failed to read {f}: {e}")
+                logger.warning(f"[EventStore] Failed to parse {f}: {e}")
 
         return results
 
@@ -204,8 +251,8 @@ class OrgEventStore:
         """Find the last pending/in-progress event for a node (for restart recovery)."""
         files = sorted(self._events_dir.glob("*.jsonl"), reverse=True)
         for f in files[:3]:
+            lines = self._read_jsonl_safely(f)
             try:
-                lines = f.read_text(encoding="utf-8").strip().split("\n")
                 for line in reversed(lines):
                     if not line.strip():
                         continue

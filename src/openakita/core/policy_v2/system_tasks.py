@@ -592,25 +592,25 @@ def _append_audit(audit_path: Path, record: dict[str, Any]) -> None:
     the bypass path. On chain-write error we fall back to raw append
     (defensive: do not lose evidence if the chain writer itself blows up).
     """
+    chain_exc: Exception | None = None
     try:
         from .audit_chain import get_writer
 
         get_writer(audit_path).append(record)
         return
-    except OSError as exc:
-        logger.warning(
-            "[C15 system_tasks] failed to append audit %s: %s",
-            audit_path,
-            exc,
-        )
-        return
     except Exception as exc:  # noqa: BLE001 — best-effort audit append
-        logger.warning(
-            "[C16 system_tasks] chain append failed for %s: %s; "
-            "falling back to raw append.",
-            audit_path,
-            exc,
-        )
+        # C17 二轮: same fix as evolution_window. OSError (filelock
+        # timeout, disk full, etc.) used to short-circuit without trying
+        # the raw fallback, defeating the "never lose audit lines"
+        # guarantee. Now every failure falls through to raw append.
+        chain_exc = exc
+
+    logger.warning(
+        "[C16 system_tasks] chain append failed for %s: %s; "
+        "falling back to raw append.",
+        audit_path,
+        chain_exc,
+    )
     try:
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         with audit_path.open("a", encoding="utf-8") as f:

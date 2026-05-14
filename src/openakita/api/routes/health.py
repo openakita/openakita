@@ -298,31 +298,62 @@ async def _check_policy_engine() -> dict[str, Any] | None:
 async def _check_audit_chain() -> dict[str, Any] | None:
     """Verify the security audit chain head is not corrupt.
 
-    We *do not* verify the entire chain on every probe (that walks the
-    full JSONL — too slow at scale). Instead we read the last line and
-    check it's a parseable record. Full ``verify_chain`` runs only on
-    explicit ``/api/config/security/audit?verify=full``.
+    We *do not* verify the entire chain on every probe (full ``verify_chain``
+    walks the entire JSONL — too slow at scale). Instead we read the tail
+    and require the bottom-most non-blank line to be parseable JSON. Full
+    verification runs only on explicit
+    ``/api/config/security/audit?verify=full``.
+
+    The path resolves through :func:`get_audit_logger` so probe + writer
+    + verifier share the same source of truth. (C17 二轮 audit 修复)
+
+    Earlier C17 hardcoded ``data/policy/audit.jsonl`` which never matched
+    the actual ``AuditConfig.log_path`` default (``data/audit/
+    policy_decisions.jsonl``) — the probe was reading a never-written file
+    and silently degrading to "OK". A vanilla install would report
+    ``audit_chain`` healthy even after the real chain file was deleted or
+    corrupted. We now use the same path the writer uses.
+
+    A second silent-OK trap is "file exists with non-zero size but the tail
+    window is all blank lines / whitespace"; this happens if the file was
+    truncated by an external editor or a half-written write. We now flag
+    those cases instead of returning None.
     """
     try:
-        from openakita.config import settings
+        from openakita.core.audit_logger import get_audit_logger
 
-        path = Path(getattr(settings, "data_dir", "data")) / "policy" / "audit.jsonl"
+        logger_inst = get_audit_logger()
+        if not getattr(logger_inst, "_enabled", True):
+            # Operator turned audit off on purpose — that's not a 503 case.
+            return None
+        path = Path(getattr(logger_inst, "_path", "") or "")
+        if not path or str(path) == ".":
+            return {"name": "audit_chain", "details": "audit_logger path unresolved"}
         if not path.exists():
             return None  # Fresh install — no audit yet, that's fine.
-        # Tail check only.
+
+        size = path.stat().st_size
+        if size == 0:
+            return None  # File created but no entries yet.
+
+        # Tail check: read last 8KB and try the bottom-most parseable line.
+        tail_window = min(size, 8192)
         with path.open("rb") as f:
-            try:
-                f.seek(-4096, 2)
-            except OSError:
-                f.seek(0)
+            f.seek(size - tail_window)
             tail = f.read().decode("utf-8", errors="replace").splitlines()
+        saw_content = False
         for line in reversed(tail):
             line = line.strip()
             if not line:
                 continue
+            saw_content = True
             json.loads(line)  # raises on corrupt tail
             return None
-        return None
+        if saw_content:
+            # tail had bytes but none survived strip — usually wiped file.
+            return {"name": "audit_chain", "details": "tail contains only blank lines"}
+        # No content in the tail window for a non-empty file.
+        return {"name": "audit_chain", "details": "tail window empty despite non-zero size"}
     except Exception as exc:  # noqa: BLE001
         return {"name": "audit_chain", "details": f"{type(exc).__name__}: {exc}"[:200]}
 
@@ -378,12 +409,18 @@ async def _compute_readiness(request: Request) -> dict[str, Any]:
     """Run every readiness check; return ``{ready, failing, ts}``.
 
     Each check returns ``None`` (ok) or ``{name, details}`` (failing).
+
+    NOTE: ``_check_event_loop_lag`` is intentionally *not* in the gather.
+    Lag measurement makes sense only when the loop is otherwise idle —
+    bundling it with the I/O checks (audit tail-read, policy engine
+    introspection) would let those checks' own scheduling cost show up
+    as "lag", producing false alarms under normal load. We run it after
+    everything else and treat its result as best-effort. (C17 二轮)
     """
     failing: list[dict[str, Any]] = []
     results = await asyncio.gather(
         _check_policy_engine(),
         _check_audit_chain(),
-        _check_event_loop_lag(),
         return_exceptions=True,
     )
     for r in results:
@@ -395,6 +432,10 @@ async def _compute_readiness(request: Request) -> dict[str, Any]:
     for sync_check in (_check_scheduler(request), _check_gateway(request)):
         if sync_check is not None:
             failing.append(sync_check)
+    # Event-loop lag runs last and standalone for a clean measurement.
+    lag_result = await _check_event_loop_lag()
+    if lag_result is not None:
+        failing.append(lag_result)
     return {
         "ready": not failing,
         "failing": failing,

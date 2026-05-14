@@ -129,13 +129,33 @@ def _sanitize_for_chain(value: Any, *, depth: int = 0) -> Any:
                 key = f"<unhashable-key {type(k).__name__}>"
             out[key] = _sanitize_for_chain(v, depth=depth + 1)
         return out
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(value, (list, tuple)):
         items = list(value)
         if len(items) > _SANITIZE_MAX_LIST_LEN:
             items = items[:_SANITIZE_MAX_LIST_LEN] + [
                 f"<truncated {len(items)} items>"
             ]
         return [_sanitize_for_chain(v, depth=depth + 1) for v in items]
+    if isinstance(value, (set, frozenset)):
+        # C17 二轮: set ordering is iteration-order-dependent on most Python
+        # versions; same set built differently produces different orders.
+        # That breaks deterministic hashing (``row_hash`` over the same
+        # logical set would differ across processes). Sort the *sanitized*
+        # repr of each element so heterogeneous-typed sets still have a
+        # total order, then sanitize once more on the canonical sequence.
+        try:
+            ordered = sorted(value, key=lambda x: repr(_sanitize_for_chain(x, depth=depth + 1)))
+        except Exception:
+            # Defensive: if any element refuses repr, fall back to
+            # insertion order; the audit row is still consistent within
+            # its own emit. (Cross-emit determinism is the goal; an
+            # element that can't be repr'd is already too weird to chase.)
+            ordered = list(value)
+        if len(ordered) > _SANITIZE_MAX_LIST_LEN:
+            ordered = ordered[:_SANITIZE_MAX_LIST_LEN] + [
+                f"<truncated {len(ordered)} items>"
+            ]
+        return [_sanitize_for_chain(v, depth=depth + 1) for v in ordered]
     if isinstance(value, BaseException):
         return f"<{type(value).__name__}: {value}>"
     # Last-resort stringify so the chain stays consistent rather than

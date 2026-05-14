@@ -2633,8 +2633,19 @@ export function ChatView({
         // ``id`` 是空字符串 → 重置上次 lastEventId，但我们用 0 表示
         // "本帧没 id"。如果同一 buffer 行里只看到 data 没看到前置 id，
         // ``pendingSeq=0`` 让 dedup 走 no-op（向后兼容老服务端无 id 帧）。
+        //
+        // C17 二轮：``pendingSeq`` 现在只在两种边界清零：
+        //   1. 空行（SSE 帧分隔符 ``\n\n``）
+        //   2. 下一条 ``id:`` 行覆盖
+        // 之前在 ``rememberSeq`` / hasSeenSeq 命中后立即清零会让 SSE 规范
+        // 允许的 "同 id 多 data 行" 跳过 dedup（虽然后端目前 1:1，但代理 /
+        // IM 网关转发可能合并），保守起见保留 pendingSeq 直到帧结束。
         let pendingSeq = 0;
         for (const line of lines) {
+          if (line === "") {
+            pendingSeq = 0; // SSE frame separator
+            continue;
+          }
           if (line.startsWith("id: ")) {
             const v = Number.parseInt(line.slice(4).trim(), 10);
             pendingSeq = Number.isFinite(v) && v > 0 ? v : 0;
@@ -2645,8 +2656,9 @@ export function ChatView({
           if (data === "[DONE]") continue;
 
           // Dedup before parsing: if we already processed this seq, skip.
+          // Keep ``pendingSeq`` non-zero so subsequent data: lines under
+          // the same id (replay duplicates) are also dropped.
           if (pendingSeq > 0 && thisConvId && hasSeenSeq(thisConvId, pendingSeq)) {
-            pendingSeq = 0;
             continue;
           }
           try {
@@ -2654,7 +2666,7 @@ export function ChatView({
             sseParseFailures = 0;
             if (pendingSeq > 0 && thisConvId) {
               rememberSeq(thisConvId, pendingSeq);
-              pendingSeq = 0;
+              // intentionally NOT zeroing pendingSeq: see C17 二轮 above.
             }
 
             switch (event.type) {

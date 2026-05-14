@@ -302,38 +302,42 @@ def record_decision(
         record.setdefault("window_reason", win.reason)
         if win.extra:
             record.setdefault("window_extra", dict(win.extra))
+    chain_exc: Exception | None = None
     try:
         from .audit_chain import get_writer
 
         get_writer(audit_path).append(record)
-    except OSError as exc:
-        logger.warning(
-            "[C15 evolution_window] failed to append evolution audit "
-            "%s for fix_id=%s: %s",
-            audit_path,
-            fix_id,
-            exc,
-        )
+        return
     except Exception as exc:  # noqa: BLE001 — best-effort audit append
+        # C17 二轮: previously ``OSError`` (which includes filelock
+        # timeouts) short-circuited to a bare warning without ever
+        # attempting the raw fallback — so under sustained cross-process
+        # contention an audit record was silently dropped. We now treat
+        # every failure (OSError, Timeout, schema/serialization, etc.)
+        # the same: log it, then try a raw append so the operator at
+        # least keeps the event on disk (chain consistency is sacrificed
+        # in this corner, which is the documented trade-off).
+        chain_exc = exc
+
+    logger.warning(
+        "[C16 evolution_window] chain append failed for %s fix_id=%s: %s; "
+        "falling back to raw append.",
+        audit_path,
+        fix_id,
+        chain_exc,
+    )
+    try:
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with audit_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as fallback_exc:
         logger.warning(
-            "[C16 evolution_window] chain append failed for %s fix_id=%s: %s; "
-            "falling back to raw append.",
+            "[C15 evolution_window] fallback raw append also failed for "
+            "%s fix_id=%s: %s",
             audit_path,
             fix_id,
-            exc,
+            fallback_exc,
         )
-        try:
-            audit_path.parent.mkdir(parents=True, exist_ok=True)
-            with audit_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError as fallback_exc:
-            logger.warning(
-                "[C15 evolution_window] fallback raw append also failed for "
-                "%s fix_id=%s: %s",
-                audit_path,
-                fix_id,
-                fallback_exc,
-            )
 
 
 def default_audit_path(workspace: Path) -> Path:

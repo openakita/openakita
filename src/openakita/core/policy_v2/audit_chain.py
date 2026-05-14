@@ -36,15 +36,28 @@ Design constraints
   appending so the audit never stops collecting evidence, but the
   verifier surfaces "this file is no longer trustworthy".
 
+C17 二轮 audit tail-window 修复
+-------------------------------
+
+The original C17 code used a fixed 64 KB tail window for both
+``_bootstrap`` and ``_reload_last_hash_from_disk``. If a single audit row
+exceeds that (realistic for ``ParamMutationAuditor`` writes carrying
+large ``before``/``after`` payloads, even after ``_sanitize_for_chain``
+truncates strings), the tail read would land in the middle of a row and
+:func:`_reload_last_hash_from_disk` would silently fail to update
+``_last_hash`` — meaning the *next* append would chain off a stale hash
+and produce a verify_chain mismatch. We now scan backwards in doubling
+chunks via :func:`_read_last_complete_line` up to a 16 MiB hard cap, so
+any reasonable single record is recoverable while pathological lines
+(>16 MiB) degrade explicitly rather than corrupting the chain.
+
 Out of scope (explicit follow-ups, not bugs)
 ---------------------------------------------
 
-* ``ParamMutationAuditor`` keeps its bespoke schema and ``threading.Lock``
-  in C16; migrating it to ``ChainedJsonlWriter`` would force a richer
-  record-shape policy and is deferred.
 * Cross-file rotation (e.g. ``audit-2026-05-13.jsonl`` → next day) doesn't
-  exist yet; when C17 adds it, the chain head will need to embed the
-  tail hash of the previous file.
+  exist yet; when added, the chain head will need to embed the tail hash
+  of the previous file. ``ParamMutationAuditor`` (C17 Phase E.2) now uses
+  the same ``ChainedJsonlWriter`` infrastructure as the policy audit.
 """
 
 from __future__ import annotations
@@ -84,6 +97,78 @@ _FILELOCK_TIMEOUT_SECONDS: float = 5.0
 
 _WRITERS: dict[Path, ChainedJsonlWriter] = {}
 _WRITERS_LOCK = threading.Lock()
+
+# C17 二轮: how far we'll grow the tail-read window when searching for the
+# last newline-terminated line. 16 MiB is enough room for very large
+# ParamMutationAuditor ``before/after`` payloads (each capped to ~4 MiB by
+# ``_sanitize_for_chain``) plus chain overhead, while still bounding RAM.
+_MAX_TAIL_BYTES: int = 16 * 1024 * 1024
+_INITIAL_TAIL_WINDOW: int = 65536
+
+
+def _read_last_complete_line(path: Path) -> bytes | None:
+    """Return the bytes of the last newline-terminated line in ``path``.
+
+    Scans backwards in doubling chunks (starting at 64 KiB, capping at
+    :data:`_MAX_TAIL_BYTES`) until we have seen at least one complete
+    final line. Returns ``None`` if:
+
+    * The file is missing, empty, or unreadable.
+    * The trailing line exceeds :data:`_MAX_TAIL_BYTES` (logged as warning).
+    * The entire file is a single partial line (no newlines).
+
+    A "complete final line" is detected when either:
+
+    * The whole file fits inside ``window`` (so the first byte is at
+      offset 0), or
+    * The buffer contains ≥ 2 newlines (the last newline terminates the
+      target line; the prior newline guarantees that line started inside
+      the window, not before it).
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size == 0:
+        return None
+
+    window = min(size, _INITIAL_TAIL_WINDOW)
+    while True:
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(size - window)
+                buf = fh.read(window)
+        except OSError:
+            return None
+
+        # Trim partial trailing bytes (e.g. mid-write crash on another
+        # process). We do NOT mutate the file here; ``_bootstrap`` owns
+        # that decision for our own writer.
+        if not buf.endswith(b"\n"):
+            last_nl = buf.rfind(b"\n")
+            if last_nl < 0:
+                if window >= size:
+                    return None  # whole file is one partial line
+                # fall through to expand window
+            else:
+                buf = buf[: last_nl + 1]
+
+        # If we've fully covered the file, the bottom line is complete.
+        # Otherwise we need ≥ 2 newlines to guarantee the trailing line
+        # started inside our window.
+        if window >= size or buf.count(b"\n") >= 2:
+            stripped = buf.rstrip(b"\n").rsplit(b"\n", 1)
+            return stripped[-1] if stripped and stripped[-1] else None
+
+        if window >= _MAX_TAIL_BYTES:
+            logger.warning(
+                "[audit_chain] %s last line exceeds %d bytes; "
+                "cannot recover row_hash safely",
+                path,
+                _MAX_TAIL_BYTES,
+            )
+            return None
+        window = min(window * 2, size)
 
 
 def _canonical_dumps(record: dict[str, Any]) -> str:
@@ -173,30 +258,31 @@ class ChainedJsonlWriter:
         if size == 0:
             return
 
-        # Read only the last ~64 KB to recover the trailing line — avoids
-        # whole-file reads on giant audit logs.
-        tail_window = min(size, 65536)
-        with open(self.path, "rb") as fh:
-            fh.seek(size - tail_window)
-            tail_bytes = fh.read()
-
-        # Detect mid-write crash: file does not end in newline.
-        ends_clean = tail_bytes.endswith(b"\n")
+        # Crash-recovery preamble: if the file does NOT end in a newline,
+        # the last bytes are a partial write from a previous crash. We
+        # need to truncate them so subsequent appends produce a clean
+        # chain. We do this by reading only the bytes after the last
+        # newline (small read, regardless of file size).
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(max(0, size - _INITIAL_TAIL_WINDOW))
+                tail_probe = fh.read()
+        except OSError:
+            return
+        ends_clean = tail_probe.endswith(b"\n")
         if not ends_clean:
-            # Find the previous newline; bytes after it are partial garbage.
-            last_nl = tail_bytes.rfind(b"\n")
+            last_nl = tail_probe.rfind(b"\n")
             if last_nl < 0:
-                # The whole file is one partial line — refuse to truncate
-                # silently (could be a tiny legitimate single-line file
-                # missing trailing \n). Just bootstrap from GENESIS.
+                # Either the whole file is one partial line, or the
+                # partial bytes overflow our 64 KiB probe. Either way
+                # refuse to truncate silently. Bootstrap from GENESIS.
                 logger.warning(
-                    "[audit_chain] %s has no newline terminator; "
-                    "bootstrapping from GENESIS without truncating.",
+                    "[audit_chain] %s has no newline terminator within tail "
+                    "probe; bootstrapping from GENESIS without truncating.",
                     self.path,
                 )
                 return
-            # Truncate the partial trailing bytes.
-            keep_until = size - (len(tail_bytes) - last_nl - 1)
+            keep_until = size - (len(tail_probe) - last_nl - 1)
             try:
                 with open(self.path, "ab") as fh:
                     fh.truncate(keep_until)
@@ -206,7 +292,6 @@ class ChainedJsonlWriter:
                     "recovery); truncated to last full line.",
                     self.path,
                 )
-                tail_bytes = tail_bytes[: last_nl + 1]
             except OSError as exc:
                 logger.error(
                     "[audit_chain] Failed to truncate partial tail on %s: %s",
@@ -215,12 +300,15 @@ class ChainedJsonlWriter:
                 )
                 return
 
-        # Find the last full line and try to extract row_hash.
-        lines = tail_bytes.rstrip(b"\n").split(b"\n")
-        if not lines or not lines[-1]:
+        # Now scan back (with auto-expand) for the last complete line and
+        # try to extract row_hash. (C17 二轮: was a fixed 64 KiB read; now
+        # ``_read_last_complete_line`` doubles its window up to 16 MiB so
+        # huge ParamMutationAuditor rows don't break bootstrap.)
+        last_line = _read_last_complete_line(self.path)
+        if last_line is None:
             return
         try:
-            last_obj = json.loads(lines[-1].decode("utf-8"))
+            last_obj = json.loads(last_line.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             logger.warning(
                 "[audit_chain] %s last line is not valid JSON; "
@@ -230,7 +318,7 @@ class ChainedJsonlWriter:
             return
         if isinstance(last_obj, dict) and isinstance(last_obj.get("row_hash"), str):
             self._last_hash = last_obj["row_hash"]
-        # else: legacy file (no row_hash) → keep GENESIS, the first chained
+        # else: legacy file (no row_hash) → keep GENESIS; the first chained
         # append starts a new sub-chain after the legacy prefix.
 
     # ------------------------------------------------------------------
@@ -247,6 +335,13 @@ class ChainedJsonlWriter:
         second one as a prev_hash mismatch. By re-reading inside the
         filelock we always chain off the latest committed tail, whichever
         process wrote it.
+
+        Uses :func:`_read_last_complete_line` (C17 二轮): the tail window
+        auto-grows up to :data:`_MAX_TAIL_BYTES` so a single audit record
+        larger than 64 KiB (e.g. a ParamMutationAuditor entry with a big
+        ``before``/``after`` blob) still yields the correct prior row_hash
+        instead of silently leaving ``_last_hash`` stale and producing a
+        chain fork on the next append.
         """
         if not self.path.exists():
             self._last_hash = GENESIS_HASH
@@ -258,26 +353,11 @@ class ChainedJsonlWriter:
         if size == 0:
             self._last_hash = GENESIS_HASH
             return
-        tail_window = min(size, 65536)
-        try:
-            with open(self.path, "rb") as fh:
-                fh.seek(size - tail_window)
-                tail = fh.read()
-        except OSError:
-            return
-        if not tail.endswith(b"\n"):
-            # A foreign torn write — caller bootstrap repaired its own
-            # process at init time; we don't try to truncate someone
-            # else's bytes here.
-            last_nl = tail.rfind(b"\n")
-            if last_nl < 0:
-                return
-            tail = tail[: last_nl + 1]
-        lines = tail.rstrip(b"\n").split(b"\n")
-        if not lines or not lines[-1]:
+        last_line = _read_last_complete_line(self.path)
+        if last_line is None:
             return
         try:
-            obj = json.loads(lines[-1].decode("utf-8"))
+            obj = json.loads(last_line.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             return
         if isinstance(obj, dict) and isinstance(obj.get("row_hash"), str):
