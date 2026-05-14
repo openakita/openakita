@@ -1,8 +1,14 @@
 """C9c SSE coverage: tool_intent_preview + policy_config_reload[ed|_failed].
 
-These tests inject a fake ``broadcast_event`` into the websocket module and
-assert the wiring fires the expected events with the expected payload shape.
-We never actually start the FastAPI server.
+These tests inject a fake ``ConnectionManager.broadcast`` into the
+websocket module and assert the wiring fires the expected events with
+the expected payload shape. We never actually start the FastAPI server.
+
+Patching ``manager.broadcast`` (the actual sink) instead of the
+``broadcast_event`` wrapper lets us assert the events that BOTH the
+``fire_event`` (sync, fire-and-forget) path AND the ``broadcast_event``
+(async, awaitable) path deliver — they both terminate in
+``manager.broadcast``.
 """
 
 from __future__ import annotations
@@ -14,19 +20,21 @@ import pytest
 
 @pytest.fixture
 def captured_events(monkeypatch):
-    """Capture all SSE broadcasts into a list for assertion.
+    """Capture all SSE broadcasts at the ConnectionManager sink.
 
-    Patches ``openakita.api.routes.websocket.broadcast_event`` directly so
-    every caller (tool_executor, global_engine, etc.) sees the fake.
+    Both ``fire_event`` (sync helper) and ``broadcast_event`` (async
+    wrapper) terminate in ``manager.broadcast(event, data)``. Patching
+    that method ensures we see events from any caller path without
+    needing to know which entry point each emitter uses.
     """
     events: list[tuple[str, dict]] = []
 
-    async def fake_broadcast(evt: str, data) -> None:
+    async def fake_broadcast(self, evt: str, data=None) -> None:
         events.append((evt, data))
 
     import openakita.api.routes.websocket as ws
 
-    monkeypatch.setattr(ws, "broadcast_event", fake_broadcast)
+    monkeypatch.setattr(ws.ConnectionManager, "broadcast", fake_broadcast)
     return events
 
 

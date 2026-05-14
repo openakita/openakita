@@ -1478,9 +1478,23 @@ class ToolExecutor:
         Schema:
             { event: "tool_intent_preview", data: {
                 tool_use_id, tool_name, params (sanitized),
-                approval_class (predicted, may be UNKNOWN),
-                session_id, batch_size, batch_idx, ts
+                approval_class (predicted via the same registry the
+                production engine uses; "unknown" for tools without an
+                explicit declaration), session_id, batch_size, batch_idx,
+                ts
             }}
+
+        ApprovalClass source: ``default_handler_registry.get_tool_class``
+        — the exact same lookup that ``policy_v2.global_engine`` plumbs
+        into the production ``ApprovalClassifier``'s ``explicit_lookup``.
+        Using this lookup directly (instead of building a fresh
+        ``ApprovalClassifier()`` per batch) keeps the preview honest
+        with the actual decision the engine will produce later in the
+        same call, AND skips the per-batch classifier construction +
+        LRU cache that ``ApprovalClassifier()`` allocates internally.
+        Tools that route through skills / MCP / plugin lookups still
+        show "unknown" in the preview — that's accurate; the production
+        engine will resolve them too, but only at decision time.
 
         Failure-mode: any exception is swallowed at DEBUG level; the SSE
         bridge is best-effort and must never block tool execution.
@@ -1489,18 +1503,17 @@ class ToolExecutor:
             return
 
         try:
-            from ..api.routes.websocket import broadcast_event
+            from ..api.routes.websocket import fire_event
         except Exception as exc:  # noqa: BLE001
             logger.debug("[ToolExec] tool_intent_preview skipped (no WS): %s", exc)
             return
 
+        # Same registry the engine uses (handlers/__init__.py).
         try:
-            from .policy_v2.classifier import ApprovalClassifier
-
-            classifier: ApprovalClassifier | None = ApprovalClassifier()
+            from ..tools.handlers import default_handler_registry as _registry
         except Exception as exc:  # noqa: BLE001
-            logger.debug("[ToolExec] ApprovalClassifier unavailable: %s", exc)
-            classifier = None
+            logger.debug("[ToolExec] handler registry unavailable: %s", exc)
+            _registry = None
 
         ts = time.time()
         total = len(tool_calls)
@@ -1510,15 +1523,17 @@ class ToolExecutor:
                 tool_input = tc.get("input", tc.get("arguments", {})) or {}
                 tool_use_id = tc.get("id", "")
                 approval_class_str = "unknown"
-                if classifier is not None:
+                if _registry is not None:
                     try:
-                        ac = classifier.classify(tool_name)
-                        approval_class_str = (
-                            ac.value if hasattr(ac, "value") else str(ac)
-                        )
+                        ac = _registry.get_tool_class(tool_name)
+                        if ac is not None:
+                            approval_class_str = (
+                                ac.value if hasattr(ac, "value") else str(ac)
+                            )
                     except Exception:
-                        # classifier may fail for unregistered/dynamic tools;
-                        # leave as "unknown" — UI handles that gracefully.
+                        # Unknown / dynamic tool → preview just says "unknown".
+                        # UI renders that with a neutral badge; engine still
+                        # makes the real call at decision time.
                         approval_class_str = "unknown"
 
                 payload = {
@@ -1531,32 +1546,7 @@ class ToolExecutor:
                     "batch_idx": idx,
                     "ts": ts,
                 }
-                # Fire-and-forget; broadcast_event is cross-loop safe.
-                # Build coroutine lazily + close on no-loop to avoid
-                # "coroutine was never awaited" warnings in CLI/test paths.
-                try:
-                    asyncio.get_running_loop()
-                except RuntimeError:
-                    logger.debug(
-                        "[ToolExec] tool_intent_preview no loop for %s",
-                        tool_name,
-                    )
-                    continue
-                _coro = None
-                try:
-                    _coro = broadcast_event("tool_intent_preview", payload)
-                    asyncio.ensure_future(_coro)
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug(
-                        "[ToolExec] tool_intent_preview emit failed for %s: %s",
-                        tool_name,
-                        exc,
-                    )
-                    if _coro is not None:
-                        try:
-                            _coro.close()
-                        except Exception:  # noqa: BLE001
-                            pass
+                fire_event("tool_intent_preview", payload)
             except Exception as exc:  # noqa: BLE001
                 logger.debug(
                     "[ToolExec] tool_intent_preview emit failed for %r: %s",

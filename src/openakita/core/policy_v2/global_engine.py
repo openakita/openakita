@@ -336,14 +336,14 @@ def reset_policy_v2_layer(scope: str = "all") -> None:
 def _emit_reload_event(*, scope: str, error: Exception | None) -> None:
     """Best-effort SSE emit for policy_config_reloaded[_failed].
 
-    Never blocks, never raises. WS module is imported lazily so non-API
-    contexts (CLI, tests, server-less import) don't hard-fail at import.
+    Never blocks, never raises. Routes through ``fire_event`` so the
+    no-loop / cross-loop / failure cases are all handled in one place
+    (see ``api/routes/websocket.py``).
     """
-    try:
-        import asyncio as _asyncio
-        import time as _time
+    import time as _time
 
-        from ...api.routes.websocket import broadcast_event
+    try:
+        from ...api.routes.websocket import fire_event
     except Exception as exc:  # noqa: BLE001
         logger.debug("[PolicyV2] reload SSE skipped (no WS): %s", exc)
         return
@@ -356,29 +356,7 @@ def _emit_reload_event(*, scope: str, error: Exception | None) -> None:
     if error is not None:
         payload["error"] = f"{type(error).__name__}: {error}"
 
-    # Build the coroutine lazily so we can close it cleanly when there is
-    # no running loop (avoids "coroutine was never awaited" RuntimeWarning
-    # in CLI/test paths where reset_policy_v2_layer runs outside an event
-    # loop).
-    coro = None
-    try:
-        _asyncio.get_running_loop()
-    except RuntimeError:
-        logger.debug(
-            "[PolicyV2] reload SSE skipped (no running loop) scope=%s", scope
-        )
-        return
-
-    try:
-        coro = broadcast_event(event, payload)
-        _asyncio.ensure_future(coro)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("[PolicyV2] reload SSE emit failed: %s", exc)
-        if coro is not None:
-            try:
-                coro.close()
-            except Exception:  # noqa: BLE001
-                pass
+    fire_event(event, payload)
 
 
 def make_preview_engine(

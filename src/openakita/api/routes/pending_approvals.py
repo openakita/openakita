@@ -138,13 +138,16 @@ async def resolve_pending(
     entry = store.get(pending_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"pending_id {pending_id!r} not found")
-    if not entry.is_active():
-        # Idempotent: already resolved/expired — return current state.
-        return JSONResponse(
-            {"status": "already_resolved", "entry": entry.to_dict()},
-            status_code=200,
-        )
+    was_active = entry.is_active()
 
+    # ``store.resolve`` is idempotent: if status is already non-pending
+    # it returns the existing entry untouched. We *always* call it and
+    # then route follow-up by the ACTUAL final state (``updated.resolution``),
+    # not by our request body. This closes the concurrent-resolve race:
+    # two POSTs with different decisions both see is_active() == True,
+    # but only the first actor wins inside store.resolve(); the second
+    # sees the winner's resolution and routes follow-up consistently
+    # (no double resume/fail on the same task).
     updated = store.resolve(
         pending_id,
         decision=body.decision,
@@ -152,12 +155,24 @@ async def resolve_pending(
         note=body.note,
     )
     if updated is None:
-        # Race: entry vanished between get() and resolve(). Surface as 409.
         raise HTTPException(status_code=409, detail="entry vanished mid-resolve")
+
+    # Detect "we lost the race" — the entry was already resolved by
+    # somebody else (or was already non-active when we entered). Return
+    # the AUTHORITATIVE state and do NOT trigger follow-up (the original
+    # actor's request handler already did).
+    if not was_active:
+        return JSONResponse(
+            {
+                "status": "already_resolved",
+                "entry": updated.to_dict(),
+                "follow_up": {"task_resumed": False, "task_failed": False},
+            },
+            status_code=200,
+        )
 
     follow_up: dict[str, Any] = {"task_resumed": False, "task_failed": False}
 
-    # Resume / fail the linked scheduled task, if any
     if updated.task_id:
         scheduler = _scheduler(request)
         if scheduler is None:
@@ -168,9 +183,13 @@ async def resolve_pending(
                 updated.task_id,
             )
         else:
-            if body.decision == "allow":
+            # Branch on the AUTHORITATIVE resolution, not the request body.
+            # Guards against a stale request body (e.g., owner clicked
+            # "allow" then "deny" milliseconds apart — only the first
+            # store.resolve writes; the second body is moot).
+            if updated.resolution == "allow":
                 follow_up = await _resume_task(scheduler, updated)
-            else:
+            elif updated.resolution == "deny":
                 follow_up = await _fail_task(scheduler, updated)
 
     return JSONResponse(
@@ -190,117 +209,154 @@ async def resolve_pending(
 REPLAY_TTL_SECONDS = 30.0  # plan §14.7: 30 second replay window
 
 
+def _prune_expired_replay_auths(raw: Any, *, now: float) -> list[dict[str, Any]]:
+    """Drop expired entries from ``task.metadata.replay_authorizations``.
+
+    Bounded growth: a long-lived task (daily cron, e.g.) accumulates one
+    auth per approval. Without pruning, the list grows monotonically
+    forever, even though engine step 7 ignores expired ones. Pruning at
+    write time keeps the persisted JSON tidy AND keeps the lifted
+    PolicyContext list short (engine iterates all entries per call).
+    """
+    if not isinstance(raw, list):
+        return []
+    kept: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            exp = float(item.get("expires_at", 0))
+        except (TypeError, ValueError):
+            continue
+        if exp > now:
+            kept.append(item)
+    return kept
+
+
 async def _resume_task(scheduler: Any, entry: Any) -> dict[str, Any]:
-    """Inject ReplayAuthorization into session metadata + reschedule task.
+    """Inject ReplayAuthorization into task metadata + reschedule task.
 
-    The replay authorization carries:
+    Concurrency model:
+    - Acquire ``scheduler._lock`` FIRST, then mutate + persist atomically.
+      Mutating task.status/next_run before taking the lock leaks an
+      intermediate state to a concurrent scheduler tick (which could
+      observe SCHEDULED + past next_run and try to run while we're still
+      writing).
+    - Re-check state under lock — a tick that already advanced the task
+      out of AWAITING_APPROVAL means we lost the race; bail with no
+      mutation.
+
+    Replay payload (consumed by engine step 7 ``_check_replay_authorization``):
     - ``expires_at = now + 30s``
-    - ``original_message`` = the tool_name (PolicyEngineV2 step 7 matches
-      against ctx.user_message; tool_name is a deterministic anchor)
-    - ``operation`` = ApprovalClass value (so step 7 matches by category)
-
-    The scheduler's existing ``trigger_in_background`` path is the reuse
-    point — we set ``task.next_run = now + advance_seconds`` and let the
-    scheduler loop pick it up on the next tick.
+    - ``original_message`` = entry.user_message (== task.prompt at the
+      time of deferral), so engine step 7 matches by user_message equality.
+      Falls back to entry.tool_name only for legacy entries on disk that
+      predate the user_message capture.
+    - ``operation`` = "" (engine step 7 primary match is by message;
+      operation match is secondary and OperationKind dictionary differs
+      from ApprovalClass enum so we don't try).
     """
     from datetime import datetime, timedelta
 
     from openakita.scheduler.task import TaskStatus
 
-    task = None
     try:
-        task = scheduler._tasks.get(entry.task_id)
+        lock = scheduler._lock
     except AttributeError:
-        pass
-    if task is None:
-        return {"task_resumed": False, "reason": f"task {entry.task_id!r} not found"}
+        return {"task_resumed": False, "reason": "scheduler has no _lock"}
 
-    if task.status != TaskStatus.AWAITING_APPROVAL:
-        return {
-            "task_resumed": False,
-            "reason": f"task in unexpected state {task.status.value}",
-        }
+    now = time.time()
+    next_run_at = datetime.now() + timedelta(seconds=2)
 
-    # Stamp replay authorization in task metadata so executor can lift it
-    # into PolicyContext.replay_authorizations on next run. Stored as raw
-    # dict (PolicyContext._coerce_replay_auths converts on the way in).
-    if not isinstance(task.metadata, dict):
-        task.metadata = {}
-    auths = list(task.metadata.get("replay_authorizations", []))
-    # Prefer the captured user_message (scheduler ctx.user_message at deferral
-    # time == task.prompt), so engine step 7 matches by equality on rerun.
-    # Fallback to tool_name when older entries on disk lack user_message.
-    original_msg = (entry.user_message or "").strip() or entry.tool_name
-    auths.append(
-        {
-            "expires_at": time.time() + REPLAY_TTL_SECONDS,
-            "original_message": original_msg,
-            "confirmation_id": entry.id,
-            # Operation field is best-effort hint for engine step 7 secondary
-            # match; equality on user_message above is the primary path.
-            "operation": "",
-        }
-    )
-    task.metadata["replay_authorizations"] = auths
-    task.metadata.pop("awaiting_approval_marker", None)
-    task.metadata["resumed_from_approval_at"] = time.time()
-    task.metadata["resumed_from_approval_id"] = entry.id
+    async with lock:
+        task = scheduler._tasks.get(entry.task_id) if hasattr(scheduler, "_tasks") else None
+        if task is None:
+            return {"task_resumed": False, "reason": f"task {entry.task_id!r} not found"}
+        if task.status != TaskStatus.AWAITING_APPROVAL:
+            return {
+                "task_resumed": False,
+                "reason": f"task in unexpected state {task.status.value}",
+            }
 
-    # Transition AWAITING_APPROVAL → SCHEDULED + immediate next_run
-    task.status = TaskStatus.SCHEDULED
-    task.next_run = datetime.now() + timedelta(seconds=2)  # next tick
-    task.updated_at = datetime.now()
+        if not isinstance(task.metadata, dict):
+            task.metadata = {}
 
-    # Persist the task state change
-    try:
-        async with scheduler._lock:
-            scheduler._save_tasks()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "[pending_approvals] task save failed after resume: %s — "
-            "in-memory state still updated, will persist on next save",
-            exc,
+        # Prune-then-append keeps the list bounded.
+        existing = _prune_expired_replay_auths(
+            task.metadata.get("replay_authorizations"), now=now
         )
+        original_msg = (entry.user_message or "").strip() or entry.tool_name
+        existing.append(
+            {
+                "expires_at": now + REPLAY_TTL_SECONDS,
+                "original_message": original_msg,
+                "confirmation_id": entry.id,
+                "operation": "",
+            }
+        )
+        task.metadata["replay_authorizations"] = existing
+        task.metadata.pop("awaiting_approval_marker", None)
+        task.metadata["resumed_from_approval_at"] = now
+        task.metadata["resumed_from_approval_id"] = entry.id
+
+        task.status = TaskStatus.SCHEDULED
+        task.next_run = next_run_at
+        task.updated_at = datetime.now()
+
+        try:
+            scheduler._save_tasks()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[pending_approvals] task save failed after resume: %s — "
+                "in-memory state updated, will persist on next save",
+                exc,
+            )
 
     return {
         "task_resumed": True,
-        "next_run": task.next_run.isoformat(),
+        "next_run": next_run_at.isoformat(),
         "replay_ttl_seconds": REPLAY_TTL_SECONDS,
+        "replay_auths_active": len(existing),
     }
 
 
 async def _fail_task(scheduler: Any, entry: Any) -> dict[str, Any]:
-    """Mark linked task as FAILED with the deny reason."""
-    from openakita.scheduler.task import TaskStatus
-
-    task = scheduler._tasks.get(entry.task_id) if hasattr(scheduler, "_tasks") else None
-    if task is None:
-        return {"task_failed": False, "reason": f"task {entry.task_id!r} not found"}
-    if task.status != TaskStatus.AWAITING_APPROVAL:
-        return {"task_failed": False, "reason": f"unexpected state {task.status.value}"}
-
-    # Direct transition AWAITING_APPROVAL → FAILED (legal per task.py state machine)
-    task.status = TaskStatus.FAILED
-    task.updated_at = task.last_run = (task.last_run or _now_dt())
-    if not isinstance(task.metadata, dict):
-        task.metadata = {}
-    task.metadata["last_error"] = (
-        f"Owner denied pending approval {entry.id}; note={entry.note or '-'}"
-    )
-    task.metadata.pop("awaiting_approval_marker", None)
-
-    try:
-        async with scheduler._lock:
-            scheduler._save_tasks()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "[pending_approvals] task save failed after deny: %s",
-            exc,
-        )
-    return {"task_failed": True}
-
-
-def _now_dt():
+    """Mark linked task as FAILED with the deny reason. Lock-first."""
     from datetime import datetime
 
-    return datetime.now()
+    from openakita.scheduler.task import TaskStatus
+
+    try:
+        lock = scheduler._lock
+    except AttributeError:
+        return {"task_failed": False, "reason": "scheduler has no _lock"}
+
+    async with lock:
+        task = scheduler._tasks.get(entry.task_id) if hasattr(scheduler, "_tasks") else None
+        if task is None:
+            return {"task_failed": False, "reason": f"task {entry.task_id!r} not found"}
+        if task.status != TaskStatus.AWAITING_APPROVAL:
+            return {
+                "task_failed": False,
+                "reason": f"unexpected state {task.status.value}",
+            }
+
+        task.status = TaskStatus.FAILED
+        now_dt = datetime.now()
+        task.updated_at = now_dt
+        task.last_run = task.last_run or now_dt
+        if not isinstance(task.metadata, dict):
+            task.metadata = {}
+        task.metadata["last_error"] = (
+            f"Owner denied pending approval {entry.id}; note={entry.note or '-'}"
+        )
+        task.metadata.pop("awaiting_approval_marker", None)
+
+        try:
+            scheduler._save_tasks()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[pending_approvals] task save failed after deny: %s",
+                exc,
+            )
+    return {"task_failed": True}

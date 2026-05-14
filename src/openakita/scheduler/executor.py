@@ -455,15 +455,34 @@ class TaskExecutor:
                     task.metadata.get("replay_authorizations", []) or []
                 )
 
+            # C12 §14.7: only lift NON-expired replay auths into the
+            # PolicyContext. Engine step 7 ignores expired entries
+            # anyway (auth.is_active(now=)), but pre-filtering keeps the
+            # ctx list short — engine iterates every entry per tool
+            # call, so for a long-lived task with many past approvals
+            # this matters.
+            import time as _time
+
+            _now_for_replay = _time.time()
             _replay_auths: list[ReplayAuthorization] = []
             for ra in _replay_auths_raw:
                 if isinstance(ra, ReplayAuthorization):
-                    _replay_auths.append(ra)
+                    if ra.expires_at > _now_for_replay:
+                        _replay_auths.append(ra)
                 elif isinstance(ra, dict):
+                    try:
+                        _exp = float(ra.get("expires_at", 0))
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "TaskExecutor: skipping malformed replay auth %r", ra
+                        )
+                        continue
+                    if _exp <= _now_for_replay:
+                        continue
                     try:
                         _replay_auths.append(
                             ReplayAuthorization(
-                                expires_at=float(ra.get("expires_at", 0)),
+                                expires_at=_exp,
                                 original_message=str(ra.get("original_message", "")),
                                 confirmation_id=str(ra.get("confirmation_id", "")),
                                 operation=str(ra.get("operation", "")),

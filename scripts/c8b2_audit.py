@@ -210,11 +210,15 @@ for tok in banned:
 print("  config.py 不再 import v1 私有符号 / reset_policy_engine: OK")
 
 # 6 个 reset_policy_v2_layer 调用（每个 endpoint 一个）
-n_v2_reset = config_text.count("reset_policy_v2_layer()")
+# C12 起这些 callsite 都传 scope=… 参数（policy_config_reloaded SSE），
+# 用更宽松的模式 ``reset_policy_v2_layer(`` 计数，避免参数变更让 audit 误报。
+import re as _re
+
+n_v2_reset = len(_re.findall(r"reset_policy_v2_layer\s*\(", config_text))
 assert n_v2_reset >= 6, (
-    f"config.py reset_policy_v2_layer() 调用次数={n_v2_reset}, 期望≥6"
+    f"config.py reset_policy_v2_layer(...) 调用次数={n_v2_reset}, 期望≥6"
 )
-print(f"  config.py 含 {n_v2_reset} 次 reset_policy_v2_layer() 调用 (期望≥6): OK")
+print(f"  config.py 含 {n_v2_reset} 次 reset_policy_v2_layer(...) 调用 (期望≥6): OK")
 
 # defaults import 改成 v2
 assert "from openakita.core.policy_v2.defaults import" in config_text, (

@@ -359,8 +359,13 @@ def build_policy_context(
     # - session.session_role 覆盖入参 ``mode``（switch_mode 写过的话）
     # - session.confirmation_mode_override 覆盖全局 confirmation_mode（per-session 模式）
     # - session.metadata["is_owner"] 覆盖入参 ``is_owner``（IM gateway 写过的话）
+    # - session.is_unattended / session.unattended_strategy 覆盖入参 ``is_unattended``
+    #   （C12 Phase A：webhook / spawn 入口可在 Session 上预写无人值守标志，
+    #   chat_with_tools 路径不需要自己计算 is_unattended）
     effective_mode = mode
     effective_is_owner = is_owner
+    effective_is_unattended = is_unattended
+    effective_unattended_strategy = ""
     if session is not None:
         try:
             sr = getattr(session, "session_role", None)
@@ -383,6 +388,39 @@ def build_policy_context(
                 effective_is_owner = owner_meta
         except Exception:
             pass
+        # First-class fields take precedence; ``is_unattended`` defaults to
+        # False so ``False`` from a default-init Session does NOT silently
+        # override an explicit ``is_unattended=True`` from the caller.
+        # The "OR" pattern matches: caller passes True → kept True; session
+        # also flags True → still True; both False → False.
+        try:
+            sess_unattended = getattr(session, "is_unattended", False)
+            if isinstance(sess_unattended, bool) and sess_unattended:
+                effective_is_unattended = True
+        except Exception:
+            pass
+        try:
+            sess_strategy = getattr(session, "unattended_strategy", "")
+            if isinstance(sess_strategy, str) and sess_strategy:
+                effective_unattended_strategy = sess_strategy
+        except Exception:
+            pass
+        # Backward compat: very old sessions stored these in metadata only.
+        # Only fall back when first-class fields are still default.
+        if not effective_is_unattended:
+            try:
+                meta_un = session.get_metadata("is_unattended")
+                if isinstance(meta_un, bool) and meta_un:
+                    effective_is_unattended = True
+            except Exception:
+                pass
+        if not effective_unattended_strategy:
+            try:
+                meta_strat = session.get_metadata("unattended_strategy")
+                if isinstance(meta_strat, str) and meta_strat:
+                    effective_unattended_strategy = meta_strat
+            except Exception:
+                pass
 
     if session is not None:
         try:
@@ -415,7 +453,8 @@ def build_policy_context(
         root_user_id=root_user_id,
         session_role=mode_to_session_role(effective_mode),
         confirmation_mode=confirmation_mode,
-        is_unattended=is_unattended,
+        is_unattended=effective_is_unattended,
+        unattended_strategy=effective_unattended_strategy,
         delegate_chain=list(delegate_chain or []),
         replay_authorizations=replay_auths,
         trusted_path_overrides=trusted_paths,

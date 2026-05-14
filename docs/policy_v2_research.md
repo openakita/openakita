@@ -4165,6 +4165,52 @@ C12 = 计划任务系统的「无人值守审批」端到端落地；C9c = §8.4
 
 C12+C9c 完成。下一步可以进 C13（多 agent confirm 冒泡 + delegate_chain 透传）。
 
+### 二轮 audit 修复（同日）
+
+提交后用户要求「再次检查确保没有遗漏、没堆屎山、没留 bug 或损害原功能」。
+做了 12 维度交叉审计，发现并修复 7 个真问题 + 提炼 1 处架构重复：
+
+| # | 类别 | 问题 | 修复 |
+|---|---|---|---|
+| 1 | **并发 bug** | `/api/pending_approvals/{id}/resolve` 按请求 body 的 `decision` 走 `_resume_task` / `_fail_task`，并发场景（owner 同时点 allow+deny）会让两个 follow-up 都触发 | 改为按 `updated.resolution`（store 的实际终态）路由；`was_active=False` 表示「我没赢比赛」→ 不触发 follow-up |
+| 3 | **正确性 + perf bug** | `tool_intent_preview` 自建 `ApprovalClassifier()` 不带 `explicit_lookup`，回退到启发式 → preview 给出的 ApprovalClass 与生产决策不一致；每批新建 classifier 浪费 LRU cache | 直接用 `default_handler_registry.get_tool_class`（与生产 engine 同源），未注册的工具显示 `unknown` 而不是错误的启发式分类 |
+| 4 | **无界增长 bug** | `_resume_task` `task.metadata.replay_authorizations.append(...)` 不清过期项，长任务每次批准累加一条永不消失（即便过期 engine 也每次 evaluate 都 iterate）| `_prune_expired_replay_auths(raw, now=...)` 先清过期再 append；scheduler executor 提升进 PolicyContext 时再次过滤过期 |
+| 5 | **并发 bug** | `_resume_task` 先 mutate task.status / next_run / metadata，再 `async with scheduler._lock` 持锁 save → scheduler 主循环 tick 可能在 mutation 中途观察到 SCHEDULED+past next_run 并 race 执行 | 重写为「lock-first, mutate-inside, save-inside-same-lock」，并加锁内 status 复查避免 lost-race |
+| 7 | **架构重复（屎山预防）** | 3 处 SSE emit 几乎一样的 `get_running_loop() → ensure_future → coroutine.close() on fail` 模板（tool_executor + global_engine + server.startup）| 在 `api/routes/websocket.py` 抽出 `fire_event(event, data)` helper，3 处全部换用，30 行重复代码消除 |
+| 8 | **历史 audit 回归** | `scripts/c8b2_audit.py:213` 用字面字符串 `reset_policy_v2_layer()` 计数，我加 `scope=` 参数后期望「≥6」会挂掉 | 改用 `re.findall(r"reset_policy_v2_layer\s*\(")` 宽匹配 |
+| 10 | **Wire 缺口** | Phase A 把 `is_unattended`/`unattended_strategy` 升一等字段到 `Session`，但 agent.py 主路径走 `build_policy_context()` 仍不读这两个字段（仅 scheduler 路径读了），导致 webhook/spawn 给 Session 预写的标志在 chat_with_tools 上不生效 | `build_policy_context` 增加优先级链：caller arg → session 一等字段 → session.metadata 兜底，三种来源任一 True 即 unattended |
+
+补充测试（3 个）：
+- `test_resolve_route_branches_by_actual_resolution_not_request_body` —— Fix #1
+- `test_resume_prunes_expired_replay_auths_before_append` —— Fix #4
+- `test_build_policy_context_reads_session_first_class_unattended_fields` —— Fix #10
+
+### 二轮 audit 同时确认 OK 的 5 个维度
+
+| # | 问题 | 结论 |
+|---|---|---|
+| 2 | `metadata["approval_class"]` 是 enum 还是 str | adapter.py:542 写 `.value` 字符串，`str()` cast 无害 |
+| 6 | `mark_awaiting_approval` 是否触发 save | scheduler.py:611 的 `async with self._lock: _save_tasks()` 覆盖所有路径 |
+| 9 | `DeferredApprovalRequired` 有无 agent loop 测试 | 只有 import smoke，但 e2e 测试在 store level 已经覆盖；agent loop 测试要起 LLM mock 成本高，软问题暂不补 |
+| 11 | `scope` 默认值 `"all"` 对老 callsite 的影响 | 所有现有 callers 不传 scope → 默认 `"all"` → 行为不变 |
+| 12 | replay auth 命中后是否在 ctx 内被消费 | engine step 7 明文 read-only；多 tool 同 batch 命中同 auth 是设计意图（同一 prompt 多步操作 once-approve-batch-allow）；30s TTL 兜底防 stale |
+
+### 验证
+
+- `scripts/c12_c9c_audit.py`：11/11 OK
+- `scripts/c8b2_audit.py`：6/6 OK（regression 修复后）
+- `scripts/c19_audit.py`：6/6 OK（无退步）
+- `pytest`：60 PASS（pending_approvals_store 11 + c9c_sse 5 + classifier_completeness 37 + scheduler_executor_status 7）
+- 全 `policy_v2/scheduler/tool_executor/agent/pending` 范围：**737 PASS** vs 一轮 734 PASS（多了 3 个新增 fix 测试）
+- 唯一观察到的失败 `test_reasoning_engine_user_handoff::test_tool_evidence_required_*` 4 项：reverting 到二轮前 commit `d424c351` 同样失败 → 与本次修改无关，pre-existing
+
+### 经验
+
+1. **3 处重复 SSE emit 模板 = 屎山种子**：当我连续 3 次写「get_running_loop → ensure_future → close」时就该停下来抽 helper；不然每加一个 emit 站点就拷一遍，几个 commit 后必然 drift。`fire_event` 是单一 SoT，cross-loop / no-loop / 失败 close 都收口一处。
+2. **historical audit 脚本是脆弱的契约**：`config_text.count("reset_policy_v2_layer()")` 这种字面字符串 assert 在加参数后会爆。下次写 audit 优先 regex 而非 substring count。
+3. **Phase A 升一等字段必须配 wire**：把字段加到 `Session` 不等于「自动接进 PolicyContext」。`PolicyContext.from_session` 读了，但 `build_policy_context` 漏读 —— production 主路径是后者。「字段加完先 grep 谁构造 PolicyContext，全数补 wire」是新规则。
+4. **lock-then-mutate, 不是 mutate-then-lock**：`async with lock` 这条语义边界要包住所有读写。原来的写法在每个 print/log 友好但 scheduler 这种 tick-driven 多读者就翻车。
+
 ---
 
 ## 附录 B：术语表

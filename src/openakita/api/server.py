@@ -516,33 +516,11 @@ def create_app(
         works regardless of which loop the Store mutation happens on.
         """
         try:
-            from openakita.api.routes.websocket import broadcast_event
+            from openakita.api.routes.websocket import fire_event
             from openakita.core.pending_approvals import get_pending_approvals_store
 
             def _hook(event_type: str, payload: dict) -> None:
-                try:
-                    asyncio.get_running_loop()
-                except RuntimeError:
-                    logger.debug(
-                        "[PendingApprovals] no running loop for %s; skipping",
-                        event_type,
-                    )
-                    return
-                _coro = None
-                try:
-                    _coro = broadcast_event(event_type, payload)
-                    asyncio.ensure_future(_coro)
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug(
-                        "[PendingApprovals] emit failed for %s: %s",
-                        event_type,
-                        exc,
-                    )
-                    if _coro is not None:
-                        try:
-                            _coro.close()
-                        except Exception:  # noqa: BLE001
-                            pass
+                fire_event(event_type, payload)
 
             get_pending_approvals_store().set_event_hook(_hook)
             logger.info("[Startup] PendingApprovals SSE hook wired")
