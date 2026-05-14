@@ -48,6 +48,13 @@ from .defaults import (
     default_protected_paths,
 )
 from .engine import PolicyEngineV2, build_engine_from_config
+from .entry_point import (
+    IM_WEBHOOK_CHANNELS,
+    SSE_INTERACTIVE_CHANNELS,
+    EntryClassification,
+    apply_classification_to_session,
+    classify_entry,
+)
 from .enums import (
     ApprovalClass,
     ConfirmationMode,
@@ -169,6 +176,12 @@ __all__ = [
     # engine
     "PolicyEngineV2",
     "build_engine_from_config",
+    # entry-point classifier (C14)
+    "EntryClassification",
+    "IM_WEBHOOK_CHANNELS",
+    "SSE_INTERACTIVE_CHANNELS",
+    "apply_classification_to_session",
+    "classify_entry",
     # global singleton (C6)
     "get_config_v2",
     "get_engine_v2",

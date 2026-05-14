@@ -2982,6 +2982,25 @@ class MessageGateway:
             if _msg_chat_name and session.chat_name != _msg_chat_name:
                 session.chat_name = _msg_chat_name
 
+            # 4.0.2 C14 / R4-7: IM/Webhook 通道没有同步 confirm UI 通道（无法
+            # 在 IM 客户端弹模态框）。把 session 标记为 is_unattended → 让
+            # PolicyEngineV2 step 11 通过 unattended_strategy（默认 ask_owner）
+            # 把 CONFIRM-class 工具 defer 给 owner 的 setup-center / 收件箱，
+            # 而不是悬挂在等不到响应的 SSE confirm 上。
+            #
+            # 用 classifier 的 idempotent helper：已经 unattended 的 session
+            # 不会被改回 False；明确设置过 unattended_strategy 的 session 也
+            # 不会被默认策略覆盖。
+            from ..core.policy_v2 import (
+                apply_classification_to_session,
+                classify_entry,
+            )
+
+            apply_classification_to_session(
+                session,
+                classify_entry(message.channel),
+            )
+
             # 4.1 多Bot绑定：将 adapter 配置的 agent_profile_id 写入新 session
             self._apply_bot_agent_profile(session, message.channel)
 

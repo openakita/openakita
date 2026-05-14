@@ -968,7 +968,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C11 | 全量回归 + 25 项手测 + 性能 SLO | ✅ DONE | plan §13.5 + R5-18/19 |
 | C12 | 计划任务/无人值守审批 + DeferredApprovalRequired + pending_approvals + 30s replay resume | ✅ DONE | §2.1 + R3 + 「C12+C9c 实施记录」|
 | C13 | 多 agent confirm 冒泡 + delegate_chain 透传 | ✅ DONE | R4-1/2/3/4 + R5-16 + 「C13 实施记录」|
-| C14 | Headless 入口统一（CLI / HTTP / Webhook / stdin）| ⏳ Pending | R4-5/6/7/8 |
+| C14 | Headless 入口统一（CLI / HTTP / Webhook / stdin）| ✅ DONE | R4-5/6/7/8 + 「C14 实施记录」|
 | C15 | Evolution / system_task / Skill-MCP trust_level | ⏳ Pending | R4-9/10/11/12/13 + R5-21 |
 | C16 | Prompt injection + YAML 严格校验 + audit 防篡改 | ⏳ Pending | R4-14/15 + R5-17 |
 | C17 | Reliability（lock 文件 / 启动扫描 / Last-Event-ID / health probe）| ⏳ Pending | R4-16/17/18/19 + R5-8/12 |
@@ -4406,3 +4406,142 @@ C13 提交后用户要求再做一遍交叉检查。做了 12 维度审计，发
 | DeferredApprovalRequired | unattended 任务遇 confirm 时抛的异常，让 task 暂停 |
 | tool_intent_preview | 新增 SSE 事件，LLM 刚生成 tool_use 时的预览 |
 | delegate_chain | 多 agent 嵌套时的调用链，confirm 冒泡到 root_user |
+| EntryClassification | C14：channel + has_tty → (is_unattended / confirm_capability / default_strategy) 的统一分类结果 |
+| confirm_capability | C14：`sse`（setup-center / web）/ `tty`（CLI Rich prompt）/ `none`（无同步通道，必走 unattended）|
+
+---
+
+## C14 实施记录（2026-05-14）
+
+### 范围
+
+R4-5/6/7/8 五个子项整合为单一架构层次，统一通过 `core/policy_v2/entry_point.py` 的 classifier 驱动：
+
+- **R4-5**：CLI confirm UX —— `cli/stream_renderer.py::_handle_security_confirm_interactive` 已用 Rich `Prompt.ask`，本次补一个 isatty 短路（belt-and-suspenders）。
+- **R4-6**：HTTP API 无 SSE 客户端 —— 新增 `POST /api/chat/sync`，遇 `DeferredApprovalRequired` 返 202 + `Location: /api/pending_approvals/{id}` 用现有 pending_approvals 体系。
+- **R4-7**：IM/Webhook 永 unattended —— `channels/gateway.py::process_message` 拿到 session 后 `apply_classification_to_session` 标记 `is_unattended=True`，让 PolicyEngineV2 step 11 走 `ask_owner` 默认策略 defer 给 owner。
+- **R4-8**：stdin isatty 检测 —— `main.py::main` callback 在进入交互前先 `classify_entry("cli")`，非 TTY 拒绝并指引用户改用 `openakita run` / `serve`；`openakita run` 命令本身也显式 `is_unattended=True` PolicyContext。
+
+### 实施
+
+**Phase A —— `core/policy_v2/entry_point.py`（新建）**
+
+`classify_entry(channel, *, has_tty=None, force_unattended=False) -> EntryClassification`
+
+矩阵：
+
+| Entry | is_unattended | confirm_capability | default_strategy |
+|---|---|---|---|
+| CLI + TTY | False | `tty` | `""` |
+| CLI 无 TTY | True | `none` | `ask_owner` |
+| desktop / web / api / setup-center | False | `sse` | `""` |
+| telegram/feishu/dingtalk/wecom/wework_ws/qq/qq_official/onebot/discord/slack/matrix/wechat | True | `none` | `ask_owner` |
+| `api-sync` | True | `none` | `defer_to_inbox` |
+| scheduler | True | `none` | `""`（让 config 兜底）|
+| webhook（generic）| True | `none` | `ask_owner` |
+| 未知 channel | True | `none` | `ask_owner`（safe-default）|
+
+`apply_classification_to_session(session, cls)` 是 idempotent helper：
+- **不会** 把 `is_unattended=True` downgrade 回 False（即使 attended channel 复用同 session）；
+- **不会** 覆盖显式 `unattended_strategy`（用户/scheduler 写的具体策略 win）；
+- 空 `default_strategy` 不写空串污染 session。
+
+**Phase B —— `main.py::main` + `run`（R4-8）**
+
+`main` callback 进入交互前调 `classify_entry("cli")`，非 TTY 立即退出并指引：
+
+```
+检测到 stdin 非 TTY（管道输入或非交互环境）
+交互式 CLI 需要终端。请改用以下任一非交互入口：
+  • openakita run "<task>" - 单次任务执行（unattended）
+  • openakita serve - 启动 API 服务并通过 /api/chat 调用
+```
+
+`run` 命令显式安装 unattended PolicyContext：
+
+```python
+cli_ctx = build_policy_context(
+    session_id=f"cli_run_{int(time.time())}",
+    channel="cli",
+    is_unattended=True,
+    user_message=task,
+)
+ctx_token = set_current_context(cli_ctx)
+try:
+    result = await agent.execute_task_from_message(task)
+finally:
+    reset_current_context(ctx_token)
+```
+
+ContextVar set/reset 严格对称，task 完成或异常都正确回滚。
+
+**Phase C —— `channels/gateway.py::process_message`（R4-7）**
+
+session 创建/获取后立即 classifier-mark：
+
+```python
+apply_classification_to_session(
+    session,
+    classify_entry(message.channel),  # telegram/feishu/... → unattended + ask_owner
+)
+```
+
+`apply_classification_to_session` 的 idempotent + 不覆盖语义保证：
+- 既有 session 被复用时不会被回写
+- adapter 已经显式设过 `unattended_strategy` 的不会被默认 `ask_owner` 覆盖
+
+**Phase D —— `POST /api/chat/sync`（R4-6）**
+
+非 SSE 客户端入口：
+
+- 创建/get session 时 `channel="api-sync"` + classifier 标 `is_unattended=True` + `default_strategy="defer_to_inbox"`
+- 调 `agent.chat_with_session`（非流式）；正常完成返 200 + `{status: "completed", message, ...}`
+- 捕获 `DeferredApprovalRequired`：返 **202** + `Location` header + JSON：
+  ```json
+  {
+    "status": "pending_approval",
+    "approval_id": "pending_abc",
+    "approval_url": "/api/pending_approvals/pending_abc",
+    "resolve_url": "/api/pending_approvals/pending_abc/resolve",
+    "unattended_strategy": "defer_to_inbox"
+  }
+  ```
+- 客户端轮询 `approval_url`，owner 通过 setup-center 或 `resolve_url` 完成确认后重新 POST `/api/chat/sync` 即可触发 30s replay window。
+
+**Phase E —— stream_renderer isatty 短路（R4-5）**
+
+`_handle_security_confirm_interactive` 在 `Prompt.ask` 调用前显式 `sys.stdin.isatty()` 守卫：非 TTY 时打印告警 + 不调 `apply_resolution`，让 unattended 路径接管。这是 belt-and-suspenders（main.py 已经 gate 进交互模式，但 stream_renderer 也可能被脚本/测试单独调用）。
+
+### 验证
+
+**测试**：
+- `tests/unit/test_policy_v2_c14_entry_point.py`：39 PASS（classifier 矩阵 / apply 幂等 / 不 downgrade / 不覆盖 / 真 Session 集成 / stream_renderer 短路）
+- `tests/integration/test_api_chat.py::TestChatSyncEndpoint`：6 PASS（completed / 202+pending_approval / 400 empty / 400 no-endpoint / 503 runtime / auto conv-id）
+- 邻近回归（C12+C9c + C13 + reasoning_engine_user_handoff + p0_regression）：124 PASS
+- `tests/unit/` 广扫：**2902 PASS, 0 真失败**（+39 新增 vs 上轮 2863；3 个仍是 test-order flake，与 C14 无关）
+
+**Audit**：`scripts/c14_audit.py` 7 维度（A-G）全绿，含 C12+C9c 和 C13 audit 不退化。
+
+**反向回归**：5 个 simulated 退化场景（CLI 误为 attended / telegram 误为 attended / 误 downgrade / api-sync 策略错 / 未知 channel 误为 attended）全部 FAIL as expected。
+
+### 关键设计决策
+
+1. **Single source of truth**：所有入口的 `is_unattended` 都从 `classify_entry` 出，不在 5 个地方各自硬编码。新增 IM adapter 只需把 channel 字符串加进 `IM_WEBHOOK_CHANNELS`。
+
+2. **Idempotent + 不 downgrade + 不覆盖**：`apply_classification_to_session` 三条不变量让 classifier 可以在 `process_message` 每次调用都跑，不怕重复污染。
+
+3. **`api-sync` 用 `defer_to_inbox` 而不是 `ask_owner`**：REST 客户端没有 owner-side 同步通道（不像 IM 可以 push 卡片给 owner），把 approval 物化到 inbox 更合适。
+
+4. **未知 channel safe-default unattended**：忘了把新 channel 加进 classifier 时，宁可走 unattended 路径 defer 给 owner，也不能让 CONFIRM 在等不到响应的通道上挂死。
+
+5. **CLI run 单独 force_unattended**：即使 TTY，`openakita run "<task>"` 也不是交互模式 —— 一次性命令没有人在 prompt 后接 Enter。
+
+### 经验
+
+1. **`is_unattended` 是个性化 channel 决策的统一抽象**：之前 5 个入口零散判断，C14 抽出来后新加 channel 只需碰一个文件。
+2. **idempotent helper 比 "first-time setup" 模式抗腐**：`process_message` 会被同一 session 反复调用，能写多次不出错才是稳的。
+3. **isatty 在 daemon 上下文可能抛 ValueError/OSError**：classifier 内部 try/except 兜底，避免把入口 hang 死。
+4. **`/api/chat/sync` 的 202 + Location 复用现有 pending_approvals**：不另起一套 task 状态机，approval 体系是 C12 已经搭好的，复用零额外面。
+5. **Audit 脚本里的正则要警惕 docstring/comment 假阳性**：`Prompt.ask` 在 docstring 里也出现过一次，必须用 `\bPrompt\.ask\(` 限定到函数调用形态。
+
+C14 完成。下一步可以进 C15（Evolution / system_task / Skill-MCP trust_level）。

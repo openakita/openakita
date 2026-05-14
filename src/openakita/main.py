@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 import typer
@@ -1320,6 +1321,23 @@ def main(
             )
             raise typer.Exit(1)
 
+        # C14 / R4-8: 交互模式需要 TTY 来驱动 prompt_toolkit + Rich 的
+        # security_confirm 提示。stdin 为管道时（``cat ... | openakita`` /
+        # CI 环境 / launchd plist 等），prompt_toolkit 会立刻在第一次输入
+        # 处永久挂死，且 Rich ``Prompt.ask`` 退回原始 ``input()`` 也会同样
+        # block。给一个明确指引而不是挂死。
+        from .core.policy_v2 import classify_entry
+
+        cli_class = classify_entry("cli")
+        if cli_class.is_unattended:
+            console.print("[yellow]检测到 stdin 非 TTY（管道输入或非交互环境）[/yellow]")
+            console.print(
+                "交互式 CLI 需要终端。请改用以下任一非交互入口：\n"
+                "  • [bold]openakita run \"<task>\"[/bold] - 单次任务执行（unattended）\n"
+                "  • [bold]openakita serve[/bold] - 启动 API 服务并通过 /api/chat 调用"
+            )
+            raise typer.Exit(1)
+
         # 运行交互式 CLI
         asyncio.run(run_interactive())
 
@@ -1360,14 +1378,36 @@ def init(
 def run(
     task: str = typer.Argument(..., help="要执行的任务"),
 ):
-    """执行单个任务"""
+    """执行单个任务（unattended：CONFIRM 类工具不会等待 TTY 响应）"""
 
     async def _run():
         agent = get_agent()
         await agent.initialize()
 
+        # C14 / R4-8: ``openakita run`` 是一次性非交互入口 — 即使 stdin
+        # 是 TTY 也不应等待 ``security_confirm`` SSE/Prompt。把
+        # PolicyContext 显式标记为 unattended，让 PolicyEngineV2 step 11
+        # 按 ``unattended_strategy`` 路由（默认 ask_owner），CONFIRM-class
+        # 工具走 PendingApproval / DeferredApprovalRequired 路径而非挂死。
+        from .core.policy_v2 import (
+            build_policy_context,
+            reset_current_context,
+            set_current_context,
+        )
+
+        cli_ctx = build_policy_context(
+            session_id=f"cli_run_{int(time.time())}",
+            channel="cli",
+            is_unattended=True,
+            user_message=task,
+        )
+        ctx_token = set_current_context(cli_ctx)
+
         with console.status("[bold green]执行任务中...", spinner="dots"):
-            result = await agent.execute_task_from_message(task)
+            try:
+                result = await agent.execute_task_from_message(task)
+            finally:
+                reset_current_context(ctx_token)
 
         if result.success:
             console.print(
