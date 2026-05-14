@@ -4378,6 +4378,7 @@ C13 提交后用户要求再做一遍交叉检查。做了 12 维度审计，发
 - `pytest`：60 PASS（pending_approvals_store 11 + c9c_sse 5 + classifier_completeness 37 + scheduler_executor_status 7）
 - 全 `policy_v2/scheduler/tool_executor/agent/pending` 范围：**737 PASS** vs 一轮 734 PASS（多了 3 个新增 fix 测试）
 - 唯一观察到的失败 `test_reasoning_engine_user_handoff::test_tool_evidence_required_*` 4 项：reverting 到二轮前 commit `d424c351` 同样失败 → 与本次修改无关，pre-existing
+  - **后续清理（与 Policy V2 series 隔离的独立 commit `4ba7351c`）**：3 项 stale test contract 已对齐 commit `a19f58d2`（soft disclaimer 取代 hard retry/replace + `_last_exit_reason="tool_evidence_missing"` 移除）。测试改名 + 反向断言（如 `_last_exit_reason != "tool_evidence_missing"`）防回归。`tests/e2e/test_p0_regression.py::test_p0_2_phase0_no_hard_exit_reason` 在源码层做同一不变量检查，形成 belt-and-suspenders。剩余 1 项 (`test_org_setup_tool` / `wework_ws_adapter`) 是 test-order flake，与本次无关。
 
 ### 经验
 
