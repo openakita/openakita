@@ -28,6 +28,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .env_overrides import apply_env_overrides
 from .migration import MigrationReport, migrate_v1_to_v2
 from .schema import PolicyConfigV2
 
@@ -47,6 +48,8 @@ def load_policies_yaml(
     *,
     cwd: Path | None = None,
     strict: bool = True,
+    apply_env: bool = True,
+    environ: dict[str, str] | None = None,
 ) -> tuple[PolicyConfigV2, MigrationReport]:
     """加载 POLICIES.yaml 并返回校验后的 v2 config + 迁移报告。
 
@@ -55,18 +58,32 @@ def load_policies_yaml(
         cwd: workspace 占位符 ``${CWD}`` 展开依据。None 用 ``Path.cwd()``。
         strict: True 时 ValidationError 抛 PolicyConfigError；False 时降级为
             WARN + 默认配置（CLI / 紧急启动场景；生产应保持 strict）。
+        apply_env: C18 Phase C —— 在 YAML 加载完成后应用 ENV 覆盖。
+            默认 True；测试 / 离线分析需要"纯 YAML 视图"时传 False。
+            ENV 覆盖列表 + 报告会通过 ``MigrationReport.env_overrides``
+            字段透传给调用方（global_engine 用来写审计行）。
+        environ: 注入式 ENV map（测试用）；None 时用 ``os.environ``。
 
     Returns:
-        (PolicyConfigV2, MigrationReport)
+        (PolicyConfigV2, MigrationReport) —— ``MigrationReport.env_overrides``
+        是 ``OverrideReport``（即使没有任何 ENV 设置，也是一个空对象，
+        不是 ``None``）。
     """
     if path is None:
         cfg = PolicyConfigV2().expand_placeholders(cwd=cwd)
-        return cfg, MigrationReport()
+        report = MigrationReport()
+        if apply_env:
+            cfg, override_report = apply_env_overrides(cfg, environ=environ)
+            report.env_overrides = override_report
+        return cfg, report
 
     p = Path(path)
     raw = _read_yaml(p)
-
-    return _build_config(raw, cwd=cwd, strict=strict, source=str(p))
+    cfg, report = _build_config(raw, cwd=cwd, strict=strict, source=str(p))
+    if apply_env:
+        cfg, override_report = apply_env_overrides(cfg, environ=environ)
+        report.env_overrides = override_report
+    return cfg, report
 
 
 def load_policies_from_dict(

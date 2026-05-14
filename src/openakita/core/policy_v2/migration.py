@@ -58,6 +58,14 @@ class MigrationReport:
     旧实现会被 ``_V2_BLOCKS`` filter 静默丢弃；现在显式记录，loader 必 WARN，
     操作员能发现 typo / 攻击者塞进来的字段。
     """
+    env_overrides: Any = None
+    """C18 Phase C：``OverrideReport`` 实例（即使没有任何 ENV 设置，也是一
+    个空的 ``OverrideReport``）。``None`` 仅出现在 ``apply_env=False`` 的
+    离线分析路径——global_engine 写审计时会跳过 ``None``。
+
+    类型故意用 ``Any`` 而非 ``OverrideReport``：避免 migration → env_overrides
+    的反向 import 循环（``apply_env_overrides`` 内部不需要 migration）。
+    """
 
     def has_changes(self) -> bool:
         return bool(self.fields_migrated or self.fields_dropped)

@@ -130,7 +130,25 @@ def _recover_from_load_failure(exc: Exception, *, source: str) -> PolicyConfigV2
 
 
 def _resolve_yaml_path() -> Path | None:
-    """识别 POLICIES.yaml 路径。返回 None 时调用方应让 loader 用默认配置。"""
+    """识别 POLICIES.yaml 路径。返回 None 时调用方应让 loader 用默认配置。
+
+    优先级（C18 Phase C）：
+
+    1. ``OPENAKITA_POLICY_FILE`` 环境变量（操作员用 helm / docker run -e
+       注入 alternate path 的标准入口）。
+    2. ``settings.identity_path / POLICIES.yaml``（应用配置）。
+    3. ``identity/POLICIES.yaml``（运行目录下的 fallback）。
+
+    返回的 ``Path`` 不要求 ``.exists()``——load_policies_yaml 内部会
+    自己处理 "文件不存在 → defaults" 并写 WARN。这让 ENV 设了一个尚
+    未挂载的路径时报错更明确（"YAML 不存在"而非"识别失败"）。
+    """
+    import os as _os
+
+    env_path = _os.environ.get("OPENAKITA_POLICY_FILE", "").strip()
+    if env_path:
+        return Path(env_path)
+
     try:
         from ...config import settings
 
@@ -144,6 +162,51 @@ def _resolve_yaml_path() -> Path | None:
     if fallback.exists():
         return fallback
     return None
+
+
+def _audit_env_overrides(report) -> None:
+    """C18 Phase C：把 ENV 覆盖写入审计链。
+
+    每次 ``load_policies_yaml`` 后调用一次；空报告（无 ENV 设置）直接
+    跳过——避免审计链被无意义的"没人改"行刷满。``skipped_errors``
+    单独记一行，便于 verify_chain 后续审查 "ENV typo 期间是不是有别
+    的 actor 也在改配置"。
+    """
+    if report is None:
+        return
+    override_report = getattr(report, "env_overrides", None)
+    if override_report is None or not override_report.has_any():
+        return
+    try:
+        from ..audit_logger import get_audit_logger
+
+        logger_inst = get_audit_logger()
+        if override_report.applied:
+            logger_inst.log(
+                tool_name="<policy_env_override>",
+                decision="env_override_applied",
+                reason=f"{len(override_report.applied)} ENV var(s) applied",
+                policy="policy_env_override",
+                metadata={
+                    "applied": override_report.applied,
+                    "skipped_count": len(override_report.skipped_errors),
+                },
+            )
+        if override_report.skipped_errors:
+            logger_inst.log(
+                tool_name="<policy_env_override>",
+                decision="env_override_invalid",
+                reason=(
+                    f"{len(override_report.skipped_errors)} ENV var(s) "
+                    "had invalid values; YAML defaults kept"
+                ),
+                policy="policy_env_override",
+                metadata={
+                    "skipped_errors": override_report.skipped_errors,
+                },
+            )
+    except Exception:
+        logger.exception("[PolicyV2] failed to write ENV override audit row")
 
 
 def _build_default_engine(
@@ -164,6 +227,7 @@ def _build_default_engine(
     # 让 _recover_from_load_failure 优先用 LKG。
     try:
         cfg, report = load_policies_yaml(yaml_path, strict=True)
+        _audit_env_overrides(report)
         if report.fields_migrated:
             logger.info(
                 "[PolicyV2] global engine loaded with %d v1 fields migrated",
@@ -293,6 +357,7 @@ def rebuild_engine_v2(
         path = Path(yaml_path) if yaml_path is not None else _resolve_yaml_path()
         try:
             cfg, report = load_policies_yaml(path, strict=True)
+            _audit_env_overrides(report)
             if report.unknown_security_keys:
                 logger.warning(
                     "[PolicyV2] POLICIES.yaml rebuild: unknown keys under "
