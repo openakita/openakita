@@ -973,7 +973,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C16 | Prompt injection + YAML 严格校验 + audit 防篡改 | ⏳ Pending | R4-14/15 + R5-17 |
 | C17 | Reliability（lock 文件 / 启动扫描 / Last-Event-ID / health probe）| ⏳ Pending | R4-16/17/18/19 + R5-8/12 |
 | C18 | UX + 配置完备性（hot-reload / ENV / dry-run / 5s 聚合）| ⏳ Pending | R4-20/21/22 + R5-11/20 |
-| **C19** | **开发者新增工具 4 层护栏（依赖 C2/C8/C11，在 C12 之前实施以护卫 C12-C18）** | ⏳ Pending | §4.21 cookbook + §12.5 |
+| **C19** | **开发者新增工具 4 层护栏（依赖 C2/C8/C11，在 C12 之前实施以护卫 C12-C18）** | ✅ DONE | §4.21 cookbook + §12.5 + 「C19 实施记录」|
 
 ---
 
@@ -3942,6 +3942,121 @@ C11 完成（含两遍二轮加固）。Policy V2 主体功能（C1-C11）全部
 - C19：开发者新增工具 4 层护栏（依赖 C11 完整性 gate 范式）
 - 可延后到 C19/security 加固包：untrusted skill `approval_class` 与
   启发式 `most_strict` 合并
+
+---
+
+## C19 实施记录（2026-05-14）
+
+- **完成日期**：2026-05-14
+- **依据**：§4.21 cookbook + §12.5 Commit 19 设计
+- **顺序**：C11 之后、C12 之前（按 §12.5.5 依赖图）
+- **scope**：4 层护栏 + completeness CI gate + WARN/Cursor rule + audit
+
+### 文件变更
+
+| 文件 | 操作 | LOC |
+|---|---|---|
+| `tests/unit/test_classifier_completeness.py` | 新增 (D1) | +400 |
+| `src/openakita/tools/handlers/__init__.py` | 改 register() 加 WARN (D2) | +18 |
+| `src/openakita/tools/handlers/*.py` × 34 | 顶部 docstring 加 6-line checklist (D3) | +204 (6×34) |
+| `.cursor/rules/add-internal-tool.mdc` | 新增 (D4) | +50 |
+| `scripts/c19_audit.py` | 新增 (audit) | +280 |
+| `docs/policy_v2_research.md` | 改 C19 行状态 + 本节 | - |
+
+### 4 层护栏落地映射
+
+| Layer | 触发时机 | 实现 | 测试 |
+|---|---|---|---|
+| **L1 CI test** | `pytest` / PR CI | `tests/unit/test_classifier_completeness.py` (35 cases: 34 AST per-file + 1 runtime) | self-hosted |
+| **L2 register WARN** | OpenAkita 启动 | `SystemHandlerRegistry.register()` 在 `_collect_tool_classes` 后扫 `tool_names - self._tool_classes` → `logger.warning` | `test_register_warns_when_tool_lacks_explicit_approval_class` + 对照组 |
+| **L3 handler docstring** | AI / 人类 read 该 handler 文件 | 34 handler files 顶部 docstring 注入 6-line `# ApprovalClass checklist (新增 / 修改工具时必读)` 块 | D3 audit dimension |
+| **L4 Cursor rule** | Cursor IDE 编辑符合 globs 文件 | `.cursor/rules/add-internal-tool.mdc` (`alwaysApply: false` + 3 globs) | D4 audit dimension |
+
+### 验证
+
+- **`pytest tests/unit/test_classifier_completeness.py`**：37 passed
+  （34 per-file AST + 1 runtime registry + 2 WARN positive/negative 对照）
+- **C19 audit**：6/6 dimensions PASS
+  - D1 completeness test 文件形态正确（4 必需 test func 全在）
+  - D2 register WARN 字串 + cookbook ref 在 `__init__.py`
+  - D3 34 handler files 全含 `# ApprovalClass checklist` + `§4.21`
+  - D4 `.cursor/rules/add-internal-tool.mdc` 含 3 必要 globs + cookbook 链接
+  - D5 `ApprovalClassifier.classify_with_source` 公开方法存在
+  - D6 pytest 真跑 + 35+ pass
+- **C11 audit 不退步**：6/6 dimensions PASS（D6 看到 19 audits，include c19_audit.py）
+- **全量 unit pytest**：2714 passed, 4 skipped, baseline 6 failures 不变
+- **Ruff**：`ruff check src/openakita/tools/handlers/__init__.py
+  tests/unit/test_classifier_completeness.py scripts/c19_audit.py` 全绿
+
+### D2 设计决策：基于 registry 字典的 WARN 而非 classifier 探针
+
+cookbook §12.5.2.2 原方案是 `register()` 内调 `classifier.classify_with_source()`
+检查 source 是否为 `heuristic_prefix` / `fallback_unknown`。落地时改为
+**直接对比 `tool_names - self._tool_classes`**：
+
+- **避开启动序问题**：handler 注册发生在全局 engine 初始化之前，
+  此时拿不到 classifier 实例。
+- **更精确**：直接判断"声明缺失"这个根本原因，不混入启发式回退的
+  细节（启发式回退本身是合理 fallback，问题是没显式声明）。
+- **同源单一**：CI gate（D1 runtime layer）和启动 WARN（D2）查的是
+  同一个 `_tool_classes` 字典，数据源一致 → 本地 WARN ↔ CI 红灯
+  100% 对齐，不会出现"本地静默但 CI 报错"的撕裂。
+
+### D3 设计决策：批处理脚本 + 一次性删除
+
+34 个 handler files 的 docstring batch edit 用一个临时 Python 脚本
+`scripts/_apply_c19_d3_docstring.py` 完成（idempotent + dry-run 支持），
+应用后立即删除：
+
+- 脚本一次性使用，留在仓里只会被未来误调用（doc 已经在每个 file 里了）
+- 删脚本 = 删运行时风险，不删 git history
+- 重跑场景：本节描述 + cookbook 已足够让人类按需重写脚本
+
+### D1 设计决策：AST + runtime 双层 gate
+
+不直接复用 cookbook §12.5.2.1 的 `_make_test_agent()` 方案：
+
+- AST 层（34 case，每文件一个 parametrize）：快、不需 boot agent、
+  错误信息直接定位文件名
+- Runtime 层（1 case）：通过 `SystemHandlerRegistry` 真注册流程，
+  断言 `get_tool_class()` 对每个 registered tool 非 None。
+  捕获 "handler 类有 TOOL_CLASSES 但 register() 流程未 absorb" 这类
+  布线 bug（AST 看不到 registry 这步）
+
+两层互补，AST 跑 0.4s，runtime 跑 0.6s，总 1s 内 → CI 友好。
+
+### D6 audit 设计：6 维度互不重叠
+
+| 维度 | 验证什么 | 防御什么 |
+|---|---|---|
+| D1 | 4 个必需 test func 全在 | 测试文件被改成空壳 |
+| D2 | WARN 字串 + cookbook ref | WARN 被改成 no-op |
+| D3 | 34 handler 含 marker + cookbook ref | 脚本只跑了一半 / 新 handler 漏 |
+| D4 | Cursor rule 必要 globs | rule 被删 / globs 漂移 |
+| D5 | classify_with_source 存在 | 方法被悄悄改名 / 删 |
+| D6 | pytest 真跑 + 35+ pass | 上面 D1-D5 全 PASS 但测试失败 |
+
+D6 是 "压舱石"：D1-D5 全 PASS 但测试运行时挂掉的话，仍然红灯。
+
+### 经验教训
+
+1. **批处理脚本 = 临时基础设施**。同样的 `_apply_*.py` 模式在 c8b6b /
+   identity-banner-strip 等场景已经用了多次。规则：跑完 + 验证 + 立即删，
+   不留 "future ops can use this" 借口。
+
+2. **WARN 位点选最早的有效层**。`register()` 是工具进入 registry 的
+   唯一关口，比 classifier 启动后扫描更早，比 CI 更早。"最早" =
+   "改动反馈环最短" → 开发者最容易立即修。
+
+3. **3 处 cookbook ref 必须保持同步**：§4.21（人读）+ register WARN
+   字串（运行时）+ Cursor rule（IDE）。Audit D2 + D3 + D4 各自检查
+   一处 → 任何一处漂移都红灯。
+
+4. **`__init__.py`/`plan.py` 等 shim 文件需显式白名单**。AST 完备性
+   测试要把"已知非工具 handler"列出来 + 写明原因，避免未来被误以为
+   "完备性测试漏检"而被修改测试规则。白名单写在测试文件里 = SOT。
+
+C19 完成。下一步进 C12+C9c（unattended 审批 wire-up + 配套 SSE 事件）。
 
 ---
 

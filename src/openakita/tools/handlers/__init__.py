@@ -116,6 +116,25 @@ class SystemHandlerRegistry:
         # policy_v2 lazily to avoid bootstrap cycle from handlers/__init__.py.
         self._collect_tool_classes(handler, tool_names or [], tool_classes)
 
+        # C19-D2: WARN for tools without an explicit ApprovalClass declaration.
+        # Falls back to ApprovalClassifier heuristics at decision time, which
+        # works but is opaque (cookbook §4.21). The check is the same data
+        # source as the CI completeness gate, so dev WARN ↔ CI red are aligned.
+        if tool_names:
+            unclassified = [
+                t for t in tool_names if t not in self._tool_classes
+            ]
+            for tool in unclassified:
+                logger.warning(
+                    "[Policy] Tool %r in handler %r has no explicit "
+                    "ApprovalClass (will fall back to classifier heuristics). "
+                    "Add an entry under TOOL_CLASSES in the handler class, or "
+                    "pass tool_classes={...} to register(); see "
+                    "docs/policy_v2_research.md §4.21",
+                    tool,
+                    handler_name,
+                )
+
         logger.info(
             "Registered handler: %s (%d tools)",
             handler_name,

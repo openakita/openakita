@@ -1,0 +1,58 @@
+---
+description: ApprovalClass spec when adding or modifying OpenAkita built-in tools
+globs:
+  - "src/openakita/tools/handlers/**/*.py"
+  - "src/openakita/core/agent.py"
+  - "src/openakita/core/policy_v2/classifier.py"
+alwaysApply: false
+---
+
+# 新增 / 修改 OpenAkita 内置工具时必读
+
+每个内置工具必须有显式 `ApprovalClass` 声明,
+否则 `pytest tests/unit/test_classifier_completeness.py` 红灯,
+启动时也会输出 `[Policy] Tool 'xxx' has no explicit ApprovalClass` WARN.
+
+完整 SOP + 4 个方案见 [docs/policy_v2_research.md §4.21](mdc:docs/policy_v2_research.md)
+
+## 推荐做法 (方案 C — handler 自治)
+
+新工具属于现有 handler 时, 在 handler 类的 `TOOL_CLASSES` 字典加一行:
+
+```python
+class FilesystemHandler:
+    TOOLS = ["read_file", "write_file", "my_new_tool"]
+    TOOL_CLASSES = {
+        "read_file": ApprovalClass.READONLY_GLOBAL,
+        "write_file": ApprovalClass.MUTATING_SCOPED,
+        "my_new_tool": ApprovalClass.MUTATING_SCOPED,  # ← 新增
+    }
+```
+
+## 备选 (方案 B — agent.py 集中声明)
+
+```python
+self.handler_registry.register(
+    "filesystem", create_filesystem_handler(self),
+    tool_classes={"my_new_tool": ApprovalClass.MUTATING_SCOPED},
+)
+```
+
+## 11 类 ApprovalClass 速查
+
+`READONLY_GLOBAL` `READONLY_SCOPED` `READONLY_SEARCH` `MUTATING_SCOPED`
+`MUTATING_GLOBAL` `DESTRUCTIVE` `EXEC_LOW_RISK` `EXEC_CAPABLE`
+`CONTROL_PLANE` `INTERACTIVE` `UNKNOWN`
+
+不确定挑哪类 → 优先选更严的 (safety-by-default), classifier 的 `most_strict`
+会保留更高严格度.
+
+## 行为依赖参数 (例: 写入路径决定风险)
+
+→ 修改 `policy_v2/classifier.py:_refine_with_params`,
+  并在 `tests/unit/test_classifier.py` 加 case 覆盖新分支.
+
+## Skill / MCP / Plugin 工具不在此列
+
+第三方扩展通过 SKILL.md frontmatter / MCP `tool.annotations` /
+plugin manifest 各自声明 — 不需要改本仓代码.
