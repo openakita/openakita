@@ -51,13 +51,56 @@ chunks via :func:`_read_last_complete_line` up to a 16 MiB hard cap, so
 any reasonable single record is recoverable while pathological lines
 (>16 MiB) degrade explicitly rather than corrupting the chain.
 
+C20 — JSONL rotation
+--------------------
+
+The writer optionally rolls the active file aside on each ``append()``
+based on :class:`AuditConfig.rotation_mode`:
+
+* ``"none"`` (default): never rotate; behaviour identical to C16/C17/C18.
+* ``"daily"``: when the active file's mtime falls on a UTC date that
+  differs from "today", rename the active file to
+  ``<stem>.YYYY-MM-DD.jsonl`` (date = mtime's UTC date) before writing
+  the new record.
+* ``"size"``: when ``stat().st_size + len(serialized_line) >
+  rotation_size_mb * 1024 * 1024``, rename the active file to
+  ``<stem>.YYYYMMDDTHHMMSS.jsonl`` (UTC timestamp at rotation moment)
+  before writing.
+
+**Chain head carry-over** (the contract the original C16 docstring
+deferred to "when rotation lands"): because rotation happens *inside*
+the same ``with self._lock`` + filelock scope as the append, and because
+we always ``_reload_last_hash_from_disk()`` BEFORE deciding to rotate,
+the writer's in-memory ``_last_hash`` already points at the renamed
+file's tail row_hash when we open the (now-empty) new file for write.
+The first record written to the new file therefore has
+``prev_hash = <last row_hash of the rotated file>`` — a verifier walking
+``<stem>.YYYY-MM-DD.jsonl`` → ``<stem>.jsonl`` in mtime order sees one
+continuous chain.
+
+Rotation never widens the trust boundary: it's all under the same
+process+filelock window as appends, and ``self.path`` (the *active*
+file) is unchanged by rotation — only its on-disk content is moved
+aside, so callers don't need to re-resolve the writer.
+
+Pruning: after rotation, if ``rotation_keep_count > 0``, archives
+matching ``<stem>.*.jsonl`` are sorted by mtime ascending and the
+oldest beyond the keep window are unlinked. ``keep_count = 0`` =
+unlimited (operator runs an external archiver).
+
 Out of scope (explicit follow-ups, not bugs)
 ---------------------------------------------
 
-* Cross-file rotation (e.g. ``audit-2026-05-13.jsonl`` → next day) doesn't
-  exist yet; when added, the chain head will need to embed the tail hash
-  of the previous file. ``ParamMutationAuditor`` (C17 Phase E.2) now uses
-  the same ``ChainedJsonlWriter`` infrastructure as the policy audit.
+* ``ParamMutationAuditor`` (C17 Phase E.2) uses the same
+  ``ChainedJsonlWriter`` infrastructure — so it inherits rotation
+  automatically once its ``AuditConfig`` is wired the same way.
+* Cross-process clock skew for daily mode: we use ``time.time()`` of
+  *this* process for "today", and ``Path.stat().st_mtime`` of the file
+  for "last write". If two processes on different timezones / clocks
+  share the file, the date comparison may flip-flop near midnight UTC.
+  Operators running multi-host audit consolidation should keep clocks
+  in sync via NTP (which is the assumption everywhere else in OpenAkita
+  too).
 """
 
 from __future__ import annotations
@@ -66,7 +109,9 @@ import json
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -363,6 +408,198 @@ class ChainedJsonlWriter:
         if isinstance(obj, dict) and isinstance(obj.get("row_hash"), str):
             self._last_hash = obj["row_hash"]
 
+    # ------------------------------------------------------------------
+    # Rotation (C20)
+    # ------------------------------------------------------------------
+
+    def _get_rotation_config(self) -> tuple[str, int, int]:
+        """Read ``audit.rotation_*`` from current policy config.
+
+        Lazy lookup at append time means hot-reload of POLICIES.yaml
+        takes effect on the next write — no restart required, matching
+        the C18 hot-reload promise.
+
+        C20 自审：we **deliberately bypass** ``get_config_v2()`` here.
+        Reason: ``append()`` can be invoked indirectly from inside
+        ``rebuild_engine_v2``'s ``threading.Lock`` (e.g. when
+        ``_audit_env_overrides`` writes an override audit row via its
+        ephemeral ``AuditLogger``). ``get_config_v2()`` itself tries to
+        ``with _lock:`` — the same non-reentrant lock — so we'd reproduce
+        the exact BUG-C2 deadlock pattern. Reading the module-level
+        ``_config`` attribute directly is GIL-safe (single attribute
+        read), lock-free, and gives us either the latest installed cfg
+        or ``None`` (in which case we fall back to defaults).
+
+        We tolerate every failure path (no config, partial config,
+        circular imports during interpreter shutdown) by falling back
+        to ``("none", 100, 30)`` so that audit writes never get blocked
+        on a config error. The contract: rotation is best-effort UX;
+        the chain integrity contract (prev_hash / row_hash) is
+        non-negotiable.
+        """
+        try:
+            from . import global_engine
+
+            cfg_obj = global_engine._config
+            if cfg_obj is None:
+                return "none", 100, 30
+            cfg = cfg_obj.audit
+            mode = getattr(cfg, "rotation_mode", "none")
+            size_mb = int(getattr(cfg, "rotation_size_mb", 100))
+            keep = int(getattr(cfg, "rotation_keep_count", 30))
+            if mode not in ("none", "daily", "size"):
+                mode = "none"
+            return mode, size_mb, keep
+        except Exception:
+            return "none", 100, 30
+
+    def _needs_rotation(
+        self, *, mode: str, size_mb: int, pending_line_bytes: int
+    ) -> tuple[bool, str | None]:
+        """Decide whether to rotate BEFORE the upcoming append.
+
+        Returns ``(needed, archive_suffix)`` — when ``needed`` is True,
+        the caller renames ``self.path`` to
+        ``<stem>.<archive_suffix>.jsonl``. Empty / missing files never
+        rotate (nothing to archive).
+        """
+        if mode == "none":
+            return False, None
+        if not self.path.exists():
+            return False, None
+        try:
+            stat = self.path.stat()
+        except OSError:
+            return False, None
+        if stat.st_size == 0:
+            return False, None
+
+        if mode == "daily":
+            try:
+                mtime_date = datetime.fromtimestamp(stat.st_mtime, tz=UTC).date()
+            except (OSError, OverflowError, ValueError):
+                return False, None
+            today = datetime.fromtimestamp(time.time(), tz=UTC).date()
+            if mtime_date != today:
+                return True, mtime_date.strftime("%Y-%m-%d")
+            return False, None
+
+        if mode == "size":
+            limit_bytes = size_mb * 1024 * 1024
+            if stat.st_size + pending_line_bytes > limit_bytes:
+                stamp = datetime.fromtimestamp(time.time(), tz=UTC).strftime(
+                    "%Y%m%dT%H%M%S"
+                )
+                # Disambiguate same-second rotations: if the archive
+                # path already exists (extremely rare, but two threads
+                # could race here in pathological tests / micro-bench),
+                # append a millisecond suffix.
+                archive = self.path.with_suffix(f".{stamp}.jsonl")
+                if archive.exists():
+                    ms = datetime.fromtimestamp(time.time(), tz=UTC).strftime(
+                        "%Y%m%dT%H%M%S%f"
+                    )
+                    stamp = ms
+                return True, stamp
+            return False, None
+
+        return False, None
+
+    def _do_rotate(self, archive_suffix: str, keep_count: int) -> None:
+        """Rename current ``self.path`` to its archive name and prune.
+
+        Must be called inside both ``self._lock`` and the cross-process
+        filelock. Idempotent w.r.t. concurrent writers (the second
+        writer's ``_needs_rotation`` check finds the file already
+        empty / fresh and skips).
+        """
+        archive = self.path.with_suffix(f".{archive_suffix}.jsonl")
+        # If the archive already exists (e.g. two rotations in the same
+        # second with the same daily suffix because clocks jumped), keep
+        # the existing archive untouched and skip rotation rather than
+        # silently overwrite history.
+        if archive.exists():
+            logger.warning(
+                "[audit_chain] rotate target %s already exists; skipping "
+                "rotation to preserve historical archive",
+                archive,
+            )
+            return
+        try:
+            self.path.rename(archive)
+        except OSError as exc:
+            logger.error(
+                "[audit_chain] failed to rotate %s -> %s: %s",
+                self.path,
+                archive,
+                exc,
+            )
+            return
+        logger.info("[audit_chain] rotated %s -> %s", self.path, archive)
+
+        # Prune older archives. Sibling pattern: same stem prefix +
+        # ``.<suffix>.jsonl``. We deliberately do NOT prune ``self.path``
+        # itself — that's the active file, not an archive.
+        if keep_count > 0:
+            self._prune_archives(keep_count)
+
+    def _list_archives(self) -> list[Path]:
+        """Find rotated siblings of ``self.path``.
+
+        Pattern: same parent dir, basename matches
+        ``<stem>.<anything>.jsonl`` AND is NOT ``self.path`` itself.
+        Returned list is sorted by ``st_mtime`` ascending (oldest
+        first), which is the verification + prune order.
+        """
+        parent = self.path.parent
+        stem = self.path.stem  # e.g. "policy_decisions" for ".jsonl"
+        if not parent.exists():
+            return []
+        results: list[tuple[float, Path]] = []
+        active_resolved = self.path.resolve()
+        for entry in parent.iterdir():
+            if not entry.is_file():
+                continue
+            if entry.resolve() == active_resolved:
+                continue
+            name = entry.name
+            # ``<stem>.<suffix>.jsonl`` — at least one dot beyond the
+            # stem before the trailing .jsonl. ``audit.jsonl`` (active)
+            # is filtered above by identity; ``audit.jsonl.lock`` is
+            # filtered here because it doesn't end with ``.jsonl``.
+            if not name.endswith(".jsonl"):
+                continue
+            if not name.startswith(stem + "."):
+                continue
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            results.append((mtime, entry))
+        results.sort(key=lambda t: t[0])
+        return [p for _, p in results]
+
+    def _prune_archives(self, keep_count: int) -> None:
+        archives = self._list_archives()
+        if len(archives) <= keep_count:
+            return
+        for stale in archives[: len(archives) - keep_count]:
+            try:
+                stale.unlink()
+                logger.info(
+                    "[audit_chain] pruned old archive %s (keep_count=%d)",
+                    stale,
+                    keep_count,
+                )
+            except OSError as exc:
+                logger.warning(
+                    "[audit_chain] failed to prune %s: %s", stale, exc
+                )
+
+    # ------------------------------------------------------------------
+    # Append
+    # ------------------------------------------------------------------
+
     def append(self, record: dict[str, Any]) -> dict[str, Any]:
         """Append ``record`` with ``prev_hash`` + ``row_hash`` populated.
 
@@ -377,8 +614,11 @@ class ChainedJsonlWriter:
            other processes).
         3. Re-read the on-disk tail to refresh ``_last_hash`` — a sibling
            process may have appended while we were waiting.
-        4. Build enriched record + write + fsync (optional).
-        5. Release filelock, then process lock.
+        4. C20: check rotation; if needed, rename active file aside. The
+           in-memory ``_last_hash`` (refreshed in step 3) carries the
+           chain head across the boundary.
+        5. Build enriched record + write + fsync (optional).
+        6. Release filelock, then process lock.
         """
         if not isinstance(record, dict):
             raise TypeError(f"record must be a dict, got {type(record).__name__}")
@@ -412,11 +652,29 @@ class ChainedJsonlWriter:
                 # Critical: re-read tail under the filelock, not before.
                 self._reload_last_hash_from_disk()
 
+                # Pre-build the enriched line so size-mode rotation can
+                # make an accurate decision (we know exactly how many
+                # bytes are about to land).
                 enriched = {**record, "prev_hash": self._last_hash}
                 row_hash = _compute_row_hash(enriched)
                 enriched["row_hash"] = row_hash
-
                 line = _canonical_dumps(enriched) + "\n"
+                line_bytes = len(line.encode("utf-8"))
+
+                # C20: rotation check + rename happens BEFORE the write.
+                # _last_hash has just been refreshed from the current
+                # file's tail, so when we rotate the file aside and then
+                # write to the empty new path, ``prev_hash`` in the
+                # enriched record above is already correct (it equals
+                # the rotated file's tail row_hash). Chain stays
+                # continuous across the rotation boundary.
+                mode, size_mb, keep = self._get_rotation_config()
+                needs, suffix = self._needs_rotation(
+                    mode=mode, size_mb=size_mb, pending_line_bytes=line_bytes
+                )
+                if needs and suffix is not None:
+                    self._do_rotate(suffix, keep)
+
                 try:
                     self.path.parent.mkdir(parents=True, exist_ok=True)
                     with open(self.path, "a", encoding="utf-8") as fh:

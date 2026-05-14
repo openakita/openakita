@@ -313,6 +313,33 @@ class AuditConfig(_Strict):
     的"legacy prefix"会被 verifier 单独标记，不会触发 tamper 告警。
     """
 
+    rotation_mode: Literal["none", "daily", "size"] = "none"
+    """C20: JSONL rotation 策略，默认关闭以保持 C16/C17/C18 行为不变。
+
+    - ``"none"``：永不 rotate，单文件无限增长（v1 行为）。
+    - ``"daily"``：写入时检测到当前 ``log_path`` 文件 mtime 的 UTC 日期与
+      当前 UTC 日期不同时，把现有文件 rename 成
+      ``<stem>.YYYY-MM-DD.jsonl``（YYYY-MM-DD 取 mtime 的日期），创建空的
+      新 ``log_path``。新文件首行 ``prev_hash`` 自动嵌入旧文件尾的
+      ``row_hash`` —— 跨 rotation 的链头连续性由 ``ChainedJsonlWriter``
+      持有的 ``self._last_hash`` in-memory 状态保证。
+    - ``"size"``：写入时检测到当前文件 size 加上即将写入的 line 长度超过
+      ``rotation_size_mb * 1024 * 1024`` 时，rename 成
+      ``<stem>.YYYYMMDDTHHMMSS.jsonl``，创建空的新文件。同样链头连续。
+    """
+
+    rotation_size_mb: int = Field(default=100, ge=1, le=10240)
+    """size mode 下单文件最大体量，默认 100 MiB（既不会让 verify_chain
+    扫一次跑数分钟，也不会让单条 ``ParamMutationAuditor`` 巨型 record 把
+    阈值打成无意义状态）。范围 [1, 10240] MiB。
+    """
+
+    rotation_keep_count: int = Field(default=30, ge=0, le=10000)
+    """rotation 后保留多少个历史 archive 文件，超过的按 mtime 升序删除最旧
+    的。``0`` = 不删除（操作员自行用 logrotate / 归档系统）。默认 30 平衡
+    了"审计可追溯一个月" + "磁盘占用可控"。
+    """
+
     @field_validator("log_path", mode="after")
     @classmethod
     def _check_log_path(cls, v: str) -> str:
