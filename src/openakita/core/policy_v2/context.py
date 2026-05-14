@@ -183,8 +183,20 @@ class PolicyContext:
             root_user_id=meta.get("root_user_id"),
             session_role=_coerce_role(getattr(session, "session_role", None)),
             confirmation_mode=_coerce_mode(getattr(session, "confirmation_mode", None)),
-            is_unattended=bool(meta.get("is_unattended", False)),
-            unattended_strategy=str(meta.get("unattended_strategy", "")),
+            # C12 §14.2: prefer first-class Session fields (added in C12) but
+            # fall back to metadata for back-compat with sessions persisted
+            # before promotion. ``getattr`` chain returns False/"" if absent →
+            # metadata value used; explicit False / "" on first-class field also
+            # wins (intentional opt-out is preserved).
+            is_unattended=bool(
+                getattr(session, "is_unattended", None)
+                if getattr(session, "is_unattended", None) is not None
+                else meta.get("is_unattended", False)
+            ),
+            unattended_strategy=str(
+                getattr(session, "unattended_strategy", None)
+                or meta.get("unattended_strategy", "")
+            ),
             delegate_chain=list(meta.get("delegate_chain", [])),
             replay_authorizations=_coerce_replay_auths(meta.get("replay_authorizations")),
             trusted_path_overrides=_coerce_trusted_paths(meta.get("trusted_path_overrides")),

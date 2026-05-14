@@ -360,6 +360,23 @@ class Session:
     session_role: str = "agent"
     confirmation_mode_override: str | None = None
 
+    # C12 §14.2: PolicyV2 unattended fields. Promoted from `metadata` to
+    # first-class fields so scheduler / spawn_agent / webhook callers can set
+    # them at session creation without metadata fishing. PolicyContext.from_session
+    # reads first-class fields when present (with metadata fallback for
+    # back-compat with sessions persisted before C12).
+    #
+    # ``is_unattended``: True for sessions where no human is interactively
+    # responding (cron task / webhook / autonomous spawn). PolicyEngineV2
+    # step 11 routes through ``_handle_unattended`` only when this is True.
+    #
+    # ``unattended_strategy``: empty → engine uses
+    # ``config.unattended.default_strategy`` ("ask_owner" by default).
+    # Explicit values: "deny" / "auto_approve" / "defer_to_owner" /
+    # "defer_to_inbox" / "ask_owner".  Per-session override of config default.
+    is_unattended: bool = False
+    unattended_strategy: str = ""
+
     @classmethod
     def create(
         cls,
@@ -714,6 +731,8 @@ class Session:
             "metadata": serializable_metadata,
             "session_role": self.session_role,
             "confirmation_mode_override": self.confirmation_mode_override,
+            "is_unattended": self.is_unattended,
+            "unattended_strategy": self.unattended_strategy,
         }
 
     def _is_json_serializable(self, value: Any) -> bool:
@@ -736,6 +755,12 @@ class Session:
         session_role = sr_raw if isinstance(sr_raw, str) and sr_raw else "agent"
         cm_raw = data.get("confirmation_mode_override")
         confirmation_mode_override = cm_raw if isinstance(cm_raw, str) and cm_raw else None
+        # C12 §14.2: is_unattended / unattended_strategy. 旧 sessions.json 没有
+        # → 默认 False / "" (= use config.unattended.default_strategy)
+        is_unattended_raw = data.get("is_unattended", False)
+        is_unattended = bool(is_unattended_raw) if is_unattended_raw is not None else False
+        us_raw = data.get("unattended_strategy", "")
+        unattended_strategy = us_raw if isinstance(us_raw, str) else ""
         return cls(
             id=data["id"],
             channel=data["channel"],
@@ -760,4 +785,6 @@ class Session:
             metadata=data.get("metadata", {}),
             session_role=session_role,
             confirmation_mode_override=confirmation_mode_override,
+            is_unattended=is_unattended,
+            unattended_strategy=unattended_strategy,
         )

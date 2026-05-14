@@ -8285,6 +8285,36 @@ class Agent:
 
             messages.append({"role": "user", "content": tool_results})
 
+            # C12 §14.5: same unattended-deferral bubble-up as in execute_task.
+            # Even on the simpler chat-with-tools loop the unattended decision
+            # path may have triggered (e.g. spawn_agent path, headless API call).
+            _deferred = [
+                tr
+                for tr in tool_results
+                if isinstance(tr, dict) and tr.get("_deferred_approval_id")
+            ]
+            if _deferred:
+                from .policy_v2.exceptions import DeferredApprovalRequired
+
+                _ids = [tr["_deferred_approval_id"] for tr in _deferred]
+                logger.info(
+                    "[chat_loop] %d tool(s) deferred for owner approval; "
+                    "halting loop. pending_ids=%s",
+                    len(_deferred),
+                    _ids,
+                )
+                raise DeferredApprovalRequired(
+                    message=(
+                        f"{len(_deferred)} tool call(s) require owner approval; "
+                        f"task suspended. pending_approvals={_ids}"
+                    ),
+                    pending_id=_ids[0],
+                    unattended_strategy=_deferred[0].get(
+                        "_deferred_approval_strategy", ""
+                    ),
+                    meta={"all_pending_ids": _ids},
+                )
+
             # === 统一处理 skip 反思 + 用户插入消息 ===
             if self.agent_state and self.agent_state.current_task:
                 await self.agent_state.current_task.process_post_tool_signals(messages)
@@ -8903,6 +8933,39 @@ class Agent:
                     has_executed_tools = True
 
                 messages.append({"role": "user", "content": tool_results})
+
+                # C12 §14.5: bubble up unattended deferrals.
+                # ``_deferred_approval_id`` is set by ``ToolExecutor._defer_unattended_confirm``
+                # whenever a CONFIRM decision in unattended context was rerouted
+                # to PendingApprovalsStore. Halt the Ralph loop now so scheduler /
+                # spawn_agent caller can mark the task as AWAITING_APPROVAL —
+                # otherwise the LLM would burn iterations re-trying the deferred tool.
+                _deferred = [
+                    tr
+                    for tr in tool_results
+                    if isinstance(tr, dict) and tr.get("_deferred_approval_id")
+                ]
+                if _deferred:
+                    from .policy_v2.exceptions import DeferredApprovalRequired
+
+                    _ids = [tr["_deferred_approval_id"] for tr in _deferred]
+                    logger.info(
+                        "[execute_task] %d tool(s) deferred for owner approval; "
+                        "halting Ralph loop. pending_ids=%s",
+                        len(_deferred),
+                        _ids,
+                    )
+                    raise DeferredApprovalRequired(
+                        message=(
+                            f"{len(_deferred)} tool call(s) require owner approval; "
+                            f"task suspended. pending_approvals={_ids}"
+                        ),
+                        pending_id=_ids[0],
+                        unattended_strategy=_deferred[0].get(
+                            "_deferred_approval_strategy", ""
+                        ),
+                        meta={"all_pending_ids": _ids, "task_id": task.id},
+                    )
 
                 # === 统一处理 skip 反思 + 用户插入消息 ===
                 if self.agent_state and self.agent_state.current_task:

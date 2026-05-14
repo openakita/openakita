@@ -46,6 +46,7 @@ from .routes import (
     memory,
     memory_repair,
     orgs,
+    pending_approvals,
     qqbot_onboard,
     scheduler,
     sessions,
@@ -378,6 +379,7 @@ def create_app(
     app.include_router(memory.router, tags=["记忆"])
     app.include_router(memory_repair.router, tags=["记忆修复"])
     app.include_router(scheduler.router, tags=["定时任务"])
+    app.include_router(pending_approvals.router, tags=["待审批"])
     app.include_router(sessions.router, tags=["会话"])
     app.include_router(skills.router, tags=["技能"])
     app.include_router(skill_categories.router, tags=["技能分类"])
@@ -503,6 +505,49 @@ def create_app(
             await asyncio.to_thread(_cleanup_old_recovery_pending)
         except Exception as e:
             logger.debug("[Startup] Memory recovery pending cleanup skipped: %s", e)
+
+    @app.on_event("startup")
+    async def _wire_pending_approvals_sse():
+        """C9c-2: bridge PendingApprovalsStore events to WebSocket broadcast.
+
+        The Store is policy-loop-agnostic; we install a sync hook that does
+        ``asyncio.ensure_future(broadcast_event(...))`` on the API loop. The
+        broadcast helper itself is cross-loop safe (engine_bridge), so this
+        works regardless of which loop the Store mutation happens on.
+        """
+        try:
+            from openakita.api.routes.websocket import broadcast_event
+            from openakita.core.pending_approvals import get_pending_approvals_store
+
+            def _hook(event_type: str, payload: dict) -> None:
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    logger.debug(
+                        "[PendingApprovals] no running loop for %s; skipping",
+                        event_type,
+                    )
+                    return
+                _coro = None
+                try:
+                    _coro = broadcast_event(event_type, payload)
+                    asyncio.ensure_future(_coro)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "[PendingApprovals] emit failed for %s: %s",
+                        event_type,
+                        exc,
+                    )
+                    if _coro is not None:
+                        try:
+                            _coro.close()
+                        except Exception:  # noqa: BLE001
+                            pass
+
+            get_pending_approvals_store().set_event_hook(_hook)
+            logger.info("[Startup] PendingApprovals SSE hook wired")
+        except Exception as e:
+            logger.warning("[Startup] PendingApprovals SSE wire failed: %s", e)
 
     @app.post("/api/shutdown", tags=["系统"])
     async def shutdown(request: Request):

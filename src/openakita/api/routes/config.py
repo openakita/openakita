@@ -1465,7 +1465,7 @@ async def write_security_config(body: SecurityConfigUpdate):
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_v2_layer()
+        reset_policy_v2_layer(scope="security")
     except Exception:
         pass
     logger.info("[Config API] Updated security policy")
@@ -1605,7 +1605,7 @@ async def write_security_zones(body: SecurityZonesUpdate):
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_v2_layer()
+        reset_policy_v2_layer(scope="zones")
     except Exception:
         pass
     logger.info("[Config API] Updated security zones")
@@ -1648,7 +1648,7 @@ async def write_security_commands(body: SecurityCommandsUpdate):
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_v2_layer()
+        reset_policy_v2_layer(scope="commands")
     except Exception:
         pass
     logger.info("[Config API] Updated security commands")
@@ -1694,7 +1694,7 @@ async def write_security_sandbox(body: SecuritySandboxUpdate):
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_v2_layer()
+        reset_policy_v2_layer(scope="sandbox")
     except Exception:
         pass
     logger.info("[Config API] Updated security sandbox")
@@ -1745,7 +1745,7 @@ async def write_permission_mode(body: _PermissionModeBody):
         _apply_permission_mode_defaults(sec, mode)
         if not _write_policies_yaml(data):
             return {"status": "error", "message": "配置写入失败，安全模式未切换"}
-        reset_policy_v2_layer()
+        reset_policy_v2_layer(scope="permission_mode")
         logger.info(f"[Config API] Permission mode set to: {mode}")
         return {"status": "ok", "mode": mode, "label": _permission_label(mode)}
     except Exception as e:
@@ -1886,7 +1886,7 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_v2_layer()
+        reset_policy_v2_layer(scope="confirmation")
     except Exception:
         pass
     return {"status": "ok"}
@@ -1967,7 +1967,7 @@ async def write_self_protection(body: _SelfProtectionUpdate):
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_v2_layer()
+        reset_policy_v2_layer(scope="self_protection")
     except Exception:
         pass
     return {"status": "ok"}

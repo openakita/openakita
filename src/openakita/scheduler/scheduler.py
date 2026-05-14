@@ -543,6 +543,20 @@ class TaskScheduler:
             else:
                 execution.finish(True, result="No executor configured")
 
+            # C12 §14.5: a `[awaiting_approval] pending_id=…` marker from the
+            # executor signals the task hit a PendingApproval and is paused —
+            # NOT a normal failure. Move task to AWAITING_APPROVAL and skip
+            # the failure-counter / auto-disable / advance_next_run flow.
+            # When owner resolves to "allow", a separate API call (resume_pending)
+            # transitions back to SCHEDULED and re-runs the task with a 30s
+            # ReplayAuthorization injected (see C12-R3-5).
+            _err_or_res = (
+                execution.error if execution.status != "success" else (execution.result or "")
+            )
+            _is_deferred = isinstance(_err_or_res, str) and _err_or_res.startswith(
+                "[awaiting_approval]"
+            )
+
             if execution.status == "success":
                 # Fix: 使用"实际预定时间"而非 datetime.now() 作为基准。
                 # 由于调度循环的 advance_seconds=20 让任务比预定时间提前 ~20s 触发，
@@ -568,6 +582,16 @@ class TaskScheduler:
                     task.metadata["missed_count"] = 0
                     task.metadata["missed_count_cleared_at"] = datetime.now().isoformat()
                 logger.info(f"Task {task.id} completed successfully")
+            elif _is_deferred:
+                # C12 §14.5: pause the task; do not increment fail_count,
+                # do not advance next_run. ``mark_awaiting_approval`` keeps
+                # the state machine honest (with logging if transition illegal).
+                task.mark_awaiting_approval(marker=_err_or_res)
+                logger.info(
+                    "Task %s paused awaiting owner approval: %s",
+                    task.id,
+                    _err_or_res,
+                )
             else:
                 self._handle_task_failure(task, execution.error or "Unknown error")
 

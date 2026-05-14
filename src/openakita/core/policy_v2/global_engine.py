@@ -37,7 +37,7 @@ import logging
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .engine import PolicyEngineV2, build_engine_from_config
 from .loader import PolicyConfigError, load_policies_yaml
@@ -285,7 +285,7 @@ def invalidate_classifier_cache(tool: str | None = None) -> None:
         )
 
 
-def reset_policy_v2_layer() -> None:
+def reset_policy_v2_layer(scope: str = "all") -> None:
     """C8b-2: 一次性重置 v2 引擎单例 + 关联子系统（audit_logger）。
 
     背景：``api/routes/config.py`` UI Save Settings 后需要让全部 v2 配置消费者
@@ -299,17 +299,86 @@ def reset_policy_v2_layer() -> None:
 
     fail-safe：audit_logger 模块未导入时静默跳过（特殊 import 路径下可能尚
     未初始化）。
-    """
-    reset_engine_v2()
-    try:
-        from ..audit_logger import reset_audit_logger
 
-        reset_audit_logger()
-    except Exception:
-        logger.debug(
-            "[PolicyV2] audit_logger reset skipped (module not available)",
+    C9c-3: emit ``policy_config_reloaded`` SSE on success / ``_failed`` on
+    exception so the UI can refresh dependent views (SecurityView,
+    PendingApprovalsView, dry-run preview cache). ``scope`` is a free-form
+    label from the caller (e.g. "security", "zones", "commands",
+    "user_allowlist") that the UI uses to decide which subviews to refresh.
+    """
+    error: Exception | None = None
+    try:
+        reset_engine_v2()
+        try:
+            from ..audit_logger import reset_audit_logger
+
+            reset_audit_logger()
+        except Exception:
+            logger.debug(
+                "[PolicyV2] audit_logger reset skipped (module not available)",
+                exc_info=True,
+            )
+    except Exception as exc:  # noqa: BLE001
+        error = exc
+        logger.error(
+            "[PolicyV2] reset_policy_v2_layer(scope=%s) failed: %s",
+            scope,
+            exc,
             exc_info=True,
         )
+
+    _emit_reload_event(scope=scope, error=error)
+    if error is not None:
+        # Re-raise so callers can decide whether to surface to the user.
+        raise error
+
+
+def _emit_reload_event(*, scope: str, error: Exception | None) -> None:
+    """Best-effort SSE emit for policy_config_reloaded[_failed].
+
+    Never blocks, never raises. WS module is imported lazily so non-API
+    contexts (CLI, tests, server-less import) don't hard-fail at import.
+    """
+    try:
+        import asyncio as _asyncio
+        import time as _time
+
+        from ...api.routes.websocket import broadcast_event
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[PolicyV2] reload SSE skipped (no WS): %s", exc)
+        return
+
+    event = "policy_config_reload_failed" if error else "policy_config_reloaded"
+    payload: dict[str, Any] = {
+        "scope": scope,
+        "ts": _time.time(),
+    }
+    if error is not None:
+        payload["error"] = f"{type(error).__name__}: {error}"
+
+    # Build the coroutine lazily so we can close it cleanly when there is
+    # no running loop (avoids "coroutine was never awaited" RuntimeWarning
+    # in CLI/test paths where reset_policy_v2_layer runs outside an event
+    # loop).
+    coro = None
+    try:
+        _asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug(
+            "[PolicyV2] reload SSE skipped (no running loop) scope=%s", scope
+        )
+        return
+
+    try:
+        coro = broadcast_event(event, payload)
+        _asyncio.ensure_future(coro)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[PolicyV2] reload SSE emit failed: %s", exc)
+        if coro is not None:
+            try:
+                coro.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def make_preview_engine(
