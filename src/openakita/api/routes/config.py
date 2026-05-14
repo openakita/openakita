@@ -1487,13 +1487,69 @@ async def read_security_config():
     return {"security": data.get("security", {})}
 
 
+def _deep_merge_security(target: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    """Recursive in-place merge of ``source`` into ``target``.
+
+    Semantics (C21 P0-2, derived from plan §7.2):
+
+    - dict + dict → recurse
+    - everything else (list / primitive / None) → source wins (replace)
+    - keys present in ``target`` but absent in ``source`` are **preserved**
+
+    Lists are replaced wholesale (not element-wise merged). This matches
+    the typical UI flow: when the user edits ``user_allowlist.commands``
+    they POST the new full list, not a diff.
+
+    Deletion is NOT supported through deep-merge. To clear a setting, the
+    caller must POST an explicit empty value (``[]`` / ``{}`` / default
+    primitive) or use the ``?replace=true`` escape hatch on the endpoint.
+
+    Why merge instead of full-replace?
+    ----------------------------------
+
+    Pre-C21 ``write_security_config`` did ``data["security"] = body.security``.
+    The UI POSTs only the fields it renders; everything it doesn't render
+    (e.g. ``user_allowlist`` custom commands, ``hot_reload``, ``rotation``,
+    ``aggregation_window_seconds``, ``audit.log_path``) silently disappeared
+    from YAML and got filled back in by loader defaults — **user-customized
+    values were lost**. The plan (§7.2) explicitly required deep-merge; this
+    function is the long-promised implementation.
+    """
+    for k, v in source.items():
+        if isinstance(v, dict) and isinstance(target.get(k), dict):
+            _deep_merge_security(target[k], v)
+        else:
+            target[k] = v
+    return target
+
+
 @router.post("/api/config/security")
-async def write_security_config(body: SecurityConfigUpdate):
-    """Write the full security policy configuration."""
+async def write_security_config(body: SecurityConfigUpdate, replace: bool = False):
+    """Update the security policy configuration.
+
+    Default behaviour (C21 P0-2): **deep-merge** the request body into the
+    existing ``security`` block, preserving any field the caller did not
+    mention. Set ``?replace=true`` to opt into the legacy full-replace
+    semantics — operators who genuinely want to wipe and rewrite the entire
+    block (e.g. a reset-to-defaults flow) can do so explicitly.
+
+    See ``_deep_merge_security`` for merge semantics, especially how lists
+    are handled (wholesale replace) and how deletion works (POST empty
+    container or use ``?replace=true``).
+    """
     data = _read_policies_yaml()
     if data is None:
         return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
-    data["security"] = body.security
+    if replace:
+        data["security"] = body.security
+        merge_mode = "replace"
+    else:
+        existing_security = data.get("security")
+        if not isinstance(existing_security, dict):
+            existing_security = {}
+        _deep_merge_security(existing_security, body.security)
+        data["security"] = existing_security
+        merge_mode = "merge"
     if not _write_policies_yaml(data):
         return {"status": "error", "message": "配置写入失败"}
     try:
@@ -1502,8 +1558,8 @@ async def write_security_config(body: SecurityConfigUpdate):
         reset_policy_v2_layer(scope="security")
     except Exception:
         pass
-    logger.info("[Config API] Updated security policy")
-    return {"status": "ok"}
+    logger.info("[Config API] Updated security policy (mode=%s)", merge_mode)
+    return {"status": "ok", "mode": merge_mode}
 
 
 # C9a §4: Dry-run preview — let user inspect how their saved policy_v2 config
