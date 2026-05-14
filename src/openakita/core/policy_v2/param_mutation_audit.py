@@ -230,13 +230,16 @@ class ParamMutationAuditor:
     """负责 snapshot / diff / 写 jsonl + revert 决策。
 
     单实例可以跨多次调用复用：``audit_dir`` 解析在构造时一次完成，
-    后续 append 走 ``threading.Lock``。
+    后续 append 委托给 ``audit_chain.ChainedJsonlWriter`` 的全局 singleton——
+    进程内 ``threading.Lock`` + 跨进程 ``filelock.FileLock`` 都在那一层。
     """
 
     def __init__(self, audit_dir: Path | None = None) -> None:
         self._audit_dir = Path(audit_dir) if audit_dir is not None else DEFAULT_AUDIT_DIR
         self._audit_path = self._audit_dir / DEFAULT_AUDIT_FILENAME
-        self._lock = threading.Lock()
+        # C17 Phase E.2: 写入串行化交给 ChainedJsonlWriter 的进程内 + 跨进程
+        # 锁——不再需要本类持自己的 threading.Lock。snapshot / evaluate 都是
+        # 纯函数，evaluator 调用 write() 时由全局 singleton writer 串行。
 
     @property
     def audit_path(self) -> Path:
