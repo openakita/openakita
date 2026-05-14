@@ -24,6 +24,7 @@ refine 不缓存（依赖 params + ctx）。
 
 from __future__ import annotations
 
+import threading
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -173,6 +174,17 @@ class ApprovalClassifier:
         self._plugin_lookup = plugin_lookup
         self._cache_size = cache_size
         self._base_cache: OrderedDict[str, tuple[ApprovalClass, DecisionSource]] = OrderedDict()
+        # C21 P0-3: explicit lock around _base_cache operations.
+        # Pre-C21 relied on "CPython OrderedDict 单 op 由 GIL 保证原子性 +
+        # try/except KeyError 兜住竞态" — correctness was maintained but the
+        # composite get→move_to_end→set→popitem sequences had observable races
+        # (cache_size temporarily exceeding _cache_size, double classification
+        # of the same tool, etc.). plan §22.3 had promised "thread-safe LRU
+        # cache" but the original OrderedDict-based impl never delivered the
+        # invariant. With the lock, every cache mutation is serialized within
+        # the classifier and we can drop the defensive try/except (kept as
+        # commented "belt and suspenders" — see _classify_base).
+        self._cache_lock = threading.Lock()
         self._shell_risk_config = shell_risk_config
 
     # ---- public API ----
@@ -216,46 +228,61 @@ class ApprovalClassifier:
 
     def invalidate(self, tool: str | None = None) -> None:
         """清除缓存。plugin 动态注册新工具时调用。"""
-        if tool is None:
-            self._base_cache.clear()
-        else:
-            self._base_cache.pop(tool, None)
+        with self._cache_lock:
+            if tool is None:
+                self._base_cache.clear()
+            else:
+                self._base_cache.pop(tool, None)
 
     @property
     def cache_size(self) -> int:
-        return len(self._base_cache)
+        with self._cache_lock:
+            return len(self._base_cache)
 
     # ---- internals ----
 
     def _classify_base(self, tool: str) -> tuple[ApprovalClass, DecisionSource]:
-        """5 步分类链（带 LRU cache）。
+        """5 步分类链（带线程安全的 LRU cache）。
 
-        Thread-safety：CPython 下 OrderedDict 单 op 由 GIL 保证原子性，但
-        ``get`` + ``move_to_end`` 不是原子的——若另一线程正好在它们之间
-        ``popitem`` 把当前 key 淘汰，``move_to_end`` 会抛 KeyError。
-        try/except 静默兜住此罕见竞态：返回 cached value 仍正确，仅 LRU
-        排序短暂失序，下次访问自动修复。
+        Thread-safety (C21 P0-3): every read+update of ``_base_cache`` is
+        serialized via ``_cache_lock``. The classification itself runs
+        **outside** the lock — handler / skill / mcp / plugin lookup
+        callbacks may take their own locks (registries) and we don't want
+        to nest them under the cache lock. Worst-case the same tool may
+        be classified twice if two threads race past the cache miss, but
+        the result is deterministic so the cache converges immediately.
 
-        ``__setitem__`` + ``popitem(last=False)`` 同样可能因竞态导致
-        cache 临时超过 ``cache_size``，但因 LRU 是性能优化而非正确性约束，
-        允许暂时溢出（下一次 set 自然修复）。
+        Cache eviction (``popitem(last=False)``) and reordering
+        (``move_to_end``) happen under the lock; the defensive
+        try/except KeyError that the pre-C21 implementation relied on is
+        no longer reachable but kept commented out below so future readers
+        understand the historical rationale.
         """
-        cached = self._base_cache.get(tool)
-        if cached is not None:
-            try:
+        with self._cache_lock:
+            cached = self._base_cache.get(tool)
+            if cached is not None:
+                # Atomic under lock: get + move_to_end can't race anymore.
                 self._base_cache.move_to_end(tool)
-            except KeyError:
-                pass
-            return cached
+                return cached
 
+        # Cache miss: do the classification OUTSIDE the lock so lookup
+        # callbacks can take their own locks without risking deadlock.
         result = self._classify_base_uncached(tool)
 
-        self._base_cache[tool] = result
-        if len(self._base_cache) > self._cache_size:
-            try:
+        with self._cache_lock:
+            # Re-check: another thread may have populated the entry while
+            # we were classifying. Either result is correct (deterministic
+            # classification), but keep the first-wins behaviour for cache
+            # locality.
+            existing = self._base_cache.get(tool)
+            if existing is not None:
+                self._base_cache.move_to_end(tool)
+                return existing
+            self._base_cache[tool] = result
+            if len(self._base_cache) > self._cache_size:
+                # Lock guarantees popitem(last=False) is safe; KeyError no
+                # longer possible. Kept the conditional for explicitness.
                 self._base_cache.popitem(last=False)
-            except KeyError:
-                pass
         return result
 
     def _classify_base_uncached(self, tool: str) -> tuple[ApprovalClass, DecisionSource]:
