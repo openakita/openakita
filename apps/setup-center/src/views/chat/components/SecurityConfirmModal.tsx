@@ -49,6 +49,15 @@ export interface SecurityCloseInfo {
   command: string;
 }
 
+// C23 P2-2: ApprovalClass DecisionAction → 中文短标签 + 颜色（必须与
+// src/openakita/core/policy_v2/enums.py 的 DecisionAction StrEnum 对齐）。
+const ACTION_LABELS: Record<string, { label: string; color: string }> = {
+  allow:   { label: "允许",  color: "#10b981" },
+  confirm: { label: "确认",  color: "#f59e0b" },
+  deny:    { label: "拒绝",  color: "#ef4444" },
+  defer:   { label: "延期",  color: "#9333ea" },
+};
+
 export function SecurityConfirmModal({
   data, apiBase, onClose, timerRef, setData,
 }: {
@@ -58,6 +67,8 @@ export function SecurityConfirmModal({
     defaultOnTimeout?: string;
     // C9a §2: v2 字段（缺失时不渲染对应 UI 元素，向后兼容旧 backend）
     approvalClass?: string | null; policyVersion?: number; channel?: string;
+    // C23 P2-2: 决策链。缺失或空时不渲染"决策依据"折叠区。
+    decisionChain?: Array<{ name: string; action: string; note: string }>;
   };
   apiBase: string;
   onClose: (info?: SecurityCloseInfo) => void;
@@ -68,6 +79,8 @@ export function SecurityConfirmModal({
   const pausedRef = useRef(false);
   const [postError, setPostError] = useState<string | null>(null);
   const [showMore, setShowMore] = useState(false);
+  // C23 P2-2: 默认折叠，避免把 modal 撑太大；用户主动 expand 才显示。
+  const [showChain, setShowChain] = useState(false);
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -203,6 +216,74 @@ export function SecurityConfirmModal({
             {humanizeArgs(data.tool, data.args)}
           </pre>
         </div>
+
+        {/* C23 P2-2: decision_chain 折叠区。plan C9 要求把"为什么会要确认"
+            的引擎判断链展开给用户看。默认折叠 (showChain=false) 不打扰；
+            点击 disclosure 展开后逐行渲染 name / action badge / note。
+            缺失或空 chain 时整段不渲染（向后兼容旧 backend）。 */}
+        {data.decisionChain && data.decisionChain.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <button
+              onClick={() => setShowChain((s) => !s)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--text)",
+                opacity: 0.7,
+                fontSize: 11,
+                cursor: "pointer",
+                padding: "2px 0",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+              title={t("chat.securityChainHint", "查看 policy_v2 引擎逐步判定记录")}
+            >
+              <span style={{ display: "inline-block", transform: showChain ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▸</span>
+              {t("chat.securityDecisionChain", "决策依据")} ({data.decisionChain.length})
+            </button>
+            {showChain && (
+              <ol style={{
+                margin: "6px 0 0",
+                padding: "8px 10px 8px 28px",
+                fontSize: 11,
+                lineHeight: 1.5,
+                background: "var(--panel2)",
+                borderRadius: 8,
+                border: "1px solid var(--line)",
+                maxHeight: 180,
+                overflow: "auto",
+                listStyle: "decimal",
+              }}>
+                {data.decisionChain.map((step, idx) => {
+                  const actionMeta = ACTION_LABELS[step.action] || { label: step.action, color: "#6b7280" };
+                  return (
+                    <li key={idx} style={{ marginBottom: 4 }}>
+                      <span style={{ fontWeight: 600 }}>{step.name}</span>
+                      <span
+                        style={{
+                          marginLeft: 6,
+                          padding: "1px 6px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          borderRadius: 999,
+                          background: `${actionMeta.color}1a`,
+                          color: actionMeta.color,
+                          border: `1px solid ${actionMeta.color}55`,
+                        }}
+                      >
+                        {actionMeta.label}
+                      </span>
+                      {step.note && (
+                        <span style={{ marginLeft: 6, opacity: 0.75, wordBreak: "break-word" }}>{step.note}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </div>
+        )}
 
         {postError && (
           <div style={{

@@ -4516,6 +4516,10 @@ class ReasoningEngine:
                                         "policy_version": 2,
                                         "delegate_chain": _delegate_chain,
                                         "root_user_id": _root_user_id,
+                                        # C23 P2-2: ship decision_chain so the modal can
+                                        # render "决策依据" — plan C9 requirement that
+                                        # was deferred. Empty list when chain is empty.
+                                        "decision_chain": _pr.to_ui_chain(),
                                         "options": [
                                             "allow_once",
                                             "allow_session",
@@ -4960,6 +4964,9 @@ class ReasoningEngine:
                                     "policy_version": 2,
                                     "delegate_chain": _delegate_chain,
                                     "root_user_id": _root_user_id,
+                                    # C23 P2-2: ship decision_chain (see other call site
+                                    # above for rationale).
+                                    "decision_chain": _pr.to_ui_chain(),
                                     "options": ["allow_once", "allow_session", "allow_always", "deny"]
                                     + (["sandbox"] if _needs_sb else []),
                                 }

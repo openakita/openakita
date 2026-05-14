@@ -90,6 +90,32 @@ class PolicyDecisionV2:
             "step_count": len(self.chain),
         }
 
+    def to_ui_chain(self) -> list[dict[str, Any]]:
+        """Compact JSON-safe serialization of ``chain`` for the
+        ``security_confirm`` SSE payload (C23 P2-2).
+
+        Plan C9 specified the modal should render ``decision_chain`` so the
+        user can see *why* the engine reached its verdict. We ship every
+        step's ``name`` / ``action`` / ``note``; ``duration_ms`` is
+        intentionally dropped — it's almost always 0 (engine steps are
+        sub-millisecond) and exposes nothing actionable to the UI.
+
+        Returning ``list[dict]`` keeps the wire format trivially
+        JSON-serializable and matches the existing
+        ``decision_chain: list[dict[str, Any]]`` shape already used by
+        ``pending_approvals.PendingApprovalEntry`` (see
+        ``api/routes/pending_approvals._serialize``), so frontend code
+        that handles deferred approvals can reuse the same renderer.
+        """
+        return [
+            {
+                "name": step.name,
+                "action": step.action.value,
+                "note": step.note,
+            }
+            for step in self.chain
+        ]
+
 
 PolicyResult = PolicyDecisionV2
 """v1 名字别名。orgs/runtime.py 等外部代码继续用此名 import（docs §6.6）。"""

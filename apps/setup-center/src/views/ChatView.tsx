@@ -332,6 +332,8 @@ export function ChatView({
     countdown: number; defaultOnTimeout?: string;
     // C9a §1: v2 字段（向后兼容，缺失时 modal 隐藏对应 UI 元素）
     approvalClass?: string | null; policyVersion?: number; channel?: string;
+    // C23 P2-2: 决策链（plan C9 要求），缺失时 modal 隐藏对应折叠区
+    decisionChain?: Array<{ name: string; action: string; note: string }>;
   };
   const [securityConfirm, setSecurityConfirm] = useState<SecurityConfirmData | null>(null);
   const securityQueueRef = useRef<SecurityConfirmData[]>([]);
@@ -3115,6 +3117,10 @@ export function ChatView({
                   approvalClass: (event.approval_class as string | null | undefined) ?? null,
                   policyVersion: (event.policy_version as number | undefined) ?? undefined,
                   channel: (event.channel as string | undefined) ?? undefined,
+                  // C23 P2-2: 决策链透传，由 SecurityConfirmModal 折叠渲染
+                  decisionChain: Array.isArray(event.decision_chain)
+                    ? (event.decision_chain as Array<{ name: string; action: string; note: string }>)
+                    : undefined,
                 };
                 setSecurityConfirm((prev) => {
                   if (prev) {
