@@ -5535,3 +5535,171 @@ Policy V2 migration roadmap 结束，C20 是兑现这两个 deferred 契约的
    ``test_append_during_simulated_lock_hold_does_not_deadlock``
    端到端死锁场景测试写出来——这套思路 100% 是 C18 BUG-C2 教出来的，
    等于 C18 二轮 audit 的资产被 C20 直接复用。值得。
+
+---
+
+## C21（二轮架构审计修复，2026-05-14）✅
+
+C20 完成后由用户发起"全局架构审计"——结论是 C1–C20 大方向正确、可独立 reason
+about，但还有 4 个长期未还的债。C21 把它们一次性还清：3 个 P0 + 1 个 P1 +
+1 个测试隔离老 bug，每条都独立 commit + 独立测试文件，按事故风险排序而非
+按修复成本排序。
+
+### 修复全景（5 个 commit）
+
+| 编号 | 类型 | 文件 | 测试 | commit |
+|------|------|------|------|--------|
+| P0-1 | 架构 | ``global_engine.py`` ``_lock`` 改 RLock | ``test_c21_global_lock_reentrant.py`` (5) | ``5c1064f1`` |
+| P0-2 | 数据丢失 | ``api/routes/config.py`` deep-merge | ``test_c21_security_config_deep_merge.py`` (17) | ``3b965c1c`` |
+| P0-3 | 并发 | ``classifier.py`` ``_cache_lock`` | ``test_c21_classifier_cache_thread_safety.py`` (9) | ``6bb834aa`` |
+| P1-1 | 一致性 | ``context.py`` ``from_session`` | ``test_c21_from_session_override.py`` (9) | ``6df67db4`` |
+| 附加 | 测试隔离 | ``test_c18_auto_confirm_cli.py`` | 复用现有 | ``68a77808`` |
+
+总计 40 个新测试，1068 / 1069 个 policy_v2 相关测试全绿（1 个 skip 是
+环境无 SQLite 的预期）。
+
+### P0-1：``global_engine._lock`` 从 ``threading.Lock`` 改 ``threading.RLock``
+
+**背景**：``_lock`` 在 C18 二轮 audit 与 C20 Phase A 已经各撞死锁一次——
+``rebuild_engine_v2`` 持锁状态下子系统 lazy init 触发 ``get_config_v2()``
+重入 → 立即死锁。两次都用"绕开 get_config_v2"的逐点 patch 修，根本问题
+"锁本身不容重入"从未触碰。
+
+**修复**：``_lock = threading.RLock()``，同线程重入合法，跨线程互斥保持。
+逐点防御代码（ephemeral logger / 直读 ``_config`` / AST 静态守卫）一并
+保留作双层保险——RLock 是"对未来未知反向边兜底"，逐点防御是"显式分隔
+关注点 + 性能优化"。
+
+**测试**（5 case）：
+
+- 结构守卫：``type(_lock).__name__`` 含 "RLock"
+- 功能守卫：同线程二次 acquire 立即返回 True
+- 端到端守卫：持锁调 ``get_config_v2()`` / ``rebuild_engine_v2()`` 不死锁
+- 跨线程互斥回归：RLock 不削弱原始单例保护（另一线程仍排队等待）
+
+### P0-2：``POST /api/config/security`` 改 deep-merge
+
+**背景**：``write_security_config`` 自 v1 起一直是 ``data["security"] =
+body.security``——整段替换。UI 通常只 POST 它知道的字段；UI 不渲染的
+字段（``user_allowlist`` 自定义命令、``hot_reload``、``rotation_*``、
+``aggregation_window_seconds``、``audit.log_path`` 等等）每次保存都会从
+YAML 里消失，被 loader defaults 填回——**用户精心维护的自定义值在每次
+保存时静默丢失**。
+
+Plan §7.2 显式给了 deep-merge 实现，从 C7 到 C20 一直没落地。
+
+**修复**：新增 ``_deep_merge_security`` helper（dict + dict → 递归；其余
+source 胜；list 整体替换符合 ``user_allowlist.commands`` 编辑语义）。
+默认 deep-merge；新增 ``?replace=true`` 逃生口供"重置整段"。返回 body
+多 ``mode`` 字段（"merge" / "replace"）让前端知道实际行为。
+
+**测试**（17 case）：
+
+- 9 个 ``_deep_merge_security`` 单元测试：空 source / primitive 覆盖 /
+  dict 递归 / list 整体替换 / 未提及 key 保留 / 类型变更 / None / 三层
+  嵌套 / 返回原引用
+- 4 个 endpoint merge 默认行为：partial POST 保留 ``user_allowlist`` /
+  嵌套 dict 不被替换 / list 整体替换 / 顶级未提及 section 保留
+- 1 个 ``?replace=true`` 逃生
+- 3 个边界：``security`` 字段坏类型 / 缺失 / 空 body
+
+### P0-3：``ApprovalClassifier._base_cache`` 加 ``threading.Lock``
+
+**背景**：``_base_cache`` 是裸 ``OrderedDict``，靠"CPython 单 op GIL 原子
+性 + try/except KeyError 兜底"。Composite ``get→move_to_end / __setitem__→
+popitem(last=False)`` 不是原子的——高并发下 ``cache_size`` 瞬间超额、
+同 tool 被并发分类多次。Plan §22.3 承诺的"thread-safe LRU cache"实际
+未兑现。
+
+**修复**：``self._cache_lock = threading.Lock()``。要点：
+
+1. 每个 cache mutation 在锁内
+2. 分类本体（``_classify_base_uncached``）跑在锁**外**——lookup callback
+   会拿 registry 自己的锁，不能在我们锁下嵌套
+3. miss → 释放锁 → 跑 classify → 重新拿锁 → re-check（race 时第一个
+   填充结果赢，后到者复用）
+4. 删掉旧的 try/except KeyError（锁让它不可达）
+
+设计上"分类在锁外、缓存在锁内"是关键，与 P0-1"为什么 _lock 必须可重入"
+是同一类教训的不同应用面。
+
+**测试**（9 case）：
+
+- 结构守卫：``_cache_lock`` 属性存在 + ``cache_size`` 走锁
+- 16 线程 × 1000 iters 并发同 tool：无异常 + 结果一致 + ``cache_size``
+  不超额
+- 40 distinct tools × 12 线程 eviction stress：``cache_size`` 永不持久
+  超 bound
+- ``invalidate(全部)`` / ``invalidate(单 tool)`` 在并发期间不抛不死锁
+- 1/4/16 三种 ``cache_size`` 下分类确定性
+
+### P1-1：``PolicyContext.from_session`` 读 ``confirmation_mode_override``
+
+**背景**：C8 给 ``Session`` 加了 ``confirmation_mode_override`` 字段。
+production 主路径 ``build_policy_context`` 正确 honor，但便捷工厂
+``PolicyContext.from_session`` 一直读 ``getattr(session,
+"confirmation_mode", None)``——Session 上根本不存在的属性。
+
+bug 隐蔽是因为：
+
+- production 调 ``build_policy_context``，不调 ``from_session``
+- ``test_policy_v2_skeleton.py`` 的假 Session 用 ``confirmation_mode``
+  字段名（pre-C8 风格）所以一直绿
+
+**修复**：读取顺序 ``confirmation_mode_override``（C8 字段，优先）→
+``confirmation_mode``（兼容假 Session）→ ``None`` → ``_coerce_mode``
+默认 ``ConfirmationMode.DEFAULT``。与 ``build_policy_context`` 行为完全
+对齐，消除"两个入口同 Session 拿不同结果"的隐患。
+
+**测试**（9 case）：
+
+- 真 ``Session`` + override="strict"/"dont_ask"/None → 正确映射
+- 真 ``Session`` + ``session_role`` 字段独立工作
+- 兼容性：旧风格假 Session（``confirmation_mode`` 字段）继续工作
+- 优先级：override 与 legacy attr 同时存在时 override 胜
+- override=None fallback 到 legacy attr
+- 完全无属性的 ancient session → DEFAULT 默认
+
+### 附加：``OPENAKITA_AUTO_CONFIRM`` env 测试间泄漏
+
+在 pre-C21 commit 07139e11 上跑
+
+```
+pytest tests/unit/ -k "c18 or policy_v2 or classifier or ..."
+```
+
+会有 3 个 fail（``test_c18_env_overrides.py`` 1 个、``test_policy_v2_loader.py``
+2 个）；单独跑全 pass。证明是测试隔离老 bug，与 C21 无关。
+
+**根因**：``test_c18_auto_confirm_cli.py::test_auto_confirm_sets_env_var_
+before_subcommand_logic`` 用 ``CliRunner`` 触发 production
+``_apply_auto_confirm_flag`` 直接 ``os.environ[X] = "1"``，绕开
+monkeypatch，env var 泄漏。
+
+**修复**：``clean_env`` fixture 升级为 ``autouse=True`` + yield 后显式
+``os.environ.pop``。任何后续测试无论怎么 setenv 都被强制 pop 兜底。
+
+### 经验教训（C21）
+
+1. **重复同款 bug 是架构 smell 而不是巧合**：``_lock`` 死锁第一次发生
+   时（C18 BUG-C2）大家以为是边缘 case，"绕开就行"。第二次发生时
+   （C20 P-A.1）依然只在 patch 点修。直到第三次审计才看明白——
+   非可重入锁配合"持锁状态下调子系统 lazy init"是一类问题，不是一个 bug。
+   下次再看到"对同一架构面修 ≥2 次类似 patch"，应该立刻 promote 到
+   架构层修复。
+2. **plan 里给的实现也要 grep 落地**：Plan §7.2 给的 ``_deep_merge``
+   实现就是 8 行 Python，**任何 reviewer 看到 ``data["security"] =
+   body.security`` 一行替换都该立刻问"deep merge 呢？"**。落地审查
+   要 grep plan 关键字 vs 实际代码，不能只看大方向是否对。
+3. **承诺即契约**：plan §22.3 写 "thread-safe LRU cache"，老代码里有
+   一句注释"CPython 单 op GIL 原子性"就当兑现了。审计要去 verify
+   契约（多线程压测）而不是 verify 意图（"开发者知道这个问题"）。
+4. **测试间隔离要主动证伪**：C18 leak 跨了 5 个月没被发现是因为
+   "单独跑全过"被等同于"测试健康"。任何会改 ``os.environ`` /
+   全局单例 / SQLite WAL 的测试都该有 yield 后 explicit teardown，
+   monkeypatch 只能撤销自己的改动，对"代码 under test 改的"无能为力。
+5. **审计要保留产物**：本次 C21 的 4 个独立 ``test_c21_*.py`` 是
+   "审计发现是什么 / 现在被防住"的活档案。下次有人想 revert 锁的
+   类型 / 改回 full-replace / 移除 cache lock，会立即被这些测试拦下。
+   commit message 里也明确把每条修复对应的历史 commit hash 链回去
+   （C18 BUG-C2 / C20 P-A.1），让未来 git blame 能找到完整脉络。
