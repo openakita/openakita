@@ -4288,6 +4288,56 @@ C13 「多 agent confirm 冒泡 + delegate_chain 透传」聚焦 R4-1/2/3/4 + R5
 
 C13 完成。下一步可以进 C14（Headless 入口统一）。
 
+### 二轮 audit 修复（同日）
+
+C13 提交后用户要求再做一遍交叉检查。做了 12 维度审计，发现并修复 4 个真问题：
+
+| # | 类别 | 问题 | 修复 |
+|---|---|---|---|
+| 1 | **真 bug**（HIGH）| `parent_ctx` 路径下 `derive_child` 把 sub-agent 的 `session_role` 强制继承父值，丢了 caller 传入的 `mode`。`orchestrator._call_agent` 根据 `profile.role` 计算 `_mode` 并显式传 `chat_with_session(mode=_mode)` → coordinator 子 agent 会按 agent 矩阵决策，违反 engine matrix lookup 的契约（engine.py:351 `lookup_matrix(ctx.session_role, ...)`）| `build_policy_context` 的 `parent_ctx` 分支改为 `eff_session_role = mode_to_session_role(mode)`，caller mode 优先 |
+| 2 | **轻码味**（LOW）| `eff_channel = channel if (channel and channel != "desktop") else base.channel` —— `"desktop"` 当 sentinel 比较，意图不清。实际 sub-agent 与父共享 session、channel 必然相同 | 删除 sentinel 逻辑，`parent_ctx` 路径总是 `channel=base.channel` |
+| 5 | **死代码喂数据**（LOW）| `tool_executor` 的 `_security_confirm` marker 在 docs §2.1 中明确标注为 "无下游消费"（C12 已用 DEFER 路径覆盖 unattended；attended SSE 由 reasoning_engine 直接 yield）。C13 一轮给这个 dead block 加 `delegate_chain` / `root_user_id` 是 "给死代码喂数据" | 撤销字段注入，块内补 disclaimer 注释（防未来 contributor 重蹈覆辙）；audit D4 改为反向 assert "不应携带 C13 字段" |
+| 8 | **state leak**（LOW）| `cleanup_session(session_id)` 只清 `_pending`，遗留 `_events` / `_decisions` / `_dedup_followers` / `_pending_cleanup`。长生命进程频繁 spawn + teardown session 会累积 orphan follower counter | `cleanup_session` 扩展同步清四个字典 |
+
+**Wire 完整性补充**（MEDIUM）：
+
+| # | 内容 | 修复 |
+|---|---|---|
+| 4 | 前端 `chatTypes.ts` 的 `security_confirm` 事件类型没声明 `delegate_chain` / `root_user_id` 字段。TypeScript 结构性类型不会报错，但 UI 无法渲染 chain badge | 补两个可选字段 `delegate_chain?: string[]; root_user_id?: string | null` |
+
+### 二轮 audit 同时确认 OK 的 7 个维度
+
+| # | 问题 | 结论 |
+|---|---|---|
+| 3 | dedup `find_dedup_leader` 与 `store_pending` 之间是否有 race | `find → register/store` 之间无 await，单线程 asyncio 下原子，**无 race** |
+| 6 | `_is_sub_agent_call=True` 但 `get_current_context()` 返回 None | `_parent_ctx=None` → 走传统 session-based 路径，**安全 fallback** |
+| 7 | follower `wait_for_resolution` 超时时 `deregister_follower` 是否始终触发 | `try / finally` 保证 deregister 一定执行 + flush `_pending_cleanup` |
+| 9 | SSE 新字段对老前端 / IM 适配器兼容 | TS 结构性类型忍多余字段；Python 字典消费方 `.get()` 缺省 None，**完全兼容** |
+| 10 | `reset_ui_confirm_bus()` 是否真的清新加的字典 | 重新实例化 → 所有字段默认值，**自动清零** |
+| 11 | `parent_ctx` 与 `_resolve_context.extra_ctx` 双路径协同 | 不同调用面（前者构造 ContextVar，后者读 ContextVar），**无冲突** |
+| 12 | 其他 `build_policy_context` 调用者是否需要 wire `parent_ctx` | scheduler 用 `PolicyContext(...)` 构造函数路径（不经 adapter），**无需修改** |
+
+### 验证
+
+- `tests/unit/test_policy_v2_c13_multi_agent.py`：23 PASS（一轮 18 + 二轮 5 新增）
+  - `test_build_policy_context_child_session_role_honors_caller_mode` — Fix #1
+  - `test_build_policy_context_parent_ctx_uses_parent_channel` — Fix #2
+  - `test_bus_cleanup_session_purges_dedup_state` — Fix #8
+  - `test_bus_cleanup_session_only_affects_target_session` — Fix #8 跨 session 隔离
+  - `test_tool_executor_security_confirm_marker_has_no_c13_fields` — Fix #5
+- `scripts/c13_audit.py`：11/11 维度 ALL GREEN（D4 修改为反向 assert）
+- `scripts/c12_c9c_audit.py`：11/11 OK（无退步）
+- `scripts/c8b2_audit.py`：6/6 OK（无退步）
+- `scripts/c19_audit.py`：6/6 OK（无退步）
+- 广谱回归 `policy_v2_skeleton / c9c_sse / c13_multi_agent / pending_approvals_store / c7_wire / c8_wire / adapter / classifier_completeness`：**168 PASS**
+
+### 经验
+
+1. **derive_child 的 "默认继承" 是双刃剑**：保护身份链字段（root_user_id / delegate_chain / safety_immune）是对的，但 `session_role` 是 sub-agent 自己的 profile.role，**不**应被父覆盖。把 "可继承" vs "必须父值" 的字段分开列在注释里，让后续维护看一眼就懂。
+2. **死代码不能加字段，但要加 disclaimer**：`_security_confirm` marker 已经存在多年，删它涉及面太大。但留着不写注释，下个人就会复制其他 marker 模式继续填字段。"无下游消费 + ``§2.1 lying bug``" 这条注释把死状态钉死。
+3. **state-machine 加新字段必须同步所有出口**：UIConfirmBus 加了 `_dedup_followers` / `_pending_cleanup`，`cleanup_session` 这条历史出口忘了同步 → 长生命进程会 leak。新规则：state dict 加字段时**先 grep 谁会 mutate 这个 state 类**，把所有出口（init / reset / clear / cleanup_*）都补 wire。
+4. **前端 TypeScript 类型不能落后**：SSE payload 加字段 → TS 联合类型同步更新。即使 TS 结构性类型容忍多余字段（不会编译错），但忘加字段意味着前端代码访问时被红线，UI 渲染逻辑写不出来。这条 wire 是接口契约的一部分，audit 应覆盖。
+
 
 
 ### 二轮 audit 修复（同日）

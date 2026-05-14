@@ -999,18 +999,16 @@ class ToolExecutor:
                 if perm_decision.metadata.get("needs_sandbox"):
                     sandbox_hint = "\n注意: 此命令将在沙箱中执行以保护系统安全。"
 
-                # C13 §15.4: 多 agent confirm 冒泡 — _security_confirm marker
-                # 携带 delegate_chain + root_user_id，让上层 reasoning_engine /
-                # gateway 渲染时能区分 sub-agent vs 顶层调用，且 IM 卡片可标注
-                # "specialist_a (via root)"。顶层调用时 chain 空、root None，
-                # UI 兜回原 path（不展示 chain badge）。
-                from .policy_v2 import get_current_context as _pv2_get_ctx_for_marker
-
-                _marker_ctx = _pv2_get_ctx_for_marker()
-                _marker_chain = (
-                    list(_marker_ctx.delegate_chain) if _marker_ctx else []
-                )
-                _marker_root = _marker_ctx.root_user_id if _marker_ctx else None
+                # 注意：``_security_confirm`` 键在 tool_result 中无任何下游消费
+                # （详见 docs/policy_v2_research.md §2.1 描述的 "lying bug"）。
+                # C12 已用 DEFER → ``_defer_unattended_confirm`` 路径覆盖了
+                # unattended 场景；attended CONFIRM 的 SSE 由 reasoning_engine
+                # 在 evaluate_via_v2 早分支直接 yield。execute_batch 走到这里
+                # 是兜底（pre-check 漏掉的极少数路径），返回的 marker 字段
+                # **不**被任何 frontend / gateway 消费，保留 schema 仅为
+                # backward-compat。C13 的 delegate_chain / root_user_id 注入
+                # 到上游 reasoning_engine.security_confirm SSE 即可，此处
+                # 不重复加字段（避免给死代码喂数据）。
                 return (
                     idx,
                     {
@@ -1028,8 +1026,6 @@ class ToolExecutor:
                             "params": tool_input,
                             "risk_level": risk,
                             "needs_sandbox": perm_decision.metadata.get("needs_sandbox", False),
-                            "delegate_chain": _marker_chain,
-                            "root_user_id": _marker_root,
                         },
                     },
                     None,

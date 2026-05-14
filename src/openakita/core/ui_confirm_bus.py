@@ -183,12 +183,25 @@ class UIConfirmBus:
         return [{"id": k, **v} for k, v in self._pending.items()]
 
     def cleanup_session(self, session_id: str) -> None:
-        """Drop all pending confirms tied to the given session."""
+        """Drop all pending confirms tied to the given session.
+
+        C13 §15.5 follow-up: also purge the associated ``_events``,
+        ``_decisions``, ``_dedup_followers`` and ``_pending_cleanup``
+        entries so a session teardown doesn't leak dedup waiter state.
+        Otherwise a long-lived process that frequently spins up + tears
+        down sessions would accumulate orphan follower counters in
+        ``_dedup_followers`` (each ``register_follower`` without a paired
+        ``deregister_follower`` after the session is gone).
+        """
         to_remove = [
             k for k, v in self._pending.items() if v.get("session_id") == session_id
         ]
         for k in to_remove:
             self._pending.pop(k, None)
+            self._events.pop(k, None)
+            self._decisions.pop(k, None)
+            self._dedup_followers.pop(k, None)
+            self._pending_cleanup.discard(k)
 
     def _cleanup_expired(self) -> None:
         """Garbage-collect pending confirms older than ``_ttl_seconds``."""

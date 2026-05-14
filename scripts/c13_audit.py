@@ -131,19 +131,43 @@ def d3_sse_payload_delegate_chain(failures: list[str]) -> None:
     _ok("payload fields", f"both sites carry chain + root ({count_chain}+{count_root})")
 
 
-def d4_tool_executor_marker(failures: list[str]) -> None:
-    print("\n[D4] tool_executor _security_confirm marker 携带 chain + root")
+def d4_tool_executor_marker_is_documented_dead(failures: list[str]) -> None:
+    """C13 二轮 audit 修复：tool_executor 的 ``_security_confirm`` marker 是
+    历史 ``§2.1 lying bug`` 的残留 — frontend / gateway 都不消费。原先 C13
+    Phase B 在 marker 上加 delegate_chain / root_user_id 是"给死代码喂数据"。
+    本维度反过来 assert 那个块明确标注为 dead-code，不再注入 C13 字段。
+    """
+    print("\n[D4] tool_executor _security_confirm marker 明确标注 dead-code 且未注入 C13 字段")
     src = _read(SRC / "core" / "tool_executor.py")
-    if '"delegate_chain": _marker_chain' not in src:
-        _fail("marker delegate_chain", "missing")
-        failures.append("D4.marker_delegate_chain")
+    if '"delegate_chain"' in src.split("# C13 §15.4")[0]:
+        # Defensive: the first hit shouldn't be in tool_executor at all
+        pass
+    # The marker block must NOT have C13 fields (we explicitly removed them)
+    block_start = src.find('"_security_confirm": {')
+    block_end = src.find("},", block_start)
+    if block_start == -1 or block_end == -1:
+        _fail("marker block locatable", "missing")
+        failures.append("D4.marker_block")
         return
-    _ok("marker delegate_chain")
-    if '"root_user_id": _marker_root' not in src:
-        _fail("marker root_user_id", "missing")
-        failures.append("D4.marker_root_user_id")
+    block_body = src[block_start:block_end]
+    if "delegate_chain" in block_body or "root_user_id" in block_body:
+        _fail(
+            "marker block clean",
+            "C13 字段不应注入到无消费者的 dead marker（见 §2.1 lying bug 注释）",
+        )
+        failures.append("D4.marker_no_dead_data")
         return
-    _ok("marker root_user_id")
+    _ok("marker block clean", "无 C13 字段注入 dead marker")
+    # The dead-code disclaimer comment must be present so future contributors
+    # know NOT to add fields back.
+    if "无任何下游消费" not in src:
+        _fail(
+            "dead-code disclaimer",
+            "缺少 \"无任何下游消费\" 注释，未来 contributor 可能重新加字段",
+        )
+        failures.append("D4.disclaimer")
+        return
+    _ok("dead-code disclaimer present")
 
 
 def d5_bus_dedup_api(failures: list[str]) -> None:
@@ -312,7 +336,7 @@ def main() -> int:
     d1_adapter_parent_ctx(failures)
     d2_agent_sub_agent_propagation(failures)
     d3_sse_payload_delegate_chain(failures)
-    d4_tool_executor_marker(failures)
+    d4_tool_executor_marker_is_documented_dead(failures)
     d5_bus_dedup_api(failures)
     d6_reasoning_engine_dedup_wire(failures)
     d7_cleanup_defers_with_followers(failures)

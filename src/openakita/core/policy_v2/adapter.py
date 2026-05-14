@@ -354,24 +354,37 @@ def build_policy_context(
             child_session_id=child_sid,
             child_agent_name=child_name,
         )
-        # 本次调用的 channel / user_message / workspace 是 sub-agent 自己的视图；
-        # 而 is_owner / is_unattended / unattended_strategy / safety_immune 等
-        # 由父继承（child confirm 上浮到 root_user 时仍按 root 的 owner 身份判断）。
-        # workspace 仅当显式传入时覆盖，否则保留父值。
+        # === sub-agent **可以**有自己的视图的字段 ===
+        # - workspace：仅当显式传入时覆盖，否则保留父值
+        # - user_message：本次调用的指令文本（用于 replay 匹配）
+        # - extra_metadata：调用方追加的元信息
+        # - session_role（C13 audit #1 fix）：sub-agent 有自己的 profile.role
+        #   （coordinator/agent/plan/ask），engine matrix lookup 完全依赖它。
+        #   orchestrator._call_agent 调 chat_with_session(mode=_mode) 时
+        #   _mode 已基于 profile.role 计算完毕，所以 caller 总会显式传 mode；
+        #   这里直接 honor caller mode。若调用方意外漏传，函数默认 mode="agent"
+        #   会让 child 走 AGENT 矩阵 —— 这是与非 parent_ctx 路径同款的安全默认。
         eff_workspace = ws_path if workspace is not None else base.workspace
-        # channel 默认沿用父 channel；显式传非默认 channel 才覆盖。
-        eff_channel = channel if (channel and channel != "desktop") else base.channel
         eff_user_message = user_message or base.user_message
         eff_metadata = dict(base.metadata)
         if extra_metadata:
             eff_metadata.update(extra_metadata)
+        eff_session_role = mode_to_session_role(mode)
+        # === sub-agent **不可**自己改的字段（escalation guard） ===
+        # - is_owner：升权风险；child 始终用父
+        # - is_unattended / unattended_strategy：任务级属性，全树一致
+        # - safety_immune_paths：禁止 child override，子安全包络等于父
+        # - root_user_id / delegate_chain：身份链
+        # - confirmation_mode：session 级配置，全树一致
+        # - replay_authorizations / trusted_path_overrides：继承父的快照副本
+        # - channel：session 共享，sub-agent 视图与父相同（不暴露 override）
         return PolicyContext(
             session_id=base.session_id,
             workspace=eff_workspace,
-            channel=eff_channel,
+            channel=base.channel,
             is_owner=base.is_owner,
             root_user_id=base.root_user_id,
-            session_role=base.session_role,
+            session_role=eff_session_role,
             confirmation_mode=base.confirmation_mode,
             is_unattended=base.is_unattended,
             unattended_strategy=base.unattended_strategy,
