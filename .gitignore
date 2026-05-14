@@ -354,3 +354,28 @@ docs/media-post-plan.md
 # subtitle-craft 本地验证脚本（含 API 调用 + 临时音视频，不入库；
 # 验证结论统一记入 plugins/subtitle-craft/VALIDATION.md 后提交）
 plugins/subtitle-craft/validation_scripts/
+
+# ─────────────────────────────────────────────────────────────
+# 仓库收紧 第三轮（2026-05-14）：本地探针 / 临时 dump / 反馈下载
+# 这些目录纯属本地排查工具产物，含大量噪声和潜在 PII
+# ─────────────────────────────────────────────────────────────
+
+# 本地 QA / 探针（exploratory_report、explore_runs 等）
+_qa/
+tools-tmp/
+# tests/e2e/ 下以下划线开头的探针（pytest 不收集，但容易被 git status 污染）
+tests/e2e/_*.py
+
+# pytest / api 临时 dump
+.pytest_out.txt
+_agents.json
+_endpoints.json
+_openapi.json
+_sessions.json
+route_stats.md
+
+# 反馈下载（含 LLM 请求/响应、PII，二进制 zip）
+.feedback-downloads/
+
+# 误打包的插件 zip（plugins/<name>/ui/dist/ 仍走白名单保留）
+plugins/plugins.zip
