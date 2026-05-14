@@ -972,7 +972,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C15 | Evolution / system_task / Skill-MCP trust_level | ✅ DONE | R4-9/10/11/12/13 + R5-21 + 「C15 实施记录」|
 | C16 | Prompt injection + YAML 严格校验 + audit 防篡改 | ✅ DONE | R4-14/15 + R5-17 + 「C16 实施记录」|
 | C17 | Reliability（lock 文件 / 启动扫描 / Last-Event-ID / health probe）| ✅ DONE | R4-16/17/18/19 + R5-8/12 + 「C17 实施记录」|
-| C18 | UX + 配置完备性（hot-reload / ENV / dry-run / 5s 聚合）| ⏳ Pending | R4-20/21/22 + R5-11/20 |
+| C18 | UX + 配置完备性（hot-reload / ENV / dry-run / 5s 聚合）| ✅ DONE | R4-20/21/22 + R5-11/20 +「C18 实施记录」+「C18 二轮 audit 修复」|
 | **C19** | **开发者新增工具 4 层护栏（依赖 C2/C8/C11，在 C12 之前实施以护卫 C12-C18）** | ✅ DONE | §4.21 cookbook + §12.5 + 「C19 实施记录」|
 
 ---
@@ -5295,3 +5295,116 @@ docs 部分说明）。
    state 跟 ``securityQueueRef.current.length`` 的同步是 JSX 触发再渲染
    的唯一办法；refs 不行。每次 ``securityQueueRef`` mutation 都得跟一个
    ``setSecurityQueueLen``。
+
+
+## C18 二轮 audit 修复（commit ``a2a3ee00``）
+
+C18 五段 phase 全部提交后做的"放下笔再回头看一遍"自审找到 3 个真
+bug + 1 个 UX 改进。三个 bug 互相耦合在同一处架构盲点上——非 reentrant
+``_lock`` 与 ``audit_logger`` 全局单例之间的隐式依赖——所以一起修了。
+
+### BUG-A1 ｜ hot-reload 失败误报为成功（LKG=None 边角）
+
+[`hot_reload._do_reload`](file:src/openakita/core/policy_v2/hot_reload.py)
+原本只检查 "before_lkg is not None and after_lkg is before_lkg" 当作失
+败信号——但进程**带着已损坏的 YAML 启动**时 LKG 永远是 ``None``，
+``rebuild_engine_v2`` 走 ``_recover_from_load_failure`` 落到 defaults
+但**不 set LKG**，``before_lkg=None``、``after_lkg=None`` 都不变，旧逻
+辑把这种"静默回退到 defaults"也标 ``ok=True``，audit 行写 "engine
+rebuilt"。
+
+**修法**：把 ``after_lkg is None`` 单独判为失败信号——``rebuild_engine_
+v2`` 的成功路径**必然** ``_set_last_known_good(cfg)``，所以 ``after_lkg
+is None`` ⇒ 走了 ``_recover_from_load_failure``。三档诊断：``after_lkg
+is None``（fail：no LKG available）/ ``before_lkg is not None and
+after_lkg is before_lkg``（fail：kept LKG）/ else（ok）。
+
+### BUG-C1 ｜ ``audit_logger`` 单例不随 audit cfg 变化刷新
+
+[`audit_logger._global_audit`](file:src/openakita/core/audit_logger.py)
+是模块单例，``get_audit_logger()`` 首次 lazy 构造后永远缓存。Phase A
+热更新 / Phase C ``OPENAKITA_AUDIT_LOG_PATH`` 把 ``_config.audit.
+log_path`` 改了，但**所有后续审计行仍写到旧路径**——直接捅穿 Phase A
++ Phase C 的核心契约（"reload + ENV 生效"）。
+
+**修法**：[`rebuild_engine_v2`](file:src/openakita/core/policy_v2/global_engine.py)
+在锁内 snapshot ``old_audit_cfg = (log_path, enabled, include_chain)``，
+完成 swap 后比较 ``new_audit_cfg``——三元组任意字段变化就调
+``reset_audit_logger()``，下一次 ``get_audit_logger()`` 自动从最新
+``_config`` 重建。三元组没变就保留单例（避免热更新风暴里频繁开关文件
+句柄）。
+
+### BUG-C2 ｜ Phase C 在 ``_lock`` 下重入 → 进程死锁（latent）
+
+修完 BUG-C1 立刻自爆的潜在 deadlock。``[_audit_env_overrides]
+(file:src/openakita/core/policy_v2/global_engine.py)`` 被
+``rebuild_engine_v2`` 在持 ``_lock = threading.Lock()``（**非
+reentrant**）状态下调用；它再调 ``get_audit_logger()``——当
+``_global_audit is None``（比如 BUG-C1 修复后 reset 过 + 有 ENV
+override 触发 audit 写入）时，单例 lazy init 走 ``get_config_v2()``
+反过来 ``with _lock:``——同一线程二次 acquire 同一非 reentrant lock
+⇒ 整个 server hang。
+
+生产期通常不暴露，是因为 ``_global_audit`` 早被其他启动路径 lazy
+init（如首次 ``policy decision`` 写 audit），等 ``rebuild_engine_v2``
+被调用时单例已存在，``get_audit_logger()`` 短路返回缓存。但 hot-reload
++ BUG-C1 reset + ENV override 三件凑齐就稳定复现。
+
+**修法**：把 ``cfg`` 显式传给 ``_audit_env_overrides(report, cfg)``，
+让它直接用 ``cfg.audit.*`` 字段构造**ephemeral** ``AuditLogger``——
+绕开单例、绕开 ``get_config_v2()`` 的锁、根除递归。语义上也更对：
+override 审计行落到**新**配置指向的 ``audit.log_path``（操作员预期），
+而不是旧单例缓存的位置。
+
+### UX-B1 ｜ 前端 batch endpoint 不查 HTTP status
+
+[`ChatView.handleSecurityBatchResolve`](file:apps/setup-center/src/views/ChatView.tsx)
+原本只 ``await r.json().catch()`` 后无条件清本地 queue，500/4xx 时静默
+失败：用户以为 "全部允许" 搞定了，IM 卡片仍然挂着、SSE waiter 也没醒。
+
+**修法**：``if (!r.ok) return``，再校验 body 的 ``status === "error"``，
+任一失败保留 queue 让用户单条点。
+
+### 回归与审计
+
+- **新增** [`tests/unit/test_c18_second_pass_audit.py`](file:tests/unit/test_c18_second_pass_audit.py)
+  9 个用例：
+  - ``TestBugA1HotReloadFailureWhenLkgNone`` × 2（LKG=None 失败信号 +
+    首次成功 promote）。
+  - ``TestBugC1AuditLoggerSingletonRefresh`` × 3（路径变化必 reset、路
+    径不变保留单例、ENV override 路径端到端落到新文件）。
+  - ``TestBugC2NoDeadlockOnEnvOverrideUnderLock`` × 2（5s timeout 单
+    探针 + 10× 压测；线程探针 + ``threading.Event`` 替代
+    ``signal.alarm`` 跑 Windows）。
+  - ``TestRegularFlowStillWorks`` × 2（保留 LKG 时成功 / 失败两条主
+    路径都不退步）。
+- **扩** [`scripts/c18_audit.py`](file:scripts/c18_audit.py)
+  新增 ``audit_second_pass_fixes()``，把 BUG-A1 / C1 / C2 / UX-B1 4 个
+  关键修复点做静态字符串校验，并把 ``test_c18_second_pass_audit.py``
+  纳入 pytest 串行执行。
+- **改** [`tests/unit/test_c18_env_overrides.py`](file:tests/unit/test_c18_env_overrides.py)
+  ``TestAuditEmission`` 改用 ``cfg.audit.log_path`` 而非 monkeypatch
+  ``get_audit_logger``，匹配 BUG-C2 修复后 ``_audit_env_overrides`` 不再
+  走单例的新路径（顺手让测试更贴近真实使用模式）。
+- **回归**：319/319 全绿（C18 自身 + C17 二轮 audit + C16 LKG +
+  Phase C8 wire/SSE + 权限/响应处理/可信路径），5.9s。Python ruff
+  clean，TypeScript ``tsc --noEmit`` 0 错误。
+
+### 二轮 audit 经验教训
+
+1. **隐式调用循环最危险**：BUG-C2 是 Phase C 上线就有的潜在 deadlock，
+   只是被 lazy init 顺序掩盖了几个月。任何"singleton → global config
+   lookup → 同把 lock"链路都是死锁地雷。下次设计跨模块单例时强制走
+   显式参数 + 杜绝 ``with _lock:`` 内的 lazy 全局访问。
+2. **修一个 bug 顺手把相邻盲点也勾出来**：BUG-C1 的修复（reset 单例）
+   反而让 BUG-C2 从"不可能触发"变成"必触发"。bug 之间的隐式耦合用
+   一次 commit 一起修复才对——分两次 PR 中间会有窗口期所有 hot-reload
+   集成都死锁。
+3. **edge case 是新功能首先要测的**：LKG=None（进程带病启动）这种
+   "正常永远不应该发生"的状态恰恰是最容易因为缺测被绕开的。Phase A
+   单测覆盖了 LKG=valid 路径 95%，剩下 5% LKG=None 全在 BUG-A1。
+4. **二轮 audit 不是表演**：本次找到的 3 个 bug 1 个真致命（死锁）、
+   1 个对操作员严重误导（审计写错文件）、1 个对运维误报（reload 失
+   败看着像成功）。如果只发"Phase A..F 全绿"的 victory lap 就结束，
+   这些会埋雷到 prod。每次 milestone 提交后强制做一遍 cross-phase
+   self-review 值得。
