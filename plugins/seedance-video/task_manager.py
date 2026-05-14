@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     callback_url TEXT,
     revised_prompt TEXT,
     last_frame_url TEXT,
+    last_frame_local_path TEXT,
+    asset_ids TEXT,
     error_message TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
@@ -92,6 +94,13 @@ class TaskManager:
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.executescript(SCHEMA_SQL)
+        # 旧库迁移：v1.3 之前没有 last_frame_local_path / asset_ids 列。
+        # ALTER TABLE 在列已存在时报错，吞掉即可。
+        for col in ("last_frame_local_path TEXT", "asset_ids TEXT"):
+            try:
+                await self._db.execute(f"ALTER TABLE tasks ADD COLUMN {col}")
+            except Exception:
+                pass
         await self._init_default_config()
         await self._db.commit()
 
@@ -255,9 +264,11 @@ class TaskManager:
         "callback_url": "callback_url",
         "revised_prompt": "revised_prompt",
         "last_frame_url": "last_frame_url",
+        "last_frame_local_path": "last_frame_local_path",
+        "asset_ids": "asset_ids",
         "error_message": "error_message",
     }
-    _JSON_ENCODED_KEYS: frozenset[str] = frozenset({"params"})
+    _JSON_ENCODED_KEYS: frozenset[str] = frozenset({"params", "asset_ids"})
 
     async def update_task(self, task_id: str, **kwargs: Any) -> bool:
         assert self._db
@@ -305,6 +316,14 @@ class TaskManager:
         d = dict(row)
         d["params"] = json.loads(d.pop("params_json", "{}"))
         d["is_draft"] = bool(d.get("is_draft"))
+        raw_assets = d.get("asset_ids")
+        if raw_assets:
+            try:
+                d["asset_ids"] = json.loads(raw_assets)
+            except (TypeError, json.JSONDecodeError):
+                d["asset_ids"] = []
+        else:
+            d["asset_ids"] = []
         return d
 
     # ── Assets ──

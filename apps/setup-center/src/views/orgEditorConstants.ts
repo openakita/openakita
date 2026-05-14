@@ -375,6 +375,16 @@ export interface OrgNodeData {
   clone_source: string | null;
   external_tools: string[];
   enable_file_tools?: boolean;
+  /**
+   * 工作台节点来源标识。由工作台模板创建时填入，运行时不影响工具放行
+   * （仍由 external_tools 决定），仅用于 UI 渲染徽章、提示词点睛、
+   * 强制保持叶子节点等校验。
+   */
+  plugin_origin?: {
+    plugin_id: string;
+    template_id: string;
+    version?: string;
+  } | null;
   ephemeral: boolean;
   avatar: string | null;
   frozen_by: string | null;

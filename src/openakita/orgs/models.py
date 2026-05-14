@@ -197,6 +197,12 @@ class OrgNode:
     # agent.file_tool.base_path = <org_workspace> 隔离在组织 workspace 内，沿用
     # 现有沙盒，不引入新的逃逸面。
     enable_file_tools: bool = True
+    # 工作台节点来源：当节点由"工作台模板"创建时填入，结构为
+    # {"plugin_id": str, "template_id": str, "version": str}。
+    # 该字段仅用于 UI 识别与提示词点睛，不参与运行时工具放行决策
+    # （工具放行仍由 external_tools 决定）。约束：工作台节点必须是叶子节点，
+    # 详见 OrgManager.update / OrgRuntime._create_node_agent。
+    plugin_origin: dict | None = None
     frozen_by: str | None = None
     frozen_reason: str | None = None
     frozen_at: str | None = None
@@ -234,6 +240,7 @@ class OrgNode:
             "avatar": self.avatar,
             "external_tools": list(self.external_tools) if self.external_tools else [],
             "enable_file_tools": self.enable_file_tools,
+            "plugin_origin": dict(self.plugin_origin) if self.plugin_origin else None,
             "frozen_by": self.frozen_by,
             "frozen_reason": self.frozen_reason,
             "frozen_at": self.frozen_at,

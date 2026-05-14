@@ -2033,6 +2033,30 @@ class OrgToolHandler:
                         "attachment: %s (file missing?)", fp,
                     )
 
+        # 工作台节点附件自动注入：当 LLM 没有显式声明 file_attachments
+        # （工作台节点的 prompt 也明确告知不需要声明），把本任务内由
+        # `runtime._record_plugin_asset_output` 钩子已经登记过的附件
+        # 直接挂到 TASK_DELIVERED 上。这样验收方既能在 TASK_DELIVERED
+        # 的 metadata.file_attachments 中看到清单，又能让 expects_artifact
+        # 验收路径找到附件 ≥ 1，避免被误判 INCOMPLETE。这些附件已经走过
+        # `_register_file_output`，不需要重复登记。
+        try:
+            plugin_buf = (
+                self._runtime._node_plugin_attachments_in_task.get(
+                    f"{org_id}:{node_id}"
+                ) or []
+            )
+        except Exception:
+            plugin_buf = []
+        if plugin_buf:
+            existing_paths = {a.get("file_path") for a in registered_attachments}
+            for att in plugin_buf:
+                fp = att.get("file_path")
+                if not fp or fp in existing_paths:
+                    continue
+                registered_attachments.append(dict(att))
+                existing_paths.add(fp)
+
         # 自动附件兜底：CPO/PM 这类不带 filesystem 工具的角色，常常把整段
         # markdown 长文塞进 deliverable 字段，前端只能看到聊天里一段长文，
         # 没法点附件下载，也不进黑板。这里在没有任何显式 file_attachments

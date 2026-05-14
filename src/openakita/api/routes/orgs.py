@@ -196,6 +196,22 @@ async def list_templates(request: Request):
     return mgr.list_templates()
 
 
+@router.get("/plugin-workbench-templates")
+async def list_plugin_workbench_templates(request: Request):
+    """List available "workbench" templates derived from loaded plugins.
+
+    A workbench template = a loaded plugin that registered at least one LLM
+    tool. The frontend OrgEditor uses these to seed pre-configured leaf
+    OrgNode instances whose ``external_tools`` directly reference the
+    plugin's tool names.
+    """
+    from openakita.orgs.plugin_workbench_templates import build_workbench_templates
+
+    agent = getattr(request.app.state, "agent", None)
+    pm = getattr(agent, "_plugin_manager", None) if agent else None
+    return build_workbench_templates(pm)
+
+
 @router.get("/templates/{template_id}")
 async def get_template(request: Request, template_id: str):
     mgr = _get_manager(request)

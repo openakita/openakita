@@ -234,6 +234,23 @@ class OrgManager:
                 if e.get("source") != e.get("target")
             ]
 
+        # 工作台节点（plugin_origin 非空）必须是叶子节点。把这一规则放在
+        # 边/节点合并完成之后做最终校验，避免任意路径(直接 PATCH 节点 / 编辑
+        # 边后保存)绕过限制。命中时抛 ValueError，由 API 层映射成 422。
+        _violations: list[str] = []
+        for n in org.nodes:
+            if not getattr(n, "plugin_origin", None):
+                continue
+            if org.get_children(n.id):
+                title = (n.role_title or n.id).strip()
+                _violations.append(f"{title}({n.id})")
+        if _violations:
+            raise ValueError(
+                "工作台节点必须是叶子节点，不允许挂下属节点："
+                + "、".join(_violations)
+                + "。请删除其下属节点或移除工作台标识后再保存。"
+            )
+
         org.updated_at = _now_iso()
         self._ensure_node_dirs(org)
         self._save(org)

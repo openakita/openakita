@@ -136,7 +136,14 @@ class Plugin(PluginBase):
         api.register_tools([
             {
                 "name": "tongyi_image_create",
-                "description": "Create a Tongyi image generation task (text-to-image, editing, style repaint, etc.)",
+                "description": (
+                    "Create a Tongyi (DashScope) image generation task. "
+                    "Returns JSON: {ok, task_id, status, mode, image_urls, "
+                    "local_paths, asset_ids}. Generated images are auto-downloaded "
+                    "to the plugin data dir and published to the Asset Bus, so the "
+                    "returned asset_ids can be fed into downstream workbenches "
+                    "(e.g. seedance_create.from_asset_ids) without rehosting."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -151,7 +158,13 @@ class Plugin(PluginBase):
             },
             {
                 "name": "tongyi_image_status",
-                "description": "Check status of a Tongyi image generation task",
+                "description": (
+                    "Check status of a Tongyi image generation task. Returns JSON: "
+                    "{ok, task_id, status, mode, image_urls, local_paths, asset_ids, "
+                    "error_message}. Use this to poll an async task created via "
+                    "tongyi_image_create — once status='succeeded' the asset_ids "
+                    "become available for downstream workbenches."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"task_id": {"type": "string"}},
@@ -160,7 +173,11 @@ class Plugin(PluginBase):
             },
             {
                 "name": "tongyi_image_list",
-                "description": "List recent Tongyi image generation tasks",
+                "description": (
+                    "List recent Tongyi image generation tasks. Returns JSON: "
+                    "{ok, total, tasks: [{task_id, status, mode, prompt, "
+                    "image_urls, local_paths, asset_ids, created_at}, ...]}."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"limit": {"type": "integer", "default": 10}},
@@ -203,23 +220,79 @@ class Plugin(PluginBase):
     # ── Tool handler ──
 
     async def _handle_tool(self, tool_name: str, args: dict) -> str:
+        """LLM-facing tool entry. Returns JSON so OrgRuntime's workbench
+        hook can detect produced artifacts (local_paths / image_urls /
+        asset_ids) and register them as task attachments."""
+        import json as _json
+
         if tool_name == "tongyi_image_create":
-            task = await self._create_task_internal(args)
-            return f"Task created: {task['id']} (status: {task['status']}, mode: {task['mode']})"
-        elif tool_name == "tongyi_image_status":
-            task = await self._tm.get_task(args["task_id"])
+            try:
+                task = await self._create_task_internal(args)
+            except HTTPException as e:
+                return _json.dumps(
+                    {
+                        "ok": False,
+                        "error": e.detail if isinstance(e.detail, str) else str(e.detail),
+                        "status_code": e.status_code,
+                    },
+                    ensure_ascii=False,
+                )
+            except Exception as e:
+                return _json.dumps(
+                    {"ok": False, "error": str(e)}, ensure_ascii=False
+                )
+            return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+        if tool_name == "tongyi_image_status":
+            tid = args.get("task_id") or ""
+            task = await self._tm.get_task(tid) if tid else None
             if not task:
-                return f"Task {args['task_id']} not found"
-            urls = task.get("image_urls", [])
-            url_info = f", images: {len(urls)}" if urls else ""
-            return f"Task {task['id']}: status={task['status']}{url_info}"
-        elif tool_name == "tongyi_image_list":
+                return _json.dumps(
+                    {"ok": False, "task_id": tid, "error": "task not found"},
+                    ensure_ascii=False,
+                )
+            return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+        if tool_name == "tongyi_image_list":
             result = await self._tm.list_tasks(limit=args.get("limit", 10))
-            lines = [f"Total: {result['total']} tasks"]
-            for t in result["tasks"]:
-                lines.append(f"  {t['id']}: [{t['mode']}] {t['status']} - {t['prompt'][:50]}")
-            return "\n".join(lines)
-        return f"Unknown tool: {tool_name}"
+            return _json.dumps(
+                {
+                    "ok": True,
+                    "total": result.get("total", 0),
+                    "tasks": [
+                        self._task_to_tool_payload(t, brief=True)
+                        for t in result.get("tasks", [])
+                    ],
+                },
+                ensure_ascii=False,
+            )
+
+        return _json.dumps(
+            {"ok": False, "error": f"Unknown tool: {tool_name}"}, ensure_ascii=False
+        )
+
+    @staticmethod
+    def _task_to_tool_payload(task: dict, *, brief: bool = False) -> dict:
+        """Project a task record into the JSON shape expected by the LLM and
+        by ``OrgRuntime._record_plugin_asset_output``. The runtime looks for
+        ``local_paths`` / ``image_urls`` / ``asset_ids`` to auto-register
+        produced images as task attachments — keep these keys stable.
+        """
+        base = {
+            "ok": task.get("status") != "failed",
+            "task_id": task.get("id"),
+            "status": task.get("status"),
+            "mode": task.get("mode"),
+            "image_urls": list(task.get("image_urls") or []),
+            "local_paths": list(task.get("local_image_paths") or []),
+            "asset_ids": list(task.get("asset_ids") or []),
+        }
+        if task.get("error_message"):
+            base["error_message"] = task["error_message"]
+        if brief:
+            base["prompt"] = (task.get("prompt") or "")[:200]
+            base["created_at"] = task.get("created_at")
+        return base
 
     # ── Internal task creation ──
 
@@ -270,12 +343,15 @@ class Plugin(PluginBase):
         )
 
         if status == "succeeded" and image_urls:
-            config = await self._tm.get_all_config()
-            if config.get("auto_download") == "true":
-                self._api.spawn_task(
-                    self._download_images(task["id"], image_urls),
-                    name=f"tongyi-image:download:{task['id']}",
-                )
+            # 工作台编排需要本地路径 + asset_ids 才能让 OrgRuntime hook 把图片
+            # 登记为任务附件。同步成功时**强制下载**并 publish 到 Asset Bus，
+            # 然后立刻 reload 一次 task 以拿到 local_image_paths / asset_ids，
+            # 这样工具 JSON 返回值中的相关字段都是最终态。auto_download 配置
+            # 仅控制"用户手动浏览历史"时是否预下载，工作台路径不受其影响。
+            await self._download_and_publish_images(task["id"], image_urls, prompt=prompt)
+            refreshed = await self._tm.get_task(task["id"])
+            if refreshed:
+                task = refreshed
             self._broadcast_update(task["id"], "succeeded")
 
         return task
@@ -502,11 +578,13 @@ class Plugin(PluginBase):
                         image_urls=image_urls,
                         usage=result.get("usage", {}),
                     )
-                    config = await self._tm.get_all_config()
-                    if config.get("auto_download") == "true" and image_urls:
-                        self._api.spawn_task(
-                            self._download_images(task["id"], image_urls),
-                            name=f"tongyi-image:download:{task['id']}",
+                    if image_urls:
+                        # 异步分支：和同步分支同步处理产物落盘+Asset Bus，
+                        # 让 LLM 后续 poll tongyi_image_status 时能拿到
+                        # local_paths / asset_ids，进而被 OrgRuntime 工作台
+                        # 钩子识别并登记为附件。
+                        await self._download_and_publish_images(
+                            task["id"], image_urls, prompt=task.get("prompt") or "",
                         )
                     self._broadcast_update(task["id"], "succeeded")
 
@@ -525,6 +603,11 @@ class Plugin(PluginBase):
                 logger.debug("Poll task %s error: %s", task["id"], e)
 
     async def _download_images(self, task_id: str, urls: list[str]) -> None:
+        """Legacy helper used by historical routes: download only, no
+        Asset Bus publishing. Workbench / org-orchestration callers should
+        prefer :meth:`_download_and_publish_images` so produced images flow
+        into downstream workbenches via stable asset_ids.
+        """
         try:
             import httpx
             config = await self._tm.get_all_config()
@@ -553,6 +636,103 @@ class Plugin(PluginBase):
             logger.info("Downloaded %d images for task %s", len(local_paths), task_id)
         except Exception as e:
             logger.warning("Failed to download images for task %s: %s", task_id, e)
+
+    async def _download_and_publish_images(
+        self,
+        task_id: str,
+        urls: list[str],
+        *,
+        prompt: str = "",
+    ) -> None:
+        """Download remote images, persist them under the plugin data dir,
+        then publish each to the Asset Bus so other workbenches (e.g.
+        seedance-video) can consume the resulting asset_ids without
+        rehosting. Errors are swallowed with warnings — the LLM still
+        sees ``image_urls`` even when local materialisation fails.
+        """
+        if not urls:
+            return
+        local_paths: list[str] = []
+        asset_ids: list[str] = []
+        downloads_dir = self._api.get_data_dir() / "downloads" / task_id
+        try:
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.warning(
+                "tongyi-image: failed to create download dir %s: %s",
+                downloads_dir, exc,
+            )
+            return
+
+        try:
+            import httpx
+        except ImportError:
+            logger.warning("tongyi-image: httpx unavailable, skip download")
+            return
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http:
+                for i, url in enumerate(urls):
+                    try:
+                        ext = ".png"
+                        lower = url.lower()
+                        if ".jpg" in lower or ".jpeg" in lower:
+                            ext = ".jpg"
+                        elif ".webp" in lower:
+                            ext = ".webp"
+                        filepath = downloads_dir / f"{task_id}_{i}{ext}"
+                        resp = await http.get(url)
+                        resp.raise_for_status()
+                        filepath.write_bytes(resp.content)
+                        local_paths.append(str(filepath))
+                    except Exception as exc:
+                        logger.warning(
+                            "tongyi-image: download %s failed: %s", url, exc,
+                        )
+        except Exception as exc:
+            logger.warning("tongyi-image: download session error: %s", exc)
+
+        # Publish each downloaded image to the Asset Bus. Failures are
+        # non-fatal — we still record any local_paths that did succeed.
+        for idx, local in enumerate(local_paths):
+            preview = urls[idx] if idx < len(urls) else None
+            try:
+                asset_id = await self._api.publish_asset(
+                    asset_kind="image",
+                    source_path=local,
+                    preview_url=preview,
+                    metadata={
+                        "task_id": task_id,
+                        "prompt": (prompt or "")[:500],
+                        "origin": "tongyi-image",
+                        "index": idx,
+                    },
+                    shared_with=["*"],
+                    ttl_seconds=86400,
+                )
+                if asset_id:
+                    asset_ids.append(asset_id)
+            except Exception as exc:
+                logger.warning(
+                    "tongyi-image: publish_asset failed for %s: %s",
+                    local, exc,
+                )
+
+        try:
+            await self._tm.update_task(
+                task_id,
+                local_image_paths=local_paths,
+                asset_ids=asset_ids,
+            )
+        except Exception as exc:
+            logger.warning(
+                "tongyi-image: persist asset metadata failed for %s: %s",
+                task_id, exc,
+            )
+        logger.info(
+            "tongyi-image: task %s materialised → %d local files, %d assets",
+            task_id, len(local_paths), len(asset_ids),
+        )
 
     def _broadcast_update(self, task_id: str, status: str) -> None:
         try:

@@ -694,10 +694,229 @@ CONTENT_OPS: dict = {
     ],
 }
 
+# ---------------------------------------------------------------------------
+# AIGC video studio — showcases the "workbench node" feature
+#
+# 这个模板演示如何把已加载的插件以「工作台节点」的形式编入组织：
+#   - `wb-tongyi-image`   → 依赖已安装/已加载的 `tongyi-image` 工作台插件
+#   - `wb-seedance-video` → 依赖已安装/已加载的 `seedance-video` 工作台插件
+#
+# 工作台节点必须是叶子节点（manager + runtime 双重校验），不允许挂下属。
+# 节点 `external_tools` 直接列出插件注册的工具名，运行时由
+# ``expand_tool_categories`` 原样透传，OrgRuntime 会自动给这些节点的
+# system prompt 追加「工作台能力段 + 交付协议」，并在工具调用成功时把
+# 远端 image_urls / video_url 下载到 org workspace，注册为任务附件。
+#
+# 工作流（指挥台 → CEO）：
+#   1. 制片人收到选题，把脚本与分镜描述交给编剧细化
+#   2. 编剧把每个镜头的视觉 prompt 整理好后，制片人派单给「通义生图工作台」
+#   3. 通义生图返回 image_urls + asset_ids，runtime 自动登记为附件
+#   4. 制片人把 asset_ids 透传给「即梦视频工作台」，请求图生视频
+#   5. 即梦视频通过 `from_asset_ids` 直接消费上游分镜，生成成片
+#   6. 制片人汇总文字脚本 + 分镜图 + 成片，交付给出品方
+#
+# 安装前置（前端在选用此模板时会用 deprecated_tools_for_node() 提示）：
+#   - 在「插件管理」里安装并启用 `tongyi-image`（需要 DASHSCOPE_API_KEY）
+#   - 在「插件管理」里安装并启用 `seedance-video`（需要 ARK_API_KEY 或同等的
+#     豆包视频 API 凭证）
+# ---------------------------------------------------------------------------
+
+AIGC_VIDEO_STUDIO: dict = {
+    "name": "AIGC 视频创作工作室",
+    "description": (
+        "由制片人统筹、编剧产出脚本、通义生图工作台出分镜、即梦视频工作台合成"
+        "成片的端到端 AIGC 短片流水线。需要预先在「插件管理」中启用 tongyi-image "
+        "与 seedance-video 两个工作台插件。"
+    ),
+    "icon": "🎬",
+    "tags": ["aigc", "video", "workbench", "tongyi-image", "seedance-video"],
+    "user_persona": {
+        "title": "出品方",
+        "display_name": "出品方",
+        "description": "短片选题与最终成片验收人",
+    },
+    "core_business": (
+        "围绕短视频/广告片选题，按「脚本 → 分镜图 → 成片」三段式流水线快速生产 "
+        "AIGC 视频。所有图片/视频产出会自动落到组织 workspace 的 plugin_assets/ "
+        "目录，并作为附件附在任务交付上。"
+    ),
+    "heartbeat_enabled": False,
+    "heartbeat_interval_s": 3600,
+    "heartbeat_prompt": "审视当前选题进度，识别脚本/分镜/成片阶段的卡点。",
+    "standup_enabled": False,
+    "standup_cron": "0 10 * * 1-5",
+    "standup_agenda": "脚本、分镜、视频成片三个阶段的产出与阻塞同步。",
+    "allow_cross_level": True,
+    # 工作台节点必须是叶子，所以最深委派深度 2 已经够用（出品方 → 制片人 →
+    # 编剧 / 工作台）。
+    "max_delegation_depth": 3,
+    "conflict_resolution": "manager",
+    "scaling_enabled": False,
+    "max_nodes": 8,
+    "scaling_approval": "manager",
+    "nodes": [
+        {
+            "id": "producer",
+            "role_title": "制片人",
+            "role_goal": (
+                "把出品方的选题拆成可执行的工序——找编剧细化脚本与分镜，"
+                "再把分镜描述派给通义生图工作台出图，最后把 asset_ids 透传给"
+                "即梦视频工作台合成视频，并对最终成片负责。"
+            ),
+            "role_backstory": "AIGC 短片制片人，擅长把粗糙的创意拆成可标准化的视觉工序。",
+            "agent_source": "local",
+            "agent_profile_id": "project-manager",
+            "position": {"x": 400, "y": 0},
+            "level": 0,
+            "department": "制作部",
+            "avatar": "ceo",
+            "external_tools": ["research", "planning", "filesystem", "memory"],
+            "custom_prompt": (
+                "你是 AIGC 视频创作工作室的制片人。\n"
+                "工作流：\n"
+                "1. 把出品方的选题派给『编剧』节点，让他用 org_submit_deliverable "
+                "返回脚本（含人物/场景/分镜描述与对白）。\n"
+                "2. 收到脚本后，把每个镜头的视觉 prompt 整理成清单，调用 "
+                "org_delegate_task 派给『通义生图工作台』节点，请求按镜头出图。\n"
+                "3. 通义生图工作台交付时，runtime 已经把图片下载到 workspace 并附"
+                "在 TASK_DELIVERED 上；同时它的 deliverable 文本会包含 asset_ids。"
+                "把这些 asset_ids 与对应镜头的运动/时长/风格描述一起，派给『即梦"
+                "视频工作台』节点，要求把 asset_ids 填入 seedance_create 的 "
+                "from_asset_ids 字段。\n"
+                "4. 视频工作台返回 video_url + 本地路径后，最终向出品方交付：剧本"
+                "（文字）+ 分镜图（附件）+ 成片（附件）。"
+            ),
+        },
+        {
+            "id": "screenwriter",
+            "role_title": "编剧",
+            "role_goal": "把选题拆成分镜脚本，给每个镜头写出可直接用于生图的视觉描述。",
+            "role_backstory": "广告短片编剧，熟悉 AIGC 工具的 prompt 写法。",
+            "agent_source": "local",
+            "agent_profile_id": "content-creator",
+            "position": {"x": 150, "y": 180},
+            "level": 1,
+            "department": "创意",
+            "avatar": "writer",
+            "external_tools": ["research", "planning", "filesystem", "memory"],
+            "custom_prompt": (
+                "你是组织里的编剧节点。收到选题后产出：(a) 一个完整剧本（场景、"
+                "人物、对白）；(b) 每个镜头的视觉 prompt 列表（编号、画面描述、"
+                "镜头语言、风格关键词）。最终用 org_submit_deliverable 交付，并把"
+                "脚本同时落盘为 markdown 文件作为附件。"
+            ),
+        },
+        {
+            "id": "wb-tongyi-image",
+            "role_title": "通义生图工作台",
+            "role_goal": "按制片人/编剧给定的分镜 prompt 调用通义生图，产出关键帧静态画面。",
+            "role_backstory": "工作台节点，背靠 tongyi-image 插件，专职文生图与图生图。",
+            "agent_source": "local",
+            "agent_profile_id": "default",
+            "position": {"x": 400, "y": 180},
+            "level": 1,
+            "department": "图像生成",
+            "avatar": "designer-f",
+            "external_tools": [
+                "tongyi_image_create",
+                "tongyi_image_status",
+                "tongyi_image_list",
+            ],
+            "enable_file_tools": False,
+            "can_delegate": False,
+            "plugin_origin": {
+                "plugin_id": "tongyi-image",
+                "template_id": "workbench:tongyi-image",
+            },
+            "custom_prompt": (
+                "你是【通义生图】工作台节点。只在收到 org_delegate_task 时启动，"
+                "按 input_schema 调用 tongyi_image_create 出图。组织 runtime 会把"
+                "图片下载到 workspace 并自动登记为附件；调 org_submit_deliverable "
+                "时只需在 deliverable 文本里说明产出（镜头号、prompt 摘要、生成的"
+                "asset_id），不要重复声明 file_attachments。若上级仅是问询/讨论"
+                "（没有明确派单），直接用 org_submit_deliverable 返回文字答复，"
+                "不要凭空调用工具。"
+            ),
+        },
+        {
+            "id": "wb-seedance-video",
+            "role_title": "即梦视频工作台",
+            "role_goal": "用编剧脚本与通义生图的分镜画面，调用即梦视频生成短片成片。",
+            "role_backstory": "工作台节点，背靠 seedance-video 插件，专职文生视频与图生视频。",
+            "agent_source": "local",
+            "agent_profile_id": "default",
+            "position": {"x": 650, "y": 180},
+            "level": 1,
+            "department": "视频生成",
+            "avatar": "media",
+            "external_tools": [
+                "seedance_create",
+                "seedance_status",
+                "seedance_list",
+            ],
+            "enable_file_tools": False,
+            "can_delegate": False,
+            "plugin_origin": {
+                "plugin_id": "seedance-video",
+                "template_id": "workbench:seedance-video",
+            },
+            "custom_prompt": (
+                "你是【即梦视频】工作台节点。只在收到 org_delegate_task 时启动；"
+                "当上级的派单 prompt 里给了上游通义生图的 asset_ids 时，必须把它"
+                "们填到 seedance_create 的 from_asset_ids 字段，由插件自动展开为 "
+                "Ark 的 content[image_url] 注入（i2v/i2v_end/multimodal 模式会按"
+                "位置自动分配 first_frame/last_frame/reference_image 角色）。生成"
+                "成功后 runtime 会把 video.mp4 与 last_frame 自动下载并登记为附件。"
+                "提交 org_submit_deliverable 时只需写文字说明，不要重复声明 "
+                "file_attachments。"
+            ),
+        },
+    ],
+    "edges": [
+        {
+            "id": "e-prod-writer",
+            "source": "producer",
+            "target": "screenwriter",
+            "edge_type": "hierarchy",
+            "label": "",
+        },
+        {
+            "id": "e-prod-tongyi",
+            "source": "producer",
+            "target": "wb-tongyi-image",
+            "edge_type": "hierarchy",
+            "label": "",
+        },
+        {
+            "id": "e-prod-seedance",
+            "source": "producer",
+            "target": "wb-seedance-video",
+            "edge_type": "hierarchy",
+            "label": "",
+        },
+        {
+            "id": "e-writer-tongyi",
+            "source": "screenwriter",
+            "target": "wb-tongyi-image",
+            "edge_type": "collaborate",
+            "label": "提供分镜 prompt",
+        },
+        {
+            "id": "e-tongyi-seedance",
+            "source": "wb-tongyi-image",
+            "target": "wb-seedance-video",
+            "edge_type": "collaborate",
+            "label": "传递 asset_ids 作为首帧/参考帧",
+        },
+    ],
+}
+
+
 ALL_TEMPLATES: dict[str, dict] = {
     "startup-company": STARTUP_COMPANY,
     "software-team": SOFTWARE_TEAM,
     "content-ops": CONTENT_OPS,
+    "aigc-video-studio": AIGC_VIDEO_STUDIO,
 }
 
 
@@ -705,6 +924,7 @@ TEMPLATE_POLICY_MAP: dict[str, str] = {
     "startup-company": "default",
     "software-team": "software-team",
     "content-ops": "content-ops",
+    "aigc-video-studio": "default",
 }
 
 
