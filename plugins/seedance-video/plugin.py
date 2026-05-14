@@ -161,7 +161,15 @@ class Plugin(PluginBase):
         api.register_tools([
             {
                 "name": "seedance_create",
-                "description": "Create a Seedance video generation task",
+                "description": (
+                    "Create a Seedance video generation task. Returns JSON: "
+                    "{ok, task_id, status, mode, video_url, video_path, "
+                    "last_frame_url, asset_ids}. Often used as a 'video output' "
+                    "workbench node in org orchestration — set from_asset_ids "
+                    "to the upstream image workbench's asset_ids to feed "
+                    "first_frame/last_frame/reference_image directly without "
+                    "rehosting."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -169,13 +177,29 @@ class Plugin(PluginBase):
                         "mode": {"type": "string", "enum": ["t2v", "i2v", "i2v_end", "multimodal", "edit", "extend"]},
                         "duration": {"type": "integer", "default": 5},
                         "ratio": {"type": "string", "default": "16:9"},
+                        "from_asset_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Asset Bus IDs produced by upstream workbenches "
+                                "(e.g. tongyi-image). Expanded into content[].image_url "
+                                "before submission. Role assignment by index + mode: "
+                                "i2v → first_frame (0), reference_image (1+); "
+                                "i2v_end → first_frame (0), last_frame (1+); "
+                                "multimodal → first_frame (0), reference_image (1+)."
+                            ),
+                        },
                     },
                     "required": ["prompt"],
                 },
             },
             {
                 "name": "seedance_status",
-                "description": "Check status of a Seedance video generation task",
+                "description": (
+                    "Check status of a Seedance video generation task. "
+                    "Returns JSON: {ok, task_id, status, mode, video_url, "
+                    "video_path, last_frame_url, asset_ids, error_message}."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"task_id": {"type": "string"}},
@@ -184,7 +208,11 @@ class Plugin(PluginBase):
             },
             {
                 "name": "seedance_list",
-                "description": "List recent Seedance video generation tasks",
+                "description": (
+                    "List recent Seedance video generation tasks. Returns JSON: "
+                    "{ok, total, tasks: [{task_id, status, mode, prompt, "
+                    "video_url, video_path, asset_ids, created_at}, ...]}."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"limit": {"type": "integer", "default": 10}},
@@ -248,21 +276,87 @@ class Plugin(PluginBase):
     # ── Tool handler ──
 
     async def _handle_tool(self, tool_name: str, args: dict) -> str:
+        """LLM-facing tool entry. Returns JSON so OrgRuntime's workbench
+        hook can detect produced artifacts (local_paths / video_url /
+        asset_ids) and register them as task attachments."""
+        import json as _json
+
         if tool_name == "seedance_create":
-            task = await self._create_task_internal(args)
-            return f"Task created: {task['id']} (status: {task['status']})"
-        elif tool_name == "seedance_status":
-            task = await self._tm.get_task(args["task_id"])
+            try:
+                task = await self._create_task_internal(args)
+            except HTTPException as e:
+                return _json.dumps(
+                    {
+                        "ok": False,
+                        "error": e.detail if isinstance(e.detail, str) else str(e.detail),
+                        "status_code": e.status_code,
+                    },
+                    ensure_ascii=False,
+                )
+            except Exception as e:
+                return _json.dumps(
+                    {"ok": False, "error": str(e)}, ensure_ascii=False
+                )
+            return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+        if tool_name == "seedance_status":
+            tid = args.get("task_id") or ""
+            task = await self._tm.get_task(tid) if tid else None
             if not task:
-                return f"Task {args['task_id']} not found"
-            return f"Task {task['id']}: status={task['status']}, video_url={task.get('video_url', 'N/A')}"
-        elif tool_name == "seedance_list":
+                return _json.dumps(
+                    {"ok": False, "task_id": tid, "error": "task not found"},
+                    ensure_ascii=False,
+                )
+            return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+        if tool_name == "seedance_list":
             tasks, total = await self._tm.list_tasks(limit=args.get("limit", 10))
-            lines = [f"Total: {total} tasks"]
-            for t in tasks:
-                lines.append(f"  {t['id']}: {t['status']} - {t['prompt'][:50]}")
-            return "\n".join(lines)
-        return f"Unknown tool: {tool_name}"
+            return _json.dumps(
+                {
+                    "ok": True,
+                    "total": total,
+                    "tasks": [
+                        self._task_to_tool_payload(t, brief=True) for t in tasks
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        return _json.dumps(
+            {"ok": False, "error": f"Unknown tool: {tool_name}"}, ensure_ascii=False
+        )
+
+    @staticmethod
+    def _task_to_tool_payload(task: dict, *, brief: bool = False) -> dict:
+        """Project a task record into the JSON shape expected by the LLM and
+        by ``OrgRuntime._record_plugin_asset_output``. The runtime looks for
+        ``local_paths`` / ``video_url`` / ``asset_ids`` to auto-register
+        produced media as task attachments — keep these keys stable.
+        """
+        local_paths: list[str] = []
+        vp = task.get("local_video_path")
+        if vp:
+            local_paths.append(vp)
+        lf_local = task.get("last_frame_local_path")
+        if lf_local:
+            local_paths.append(lf_local)
+        base = {
+            "ok": task.get("status") != "failed",
+            "task_id": task.get("id"),
+            "status": task.get("status"),
+            "mode": task.get("mode"),
+            "video_url": task.get("video_url") or "",
+            "video_path": vp or "",
+            "last_frame_url": task.get("last_frame_url") or "",
+            "last_frame_path": lf_local or "",
+            "local_paths": local_paths,
+            "asset_ids": list(task.get("asset_ids") or []),
+        }
+        if task.get("error_message"):
+            base["error_message"] = task["error_message"]
+        if brief:
+            base["prompt"] = (task.get("prompt") or "")[:200]
+            base["created_at"] = task.get("created_at")
+        return base
 
     # ── Long-video chain bookkeeping (Sprint 8 / V2) ──
 
@@ -390,6 +484,21 @@ class Plugin(PluginBase):
                 )
 
             content = params.get("content") or [{"type": "text", "text": params.get("prompt", "")}]
+
+            # 工作台编排：from_asset_ids 把上游工作台（例如通义生图）的产物
+            # 通过 Asset Bus 注入到当前任务的 content[]，让 LLM 不必再手动
+            # 上传图片到 Ark。展开角色取决于 mode：
+            #   i2v        → first_frame (0), reference_image (1+)
+            #   i2v_end    → first_frame (0), last_frame (1+)
+            #   multimodal → first_frame (0), reference_image (1+)
+            #   其他       → reference_image
+            from_asset_ids = params.pop("from_asset_ids", None) or []
+            if from_asset_ids and isinstance(from_asset_ids, list):
+                expanded = await self._expand_from_asset_ids(from_asset_ids, mode)
+                if expanded:
+                    if not isinstance(content, list):
+                        content = []
+                    content = list(content) + expanded
 
             # ── Mode validation (Sprint 8 / V1) ──
             # User-reported bug: "i2v / multimodal / edit / extend 都生不了任务".
@@ -643,11 +752,14 @@ class Plugin(PluginBase):
                         updates["last_frame_url"] = last_frame_url
                     await self._tm.update_task(task["id"], **updates)
 
-                    auto_dl = await self._tm.get_config("auto_download")
-                    if auto_dl == "true" and video_url:
-                        self._api.spawn_task(
-                            self._download_video(task["id"], video_url),
-                            name=f"seedance-video:dl:{task['id']}",
+                    # 工作台编排必须拿到本地路径 + asset_ids 才能让 OrgRuntime
+                    # hook 把视频/末帧登记为任务附件，所以**强制**下载+publish
+                    # 一次（不再受 auto_download 配置影响）。失败时降级为
+                    # 仅 URL，由 hook 的远端下载兜底。
+                    if video_url:
+                        await self._download_and_publish_video(
+                            task["id"], video_url, last_frame_url=last_frame_url,
+                            prompt=task.get("prompt") or "",
                         )
 
                     self._broadcast_update(task["id"], "succeeded")
@@ -660,6 +772,56 @@ class Plugin(PluginBase):
 
             except Exception as e:
                 logger.debug("Poll task %s error: %s", task["id"], e)
+
+    async def _expand_from_asset_ids(
+        self,
+        asset_ids: list[str],
+        mode: str,
+    ) -> list[dict]:
+        """Turn upstream workbench ``asset_ids`` into Ark content items.
+
+        Each successful Asset Bus lookup is materialised as an
+        ``{"type": "image_url", "image_url": {"url": ...}, "role": ...}``
+        entry whose role is derived from the **0-indexed position** within
+        ``asset_ids`` together with ``mode``.
+
+        Unknown / unreadable asset_ids are silently skipped (the
+        plain-text prompt path still works). We deliberately avoid raising
+        so a partial failure of the Asset Bus does not abort the entire
+        task.
+        """
+        if not asset_ids:
+            return []
+        expanded: list[dict] = []
+        for idx, aid in enumerate(asset_ids):
+            try:
+                asset = await self._api.consume_asset(aid)
+            except Exception as exc:
+                logger.warning("seedance-video: consume_asset(%s) failed: %s", aid, exc)
+                continue
+            if not asset:
+                continue
+            url = (
+                asset.get("preview_url")
+                or asset.get("source_path")
+                or ""
+            )
+            if not isinstance(url, str) or not url:
+                continue
+            if mode == "i2v_end":
+                role = "first_frame" if idx == 0 else "last_frame"
+            elif mode in ("i2v", "multimodal"):
+                role = "first_frame" if idx == 0 else "reference_image"
+            else:
+                role = "reference_image"
+            expanded.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": url},
+                    "role": role,
+                }
+            )
+        return expanded
 
     async def _download_video(self, task_id: str, url: str) -> None:
         """Download video to local output directory."""
@@ -700,6 +862,133 @@ class Plugin(PluginBase):
             logger.info("Downloaded video for task %s to %s", task_id, filepath)
         except Exception as e:
             logger.warning("Failed to download video for task %s: %s", task_id, e)
+
+    async def _download_and_publish_video(
+        self,
+        task_id: str,
+        video_url: str,
+        *,
+        last_frame_url: str = "",
+        prompt: str = "",
+    ) -> None:
+        """Download the produced video (and optional last-frame image),
+        persist them under the plugin data dir, then publish each to the
+        Asset Bus so downstream workbenches can consume the asset_ids
+        (e.g. as the first_frame for a follow-up Seedance edit). Errors
+        are non-fatal — the LLM still sees ``video_url`` even when local
+        materialisation fails."""
+        if not video_url:
+            return
+
+        downloads_dir = self._api.get_data_dir() / "downloads" / task_id
+        try:
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.warning(
+                "seedance-video: failed to create download dir %s: %s",
+                downloads_dir, exc,
+            )
+            return
+
+        try:
+            import httpx
+        except ImportError:
+            logger.warning("seedance-video: httpx unavailable, skip download")
+            return
+
+        video_path: Path | None = None
+        last_frame_path: Path | None = None
+        try:
+            async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as http:
+                try:
+                    resp = await http.get(video_url)
+                    resp.raise_for_status()
+                    video_path = downloads_dir / f"{task_id}.mp4"
+                    video_path.write_bytes(resp.content)
+                except Exception as exc:
+                    logger.warning("seedance-video: video download failed: %s", exc)
+                    video_path = None
+                if last_frame_url:
+                    try:
+                        ext = ".png"
+                        low = last_frame_url.lower()
+                        if ".jpg" in low or ".jpeg" in low:
+                            ext = ".jpg"
+                        elif ".webp" in low:
+                            ext = ".webp"
+                        resp2 = await http.get(last_frame_url)
+                        resp2.raise_for_status()
+                        last_frame_path = downloads_dir / f"{task_id}_last_frame{ext}"
+                        last_frame_path.write_bytes(resp2.content)
+                    except Exception as exc:
+                        logger.warning(
+                            "seedance-video: last-frame download failed: %s", exc,
+                        )
+                        last_frame_path = None
+        except Exception as exc:
+            logger.warning("seedance-video: download session error: %s", exc)
+
+        asset_ids: list[str] = []
+        if video_path is not None:
+            try:
+                aid = await self._api.publish_asset(
+                    asset_kind="video",
+                    source_path=str(video_path),
+                    preview_url=video_url,
+                    metadata={
+                        "task_id": task_id,
+                        "prompt": (prompt or "")[:500],
+                        "origin": "seedance-video",
+                        "role": "video",
+                    },
+                    shared_with=["*"],
+                    ttl_seconds=86400,
+                )
+                if aid:
+                    asset_ids.append(aid)
+            except Exception as exc:
+                logger.warning("seedance-video: publish_asset(video) failed: %s", exc)
+        if last_frame_path is not None:
+            try:
+                aid = await self._api.publish_asset(
+                    asset_kind="image",
+                    source_path=str(last_frame_path),
+                    preview_url=last_frame_url or None,
+                    metadata={
+                        "task_id": task_id,
+                        "prompt": (prompt or "")[:500],
+                        "origin": "seedance-video",
+                        "role": "last_frame",
+                    },
+                    shared_with=["*"],
+                    ttl_seconds=86400,
+                )
+                if aid:
+                    asset_ids.append(aid)
+            except Exception as exc:
+                logger.warning(
+                    "seedance-video: publish_asset(last_frame) failed: %s", exc,
+                )
+
+        updates: dict[str, Any] = {"asset_ids": asset_ids}
+        if video_path is not None:
+            updates["local_video_path"] = str(video_path)
+        if last_frame_path is not None:
+            updates["last_frame_local_path"] = str(last_frame_path)
+        try:
+            await self._tm.update_task(task_id, **updates)
+        except Exception as exc:
+            logger.warning(
+                "seedance-video: persist asset metadata failed for %s: %s",
+                task_id, exc,
+            )
+        logger.info(
+            "seedance-video: task %s materialised → video=%s last_frame=%s assets=%d",
+            task_id,
+            bool(video_path),
+            bool(last_frame_path),
+            len(asset_ids),
+        )
 
     def _broadcast_update(self, task_id: str, status: str) -> None:
         try:

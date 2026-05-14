@@ -335,6 +335,13 @@ class OrgRuntime:
         # key = "{org_id}:{node_id}"（与 _node_last_activity 对齐），值 = int。
         self._node_files_registered_in_task: dict[str, int] = {}
 
+        # 工作台节点：本任务内由 plugin tool hook 自动登记的附件清单。
+        # _record_plugin_asset_output 成功 register 时 append，
+        # _handle_org_submit_deliverable 在 LLM 未声明 file_attachments 时
+        # 自动取用，避免插件节点必须人工列附件。同样在每次任务起手清空。
+        # key 与 _node_files_registered_in_task 对齐：``{org_id}:{node_id}``。
+        self._node_plugin_attachments_in_task: dict[str, list[dict]] = {}
+
         # 工具级在途锁：防止 LLM 在同一 ReAct iter 内 emit 多个相同 tool_use
         # （如 3 次 org_delegate_task 给同一 to_node 同一 chain）造成下游
         # mailbox 重复入队。key = "{tool}:{org_id}:{node_id}:{...}"，
@@ -1462,6 +1469,10 @@ class OrgRuntime:
             # 都会让该 counter +1。auto-persist 兜底仅在 counter==0 时触发，
             # 杜绝"LLM 已自己写过文件 + 系统又兜底落盘"的双写。
             self._node_files_registered_in_task[cache_key] = 0
+            # plugin hook 登记附件缓冲清零：本任务内由 _record_plugin_asset_output
+            # 产生的附件会累计到这里，供 _handle_org_submit_deliverable 在 LLM
+            # 未传 file_attachments 时自动取用。
+            self._node_plugin_attachments_in_task[cache_key] = []
 
             result_text = await self._run_agent_task(
                 agent, prompt, session_id, org, node,
@@ -2140,6 +2151,22 @@ class OrgRuntime:
 
         is_root = (node.level == 0 or not org.get_parent(node.id))
         is_coordinator = bool(org.get_children(node.id))
+
+        # 工作台节点（plugin_origin 非空）必须是叶子节点：coordinator 路径会
+        # 把 allowed_external 强制清空，导致工作台工具无法放行 → 节点形同虚设。
+        # 这里在运行时再保险一次：检测到非法组合时降级为非工作台节点（保留
+        # external_tools 但剥离 plugin_origin 标识），并 emit warning，让用户
+        # 在前端能看到提示并修复编排。
+        active_plugin_origin = dict(node.plugin_origin) if node.plugin_origin else None
+        if active_plugin_origin and is_coordinator:
+            logger.warning(
+                "[OrgRuntime] workbench node %s in org %s has children — "
+                "plugin_origin will be ignored at runtime. "
+                "Please make workbench nodes leaves.",
+                node.id, org.id,
+            )
+            active_plugin_origin = None
+
         allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT_TOOLS
         if is_coordinator:
             # 管理节点只负责拆解、委派、等待和验收；真实文件/浏览器/命令等
@@ -2206,6 +2233,25 @@ class OrgRuntime:
         agent.file_tool.base_path = org_workspace
         agent.shell_tool.default_cwd = str(org_workspace)
 
+        # 工作台节点：把"插件能力 + 产物交付协议"段拼到 org_context，让 LLM
+        # 在 system prompt 中看到具体可调用的工作台工具名与产物自动登记规则。
+        # 仅对真正"激活"的工作台节点（active_plugin_origin 非空，即叶子节点）
+        # 生效，避免被强制降级的 coordinator 拿到误导性提示。
+        if active_plugin_origin:
+            try:
+                workbench_section = self._build_workbench_prompt_section(
+                    agent, active_plugin_origin,
+                )
+                if workbench_section:
+                    org_context_prompt = (
+                        f"{org_context_prompt}\n\n{workbench_section}"
+                    )
+            except Exception:
+                logger.debug(
+                    "[OrgRuntime] failed to build workbench prompt section",
+                    exc_info=True,
+                )
+
         # A node is an "org coordinator" iff it has direct subordinates —
         # ``build_org_node_tools`` already drops ``org_delegate_task`` for
         # leaf nodes, so this aligns the runtime contract: only nodes that
@@ -2224,8 +2270,10 @@ class OrgRuntime:
             "workspace": org_workspace,
             "is_root": is_root,
             "is_coordinator": is_coordinator,
+            "plugin_origin": active_plugin_origin,
         }
         agent._is_org_coordinator = is_coordinator
+        agent._workbench_plugin_origin = active_plugin_origin
 
         if hasattr(agent, "brain") and hasattr(agent.brain, "set_trace_context"):
             agent.brain.set_trace_context({
@@ -2245,6 +2293,100 @@ class OrgRuntime:
         self._register_org_tool_handler(agent, org.id, node.id)
 
         return agent
+
+    @staticmethod
+    def _build_workbench_prompt_section(
+        agent: Any, plugin_origin: dict,
+    ) -> str:
+        """Compose a "你是【X】工作台节点" section for the system prompt.
+
+        Lists the workbench-specific tools (filtered from
+        ``agent.tool_catalog``) and reiterates the artifact-handoff
+        contract: workbench produces → runtime auto-registers → submit
+        deliverable without re-declaring file_attachments → upstream
+        asset_id / image_url flows back into downstream tool input.
+
+        Returns an empty string when the plugin manager / tool catalog
+        cannot be queried so the caller leaves the original prompt intact.
+        """
+        if not plugin_origin:
+            return ""
+        plugin_id = str(plugin_origin.get("plugin_id") or "").strip()
+        if not plugin_id:
+            return ""
+
+        pm = getattr(agent, "_plugin_manager", None)
+        manifest = None
+        plugin_tool_names: set[str] = set()
+        if pm is not None:
+            try:
+                lp = pm.get_loaded(plugin_id)
+                if lp is not None:
+                    manifest = lp.manifest
+                    for t in getattr(lp.api, "_registered_tools", None) or []:
+                        if isinstance(t, dict) and t.get("name"):
+                            plugin_tool_names.add(t["name"])
+            except Exception:
+                logger.debug(
+                    "[OrgRuntime] _build_workbench_prompt_section: lookup failed",
+                    exc_info=True,
+                )
+
+        display_name = (
+            (getattr(manifest, "display_name_zh", None) or "")
+            or (getattr(manifest, "name", None) or "")
+            or plugin_id
+        )
+
+        active_tool_lines: list[str] = []
+        try:
+            seen: set[str] = set()
+            for t in getattr(agent, "_tools", None) or []:
+                if not isinstance(t, dict):
+                    continue
+                name = t.get("name") or ""
+                if name in plugin_tool_names and name not in seen:
+                    seen.add(name)
+                    desc = (t.get("description") or "").strip()
+                    if desc:
+                        if len(desc) > 160:
+                            desc = desc[:160].rstrip() + "..."
+                        active_tool_lines.append(f"- `{name}` — {desc}")
+                    else:
+                        active_tool_lines.append(f"- `{name}`")
+            # 兜底：若 agent._tools 里没找到任何插件工具（节点被错误配置导致
+            # external_tools 未声明该工具），把已知工具名列出来让 LLM 看到全貌。
+            if not active_tool_lines:
+                for name in sorted(plugin_tool_names):
+                    active_tool_lines.append(f"- `{name}`")
+        except Exception:
+            for name in sorted(plugin_tool_names):
+                active_tool_lines.append(f"- `{name}`")
+
+        tool_block = "\n".join(active_tool_lines) if active_tool_lines else "（暂无工具）"
+
+        return (
+            f"## 你是【{display_name}】工作台节点\n"
+            f"专属能力（请按 input_schema 严格调用）：\n{tool_block}\n\n"
+            "交付协议：\n"
+            "1. 工作台工具调用成功后，组织 runtime 会把产物（图片/视频/音频/"
+            "本地文件）自动下载到 org workspace 的 `plugin_assets/<workbench>/<task>/` "
+            "目录，并通过 `_register_file_output` 登记为任务附件（黑板 RESOURCE + "
+            "ProjectTask + chat UI 附件 chip）；\n"
+            "2. 你**不需要**在 `org_submit_deliverable` 的 `file_attachments` "
+            "参数里再重复声明这些产物——runtime 会自动把它们随 TASK_DELIVERED "
+            "送给委派人；只需在 `deliverable` 文本里说明产出内容（标题、规格、"
+            "prompt 摘要、`asset_id` 等关键标识）即可；\n"
+            "3. 如果工具返回里出现 `registered_attachments` 字段，那就是 runtime "
+            "已经成功登记的本地路径，你可以在 deliverable 文本里直接引用其中的 "
+            "`filename`；\n"
+            "4. 若上级 prompt 中提供了上游工作台的 `asset_id` 或 `image_url`，"
+            "请如实填入对应工具参数（例如 `seedance_create.from_asset_ids` 或 "
+            "`content[].image_url`）；不要凭空想象资源；\n"
+            "5. 若上级只是问询/讨论（而非真正下单产出），直接用 "
+            "`org_submit_deliverable` 提交文字回答，无需调用工作台工具；\n"
+            "6. 完成后调 `org_submit_deliverable` 把成果交给委派人，等待验收。"
+        )
 
     def _resolve_org_workspace(self, org: Organization) -> Path:
         """Return the effective workspace directory for an organization.
@@ -4706,6 +4848,23 @@ class OrgRuntime:
                     logger.debug(
                         "[OrgRuntime] failed to record file output", exc_info=True,
                     )
+            elif self._is_plugin_tool(agent, tool_name):
+                # 工作台节点：插件工具产出（image_urls / video_url / local_paths /
+                # asset_ids）由 runtime 自动下载到 org workspace 并走 _register_file_output
+                # 登记，让产物进入 chat UI 附件 chip + 任务验收链路。
+                try:
+                    ws = getattr(agent, "_org_context", {}).get("workspace")
+                    enhanced = await self._record_plugin_asset_output(
+                        agent, org_id, node_id, tool_name, tool_input, result,
+                        workspace=ws,
+                    )
+                    if enhanced is not None:
+                        result = enhanced
+                except Exception:
+                    logger.debug(
+                        "[OrgRuntime] failed to record plugin asset output",
+                        exc_info=True,
+                    )
             return result
 
         executor.execute_tool_with_policy = _patched_with_policy
@@ -5191,4 +5350,416 @@ class OrgRuntime:
                     workspace=workspace,
                 )
             return
+
+    # ------------------------------------------------------------------
+    # Workbench (plugin) node asset bridging
+    # ------------------------------------------------------------------
+
+    # 单个文件最大下载尺寸（防止恶意 URL 拖垮节点磁盘）。50 MB 与
+    # seedance-video 上传体积上限一致。
+    _PLUGIN_ASSET_MAX_BYTES: int = 50 * 1024 * 1024
+    _PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S: float = 120.0
+
+    def _is_plugin_tool(self, agent: Any, tool_name: str) -> bool:
+        """Return True iff ``tool_name`` was registered by a loaded plugin
+        on the given agent's PluginManager.
+
+        Caches the per-agent plugin tool name set on ``agent._plugin_tool_names``
+        so the lookup is O(1) per call. Re-computation only happens when the
+        attribute is missing — at which point we walk
+        ``agent._plugin_manager.loaded_plugins.values()`` once.
+        """
+        if not tool_name or tool_name.startswith("org_"):
+            return False
+        cached: set[str] | None = getattr(agent, "_plugin_tool_names", None)
+        if cached is None:
+            cached = set()
+            pm = getattr(agent, "_plugin_manager", None)
+            if pm is not None:
+                try:
+                    for lp in pm.loaded_plugins.values():
+                        for t in getattr(lp.api, "_registered_tools", None) or []:
+                            n = t.get("name") if isinstance(t, dict) else None
+                            if n:
+                                cached.add(n)
+                except Exception:
+                    logger.debug(
+                        "[OrgRuntime] failed to enumerate plugin tool names",
+                        exc_info=True,
+                    )
+            agent._plugin_tool_names = cached
+        return tool_name in cached
+
+    @staticmethod
+    def _plugin_id_for_tool(agent: Any, tool_name: str) -> str:
+        """Best-effort lookup of which plugin registered ``tool_name``.
+
+        Returns the plugin id, or an empty string if the mapping cannot be
+        established (e.g. PluginManager not attached). The result is only
+        used for namespacing the on-disk asset directory.
+        """
+        pm = getattr(agent, "_plugin_manager", None)
+        if pm is None:
+            return ""
+        try:
+            for lp in pm.loaded_plugins.values():
+                for t in getattr(lp.api, "_registered_tools", None) or []:
+                    if isinstance(t, dict) and t.get("name") == tool_name:
+                        return lp.manifest.id
+        except Exception:
+            return ""
+        return ""
+
+    @staticmethod
+    def _safe_asset_filename(raw: str, default_ext: str = ".bin") -> str:
+        """Strip path separators and dangerous chars from a candidate filename.
+
+        We never trust an LLM- or plugin-supplied filename to be safe;
+        always resolve under a known parent and reject path traversal.
+        """
+        import re
+
+        cleaned = (raw or "").strip().replace("\\", "/").split("/")[-1]
+        cleaned = re.sub(r"[\x00-\x1f<>:\"|?*]", "_", cleaned)
+        if not cleaned:
+            cleaned = f"asset{default_ext}"
+        # cap length so freakishly long filenames cannot blow up file systems
+        if len(cleaned) > 120:
+            stem, dot, ext = cleaned.rpartition(".")
+            if dot and len(ext) <= 8:
+                cleaned = stem[: 120 - len(ext) - 1] + "." + ext
+            else:
+                cleaned = cleaned[:120]
+        return cleaned
+
+    @staticmethod
+    def _ext_for_url(url: str, fallback: str = ".bin") -> str:
+        """Pick a file extension based on URL path (last `.xxx`)."""
+        import re
+        from urllib.parse import urlparse
+
+        try:
+            path = urlparse(url).path
+        except Exception:
+            return fallback
+        m = re.search(r"\.([A-Za-z0-9]{1,8})$", path or "")
+        if not m:
+            return fallback
+        return "." + m.group(1).lower()
+
+    async def _download_to_workspace(
+        self,
+        url: str,
+        dest: Path,
+    ) -> bool:
+        """Stream-download ``url`` into ``dest`` using httpx, with size cap.
+
+        Returns True on success, False on any failure (network error, 4xx/5xx,
+        oversize, IO error). Never raises.
+        """
+        if not url:
+            return False
+        try:
+            import httpx
+        except Exception:
+            logger.debug("[OrgRuntime] httpx unavailable, cannot download %s", url)
+            return False
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        total = 0
+        try:
+            async with (
+                httpx.AsyncClient(
+                    follow_redirects=True,
+                    timeout=self._PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S,
+                ) as client,
+                client.stream("GET", url) as resp,
+            ):
+                if resp.status_code != 200:
+                    logger.info(
+                        "[OrgRuntime] download %s returned HTTP %s",
+                        url, resp.status_code,
+                    )
+                    return False
+                with open(tmp, "wb") as fh:
+                    async for chunk in resp.aiter_bytes():
+                        total += len(chunk)
+                        if total > self._PLUGIN_ASSET_MAX_BYTES:
+                            logger.warning(
+                                "[OrgRuntime] download %s aborted, "
+                                "exceeded %d bytes",
+                                url, self._PLUGIN_ASSET_MAX_BYTES,
+                            )
+                            tmp.unlink(missing_ok=True)
+                            return False
+                        fh.write(chunk)
+            import os as _os
+            _os.replace(str(tmp), str(dest))
+            return dest.exists() and dest.stat().st_size > 0
+        except Exception as exc:
+            logger.info(
+                "[OrgRuntime] download %s failed: %s", url, exc,
+            )
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return False
+
+    @staticmethod
+    def _copy_to_workspace(src: Path, dest: Path) -> bool:
+        """Hard-link or copy a local file into ``dest``.
+
+        Hard-link first (cheap, atomic on same volume); fall back to copy
+        when hard-linking is not possible (e.g. across volumes on Windows).
+        Returns True on success.
+        """
+        import shutil
+
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                return True
+            try:
+                import os as _os
+                _os.link(str(src), str(dest))
+                return True
+            except OSError:
+                shutil.copy2(str(src), str(dest))
+                return True
+        except Exception as exc:
+            logger.debug(
+                "[OrgRuntime] copy %s -> %s failed: %s", src, dest, exc,
+            )
+            return False
+
+    async def _record_plugin_asset_output(
+        self,
+        agent: Any,
+        org_id: str,
+        node_id: str,
+        tool_name: str,
+        tool_input: dict,
+        result: str,
+        *,
+        workspace: Path | None,
+    ) -> str | None:
+        """Parse a workbench tool's JSON return value, materialise any
+        produced artifacts into the org workspace, register them as task
+        attachments, and return a possibly-augmented result string carrying
+        a ``registered_attachments`` field so the LLM can see what was
+        attached on the next ReAct turn.
+
+        Returns:
+          - ``None`` if no enhancement was applied (result not JSON, no
+            artifact references, plugin manager unavailable, or workspace
+            missing). Caller should keep the original result untouched.
+          - a JSON-encoded string with ``registered_attachments`` appended,
+            otherwise. The original payload keys are preserved.
+        """
+        import json as _json
+
+        if not result or workspace is None:
+            return None
+
+        try:
+            payload = _json.loads(result)
+        except (_json.JSONDecodeError, TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        # Skip failed tool calls — only auto-register on success-looking
+        # payloads. Plugins are free to set ok=False; we still respect that.
+        if payload.get("ok") is False:
+            return None
+
+        plugin_id = self._plugin_id_for_tool(agent, tool_name) or "plugin"
+        task_id = (
+            payload.get("task_id")
+            or tool_input.get("task_id")
+            or "task"
+        )
+        # path-traversal safety: only use the basename of each component
+        plugin_slug = self._safe_asset_filename(str(plugin_id), default_ext="")
+        task_slug = self._safe_asset_filename(str(task_id), default_ext="")
+        target_dir = (
+            Path(workspace) / "plugin_assets" / (plugin_slug or "plugin") / (task_slug or "task")
+        ).resolve()
+
+        # 仅当目标目录确实位于 workspace 内才放行（即便上面 _safe_asset_filename
+        # 已剥离分隔符，做一次显式校验确保万一拼接出绝对路径也能拦下来）。
+        try:
+            workspace_resolved = Path(workspace).resolve()
+            if not str(target_dir).startswith(str(workspace_resolved)):
+                logger.warning(
+                    "[OrgRuntime] refusing plugin asset dir outside workspace: %s",
+                    target_dir,
+                )
+                return None
+        except Exception:
+            return None
+
+        chain_id = self.get_current_chain_id(org_id, node_id)
+
+        # 候选附件来源（按优先级合并）：
+        #   1. local_paths：插件已经在本地有文件，直接 hardlink / copy
+        #   2. asset_ids：通过 Asset Bus 查 source_path / preview_url
+        #   3. image_urls / video_url：远端 URL，httpx 流式下载
+        candidates: list[dict] = []
+
+        for raw in payload.get("local_paths") or []:
+            if isinstance(raw, str) and raw:
+                candidates.append({"kind": "local", "src": raw})
+        # video_path / image_path 也按本地路径处理（plugin 可能用单数字段）
+        for key in ("video_path", "image_path"):
+            v = payload.get(key)
+            if isinstance(v, str) and v:
+                candidates.append({"kind": "local", "src": v})
+
+        for raw in payload.get("asset_ids") or []:
+            if isinstance(raw, str) and raw:
+                candidates.append({"kind": "asset", "asset_id": raw})
+
+        for raw in payload.get("image_urls") or []:
+            if isinstance(raw, str) and raw and not raw.startswith("data:"):
+                candidates.append({"kind": "url", "url": raw, "ext_hint": ".png"})
+        v = payload.get("video_url")
+        if isinstance(v, str) and v and not v.startswith("data:"):
+            candidates.append({"kind": "url", "url": v, "ext_hint": ".mp4"})
+        v = payload.get("audio_url")
+        if isinstance(v, str) and v and not v.startswith("data:"):
+            candidates.append({"kind": "url", "url": v, "ext_hint": ".mp3"})
+
+        if not candidates:
+            return None
+
+        # 对 asset_ids 通过 PluginManager 的 asset_bus 资源拿 source_path / preview_url
+        asset_bus = None
+        pm = getattr(agent, "_plugin_manager", None)
+        if pm is not None:
+            try:
+                asset_bus = pm.host_refs.get("asset_bus") if hasattr(pm, "host_refs") else None
+                if asset_bus is None:
+                    # _host_refs 是 _LiveFilteredHostRefs（dict-like）
+                    asset_bus = (
+                        pm._external_host_refs.get("asset_bus")
+                        if hasattr(pm, "_external_host_refs") else None
+                    )
+            except Exception:
+                asset_bus = None
+
+        registered: list[dict] = []
+        seen_paths: set[str] = set()
+
+        for idx, cand in enumerate(candidates):
+            try:
+                kind = cand["kind"]
+                local_path: Path | None = None
+                if kind == "local":
+                    src_str = cand["src"]
+                    src = Path(src_str)
+                    if not src.is_absolute():
+                        src = (Path(workspace) / src).resolve()
+                    if not src.exists() or not src.is_file():
+                        continue
+                    fname = self._safe_asset_filename(src.name)
+                    dest = (target_dir / fname).resolve()
+                    if not str(dest).startswith(str(workspace_resolved)):
+                        continue
+                    if dest != src and not self._copy_to_workspace(src, dest):
+                        continue
+                    local_path = dest if dest.exists() else src
+                elif kind == "asset" and asset_bus is not None:
+                    aid = cand["asset_id"]
+                    row = None
+                    try:
+                        row = await asset_bus.get(aid, requester_plugin_id=plugin_id)
+                    except Exception:
+                        logger.debug(
+                            "[OrgRuntime] asset_bus.get(%s) failed", aid, exc_info=True
+                        )
+                    if not row:
+                        continue
+                    sp = row.get("source_path")
+                    pu = row.get("preview_url")
+                    ext = ".bin"
+                    if sp:
+                        ext = Path(sp).suffix or ext
+                    elif pu:
+                        ext = self._ext_for_url(pu, fallback=ext)
+                    fname = self._safe_asset_filename(f"{aid}{ext}")
+                    dest = (target_dir / fname).resolve()
+                    if not str(dest).startswith(str(workspace_resolved)):
+                        continue
+                    if sp:
+                        src = Path(sp)
+                        if src.exists() and src.is_file():
+                            if dest != src and not self._copy_to_workspace(src, dest):
+                                continue
+                            local_path = dest if dest.exists() else src
+                    if local_path is None and pu:
+                        ok = await self._download_to_workspace(pu, dest)
+                        if ok:
+                            local_path = dest
+                elif kind == "url":
+                    url = cand["url"]
+                    ext = self._ext_for_url(url, fallback=cand.get("ext_hint", ".bin"))
+                    fname = self._safe_asset_filename(f"{task_slug or 'item'}_{idx}{ext}")
+                    dest = (target_dir / fname).resolve()
+                    if not str(dest).startswith(str(workspace_resolved)):
+                        continue
+                    ok = await self._download_to_workspace(url, dest)
+                    if ok:
+                        local_path = dest
+                else:
+                    continue
+
+                if local_path is None:
+                    continue
+                key = str(local_path)
+                if key in seen_paths:
+                    continue
+                seen_paths.add(key)
+
+                att = self._register_file_output(
+                    org_id, node_id,
+                    chain_id=chain_id,
+                    filename=local_path.name,
+                    file_path=str(local_path),
+                    workspace=Path(workspace),
+                )
+                if att:
+                    registered.append(att)
+                    # 累计到本任务的 plugin-hook 附件缓冲，供 submit_deliverable
+                    # 在 LLM 未声明 file_attachments 时自动取用。
+                    buf = self._node_plugin_attachments_in_task.setdefault(
+                        f"{org_id}:{node_id}", []
+                    )
+                    if not any(
+                        b.get("file_path") == att.get("file_path") for b in buf
+                    ):
+                        buf.append(dict(att))
+            except Exception:
+                logger.debug(
+                    "[OrgRuntime] plugin asset candidate failed: %s",
+                    cand, exc_info=True,
+                )
+                continue
+
+        if not registered:
+            return None
+
+        # 把已登记附件回写 payload，让 LLM 在下一轮 ReAct 中看到具体路径，
+        # 方便它在 org_submit_deliverable 的 deliverable 文本中按文件名引用。
+        payload["registered_attachments"] = registered
+        # Mirror to a stable top-level array of paths for convenience
+        payload.setdefault("local_paths", []).extend(
+            [a["file_path"] for a in registered
+             if a.get("file_path") not in (payload.get("local_paths") or [])]
+        )
+        try:
+            return _json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            return None
 

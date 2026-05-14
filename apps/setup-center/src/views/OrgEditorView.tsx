@@ -58,10 +58,12 @@ import {
   IconPin,
   IconShuffle,
   IconBot,
+  IconPlug,
 } from "../icons";
 import { safeFetch } from "../providers";
 import { IS_CAPACITOR, saveFileDialog, IS_TAURI, writeTextFile, openFileDialog, onWsEvent, saveAttachment } from "../platform";
 import { OrgInboxSidebar } from "../components/OrgInboxSidebar";
+import { WorkbenchNodePicker, type WorkbenchTemplate } from "../components/WorkbenchNodePicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { OrgAvatar, AVATAR_PRESETS, AVATAR_MAP } from "../components/OrgAvatars";
 import { OrgChatPanel } from "../components/OrgChatPanel";
@@ -421,6 +423,23 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
                 {isEphemeral ? t("org.editor.ephemeral") : t("org.editor.clone")}
               </span>
             )}
+            {data.plugin_origin && (
+              <span
+                title={t("org.editor.workbenchBadge", "工作台") + "：" + (data.plugin_origin.plugin_id || "")}
+                style={{
+                  fontSize: 9,
+                  padding: "0 5px",
+                  borderRadius: 3,
+                  background: "#ecfeff",
+                  color: "#0e7490",
+                  fontWeight: 600,
+                  border: "1px solid #a5f3fc",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {t("org.editor.workbenchBadge", "工作台")}
+              </span>
+            )}
           </div>
 
         {/* Goal preview */}
@@ -630,6 +649,7 @@ export function OrgEditorView({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewNodeForm, setShowNewNodeForm] = useState(false);
+  const [showWorkbenchPicker, setShowWorkbenchPicker] = useState(false);
   const [propsTab, setPropsTab] = useState<"overview" | "identity" | "capabilities">("overview");
   const [fullPromptPreview, setFullPromptPreview] = useState<string | null>(null);
   const [promptPreviewLoading, setPromptPreviewLoading] = useState(false);
@@ -1138,6 +1158,36 @@ export function OrgEditorView({
     if (!currentOrg) return false;
     const payload = buildSavePayload();
     if (!payload) return false;
+
+    // 工作台节点必须是叶子节点：与后端 OrgManager.update 的校验同步，
+    // 在 PUT 之前先做一次前端校验，避免 400 才提示。
+    try {
+      const nodes: Array<{ id: string; role_title?: string; plugin_origin?: unknown }> =
+        (payload as any).nodes || [];
+      const edges: Array<{ source: string; target: string }> = (payload as any).edges || [];
+      const workbenchIds = new Set(
+        nodes.filter((n) => !!n.plugin_origin).map((n) => n.id),
+      );
+      const offending: string[] = [];
+      for (const e of edges) {
+        if (workbenchIds.has(e.source)) {
+          const n = nodes.find((x) => x.id === e.source);
+          offending.push((n?.role_title || e.source) as string);
+        }
+      }
+      if (offending.length) {
+        const msg =
+          t("org.editor.workbenchMustBeLeaf", "工作台节点必须是叶子节点") +
+          "：" +
+          Array.from(new Set(offending)).join("、");
+        showToast(msg, "error");
+        setSaveStatus("error");
+        return false;
+      }
+    } catch (validationErr) {
+      console.debug("workbench leaf validation skipped", validationErr);
+    }
+
     const snapshot = JSON.stringify(payload);
     if (snapshot === lastSavedRef.current) return true;
     setSaveStatus("saving");
@@ -1158,7 +1208,7 @@ export function OrgEditorView({
       showToast(e.message || t("org.editor.autoSaveFailed"), "error");
       return false;
     }
-  }, [currentOrg, buildSavePayload, apiBaseUrl, fetchOrgList, showToast]);
+  }, [currentOrg, buildSavePayload, apiBaseUrl, fetchOrgList, showToast, t]);
 
   const doSaveRef = useRef(doSave);
   doSaveRef.current = doSave;
@@ -1303,6 +1353,7 @@ export function OrgEditorView({
         clone_source: null,
         external_tools: [],
         enable_file_tools: true,
+        plugin_origin: null,
         ephemeral: false,
         frozen_by: null,
         frozen_reason: null,
@@ -1324,6 +1375,66 @@ export function OrgEditorView({
     setEdges((prev) => prev.filter((e) => e.source !== selectedNodeId && e.target !== selectedNodeId));
     setSelectedNodeId(null);
   }, [selectedNodeId, setNodes, setEdges]);
+
+  /**
+   * Add a workbench (plugin-backed) node to the canvas.
+   *
+   * Builds an OrgNodeData from the picked template's ``suggested_node``,
+   * keeping it as a leaf node (the only valid topology — see backend
+   * OrgManager.update + OrgRuntime._create_node_agent). The node's
+   * external_tools is pre-bound to the workbench's tool names; the
+   * plugin_origin field flags it for UI badges, read-only capability tab,
+   * and runtime prompt injection.
+   */
+  const handleAddWorkbenchNode = useCallback((tpl: WorkbenchTemplate) => {
+    if (!currentOrg) return;
+    const suggested = tpl.suggested_node || {};
+    const newId = `wb_${tpl.plugin_id.replace(/[^a-zA-Z0-9_]/g, "_")}_${Date.now().toString(36)}`;
+    setNodes((prev) => {
+      const newNode: OrgNodeData = {
+        id: newId,
+        role_title: suggested.role_title || tpl.name || tpl.plugin_id,
+        role_goal: suggested.role_goal || "",
+        role_backstory: "",
+        agent_source: "local",
+        agent_profile_id: suggested.agent_profile_id ?? null,
+        position: getNextNodePosition(prev),
+        level: 0,
+        department: tpl.category || "",
+        custom_prompt: suggested.custom_prompt || "",
+        identity_dir: null,
+        mcp_servers: suggested.mcp_servers || [],
+        skills: suggested.skills || [],
+        skills_mode: suggested.skills_mode || "all",
+        preferred_endpoint: null,
+        endpoint_policy: "prefer",
+        max_concurrent_tasks: suggested.max_concurrent_tasks ?? 1,
+        timeout_s: 0,
+        can_delegate: suggested.can_delegate ?? false,
+        can_escalate: suggested.can_escalate ?? true,
+        can_request_scaling: false,
+        is_clone: false,
+        clone_source: null,
+        external_tools: [...(suggested.external_tools || [])],
+        enable_file_tools: suggested.enable_file_tools ?? false,
+        plugin_origin: suggested.plugin_origin || {
+          plugin_id: tpl.plugin_id,
+          template_id: tpl.id,
+          version: tpl.version,
+        },
+        ephemeral: false,
+        frozen_by: null,
+        frozen_reason: null,
+        frozen_at: null,
+        avatar: null,
+        status: "idle",
+      };
+      return [...prev, orgNodeToFlowNode(newNode, { _liveMode: liveMode })];
+    });
+    setSelectedNodeId(newId);
+    setPropsTab("capabilities");
+    setShowRightPanel(true);
+  }, [currentOrg, liveMode, setNodes]);
 
   const toggleLayoutLock = useCallback(() => {
     if (liveMode) {
@@ -1610,7 +1721,8 @@ export function OrgEditorView({
       department: "", custom_prompt: "", identity_dir: null, mcp_servers: [], skills: [],
       skills_mode: "all", preferred_endpoint: null, endpoint_policy: "prefer", max_concurrent_tasks: 1, timeout_s: 0,
       can_delegate: true, can_escalate: true, can_request_scaling: true, is_clone: false,
-      clone_source: null, external_tools: [], enable_file_tools: true, ephemeral: false, frozen_by: null,
+      clone_source: null, external_tools: [], enable_file_tools: true, plugin_origin: null,
+      ephemeral: false, frozen_by: null,
       frozen_reason: null, frozen_at: null, avatar: null, status: "idle",
     };
     setNodes((prev) => [...prev, orgNodeToFlowNode(newNode, { _liveMode: liveMode })]);
@@ -2083,6 +2195,14 @@ export function OrgEditorView({
           document.body
         )}
 
+        {/* Workbench node picker — adds a leaf node pre-bound to a plugin's tools */}
+        <WorkbenchNodePicker
+          apiBaseUrl={apiBaseUrl}
+          open={showWorkbenchPicker}
+          onClose={() => setShowWorkbenchPicker(false)}
+          onPick={handleAddWorkbenchNode}
+        />
+
         {/* Main content: Canvas / Projects / Dashboard */}
         {currentOrg ? (
           <>
@@ -2172,6 +2292,14 @@ export function OrgEditorView({
                 <div className="org-canvas-toolbar">
                   <button className="org-cvs-btn" onClick={() => setShowNewNodeForm(true)} title={t("org.editor.addNode")}>
                     <IconPlus size={13} /> {t("org.editor.addNode")}
+                  </button>
+                  <button
+                    className="org-cvs-btn"
+                    onClick={() => setShowWorkbenchPicker(true)}
+                    title={t("org.editor.addWorkbenchNode", "添加工作台节点")}
+                    disabled={liveMode}
+                  >
+                    <IconPlug size={13} /> {t("org.editor.addWorkbenchNode", "添加工作台节点")}
                   </button>
                   <button
                     className="org-cvs-btn"
@@ -3832,8 +3960,71 @@ export function OrgEditorView({
 
             {propsTab === "capabilities" && (
               <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* ── Workbench banner: appears only for plugin-backed leaf nodes ── */}
+                {selectedNode.plugin_origin && (
+                  <div
+                    style={{
+                      border: "1px solid #a5f3fc",
+                      background: "#ecfeff",
+                      color: "#0e7490",
+                      borderRadius: 6,
+                      padding: "10px 12px",
+                      fontSize: 12,
+                      lineHeight: 1.6,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                    }}
+                    role="note"
+                    aria-label={t("org.editor.workbenchBadge", "工作台")}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
+                      <IconPlug size={13} />
+                      {t("org.editor.workbenchBadge", "工作台")}：
+                      {selectedNode.plugin_origin.plugin_id}
+                      {selectedNode.plugin_origin.version
+                        ? ` · v${selectedNode.plugin_origin.version}`
+                        : ""}
+                    </div>
+                    <div style={{ fontSize: 11 }}>
+                      {t(
+                        "org.editor.workbenchBannerDesc",
+                        "这是工作台节点。工具清单由工作台决定，请勿手动调整；工作台节点必须保持为叶子节点，否则保存时将被拒绝。",
+                      )}
+                    </div>
+                    {(selectedNode.external_tools || []).length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
+                          {t("org.editor.workbenchTools", "工作台工具（只读）")}
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {selectedNode.external_tools.map((name: string) => (
+                            <span
+                              key={name}
+                              style={{
+                                fontSize: 10,
+                                padding: "1px 6px",
+                                borderRadius: 3,
+                                background: "#fff",
+                                color: "#0e7490",
+                                border: "1px solid #a5f3fc",
+                                fontFamily: "var(--font-mono, monospace)",
+                              }}
+                            >
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {/* ── Section 1: 执行工具类目 ── */}
-                <Card className="gap-0 overflow-hidden py-0">
+                <Card
+                  className="gap-0 overflow-hidden py-0"
+                  style={selectedNode.plugin_origin ? { opacity: 0.55, pointerEvents: "none" } : undefined}
+                  aria-disabled={selectedNode.plugin_origin ? true : undefined}
+                >
                   <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
                     <div className="min-w-0">
                       <CardTitle className="text-sm">{t("org.editor.executionTools")}</CardTitle>
