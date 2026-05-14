@@ -250,6 +250,106 @@ openakita --auto-confirm
 openakita --mode chat|task|test
 ```
 
+## POLICIES.yaml Configuration (Policy v2)
+
+OpenAkita's security policy lives in `identity/POLICIES.yaml`. Most fields
+have safe defaults; only override what your deployment needs.
+
+### Hot-reload (C18 Phase A)
+
+Watch `POLICIES.yaml` for edits and rebuild the policy engine in-place
+without restarting OpenAkita:
+
+```yaml
+# identity/POLICIES.yaml
+security:
+  hot_reload:
+    enabled: true              # default: false (opt-in)
+    poll_interval_seconds: 5.0 # 0.5 .. 3600
+    debounce_seconds: 0.5      # avoid reading half-written editor saves
+```
+
+Behavior when `enabled: true`:
+
+- A daemon thread polls the YAML file every `poll_interval_seconds`.
+- `mtime` + content-hash dedup skips no-op writes (`touch`,
+  `git checkout` to same SHA, etc.).
+- Validation failure → keep the **last-known-good** config; write a
+  `reload_failed` row to the audit chain. The previous engine keeps
+  running so a typo doesn't lock you out.
+- Validation success → atomic swap of the engine singleton; write a
+  `reload_ok` audit row.
+
+Recommended for: k8s ConfigMap mounts, CI rolling deploys.
+Not recommended for: workstation development (manual `openakita serve`
+restart is fine).
+
+### Batch confirm aggregation (C18 Phase B)
+
+When `>= 2` confirms accumulate in the same conversation, show one
+"Approve all / Deny all" affordance instead of stacking N modals:
+
+```yaml
+security:
+  confirmation:
+    aggregation_window_seconds: 5.0  # default 0 (disabled)
+```
+
+Range: `[0, 600]`. Set to `5.0` for the typical UX. The window anchors
+on the most recent emission — only confirms that arrived within the
+window are batched.
+
+Endpoint: `POST /api/chat/security-confirm/batch` with body
+`{session_id, decision, within_seconds?}`. The server clamps client
+`within_seconds` to the configured value so a malicious client cannot
+resolve every pending confirm with a huge window.
+
+### Environment variable overrides (C18 Phase C)
+
+Five `OPENAKITA_*` variables can override fields without rewriting
+`POLICIES.yaml`. Useful for container deploys where the YAML is mounted
+read-only.
+
+| ENV variable                  | Field overridden                  | Values                                                       |
+| ----------------------------- | --------------------------------- | ------------------------------------------------------------ |
+| `OPENAKITA_POLICY_FILE`       | (path) alternate POLICIES.yaml    | absolute or relative path                                    |
+| `OPENAKITA_POLICY_HOT_RELOAD` | `hot_reload.enabled`              | `true` / `false` / `1` / `0` / `yes` / `no` / `on` / `off`   |
+| `OPENAKITA_AUTO_CONFIRM`      | `confirmation.mode`               | truthy → `trust`; falsy → `default`                          |
+| `OPENAKITA_UNATTENDED_STRATEGY` | `unattended.default_strategy`   | `deny` / `auto_approve` / `defer_to_owner` / `defer_to_inbox` / `ask_owner` |
+| `OPENAKITA_AUDIT_LOG_PATH`    | `audit.log_path`                  | (path; same safe-path rules as the YAML field)               |
+
+Notes:
+
+- ENV is re-read on every config load → hot-reload (Phase A) picks up
+  ENV changes automatically.
+- Invalid values (e.g. `OPENAKITA_POLICY_HOT_RELOAD=yes-please`) log a
+  loud `[PolicyV2]` warning, leave the YAML default in place, and write
+  an `env_override_invalid` audit row.
+- Successful overrides write an `env_override_applied` audit row
+  listing the (env, path, value) tuples.
+- `OPENAKITA_POLICY_FILE` is resolved early (before the override layer
+  itself runs) and takes precedence over `settings.identity_path`.
+
+We intentionally do NOT expose `workspace.paths`, `safety_immune.paths`,
+`user_allowlist`, or any approval-class table via ENV — those must live
+in VCS.
+
+### `--auto-confirm` CLI flag (C18 Phase D)
+
+```bash
+openakita --auto-confirm                 # interactive CLI
+openakita --auto-confirm run "..."       # one-shot task
+openakita --auto-confirm serve           # API server
+```
+
+Equivalent to `OPENAKITA_AUTO_CONFIRM=1`. **Destructive
+(`mutating_global`) tools and `safety_immune` paths still require
+confirm** — this is enforced in the classifier, not in
+`confirmation.mode`. So `--auto-confirm` does NOT mean "yolo mode".
+
+The CLI flag is additive: setting it does not clear a pre-existing
+`OPENAKITA_AUTO_CONFIRM` env var that operators set elsewhere.
+
 ## Advanced Configuration
 
 ### Proxy Settings

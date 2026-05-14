@@ -5164,3 +5164,134 @@ C17 二轮修复总计：6 个源文件 + 1 个新测试文件，14 个新测试
   来需要按 SSE event type 分发（而不是 JSON `type` 字段），需要补。
 - **Health probe 集成监控**：`/readyz` 503 时 systemd / k8s readiness 自
   动摘除节点的端到端集成测试推 C18 部署体验里程碑。
+
+
+## C18 — UX + 配置完备性
+
+### 背景对比
+
+调研 4 个邻近开源项目对"配置热更新 / 批量 confirm / ENV 覆盖"的实现
+策略：
+
+| 项目          | hot-reload         | confirm 聚合          | ENV 覆盖              |
+| ------------- | ------------------ | --------------------- | --------------------- |
+| claude-code   | chokidar + awaitWriteFinish + LKG promote | 无（confirm 全异步）    | CLI flag → ENV → 默认 |
+| hermes-agent  | 5s mtime 轮询 + silent reject | 无                    | hard-code 若干 env    |
+| QwenPaw       | 2s mtime 轮询 + invalid skip   | 无                    | settings.py 散乱      |
+| openclaw      | chokidar + 200ms + LKG promote | 无                    | 注册表 + audit 行     |
+
+我们选 **mtime poll（无 watchdog 依赖）** + **debounce**（学 chokidar
+``awaitWriteFinish``）+ **LKG 路径已存在**（C16）+ **注册表 + audit
+行**（学 openclaw）。
+
+### 分 phase 落地
+
+**Phase A | POLICIES.yaml hot-reload**（commit ``c88ac61a``）
+
+- 新文件 [`core/policy_v2/hot_reload.py`](file:src/openakita/core/policy_v2/hot_reload.py)：``PolicyHotReloader``
+  守护线程 + 模块单例 + ``start_hot_reloader`` / ``stop_hot_reloader`` /
+  ``get_hot_reloader``。
+- ``mtime`` + ``sha256`` 双重去重：``touch`` / git checkout 同 SHA / 编辑器
+  save-no-change 都不会触发 rebuild。
+- 0.5s debounce 兜底"truncate then write"半写文件。
+- 复用 [`global_engine.rebuild_engine_v2`](file:src/openakita/core/policy_v2/global_engine.py) 的 LKG 路径：校验失败保留
+  上一份 valid config，写 ``reload_failed`` audit 行；成功原子 swap engine
+  指针 + 写 ``reload_ok`` audit 行。
+- ``schema.HotReloadConfig`` 默认 ``enabled=False``（参考 4 个邻近项目
+  没有一个把"文件即改即生效"作为默认）。
+- [`api/server.py`](file:src/openakita/api/server.py) 启动 hook 调 ``start_hot_reloader``，关闭 hook 调
+  ``stop_hot_reloader(timeout=2.0)``。
+- **单测**：[`tests/unit/test_c18_hot_reload.py`](file:tests/unit/test_c18_hot_reload.py) 19 个用例，覆盖 schema
+  bound、mtime/content 去重、LKG 回滚、audit 行、disappearing-file、
+  singleton API、真实线程生命周期。
+
+**Phase B | 5s confirm 聚合**（commit ``db6d6079``）
+
+- ``schema.ConfirmationConfig`` 新增 ``aggregation_window_seconds: float
+  = 0.0``，范围 ``[0, 600]``。
+- ``UIConfirmBus.list_batch_candidates(session_id, within_seconds)``：按
+  session + 时间窗筛选 confirm_id（窗锚定在最新 emission 上，避免误聚合
+  陈旧 pending）。
+- ``UIConfirmBus.batch_resolve(session_id, decision, within_seconds)``：
+  逐个 ``resolve()`` 唤醒 waiter + pop pending，幂等。
+- API 端点 ``POST /api/chat/security-confirm/batch``：候选列表走
+  ``apply_resolution``（与单条 endpoint 一致，allowlist 副作用不绕过）。
+  服务端对客户端 ``within_seconds`` 做 clamp（≤ POLICIES.yaml 值），防止
+  恶意客户端用超大窗清空 session。
+- GET/POST ``/api/config/security/confirmation`` 加 ``aggregation_window_
+  seconds`` 读写支持。
+- 前端 [`ChatView.tsx`](file:apps/setup-center/src/views/ChatView.tsx)：挂载时拉取窗口配置；queue 长度镜像到
+  React state；当 (window>0 + 显示 modal + queue ≥1) 三条件成立时渲染
+  批量横幅，点击调 batch endpoint + 本地清 queue。
+- **单测**：[`tests/unit/test_c18_confirm_batch.py`](file:tests/unit/test_c18_confirm_batch.py) 17 个用例，覆盖 schema
+  bound、list_batch_candidates 时间窗、batch_resolve fan-out + waiter
+  wake + session 隔离、API endpoint 端到端 + clamp + 别名归一化。
+
+**Phase C | 5 个 ENV 覆盖**（commit ``1c099615``）
+
+- 新文件 [`core/policy_v2/env_overrides.py`](file:src/openakita/core/policy_v2/env_overrides.py)：
+  ``(env_name, cfg_path, coerce, redact)`` 注册表 4 条 + 显式 coerce 函数
+  （bool 拒绝 ambiguous、unattended 强制 enum 校验、path 拒绝空串）。
+- ``OPENAKITA_POLICY_FILE`` 在 [`global_engine._resolve_yaml_path`](file:src/openakita/core/policy_v2/global_engine.py) 优先
+  ``settings.identity_path``（操作员 helm/docker 注入 alternate path 标准
+  入口）。
+- ``apply_env_overrides(cfg)``：YAML 加载后顺序应用；post-validation 失败
+  退回 pre-override cfg + ``<validation>`` 错误条目，防止 ENV 攻击直接打到
+  LKG fallback。
+- 报告挂到 ``MigrationReport.env_overrides``，[`global_engine._audit_env_
+  overrides`](file:src/openakita/core/policy_v2/global_engine.py) 把 ``applied`` / ``skipped_errors`` 写 audit 链
+  （policy=``policy_env_override``）。
+- 每次 ``load_policies_yaml`` 都重读 ``os.environ`` → Phase A hot-reload
+  无缝继承 ENV 覆盖。
+- **单测**：[`tests/unit/test_c18_env_overrides.py`](file:tests/unit/test_c18_env_overrides.py) 37 个用例，覆盖 5 个
+  coerce 函数边界、4 个 ENV 单独/组合应用、coerce 错误的 fallback、
+  post-validation 失败 fallback、_resolve_yaml_path ENV 优先、
+  load_policies_yaml 报告透传、审计 applied/invalid 双行、hot-reload
+  每次重读 environ。
+
+**Phase D | --auto-confirm CLI flag**（commit ``a68a1fa9``）
+
+- [`main.py`](file:src/openakita/main.py) 顶层 typer callback 加 ``--auto-confirm`` 标志 →
+  helper ``_apply_auto_confirm_flag`` → ``os.environ["OPENAKITA_AUTO_CONFIRM
+  "] = "1"``。所有 reload 路径自动拣到（Phase C single SoT）。
+- 关键设计：CLI flag 只改 ``ConfirmationMode``，**不**改 classifier 对
+  destructive / safety_immune 的判定。Help text 显式说明 carveout（有
+  regression test 卡 help 必须含 "destructive" + "safety_immune"）。
+- 借鉴 claude-code "CLI > ENV > config" 优先级，不在 main.py 里手动
+  ``set_engine_v2``。
+- **单测**：[`tests/unit/test_c18_auto_confirm_cli.py`](file:tests/unit/test_c18_auto_confirm_cli.py) 9 个用例，覆盖
+  helper enabled/disabled、Phase D → Phase C 组合（apply_env_overrides
+  读 helper 设的 env）、CliRunner 端到端、help text carveout、schema
+  没多出 bypass_destructive 字段。
+
+**Phase E | Audit JSONL rotation**：deferred 到后续 milestone（Phase F
+docs 部分说明）。
+
+**Phase F | 文档 + audit 脚本 + 全量回归**（本 commit）
+
+- [`docs/configuration.md`](file:docs/configuration.md) 新增 "POLICIES.yaml Configuration (Policy
+  v2)" 章节，4 个子章节对应 Phase A..D。
+- [`scripts/c18_audit.py`](file:scripts/c18_audit.py)：5 个 audit 函数对应 Phase A..D + F，最后跑
+  4 个 test 文件全套。
+- 本 research 章节。
+- 全量回归：C18 自身 82 个测试 + 与 C16 / C17 共享代码路径全绿。
+
+### 经验教训
+
+1. **借开源做参考时记错号**：openclaw 的 ``promoteSnapshot`` 跟 C16 的
+   LKG 是一一映射，但前者放在 watcher 回调里，后者放在 ``rebuild_engine_
+   v2`` 里。统一在 ``rebuild_engine_v2`` 是关键 —— 同一个入口同时服务
+   manual reset (UI Save Settings) 和 hot-reload，LKG 语义一致。
+2. **ENV 不能默认就生效**：Phase C 注册表里特意把 ``POLICIES.yaml``
+   security-critical 字段（``workspace.paths`` / ``safety_immune.paths``
+   / ``user_allowlist``）排除掉。只暴露 5 个运维型字段。攻击面最小化。
+3. **CLI flag 不是 yolo 模式**：Phase D 的 ``--auto-confirm`` 不绕开
+   classifier。help text + regression test 双重保险，避免操作员误以为
+   它是"全绿"。
+4. **debounce 不能用 ``time.sleep``**：``threading.Event.wait`` 在 stop
+   信号到达时立即返回 ``True``，``sleep`` 会强制等满；Phase A 用前者
+   让 ``stop_hot_reloader`` 的 ``join(timeout)`` 真的能在 2 秒内退出。
+5. **client-side state mirror**：Phase B 的 ``securityQueueLen``
+   state 跟 ``securityQueueRef.current.length`` 的同步是 JSX 触发再渲染
+   的唯一办法；refs 不行。每次 ``securityQueueRef`` mutation 都得跟一个
+   ``setSecurityQueueLen``。
