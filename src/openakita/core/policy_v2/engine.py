@@ -959,12 +959,49 @@ class PolicyEngineV2:
         event: ToolCallEvent,
         ctx: PolicyContext,
     ) -> None:
-        if self._audit_hook is None:
-            return
-        try:
-            self._audit_hook(decision, event, ctx)
-        except Exception:
-            logger.exception("[PolicyEngineV2] audit_hook raised; ignored")
+        if self._audit_hook is not None:
+            try:
+                self._audit_hook(decision, event, ctx)
+            except Exception:
+                logger.exception("[PolicyEngineV2] audit_hook raised; ignored")
+
+        # C15 §17.1 — when this decision sits inside an active
+        # Evolution self-fix window, fan it out to the dedicated
+        # ``evolution_decisions.jsonl`` so operators have a discrete
+        # trail of what Evolution attempted. Errors are swallowed
+        # (audit is best-effort; never breaks the decision path).
+        if ctx.evolution_fix_id:
+            try:
+                from .evolution_window import default_audit_path as _evo_audit_path
+                from .evolution_window import record_decision as _evo_record
+
+                _evo_record(
+                    fix_id=ctx.evolution_fix_id,
+                    audit_path=_evo_audit_path(ctx.workspace),
+                    decision_record={
+                        "tool": event.tool,
+                        "action": decision.action.value
+                        if hasattr(decision.action, "value")
+                        else str(decision.action),
+                        "approval_class": (
+                            decision.approval_class.value
+                            if hasattr(decision.approval_class, "value")
+                            else str(decision.approval_class)
+                        ),
+                        "reason": decision.reason,
+                        "session_id": ctx.session_id,
+                        "channel": ctx.channel,
+                        "session_role": (
+                            ctx.session_role.value
+                            if hasattr(ctx.session_role, "value")
+                            else str(ctx.session_role)
+                        ),
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "[PolicyEngineV2] evolution audit hook raised; ignored"
+                )
 
     def _maybe_audit_intent(
         self,

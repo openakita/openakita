@@ -969,7 +969,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C12 | 计划任务/无人值守审批 + DeferredApprovalRequired + pending_approvals + 30s replay resume | ✅ DONE | §2.1 + R3 + 「C12+C9c 实施记录」|
 | C13 | 多 agent confirm 冒泡 + delegate_chain 透传 | ✅ DONE | R4-1/2/3/4 + R5-16 + 「C13 实施记录」|
 | C14 | Headless 入口统一（CLI / HTTP / Webhook / stdin）| ✅ DONE | R4-5/6/7/8 + 「C14 实施记录」|
-| C15 | Evolution / system_task / Skill-MCP trust_level | ⏳ Pending | R4-9/10/11/12/13 + R5-21 |
+| C15 | Evolution / system_task / Skill-MCP trust_level | ✅ DONE | R4-9/10/11/12/13 + R5-21 + 「C15 实施记录」|
 | C16 | Prompt injection + YAML 严格校验 + audit 防篡改 | ⏳ Pending | R4-14/15 + R5-17 |
 | C17 | Reliability（lock 文件 / 启动扫描 / Last-Event-ID / health probe）| ⏳ Pending | R4-16/17/18/19 + R5-8/12 |
 | C18 | UX + 配置完备性（hot-reload / ENV / dry-run / 5s 聚合）| ⏳ Pending | R4-20/21/22 + R5-11/20 |
@@ -4578,3 +4578,151 @@ apply_classification_to_session(
 二轮 audit 关键结论：`classify_entry` 现在是**真正的**单一 SoT（5 个 production 入口 + 1 个 MCP stdin），加上 `build_policy_context` 的 `unattended_strategy` 参数，所有 headless 入口都走同一条"分类 → 构造 → 安装 ctx"路径。`apply_classification_to_session` 在 hot path 上有 4 段 try/except 防御，broken session 不会撕掉 request。`/api/chat/sync` 有完整 lifecycle 锁保护，与 `/api/chat` SSE 在并发行为上对齐。
 
 C14 完成。下一步可以进 C15（Evolution / system_task / Skill-MCP trust_level）。
+
+---
+
+## C15 实施记录（2026-05-14）
+
+C15 解决 R4-9/10/11/12/13 + R5-21，并把 C14 二轮 audit 标出的
+"Evolution self-fix 缺 classifier" follow-up gap 一并合掉。分三个相互独立的
+phase（A：Skill/MCP trust 严格度取大；B：SYSTEM_TASKS.yaml whitelist + 锁；
+C：Evolution self-fix 审计窗口 + classifier ctx 装载），合并在 2 个 commit
+里落地（Phase A 单独 commit，B+C 合 commit 因为均围绕"旁路 / 审计"语义）。
+
+### Phase A — Skill/MCP declared_class trust（commit `f9057cef`）
+
+**问题模式**：第三方 Skill / MCP server 自报的 ``approval_class`` 不可认证。
+- SKILL.md frontmatter 写 ``approval_class: readonly_global``，但工具实际
+  执行 ``rm -rf workspace``。
+- MCP server ``tool.annotations.approval_class`` 同理。
+
+**机制**：新增 ``core/policy_v2/declared_class_trust.py``：
+
+| 函数 | 作用 |
+|------|------|
+| ``DeclaredClassTrust = {DEFAULT, TRUSTED}`` | 操作员对自报的信任度 |
+| ``compute_effective_class(tool, declared, trust)`` | TRUSTED → 直接采信；DEFAULT → ``most_strict([declared, heuristic(tool)])`` |
+| ``infer_skill_declared_trust(trust_level)`` | ``builtin/local/marketplace`` → TRUSTED，``remote`` / 未知 → DEFAULT |
+| ``infer_mcp_declared_trust(server_trust_level)`` | 仅显式 ``"trusted"`` （大小写无关）→ TRUSTED |
+| ``classifier.heuristic_classify`` | 公开 re-export，避免 sibling 模块摸私有名 |
+
+**接入**：
+
+1. ``SkillRegistry.get_tool_class`` 调 ``compute_effective_class``，
+   系统技能用 ``tool_name`` 跑启发式，外部技能用 ``skill_id`` 转下划线（
+   因为 exposed name 永远 ``skill_<id>`` 永不命中启发式前缀）。
+2. ``MCPClient.get_tool_class`` 同理；启发式 name 用 ``tool.name`` 而非
+   namespaced ``mcp_<server>_<tool>`` 形式。
+3. ``MCPServerConfig.trust_level: str = "default"`` 新字段；
+   ``load_servers_from_config`` 透传 JSON ``trust_level`` 字段。旧
+   ``mcp_servers.json`` 没字段 → 默认 ``"default"`` → 比 v1 更保守。
+
+**豁免**：``destructiveHint`` / ``readOnlyHint`` / ``openWorldHint``
+是 MCP 协议层 runtime annotation（server runtime 写入，不是 manifest
+自报），不走 trust gate。
+
+### Phase B — SYSTEM_TASKS.yaml whitelist + hash 锁（commit `<C15 B+C>`）
+
+**问题模式**：审计日志轮转 / 检查点过期清理 / prompt 缓存重建这类机械操作
+经常落在 ``safety_immune`` 范围（``data/audit/**``、``data/checkpoints/**``、
+``identity/runtime/**``）。强行走 PolicyEngine 会要么误判 DESTRUCTIVE、要么
+在 3am 弹无人响应的 CONFIRM。
+
+**机制**：新增 ``core/policy_v2/system_tasks.py``：
+
+| 文件 | 角色 |
+|------|------|
+| ``identity/SYSTEM_TASKS.yaml`` | operator-authored whitelist（``identity/SYSTEM_TASKS.yaml.template`` ships sample） |
+| ``.openakita/system_tasks.lock`` | sha256 of YAML, regenerated only via setup-center / CLI action（agent 自己**不**写） |
+| ``data/audit/system_tasks.jsonl`` | append-only bypass audit |
+
+| API | 作用 |
+|-----|------|
+| ``compute_yaml_hash(bytes)`` / ``read_lock`` / ``write_lock`` | sha256 工具 |
+| ``load_registry(yaml_path, lock_path)`` | fail-closed：缺文件 / 锁不匹配 / yaml 非法 → 空 registry，不抛异常 |
+| ``SystemTask`` dataclass | id / description / tools / path_globs / requires_backup |
+| ``SystemTaskRegistry.try_match(task_id, tool, params)`` | 三层 gate：task_id → tool whitelist → 所有 path 参数都命中 glob |
+| ``request_bypass(...) → BypassDecision \| None`` | match 后做 ``CheckpointManager.create_checkpoint``；checkpoint 失败 → 拒绝 bypass + audit "checkpoint_failed" |
+| ``finalize_bypass(decision, success, error)`` | append ``system_task_bypass_end`` 记录 + 计算 duration_ms |
+
+**未自动 wire 实际 callers**：Phase B 只交付 infrastructure。具体维护任务
+（audit rotation / checkpoint 清理）在后续 commit 按需 wire — 这样 C15
+commit 的风险面有界，``SYSTEM_TASKS.yaml`` 不存在 / 空 → 零 bypass。
+
+**glob 语义**：``**`` 递归（``data/audit/**`` 匹配 sub-dirs），``*``
+保持 ``fnmatch`` 默认行为（match path separator）。Path 归一支持
+``./`` 前缀剥离 + 反斜杠转正斜杠 + 绝对路径相对 workspace 归一。
+
+### Phase C — Evolution self-fix audit window + classifier ctx（commit `<C15 B+C>`）
+
+**问题模式**：
+1. C14 follow-up gap — ``evolution.self_check._execute_fix_by_llm_decision``
+   spawns 一个新 Agent 但**没**安装 ``PolicyContext ContextVar``，
+   ``check_permission`` 走 fallback ctx ``is_unattended=False``，CONFIRM 类
+   工具挂死等永远不来的 UI 响应。
+2. R4-9 — Evolution self-fix 过的工具调用与"用户操作"在审计日志里没有
+   区分；operator 想问"昨晚 Evolution 自己改了什么"答不出来。
+
+**机制**：
+
+1. ``PolicyContext.evolution_fix_id: str | None`` 新字段。
+2. ``core/policy_v2/evolution_window.py``：
+   - ``EvolutionWindow`` dataclass：fix_id / reason / started_at /
+     deadline_at（默认 600s TTL）/ extra metadata。
+   - ``open_window(reason, ttl, extra) → EvolutionWindow``。
+   - ``close_window(fix_id)`` / idempotent。
+   - 自动 evict 过期窗口（``get_window`` 看到 expired 就清掉 + WARN）。
+   - ``set_active_fix_id`` / ``reset_active_fix_id`` / ``get_active_fix_id``
+     ContextVar wrapper（mirrors ``policy_v2.context`` 模式）。
+   - ``record_decision(fix_id, audit_path, decision_record)`` append
+     ``data/audit/evolution_decisions.jsonl``；自动 enrich ``window_reason``
+     / ``window_extra`` / ``ts``。OSError swallow。
+3. ``entry_point.classify_entry("evolution", force_unattended=True)``
+   新分支：``is_unattended=True``, ``default_strategy="ask_owner"``。
+   同时识别别名 ``"evolution-self-fix"``。
+4. ``adapter.build_policy_context``：
+   - 新参数 ``evolution_fix_id``。
+   - 显式入参为空时 fallback 到 ``get_active_fix_id()`` ContextVar
+     （nested helpers 无须显式 threading）。
+   - parent_ctx 路径传 ``evolution_fix_id=base.evolution_fix_id``，
+     ``PolicyContext.derive_child`` 也补了同样的字段 —— sub-agent 在
+     evolution 窗口内的调用同样被打 tag。
+5. ``engine._maybe_audit``：当 ``ctx.evolution_fix_id`` 非空时，调
+   ``evolution_window.record_decision`` 把 ``{tool, action, approval_class,
+   reason, session_id, channel, session_role}`` 写到
+   ``evolution_decisions.jsonl``。异常吞掉。
+6. ``evolution/self_check.py::_execute_fix_by_llm_decision``：
+   ``open_window("self-fix") → set_active_fix_id → classify_entry("evolution",
+   force_unattended=True) → build_policy_context(...) → set_current_context``。
+   ``finally`` 块按相反顺序 reset_current_context / reset_active_fix_id /
+   close_window。三个 cleanup 步骤相互独立（一个失败不影响其他）。
+
+**Phase C 明确不做的事**：``safety_immune`` 实际松绑（让 Evolution 可写
+``identity/runtime/`` 等）被刻意推迟。先打好审计基础（``evolution_decisions.jsonl``
++ ``fix_id`` 链接），后续如果 operator 想 opt in 局部松绑可以单写
+commit，threat model 想清楚再松。这版本只确保：
+
+- Evolution self-fix 期间所有 policy 决策都能在 audit 里追溯；
+- ``CONFIRM`` 类工具走 ``ask_owner`` 而不是挂死；
+- 1 个过期窗口（crash 后窗口残留）不会污染后续决策（自动 evict + WARN）。
+
+### 验证
+
+| 维度 | 结果 |
+|------|------|
+| Phase A unit tests | 31 ✓ |
+| Phase B unit tests | 33 ✓ |
+| Phase C unit tests | 27 ✓ |
+| C15 邻测回归（classifier / skill_registry / adapter / C13 / C14 / chat_sync） | 246 ✓（合计 337 ✓） |
+| ``scripts/c15_audit.py`` 5 段 (A/B/C/D/E) | ✓（D 段额外跑 ``c14_audit.py`` 确保未回归 C14） |
+| ``scripts/c15_reaudit_reverse_regression.py`` | A/B/C 三场景全部 FAIL as expected（disabled rule / disabled lock / disabled fan-out 都被对应测试抓到）|
+| ruff | clean（autofix I001 + F401） |
+
+### 已知 follow-up（out-of-scope）
+
+- **SYSTEM_TASKS bypass 实际 caller**：Phase B 不 wire 任何 production
+  caller，按需在后续 commit 加（audit rotation / checkpoint 清理等）。
+- **safety_immune 时窗松绑**：Phase C 仅审计；如果将来要让 Evolution
+  实际写 ``identity/runtime/cache/`` 之类，需要单独 commit + threat model。
+- **setup-center 'regenerate system_tasks lock' UI 按钮**：CLI 命令
+  + UI 入口尚未实现，操作员目前只能手动改 lock 文件（写 sha256:<hex>）。

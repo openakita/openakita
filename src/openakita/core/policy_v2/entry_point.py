@@ -196,6 +196,20 @@ def classify_entry(
             reason="scheduler (set by executor)",
         )
 
+    if channel_norm in ("evolution", "evolution-self-fix"):
+        # C15 §17.1 — Evolution.self_check runs the fix agent fully
+        # headless. Like scheduler, there's no live operator on the
+        # other end. ``ask_owner`` keeps the deferred-approval inbox
+        # pattern consistent: any CONFIRM-class tool the fix agent
+        # tries to invoke routes to setup-center pending_approvals
+        # for the operator to review when they're next online.
+        return EntryClassification(
+            is_unattended=True,
+            confirm_capability="none",
+            default_strategy="ask_owner",
+            reason=f"evolution self-fix ({channel_norm})",
+        )
+
     if channel_norm == "webhook":
         return EntryClassification(
             is_unattended=True,

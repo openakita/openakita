@@ -318,6 +318,7 @@ def build_policy_context(
     extra_metadata: dict[str, object] | None = None,
     parent_ctx: PolicyContext | None = None,
     child_agent_name: str | None = None,
+    evolution_fix_id: str | None = None,
 ) -> PolicyContext:
     """从 v1 session 对象 + 入参构造 ``PolicyContext`` 供 v2 决策使用。
 
@@ -395,6 +396,10 @@ def build_policy_context(
             safety_immune_paths=base.safety_immune_paths,
             metadata=eff_metadata,
             user_message=eff_user_message,
+            # C15 §17.1 — sub-agents derived during an evolution fix
+            # must inherit the marker; otherwise audit records from
+            # child agents would miss the fix_id linkage.
+            evolution_fix_id=base.evolution_fix_id,
         )
 
     # confirmation_mode 来自全局 config（与 v1 ``_is_trust_mode`` 同源）
@@ -511,6 +516,20 @@ def build_policy_context(
         except Exception:
             pass
 
+    # C15 §17.1 — when caller didn't pass evolution_fix_id explicitly,
+    # fall back to the ContextVar set by ``evolution.self_check``. This
+    # means any nested PolicyContext build inside an active fix window
+    # inherits the marker without each call-site having to know about
+    # evolution_window's existence.
+    effective_evolution_fix_id = evolution_fix_id
+    if effective_evolution_fix_id is None:
+        try:
+            from .evolution_window import get_active_fix_id
+
+            effective_evolution_fix_id = get_active_fix_id()
+        except Exception:
+            effective_evolution_fix_id = None
+
     return PolicyContext(
         session_id=session_id or "policy_v2_ctx",
         workspace=ws_path,
@@ -527,6 +546,7 @@ def build_policy_context(
         safety_immune_paths=safety_immune,
         metadata=dict(extra_metadata or {}),
         user_message=user_message,
+        evolution_fix_id=effective_evolution_fix_id,
     )
 
 

@@ -70,6 +70,23 @@ from .enums import (
     most_strict,
     strictness,
 )
+from .evolution_window import (
+    DEFAULT_WINDOW_TTL_SECONDS,
+    EvolutionWindow,
+    active_windows,
+    close_window,
+    get_active_fix_id,
+    get_window,
+    open_window,
+    record_decision,
+    reset_active_fix_id,
+    reset_windows,
+    set_active_fix_id,
+    snapshot_window,
+)
+from .evolution_window import (
+    default_audit_path as evolution_default_audit_path,
+)
 from .exceptions import (
     ConfirmationRequired,
     DeferredApprovalRequired,
@@ -139,6 +156,21 @@ from .skill_allowlist import (
     SkillAllowlistManager,
     get_skill_allowlist_manager,
     reset_skill_allowlist_manager,
+)
+from .system_tasks import (
+    BypassDecision,
+    SystemTask,
+    SystemTaskRegistry,
+    SystemTasksLockMismatch,
+    compute_yaml_hash,
+    default_audit_path,
+    default_lock_path,
+    default_yaml_path,
+    finalize_bypass,
+    load_registry,
+    read_lock,
+    request_bypass,
+    write_lock,
 )
 from .user_allowlist import UserAllowlistManager, command_to_pattern
 from .zones import (
@@ -264,4 +296,32 @@ __all__ = [
     "compute_effective_class",
     "infer_mcp_declared_trust",
     "infer_skill_declared_trust",
+    # C15 §17.2 SYSTEM_TASKS.yaml whitelist + bypass
+    "BypassDecision",
+    "SystemTask",
+    "SystemTaskRegistry",
+    "SystemTasksLockMismatch",
+    "compute_yaml_hash",
+    "default_audit_path",
+    "default_lock_path",
+    "default_yaml_path",
+    "finalize_bypass",
+    "load_registry",
+    "read_lock",
+    "request_bypass",
+    "write_lock",
+    # C15 §17.1 Evolution self-fix audit window
+    "DEFAULT_WINDOW_TTL_SECONDS",
+    "EvolutionWindow",
+    "active_windows",
+    "close_window",
+    "evolution_default_audit_path",
+    "get_active_fix_id",
+    "get_window",
+    "open_window",
+    "record_decision",
+    "reset_active_fix_id",
+    "reset_windows",
+    "set_active_fix_id",
+    "snapshot_window",
 ]

@@ -146,6 +146,17 @@ class PolicyContext:
     """当前轮 user message（C5 用于 replay/trusted_path 匹配）。空表示无 message
     上下文（CLI 单轮工具调用、内部 spawn）。"""
 
+    evolution_fix_id: str | None = None
+    """C15 §17.1 — 当本次决策发生在 Evolution self_check 修复窗口内时，
+    set 为 self_check 生成的 fix id。engine 据此把决策追加到
+    ``data/audit/evolution_decisions.jsonl``，方便 operator 复盘
+    Evolution 究竟尝试改了什么。
+
+    None 表示 **不在** evolution 窗口内（默认 99.99% 路径）。Phase C v1
+    仅做审计，**不**改变 safety_immune 判定；进一步松绑（让 Evolution
+    在窗口内可写 identity/runtime 等）作为后续 commit 处理，避免一次性
+    扩大攻击面。"""
+
     def __post_init__(self) -> None:
         """构造后归一：把 string 形态的 role/mode 强制转 enum。
 
@@ -235,6 +246,10 @@ class PolicyContext:
             safety_immune_paths=self.safety_immune_paths,
             metadata=dict(self.metadata),
             user_message=self.user_message,
+            # C15 §17.1 — sub-agents derived during an Evolution self-fix
+            # window must inherit the marker so their tool decisions also
+            # land in ``evolution_decisions.jsonl`` with the same fix_id.
+            evolution_fix_id=self.evolution_fix_id,
         )
 
 
