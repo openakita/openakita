@@ -5941,3 +5941,335 @@ grep guard：噪声 ApprovalClass 过滤器存在 + 后端发射器还在
 回归全量 4838 unit test 中有 33 个 pre-existing failures（与 C21/C22/C23
 工作无关，单独跑全 pass），主要是 ``os.environ`` / SQLite WAL / 单例
 状态在不同测试间的隔离问题——不在本次 milestone 范围。
+
+---
+
+## C24（三轮架构审计修复 F1-F7，2026-05-14）✅
+
+C22 + C23 完成后用户再次发起全局审视。**最关键发现**：C22 P3-2 的
+``AsyncBatchAuditWriter`` 实现完整、单元测试齐全，但 **从未在主程序里被
+启动** —— ``api/server.py`` 没注册 startup hook，所以 production
+``AuditLogger.log()`` 永远走 sync fallback，性能优化是 dead code。
+顺带还揪出一个 Windows path 归一化的隐藏 bug 和一个 ``stop()`` 可能 hang
+的边界情形。
+
+这一节把这 3 个修复 + 4 个 hygiene 改进按 P0/P1/P2 优先级拆 5 个独立
+commit，每条都有"为什么之前没抓到"的根因分析 + 防回归测试。
+
+### 修复全景（7 项 → 5 commits）
+
+| 编号 | 优先级 | 类别 | commit | 文件 |
+|------|--------|------|--------|------|
+| F1 | P0 | 架构断层 | ``4d741baa`` | ``api/server.py`` + ``audit_writer.py`` + 新测试 |
+| F2 | P0 | shutdown hang | 同上 | ``audit_writer.py`` ``stop()`` |
+| F3 | P0 | Windows 隐藏 bug | 同上 | path 归一化 |
+| F4 | P1 | 矩阵漂移守卫 | ``638fe73b`` | ``test_c23_policy_v2_matrix.py`` |
+| F5 | P2 | 测试 hygiene | ``47b1daea`` | ``tests/perf/test_policy_v2_perf.py`` |
+| F6 | P2 | LRU 命中率 | ``c1caab9d`` | ``shell_risk.py`` + 测试 |
+| F7 | P2 | UI i18n | ``5b7d3b5f`` | ``SecurityConfirmModal.tsx`` |
+
+### F1：``AsyncBatchAuditWriter`` 接入 server 生命周期
+
+**根因**：C22 P3-2 commit ``1d100b0b`` 只创建了
+``start_global_audit_writer`` / ``stop_global_audit_writer`` 函数，但
+没有任何主程序代码调用它们。AuditLogger.log() prelude 检查
+``async_w.is_running()`` 永远 False → sync fallback。**最危险的 bug 模
+式：表面完工实际未启用**——所有测试都通过，因为测试自己 ``start()``
+writer；生产环境从未 start。
+
+```
+grep start_global_audit_writer src/openakita/
+  src/openakita/core/policy_v2/audit_writer.py   ← 自己定义
+  # 没有第二个文件
+```
+
+**修复**：``api/server.py`` 在 ``create_app`` 末尾注册两个 hook：
+
+- ``_start_async_audit_writer`` (startup)：从 ``cfg.audit.log_path``
+  或 ``DEFAULT_AUDIT_PATH`` 解析路径，``await start_global_audit_writer(path)``
+- ``_shutdown_async_audit_writer`` (shutdown)：``await stop_global_audit_writer()``
+  drain + 等 worker 退出
+
+**fail-safe**：两个 hook 都包 ``try/except``。startup 异常 → WARNING 日志
++ 系统继续运行（sync fallback 仍 100% 可用）。shutdown 异常 → 也不阻塞
+关机流程。
+
+**防回归测试**：``TestServerLifecycleWiring`` 两个 case grep
+``server.py`` 源码确保两个 hook 都还在 + 用 ``DEFAULT_AUDIT_PATH`` /
+``cfg.log_path``。下次有人重构 server.py 时 dead-code 这两段会立即 fail。
+
+### F2：``stop()`` 加 sentinel 超时，避免 shutdown hang
+
+**根因**：原 ``stop()`` 在 queue 满时 ``await queue.put(None)`` **没有
+超时**。如果 worker 卡在 filelock（其他进程长期持锁 / 磁盘 stalled）
+不消费，sentinel 永远投不进去，后面 ``wait_for(task, timeout=timeout)``
+也得不到执行机会。表现：uvicorn worker 在 SIGTERM 时不退出，systemd
+强杀 → zombie。
+
+**修复**：把 timeout 预算二分 ——
+
+```python
+sentinel_budget = max(min(timeout / 2.0, 5.0), 0.1)
+worker_budget = max(timeout - sentinel_budget, 0.5)
+
+try:
+    queue.put_nowait(None)            # 立即可投递
+    sentinel_delivered = True
+except asyncio.QueueFull:
+    try:
+        await asyncio.wait_for(       # 等 worker 让出空间
+            queue.put(None), timeout=sentinel_budget
+        )
+        sentinel_delivered = True
+    except TimeoutError:
+        # 投递失败：直接 cancel worker（worker 在 sync code 内则要等其
+        # 返回 await 边界后才生效，这是 Python 语言限制，不是 bug）
+        ...
+```
+
+总 stop() 时间被严格上界 ``timeout + ~2s cleanup``。
+
+**防回归测试**：``TestStopHangPrevention::test_stop_with_blocked_worker_does_not_hang_forever``
+用 stuck-in-await 的假 worker + 满 queue + ``stop(timeout=1.5)``，
+断言总时间 < 4s。原代码下这个测试会跑 60s+ 超时。
+
+### F3：path 归一化修 Windows-only 静默失败
+
+**根因**：审视 F1 时顺手发现的 **生产环境严重 bug**：
+
+- ``AuditLogger.__init__`` 存 ``self._path = Path(path)``，``log()``
+  里调 ``get_async_audit_writer(str(self._path))``
+- 在 Windows 上 ``str(Path('data/audit/x.jsonl'))`` 返回
+  ``'data\\audit\\x.jsonl'``（反斜杠）
+- F1 的 startup hook 用 ``DEFAULT_AUDIT_PATH = 'data/audit/policy_decisions.jsonl'``
+  （正斜杠）调 ``start_global_audit_writer``
+- ``get_async_audit_writer`` 比较 ``_GLOBAL_WRITER._path != path``
+  字符串比较 → 永远不等 → 永远返回 None → 永远 sync fallback
+
+意味着 **没有 F3，F1 等于白做** —— Windows 上即使注册了 hook，
+AuditLogger 仍走不到 async writer。Linux/macOS 上 ``str(Path('a/b'))``
+还是 ``'a/b'``，所以这个 bug 只在 Windows 触发，且非常隐蔽（"async writer
+跑起来了但没人用它"）。
+
+**修复**：``AsyncBatchAuditWriter.__init__`` 用 ``str(Path(path))``
+归一化；``get_async_audit_writer`` 和 ``start_global_audit_writer`` 都对
+传入 path 先 normalize 再比较。
+
+**防回归测试**：``TestPathNormalization`` 两个 case，正斜杠 + 反斜杠
+两种写法构造 writer，断言 ``_path`` 相等；并通过 singleton 验证两种
+查询都能找到。
+
+### F3 附带：foreign-thread enqueue race 文档化
+
+原代码在 foreign thread enqueue 时：
+
+1. ``qsize() < maxsize`` → ``call_soon_threadsafe(_put_or_fallback)``
+2. 微秒级 race window 内 queue 填满 → ``_put_or_fallback`` 在 **loop
+   线程上** sync fallback → 短暂阻塞 loop
+
+我曾经一度想改成"loop 线程上直接 drop record"避免 loop 阻塞，但很快撤回
+——审计日志数据完整性 >>> µs 级 loop 阻塞。把这个 trade-off 在注释
+里讲清楚：罕见 race window 内宁可短暂阻塞 loop 也不丢 record，运维通过
+``stats['sync_fallback']`` 计数器观测，必要时增大 ``OPENAKITA_AUDIT_QUEUE_MAX``。
+
+### F4：审批矩阵 invariant 守卫从 2 条 → 19 条
+
+**背景**：C23 P2-1 的矩阵 11×5 = 55 个格子，但 ``test_c23_policy_v2_matrix.py``
+原本只硬守卫了 2 条（destructive×strict=DENY、UNKNOWN never ALLOW）。
+其他 53 个格子可以静默漂移：engine.py 改了 baseline 决策但忘了同步 UI，
+单元测试不会 fail，只有 code review 能抓住。
+
+**修复**：新增 17 条 per-cell invariants（参数化测试）覆盖：
+
+- readonly_* 三个 class 在 5 个 mode 下 **必须 allow**（只读永不阻塞）
+- destructive 在 strict / dont_ask **必须 deny**
+- exec_capable / control_plane 在 trust/strict **必须 confirm**，
+  dont_ask **必须 deny**
+
+加 ``test_dont_ask_non_readonly_is_deny``：所有非 readonly / 非 interactive
+class 在 dont_ask 模式下都必须 DENY（cron 模式安全契约）。
+
+加 ``test_matrix_row_count_matches_approval_class_enum``：MATRIX 行数 +
+klass 值集合必须严格等于 ``ApprovalClass`` enum，用 regex 数行数。
+catch"复制行忘改 klass"+"漏加新 enum"。
+
+**覆盖率提升**：4%（2/55 格子守卫）→ 33%（18/55 + 全行/列性质）。剩余
+35 个格子无硬守卫的 trade-off 是 deliberate —— 继续加格子会变成"在
+.tsx 里抄一遍 engine.py"，价值递减，保留代码 review 作为防线。
+
+### F5：``TestBudgetParity`` 改用 grep 而非 importlib
+
+**根因**：C22 P3-3 的 parity guard 通过 ``importlib.util.spec_from_file_location``
+加载 ``scripts/c11_perf_baseline.py``。该脚本在 import 时
+``sys.path.insert(0, str(SRC))`` 是 import-time side effect。每次
+TestBudgetParity 跑，sys.path 就被插入一份重复 entry。在 ``pip install -e``
+已添加 src/ 到 sys.path 的情况下不会出错，但仍是 hygiene 漂移。
+
+**修复**：直接 ``re.search`` 文件内容找
+``"key_name": <number>``，不再 exec module。我们只需要数字，不需要
+执行脚本里的 ``ApprovalClassifier`` 初始化等重资产。``_script_budget``
+classmethod 封装，两个 test method 都用它。
+
+### F6：``shell_risk._coerce_tuple`` 拆成两个 normaliser
+
+**根因**：C22 P3-1 的 ``_coerce_tuple`` 把 ``None`` 和 ``[]`` 当作不同
+cache key 处理。对 ``blocked_tokens`` 来说语义正确（None=用默认；[]=
+显式关掉）。但对其他 4 个参数（``extra_critical``/``extra_high``/
+``extra_medium``/``excluded_patterns``）来说，下游是 ``if extra:`` 真假
+判断，``None`` 和 ``[]`` 行为完全等价，却占两个 cache slot。
+
+**修复**：拆成 ``_normalize_extra``（折叠 [] → None）和
+``_normalize_blocked``（保留 [] vs None 区分），docstring 写明语义契约。
+
+**新增测试**：``test_extra_empty_and_none_share_cache_slot`` —— 同一
+command 用 ``extra_critical=[]`` / ``extra_high=[]`` / ``extra_medium=[]``
+/ ``excluded_patterns=[]`` / 全 None 5 种调用，应得 1 miss + 4 hits。
+原代码会得 5 misses。``test_blocked_empty_and_none_are_different_cache_keys``
+保留并改名，pin 住 blocked 槽位的"distinct"语义。
+
+### F7：``decision_chain`` UI step.name 加 i18n map
+
+**问题**：C23 P2-2 直接把 engine.py 的 ``DecisionStep.name=`` 英文常量
+（``preflight`` / ``classify`` / ``safety_immune`` / ``matrix`` / 等
+22 个）渲染到中文 UI。中文用户在"决策依据"折叠区看到中英混杂：badge
+是中文 "允许 / 确认 / 拒绝"，step name 全英文。
+
+**修复**：``SecurityConfirmModal.tsx`` 加 ``STEP_LABELS`` map 覆盖全部
+22 个 step name → 中文短标签。未命中（未来 engine 加新 step）则
+fallback 到原英文 name，不会破坏渲染。
+
+原英文 name 仍保留为 ``<span title=...>`` tooltip，让工程师 debug
+chain 时能直接对应 ``engine.py`` 源代码。
+
+### 经验教训（C24）
+
+1. **"实现完整且测试齐全"≠"在生产生效"**：F1 是最有教育意义的一条——
+   ``AsyncBatchAuditWriter`` 有 22 个单元测试全绿、有 perf SLO 守卫，
+   但 production 永远走 sync 路径，因为没人调 ``start_global_audit_writer``。
+   下次审计要专门 grep：**"创建/启动函数有没有被生产代码调用"**，
+   不要只 verify 函数自身正确。
+
+2. **审视过程本身能发现新 bug，而不只是确认旧 bug**：F3 不在原始审计
+   清单里。修 F1 的过程中追踪 ``AuditLogger.log()`` 路径时才发现
+   Windows 上 path 永远不匹配。这种 bug 的特点是"看似工作（sync
+   fallback 正常）但优化没生效"，单元测试不会 fail，性能 benchmark
+   会显示"没快"但 dev 通常归因为"环境差异"。下次实施跨平台特性时
+   强制写一条"两种分隔符产生同 singleton"的 invariant 测试。
+
+3. **修 bug 时小心 over-correction**：我曾把 F3 附带的 foreign-thread
+   race 改成"loop 线程上 drop record"，理由是"loop 不应被阻塞"。
+   立刻撤回 —— audit 数据完整性是合规契约，µs 级 loop 阻塞是合理代价。
+   这种 trade-off 要在注释里讲清楚"为什么有意接受这个看起来糟糕的
+   行为"，否则下次审计会被人看到又改一遍。
+
+4. **守卫数量 vs 价值递减**：F4 把矩阵覆盖率从 4% → 33%。继续加守卫
+   会变成"在测试里抄一遍 engine 的决策树"，价值越来越低、维护负担
+   越来越高。要识别 "diminishing returns" 的拐点，到 33% 这种"硬契约
+   100% 守卫，其他靠 review"的混合策略就够了。
+
+5. **每个 P0 修复要带"为什么之前没抓到"的根因分析**：F1/F2/F3 的
+   commit message 都明确写了历史——F1 来自 C22 commit 1d100b0b 漏接
+   生命周期；F2 是 C22 同一 commit 的边界情形；F3 是 F1 修复过程中
+   附带发现的 Windows-only 静默失败。这种交叉引用让未来 git blame
+   能复原完整脉络，而不是看到一个独立 commit 想"为什么这里要 normalize
+   path？"。
+
+### 测试基线（C21 + C22 + C23 + C24 综合）
+
+- C21 隐患/bug 修复：``test_c21_*.py`` 4 个文件 ~25 case
+- C22 性能 + audit writer：``test_c22_*.py`` 2 个文件 35 case
+- C23 前端三件套：``test_c23_*.py`` 3 个文件 26 case
+- ``tests/perf/test_policy_v2_perf.py``：7 case
+- **C24 新增**：F1/F2/F3 路径归一化 + stop hang + server wiring 共 6 case；
+  F4 invariants 17 case + 2 条规则；F6 ``test_extra_empty_and_none_share_cache_slot`` 1 case
+- **合计 ~125 case 全绿，无 regression**
+
+---
+
+## Plan 完成度盘点（截至 C24）
+
+对照 ``.cursor/plans/security_architecture_v2_31fbf920.plan.md`` 列出的
+19 个 commit（C0-C18 + perf），实际落地全部完成，并超额做了以下扩展：
+
+| Plan ID | 名称 | 实际落地 commit / 章节 |
+|---------|------|------------------------|
+| C0 | 调研落盘 | ``docs/policy_v2_research.md``（本文件，~6000 行） |
+| C1 | policy_v2/ 骨架 | C1 实施记录 |
+| C2 | ApprovalClassifier | C2 实施记录 + C21 P0-3 ``_cache_lock`` |
+| C3 | PolicyEngineV2 | C3 实施记录 + C21 P0-1 ``_lock`` RLock |
+| C4 | tool_executor 切 v2 + 删 reasoning_engine 双检 | C4 实施记录 |
+| C5 | agent.py RiskGate 切 v2 | C5 实施记录 + C21 P1-1 ``from_session`` |
+| C6 | safety_immune + OwnerOnly + IM confirm | C6 实施记录 |
+| C7 | YAML schema + 迁移 | C7 实施记录 + C21 P0-2 deep-merge |
+| C8 | 删旧代码 + bug 修 | C8a/b1-6b 全套 |
+| C9 | 前端适配 | C9a/b + C9c-1/2 + C23 P2-1/2/3 |
+| C10 | Hook + Trusted Tool Policy | C10 实施记录 |
+| C11 | 全量回归 + 性能 SLO | C11 实施记录（CLI bench） + C22 P3-3（pytest 化） |
+| C12 | unattended + scheduled task | C12+C9c 实施记录 |
+| C13 | multi-agent confirm 冒泡 | C13 实施记录 |
+| C14 | headless 统一 | C14 实施记录 |
+| C15 | Evolution / system_task / Skill 信任 | C15 实施记录 |
+| C16 | Prompt injection + YAML schema | C16 实施记录 |
+| C17 | Reliability | C17 实施记录 + C17 二轮 audit |
+| C18 | UX 配置（hot-reload / aggregation / ENV） | C18 + C18 二轮 audit |
+| C_perf | audit 异步批量、shell LRU、classifier LRU | C22 P3-1/P3-2/P3-3 |
+
+**额外里程碑**（plan 未列、实际完成）：
+
+| ID | 内容 | 章节 |
+|----|------|------|
+| C19 | docs / PR 准备 | C19 实施记录 |
+| C20 | Audit JSONL rotation | C20 实施记录 |
+| C21 | 二轮架构审计（_lock / deep-merge / cache lock / from_session）| C21 |
+| C22 | 性能段（shell LRU / AsyncBatchAuditWriter / pytest SLO） | C22 |
+| C23 | 前端 policy_v2 完整化（decision_chain UI / intent toast / matrix tab） | C23 |
+| C24 | 三轮架构审计（async writer 接入 / Windows path / stop hang / matrix 守卫） | 本节 |
+
+### 已知遗留与有意识 trade-off
+
+下列项是 plan 描述与实际实现的偏差，**都是 deliberate 简化**，不算
+遗漏：
+
+1. **``confirm_aggregator`` 没有 backend Aggregator class** —— plan §20.1
+   预想后端有一个 ``ConfirmAggregator`` 在 5s 窗口内聚合，实际改为
+   **frontend-driven 批量 resolve**：UI 看到队列里 ≥ 2 个同 session
+   confirm 时显示"批准本批"横幅，调 ``/api/chat/security-confirm/batch``
+   一次性 resolve。Server 端有 ``aggregation_window_seconds`` clamp
+   防滥用。简化收益 / 风险都更小。
+
+2. **``pending_approvals`` 没有 60s 后台扫描 task** —— plan §14.5 / §22.2
+   要求"过期扫描后台 task"，实际实现为 **lazy expire**：
+   ``list_pending()`` 被调用时检查 ``expires_at`` 并广播
+   ``pending_approval_resolved`` SSE。代价：如果没人查看
+   PendingApprovalsView，过期通知不会主动发到 IM owner（owner 不知道
+   任务超时被拒）。可接受，因为 SchedulerView / PendingApprovalsView
+   是 owner 主要 entry point，进入会立即触发清扫。
+
+3. **审批矩阵 35 个非关键格子无硬守卫** —— F4 加了 17 条 invariant
+   覆盖关键 fail-closed 性质 + 全行/全列性质（dont_ask×非 readonly =
+   deny），其他 35 格靠 code review。继续加守卫价值递减。
+
+4. **foreign-thread enqueue race 仍可能短暂阻塞 loop** —— audit 数据
+   完整性优先于 µs 级 loop 阻塞。运维通过 ``stats['sync_fallback']``
+   监控。
+
+5. **shell_risk LRU ``OPENAKITA_SHELL_LRU_SIZE`` 不支持运行时改** ——
+   装饰时一次性读 env；改 env 后要重启进程。绝大多数部署可接受。
+
+### 没有遗漏的隐患（已主动 grep 验证）
+
+- ✅ ``start_hot_reloader`` / ``stop_hot_reloader`` 在 server.py 已接入
+  （commit 之前就有，C18 Phase A）
+- ✅ ``start_global_audit_writer`` / ``stop_global_audit_writer`` 在
+  server.py 已接入（C24 F1 修复）
+- ✅ ``SYSTEM_TASKS.yaml`` allowlist 在 ``policy_v2/system_tasks.py``
+  实装、scheduler executor 调用
+- ✅ ``aggregation_window_seconds`` 字段在 schema + UI + batch endpoint
+  三处串通
+- ✅ ``/api/health`` 已接入 PolicyEngine readiness probe（C17）
+- ✅ ``audit_chain`` ``prev_hash`` / ``row_hash`` 防篡改链在 C16 落地、
+  C20 加 rotation、C22 P3-2 加 ``append_batch``
+
+至此 plan 全部完成 + 三轮审计修复（C21 / C22-C23 / C24）。下一阶段不在
+本 plan 范围内（如 ACP 协议化 / LLM YOLO classifier / dual-LLM injection
+filter / 多用户协作审批 / 跨实例集群同步）。
