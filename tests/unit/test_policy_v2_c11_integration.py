@@ -56,14 +56,16 @@ from pathlib import Path
 
 import pytest
 
-from openakita.core.policy_v2.classifier import ApprovalClassifier
 from openakita.core.policy_v2.context import (
     PolicyContext,
     ReplayAuthorization,
     TrustedPathOverride,
 )
 from openakita.core.policy_v2.death_switch import get_death_switch_tracker
-from openakita.core.policy_v2.engine import PolicyEngineV2
+from openakita.core.policy_v2.engine import (
+    PolicyEngineV2,
+    build_engine_from_config,
+)
 from openakita.core.policy_v2.enums import (
     ApprovalClass,
     ConfirmationMode,
@@ -71,12 +73,12 @@ from openakita.core.policy_v2.enums import (
     DecisionSource,
     SessionRole,
 )
-from openakita.core.policy_v2.models import ToolCallEvent
+from openakita.core.policy_v2.models import MessageIntentEvent, ToolCallEvent
 from openakita.core.policy_v2.schema import (
+    ApprovalClassesConfig,
     DeathSwitchConfig,
     PolicyConfigV2,
     SafetyImmuneConfig,
-    UnattendedConfig,  # noqa: F401  (reserved for future cases)
     UserAllowlistConfig,
 )
 
@@ -101,19 +103,20 @@ def _make_engine(
     plugin_lookup=None,
     config: PolicyConfigV2 | None = None,
 ) -> PolicyEngineV2:
-    """构造测试用 PolicyEngineV2.
+    """构造测试用 PolicyEngineV2 — 走 SOT 工厂.
 
-    每个 case 自己构造, 避免污染全局单例; classifier 默认仅启发式(无 lookup),
-    case 显式注入需要的 lookup 函数.
+    用 ``build_engine_from_config`` 而非 ``ApprovalClassifier()`` + ``PolicyEngineV2()``
+    手动拼装, 避免引擎构造时打 split-brain WARN 噪声 (那条 WARN 是给生产
+    误用场景预留的, 测试如果走"手动拼+刚好 shell_risk 不一致"会每个 case
+    一条警告). 二轮加固改用 SOT.
     """
-    classifier = ApprovalClassifier(
+    return build_engine_from_config(
+        config or PolicyConfigV2(),
         explicit_lookup=explicit_lookup,
         skill_lookup=skill_lookup,
         mcp_lookup=mcp_lookup,
         plugin_lookup=plugin_lookup,
-        shell_risk_config=(config or PolicyConfigV2()).shell_risk,
     )
-    return PolicyEngineV2(classifier=classifier, config=config or PolicyConfigV2())
 
 
 def _ctx(
@@ -169,10 +172,8 @@ class TestStep3SafetyImmune:
         核心承诺. builtin 路径是 ``${CWD}/identity/SOUL.md`` 形式 (绝对),
         测试用 ``Path.cwd()`` 拼出与 engine 启动时一致的绝对路径.
         """
-        from pathlib import Path as _Path
-
         engine = _make_engine()
-        abs_path = str(_Path.cwd() / "identity" / "SOUL.md")
+        abs_path = str(Path.cwd() / "identity" / "SOUL.md")
         decision = engine.evaluate_tool_call(
             ToolCallEvent(
                 tool="write_file",
@@ -748,29 +749,195 @@ class TestLookupChain:
 
 
 # =============================================================================
-# C11 "completeness gate" — 25 cases registered & each is a real assertion.
+# Round-2 added: gaps the second-round audit found
+# =============================================================================
+
+
+class TestRound2EvaluateMessageIntent:
+    """case 26-28 — evaluate_message_intent (PolicyEngineV2 第二条公开路径).
+
+    第一轮只测 evaluate_tool_call 这条路径, 漏掉 pre-LLM RiskGate 入口.
+    plan §3 + engine.py docstring 都把这两条方法并列为 "唯一权威决策入口".
+    """
+
+    def test_c11_26_intent_plan_mode_blocks_write_intent(self):
+        """Case 26 — intent · PLAN role + write risk → DENY.
+
+        engine ``_evaluate_message_intent_impl`` step 1: PLAN/ASK 角色对任何
+        非 readonly 风险信号都 DENY (intent_role_block step). 这是 plan 模式
+        "只画图不写"的核心承诺.
+        """
+        engine = _make_engine()
+        decision = engine.evaluate_message_intent(
+            MessageIntentEvent(
+                message="please rewrite all files",
+                risk_intent={"operation_kind": "write", "requires_confirmation": True},
+            ),
+            _ctx(role=SessionRole.PLAN),
+        )
+        assert decision.action == DecisionAction.DENY, (
+            f"PLAN mode must DENY write intent; got {decision.action}"
+        )
+        assert "intent_role_block" in _step_names(decision)
+
+    def test_c11_27_intent_trust_mode_bypasses_gate(self):
+        """Case 27 — intent · TRUST mode → ALLOW (bypass).
+
+        engine 设计: TRUST 模式 pre-LLM 闸门一律放行 (用户显式 yolo).
+        关键安全保证: 工具级仍走完 evaluate_tool_call, intent gate 只是
+        "提前告诉用户这条消息可能危险"的 UI 信号.
+        """
+        engine = _make_engine()
+        decision = engine.evaluate_message_intent(
+            MessageIntentEvent(
+                message="rm -rf /",
+                risk_intent={"operation_kind": "delete", "risk_level": "high"},
+            ),
+            _ctx(mode=ConfirmationMode.TRUST),
+        )
+        assert decision.action == DecisionAction.ALLOW
+        assert "intent_trust_bypass" in _step_names(decision)
+
+    def test_c11_28_intent_default_risky_signal_confirms(self):
+        """Case 28 — intent · DEFAULT mode + risky signal → CONFIRM.
+
+        AGENT × DEFAULT + 写信号 → CONFIRM (intent_risk step). 这是 GUI
+        看到的"这条消息要 ask 才能继续"的 SSE 触发.
+        """
+        engine = _make_engine()
+        decision = engine.evaluate_message_intent(
+            MessageIntentEvent(
+                message="delete config.yaml",
+                risk_intent={"operation_kind": "delete"},
+            ),
+            _ctx(mode=ConfirmationMode.DEFAULT),
+        )
+        assert decision.action == DecisionAction.CONFIRM
+        assert "intent_risk" in _step_names(decision)
+
+
+class TestRound2ApprovalOverride:
+    """case 29-30 — Step 2b approval_class_overrides (用户最大自定义旋钮).
+
+    POLICIES.yaml ``security.approval_classes.overrides`` 让用户对单个工具
+    手改 ApprovalClass. **关键安全保证**: 只接受 ``most_strict`` 比 classifier
+    更严的 override; 比 classifier 更弱的 override 必须被忽略 (chain 留痕),
+    否则用户错配可静默把 DESTRUCTIVE 降到 READONLY 绕过审批.
+    """
+
+    def test_c11_29_override_stronger_than_classifier_upgrades(self):
+        """Case 29 — override (DESTRUCTIVE) > classifier (MUTATING_GLOBAL) → 升级.
+
+        ``write_file`` 启发式归 MUTATING_GLOBAL; 用户配置 override 把它升到
+        DESTRUCTIVE → 终态用 DESTRUCTIVE (chain 含 ``approval_override_applied``).
+        """
+        cfg = PolicyConfigV2(
+            approval_classes=ApprovalClassesConfig(
+                overrides={"write_file": ApprovalClass.DESTRUCTIVE}
+            )
+        )
+        engine = _make_engine(config=cfg)
+        decision = engine.evaluate_tool_call(
+            ToolCallEvent(tool="write_file", params={"path": "x", "content": "y"}),
+            _ctx(),
+        )
+        assert decision.approval_class == ApprovalClass.DESTRUCTIVE, (
+            f"override should upgrade to DESTRUCTIVE; got {decision.approval_class}"
+        )
+        assert "approval_override_applied" in _step_names(decision), (
+            f"upgrade must leave audit trail; chain={_step_names(decision)}"
+        )
+
+    def test_c11_30_override_weaker_than_classifier_ignored(self):
+        """Case 30 — override (READONLY) < classifier (DESTRUCTIVE) → 忽略.
+
+        ``delete_file`` 启发式归 DESTRUCTIVE; 用户错配把它"override"到
+        READONLY_SCOPED — 必须**忽略**该 override (most_strict 不下放),
+        终态保持 DESTRUCTIVE, chain 留 ``approval_override_ignored`` 留痕.
+
+        若此 case 失败说明 most_strict floor 被绕过, 是 P0 安全 bug.
+        """
+        cfg = PolicyConfigV2(
+            approval_classes=ApprovalClassesConfig(
+                overrides={"delete_file": ApprovalClass.READONLY_SCOPED}
+            )
+        )
+        engine = _make_engine(config=cfg)
+        decision = engine.evaluate_tool_call(
+            ToolCallEvent(tool="delete_file", params={"path": "x"}),
+            _ctx(),
+        )
+        assert decision.approval_class == ApprovalClass.DESTRUCTIVE, (
+            f"weaker override must be IGNORED (most_strict floor); "
+            f"got {decision.approval_class} — POTENTIAL P0 SECURITY BUG"
+        )
+        assert "approval_override_ignored" in _step_names(decision)
+
+
+class TestRound2UnattendedDefer:
+    """case 31 — unattended × destructive × defer_to_owner → DEFER.
+
+    第一轮 D5 漏测 DEFER 终态. plan §11 把 defer_to_owner / defer_to_inbox
+    列为主策略 (C12 wire 后会写入 pending_approvals 等 owner 回来确认).
+    """
+
+    def test_c11_31_unattended_defer_to_owner_returns_defer(self):
+        """Case 31 — DEFER terminal action 路径覆盖."""
+        engine = _make_engine()
+        decision = engine.evaluate_tool_call(
+            ToolCallEvent(tool="delete_file", params={"path": "x"}),
+            _ctx(
+                mode=ConfirmationMode.DEFAULT,
+                is_unattended=True,
+                unattended_strategy="defer_to_owner",
+            ),
+        )
+        assert decision.action == DecisionAction.DEFER, (
+            f"defer_to_owner must produce DEFER terminal; got {decision.action}"
+        )
+        assert decision.is_unattended_path is True
+        assert "unattended" in _step_names(decision)
+
+
+# =============================================================================
+# C11 "completeness gate" — 31 cases registered, NN 必须 01-31 contiguous.
 # =============================================================================
 
 
 def test_c11_completeness_gate():
-    """Sanity gate: 25 个 case 都注册了, 命名规范统一便于 grep.
+    """Sanity gate: 31 个 case 都注册了 + NN 严格 01-31 连续.
 
-    检查范围: 本模块所有以 ``test_c11_NN_`` 为名的 method (NN 是两位数字),
-    去重计数应等于 25. 用 ast.parse 而不是 inspect 是为了避开 import 副作用
-    + pytest collection 顺序差异.
+    第一轮只查"数量 == 25"; 这放任了"删 case 17 + 加 case 26"的静默漂移
+    (数量仍 25). 二轮加固加上 NN 连续断言:
+    - 解析 ``test_c11_NN_<scene>`` 中的 NN
+    - 必须等于 ``{1, 2, ..., N}`` 集合
+    - N (max NN) == 函数总数 (无空洞)
+
+    用 ast.parse 而不是 inspect 是为了避开 import 副作用 + pytest collection
+    顺序差异.
     """
     import ast
-    from pathlib import Path
 
     src = Path(__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
-    pat = re.compile(r"^test_c11_\d{2}_")
-    names = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-        and pat.match(node.name)
-    }
-    assert len(names) == 25, (
-        f"Expected exactly 25 c11_NN_ cases, found {len(names)}: {sorted(names)}"
+    pat = re.compile(r"^test_c11_(\d{2})_")
+    nn_values: set[int] = set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            m = pat.match(node.name)
+            if m:
+                names.add(node.name)
+                nn_values.add(int(m.group(1)))
+    expected_count = 31
+    assert len(names) == expected_count, (
+        f"Expected exactly {expected_count} c11_NN_ cases, found {len(names)}: "
+        f"{sorted(names)}"
+    )
+    expected_set = set(range(1, expected_count + 1))
+    missing = expected_set - nn_values
+    extras = nn_values - expected_set
+    assert not missing and not extras, (
+        f"NN must be exactly 01-{expected_count:02d} contiguous; "
+        f"missing={sorted(missing)}, extras={sorted(extras)}"
     )

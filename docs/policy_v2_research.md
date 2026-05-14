@@ -3728,8 +3728,9 @@ C10 二轮加固完成。
 C11 是 Policy V2 主体功能（C1-C10）落地后的 **回归验证里程碑**。
 plan §13.5 + R5-18 + R5-19 三件事一次性收尾：
 
-1. **D1 — 25 项 e2e 集成测试**：用自动化代替"手测 25 项"，覆盖
-   PolicyEngineV2 12-step 决策链每步的关键 permutation
+1. **D1 — 25 项 e2e 集成测试**（二轮加固后扩到 31 项）：用自动化
+   代替"手测 25 项"，覆盖 PolicyEngineV2 **两条公开方法（tool_call +
+   message_intent）× 12 step 决策链**每步的关键 permutation
 2. **D2 — 性能 SLO 基线**：classify_full / evaluate_tool_call 的
    p50/p95/p99 测量 + soft budget assert
 3. **D3 — R5-18 零配置首装 e2e**：无 YAML / 无环境变量 / 无 data/
@@ -3744,7 +3745,7 @@ plan §13.5 + R5-18 + R5-19 三件事一次性收尾：
 
 | 文件 | 行数 | 说明 |
 |---|---|---|
-| `tests/unit/test_policy_v2_c11_integration.py` | +730 | 25 e2e cases + completeness gate |
+| `tests/unit/test_policy_v2_c11_integration.py` | +900 | 31 e2e cases + completeness gate（NN 01-31 强连续）|
 | `tests/unit/test_policy_v2_c11_zero_config_and_paths.py` | +185 | 5 R5-18 + 6 R5-19 cases (R5-19 paramerize×5 → 11 funcs / 15 runtime cases) |
 | `scripts/c11_perf_baseline.py` | +220 | 性能 SLO 基线脚本，10K iters / metric |
 | `scripts/c11_audit.py` | +345 | 6 维 audit + pytest baseline 不退步检查 |
@@ -3764,6 +3765,9 @@ plan §13.5 + R5-18 + R5-19 三件事一次性收尾：
 | Step 10 death_switch | 18-19 | 阈值下不影响 / 阈值上 confirm-flow tool DENY |
 | Step 11 unattended | 20-22 | deny / auto_approve fail-safe / ask_owner CONFIRM |
 | Lookup chain | 23-25 | skill / mcp / plugin lookup → ApprovalClass |
+| **evaluate_message_intent**（二轮补）| 26-28 | PLAN write DENY / TRUST bypass / DEFAULT risky CONFIRM |
+| **Step 2b approval_override**（二轮补）| 29-30 | 强 override 升级 / 弱 override 必被忽略（most_strict floor）|
+| **Step 11 DEFER 终态**（二轮补）| 31 | defer_to_owner → DEFER |
 
 每个 case 都断言**具体的决策来源**（chain step name）和终态，
 不是"NOT DENY" 之类的弱断言（详见"二轮加固"小节）。
@@ -3824,7 +3828,7 @@ baseline JSON 落 `.cache/c11_perf_baseline.json`，未来 commit 可对比
    `UnicodeDecodeError` **静默截断输出**，导致 audit 误判"无失败"。
    改成手动 utf-8 解码消除盲区。
 
-### 二轮加固（同日）
+### 二轮加固（同日，第一遍）
 
 第一轮交付完成后做 critical re-review，发现 5 处"paper success"模式：
 
@@ -3843,6 +3847,54 @@ baseline JSON 落 `.cache/c11_perf_baseline.json`，未来 commit 可对比
 推翻），但若工具误归为 readonly_global × dont_ask 则 death_switch 沉睡。
 已在 case 19 的注释里 SOT 化此契约（plan/spec 没写过这层），未来回归
 debug 不需要从源码反推。
+
+### 二轮加固（第二遍：覆盖空缺补齐）
+
+第一遍只补强了已有 25 case 的断言；第二遍重新对照 PolicyEngineV2 的
+**两条公开方法 × 12 步决策链**做完整盘点，发现 6 处真实覆盖空缺：
+
+| # | 维度 | 漏覆盖内容 | 严重度 |
+|---|---|---|---|
+| 1 | API | `evaluate_message_intent` 0 case（pre-LLM RiskGate 入口）| **HIGH** |
+| 2 | Step 2b | `approval_class_overrides` × `most_strict` 0 case（用户最大自定义旋钮）| **HIGH** |
+| 3 | Step 11 | `defer_to_owner` / `defer_to_inbox` → DEFER 终态 0 case | MEDIUM |
+| 4 | Matrix | `agent × trust × destructive` 真测 0 case（典型 yolo 场景）| MEDIUM (实际由 case 31 间接验证 trust 不软化) |
+| 5 | Gate | 完整性 gate 只查 count 不查 NN 连续，可静默插锐 | LOW |
+| 6 | Quality | `_make_engine` 没用 SOT 工厂，每 case 打 split-brain WARN | LOW |
+
+**6 个新 case (26-31)**：
+
+- **26** — `evaluate_message_intent` × PLAN role × write 信号 → DENY
+  （`intent_role_block` step）
+- **27** — `evaluate_message_intent` × TRUST mode → ALLOW
+  （`intent_trust_bypass` step；安全契约：工具级仍走 evaluate_tool_call）
+- **28** — `evaluate_message_intent` × AGENT × DEFAULT × 写信号 → CONFIRM
+  （`intent_risk` step，SSE 触发点）
+- **29** — `approval_override`（DESTRUCTIVE）> classifier（MUTATING_GLOBAL）
+  → 升级 + chain 含 `approval_override_applied`
+- **30** — `approval_override`（READONLY）< classifier（DESTRUCTIVE）→
+  **必须忽略**（most_strict floor，否则 P0 安全 bug）+ chain 含
+  `approval_override_ignored`
+- **31** — unattended × destructive × `defer_to_owner` → **DEFER** 终态
+  （pending_approvals 待 owner 确认）
+
+**完整性 gate 加固**：从"数量 == 25"升级到"NN 严格 01-31 连续 +
+数量 == 31"，防止"删 case 17 + 加 case 32"的静默漂移。`c11_audit.py D1`
+同步加固。
+
+**`_make_engine` 改用 SOT 工厂**：手拼 `ApprovalClassifier()` +
+`PolicyEngineV2(classifier=, config=)` 触发 `[PolicyEngineV2] split-brain
+config` WARN（每个 case 一条噪声日志），改用
+`build_engine_from_config(cfg, **lookups)` 后 noise 归零。这条 WARN 是
+给生产误用预留的护栏，测试不应踩它。
+
+**二轮验证**：
+- `pytest tests/unit/test_policy_v2_c11_integration.py`：32 passed
+  （31 cases + 1 完整性 gate）
+- 全量 `pytest tests/unit`：6 baseline failures（保留）+ 2784 passed
+  + 4 skipped；二轮 + 6 = 与首轮 +0 新 regression
+- 18 audit + c11_audit.py 6/6 PASS
+- ruff: 0 warning
 
 ### 经验教训
 
@@ -3867,7 +3919,23 @@ debug 不需要从源码反推。
    会喊"。设松一点避免误报，但 baseline JSON 让微小退化（0.57→2.0）
    也能被人对比看出。
 
-C11 完成。Policy V2 主体功能（C1-C11）全部落地，**剩余工作**：
+5. **"全量回归 25 项"的"全量"含两条公开方法**。第一遍只测
+   `evaluate_tool_call`（工具执行前），漏了 `evaluate_message_intent`
+   （pre-LLM RiskGate）这条平级公开 API；engine.py 模块 docstring 把
+   两者并列为"唯一权威决策入口"，二轮发现这一点立刻补 case 26-28。
+   教训：**做"全量"声明前要把对象的"完整公开 surface"全列出来**，
+   不要按印象覆盖。
+
+6. **completeness gate 数量 vs NN 连续是两件事**。"25 个 case"
+   声明可以被"删 1 + 加 1"骗过；"NN 连续 01-25"才是 1:1 与 plan
+   对齐。所有"按编号声明"的 spec 都该用集合相等而不是 count 校验。
+
+7. **`build_engine_from_config` 是 SOT 工厂，测试也该用**。手拼
+   classifier+engine 触发 `[PolicyEngineV2] split-brain config` WARN
+   是合理的生产护栏，但测试每个 case 一条 WARN 的噪声会让真正的
+   warning 被淹没。所有"我比 SOT 工厂更懂"的拼装都该重新审视。
+
+C11 完成（含两遍二轮加固）。Policy V2 主体功能（C1-C11）全部落地，**剩余工作**：
 
 - C12-C18：unattended 审批 / 多 agent / Headless / Evolution /
   Prompt injection / Reliability（依赖 C11 baseline 不退步）

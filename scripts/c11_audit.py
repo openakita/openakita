@@ -33,7 +33,9 @@ TESTS = ROOT / "tests" / "unit"
 SCRIPTS = ROOT / "scripts"
 
 REQUIRED_C11_TESTS = {
-    "test_policy_v2_c11_integration.py": 25,  # >= 25 c11_NN_ functions
+    # 25 main + 6 round-2 added (26-31): evaluate_message_intent (3) +
+    # approval_class_overrides (2) + unattended.DEFER (1)
+    "test_policy_v2_c11_integration.py": 31,
     # 5 R5-18 + 6 R5-19 ast funcs (one R5-19 has @parametrize → 5 sub-cases at runtime)
     "test_policy_v2_c11_zero_config_and_paths.py": 11,
 }
@@ -100,24 +102,6 @@ def _fail(label: str, msg: str) -> None:
     print(f"  [FAIL] {label} — {msg}")
 
 
-def _count_c11_test_funcs(path: Path) -> int:
-    """Count test functions whose name matches ``test_c11_NN_...``.
-
-    Uses ast.parse — no import side effects, robust to lint/format changes.
-    """
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
-        return -1  # signal failure
-    pat = re.compile(r"^test_c11_\d+_")
-    n = 0
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if pat.match(node.name):
-                n += 1
-    return n
-
-
 def _count_test_funcs(path: Path) -> int:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -136,18 +120,44 @@ def _count_test_funcs(path: Path) -> int:
 # ---------------------------------------------------------------------------
 
 
-def d1_25_cases_registered() -> bool:
-    print("\nD1: 25 c11_NN_* cases registered in test_policy_v2_c11_integration.py")
+def d1_31_cases_registered() -> bool:
+    """31 cases (25 round-1 + 6 round-2) with NN strictly 01-31 contiguous.
+
+    Round-2 加固: 仅查"数量"会放任"删 case 17 + 加 case 32"的静默漂移,
+    所以这里也强制 NN ⊆ {01..31} 一致.
+    """
+    print("\nD1: 31 c11_NN_* cases registered + NN 01-31 contiguous")
     path = TESTS / "test_policy_v2_c11_integration.py"
     if not path.exists():
         _fail("integration file present", f"missing {path}")
         return False
-    n = _count_c11_test_funcs(path)
     expected = REQUIRED_C11_TESTS["test_policy_v2_c11_integration.py"]
-    if n < expected:
-        _fail("c11_NN_ count", f"found {n}, need >= {expected}")
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError) as exc:
+        _fail("parse", str(exc))
         return False
-    _ok("c11_NN_ count", f"{n} cases (>= {expected})")
+    pat = re.compile(r"^test_c11_(\d{2})_")
+    nn: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            m = pat.match(node.name)
+            if m:
+                nn.add(int(m.group(1)))
+    if len(nn) != expected:
+        _fail("c11_NN_ count", f"found {len(nn)}, need {expected}")
+        return False
+    expected_set = set(range(1, expected + 1))
+    missing = expected_set - nn
+    extras = nn - expected_set
+    if missing or extras:
+        _fail(
+            "NN contiguous",
+            f"NN must equal {{01..{expected:02d}}}; "
+            f"missing={sorted(missing)}, extras={sorted(extras)}",
+        )
+        return False
+    _ok("c11_NN_ count + contiguous", f"{len(nn)} cases, NN 01-{expected:02d}")
     return True
 
 
@@ -397,7 +407,7 @@ def main() -> int:
     print("=" * 70)
 
     results = {
-        "D1 25 cases": d1_25_cases_registered(),
+        "D1 31 cases (NN 01-31)": d1_31_cases_registered(),
         "D2 R5-18+19 tests": d2_zero_config_and_paths(),
         "D3 perf script": d3_perf_script_with_budgets(),
         "D4 perf baseline runs": d4_perf_baseline_runs(),
