@@ -1755,6 +1755,8 @@ async def chat(request: Request, body: ChatRequest):
     effective_mode = body.mode
     if body.plan_mode and effective_mode == "agent":
         effective_mode = "plan"
+    if body.permission_mode == "plan" and effective_mode == "agent":
+        effective_mode = "plan"
     if session_manager is not None and conversation_id and body.permission_mode:
         # v1.27.x introduced per-turn product permission_mode via the old
         # PolicyEngine singleton. Policy V2 keeps that state on the session
@@ -1771,7 +1773,6 @@ async def chat(request: Request, body: ChatRequest):
                 channel="desktop",
                 chat_id=conversation_id,
                 user_id="user",
-                agent_profile_id=body.agent_profile_id or "",
             )
             session.confirmation_mode_override = _mode_map.get(body.permission_mode, "default")
             session_manager.mark_dirty()

@@ -15,7 +15,7 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -38,7 +38,6 @@ class TestInjectModulePaths:
         (modules_dir / "browser" / "site-packages").mkdir(parents=True)
 
         with patch("openakita.runtime_env._get_openakita_root", return_value=tmp_path):
-            original_path_len = len(sys.path)
             from openakita.runtime_env import inject_module_paths_runtime
 
             count = inject_module_paths_runtime()
@@ -54,7 +53,6 @@ class TestInjectModulePaths:
 
     def test_inject_skips_nonexistent_dirs(self, tmp_path):
         """模块目录不存在时不应报错"""
-        modules_dir = tmp_path / "modules"
         # 不创建任何子目录
 
         with patch("openakita.runtime_env._get_openakita_root", return_value=tmp_path):
@@ -427,7 +425,7 @@ class TestMirrorConsistency:
         content = app_tsx_path.read_text(encoding="utf-8")
 
         # pipIndexPresetId 默认值应为 "aliyun"
-        assert 'useState<"official" | "tuna" | "aliyun" | "custom">("aliyun")' in content, (
+        assert 'useState<"official" | "tuna" | "ustc" | "aliyun" | "custom">("aliyun")' in content, (
             "pipIndexPresetId 默认值应为 aliyun"
         )
 
@@ -789,7 +787,7 @@ class TestMemoryRetrievalFallback:
         # retrieval_engine=None 确保不走 RetrievalEngine 路径，回退到 _search_related_memories
         manager.retrieval_engine = None
 
-        result, used_vector = asyncio.get_event_loop().run_until_complete(
+        result, used_vector = asyncio.run(
             async_search_related_memories(
                 query="PostgreSQL",
                 memory_manager=manager,
@@ -876,7 +874,7 @@ class TestVectorStoreRetryReset:
             # 模拟 sentence_transformers 不可用
             with patch("openakita.memory.vector_store.inject_module_paths_runtime",
                         create=True, side_effect=Exception("no runtime")):
-                result = vs_module._lazy_import()
+                vs_module._lazy_import()
 
             # 应该尝试 import 并（因为缺少包）返回 False
             # 但关键是：它确实执行了 import 尝试（不再短路）

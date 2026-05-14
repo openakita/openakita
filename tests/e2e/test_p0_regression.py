@@ -176,29 +176,22 @@ def test_p0_2_phase3_source_tag_consistent_passes():
 
 
 def test_p0_3_command_store_atomic_update():
-    """P0-3 D：_update_command_state 必须存在并保证 status='done' 时 phase 同步。"""
-    from openakita.api.routes import orgs as orgs_route
+    """P0-3 D：命令状态更新必须保证 status='done' 时 phase 同步。"""
+    from openakita.orgs.command_service import OrgCommandService
 
-    assert hasattr(orgs_route, "_update_command_state"), (
-        "_update_command_state 一旦被去掉，_command_store 的 status/phase "
-        "就回到非原子更新，前端短期内可能拿到不一致快照。"
-    )
-    assert hasattr(orgs_route, "_command_store_lock"), (
-        "_command_store_lock 是原子保证的核心，必须保留。"
-    )
-
+    service = OrgCommandService(runtime=None, session_manager=None)
     cmd_id = "test_p0_3_atomic"
-    orgs_route._command_store[cmd_id] = {"status": "running", "phase": "running"}
+    service.commands[cmd_id] = {"status": "running", "phase": "running"}
     try:
-        orgs_route._update_command_state(cmd_id, status="done", result={"ok": 1})
-        snapshot = dict(orgs_route._command_store[cmd_id])
+        service._update_command_state(cmd_id, status="done", result={"ok": 1})
+        snapshot = dict(service.commands[cmd_id])
         assert snapshot["status"] == "done"
         assert snapshot["phase"] == "done", (
             "status='done' 时 phase 没自动对齐 'done'，前端 polling 可能拿到错位快照。"
         )
         assert snapshot.get("result") == {"ok": 1}
     finally:
-        orgs_route._command_store.pop(cmd_id, None)
+        service.commands.pop(cmd_id, None)
 
 
 # =============================================================================

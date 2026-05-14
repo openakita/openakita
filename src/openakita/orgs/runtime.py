@@ -5226,13 +5226,26 @@ class OrgRuntime:
         )
 
         if entry:
-            asyncio.ensure_future(self._broadcast_ws("org:blackboard_update", {
-                "org_id": org_id, "scope": "org", "node_id": node_id,
+            payload = {
+                "org_id": org_id,
+                "scope": "org",
+                "node_id": node_id,
                 "memory_type": "resource",
                 "filename": resolved_name,
                 "file_path": str(p),
                 "file_size": size_bytes,
-            }))
+            }
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._broadcast_ws("org:blackboard_update", payload))
+            except RuntimeError:
+                logger.debug(
+                    "[OrgRuntime] skip blackboard websocket broadcast outside event loop "
+                    "(org=%s node=%s file=%s)",
+                    org_id,
+                    node_id,
+                    resolved_name,
+                )
 
         _TEXT_EXTS = {".md", ".txt", ".html", ".json", ".yaml", ".yml", ".csv", ".xml"}
         text_preview = ""

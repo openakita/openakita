@@ -312,6 +312,18 @@ class OrgCommandService:
         self._summary_subscribers.setdefault(command_id, []).append(
             (queue, asyncio.get_running_loop(), surface, target)
         )
+        cmd = self._commands.get(command_id)
+        if cmd and cmd.get("status") in {"done", "error"}:
+            event: dict[str, Any] = {
+                "type": "org_command_done",
+                "org_id": cmd.get("org_id", ""),
+                "command_id": command_id,
+            }
+            if cmd.get("status") == "done":
+                event["result"] = cmd.get("result")
+            else:
+                event["error"] = cmd.get("error") or "Command failed"
+            queue.put_nowait(event)
         return queue
 
     def unsubscribe_summary(self, command_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None:

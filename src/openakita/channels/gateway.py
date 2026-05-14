@@ -45,7 +45,10 @@ def _notify_im_event(event: str, data: dict | None = None) -> None:
     try:
         from openakita.api.routes.websocket import broadcast_event
 
-        asyncio.ensure_future(broadcast_event(event, data))
+        loop = asyncio.get_running_loop()
+        loop.create_task(broadcast_event(event, data))
+    except RuntimeError:
+        logger.debug("[Gateway] skip IM websocket broadcast outside event loop: %s", event)
     except Exception:
         pass
 

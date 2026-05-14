@@ -63,32 +63,72 @@ _UNSET_OWNER = object()
 class MemoryManager:
     """记忆管理器 (v2)"""
 
+    def _ensure_context_vars(self) -> None:
+        """Initialize per-instance contextvars for legacy ``__new__`` test doubles."""
+        if not hasattr(self, "_current_session_id_var"):
+            self._current_session_id_var = contextvars.ContextVar(
+                f"openakita_memory_session_id_{id(self)}",
+                default=None,
+            )
+        if not hasattr(self, "_current_user_id_var"):
+            self._current_user_id_var = contextvars.ContextVar(
+                f"openakita_memory_user_id_{id(self)}",
+                default="default",
+            )
+        if not hasattr(self, "_current_workspace_id_var"):
+            self._current_workspace_id_var = contextvars.ContextVar(
+                f"openakita_memory_workspace_id_{id(self)}",
+                default="default",
+            )
+        if not hasattr(self, "_session_turns_var"):
+            self._session_turns_var = contextvars.ContextVar(
+                f"openakita_memory_session_turns_{id(self)}",
+                default=None,
+            )
+        if not hasattr(self, "_recent_messages_var"):
+            self._recent_messages_var = contextvars.ContextVar(
+                f"openakita_memory_recent_messages_{id(self)}",
+                default=None,
+            )
+        if not hasattr(self, "_session_cited_memories_var"):
+            self._session_cited_memories_var = contextvars.ContextVar(
+                f"openakita_memory_cited_{id(self)}",
+                default=None,
+            )
+
     @property
     def _current_session_id(self) -> str | None:
+        self._ensure_context_vars()
         return self._current_session_id_var.get()
 
     @_current_session_id.setter
     def _current_session_id(self, value: str | None) -> None:
+        self._ensure_context_vars()
         self._current_session_id_var.set(value)
 
     @property
     def _current_user_id(self) -> str:
+        self._ensure_context_vars()
         return self._current_user_id_var.get()
 
     @_current_user_id.setter
     def _current_user_id(self, value: str) -> None:
+        self._ensure_context_vars()
         self._current_user_id_var.set(value or "default")
 
     @property
     def _current_workspace_id(self) -> str:
+        self._ensure_context_vars()
         return self._current_workspace_id_var.get()
 
     @_current_workspace_id.setter
     def _current_workspace_id(self, value: str) -> None:
+        self._ensure_context_vars()
         self._current_workspace_id_var.set(value or "default")
 
     @property
     def _session_turns(self) -> list[ConversationTurn]:
+        self._ensure_context_vars()
         turns = self._session_turns_var.get()
         if turns is None:
             turns = []
@@ -97,10 +137,12 @@ class MemoryManager:
 
     @_session_turns.setter
     def _session_turns(self, value: list[ConversationTurn]) -> None:
+        self._ensure_context_vars()
         self._session_turns_var.set(value)
 
     @property
     def _recent_messages(self) -> list[dict]:
+        self._ensure_context_vars()
         messages = self._recent_messages_var.get()
         if messages is None:
             messages = []
@@ -109,10 +151,12 @@ class MemoryManager:
 
     @_recent_messages.setter
     def _recent_messages(self, value: list[dict]) -> None:
+        self._ensure_context_vars()
         self._recent_messages_var.set(value)
 
     @property
     def _session_cited_memories(self) -> list[dict]:
+        self._ensure_context_vars()
         memories = self._session_cited_memories_var.get()
         if memories is None:
             memories = []
@@ -121,6 +165,7 @@ class MemoryManager:
 
     @_session_cited_memories.setter
     def _session_cited_memories(self, value: list[dict]) -> None:
+        self._ensure_context_vars()
         self._session_cited_memories_var.set(value)
 
     def __init__(
@@ -486,8 +531,9 @@ class MemoryManager:
         self._recent_messages = []
         self._session_cited_memories = []
         self._set_retrieval_scope_context()
-        if hasattr(self.retrieval_engine, "set_focus_terms"):
-            self.retrieval_engine.set_focus_terms(focus_terms or [])
+        retrieval_engine = getattr(self, "retrieval_engine", None)
+        if hasattr(retrieval_engine, "set_focus_terms"):
+            retrieval_engine.set_focus_terms(focus_terms or [])
         snapshot = getattr(self, "_precompact_snapshot", None)
         if isinstance(snapshot, dict) and snapshot.get("session_id") != session_id:
             self._precompact_snapshot = None

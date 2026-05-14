@@ -134,6 +134,38 @@ async def test_summary_delivery_records_target(persisted_org):
 
 
 @pytest.mark.asyncio
+async def test_late_summary_subscriber_receives_terminal_event(persisted_org):
+    persisted_org.status = OrgStatus.ACTIVE
+    rt = MagicMock()
+    rt.get_org.return_value = persisted_org
+    rt.get_command_tracker_snapshot.return_value = None
+    service = OrgCommandService(rt, None)
+    service._schedule_run = MagicMock()
+    started = service.submit(OrgCommandRequest(org_id=persisted_org.id, content="任务"))
+    service._update_command_state(
+        started["command_id"],
+        status="done",
+        phase="done",
+        result={"result": "already done"},
+        finished_at=time.time(),
+    )
+
+    queue = service.subscribe_summary(
+        started["command_id"],
+        surface="im",
+        target="wechat:chat:user",
+    )
+
+    event = await asyncio.wait_for(queue.get(), timeout=0.1)
+    assert event == {
+        "type": "org_command_done",
+        "org_id": persisted_org.id,
+        "command_id": started["command_id"],
+        "result": {"result": "already done"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_cancel_is_idempotent_for_finished_command(persisted_org):
     persisted_org.status = OrgStatus.ACTIVE
     rt = MagicMock()

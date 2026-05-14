@@ -99,6 +99,53 @@ class TestChatEndpoint:
         assert captured_kwargs["mode"] == "agent"
         assert captured_kwargs["plan_mode"] is False
 
+    async def test_chat_permission_mode_sets_policy_v2_session_override(self, client, app, tmp_path):
+        from openakita.sessions.manager import SessionManager
+
+        conversation_id = "test-conv-permission-mode"
+        app.state.session_manager = SessionManager(storage_path=tmp_path / "sessions")
+
+        resp = await client.post(
+            "/api/chat",
+            json={
+                "message": "Hello",
+                "conversation_id": conversation_id,
+                "permission_mode": "accept_edits",
+            },
+        )
+
+        assert resp.status_code == 200
+        session = app.state.session_manager.get_session(
+            channel="desktop",
+            chat_id=conversation_id,
+            user_id="user",
+            create_if_missing=False,
+        )
+        assert session is not None
+        assert session.confirmation_mode_override == "accept_edits"
+
+    async def test_chat_permission_mode_plan_uses_plan_role(self, client, mock_agent, monkeypatch):
+        captured_kwargs = {}
+
+        async def fake_stream(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            yield {"type": "text_delta", "content": "Hello from mock agent"}
+            yield {"type": "done"}
+
+        monkeypatch.setattr(mock_agent, "chat_with_session_stream", fake_stream)
+
+        resp = await client.post(
+            "/api/chat",
+            json={
+                "message": "Hello",
+                "conversation_id": "test-conv-permission-mode-plan",
+                "permission_mode": "plan",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert captured_kwargs["mode"] == "plan"
+
     async def test_chat_empty_message(self, client):
         resp = await client.post(
             "/api/chat",
