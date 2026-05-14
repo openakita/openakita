@@ -176,22 +176,39 @@ def _shell_lru_size() -> int:
     return _SHELL_LRU_DEFAULT_SIZE
 
 
-def _coerce_tuple(value: list[str] | tuple[str, ...] | None) -> tuple[str, ...] | None:
-    """Convert list/None into a hashable key fragment.
+def _normalize_extra(
+    value: list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    """Hashable key fragment for ``extra_*`` and ``excluded_patterns``.
 
-    ``functools.lru_cache`` requires hashable arguments — patterns come in as
-    lists from ``ShellRiskConfig``. Returns:
+    For these four slots, ``None`` and ``[]`` are **semantically
+    equivalent**: :func:`_matches_any` and the excluded-patterns loop
+    both gate on truthiness (``if extra:``), so an empty container
+    means "no extra patterns" exactly like ``None``. Folding both
+    to ``None`` here lets the LRU cache treat them as one key,
+    improving hit rate on configs where some classes ship without
+    custom patterns.
+    """
+    if value is None or len(value) == 0:
+        return None
+    if isinstance(value, tuple):
+        return value
+    return tuple(value)
 
-    - ``None`` → ``None`` (means "use default behaviour" for this slot)
-    - ``[]`` → ``()`` (empty tuple; the **opt-out** state: caller passed
-      empty list to explicitly disable. Notably, ``blocked_tokens=[]``
-      means "skip the blocked-token check entirely" — must NOT be folded
-      into ``None``, which would re-enable the defaults.)
-    - non-empty list → tuple copy
 
-    The None-vs-empty distinction is load-bearing for ``blocked_tokens``;
-    keep it consistent across all 5 slots so callers don't need to
-    remember which slot has which semantics.
+def _normalize_blocked(
+    value: list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    """Hashable key fragment for ``blocked_tokens``.
+
+    Unlike the extra/excluded slots, here ``None`` and ``[]`` are NOT
+    equivalent:
+
+    - ``None`` → fall back to :data:`DEFAULT_BLOCKED_COMMANDS`
+    - ``()`` (empty tuple) → explicit opt-out, skip the check entirely
+
+    Folding ``[]`` to ``None`` would silently re-enable the defaults
+    for a caller who explicitly disabled them. Keep them distinct.
     """
     if value is None:
         return None
@@ -290,11 +307,11 @@ def classify_shell_command(
     # v1 policy.py 行为一致。
     return _classify_cached(
         command,
-        _coerce_tuple(extra_critical),
-        _coerce_tuple(extra_high),
-        _coerce_tuple(extra_medium),
-        _coerce_tuple(blocked_tokens),
-        _coerce_tuple(excluded_patterns),
+        _normalize_extra(extra_critical),
+        _normalize_extra(extra_high),
+        _normalize_extra(extra_medium),
+        _normalize_blocked(blocked_tokens),
+        _normalize_extra(excluded_patterns),
     )
 
 

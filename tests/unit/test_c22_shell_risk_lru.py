@@ -116,9 +116,16 @@ class TestNoneVsEmptyListSemantics:
     """Regression for the C22 implementation: the ``[]`` vs ``None``
     distinction for ``blocked_tokens`` is load-bearing — ``[]`` means
     "explicitly opt out of blocked-token check", ``None`` means "use
-    defaults". Collapsing both to ``None`` (a naive
-    ``not value -> return None`` in ``_coerce_tuple``) was the first-try
-    bug; this test pins the correct semantics."""
+    defaults". The two normalisers (:func:`_normalize_blocked` vs
+    :func:`_normalize_extra`) split the slots:
+
+    - **blocked_tokens** uses ``_normalize_blocked``: keeps ``None``
+      vs ``[]`` distinct.
+    - **extra_critical / extra_high / extra_medium / excluded_patterns**
+      use ``_normalize_extra``: folds ``[]`` to ``None`` because the
+      downstream ``if extra:`` check treats them identically; folding
+      improves LRU hit rate.
+    """
 
     def test_blocked_tokens_none_uses_defaults(self) -> None:
         """blocked_tokens=None → DEFAULT_BLOCKED_COMMANDS applied."""
@@ -132,13 +139,37 @@ class TestNoneVsEmptyListSemantics:
         result = classify_shell_command("regedit /s f.reg", blocked_tokens=[])
         assert result == ShellRiskLevel.LOW
 
-    def test_empty_and_none_are_different_cache_keys(self) -> None:
+    def test_blocked_empty_and_none_are_different_cache_keys(self) -> None:
         """Verify the cache key distinguishes them so the previous
         assertion couldn't accidentally be cached from a prior call."""
         classify_shell_command("regedit /s f.reg")  # None → BLOCKED
         classify_shell_command("regedit /s f.reg", blocked_tokens=[])  # [] → LOW
         info = classify_shell_command.cache_info()
         assert info.misses == 2, "() and None must be distinct cache keys"
+
+    def test_extra_empty_and_none_share_cache_slot(self) -> None:
+        """Regression for F6 (post-audit refinement). For
+        ``extra_critical`` / ``extra_high`` / ``extra_medium`` /
+        ``excluded_patterns``, the downstream ``if extra:`` check
+        gates on truthiness, so ``[]`` and ``None`` are
+        behaviourally identical. The normaliser must fold ``[]`` to
+        ``None`` so they share one cache entry — otherwise we burn
+        an LRU slot on the duplicate.
+        """
+        classify_shell_command.cache_clear()
+        cmd = "echo hello"
+        classify_shell_command(cmd)  # all None
+        classify_shell_command(cmd, extra_critical=[])
+        classify_shell_command(cmd, extra_high=[])
+        classify_shell_command(cmd, extra_medium=[])
+        classify_shell_command(cmd, excluded_patterns=[])
+        info = classify_shell_command.cache_info()
+        assert info.misses == 1 and info.hits == 4, (
+            f"extra_* / excluded_patterns [] must fold to None for cache "
+            f"key equality; got misses={info.misses}, hits={info.hits}. "
+            "If you intentionally split these slots, remove "
+            "_normalize_extra from shell_risk.py and update this test."
+        )
 
 
 def test_cache_clear_resets() -> None:
