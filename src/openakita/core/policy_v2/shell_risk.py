@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 import shlex
 from enum import StrEnum
+from functools import lru_cache
 
 # ---------------------------------------------------------------------------
 # Critical: 不可恢复 + 全系统破坏（rm -rf / 等）
@@ -150,35 +151,74 @@ _CRITICAL_RE = [re.compile(p, re.IGNORECASE) for p in CRITICAL_SHELL_PATTERNS]
 _HIGH_RE = [re.compile(p, re.IGNORECASE) for p in HIGH_RISK_SHELL_PATTERNS]
 _MEDIUM_RE = [re.compile(p, re.IGNORECASE) for p in MEDIUM_RISK_SHELL_PATTERNS]
 
+# C22 P3-1: LRU cache size for shell classification.
+# Plan §13.5.2 B mandated an LRU cache; benchmarks (test_c22_shell_risk_lru
+# bench section) show first-call cost ~150-300µs, cached call ~0.5-1.5µs
+# (>100× speedup) on a 50-pattern set. 512 entries cover typical agent
+# session command diversity (CI / dev loops repeat the same commands 100s
+# of times). Tune via OPENAKITA_SHELL_LRU_SIZE env if needed.
+_SHELL_LRU_DEFAULT_SIZE = 512
 
-def classify_shell_command(
-    command: str,
-    *,
-    extra_critical: list[str] | None = None,
-    extra_high: list[str] | None = None,
-    extra_medium: list[str] | None = None,
-    blocked_tokens: list[str] | None = None,
-    excluded_patterns: list[str] | None = None,
-) -> ShellRiskLevel:
-    """Classify a shell command string.
 
-    Args:
-        command: The full command line (may include sudo/nice/env prefixes).
-        extra_critical / extra_high / extra_medium: User-provided custom patterns
-            from POLICIES.yaml ``command_patterns.custom_critical/custom_high``
-            (currently no custom_medium in v1, but accepted for symmetry).
-        blocked_tokens: Override DEFAULT_BLOCKED_COMMANDS. None → use defaults.
-        excluded_patterns: Patterns that, if matched, bypass classification
-            (forced LOW). For user opt-out via POLICIES.yaml.
+def _shell_lru_size() -> int:
+    """Resolve cache size at module load. Test fixtures may override via
+    ``classify_shell_command.cache_clear`` + ``configure_cache_size``."""
+    import os as _os
 
-    Returns:
-        ShellRiskLevel. Empty/whitespace-only command → LOW (avoid false alarm).
+    raw = _os.environ.get("OPENAKITA_SHELL_LRU_SIZE", "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if 0 < v < 100_000:
+                return v
+        except ValueError:
+            pass
+    return _SHELL_LRU_DEFAULT_SIZE
+
+
+def _coerce_tuple(value: list[str] | tuple[str, ...] | None) -> tuple[str, ...] | None:
+    """Convert list/None into a hashable key fragment.
+
+    ``functools.lru_cache`` requires hashable arguments — patterns come in as
+    lists from ``ShellRiskConfig``. Returns:
+
+    - ``None`` → ``None`` (means "use default behaviour" for this slot)
+    - ``[]`` → ``()`` (empty tuple; the **opt-out** state: caller passed
+      empty list to explicitly disable. Notably, ``blocked_tokens=[]``
+      means "skip the blocked-token check entirely" — must NOT be folded
+      into ``None``, which would re-enable the defaults.)
+    - non-empty list → tuple copy
+
+    The None-vs-empty distinction is load-bearing for ``blocked_tokens``;
+    keep it consistent across all 5 slots so callers don't need to
+    remember which slot has which semantics.
     """
-    if command is None or not command.strip():
-        return ShellRiskLevel.LOW
-    # NOTE: 不 strip 工作字符串 —— 部分 CRITICAL pattern 依赖 trailing whitespace
-    # （例如 ``chown\s+-R\s+.*\s+/\s`` 要求 / 后有空白才不误中 'rm -rf /tmp'）。
-    # v1 policy.py 行为一致。
+    if value is None:
+        return None
+    if isinstance(value, tuple):
+        return value
+    return tuple(value)
+
+
+@lru_cache(maxsize=_shell_lru_size())
+def _classify_cached(
+    command: str,
+    extra_critical: tuple[str, ...] | None,
+    extra_high: tuple[str, ...] | None,
+    extra_medium: tuple[str, ...] | None,
+    blocked_tokens: tuple[str, ...] | None,
+    excluded_patterns: tuple[str, ...] | None,
+) -> ShellRiskLevel:
+    """Pure inner classifier — all args hashable so ``lru_cache`` can key on
+    them. Public ``classify_shell_command`` is a thin wrapper that converts
+    list args to tuples.
+
+    Cache invalidation strategy: when ``ShellRiskConfig`` changes (POLICIES.yaml
+    hot-reload), the tuples change → different cache keys → old entries
+    naturally age out under LRU pressure. Hot-reload code does NOT need to
+    explicitly clear the cache, though tests can call
+    ``classify_shell_command.cache_clear`` for determinism.
+    """
     text = command
 
     if excluded_patterns:
@@ -189,7 +229,9 @@ def classify_shell_command(
             except re.error:
                 continue
 
-    tokens = blocked_tokens if blocked_tokens is not None else DEFAULT_BLOCKED_COMMANDS
+    tokens = (
+        list(blocked_tokens) if blocked_tokens is not None else DEFAULT_BLOCKED_COMMANDS
+    )
     if tokens and _has_blocked_token(text, tokens):
         return ShellRiskLevel.BLOCKED
 
@@ -205,10 +247,68 @@ def classify_shell_command(
     return ShellRiskLevel.LOW
 
 
+def classify_shell_command(
+    command: str,
+    *,
+    extra_critical: list[str] | None = None,
+    extra_high: list[str] | None = None,
+    extra_medium: list[str] | None = None,
+    blocked_tokens: list[str] | None = None,
+    excluded_patterns: list[str] | None = None,
+) -> ShellRiskLevel:
+    """Classify a shell command string.
+
+    C22 P3-1: LRU-cached on (command, extra_*, blocked_tokens,
+    excluded_patterns). First call for a given combination scans patterns;
+    subsequent calls return in O(1). Plan §13.5.2 B mandated this — engine
+    hot path runs this per ``run_shell`` tool call, and a typical dev loop
+    repeats the same 10–20 commands hundreds of times.
+
+    Args:
+        command: The full command line (may include sudo/nice/env prefixes).
+        extra_critical / extra_high / extra_medium: User-provided custom patterns
+            from POLICIES.yaml ``command_patterns.custom_critical/custom_high``
+            (currently no custom_medium in v1, but accepted for symmetry).
+        blocked_tokens: Override DEFAULT_BLOCKED_COMMANDS. None → use defaults.
+        excluded_patterns: Patterns that, if matched, bypass classification
+            (forced LOW). For user opt-out via POLICIES.yaml.
+
+    Returns:
+        ShellRiskLevel. Empty/whitespace-only command → LOW (avoid false alarm).
+
+    Cache introspection (mainly tests):
+        ``classify_shell_command.cache_info()`` returns
+        ``functools._CacheInfo`` (hits, misses, maxsize, currsize).
+        ``classify_shell_command.cache_clear()`` resets the cache.
+    """
+    if command is None or not command.strip():
+        # Skip cache for empty input: hot path is non-empty commands and
+        # caching "" → LOW just wastes one slot for a trivial check.
+        return ShellRiskLevel.LOW
+    # NOTE: 不 strip 工作字符串 —— 部分 CRITICAL pattern 依赖 trailing whitespace
+    # （例如 ``chown\s+-R\s+.*\s+/\s`` 要求 / 后有空白才不误中 'rm -rf /tmp'）。
+    # v1 policy.py 行为一致。
+    return _classify_cached(
+        command,
+        _coerce_tuple(extra_critical),
+        _coerce_tuple(extra_high),
+        _coerce_tuple(extra_medium),
+        _coerce_tuple(blocked_tokens),
+        _coerce_tuple(excluded_patterns),
+    )
+
+
+# Expose ``_classify_cached``'s cache_info/cache_clear at the public entry
+# so callers (tests, perf benches, ops scripts) can introspect without
+# importing the underscore-prefixed helper.
+classify_shell_command.cache_info = _classify_cached.cache_info  # type: ignore[attr-defined]
+classify_shell_command.cache_clear = _classify_cached.cache_clear  # type: ignore[attr-defined]
+
+
 def _matches_any(
     text: str,
     compiled: list[re.Pattern[str]],
-    extra: list[str] | None,
+    extra: tuple[str, ...] | list[str] | None,
 ) -> bool:
     for rx in compiled:
         if rx.search(text):
