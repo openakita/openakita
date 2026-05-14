@@ -58,6 +58,37 @@ const ACTION_LABELS: Record<string, { label: string; color: string }> = {
   defer:   { label: "延期",  color: "#9333ea" },
 };
 
+// C23 F7: engine.py 决策链 step.name → 中文短标签。chain step name 是
+// engine 内部英文常量（preflight / classify / matrix / safety_immune / ...）
+// 直接渲染会让中文用户面对一堆英文标识符。这里给出对照表，
+// 命中则展示中文，未命中（例如未来新加的 step）则保留原 name 不破坏渲染。
+// 后端真相来源: src/openakita/core/policy_v2/engine.py 各 DecisionStep
+// 的 name= 参数。
+const STEP_LABELS: Record<string, string> = {
+  engine_crash:              "引擎异常",
+  preflight:                 "预检",
+  classify:                  "分类",
+  safety_immune:             "永不放行检查",
+  owner_only:                "Owner 唯一性",
+  channel_compat:            "信道兼容性",
+  matrix:                    "矩阵决策",
+  matrix_deny:               "矩阵拒绝",
+  matrix_allow:              "矩阵放行",
+  replay:                    "重放检查",
+  trusted_path:              "可信路径",
+  user_allowlist:            "用户白名单",
+  death_switch:              "死亡开关",
+  unattended:                "无人值守模式",
+  finalize:                  "终决",
+  intent_preflight:          "意图预检",
+  intent_role_block:         "角色意图阻断",
+  intent_trust_bypass:       "信任旁路",
+  intent_clean:              "意图清扫",
+  intent_risk:               "意图风险",
+  approval_override_ignored: "覆盖未应用",
+  approval_override_applied: "覆盖已应用",
+};
+
 export function SecurityConfirmModal({
   data, apiBase, onClose, timerRef, setData,
 }: {
@@ -257,9 +288,10 @@ export function SecurityConfirmModal({
               }}>
                 {data.decisionChain.map((step, idx) => {
                   const actionMeta = ACTION_LABELS[step.action] || { label: step.action, color: "#6b7280" };
+                  const stepLabel = STEP_LABELS[step.name] || step.name;
                   return (
                     <li key={idx} style={{ marginBottom: 4 }}>
-                      <span style={{ fontWeight: 600 }}>{step.name}</span>
+                      <span style={{ fontWeight: 600 }} title={step.name}>{stepLabel}</span>
                       <span
                         style={{
                           marginLeft: 6,
