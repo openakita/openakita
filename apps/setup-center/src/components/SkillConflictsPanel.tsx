@@ -42,7 +42,7 @@ function describeOrigin(origin?: string): string {
     case "marketplace":
       return "技能市场";
     case "plugin":
-      return "插件提供";
+      return "工作台应用提供";
     default:
       return origin || "未知来源";
   }

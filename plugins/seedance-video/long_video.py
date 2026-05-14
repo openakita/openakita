@@ -257,8 +257,10 @@ class ChainGenerator:
     ) -> list[dict]:
         """Generate all segments with chaining.
 
-        mode: "serial" — each segment uses previous as reference_video (AI extend)
-              "parallel" — each uses return_last_frame for next's first_frame
+        mode: "serial" — each segment uses previous last_frame as first_frame
+              "serial_extend" / "cloud_transition" — each later segment uses
+                  previous video_url as reference_video for Seedance cloud continuation
+              "parallel" — each segment is generated independently
 
         ``max_parallel`` (parallel mode only) — bounded concurrency for the
         ``run_parallel`` worker that submits the per-segment Ark calls.
@@ -281,12 +283,18 @@ class ChainGenerator:
                 base["chain_mode"] = mode
             return base
 
-        if mode == "serial":
+        if mode in ("serial", "serial_extend", "cloud_transition"):
             prev_task = None
             for seg in segments:
                 idx = seg.get("index", 0)
-                content = self._build_content(seg, prev_task)
+                use_extend = mode in ("serial_extend", "cloud_transition")
+                content = (
+                    self._build_extend_content(seg, prev_task)
+                    if use_extend
+                    else self._build_content(seg, prev_task)
+                )
                 has_frame = bool(prev_task and prev_task.get("last_frame_url"))
+                has_video = bool(prev_task and prev_task.get("video_url"))
                 try:
                     result = await self._ark.create_task(
                         model=model_id,
@@ -326,7 +334,7 @@ class ChainGenerator:
                     ark_task_id=result.get("id", ""),
                     status="running",
                     prompt=seg.get("prompt", ""),
-                    mode="i2v" if has_frame else "t2v",
+                    mode="extend" if has_video and use_extend else ("i2v" if has_frame else "t2v"),
                     model=model_id,
                     params=_seg_params(seg),
                 )
@@ -405,6 +413,33 @@ class ChainGenerator:
                     prev_task.get("id", "?"),
                 )
         return content
+
+    def _build_extend_content(self, segment: dict, prev_task: dict | None) -> list[dict]:
+        """Build content for cloud continuation using previous video_url.
+
+        Seedance edit/extend modes require a public cloud video URL. If the
+        previous task has no such URL, fall back to last-frame chaining so long
+        video generation can still proceed with reduced continuity.
+        """
+        prompt = segment.get("prompt", "")
+        transition = segment.get("transition_to_next") or segment.get("transition") or ""
+        if transition:
+            prompt = f"{prompt}\n\n转场要求：{transition}"
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        if prev_task:
+            video_url = prev_task.get("video_url") or ""
+            if isinstance(video_url, str) and video_url.lower().startswith(("http://", "https://")):
+                content.append({
+                    "type": "video_url",
+                    "video_url": {"url": video_url},
+                    "role": "reference_video",
+                })
+                logger.info(
+                    "Chain: using video_url from segment %s for cloud extend",
+                    prev_task.get("id", "?"),
+                )
+                return content
+        return self._build_content(segment, prev_task)
 
     @staticmethod
     def _is_image_rejection(exc: Exception) -> bool:

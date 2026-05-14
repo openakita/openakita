@@ -341,6 +341,10 @@ class OrgRuntime:
         # 自动取用，避免插件节点必须人工列附件。同样在每次任务起手清空。
         # key 与 _node_files_registered_in_task 对齐：``{org_id}:{node_id}``。
         self._node_plugin_attachments_in_task: dict[str, list[dict]] = {}
+        # 工作台节点：本任务内插件工具返回 ok=False 且 terminal=True 时记录
+        # 失败详情。如果叶子工作台随后没有提交交付物，运行时会把本轮视为失败
+        # 并关闭 chain，避免组织命令永远等不到交付。
+        self._node_plugin_failures_in_task: dict[str, dict] = {}
 
         # 工具级在途锁：防止 LLM 在同一 ReAct iter 内 emit 多个相同 tool_use
         # （如 3 次 org_delegate_task 给同一 to_node 同一 chain）造成下游
@@ -1473,6 +1477,7 @@ class OrgRuntime:
             # 产生的附件会累计到这里，供 _handle_org_submit_deliverable 在 LLM
             # 未传 file_attachments 时自动取用。
             self._node_plugin_attachments_in_task[cache_key] = []
+            self._node_plugin_failures_in_task.pop(cache_key, None)
 
             result_text = await self._run_agent_task(
                 agent, prompt, session_id, org, node,
@@ -1634,6 +1639,27 @@ class OrgRuntime:
 
             is_normal = exit_reason in ("normal", "ask_user", "waiting_user") or is_soft_verify
             is_terminated = exit_reason == "loop_terminated"
+            plugin_failure = self._node_plugin_failures_in_task.get(cache_key)
+            submit_called_for_failure = self._react_trace_has_tool(
+                react_trace, "org_submit_deliverable",
+            )
+            if (
+                is_normal
+                and plugin_failure
+                and activation_origin == "task_assign"
+                and chain_id
+                and not submit_called_for_failure
+            ):
+                exit_reason = "plugin_tool_failed"
+                is_normal = False
+                is_terminated = False
+                msg = (
+                    plugin_failure.get("error")
+                    or plugin_failure.get("message")
+                    or "工作台工具调用失败"
+                )
+                if msg and msg not in (result_text or ""):
+                    result_text = ((result_text or "").rstrip() + "\n\n" + str(msg)).strip()
 
             status_reason = "task_completed" if is_normal else (
                 "task_terminated" if is_terminated else "task_failed"
@@ -3595,6 +3621,7 @@ class OrgRuntime:
         for (oid, root_id), tracker in list(self._active_user_cmd.items()):
             if oid != org_id or tracker.command_id != command_id:
                 continue
+            blockers = self._collect_tracker_blockers(tracker)
             return {
                 "command_id": tracker.command_id,
                 "root_node_id": root_id,
@@ -3603,6 +3630,13 @@ class OrgRuntime:
                 "root_chain_id": tracker.root_chain_id or "",
                 "open_chains": sorted(tracker.open_chains),
                 "open_chain_count": len(tracker.open_chains),
+                "open_subtree_chains": blockers.get("open_subtree_chains", []),
+                "chain_parent": blockers.get("chain_parent", {}),
+                "root_status": blockers.get("root_status", ""),
+                "busy_nodes": blockers.get("busy_nodes", []),
+                "pending_mailbox": blockers.get("pending_mailbox", []),
+                "blockers": blockers.get("blockers", []),
+                "blocker_summary": blockers.get("summary", ""),
                 "elapsed_s": round(now - tracker.started_at, 1),
                 "last_progress_elapsed_s": round(now - tracker.last_progress_at, 1),
                 "warned_stuck": tracker.warned_stuck,
@@ -3610,6 +3644,83 @@ class OrgRuntime:
                 "user_cancelled": tracker.user_cancelled,
             }
         return None
+
+    def _collect_tracker_blockers(self, tracker: UserCommandTracker) -> dict[str, Any]:
+        """Return structured reasons why a user command is not finalized yet."""
+        org = self.get_org(tracker.org_id)
+        bucket = self._closed_chains.get(tracker.org_id) or {}
+        subtree = self._collect_chain_subtree(tracker.root_chain_id)
+        open_subtree = sorted(cid for cid in subtree if cid not in bucket)
+        if not subtree:
+            open_subtree = sorted(tracker.open_chains)
+
+        root_status = ""
+        busy_nodes: list[dict[str, str]] = []
+        pending_mailbox: list[dict[str, Any]] = []
+        if org:
+            root = org.get_node(tracker.root_node_id)
+            root_status = root.status.value if root else "missing"
+            for node in org.nodes:
+                if node.id != tracker.root_node_id and node.status in (
+                    NodeStatus.BUSY, NodeStatus.WAITING,
+                ):
+                    busy_nodes.append({
+                        "node_id": node.id,
+                        "role_title": node.role_title,
+                        "status": node.status.value,
+                    })
+            messenger = self.get_messenger(tracker.org_id)
+            if messenger:
+                for node in org.nodes:
+                    count = messenger.get_pending_count(node.id)
+                    if count > 0:
+                        pending_mailbox.append({
+                            "node_id": node.id,
+                            "role_title": node.role_title,
+                            "pending": count,
+                        })
+
+        blockers: list[str] = []
+        if open_subtree:
+            blockers.append("open_chains")
+        if root_status and root_status != NodeStatus.IDLE.value:
+            blockers.append("root_not_idle")
+        if busy_nodes:
+            blockers.append("busy_nodes")
+        if pending_mailbox:
+            blockers.append("pending_mailbox")
+        if tracker.state == "awaiting_summary":
+            blockers.append("awaiting_summary")
+
+        summary_parts: list[str] = []
+        if open_subtree:
+            summary_parts.append(f"仍有 {len(open_subtree)} 条任务链未关闭")
+        if root_status and root_status != NodeStatus.IDLE.value:
+            summary_parts.append(f"根节点状态为 {root_status}")
+        if busy_nodes:
+            names = ", ".join(n["role_title"] or n["node_id"] for n in busy_nodes[:3])
+            summary_parts.append(f"忙碌节点: {names}")
+        if pending_mailbox:
+            names = ", ".join(
+                f"{n['role_title'] or n['node_id']}({n['pending']})"
+                for n in pending_mailbox[:3]
+            )
+            summary_parts.append(f"待处理消息: {names}")
+        if tracker.state == "awaiting_summary":
+            summary_parts.append("正在等待根节点生成最终汇总")
+
+        return {
+            "blockers": blockers,
+            "summary": "；".join(summary_parts),
+            "open_subtree_chains": open_subtree,
+            "chain_parent": {
+                cid: self._chain_parent.get(cid)
+                for cid in open_subtree
+            },
+            "root_status": root_status,
+            "busy_nodes": busy_nodes,
+            "pending_mailbox": pending_mailbox,
+        }
 
     async def cancel_user_command(
         self,
@@ -3925,6 +4036,7 @@ class OrgRuntime:
         """
         try:
             subtree = self._collect_chain_subtree(tracker.root_chain_id)
+            blockers = self._collect_tracker_blockers(tracker)
             payload = {
                 "org": tracker.org_id,
                 "root": tracker.root_node_id,
@@ -3937,6 +4049,8 @@ class OrgRuntime:
                     1 for c in subtree
                     if c in (self._closed_chains.get(tracker.org_id) or {})
                 ),
+                "blockers": blockers.get("blockers", []),
+                "blocker_summary": blockers.get("summary", ""),
             }
             payload.update(extra)
             logger.debug("[Finalize] %s", payload)
@@ -3956,6 +4070,11 @@ class OrgRuntime:
                     "decision": decision,
                     "command_id": tracker.command_id or "",
                     "root_chain_id": tracker.root_chain_id or "",
+                    "blockers": blockers.get("blockers", []),
+                    "blocker_summary": blockers.get("summary", ""),
+                    "open_subtree_chains": blockers.get("open_subtree_chains", []),
+                    "busy_nodes": blockers.get("busy_nodes", []),
+                    "pending_mailbox": blockers.get("pending_mailbox", []),
                 },
             )
         except Exception:
@@ -4828,9 +4947,38 @@ class OrgRuntime:
             self._node_last_activity[f"{org_id}:{node_id}"] = time.monotonic()
             if tool_name.startswith("org_"):
                 return await tool_handler.handle(tool_name, tool_input, org_id, node_id)
-            result = await original_with_policy(
-                tool_name, tool_input, policy_result, session_id=session_id,
-            )
+            is_plugin_tool = self._is_plugin_tool(agent, tool_name)
+            if is_plugin_tool:
+                await self._broadcast_ws("org:workbench_tool_status", {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "tool_name": tool_name,
+                    "status": "running",
+                })
+                self.get_event_store(org_id).emit(
+                    "workbench_tool_started",
+                    node_id,
+                    {"tool_name": tool_name, "input": str(tool_input)[:_LIM_EVENT]},
+                )
+            try:
+                result = await original_with_policy(
+                    tool_name, tool_input, policy_result, session_id=session_id,
+                )
+            except Exception as exc:
+                if is_plugin_tool:
+                    await self._broadcast_ws("org:workbench_tool_status", {
+                        "org_id": org_id,
+                        "node_id": node_id,
+                        "tool_name": tool_name,
+                        "status": "failed",
+                        "error": str(exc)[:_LIM_WS],
+                    })
+                    self.get_event_store(org_id).emit(
+                        "workbench_tool_failed",
+                        node_id,
+                        {"tool_name": tool_name, "error": str(exc)[:_LIM_EVENT]},
+                    )
+                raise
             if tool_name in ("create_plan", "update_plan_step", "complete_plan"):
                 chain_id = getattr(agent, "_org_context", {}).get("current_chain_id") or ""
                 if chain_id:
@@ -4848,10 +4996,18 @@ class OrgRuntime:
                     logger.debug(
                         "[OrgRuntime] failed to record file output", exc_info=True,
                     )
-            elif self._is_plugin_tool(agent, tool_name):
+            elif is_plugin_tool:
                 # 工作台节点：插件工具产出（image_urls / video_url / local_paths /
                 # asset_ids）由 runtime 自动下载到 org workspace 并走 _register_file_output
                 # 登记，让产物进入 chat UI 附件 chip + 任务验收链路。
+                plugin_ok = True
+                try:
+                    import json as _json
+                    parsed = _json.loads(result) if isinstance(result, str) else None
+                    if isinstance(parsed, dict) and parsed.get("ok") is False:
+                        plugin_ok = False
+                except Exception:
+                    plugin_ok = True
                 try:
                     ws = getattr(agent, "_org_context", {}).get("workspace")
                     enhanced = await self._record_plugin_asset_output(
@@ -4864,6 +5020,18 @@ class OrgRuntime:
                     logger.debug(
                         "[OrgRuntime] failed to record plugin asset output",
                         exc_info=True,
+                    )
+                if plugin_ok:
+                    await self._broadcast_ws("org:workbench_tool_status", {
+                        "org_id": org_id,
+                        "node_id": node_id,
+                        "tool_name": tool_name,
+                        "status": "finished",
+                    })
+                    self.get_event_store(org_id).emit(
+                        "workbench_tool_succeeded",
+                        node_id,
+                        {"tool_name": tool_name},
                     )
             return result
 
@@ -5572,6 +5740,40 @@ class OrgRuntime:
         # Skip failed tool calls — only auto-register on success-looking
         # payloads. Plugins are free to set ok=False; we still respect that.
         if payload.get("ok") is False:
+            failure = {
+                "tool_name": tool_name,
+                "error": (
+                    payload.get("error")
+                    or payload.get("error_message")
+                    or payload.get("message")
+                    or "插件工具调用失败"
+                ),
+                "status_code": payload.get("status_code"),
+                "terminal": bool(payload.get("terminal", False)),
+            }
+            try:
+                self.get_event_store(org_id).emit(
+                    "workbench_tool_failed",
+                    node_id,
+                    {
+                        "tool_name": tool_name,
+                        "error": str(failure["error"])[:_LIM_EVENT],
+                        "status_code": failure.get("status_code"),
+                        "terminal": failure["terminal"],
+                    },
+                )
+                await self._broadcast_ws("org:workbench_tool_status", {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "tool_name": tool_name,
+                    "status": "failed",
+                    "error": str(failure["error"])[:_LIM_WS],
+                    "terminal": failure["terminal"],
+                })
+            except Exception:
+                logger.debug("[OrgRuntime] plugin failure emit failed", exc_info=True)
+            if failure["terminal"]:
+                self._node_plugin_failures_in_task[f"{org_id}:{node_id}"] = failure
             return None
 
         plugin_id = self._plugin_id_for_tool(agent, tool_name) or "plugin"

@@ -84,6 +84,7 @@ class OrgCommandRequest:
     origin_surface: OrgCommandSurface = OrgCommandSurface.ORG_CONSOLE
     output_scope: OrgOutputScope = OrgOutputScope.CONSOLE_FULL
     replace_existing: bool = False
+    continue_previous: bool = False
 
 
 def set_command_service(service: OrgCommandService | None) -> None:
@@ -146,6 +147,13 @@ class OrgCommandService:
         command_id = uuid.uuid4().hex[:12]
         root_key = (request.org_id, root_node_id)
         now = time.time()
+        run_content = content
+        if request.continue_previous:
+            run_content = self._build_continue_content(
+                request.org_id,
+                root_node_id,
+                content,
+            )
 
         with self._lock:
             existing_id = self._running_by_root.get(root_key)
@@ -175,12 +183,23 @@ class OrgCommandService:
                 "output_scope": request.output_scope.value,
                 "source": request.source.to_dict(),
                 "delivered_to": [],
+                "continue_previous": request.continue_previous,
             }
             self._running_by_root[root_key] = command_id
 
         self._bridge_persist_user_message(request.org_id, request.target_node_id, content)
+        run_request = OrgCommandRequest(
+            org_id=request.org_id,
+            content=run_content,
+            target_node_id=request.target_node_id,
+            source=request.source,
+            origin_surface=request.origin_surface,
+            output_scope=request.output_scope,
+            replace_existing=request.replace_existing,
+            continue_previous=request.continue_previous,
+        )
         self._schedule_run(
-            request,
+            run_request,
             command_id,
             root_node_id,
             replace_existing_id=existing_id if request.replace_existing else None,
@@ -230,6 +249,12 @@ class OrgCommandService:
                 "root_chain_id": live.get("root_chain_id", ""),
                 "open_chains": live.get("open_chains", []),
                 "open_chain_count": live.get("open_chain_count", 0),
+                "open_subtree_chains": live.get("open_subtree_chains", []),
+                "blockers": live.get("blockers", []),
+                "blocker_summary": live.get("blocker_summary", ""),
+                "busy_nodes": live.get("busy_nodes", []),
+                "pending_mailbox": live.get("pending_mailbox", []),
+                "root_status": live.get("root_status", ""),
                 "last_progress_elapsed_s": live.get("last_progress_elapsed_s"),
                 "warned_stuck": live.get("warned_stuck", False),
                 "stopped_by_watchdog": live.get("auto_stopped", False),
@@ -497,6 +522,82 @@ class OrgCommandService:
             return target_node_id
         roots = org.get_root_nodes()
         return roots[0].id if roots else ""
+
+    def _build_continue_content(self, org_id: str, root_node_id: str, content: str) -> str:
+        """Augment a new command with recent context after user cancellation.
+
+        This is intentionally a new command, not a resurrection of the old
+        command_id. It gives the root enough persisted context to continue the
+        story from blackboard/events/project tasks.
+        """
+        last_cmd = self._find_recent_previous_command(org_id, root_node_id)
+        sections: list[str] = []
+        if last_cmd:
+            result = last_cmd.get("result")
+            result_text = ""
+            if isinstance(result, dict):
+                result_text = str(result.get("result") or result.get("error") or "")[:1200]
+            elif result:
+                result_text = str(result)[:1200]
+            sections.append(
+                "\n".join([
+                    f"- 上一条命令: {last_cmd.get('command_id')}",
+                    f"- 状态: {last_cmd.get('status')} / {last_cmd.get('phase')}",
+                    f"- 是否用户终止: {bool(last_cmd.get('cancel_requested_by_user'))}",
+                    f"- 阶段性结果: {result_text or '（无）'}",
+                ])
+            )
+
+        try:
+            bb = self._runtime.get_blackboard(org_id)
+            summary = bb.get_org_summary(max_entries=8)
+            if summary:
+                sections.append("最近组织黑板:\n" + summary[:2000])
+        except Exception:
+            pass
+
+        try:
+            from openakita.orgs.project_store import ProjectStore
+
+            store = ProjectStore(self._runtime._manager._org_dir(org_id))
+            tasks = store.all_tasks()
+            unfinished = [
+                t for t in tasks
+                if str(t.get("status") or "") in {"todo", "in_progress", "delivered", "rejected", "blocked"}
+            ][:12]
+            if unfinished:
+                lines = []
+                for t in unfinished:
+                    lines.append(
+                        f"- {t.get('title') or t.get('id')} [{t.get('status')}] "
+                        f"assignee={t.get('assignee_node_id') or '-'} "
+                        f"chain={str(t.get('chain_id') or '')[:12]}"
+                    )
+                sections.append("未完成/待处理项目任务:\n" + "\n".join(lines))
+        except Exception:
+            pass
+
+        context = "\n\n".join(s for s in sections if s.strip()) or "（没有可恢复的结构化上下文）"
+        return (
+            "[继续被中断任务]\n"
+            "这是一条新的组织命令，不是恢复旧 command_id。请先阅读下面的历史上下文，"
+            "基于黑板、事件和未完成任务继续推进；不要重复已经完成的工作。\n\n"
+            f"{context}\n\n"
+            "[用户的新指令]\n"
+            f"{content}"
+        )
+
+    def _find_recent_previous_command(self, org_id: str, root_node_id: str) -> dict[str, Any] | None:
+        candidates = [
+            cmd for cmd in self._commands.values()
+            if cmd.get("org_id") == org_id
+            and cmd.get("root_node_id") == root_node_id
+            and cmd.get("status") != "running"
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: float(c.get("finished_at") or c.get("updated_at") or 0), reverse=True)
+        return candidates[0]
 
     def _bridge_persist_user_message(
         self,

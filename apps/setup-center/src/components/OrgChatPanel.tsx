@@ -131,6 +131,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [canContinuePrevious, setCanContinuePrevious] = useState(false);
   // 当前在跑命令的 command_id；用于"强制终止"按键判断启用状态。
   // - 在 send_command 拿到 commandId 后置位
   // - finalizeResult / send 异常 / 不可恢复重连完成时清空
@@ -322,6 +323,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     setMessages([]);
     _pendingCmds.delete(convId);
     setPendingCmdId(null);
+    setCanContinuePrevious(false);
     try { localStorage.removeItem(LS_PREFIX + convId); } catch {}
     try {
       await safeFetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}`, {
@@ -348,8 +350,8 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     }
   }, [apiBaseUrl, orgId, pendingCmdId]);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  const handleSend = useCallback(async (opts?: { continuePrevious?: boolean; text?: string }) => {
+    const text = (opts?.text ?? input).trim();
     if (!text || sending) return;
 
     const userMsg: ChatMsg = { id: genId(), role: "user", content: text, timestamp: Date.now() };
@@ -359,6 +361,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     };
     setMessages(prev => [...prev, userMsg, placeholder]);
     setInput("");
+    setCanContinuePrevious(false);
     setSending(true);
 
     const nn = (id: string) => nodeNamesRef.current?.[id] || id;
@@ -579,6 +582,20 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         )) {
           updatePreview();
         }
+      } else if (event === "org:workbench_tool_status") {
+        const status = (d.status || "") as string;
+        const toolName = (d.tool_name || "") as string;
+        const error = (d.error || "") as string;
+        const seg = findOrCreateSeg(nid);
+        const line =
+          status === "running"
+            ? t("org.chat.workbenchToolRunning", { tool: toolName })
+            : status === "failed"
+              ? t("org.chat.workbenchToolFailed", { tool: toolName, error })
+              : t("org.chat.workbenchToolFinished", { tool: toolName });
+        if (pushSegLine(seg, line)) {
+          updatePreview();
+        }
       }
     });
 
@@ -658,7 +675,11 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/command`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: text, target_node_id: nodeId || undefined }),
+        body: JSON.stringify({
+          content: text,
+          target_node_id: nodeId || undefined,
+          continue_previous: !!opts?.continuePrevious,
+        }),
       });
       const data = await res.json();
       const commandId = data.command_id as string | undefined;
@@ -680,10 +701,12 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           const error = d.error as string | undefined;
           const resultText = getCommandResultText(result, error, d);
           const stopped = !!(result && result.stopped_by_watchdog);
+          const cancelled = !!(result && result.cancelled_by_user);
           const warning = result && typeof result.warning === "string" ? result.warning as string : undefined;
           setTimeout(() => {
             finalContent = wrapWithProcess(resultText, { stoppedByWatchdog: stopped, warning });
             finalizeResult(finalContent, collectAllFiles());
+            if (stopped || cancelled) setCanContinuePrevious(true);
           }, 500);
         });
 
@@ -693,14 +716,22 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           try {
             const poll = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/commands/${commandId}`);
             const pd = await poll.json();
+            if (pd.status === "running" && typeof pd.blocker_summary === "string" && pd.blocker_summary.trim()) {
+              const seg = findOrCreateSeg("system");
+              if (pushSegLine(seg, t("org.chat.commandBlocker", { reason: pd.blocker_summary }))) {
+                updatePreview();
+              }
+            }
             if (pd.status === "done" || pd.status === "error") {
               if (!resolved) {
                 resolved = true;
                 const resultText = getCommandResultText(pd.result, pd.error, pd);
                 const stopped = !!(pd.result && pd.result.stopped_by_watchdog);
+                const cancelled = !!(pd.result && pd.result.cancelled_by_user);
                 const warning = pd.result && typeof pd.result.warning === "string" ? pd.result.warning : undefined;
                 finalContent = wrapWithProcess(resultText, { stoppedByWatchdog: stopped, warning });
                 finalizeResult(finalContent, collectAllFiles());
+                if (stopped || cancelled) setCanContinuePrevious(true);
               }
             }
           } catch { /* retry */ }
@@ -731,6 +762,13 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       }
     }
   }, [input, sending, orgId, nodeId, apiBaseUrl, convId, persistToBackend]);
+
+  const handleContinuePrevious = useCallback(() => {
+    handleSend({
+      continuePrevious: true,
+      text: t("org.chat.continuePreviousPrompt"),
+    });
+  }, [handleSend, t]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -833,6 +871,21 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         </div>
       )}
 
+      {canContinuePrevious && !sending && (
+        <div style={{ display: "flex", justifyContent: "flex-end", padding: "0 12px 8px", flexShrink: 0 }}>
+          <button
+            data-slot="ocp"
+            type="button"
+            className="ocp-close"
+            onClick={handleContinuePrevious}
+            title={t("org.chat.continuePreviousTitle")}
+            style={{ width: "auto", padding: "4px 10px", fontSize: 12 }}
+          >
+            {t("org.chat.continuePrevious")}
+          </button>
+        </div>
+      )}
+
       <div className={`ocp-input-area ${compact ? "ocp-compact" : ""}`}>
         <textarea
           ref={inputRef}
@@ -858,7 +911,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         </button>
         <button
           data-slot="ocp"
-          onClick={handleSend}
+          onClick={() => handleSend()}
           disabled={sending || !input.trim()}
           className={`ocp-send ${sending ? "ocp-send-busy" : ""}`}
         >

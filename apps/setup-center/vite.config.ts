@@ -54,11 +54,11 @@ export default defineConfig({
       ),
     },
     // Force a single instance of React + react-dom across the dep graph.
-    // Without this, lazy-loaded views (e.g. PluginManagerView) can end up
+    // Without this, lazy-loaded views (e.g. PluginManagerView / OrgEditorView) can end up
     // calling react-i18next's useTranslation() against a different React copy
     // than the host renderer, causing "Cannot read properties of null
     // (reading 'useContext')" at hook-dispatch time.
-    dedupe: ["react", "react-dom", "react-i18next", "three"],
+    dedupe: ["react", "react-dom", "react-i18next", "@xyflow/react", "zustand", "radix-ui", "three"],
   },
   optimizeDeps: {
     include: [
@@ -74,6 +74,10 @@ export default defineConfig({
       "react-i18next",
       "i18next",
       "i18next-browser-languagedetector",
+      "@xyflow/react",
+      "zustand",
+      "zustand/traditional",
+      "radix-ui",
       "react-force-graph-3d",
       "3d-force-graph",
       "three-forcegraph",

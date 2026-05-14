@@ -449,8 +449,8 @@ class Organization:
     workspace_dir: str = ""
 
     # Watchdog
-    # 默认关闭：组织节点卡住时由用户在指挥台手动强制终止；无人值守场景可在 UI 中开启。
-    watchdog_enabled: bool = False
+    # 默认开启：自动发现节点长时间无进展；用户仍可在组织设置中关闭。
+    watchdog_enabled: bool = True
     watchdog_interval_s: int = 30
     watchdog_stuck_threshold_s: int = 1800
     watchdog_silence_threshold_s: int = 1800

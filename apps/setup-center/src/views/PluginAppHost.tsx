@@ -319,7 +319,7 @@ export default function PluginAppHost({ pluginId, apiBase, onViewChange }: Plugi
             </div>
             {slow && (
               <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted, #94a3b8)" }}>
-                {t("pluginApp.loadingSlow", "插件启动较慢，请稍候…")}
+                {t("pluginApp.loadingSlow", "工作台应用启动较慢，请稍候…")}
               </div>
             )}
           </div>

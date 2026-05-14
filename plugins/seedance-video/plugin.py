@@ -81,6 +81,22 @@ class CreateTaskBody(BaseModel):
     client_request_id: str = ""
     content: list[dict] | None = None
 
+class VideoUrlTaskBody(BaseModel):
+    prompt: str = ""
+    source_video_url: str
+    model: str = "2.0"
+    ratio: str = "16:9"
+    duration: int = 5
+    resolution: str = "720p"
+    generate_audio: bool = True
+    seed: int = -1
+    watermark: bool = False
+    service_tier: str = "default"
+    callback_url: str | None = None
+    execution_expires_after: int | None = None
+    client_request_id: str = ""
+    next_scene_prompt: str = ""
+
 class DraftConfirmBody(BaseModel):
     resolution: str = "720p"
     watermark: bool = False
@@ -207,6 +223,67 @@ class Plugin(PluginBase):
                 },
             },
             {
+                "name": "seedance_edit",
+                "description": (
+                    "Edit an existing Seedance video. Requires source_video_url "
+                    "to be a public http(s) cloud video URL, usually the video_url "
+                    "returned by a previous seedance task. Local files/base64 are rejected."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Edit instruction"},
+                        "source_video_url": {"type": "string", "description": "Public http(s) video URL"},
+                        "model": {"type": "string", "default": "2.0"},
+                        "duration": {"type": "integer", "default": 5},
+                        "ratio": {"type": "string", "default": "16:9"},
+                        "resolution": {"type": "string", "default": "720p"},
+                    },
+                    "required": ["prompt", "source_video_url"],
+                },
+            },
+            {
+                "name": "seedance_extend",
+                "description": (
+                    "Extend/continue an existing Seedance video. Requires source_video_url "
+                    "to be a public http(s) cloud video URL, usually the video_url returned "
+                    "by a previous seedance task."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Continuation instruction"},
+                        "source_video_url": {"type": "string", "description": "Public http(s) video URL"},
+                        "model": {"type": "string", "default": "2.0"},
+                        "duration": {"type": "integer", "default": 5},
+                        "ratio": {"type": "string", "default": "16:9"},
+                        "resolution": {"type": "string", "default": "720p"},
+                    },
+                    "required": ["prompt", "source_video_url"],
+                },
+            },
+            {
+                "name": "seedance_transition",
+                "description": (
+                    "Generate an AI transition/bridge clip from the first source video "
+                    "toward the next scene. Uses Seedance cloud generation rather than "
+                    "ffmpeg hard concatenation. Requires source_video_url as public http(s)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Transition instruction"},
+                        "source_video_url": {"type": "string", "description": "Public http(s) video URL to extend from"},
+                        "next_scene_prompt": {"type": "string", "description": "Description of the target next scene"},
+                        "model": {"type": "string", "default": "2.0"},
+                        "duration": {"type": "integer", "default": 4},
+                        "ratio": {"type": "string", "default": "16:9"},
+                        "resolution": {"type": "string", "default": "720p"},
+                    },
+                    "required": ["prompt", "source_video_url"],
+                },
+            },
+            {
                 "name": "seedance_list",
                 "description": (
                     "List recent Seedance video generation tasks. Returns JSON: "
@@ -290,14 +367,44 @@ class Plugin(PluginBase):
                         "ok": False,
                         "error": e.detail if isinstance(e.detail, str) else str(e.detail),
                         "status_code": e.status_code,
+                        "terminal": self._is_terminal_create_error(e),
                     },
                     ensure_ascii=False,
                 )
             except Exception as e:
                 return _json.dumps(
-                    {"ok": False, "error": str(e)}, ensure_ascii=False
+                    {"ok": False, "error": str(e), "terminal": True}, ensure_ascii=False
                 )
             return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+        if tool_name in ("seedance_edit", "seedance_extend", "seedance_transition"):
+            try:
+                mode = "edit" if tool_name == "seedance_edit" else "extend"
+                task_args = self._build_video_url_create_args(args, mode=mode)
+                task = await self._create_task_internal(task_args)
+                payload = self._task_to_tool_payload(task)
+                if tool_name == "seedance_transition":
+                    payload["transition_strategy"] = "seedance_extend"
+                    payload["message"] = (
+                        "已通过 Seedance 云端 extend 生成过渡/续写片段；"
+                        "如需最终长片，可再用本地 concat 合成。"
+                    )
+                return _json.dumps(payload, ensure_ascii=False)
+            except HTTPException as e:
+                return _json.dumps(
+                    {
+                        "ok": False,
+                        "error": e.detail if isinstance(e.detail, str) else str(e.detail),
+                        "status_code": e.status_code,
+                        "terminal": self._is_terminal_create_error(e),
+                    },
+                    ensure_ascii=False,
+                )
+            except Exception as e:
+                return _json.dumps(
+                    {"ok": False, "error": str(e), "terminal": True},
+                    ensure_ascii=False,
+                )
 
         if tool_name == "seedance_status":
             tid = args.get("task_id") or ""
@@ -357,6 +464,69 @@ class Plugin(PluginBase):
             base["prompt"] = (task.get("prompt") or "")[:200]
             base["created_at"] = task.get("created_at")
         return base
+
+    @staticmethod
+    def _is_terminal_create_error(exc: HTTPException) -> bool:
+        """Return True when retrying the same create call cannot make progress."""
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        markers = (
+            "API Key",
+            "AuthenticationError",
+            "首帧模式需要",
+            "首尾帧模式需要",
+            "多模态模式至少",
+            "编辑模式需要",
+            "延长模式需要",
+            "公网 http(s) 视频 URL",
+            "from_asset_ids",
+            "Asset Bus",
+            "模型",
+            "不支持",
+        )
+        return exc.status_code in (400, 401, 403, 413) or any(m in detail for m in markers)
+
+    @staticmethod
+    def _build_video_url_create_args(args: dict, *, mode: str) -> dict:
+        """Build a canonical seedance_create payload for edit/extend wrappers."""
+        source_url = (
+            args.get("source_video_url")
+            or args.get("video_url")
+            or args.get("url")
+            or ""
+        )
+        if not isinstance(source_url, str) or not source_url.strip():
+            label = "编辑" if mode == "edit" else "延长/过渡"
+            raise HTTPException(status_code=400, detail=f"{label}模式缺少 source_video_url")
+        source_url = source_url.strip()
+        if not source_url.lower().startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "编辑/延长模式必须使用 Seedance 返回的云端 http(s) video_url，"
+                    "不能直接上传本地视频或 base64。"
+                ),
+            )
+        prompt = (args.get("prompt") or "").strip()
+        if mode == "extend" and args.get("next_scene_prompt"):
+            prompt = (
+                f"{prompt}\n\n请自然过渡到下一场景：{args.get('next_scene_prompt')}"
+                if prompt else f"请自然过渡到下一场景：{args.get('next_scene_prompt')}"
+            )
+        if not prompt:
+            prompt = "保持原视频风格，进行自然续写。"
+        return {
+            **args,
+            "prompt": prompt,
+            "mode": mode,
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "video_url",
+                    "video_url": {"url": source_url},
+                    "role": "reference_video",
+                },
+            ],
+        }
 
     # ── Long-video chain bookkeeping (Sprint 8 / V2) ──
 
@@ -499,6 +669,15 @@ class Plugin(PluginBase):
                     if not isinstance(content, list):
                         content = []
                     content = list(content) + expanded
+                elif mode in ("i2v", "i2v_end", "multimodal"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "from_asset_ids 未能展开为可提交给 Ark 的图片素材。"
+                            "请确认上游工作台返回的是有效 asset_ids，且 seedance-video "
+                            "已获得 assets.consume 权限。"
+                        ),
+                    )
 
             # ── Mode validation (Sprint 8 / V1) ──
             # User-reported bug: "i2v / multimodal / edit / extend 都生不了任务".
@@ -785,10 +964,8 @@ class Plugin(PluginBase):
         entry whose role is derived from the **0-indexed position** within
         ``asset_ids`` together with ``mode``.
 
-        Unknown / unreadable asset_ids are silently skipped (the
-        plain-text prompt path still works). We deliberately avoid raising
-        so a partial failure of the Asset Bus does not abort the entire
-        task.
+        Unknown / unreadable asset_ids are skipped; callers that require
+        media validate the resulting list and raise a structured 400.
         """
         if not asset_ids:
             return []
@@ -801,11 +978,17 @@ class Plugin(PluginBase):
                 continue
             if not asset:
                 continue
-            url = (
-                asset.get("preview_url")
-                or asset.get("source_path")
-                or ""
-            )
+            source_path = asset.get("source_path") or ""
+            preview_url = asset.get("preview_url") or ""
+            url = ""
+            if isinstance(source_path, str) and source_path:
+                data_url = self._local_file_to_data_url(source_path)
+                if data_url:
+                    url = data_url
+            if not url and isinstance(preview_url, str) and preview_url:
+                url = preview_url
+            if not url and isinstance(source_path, str):
+                url = source_path
             if not isinstance(url, str) or not url:
                 continue
             if mode == "i2v_end":
@@ -822,6 +1005,24 @@ class Plugin(PluginBase):
                 }
             )
         return expanded
+
+    @staticmethod
+    def _local_file_to_data_url(path_value: str) -> str:
+        """Convert a local image file to a data URI for Ark image inputs."""
+        try:
+            path = Path(path_value)
+            if not path.is_file():
+                return ""
+            mime = mimetypes.guess_type(path.name)[0] or ""
+            if not mime.startswith("image/"):
+                return ""
+            max_bytes = 50 * 1024 * 1024
+            if path.stat().st_size > max_bytes:
+                return ""
+            data = base64.b64encode(path.read_bytes()).decode("ascii")
+            return f"data:{mime};base64,{data}"
+        except Exception:
+            return ""
 
     async def _download_video(self, task_id: str, url: str) -> None:
         """Download video to local output directory."""
@@ -1020,6 +1221,29 @@ class Plugin(PluginBase):
         async def create_task(body: CreateTaskBody) -> dict:
             task = await self._create_task_internal(body.model_dump())
             return {"ok": True, "task": task}
+
+        @router.post("/tasks/edit")
+        async def create_edit_task(body: VideoUrlTaskBody) -> dict:
+            params = self._build_video_url_create_args(body.model_dump(), mode="edit")
+            task = await self._create_task_internal(params)
+            return {"ok": True, "task": task}
+
+        @router.post("/tasks/extend")
+        async def create_extend_task(body: VideoUrlTaskBody) -> dict:
+            params = self._build_video_url_create_args(body.model_dump(), mode="extend")
+            task = await self._create_task_internal(params)
+            return {"ok": True, "task": task}
+
+        @router.post("/tasks/transition")
+        async def create_transition_task(body: VideoUrlTaskBody) -> dict:
+            params = self._build_video_url_create_args(body.model_dump(), mode="extend")
+            task = await self._create_task_internal(params)
+            return {
+                "ok": True,
+                "task": task,
+                "transition_strategy": "seedance_extend",
+                "message": "已通过 Seedance 云端 extend 创建过渡/续写片段。",
+            }
 
         @router.get("/tasks")
         async def list_tasks(

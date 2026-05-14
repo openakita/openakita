@@ -3,14 +3,14 @@
  * ────────────────────────────────────────────────────────────────
  * 在组织编排器中弹出一个选择框，列出后端通过
  * `GET /api/orgs/plugin-workbench-templates` 返回的"工作台模板"。
- * 每个模板对应一个已加载并注册了 LLM 工具的插件，点击后回调上层用
+ * 每个模板对应一个已加载并注册了 LLM 工具的工作台应用，点击后回调上层用
  * `template.suggested_node` 在画布上创建一个预配置的叶子节点
  * （`external_tools` 已锁定为该工作台的工具集，`plugin_origin` 写入
  * 节点 data 以便后续 UI / 提示词 / 运行时识别）。
  *
  * 关键约束（与后端 OrgManager.update / OrgRuntime._create_node_agent 对齐）：
  *   - 工作台节点必须是叶子节点（不允许挂下属），否则保存被拒绝
- *   - 工作台工具列表由插件决定，UI 上以只读形式展示，避免用户误删
+ *   - 工作台工具列表由工作台应用决定，UI 上以只读形式展示，避免用户误删
  */
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -148,7 +148,7 @@ export function WorkbenchNodePicker(props: WorkbenchNodePickerProps) {
           <input
             type="text"
             value={search}
-            placeholder={t("org.editor.workbenchSearchPh", "搜索工作台名称、插件 ID 或工具名…")}
+            placeholder={t("org.editor.workbenchSearchPh", "搜索工作台名称、工作台应用 ID 或工具名…")}
             onChange={(e) => setSearch(e.target.value)}
             style={{
               width: "100%",
@@ -195,7 +195,7 @@ export function WorkbenchNodePicker(props: WorkbenchNodePickerProps) {
               {items.length === 0
                 ? t(
                     "org.editor.workbenchEmpty",
-                    "暂无可用工作台：请先在「插件管理」中加载提供 LLM 工具的插件。",
+                    "暂无可用工作台：请先在「工作台」中加载提供 LLM 工具的工作台应用。",
                   )
                 : t("org.editor.workbenchNoMatch", "没有匹配的工作台。")}
             </div>

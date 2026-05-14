@@ -131,9 +131,10 @@ class OrgToolHandler:
                 if str(t.get("chain_id") or "").startswith(raw)
             ]
             if not matches:
-                return raw, (
-                    f"未找到任务链 {raw}。请使用交付消息里的完整 task_chain_id。"
-                )
+                # 兼容非 ProjectStore 场景（测试夹具、历史组织、外部工具直接
+                # 传入完整 chain_id）：找不到任务记录时保留原值继续验收。
+                # 缩短 ID 的歧义仍会在下方多候选分支报错。
+                return raw, None
 
             delivered = [t for t in matches if t.get("status") == "delivered"]
             candidates = delivered or matches

@@ -851,6 +851,9 @@ AIGC_VIDEO_STUDIO: dict = {
             "avatar": "media",
             "external_tools": [
                 "seedance_create",
+                "seedance_edit",
+                "seedance_extend",
+                "seedance_transition",
                 "seedance_status",
                 "seedance_list",
             ],
@@ -867,6 +870,9 @@ AIGC_VIDEO_STUDIO: dict = {
                 "Ark 的 content[image_url] 注入（i2v/i2v_end/multimodal 模式会按"
                 "位置自动分配 first_frame/last_frame/reference_image 角色）。生成"
                 "成功后 runtime 会把 video.mp4 与 last_frame 自动下载并登记为附件。"
+                "如果任务是编辑、延长或镜头间 AI 过渡，必须使用上游 seedance "
+                "任务返回的公网 video_url，分别调用 seedance_edit、seedance_extend "
+                "或 seedance_transition；不能把本地视频文件/base64 当作源视频上传。"
                 "提交 org_submit_deliverable 时只需写文字说明，不要重复声明 "
                 "file_attachments。"
             ),
