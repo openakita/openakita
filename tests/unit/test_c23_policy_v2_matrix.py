@@ -219,3 +219,148 @@ def test_unknown_class_strict_is_deny_or_confirm() -> None:
             )
             return
     pytest.fail("unknown row not found in MATRIX")
+
+
+# ---------------------------------------------------------------------
+# Per-row baseline invariants. These extend the previous "single key
+# cell" guards (destructive×strict, unknown all-modes) into broader
+# rules that catch wider classes of drift.
+# ---------------------------------------------------------------------
+
+# Mapping of class → list of (mode, expected_decision) pairs that MUST
+# hold in the static matrix. Each entry corresponds to a property the
+# user can rely on by reading the policy_v2 docs / plan §3 — if engine
+# behaviour diverges from these, we want the test to fire so the UI is
+# updated in lockstep.
+INVARIANTS: list[tuple[str, str, str]] = [
+    # readonly_* family — auto-allow in EVERY mode, including dont_ask
+    # (dont_ask is cron-friendly: it kills *interactive* prompts, but
+    # readonly tools never prompt so they pass through).
+    ("readonly_scoped", "trust", "allow"),
+    ("readonly_scoped", "default", "allow"),
+    ("readonly_scoped", "accept_edits", "allow"),
+    ("readonly_scoped", "strict", "allow"),
+    ("readonly_scoped", "dont_ask", "allow"),
+    ("readonly_global", "default", "allow"),
+    ("readonly_global", "strict", "allow"),
+    ("readonly_global", "dont_ask", "allow"),
+    ("readonly_search", "default", "allow"),
+    ("readonly_search", "strict", "allow"),
+    ("readonly_search", "dont_ask", "allow"),
+    # destructive in dont_ask: deny. dont_ask is the cron / unattended
+    # mode — anything that needs confirmation is auto-denied, and
+    # destructive ALWAYS needs confirmation in non-trust modes.
+    ("destructive", "dont_ask", "deny"),
+    # destructive in strict: deny (the single most-cited safety
+    # guarantee; duplicated from test_destructive_strict_is_deny but
+    # kept here so the invariant set is the single source of truth).
+    ("destructive", "strict", "deny"),
+    # exec_capable / control_plane — never auto-allow in any mode
+    # except via custom override (engine step 9). The matrix must
+    # show confirm in trust/default/accept_edits/strict; deny in
+    # dont_ask.
+    ("exec_capable", "trust", "confirm"),
+    ("exec_capable", "strict", "confirm"),
+    ("exec_capable", "dont_ask", "deny"),
+    ("control_plane", "trust", "confirm"),
+    ("control_plane", "strict", "confirm"),
+    ("control_plane", "dont_ask", "deny"),
+]
+
+
+@pytest.mark.parametrize("klass,mode,expected", INVARIANTS)
+def test_baseline_invariant(klass: str, mode: str, expected: str) -> None:
+    """Per-(class, mode) baseline-decision invariant.
+
+    Each tuple in :data:`INVARIANTS` documents a property of
+    ``engine.py``'s default decision chain that's externally relied
+    on. If you flip a cell in PolicyV2MatrixView.tsx without also
+    flipping engine.py (or vice versa), the matching invariant fires.
+
+    Format check: the matrix row literal puts all 5 decisions on one
+    line (single-line per row); we grep for the row and assert the
+    expected ``mode: "decision"`` substring is present on it.
+    """
+    src = FRONTEND_MATRIX.read_text(encoding="utf-8")
+    needle_row = f'klass: "{klass}"'
+    for line in src.splitlines():
+        if needle_row in line:
+            needle_cell = f'{mode}: "{expected}"'
+            assert needle_cell in line, (
+                f"Invariant violated: {klass} × {mode} should be "
+                f"{expected.upper()} but the UI matrix says otherwise.\n"
+                f"Row: {line.strip()}\n"
+                f"If engine.py changed: update PolicyV2MatrixView.tsx "
+                f"AND remove/adjust this invariant in tandem.\n"
+                f"If engine.py did NOT change: the UI matrix drifted, "
+                f"fix the .tsx file."
+            )
+            return
+    pytest.fail(f"klass={klass!r} row not found in MATRIX")
+
+
+def test_dont_ask_non_readonly_is_deny() -> None:
+    """All non-readonly, non-interactive classes in dont_ask mode must
+    be DENY. dont_ask is the cron / scheduled-task mode: any operation
+    that would normally need a confirm prompt is dropped to deny
+    (because there's no human to answer). Auto-allowing a write/exec
+    in dont_ask would silently mutate the world during scheduled
+    tasks without any audit trail beyond the decision log.
+
+    Readonly classes are exempt — they don't trigger prompts to begin
+    with. interactive is the literal ask_user tool; it has its own
+    special-case behaviour in engine.py (dont_ask returns deny).
+    """
+    src = FRONTEND_MATRIX.read_text(encoding="utf-8")
+    readonly_or_interactive = {
+        "readonly_scoped",
+        "readonly_global",
+        "readonly_search",
+        "interactive",
+    }
+    rows: list[tuple[str, str]] = []
+    for line in src.splitlines():
+        if 'klass: "' not in line or 'dont_ask:' not in line:
+            continue
+        # Extract klass + dont_ask value via simple substring slicing
+        try:
+            klass_start = line.index('klass: "') + len('klass: "')
+            klass_end = line.index('"', klass_start)
+            klass = line[klass_start:klass_end]
+            dak_start = line.index('dont_ask: "') + len('dont_ask: "')
+            dak_end = line.index('"', dak_start)
+            decision = line[dak_start:dak_end]
+            rows.append((klass, decision))
+        except ValueError:
+            continue
+    bad = [(k, d) for (k, d) in rows if k not in readonly_or_interactive and d != "deny"]
+    assert not bad, (
+        f"dont_ask MUST be DENY for non-readonly classes; offenders: {bad}. "
+        "If you intentionally relaxed a class in dont_ask mode, also "
+        "verify engine.py mode_ruleset matches and remove the class "
+        "from this invariant."
+    )
+
+
+def test_matrix_row_count_matches_approval_class_enum() -> None:
+    """Defensive: the number of MATRIX rows must equal the number of
+    ApprovalClass enum values. Combined with test_all_approval_classes_rendered,
+    this catches the case where someone copies a row instead of editing
+    it (duplicate klass with two values)."""
+    src = FRONTEND_MATRIX.read_text(encoding="utf-8")
+    # Count ``klass: "..."`` occurrences inside the MATRIX block. The
+    # tsx file also emits ``klass: string;`` in the type definition
+    # — that one uses no quotes around the value, so the pattern below
+    # (with the literal quote) only catches data rows.
+    import re
+
+    klass_values = re.findall(r'klass: "([^"]+)"', src)
+    expected = sorted(c.value for c in ApprovalClass)
+    actual = sorted(klass_values)
+    assert actual == expected, (
+        f"MATRIX row count / values mismatch.\n"
+        f"  ApprovalClass enum: {expected}\n"
+        f"  MATRIX rows:        {actual}\n"
+        "Likely cause: enum changed without UI update, OR a row was "
+        "duplicated / deleted by accident."
+    )
