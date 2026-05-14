@@ -5703,3 +5703,241 @@ monkeypatch，env var 泄漏。
    类型 / 改回 full-replace / 移除 cache lock，会立即被这些测试拦下。
    commit message 里也明确把每条修复对应的历史 commit hash 链回去
    （C18 BUG-C2 / C20 P-A.1），让未来 git blame 能找到完整脉络。
+
+---
+
+## C22 — 性能段（兑现 plan §13.5.2 + §13.5.4）
+
+C21 二轮审计把 P2 / P3 标为 "功能性新做" 而非 bug：plan §13 / §13.5
+里早就列了但从 C5/C11 落地以来一直没做。C22 + C23 把这批账还清。
+
+### 改动总览
+
+| 改动 | 类别 | commit |
+|---|---|---|
+| ``classify_shell_command`` 加 LRU 缓存（plan §13.5.2 B） | P3-1 | `2a2146ef` |
+| ``audit_writer.py`` AsyncBatchAuditWriter（plan §13.5.2 A） | P3-2 | `1d100b0b` |
+| ``tests/perf/test_policy_v2_perf.py`` pytest 化 SLO（plan §13.5.4） | P3-3 | `993707dd` |
+
+### C22 P3-1 — shell_risk LRU
+
+**背景**：每次 ``run_shell`` 工具调用都走 ~50 条 compiled regex 顺序扫描，
+~150-300µs / call。Dev 循环里同一命令重复几百次，纯重复算。
+
+**实现**：``functools.lru_cache(maxsize=512)`` 包内部 ``_classify_cached``，
+public ``classify_shell_command`` 是薄壳负责把 list 类型 kwarg 转 tuple
+（hashable）。``_coerce_tuple`` 关键 quirk：``[]`` 与 ``None`` 不可合并
+（前者 = "显式禁用"，后者 = "用默认"）—— 第一版用 ``not value -> None``
+立刻被 ``test_custom_blocked_tokens_override`` 抓出来。
+
+**性能**（1000 次同命令）：
+- uncached: 31.8ms
+- cached: 0.2ms
+- **~176× 加速**
+
+**Hot-reload 失效策略**：POLICIES.yaml 改 ``custom_critical`` 后 tuple
+key 变 → 新 cache 条目，老条目随 LRU 自然老化。不需要显式 ``cache_clear()``。
+
+测试：``tests/unit/test_c22_shell_risk_lru.py``（13 case），覆盖
+缓存命中率、不同 patterns 隔离 cache key、 ``[]`` vs ``None`` 语义、
+空命令绕过 cache、LRU eviction、env override 等。
+
+### C22 P3-2 — AsyncBatchAuditWriter
+
+**背景**：``AuditLogger.log()`` 每次都在请求线程上付 filelock 获取 +
+tail-read 成本（~1-2ms 健康磁盘，contention 下更差）。Burst load
+（checkpoint replay）会显著放大延迟。
+
+**实现两件套**：
+
+1. ``ChainedJsonlWriter.append_batch(records)``（audit_chain.py 新方法）：
+   单次 filelock + 单次 tail-read + 内存中链式计算 N 条
+   prev_hash/row_hash + 单次 fh.write + 单次 fsync。**链完整性契约
+   不变** —— 外部 verifier 看到的字节序列与 N 次 ``append()`` 完全相同
+   （``test_batch_chain_equivalent_to_individual_append`` byte-for-byte 守卫）。
+
+2. ``AsyncBatchAuditWriter``（``src/openakita/core/policy_v2/audit_writer.py``
+   新模块）：
+   - Producer 调 ``enqueue(record)`` 立即返回（µs 级）
+   - 后台 worker task 从 ``asyncio.Queue`` 拉，攒到 max_batch_size 或
+     max_batch_delay_ms 触发 ``append_batch``
+   - 默认 ``max_batch=64 / delay=50ms / queue_maxsize=4096``
+
+**跨线程安全**：
+- 同 loop thread → 直接 ``put_nowait``（asyncio.Queue 非线程安全但
+  同线程 ok）
+- 异 thread（FastAPI worker / gateway） → ``loop.call_soon_threadsafe``
+  调度入 queue（先做 ``qsize`` 近似检查，已满直接 producer 线程 sync
+  fallback，避免 loop 线程被 filelock 阻塞）
+
+**背压与降级**：queue full → ``ChainedJsonlWriter.append()`` 同步直写。
+**宁可慢，也不丢审计行**（合规契约）。worker not running / loop closed
+路径同样兜底 sync。
+
+**生命周期**：``start_global_audit_writer(path)`` 进程级单例，幂等；
+``stop_global_audit_writer()`` drain queue + await worker；用 ``None``
+sentinel 通知 worker 优雅退出。
+
+**AuditLogger 集成**：``log()`` 加 prelude，async writer running 时
+``enqueue`` 后立即 return；否则原 sync 路径——完全向后兼容。
+
+测试：``tests/unit/test_c22_async_audit_writer.py``（22 case），覆盖
+chain 字节等价、生命周期幂等、跨线程 enqueue、批量触发条件、
+backpressure、graceful drain、AuditLogger 集成、global singleton 切路径。
+
+**关键调试历史**：第一版 enqueue 用 ``asyncio.get_event_loop_policy().get_event_loop is loop`` 检测
+"是否同线程"——这是 *bound method* 与 loop 对象比较，永远 False。
+导致从 loop coroutine 内调 enqueue 时走 ``run_coroutine_threadsafe``
++ ``fut.result(timeout=0.5)``，但 future 永远不会 resolve（我们在 loop
+线程上阻塞等待自己的 loop），timeout 后 fallback sync。
+修复：用 ``asyncio.get_running_loop()`` + ``is loop`` 判定。
+
+测试侧也踩了同样的坑：``test_enqueue_from_foreign_thread`` 用
+``threading.Thread.join()`` 阻塞 loop 线程让 ``call_soon_threadsafe``
+调度过的 callback 没机会跑——改用 ``asyncio.to_thread(producer)``，
+模拟真实 FastAPI worker 模式。
+
+### C22 P3-3 — pytest 化 SLO
+
+**背景**：C11 留下了 ``scripts/c11_perf_baseline.py`` 一次性 CLI，但
+没接入 CI；C22 引入了新的性能路径（shell LRU、async audit writer）也
+没有 pytest 守卫。结果是"未来一次重构静悄悄把决策拖到 50ms/call，需
+要等生产 telemetry 才能发现"。
+
+**实现**：
+1. 新目录 ``tests/perf/`` + 注册 ``perf`` marker
+2. pyproject.toml ``addopts`` 加 ``-m 'not perf'``：默认 ``pytest``
+   跳过 perf 测试不拖慢日常 inner loop；CI 跑 ``pytest -m perf``
+3. ``TestBudgetParity`` 守卫：tests/perf 的 ``SLO_BUDGETS_MS`` 与
+   ``scripts/c11_perf_baseline.py`` 的 ``SLO_BUDGET_MS`` 完全一致
+4. 一个 meta check ``test_perf_marker_registered``（不带 marker）
+   每次 pytest 都跑，发现 pyproject.toml 漏 marker 立即告警
+
+### 性能基线（dev laptop 实测，5K iters / metric）
+
+| 指标 | budget | 实测 p95 | 裕度 | 状态 |
+|------|--------|---------|------|------|
+| ``classify_full`` | 1.0ms | 0.443ms | 2.3× | ✅ |
+| ``evaluate_tool_call`` | 5.0ms | 0.488ms | 10× | ✅ |
+| ``classify_shell_command`` 加速 | ≥10× | 161× | 16× over floor | ✅ |
+| ``audit_writer`` 100-record flush p95 | 200ms | 36.5ms | 5.5× | ✅ |
+
+---
+
+## C23 — 前端 policy_v2 完整化（兑现 plan §13 / R5-12 / C9）
+
+| 改动 | 类别 | commit |
+|---|---|---|
+| ``SecurityConfirmModal`` 渲染 ``decision_chain`` | P2-2 | `6dccb9f8` |
+| ChatView 订阅 ``tool_intent_preview`` SSE 弹 toast | P2-3 | `74bf747d` |
+| ``SecurityView`` 加 "审批矩阵" tab | P2-1 | `cbee36d3` |
+
+### C23 P2-2 — decision_chain UI
+
+**背景**：plan C9 要求 modal 渲染 ``decision_chain`` 让用户看到引擎
+逐步判定。C9a 加了 ``approval_class`` badge 但 chain 一直没接通。
+
+**后端**：``PolicyDecisionV2.to_ui_chain()`` 把 ``list[DecisionStep]``
+压缩为 ``[{name, action, note}, ...]``。**丢 ``duration_ms``**（几乎都是 0，
+用户无 actionable 信息）。``reasoning_engine.py`` 两个 ``security_confirm``
+yield 点都注入 ``"decision_chain": _pr.to_ui_chain()``。
+
+**前端**：``SecurityConfirmModal`` 加折叠"决策依据"区，默认折叠
+（``showChain=false``）；展开后逐行渲染 ``step.name + action badge
++ note``。``ACTION_LABELS`` map 与 ``DecisionAction`` StrEnum 字面量
+对齐，最大高 180px + auto overflow 防长 chain 撑爆 modal。
+
+测试：``tests/unit/test_c23_security_confirm_decision_chain.py``（10 case），
+含 grep guard "两个 yield 点都注入了 decision_chain"。
+
+### C23 P2-3 — tool_intent_preview toast
+
+**背景**：C9c-1 加了后端 ``_emit_tool_intent_previews`` SSE，但前端从
+C9c-1 到 C20 一直没订阅。事件发了、走 WS、丢地上。
+
+**前端**：``chatTypes.ts`` discriminated union 加 ``tool_intent_preview``
+变体；``ChatView`` 加 ``case "tool_intent_preview":`` 用 sonner ``toast.message``
+渲染 2.5s 提示。**过滤策略**：只对"有副作用"的 ApprovalClass 弹 toast；
+``readonly_*`` / ``interactive`` / ``unknown`` 全部跳过——否则
+``list_directory`` / ``read_file`` 每次都弹气泡 UI 不可用。
+
+测试：``tests/unit/test_c23_tool_intent_preview_ui_wiring.py``（5 case），
+grep guard：噪声 ApprovalClass 过滤器存在 + 后端发射器还在
+（防止后端删了但前端 handler 残留死代码）。
+
+### C23 P2-1 — 审批矩阵 view
+
+**背景**：plan §13 / R5-12 / C9 要求 SecurityView 暴露两层结构：
+1. ``session_role`` × ``confirmation_mode`` 5 状态
+2. 11 ApprovalClass × 5 ConfirmationMode 的自动批准矩阵
+
+从 C9a 到 C20 用户没法在 UI 上回答"我设 mode=trust，destructive 会被
+自动放行吗?"——必须读 engine.py 或 plan §3 文档。
+
+**实现**：
+1. 新文件 ``apps/setup-center/src/views/security/PolicyV2MatrixView.tsx``：
+   - Session Role 面板（4 个角色 + 描述：plan/ask 只读，agent/coord 走矩阵）
+   - 12×5 矩阵（11 ApprovalClass + UNKNOWN × 5 ConfirmationMode）
+   - 每格 ALLOW / CONFIRM / DENY 彩色 badge + 图例 + 数据源说明
+2. SecurityView 集成：``TabId`` union 加 ``"policy_v2_matrix"``，
+   TABS 数组在 confirmation 后插入"审批矩阵"tab，渲染分支
+   ``{tab === "policy_v2_matrix" && <PolicyV2MatrixView />}``
+3. i18n 11 条 key（zh + en）。**第一版误把 key 写到 chat 命名空间下**，
+   测试守卫立刻抓出来 → 修正放到 security。
+
+**设计取舍**：矩阵**不是 live editor / live binding** —— engine.py
+12-step 决策链没有单一可序列化的 ``(class, mode) → decision`` 映射
+（还要叠 safety_immune / unattended / mode_ruleset / custom override），
+所以矩阵渲染的是 **baseline 行为**，数据源是 engine.py 决策链 + plan §3。
+
+**一致性守卫**：``tests/unit/test_c23_policy_v2_matrix.py`` 11 case，
+保证：
+- 文件存在
+- 所有 ApprovalClass / ConfirmationMode / SessionRole enum 值都
+  渲染到 UI（防止未来加 enum 但漏更新 UI）
+- SecurityView 注册了 tab
+- i18n 都在 security 命名空间下
+- ``destructive in strict = DENY``（最关键 fail-closed 不变量）
+- UNKNOWN 任何 mode 都不能 allow（fail-closed 守卫）
+
+### 经验教训（C22 + C23）
+
+1. **"功能性新做" ≠ "可以无限延后"**：plan §13.5.2 性能段从 C5
+   shell_risk 落地到 C20 一直没做，因为每次审计都被标"future work"。
+   C21 二轮审计才把它从 future work 提升为 P3 优先级，强制纳入
+   下一个 milestone。下次看到 plan 里某段持续 3+ milestone 没动，
+   要么删除（明示不做），要么强制排期（避免成为审计黑洞）。
+
+2. **enqueue 同步/异步路径的边界检测**：``asyncio.get_event_loop_policy().get_event_loop is loop``
+   是 bound method 与 loop 对象比较，永远 False。正确做法是
+   ``asyncio.get_running_loop() is loop``。这类"看起来对的样板"很危险，
+   单元测试要专门测两个路径（loop coroutine 内调 + 外部 thread 调）。
+
+3. **测试 fixture 也会踩 loop blocking 的坑**：``threading.Thread.join()``
+   在 async test 里会阻塞 loop 线程，导致 ``call_soon_threadsafe``
+   调度的 callback 没机会跑——改用 ``asyncio.to_thread(producer)``
+   模拟真实 FastAPI worker 模式。
+
+4. **静态文档矩阵 + 一致性守卫 > live binding**：``PolicyV2MatrixView``
+   渲染的是 documentation matrix，不是 live policy state。理由：
+   engine 12-step 决策链没有可序列化的 ``(class, mode) → decision`` 映射，
+   live binding 反而会失真。代价是工程师改 engine.py 必须手动更新
+   matrix——通过 ``test_c23_policy_v2_matrix.py`` 11 case 守卫（enum
+   完备性、关键格子 fail-closed 不变量）确保漂移会立刻 fail。
+
+5. **i18n key 放错 namespace 是高频低代价 bug**：第一版把 matrix
+   i18n 加到 ``chat.`` 下，但组件用 ``t("security.matrix...")``。
+   测试守卫立刻抓住，修正放到 ``security.`` namespace。未来加 i18n
+   时建议先 grep 组件里 ``t("xxx.xxx", ...)`` 的 namespace 再编辑 json。
+
+### 测试基线（C21 + C22 + C23 综合）
+
+- C21 隐患/bug 修复测试：``test_c21_*.py`` 4 个文件，~25 case
+- C22 性能 + audit writer：``test_c22_*.py`` 2 个文件，35 case
+- C23 前端三件套：``test_c23_*.py`` 3 个文件，26 case
+- ``tests/perf/test_policy_v2_perf.py``：7 case（6 perf + 1 meta）
+- **合计 ~100 case 全绿**，无 regression
+
+回归全量 4838 unit test 中有 33 个 pre-existing failures（与 C21/C22/C23
+工作无关，单独跑全 pass），主要是 ``os.environ`` / SQLite WAL / 单例
+状态在不同测试间的隔离问题——不在本次 milestone 范围。
