@@ -5,7 +5,12 @@
 
 1. **延迟加载（lazy）**：模块 import 时不读 YAML、不构造引擎；首次 ``get_engine_v2()``
    触发加载，避免 import-time I/O 与启动顺序耦合。
-2. **线程安全**：用 ``threading.Lock`` 保护单例初始化，防止并发首次调用产生两个引擎。
+2. **线程安全 + 可重入**：用 ``threading.RLock`` 保护单例。**必须**是 RLock 而不是
+   普通 ``threading.Lock``——hot-path 上有 ``rebuild_engine_v2`` 在持锁状态下走的
+   子系统（audit logger reset、SSE emit、classifier invalidate）可能反过来调
+   ``get_config_v2()`` / ``get_engine_v2()``，普通 Lock 会立即死锁。历史上 BUG-C2
+   (C18 二轮) 和 C20 Phase A P-A.1 都是这条路径触发，过去靠"绕开 get_config_v2"
+   逐点 patch；C21 起改用 RLock 一次根除整类问题，保留逐点防御代码作为额外稳健层。
 3. **测试友好**：提供 ``set_engine_v2`` / ``reset_engine_v2``，让 pytest 能在 fixture
    里替换实例并清理状态。
 4. **Explicit-lookup 注入点**：默认无 ``explicit_lookup``（classifier 仅依赖
@@ -66,7 +71,11 @@ _explicit_lookup: ExplicitLookup | None = None
 _skill_lookup: SkillLookup | None = None
 _mcp_lookup: McpLookup | None = None
 _plugin_lookup: PluginLookup | None = None
-_lock = threading.Lock()
+# C21 P0-1：必须是 RLock。详见模块 docstring "线程安全 + 可重入" 段。
+# 历史教训（在 docs/policy_v2_research.md "C18 二轮 audit" 与 "C20 实施记录
+# P-A.1" 都有详记）：rebuild_engine_v2 持锁期间调子系统 → 子系统 lazy init →
+# 子系统 init 时调 get_config_v2() → 重入 _lock → 死锁。RLock 让重入合法。
+_lock = threading.RLock()
 
 # C16 Phase B：last-known-good (LKG) 缓存。
 # 当 POLICIES.yaml 校验失败时（攻击者篡改 / 操作员 typo），下一次加载会优先
@@ -74,7 +83,9 @@ _lock = threading.Lock()
 # approval_classes / shell_risk 等用户精心配置的字段全部消失。
 # 首次启动校验失败时仍走 default fallback，保留"操作员第一次启动有 typo 也
 # 不会被锁死"的体验。
-# 锁是独立的 ``_LKG_LOCK``，避免和 ``_lock`` 形成嵌套（rebuild 已持 ``_lock``）。
+# 锁独立于 ``_lock`` 是历史遗留（C16 写时 ``_lock`` 还是 Lock，必须避免嵌套）。
+# C21 起 ``_lock`` 改为 RLock，理论上可以合并，但保留独立锁更便于 reason about
+# 加锁顺序，避免新代码绕到 ``_LKG_LOCK → _lock`` 这条潜在反向边。
 _LAST_KNOWN_GOOD: PolicyConfigV2 | None = None
 _LKG_LOCK = threading.Lock()
 
