@@ -720,11 +720,17 @@ export function OrgEditorView({
   const [bizCollapsed, setBizCollapsed] = useState(false);
   const [orgWatchdogCollapsed, setOrgWatchdogCollapsed] = useState(true);
   const [watchdogCollapsed, setWatchdogCollapsed] = useState(true);
-  // 看门狗本地草稿（默认 0=禁用），保存后才写入 .env
-  const [watchdogDraft, setWatchdogDraft] = useState<{ warn: string; autostop: string; timeout: string }>({
+  // 看门狗本地草稿：留空 = 用后端默认；填 0 = 显式禁用；填正数 = 自定义。
+  const [watchdogDraft, setWatchdogDraft] = useState<{
+    warn: string;
+    autostop: string;
+    timeout: string;
+    deadlock: string;
+  }>({
     warn: "",
     autostop: "",
     timeout: "",
+    deadlock: "",
   });
   const [watchdogLoaded, setWatchdogLoaded] = useState(false);
   const [watchdogSaving, setWatchdogSaving] = useState(false);
@@ -738,6 +744,7 @@ export function OrgEditorView({
         warn: env.ORG_COMMAND_STUCK_WARN_SECS || "",
         autostop: env.ORG_COMMAND_STUCK_AUTOSTOP_SECS || "",
         timeout: env.ORG_COMMAND_TIMEOUT_SECS || "",
+        deadlock: env.ORG_COMMAND_DEADLOCK_GRACE_SECS || "",
       });
       setWatchdogLoaded(true);
     } catch {
@@ -748,15 +755,25 @@ export function OrgEditorView({
   const saveWatchdogConfig = useCallback(async () => {
     setWatchdogSaving(true);
     try {
-      const entries: Record<string, string> = {
-        ORG_COMMAND_STUCK_WARN_SECS: watchdogDraft.warn.trim() || "0",
-        ORG_COMMAND_STUCK_AUTOSTOP_SECS: watchdogDraft.autostop.trim() || "0",
-        ORG_COMMAND_TIMEOUT_SECS: watchdogDraft.timeout.trim() || "0",
+      // 保存策略：用户清空 = 显式删除 .env 行 → 后端 fallback 到 default；
+      // 用户填了值（含 "0"） = 写入 .env 覆盖默认。/api/config/env 的
+      // entries 空串语义是"保留原行"，真删除必须走 delete_keys。
+      const draftMap: Record<string, string> = {
+        ORG_COMMAND_STUCK_WARN_SECS: watchdogDraft.warn.trim(),
+        ORG_COMMAND_STUCK_AUTOSTOP_SECS: watchdogDraft.autostop.trim(),
+        ORG_COMMAND_TIMEOUT_SECS: watchdogDraft.timeout.trim(),
+        ORG_COMMAND_DEADLOCK_GRACE_SECS: watchdogDraft.deadlock.trim(),
       };
+      const entries: Record<string, string> = {};
+      const delete_keys: string[] = [];
+      for (const [k, v] of Object.entries(draftMap)) {
+        if (v === "") delete_keys.push(k);
+        else entries[k] = v;
+      }
       await safeFetch(`${apiBaseUrl}/api/config/env`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entries }),
+        body: JSON.stringify({ entries, delete_keys }),
       });
       showToast(t("org.editor.watchdogSaved"), "ok");
     } catch {
@@ -4937,10 +4954,11 @@ export function OrgEditorView({
             >
               <div style={{ fontWeight: 600, fontSize: 13 }}>
                 {t("org.editor.watchdogTitle")}
-                {watchdogCollapsed && (watchdogDraft.warn || watchdogDraft.autostop || watchdogDraft.timeout) && (
-                  Number(watchdogDraft.warn || 0) > 0 ||
-                  Number(watchdogDraft.autostop || 0) > 0 ||
-                  Number(watchdogDraft.timeout || 0) > 0
+                {watchdogCollapsed && (
+                  watchdogDraft.warn.trim() !== "" ||
+                  watchdogDraft.autostop.trim() !== "" ||
+                  watchdogDraft.timeout.trim() !== "" ||
+                  watchdogDraft.deadlock.trim() !== ""
                 ) && (
                   <span style={{ fontWeight: 400, fontSize: 11, color: "var(--ok)", marginLeft: 6 }}>
                     {t("org.editor.watchdogActive")}
@@ -4962,7 +4980,7 @@ export function OrgEditorView({
                     <input
                       className="input"
                       style={{ width: "100%", fontSize: 12 }}
-                      placeholder="0"
+                      placeholder=""
                       value={watchdogDraft.warn}
                       onChange={(e) => setWatchdogDraft({ ...watchdogDraft, warn: e.target.value })}
                     />
@@ -4977,7 +4995,7 @@ export function OrgEditorView({
                     <input
                       className="input"
                       style={{ width: "100%", fontSize: 12 }}
-                      placeholder="0"
+                      placeholder=""
                       value={watchdogDraft.autostop}
                       onChange={(e) => setWatchdogDraft({ ...watchdogDraft, autostop: e.target.value })}
                     />
@@ -4992,12 +5010,27 @@ export function OrgEditorView({
                     <input
                       className="input"
                       style={{ width: "100%", fontSize: 12 }}
-                      placeholder="0"
+                      placeholder=""
                       value={watchdogDraft.timeout}
                       onChange={(e) => setWatchdogDraft({ ...watchdogDraft, timeout: e.target.value })}
                     />
                     <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
                       {t("org.editor.watchdogTimeoutHelp")}
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>
+                      {t("org.editor.watchdogDeadlockLabel")}
+                    </label>
+                    <input
+                      className="input"
+                      style={{ width: "100%", fontSize: 12 }}
+                      placeholder=""
+                      value={watchdogDraft.deadlock}
+                      onChange={(e) => setWatchdogDraft({ ...watchdogDraft, deadlock: e.target.value })}
+                    />
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                      {t("org.editor.watchdogDeadlockHelp")}
                     </div>
                   </div>
                 </div>
@@ -5014,7 +5047,7 @@ export function OrgEditorView({
                     className="btnSmall"
                     style={{ fontSize: 11, padding: "4px 10px" }}
                     disabled={watchdogSaving}
-                    onClick={() => setWatchdogDraft({ warn: "", autostop: "", timeout: "" })}
+                    onClick={() => setWatchdogDraft({ warn: "", autostop: "", timeout: "", deadlock: "" })}
                   >
                     {t("org.editor.watchdogClear")}
                   </button>
