@@ -30,6 +30,8 @@ def handler(tmp_path):
     agent = MagicMock()
     agent.file_tool = FileTool(base_path=str(tmp_path))
     agent.shell_tool = MagicMock()
+    agent.allowed_roots = [str(tmp_path)]
+    agent.default_cwd = str(tmp_path)
     return FilesystemHandler(agent)
 
 

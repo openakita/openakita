@@ -23,8 +23,8 @@ import pytest
 
 from openakita.orgs.manager import OrgManager
 from openakita.orgs.runtime import OrgRuntime
-from openakita.orgs.models import NodeStatus, OrgStatus
-from .conftest import make_org, make_node, make_edge
+from openakita.orgs.models import NodeStatus
+from .conftest import make_org
 
 _SKIP_REASON = "LLM tests require OPENAKITA_LLM_TESTS=1 env"
 
@@ -124,7 +124,7 @@ class TestMultiHopDelegation:
         org = manager.create(make_org(name="事件链测试").to_dict())
         await runtime.start_org(org.id)
 
-        result = await asyncio.wait_for(
+        await asyncio.wait_for(
             runtime.send_command(
                 org.id, "node_ceo",
                 "给CTO分配任务：写一份技术方案摘要。用 org_delegate_task。",

@@ -18,10 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -34,11 +33,8 @@ from openakita.orgs.models import (
     OrgMessage,
     OrgNode,
     OrgProject,
-    OrgStatus,
     ProjectTask,
-    ProjectType,
     TaskStatus,
-    _new_id,
     _now_iso,
 )
 
@@ -152,7 +148,6 @@ class TestProjectTaskSubtaskFields:
         assert t.execution_log == []
 
     def test_subtask_creation(self):
-        parent = ProjectTask(id="task_001", project_id="p1", title="parent")
         child = ProjectTask(
             id="task_002", project_id="p1", title="child",
             parent_task_id="task_001", depth=1,
@@ -432,6 +427,7 @@ class TestSecurityFixes:
         rt._manager = MagicMock()
         handler = OrgToolHandler(rt)
 
+        assert handler is not None
         assert "\\" in "..\\etc\\passwd"
 
     def test_policy_path_blocks_dotdot(self):
@@ -595,8 +591,6 @@ class TestBlackboardTTL:
 
     def test_ttl_hours_respected(self, org_dir):
         from openakita.orgs.blackboard import OrgBlackboard
-        from openakita.orgs.models import MemoryType, OrgMemoryEntry
-        import json
         from datetime import datetime, timezone, timedelta
 
         bb = OrgBlackboard(org_dir, "org_test")
@@ -668,7 +662,6 @@ class TestPlanToolsInKeep:
     def test_plan_tools_kept(self):
         from openakita.orgs.runtime import OrgRuntime
 
-        source = OrgRuntime._create_node_agent.__code__
         source_text = ""
         try:
             import inspect
@@ -690,7 +683,7 @@ class TestIdentityInjection:
     """Verify identity context includes project tasks in command mode."""
 
     def test_command_mode_injects_project_context(self, org_dir, sample_org):
-        from openakita.orgs.identity import OrgIdentity, ResolvedIdentity
+        from openakita.orgs.identity import OrgIdentity
         from openakita.orgs.project_store import ProjectStore
 
         sample_org.operation_mode = "command"

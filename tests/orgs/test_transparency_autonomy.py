@@ -8,27 +8,19 @@ Tests for Phase 1-3 features:
 
 from __future__ import annotations
 
-import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from openakita.orgs.heartbeat import OrgHeartbeat
 from openakita.orgs.identity import OrgIdentity
 from openakita.orgs.models import (
-    EdgeType,
     MemoryType,
-    MsgType,
     NodeStatus,
-    OrgEdge,
-    OrgNode,
-    OrgStatus,
-    Organization,
-    UserPersona,
 )
 from openakita.orgs.tool_handler import OrgToolHandler
-from .conftest import make_edge, make_node, make_org
+from .conftest import make_org
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -412,7 +404,6 @@ class TestStatsEndpointEnhancements:
         except ImportError:
             pytest.skip("httpx not installed")
 
-        from openakita.orgs.models import NodeStatus
         persisted_org.nodes[1].status = NodeStatus.ERROR
         _mock_stats_deps(mock_runtime, persisted_org)
         app = _make_test_app(mock_runtime)
@@ -430,7 +421,6 @@ class TestStatsEndpointEnhancements:
             pytest.skip("httpx not installed")
 
         bb = mock_runtime.get_blackboard(persisted_org.id)
-        from openakita.orgs.models import MemoryType
         bb.write_org("测试黑板条目", source_node="node_ceo", memory_type=MemoryType.DECISION)
 
         _mock_stats_deps(mock_runtime, persisted_org)

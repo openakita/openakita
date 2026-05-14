@@ -27,7 +27,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from openakita.config import settings
 from openakita.orgs.tool_handler import OrgToolHandler
 
 from .conftest import make_edge, make_node, make_org
@@ -150,7 +149,7 @@ class TestPlannerToContentTeamMembers:
         handler = OrgToolHandler(mock_runtime_ct)
         result = await handler.handle(
             "org_delegate_task",
-            {"to_node": target, "task": f"基于 chain X 的子任务"},
+            {"to_node": target, "task": "基于 chain X 的子任务"},
             content_team_org.id,
             "planner",
         )

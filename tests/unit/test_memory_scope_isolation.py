@@ -45,7 +45,7 @@ def test_injection_context_only_sees_current_session_and_user_memory(tmp_path):
     _save_memory(manager, "alpha other session detail", scope="session", scope_owner="session-b")
     _save_memory(manager, "alpha user preference", scope="user")
 
-    context = manager.get_injection_context("alpha", max_related=5)
+    context = manager.get_injection_context("alpha related memory", max_related=5)
 
     assert "alpha current session detail" in context
     assert "alpha user preference" in context
@@ -75,7 +75,7 @@ def test_episode_retrieval_is_limited_to_current_session(tmp_path):
         )
     )
 
-    candidates = manager.retrieval_engine.retrieve_candidates("alpha")
+    candidates = manager.retrieval_engine.retrieve_candidates("alpha related memory")
     content = "\n".join(c.content for c in candidates)
 
     assert "alpha current episode" in content

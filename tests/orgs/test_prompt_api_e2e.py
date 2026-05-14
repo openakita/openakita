@@ -11,7 +11,6 @@ Validates:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -279,7 +278,7 @@ class TestToolCarryingViaAPI:
     async def test_skills_category_expansion(self, app_client):
         """skills category should expand to skill tools."""
         client, manager, _ = app_client
-        from tests.orgs.conftest import make_node, make_edge, make_org
+        from tests.orgs.conftest import make_node, make_org
         org = make_org(
             nodes=[
                 make_node("n1", "SkillUser", 0, "Team", external_tools=["skills"]),

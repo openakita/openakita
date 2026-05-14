@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from openakita.orgs.heartbeat import OrgHeartbeat
-from openakita.orgs.models import OrgStatus
-from .conftest import make_org
 
 
 @pytest.fixture()
@@ -95,7 +92,7 @@ class TestHeartbeatWithCoreBusiness:
         persisted_org.operation_mode = "autonomous"
         persisted_org.core_business = "做一个 AI 产品，当前阶段目标：完成 MVP"
         mock_runtime.send_command = AsyncMock(return_value={"result": "复盘完成"})
-        result = await heartbeat.trigger_heartbeat(persisted_org.id)
+        await heartbeat.trigger_heartbeat(persisted_org.id)
 
         prompt = mock_runtime.send_command.call_args[0][2]
         assert "经营复盘" in prompt

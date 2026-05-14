@@ -71,6 +71,9 @@ dependencies = [
 
     # Image processing
     "Pillow>=10.0.0",
+
+    # HTML parsing for media-strategy plugin sources
+    "beautifulsoup4>=4.12.0",
 ]
 
 [project.optional-dependencies]

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock
 
 import pytest
 
 from openakita.orgs.inbox import OrgInbox
-from openakita.orgs.models import InboxMessage, InboxPriority
+from openakita.orgs.models import InboxPriority
 
 
 @pytest.fixture()

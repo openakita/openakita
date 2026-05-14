@@ -279,7 +279,7 @@ async def test_whitelist_keys_are_stable() -> None:
     expected = {
         "status", "error_message", "api_task_id",
         "prompt", "negative_prompt", "model", "mode",
-        "params", "image_urls", "local_image_paths", "usage",
+        "params", "image_urls", "local_image_paths", "usage", "asset_ids",
     }
     assert set(TaskManager._UPDATABLE_COLUMNS) == expected
     # JSON-encoded keys must be a subset of whitelisted keys.
