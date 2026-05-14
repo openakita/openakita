@@ -247,6 +247,10 @@ class PluginManager:
         不让一个坏 manifest 拖垮 PolicyEngine 启动。
         """
         try:
+            from ..core.policy_v2.declared_class_trust import (
+                DeclaredClassTrust,
+                compute_effective_class,
+            )
             from ..core.policy_v2.enums import (
                 ApprovalClass,
                 DecisionSource,
@@ -272,7 +276,13 @@ class PluginManager:
                     tool_name,
                 )
                 continue
-            candidates.append((klass, DecisionSource.PLUGIN_PREFIX))
+            effective, source = compute_effective_class(
+                tool_name,
+                klass,
+                DeclaredClassTrust.DEFAULT,
+                source=DecisionSource.PLUGIN_PREFIX,
+            )
+            candidates.append((effective, source))
         if not candidates:
             return None
         return most_strict(candidates)

@@ -14,14 +14,17 @@
 """
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
 
+from openakita.core import reasoning_engine as reasoning_engine_module
 from openakita.core.permission import check_permission
 from openakita.core.policy_v2 import (
     ApprovalClass,
     DecisionAction,
+    DeferredApprovalRequired,
     PolicyDecisionV2,
     reset_engine_v2,
     set_engine_v2,
@@ -74,6 +77,7 @@ class _CountingV2Engine:
             action=self.action,
             reason="" if self.action == DecisionAction.ALLOW else "stub deny",
             approval_class=ApprovalClass.READONLY_SCOPED,
+            is_unattended_path=self.action == DecisionAction.DEFER,
         )
 
 
@@ -209,6 +213,69 @@ async def test_execute_tool_with_policy_normalizes_tool_aliases():
 
     assert result == "ok:create_todo"
     assert registry.executed == ["create_todo"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_with_policy_refuses_defer_decision():
+    registry = _DummyRegistry()
+    executor = ToolExecutor(registry)
+
+    with pytest.raises(DeferredApprovalRequired):
+        await executor.execute_tool_with_policy(
+            "read_file",
+            {"path": "README.md"},
+            PolicyDecisionV2(
+                action=DecisionAction.DEFER,
+                reason="unattended strategy=defer_to_owner",
+                approval_class=ApprovalClass.READONLY_SCOPED,
+                metadata={"unattended_strategy": "defer_to_owner"},
+            ),
+            session_id="conv-1",
+        )
+
+    assert registry.executed == []
+
+
+def test_reasoning_engine_defer_paths_route_to_pending_approvals():
+    source = inspect.getsource(reasoning_engine_module.ReasoningEngine)
+
+    assert source.count("DecisionAction.DEFER") >= 2
+    assert source.count("_defer_unattended_confirm") >= 2
+    assert source.count("DeferredApprovalRequired") >= 2
+
+
+@pytest.mark.asyncio
+async def test_execute_batch_stops_immediately_on_deferred_approval(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    engine = _CountingV2Engine(action=DecisionAction.DEFER)
+    _install_v2(engine)
+
+    async def _fake_defer(self, **kwargs):  # noqa: ANN001
+        return {
+            "type": "tool_result",
+            "tool_use_id": kwargs["tool_use_id"],
+            "content": "paused",
+            "is_error": True,
+            "_deferred_approval_id": "pa_test",
+            "_deferred_approval_strategy": "defer_to_owner",
+        }
+
+    monkeypatch.setattr(ToolExecutor, "_defer_unattended_confirm", _fake_defer)
+
+    registry = _DummyRegistry()
+    executor = ToolExecutor(registry)
+    results, executed, _ = await executor.execute_batch(
+        [
+            {"id": "tool-1", "name": "read_file", "input": {"path": "a.txt"}},
+            {"id": "tool-2", "name": "create_todo", "input": {"title": "b"}},
+        ],
+    )
+
+    assert len(results) == 1
+    assert results[0]["_deferred_approval_id"] == "pa_test"
+    assert executed == []
+    assert registry.executed == []
 
 
 # ---------------------------------------------------------------------------

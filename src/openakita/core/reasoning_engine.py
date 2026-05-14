@@ -2719,6 +2719,22 @@ class ReasoningEngine:
                     allow_interrupt_checks=self._state.interrupt_enabled,
                     capture_delivery_receipts=True,
                 )
+                _deferred_results = [
+                    tr
+                    for tr in tool_results
+                    if isinstance(tr, dict) and tr.get("_deferred_approval_id")
+                ]
+                if _deferred_results:
+                    from .policy_v2.exceptions import DeferredApprovalRequired
+
+                    _first_deferred = _deferred_results[0]
+                    raise DeferredApprovalRequired(
+                        message=str(_first_deferred.get("content", "")),
+                        pending_id=_first_deferred.get("_deferred_approval_id"),
+                        unattended_strategy=_first_deferred.get(
+                            "_deferred_approval_strategy"
+                        ),
+                    )
                 for _exec_tc, _exec_result in zip(decision.tool_calls, tool_results, strict=False):
                     if isinstance(_exec_result, dict):
                         self._remember_readonly_tool_result(
@@ -4419,9 +4435,40 @@ class ReasoningEngine:
                             _pr = evaluate_via_v2(
                                 t_name, t_args if isinstance(t_args, dict) else {}
                             )
+                            _deferred_tool_result = None
                             if _pr.action == DecisionAction.DENY:
                                 r = f"⚠️ 策略拒绝: {_pr.reason}"
                                 _tool_is_error = True
+                            elif _pr.action == DecisionAction.DEFER:
+                                from types import SimpleNamespace
+
+                                _state_task_id = state.task_id
+                                if _state_task_id is None:
+                                    try:
+                                        from ..scheduler.locks import (
+                                            get_current_scheduled_task_id,
+                                        )
+
+                                        _state_task_id = get_current_scheduled_task_id()
+                                    except Exception:
+                                        _state_task_id = None
+                                _deferred_tool_result = (
+                                    await self._tool_executor._defer_unattended_confirm(
+                                        tool_use_id=t_id,
+                                        tool_name=t_name,
+                                        tool_input=t_args if isinstance(t_args, dict) else {},
+                                        perm_decision=SimpleNamespace(
+                                            metadata=dict(_pr.metadata),
+                                            decision_chain=_pr.to_ui_chain(),
+                                            reason=_pr.reason,
+                                        ),
+                                        session_id=conversation_id or "",
+                                        task_id=_state_task_id,
+                                    )
+                                )
+                                r = str(_deferred_tool_result.get("content", ""))
+                                _tool_is_error = True
+                                _security_confirm_interrupted_ask = True
                             elif _pr.action == DecisionAction.CONFIRM:
                                 # C8 §2.3 fix：取消 IM 渠道早退。reasoning_engine 永远 yield
                                 # ``security_confirm`` SSE，让 gateway._consume_stream 把事件
@@ -4599,14 +4646,36 @@ class ReasoningEngine:
                             # chain_text: 结果摘要
                             if _ask_result_summary:
                                 yield {"type": "chain_text", "content": _ask_result_summary}
-                            tool_results_for_msg.append(
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": t_id,
-                                    "content": r,
-                                    "is_error": _tool_is_error,
-                                }
-                            )
+                            _tool_result_msg = {
+                                "type": "tool_result",
+                                "tool_use_id": t_id,
+                                "content": r,
+                                "is_error": _tool_is_error,
+                            }
+                            if _deferred_tool_result:
+                                _tool_result_msg.update(
+                                    {
+                                        "_deferred_approval_id": _deferred_tool_result.get(
+                                            "_deferred_approval_id"
+                                        ),
+                                        "_deferred_approval_strategy": _deferred_tool_result.get(
+                                            "_deferred_approval_strategy"
+                                        ),
+                                    }
+                                )
+                            tool_results_for_msg.append(_tool_result_msg)
+                            if _deferred_tool_result:
+                                from .policy_v2.exceptions import DeferredApprovalRequired
+
+                                raise DeferredApprovalRequired(
+                                    message=r,
+                                    pending_id=_deferred_tool_result.get(
+                                        "_deferred_approval_id"
+                                    ),
+                                    unattended_strategy=_deferred_tool_result.get(
+                                        "_deferred_approval_strategy"
+                                    ),
+                                )
                             if _security_confirm_interrupted_ask:
                                 break
 
@@ -4888,6 +4957,59 @@ class ReasoningEngine:
                                 }
                             )
                             continue
+
+                        if _pr.action == DecisionAction.DEFER:
+                            from types import SimpleNamespace
+
+                            _state_task_id = state.task_id
+                            if _state_task_id is None:
+                                try:
+                                    from ..scheduler.locks import (
+                                        get_current_scheduled_task_id,
+                                    )
+
+                                    _state_task_id = get_current_scheduled_task_id()
+                                except Exception:
+                                    _state_task_id = None
+                            _deferred_tool_result = (
+                                await self._tool_executor._defer_unattended_confirm(
+                                    tool_use_id=tool_id,
+                                    tool_name=tool_name,
+                                    tool_input=_tool_args_dict,
+                                    perm_decision=SimpleNamespace(
+                                        metadata=dict(_pr.metadata),
+                                        decision_chain=_pr.to_ui_chain(),
+                                        reason=_pr.reason,
+                                    ),
+                                    session_id=conversation_id or "",
+                                    task_id=_state_task_id,
+                                )
+                            )
+                            result_text = str(_deferred_tool_result.get("content", ""))
+                            result_summary = (
+                                self._summarize_tool_result(tool_name, result_text) or ""
+                            )
+                            yield {
+                                "type": "tool_call_end",
+                                "tool": tool_name,
+                                "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
+                                "id": tool_id,
+                                "is_error": True,
+                                "result_summary": result_summary,
+                            }
+                            if result_summary:
+                                yield {"type": "chain_text", "content": result_summary}
+                            from .policy_v2.exceptions import DeferredApprovalRequired
+
+                            raise DeferredApprovalRequired(
+                                message=result_text,
+                                pending_id=_deferred_tool_result.get(
+                                    "_deferred_approval_id"
+                                ),
+                                unattended_strategy=_deferred_tool_result.get(
+                                    "_deferred_approval_strategy"
+                                ),
+                            )
 
                         _executed_tool_calls_for_budget.append(tc)
 

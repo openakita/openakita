@@ -20,6 +20,7 @@ bounded so they don't blow up CI runtime.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -152,11 +153,19 @@ class TestMultiProcessAppend:
         worker.write_text(_WORKER_SOURCE, encoding="utf-8")
 
         def run(tag: str, n: int) -> subprocess.Popen[str]:
+            env = os.environ.copy()
+            src_path = str(Path(__file__).resolve().parents[2] / "src")
+            env["PYTHONPATH"] = (
+                src_path
+                if not env.get("PYTHONPATH")
+                else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+            )
             return subprocess.Popen(
                 [sys.executable, str(worker), str(path), str(n), tag],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                env=env,
             )
 
         p1 = run("A", 10)

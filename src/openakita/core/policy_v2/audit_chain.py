@@ -17,8 +17,8 @@ Design constraints
   last row_hash from disk (since a sibling process may have appended in
   the gap between our last write and now), enriches the new row, writes,
   and releases. The lock file lives next to the JSONL with ``.lock``
-  suffix. When ``filelock`` is unavailable (very rare) we fall back to
-  process-only locking with a warning.
+  suffix. When ``filelock`` is unavailable, a small stdlib OS file-lock
+  fallback preserves the same cross-process serialization contract.
 * Crash recovery: if the previous run died mid-write, the file may end on
   a partial JSON line. ``ChainedJsonlWriter`` detects this on open,
   truncates the partial bytes (only when the file does *not* end in
@@ -123,15 +123,84 @@ GENESIS_HASH: str = "0" * 64
 _FSYNC_ENV: str = "OPENAKITA_AUDIT_FSYNC"
 
 # C17 Phase E.1: cross-process append serialization. ``filelock`` is in
-# pyproject deps so this should always import successfully — if it doesn't
-# we degrade to in-process locking only.
+# pyproject deps, but tests and embedded deployments can run from source
+# without installing extras. If import fails, use a stdlib OS file lock
+# instead of silently degrading to process-only locking.
+class _StdlibFileLockTimeout(TimeoutError):
+    pass
+
+
+class _StdlibFileLock:
+    """Small cross-process exclusive lock fallback for audit integrity."""
+
+    def __init__(self, path: str) -> None:
+        self.path = Path(path)
+        self._fh: Any | None = None
+
+    def acquire(self, timeout: float | None = None) -> _StdlibFileLock:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(self.path, "a+b")  # noqa: SIM115 - held open until release()
+        try:
+            fh.seek(0, os.SEEK_END)
+            if fh.tell() == 0:
+                fh.write(b"\0")
+                fh.flush()
+
+            while True:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+
+                        fh.seek(0)
+                        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self._fh = fh
+                    return self
+                except OSError as exc:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise _StdlibFileLockTimeout(str(exc)) from exc
+                    time.sleep(0.05)
+        except Exception:
+            fh.close()
+            raise
+
+    def release(self) -> None:
+        fh = self._fh
+        self._fh = None
+        if fh is None:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                fh.seek(0)
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            fh.close()
+
+    def __enter__(self) -> _StdlibFileLock:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.release()
+
+
 try:
     from filelock import FileLock
     from filelock import Timeout as _FileLockTimeout
     _HAS_FILELOCK = True
 except Exception:  # pragma: no cover
     _HAS_FILELOCK = False
-    _FileLockTimeout = Exception  # type: ignore[assignment, misc]
+    FileLock = _StdlibFileLock  # type: ignore[assignment, misc]
+    _FileLockTimeout = _StdlibFileLockTimeout  # type: ignore[assignment, misc]
 
 # Bound how long we'll wait for the cross-process lock per append.
 # Audit appends are O(ms); a 5s wait is generous. On timeout we log and
@@ -282,9 +351,7 @@ class ChainedJsonlWriter:
         # C17 Phase E.1: cross-process filelock sibling of the audit file.
         # ``filelock`` 0.12+ is happy with str paths on Windows + POSIX.
         self._filelock_path = self.path.with_suffix(self.path.suffix + ".lock")
-        self._filelock = (
-            FileLock(str(self._filelock_path)) if _HAS_FILELOCK else None
-        )
+        self._filelock = FileLock(str(self._filelock_path))
         self._bootstrap()
 
     # ------------------------------------------------------------------

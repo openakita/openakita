@@ -61,9 +61,10 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ class PendingApproval:
     def from_dict(cls, data: dict[str, Any]) -> PendingApproval:
         # Defensive: ignore unknown keys (forward-compat with future fields)
         # and supply defaults for missing optional fields.
-        accepted = {f for f in cls.__dataclass_fields__}
+        accepted = set(cls.__dataclass_fields__)
         clean = {k: v for k, v in data.items() if k in accepted}
         return cls(**clean)
 
@@ -436,9 +437,30 @@ class PendingApprovalsStore:
             if entry.status != "pending":
                 # Already resolved — idempotent; no event re-fire.
                 return entry
+            now = time.time()
+            if entry.expires_at <= now:
+                entry.status = "expired"
+                entry.resolution = "expired"
+                entry.resolved_at = now
+                entry.resolved_by = None
+                entry.note = "expired before resolve"
+                self._persist()
+                self._emit(
+                    "pending_approval_resolved",
+                    {
+                        "id": entry.id,
+                        "session_id": entry.session_id,
+                        "tool_name": entry.tool_name,
+                        "resolution": "expired",
+                        "resolved_at": entry.resolved_at,
+                        "resolved_by": None,
+                        "note": entry.note,
+                    },
+                )
+                return entry
             entry.status = "approved" if decision == "allow" else "denied"
             entry.resolution = decision
-            entry.resolved_at = time.time()
+            entry.resolved_at = now
             entry.resolved_by = resolved_by
             entry.note = note
             self._persist()

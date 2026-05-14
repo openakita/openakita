@@ -796,6 +796,23 @@ class ToolExecutor:
         Permission check is assumed to be done by the caller (execute_batch or
         ReasoningEngine).  Only todo-required gate remains here.
         """
+        _policy_action = getattr(policy_result, "action", "")
+        if str(getattr(_policy_action, "value", _policy_action)) == "defer":
+            from .policy_v2.exceptions import DeferredApprovalRequired
+
+            raise DeferredApprovalRequired(
+                message=(
+                    "PolicyEngineV2 returned DEFER, but the caller did not route "
+                    "the tool call through pending_approvals. Refusing to execute."
+                ),
+                pending_id=None,
+                unattended_strategy=str(
+                    getattr(policy_result, "metadata", {}).get(
+                        "unattended_strategy", "defer_to_owner"
+                    )
+                ),
+            )
+
         tool_name = self._canonicalize_tool_name(tool_name)
         if isinstance(tool_input, dict):
             tool_input = normalize_tool_input(tool_name, tool_input)
@@ -1256,6 +1273,13 @@ class ToolExecutor:
                             break
                         result = await _run_one(tc, tc["_idx"])
                         results.append(result)
+                        if isinstance(result[1], dict) and result[1].get("_deferred_approval_id"):
+                            break
+                if any(
+                    isinstance(item[1], dict) and item[1].get("_deferred_approval_id")
+                    for item in results
+                ):
+                    break
             results = sorted(results, key=lambda x: x[0])
         else:
             # 串行执行
@@ -1263,6 +1287,8 @@ class ToolExecutor:
             for i, tc in enumerate(tool_calls):
                 result = await _run_one(tc, i)
                 results.append(result)
+                if isinstance(result[1], dict) and result[1].get("_deferred_approval_id"):
+                    break
 
                 # 串行模式下检查中断和取消
                 if state and state.cancelled:

@@ -31,7 +31,6 @@ from openakita.core.pending_approvals import (
     PendingApprovalsStore,
 )
 
-
 # ---------------------------------------------------------------------------
 # Store basics: create / list / get / resolve / persist round-trip
 # ---------------------------------------------------------------------------
@@ -128,6 +127,36 @@ def test_store_lazy_expire_bumps_to_expired(tmp_path: Path) -> None:
     active = store.list_active()
     assert all(e.id != entry.id for e in active), "expired entry must be filtered out"
     assert store.get(entry.id).status == "expired"  # type: ignore[union-attr]
+
+
+def test_resolve_expired_entry_does_not_approve(tmp_path: Path) -> None:
+    events: list[tuple[str, dict]] = []
+    store = _mkstore(tmp_path)
+    store.set_event_hook(lambda evt, payload: events.append((evt, payload)))
+    entry = store.create(
+        task_id="t-1",
+        session_id="s-1",
+        tool_name="run_powershell",
+        params={"command": "ls"},
+        approval_class="EXEC_CAPABLE",
+        decision_chain=[],
+        decision_meta={},
+        reason="r",
+        unattended_strategy="defer_to_owner",
+        ttl_seconds=60.0,
+    )
+    entry.expires_at = time.time() - 1
+
+    updated = store.resolve(entry.id, decision="allow", resolved_by="owner")
+
+    assert updated is not None
+    assert updated.status == "expired"
+    assert updated.resolution == "expired"
+    assert updated.resolved_by is None
+    assert updated.note == "expired before resolve"
+    resolved_events = [e for e in events if e[0] == "pending_approval_resolved"]
+    assert len(resolved_events) == 1
+    assert resolved_events[0][1]["resolution"] == "expired"
 
 
 def test_resolve_invalid_decision_raises(tmp_path: Path) -> None:

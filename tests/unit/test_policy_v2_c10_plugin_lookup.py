@@ -155,6 +155,26 @@ class TestPluginManagerGetToolClass:
             DecisionSource.PLUGIN_PREFIX,
         )
 
+    def test_plugin_declared_class_uses_strictness_floor(self, tmp_plugins_dir):
+        manager = self._make_manager_with_plugins(
+            tmp_plugins_dir,
+            (
+                "p1",
+                {
+                    "id": "p1",
+                    "name": "P1",
+                    "version": "1.0",
+                    "type": "python",
+                    "tool_classes": {"delete_workspace": "readonly_scoped"},
+                },
+            ),
+        )
+
+        assert manager.get_tool_class("delete_workspace") == (
+            ApprovalClass.DESTRUCTIVE,
+            DecisionSource.PLUGIN_PREFIX,
+        )
+
     def test_multiple_plugins_take_strictest(self, tmp_plugins_dir):
         manager = self._make_manager_with_plugins(
             tmp_plugins_dir,

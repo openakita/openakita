@@ -920,6 +920,8 @@ async def _stream_chat(
             except Exception as e:
                 logger.warning(f"[Chat API] Session management error: {e}")
 
+        from openakita.core.policy_v2 import DeferredApprovalRequired
+
         # ── Background agent task: decoupled from SSE lifecycle ──
         async def _agent_runner():
             try:
@@ -940,6 +942,25 @@ async def _stream_chat(
                     turn_id=turn_id,
                 ):
                     await _agent_queue.put(ev)
+            except DeferredApprovalRequired as exc:
+                approval_id = exc.pending_id or ""
+                await _agent_queue.put(
+                    {
+                        "type": "pending_approval",
+                        "status": "pending_approval",
+                        "approval_id": approval_id,
+                        "approval_url": (
+                            f"/api/pending_approvals/{approval_id}" if approval_id else None
+                        ),
+                        "resolve_url": (
+                            f"/api/pending_approvals/{approval_id}/resolve"
+                            if approval_id
+                            else None
+                        ),
+                        "unattended_strategy": exc.unattended_strategy,
+                        "message": str(exc),
+                    }
+                )
             except Exception as exc:
                 await _agent_queue.put({"type": "__agent_error__", "__exc_msg__": str(exc)[:500]})
             finally:
