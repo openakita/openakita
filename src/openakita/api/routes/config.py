@@ -1799,12 +1799,18 @@ async def read_security_audit():
     """
     try:
         from openakita.core.audit_logger import get_audit_logger
-        from openakita.core.policy_v2.audit_chain import verify_chain
+        from openakita.core.policy_v2.audit_chain import (
+            verify_chain_with_rotation,
+        )
 
         logger_instance = get_audit_logger()
         entries = logger_instance.tail(50)
         try:
-            result = verify_chain(logger_instance._path)
+            # C20: verify across rotation archives + active file. On
+            # deployments where rotation is disabled (default) this
+            # behaves identically to verify_chain(active_path) — so
+            # backward compatible with the C16 contract.
+            result = verify_chain_with_rotation(logger_instance._path)
             chain_verification = {
                 "ok": result.ok,
                 "total": result.total,

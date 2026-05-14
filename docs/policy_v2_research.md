@@ -974,6 +974,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C17 | Reliability（lock 文件 / 启动扫描 / Last-Event-ID / health probe）| ✅ DONE | R4-16/17/18/19 + R5-8/12 + 「C17 实施记录」|
 | C18 | UX + 配置完备性（hot-reload / ENV / dry-run / 5s 聚合）| ✅ DONE | R4-20/21/22 + R5-11/20 +「C18 实施记录」+「C18 二轮 audit 修复」|
 | **C19** | **开发者新增工具 4 层护栏（依赖 C2/C8/C11，在 C12 之前实施以护卫 C12-C18）** | ✅ DONE | §4.21 cookbook + §12.5 + 「C19 实施记录」|
+| C20 | Audit JSONL rotation（daily / size + 跨文件链头延续 + verify_chain 多文件遍历）| ✅ DONE |「C20 实施记录」（兑现 C16/C18 deferred 契约）|
 
 ---
 
@@ -5408,3 +5409,129 @@ override 审计行落到**新**配置指向的 ``audit.log_path``（操作员预
    败看着像成功）。如果只发"Phase A..F 全绿"的 victory lap 就结束，
    这些会埋雷到 prod。每次 milestone 提交后强制做一遍 cross-phase
    self-review 值得。
+
+
+## C20 实施记录 — Audit JSONL Rotation
+
+### 背景
+
+C16 docstring（line 57-60）和 C18 Phase E（line 5267-5268）都显式
+deferred 了"跨文件 rotation + 跨文件链头嵌入" 的工作。C19 之后整个
+Policy V2 migration roadmap 结束，C20 是兑现这两个 deferred 契约的
+最自然下一步——价值"高"（落地后审计链才真正生产级长期可用，否则单
+文件无限增长会拖死 verify_chain 的 O(N) 扫描）。
+
+### 选择"先 schema 后 writer 后 verifier"分 phase 落地
+
+两个 commit：
+- **Phase A**（commit ``bbbeada9``）：rotation 引擎 + 链头跨文件
+  嵌入 + schema 字段。21 个单测。
+- **Phase B**（本 commit）：``verify_chain_with_rotation`` 多文件遍
+  历 + ``_list_rotation_archives`` 自动发现 + audit API endpoint 切
+  入 + audit 脚本 + 文档。9 个新增 verifier 测试。
+
+### 关键设计决策
+
+**1. 默认关闭** — ``rotation_mode = "none"``。所有现有部署 zero
+   behavior change。"opt-in" 是 C18 hot-reload 同款理念。
+
+**2. 链头跨文件延续的工程实现**：rotation 永远在 ``append()`` 的
+   ``with self._lock`` + filelock 双锁内部进行；先
+   ``_reload_last_hash_from_disk()`` 刷新 ``_last_hash``，再判断是
+   否 rotate（rename），然后写。由于 rename 后 in-memory
+   ``_last_hash`` 指向 archive 尾的 ``row_hash``，新文件首条记录的
+   ``prev_hash`` 自动嵌入它——契约自然 fulfilled，不需要单独的
+   "rotation event"。
+
+**3. Rotation 路径选择**：
+   - daily mode：``<stem>.YYYY-MM-DD.jsonl``（日期取 mtime 的 UTC
+     日期，表达"截止到此日期"）
+   - size mode：``<stem>.YYYYMMDDTHHMMSS.jsonl``（精确到秒，同秒冲突
+     时降级到微秒）
+   - active path（``self.path``）始终不变——caller 不需要重新 resolve
+     writer，所有 callsite 透明受益
+
+**4. Lock-free rotation 配置读取**（这条是本 milestone 自审里 +1
+   的关键 lesson）：``_get_rotation_config`` 直读
+   ``global_engine._config`` 模块属性而 **不**走 ``get_config_v2()``。
+   原因：``append()`` 会被 ``rebuild_engine_v2`` 在持非 reentrant
+   ``_lock`` 状态下间接调到（例如 C18 ``_audit_env_overrides`` 路径），
+   ``get_config_v2()`` 自己也 ``with _lock``，重入即死锁——精确复现
+   C18 BUG-C2。我在第一版实现里就埋了同样的雷，跑回归立刻挂；二话不
+   说改成模块属性直读，并加了 AST-level 静态守卫
+   （``test_rotation_config_read_is_lock_free``）防未来重蹈覆辙。
+
+**5. ``verify_chain_with_rotation`` 是新增 API，不破坏旧的
+   ``verify_chain``**：旧函数继续单文件走，新函数走 archive +
+   active 串联。Phase A 单测里
+   ``test_each_file_individually_verifies`` 显式验证"单文件
+   ``verify_chain`` 对 rotation 后的 active 文件返回 ok=False"——这是
+   预期行为（active 第一行的 prev_hash 指向 archive 尾，从
+   GENESIS 起的单文件 walk 会在第一行 mismatch）；这条单测的存在
+   就是为了**记录** Phase B 的必要性。
+   API endpoint ``GET /api/config/security/audit`` 切到新函数，
+   SecurityView UI 自动看到跨文件链状态。
+
+**6. 跨文件 ``first_bad_line`` 用 concatenated 索引**：报错信息会
+   显示文件名（``arch.jsonl``） + 该文件内的行号，但
+   ``first_bad_line`` 数字用 archive + active 串联的全局行号（1-based），
+   操作员定位时不用算偏移。
+
+### 出现的问题 + 修复
+
+**P-A.1（实现中段被自己绊倒）**：第一版
+   ``_get_rotation_config`` 写了 ``from .global_engine import
+   get_config_v2``。跑回归在 C18 BUG-C2 deadlock test 卡死整整 5
+   分钟。立刻意识到是同款 deadlock，改成直读
+   ``global_engine._config`` 模块属性 + 在 commit 之前就加 AST 静
+   态守卫。这其实是非常好的"二轮 audit 思路滋养第一轮实现" 的实例：
+   C18 自审的 BUG-C2 教训让我在 C20 一开始写出来时就发现而不是发到
+   prod 才发现。
+
+**P-A.2（zombie 进程占文件锁）**：在调试 P-A.1 时
+   ``taskkill /F`` 杀掉的 pytest 留了 15 个僵尸 python 进程，每个都
+   持着 ``data/audit/policy_decisions.jsonl.lock`` 的 filelock，下
+   一轮跑测试就 5s timeout 失败。批量杀掉 + 删 lockfile 才恢复。
+   ——这跟 C20 实现无关，是 Windows + filelock + 长跑测试组合的开发
+   环境清理问题；记下来给未来同类调试参考。
+
+**P-A.3（AST 静态守卫的 false positive）**：第一版
+   ``test_rotation_config_read_is_lock_free`` 用 ``"get_config_v2"
+   not in src`` 字符串匹配，被自己 docstring 里"我们故意不调
+   get_config_v2"的解释抓出来误报。改成
+   ``ast.parse`` + 收集所有 ``Call.func`` 节点的 ``Name``/
+   ``Attribute``：只检查真实调用，docstring 提及不算。
+
+### 验证 / 回归
+
+| 维度 | 结果 |
+|------|------|
+| Phase A 单测 | 21/21 PASS |
+| Phase B 单测 | 9/9 PASS（``TestVerifyChainWithRotation``）|
+| ``scripts/c20_audit.py`` | 7 个 section all passed |
+| 完整回归 | 349/349 PASS（C20 全部 30 + C17 chain/二轮/health/SSE/scheduler + C18 全套 + Phase C8 wire/SSE + 权限/响应处理/可信路径），7.21s |
+| Ruff | clean |
+| 文档闭环 | ``docs/configuration.md`` "Audit JSONL rotation (C20)" 子章节 + 本节实施记录 |
+
+### 经验教训（C20）
+
+1. **deferred 契约要兑现**：C16 / C18 都把 rotation 写在 "out of
+   scope (explicit follow-ups, not bugs)" 而不是"不做"。隔了几个
+   milestone 回来兑现，老 docstring 里的 "when rotation lands, the
+   chain head will need to embed the tail hash of the previous file"
+   就是设计指引——按它写第一版就对。
+2. **新功能里复刻刚修过的 bug 几乎是必然**：BUG-C2 死锁的根因是
+   "hot-path 调 get_config_v2 重入 _lock"。在 C20 写
+   ``_get_rotation_config`` 时我**自己**又犯了一次（虽然写完 5 秒内
+   就发现）。说明 BUG-C2 的修复**只在 patch 点**修了，没在
+   "policy_v2 模块编码守则"层面留住。这次顺手加的 AST 守卫
+   ``test_rotation_config_read_is_lock_free`` 是一个**模式护栏**，
+   下次有人添新 hot-path 配置查询也会被它接住。
+3. **测试当文档**：``test_each_file_individually_verifies`` 用例本质
+   是把 "Phase A 实现 + Phase B 必要性" 用代码记录下来——任何看到
+   "为什么 verify_chain 单跑会 fail 但
+   verify_chain_with_rotation 不会"疑问的人，跑这个测试就懂了。
+4. **C18 二轮 audit 的回报**：C20 一上来就把
+   ``test_append_during_simulated_lock_hold_does_not_deadlock``
+   端到端死锁场景测试写出来——这套思路 100% 是 C18 BUG-C2 教出来的，
+   等于 C18 二轮 audit 的资产被 C20 直接复用。值得。

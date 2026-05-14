@@ -43,8 +43,10 @@ from openakita.core.policy_v2 import audit_chain
 from openakita.core.policy_v2.audit_chain import (
     GENESIS_HASH,
     ChainedJsonlWriter,
+    _list_rotation_archives,
     get_writer,
     verify_chain,
+    verify_chain_with_rotation,
 )
 from openakita.core.policy_v2.schema import AuditConfig, PolicyConfigV2
 
@@ -634,6 +636,226 @@ class TestDeadlockImmune:
 # ---------------------------------------------------------------------------
 # Bonus: existing chain integrity tests still pass through rotation
 # ---------------------------------------------------------------------------
+
+
+class TestVerifyChainWithRotation:
+    """C20 Phase B — verifier walks archives + active file as one
+    continuous chain."""
+
+    def test_empty_dir_returns_ok(self, tmp_path: Path) -> None:
+        result = verify_chain_with_rotation(tmp_path / "audit.jsonl")
+        assert result.ok
+        assert result.total == 0
+
+    def test_single_file_no_rotation_behaves_like_verify_chain(
+        self, tmp_path: Path, install_audit_config
+    ) -> None:
+        """Backward-compat check: a deployment with rotation off (the
+        default) MUST produce identical verifier output to the legacy
+        verify_chain call. SecurityView's UI contract depends on this."""
+        install_audit_config({"rotation_mode": "none"})
+        log = tmp_path / "audit.jsonl"
+        writer = get_writer(log)
+        for i in range(5):
+            writer.append({"event": f"e{i}"})
+
+        r1 = verify_chain(log)
+        r2 = verify_chain_with_rotation(log)
+        assert r1.ok == r2.ok
+        assert r1.total == r2.total
+        assert r1.legacy_prefix_lines == r2.legacy_prefix_lines
+        assert r1.first_bad_line == r2.first_bad_line
+
+    def test_walks_archives_then_active_file(
+        self, tmp_path: Path, install_audit_config
+    ) -> None:
+        """The whole point of Phase B: a chain split across one
+        archive + active file verifies end-to-end."""
+        install_audit_config({"rotation_mode": "daily"})
+        log = tmp_path / "audit.jsonl"
+        writer = get_writer(log)
+
+        # Old "day": 3 records
+        writer.append({"event": "a", "ts": 1.0})
+        writer.append({"event": "b", "ts": 2.0})
+        writer.append({"event": "c", "ts": 3.0})
+
+        # Force rotation
+        import os
+
+        old_ts = time.time() - 25 * 3600
+        os.utime(log, (old_ts, old_ts))
+
+        # New "day": 2 records
+        writer.append({"event": "d", "ts": 4.0})
+        writer.append({"event": "e", "ts": 5.0})
+
+        result = verify_chain_with_rotation(log)
+        assert result.ok, f"cross-file chain failed: {result.reason}"
+        assert result.total == 5
+        assert result.legacy_prefix_lines == 0
+
+    def test_chain_break_in_archive_detected(
+        self, tmp_path: Path, install_audit_config
+    ) -> None:
+        """Tamper detection across rotation boundary: if someone edits
+        the archive's last row's row_hash, the verifier must flag it
+        and identify the offending file."""
+        install_audit_config({"rotation_mode": "daily"})
+        log = tmp_path / "audit.jsonl"
+        writer = get_writer(log)
+        writer.append({"event": "a"})
+        writer.append({"event": "b"})
+        import os
+
+        os.utime(log, (time.time() - 25 * 3600, time.time() - 25 * 3600))
+        writer.append({"event": "c"})
+
+        # Tamper with the archive: flip a byte in the LAST row's
+        # row_hash. The active file's first record's prev_hash refers
+        # to that hash, so the chain will fail at the active file's
+        # first row (prev_hash mismatch).
+        archives = [
+            p for p in tmp_path.iterdir()
+            if p.name != log.name and p.name.endswith(".jsonl")
+        ]
+        assert len(archives) == 1
+        arch = archives[0]
+        lines = arch.read_text(encoding="utf-8").splitlines()
+        last = json.loads(lines[-1])
+        # Mutate WITHOUT recomputing — chain break.
+        last["event"] = "TAMPERED"
+        lines[-1] = json.dumps(last, separators=(",", ":"), sort_keys=True)
+        arch.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = verify_chain_with_rotation(log)
+        assert result.ok is False
+        # Could fail at the archive's row (row_hash recompute mismatch)
+        # OR at the active file's first row (prev_hash mismatch).
+        # Either is acceptable — we just need OK=False with a clear
+        # reason naming the offending file.
+        assert result.reason is not None
+        # The reason should name one of the files.
+        assert (
+            arch.name in result.reason
+            or log.name in result.reason
+        )
+
+    def test_chain_break_in_active_file_detected(
+        self, tmp_path: Path, install_audit_config
+    ) -> None:
+        install_audit_config({"rotation_mode": "daily"})
+        log = tmp_path / "audit.jsonl"
+        writer = get_writer(log)
+        writer.append({"event": "a"})
+        import os
+
+        os.utime(log, (time.time() - 25 * 3600, time.time() - 25 * 3600))
+        writer.append({"event": "b"})
+        writer.append({"event": "c"})
+
+        lines = log.read_text(encoding="utf-8").splitlines()
+        last = json.loads(lines[-1])
+        last["event"] = "EVIL"
+        lines[-1] = json.dumps(last, separators=(",", ":"), sort_keys=True)
+        log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = verify_chain_with_rotation(log)
+        assert result.ok is False
+        assert log.name in (result.reason or "")
+
+    def test_active_file_alone_passes_when_no_rotation_history(
+        self, tmp_path: Path, install_audit_config
+    ) -> None:
+        """Deployment with rotation on but no rotations yet (fresh
+        install): verifier walks just the active file, returns ok."""
+        install_audit_config({"rotation_mode": "daily"})
+        log = tmp_path / "audit.jsonl"
+        writer = get_writer(log)
+        for i in range(3):
+            writer.append({"event": f"e{i}"})
+
+        result = verify_chain_with_rotation(log)
+        assert result.ok
+        assert result.total == 3
+
+    def test_archives_listed_in_mtime_order(
+        self, tmp_path: Path, install_audit_config
+    ) -> None:
+        """_list_rotation_archives sorts by mtime ascending. Critical
+        for chain walking — wrong order = false-positive tamper."""
+        install_audit_config({
+            "rotation_mode": "size",
+            "rotation_size_mb": 1,
+            "rotation_keep_count": 0,
+        })
+        log = tmp_path / "audit.jsonl"
+        writer = get_writer(log)
+        big = "x" * (600 * 1024)
+        for epoch in range(3):
+            writer.append({"epoch": epoch, "blob": big})
+            writer.append({"epoch": epoch, "blob": big})
+            writer.append({"epoch": epoch, "n": "trigger"})
+            time.sleep(0.05)
+
+        archives = _list_rotation_archives(log)
+        assert len(archives) >= 2
+        mtimes = [p.stat().st_mtime for p in archives]
+        assert mtimes == sorted(mtimes), (
+            "archives must be ordered oldest-first for chain walk to work"
+        )
+
+    def test_active_file_absent_still_verifies_archives(
+        self, tmp_path: Path, install_audit_config
+    ) -> None:
+        """Operator forensic case: the active file got moved away (e.g.
+        for offline analysis); only archives remain. verify_chain_with_
+        rotation must still walk them."""
+        install_audit_config({"rotation_mode": "daily"})
+        log = tmp_path / "audit.jsonl"
+        writer = get_writer(log)
+        writer.append({"event": "a"})
+        writer.append({"event": "b"})
+        import os
+
+        os.utime(log, (time.time() - 25 * 3600, time.time() - 25 * 3600))
+        writer.append({"event": "fresh"})
+
+        # Remove active file — only archive remains.
+        log.unlink()
+
+        result = verify_chain_with_rotation(log)
+        assert result.ok
+        assert result.total == 2  # the 2 rows in the archive
+
+    def test_concatenated_first_bad_line_uses_global_index(
+        self, tmp_path: Path, install_audit_config
+    ) -> None:
+        """first_bad_line is 1-indexed over the CONCATENATED stream,
+        so operators can locate the issue uniquely. We tamper with the
+        first row of the active file (which is row 3 in the
+        concatenated stream after a 2-row archive)."""
+        install_audit_config({"rotation_mode": "daily"})
+        log = tmp_path / "audit.jsonl"
+        writer = get_writer(log)
+        writer.append({"event": "a"})
+        writer.append({"event": "b"})
+        import os
+
+        os.utime(log, (time.time() - 25 * 3600, time.time() - 25 * 3600))
+        writer.append({"event": "c"})
+        writer.append({"event": "d"})
+
+        # Tamper with active file's first row (concat row 3).
+        lines = log.read_text(encoding="utf-8").splitlines()
+        first = json.loads(lines[0])
+        first["event"] = "EVIL"
+        lines[0] = json.dumps(first, separators=(",", ":"), sort_keys=True)
+        log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = verify_chain_with_rotation(log)
+        assert result.ok is False
+        assert result.first_bad_line == 3
 
 
 class TestRotationDoesNotBreakRecordShape:

@@ -350,6 +350,71 @@ confirm** — this is enforced in the classifier, not in
 The CLI flag is additive: setting it does not clear a pre-existing
 `OPENAKITA_AUTO_CONFIRM` env var that operators set elsewhere.
 
+### Audit JSONL rotation (C20)
+
+The audit log (`security.audit.log_path`, default `data/audit/policy_decisions.jsonl`)
+is append-only with tamper-evident hash chaining (C16). C20 adds
+optional rotation so a long-running deployment doesn't grow a single
+multi-GB file.
+
+```yaml
+security:
+  audit:
+    log_path: data/audit/policy_decisions.jsonl
+    enabled: true
+    include_chain: true       # C16: hash-chain rows for tamper detection
+
+    # === C20 rotation (default off — no behaviour change from C18) ===
+    rotation_mode: none       # none | daily | size
+    rotation_size_mb: 100     # threshold for "size" mode (1..10240 MiB)
+    rotation_keep_count: 30   # how many archives to retain (0 = unlimited)
+```
+
+**Modes**:
+
+- `none` (default): never rotate. Single file grows forever. Identical
+  to C16/C17/C18 behaviour — operators who haven't touched their YAML
+  see no change.
+- `daily`: when the active file's mtime falls on a UTC day before
+  "today", rename it to `<stem>.YYYY-MM-DD.jsonl` (date = mtime's UTC
+  date) and start a fresh active file for today.
+- `size`: when `stat().st_size + len(new_line) > rotation_size_mb *
+  1024 * 1024`, rename to `<stem>.YYYYMMDDTHHMMSS.jsonl` (UTC stamp at
+  rotation moment).
+
+**Chain head carry-over**: rotation preserves the hash chain across
+files. The first record written to the new active file has
+`prev_hash = <last row_hash of the rotated archive>`. The
+`/api/config/security/audit` endpoint uses
+`verify_chain_with_rotation` to walk archives + active file as one
+continuous chain, so SecurityView correctly reports tamper status
+across rotation boundaries.
+
+**Pruning**: after each rotation, archives matching
+`<stem>.*.jsonl` are sorted by mtime ascending and the oldest beyond
+`rotation_keep_count` are deleted. `0` = keep everything (operator
+runs an external archiver).
+
+**Hot-reload**: rotation parameters are read at each append via the
+lock-free `global_engine._config` attribute, so C18 hot-reload
+(`security.hot_reload.enabled: true`) takes effect on the very next
+audit write — no restart required.
+
+**Operator notes**:
+
+- Multi-process deployments: rotation happens under the same
+  `filelock.FileLock` as appends, so concurrent processes serialize
+  safely. Clocks should stay in sync via NTP (assumption shared with
+  every other audit feature).
+- Existing archives: a pre-existing archive at the would-be rotation
+  target path is never overwritten — rotation skips with a WARN log
+  and the active file keeps growing until the next eligible window.
+  This prevents accidental history loss from clock jumps.
+- Forensics: if the active file is moved aside for offline analysis,
+  the archives still verify on their own via
+  `verify_chain_with_rotation(<active_path>)` — the function
+  tolerates a missing active file as long as archives exist.
+
 ## Advanced Configuration
 
 ### Proxy Settings

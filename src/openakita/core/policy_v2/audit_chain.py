@@ -742,12 +742,226 @@ def reset_writers_for_testing() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _list_rotation_archives(active_path: Path) -> list[Path]:
+    """Find rotated siblings of ``active_path`` (the "current" file).
+
+    Mirror of :meth:`ChainedJsonlWriter._list_archives` but available
+    as a module-level helper so :func:`verify_chain_with_rotation` can
+    use it without instantiating a writer.
+
+    Pattern: same parent dir, basename starts with
+    ``<active_stem>.`` + ends with ``.jsonl``, NOT the active file
+    itself, NOT a ``.lock`` sidecar. Result sorted by mtime ascending
+    (oldest first — natural chain walk order).
+    """
+    parent = active_path.parent
+    stem = active_path.stem
+    if not parent.exists():
+        return []
+    results: list[tuple[float, Path]] = []
+    try:
+        active_resolved = active_path.resolve()
+    except OSError:
+        active_resolved = active_path
+    for entry in parent.iterdir():
+        if not entry.is_file():
+            continue
+        try:
+            if entry.resolve() == active_resolved:
+                continue
+        except OSError:
+            continue
+        name = entry.name
+        if not name.endswith(".jsonl"):
+            continue
+        if not name.startswith(stem + "."):
+            continue
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        results.append((mtime, entry))
+    results.sort(key=lambda t: t[0])
+    return [p for _, p in results]
+
+
+def verify_chain_with_rotation(active_path: Path | str) -> ChainVerifyResult:
+    """Verify the hash chain across rotated archives + the active file.
+
+    Walks every ``<stem>.<suffix>.jsonl`` archive in mtime order,
+    followed by the active file ``<stem>.jsonl``. Maintains
+    ``expected_prev`` across file boundaries — so a chain that was
+    rotated mid-life still verifies cleanly end-to-end.
+
+    Returns a single :class:`ChainVerifyResult` over the concatenated
+    history. ``total`` counts every line across all files;
+    ``legacy_prefix_lines`` is summed across all files where the
+    pre-C16 raw-append prefix existed; ``first_bad_line`` is the
+    line index within the concatenated stream (1-indexed).
+
+    If the directory has no rotation archives, behaviour is identical
+    to :func:`verify_chain` on the active file alone — so existing
+    callers can switch to this entry point freely without seeing
+    spurious differences on un-rotated deployments.
+    """
+    p = Path(active_path)
+    archives = _list_rotation_archives(p)
+    # Walk archives first (oldest → newest), then the active file. If
+    # active file doesn't exist yet (fresh deploy) we still verify the
+    # archives — operator may be checking history of a since-rotated
+    # log.
+    files: list[Path] = list(archives)
+    if p.exists():
+        files.append(p)
+    if not files:
+        return ChainVerifyResult(
+            ok=True,
+            total=0,
+            legacy_prefix_lines=0,
+            truncated_tail_recovered=False,
+            first_bad_line=None,
+            reason=None,
+        )
+
+    total = 0
+    legacy_prefix = 0
+    truncated_any = False
+    expected_prev = GENESIS_HASH
+    in_chain = False
+
+    for file_idx, file_path in enumerate(files):
+        try:
+            with open(file_path, encoding="utf-8") as fh:
+                content = fh.read()
+        except OSError as exc:
+            return ChainVerifyResult(
+                ok=False,
+                total=total,
+                legacy_prefix_lines=legacy_prefix,
+                truncated_tail_recovered=truncated_any,
+                first_bad_line=total,
+                reason=f"read error on {file_path.name}: {exc}",
+            )
+
+        file_truncated = bool(content) and not content.endswith("\n")
+        truncated_any = truncated_any or file_truncated
+        lines = content.split("\n")
+        if lines and lines[-1] == "":
+            lines = lines[:-1]
+
+        is_last_file = file_idx == len(files) - 1
+
+        for line_in_file_idx, raw in enumerate(lines, start=1):
+            total += 1
+            try:
+                obj = json.loads(raw)
+            except ValueError as exc:
+                # Allow only the very last line of the very last file
+                # to be a torn partial write (crash recovery semantics).
+                if (
+                    is_last_file
+                    and line_in_file_idx == len(lines)
+                    and file_truncated
+                ):
+                    total -= 1
+                    break
+                return ChainVerifyResult(
+                    ok=False,
+                    total=total,
+                    legacy_prefix_lines=legacy_prefix,
+                    truncated_tail_recovered=truncated_any,
+                    first_bad_line=total,
+                    reason=(
+                        f"{file_path.name} line {line_in_file_idx} is "
+                        f"not valid JSON: {exc}"
+                    ),
+                )
+            if not isinstance(obj, dict):
+                return ChainVerifyResult(
+                    ok=False,
+                    total=total,
+                    legacy_prefix_lines=legacy_prefix,
+                    truncated_tail_recovered=truncated_any,
+                    first_bad_line=total,
+                    reason=(
+                        f"{file_path.name} line {line_in_file_idx} is "
+                        "not a JSON object"
+                    ),
+                )
+
+            row_hash = obj.get("row_hash")
+            prev_hash = obj.get("prev_hash")
+
+            if row_hash is None and prev_hash is None:
+                if not in_chain:
+                    legacy_prefix += 1
+                    continue
+                return ChainVerifyResult(
+                    ok=False,
+                    total=total,
+                    legacy_prefix_lines=legacy_prefix,
+                    truncated_tail_recovered=truncated_any,
+                    first_bad_line=total,
+                    reason=(
+                        f"{file_path.name} line {line_in_file_idx} is "
+                        "missing chain fields after chain started"
+                    ),
+                )
+
+            in_chain = True
+
+            if prev_hash != expected_prev:
+                return ChainVerifyResult(
+                    ok=False,
+                    total=total,
+                    legacy_prefix_lines=legacy_prefix,
+                    truncated_tail_recovered=truncated_any,
+                    first_bad_line=total,
+                    reason=(
+                        f"{file_path.name} line {line_in_file_idx} "
+                        f"prev_hash mismatch: expected {expected_prev[:12]}…, "
+                        f"got {(prev_hash or 'None')[:12]}…"
+                    ),
+                )
+
+            bare = {k: v for k, v in obj.items() if k != "row_hash"}
+            recomputed = _compute_row_hash(bare)
+            if recomputed != row_hash:
+                return ChainVerifyResult(
+                    ok=False,
+                    total=total,
+                    legacy_prefix_lines=legacy_prefix,
+                    truncated_tail_recovered=truncated_any,
+                    first_bad_line=total,
+                    reason=(
+                        f"{file_path.name} line {line_in_file_idx} "
+                        f"row_hash mismatch: stored {(row_hash or 'None')[:12]}…, "
+                        f"recomputed {recomputed[:12]}…"
+                    ),
+                )
+
+            expected_prev = row_hash
+
+    return ChainVerifyResult(
+        ok=True,
+        total=total,
+        legacy_prefix_lines=legacy_prefix,
+        truncated_tail_recovered=truncated_any,
+        first_bad_line=None,
+        reason=None,
+    )
+
+
 def verify_chain(path: Path | str) -> ChainVerifyResult:
     """Walk ``path`` line-by-line and verify the hash chain.
 
-    Linear O(N) — acceptable until rotation lands in C17. Use sparingly
-    on very large files; SecurityView should call this on operator demand,
-    not on every page render.
+    Single-file walker — kept for back-compat and for callers who
+    explicitly want to verify just one file (e.g. one archive in
+    isolation). For end-to-end verification across rotation use
+    :func:`verify_chain_with_rotation`.
+
+    Linear O(N). Use sparingly on very large files; SecurityView
+    should call this on operator demand, not on every page render.
     """
     p = Path(path)
     if not p.exists():
@@ -879,7 +1093,9 @@ __all__ = [
     "GENESIS_HASH",
     "_canonical_dumps",
     "_compute_row_hash",
+    "_list_rotation_archives",
     "get_writer",
     "reset_writers_for_testing",
     "verify_chain",
+    "verify_chain_with_rotation",
 ]
