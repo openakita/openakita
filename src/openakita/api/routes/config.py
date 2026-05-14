@@ -262,6 +262,40 @@ class SecurityConfirmRequest(BaseModel):
         }.get(value, value)
 
 
+class SecurityConfirmBatchRequest(BaseModel):
+    """C18 Phase B：一次性 resolve 一个 session 内时间窗内的所有待 confirm。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(validation_alias=AliasChoices("session_id", "conversation_id"))
+    decision: str = Field(
+        validation_alias=AliasChoices("decision", "choice"),
+        description="allow_once | allow_session | allow_always | deny | sandbox",
+    )
+    within_seconds: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=600.0,
+        description=(
+            "Restrict batch to confirms whose created_at is within "
+            "``within_seconds`` of the most recent pending. None/0 = "
+            "no time filter (resolve every pending in the session). "
+            "Server clamps to POLICIES.yaml confirmation.aggregation_"
+            "window_seconds when that field is set and stricter."
+        ),
+    )
+
+    def normalized_decision(self) -> str:
+        value = (self.decision or "").strip()
+        return {
+            "cancel": "deny",
+            "confirm_cancel": "deny",
+            "confirm_continue": "allow_once",
+            "continue": "allow_once",
+            "inspect_only": "deny",
+        }.get(value, value)
+
+
 def _normalize_permission_mode(mode: str) -> str:
     """Normalize product/user-facing mode names to the existing backend modes."""
     normalized = (mode or "yolo").strip().lower()
@@ -1838,6 +1872,90 @@ async def security_confirm(body: SecurityConfirmRequest):
     return {"status": "ok", "confirm_id": body.confirm_id, "decision": decision}
 
 
+@router.post("/api/chat/security-confirm/batch")
+async def security_confirm_batch(body: SecurityConfirmBatchRequest):
+    """C18 Phase B：批量 resolve 同一 session 内 ≥2 个待 confirm。
+
+    服务端先用 ``UIConfirmBus.list_batch_candidates`` 算出窗内 confirm_id
+    列表，再对每个 id 走 ``apply_resolution``——所有 allowlist 副作用与
+    单条 ``/api/chat/security-confirm`` 完全一致（决不绕过 SessionAllowlist/
+    UserAllowlist 写入）。
+    """
+    decision = body.normalized_decision()
+    try:
+        from openakita.core.policy_v2 import apply_resolution
+        from openakita.core.policy_v2.global_engine import get_config_v2
+        from openakita.core.ui_confirm_bus import get_ui_confirm_bus
+
+        bus = get_ui_confirm_bus()
+
+        # Server-side clamp：window 由 POLICIES.yaml 控制。当 POLICIES.yaml
+        # 设了 ``aggregation_window_seconds > 0`` 时，请求传入的更大窗会
+        # 被收紧到配置值——避免恶意客户端用超大窗"清空整个 session 的所
+        # 有等待 confirm"。
+        try:
+            cfg_window = float(
+                get_config_v2().confirmation.aggregation_window_seconds
+            )
+        except Exception:
+            cfg_window = 0.0
+
+        if cfg_window > 0:
+            if body.within_seconds is None or body.within_seconds > cfg_window:
+                effective_window: float | None = cfg_window
+            else:
+                effective_window = body.within_seconds
+        else:
+            # 配置为 0（默认关）时，仍允许显式 within_seconds 传 None
+            # —— 用于内部紧急脚本一次性 resolve 全部 session pending。
+            # UI 路径在 enabled=false 时根本不会调这个端点。
+            effective_window = body.within_seconds
+
+        candidates = bus.list_batch_candidates(
+            body.session_id, within_seconds=effective_window
+        )
+        logger.info(
+            "[Security] Batch confirm session=%s decision=%s window=%s "
+            "candidates=%d",
+            body.session_id[:12] if body.session_id else "",
+            decision,
+            effective_window,
+            len(candidates),
+        )
+
+        resolved_ids: list[str] = []
+        missing_ids: list[str] = []
+        for cid in candidates:
+            try:
+                found = apply_resolution(cid, decision)
+                if found:
+                    resolved_ids.append(cid)
+                else:
+                    missing_ids.append(cid)
+            except Exception as e:
+                logger.warning(
+                    "[Security] Batch confirm failed for id=%s: %s", cid, e
+                )
+                missing_ids.append(cid)
+
+        return {
+            "status": "ok",
+            "session_id": body.session_id,
+            "decision": decision,
+            "resolved_count": len(resolved_ids),
+            "resolved_ids": resolved_ids,
+            "missing_ids": missing_ids,
+            "window_seconds": effective_window,
+        }
+    except Exception as e:
+        logger.exception("[Security] Batch confirm endpoint failed")
+        return {
+            "status": "error",
+            "session_id": body.session_id,
+            "message": str(e),
+        }
+
+
 @router.post("/api/config/security/death-switch/reset")
 async def reset_death_switch():
     """Reset the death switch (exit read-only mode)."""
@@ -1869,6 +1987,7 @@ async def read_security_confirmation():
             "timeout_seconds": 60,
             "default_on_timeout": "deny",
             "confirm_ttl": 120,
+            "aggregation_window_seconds": 0.0,
         }
     c = data.get("security", {}).get("confirmation", {})
     return {
@@ -1876,6 +1995,8 @@ async def read_security_confirmation():
         "timeout_seconds": c.get("timeout_seconds", 60),
         "default_on_timeout": c.get("default_on_timeout", "deny"),
         "confirm_ttl": c.get("confirm_ttl", 120),
+        # C18 Phase B：0 = 关；>0 = 允许 UI 批量 resolve。
+        "aggregation_window_seconds": c.get("aggregation_window_seconds", 0.0),
     }
 
 
@@ -1884,6 +2005,7 @@ class _ConfirmationUpdate(BaseModel):
     timeout_seconds: int | None = None
     default_on_timeout: str | None = None
     confirm_ttl: float | None = None
+    aggregation_window_seconds: float | None = None
 
 
 @router.post("/api/config/security/confirmation")
@@ -1906,6 +2028,18 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
         conf["default_on_timeout"] = body.default_on_timeout
     if body.confirm_ttl is not None:
         conf["confirm_ttl"] = body.confirm_ttl
+    if body.aggregation_window_seconds is not None:
+        v = float(body.aggregation_window_seconds)
+        # Mirror the schema range (0..600) so writes via API match
+        # POLICIES.yaml validation. Out-of-range = error rather than
+        # silent clamp; otherwise user'd save 700 and read back 600
+        # with no explanation.
+        if v < 0 or v > 600:
+            return {
+                "status": "error",
+                "message": "aggregation_window_seconds must be in [0, 600]",
+            }
+        conf["aggregation_window_seconds"] = v
     _write_policies_yaml(data)
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer

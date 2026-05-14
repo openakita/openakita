@@ -395,6 +395,69 @@ class UIConfirmBus:
             "needs_sandbox": needs_sandbox,
         }
 
+    # ----- C18 Phase B: batch resolve --------------------------------------
+
+    def list_batch_candidates(
+        self,
+        session_id: str,
+        *,
+        within_seconds: float | None = None,
+    ) -> list[str]:
+        """Return confirm_ids in ``session_id`` eligible for batch resolution.
+
+        When ``within_seconds`` is provided, restricts to confirms whose
+        ``created_at`` is within ``within_seconds`` of *the youngest* pending
+        confirm in the session — i.e. a sliding 5-second window anchored at
+        the most recent emission. This matches the UX promise: "user clicks
+        'Approve all' on a card that just appeared; we batch everything
+        that arrived alongside it, not random old ones".
+
+        Returns an empty list when the session has no pending confirms.
+        """
+        self._cleanup_expired()
+        in_session = [
+            (cid, p.get("created_at", 0.0))
+            for cid, p in self._pending.items()
+            if p.get("session_id") == session_id
+        ]
+        if not in_session:
+            return []
+        if within_seconds is None or within_seconds <= 0:
+            return [cid for cid, _ in in_session]
+        # Anchor on the most recent emission so the window covers
+        # confirms that arrived ~together. This is what "5s aggregation"
+        # means in UX terms — the user reacts to the latest popup.
+        latest_ts = max(ts for _, ts in in_session)
+        return [
+            cid for cid, ts in in_session if (latest_ts - ts) <= within_seconds
+        ]
+
+    def batch_resolve(
+        self,
+        session_id: str,
+        decision: str,
+        *,
+        within_seconds: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Resolve all pending confirms for a session with one decision.
+
+        Returns the list of resolved sidecars (one per actually-resolved
+        confirm_id). The caller is responsible for threading each entry
+        through ``apply_resolution`` if allowlist side-effects are desired
+        — keeping the bus side-effect-free preserves the C8b-3 invariant.
+
+        Idempotent on each confirm_id: a previously-resolved id is a no-op.
+        """
+        ids = self.list_batch_candidates(
+            session_id, within_seconds=within_seconds
+        )
+        results: list[dict[str, Any]] = []
+        for cid in ids:
+            resolved = self.resolve(cid, decision)
+            if resolved is not None:
+                results.append({"confirm_id": cid, **resolved})
+        return results
+
     async def wait_for_resolution(self, confirm_id: str, timeout: float) -> str:
         """Block until ``resolve(confirm_id, ...)`` is called or ``timeout`` hits.
 

@@ -335,6 +335,17 @@ export function ChatView({
   };
   const [securityConfirm, setSecurityConfirm] = useState<SecurityConfirmData | null>(null);
   const securityQueueRef = useRef<SecurityConfirmData[]>([]);
+  // C18 Phase B: surface queue length to JSX so the "Approve all queued"
+  // affordance can light up when ≥1 confirms are stacked behind the
+  // currently-shown modal. We can't read securityQueueRef.current
+  // directly in JSX (refs don't trigger re-render), so keep a state
+  // mirror updated alongside every queue mutation.
+  const [securityQueueLen, setSecurityQueueLen] = useState(0);
+  // C18 Phase B: POLICIES.yaml ``confirmation.aggregation_window_seconds``.
+  // 0 = batch UI hidden; >0 = show "Approve all (N+1)" affordance and
+  // pass as ``within_seconds`` to POST /api/chat/security-confirm/batch
+  // (server clamps to its own config). Loaded once on mount.
+  const [securityAggWindow, setSecurityAggWindow] = useState<number>(0);
   const securityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const handleSecurityClose = useCallback((info?: SecurityCloseInfo) => {
     if (securityTimerRef.current) clearInterval(securityTimerRef.current);
@@ -367,7 +378,40 @@ export function ChatView({
 
     const next = securityQueueRef.current.shift();
     setSecurityConfirm(next ?? null);
+    setSecurityQueueLen(securityQueueRef.current.length);
   }, [apiBaseUrl, securityPolicy]);
+
+  // C18 Phase B：批量 resolve 当前 session 内 confirm。banner 点击进入。
+  const handleSecurityBatchResolve = useCallback(
+    async (decision: "allow_once" | "deny") => {
+      const convId = activeConvIdRef.current;
+      if (!convId) return;
+      try {
+        const r = await safeFetch(`${apiBaseUrl}/api/chat/security-confirm/batch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: convId,
+            decision,
+            within_seconds: securityAggWindow > 0 ? securityAggWindow : undefined,
+          }),
+        });
+        // Best-effort: regardless of response, clear local UI state.
+        // Server is the single source of truth — it has either resolved
+        // the candidates (waiter wakes via UIConfirmBus) or refused; we
+        // shouldn't keep the local queue showing stale entries.
+        await r.json().catch(() => null);
+      } catch {
+        // Network error: leave queue alone so user can retry one-by-one.
+        return;
+      }
+      securityQueueRef.current = [];
+      setSecurityQueueLen(0);
+      if (securityTimerRef.current) clearInterval(securityTimerRef.current);
+      setSecurityConfirm(null);
+    },
+    [apiBaseUrl, securityAggWindow],
+  );
   const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
     if (!lightbox) return;
@@ -1375,6 +1419,20 @@ export function ChatView({
       const d = data as Record<string, unknown> | null;
       if (d && typeof d.active === "boolean") setDeathSwitchActive(d.active);
     });
+  }, [apiBaseUrl]);
+
+  // ── C18 Phase B: load confirmation.aggregation_window_seconds once ──
+  // 默认 0（关）。后端 POLICIES.yaml hot-reload 路径 (C18 Phase A) 改了
+  // 这个字段时，前端不会自动刷新——下次 ChatView 重新挂载（reload / 切
+  // 换页面回来）即可。这与已有的 self-protection 读法保持一致。
+  useEffect(() => {
+    safeFetch(`${apiBaseUrl}/api/config/security/confirmation`)
+      .then(r => r.json())
+      .then(data => {
+        const v = Number(data?.aggregation_window_seconds);
+        if (Number.isFinite(v) && v > 0) setSecurityAggWindow(v);
+      })
+      .catch(() => {});
   }, [apiBaseUrl]);
 
   // ── Sub-agent real-time updates via WebSocket (reduces polling dependency) ──
@@ -3055,6 +3113,7 @@ export function ChatView({
                 setSecurityConfirm((prev) => {
                   if (prev) {
                     securityQueueRef.current.push(newConfirm);
+                    setSecurityQueueLen(securityQueueRef.current.length);
                     return prev;
                   }
                   return newConfirm;
@@ -5598,6 +5657,77 @@ export function ChatView({
           timerRef={securityTimerRef}
           setData={setSecurityConfirm}
         />,
+        document.body,
+      )}
+
+      {/*
+        C18 Phase B：批量 resolve 横幅。仅当
+        (a) POLICIES.yaml ``confirmation.aggregation_window_seconds`` > 0
+        (b) 当前正显示一个 modal
+        (c) queue 还排着 ≥1 个 confirm
+        三者同时成立时显示。点击调用 ``/api/chat/security-confirm/batch``
+        一次性 resolve 当前 session 窗内全部 confirm（包含正在显示的）。
+      */}
+      {securityConfirm && securityAggWindow > 0 && securityQueueLen >= 1 && createPortal(
+        <div
+          role="region"
+          aria-label={t("security.batch.banner_label", "批量确认")}
+          style={{
+            position: "fixed",
+            top: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 10000,
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            padding: "10px 14px",
+            borderRadius: 10,
+            background: "#1f2937",
+            color: "#f9fafb",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+            fontSize: 13,
+            maxWidth: "min(90vw, 720px)",
+          }}
+        >
+          <span style={{ opacity: 0.85 }}>
+            {t(
+              "security.batch.queue_hint",
+              "本会话还有 {{count}} 个待确认操作（{{window}}s 窗内聚合）",
+              { count: securityQueueLen, window: securityAggWindow },
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => handleSecurityBatchResolve("allow_once")}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              background: "#16a34a",
+              color: "#fff",
+              border: "none",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            {t("security.batch.allow_all", "全部允许 ({{n}})", { n: securityQueueLen + 1 })}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSecurityBatchResolve("deny")}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              background: "#dc2626",
+              color: "#fff",
+              border: "none",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            {t("security.batch.deny_all", "全部拒绝 ({{n}})", { n: securityQueueLen + 1 })}
+          </button>
+        </div>,
         document.body,
       )}
     </div>

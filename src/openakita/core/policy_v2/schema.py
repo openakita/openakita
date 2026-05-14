@@ -152,6 +152,17 @@ class ConfirmationConfig(_Strict):
     default_on_timeout: Literal["allow", "deny"] = "deny"
     confirm_ttl: float = Field(default=120.0, ge=0.0, le=86400.0)
 
+    # C18 Phase B：批量确认聚合窗口（秒）。
+    #
+    # 当 ``>0`` 时，UI 检测到同一 session 在此窗口内有 ≥2 个待 confirm
+    # 时显示"全部允许 / 全部拒绝"按钮，配合 ``POST /api/chat/security-
+    # confirm/batch`` 一次性 resolve 所有窗内待审项。
+    #
+    # 默认 ``0``（关）——参考 4 个邻近开源项目（claude-code / hermes /
+    # QwenPaw / openclaw）均没有把多项聚合作为默认行为，避免"用户没看清就
+    # 批量放行"。运维场景 / 信任度高的 owner 可在 POLICIES.yaml 显式开。
+    aggregation_window_seconds: float = Field(default=0.0, ge=0.0, le=600.0)
+
 
 class SessionRoleConfig(_Strict):
     """会话角色默认值。每个 session 启动时若没指定 role，用此默认。"""
