@@ -128,6 +128,14 @@ class OrgManager:
             raise ValueError(f"Invalid org_id: {org_id}")
         return self._orgs_dir / org_id
 
+    def get_org_dir(self, org_id: str) -> Path:
+        """公开版的 :pyfunc:`_org_dir`：返回组织在磁盘上的根目录。
+
+        推荐的访问路径，外部调用方（command_service / api 路由 / 插件）应该
+        通过这里而不是直接戳带前导下划线的私有方法。两者完全等价、无副作用。
+        """
+        return self._org_dir(org_id)
+
     def _org_json(self, org_id: str) -> Path:
         return self._org_dir(org_id) / "org.json"
 
