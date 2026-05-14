@@ -107,6 +107,21 @@ class AuditLogger:
                 entry["safety_immune"] = bool(si)
 
         if self._include_chain:
+            # C22 P3-2: prefer async batch writer if started for this
+            # path. Falls through to sync :class:`ChainedJsonlWriter`
+            # when no writer is running (CLI / pre-init / tests) — same
+            # correctness contract, just per-call filelock overhead.
+            try:
+                from .policy_v2.audit_writer import get_async_audit_writer
+
+                async_w = get_async_audit_writer(str(self._path))
+                if async_w is not None and async_w.is_running():
+                    async_w.enqueue(entry)
+                    return
+            except Exception as e:
+                logger.debug(
+                    "[Audit] async writer unavailable, using sync chain: %s", e
+                )
             try:
                 from .policy_v2.audit_chain import get_writer
 

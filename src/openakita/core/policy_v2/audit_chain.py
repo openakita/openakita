@@ -697,6 +697,119 @@ class ChainedJsonlWriter:
                     except Exception:  # pragma: no cover
                         pass
 
+    def append_batch(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """C22 P3-2: append N records under a SINGLE filelock acquisition.
+
+        Plan §13.5.2 A specified an async batch writer to coalesce audit
+        writes. Per-record :meth:`append` re-acquires the cross-process
+        filelock + re-reads the tail every call (~ms each). Under
+        burst load (e.g. checkpoint replay) this dominates engine
+        latency. ``append_batch`` keeps the same correctness guarantees
+        but pays the filelock + tail-read cost once for the whole batch:
+
+        - Acquire process lock + filelock once
+        - Re-read tail once to refresh ``_last_hash``
+        - For each record: compute prev_hash → row_hash in-memory,
+          chaining the next record off the previous in-batch row_hash
+          (NOT off the on-disk tail — the next on-disk tail will be
+          the *previous* in-batch row after we write)
+        - Pre-build all enriched lines, then a single ``fh.write`` of
+          the concatenated lines + optional fsync
+        - Update ``_last_hash`` to the last in-batch row_hash
+        - Release locks
+
+        Chain invariant: external verifier sees exactly the same byte
+        sequence as if N :meth:`append` calls had been made
+        back-to-back. Empty list → no-op, returns ``[]``.
+
+        Returns the list of enriched records (in input order). On
+        partial failure (mid-batch ``write`` raises) the lock is
+        released and the exception bubbles — some records may have
+        been written to disk; caller should treat the batch as
+        failed and re-enqueue unconfirmed ones if it needs at-least-once.
+        """
+        if not records:
+            return []
+        for r in records:
+            if not isinstance(r, dict):
+                raise TypeError(
+                    f"all batch records must be dicts, got {type(r).__name__}"
+                )
+            if "row_hash" in r or "prev_hash" in r:
+                raise ValueError(
+                    "batch records must not pre-populate prev_hash / row_hash"
+                )
+
+        with self._lock:
+            acquired_cross = False
+            if self._filelock is not None:
+                try:
+                    self._filelock.acquire(timeout=_FILELOCK_TIMEOUT_SECONDS)
+                    acquired_cross = True
+                except _FileLockTimeout as exc:
+                    logger.error(
+                        "[audit_chain] cross-process filelock timed out "
+                        "after %.1fs for %s (batch=%d); refusing to append",
+                        _FILELOCK_TIMEOUT_SECONDS,
+                        self.path,
+                        len(records),
+                    )
+                    raise OSError(
+                        f"audit_chain filelock timeout on {self.path}"
+                    ) from exc
+
+            try:
+                self._reload_last_hash_from_disk()
+
+                # Pre-build all enriched records + concatenated payload
+                # so we can apply size-mode rotation accurately (sum of
+                # all line bytes) and then issue a single write.
+                enriched_list: list[dict[str, Any]] = []
+                lines: list[str] = []
+                cursor = self._last_hash
+                for r in records:
+                    enriched = {**r, "prev_hash": cursor}
+                    rh = _compute_row_hash(enriched)
+                    enriched["row_hash"] = rh
+                    line = _canonical_dumps(enriched) + "\n"
+                    enriched_list.append(enriched)
+                    lines.append(line)
+                    cursor = rh
+
+                total_bytes = sum(len(line.encode("utf-8")) for line in lines)
+
+                mode, size_mb, keep = self._get_rotation_config()
+                needs, suffix = self._needs_rotation(
+                    mode=mode, size_mb=size_mb, pending_line_bytes=total_bytes
+                )
+                if needs and suffix is not None:
+                    self._do_rotate(suffix, keep)
+
+                try:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self.path, "a", encoding="utf-8") as fh:
+                        fh.write("".join(lines))
+                        if os.getenv(_FSYNC_ENV) == "1":
+                            fh.flush()
+                            os.fsync(fh.fileno())
+                except OSError as exc:
+                    logger.error(
+                        "[audit_chain] Failed batch-append (%d records) to %s: %s",
+                        len(records),
+                        self.path,
+                        exc,
+                    )
+                    raise
+
+                self._last_hash = cursor
+                return enriched_list
+            finally:
+                if acquired_cross and self._filelock is not None:
+                    try:
+                        self._filelock.release()
+                    except Exception:  # pragma: no cover
+                        pass
+
     @property
     def last_hash(self) -> str:
         return self._last_hash
