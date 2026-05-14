@@ -153,20 +153,34 @@ class TestBudgetParity:
     """Make sure ``tests/perf`` budgets and ``scripts/c11_perf_baseline.py``
     budgets don't drift silently. If someone bumps one, this test fails
     until the other matches — forcing a conscious decision.
+
+    We compare via *text grep* of the script instead of importing it,
+    because ``scripts/c11_perf_baseline.py`` mutates ``sys.path`` at
+    import time (``sys.path.insert(0, str(SRC))``) — pulling it in via
+    ``importlib`` would pollute every subsequent test's ``sys.path``
+    with a duplicate entry. The grep approach also keeps the script
+    importable by humans without side-effecting the test session.
     """
+
+    _SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "c11_perf_baseline.py"
+
+    @classmethod
+    def _script_budget(cls, key: str) -> float:
+        import re
+
+        src = cls._SCRIPT_PATH.read_text(encoding="utf-8")
+        m = re.search(rf'["\']?{re.escape(key)}["\']?\s*:\s*([\d.]+)', src)
+        if not m:
+            pytest.fail(
+                f"Couldn't find SLO_BUDGET_MS[{key!r}] in "
+                f"{cls._SCRIPT_PATH.name}. Either the script renamed the key "
+                "(update grep here) or the budget vanished (re-add it)."
+            )
+        return float(m.group(1))
 
     @pytest.mark.perf
     def test_classify_budget_matches_baseline_script(self) -> None:
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location(
-            "_c11_perf_baseline",
-            Path(__file__).resolve().parents[2] / "scripts" / "c11_perf_baseline.py",
-        )
-        assert spec is not None and spec.loader is not None
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        script_budget = mod.SLO_BUDGET_MS["classify_full_p95"]
+        script_budget = self._script_budget("classify_full_p95")
         assert SLO_BUDGETS_MS["classify_full_p95"] == script_budget, (
             f"Budget drift: tests/perf says "
             f"{SLO_BUDGETS_MS['classify_full_p95']}ms, "
@@ -176,16 +190,7 @@ class TestBudgetParity:
 
     @pytest.mark.perf
     def test_evaluate_budget_matches_baseline_script(self) -> None:
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location(
-            "_c11_perf_baseline",
-            Path(__file__).resolve().parents[2] / "scripts" / "c11_perf_baseline.py",
-        )
-        assert spec is not None and spec.loader is not None
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        script_budget = mod.SLO_BUDGET_MS["evaluate_tool_call_p95"]
+        script_budget = self._script_budget("evaluate_tool_call_p95")
         assert SLO_BUDGETS_MS["evaluate_tool_call_p95"] == script_budget
 
 
