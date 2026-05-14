@@ -709,7 +709,7 @@ CONTENT_OPS: dict = {
 #
 # 工作流（指挥台 → CEO）：
 #   1. 制片人收到选题，把脚本与分镜描述交给编剧细化
-#   2. 编剧把每个镜头的视觉 prompt 整理好后，制片人派单给「通义生图工作台」
+#   2. 编剧把每个镜头的中文画面说明与模型提示词整理好后，制片人派单给「通义生图工作台」
 #   3. 通义生图返回 image_urls + asset_ids，runtime 自动登记为附件
 #   4. 制片人把 asset_ids 透传给「即梦视频工作台」，请求图生视频
 #   5. 即梦视频通过 `from_asset_ids` 直接消费上游分镜，生成成片
@@ -776,13 +776,15 @@ AIGC_VIDEO_STUDIO: dict = {
                 "工作流：\n"
                 "1. 把出品方的选题派给『编剧』节点，让他用 org_submit_deliverable "
                 "返回脚本（含人物/场景/分镜描述与对白）。\n"
-                "2. 收到脚本后，把每个镜头的视觉 prompt 整理成清单，调用 "
+                "2. 收到脚本后，把每个镜头的中文画面说明与模型提示词整理成清单，调用 "
                 "org_delegate_task 派给『通义生图工作台』节点，请求按镜头出图。\n"
                 "3. 通义生图工作台交付时，runtime 已经把图片下载到 workspace 并附"
                 "在 TASK_DELIVERED 上；同时它的 deliverable 文本会包含 asset_ids。"
-                "把这些 asset_ids 与对应镜头的运动/时长/风格描述一起，派给『即梦"
-                "视频工作台』节点，要求把 asset_ids 填入 seedance_create 的 "
-                "from_asset_ids 字段。\n"
+                "把这些 asset_ids 与对应镜头的中文画面说明、镜头运动、时长、风格"
+                "一起派给『即梦视频工作台』节点。多镜头视频必须明确要求即梦按镜头"
+                "逐个调用 seedance_create，每次只消费一个镜头的 from_asset_ids，并"
+                "按分镜时长设置 duration（例如 30 秒/3 镜头就是每段 10 秒），不要"
+                "用同一总主题 prompt 重复生成多个视频。\n"
                 "4. 视频工作台返回 video_url + 本地路径后，最终向出品方交付：剧本"
                 "（文字）+ 分镜图（附件）+ 成片（附件）。"
             ),
@@ -801,9 +803,10 @@ AIGC_VIDEO_STUDIO: dict = {
             "external_tools": ["research", "planning", "filesystem", "memory"],
             "custom_prompt": (
                 "你是组织里的编剧节点。收到选题后产出：(a) 一个完整剧本（场景、"
-                "人物、对白）；(b) 每个镜头的视觉 prompt 列表（编号、画面描述、"
-                "镜头语言、风格关键词）。最终用 org_submit_deliverable 交付，并把"
-                "脚本同时落盘为 markdown 文件作为附件。"
+                "人物、对白）；(b) 每个镜头的中文画面说明、镜头语言、时长和模型"
+                "提示词。中文语境下，交付内容必须以中文为主；如需英文关键词辅助"
+                "生图，只能放在“模型提示词”字段里，不能整段只输出英文。最终用 "
+                "org_submit_deliverable 交付，并把脚本同时落盘为 markdown 文件作为附件。"
             ),
         },
         {
@@ -832,8 +835,10 @@ AIGC_VIDEO_STUDIO: dict = {
                 "你是【通义生图】工作台节点。只在收到 org_delegate_task 时启动，"
                 "按 input_schema 调用 tongyi_image_create 出图。组织 runtime 会把"
                 "图片下载到 workspace 并自动登记为附件；调 org_submit_deliverable "
-                "时只需在 deliverable 文本里说明产出（镜头号、prompt 摘要、生成的"
-                "asset_id），不要重复声明 file_attachments。若上级仅是问询/讨论"
+                "时只需在 deliverable 文本里说明产出（镜头号、中文画面摘要、模型"
+                "提示词摘要、生成的 asset_id），不要重复声明 file_attachments。"
+                "中文语境下，用户可见交付必须使用中文；模型提示词可以保留少量英文"
+                "关键词，但不要整段只输出英文。若上级仅是问询/讨论"
                 "（没有明确派单），直接用 org_submit_deliverable 返回文字答复，"
                 "不要凭空调用工具。"
             ),
@@ -865,11 +870,13 @@ AIGC_VIDEO_STUDIO: dict = {
             },
             "custom_prompt": (
                 "你是【即梦视频】工作台节点。只在收到 org_delegate_task 时启动；"
-                "当上级的派单 prompt 里给了上游通义生图的 asset_ids 时，必须把它"
-                "们填到 seedance_create 的 from_asset_ids 字段，由插件自动展开为 "
-                "Ark 的 content[image_url] 注入（i2v/i2v_end/multimodal 模式会按"
-                "位置自动分配 first_frame/last_frame/reference_image 角色）。生成"
-                "成功后 runtime 会把 video.mp4 与 last_frame 自动下载并登记为附件。"
+                "当上级的派单 prompt 里给了上游通义生图的 asset_ids 时，如果是多"
+                "镜头任务，必须按镜头逐个调用 seedance_create：每次只传当前镜头"
+                "的一个 from_asset_ids，并设置该镜头的 duration（例如 30 秒/3 镜头"
+                "就是每段 10 秒）。每次调用的 prompt 必须写清当前镜头独有的中文"
+                "画面、镜头运动和风格，不要用同一段总主题 prompt 重复生成多个视频。"
+                "插件会把 from_asset_ids 自动展开为 Ark 的 content[image_url] 注入。"
+                "生成成功后 runtime 会把 video.mp4 与 last_frame 自动下载并登记为附件。"
                 "如果任务是编辑、延长或镜头间 AI 过渡，必须使用上游 seedance "
                 "任务返回的公网 video_url，分别调用 seedance_edit、seedance_extend "
                 "或 seedance_transition；不能把本地视频文件/base64 当作源视频上传。"

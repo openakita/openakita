@@ -2394,6 +2394,11 @@ class OrgRuntime:
         return (
             f"## 你是【{display_name}】工作台节点\n"
             f"专属能力（请按 input_schema 严格调用）：\n{tool_block}\n\n"
+            "语言与展示要求：\n"
+            "1. 当前用户使用中文时，你的交付说明、进度摘要、镜头标题和用户可见字段"
+            "必须使用中文；\n"
+            "2. 只有传给生图/视频模型的技术提示词可以包含英文关键词，但必须同时提供"
+            "中文镜头说明，不要整段只输出英文 prompt；\n\n"
             "交付协议：\n"
             "1. 工作台工具调用成功后，组织 runtime 会把产物（图片/视频/音频/"
             "本地文件）自动下载到 org workspace 的 `plugin_assets/<workbench>/<task>/` "
@@ -2412,6 +2417,17 @@ class OrgRuntime:
             "5. 若上级只是问询/讨论（而非真正下单产出），直接用 "
             "`org_submit_deliverable` 提交文字回答，无需调用工作台工具；\n"
             "6. 完成后调 `org_submit_deliverable` 把成果交给委派人，等待验收。"
+            + (
+                "\n\n即梦视频工作台补充规则：\n"
+                "- 多镜头任务必须按镜头逐个调用 `seedance_create`：每次只传当前镜头"
+                "对应的一个 `from_asset_ids`，并设置该镜头时长，例如 30 秒/3 镜头"
+                "应设置 `duration=10`；\n"
+                "- 每个镜头的 `prompt` 必须写清楚该镜头独有的画面、运动和风格，"
+                "不要用同一段总主题 prompt 重复生成多个视频；\n"
+                "- Seedance 2.0 支持并发额度，但组织工作台为了稳定交付，会等待"
+                "每个 `seedance_create` 完成后再继续下一个镜头。"
+                if plugin_id == "seedance-video" else ""
+            )
         )
 
     def _resolve_org_workspace(self, org: Organization) -> Path:

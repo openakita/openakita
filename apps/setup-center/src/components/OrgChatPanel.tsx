@@ -370,6 +370,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     const activeSegIdx = new Map<string, number>();
     const cmdStartTime = Date.now();
     const activity = { last: Date.now() };
+    let lastBlockerSummary = "";
 
     function findOrCreateSeg(nodeId: string): TimelineSegment {
       let idx = activeSegIdx.get(nodeId);
@@ -717,8 +718,11 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             const poll = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/commands/${commandId}`);
             const pd = await poll.json();
             if (pd.status === "running" && typeof pd.blocker_summary === "string" && pd.blocker_summary.trim()) {
+              const blockerSummary = pd.blocker_summary.trim();
               const seg = findOrCreateSeg("system");
-              if (pushSegLine(seg, t("org.chat.commandBlocker", { reason: pd.blocker_summary }))) {
+              const line = t("org.chat.commandBlocker", { reason: blockerSummary });
+              if (blockerSummary !== lastBlockerSummary && pushSegLine(seg, line)) {
+                lastBlockerSummary = blockerSummary;
                 updatePreview();
               }
             }
