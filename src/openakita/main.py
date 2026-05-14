@@ -887,6 +887,22 @@ async def run_interactive():
                 channel="cli", chat_id=_cid, user_id="cli_user", create_if_missing=True
             )
             if cs:
+                # C14 re-audit (D2): mark CLI interactive sessions via the
+                # entry classifier so the architectural SoT is consistent
+                # (``run_interactive`` is already TTY-gated upstream, so
+                # classifier returns ``is_unattended=False`` — no-op behavior
+                # but eliminates the "classifier sometimes skipped" pattern).
+                try:
+                    from .core.policy_v2 import (
+                        apply_classification_to_session as _apply_cls,
+                    )
+                    from .core.policy_v2 import (
+                        classify_entry as _classify,
+                    )
+
+                    _apply_cls(cs, _classify("cli"))
+                except Exception:
+                    pass
                 agent._cli_session = cs
                 mc = len(cs.context.get_messages())
                 if mc > 0 and not _cli_force_new_session:
@@ -1389,16 +1405,23 @@ def run(
         # PolicyContext 显式标记为 unattended，让 PolicyEngineV2 step 11
         # 按 ``unattended_strategy`` 路由（默认 ask_owner），CONFIRM-class
         # 工具走 PendingApproval / DeferredApprovalRequired 路径而非挂死。
+        #
+        # Re-audit (D1): classifier 是 SoT — 这里通过 ``classify_entry``
+        # 拿到完整 (is_unattended, default_strategy) 后再喂给
+        # build_policy_context，避免 strategy 经 "全局默认兜底" 路径绕行。
         from .core.policy_v2 import (
             build_policy_context,
+            classify_entry,
             reset_current_context,
             set_current_context,
         )
 
+        _cls = classify_entry("cli", force_unattended=True)
         cli_ctx = build_policy_context(
             session_id=f"cli_run_{int(time.time())}",
             channel="cli",
-            is_unattended=True,
+            is_unattended=_cls.is_unattended,
+            unattended_strategy=_cls.default_strategy or "",
             user_message=task,
         )
         ctx_token = set_current_context(cli_ctx)

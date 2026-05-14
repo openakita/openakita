@@ -8445,17 +8445,29 @@ class Agent:
         Returns:
             TaskResult
 
-        Note (C7→C12 known gap)
-        -----------------------
-        本路径不安装 PolicyContext ContextVar。下游 ``check_permission`` 走
-        ``policy_v2.adapter._build_fallback_context`` 拿到的 ctx：
-        workspace=cwd / role=AGENT / confirmation_mode=get_config_v2().mode /
-        ``is_unattended=False``。
+        Note (C7→C14 PolicyContext wiring)
+        ----------------------------------
+        ``execute_task`` 本身**不**安装 PolicyContext ContextVar — 调用方负责。
+        当前 SoT 注入点（按入口分类）：
 
-        前三项足以让 trust mode、safety_immune 等“决策”行为与交互会话一致；
-        ``is_unattended=False`` 则会让 scheduled / CLI batch / evolution self-fix
-        在遇到 CONFIRM 时按“等用户回应”处理 → 任务挂起。这是已知缺口，由
-        C12（无人值守审批 + scheduler ContextVar wire）补齐，不属于 C7 范围。
+        - ``openakita run`` (main.py)：C14 起通过
+          ``classify_entry("cli", force_unattended=True)`` 拿到分类结果后
+          ``build_policy_context(is_unattended=True, unattended_strategy=…)`` +
+          ``set_current_context``；``run`` 命令的 finally 配对 reset。
+        - ``scheduler.executor._execute_task``：C12 起显式
+          ``PolicyContext(is_unattended=True, unattended_strategy=…)`` +
+          ``set_current_context`` / ``reset_current_context``（try/finally 对称）。
+        - ``mcp_server._execute_tool`` (openakita_chat)：C14 起同上，
+          ``classify_entry("mcp", force_unattended=True)``。
+        - ``evolution.self_check._attempt_fix``：尚未走 classifier（已知 follow-up
+          gap）；行为上由于 self-fix 多数走非 CONFIRM 路径所以暂无可见症状。
+
+        若调用方未安装 ctx，下游 ``check_permission`` 走
+        ``policy_v2.adapter._build_fallback_context``：workspace=cwd /
+        role=AGENT / confirmation_mode=get_config_v2().mode /
+        ``is_unattended=False`` — 前三项与交互会话一致，但 ``is_unattended=False``
+        会让任何 CONFIRM 类工具按 "等用户回应" 挂起。因此 headless 入口
+        必须由调用方按需覆盖（见上面 4 个 SoT 入口）。
         """
         import time
 

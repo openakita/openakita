@@ -288,6 +288,161 @@ class TestChatSyncEndpoint:
         body = resp.json()
         assert body["conversation_id"].startswith("api_sync_")
 
+    async def test_sync_returns_409_when_conversation_busy(
+        self, client, mock_agent, monkeypatch
+    ):
+        """C14 re-audit D5: concurrent sync on same conv_id must 409, not
+        race into chat_with_session and corrupt session state.
+
+        Pre-fix this test would either pass via accident (two parallel
+        completions interleaving) or assert race-condition behavior; with
+        the lifecycle.start lock the second caller deterministically gets
+        409 before chat_with_session is even reached.
+        """
+        import asyncio as _aio
+
+        from openakita.api.routes import chat as chat_routes
+        from openakita.api.routes.conversation_lifecycle import get_lifecycle_manager
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+
+        gate = _aio.Event()
+
+        async def _slow_chat(*_args, **_kwargs):
+            await gate.wait()
+            return "ok"
+
+        mock_agent.chat_with_session = _slow_chat
+
+        # Pre-acquire the lifecycle lock from a different "client" so the
+        # next request sees a conflict deterministically. This sidesteps
+        # the need to actually race two coroutines.
+        lifecycle = get_lifecycle_manager()
+        await lifecycle.start("sync-busy-conv", "external_client")
+
+        try:
+            resp = await client.post(
+                "/api/chat/sync",
+                json={"message": "Hi", "conversation_id": "sync-busy-conv"},
+            )
+            assert resp.status_code == 409, (
+                f"expected 409 (conversation_busy), got {resp.status_code}: "
+                f"{resp.text}"
+            )
+            body = resp.json()
+            assert body["error"] == "conversation_busy"
+            assert body["conversation_id"] == "sync-busy-conv"
+            assert body["busy_client_id"] == "external_client"
+        finally:
+            gate.set()
+            await lifecycle.finish("sync-busy-conv")
+
+    async def test_sync_releases_lifecycle_on_completion(
+        self, client, mock_agent, monkeypatch
+    ):
+        """C14 re-audit D5: a successful sync must release the busy-lock
+        so a follow-up call can proceed (no leak on happy path)."""
+        from openakita.api.routes import chat as chat_routes
+        from openakita.api.routes.conversation_lifecycle import get_lifecycle_manager
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+        mock_agent.chat_with_session = AsyncMock(return_value="reply")
+
+        resp1 = await client.post(
+            "/api/chat/sync",
+            json={"message": "first", "conversation_id": "sync-release-conv"},
+        )
+        assert resp1.status_code == 200
+
+        lifecycle = get_lifecycle_manager()
+        busy_status = await lifecycle.get_busy_status("sync-release-conv")
+        assert busy_status.get("busy") is False, (
+            "lifecycle.finish() must release the lock on happy path; "
+            f"got busy_status={busy_status}"
+        )
+
+        resp2 = await client.post(
+            "/api/chat/sync",
+            json={"message": "second", "conversation_id": "sync-release-conv"},
+        )
+        assert resp2.status_code == 200, (
+            "second call on same conv_id must succeed (lock released)"
+        )
+
+    async def test_sync_releases_lifecycle_on_error(
+        self, client, mock_agent, monkeypatch
+    ):
+        """C14 re-audit D5: exception path must also release the lock —
+        otherwise a single 5xx would permanently busy-out the conversation.
+        """
+        from openakita.api.routes import chat as chat_routes
+        from openakita.api.routes.conversation_lifecycle import get_lifecycle_manager
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+
+        async def _boom(*_args, **_kwargs):
+            raise RuntimeError("kaboom")
+
+        mock_agent.chat_with_session = _boom
+
+        resp = await client.post(
+            "/api/chat/sync",
+            json={"message": "x", "conversation_id": "sync-error-conv"},
+        )
+        assert resp.status_code == 503
+
+        lifecycle = get_lifecycle_manager()
+        busy_status = await lifecycle.get_busy_status("sync-error-conv")
+        assert busy_status.get("busy") is False, (
+            "lifecycle.finish() must run via finally even on error; "
+            f"got busy_status={busy_status}"
+        )
+
+    async def test_sync_releases_lifecycle_on_deferred_approval(
+        self, client, mock_agent, monkeypatch
+    ):
+        """C14 re-audit D5: 202 deferred path must also release the lock,
+        otherwise the conversation stays busy until process restart."""
+        from openakita.api.routes import chat as chat_routes
+        from openakita.api.routes.conversation_lifecycle import get_lifecycle_manager
+        from openakita.core.policy_v2 import DeferredApprovalRequired
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+
+        async def _defer(*_args, **_kwargs):
+            raise DeferredApprovalRequired(
+                "needs owner",
+                pending_id="pending_xyz",
+                unattended_strategy="defer_to_inbox",
+            )
+
+        mock_agent.chat_with_session = _defer
+
+        resp = await client.post(
+            "/api/chat/sync",
+            json={"message": "delete db", "conversation_id": "sync-defer-conv"},
+        )
+        assert resp.status_code == 202
+
+        lifecycle = get_lifecycle_manager()
+        busy_status = await lifecycle.get_busy_status("sync-defer-conv")
+        assert busy_status.get("busy") is False, (
+            "lifecycle.finish() must run after 202 deferred path; "
+            f"got busy_status={busy_status}"
+        )
+
 
 class TestChatControlEndpoints:
     async def test_cancel_endpoint(self, client, mock_agent):

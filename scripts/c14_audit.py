@@ -112,14 +112,15 @@ def audit_b_main_isatty_and_run() -> None:
     run_body = run_match.group(0)
     for required in (
         "build_policy_context",
-        "is_unattended=True",
+        "classify_entry",
+        "force_unattended=True",
         "set_current_context",
         "reset_current_context",
         "channel=\"cli\"",
     ):
         if required not in run_body:
             fail(f"run command missing {required!r}")
-    ok("`openakita run` installs is_unattended=True PolicyContext (set+reset symmetric)")
+    ok("`openakita run` installs classifier-derived unattended PolicyContext (set+reset symmetric)")
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +299,78 @@ def audit_g_tests_present_and_green() -> None:
     ok(f"C14 + /api/chat/sync tests green: {last}")
 
 
+# ---------------------------------------------------------------------------
+# H. Re-audit follow-up fixes (D1 / D5 / D6 / D8)
+# ---------------------------------------------------------------------------
+
+
+def audit_h_reaudit_fixes() -> None:
+    section("H. Re-audit fixes (D1/D5/D6/D8)")
+
+    # D1: build_policy_context accepts unattended_strategy
+    adapter = _read("src/openakita/core/policy_v2/adapter.py")
+    if "unattended_strategy: str = " not in adapter:
+        fail("D1: build_policy_context missing unattended_strategy parameter")
+    if "effective_unattended_strategy = unattended_strategy or " not in adapter:
+        fail("D1: build_policy_context does not thread unattended_strategy param")
+    ok("D1: build_policy_context accepts and threads unattended_strategy")
+
+    # D5: /api/chat/sync wraps chat_with_session in lifecycle.start/finish
+    chat = _read("src/openakita/api/routes/chat.py")
+    sync_match = re.search(
+        r"@router\.post\(\"/api/chat/sync\"\).*?(?=@router\.post|@router\.get)",
+        chat,
+        re.DOTALL,
+    )
+    if sync_match is None:
+        fail("D5: /api/chat/sync endpoint body not found")
+    sync_body = sync_match.group(0)
+    for required in (
+        "get_lifecycle_manager()",
+        "lifecycle.start(conversation_id",
+        "conversation_busy",
+        "status_code=409",
+        "lifecycle.finish(conversation_id",
+    ):
+        if required not in sync_body:
+            fail(f"D5: chat_sync missing {required!r}")
+    ok("D5: /api/chat/sync wraps chat_with_session in lifecycle busy-lock (409 + finally finish)")
+
+    # D6: mcp_server installs unattended PolicyContext for openakita_chat
+    mcp = _read("src/openakita/mcp_server.py")
+    for required in (
+        "classify_entry",
+        "force_unattended=True",
+        "set_current_context",
+        "reset_current_context",
+        "channel=\"mcp\"",
+    ):
+        if required not in mcp:
+            fail(f"D6: mcp_server missing {required!r}")
+    ok("D6: mcp_server.openakita_chat installs unattended PolicyContext (set+reset symmetric)")
+
+    # D8: apply_classification_to_session has defensive try/except
+    entry = _read("src/openakita/core/policy_v2/entry_point.py")
+    apply_func_match = re.search(
+        r"def apply_classification_to_session\(.*?(?=\n__all__\b|\Z)",
+        entry,
+        re.DOTALL,
+    )
+    if apply_func_match is None:
+        fail("D8: apply_classification_to_session body not found")
+    apply_body = apply_func_match.group(0)
+    # Count try/except blocks — must be ≥3 (initial getattr, set is_unattended,
+    # set unattended_strategy)
+    try_count = apply_body.count("try:")
+    except_count = apply_body.count("except Exception:")
+    if try_count < 3 or except_count < 3:
+        fail(
+            f"D8: apply_classification_to_session needs ≥3 try/except guards "
+            f"(found try={try_count}, except={except_count})"
+        )
+    ok(f"D8: apply_classification_to_session defensively guarded (try={try_count}, except={except_count})")
+
+
 def main() -> None:
     audit_a_classifier_module()
     audit_b_main_isatty_and_run()
@@ -306,7 +379,8 @@ def main() -> None:
     audit_e_stream_renderer_isatty_gate()
     audit_f_prior_milestone_regression()
     audit_g_tests_present_and_green()
-    print("\nALL C14 AUDIT CHECKS PASSED (A–G)")
+    audit_h_reaudit_fixes()
+    print("\nALL C14 AUDIT CHECKS PASSED (A–H)")
 
 
 if __name__ == "__main__":

@@ -815,6 +815,25 @@ async def _stream_chat(
                     create_if_missing=True,
                 )
                 if session:
+                    # C14 re-audit (D2): make the entry classifier the single
+                    # source of truth for **all** sessions, even attended SSE
+                    # ones. For ``channel="desktop"`` classifier returns
+                    # ``is_unattended=False`` and the idempotent helper is a
+                    # behavioral no-op — but it future-proofs the path: if a
+                    # later subroutine flips the session to unattended,
+                    # downstream policy will see consistent flags.
+                    try:
+                        from openakita.core.policy_v2 import (
+                            apply_classification_to_session as _apply_cls,
+                        )
+                        from openakita.core.policy_v2 import (
+                            classify_entry as _classify,
+                        )
+
+                        _apply_cls(session, _classify("desktop"))
+                    except Exception:
+                        pass
+
                     if chat_request.agent_profile_id:
                         _apply_agent_profile(session, chat_request.agent_profile_id)
                     session.set_metadata("selected_endpoint", chat_request.endpoint or "")
@@ -1631,97 +1650,147 @@ async def chat_sync(request: Request, body: ChatRequest):
     if not actual_agent._initialized:
         await actual_agent.initialize()
 
-    session = None
-    session_messages_history: list[dict] = []
-    if session_manager:
-        try:
-            session = session_manager.get_session(
-                channel="api-sync",
-                chat_id=conversation_id,
-                user_id="api_sync_user",
-                create_if_missing=True,
-            )
-            if session is not None:
-                apply_classification_to_session(session, classify_entry("api-sync"))
-                session.add_message("user", body.message or "")
-                session_messages_history = session.context.get_messages()
-        except Exception as exc:
-            logger.warning(
-                "[Chat API /sync] session bootstrap failed: %s (conv=%s)",
-                exc,
-                conversation_id,
-            )
-
-    effective_mode = body.mode or "agent"
-    if body.plan_mode and effective_mode == "agent":
-        effective_mode = "plan"
-
+    # C14 re-audit (D5): /api/chat/sync MUST enter the conversation
+    # lifecycle busy-lock, otherwise two concurrent sync calls on the
+    # same conversation_id race for the same Session.context message
+    # list. Mirror /api/chat SSE's lock pattern (start → 409 on conflict;
+    # finish in outer ``finally``). client_id is opaque to the lifecycle
+    # manager and only used to identify the holder in 409 responses, so
+    # using ``f"sync_{request_id}"`` is fine.
+    lifecycle = get_lifecycle_manager()
+    busy_gen = 0
+    sync_client_id = f"sync_{request_id}"
     try:
-        reply = await actual_agent.chat_with_session(
-            message=body.message or "",
-            session_messages=session_messages_history,
-            session_id=conversation_id,
-            session=session,
-            gateway=None,
-            mode=effective_mode,
-            endpoint_override=body.endpoint,
-            endpoint_policy=body.endpoint_policy,
-            thinking_mode=body.thinking_mode,
-            thinking_depth=body.thinking_depth,
-        )
-    except DeferredApprovalRequired as exc:
-        # C14 / R4-6 / C12 §14.2: CONFIRM-class tool routed through
-        # _handle_unattended → defer_to_inbox (or whatever the session
-        # configured). Hand the client an opaque approval_id + URL so they
-        # can poll the existing /api/pending_approvals/{id} endpoints
-        # without needing SSE.
-        approval_id = exc.pending_id or ""
-        return JSONResponse(
-            status_code=202,
-            headers={"Location": f"/api/pending_approvals/{approval_id}"} if approval_id else {},
-            content={
-                "status": "pending_approval",
-                "conversation_id": conversation_id,
-                "request_id": request_id,
-                "approval_id": approval_id,
-                "approval_url": (
-                    f"/api/pending_approvals/{approval_id}" if approval_id else None
-                ),
-                "resolve_url": (
-                    f"/api/pending_approvals/{approval_id}/resolve" if approval_id else None
-                ),
-                "unattended_strategy": exc.unattended_strategy,
-                "message": (
-                    "工具调用需要 owner 审批；客户端可轮询 approval_url 获取状态，"
-                    "owner 在 setup-center 或通过 resolve_url 完成确认后请重新提交本次请求。"
-                ),
-            },
-        )
+        conflict, busy_gen = await lifecycle.start(conversation_id, sync_client_id)
     except Exception as exc:
-        logger.exception(
-            "[Chat API /sync] runtime error (conv=%s, request=%s)",
-            conversation_id,
-            request_id,
-        )
         return _chat_startup_error_response(
             exc,
             conversation_id=conversation_id,
             request_id=request_id,
-            stage="chat_with_session",
+            stage="conversation_lifecycle",
+        )
+    if conflict is not None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "conversation_busy",
+                "conversation_id": conversation_id,
+                "busy_client_id": conflict.client_id,
+                "busy_since": conflict.start_time,
+                "message": (
+                    "该会话当前被其他请求占用，请等待空闲后重试 "
+                    "(可调用 GET /api/chat/busy 查询状态)。"
+                ),
+            },
         )
 
-    if session is not None:
-        try:
-            session.add_message("assistant", reply or "")
-        except Exception:
-            pass
+    try:
+        session = None
+        session_messages_history: list[dict] = []
+        if session_manager:
+            try:
+                session = session_manager.get_session(
+                    channel="api-sync",
+                    chat_id=conversation_id,
+                    user_id="api_sync_user",
+                    create_if_missing=True,
+                )
+                if session is not None:
+                    apply_classification_to_session(session, classify_entry("api-sync"))
+                    session.add_message("user", body.message or "")
+                    session_messages_history = session.context.get_messages()
+            except Exception as exc:
+                logger.warning(
+                    "[Chat API /sync] session bootstrap failed: %s (conv=%s)",
+                    exc,
+                    conversation_id,
+                )
 
-    return {
-        "status": "completed",
-        "conversation_id": conversation_id,
-        "request_id": request_id,
-        "message": reply or "",
-    }
+        effective_mode = body.mode or "agent"
+        if body.plan_mode and effective_mode == "agent":
+            effective_mode = "plan"
+
+        try:
+            reply = await actual_agent.chat_with_session(
+                message=body.message or "",
+                session_messages=session_messages_history,
+                session_id=conversation_id,
+                session=session,
+                gateway=None,
+                mode=effective_mode,
+                endpoint_override=body.endpoint,
+                endpoint_policy=body.endpoint_policy,
+                thinking_mode=body.thinking_mode,
+                thinking_depth=body.thinking_depth,
+            )
+        except DeferredApprovalRequired as exc:
+            # C14 / R4-6 / C12 §14.2: CONFIRM-class tool routed through
+            # _handle_unattended → defer_to_inbox (or whatever the session
+            # configured). Hand the client an opaque approval_id + URL so they
+            # can poll the existing /api/pending_approvals/{id} endpoints
+            # without needing SSE.
+            approval_id = exc.pending_id or ""
+            return JSONResponse(
+                status_code=202,
+                headers=(
+                    {"Location": f"/api/pending_approvals/{approval_id}"}
+                    if approval_id
+                    else {}
+                ),
+                content={
+                    "status": "pending_approval",
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                    "approval_id": approval_id,
+                    "approval_url": (
+                        f"/api/pending_approvals/{approval_id}" if approval_id else None
+                    ),
+                    "resolve_url": (
+                        f"/api/pending_approvals/{approval_id}/resolve"
+                        if approval_id
+                        else None
+                    ),
+                    "unattended_strategy": exc.unattended_strategy,
+                    "message": (
+                        "工具调用需要 owner 审批；客户端可轮询 approval_url 获取状态，"
+                        "owner 在 setup-center 或通过 resolve_url 完成确认后请重新提交本次请求。"
+                    ),
+                },
+            )
+        except Exception as exc:
+            logger.exception(
+                "[Chat API /sync] runtime error (conv=%s, request=%s)",
+                conversation_id,
+                request_id,
+            )
+            return _chat_startup_error_response(
+                exc,
+                conversation_id=conversation_id,
+                request_id=request_id,
+                stage="chat_with_session",
+            )
+
+        if session is not None:
+            try:
+                session.add_message("assistant", reply or "")
+            except Exception:
+                pass
+
+        return {
+            "status": "completed",
+            "conversation_id": conversation_id,
+            "request_id": request_id,
+            "message": reply or "",
+        }
+    finally:
+        try:
+            await lifecycle.finish(conversation_id, generation=busy_gen)
+        except Exception:
+            logger.warning(
+                "[Chat API /sync] lifecycle.finish failed (conv=%s, gen=%d)",
+                conversation_id,
+                busy_gen,
+            )
 
 
 @router.get("/api/chat/busy")

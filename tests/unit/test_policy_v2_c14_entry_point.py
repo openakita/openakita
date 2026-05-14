@@ -26,7 +26,6 @@ from openakita.core.policy_v2.entry_point import (
     classify_entry,
 )
 
-
 # ---------------------------------------------------------------------------
 # classify_entry: CLI branch (TTY-dependent)
 # ---------------------------------------------------------------------------
@@ -316,3 +315,141 @@ def test_stream_renderer_security_confirm_skips_on_no_tty(monkeypatch):
         "non-TTY confirm must NOT trigger apply_resolution — let unattended "
         "path / setup-center handle it"
     )
+
+
+# ---------------------------------------------------------------------------
+# Re-audit fixes (D1 / D5 / D6 / D8): defensive + SoT
+# ---------------------------------------------------------------------------
+
+
+# --- D8: apply_classification_to_session defensive against bad sessions ---
+
+
+class _SessionRaisingOnGet:
+    """Simulate a Session subclass with a descriptor that raises."""
+
+    @property
+    def is_unattended(self):
+        raise RuntimeError("descriptor blew up")
+
+    unattended_strategy = ""
+
+
+class _SessionRaisingOnSet:
+    is_unattended = False
+
+    @property
+    def unattended_strategy(self):
+        return ""
+
+    @unattended_strategy.setter
+    def unattended_strategy(self, _):
+        raise RuntimeError("setter blew up")
+
+
+def test_apply_classification_swallows_getattr_failure():
+    """A broken descriptor must NOT propagate up to the gateway / chat_sync.
+
+    apply_classification_to_session is on the request hot path; any raise
+    here would 500 the user's IM message or HTTP POST.
+    """
+    bad = _SessionRaisingOnGet()
+    cls = classify_entry("telegram")
+    mutated = apply_classification_to_session(bad, cls)
+    assert mutated is False, "broken session must not be reported as mutated"
+
+
+def test_apply_classification_swallows_setattr_failure():
+    """A setter that raises (e.g. read-only proxy) must not propagate."""
+    bad = _SessionRaisingOnSet()
+    cls = classify_entry("api-sync")
+    mutated = apply_classification_to_session(bad, cls)
+    # is_unattended setattr likely succeeds; strategy setattr fails silently
+    assert bad.is_unattended is True
+    # mutated may be True (is_unattended got set) but the strategy setter
+    # raising must not bubble — that's the assertion that matters.
+    assert isinstance(mutated, bool)
+
+
+# --- D1: build_policy_context threads unattended_strategy from classifier ---
+
+
+def test_build_policy_context_accepts_unattended_strategy():
+    """Caller (openakita run / mcp_server) feeds classifier.default_strategy
+    into build_policy_context so the strategy is on the ctx without needing
+    a Session round-trip."""
+    from openakita.core.policy_v2.adapter import build_policy_context
+
+    ctx = build_policy_context(
+        session_id="test_cli_run",
+        channel="cli",
+        is_unattended=True,
+        unattended_strategy="ask_owner",
+        user_message="test",
+    )
+    assert ctx.is_unattended is True
+    assert ctx.unattended_strategy == "ask_owner"
+
+
+def test_build_policy_context_unattended_strategy_defaults_to_empty():
+    """Default keeps the legacy fallback (engine reads global default) so
+    pre-C14 call sites are unaffected."""
+    from openakita.core.policy_v2.adapter import build_policy_context
+
+    ctx = build_policy_context(
+        session_id="legacy",
+        channel="desktop",
+        is_unattended=False,
+        user_message="hi",
+    )
+    assert ctx.unattended_strategy == ""
+
+
+def test_build_policy_context_session_strategy_overrides_param():
+    """Existing C12 contract: session.unattended_strategy wins over the
+    new param. Defends against an entry point passing stale strategy."""
+    from openakita.core.policy_v2.adapter import build_policy_context
+    from openakita.sessions.session import Session, SessionConfig
+
+    sess = Session.create(
+        channel="telegram",
+        chat_id="c1",
+        user_id="u1",
+        config=SessionConfig(),
+    )
+    sess.is_unattended = True
+    sess.unattended_strategy = "defer_to_inbox"
+
+    ctx = build_policy_context(
+        session=sess,
+        session_id="t",
+        channel="telegram",
+        is_unattended=True,
+        unattended_strategy="ask_owner",  # param value, but session wins
+        user_message="msg",
+    )
+    assert ctx.unattended_strategy == "defer_to_inbox"
+
+
+# --- D6: MCP server installs unattended PolicyContext for openakita_chat ---
+
+
+def test_mcp_server_classifier_for_stdio_tool():
+    """The MCP server runs over stdio (no TTY, no SSE); ``openakita_chat``
+    invocations must be classified unattended so CONFIRM-class tools
+    don't hang."""
+    cls = classify_entry("mcp", force_unattended=True)
+    assert cls.is_unattended is True
+    assert cls.confirm_capability == "none"
+    assert cls.default_strategy == "ask_owner"
+
+
+def test_mcp_server_imports_classifier():
+    """Belt-and-suspenders: the MCP server module must import the
+    classifier (otherwise the contextvar would never be installed and a
+    silent regression could leak attended-default into stdio invocations)."""
+    import openakita.mcp_server as mcp_mod
+
+    src = __import__("pathlib").Path(mcp_mod.__file__).read_text(encoding="utf-8")
+    assert "classify_entry" in src, "MCP server must reference classifier"
+    assert "is_unattended=cls.is_unattended" in src or "force_unattended=True" in src

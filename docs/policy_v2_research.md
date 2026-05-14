@@ -4544,4 +4544,37 @@ apply_classification_to_session(
 4. **`/api/chat/sync` 的 202 + Location 复用现有 pending_approvals**：不另起一套 task 状态机，approval 体系是 C12 已经搭好的，复用零额外面。
 5. **Audit 脚本里的正则要警惕 docstring/comment 假阳性**：`Prompt.ask` 在 docstring 里也出现过一次，必须用 `\bPrompt\.ask\(` 限定到函数调用形态。
 
+### 二轮 audit 修复（2026-05-14, D1/D2/D5/D6/D8/D12）
+
+> 用户二次 review (`再次检查确保执行没有遗漏 ...`) 时多维度审查，按 12 个维度审 (D1–D12) 后补 6 项：3 真 bug、3 架构清洁度。补完后 `c14_audit.py` 扩展到 A–H 8 段、新增 5 个反向回归 scenario，全部绿。
+
+**真 bug 修复**：
+
+1. **D5：`/api/chat/sync` 缺 lifecycle busy-lock**：旧实现没进 `conversation_lifecycle`，并发同 conv_id 调用会两次 `session.add_message` 撕碎 message 列表。修复：镜像 `/api/chat` SSE 的 `lifecycle.start → 409` + `finally finish` 模式，client_id 用 `f"sync_{request_id}"` 区分。补 4 个 integration test 验收 409 / happy-path-release / error-path-release / 202-deferred-release。
+
+2. **D6：MCP server `openakita_chat` 未走 classifier**：MCP 通过 stdio（无 TTY、无 SSE）被 Claude Desktop/Cursor 调用，是真正的 headless stdin 入口。旧代码直接 `agent.chat(message)` 让 fallback ctx `is_unattended=False` 生效 → CONFIRM 类工具会挂死等永远不会到来的用户响应。修复：`classify_entry("mcp", force_unattended=True)` + `build_policy_context(...)` + `set/reset_current_context`（try/finally 对称）。
+
+3. **D8：`apply_classification_to_session` 缺防御**：`getattr(session, "is_unattended", ...)` 若 session 是带描述符且 raise 的自定义类，异常会冒泡到 `gateway.process_message` / `chat_sync`，导致用户 IM 消息或 HTTP POST 直接 500。修复：3 段 try/except 把 getattr/setattr 全部兜住，broken session 返回 `mutated=False` 但保证请求处理不崩。
+
+**架构清洁度修复**：
+
+4. **D1：`build_policy_context` 缺 `unattended_strategy` 参数**：旧实现 caller 只能传 `is_unattended=True`，`strategy` 走全局默认兜底。这意味着 classifier 给的 `default_strategy="ask_owner"` 在 `openakita run` / MCP 路径走的是"等价但绕路"通道。修复：参数化 `unattended_strategy: str = ""`，classifier 输出直接喂给 `build_policy_context`；session metadata 优先级保持不变（C12 既有契约不破）。
+
+5. **D2：`/api/chat` SSE 与 CLI interactive 入口未走 classifier**：行为上没问题（channel attended → classifier 返回 `is_unattended=False` 与默认一致），但 architecturally 让 classifier 不再是真正的 SoT。修复：两处都补 `apply_classification_to_session(s, classify_entry(channel))`，idempotent 保证零行为变化。
+
+6. **D12：`execute_task` docstring 过期**：从 C7 一路到 C12 的 note 没跟上 C14，仍写"本路径不安装 PolicyContext ContextVar … 由 C12 补齐"。修复：重写为"调用方负责"，明确列出当前 4 个 SoT 注入点（`openakita run` / scheduler / MCP / evolution-TBD）。
+
+**反向回归（confirmed FAIL-on-regression）**：
+
+- D1 simulate `build_policy_context` 丢 `unattended_strategy` → test asserts `ctx.unattended_strategy == "ask_owner"` 会失败 ✓
+- D5 simulate `/api/chat/sync` 缺 `lifecycle.start` → audit 子串检查会失败 ✓
+- D6 simulate `mcp_server` 缺 `classify_entry` → audit 子串检查会失败 ✓
+- D8 simulate `apply_classification` 缺 try/except → 抛 `RuntimeError`，defensive test 会失败 ✓
+
+**未列入本轮修复（已知 follow-up gap）**：
+
+- **Evolution self-fix (`evolution/self_check.py::_attempt_fix`)** 仍未走 classifier。Self-fix 路径多数 CONFIRM-free（修工具配置 / skill 注册），目前无可见症状。建议在 C15 / C16（Evolution / system_task）一起处理。
+
+二轮 audit 关键结论：`classify_entry` 现在是**真正的**单一 SoT（5 个 production 入口 + 1 个 MCP stdin），加上 `build_policy_context` 的 `unattended_strategy` 参数，所有 headless 入口都走同一条"分类 → 构造 → 安装 ctx"路径。`apply_classification_to_session` 在 hot path 上有 4 段 try/except 防御，broken session 不会撕掉 request。`/api/chat/sync` 有完整 lifecycle 锁保护，与 `/api/chat` SSE 在并发行为上对齐。
+
 C14 完成。下一步可以进 C15（Evolution / system_task / Skill-MCP trust_level）。

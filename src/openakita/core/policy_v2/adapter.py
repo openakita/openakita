@@ -309,6 +309,7 @@ def build_policy_context(
     workspace: Path | str | None = None,
     mode: str = "agent",
     is_unattended: bool = False,
+    unattended_strategy: str = "",
     is_owner: bool = True,
     channel: str = "desktop",
     root_user_id: str | None = None,
@@ -427,7 +428,10 @@ def build_policy_context(
     effective_mode = mode
     effective_is_owner = is_owner
     effective_is_unattended = is_unattended
-    effective_unattended_strategy = ""
+    # C14 / R4-8: caller (e.g. ``openakita run``, MCP server) may pass
+    # ``unattended_strategy`` directly via classifier output when there's
+    # no Session object to carry it. Session metadata still wins below.
+    effective_unattended_strategy = unattended_strategy or ""
     if session is not None:
         try:
             sr = getattr(session, "session_role", None)

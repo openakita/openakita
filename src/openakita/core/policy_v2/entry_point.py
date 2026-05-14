@@ -225,24 +225,45 @@ def apply_classification_to_session(session, classification: EntryClassification
     once a session is marked unattended by any code path, keep it so).
     Will fill an empty ``unattended_strategy`` but won't overwrite an
     explicit value.
+
+    Hardening: getattr / setattr failures (e.g. a custom Session class
+    with a descriptor that raises) are swallowed — this helper is called
+    from hot paths (gateway.process_message, chat_sync) where a broken
+    session must NOT crash request handling. Caller proceeds with
+    unmodified session in that edge case.
     """
     if session is None:
         return False
     mutated = False
 
-    current_unattended = bool(getattr(session, "is_unattended", False))
-    if classification.is_unattended and not current_unattended:
-        session.is_unattended = True
-        mutated = True
+    try:
+        current_unattended = bool(getattr(session, "is_unattended", False))
+    except Exception:
+        return False
 
-    current_strategy = getattr(session, "unattended_strategy", "") or ""
+    if classification.is_unattended and not current_unattended:
+        try:
+            session.is_unattended = True
+            mutated = True
+            current_unattended = True
+        except Exception:
+            current_unattended = False
+
+    try:
+        current_strategy = getattr(session, "unattended_strategy", "") or ""
+    except Exception:
+        current_strategy = ""
+
     if (
         classification.default_strategy
         and not current_strategy
-        and bool(getattr(session, "is_unattended", False))
+        and current_unattended
     ):
-        session.unattended_strategy = classification.default_strategy
-        mutated = True
+        try:
+            session.unattended_strategy = classification.default_strategy
+            mutated = True
+        except Exception:
+            pass
 
     return mutated
 
