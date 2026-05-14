@@ -21,6 +21,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { toast } from "sonner";
 import { Loader2, LockKeyhole, RotateCw, Save, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
+import { PolicyV2MatrixView } from "./security/PolicyV2MatrixView";
 
 type SecurityViewProps = {
   apiBaseUrl: string;
@@ -107,7 +108,7 @@ type AllowlistData = {
   tools: Array<Record<string, unknown>>;
 };
 
-type TabId = "zones" | "commands" | "sandbox" | "audit" | "checkpoints" | "confirmation" | "selfprotection" | "imowner" | "dryrun";
+type TabId = "zones" | "commands" | "sandbox" | "audit" | "checkpoints" | "confirmation" | "selfprotection" | "imowner" | "dryrun" | "policy_v2_matrix";
 
 // C9a §3: per-channel IM owner allowlist (调用 C8a backend)
 type ImOwnerAllowlistEntry = {
@@ -426,6 +427,8 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
 
   const TABS: { id: TabId; labelKey: string; fallback: string }[] = [
     { id: "confirmation", labelKey: "security.confirmation", fallback: "确认策略" },
+    // C23 P2-1: policy_v2 审批矩阵（session_role × confirmation_mode × ApprovalClass）
+    { id: "policy_v2_matrix", labelKey: "security.policyV2Matrix", fallback: "审批矩阵" },
     { id: "zones", labelKey: "security.zones", fallback: "区域" },
     { id: "commands", labelKey: "security.commands", fallback: "命令" },
     { id: "sandbox", labelKey: "security.sandbox", fallback: "沙箱" },
@@ -549,6 +552,9 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
           ))}
         </ToggleGroup>
       </div>
+
+      {/* C23 P2-1: policy_v2 审批矩阵（在 confirmation tab 之前渲染对应 case） */}
+      {tab === "policy_v2_matrix" && <PolicyV2MatrixView />}
 
       {/* Confirmation */}
       {tab === "confirmation" && (
