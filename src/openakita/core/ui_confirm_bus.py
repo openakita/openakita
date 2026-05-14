@@ -66,6 +66,16 @@ class UIConfirmBus:
         self._events: dict[str, asyncio.Event] = {}
         self._decisions: dict[str, str] = {}
         self._pending: dict[str, dict[str, Any]] = {}
+        # C13 §15.5: dedup_followers tracks how many follower waiters are
+        # parked on a leader's confirm_id (e.g., delegate_parallel siblings
+        # racing on the same write_file). Used by cleanup() to defer real
+        # removal until followers also resolve, preventing the race where
+        # the leader's cleanup empties _decisions before followers read it.
+        self._dedup_followers: dict[str, int] = {}
+        # confirm_ids that the leader has already requested cleanup on, but
+        # had to defer because followers were still waiting. When the last
+        # follower deregisters, ``deregister_follower`` flushes these.
+        self._pending_cleanup: set[str] = set()
         self._ttl_seconds = ttl_seconds
 
     # ----- TTL configuration ------------------------------------------------
@@ -89,12 +99,20 @@ class UIConfirmBus:
         *,
         session_id: str = "",
         needs_sandbox: bool = False,
+        dedup_key: str | None = None,
     ) -> None:
         """Register the sidecar payload for a confirm_id about to be SSE'd.
 
         Must be called by the SSE producer **before** the event is yielded,
         so the resolver (gateway IM card click / web modal POST) can pop
         it back out.
+
+        ``dedup_key`` (C13 §15.5) is an optional fingerprint used to
+        coalesce identical confirms from ``delegate_parallel`` siblings:
+        when two sub-agents race to ``store_pending`` for the same
+        (tool_name, normalized_params, session), the second caller can
+        instead join the first as a "follower" via ``find_dedup_leader``
+        and skip its own SSE emission.
         """
         self._cleanup_expired()
         self._pending[tool_id] = {
@@ -103,7 +121,62 @@ class UIConfirmBus:
             "created_at": time.time(),
             "session_id": session_id,
             "needs_sandbox": needs_sandbox,
+            "dedup_key": dedup_key,
         }
+
+    # C13 §15.5: dedup helpers ----------------------------------------------
+
+    def find_dedup_leader(
+        self, *, session_id: str, dedup_key: str
+    ) -> str | None:
+        """Return existing pending confirm_id with matching dedup_key.
+
+        Used by ``delegate_parallel`` siblings: if a leader sub-agent already
+        emitted a CONFIRM SSE for the same (session, tool, normalized params),
+        the follower sub-agent should attach to the leader's confirm_id
+        instead of emitting a duplicate card.
+
+        Returns None when no matching active leader exists; the caller then
+        proceeds with the normal store_pending + emit path.
+        """
+        if not dedup_key:
+            return None
+        for cid, p in self._pending.items():
+            if p.get("dedup_key") == dedup_key and p.get("session_id") == session_id:
+                return cid
+        return None
+
+    def register_follower(self, leader_id: str) -> None:
+        """Increment follower waiter count for ``leader_id``.
+
+        Must be called before the follower awaits ``wait_for_resolution``;
+        paired with ``deregister_follower`` after the wait returns. Together
+        they make ``cleanup`` defer real removal until all followers have
+        also read the decision (avoids the wake-then-cleanup-then-read race).
+        """
+        if not leader_id:
+            return
+        self._dedup_followers[leader_id] = self._dedup_followers.get(leader_id, 0) + 1
+
+    def deregister_follower(self, leader_id: str) -> None:
+        """Decrement follower count; flush deferred cleanup when count hits 0."""
+        if not leader_id:
+            return
+        n = self._dedup_followers.get(leader_id, 0) - 1
+        if n > 0:
+            self._dedup_followers[leader_id] = n
+            return
+        self._dedup_followers.pop(leader_id, None)
+        # If the leader already requested cleanup while followers were
+        # still parked, the actual pop was deferred. Flush it now.
+        if leader_id in self._pending_cleanup:
+            self._pending_cleanup.discard(leader_id)
+            self._events.pop(leader_id, None)
+            self._decisions.pop(leader_id, None)
+
+    def follower_count(self, leader_id: str) -> int:
+        """Diagnostic accessor for tests / debug panel."""
+        return self._dedup_followers.get(leader_id, 0)
 
     def list_pending(self) -> list[dict[str, Any]]:
         """Diagnostic accessor (SecurityView debug panel / tests)."""
@@ -148,8 +221,20 @@ class UIConfirmBus:
         self._decisions.pop(confirm_id, None)
 
     def cleanup(self, confirm_id: str) -> None:
-        """Drop both the event and the resolved decision for an id."""
+        """Drop both the event and the resolved decision for an id.
+
+        C13 §15.5: defer real removal when followers are still parked on
+        this leader's event/decision. Without this, leader's caller
+        immediately popping _decisions after wait_for_resolution returns
+        would race with followers whose ``wait`` also woke but hasn't yet
+        read _decisions — they'd see an empty dict and fall back to "deny".
+        ``deregister_follower`` flushes the deferred cleanup when the last
+        follower returns.
+        """
         if not confirm_id:
+            return
+        if self._dedup_followers.get(confirm_id, 0) > 0:
+            self._pending_cleanup.add(confirm_id)
             return
         self._events.pop(confirm_id, None)
         self._decisions.pop(confirm_id, None)

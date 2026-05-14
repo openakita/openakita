@@ -315,6 +315,8 @@ def build_policy_context(
     user_message: str = "",
     delegate_chain: list[str] | None = None,
     extra_metadata: dict[str, object] | None = None,
+    parent_ctx: PolicyContext | None = None,
+    child_agent_name: str | None = None,
 ) -> PolicyContext:
     """从 v1 session 对象 + 入参构造 ``PolicyContext`` 供 v2 决策使用。
 
@@ -331,8 +333,55 @@ def build_policy_context(
     - **fail-soft**：session 可能是 None / dict / SessionContext 对象 / mock；
       所有 ``getattr`` / ``get_metadata`` 失败均退化为空 list 而非抛异常，
       避免 ctx 构造把 production 卡死。
+
+    C13 多 agent 链路（``parent_ctx`` + ``child_agent_name``）：
+    - 当 ``parent_ctx`` 非空（sub-agent 入口）：走 ``parent_ctx.derive_child(...)``
+      派生 child ctx，并叠加本次 session/user_message 的本地视图。
+    - 这样 root_user_id / delegate_chain / safety_immune_paths / replay /
+      trusted_paths 全部由父继承而来，**不**被 sub-agent 重新构造时清空。
+    - sub-agent 仍可通过 ``user_message=...`` 覆盖 user_message（用于本次工具
+      调用的 replay 匹配），其余 immune 字段保持父值。
     """
     ws_path = Path(workspace) if workspace is not None else Path(os.getcwd())
+
+    # C13 §15: sub-agent path — 父 ctx 已是 root 视图（root_user_id /
+    # delegate_chain / safety_immune / replay / trusted_paths 全部就位），
+    # 直接 derive_child + 本地字段叠加，不重新走全套 session 推断流程。
+    if parent_ctx is not None:
+        child_sid = session_id or parent_ctx.session_id
+        child_name = (child_agent_name or "").strip() or "sub_agent"
+        base = parent_ctx.derive_child(
+            child_session_id=child_sid,
+            child_agent_name=child_name,
+        )
+        # 本次调用的 channel / user_message / workspace 是 sub-agent 自己的视图；
+        # 而 is_owner / is_unattended / unattended_strategy / safety_immune 等
+        # 由父继承（child confirm 上浮到 root_user 时仍按 root 的 owner 身份判断）。
+        # workspace 仅当显式传入时覆盖，否则保留父值。
+        eff_workspace = ws_path if workspace is not None else base.workspace
+        # channel 默认沿用父 channel；显式传非默认 channel 才覆盖。
+        eff_channel = channel if (channel and channel != "desktop") else base.channel
+        eff_user_message = user_message or base.user_message
+        eff_metadata = dict(base.metadata)
+        if extra_metadata:
+            eff_metadata.update(extra_metadata)
+        return PolicyContext(
+            session_id=base.session_id,
+            workspace=eff_workspace,
+            channel=eff_channel,
+            is_owner=base.is_owner,
+            root_user_id=base.root_user_id,
+            session_role=base.session_role,
+            confirmation_mode=base.confirmation_mode,
+            is_unattended=base.is_unattended,
+            unattended_strategy=base.unattended_strategy,
+            delegate_chain=list(base.delegate_chain),
+            replay_authorizations=list(base.replay_authorizations),
+            trusted_path_overrides=list(base.trusted_path_overrides),
+            safety_immune_paths=base.safety_immune_paths,
+            metadata=eff_metadata,
+            user_message=eff_user_message,
+        )
 
     # confirmation_mode 来自全局 config（与 v1 ``_is_trust_mode`` 同源）
     try:

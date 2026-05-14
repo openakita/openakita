@@ -967,7 +967,7 @@ self.handler_registry.register("memory", create_memory_handler(self))
 | C10 | Hook 来源分层 + Trusted Tool Policy + plugin manifest 桥接 | ✅ DONE | §3.2 R2-12 + R5-7 + 「C10 实施记录」|
 | C11 | 全量回归 + 25 项手测 + 性能 SLO | ✅ DONE | plan §13.5 + R5-18/19 |
 | C12 | 计划任务/无人值守审批 + DeferredApprovalRequired + pending_approvals + 30s replay resume | ✅ DONE | §2.1 + R3 + 「C12+C9c 实施记录」|
-| C13 | 多 agent confirm 冒泡 + delegate_chain 透传 | ⏳ Pending | R4-1/2/3/4 + R5-16 |
+| C13 | 多 agent confirm 冒泡 + delegate_chain 透传 | ✅ DONE | R4-1/2/3/4 + R5-16 + 「C13 实施记录」|
 | C14 | Headless 入口统一（CLI / HTTP / Webhook / stdin）| ⏳ Pending | R4-5/6/7/8 |
 | C15 | Evolution / system_task / Skill-MCP trust_level | ⏳ Pending | R4-9/10/11/12/13 + R5-21 |
 | C16 | Prompt injection + YAML 严格校验 + audit 防篡改 | ⏳ Pending | R4-14/15 + R5-17 |
@@ -4164,6 +4164,131 @@ C12 = 计划任务系统的「无人值守审批」端到端落地；C9c = §8.4
    ALLOW 了。
 
 C12+C9c 完成。下一步可以进 C13（多 agent confirm 冒泡 + delegate_chain 透传）。
+
+---
+
+## C13 实施记录（与 C12+C9c 提交后立即跟进）
+
+### 范围
+
+C13 「多 agent confirm 冒泡 + delegate_chain 透传」聚焦 R4-1/2/3/4 + R5-16：
+
+- **R4-1** sub-agent confirm 推到错误 channel / 黑洞 → 全冒泡到 root_user
+- **R4-2** `delegate_parallel` N 个 sub 同 confirm 重复弹 → confirm_dedup
+- **R4-3** `spawn_agent` 异步派生后无 owner → 视 unattended + owner=root
+- **R4-4** org root → specialist 多层 delegate confirm → delegate_chain 透传
+- **R5-16** ContextVar 跨 spawn task 不传递 → 显式 derive_child 派生
+
+### 实施切片
+
+| Phase | 内容 | 代码改动 |
+|---|---|---|
+| **A** | `build_policy_context(parent_ctx, child_agent_name)` + agent.py 两处 sub-agent 检测 + derive_child 派生 | `adapter.py` (+45 lines)、`agent.py` (+30 lines) |
+| **B** | `security_confirm` SSE payload 携带 `delegate_chain` / `root_user_id`；tool_executor `_security_confirm` marker 同步携带 | `reasoning_engine.py` (+40 lines)、`tool_executor.py` (+18 lines) |
+| **C** | `UIConfirmBus` 加 `find_dedup_leader` / `register_follower` / `deregister_follower` / `_pending_cleanup` API；reasoning_engine 两处 CONFIRM 发射检 leader 走 follower 路径 | `ui_confirm_bus.py` (+80 lines)、`reasoning_engine.py` (+60 lines) |
+| **D** | spawn_agent 的 owner=root + is_unattended 由 Phase A `derive_child` 自然继承（无单独代码改动，靠测试验证） | — |
+
+### 关键设计决定
+
+1. **derive_child 是单一 SoT**：`build_policy_context` 检测 `parent_ctx` 非空就走
+   `parent_ctx.derive_child(...)`，**不**重新走 session metadata 推断分支。
+   `root_user_id` / `delegate_chain` / `safety_immune_paths` / `replay_authorizations` /
+   `trusted_path_overrides` 全部由父继承。sub-agent 本地只能覆盖
+   `user_message` / `channel` / `workspace` / `extra_metadata`（这些是 per-call 视图）。
+   `is_owner` 等 escalation-prone 字段保留父值，**禁止 sub-agent 自己升权**。
+
+2. **child 检测靠 `_is_sub_agent_call`**：orchestrator `_call_agent` 已经在
+   sub-agent 上设置 `agent._is_sub_agent_call=True`（depth>0）。我们在
+   `agent.chat_with_session(_stream)` 入口检测它 + 取 `get_current_context()`，
+   若是 sub-agent 且父 ctx 存在则传 `parent_ctx`。顶层 agent 路径完全不变
+   （regression-safe）。
+
+3. **ContextVar 跨 asyncio.create_task 透传**：Python 自动行为，无需显式
+   serialize。Orchestrator 用 `asyncio.create_task(_call_agent(...))` 跑 sub-agent
+   时，父 task 的 ContextVar 自动复制到子 task。`agent.chat_with_session` 内的
+   `get_current_context()` 直接返回父 ctx。
+
+4. **SSE payload 字段优雅退化**：顶层 agent 时 `delegate_chain=[]` /
+   `root_user_id=None`，前端按缺省渲染（不展示 chain badge）。多 agent 时
+   payload 包含完整调用链，UI 可渲染「specialist_a (via root) 请求执行 ...」。
+
+5. **dedup_key 用稳定哈希**：`md5(tool_name + json(params, sort_keys=True))`。
+   同 tool 同参的 delegate_parallel 兄弟得到相同 key；dict key 顺序不影响哈希。
+   非 dict 参数走 `str()` 兜底（仍可哈希）。
+
+6. **follower 不发新 SSE，wait 在同一 event**：发现 leader 后调
+   `register_follower(leader_id)` + `await wait_for_resolution(leader_id, ...)`，
+   完事 `deregister_follower(leader_id)`。Python `asyncio.Event.wait()` 支持多
+   waiter 同时等同一 event，`set()` 唤醒全员。
+
+7. **cleanup defer 避免唤醒读取竞态**：原 `wait_for_resolution` 返回后立即
+   `_bus.cleanup(t_id)` 会在 leader 已读、follower 尚未读 `_decisions` 时清空
+   字典，让 follower 错读为 `"deny"`。新加 `_pending_cleanup: set[str]`：cleanup
+   时若仍有 followers，把 id 加入 set 并延迟真清；`deregister_follower` 在
+   `count→0` 时检查 set 并 flush。
+
+### 验证
+
+#### audit 脚本：D1-D11 全绿
+
+`scripts/c13_audit.py` 11 个维度：
+
+1. `build_policy_context` parent_ctx + child_agent_name + derive_child route — **OK**
+2. agent.py sync + stream 两处都 wire `_is_sub_agent_call` + `child_agent_name=_agent_profile_id` — **OK**
+3. `security_confirm` SSE 两处发射都带 `delegate_chain` + `root_user_id` — **OK**
+4. tool_executor `_security_confirm` marker 带 chain + root — **OK**
+5. UIConfirmBus 五个 dedup 符号（find/register/deregister/_pending_cleanup/dedup_key）— **OK**
+6. reasoning_engine 两处 CONFIRM 都 consult `find_dedup_leader` + `register_follower` — **OK**
+7. `cleanup()` defer + `deregister_follower` flush — **OK**
+8. pytest C13 18 项 — **OK**（all green）
+9. regression: c12_c9c_audit.py 11 项 — **OK**
+10. regression: skeleton 测试（derive_child 契约）— **OK**
+11. regression: multi_agent + delegation 测试 — **155 PASS**
+
+#### 单元测试
+
+- `tests/unit/test_policy_v2_c13_multi_agent.py`：18 PASS（新增）
+- `tests/unit/test_policy_v2_skeleton.py`：12 PASS（derive_child 契约不退步）
+- `tests/unit/test_pending_approvals_store.py`：14 PASS（C12 不退步）
+- `tests/unit/test_policy_v2_c9c_sse.py`：5 PASS（C9c SSE 不退步）
+- `tests/unit/test_multi_agent.py`：109 PASS
+- `tests/unit/test_delegation_preamble.py`：35 PASS
+- `tests/unit/test_risk_intent_delegation.py`：11 PASS
+
+**广谱回归**：上述 9 个测试文件累计 **282 PASS**。
+
+### 经验
+
+1. **derive_child 必须是「parent ctx 入口」的唯一路径**：sub-agent 走
+   `build_policy_context` 重新从 session 推断时，**任何**遗漏字段（如
+   `delegate_chain`、`root_user_id`、`safety_immune_paths`）都会让 child ctx
+   裸奔。把 derive_child 拉到 `build_policy_context` 的 happy path（`parent_ctx is not None`），让重构者无路可逃。
+
+2. **escalation-prone 字段不能让 sub-agent 覆盖**：本轮把 `is_owner` 设计成
+   父继承而非入参覆盖（即使 `build_policy_context(is_owner=True)` 也不能让一个
+   父 is_owner=False 的 sub-agent 升权）。`test_build_policy_context_parent_ctx_overrides_session_path`
+   把这条契约钉死。
+
+3. **asyncio.Event 多 waiter 是双刃剑**：`ev.set()` 唤醒全员，看似优雅，
+   但 leader caller 的 cleanup 跑得比 follower 调度快时会读穿。`_pending_cleanup`
+   的 refcount-defer 模式比「换成 Future + multi-await」更小动作（不动 wait API）
+   且 race-safe。
+
+4. **dedup_key 用 hash 而非 raw key**：`tool_name + str(params)` 看着够用，但
+   dict key 顺序不稳定（Python 3.7+ 虽然 ordered，但 dict literal 与 dict
+   comprehension 可能差序）+ params 包含 nested dict 时 str 比较脆。`json.dumps(sort_keys=True)`
+   + md5 是 cheap-and-correct 范式，C13 测试 `test_compute_confirm_dedup_key_stable_across_dict_order`
+   钉死。
+
+5. **R4-3 spawn_agent 不需要独立 wire**：原以为要单独给 spawn_agent 加 owner=root
+   传递逻辑，但 Phase A 的 derive_child 路径已经把 `is_unattended` /
+   `unattended_strategy` 从父继承，加上 spawn_agent 走的是 `orchestrator.delegate(...)`
+   同款路径（同 session、同 parent ctx），R4-3 自动吃下。测试
+   `test_build_policy_context_unattended_propagates_to_child` 验证此点。
+
+C13 完成。下一步可以进 C14（Headless 入口统一）。
+
+
 
 ### 二轮 audit 修复（同日）
 

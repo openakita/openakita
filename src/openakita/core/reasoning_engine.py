@@ -128,6 +128,32 @@ def _is_im_conversation(conversation_id: str | None) -> bool:
     return str(conversation_id).startswith(_IM_CONVERSATION_PREFIXES)
 
 
+def _compute_confirm_dedup_key(tool_name: str, params: Any) -> str:
+    """C13 §15.5: compute a stable dedup fingerprint for CONFIRM coalescing.
+
+    delegate_parallel siblings often issue identical (tool_name, params),
+    causing the UI to receive N redundant confirm cards. We hash
+    ``(tool_name, json(params, sort_keys=True))`` so the same operation
+    deterministically maps to one key — first sub-agent becomes the leader,
+    later siblings detect the leader via ``UIConfirmBus.find_dedup_leader``
+    and wait on the leader's event instead of emitting their own SSE.
+
+    Returns ``""`` (falsy → opts out of dedup) when params can't be hashed
+    safely; the caller falls back to the normal per-call confirm path.
+    """
+    if not tool_name:
+        return ""
+    try:
+        if isinstance(params, dict):
+            normalized = json.dumps(params, sort_keys=True, default=str)
+        else:
+            normalized = str(params)
+    except Exception:
+        return ""
+    payload = f"{tool_name}|{normalized}".encode("utf-8", errors="ignore")
+    return hashlib.md5(payload).hexdigest()
+
+
 def _tool_result_fingerprint(tool_results: list[dict]) -> str:
     parts: list[str] = []
     for result in tool_results:
@@ -4413,45 +4439,98 @@ class ReasoningEngine:
                                 # 让前端能区分 v1 兜底事件 vs v2 主决策事件。
                                 # 字段缺失时前端兜回旧路径（risk_level）—— 完全向后兼容。
                                 _approval_class = _pr.metadata.get("approval_class")
-                                _bus.store_pending(
-                                    t_id,
-                                    t_name,
-                                    t_args if isinstance(t_args, dict) else {},
-                                    session_id=conversation_id or "",
-                                    needs_sandbox=_needs_sb,
+                                # C13 §15.4: 多 agent confirm 冒泡链路 — payload
+                                # 携带 delegate_chain + root_user_id，让 UI 渲染
+                                # "specialist_a (via root) 请求执行 ..."。顶层
+                                # agent 时 chain 空、root_user_id=None，UI 兜回
+                                # 原有行为（无 chain badge）。
+                                from .policy_v2 import (
+                                    get_current_context as _pv2_get_ctx_for_emit,
                                 )
-                                _bus.prepare(t_id)
-                                yield {
-                                    "type": "security_confirm",
-                                    "tool": t_name,
-                                    "args": t_args if isinstance(t_args, dict) else {},
-                                    "id": t_id,
-                                    "reason": _pr.reason,
-                                    "risk_level": _risk,
-                                    "needs_sandbox": _needs_sb,
-                                    "timeout_seconds": _v2_conf.timeout_seconds,
-                                    "default_on_timeout": _v2_conf.default_on_timeout,
-                                    "channel": "im" if _is_im else "desktop",
-                                    "approval_class": _approval_class,
-                                    "policy_version": 2,
-                                    "options": [
-                                        "allow_once",
-                                        "allow_session",
-                                        "allow_always",
-                                        "deny",
-                                    ]
-                                    + (["sandbox"] if _needs_sb else []),
-                                }
-                                # IM 用户响应延迟更高：卡片走 IM 通道 + 用户切回看消息往往
-                                # >60s。给 IM 多 4 倍时长（最少 180s 兜底），桌面端沿用配置。
+
+                                _emit_ctx = _pv2_get_ctx_for_emit()
+                                _delegate_chain = (
+                                    list(_emit_ctx.delegate_chain) if _emit_ctx else []
+                                )
+                                _root_user_id = (
+                                    _emit_ctx.root_user_id if _emit_ctx else None
+                                )
+                                # C13 §15.5: dedup — when delegate_parallel
+                                # siblings issue the same (tool, params), only
+                                # the first emits the SSE; siblings attach as
+                                # followers on the leader's confirm event.
+                                _dedup_key = _compute_confirm_dedup_key(
+                                    t_name, t_args
+                                )
+                                _leader_id = _bus.find_dedup_leader(
+                                    session_id=conversation_id or "",
+                                    dedup_key=_dedup_key,
+                                ) if _dedup_key else None
                                 _confirm_timeout = float(_v2_conf.timeout_seconds)
                                 if _is_im:
                                     _confirm_timeout = max(_confirm_timeout * 4, 180.0)
-                                _decision = await _bus.wait_for_resolution(
-                                    t_id,
-                                    _confirm_timeout,
-                                )
-                                _bus.cleanup(t_id)
+                                if _leader_id:
+                                    # Follower path: skip SSE emission, share
+                                    # the leader's event. cleanup() on the
+                                    # leader is deferred until all followers
+                                    # deregister, so we still read _decisions
+                                    # safely.
+                                    logger.info(
+                                        "[C13 dedup] tool=%s session=%s join "
+                                        "leader confirm_id=%s",
+                                        t_name,
+                                        (conversation_id or "")[:12],
+                                        _leader_id[:8],
+                                    )
+                                    _bus.register_follower(_leader_id)
+                                    try:
+                                        _decision = await _bus.wait_for_resolution(
+                                            _leader_id, _confirm_timeout
+                                        )
+                                    finally:
+                                        _bus.deregister_follower(_leader_id)
+                                    # Don't call cleanup on the leader from
+                                    # follower path — leader's caller owns it.
+                                else:
+                                    _bus.store_pending(
+                                        t_id,
+                                        t_name,
+                                        t_args if isinstance(t_args, dict) else {},
+                                        session_id=conversation_id or "",
+                                        needs_sandbox=_needs_sb,
+                                        dedup_key=_dedup_key or None,
+                                    )
+                                    _bus.prepare(t_id)
+                                    yield {
+                                        "type": "security_confirm",
+                                        "tool": t_name,
+                                        "args": t_args if isinstance(t_args, dict) else {},
+                                        "id": t_id,
+                                        "reason": _pr.reason,
+                                        "risk_level": _risk,
+                                        "needs_sandbox": _needs_sb,
+                                        "timeout_seconds": _v2_conf.timeout_seconds,
+                                        "default_on_timeout": _v2_conf.default_on_timeout,
+                                        "channel": "im" if _is_im else "desktop",
+                                        "approval_class": _approval_class,
+                                        "policy_version": 2,
+                                        "delegate_chain": _delegate_chain,
+                                        "root_user_id": _root_user_id,
+                                        "options": [
+                                            "allow_once",
+                                            "allow_session",
+                                            "allow_always",
+                                            "deny",
+                                        ]
+                                        + (["sandbox"] if _needs_sb else []),
+                                    }
+                                    # IM 用户响应延迟更高：卡片走 IM 通道 + 用户切回看消息往往
+                                    # >60s。给 IM 多 4 倍时长（最少 180s 兜底），桌面端沿用配置。
+                                    _decision = await _bus.wait_for_resolution(
+                                        t_id,
+                                        _confirm_timeout,
+                                    )
+                                    _bus.cleanup(t_id)
                                 if _decision in (
                                     "allow",
                                     "allow_once",
@@ -4817,38 +4896,78 @@ class ReasoningEngine:
                             _needs_sb = _pr.metadata.get("needs_sandbox", False)
                             # C9a §1: 见上方 hotspot 同款注释（v2 字段向后兼容下发）
                             _approval_class = _pr.metadata.get("approval_class")
-                            _bus.store_pending(
-                                tool_id,
-                                tool_name,
-                                _tool_args_dict,
-                                session_id=conversation_id or "",
-                                needs_sandbox=_needs_sb,
+                            # C13 §15.4: 见上方 hotspot 同款注释 — 多 agent
+                            # confirm 冒泡 payload。
+                            from .policy_v2 import (
+                                get_current_context as _pv2_get_ctx_for_emit,
                             )
-                            _bus.prepare(tool_id)
-                            yield {
-                                "type": "security_confirm",
-                                "tool": tool_name,
-                                "args": _tool_args_dict,
-                                "id": tool_id,
-                                "reason": _pr.reason,
-                                "risk_level": _risk,
-                                "needs_sandbox": _needs_sb,
-                                "timeout_seconds": _v2_conf.timeout_seconds,
-                                "default_on_timeout": _v2_conf.default_on_timeout,
-                                "channel": "im" if _is_im else "desktop",
-                                "approval_class": _approval_class,
-                                "policy_version": 2,
-                                "options": ["allow_once", "allow_session", "allow_always", "deny"]
-                                + (["sandbox"] if _needs_sb else []),
-                            }
+
+                            _emit_ctx = _pv2_get_ctx_for_emit()
+                            _delegate_chain = (
+                                list(_emit_ctx.delegate_chain) if _emit_ctx else []
+                            )
+                            _root_user_id = (
+                                _emit_ctx.root_user_id if _emit_ctx else None
+                            )
+                            # C13 §15.5: dedup — 见上方 hotspot 同款注释。
+                            _dedup_key = _compute_confirm_dedup_key(
+                                tool_name, _tool_args_dict
+                            )
+                            _leader_id = _bus.find_dedup_leader(
+                                session_id=conversation_id or "",
+                                dedup_key=_dedup_key,
+                            ) if _dedup_key else None
                             _confirm_timeout = float(_v2_conf.timeout_seconds)
                             if _is_im:
                                 _confirm_timeout = max(_confirm_timeout * 4, 180.0)
-                            _decision = await _bus.wait_for_resolution(
-                                tool_id,
-                                _confirm_timeout,
-                            )
-                            _bus.cleanup(tool_id)
+                            if _leader_id:
+                                logger.info(
+                                    "[C13 dedup] tool=%s session=%s join "
+                                    "leader confirm_id=%s",
+                                    tool_name,
+                                    (conversation_id or "")[:12],
+                                    _leader_id[:8],
+                                )
+                                _bus.register_follower(_leader_id)
+                                try:
+                                    _decision = await _bus.wait_for_resolution(
+                                        _leader_id, _confirm_timeout
+                                    )
+                                finally:
+                                    _bus.deregister_follower(_leader_id)
+                            else:
+                                _bus.store_pending(
+                                    tool_id,
+                                    tool_name,
+                                    _tool_args_dict,
+                                    session_id=conversation_id or "",
+                                    needs_sandbox=_needs_sb,
+                                    dedup_key=_dedup_key or None,
+                                )
+                                _bus.prepare(tool_id)
+                                yield {
+                                    "type": "security_confirm",
+                                    "tool": tool_name,
+                                    "args": _tool_args_dict,
+                                    "id": tool_id,
+                                    "reason": _pr.reason,
+                                    "risk_level": _risk,
+                                    "needs_sandbox": _needs_sb,
+                                    "timeout_seconds": _v2_conf.timeout_seconds,
+                                    "default_on_timeout": _v2_conf.default_on_timeout,
+                                    "channel": "im" if _is_im else "desktop",
+                                    "approval_class": _approval_class,
+                                    "policy_version": 2,
+                                    "delegate_chain": _delegate_chain,
+                                    "root_user_id": _root_user_id,
+                                    "options": ["allow_once", "allow_session", "allow_always", "deny"]
+                                    + (["sandbox"] if _needs_sb else []),
+                                }
+                                _decision = await _bus.wait_for_resolution(
+                                    tool_id,
+                                    _confirm_timeout,
+                                )
+                                _bus.cleanup(tool_id)
                             _confirmed_allowed = _decision in (
                                 "allow",
                                 "allow_once",

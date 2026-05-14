@@ -5912,15 +5912,29 @@ class Agent:
         # 消费仍由 _consume_risk_authorization 在 agent.py 完成）。
         _policy_ctx_token = None
         try:
+            from .policy_v2 import get_current_context as _pv2_get_ctx
             from .policy_v2 import set_current_context as _pv2_set_ctx
             from .policy_v2.adapter import build_policy_context as _pv2_build_ctx
 
+            # C13 §15.4 + R5-16: sub-agent 入口检测父 ctx（ContextVar 跨
+            # asyncio.create_task 已自动透传），存在时走 derive_child 继承
+            # root_user_id / delegate_chain / safety_immune / replay；不再
+            # 重新从 sub-agent 自己的 session 推断（sub-agent 仍共享 parent
+            # 的 session 对象，但 root_user_id / delegate_chain 这些只能从
+            # 父 ctx 拿到）。顶层 agent（_is_sub_agent_call=False）走原路径。
+            _parent_ctx = None
+            if getattr(self, "_is_sub_agent_call", False):
+                _parent_ctx = _pv2_get_ctx()
             _policy_ctx = _pv2_build_ctx(
                 session=session,
                 session_id=conversation_id or session_id or "",
                 mode=mode,
                 user_message=message,
                 channel=getattr(session, "channel", None) or "desktop",
+                parent_ctx=_parent_ctx,
+                child_agent_name=(
+                    getattr(self, "_agent_profile_id", None) if _parent_ctx else None
+                ),
             )
             _policy_ctx_token = _pv2_set_ctx(_policy_ctx)
         except Exception as _ctx_exc:
@@ -6331,15 +6345,25 @@ class Agent:
         # 同源；详见 chat_with_session 同名块注释）
         _policy_ctx_token = None
         try:
+            from .policy_v2 import get_current_context as _pv2_get_ctx
             from .policy_v2 import set_current_context as _pv2_set_ctx
             from .policy_v2.adapter import build_policy_context as _pv2_build_ctx
 
+            # C13 §15.4 + R5-16: stream 路径与 sync 路径同源，见 chat_with_session
+            # 同名块的注释。
+            _parent_ctx = None
+            if getattr(self, "_is_sub_agent_call", False):
+                _parent_ctx = _pv2_get_ctx()
             _policy_ctx = _pv2_build_ctx(
                 session=session,
                 session_id=conversation_id or session_id or "",
                 mode=mode,
                 user_message=message,
                 channel=getattr(session, "channel", None) or "desktop",
+                parent_ctx=_parent_ctx,
+                child_agent_name=(
+                    getattr(self, "_agent_profile_id", None) if _parent_ctx else None
+                ),
             )
             _policy_ctx_token = _pv2_set_ctx(_policy_ctx)
         except Exception as _ctx_exc:
