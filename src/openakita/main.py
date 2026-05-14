@@ -1304,11 +1304,54 @@ def show_skills():
 _cli_force_new_session = False
 
 
+def _apply_auto_confirm_flag(*, enabled: bool) -> None:
+    """C18 Phase D — translate ``--auto-confirm`` to the Phase C ENV var.
+
+    Done as a tiny helper (not inlined) so unit tests can exercise it
+    without spinning up typer. The flag intentionally feeds the same
+    ``OPENAKITA_AUTO_CONFIRM`` override registered in
+    ``core.policy_v2.env_overrides``: ENV is the single contract surface
+    every subprocess / engine reload re-reads.
+
+    Importantly, **destructive (mutating_global) tools and safety_immune
+    paths still require confirm** — that gate is in classifier, not in
+    the ConfirmationMode value. So even with ``--auto-confirm``:
+
+    - ``write_file path=/etc/...`` (safety_immune) → CONFIRM
+    - ``rm -rf /`` (destructive) → CONFIRM
+    - ``read_file`` / non-destructive ``run_shell`` → ALLOW
+
+    This is documented in ``--auto-confirm`` help text + audit row.
+    """
+    if not enabled:
+        return
+    import os as _os
+
+    _os.environ["OPENAKITA_AUTO_CONFIRM"] = "1"
+    # Loud signal so operators don't forget they enabled auto-confirm.
+    # Won't trigger AGAIN at every subsequent engine reload (the
+    # underlying ENV var being set is enough; the audit row gets
+    # written by global_engine._audit_env_overrides on first load).
+    console.print(
+        "[yellow]auto-confirm enabled — non-destructive tools will skip confirm. "
+        "destructive (mutating_global) and safety_immune paths still require confirm.[/yellow]"
+    )
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
     version: bool = typer.Option(False, "--version", "-v", help="显示版本信息"),
     new_session: bool = typer.Option(False, "--new", help="强制开启新 CLI 会话，不恢复上次对话"),
+    auto_confirm: bool = typer.Option(
+        False,
+        "--auto-confirm",
+        help=(
+            "Skip confirm for non-destructive tools (C18 Phase D). "
+            "Equivalent to OPENAKITA_AUTO_CONFIRM=1. Destructive "
+            "(mutating_global) and safety_immune paths still require confirm."
+        ),
+    ),
 ):
     """
     OpenAkita - 全能自进化AI助手
@@ -1317,6 +1360,13 @@ def main(
     """
     global _cli_force_new_session
     _cli_force_new_session = new_session
+
+    # C18 Phase D: translate the CLI flag into the Phase C ENV var.
+    # MUST happen before any policy_v2 import in a sub-command, hence we
+    # do it in the top-level callback (typer invokes the callback before
+    # the sub-command). The classify_entry / engine init below all
+    # re-read os.environ, so the flag propagates.
+    _apply_auto_confirm_flag(enabled=auto_confirm)
 
     if version:
         from . import __version__
