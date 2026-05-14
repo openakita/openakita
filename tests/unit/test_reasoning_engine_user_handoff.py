@@ -159,7 +159,20 @@ async def test_verify_incomplete_exhaustion_is_marked_non_normal():
 
 
 @pytest.mark.asyncio
-async def test_tool_evidence_required_blocks_implicit_long_reply_without_tools():
+async def test_tool_evidence_required_soft_disclaimer_on_long_reply_without_tools():
+    """Soft disclaimer contract (commit a19f58d2, "harden evidence handling"):
+
+    When ``tool_evidence_required=True`` and ``tools_executed_in_task=False``,
+    the engine **no longer** hard-retries via a synthetic user message + tuple
+    return. The historical hard path was set to ``_last_exit_reason=
+    "tool_evidence_missing"`` which then mapped to ``OrgRuntime.task_failed``
+    and deadlocked organization chains on perfectly normal analysis replies.
+
+    The new contract returns the cleaned text **plus** a soft disclaimer
+    suffix, working_messages is left untouched. Stage-3
+    ``_check_source_tag_consistency`` covers the remaining belt-and-suspenders
+    case at a later stage.
+    """
     engine = ReasoningEngine(
         brain=None,
         tool_executor=None,
@@ -167,7 +180,7 @@ async def test_tool_evidence_required_blocks_implicit_long_reply_without_tools()
         response_handler=AsyncMock(),
         agent_state=AgentState(),
     )
-    working_messages = []
+    working_messages: list[dict] = []
     reply = "这是一段看起来完整的分析。" * 20
 
     result = await engine._handle_final_answer(
@@ -189,14 +202,25 @@ async def test_tool_evidence_required_blocks_implicit_long_reply_without_tools()
         tool_evidence_required=True,
     )
 
-    assert isinstance(result, tuple)
-    assert result[1] == 1
-    assert working_messages[-1]["role"] == "user"
-    assert "需要外部证据或工具验证" in working_messages[-1]["content"]
+    assert isinstance(result, str), "soft path returns text + disclaimer, not retry tuple"
+    assert result.startswith(reply), "原文必须保留在前，disclaimer 仅追加在末尾"
+    assert "未调用工具" in result, "soft 提示标记 — 用户/前端能看出来本轮无工具证据"
+    assert working_messages == [], (
+        "soft path 不再注入 synthetic user message 触发重试 "
+        "(避免组织模式下 _last_exit_reason=tool_evidence_missing 级联 task_failed)"
+    )
+    assert engine._last_exit_reason != "tool_evidence_missing", (
+        "exit_reason 不再用 tool_evidence_missing（commit a19f58d2 移除该 reason 防 org 死锁）"
+    )
 
 
 @pytest.mark.asyncio
-async def test_tool_evidence_required_blocks_reply_tag_without_tools():
+async def test_tool_evidence_required_soft_disclaimer_on_reply_tag_without_tools():
+    """Same soft contract as above, with explicit ``[REPLY]`` intent tag.
+
+    [REPLY] intent + no tools used to be a hard "blocker" path; current
+    contract keeps the tag-stripped text and adds the soft disclaimer.
+    """
     engine = ReasoningEngine(
         brain=None,
         tool_executor=None,
@@ -204,7 +228,7 @@ async def test_tool_evidence_required_blocks_reply_tag_without_tools():
         response_handler=AsyncMock(),
         agent_state=AgentState(),
     )
-    working_messages = []
+    working_messages: list[dict] = []
 
     result = await engine._handle_final_answer(
         decision=Decision(
@@ -228,9 +252,10 @@ async def test_tool_evidence_required_blocks_reply_tag_without_tools():
         tool_evidence_required=True,
     )
 
-    assert isinstance(result, tuple)
-    assert result[1] == 1
-    assert "需要外部证据或工具验证" in working_messages[-1]["content"]
+    assert isinstance(result, str)
+    assert "我已经分析过这个 issue" in result, "[REPLY] tag 剥离后原文应保留"
+    assert "未调用工具" in result, "soft disclaimer 追加"
+    assert working_messages == []
 
 
 @pytest.mark.asyncio
@@ -302,7 +327,23 @@ async def test_plain_short_analysis_without_tools_is_accepted():
 
 
 @pytest.mark.asyncio
-async def test_tool_evidence_required_exhausts_to_unverified_without_repeated_prompts():
+async def test_tool_evidence_required_does_not_replace_text_after_retry_budget():
+    """Even when retry counter is exhausted, the engine **must not** replace
+    the LLM text with a synthetic "无法验证" string.
+
+    Pre-a19f58d2 behavior:
+      - text replaced with "未执行任何工具，无法验证该结论。请允许我读取..."
+      - _last_exit_reason = "tool_evidence_missing"
+      - OrgRuntime mapped this to task_failed → 组织链死锁
+
+    Post-a19f58d2 (current) behavior:
+      - text preserved + soft disclaimer suffix
+      - _last_exit_reason NOT set to "tool_evidence_missing"
+      - Stage-3 source-tag consistency check is the remaining safety net
+
+    The exhaustion counter (``no_tool_call_count=1``) no longer flips
+    behavior — the soft path is uniformly applied.
+    """
     engine = ReasoningEngine(
         brain=None,
         tool_executor=None,
@@ -310,9 +351,10 @@ async def test_tool_evidence_required_exhausts_to_unverified_without_repeated_pr
         response_handler=AsyncMock(),
         agent_state=AgentState(),
     )
+    original_text = "这是未经工具验证的分析。"
 
     result = await engine._handle_final_answer(
-        decision=Decision(type=DecisionType.FINAL_ANSWER, text_content="这是未经工具验证的分析。"),
+        decision=Decision(type=DecisionType.FINAL_ANSWER, text_content=original_text),
         working_messages=[],
         original_messages=[{"role": "user", "content": "分析这个 GitHub issue 是否仍存在"}],
         tools_executed_in_task=False,
@@ -330,5 +372,12 @@ async def test_tool_evidence_required_exhausts_to_unverified_without_repeated_pr
         tool_evidence_required=True,
     )
 
-    assert result == "未执行任何工具，无法验证该结论。请允许我读取、搜索或调用相关工具后再继续核对。"
-    assert engine._last_exit_reason == "tool_evidence_missing"
+    assert isinstance(result, str)
+    assert result.startswith(original_text), (
+        "原文必须保留 — 不再被 '未执行任何工具，无法验证...' 替换"
+    )
+    assert "未调用工具" in result, "soft disclaimer 追加"
+    assert engine._last_exit_reason != "tool_evidence_missing", (
+        "exit_reason 必须避开 tool_evidence_missing — "
+        "防 OrgRuntime 错误映射为 task_failed 导致组织死锁"
+    )
