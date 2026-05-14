@@ -260,19 +260,21 @@ class TestAuditEmission:
     def test_apply_writes_audit_row(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from openakita.core import audit_logger as al
-
+        # C18 二轮 audit (BUG-C2) 修复后，``_audit_env_overrides`` 用
+        # cfg.audit.log_path 直接构造 ephemeral logger（绕开单例避免
+        # 死锁）。所以我们通过 YAML 指定 audit 路径来捕获 audit 行，
+        # 比之前 monkey-patch get_audit_logger 更真实地反映生产路径。
         audit_path = tmp_path / "audit.jsonl"
-        fake_logger = al.AuditLogger(
-            path=str(audit_path), enabled=True, include_chain=False
-        )
-        monkeypatch.setattr(al, "get_audit_logger", lambda: fake_logger)
-
         yaml = tmp_path / "POLICIES.yaml"
-        yaml.write_text("security: {}\n", encoding="utf-8")
+        yaml.write_text(
+            "security:\n"
+            "  audit:\n"
+            f"    log_path: '{audit_path.as_posix()}'\n"
+            "    include_chain: false\n",
+            encoding="utf-8",
+        )
         monkeypatch.setenv("OPENAKITA_POLICY_HOT_RELOAD", "1")
 
-        # Force a fresh engine build through the public path.
         global_engine.reset_engine_v2(clear_explicit_lookup=True)
         global_engine._clear_last_known_good()
         global_engine.rebuild_engine_v2(yaml_path=yaml)
@@ -292,16 +294,15 @@ class TestAuditEmission:
     def test_skipped_errors_write_separate_audit_row(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from openakita.core import audit_logger as al
-
         audit_path = tmp_path / "audit.jsonl"
-        fake_logger = al.AuditLogger(
-            path=str(audit_path), enabled=True, include_chain=False
-        )
-        monkeypatch.setattr(al, "get_audit_logger", lambda: fake_logger)
-
         yaml = tmp_path / "POLICIES.yaml"
-        yaml.write_text("security: {}\n", encoding="utf-8")
+        yaml.write_text(
+            "security:\n"
+            "  audit:\n"
+            f"    log_path: '{audit_path.as_posix()}'\n"
+            "    include_chain: false\n",
+            encoding="utf-8",
+        )
         monkeypatch.setenv("OPENAKITA_POLICY_HOT_RELOAD", "totally-broken-value")
 
         global_engine.reset_engine_v2(clear_explicit_lookup=True)

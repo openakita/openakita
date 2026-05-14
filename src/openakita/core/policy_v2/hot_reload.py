@@ -222,10 +222,34 @@ class PolicyHotReloader:
             new_engine = rebuild_engine_v2(yaml_path=self.path)
             new_engine_id = id(new_engine)
             after_lkg = _get_last_known_good()
-            # If LKG identity didn't advance, rebuild_engine_v2 hit the
-            # _recover_from_load_failure branch — meaning the new file
-            # failed validation and we kept the previous engine config.
-            if before_lkg is not None and after_lkg is before_lkg:
+            # Reload success / failure detection. ``rebuild_engine_v2``'s
+            # contract: on a successful YAML load + validate it calls
+            # ``_set_last_known_good(cfg)`` → LKG identity changes. On
+            # failure it routes through ``_recover_from_load_failure``
+            # which returns the existing LKG (or ``PolicyConfigV2()``
+            # defaults when LKG was None) and does NOT touch LKG.
+            #
+            # So we have three cases:
+            #
+            # 1. ``after_lkg is None`` — process started with a broken
+            #    YAML (LKG never got promoted). Current reload also
+            #    failed → rebuild silently returned defaults. This is
+            #    a failed reload even though no "identity didn't change"
+            #    signal fires (because before_lkg was also None).
+            # 2. ``before_lkg is not None and after_lkg is before_lkg``
+            #    — classic failure-with-LKG: the previous good config
+            #    is preserved.
+            # 3. ``after_lkg`` is a NEW object — promotion happened,
+            #    reload succeeded.
+            if after_lkg is None:
+                ok = False
+                reason = "validation failed; no last-known-good available"
+                logger.warning(
+                    "[PolicyHotReload] %s reload skipped (no LKG; engine "
+                    "fell back to defaults)",
+                    self.path,
+                )
+            elif before_lkg is not None and after_lkg is before_lkg:
                 ok = False
                 reason = "validation failed; kept last-known-good"
                 logger.warning(

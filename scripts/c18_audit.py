@@ -288,6 +288,7 @@ def audit_phase_f_tests() -> None:
         "tests/unit/test_c18_confirm_batch.py",
         "tests/unit/test_c18_env_overrides.py",
         "tests/unit/test_c18_auto_confirm_cli.py",
+        "tests/unit/test_c18_second_pass_audit.py",
     ]
     for tf in test_files:
         if not (REPO / tf).exists():
@@ -321,6 +322,61 @@ def audit_phase_f_tests() -> None:
     ok("C18 pytest suite: green")
 
 
+def audit_second_pass_fixes() -> None:
+    """C18 二轮自审：3 个 bug + 1 个 UX 改进必须仍然 in place。
+
+    BUG-A1: ``hot_reload._do_reload`` must treat ``after_lkg is None``
+            as a failure (invalid reload with no LKG fallback).
+    BUG-C1: ``rebuild_engine_v2`` must reset the audit_logger singleton
+            when the audit config changes.
+    BUG-C2: ``_audit_env_overrides`` must accept ``cfg`` so it doesn't
+            re-enter ``get_config_v2`` under ``_lock`` (deadlock).
+    UX-B1:  ``ChatView.tsx`` batch resolve must check ``r.ok`` before
+            clearing local queue.
+    """
+    section("2nd-pass audit: BUG-A1 / BUG-C1 / BUG-C2 / UX-B1 in place")
+
+    hot_reload = _read("src/openakita/core/policy_v2/hot_reload.py")
+    must_contain(
+        hot_reload,
+        "no last-known-good available",
+        "hot_reload.py (BUG-A1: detect failure when LKG=None)",
+    )
+
+    global_engine_src = _read("src/openakita/core/policy_v2/global_engine.py")
+    must_contain(
+        global_engine_src,
+        "reset_audit_logger",
+        "global_engine.py (BUG-C1: invalidate audit singleton on rebuild)",
+    )
+    must_contain(
+        global_engine_src,
+        "_audit_env_overrides(report, cfg)",
+        "global_engine.py (BUG-C2: pass cfg to avoid deadlock)",
+    )
+    # Phase C function signature must accept cfg.
+    must_contain(
+        global_engine_src,
+        "def _audit_env_overrides(report, cfg",
+        "global_engine.py (BUG-C2: signature change)",
+    )
+
+    chat = _read("apps/setup-center/src/views/ChatView.tsx")
+    must_contain(
+        chat,
+        "if (!r.ok)",
+        "ChatView.tsx (UX-B1: batch endpoint checks HTTP status)",
+    )
+
+    second_pass_test = _read("tests/unit/test_c18_second_pass_audit.py")
+    for marker in (
+        "TestBugA1HotReloadFailureWhenLkgNone",
+        "TestBugC1AuditLoggerSingletonRefresh",
+        "TestBugC2NoDeadlockOnEnvOverrideUnderLock",
+    ):
+        must_contain(second_pass_test, marker, "test_c18_second_pass_audit.py")
+
+
 def audit_phase_f_docs() -> None:
     section("F. docs/configuration.md updated")
 
@@ -352,6 +408,7 @@ def main() -> None:
     audit_phase_d()
     audit_phase_f_tests()
     audit_phase_f_docs()
+    audit_second_pass_fixes()
     print("\nC18 audit: all checks passed")
 
 

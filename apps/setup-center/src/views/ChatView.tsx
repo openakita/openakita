@@ -396,11 +396,17 @@ export function ChatView({
             within_seconds: securityAggWindow > 0 ? securityAggWindow : undefined,
           }),
         });
-        // Best-effort: regardless of response, clear local UI state.
-        // Server is the single source of truth — it has either resolved
-        // the candidates (waiter wakes via UIConfirmBus) or refused; we
-        // shouldn't keep the local queue showing stale entries.
-        await r.json().catch(() => null);
+        // C18 二轮自审 (IMPROVEMENT-B1)：必须检查 HTTP status 才能
+        // 决定是否清本地 queue。500/4xx 时静默清掉用户会以为搞定，
+        // 实际却什么都没 resolve——后续 SSE waiter 也没醒，IM 卡片
+        // 仍然挂着。出错就让用户单条点。
+        if (!r.ok) {
+          return;
+        }
+        const body = await r.json().catch(() => null) as { status?: string } | null;
+        if (body && body.status === "error") {
+          return;
+        }
       } catch {
         // Network error: leave queue alone so user can retry one-by-one.
         return;

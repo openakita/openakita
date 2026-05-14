@@ -164,13 +164,26 @@ def _resolve_yaml_path() -> Path | None:
     return None
 
 
-def _audit_env_overrides(report) -> None:
+def _audit_env_overrides(report, cfg: PolicyConfigV2 | None = None) -> None:
     """C18 Phase C：把 ENV 覆盖写入审计链。
 
     每次 ``load_policies_yaml`` 后调用一次；空报告（无 ENV 设置）直接
     跳过——避免审计链被无意义的"没人改"行刷满。``skipped_errors``
     单独记一行，便于 verify_chain 后续审查 "ENV typo 期间是不是有别
     的 actor 也在改配置"。
+
+    C18 二轮 audit 修复（latent deadlock）：这个函数会被
+    ``rebuild_engine_v2`` 在持 ``_lock`` 状态下调用。如果走默认的
+    ``get_audit_logger()`` 单例路径，当 ``_global_audit is None`` 时
+    它会反过来调 ``get_config_v2()`` 再次尝试 acquire 同一把非
+    reentrant 锁，造成进程死锁。生产环境下通常不暴露——因为
+    ``_global_audit`` 在 rebuild 之前早被其他调用 lazy init。但
+    hot-reload + ``reset_audit_logger`` + 同时有 ENV override 的场
+    景里三件凑齐就死。
+
+    正确做法：直接用刚加载完成的 ``cfg`` 构造一次性 ``AuditLogger``，
+    绕开单例 + 绕开 ``get_config_v2()`` 的锁。``cfg`` 不可用时退化
+    成单例（旧行为）以保持启动期兼容。
     """
     if report is None:
         return
@@ -178,9 +191,19 @@ def _audit_env_overrides(report) -> None:
     if override_report is None or not override_report.has_any():
         return
     try:
-        from ..audit_logger import get_audit_logger
+        if cfg is not None:
+            from ..audit_logger import DEFAULT_AUDIT_PATH, AuditLogger
 
-        logger_inst = get_audit_logger()
+            logger_inst: Any = AuditLogger(
+                path=cfg.audit.log_path or DEFAULT_AUDIT_PATH,
+                enabled=cfg.audit.enabled,
+                include_chain=getattr(cfg.audit, "include_chain", True),
+            )
+        else:
+            from ..audit_logger import get_audit_logger
+
+            logger_inst = get_audit_logger()
+
         if override_report.applied:
             logger_inst.log(
                 tool_name="<policy_env_override>",
@@ -227,7 +250,7 @@ def _build_default_engine(
     # 让 _recover_from_load_failure 优先用 LKG。
     try:
         cfg, report = load_policies_yaml(yaml_path, strict=True)
-        _audit_env_overrides(report)
+        _audit_env_overrides(report, cfg)
         if report.fields_migrated:
             logger.info(
                 "[PolicyV2] global engine loaded with %d v1 fields migrated",
@@ -354,10 +377,24 @@ def rebuild_engine_v2(
     """
     global _engine, _config, _explicit_lookup, _skill_lookup, _mcp_lookup, _plugin_lookup
     with _lock:
+        # Snapshot the old audit config so we can detect whether the
+        # rebuild changed any audit-related field. If it did, we need
+        # to reset the audit_logger singleton — otherwise hot-reload /
+        # ENV ``OPENAKITA_AUDIT_LOG_PATH`` would change ``_config`` but
+        # ``get_audit_logger()`` would keep writing to the old path
+        # (C18 二轮 audit BUG-C1).
+        old_audit_cfg: tuple[str, bool, bool] | None = None
+        if _config is not None:
+            old_audit_cfg = (
+                _config.audit.log_path,
+                _config.audit.enabled,
+                _config.audit.include_chain,
+            )
+
         path = Path(yaml_path) if yaml_path is not None else _resolve_yaml_path()
         try:
             cfg, report = load_policies_yaml(path, strict=True)
-            _audit_env_overrides(report)
+            _audit_env_overrides(report, cfg)
             if report.unknown_security_keys:
                 logger.warning(
                     "[PolicyV2] POLICIES.yaml rebuild: unknown keys under "
@@ -385,6 +422,29 @@ def rebuild_engine_v2(
             plugin_lookup=_plugin_lookup,
         )
         _config = cfg
+
+        # Invalidate the audit_logger singleton if any audit field
+        # changed (path / enabled / include_chain). The reset is cheap
+        # — next ``get_audit_logger()`` lazily rebuilds from the fresh
+        # config (and any in-flight callers holding a reference to the
+        # old logger keep writing to the old path until they finish;
+        # that's fine — the row in flight just lands in the previous
+        # file).
+        new_audit_cfg = (
+            cfg.audit.log_path,
+            cfg.audit.enabled,
+            cfg.audit.include_chain,
+        )
+        if old_audit_cfg is None or old_audit_cfg != new_audit_cfg:
+            try:
+                from ..audit_logger import reset_audit_logger
+
+                reset_audit_logger()
+            except Exception:
+                logger.exception(
+                    "[PolicyV2] failed to reset audit_logger singleton "
+                    "after rebuild — audit may still write to previous path"
+                )
     return _engine
 
 
