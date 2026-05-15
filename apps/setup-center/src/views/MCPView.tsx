@@ -1,9 +1,8 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import {
   IconLink,
   IconChevronDown, IconChevronRight,
-  DotYellow,
 } from "../icons";
 import { safeFetch } from "../providers";
 import type { MCPConfigField, EnvMap } from "../types";
@@ -18,7 +17,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Loader2, RefreshCw, Plus, Trash2, Plug, Unplug, Info, Server, Wrench, Eye, EyeOff, Save, AlertTriangle } from "lucide-react";
+import { Loader2, RefreshCw, Plus, Trash2, Plug, Unplug, Info, Server, Wrench, Eye, EyeOff, Save, AlertTriangle, Search, CheckCircle2, CircleDashed, XCircle, Link2 } from "lucide-react";
 import { toast } from "sonner";
 
 type MCPTool = {
@@ -39,10 +38,17 @@ type MCPServer = {
   catalog_tool_count: number;
   source: "builtin" | "workspace";
   removable: boolean;
+  enabled: boolean;
+  auto_connect: boolean;
   config_schema: MCPConfigField[];
   config_status: Record<string, boolean>;
   config_complete: boolean;
 };
+
+type ServerBusyAction = "connect" | "disconnect" | "delete" | "add" | null;
+type MCPStatusFilter = "all" | "connected" | "disconnected" | "needs_config" | "error";
+type MCPSourceFilter = "all" | "builtin" | "workspace";
+type MCPSortBy = "recent" | "name" | "status";
 
 type AddServerForm = {
   name: string;
@@ -74,31 +80,49 @@ function transportLabel(transport: string): string {
   return "stdio";
 }
 
-function ConnectionIndicator({ connected, busy }: { connected: boolean; busy: boolean }) {
-  const shellClassName = "relative flex size-11 shrink-0 items-center justify-center rounded-2xl border";
-
-  if (busy) {
+function ConnectionStatusChip({
+  connected,
+  busyAction,
+  error,
+  t,
+}: {
+  connected: boolean;
+  busyAction: ServerBusyAction;
+  error: boolean;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}) {
+  if (busyAction === "connect") {
     return (
-      <div className={`${shellClassName} border-primary/20 bg-primary/5 text-primary`}>
-        <Loader2 className="animate-spin" size={16} />
-      </div>
+      <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-2 text-[11px] font-medium text-blue-700 dark:text-blue-300">
+        <Loader2 size={11} className="animate-spin" />
+        {t("mcp.connecting")}
+      </span>
+    );
+  }
+
+  if (error) {
+    return (
+      <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-red-500/30 bg-red-500/10 px-2 text-[11px] font-medium text-red-700 dark:text-red-300">
+        <XCircle size={11} />
+        {t("mcp.connectionFailed")}
+      </span>
     );
   }
 
   if (connected) {
     return (
-      <div className={`${shellClassName} border-emerald-500/25 bg-emerald-500/10`}>
-        <span className="absolute inline-flex size-5 rounded-full bg-emerald-400/20 animate-ping" />
-        <span className="absolute inline-flex size-3.5 rounded-full bg-emerald-500/30 animate-pulse" />
-        <span className="relative inline-flex size-2.5 rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(34,197,94,0.45)]" />
-      </div>
+      <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+        <CheckCircle2 size={11} />
+        {t("mcp.connected")}
+      </span>
     );
   }
 
   return (
-    <div className={`${shellClassName} border-border bg-muted/40`}>
-      <span className="inline-flex size-2.5 rounded-full bg-muted-foreground/70" />
-    </div>
+    <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2 text-[11px] font-medium text-muted-foreground">
+      <CircleDashed size={11} />
+      {t("mcp.disconnected")}
+    </span>
   );
 }
 
@@ -133,6 +157,17 @@ function parseArgs(raw: string): string[] {
   }
   if (current) args.push(current);
   return args;
+}
+
+function parseKeyValueLines(raw: string): Record<string, string> {
+  const parsed: Record<string, string> = {};
+  if (!raw.trim()) return parsed;
+  for (const line of raw.trim().split("\n")) {
+    const idx = line.indexOf("=");
+    if (idx <= 0) continue;
+    parsed[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  }
+  return parsed;
 }
 
 function renderHelpText(help: string, helpUrl?: string) {
@@ -221,6 +256,7 @@ function MCPConfigForm({
       const res = await safeFetch(`${apiBaseUrl}/api/mcp/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(60_000),
         body: JSON.stringify({ server_name: serverName }),
       });
       const data = await res.json();
@@ -478,11 +514,19 @@ export function MCPView({
   const [mcpEnabled, setMcpEnabled] = useState(true);
 
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<MCPStatusFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<MCPSourceFilter>("all");
+  const [sortBy, setSortBy] = useState<MCPSortBy>("recent");
   const [expandedServer, setExpandedServer] = useState<string | null>(null);
   const [instructions, setInstructions] = useState<Record<string, string>>({});
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState<AddServerForm>({ ...emptyForm });
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busyTarget, setBusyTarget] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<ServerBusyAction>(null);
+  const [failedServers, setFailedServers] = useState<Record<string, boolean>>({});
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [quickConfigDialog, setQuickConfigDialog] = useState<QuickConfigDialogState>(null);
 
@@ -494,9 +538,12 @@ export function MCPView({
       const data = await res.json();
       setServers(data.servers || []);
       if (typeof data.mcp_enabled === "boolean") setMcpEnabled(data.mcp_enabled);
-    } catch { /* ignore */ }
+      setFetchError(null);
+    } catch {
+      setFetchError(t("mcp.fetchFailed"));
+    }
     setLoading(false);
-  }, [serviceRunning, apiBaseUrl]);
+  }, [serviceRunning, apiBaseUrl, t]);
 
   useEffect(() => { fetchServers(); }, [fetchServers]);
 
@@ -506,7 +553,8 @@ export function MCPView({
   };
 
   const connectServer = async (name: string) => {
-    setBusy(name);
+    setBusyTarget(name);
+    setBusyAction("connect");
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/mcp/connect`, {
         method: "POST",
@@ -515,7 +563,12 @@ export function MCPView({
       });
       const data = await res.json();
       if (data.status === "connected" || data.status === "already_connected") {
-        showMsg(`${t("mcp.connected")} ${name}`, true);
+        setFailedServers(prev => {
+          const next = { ...prev };
+          delete next[name];
+          return next;
+        });
+        showMsg(t("mcp.connectSuccess", { name }), true);
         await fetchServers();
       } else if (data.status === "config_incomplete") {
         const server = servers.find(s => s.name === name);
@@ -531,37 +584,48 @@ export function MCPView({
           setExpandedServer(name);
         }
       } else {
+        setFailedServers(prev => ({ ...prev, [name]: true }));
         showMsg(`${t("mcp.connectFailed")}: ${data.error || t("mcp.unknownError")}`, false);
       }
     } catch (e) {
+      setFailedServers(prev => ({ ...prev, [name]: true }));
       showMsg(`${t("mcp.connectError")}: ${e}`, false);
     }
-    setBusy(null);
+    setBusyTarget(null);
+    setBusyAction(null);
   };
 
   const disconnectServer = async (name: string) => {
-    setBusy(name);
+    setBusyTarget(name);
+    setBusyAction("disconnect");
     try {
       await safeFetch(`${apiBaseUrl}/api/mcp/disconnect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server_name: name }),
       });
-      showMsg(`${t("mcp.disconnected")} ${name}`, true);
+      setFailedServers(prev => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+      showMsg(t("mcp.disconnectSuccess", { name }), true);
       await fetchServers();
     } catch (e) {
       showMsg(`${t("mcp.disconnectError")}: ${e}`, false);
     }
-    setBusy(null);
+    setBusyTarget(null);
+    setBusyAction(null);
   };
 
   const doRemoveServer = useCallback(async (name: string) => {
-    setBusy(name);
+    setBusyTarget(name);
+    setBusyAction("delete");
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" });
       const data = await res.json();
       if (data.status === "ok") {
-        showMsg(`${t("mcp.deleted")} ${name}`, true);
+        showMsg(t("mcp.deleteSuccess", { name }), true);
         await fetchServers();
       } else {
         showMsg(`${t("mcp.deleteFailed")}: ${data.message || t("mcp.unknownError")}`, false);
@@ -569,7 +633,8 @@ export function MCPView({
     } catch (e) {
       showMsg(`${t("mcp.deleteFailed")}: ${e}`, false);
     }
-    setBusy(null);
+    setBusyTarget(null);
+    setBusyAction(null);
   }, [apiBaseUrl, t, fetchServers]);
 
   const removeServer = (name: string) => {
@@ -585,22 +650,11 @@ export function MCPView({
     if (!/^[a-zA-Z0-9_-]+$/.test(name)) { showMsg(t("mcp.nameInvalid"), false); return; }
     if (form.transport === "stdio" && !form.command.trim()) { showMsg(t("mcp.commandRequired"), false); return; }
     if ((form.transport === "streamable_http" || form.transport === "sse") && !form.url.trim()) { showMsg(t("mcp.urlRequired", { transport: form.transport === "sse" ? "SSE" : "HTTP" }), false); return; }
-    setBusy("add");
+    setBusyTarget("add");
+    setBusyAction("add");
     try {
-      const envObj: Record<string, string> = {};
-      if (form.env.trim()) {
-        for (const line of form.env.trim().split("\n")) {
-          const idx = line.indexOf("=");
-          if (idx > 0) envObj[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-        }
-      }
-      const headersObj: Record<string, string> = {};
-      if (form.headers.trim()) {
-        for (const line of form.headers.trim().split("\n")) {
-          const idx = line.indexOf("=");
-          if (idx > 0) headersObj[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-        }
-      }
+      const envObj = parseKeyValueLines(form.env);
+      const headersObj = parseKeyValueLines(form.headers);
       const parsedArgs = parseArgs(form.args);
       const res = await safeFetch(`${apiBaseUrl}/api/mcp/servers/add`, {
         method: "POST",
@@ -628,7 +682,7 @@ export function MCPView({
             connMsg = `\n[!] ${t("mcp.autoConnectFailed")}: ${cr.error || t("mcp.unknownError")}`;
           }
         }
-        showMsg(`[OK] 已添加 ${name}${connMsg}`, !cr || cr.connected !== false);
+        showMsg(`${t("mcp.addSuccess", { name })}${connMsg}`, !cr || cr.connected !== false);
         setForm({ ...emptyForm });
         setShowAdd(false);
         await fetchServers();
@@ -638,7 +692,8 @@ export function MCPView({
     } catch (e) {
       showMsg(`${t("mcp.addError")}: ${e}`, false);
     }
-    setBusy(null);
+    setBusyTarget(null);
+    setBusyAction(null);
   };
 
   const loadInstructions = async (name: string) => {
@@ -659,54 +714,95 @@ export function MCPView({
     }
   };
 
+  const connectedCount = servers.filter((server) => server.connected).length;
+  const totalTools = servers.reduce((sum, server) => sum + (server.connected ? server.tool_count : server.catalog_tool_count), 0);
+
+  const hasActiveFilters = searchQuery.trim().length > 0 || statusFilter !== "all" || sourceFilter !== "all" || sortBy !== "recent";
+  const clearFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("all");
+    setSourceFilter("all");
+    setSortBy("recent");
+  };
+
+  const filteredServers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const list = servers.filter((server) => {
+      if (query) {
+        const target = `${server.name} ${server.description || ""}`.toLowerCase();
+        if (!target.includes(query)) return false;
+      }
+
+      if (statusFilter === "connected" && !server.connected) return false;
+      if (statusFilter === "disconnected" && server.connected) return false;
+      if (statusFilter === "needs_config" && (server.config_complete || !server.config_schema?.length)) return false;
+      if (statusFilter === "error" && !failedServers[server.name]) return false;
+
+      if (sourceFilter !== "all" && server.source !== sourceFilter) return false;
+      return true;
+    });
+
+    if (sortBy === "name") {
+      return list.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    if (sortBy === "status") {
+      const statusWeight = (server: MCPServer): number => {
+        if (failedServers[server.name]) return 0;
+        if (server.connected) return 1;
+        if (server.config_schema?.length > 0 && !server.config_complete) return 2;
+        return 3;
+      };
+      return list.sort((a, b) => statusWeight(a) - statusWeight(b) || a.name.localeCompare(b.name));
+    }
+
+    return list;
+  }, [servers, searchQuery, statusFilter, sourceFilter, sortBy, failedServers]);
+
   if (!serviceRunning) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <IconLink size={48} />
         <div className="mt-3 font-semibold">MCP</div>
-        <div className="mt-1 text-xs opacity-50">后端服务未启动，请启动后再进行使用</div>
+        <div className="mt-1 text-xs opacity-70">{t("mcp.serviceNotRunning")}</div>
       </div>
     );
   }
 
-  const connectedCount = servers.filter((server) => server.connected).length;
-  const totalTools = servers.reduce((sum, server) => sum + (server.connected ? server.tool_count : server.catalog_tool_count), 0);
-
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-5">
-      <Card className="gap-0 overflow-hidden border-border/80 bg-gradient-to-br from-primary/5 via-background to-background py-0 shadow-sm">
-        <CardHeader className="gap-3 px-6 py-5">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex min-w-0 items-start gap-4">
-              <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                <IconLink size={22} />
+      <Card className="gap-0 overflow-hidden border-primary/20 bg-gradient-to-br from-primary/[0.08] via-primary/[0.03] to-background py-0 shadow-sm">
+        <CardHeader className="gap-3 px-5 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <CardTitle className="truncate text-lg tracking-tight" title={t("mcp.title")}>
+                  {t("mcp.title")}
+                </CardTitle>
+                <Badge
+                  variant="outline"
+                  className={mcpEnabled
+                    ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                    : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"}
+                >
+                  {mcpEnabled ? t("mcp.enabled") : t("mcp.disabled")}
+                </Badge>
               </div>
-              <div className="min-w-0 space-y-2">
-                <div className="flex min-w-0 items-center gap-3">
-                  <CardTitle className="truncate text-xl tracking-tight" title={t("mcp.title")}>
-                    {t("mcp.title")}
-                  </CardTitle>
-                  {!mcpEnabled && (
-                    <Badge
-                      variant="outline"
-                      className="max-w-full shrink overflow-hidden text-ellipsis whitespace-nowrap border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                      title={t("mcp.disabled") || "MCP 已禁用"}
-                    >
-                      {t("mcp.disabled") || "MCP 已禁用"}
-                    </Badge>
-                  )}
-                </div>
-                <CardDescription className="max-w-3xl text-sm leading-6">
-                  <strong className="font-semibold text-foreground">MCP (Model Context Protocol)</strong> {t("mcp.helpLine1")}
-                  <br />
+              <CardDescription className="text-sm">{t("mcp.subtitle")}</CardDescription>
+              {showHelp && (
+                <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs leading-6 text-muted-foreground">
                   {t("mcp.helpLine2")}
                   <br />
                   {t("mcp.helpLine3")}
-                </CardDescription>
-              </div>
+                </div>
+              )}
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setShowHelp((v) => !v)}>
+                <Info size={14} />
+                {t("mcp.learnMore")}
+              </Button>
               <Button variant={showAdd ? "secondary" : "outline"} onClick={() => setShowAdd(!showAdd)}>
                 <Plus size={14} />
                 {t("mcp.addServer")}
@@ -717,21 +813,21 @@ export function MCPView({
               </Button>
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-background/75 px-3 py-1 text-xs">
+              <span className="text-muted-foreground">{t("mcp.metricsServers")}</span>
+              <strong>{servers.length}</strong>
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-background/75 px-3 py-1 text-xs">
+              <span className="text-muted-foreground">{t("mcp.metricsConnected")}</span>
+              <strong className="text-emerald-600">{connectedCount}</strong>
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-background/75 px-3 py-1 text-xs">
+              <span className="text-muted-foreground">{t("mcp.metricsTools")}</span>
+              <strong>{totalTools}</strong>
+            </span>
+          </div>
         </CardHeader>
-        <CardContent className="grid gap-3 border-t px-6 py-4 sm:grid-cols-3">
-          <div className="rounded-xl border bg-background/80 p-4">
-            <div className="text-xs text-muted-foreground">MCP Servers</div>
-            <div className="mt-2 text-2xl font-semibold">{servers.length}</div>
-          </div>
-          <div className="rounded-xl border bg-background/80 p-4">
-            <div className="text-xs text-muted-foreground">{t("mcp.connected")}</div>
-            <div className="mt-2 text-2xl font-semibold text-emerald-600">{connectedCount}</div>
-          </div>
-          <div className="rounded-xl border bg-background/80 p-4">
-            <div className="text-xs text-muted-foreground">{t("mcp.availableTools")}</div>
-            <div className="mt-2 text-2xl font-semibold">{totalTools}</div>
-          </div>
-        </CardContent>
       </Card>
 
       {showAdd && (
@@ -830,8 +926,8 @@ export function MCPView({
               <Button variant="outline" onClick={() => { setShowAdd(false); setForm({ ...emptyForm }); }}>
                 {t("common.cancel")}
               </Button>
-              <Button onClick={addServer} disabled={busy === "add"}>
-                {busy === "add" && <Loader2 className="animate-spin" size={14} />}
+              <Button onClick={addServer} disabled={busyAction === "add"}>
+                {busyAction === "add" && <Loader2 className="animate-spin" size={14} />}
                 {t("mcp.add")}
               </Button>
             </div>
@@ -839,235 +935,291 @@ export function MCPView({
         </Card>
       )}
 
-      {loading && servers.length === 0 ? (
-        <Card className="shadow-sm">
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            {t("common.loading")}
+      <Card className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm">
+        {mcpEnabled && (
+          <CardContent className="border-b bg-muted/25 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-[220px] flex-1">
+                <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t("mcp.searchPlaceholder")}
+                  className="pl-8"
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as MCPStatusFilter)}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("mcp.filterStatusAll")}</SelectItem>
+                  <SelectItem value="connected">{t("mcp.filterStatusConnected")}</SelectItem>
+                  <SelectItem value="disconnected">{t("mcp.filterStatusDisconnected")}</SelectItem>
+                  <SelectItem value="needs_config">{t("mcp.filterStatusNeedsConfig")}</SelectItem>
+                  <SelectItem value="error">{t("mcp.filterStatusError")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={sourceFilter} onValueChange={(v) => setSourceFilter(v as MCPSourceFilter)}>
+                <SelectTrigger className="w-[130px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t("mcp.filterSourceAll")}</SelectItem>
+                  <SelectItem value="builtin">{t("mcp.sourceBuiltin")}</SelectItem>
+                  <SelectItem value="workspace">{t("mcp.sourceWorkspace")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={sortBy} onValueChange={(v) => setSortBy(v as MCPSortBy)}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="recent">{t("mcp.sortRecent")}</SelectItem>
+                  <SelectItem value="name">{t("mcp.sortName")}</SelectItem>
+                  <SelectItem value="status">{t("mcp.sortStatus")}</SelectItem>
+                </SelectContent>
+              </Select>
+              {hasActiveFilters && (
+                <Button variant="ghost" size="sm" onClick={clearFilters}>
+                  {t("mcp.clearFilters")}
+                </Button>
+              )}
+              <span className="ml-auto text-xs text-muted-foreground">
+                {t("mcp.resultCount", { count: filteredServers.length })}
+              </span>
+            </div>
           </CardContent>
-        </Card>
-      ) : servers.length === 0 ? (
-        <Card className="shadow-sm">
-          <CardContent className="py-12 text-center text-muted-foreground">
-            <p className="text-base font-medium text-foreground">{t("mcp.noServers")}</p>
-            <p className="mt-2 text-sm">{t("mcp.noServersHint")}</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {servers.map((s) => {
-            const isBusy = busy === s.name;
+        )}
 
-            return (
-            <Card key={s.name} className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-shadow hover:shadow-md">
-              <CardHeader className="gap-3 px-6 py-4">
-                <div
-                  className="flex cursor-pointer items-center justify-between gap-4"
-                  onClick={() => toggleExpand(s.name)}
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-4">
-                    <ConnectionIndicator connected={s.connected} busy={isBusy} />
-                    <div className="min-w-0 flex-1 space-y-3">
-                      <div className="flex min-w-0 items-center gap-2">
+        <CardContent className="px-4 py-4">
+          {!mcpEnabled ? (
+            <div className="space-y-2 py-6 text-center text-sm text-muted-foreground">
+              <p className="text-base font-medium text-foreground">{t("mcp.disabled")}</p>
+              <p>{t("mcp.disabledHint")}</p>
+            </div>
+          ) : fetchError ? (
+            <div className="space-y-3 py-6 text-center text-sm text-muted-foreground">
+              <p className="text-base font-medium text-foreground">{t("mcp.loadFailedTitle")}</p>
+              <p>{fetchError}</p>
+              <Button variant="outline" onClick={fetchServers}>
+                <RefreshCw size={14} />
+                {t("common.retry")}
+              </Button>
+            </div>
+          ) : loading && servers.length === 0 ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              {t("common.loading")}
+            </div>
+          ) : servers.length === 0 ? (
+            <div className="space-y-3 py-8 text-center text-muted-foreground">
+              <p className="text-base font-medium text-foreground">{t("mcp.noServers")}</p>
+              <p className="mt-2 text-sm">{t("mcp.noServersHint")}</p>
+              <Button variant="outline" onClick={() => setShowAdd(true)}>
+                <Plus size={14} />
+                {t("mcp.addServer")}
+              </Button>
+            </div>
+          ) : filteredServers.length === 0 ? (
+            <div className="space-y-3 py-8 text-center text-muted-foreground">
+              <p className="text-base font-medium text-foreground">{t("mcp.noMatchedServers")}</p>
+              <p className="text-sm">{t("mcp.noMatchedServersHint")}</p>
+              <Button variant="outline" onClick={clearFilters}>
+                {t("mcp.clearFilters")}
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {filteredServers.map((s) => {
+                const isBusy = busyTarget === s.name;
+                const rowBusyAction: ServerBusyAction = isBusy ? busyAction : null;
+                const hasConfigIssue = s.config_schema?.length > 0 && !s.config_complete;
+
+                return (
+                <Card key={s.name} className="gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-shadow hover:shadow-md">
+                  <CardHeader className="gap-3 px-3 py-3 sm:px-4">
+                    <div
+                      className="flex cursor-pointer items-center justify-between gap-3"
+                      onClick={() => toggleExpand(s.name)}
+                    >
+                      <div className="flex min-w-0 flex-1 items-start gap-2">
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          className="pointer-events-none -ml-2"
+                          className="-ml-1 -mt-0.5 shrink-0"
+                          title={expandedServer === s.name ? t("mcp.collapseDetails") : t("mcp.expandDetails")}
+                          aria-label={expandedServer === s.name ? t("mcp.collapseDetails") : t("mcp.expandDetails")}
                         >
                           {expandedServer === s.name ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
                         </Button>
-                        <CardTitle className="min-w-0 truncate text-base" title={s.name}>
-                          {s.name}
-                        </CardTitle>
-                        <Badge
-                          variant="secondary"
-                          className="max-w-[96px] shrink overflow-hidden text-ellipsis whitespace-nowrap"
-                          title={transportLabel(s.transport)}
-                        >
-                          {transportLabel(s.transport)}
-                        </Badge>
-                        <Badge
-                          variant="outline"
-                          className={`max-w-[120px] shrink overflow-hidden text-ellipsis whitespace-nowrap ${
-                            s.source === "workspace" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : ""
-                          }`}
-                          title={s.source === "workspace" ? t("mcp.sourceWorkspace") : t("mcp.sourceBuiltin")}
-                        >
-                          {s.source === "workspace" ? t("mcp.sourceWorkspace") : t("mcp.sourceBuiltin")}
-                        </Badge>
-                        {s.connected ? (
-                          <Badge
-                            variant="outline"
-                            className="max-w-[110px] shrink overflow-hidden text-ellipsis whitespace-nowrap border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                            title={t("mcp.connected")}
-                          >
-                            {t("mcp.connected")}
-                          </Badge>
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="max-w-[110px] shrink overflow-hidden text-ellipsis whitespace-nowrap text-muted-foreground"
-                            title={t("mcp.disconnected")}
-                          >
-                            {t("mcp.disconnected")}
-                          </Badge>
-                        )}
-                        {s.config_schema?.length > 0 && !s.config_complete && (
-                          <Badge
-                            variant="outline"
-                            className="max-w-[120px] shrink overflow-hidden text-ellipsis whitespace-nowrap border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                            title={t("mcp.configIncomplete")}
-                          >
-                            <AlertTriangle size={11} className="mr-0.5" />
-                            {t("mcp.configIncomplete")}
-                          </Badge>
-                        )}
-                      </div>
-
-                      {s.description && (
-                        <CardDescription className="max-w-3xl text-sm leading-6">
-                          <span className="block truncate" title={s.description}>
-                            {s.description}
-                          </span>
-                        </CardDescription>
-                      )}
-
-                      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                        <Badge
-                          variant="outline"
-                          className="max-w-[170px] shrink gap-1 overflow-hidden text-ellipsis whitespace-nowrap"
-                          title={s.connected ? t("mcp.toolCount", { count: s.tool_count }) : t("mcp.toolCountCatalog", { count: s.catalog_tool_count })}
-                        >
-                          <Wrench size={12} />
-                          {s.connected ? t("mcp.toolCount", { count: s.tool_count }) : t("mcp.toolCountCatalog", { count: s.catalog_tool_count })}
-                        </Badge>
-                        {s.has_instructions && (
-                          <Badge
-                            variant="outline"
-                            className="max-w-[120px] shrink gap-1 overflow-hidden text-ellipsis whitespace-nowrap"
-                            title={t("mcp.instructions")}
-                          >
-                            <Info size={12} />
-                            {t("mcp.instructions")}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex shrink-0 items-center gap-2 self-center" onClick={(e) => e.stopPropagation()}>
-                    {s.connected ? (
-                      <Button
-                        variant="outline"
-                        onClick={() => disconnectServer(s.name)}
-                        disabled={isBusy}
-                        className="text-amber-600 border-amber-300 hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950"
-                      >
-                        {isBusy ? <Loader2 className="animate-spin" size={14} /> : <Unplug size={14} />}
-                        {t("mcp.disconnect")}
-                      </Button>
-                    ) : (
-                      <Button onClick={() => connectServer(s.name)} disabled={isBusy} className="self-center">
-                        {isBusy ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
-                        {t("mcp.connect")}
-                      </Button>
-                    )}
-                    {s.removable && (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => removeServer(s.name)}
-                        disabled={isBusy}
-                        title={t("mcp.deleteServer")}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 size={14} />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-
-              {expandedServer === s.name && (
-                <CardContent className="space-y-4 border-t px-6 py-4">
-                  {s.config_schema && s.config_schema.length > 0 && (
-                    <MCPConfigForm
-                      schema={s.config_schema}
-                      configStatus={s.config_status}
-                      envDraft={envDraft}
-                      onEnvChange={onEnvChange}
-                      onSave={async (keys) => {
-                        await onSaveEnvKeys(keys);
-                        await fetchServers();
-                      }}
-                      serverName={s.name}
-                      serverTransport={s.transport}
-                      apiBaseUrl={apiBaseUrl}
-                      onRefresh={fetchServers}
-                      t={t}
-                    />
-                  )}
-                  <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
-                    <div className="mb-1 flex items-center gap-2 font-medium text-foreground">
-                      <Server size={14} />
-                      {t("mcp.transport")}
-                    </div>
-                    {s.transport === "streamable_http" || s.transport === "sse" ? (
-                      <span>{transportLabel(s.transport)} URL: <code>{s.url}</code></span>
-                    ) : (
-                      <span>{t("mcp.commandLabel")}: <code>{s.command}</code></span>
-                    )}
-                  </div>
-
-                  {s.tools.length > 0 ? (
-                    <div className="space-y-3">
-                      <div className="text-sm font-semibold text-foreground">
-                        {t("mcp.availableTools")} ({s.tools.length})
-                      </div>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {s.tools.map((tool) => (
-                          <div key={tool.name} className="rounded-xl border bg-background/80 p-4">
-                            <div className="truncate text-sm font-medium text-foreground" title={tool.name}>{tool.name}</div>
-                            {tool.description && (
-                              <div className="mt-2 truncate text-sm leading-6 text-muted-foreground" title={tool.description}>
-                                {tool.description}
-                              </div>
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <ConnectionStatusChip connected={s.connected} busyAction={rowBusyAction} error={!!failedServers[s.name]} t={t} />
+                            <CardTitle className="min-w-0 truncate text-base" title={s.name}>
+                              {s.name}
+                            </CardTitle>
+                            {!s.enabled && (
+                              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                                {t("mcp.serverDisabledTag")}
+                              </Badge>
                             )}
                           </div>
-                        ))}
+                          {s.description && (
+                            <CardDescription className="truncate text-sm" title={s.description}>
+                              {s.description}
+                            </CardDescription>
+                          )}
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <Badge variant="secondary">{transportLabel(s.transport)}</Badge>
+                            <Badge variant="outline">{s.source === "workspace" ? t("mcp.sourceWorkspace") : t("mcp.sourceBuiltin")}</Badge>
+                            <Badge variant="outline" className="gap-1">
+                              <Wrench size={11} />
+                              {s.connected ? t("mcp.toolCount", { count: s.tool_count }) : t("mcp.toolCountCatalog", { count: s.catalog_tool_count })}
+                            </Badge>
+                            {hasConfigIssue && (
+                              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+                                <AlertTriangle size={11} className="mr-1" />
+                                {t("mcp.configIncomplete")}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-2 self-center" onClick={(e) => e.stopPropagation()}>
+                        {s.connected ? (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => disconnectServer(s.name)}
+                            disabled={isBusy}
+                            className="h-9 min-w-[92px] px-4"
+                          >
+                            {isBusy ? <Loader2 className="animate-spin" size={14} /> : <Unplug size={14} />}
+                            {t("mcp.disconnect")}
+                          </Button>
+                        ) : hasConfigIssue ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => toggleExpand(s.name)}
+                            disabled={isBusy}
+                            className="h-9 min-w-[92px] px-4"
+                          >
+                            <Link2 size={14} />
+                            {t("mcp.goConfig")}
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => connectServer(s.name)}
+                            disabled={isBusy || !s.enabled}
+                            className="h-9 min-w-[92px] self-center px-4"
+                          >
+                            {isBusy ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
+                            {t("mcp.connect")}
+                          </Button>
+                        )}
+                        {s.removable && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => removeServer(s.name)}
+                            disabled={isBusy}
+                            title={t("mcp.deleteServer")}
+                            className="text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        )}
                       </div>
                     </div>
-                  ) : !s.connected ? (
-                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
-                      <span className="inline-flex items-center gap-2">
-                        <DotYellow />
-                        {t("mcp.connectToSeeTools")}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-                      {t("mcp.noTools")}
-                    </div>
-                  )}
+                  </CardHeader>
 
-                  {s.has_instructions && instructions[s.name] && (
-                    <Card className="gap-0 border-border/70 bg-muted/20 py-0 shadow-none">
-                      <CardHeader className="gap-2 px-4 py-3">
-                        <CardTitle className="text-sm">{t("mcp.instructions")}</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <pre className="max-h-[300px] overflow-auto rounded-lg border bg-background p-3 text-xs leading-6 text-foreground whitespace-pre-wrap break-words">
-                          {instructions[s.name]}
-                        </pre>
-                      </CardContent>
-                    </Card>
+                  {expandedServer === s.name && (
+                    <CardContent className="space-y-4 border-t px-6 py-4">
+                      <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
+                        <div className="mb-1 flex items-center gap-2 font-medium text-foreground">
+                          <Server size={14} />
+                          {t("mcp.basicInfo")}
+                        </div>
+                        {s.transport === "streamable_http" || s.transport === "sse" ? (
+                          <span>{transportLabel(s.transport)} URL: <code>{s.url}</code></span>
+                        ) : (
+                          <span>{t("mcp.commandLabel")}: <code>{s.command}</code></span>
+                        )}
+                      </div>
+
+                      {s.config_schema && s.config_schema.length > 0 && (
+                        <MCPConfigForm
+                          schema={s.config_schema}
+                          configStatus={s.config_status}
+                          envDraft={envDraft}
+                          onEnvChange={onEnvChange}
+                          onSave={async (keys) => {
+                            await onSaveEnvKeys(keys);
+                            await fetchServers();
+                          }}
+                          serverName={s.name}
+                          serverTransport={s.transport}
+                          apiBaseUrl={apiBaseUrl}
+                          onRefresh={fetchServers}
+                          t={t}
+                        />
+                      )}
+
+                      {s.tools.length > 0 ? (
+                        <div className="space-y-3">
+                          <div className="text-sm font-semibold text-foreground">
+                            {t("mcp.toolsAndInstructions")} ({s.tools.length})
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {s.tools.map((tool) => (
+                              <div key={tool.name} className="rounded-xl border bg-background/80 p-4">
+                                <div className="truncate text-sm font-medium text-foreground" title={tool.name}>{tool.name}</div>
+                                {tool.description && (
+                                  <div className="mt-2 truncate text-sm leading-6 text-muted-foreground" title={tool.description}>
+                                    {tool.description}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : !s.connected ? (
+                        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-muted-foreground">
+                          <span className="inline-flex items-center gap-2">
+                            <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400" />
+                            {t("mcp.connectToSeeTools")}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                          {t("mcp.noTools")}
+                        </div>
+                      )}
+
+                      {s.has_instructions && instructions[s.name] && (
+                        <Card className="gap-0 border-border/70 bg-muted/20 py-0 shadow-none">
+                          <CardHeader className="gap-2 px-4 py-3">
+                            <CardTitle className="text-sm">{t("mcp.instructions")}</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <pre className="max-h-[300px] overflow-auto rounded-lg border bg-background p-3 text-xs leading-6 text-foreground whitespace-pre-wrap break-words">
+                              {instructions[s.name]}
+                            </pre>
+                          </CardContent>
+                        </Card>
+                      )}
+                    </CardContent>
                   )}
-                </CardContent>
-              )}
-            </Card>
-          );
-          })}
-        </div>
-      )}
+                </Card>
+              );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
       <QuickConfigDialog

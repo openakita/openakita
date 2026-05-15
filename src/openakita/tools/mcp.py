@@ -633,13 +633,22 @@ class MCPClient:
         try:
             kwargs: dict[str, Any] = {"url": config.url}
             if config.headers:
-                import httpx as _httpx
+                # New MCP SDK (>=1.8) accepts `headers` directly;
+                # older versions used `http_client` with a pre-built httpx client.
+                import inspect as _inspect
 
-                _managed_http_client = _httpx.AsyncClient(
-                    headers=config.headers,
-                    timeout=_httpx.Timeout(self._CONNECT_TIMEOUT),
-                )
-                kwargs["http_client"] = _managed_http_client
+                _sig = _inspect.signature(streamablehttp_client)
+                if "headers" in _sig.parameters:
+                    kwargs["headers"] = config.headers
+                    kwargs["timeout"] = float(self._CONNECT_TIMEOUT)
+                else:
+                    import httpx as _httpx
+
+                    _managed_http_client = _httpx.AsyncClient(
+                        headers=config.headers,
+                        timeout=_httpx.Timeout(self._CONNECT_TIMEOUT),
+                    )
+                    kwargs["http_client"] = _managed_http_client
             http_cm = streamablehttp_client(**kwargs)
             read, write, _ = await asyncio.wait_for(
                 http_cm.__aenter__(),
