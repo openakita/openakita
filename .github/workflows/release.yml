@@ -219,6 +219,9 @@ jobs:
             suffix: "macos-x64"
 
     runs-on: ${{ matrix.platform }}
+    env:
+      CARGO_NET_RETRY: "10"
+      PIP_DEFAULT_TIMEOUT: "120"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -247,6 +250,15 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: apps/setup-center/package-lock.json
+
+      - name: Harden npm against flaky mirrors and timeouts
+        shell: bash
+        run: |
+          npm config set registry https://registry.npmjs.org/
+          npm config set fetch-retries 8
+          npm config set fetch-retry-mintimeout 20000
+          npm config set fetch-retry-maxtimeout 180000
+          npm config set fetch-timeout 600000
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -286,9 +298,9 @@ jobs:
           # 非 editable：PyInstaller 必须把 SDK 当作普通 site-packages 条目收集
           # 进 openakita-server 镜像，editable 安装会让打包遗漏 SDK 代码与 web/
           # 资源（与 ci.yml 第 341 行保持一致）。
-          pip install ./openakita-plugin-sdk
-          pip install -e ".[all]"
-          pip install build "pyinstaller>=6.18.0"
+          pip install --retries 10 --timeout 120 ./openakita-plugin-sdk
+          pip install --retries 10 --timeout 120 -e ".[all]"
+          pip install --retries 10 --timeout 120 build "pyinstaller>=6.18.0"
 
       - name: Clean previous PyInstaller output
         shell: bash
@@ -448,7 +460,19 @@ jobs:
           CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
           # Clear cached build-scripts to avoid glibc mismatch across Ubuntu versions
           rm -rf target/debug/build
-          "$CARGO_BIN/cargo" fetch --locked
+          FETCH_OK=0
+          for attempt in 1 2 3 4 5; do
+            if "$CARGO_BIN/cargo" fetch --locked; then
+              FETCH_OK=1
+              break
+            fi
+            echo "::warning::cargo fetch attempt ${attempt}/5 failed (network); sleeping 45s"
+            sleep 45
+          done
+          if [ "$FETCH_OK" != 1 ]; then
+            echo "::error::cargo fetch failed after retries"
+            exit 1
+          fi
           CHECK_ARGS=""
           if [ -n "${{ matrix.rust_target }}" ]; then
             CHECK_ARGS="--target ${{ matrix.rust_target }}"
