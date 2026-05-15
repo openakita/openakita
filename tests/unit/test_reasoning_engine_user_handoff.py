@@ -159,7 +159,22 @@ async def test_verify_incomplete_exhaustion_is_marked_non_normal():
 
 
 @pytest.mark.asyncio
-async def test_tool_evidence_required_blocks_implicit_long_reply_without_tools():
+async def test_tool_evidence_required_appends_soft_disclaimer_to_implicit_long_reply():
+    """``tool_evidence_required=True`` + 0 tool calls + plain analysis text.
+
+    Contract change (P0-2 阶段 1 重构后)：旧实现会把这种场景判定为"幻觉"，
+    在 ``working_messages`` 里塞 "需要外部证据或工具验证" 强制重试一次。
+    实战中发现：
+
+    * 大量没真正"幻觉"的解释 / 分析回答被无谓重试，浪费 token
+    * 重试反而把上下文越搅越脏，让 ``OrgRuntime`` 把任务记成 ``task_failed``
+    * 长链编排会因为这类伪重试出现死锁
+
+    重构后改为软兜底：原样返回 LLM 文本，并在末尾追加一段 disclaimer 提醒
+    用户"这条回答没核对外部状态"。``working_messages`` 不再被改写。
+    阶段 3 的 ``_check_source_tag_consistency()`` 与 ``_get_action_done_re()``
+    形成 belt-and-suspenders 双重保险，伪造"已查到/已读取"的回答仍会被标记。
+    """
     engine = ReasoningEngine(
         brain=None,
         tool_executor=None,
@@ -167,7 +182,7 @@ async def test_tool_evidence_required_blocks_implicit_long_reply_without_tools()
         response_handler=AsyncMock(),
         agent_state=AgentState(),
     )
-    working_messages = []
+    working_messages: list[dict] = []
     reply = "这是一段看起来完整的分析。" * 20
 
     result = await engine._handle_final_answer(
@@ -189,14 +204,30 @@ async def test_tool_evidence_required_blocks_implicit_long_reply_without_tools()
         tool_evidence_required=True,
     )
 
-    assert isinstance(result, tuple)
-    assert result[1] == 1
-    assert working_messages[-1]["role"] == "user"
-    assert "需要外部证据或工具验证" in working_messages[-1]["content"]
+    assert isinstance(result, str), (
+        "tool_evidence_required 路径不再返回 tuple 触发重试；"
+        "新契约是返回带 disclaimer 的字符串"
+    )
+    assert result.startswith(reply), "原 LLM 文本必须保留在前面，不被替换"
+    assert "本次回答未调用工具核对外部状态" in result, (
+        "soft disclaimer 必须追加到末尾"
+    )
+    assert working_messages == [], (
+        "不再向 working_messages 注入重试 prompt，避免触发 OrgRuntime 误判"
+    )
+    # 不再设置 _last_exit_reason="tool_evidence_missing"——那个 reason 会被
+    # OrgRuntime 错误映射成 task_failed 导致组织链路死锁。
+    assert engine._last_exit_reason != "tool_evidence_missing"
 
 
 @pytest.mark.asyncio
-async def test_tool_evidence_required_blocks_reply_tag_without_tools():
+async def test_tool_evidence_required_appends_soft_disclaimer_to_reply_tag_response():
+    """``[REPLY]`` 显式声明 + ``tool_evidence_required=True`` + 0 tool calls。
+
+    旧实现：把 ``[REPLY]`` 也当作可疑路径挡下来，强制重试。
+    新实现：``[REPLY]`` 被剥离，原文 + soft disclaimer 直接返回，
+    让用户看到 LLM 真实输出 + 来源不确定提示。
+    """
     engine = ReasoningEngine(
         brain=None,
         tool_executor=None,
@@ -204,7 +235,7 @@ async def test_tool_evidence_required_blocks_reply_tag_without_tools():
         response_handler=AsyncMock(),
         agent_state=AgentState(),
     )
-    working_messages = []
+    working_messages: list[dict] = []
 
     result = await engine._handle_final_answer(
         decision=Decision(
@@ -228,9 +259,12 @@ async def test_tool_evidence_required_blocks_reply_tag_without_tools():
         tool_evidence_required=True,
     )
 
-    assert isinstance(result, tuple)
-    assert result[1] == 1
-    assert "需要外部证据或工具验证" in working_messages[-1]["content"]
+    assert isinstance(result, str)
+    # [REPLY] tag 已被 clean_llm_response 剥离
+    assert "[REPLY]" not in result
+    assert "我已经分析过这个 issue" in result
+    assert "本次回答未调用工具核对外部状态" in result
+    assert working_messages == []
 
 
 @pytest.mark.asyncio
@@ -302,7 +336,18 @@ async def test_plain_short_analysis_without_tools_is_accepted():
 
 
 @pytest.mark.asyncio
-async def test_tool_evidence_required_exhausts_to_unverified_without_repeated_prompts():
+async def test_tool_evidence_required_with_exhausted_retry_budget_returns_text_with_disclaimer():
+    """重试预算耗尽（``no_tool_call_count >= max_no_tool_retries``）路径。
+
+    旧实现：硬替换 LLM 文本为固定提示
+    "未执行任何工具，无法验证该结论。请允许我读取、搜索或调用相关工具后再继续核对。"
+    并把 ``_last_exit_reason`` 设为 ``"tool_evidence_missing"``。
+
+    新实现（P0-2 阶段 0 修正）：原文 + soft disclaimer，``_last_exit_reason``
+    保留为 None 或正常 ``"normal"``。原因是 ``"tool_evidence_missing"`` 会被
+    ``OrgRuntime`` 映射成 ``task_failed``，让组织链路误判任务失败而触发
+    ``org_wait_for_deliverable`` 死锁。
+    """
     engine = ReasoningEngine(
         brain=None,
         tool_executor=None,
@@ -330,5 +375,10 @@ async def test_tool_evidence_required_exhausts_to_unverified_without_repeated_pr
         tool_evidence_required=True,
     )
 
-    assert result == "未执行任何工具，无法验证该结论。请允许我读取、搜索或调用相关工具后再继续核对。"
-    assert engine._last_exit_reason == "tool_evidence_missing"
+    assert isinstance(result, str)
+    assert "这是未经工具验证的分析。" in result, "原 LLM 文本必须保留"
+    assert "本次回答未调用工具核对外部状态" in result, "soft disclaimer 追加"
+    assert engine._last_exit_reason != "tool_evidence_missing", (
+        "tool_evidence_missing exit_reason 已被移除（会让 OrgRuntime 误判 "
+        "task_failed），新契约下不应再设置"
+    )
