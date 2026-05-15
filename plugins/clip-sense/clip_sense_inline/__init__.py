@@ -1,3 +1,4 @@
+# ruff: noqa: N999
 """clip-sense vendored helpers.
 
 These modules used to live under ``openakita_plugin_sdk.contrib.*`` but were

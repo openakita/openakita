@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from clip_pipeline import (
     ClipPipelineContext,
-    PipelineError,
     _classify_error,
     _merge_overlapping,
     run_pipeline,
@@ -66,6 +62,9 @@ def _make_mock_ffmpeg(available: bool = True, duration: float = 60.0):
 def _make_mock_asr():
     from clip_asr_client import TranscriptResult, TranscriptSentence
     asr = AsyncMock()
+    asr.upload_local_source = AsyncMock(
+        return_value="oss://dashscope/tmp/mock/source.mp4",
+    )
     asr.transcribe = AsyncMock(return_value=TranscriptResult(
         sentences=[
             TranscriptSentence(start=0.0, end=5.0, text="Hello world"),
@@ -112,11 +111,6 @@ class TestSilenceCleanPipeline:
 
         run(run_pipeline(ctx, tm, None, ffmpeg, emit))
 
-        step_names = [
-            call.args[1].get("step") if len(call.args) > 1 else call.kwargs.get("step")
-            for call in emit.call_args_list
-            if (len(call.args) > 1 and call.args[1].get("step")) or call.kwargs.get("step")
-        ]
         steps_seen = set()
         for c in emit.call_args_list:
             data = c.args[1] if len(c.args) > 1 else {}
@@ -140,6 +134,62 @@ class TestHighlightExtractPipeline:
 
         run(run_pipeline(ctx, tm, asr, ffmpeg, emit))
         tm.update_task.assert_any_call("test001", status="succeeded", pipeline_step="done")
+
+
+class TestTranscribeSourceUrl:
+    """Non-public source_url must trigger DashScope temp upload before transcribe."""
+
+    def test_relative_url_uploads_then_transcribes(self, tmp_path: Path):
+        ctx = _make_ctx(tmp_path, mode="highlight_extract")
+        ctx.source_url = "/api/plugins/clip-sense/uploads/abc.mp4"
+        tm = _make_mock_tm()
+        ffmpeg = _make_mock_ffmpeg()
+        asr = _make_mock_asr()
+        emit = MagicMock()
+
+        run(run_pipeline(ctx, tm, asr, ffmpeg, emit))
+
+        asr.upload_local_source.assert_awaited()
+        asr.transcribe.assert_awaited_once_with("oss://dashscope/tmp/mock/source.mp4")
+
+    def test_loopback_url_uploads_then_transcribes(self, tmp_path: Path):
+        ctx = _make_ctx(tmp_path, mode="highlight_extract")
+        ctx.source_url = "http://127.0.0.1:18900/api/plugins/clip-sense/uploads/x.mp4"
+        tm = _make_mock_tm()
+        ffmpeg = _make_mock_ffmpeg()
+        asr = _make_mock_asr()
+        emit = MagicMock()
+
+        run(run_pipeline(ctx, tm, asr, ffmpeg, emit))
+
+        asr.upload_local_source.assert_awaited()
+        asr.transcribe.assert_awaited_once_with("oss://dashscope/tmp/mock/source.mp4")
+
+    def test_public_https_skips_upload(self, tmp_path: Path):
+        ctx = _make_ctx(tmp_path, mode="highlight_extract")
+        ctx.source_url = "https://cdn.example.com/video.mp4"
+        tm = _make_mock_tm()
+        ffmpeg = _make_mock_ffmpeg()
+        asr = _make_mock_asr()
+        emit = MagicMock()
+
+        run(run_pipeline(ctx, tm, asr, ffmpeg, emit))
+
+        asr.upload_local_source.assert_not_called()
+        asr.transcribe.assert_awaited_once_with("https://cdn.example.com/video.mp4")
+
+    def test_oss_url_skips_upload(self, tmp_path: Path):
+        ctx = _make_ctx(tmp_path, mode="highlight_extract")
+        ctx.source_url = "oss://bucket/path/file.mp4"
+        tm = _make_mock_tm()
+        ffmpeg = _make_mock_ffmpeg()
+        asr = _make_mock_asr()
+        emit = MagicMock()
+
+        run(run_pipeline(ctx, tm, asr, ffmpeg, emit))
+
+        asr.upload_local_source.assert_not_called()
+        asr.transcribe.assert_awaited_once_with("oss://bucket/path/file.mp4")
 
 
 class TestTopicSplitPipeline:

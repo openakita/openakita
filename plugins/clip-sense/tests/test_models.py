@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import pytest
-
 from clip_models import (
     ERROR_HINTS,
     MODES,
-    MODES_BY_ID,
     SILENCE_PRESETS,
     SILENCE_PRESETS_BY_ID,
     CostPreview,
@@ -126,11 +124,11 @@ class TestCostEstimation:
 class TestErrorHints:
     EXPECTED_KINDS = [
         "network", "timeout", "auth", "quota", "moderation",
-        "dependency", "format", "duration", "unknown",
+        "dependency", "format", "no_speech", "duration", "unknown",
     ]
 
-    def test_all_nine_kinds_present(self):
-        assert len(ERROR_HINTS) == 9
+    def test_all_ten_kinds_present(self):
+        assert len(ERROR_HINTS) == 10
         for kind in self.EXPECTED_KINDS:
             assert kind in ERROR_HINTS
 

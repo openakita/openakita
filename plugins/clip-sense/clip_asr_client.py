@@ -12,8 +12,10 @@ P0-7: Qwen JSON output parsed via llm_json_parser 5-level fallback
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,19 @@ _TERMINAL_STATES = frozenset({"SUCCEEDED", "FAILED", "CANCELED", "UNKNOWN"})
 
 MAX_TRANSCRIPT_CHARS = 20000
 MAX_ANALYSIS_RETRIES = 2
+
+
+def _normalize_paraformer_task_status(raw: object) -> str:
+    """DashScope may return mixed casing or alternate success tokens."""
+    s = str(raw or "").strip().upper()
+    aliases = {
+        "SUCCESS": "SUCCEEDED",
+        "SUCCEED": "SUCCEEDED",
+        "COMPLETED": "SUCCEEDED",
+        "COMPLETE": "SUCCEEDED",
+        "DONE": "SUCCEEDED",
+    }
+    return aliases.get(s, s)
 
 
 @dataclass(frozen=True)
@@ -65,6 +80,9 @@ class ClipAsrClient:
         poll_max_seconds: float = 900.0,
         timeout: float = 120.0,
         qwen_model: str = "qwen-plus",
+        analysis_provider: str = "host",
+        analysis_brain: Any = None,
+        analysis_api_key: str = "",
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -73,9 +91,27 @@ class ClipAsrClient:
         self._timeout = timeout
         self._qwen_model = qwen_model
         self._client: Any = None
+        self._analysis_provider = self._normalize_analysis_provider(analysis_provider)
+        self._analysis_brain = analysis_brain
+        self._analysis_api_key = analysis_api_key
 
     def update_api_key(self, key: str) -> None:
         self._api_key = key
+
+    def configure_analysis(
+        self,
+        *,
+        provider: str = "host",
+        brain: Any = None,
+        api_key: str = "",
+    ) -> None:
+        self._analysis_provider = self._normalize_analysis_provider(provider)
+        self._analysis_brain = brain
+        self._analysis_api_key = api_key
+
+    @staticmethod
+    def _normalize_analysis_provider(provider: str) -> str:
+        return "dashscope" if str(provider or "").lower() == "dashscope" else "host"
 
     async def _ensure_client(self) -> Any:
         if self._client is None:
@@ -93,6 +129,34 @@ class ClipAsrClient:
         if async_mode:
             h["X-DashScope-Async"] = "enable"
         return h
+
+    def _analysis_auth_headers(self) -> dict[str, str]:
+        key = self._analysis_api_key
+        if not key:
+            raise AsrError("DashScope analysis API key not configured", kind="auth")
+        return {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        }
+
+    @staticmethod
+    def _oss_resolve_headers(source_url: str) -> dict[str, str]:
+        """DashScope temporary ``oss://`` URLs require this header on HTTP calls."""
+        if (source_url or "").strip().lower().startswith("oss://"):
+            return {"X-DashScope-OssResourceResolve": "enable"}
+        return {}
+
+    async def upload_local_source(self, path: Path) -> str:
+        """Upload a local media file to DashScope temp OSS for Paraformer ``file_urls``."""
+        from clip_dashscope_upload import upload_local_file_for_paraformer
+
+        client = await self._ensure_client()
+        return await upload_local_file_for_paraformer(
+            client,
+            self._api_key,
+            base_url=self._base_url,
+            local_path=path,
+        )
 
     # ------------------------------------------------------------------
     # Paraformer transcription (P0-1, P0-2, P0-3)
@@ -125,10 +189,17 @@ class ClipAsrClient:
             },
         }
         submit_url = f"{self._base_url}/api/v1/services/audio/asr/transcription"
+        submit_headers = {
+            **self._auth_headers(async_mode=True),
+            **self._oss_resolve_headers(source_url),
+        }
 
         try:
             resp = await client.post(
-                submit_url, headers=self._auth_headers(async_mode=True), json=body
+                submit_url,
+                headers=submit_headers,
+                json=body,
+                timeout=httpx.Timeout(180.0, connect=60.0),
             )
         except httpx.HTTPError as exc:
             raise AsrError(
@@ -149,7 +220,10 @@ class ClipAsrClient:
             raise AsrError("Paraformer did not return task_id", kind="unknown")
 
         poll_url = f"{self._base_url}/api/v1/tasks/{task_id}"
-        poll_headers = {"Authorization": f"Bearer {self._api_key}"}
+        poll_headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            **self._oss_resolve_headers(source_url),
+        }
         elapsed = 0.0
         data: dict[str, Any] = {}
 
@@ -157,19 +231,59 @@ class ClipAsrClient:
             await asyncio.sleep(self._poll_interval)
             elapsed += self._poll_interval
             try:
-                pr = await client.get(poll_url, headers=poll_headers)
+                pr = await client.get(
+                    poll_url,
+                    headers=poll_headers,
+                    timeout=httpx.Timeout(120.0, connect=30.0),
+                )
             except httpx.HTTPError:
                 continue
             if pr.status_code >= 400:
                 continue
             data = pr.json()
-            status = (data.get("output") or {}).get("task_status", "")
+            out = data.get("output") or {}
+            if not isinstance(out, dict):
+                out = {}
+            raw_status = out.get("task_status") or data.get("task_status") or ""
+            status = _normalize_paraformer_task_status(raw_status)
             if status in _TERMINAL_STATES:
                 if status != "SUCCEEDED":
-                    raise AsrError(
-                        f"Paraformer task ended with status {status!r}",
-                        kind="unknown",
+                    msg = (
+                        out.get("message")
+                        or out.get("msg")
+                        or out.get("detail")
+                        or ""
                     )
+                    code = out.get("code") or data.get("code") or ""
+                    if not msg and out:
+                        try:
+                            msg = json.dumps(out, ensure_ascii=False)[:400]
+                        except (TypeError, ValueError):
+                            msg = str(out)[:400]
+                    parts = [f"Paraformer task ended with status {status!r}"]
+                    if str(msg).strip():
+                        parts.append(str(msg).strip()[:500])
+                    if str(code).strip():
+                        parts.append(f"code={code}")
+                    parts.append(f"task_id={task_id}")
+                    logger.warning(
+                        "Paraformer terminal status=%s task_id=%s body=%s",
+                        status, task_id, json.dumps(data, ensure_ascii=False)[:1200],
+                    )
+                    code_s = str(code).strip().upper()
+                    msg_s = str(msg).strip().upper()
+                    # DashScope returns task_status=FAILED with e.g. SUCCESS_WITH_NO_VALID_FRAGMENT
+                    # when the file is reachable but no usable speech is detected in the audio.
+                    if "NO_VALID_FRAGMENT" in code_s or "NO_VALID_FRAGMENT" in msg_s:
+                        friendly = (
+                            "云端未从音轨中识别到可转写的人声片段（Paraformer：无有效语音）。"
+                            "请使用带清晰对白/口播的视频；纯音乐、环境声或音量过低会导致此结果。"
+                        )
+                        raise AsrError(
+                            f"{friendly} code={code}; task_id={task_id}",
+                            kind="no_speech",
+                        )
+                    raise AsrError("; ".join(parts), kind="unknown")
                 break
         else:
             raise AsrError(
@@ -186,7 +300,12 @@ class ClipAsrClient:
             raise AsrError("Paraformer result missing transcription_url", kind="unknown")
 
         try:
-            tr_resp = await client.get(transcript_url)
+            tr_headers = self._oss_resolve_headers(source_url)
+            tr_resp = await client.get(
+                transcript_url,
+                headers=tr_headers if tr_headers else None,
+                timeout=httpx.Timeout(300.0, connect=60.0),
+            )
             tr_resp.raise_for_status()
             transcript = tr_resp.json()
         except httpx.HTTPError as exc:
@@ -222,8 +341,6 @@ class ClipAsrClient:
         total_duration_sec: float = 0.0,
     ) -> list[dict[str, Any]]:
         """Use Qwen to select highlight segments from transcript."""
-        truncated = transcript_text[:MAX_TRANSCRIPT_CHARS]
-
         prompt = (
             "你是一个专业的视频剪辑师，请从以下转写文本中选出最精彩的片段。\n\n"
             f"要求：选出 {target_count} 个片段，每个片段约 {target_duration} 秒。\n"
@@ -291,8 +408,17 @@ class ClipAsrClient:
         fallback: Any = None,
         max_retries: int = MAX_ANALYSIS_RETRIES,
     ) -> Any:
-        """Call Qwen with retry + feedback on parse failure (CutClaw pattern)."""
+        """Analyze with host LLM by default, or DashScope Qwen when explicitly enabled."""
         from clip_sense_inline.llm_json_parser import parse_llm_json
+
+        if self._analysis_provider != "dashscope":
+            return await self._host_analyze_with_retry(
+                prompt,
+                expect_type=expect_type,
+                fallback=fallback,
+                max_retries=max_retries,
+                parse_llm_json=parse_llm_json,
+            )
 
         import httpx
 
@@ -316,7 +442,7 @@ class ClipAsrClient:
 
             try:
                 resp = await client.post(
-                    url, headers=self._auth_headers(), json=body
+                    url, headers=self._analysis_auth_headers(), json=body
                 )
             except httpx.HTTPError as exc:
                 if attempt < max_retries:
@@ -359,10 +485,107 @@ class ClipAsrClient:
         logger.error("Qwen analysis exhausted all retries, returning fallback")
         return fallback if fallback is not None else ([] if expect_type is list else {})
 
+    async def _host_analyze_with_retry(
+        self,
+        prompt: str,
+        *,
+        expect_type: type,
+        fallback: Any,
+        max_retries: int,
+        parse_llm_json: Any,
+    ) -> Any:
+        brain = self._analysis_brain
+        if brain is None:
+            raise AsrError(
+                "Host LLM is unavailable. Grant brain.access or enable custom Bailian analysis key.",
+                kind="auth",
+            )
+
+        last_feedback = ""
+        system = (
+            "你是 ClipSense 的视频内容分析器。"
+            "只返回合法 JSON，不要输出 Markdown 围栏、解释或额外文本。"
+        )
+        for attempt in range(max_retries + 1):
+            user = prompt
+            if last_feedback:
+                user += (
+                    "\n\n上一次输出无法解析，错误："
+                    f"{last_feedback}\n请只返回合法 JSON。"
+                )
+            try:
+                content = await _call_host_brain(brain, system=system, prompt=user)
+            except Exception as exc:
+                if attempt < max_retries:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise AsrError(f"Host LLM analysis error: {exc}", kind="unknown") from exc
+
+            errors: list[str] = []
+            result = parse_llm_json(
+                content, fallback=None, expect=expect_type, errors=errors
+            )
+            if result is not None:
+                return result
+            last_feedback = "; ".join(errors[:3])
+            logger.warning(
+                "Host LLM JSON parse failed (attempt %d/%d): %s",
+                attempt + 1, max_retries + 1, last_feedback,
+            )
+
+        logger.error("Host LLM analysis exhausted all retries, returning fallback")
+        return fallback if fallback is not None else ([] if expect_type is list else {})
+
     async def close(self) -> None:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+
+async def _call_host_brain(brain: Any, *, system: str, prompt: str) -> str:
+    if hasattr(brain, "chat"):
+        response = await brain.chat(
+            messages=[{"role": "user", "content": prompt}],
+            system=system,
+            temperature=0.2,
+            max_tokens=4000,
+        )
+    elif hasattr(brain, "think_lightweight"):
+        response = await brain.think_lightweight(
+            prompt=prompt,
+            system=system,
+            temperature=0.2,
+            max_tokens=4000,
+        )
+    elif hasattr(brain, "think"):
+        response = await brain.think(
+            prompt=prompt,
+            system=system,
+            temperature=0.2,
+            max_tokens=4000,
+        )
+    else:
+        raise RuntimeError("Host Brain has no supported LLM call method")
+    return _response_to_text(response)
+
+
+def _response_to_text(response: Any) -> str:
+    if isinstance(response, str):
+        return response
+    content = getattr(response, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(str(block.get("text") or block.get("content") or ""))
+            else:
+                parts.append(str(getattr(block, "text", "") or getattr(block, "content", "") or ""))
+        return "\n".join(p for p in parts if p)
+    if content is not None:
+        return str(content)
+    return str(response or "")
 
 
 def _flatten_sentences(payload: dict[str, Any]) -> list[TranscriptSentence]:

@@ -63,3 +63,35 @@ def test_audit_uses_real_chart_data_fields() -> None:
 
     assert "missing_chart_data" not in codes
 
+
+def test_audit_reports_visual_system_guardrails() -> None:
+    report = PptAudit().run(
+        {
+            "slides": [
+                {"id": "s1", "index": 1, "title": "正常封面", "slide_type": "cover", "content": {}},
+                {
+                    "id": "s2",
+                    "index": 2,
+                    "title": "这是一个非常非常非常长的中文标题应该被提示压缩",
+                    "slide_type": "cover",
+                    "content": {
+                        "bullets": [
+                            "这是一条很长很长的项目符号内容，用来模拟模型把正文直接塞进列表项，导致页面密度过高和阅读体验变差，需要审计提前提示。"
+                        ]
+                    },
+                },
+                {
+                    "id": "s3",
+                    "index": 3,
+                    "title": "图表页",
+                    "slide_type": "chart_bar",
+                    "content": {"image_query": "dashboard screenshot"},
+                },
+                {"id": "s4", "index": 4, "title": "结论", "slide_type": "summary", "content": {"bullets": ["A"]}},
+            ]
+        }
+    )
+    codes = {issue["code"] for issue in report["issues"]}
+
+    assert {"title_too_long_cjk", "cover_after_first", "list_item_too_long", "image_layout_mismatch"} <= codes
+

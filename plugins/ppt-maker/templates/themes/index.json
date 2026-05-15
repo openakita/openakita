@@ -34,6 +34,51 @@
     "accent_color": "#EC4899",
     "density": "airy",
     "keywords": ["pitch", "launch", "creative", "hero"]
+  },
+  "swiss_ikb": {
+    "label": "Swiss IKB",
+    "summary": "Swiss International Style with straight edges, hairlines, and a single Klein-blue accent.",
+    "primary_color": "#0A0A0A",
+    "secondary_color": "#737373",
+    "accent_color": "#002FA7",
+    "density": "airy",
+    "keywords": ["swiss", "grid", "ikb", "technology", "methodology"]
+  },
+  "swiss_lemon": {
+    "label": "Swiss Lemon",
+    "summary": "Swiss grid system with a high-contrast lemon-yellow accent for young, retail, and active topics.",
+    "primary_color": "#0A0A0A",
+    "secondary_color": "#737373",
+    "accent_color": "#FFD500",
+    "density": "airy",
+    "keywords": ["swiss", "grid", "yellow", "retail", "active"]
+  },
+  "swiss_lime": {
+    "label": "Swiss Lime",
+    "summary": "Swiss grid system with a highlighter-green accent for future, sustainability, and startup topics.",
+    "primary_color": "#0A0A0A",
+    "secondary_color": "#737373",
+    "accent_color": "#C5E803",
+    "density": "airy",
+    "keywords": ["swiss", "grid", "green", "future", "sustainability"]
+  },
+  "swiss_orange": {
+    "label": "Swiss Orange",
+    "summary": "Swiss grid system with safety-orange accents for industrial, warning, and decision-point decks.",
+    "primary_color": "#0A0A0A",
+    "secondary_color": "#737373",
+    "accent_color": "#FF6B35",
+    "density": "airy",
+    "keywords": ["swiss", "grid", "orange", "industrial", "warning"]
+  },
+  "editorial_ink": {
+    "label": "Editorial Ink",
+    "summary": "Magazine-like warm paper style for narrative talks, quotes, and image-led storytelling.",
+    "primary_color": "#161411",
+    "secondary_color": "#4F463C",
+    "accent_color": "#A15C38",
+    "density": "airy",
+    "keywords": ["magazine", "editorial", "ink", "narrative", "image"]
   }
 }
 

@@ -44,9 +44,21 @@ class PptAudit:
             issues.append(self._issue("warning", "missing_title", f"{slide_id} has no title."))
         if len(title) > 48:
             issues.append(self._issue("warning", "title_too_long", f"{slide_id} title is long."))
+        if self._cjk_len(title) > 18:
+            issues.append(
+                self._issue(
+                    "warning",
+                    "title_too_long_cjk",
+                    f"{slide_id} Chinese title is long; shorten it or lower the title scale.",
+                )
+            )
+        index = int(slide.get("index") or 0)
+        if slide.get("slide_type") == "cover" and index > 1:
+            issues.append(self._issue("warning", "cover_after_first", f"{slide_id} uses cover after slide 1."))
         text_len = len(json.dumps(content, ensure_ascii=False))
         if text_len > 1800:
             issues.append(self._issue("warning", "text_too_dense", f"{slide_id} content is dense."))
+        self._audit_lists(slide_id, content, issues)
         quality = slide.get("quality") or {}
         if isinstance(quality, dict):
             density_score = float(quality.get("density_score") or 0)
@@ -73,6 +85,14 @@ class PptAudit:
                 issues.append(self._issue("warning", "missing_chart_spec", f"{slide_id} has no chart spec."))
         if (content.get("image_query") or content.get("icon_query")) and not slide.get("assets"):
             issues.append(self._issue("info", "asset_unresolved", f"{slide_id} has unresolved asset hints."))
+        if content.get("image_query") and slide.get("slide_type") in {"data_table", "chart_bar", "chart_line", "chart_pie"}:
+            issues.append(
+                self._issue(
+                    "info",
+                    "image_layout_mismatch",
+                    f"{slide_id} requests an image on a data-heavy slide; confirm the image has a clear evidence slot.",
+                )
+            )
 
     def _issue(self, severity: str, code: str, message: str) -> dict[str, str]:
         return {"severity": severity, "code": code, "message": message}
@@ -92,6 +112,20 @@ class PptAudit:
             if repeated >= 4:
                 issues.append(self._issue("warning", "layout_repetition", f"{current} repeats too often."))
                 break
+
+    def _audit_lists(self, slide_id: str, content: dict[str, Any], issues: list[dict[str, Any]]) -> None:
+        for key in ("bullets", "items", "findings", "risks"):
+            values = content.get(key)
+            if not isinstance(values, list):
+                continue
+            if len(values) > 8:
+                issues.append(self._issue("warning", "list_too_long", f"{slide_id} {key} has too many items."))
+            if any(len(str(item)) > 48 for item in values):
+                issues.append(self._issue("warning", "list_item_too_long", f"{slide_id} {key} has long items."))
+
+    @staticmethod
+    def _cjk_len(value: str) -> int:
+        return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
 
     @staticmethod
     def _score(issues: list[dict[str, Any]]) -> dict[str, Any]:

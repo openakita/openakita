@@ -10,38 +10,33 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
+import re
 import uuid
 from pathlib import Path
 from typing import Any
-
-from fastapi import APIRouter, HTTPException, UploadFile, File
-from pydantic import BaseModel, ConfigDict, Field
-
-from openakita.plugins.api import PluginAPI, PluginBase
-from clip_sense_inline.storage_stats import collect_storage_stats
-from clip_sense_inline.system_deps import SystemDepsManager
-from clip_sense_inline.upload_preview import (
-    add_upload_preview_route,
-    build_preview_url,
-)
 
 from clip_asr_client import ClipAsrClient
 from clip_ffmpeg_ops import FFmpegOps
 from clip_models import (
     MODES,
     MODES_BY_ID,
-    SILENCE_PRESETS,
     SILENCE_PRESETS_BY_ID,
-    estimate_cost,
-    get_error_hints,
-    get_mode,
     mode_to_dict,
 )
 from clip_pipeline import ClipPipelineContext, run_pipeline
+from clip_sense_inline.storage_stats import collect_storage_stats
+from clip_sense_inline.system_deps import SystemDepsManager
+from clip_sense_inline.upload_preview import DEFAULT_PREVIEW_EXTENSIONS, build_preview_url
 from clip_task_manager import TaskManager
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel, ConfigDict
+
+from openakita.plugins.api import PluginAPI, PluginBase
 
 logger = logging.getLogger(__name__)
+
+_UPLOAD_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_INTERNAL_PARAM_PREFIX = "_"
 
 
 # ── Request models ──
@@ -65,7 +60,7 @@ class CreateTaskBody(BaseModel):
     silence_preset: str = ""
     target_segment_duration: int = 180
     burn_subtitle: bool = False
-    output_format: str = "mp4"
+    output_format: str | None = None
     # Talking-polish mode toggles (default: remove all detected categories).
     remove_filler: bool = True
     remove_stutter: bool = True
@@ -189,12 +184,35 @@ class Plugin(PluginBase):
 
     async def _async_init(self) -> None:
         await self._tm.init()
-        api_key = await self._tm.get_config("dashscope_api_key")
-        if api_key:
-            self._client = ClipAsrClient(api_key)
+        await self._ensure_client_from_config()
         ffmpeg_path = await self._tm.get_config("ffmpeg_path") or ""
         self._ffmpeg = FFmpegOps(ffmpeg_path if ffmpeg_path else None)
         self._start_polling()
+
+    async def _ensure_client_from_config(self) -> None:
+        api_key = await self._tm.get_config("dashscope_api_key") or ""
+        analysis_provider = await self._tm.get_config("analysis_provider") or "host"
+        analysis_api_key = await self._tm.get_config("dashscope_analysis_api_key") or ""
+        brain = self._get_host_brain()
+        if api_key:
+            if self._client:
+                self._client.update_api_key(api_key)
+            else:
+                self._client = ClipAsrClient(api_key)
+            self._client.configure_analysis(
+                provider=analysis_provider,
+                brain=brain,
+                api_key=analysis_api_key,
+            )
+        else:
+            self._client = None
+
+    def _get_host_brain(self) -> Any:
+        try:
+            return self._api.get_brain()
+        except Exception as exc:
+            logger.debug("clip-sense host brain unavailable: %s", exc)
+            return None
 
     async def on_unload(self) -> None:
         if self._poll_task and not self._poll_task.done():
@@ -245,15 +263,42 @@ class Plugin(PluginBase):
             if ctx:
                 ctx.cancelled = True
                 return f"Cancel requested for task {tid}"
-            return f"Task {tid} not found in running pipelines"
+            task = await self._tm.get_task(tid)
+            if not task:
+                return f"Task {tid} not found"
+            await self._tm.update_task(tid, status="cancelled")
+            return f"Task {tid} marked as cancelled"
         return f"Unknown tool: {tool_name}"
 
     # ── Route registration ──
 
     def _register_routes(self, router: APIRouter) -> None:
-        uploads_dir = self._data_dir / "uploads"
-        uploads_dir.mkdir(parents=True, exist_ok=True)
-        add_upload_preview_route(router, base_dir=uploads_dir)
+        @router.get("/uploads/{rel_path:path}")
+        async def serve_upload(rel_path: str) -> Any:
+            """Serve previews from the currently configured uploads directory."""
+            from fastapi.responses import FileResponse
+
+            if not rel_path or "\x00" in rel_path:
+                raise HTTPException(404, "not found")
+            base = Path(
+                self._storage_defaults(await self._tm.get_all_config())["uploads_dir"]
+            ).resolve()
+            try:
+                candidate = (base / rel_path).resolve()
+                candidate.relative_to(base)
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise HTTPException(403, "forbidden") from exc
+            if not candidate.is_file():
+                raise HTTPException(404, "not found")
+            ext = candidate.suffix.lower().lstrip(".")
+            if ext not in DEFAULT_PREVIEW_EXTENSIONS:
+                raise HTTPException(404, "not found")
+            if candidate.stat().st_size > 50 * 1024 * 1024:
+                raise HTTPException(413, "file too large")
+            return FileResponse(
+                candidate,
+                headers={"Cache-Control": "public, max-age=300"},
+            )
 
         # 1. POST /tasks — create task
         @router.post("/tasks")
@@ -285,8 +330,20 @@ class Plugin(PluginBase):
         # 4. DELETE /tasks/{task_id}
         @router.delete("/tasks/{task_id}")
         async def delete_task(task_id: str) -> dict[str, str]:
-            if not await self._tm.delete_task(task_id):
+            task = await self._tm.get_task(task_id)
+            if not task:
                 raise HTTPException(404, "Task not found")
+            await self._tm.delete_task(task_id)
+            # Clean up both task workspace and generated-output directory.
+            config = await self._tm.get_all_config()
+            defaults = self._storage_defaults(config)
+            for task_dir in {
+                Path(defaults["tasks_dir"]) / task_id,
+                Path(defaults["output_dir"]) / task_id,
+            }:
+                if task_dir.exists() and task_dir.is_dir():
+                    import shutil as _shutil
+                    _shutil.rmtree(task_dir, ignore_errors=True)
             return {"status": "deleted"}
 
         # 5. POST /tasks/{task_id}/cancel
@@ -317,12 +374,35 @@ class Plugin(PluginBase):
 
         # 7. GET /tasks/{task_id}/download
         @router.get("/tasks/{task_id}/download")
-        async def download_output(task_id: str) -> Any:
+        async def download_output(task_id: str, index: int | None = None) -> Any:
+            """Download output. For topic_split with multiple files:
+            - ?index=N  → download the Nth topic file (0-based)
+            - ?index=-1 → download the zip of all topics
+            - no index  → download the primary output_path (first topic)
+            """
             from fastapi.responses import FileResponse
             task = await self._tm.get_task(task_id)
             if not task or not task.get("output_path"):
                 raise HTTPException(404, "Output not found")
-            p = Path(task["output_path"])
+            params = task.get("params") or {}
+            if isinstance(params, str):
+                import json as _json
+                try:
+                    params = _json.loads(params)
+                except Exception:
+                    params = {}
+            topic_files = params.get("_topic_files") or []
+            topics_zip = params.get("_topics_zip") or ""
+            if index is not None:
+                if index == -1 and topics_zip:
+                    p = Path(topics_zip)
+                elif 0 <= index < len(topic_files):
+                    p = Path(topic_files[index])
+                else:
+                    raise HTTPException(404, "Topic index out of range")
+            else:
+                p = Path(task["output_path"])
+            p = await self._resolve_task_file(task_id, p, kind="output")
             if not p.exists():
                 raise HTTPException(404, "Output file missing")
             return FileResponse(p, filename=p.name)
@@ -334,7 +414,9 @@ class Plugin(PluginBase):
             task = await self._tm.get_task(task_id)
             if not task or not task.get("subtitle_path"):
                 raise HTTPException(404, "Subtitle not found")
-            p = Path(task["subtitle_path"])
+            p = await self._resolve_task_file(
+                task_id, Path(task["subtitle_path"]), kind="subtitle"
+            )
             if not p.exists():
                 raise HTTPException(404, "Subtitle file missing")
             return FileResponse(p, filename=p.name, media_type="text/plain")
@@ -355,13 +437,10 @@ class Plugin(PluginBase):
         # button always point at where the bytes actually land.
         @router.post("/upload")
         async def upload_video(file: UploadFile = File(...)) -> dict[str, Any]:
-            cfg_uploads = (await self._tm.get_config("uploads_dir") or "").strip()
-            uploads_dir = (
-                Path(cfg_uploads).expanduser() if cfg_uploads
-                else self._data_dir / "uploads"
-            )
+            dirs = self._storage_defaults(await self._tm.get_all_config())
+            uploads_dir = Path(dirs["uploads_dir"])
             uploads_dir.mkdir(parents=True, exist_ok=True)
-            safe_name = f"{uuid.uuid4().hex[:8]}_{file.filename or 'video.mp4'}"
+            safe_name = self._safe_upload_name(file.filename or "video.mp4")
             dest = uploads_dir / safe_name
             with open(dest, "wb") as f:
                 while chunk := await file.read(1024 * 1024):
@@ -394,32 +473,47 @@ class Plugin(PluginBase):
         # 14. GET /settings
         @router.get("/settings")
         async def get_settings() -> dict[str, str]:
-            return await self._tm.get_all_config()
+            raw = await self._tm.get_all_config()
+            out = dict(raw)
+            for k in ("output_dir", "uploads_dir", "tasks_dir"):
+                v = out.get(k, "")
+                if self._is_placeholder_or_hint_path(v):
+                    out[k] = ""
+            return out
 
         # 15. PUT /settings
         @router.put("/settings")
         async def update_settings(body: ConfigUpdateBody) -> dict[str, str]:
-            await self._tm.set_configs(body.updates)
-            if "dashscope_api_key" in body.updates:
-                key = body.updates["dashscope_api_key"]
-                if key:
-                    if self._client:
-                        self._client.update_api_key(key)
-                    else:
-                        self._client = ClipAsrClient(key)
-                else:
-                    self._client = None
-            if "ffmpeg_path" in body.updates:
-                fp = body.updates["ffmpeg_path"]
+            updates = dict(body.updates)
+            if "analysis_provider" in updates:
+                provider = (updates["analysis_provider"] or "host").strip().lower()
+                updates["analysis_provider"] = provider if provider in ("host", "dashscope") else "host"
+            for k in ("output_dir", "uploads_dir", "tasks_dir"):
+                if k not in updates:
+                    continue
+                if self._is_placeholder_or_hint_path(updates[k]):
+                    updates[k] = ""
+            await self._tm.set_configs(updates)
+            if any(
+                k in updates
+                for k in (
+                    "dashscope_api_key",
+                    "analysis_provider",
+                    "dashscope_analysis_api_key",
+                )
+            ):
+                await self._ensure_client_from_config()
+            if "ffmpeg_path" in updates:
+                fp = updates["ffmpeg_path"]
                 self._ffmpeg = FFmpegOps(fp if fp else None)
             return {"status": "ok"}
 
         # 16. GET /storage/stats
         # Per-folder snapshot in the same shape seedance-video returns,
         # so the Settings page can render one stat card per managed
-        # directory (output / uploads / tasks). ``output_dir`` falls back
-        # to ~/clip-sense-output to mirror seedance's "default folder
-        # opens even before the user customised anything" behaviour.
+        # directory (output / uploads / tasks). Empty ``output_dir`` in
+        # config uses ``<plugin_data_dir>/tasks`` — same parent as task
+        # workspaces created by ``_create_task_internal``.
         @router.get("/storage/stats")
         async def storage_stats() -> dict[str, Any]:
             config = await self._tm.get_all_config()
@@ -439,6 +533,60 @@ class Plugin(PluginBase):
                     "truncated": report.truncated,
                 }
             return {"ok": True, "stats": stats, "truncated": truncated_any}
+
+        # 16b. POST /storage/clear-cache — remove cached/output files
+        @router.post("/storage/clear-cache")
+        async def clear_cache(target: str = "uploads") -> dict[str, Any]:
+            """Clear files in a managed directory.
+            target: 'uploads' | 'output' | 'all'
+            """
+            config = await self._tm.get_all_config()
+            defaults = self._storage_defaults(config)
+            dirs_to_clear: list[Path] = []
+            if target in ("uploads", "all"):
+                dirs_to_clear.append(Path(defaults["uploads_dir"]))
+            if target in ("output", "all"):
+                dirs_to_clear.append(Path(defaults["output_dir"]))
+            freed_bytes = 0
+            removed_files = 0
+            for dir_path in dirs_to_clear:
+                if self._is_dangerous_clear_target(dir_path):
+                    raise HTTPException(400, f"Refusing to clear unsafe directory: {dir_path}")
+                if not dir_path.exists():
+                    continue
+                for f in dir_path.rglob("*"):
+                    if f.is_file():
+                        try:
+                            freed_bytes += f.stat().st_size
+                            f.unlink()
+                            removed_files += 1
+                        except OSError:
+                            pass
+                for d in sorted(dir_path.rglob("*"), reverse=True):
+                    if d.is_dir():
+                        try:
+                            d.rmdir()
+                        except OSError:
+                            pass
+            # When output dir is cleared, nullify file paths on all tasks
+            # so the UI won't show broken video/download links.
+            if target in ("output", "all"):
+                all_tasks = await self._tm.list_tasks(limit=9999)
+                for t in all_tasks.get("tasks", []):
+                    if t.get("output_path") or t.get("subtitle_path"):
+                        updates: dict[str, Any] = {}
+                        if t.get("output_path"):
+                            updates["output_path"] = ""
+                        if t.get("subtitle_path"):
+                            updates["subtitle_path"] = ""
+                        await self._tm.update_task(t["id"], **updates)
+
+            return {
+                "ok": True,
+                "freed_bytes": freed_bytes,
+                "freed_mb": round(freed_bytes / 1048576, 1),
+                "removed_files": removed_files,
+            }
 
         # 17. POST /storage/open-folder — mkdir -p target then open in OS
         # file manager. Resolves either an explicit ``path`` or a known
@@ -701,25 +849,114 @@ class Plugin(PluginBase):
 
     # ── Storage helpers ──
 
+    @staticmethod
+    def _is_placeholder_or_hint_path(value: str) -> bool:
+        """True if the stored config is empty or looks like UI placeholder / hint text.
+
+        Users sometimes blur-save the placeholder line (e.g. ``默认: <插件数据目录>/tasks/``)
+        into SQLite; ``Path`` would then point at a non-existent name and storage stats
+        stay at zero even though real files live under the plugin data directory.
+        """
+        s = (value or "").strip()
+        if not s:
+            return True
+        low = s.lower()
+        if s.startswith("<") or "<" in s:
+            return True
+        if "插件数据" in s:
+            return True
+        if s.startswith("默认:") or low.startswith("default:"):
+            return True
+        if "plugin data dir" in low or "<plugin" in low:
+            return True
+        return False
+
+    @staticmethod
+    def _normalize_config_path(path_str: str) -> str:
+        """Expand ``~`` / user profile and resolve to an absolute path.
+
+        SQLite stores folder overrides like ``~/clip-sense-output``; ``Path``
+        does not treat that as existing unless expanded, so storage walks
+        would otherwise return zero bytes/files on Windows/macOS.
+        """
+        s = (path_str or "").strip()
+        if not s:
+            return ""
+        try:
+            return str(Path(s).expanduser().resolve(strict=False))
+        except (OSError, RuntimeError):
+            return str(Path(s).expanduser())
+
     def _storage_defaults(self, config: dict[str, str]) -> dict[str, str]:
         """Return the resolved (user override OR default) path for every
         managed storage slot. Keep keys in sync with the Settings folder
         section + ``/storage/open-folder``.
+
+        UI placeholders like ``<插件数据目录>/uploads/`` must not be passed
+        to ``Path`` literally — they are treated as “use plugin default”.
         """
+        raw_out = (config.get("output_dir") or "").strip()
+        if self._is_placeholder_or_hint_path(raw_out):
+            out_dir = str(self._data_dir / "tasks")
+        else:
+            out_dir = raw_out
+
+        raw_up = (config.get("uploads_dir") or "").strip()
+        if self._is_placeholder_or_hint_path(raw_up):
+            uploads = str(self._data_dir / "uploads")
+        else:
+            uploads = raw_up
+
+        raw_td = (config.get("tasks_dir") or "").strip()
+        if self._is_placeholder_or_hint_path(raw_td):
+            tasks = str(self._data_dir / "tasks")
+        else:
+            tasks = raw_td
+
         return {
-            "output_dir": (
-                (config.get("output_dir") or "").strip()
-                or str(Path.home() / "clip-sense-output")
-            ),
-            "uploads_dir": (
-                (config.get("uploads_dir") or "").strip()
-                or str(self._data_dir / "uploads")
-            ),
-            "tasks_dir": (
-                (config.get("tasks_dir") or "").strip()
-                or str(self._data_dir / "tasks")
-            ),
+            "output_dir": self._normalize_config_path(out_dir),
+            "uploads_dir": self._normalize_config_path(uploads),
+            "tasks_dir": self._normalize_config_path(tasks),
         }
+
+    async def _task_dirs(self, task_id: str) -> tuple[Path, Path]:
+        defaults = self._storage_defaults(await self._tm.get_all_config())
+        return Path(defaults["tasks_dir"]) / task_id, Path(defaults["output_dir"]) / task_id
+
+    async def _allowed_task_roots(self, task_id: str) -> list[Path]:
+        task_dir, output_dir = await self._task_dirs(task_id)
+        roots = {task_dir.resolve(strict=False), output_dir.resolve(strict=False)}
+        return list(roots)
+
+    async def _resolve_task_file(self, task_id: str, path: Path, *, kind: str) -> Path:
+        try:
+            candidate = path.expanduser().resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(400, f"Invalid {kind} path") from exc
+        for root in await self._allowed_task_roots(task_id):
+            try:
+                candidate.relative_to(root)
+                return candidate
+            except ValueError:
+                continue
+        raise HTTPException(403, f"{kind} path is outside this task workspace")
+
+    @staticmethod
+    def _safe_upload_name(filename: str) -> str:
+        base = Path(filename or "video.mp4").name.strip().strip(".")
+        if not base:
+            base = "video.mp4"
+        base = _UPLOAD_NAME_RE.sub("_", base)
+        return f"{uuid.uuid4().hex[:8]}_{base}"
+
+    @staticmethod
+    def _is_dangerous_clear_target(path: Path) -> bool:
+        try:
+            target = path.expanduser().resolve(strict=False)
+            home = Path.home().resolve(strict=False)
+        except (OSError, RuntimeError):
+            return True
+        return target == target.parent or target == home
 
     # ── Internal task creation ──
 
@@ -743,7 +980,15 @@ class Plugin(PluginBase):
         params = {
             k: v for k, v in args.items()
             if k not in ("mode", "source_video_path", "source_url")
+            and not str(k).startswith(_INTERNAL_PARAM_PREFIX)
         }
+        # Inject default_output_format from config when not explicitly set
+        if not params.get("output_format"):
+            fmt = (await self._tm.get_config("default_output_format")) or "mp4"
+            params["output_format"] = fmt
+        if "burn_subtitle" not in params:
+            default_subtitle = (await self._tm.get_config("default_subtitle")) or "false"
+            params["burn_subtitle"] = default_subtitle.strip().lower() == "true"
 
         task = await self._tm.create_task(
             mode=mode_id,
@@ -756,21 +1001,13 @@ class Plugin(PluginBase):
             rel = Path(source_path).name
             source_url = build_preview_url("clip-sense", rel)
 
-        # Honour the user's Settings ▸ Folder ▸ "Output dir" override so
-        # the final mp4 lands wherever they pointed it (seedance-style).
-        # Falls back to ``<plugin_data_dir>/tasks`` when not customised
-        # so existing behaviour is preserved.
-        cfg_output = (await self._tm.get_config("output_dir") or "").strip()
-        base_tasks_dir = (
-            Path(cfg_output).expanduser() if cfg_output
-            else self._data_dir / "tasks"
-        )
-        task_dir = base_tasks_dir / task["id"]
+        task_dir, output_dir = await self._task_dirs(task["id"])
         ctx = ClipPipelineContext(
             task_id=task["id"],
             mode=mode_id,
             params=params,
             task_dir=task_dir,
+            output_dir=output_dir,
             source_video_path=Path(source_path),
             source_url=source_url,
         )
@@ -788,6 +1025,15 @@ class Plugin(PluginBase):
             )
         except Exception as exc:
             logger.exception("clip-sense pipeline unexpected error: %s", exc)
+            try:
+                await self._tm.update_task(
+                    ctx.task_id,
+                    status="failed",
+                    error_kind="unknown",
+                    error_message=f"Unexpected pipeline error: {exc}",
+                )
+            except Exception as update_exc:
+                logger.warning("clip-sense failed to mark task failed: %s", update_exc)
         finally:
             self._running_pipelines.pop(ctx.task_id, None)
 
