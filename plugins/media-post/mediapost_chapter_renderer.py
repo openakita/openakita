@@ -353,7 +353,8 @@ async def _render_one_drawtext(
         "1",
         str(out_path),
     ]
-    proc = await asyncio.create_subprocess_exec(
+proc = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,

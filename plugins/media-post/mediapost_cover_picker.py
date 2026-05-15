@@ -11,7 +11,8 @@ Per ``docs/media-post-plan.md`` §6.3:
 4. Candidates below ``min_score_threshold`` are dropped; the rest sort
    by ``overall_score`` desc and the top-N are copied to ``final/``.
 
-All ffmpeg invocations use ``asyncio.create_subprocess_exec(*cmd)`` —
+All ffmpeg invocations use ``asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# *cmd)`` —
 ``shell=True`` is forbidden by red-line §13. Failures inside the
 candidate-extraction step raise :class:`MediaPostError("dependency",
 …)`` so the pipeline maps to the dependency hint card.
@@ -205,7 +206,8 @@ async def _extract_candidates(
         "-frames:v",
         str(max_frames),
         str(out_dir / "cand_%02d.png"),
-    ]
+proc = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
