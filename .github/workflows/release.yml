@@ -248,6 +248,13 @@ jobs:
           cache: npm
           cache-dependency-path: apps/setup-center/package-lock.json
 
+      - name: Isolate Rust from macOS image shims
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          echo "RUSTUP_HOME=$RUNNER_TEMP/openakita-rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$RUNNER_TEMP/openakita-cargo" >> "$GITHUB_ENV"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

@@ -277,6 +277,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
 
+      - name: Isolate Rust from macOS image shims
+        if: runner.os == 'macOS' && hashFiles('apps/setup-center/src-tauri/Cargo.toml') != ''
+        shell: bash
+        run: |
+          echo "RUSTUP_HOME=$RUNNER_TEMP/openakita-rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$RUNNER_TEMP/openakita-cargo" >> "$GITHUB_ENV"
+
       - name: Set up Rust
         if: ${{ hashFiles('apps/setup-center/src-tauri/Cargo.toml') != '' }}
         uses: dtolnay/rust-toolchain@stable

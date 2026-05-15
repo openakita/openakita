@@ -149,6 +149,15 @@ jobs:
           cache: npm
           cache-dependency-path: apps/setup-center/package-lock.json
 
+      # GitHub macOS images ship rustup; default ~/.cargo/bin/cargo can mis-delegate
+      # to rustup-init ("unexpected argument 'fetch'"). Use a fresh RUSTUP_HOME/CARGO_HOME.
+      - name: Isolate Rust from macOS image shims
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          echo "RUSTUP_HOME=$RUNNER_TEMP/openakita-rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$RUNNER_TEMP/openakita-cargo" >> "$GITHUB_ENV"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
