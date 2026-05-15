@@ -40,6 +40,13 @@ from tongyi_task_manager import TaskManager
 logger = logging.getLogger(__name__)
 
 
+def _normalize_base_url(value: str | None, *, field: str = "Base URL") -> str:
+    base_url = (value or "").strip().rstrip("/")
+    if base_url and not base_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail=f"{field} 必须以 http:// 或 https:// 开头")
+    return base_url
+
+
 def _safe_log(data: dict, max_len: int = 500) -> str:
     """Truncate dict repr for safe logging."""
     import json as _json
@@ -129,7 +136,21 @@ class Plugin(PluginBase):
         api.register_tools([
             {
                 "name": "tongyi_image_create",
-                "description": "Create a Tongyi image generation task (text-to-image, editing, style repaint, etc.)",
+                "description": (
+                    "Create a Tongyi (DashScope) image generation task. "
+                    "Blocks until the image is ready (DashScope async tasks "
+                    "are polled internally for up to ~3 minutes), so the "
+                    "returned JSON already carries the produced asset_ids "
+                    "and local_paths in the common case — no need to call "
+                    "tongyi_image_status afterwards. "
+                    "Returns JSON: {ok, task_id, status, mode, image_urls, "
+                    "local_paths, asset_ids}. Generated images are auto-downloaded "
+                    "to the plugin data dir and published to the Asset Bus, so the "
+                    "returned asset_ids can be fed into downstream workbenches "
+                    "(e.g. seedance_create.from_asset_ids) without rehosting. "
+                    "If status is still 'running' on return (very rare, only "
+                    "when DashScope is unusually slow), poll tongyi_image_status."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -144,7 +165,13 @@ class Plugin(PluginBase):
             },
             {
                 "name": "tongyi_image_status",
-                "description": "Check status of a Tongyi image generation task",
+                "description": (
+                    "Check status of a Tongyi image generation task. Returns JSON: "
+                    "{ok, task_id, status, mode, image_urls, local_paths, asset_ids, "
+                    "error_message}. Use this to poll an async task created via "
+                    "tongyi_image_create — once status='succeeded' the asset_ids "
+                    "become available for downstream workbenches."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"task_id": {"type": "string"}},
@@ -153,7 +180,11 @@ class Plugin(PluginBase):
             },
             {
                 "name": "tongyi_image_list",
-                "description": "List recent Tongyi image generation tasks",
+                "description": (
+                    "List recent Tongyi image generation tasks. Returns JSON: "
+                    "{ok, total, tasks: [{task_id, status, mode, prompt, "
+                    "image_urls, local_paths, asset_ids, created_at}, ...]}."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"limit": {"type": "integer", "default": 10}},
@@ -166,9 +197,12 @@ class Plugin(PluginBase):
 
     async def _async_init(self) -> None:
         await self._tm.init()
-        api_key = await self._tm.get_config("dashscope_api_key")
+        config = await self._tm.get_all_config()
+        api_key = config.get("dashscope_api_key", "")
         if api_key:
-            self._client = DashScopeClient(api_key)
+            self._client = DashScopeClient(
+                api_key, base_url=config.get("dashscope_base_url") or None,
+            )
         self._start_polling()
 
     async def on_unload(self) -> None:
@@ -193,23 +227,79 @@ class Plugin(PluginBase):
     # ── Tool handler ──
 
     async def _handle_tool(self, tool_name: str, args: dict) -> str:
+        """LLM-facing tool entry. Returns JSON so OrgRuntime's workbench
+        hook can detect produced artifacts (local_paths / image_urls /
+        asset_ids) and register them as task attachments."""
+        import json as _json
+
         if tool_name == "tongyi_image_create":
-            task = await self._create_task_internal(args)
-            return f"Task created: {task['id']} (status: {task['status']}, mode: {task['mode']})"
-        elif tool_name == "tongyi_image_status":
-            task = await self._tm.get_task(args["task_id"])
+            try:
+                task = await self._create_task_internal(args)
+            except HTTPException as e:
+                return _json.dumps(
+                    {
+                        "ok": False,
+                        "error": e.detail if isinstance(e.detail, str) else str(e.detail),
+                        "status_code": e.status_code,
+                    },
+                    ensure_ascii=False,
+                )
+            except Exception as e:
+                return _json.dumps(
+                    {"ok": False, "error": str(e)}, ensure_ascii=False
+                )
+            return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+        if tool_name == "tongyi_image_status":
+            tid = args.get("task_id") or ""
+            task = await self._tm.get_task(tid) if tid else None
             if not task:
-                return f"Task {args['task_id']} not found"
-            urls = task.get("image_urls", [])
-            url_info = f", images: {len(urls)}" if urls else ""
-            return f"Task {task['id']}: status={task['status']}{url_info}"
-        elif tool_name == "tongyi_image_list":
+                return _json.dumps(
+                    {"ok": False, "task_id": tid, "error": "task not found"},
+                    ensure_ascii=False,
+                )
+            return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+        if tool_name == "tongyi_image_list":
             result = await self._tm.list_tasks(limit=args.get("limit", 10))
-            lines = [f"Total: {result['total']} tasks"]
-            for t in result["tasks"]:
-                lines.append(f"  {t['id']}: [{t['mode']}] {t['status']} - {t['prompt'][:50]}")
-            return "\n".join(lines)
-        return f"Unknown tool: {tool_name}"
+            return _json.dumps(
+                {
+                    "ok": True,
+                    "total": result.get("total", 0),
+                    "tasks": [
+                        self._task_to_tool_payload(t, brief=True)
+                        for t in result.get("tasks", [])
+                    ],
+                },
+                ensure_ascii=False,
+            )
+
+        return _json.dumps(
+            {"ok": False, "error": f"Unknown tool: {tool_name}"}, ensure_ascii=False
+        )
+
+    @staticmethod
+    def _task_to_tool_payload(task: dict, *, brief: bool = False) -> dict:
+        """Project a task record into the JSON shape expected by the LLM and
+        by ``OrgRuntime._record_plugin_asset_output``. The runtime looks for
+        ``local_paths`` / ``image_urls`` / ``asset_ids`` to auto-register
+        produced images as task attachments — keep these keys stable.
+        """
+        base = {
+            "ok": task.get("status") != "failed",
+            "task_id": task.get("id"),
+            "status": task.get("status"),
+            "mode": task.get("mode"),
+            "image_urls": list(task.get("image_urls") or []),
+            "local_paths": list(task.get("local_image_paths") or []),
+            "asset_ids": list(task.get("asset_ids") or []),
+        }
+        if task.get("error_message"):
+            base["error_message"] = task["error_message"]
+        if brief:
+            base["prompt"] = (task.get("prompt") or "")[:200]
+            base["created_at"] = task.get("created_at")
+        return base
 
     # ── Internal task creation ──
 
@@ -260,15 +350,136 @@ class Plugin(PluginBase):
         )
 
         if status == "succeeded" and image_urls:
-            config = await self._tm.get_all_config()
-            if config.get("auto_download") == "true":
-                self._api.spawn_task(
-                    self._download_images(task["id"], image_urls),
-                    name=f"tongyi-image:download:{task['id']}",
-                )
+            # 工作台编排需要本地路径 + asset_ids 才能让 OrgRuntime hook 把图片
+            # 登记为任务附件。同步成功时**强制下载**并 publish 到 Asset Bus，
+            # 然后立刻 reload 一次 task 以拿到 local_image_paths / asset_ids，
+            # 这样工具 JSON 返回值中的相关字段都是最终态。auto_download 配置
+            # 仅控制"用户手动浏览历史"时是否预下载，工作台路径不受其影响。
+            await self._download_and_publish_images(task["id"], image_urls, prompt=prompt)
+            refreshed = await self._tm.get_task(task["id"])
+            if refreshed:
+                task = refreshed
             self._broadcast_update(task["id"], "succeeded")
+            return task
+
+        # ── 异步分支 ───────────────────────────────────────────────
+        # 老实现：提交后立即返回 status="running"，让 LLM 自己 poll
+        # tongyi_image_status。但工作台节点上的 LLM 不会自觉 poll，常常
+        # 看到 ok=true 就直接 submit_deliverable 把空 asset_ids 当作交付，
+        # 下游 seedance 拿不到分镜图。改为同步等待：在工具内部按短间隔
+        # poll DashScope 任务状态，最多等 internal_wait 秒；等到 SUCCEEDED
+        # 就当场下载 + publish，等到 FAILED 就回写错误，超时就保留
+        # status=running 让后台 _poll_loop 接力，并在返回里告诉 LLM
+        # 必须 poll tongyi_image_status。
+        if is_async and api_task_id:
+            await self._wait_for_async_task(
+                task_id=task["id"], api_task_id=api_task_id,
+                prompt=prompt,
+            )
+            refreshed = await self._tm.get_task(task["id"])
+            if refreshed:
+                task = refreshed
 
         return task
+
+    # 单次轮询间隔（秒）。DashScope 通用图任务一般 10–60s 完成；间隔太短会
+    # 浪费配额，太长会让节点白等。3s 起步、给 dashscope 第一拍准备时间。
+    _ASYNC_WAIT_INITIAL_DELAY = 3.0
+    _ASYNC_WAIT_INTERVAL = 5.0
+    # 工具内部最多等多少秒。180s 覆盖 wan27-pro 慢任务（typical 60–120s）。
+    # 超过的极少数情况下回退到后台 _poll_loop + LLM tongyi_image_status。
+    _ASYNC_WAIT_TIMEOUT = 180.0
+
+    async def _wait_for_async_task(
+        self,
+        *,
+        task_id: str,
+        api_task_id: str,
+        prompt: str,
+    ) -> None:
+        """Block in-tool until the DashScope async task settles, or the
+        internal timeout fires.
+
+        Side effects mirror what the background ``_poll_loop`` would do
+        once a task transitions: update the local task row, download +
+        Asset-Bus-publish the produced images on success, broadcast the
+        WS update so the workbench UI flips to its terminal status. The
+        background poller still runs as a safety net for tasks that
+        outlive the in-tool window.
+        """
+        if not self._client:
+            return
+        await asyncio.sleep(self._ASYNC_WAIT_INITIAL_DELAY)
+        deadline = time.monotonic() + self._ASYNC_WAIT_TIMEOUT
+        attempt = 0
+        while time.monotonic() < deadline:
+            attempt += 1
+            try:
+                result = await self._client.get_task(api_task_id)
+            except DashScopeError as exc:
+                logger.info(
+                    "tongyi_image_create wait: get_task(%s) DashScope error %s",
+                    api_task_id, exc,
+                )
+                await asyncio.sleep(self._ASYNC_WAIT_INTERVAL)
+                continue
+            except Exception as exc:
+                logger.info(
+                    "tongyi_image_create wait: get_task(%s) network error %s",
+                    api_task_id, exc,
+                )
+                await asyncio.sleep(self._ASYNC_WAIT_INTERVAL)
+                continue
+            output = result.get("output", {}) if isinstance(result, dict) else {}
+            status = (output.get("task_status") or "").upper()
+            if status == "SUCCEEDED":
+                image_urls = self._extract_image_urls(result)
+                logger.info(
+                    "tongyi_image_create wait: task %s SUCCEEDED after %d polls, %d images",
+                    task_id, attempt, len(image_urls),
+                )
+                await self._tm.update_task(
+                    task_id, status="succeeded",
+                    image_urls=image_urls,
+                    usage=result.get("usage", {}),
+                )
+                if image_urls:
+                    try:
+                        await self._download_and_publish_images(
+                            task_id, image_urls, prompt=prompt,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "tongyi_image_create wait: download failed for %s",
+                            task_id,
+                        )
+                self._broadcast_update(task_id, "succeeded")
+                return
+            if status == "FAILED":
+                error_msg = (
+                    output.get("message")
+                    or output.get("error_message")
+                    or "DashScope reported FAILED without a message"
+                )
+                logger.info(
+                    "tongyi_image_create wait: task %s FAILED — %s",
+                    task_id, error_msg,
+                )
+                await self._tm.update_task(
+                    task_id, status="failed", error_message=str(error_msg),
+                )
+                self._broadcast_update(task_id, "failed")
+                return
+            await asyncio.sleep(self._ASYNC_WAIT_INTERVAL)
+        # Timeout: leave task as running, the background _poll_loop will
+        # finish it. The caller's tool payload will carry status="running"
+        # and an empty asset list, plus the description tells the LLM that
+        # in this case it must call tongyi_image_status to finish the job.
+        logger.info(
+            "tongyi_image_create wait: task %s still running after %.0fs, "
+            "handing off to background poller",
+            task_id, self._ASYNC_WAIT_TIMEOUT,
+        )
 
     async def _dispatch_api_call(
         self, mode: str, model_info: Any, params: dict
@@ -492,11 +703,13 @@ class Plugin(PluginBase):
                         image_urls=image_urls,
                         usage=result.get("usage", {}),
                     )
-                    config = await self._tm.get_all_config()
-                    if config.get("auto_download") == "true" and image_urls:
-                        self._api.spawn_task(
-                            self._download_images(task["id"], image_urls),
-                            name=f"tongyi-image:download:{task['id']}",
+                    if image_urls:
+                        # 异步分支：和同步分支同步处理产物落盘+Asset Bus，
+                        # 让 LLM 后续 poll tongyi_image_status 时能拿到
+                        # local_paths / asset_ids，进而被 OrgRuntime 工作台
+                        # 钩子识别并登记为附件。
+                        await self._download_and_publish_images(
+                            task["id"], image_urls, prompt=task.get("prompt") or "",
                         )
                     self._broadcast_update(task["id"], "succeeded")
 
@@ -515,6 +728,11 @@ class Plugin(PluginBase):
                 logger.debug("Poll task %s error: %s", task["id"], e)
 
     async def _download_images(self, task_id: str, urls: list[str]) -> None:
+        """Legacy helper used by historical routes: download only, no
+        Asset Bus publishing. Workbench / org-orchestration callers should
+        prefer :meth:`_download_and_publish_images` so produced images flow
+        into downstream workbenches via stable asset_ids.
+        """
         try:
             import httpx
             config = await self._tm.get_all_config()
@@ -543,6 +761,103 @@ class Plugin(PluginBase):
             logger.info("Downloaded %d images for task %s", len(local_paths), task_id)
         except Exception as e:
             logger.warning("Failed to download images for task %s: %s", task_id, e)
+
+    async def _download_and_publish_images(
+        self,
+        task_id: str,
+        urls: list[str],
+        *,
+        prompt: str = "",
+    ) -> None:
+        """Download remote images, persist them under the plugin data dir,
+        then publish each to the Asset Bus so other workbenches (e.g.
+        seedance-video) can consume the resulting asset_ids without
+        rehosting. Errors are swallowed with warnings — the LLM still
+        sees ``image_urls`` even when local materialisation fails.
+        """
+        if not urls:
+            return
+        local_paths: list[str] = []
+        asset_ids: list[str] = []
+        downloads_dir = self._api.get_data_dir() / "downloads" / task_id
+        try:
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.warning(
+                "tongyi-image: failed to create download dir %s: %s",
+                downloads_dir, exc,
+            )
+            return
+
+        try:
+            import httpx
+        except ImportError:
+            logger.warning("tongyi-image: httpx unavailable, skip download")
+            return
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http:
+                for i, url in enumerate(urls):
+                    try:
+                        ext = ".png"
+                        lower = url.lower()
+                        if ".jpg" in lower or ".jpeg" in lower:
+                            ext = ".jpg"
+                        elif ".webp" in lower:
+                            ext = ".webp"
+                        filepath = downloads_dir / f"{task_id}_{i}{ext}"
+                        resp = await http.get(url)
+                        resp.raise_for_status()
+                        filepath.write_bytes(resp.content)
+                        local_paths.append(str(filepath))
+                    except Exception as exc:
+                        logger.warning(
+                            "tongyi-image: download %s failed: %s", url, exc,
+                        )
+        except Exception as exc:
+            logger.warning("tongyi-image: download session error: %s", exc)
+
+        # Publish each downloaded image to the Asset Bus. Failures are
+        # non-fatal — we still record any local_paths that did succeed.
+        for idx, local in enumerate(local_paths):
+            preview = urls[idx] if idx < len(urls) else None
+            try:
+                asset_id = await self._api.publish_asset(
+                    asset_kind="image",
+                    source_path=local,
+                    preview_url=preview,
+                    metadata={
+                        "task_id": task_id,
+                        "prompt": (prompt or "")[:500],
+                        "origin": "tongyi-image",
+                        "index": idx,
+                    },
+                    shared_with=["*"],
+                    ttl_seconds=86400,
+                )
+                if asset_id:
+                    asset_ids.append(asset_id)
+            except Exception as exc:
+                logger.warning(
+                    "tongyi-image: publish_asset failed for %s: %s",
+                    local, exc,
+                )
+
+        try:
+            await self._tm.update_task(
+                task_id,
+                local_image_paths=local_paths,
+                asset_ids=asset_ids,
+            )
+        except Exception as exc:
+            logger.warning(
+                "tongyi-image: persist asset metadata failed for %s: %s",
+                task_id, exc,
+            )
+        logger.info(
+            "tongyi-image: task %s materialised → %d local files, %d assets",
+            task_id, len(local_paths), len(asset_ids),
+        )
 
     def _broadcast_update(self, task_id: str, status: str) -> None:
         try:
@@ -792,18 +1107,28 @@ class Plugin(PluginBase):
         @router.get("/settings")
         async def get_settings() -> dict:
             cfg = await self._tm.get_all_config()
+            cfg.setdefault("dashscope_api_key", "")
+            cfg.setdefault("dashscope_base_url", "")
             return {"ok": True, "config": cfg}
 
         @router.put("/settings")
         async def update_settings(body: ConfigUpdateBody) -> dict:
-            await self._tm.set_configs(body.updates)
-            if "dashscope_api_key" in body.updates and body.updates["dashscope_api_key"]:
-                key = body.updates["dashscope_api_key"]
-                if self._client:
-                    self._client.update_api_key(key)
-                else:
-                    self._client = DashScopeClient(key)
+            cleaned: dict[str, str] = {k: (v or "").strip() for k, v in body.updates.items()}
+            if "dashscope_base_url" in cleaned:
+                cleaned["dashscope_base_url"] = _normalize_base_url(
+                    cleaned["dashscope_base_url"], field="DashScope Base URL",
+                )
+            await self._tm.set_configs(cleaned)
             saved = await self._tm.get_all_config()
+
+            if "dashscope_api_key" in cleaned or "dashscope_base_url" in cleaned:
+                key = saved.get("dashscope_api_key", "")
+                base_url = saved.get("dashscope_base_url", "") or None
+                if self._client is not None:
+                    await self._client.close()
+                    self._client = None
+                if key:
+                    self._client = DashScopeClient(key, base_url=base_url)
             return {"ok": True, "config": saved}
 
         @router.get("/models")

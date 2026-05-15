@@ -1,9 +1,8 @@
 """L2 Component Tests: RetrievalEngine multi-way recall + reranking."""
 
 import pytest
-from datetime import datetime
 
-from openakita.memory.retrieval import RetrievalEngine
+from openakita.memory.retrieval import MemoryQueryPreprocessor, RetrievalEngine
 from openakita.memory.types import Episode, MemoryType, SemanticMemory
 from openakita.memory.unified_store import UnifiedStore
 
@@ -66,6 +65,24 @@ class TestRetrievalEngine:
         candidates = engine.retrieve_candidates("Python", limit=10)
         assert isinstance(candidates, list)
 
+    def test_preprocessor_strips_injected_memory_blocks(self):
+        prepared = MemoryQueryPreprocessor.prepare(
+            "当前问题\n## 相关记忆（自动检索）\n- 用户喜欢旧方案\n## 其他\n这个文件继续改"
+        )
+        assert "用户喜欢旧方案" not in prepared.query
+        assert not prepared.skip
+
+    def test_retrieval_gate_skips_control_only(self):
+        prepared = MemoryQueryPreprocessor.prepare("好的")
+        assert prepared.skip
+
+    def test_retrieval_gate_keeps_short_reference_with_context(self):
+        prepared = MemoryQueryPreprocessor.prepare(
+            "这个文件",
+            recent_messages=[{"role": "user", "content": "src/openakita/memory/retrieval.py"}],
+        )
+        assert not prepared.skip
+
     def test_retrieve_with_recent_messages(self, populated_store):
         engine = RetrievalEngine(populated_store)
         recent = [
@@ -91,6 +108,23 @@ class TestRetrievalEngine:
             RetrievalCandidate(
                 memory_id="b", content="high", relevance=0.9,
                 recency_score=0.8, importance_score=0.9, access_frequency_score=0.5,
+            ),
+        ]
+        ranked = engine._rerank(candidates, "test")
+        assert ranked[0].memory_id == "b"
+
+    def test_focus_terms_boost_sorting_only(self, engine):
+        from openakita.memory.retrieval import RetrievalCandidate
+
+        engine.set_focus_terms(["retrieval.py"])
+        candidates = [
+            RetrievalCandidate(
+                memory_id="a", content="unrelated", relevance=0.7,
+                recency_score=0.3, importance_score=0.3, access_frequency_score=0.1,
+            ),
+            RetrievalCandidate(
+                memory_id="b", content="retrieval.py current task", relevance=0.68,
+                recency_score=0.3, importance_score=0.3, access_frequency_score=0.1,
             ),
         ]
         ranked = engine._rerank(candidates, "test")

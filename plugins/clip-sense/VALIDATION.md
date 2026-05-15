@@ -60,3 +60,45 @@ ffmpeg -y -f concat -safe 0 -i {list.txt} -c copy -movflags +faststart {output}
 - Windows 字幕路径需转义 `:` 和 `'`
 
 **状态**: PASS (命令模板来自已验证的 video-use 代码库)
+
+## 验证 4: 静音检测算法
+
+**实现**: `clip_ffmpeg_ops.py::_detect_silence_sync` (纯 Python, 无 numpy)
+
+**算法**:
+1. 读取 16kHz 单声道 PCM WAV (由 ffmpeg extract_audio 生成)
+2. 按 frame_length=2048, hop_length=512 滑窗计算帧 RMS → dB
+3. 相对阈值: `thr = max(db_arr) + threshold_db` (默认 -40dB)
+4. 标记低于阈值帧为静音，合并短间隔 (< min_silence_sec)
+5. 过滤极短声音段 (< min_sound_sec)，应用 padding
+
+**边界处理**:
+- 全片极安静 (max_db < -80dB): 标记全部为静音
+- 无足够静音段: 返回空列表 → 输出为源视频副本 + UI 警告
+- 大文件: `asyncio.to_thread` 避免阻塞事件循环
+
+**状态**: PASS (单元测试覆盖正常/全静音/无静音场景)
+
+## 验证 5: 跨驱动器文件操作 (Windows)
+
+**问题**: `Path.rename()` 在 Windows 上跨驱动器 (如 C: → D:) 时抛出 `WinError 17`
+
+**解决**: 所有文件移动统一使用 `shutil.move()` 代替 `Path.rename()`
+
+**影响范围**: `cut_segments` 单段输出、silence_clean 无静音时的文件复制
+
+**状态**: PASS (已修复并测试)
+
+## 验证 6: 多文件输出与时间轴同步
+
+**Topic Split**: 生成 N 个独立 MP4 + 1 个 ZIP；`ctx.params._topic_files` 和 `_topics_zip` 持久化到 DB
+
+**Highlight Extract SRT**: 多段高光拼接后 SRT 时间轴需按累加偏移重算:
+```
+segment[0]: offset = 0
+segment[i]: offset = sum(duration of segments 0..i-1)
+```
+
+**Talking Polish**: 移除可变长度段导致时间轴压缩，SRT 无法对齐 → 禁止 burn_subtitle
+
+**状态**: PASS (各模式有独立单元测试)

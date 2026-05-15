@@ -9,6 +9,7 @@ Session 代表一个独立的对话上下文，包含:
 """
 
 import logging
+import re
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -149,6 +150,9 @@ class SessionContext:
     # Task checkpoints — emitted by reasoning_engine.reason_stream for resume / timeline
     # 上限由 append_task_checkpoint 控制，避免长会话无限增长。
     task_checkpoints: list[dict] = field(default_factory=list)
+    focus_terms: list[str] = field(default_factory=list)
+    focus_updated_at: str | None = None
+    precompact_snapshot: dict[str, Any] = field(default_factory=dict)
     _msg_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     _DEDUP_TIME_WINDOW_SECONDS = 30
@@ -189,7 +193,66 @@ class SessionContext:
                     **metadata,
                 }
             )
+            if role == "user" and content:
+                self.update_focus_terms(content)
             return True
+
+    _FOCUS_FILE_RE = re.compile(
+        r"(?:[A-Za-z]:[\\/][^\s\"'<>|]+|[\w./\\-]+\.(?:py|ts|tsx|js|jsx|md|json|yaml|yml|toml|rs|go))"
+    )
+    _FOCUS_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}|[\u4e00-\u9fff]{2,12}")
+    _FOCUS_STOP_WORDS = {
+        "帮我",
+        "这个",
+        "那个",
+        "一下",
+        "继续",
+        "看看",
+        "请问",
+        "如何",
+        "怎么",
+        "需要",
+        "实现",
+        "修改",
+        "the",
+        "and",
+        "for",
+        "with",
+    }
+
+    def update_focus_terms(self, content: str, *, max_terms: int = 12) -> None:
+        """Update lightweight session focus terms; never writes long-term memory."""
+        text = content.strip()
+        if not text:
+            return
+        if len(self.messages) - self.current_topic_start <= 1:
+            self.focus_terms = []
+
+        candidates: list[str] = []
+        candidates.extend(m.group(0).strip(".,，。;；") for m in self._FOCUS_FILE_RE.finditer(text))
+        for match in self._FOCUS_WORD_RE.finditer(text):
+            term = match.group(0).strip()
+            if len(term) < 2 or term.lower() in self._FOCUS_STOP_WORDS:
+                continue
+            if (
+                any(ch.isupper() for ch in term)
+                or "_" in term
+                or "-" in term
+                or "/" in term
+                or any(
+                    keyword in term
+                    for keyword in ("任务", "记忆", "权限", "审计", "会话", "路径", "压缩", "队列")
+                )
+            ):
+                candidates.append(term)
+
+        merged: list[str] = []
+        for term in [*candidates, *self.focus_terms]:
+            if term and term not in merged:
+                merged.append(term)
+        self.focus_terms = merged[:max_terms]
+        if candidates:
+            self.focus_updated_at = datetime.now().isoformat()
 
     def mark_topic_boundary(self) -> None:
         """在当前消息位置标记话题边界。
@@ -199,6 +262,8 @@ class SessionContext:
         boundary_idx = len(self.messages)
         self.topic_boundaries.append(boundary_idx)
         self.current_topic_start = boundary_idx
+        self.focus_terms = []
+        self.focus_updated_at = datetime.now().isoformat()
 
     def get_current_topic_messages(self) -> list[dict]:
         """获取当前话题的消息（从最后一个边界开始）。"""
@@ -291,6 +356,9 @@ class SessionContext:
             "delegation_chain": self.delegation_chain,
             "sub_agent_records": self.sub_agent_records,
             "task_checkpoints": self.task_checkpoints,
+            "focus_terms": self.focus_terms,
+            "focus_updated_at": self.focus_updated_at,
+            "precompact_snapshot": self.precompact_snapshot,
         }
 
     @classmethod
@@ -312,6 +380,9 @@ class SessionContext:
             delegation_chain=data.get("delegation_chain", []),
             sub_agent_records=data.get("sub_agent_records", []),
             task_checkpoints=data.get("task_checkpoints", []),
+            focus_terms=data.get("focus_terms", []),
+            focus_updated_at=data.get("focus_updated_at"),
+            precompact_snapshot=data.get("precompact_snapshot", {}),
         )
 
 
@@ -330,6 +401,7 @@ class Session:
     channel: str  # 来源通道
     chat_id: str  # 聊天 ID（群/私聊）
     user_id: str  # 用户 ID
+    bot_instance_id: str = ""  # 机器人实例 ID（为空时兼容旧数据，回退 channel）
     thread_id: str | None = None  # 话题/线程 ID（飞书话题等）
     chat_type: str = "private"  # "group" | "private"
     display_name: str = ""  # 用户昵称（用于 UI 展示）
@@ -349,12 +421,41 @@ class Session:
     # 元数据
     metadata: dict = field(default_factory=dict)
 
+    # PolicyV2 正交两层 mode（C8 §2.2 新增）
+    # ``session_role``: SessionRole 枚举字符串 ("agent" / "plan" / "ask" / "coordinator")
+    # ``confirmation_mode_override``: 若非 None，覆盖全局 ConfirmationMode（"default"
+    # / "trust" / "strict" / "accept_edits" / "dont_ask"）。switch_mode 工具写入
+    # ``session_role``；UI/handler 后续可对个别 session 单独覆盖 confirmation_mode。
+    # 用 ``str`` 而非 ``Enum`` 是为了让旧 sessions.json（无字段）反序列化时可
+    # ``getattr(session, "session_role", "agent")`` 兼容；adapter.build_policy_context
+    # 把字符串 coerce 回 SessionRole 枚举。
+    session_role: str = "agent"
+    confirmation_mode_override: str | None = None
+
+    # C12 §14.2: PolicyV2 unattended fields. Promoted from `metadata` to
+    # first-class fields so scheduler / spawn_agent / webhook callers can set
+    # them at session creation without metadata fishing. PolicyContext.from_session
+    # reads first-class fields when present (with metadata fallback for
+    # back-compat with sessions persisted before C12).
+    #
+    # ``is_unattended``: True for sessions where no human is interactively
+    # responding (cron task / webhook / autonomous spawn). PolicyEngineV2
+    # step 11 routes through ``_handle_unattended`` only when this is True.
+    #
+    # ``unattended_strategy``: empty → engine uses
+    # ``config.unattended.default_strategy`` ("ask_owner" by default).
+    # Explicit values: "deny" / "auto_approve" / "defer_to_owner" /
+    # "defer_to_inbox" / "ask_owner".  Per-session override of config default.
+    is_unattended: bool = False
+    unattended_strategy: str = ""
+
     @classmethod
     def create(
         cls,
         channel: str,
         chat_id: str,
         user_id: str,
+        bot_instance_id: str = "",
         thread_id: str | None = None,
         config: SessionConfig | None = None,
         chat_type: str = "private",
@@ -370,6 +471,7 @@ class Session:
             channel=channel,
             chat_id=chat_id,
             user_id=user_id,
+            bot_instance_id=bot_instance_id or channel,
             thread_id=thread_id,
             chat_type=chat_type,
             display_name=display_name,
@@ -471,7 +573,8 @@ class Session:
     @property
     def session_key(self) -> str:
         """会话唯一标识"""
-        key = f"{self.channel}:{self.chat_id}:{self.user_id}"
+        namespace = self.bot_instance_id or self.channel
+        key = f"{namespace}:{self.chat_id}:{self.user_id}"
         if self.thread_id:
             key += f":{self.thread_id}"
         return key
@@ -682,6 +785,7 @@ class Session:
         return {
             "id": self.id,
             "channel": self.channel,
+            "bot_instance_id": self.bot_instance_id or self.channel,
             "chat_id": self.chat_id,
             "user_id": self.user_id,
             "thread_id": self.thread_id,
@@ -701,6 +805,10 @@ class Session:
                 "auto_summarize": self.config.auto_summarize,
             },
             "metadata": serializable_metadata,
+            "session_role": self.session_role,
+            "confirmation_mode_override": self.confirmation_mode_override,
+            "is_unattended": self.is_unattended,
+            "unattended_strategy": self.unattended_strategy,
         }
 
     def _is_json_serializable(self, value: Any) -> bool:
@@ -717,9 +825,22 @@ class Session:
     def from_dict(cls, data: dict) -> "Session":
         """反序列化"""
         config_data = data.get("config", {})
+        # C8: session_role / confirmation_mode_override 旧 sessions.json 没有，
+        # 走默认 "agent" / None。读取时容错任意非法值（None/类型错） → 默认。
+        sr_raw = data.get("session_role", "agent")
+        session_role = sr_raw if isinstance(sr_raw, str) and sr_raw else "agent"
+        cm_raw = data.get("confirmation_mode_override")
+        confirmation_mode_override = cm_raw if isinstance(cm_raw, str) and cm_raw else None
+        # C12 §14.2: is_unattended / unattended_strategy. 旧 sessions.json 没有
+        # → 默认 False / "" (= use config.unattended.default_strategy)
+        is_unattended_raw = data.get("is_unattended", False)
+        is_unattended = bool(is_unattended_raw) if is_unattended_raw is not None else False
+        us_raw = data.get("unattended_strategy", "")
+        unattended_strategy = us_raw if isinstance(us_raw, str) else ""
         return cls(
             id=data["id"],
             channel=data["channel"],
+            bot_instance_id=data.get("bot_instance_id") or data.get("channel", ""),
             chat_id=data["chat_id"],
             user_id=data["user_id"],
             thread_id=data.get("thread_id"),
@@ -739,4 +860,8 @@ class Session:
                 auto_summarize=config_data.get("auto_summarize", True),
             ),
             metadata=data.get("metadata", {}),
+            session_role=session_role,
+            confirmation_mode_override=confirmation_mode_override,
+            is_unattended=is_unattended,
+            unattended_strategy=unattended_strategy,
         )

@@ -43,6 +43,7 @@ async def test_default_config_seeded(tm):
     cfg = await tm.get_all_config()
     for key, default in DEFAULT_CONFIG.items():
         assert cfg.get(key) == default
+    assert cfg["ark_base_url"] == ""
 
 
 @pytest.mark.asyncio

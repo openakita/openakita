@@ -131,9 +131,10 @@ class OrgToolHandler:
                 if str(t.get("chain_id") or "").startswith(raw)
             ]
             if not matches:
-                return raw, (
-                    f"未找到任务链 {raw}。请使用交付消息里的完整 task_chain_id。"
-                )
+                # 兼容非 ProjectStore 场景（测试夹具、历史组织、外部工具直接
+                # 传入完整 chain_id）：找不到任务记录时保留原值继续验收。
+                # 缩短 ID 的歧义仍会在下方多候选分支报错。
+                return raw, None
 
             delivered = [t for t in matches if t.get("status") == "delivered"]
             candidates = delivered or matches
@@ -2032,6 +2033,30 @@ class OrgToolHandler:
                         "[ToolHandler] submit_deliverable skipped unregistrable "
                         "attachment: %s (file missing?)", fp,
                     )
+
+        # 工作台节点附件自动注入：当 LLM 没有显式声明 file_attachments
+        # （工作台节点的 prompt 也明确告知不需要声明），把本任务内由
+        # `runtime._record_plugin_asset_output` 钩子已经登记过的附件
+        # 直接挂到 TASK_DELIVERED 上。这样验收方既能在 TASK_DELIVERED
+        # 的 metadata.file_attachments 中看到清单，又能让 expects_artifact
+        # 验收路径找到附件 ≥ 1，避免被误判 INCOMPLETE。这些附件已经走过
+        # `_register_file_output`，不需要重复登记。
+        try:
+            plugin_buf = (
+                self._runtime._node_plugin_attachments_in_task.get(
+                    f"{org_id}:{node_id}"
+                ) or []
+            )
+        except Exception:
+            plugin_buf = []
+        if plugin_buf:
+            existing_paths = {a.get("file_path") for a in registered_attachments}
+            for att in plugin_buf:
+                fp = att.get("file_path")
+                if not fp or fp in existing_paths:
+                    continue
+                registered_attachments.append(dict(att))
+                existing_paths.add(fp)
 
         # 自动附件兜底：CPO/PM 这类不带 filesystem 工具的角色，常常把整段
         # markdown 长文塞进 deliverable 字段，前端只能看到聊天里一段长文，

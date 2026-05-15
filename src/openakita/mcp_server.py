@@ -143,8 +143,51 @@ class MCPServer:
             message = arguments.get("message", "")
             if not message:
                 return "Error: message is required"
-            response = await self._agent.chat(message)
-            return response
+            # C14 re-audit (D6): the MCP server is a stdin-based headless
+            # entry point (Claude Desktop / Cursor invokes us as a child
+            # process over stdio). Each ``openakita_chat`` invocation is
+            # non-interactive — there's no TTY, no SSE bus, no owner to
+            # respond to a ``security_confirm`` event. Install a
+            # ``is_unattended=True`` PolicyContext for the duration of
+            # the agent call so CONFIRM-class tools route through
+            # ``_handle_unattended`` → DeferredApprovalRequired (which the
+            # caller observes as a tool-result error) instead of hanging
+            # waiting for a user that will never arrive.
+            ctx_token = None
+            try:
+                from .core.policy_v2 import (
+                    build_policy_context,
+                    classify_entry,
+                    set_current_context,
+                )
+
+                cls = classify_entry("mcp", force_unattended=True)
+                mcp_ctx = build_policy_context(
+                    session_id="mcp_tool_openakita_chat",
+                    channel="mcp",
+                    is_unattended=cls.is_unattended,
+                    unattended_strategy=cls.default_strategy or "",
+                    user_message=message,
+                )
+                ctx_token = set_current_context(mcp_ctx)
+            except Exception as ctx_exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "[MCP] failed to install unattended PolicyContext: %s; "
+                    "agent.chat will use fallback ctx",
+                    ctx_exc,
+                )
+
+            try:
+                response = await self._agent.chat(message)
+                return response
+            finally:
+                if ctx_token is not None:
+                    try:
+                        from .core.policy_v2 import reset_current_context
+
+                        reset_current_context(ctx_token)
+                    except Exception:
+                        pass
 
         elif tool_name == "openakita_memory_search":
             query = arguments.get("query", "")

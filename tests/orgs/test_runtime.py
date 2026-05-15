@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from openakita.orgs.manager import OrgManager
 from openakita.orgs.runtime import OrgRuntime
-from openakita.orgs.models import NodeStatus, OrgProject, OrgStatus, ProjectTask, ProjectStatus, TaskStatus
-from openakita.orgs.project_store import ProjectStore
+from openakita.orgs.models import NodeStatus, OrgStatus
 from .conftest import make_org
 
 
@@ -250,7 +248,6 @@ class TestAutoKickoff:
         with patch("openakita.orgs.templates.ensure_builtin_templates"):
             await runtime.start()
         try:
-            from openakita.orgs.models import UserPersona
             org_data = make_org(name="投资项目").to_dict()
             org_data["core_business"] = "AI 研究"
             org_data["operation_mode"] = "autonomous"

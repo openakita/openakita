@@ -622,6 +622,7 @@ async def delete_chat_alias(
 # ─── Group Policy Management ─────────────────────────────────────────────
 
 _GROUP_POLICY_PATH = Path("data/sessions/group_policy.json")
+_OWNER_ALLOWLIST_PATH = Path("data/sessions/im_owner_allowlist.json")
 
 
 def _load_group_policy() -> dict:
@@ -640,6 +641,24 @@ def _save_group_policy(data: dict) -> None:
 
     _GROUP_POLICY_PATH.parent.mkdir(parents=True, exist_ok=True)
     atomic_json_write(_GROUP_POLICY_PATH, data)
+
+
+def _load_owner_allowlist() -> dict:
+    if _OWNER_ALLOWLIST_PATH.exists():
+        try:
+            import json
+
+            return json.loads(_OWNER_ALLOWLIST_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_owner_allowlist(data: dict) -> None:
+    from openakita.utils.atomic_io import atomic_json_write
+
+    _OWNER_ALLOWLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    atomic_json_write(_OWNER_ALLOWLIST_PATH, data)
 
 
 @router.get("/api/im/group-policy")
@@ -707,6 +726,73 @@ async def set_group_policy(request: Request, body: GroupPolicyRequest):
     _save_group_policy(policy_data)
 
     _notify_im_event("im:group_policy_changed", {"channel": body.channel, "mode": body.mode})
+    return JSONResponse(content={"ok": True})
+
+
+# ─── IM Owner Allowlist (C8 §9.2) ─────────────────────────────────────
+
+
+@router.get("/api/im/owner-allowlist")
+async def get_owner_allowlist(request: Request, channel: str = Query("")):
+    """Return the IM owner user_id allowlist for a channel.
+
+    语义见 ``MessageGateway._get_owner_user_ids``：``configured=False`` 表示
+    该渠道未配 allowlist（PolicyContext 默认 ``is_owner=True``，向后兼容
+    单用户私聊）；``configured=True`` 时只有 ``owners`` 内的 user_id 在
+    PolicyContext 里得到 ``is_owner=True``，其余一律 False。
+    """
+    gateway = _get_gateway(request)
+    if gateway is None or not channel:
+        return JSONResponse(content={"channel": channel, "configured": False, "owners": []})
+    owners_set = gateway._get_owner_user_ids(channel)
+    if owners_set is None:
+        return JSONResponse(content={"channel": channel, "configured": False, "owners": []})
+    return JSONResponse(
+        content={"channel": channel, "configured": True, "owners": sorted(owners_set)}
+    )
+
+
+class OwnerAllowlistRequest(BaseModel):
+    channel: str
+    owners: list[str] | None = None
+    """``None`` → 显式取消 allowlist 配置（恢复"未配 allowlist"语义）；
+    ``[]`` → 显式锁定 owner 为空集（CONTROL_PLANE 工具全员被拒）；
+    非空 list → 设置 owner allowlist。"""
+
+
+@router.post("/api/im/owner-allowlist")
+async def set_owner_allowlist(request: Request, body: OwnerAllowlistRequest):
+    """Update IM owner user_id allowlist (runtime + persisted)."""
+    gateway = _get_gateway(request)
+    if gateway is None:
+        return JSONResponse(status_code=500, content={"error": "gateway not available"})
+
+    adapter = gateway._adapters.get(body.channel)
+    if adapter is not None:
+        if body.owners is None:
+            if hasattr(adapter, "_owner_user_ids"):
+                try:
+                    delattr(adapter, "_owner_user_ids")
+                except AttributeError:
+                    adapter._owner_user_ids = None
+        else:
+            adapter._owner_user_ids = {str(uid) for uid in body.owners}
+
+    policy_data = _load_owner_allowlist()
+    if body.owners is None:
+        policy_data.pop(body.channel, None)
+    else:
+        policy_data[body.channel] = {"owners": [str(uid) for uid in body.owners]}
+    _save_owner_allowlist(policy_data)
+
+    _notify_im_event(
+        "im:owner_allowlist_changed",
+        {
+            "channel": body.channel,
+            "configured": body.owners is not None,
+            "count": len(body.owners or []),
+        },
+    )
     return JSONResponse(content={"ok": True})
 
 

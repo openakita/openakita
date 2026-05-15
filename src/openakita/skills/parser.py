@@ -82,6 +82,12 @@ class SkillMetadata:
     name_i18n: dict[str, str] = field(default_factory=dict)
     description_i18n: dict[str, str] = field(default_factory=dict)
 
+    # C10：技能自报 ApprovalClass（policy_v2.ApprovalClass enum value，全小写）。
+    # canonical 字段名为 ``approval_class``；保留 ``risk_class`` 作 alias 一次性
+    # 接受 + WARN（plan §4.21.4 早期措辞）。值非法时降级为 None + WARN，决策回到
+    # handler / 启发式回退（与 v1 行为完全一致），不会破坏既有技能。
+    approval_class: str | None = None
+
     def get_display_name(self, lang: str = "zh") -> str:
         """按语言返回显示名称，找不到则回退到 name"""
         return self.name_i18n.get(lang, self.name)
@@ -413,6 +419,8 @@ class SkillParser:
             [str(t) for t in fbt_raw] if isinstance(fbt_raw, list) else []
         )
 
+        approval_class = self._parse_approval_class(data, path)
+
         return SkillMetadata(
             name=name,
             description=description.strip(),
@@ -442,7 +450,68 @@ class SkillParser:
             hooks=hooks,
             model=model if isinstance(model, str) else None,
             fallback_for_toolsets=fallback_for_toolsets,
+            approval_class=approval_class,
         )
+
+    @staticmethod
+    def _parse_approval_class(data: dict, path: Path) -> str | None:
+        """Parse ``approval_class`` (canonical) or ``risk_class`` (alias) frontmatter.
+
+        Behaviour:
+        - Both fields present and equal → return canonical (no warn).
+        - Both fields present and different → use ``approval_class``, WARN once.
+        - Only ``risk_class`` → accept as alias, WARN once (deprecation hint).
+        - Value not in :class:`ApprovalClass` enum → WARN, return ``None``
+          (classifier falls back to handler / heuristic, preserving v1 behaviour).
+        - Missing → ``None`` (no warn — vast majority of legacy SKILL.md).
+        """
+        canonical = data.get("approval_class") or data.get("approval-class")
+        alias = data.get("risk_class") or data.get("risk-class")
+
+        chosen: str | None = None
+        if canonical is not None and alias is not None and str(canonical) != str(alias):
+            logger.warning(
+                "SKILL.md %s declares both 'approval_class=%s' and 'risk_class=%s'; "
+                "using approval_class (canonical)",
+                path,
+                canonical,
+                alias,
+            )
+            chosen = str(canonical)
+        elif canonical is not None:
+            chosen = str(canonical)
+        elif alias is not None:
+            logger.warning(
+                "SKILL.md %s uses deprecated 'risk_class' field; rename to "
+                "'approval_class' to silence this warning",
+                path,
+            )
+            chosen = str(alias)
+        else:
+            return None
+
+        chosen = chosen.strip().lower()
+        if not chosen:
+            return None
+
+        # Validate against ApprovalClass enum lazily to avoid cycle at import time.
+        try:
+            from ..core.policy_v2.enums import ApprovalClass
+
+            valid = {c.value for c in ApprovalClass}
+        except Exception:
+            return chosen
+
+        if chosen not in valid:
+            logger.warning(
+                "SKILL.md %s declares unknown approval_class=%r; valid values are %s. "
+                "Falling back to handler/heuristic classification.",
+                path,
+                chosen,
+                sorted(valid),
+            )
+            return None
+        return chosen
 
     def parse_directory(self, skill_dir: Path) -> ParsedSkill:
         """

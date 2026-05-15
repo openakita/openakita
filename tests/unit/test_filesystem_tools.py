@@ -25,11 +25,28 @@ def file_tool(tmp_path):
 
 
 @pytest.fixture
-def handler(tmp_path):
+def handler(tmp_path, monkeypatch):
     """FilesystemHandler backed by a minimal mock Agent."""
+    class _Workspace:
+        paths = [str(tmp_path)]
+
+    class _Profile:
+        current = "protect"
+
+    class _Config:
+        enabled = True
+        workspace = _Workspace()
+        profile = _Profile()
+
+    monkeypatch.setattr(
+        "openakita.core.policy_v2.get_config_v2",
+        lambda: _Config(),
+    )
     agent = MagicMock()
     agent.file_tool = FileTool(base_path=str(tmp_path))
     agent.shell_tool = MagicMock()
+    agent.allowed_roots = [str(tmp_path)]
+    agent.default_cwd = str(tmp_path)
     return FilesystemHandler(agent)
 
 

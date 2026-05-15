@@ -99,6 +99,53 @@ class TestChatEndpoint:
         assert captured_kwargs["mode"] == "agent"
         assert captured_kwargs["plan_mode"] is False
 
+    async def test_chat_permission_mode_sets_policy_v2_session_override(self, client, app, tmp_path):
+        from openakita.sessions.manager import SessionManager
+
+        conversation_id = "test-conv-permission-mode"
+        app.state.session_manager = SessionManager(storage_path=tmp_path / "sessions")
+
+        resp = await client.post(
+            "/api/chat",
+            json={
+                "message": "Hello",
+                "conversation_id": conversation_id,
+                "permission_mode": "accept_edits",
+            },
+        )
+
+        assert resp.status_code == 200
+        session = app.state.session_manager.get_session(
+            channel="desktop",
+            chat_id=conversation_id,
+            user_id="user",
+            create_if_missing=False,
+        )
+        assert session is not None
+        assert session.confirmation_mode_override == "accept_edits"
+
+    async def test_chat_permission_mode_plan_uses_plan_role(self, client, mock_agent, monkeypatch):
+        captured_kwargs = {}
+
+        async def fake_stream(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            yield {"type": "text_delta", "content": "Hello from mock agent"}
+            yield {"type": "done"}
+
+        monkeypatch.setattr(mock_agent, "chat_with_session_stream", fake_stream)
+
+        resp = await client.post(
+            "/api/chat",
+            json={
+                "message": "Hello",
+                "conversation_id": "test-conv-permission-mode-plan",
+                "permission_mode": "plan",
+            },
+        )
+
+        assert resp.status_code == 200
+        assert captured_kwargs["mode"] == "plan"
+
     async def test_chat_empty_message(self, client):
         resp = await client.post(
             "/api/chat",
@@ -171,6 +218,277 @@ class TestChatEndpoint:
 
         assert resp.status_code == 200
         assert resp.json()["title"] == "你好"
+
+
+class TestChatSyncEndpoint:
+    """C14 / R4-6: non-SSE chat endpoint with 202+poll deferred-approval flow."""
+
+    async def test_sync_returns_completed_json(self, client, mock_agent, monkeypatch):
+        from openakita.api.routes import chat as chat_routes
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+        mock_agent.chat_with_session = AsyncMock(return_value="reply from agent")
+
+        resp = await client.post(
+            "/api/chat/sync",
+            json={"message": "Hello", "conversation_id": "sync-conv-1"},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert body["conversation_id"] == "sync-conv-1"
+        assert body["message"] == "reply from agent"
+        assert "request_id" in body
+        assert resp.headers.get("content-type", "").startswith("application/json")
+
+    async def test_sync_returns_202_on_deferred_approval(self, client, mock_agent, monkeypatch):
+        from openakita.api.routes import chat as chat_routes
+        from openakita.core.policy_v2 import DeferredApprovalRequired
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+
+        async def _raise_deferred(*_args, **_kwargs):
+            raise DeferredApprovalRequired(
+                "owner approval required",
+                pending_id="pending_abc123",
+                unattended_strategy="defer_to_inbox",
+            )
+
+        mock_agent.chat_with_session = _raise_deferred
+
+        resp = await client.post(
+            "/api/chat/sync",
+            json={"message": "rm -rf /", "conversation_id": "sync-conv-2"},
+        )
+
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body["status"] == "pending_approval"
+        assert body["approval_id"] == "pending_abc123"
+        assert body["approval_url"] == "/api/pending_approvals/pending_abc123"
+        assert body["resolve_url"] == "/api/pending_approvals/pending_abc123/resolve"
+        assert body["unattended_strategy"] == "defer_to_inbox"
+        # Location header for REST-style 202 + Location handoff
+        assert resp.headers.get("location") == "/api/pending_approvals/pending_abc123"
+
+    async def test_sync_empty_message_returns_400(self, client):
+        resp = await client.post(
+            "/api/chat/sync",
+            json={"message": "", "conversation_id": "sync-conv-3"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "empty_message"
+
+    async def test_sync_no_endpoints_returns_400(self, client, monkeypatch):
+        from openakita.api.routes import chat as chat_routes
+
+        monkeypatch.setattr(chat_routes, "_chat_endpoint_names", lambda: set())
+        resp = await client.post(
+            "/api/chat/sync",
+            json={"message": "Hello", "conversation_id": "sync-conv-4"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "no_chat_endpoints_configured"
+
+    async def test_sync_runtime_error_returns_503(self, client, mock_agent, monkeypatch):
+        from openakita.api.routes import chat as chat_routes
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+
+        async def _boom(*_args, **_kwargs):
+            raise RuntimeError("llm endpoint down")
+
+        mock_agent.chat_with_session = _boom
+
+        resp = await client.post(
+            "/api/chat/sync",
+            json={"message": "Hello", "conversation_id": "sync-conv-5"},
+        )
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["error"] == "chat_startup_failed"
+        assert body["stage"] == "chat_with_session"
+        assert body["retryable"] is True
+
+    async def test_sync_auto_generates_conversation_id(self, client, mock_agent, monkeypatch):
+        from openakita.api.routes import chat as chat_routes
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+        mock_agent.chat_with_session = AsyncMock(return_value="ok")
+
+        resp = await client.post("/api/chat/sync", json={"message": "Hi"})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["conversation_id"].startswith("api_sync_")
+
+    async def test_sync_returns_409_when_conversation_busy(
+        self, client, mock_agent, monkeypatch
+    ):
+        """C14 re-audit D5: concurrent sync on same conv_id must 409, not
+        race into chat_with_session and corrupt session state.
+
+        Pre-fix this test would either pass via accident (two parallel
+        completions interleaving) or assert race-condition behavior; with
+        the lifecycle.start lock the second caller deterministically gets
+        409 before chat_with_session is even reached.
+        """
+        import asyncio as _aio
+
+        from openakita.api.routes import chat as chat_routes
+        from openakita.api.routes.conversation_lifecycle import get_lifecycle_manager
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+
+        gate = _aio.Event()
+
+        async def _slow_chat(*_args, **_kwargs):
+            await gate.wait()
+            return "ok"
+
+        mock_agent.chat_with_session = _slow_chat
+
+        # Pre-acquire the lifecycle lock from a different "client" so the
+        # next request sees a conflict deterministically. This sidesteps
+        # the need to actually race two coroutines.
+        lifecycle = get_lifecycle_manager()
+        await lifecycle.start("sync-busy-conv", "external_client")
+
+        try:
+            resp = await client.post(
+                "/api/chat/sync",
+                json={"message": "Hi", "conversation_id": "sync-busy-conv"},
+            )
+            assert resp.status_code == 409, (
+                f"expected 409 (conversation_busy), got {resp.status_code}: "
+                f"{resp.text}"
+            )
+            body = resp.json()
+            assert body["error"] == "conversation_busy"
+            assert body["conversation_id"] == "sync-busy-conv"
+            assert body["busy_client_id"] == "external_client"
+        finally:
+            gate.set()
+            await lifecycle.finish("sync-busy-conv")
+
+    async def test_sync_releases_lifecycle_on_completion(
+        self, client, mock_agent, monkeypatch
+    ):
+        """C14 re-audit D5: a successful sync must release the busy-lock
+        so a follow-up call can proceed (no leak on happy path)."""
+        from openakita.api.routes import chat as chat_routes
+        from openakita.api.routes.conversation_lifecycle import get_lifecycle_manager
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+        mock_agent.chat_with_session = AsyncMock(return_value="reply")
+
+        resp1 = await client.post(
+            "/api/chat/sync",
+            json={"message": "first", "conversation_id": "sync-release-conv"},
+        )
+        assert resp1.status_code == 200
+
+        lifecycle = get_lifecycle_manager()
+        busy_status = await lifecycle.get_busy_status("sync-release-conv")
+        assert busy_status.get("busy") is False, (
+            "lifecycle.finish() must release the lock on happy path; "
+            f"got busy_status={busy_status}"
+        )
+
+        resp2 = await client.post(
+            "/api/chat/sync",
+            json={"message": "second", "conversation_id": "sync-release-conv"},
+        )
+        assert resp2.status_code == 200, (
+            "second call on same conv_id must succeed (lock released)"
+        )
+
+    async def test_sync_releases_lifecycle_on_error(
+        self, client, mock_agent, monkeypatch
+    ):
+        """C14 re-audit D5: exception path must also release the lock —
+        otherwise a single 5xx would permanently busy-out the conversation.
+        """
+        from openakita.api.routes import chat as chat_routes
+        from openakita.api.routes.conversation_lifecycle import get_lifecycle_manager
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+
+        async def _boom(*_args, **_kwargs):
+            raise RuntimeError("kaboom")
+
+        mock_agent.chat_with_session = _boom
+
+        resp = await client.post(
+            "/api/chat/sync",
+            json={"message": "x", "conversation_id": "sync-error-conv"},
+        )
+        assert resp.status_code == 503
+
+        lifecycle = get_lifecycle_manager()
+        busy_status = await lifecycle.get_busy_status("sync-error-conv")
+        assert busy_status.get("busy") is False, (
+            "lifecycle.finish() must run via finally even on error; "
+            f"got busy_status={busy_status}"
+        )
+
+    async def test_sync_releases_lifecycle_on_deferred_approval(
+        self, client, mock_agent, monkeypatch
+    ):
+        """C14 re-audit D5: 202 deferred path must also release the lock,
+        otherwise the conversation stays busy until process restart."""
+        from openakita.api.routes import chat as chat_routes
+        from openakita.api.routes.conversation_lifecycle import get_lifecycle_manager
+        from openakita.core.policy_v2 import DeferredApprovalRequired
+
+        async def fake_get_agent(*args, **kwargs):
+            return mock_agent
+
+        monkeypatch.setattr(chat_routes, "_get_agent_for_session", fake_get_agent)
+
+        async def _defer(*_args, **_kwargs):
+            raise DeferredApprovalRequired(
+                "needs owner",
+                pending_id="pending_xyz",
+                unattended_strategy="defer_to_inbox",
+            )
+
+        mock_agent.chat_with_session = _defer
+
+        resp = await client.post(
+            "/api/chat/sync",
+            json={"message": "delete db", "conversation_id": "sync-defer-conv"},
+        )
+        assert resp.status_code == 202
+
+        lifecycle = get_lifecycle_manager()
+        busy_status = await lifecycle.get_busy_status("sync-defer-conv")
+        assert busy_status.get("busy") is False, (
+            "lifecycle.finish() must run after 202 deferred path; "
+            f"got busy_status={busy_status}"
+        )
 
 
 class TestChatControlEndpoints:

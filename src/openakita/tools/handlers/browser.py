@@ -14,6 +14,14 @@
 - browser_list_tabs / browser_switch_tab / browser_new_tab: 标签页管理
 - browser_close: 关闭浏览器
 - view_image: 查看/分析本地图片
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import logging
@@ -22,6 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...agents.lock_manager import LockManager
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -78,6 +87,25 @@ class BrowserHandler:
         "browser_close",
         "view_image",
     ]
+
+    # C7 explicit ApprovalClass — 浏览器是真实执行环境，写入 cookie / 执行 JS
+    # 都属于 EXEC_CAPABLE；只读类（截图/列 tab）归 READONLY_GLOBAL
+    TOOL_CLASSES = {
+        "browser_open": ApprovalClass.EXEC_CAPABLE,
+        "browser_navigate": ApprovalClass.EXEC_CAPABLE,
+        "browser_click": ApprovalClass.EXEC_CAPABLE,
+        "browser_type": ApprovalClass.EXEC_CAPABLE,
+        "browser_scroll": ApprovalClass.EXEC_LOW_RISK,
+        "browser_wait": ApprovalClass.EXEC_LOW_RISK,
+        "browser_execute_js": ApprovalClass.EXEC_CAPABLE,
+        "browser_get_content": ApprovalClass.READONLY_GLOBAL,
+        "browser_screenshot": ApprovalClass.READONLY_GLOBAL,
+        "browser_list_tabs": ApprovalClass.READONLY_GLOBAL,
+        "browser_switch_tab": ApprovalClass.EXEC_LOW_RISK,
+        "browser_new_tab": ApprovalClass.EXEC_LOW_RISK,
+        "browser_close": ApprovalClass.EXEC_LOW_RISK,
+        "view_image": ApprovalClass.READONLY_GLOBAL,
+    }
 
     # browser_get_content 默认最大字符数
     CONTENT_DEFAULT_MAX_LENGTH = 32000

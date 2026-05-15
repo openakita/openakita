@@ -56,6 +56,9 @@ _PACKAGE_MODULE_MAP: dict[str, tuple[str | None, str | None, str]] = {
     # -- 向量记忆 --
     "sentence_transformers": ("vector-memory", "向量记忆增强", "sentence-transformers"),
     "chromadb": ("vector-memory", "向量记忆增强", "chromadb"),
+    # -- Whisper 语音识别 --
+    "whisper": ("whisper", "Whisper 语音识别", "openai-whisper"),
+    "static_ffmpeg": ("whisper", "Whisper 语音识别", "static-ffmpeg"),
     # -- IM 通道适配器 (已直接打包) --
     "lark_oapi": (None, None, "lark-oapi"),
     "dingtalk_stream": (None, None, "dingtalk-stream"),

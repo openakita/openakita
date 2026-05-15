@@ -28,6 +28,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { EnvMap, PlatformInfo, WorkspaceSummary, ViewId } from "../types";
 
+const SHOW_EXTENSIONS_CARD = false;
+
 export interface AdvancedViewProps {
   envDraft: EnvMap;
   setEnvDraft: React.Dispatch<React.SetStateAction<EnvMap>>;
@@ -882,7 +884,9 @@ export function AdvancedView(props: AdvancedViewProps) {
       </div>
 
       {/* ── Card 5: 外部扩展模块 ── */}
-      <ExtensionsCard shouldUseHttpApi={shouldUseHttpApi} httpApiBase={httpApiBase} />
+      {SHOW_EXTENSIONS_CARD && (
+        <ExtensionsCard shouldUseHttpApi={shouldUseHttpApi} httpApiBase={httpApiBase} />
+      )}
 
       {/* ── Card 6: 系统信息与运维 ── */}
       <div className="card" style={{ marginTop: 10 }}>

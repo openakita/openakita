@@ -26,6 +26,13 @@ from ppt_layouts import describe_layouts_for_prompt, fill_required, layout_for
 from ppt_maker_inline.file_utils import ensure_dir, safe_name
 from ppt_maker_inline.llm_json_parser import parse_llm_json_object
 from ppt_models import ChartType, DeckMode, SlideType
+from ppt_generation_models import (
+    ContextPack,
+    DesignSystem,
+    GenerationBrief,
+    SlideSpec,
+    StoryPlan,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 T = TypeVar("T", bound=BaseModel)
@@ -158,6 +165,12 @@ class SlideIrDraft(BaseModel):
 
     slides: list[dict[str, Any]]
     audit_notes: list[str] = Field(default_factory=list)
+
+
+class SlideSpecDraft(BaseModel):
+    model_config = _strict_model()
+
+    slides: list[SlideSpec]
 
 
 class RewriteSlideDraft(BaseModel):
@@ -695,6 +708,153 @@ Design spec: {json.dumps(design_spec, ensure_ascii=False)}
             model=SlideIrDraft,
             project_id=project_id,
         )
+
+    # ── Generation v2 orchestration helpers ───────────────────────────
+
+    async def normalize_brief(
+        self,
+        *,
+        raw_brief: dict[str, Any],
+        project_id: str | None = None,
+    ) -> GenerationBrief:
+        prompt = f"""
+Normalize this presentation request into a stable generation brief.
+Return strict JSON matching the schema.
+Raw brief:
+{json.dumps(raw_brief, ensure_ascii=False)}
+
+Schema:
+{json.dumps(GenerationBrief.model_json_schema(), ensure_ascii=False)}
+"""
+        return await self._call_json(
+            label="brief_normalization",
+            prompt=prompt,
+            model=GenerationBrief,
+            project_id=project_id,
+        )
+
+    async def distill_context_pack(
+        self,
+        *,
+        project_id_value: str,
+        context_markdown: str,
+        table_insights: dict[str, Any] | None = None,
+        chart_specs: list[dict[str, Any]] | None = None,
+        brand_tokens: dict[str, Any] | None = None,
+        project_id: str | None = None,
+    ) -> ContextPack:
+        prompt = f"""
+Distill source material into a compact context pack for presentation generation.
+Return strict JSON matching the schema. Keep facts grounded in the source.
+
+Project id: {project_id_value}
+Source material:
+{context_markdown[:16000]}
+
+Table insights:
+{json.dumps(table_insights or {}, ensure_ascii=False)}
+
+Chart specs:
+{json.dumps(chart_specs or [], ensure_ascii=False)}
+
+Brand tokens:
+{json.dumps(brand_tokens or {}, ensure_ascii=False)}
+
+Schema:
+{json.dumps(ContextPack.model_json_schema(), ensure_ascii=False)}
+"""
+        return await self._call_json(
+            label="context_pack",
+            prompt=prompt,
+            model=ContextPack,
+            project_id=project_id,
+        )
+
+    async def plan_story(
+        self,
+        *,
+        brief: dict[str, Any],
+        context_pack: dict[str, Any],
+        project_id: str | None = None,
+    ) -> StoryPlan:
+        prompt = f"""
+Create a slide-by-slide story plan for this deck.
+Use conclusion-first titles when the audience is executive/business.
+
+Brief:
+{json.dumps(brief, ensure_ascii=False)}
+
+Context pack:
+{json.dumps(context_pack, ensure_ascii=False)[:16000]}
+
+Schema:
+{json.dumps(StoryPlan.model_json_schema(), ensure_ascii=False)}
+"""
+        return await self._call_json(
+            label="story_plan",
+            prompt=prompt,
+            model=StoryPlan,
+            project_id=project_id,
+        )
+
+    async def generate_design_system_v2(
+        self,
+        *,
+        brief: dict[str, Any],
+        brand_tokens: dict[str, Any] | None = None,
+        project_id: str | None = None,
+    ) -> DesignSystem:
+        prompt = f"""
+Create a coherent presentation design system.
+Return strict JSON matching the schema. Prefer editable PPTX-friendly styling.
+
+Brief:
+{json.dumps(brief, ensure_ascii=False)}
+
+Brand tokens:
+{json.dumps(brand_tokens or {}, ensure_ascii=False)}
+
+Schema:
+{json.dumps(DesignSystem.model_json_schema(), ensure_ascii=False)}
+"""
+        return await self._call_json(
+            label="design_system_v2",
+            prompt=prompt,
+            model=DesignSystem,
+            project_id=project_id,
+        )
+
+    async def generate_slide_specs(
+        self,
+        *,
+        story_plan: dict[str, Any],
+        design_system: dict[str, Any],
+        layout_catalog: dict[str, Any],
+        project_id: str | None = None,
+    ) -> list[SlideSpec]:
+        prompt = f"""
+Generate slide specs from the story plan and layout catalog.
+Pick layout_id values from the catalog when possible. Return strict JSON.
+
+Story plan:
+{json.dumps(story_plan, ensure_ascii=False)}
+
+Design system:
+{json.dumps(design_system, ensure_ascii=False)}
+
+Layout catalog:
+{json.dumps(layout_catalog, ensure_ascii=False)[:14000]}
+
+Schema:
+{json.dumps(SlideSpecDraft.model_json_schema(), ensure_ascii=False)}
+"""
+        draft = await self._call_json(
+            label="slide_specs",
+            prompt=prompt,
+            model=SlideSpecDraft,
+            project_id=project_id,
+        )
+        return draft.slides
 
     async def rewrite_slide(
         self,

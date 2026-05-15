@@ -242,12 +242,21 @@ _global_checkpoint_mgr: CheckpointManager | None = None
 
 
 def get_checkpoint_manager() -> CheckpointManager:
+    """Return the lazily-constructed global CheckpointManager.
+
+    C8b-2: 改读 ``policy_v2.CheckpointConfig``。v2 schema 同名同字段（v1
+    ``checkpoint.snapshot_dir`` / ``checkpoint.max_snapshots``），无需 inline
+    rename。``loader.migrate_v1_to_v2`` 已确保 v1 YAML 自动透传过来。
+
+    fail-safe：v2 加载异常 → 退化到 ``CheckpointManager()`` 默认（与 v1 同
+    行为）。
+    """
     global _global_checkpoint_mgr
     if _global_checkpoint_mgr is None:
         try:
-            from .policy import get_policy_engine
+            from .policy_v2.global_engine import get_config_v2
 
-            cfg = get_policy_engine().config.checkpoint
+            cfg = get_config_v2().checkpoint
             _global_checkpoint_mgr = CheckpointManager(
                 snapshot_dir=cfg.snapshot_dir,
                 max_snapshots=cfg.max_snapshots,

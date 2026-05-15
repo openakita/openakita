@@ -181,6 +181,9 @@ class ToolExecutor:
         self._handler_registry = handler_registry
         self._agent_ref: Any = None  # set by Agent after construction
         self._plugin_hooks: Any = None  # HookRegistry, set by Agent after construction
+        # C10: PluginManager set by Agent.late_wire — needed for
+        # mutates_params authorization in on_before_tool_use audit.
+        self._plugin_manager: Any = None
 
         # 并行控制
         self._semaphore = asyncio.Semaphore(max(1, max_parallel))
@@ -477,14 +480,134 @@ class ToolExecutor:
         return await self._execute_tool_impl(tool_name, tool_input)
 
     async def _dispatch_hook(self, hook_name: str, **kwargs) -> None:
-        """Fire a plugin hook if a HookRegistry is attached. Never raises."""
+        """Fire a plugin hook if a HookRegistry is attached. Never raises.
+
+        ``on_before_tool_use`` 走 :meth:`_dispatch_before_tool_use_hook` 走专门
+        的 mutates_params 审计 + revert 路径（C10 / R2-12）。其他 hook 透传。
+        """
         hooks = self._plugin_hooks
         if hooks is None:
+            return
+        if hook_name == "on_before_tool_use":
+            await self._dispatch_before_tool_use_hook(**kwargs)
             return
         try:
             await hooks.dispatch(hook_name, **kwargs)
         except Exception as e:
             logger.debug(f"[ToolExecutor] {hook_name} hook error (ignored): {e}")
+
+    async def _dispatch_before_tool_use_hook(
+        self, *, tool_name: str, tool_input: Any
+    ) -> None:
+        """C10：on_before_tool_use 专用 dispatch + R2-12 强制审计。
+
+        步骤：
+        1. 用 ``ParamMutationAuditor.snapshot`` deep-copy 一份 ``tool_input``。
+        2. 派发 hook（HookRegistry 现状为并行 ``asyncio.gather``）。
+        3. diff before vs after：无差异 → 跳过审计静默返回。
+        4. 收集 ``on_before_tool_use`` 注册的 plugin_id 列表作为 attribution
+           候选。
+        5. 任一候选 plugin 在 ``manifest.mutates_params`` 列出该 tool → ``allowed``，
+           否则 ``revert``。
+        6. 写 jsonl 审计；revert 时把 ``tool_input`` 原地恢复为 snapshot。
+
+        所有异常都吃掉只 WARN——hook / 审计绝不能阻止 tool 执行。
+        """
+        hooks = self._plugin_hooks
+        if hooks is None:
+            return
+
+        from .policy_v2.param_mutation_audit import get_default_auditor
+
+        auditor = get_default_auditor()
+        before_snapshot = auditor.snapshot(tool_input)
+
+        try:
+            await hooks.dispatch(
+                "on_before_tool_use", tool_name=tool_name, tool_input=tool_input
+            )
+        except Exception as e:
+            logger.debug(
+                f"[ToolExecutor] on_before_tool_use hook error (ignored): {e}"
+            )
+
+        if not isinstance(tool_input, dict):
+            # Hook 不会原地改非 dict，diff 没意义
+            return
+
+        candidate_plugin_ids: list[str] = []
+        try:
+            for cb in hooks.get_hooks("on_before_tool_use"):
+                pid = getattr(cb, "__plugin_id__", "") or ""
+                if pid and pid not in candidate_plugin_ids:
+                    candidate_plugin_ids.append(pid)
+        except Exception as exc:
+            logger.debug(
+                "[ToolExecutor] failed to enumerate on_before_tool_use callbacks: %s",
+                exc,
+            )
+
+        plugin_manager = getattr(self, "_plugin_manager", None)
+        if plugin_manager is not None and hasattr(
+            plugin_manager, "plugin_allows_param_mutation"
+        ):
+            is_authorized = plugin_manager.plugin_allows_param_mutation
+        else:
+            def is_authorized(_plugin_id: str, _tool: str) -> bool:
+                return False
+
+        outcome = auditor.evaluate(
+            tool_name=tool_name,
+            before=before_snapshot,
+            after=tool_input,
+            candidate_plugin_ids=candidate_plugin_ids,
+            is_plugin_authorized=is_authorized,
+        )
+        if not outcome.has_changes:
+            return
+
+        if not outcome.allowed:
+            # Revert：把 tool_input 原地恢复——不能 reassign，因为外层调用
+            # 持有同一个 dict 引用。snapshot_failed 时 before_snapshot 是
+            # sentinel（不是 dict），无法恢复——只能 fail closed 清空
+            # tool_input，让下游 handler 因缺参直接拒绝执行（远优于带着
+            # 未审计的 mutation 继续）。
+            if outcome.snapshot_failed:
+                try:
+                    tool_input.clear()
+                except Exception as exc:
+                    logger.error(
+                        "[ToolExecutor] snapshot failed for tool=%s and "
+                        "tool_input.clear() also failed: %s — mutation "
+                        "remains; downstream handler MUST treat input as "
+                        "untrusted",
+                        tool_name,
+                        exc,
+                    )
+                logger.error(
+                    "[ToolExecutor] on_before_tool_use snapshot failed for "
+                    "tool=%s; cleared tool_input as fail-closed (audit "
+                    "record snapshot_failed=True)",
+                    tool_name,
+                )
+            else:
+                try:
+                    tool_input.clear()
+                    tool_input.update(before_snapshot)
+                except Exception as exc:
+                    logger.warning(
+                        "[ToolExecutor] failed to revert on_before_tool_use "
+                        "mutation for tool=%s: %s",
+                        tool_name,
+                        exc,
+                    )
+
+        auditor.write(
+            tool_name=tool_name,
+            outcome=outcome,
+            before=before_snapshot,
+            after=tool_input if outcome.allowed else before_snapshot,
+        )
 
     async def _execute_tool_impl(
         self,
@@ -673,6 +796,23 @@ class ToolExecutor:
         Permission check is assumed to be done by the caller (execute_batch or
         ReasoningEngine).  Only todo-required gate remains here.
         """
+        _policy_action = getattr(policy_result, "action", "")
+        if str(getattr(_policy_action, "value", _policy_action)) == "defer":
+            from .policy_v2.exceptions import DeferredApprovalRequired
+
+            raise DeferredApprovalRequired(
+                message=(
+                    "PolicyEngineV2 returned DEFER, but the caller did not route "
+                    "the tool call through pending_approvals. Refusing to execute."
+                ),
+                pending_id=None,
+                unattended_strategy=str(
+                    getattr(policy_result, "metadata", {}).get(
+                        "unattended_strategy", "defer_to_owner"
+                    )
+                ),
+            )
+
         tool_name = self._canonicalize_tool_name(tool_name)
         if isinstance(tool_input, dict):
             tool_input = normalize_tool_input(tool_name, tool_input)
@@ -763,6 +903,12 @@ class ToolExecutor:
 
         session_id = state.session_id if state else None
 
+        # C9c-1: emit `tool_intent_preview` SSE per tool call BEFORE we run
+        # any of them. UI gets to show "about to call X" with sanitized
+        # params + the inferred ApprovalClass, all in one batch up-front.
+        # Best-effort: never blocks, never raises (catches all + logs DEBUG).
+        self._emit_tool_intent_previews(tool_calls, session_id)
+
         async def _run_one(tc: dict, idx: int) -> tuple[int, dict, str | None, list | None]:
             tool_name = self._canonicalize_tool_name(tc.get("name", ""))
             tool_input = tc.get("input", tc.get("arguments", {})) or {}
@@ -802,48 +948,119 @@ class ToolExecutor:
                 )
 
             if perm_decision.behavior == "confirm":
-                from .policy import get_policy_engine
+                # C12 §14.3 unattended branch: when PolicyEngineV2 step 11
+                # returned DEFER (defer_to_owner / defer_to_inbox / ask_owner),
+                # ``metadata.is_unattended_path`` is True. We must NOT block
+                # the loop waiting for user (no human attached) and must NOT
+                # lie to the LLM ("已通知用户" — §2.1 bug). Instead:
+                #   1. Persist a PendingApproval entry (atomic + SSE event)
+                #   2. Return a tool_result that tells LLM **the truth**:
+                #      task is paused awaiting owner approval
+                #   3. Mark the result with ``_deferred_approval_id`` so the
+                #      Ralph loop in agent.py / scheduler can raise
+                #      ``DeferredApprovalRequired`` and halt the task
+                #      cleanly (instead of letting LLM re-try / use ask_user)
+                if perm_decision.metadata.get("is_unattended_path"):
+                    # C17 Phase A.4: scheduler 触发 unattended 路径时，
+                    # 多数子调用 ``state.task_id`` 是 None（Agent.execute_task
+                    # 没走 ``begin_task`` 注册）。退化到读 scheduler
+                    # ContextVar，让 pending_approval 永远带正确 task_id，
+                    # 而不是 30% 的 PendingApproval 行 task_id=None 让恢复
+                    # 链路无从匹配。
+                    state_task_id = getattr(state, "task_id", None) if state else None
+                    if state_task_id is None:
+                        try:
+                            from ..scheduler.locks import get_current_scheduled_task_id
+                            state_task_id = get_current_scheduled_task_id()
+                        except Exception:
+                            state_task_id = None
+                    pending_marker = await self._defer_unattended_confirm(
+                        tool_use_id=tool_use_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        perm_decision=perm_decision,
+                        session_id=session_id or "",
+                        task_id=state_task_id,
+                    )
+                    return (idx, pending_marker, None, None)
 
-                policy_engine = get_policy_engine()
-                confirm_key = policy_engine._confirm_cache_key(tool_name, tool_input)
-                if confirm_key in self._pending_confirms:
-                    policy_engine.mark_confirmed(tool_name, tool_input)
-                    del self._pending_confirms[confirm_key]
-                    logger.info(f"[Security] Auto-allowed retry of confirmed tool: {tool_name}")
-                else:
-                    self._pending_confirms[confirm_key] = {
-                        "tool_name": tool_name,
-                        "params": tool_input,
-                        "metadata": perm_decision.metadata,
-                        "ts": time.time(),
-                    }
-                    risk = perm_decision.metadata.get("risk_level", "")
-                    sandbox_hint = ""
-                    if perm_decision.metadata.get("needs_sandbox"):
-                        sandbox_hint = "\n注意: 此命令将在沙箱中执行以保护系统安全。"
-
+                # C8b-3：dedup key 从 hash(tool, command, path) 改为 tool_use_id。
+                #
+                # 旧实现命中 dedup 后调 ``mark_confirmed`` 写 v1 _session_allowlist——
+                # 这是"用户没在 UI 真的确认 → tool_executor 自作主张允许"的安全
+                # 漏洞。新行为：tool_use_id 是 LLM 单次 tool block 的唯一 id；
+                # 正常 LLM retry 会生成新 id（命中不到本分支，会重新走 confirm
+                # 流程让用户再决策一次）。本 dedup 只防御"reasoning_engine 因
+                # bug 重复消费同一 tool_use 块"的极端场景：直接返回 idle 错误，
+                # **不**触发 _security_confirm metadata（避免 reasoning_engine
+                # 重发 SSE 给 UI 弹两次卡片）。
+                #
+                # 真正的"session 内同一工具免 confirm"语义由 SessionAllowlistManager
+                # 在 PolicyEngineV2 step 9 提供——用户点 "allow_session" 后第二次
+                # 调用走 ALLOW 直接绕过本 confirm 分支。
+                if tool_use_id and tool_use_id in self._pending_confirms:
+                    logger.info(
+                        "[Security] tool_use_id %s already pending—suppress dup "
+                        "confirm SSE (tool=%s)",
+                        tool_use_id[:8],
+                        tool_name,
+                    )
                     return (
                         idx,
                         {
                             "type": "tool_result",
                             "tool_use_id": tool_use_id,
-                            "content": (
-                                f"⚠️ 需要用户确认: {perm_decision.reason}"
-                                f"{sandbox_hint}\n"
-                                "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
-                                "不要使用 ask_user 工具重复询问。"
-                            ),
+                            "content": "⚠️ 该工具调用的确认已在等待中，请勿重复触发。",
                             "is_error": True,
-                            "_security_confirm": {
-                                "tool_name": tool_name,
-                                "params": tool_input,
-                                "risk_level": risk,
-                                "needs_sandbox": perm_decision.metadata.get("needs_sandbox", False),
-                            },
                         },
                         None,
                         None,
                     )
+
+                if tool_use_id:
+                    self._pending_confirms[tool_use_id] = {
+                        "tool_name": tool_name,
+                        "params": tool_input,
+                        "metadata": perm_decision.metadata,
+                        "ts": time.time(),
+                    }
+                risk = perm_decision.metadata.get("risk_level", "")
+                sandbox_hint = ""
+                if perm_decision.metadata.get("needs_sandbox"):
+                    sandbox_hint = "\n注意: 此命令将在沙箱中执行以保护系统安全。"
+
+                # 注意：``_security_confirm`` 键在 tool_result 中无任何下游消费
+                # （详见 docs/policy_v2_research.md §2.1 描述的 "lying bug"）。
+                # C12 已用 DEFER → ``_defer_unattended_confirm`` 路径覆盖了
+                # unattended 场景；attended CONFIRM 的 SSE 由 reasoning_engine
+                # 在 evaluate_via_v2 早分支直接 yield。execute_batch 走到这里
+                # 是兜底（pre-check 漏掉的极少数路径），返回的 marker 字段
+                # **不**被任何 frontend / gateway 消费，保留 schema 仅为
+                # backward-compat。C13 的 delegate_chain / root_user_id 注入
+                # 到上游 reasoning_engine.security_confirm SSE 即可，此处
+                # 不重复加字段（避免给死代码喂数据）。
+                return (
+                    idx,
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": (
+                            f"⚠️ 需要用户确认: {perm_decision.reason}"
+                            f"{sandbox_hint}\n"
+                            "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
+                            "不要使用 ask_user 工具重复询问。"
+                        ),
+                        "is_error": True,
+                        "_security_confirm": {
+                            "tool_name": tool_name,
+                            "params": tool_input,
+                            "risk_level": risk,
+                            "needs_sandbox": perm_decision.metadata.get("needs_sandbox", False),
+                        },
+                    },
+                    None,
+                    None,
+                )
 
             # Auto-promote deferred tools (formerly blind-call guard).
             #
@@ -1056,6 +1273,13 @@ class ToolExecutor:
                             break
                         result = await _run_one(tc, tc["_idx"])
                         results.append(result)
+                        if isinstance(result[1], dict) and result[1].get("_deferred_approval_id"):
+                            break
+                if any(
+                    isinstance(item[1], dict) and item[1].get("_deferred_approval_id")
+                    for item in results
+                ):
+                    break
             results = sorted(results, key=lambda x: x[0])
         else:
             # 串行执行
@@ -1063,6 +1287,8 @@ class ToolExecutor:
             for i, tc in enumerate(tool_calls):
                 result = await _run_one(tc, i)
                 results.append(result)
+                if isinstance(result[1], dict) and result[1].get("_deferred_approval_id"):
+                    break
 
                 # 串行模式下检查中断和取消
                 if state and state.cancelled:
@@ -1246,6 +1472,233 @@ class ToolExecutor:
         stale = [k for k, v in self._pending_confirms.items() if now - v.get("ts", 0) > 300]
         for k in stale:
             del self._pending_confirms[k]
+
+    # ---- C9c-1: tool_intent_preview SSE ----
+
+    _PREVIEW_PARAM_MAX_CHARS = 200  # truncate per-value to avoid SSE bloat
+    _PREVIEW_REDACT_KEYS = frozenset(
+        {
+            "password",
+            "passwd",
+            "secret",
+            "token",
+            "api_key",
+            "apikey",
+            "access_token",
+            "refresh_token",
+            "private_key",
+            "credential",
+            "credentials",
+            "auth",
+            "authorization",
+        }
+    )
+
+    def _sanitize_preview_params(self, raw: Any) -> Any:
+        """Best-effort, recursive trim + redact for SSE preview.
+
+        - Redacts well-known secret keys (case-insensitive substring).
+        - Truncates strings to ``_PREVIEW_PARAM_MAX_CHARS`` with ellipsis.
+        - Walks dict/list; leaves other types untouched (json.dumps will
+          raise upstream if non-serializable, which is the right loud signal).
+        """
+        if isinstance(raw, dict):
+            out: dict[str, Any] = {}
+            for k, v in raw.items():
+                key_lc = str(k).lower()
+                if any(red in key_lc for red in self._PREVIEW_REDACT_KEYS):
+                    out[k] = "***REDACTED***"
+                else:
+                    out[k] = self._sanitize_preview_params(v)
+            return out
+        if isinstance(raw, list):
+            return [self._sanitize_preview_params(v) for v in raw]
+        if isinstance(raw, str) and len(raw) > self._PREVIEW_PARAM_MAX_CHARS:
+            return raw[: self._PREVIEW_PARAM_MAX_CHARS] + "...[truncated]"
+        return raw
+
+    def _emit_tool_intent_previews(
+        self,
+        tool_calls: list[dict],
+        session_id: str | None,
+    ) -> None:
+        """Emit one ``tool_intent_preview`` SSE event per tool call.
+
+        Schema:
+            { event: "tool_intent_preview", data: {
+                tool_use_id, tool_name, params (sanitized),
+                approval_class (predicted via the same registry the
+                production engine uses; "unknown" for tools without an
+                explicit declaration), session_id, batch_size, batch_idx,
+                ts
+            }}
+
+        ApprovalClass source: ``default_handler_registry.get_tool_class``
+        — the exact same lookup that ``policy_v2.global_engine`` plumbs
+        into the production ``ApprovalClassifier``'s ``explicit_lookup``.
+        Using this lookup directly (instead of building a fresh
+        ``ApprovalClassifier()`` per batch) keeps the preview honest
+        with the actual decision the engine will produce later in the
+        same call, AND skips the per-batch classifier construction +
+        LRU cache that ``ApprovalClassifier()`` allocates internally.
+        Tools that route through skills / MCP / plugin lookups still
+        show "unknown" in the preview — that's accurate; the production
+        engine will resolve them too, but only at decision time.
+
+        Failure-mode: any exception is swallowed at DEBUG level; the SSE
+        bridge is best-effort and must never block tool execution.
+        """
+        if not tool_calls:
+            return
+
+        try:
+            from ..api.routes.websocket import fire_event
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[ToolExec] tool_intent_preview skipped (no WS): %s", exc)
+            return
+
+        # Same registry the engine uses (handlers/__init__.py).
+        try:
+            from ..tools.handlers import default_handler_registry as _registry
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[ToolExec] handler registry unavailable: %s", exc)
+            _registry = None
+
+        ts = time.time()
+        total = len(tool_calls)
+        for idx, tc in enumerate(tool_calls):
+            try:
+                tool_name = self._canonicalize_tool_name(tc.get("name", ""))
+                tool_input = tc.get("input", tc.get("arguments", {})) or {}
+                tool_use_id = tc.get("id", "")
+                approval_class_str = "unknown"
+                if _registry is not None:
+                    try:
+                        ac = _registry.get_tool_class(tool_name)
+                        if ac is not None:
+                            approval_class_str = (
+                                ac.value if hasattr(ac, "value") else str(ac)
+                            )
+                    except Exception:
+                        # Unknown / dynamic tool → preview just says "unknown".
+                        # UI renders that with a neutral badge; engine still
+                        # makes the real call at decision time.
+                        approval_class_str = "unknown"
+
+                payload = {
+                    "tool_use_id": tool_use_id,
+                    "tool_name": tool_name,
+                    "params": self._sanitize_preview_params(tool_input),
+                    "approval_class": approval_class_str,
+                    "session_id": session_id,
+                    "batch_size": total,
+                    "batch_idx": idx,
+                    "ts": ts,
+                }
+                fire_event("tool_intent_preview", payload)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "[ToolExec] tool_intent_preview emit failed for %r: %s",
+                    tc.get("name"),
+                    exc,
+                )
+
+    async def _defer_unattended_confirm(
+        self,
+        *,
+        tool_use_id: str,
+        tool_name: str,
+        tool_input: dict,
+        perm_decision: "PermissionDecision",
+        session_id: str,
+        task_id: str | None,
+    ) -> dict:
+        """C12 §14.5: persist a pending_approval and return an honest tool_result.
+
+        Called from ``execute_batch._run_one`` when a CONFIRM decision is
+        coupled with ``metadata.is_unattended_path == True`` (i.e. the engine
+        routed through ``_handle_unattended`` and decided owner approval is
+        required).
+
+        Behavior:
+        - Atomic write to ``data/scheduler/pending_approvals.json``
+        - Emit ``pending_approval_created`` SSE event (via Store hook)
+        - Return a tool_result containing both LLM-readable text (so the LLM
+          stops trying) AND a ``_deferred_approval_id`` field that the
+          surrounding Ralph loop / scheduler picks up to halt the task
+
+        Failure mode (Store unavailable / disk full):
+        - Catch + log + return a deny-shaped tool_result with reason. Never
+          fall back to the §2.1 "lying" path.
+        """
+        from .pending_approvals import get_pending_approvals_store
+        from .policy_v2.context import get_current_context
+
+        ctx = get_current_context()
+        unattended_strategy = (
+            ctx.unattended_strategy if ctx is not None else "defer_to_owner"
+        ) or "defer_to_owner"
+        approval_class = perm_decision.metadata.get("approval_class")
+        decision_chain = list(perm_decision.decision_chain or [])
+        # Capture the user_message so resume can write a ReplayAuthorization
+        # that engine step 7 matches by equality (see api/routes/pending_approvals.py).
+        captured_msg = (ctx.user_message if ctx is not None else "") or ""
+
+        try:
+            store = get_pending_approvals_store()
+            entry = store.create(
+                task_id=task_id,
+                session_id=session_id or (ctx.session_id if ctx else "unknown"),
+                tool_name=tool_name,
+                params=tool_input if isinstance(tool_input, dict) else {},
+                approval_class=str(approval_class) if approval_class else None,
+                decision_chain=decision_chain,
+                decision_meta=dict(perm_decision.metadata),
+                reason=perm_decision.reason or "owner approval required",
+                unattended_strategy=unattended_strategy,
+                user_message=captured_msg,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "[ToolExec] Failed to persist pending_approval for %s/%s: %s — "
+                "denying tool call (fail-closed, do NOT lie to LLM)",
+                tool_name,
+                tool_use_id[:8] if tool_use_id else "no_id",
+                exc,
+                exc_info=True,
+            )
+            return {
+                "type": "tool_result",
+                "tool_use_id": tool_use_id,
+                "content": (
+                    "⚠️ 无人值守审批写入失败，工具调用已拒绝以保护安全。"
+                    f"详情: {exc}"
+                ),
+                "is_error": True,
+            }
+
+        logger.info(
+            "[ToolExec] Created pending_approval %s for %s "
+            "(strategy=%s, session=%s, task=%s)",
+            entry.id,
+            tool_name,
+            unattended_strategy,
+            session_id or "?",
+            task_id or "ad-hoc",
+        )
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": (
+                f"⏸️ 工具调用 '{tool_name}' 需要 owner 批准 (策略={unattended_strategy})。"
+                f"\n已创建待审批记录 {entry.id}，本任务暂停等待人工决定。"
+                "\n不要继续尝试此工具或绕路重试，等待 owner 通过 IM 卡片 / "
+                "PendingApprovalsView 做决策。"
+            ),
+            "is_error": True,
+            "_deferred_approval_id": entry.id,
+            "_deferred_approval_strategy": unattended_strategy,
+        }
 
     def _check_permission_deny_msg(self, tool_name: str, tool_input: dict) -> str | None:
         """Convenience wrapper: returns a deny message string or None for allow.

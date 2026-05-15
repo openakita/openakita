@@ -7,24 +7,18 @@ and concurrent task execution scenarios.
 
 from __future__ import annotations
 
-import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from openakita.orgs.models import (
-    EdgeType,
     MsgType,
     NodeStatus,
-    OrgEdge,
     OrgMessage,
-    OrgNode,
-    OrgStatus,
-    Organization,
 )
 from openakita.orgs.tool_handler import OrgToolHandler
-from .conftest import make_edge, make_node, make_org
+from .conftest import make_node
 
 
 class TestNodeErrorRecovery:
@@ -154,7 +148,6 @@ class TestMessageFormatting:
     """Test _format_incoming_message covers all message types."""
 
     def _make_runtime(self):
-        from openakita.orgs.runtime import OrgRuntime
         rt = MagicMock()
         rt._chain_delegation_depth = {}
         return rt

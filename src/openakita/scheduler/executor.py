@@ -422,6 +422,110 @@ class TaskExecutor:
                         f"TaskExecutor: using task-level timeout {task_timeout}s "
                         f"(default: {self.timeout_seconds}s)"
                     )
+            # C12 §14.2 + §14.3: install an unattended PolicyContext so the
+            # PolicyEngineV2 step 11 routes through ``_handle_unattended``.
+            # The strategy is taken from ``task.metadata.unattended_strategy``
+            # (per-task override) or falls back to engine config default.
+            # ContextVar propagation: the ContextVar set here is inherited by
+            # ``self._run_agent → agent.execute_task_from_message → execute_batch``
+            # via Python's standard asyncio task copy semantics.
+            #
+            # C12 §14.7 (R3-5): if the task is being resumed after an owner
+            # approval, ``task.metadata["replay_authorizations"]`` carries
+            # 30s-TTL replay records (written by /api/pending_approvals/resolve).
+            # Lift them into the PolicyContext so engine step 7 ``replay`` can
+            # match and shortcut the same tool+params to ALLOW without re-asking.
+            import os as _os
+            from pathlib import Path as _Path
+
+            from ..core.policy_v2.context import (
+                PolicyContext,
+                ReplayAuthorization,
+                reset_current_context,
+                set_current_context,
+            )
+
+            _strategy = ""
+            _replay_auths_raw: list = []
+            if task.metadata and isinstance(task.metadata, dict):
+                raw = task.metadata.get("unattended_strategy")
+                if isinstance(raw, str):
+                    _strategy = raw
+                _replay_auths_raw = list(
+                    task.metadata.get("replay_authorizations", []) or []
+                )
+
+            # C12 §14.7: only lift NON-expired replay auths into the
+            # PolicyContext. Engine step 7 ignores expired entries
+            # anyway (auth.is_active(now=)), but pre-filtering keeps the
+            # ctx list short — engine iterates every entry per tool
+            # call, so for a long-lived task with many past approvals
+            # this matters.
+            import time as _time
+
+            _now_for_replay = _time.time()
+            _replay_auths: list[ReplayAuthorization] = []
+            for ra in _replay_auths_raw:
+                if isinstance(ra, ReplayAuthorization):
+                    if ra.expires_at > _now_for_replay:
+                        _replay_auths.append(ra)
+                elif isinstance(ra, dict):
+                    try:
+                        _exp = float(ra.get("expires_at", 0))
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "TaskExecutor: skipping malformed replay auth %r", ra
+                        )
+                        continue
+                    if _exp <= _now_for_replay:
+                        continue
+                    try:
+                        _replay_auths.append(
+                            ReplayAuthorization(
+                                expires_at=_exp,
+                                original_message=str(ra.get("original_message", "")),
+                                confirmation_id=str(ra.get("confirmation_id", "")),
+                                operation=str(ra.get("operation", "")),
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "TaskExecutor: skipping malformed replay auth %r", ra
+                        )
+
+            # workspace_roots = security.workspace.paths（用户配置）∪ task cwd。
+            # 不再用单一 cwd 覆盖用户配置——计划任务必须遵守安全页定义的工作区
+            # 边界，与对话路径一致。
+            try:
+                from openakita.core.policy_v2 import get_config_v2 as _get_cfg
+
+                _cfg_roots = tuple(_Path(p) for p in _get_cfg().workspace.paths)
+            except Exception:
+                _cfg_roots = ()
+            _cwd_root = _Path(_os.getcwd())
+            _ws_seen: set[str] = set()
+            _ws_list: list[_Path] = []
+            for _p in (*_cfg_roots, _cwd_root):
+                _k = str(_p)
+                if _k not in _ws_seen:
+                    _ws_seen.add(_k)
+                    _ws_list.append(_p)
+            _policy_ctx = PolicyContext(
+                # ScheduledTask has no first-class ``session_id`` field —
+                # fall back to a synthetic id derived from task.id.
+                session_id=getattr(task, "session_id", None) or f"task:{task.id}",
+                workspace_roots=tuple(_ws_list),
+                channel="scheduler",
+                is_owner=True,  # scheduler-owned tasks act on behalf of owner
+                is_unattended=True,
+                unattended_strategy=_strategy,
+                # user_message is the task prompt; engine step 7 replay match
+                # is by equality, and scheduler reruns the same prompt verbatim
+                # — so a recorded auth.original_message == prompt → ALLOW.
+                user_message=task.prompt or "",
+                replay_authorizations=_replay_auths,
+            )
+            _ctx_token = set_current_context(_policy_ctx)
             try:
                 agent_success, result = await asyncio.wait_for(
                     self._run_agent(agent, prompt), timeout=task_timeout
@@ -435,6 +539,32 @@ class TaskExecutor:
                 if not skip_end_notification:
                     await self._send_end_notification(task, success=False, message=error_msg)
                 return False, error_msg
+            except Exception as exc:  # noqa: BLE001
+                # C12 §14.5: catch DeferredApprovalRequired before the generic
+                # handler below so we report it as a distinct outcome (paused,
+                # not failed). Caller (Scheduler) sees a special prefix and
+                # transitions task to AWAITING_APPROVAL rather than FAILED.
+                from ..core.policy_v2.exceptions import DeferredApprovalRequired
+
+                if isinstance(exc, DeferredApprovalRequired):
+                    logger.info(
+                        "TaskExecutor: task %s deferred awaiting owner approval "
+                        "(pending=%s strategy=%s)",
+                        task.id,
+                        exc.pending_id,
+                        exc.unattended_strategy,
+                    )
+                    pending_marker = (
+                        f"[awaiting_approval] pending_id={exc.pending_id} "
+                        f"strategy={exc.unattended_strategy or 'defer_to_owner'}"
+                    )
+                    # Do NOT send a regular end notification — owner is being
+                    # notified separately via pending_approval_created SSE / IM card.
+                    return False, pending_marker
+                # Other exceptions go to the outer handler below
+                raise
+            finally:
+                reset_current_context(_ctx_token)
 
             # 5. 发送结果通知（如果需要）
             if not agent_success:

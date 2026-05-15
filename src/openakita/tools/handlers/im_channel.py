@@ -11,12 +11,22 @@ IM 通道处理器
 - 通过 gateway/adapter 发送消息，不依赖 Session 类的发送方法
 - 各 adapter 实现统一接口，新增 IM 平台只需实现 ChannelAdapter 基类
 - 对于平台不支持的功能（如某些平台不支持语音），返回友好提示
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
+
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...channels.base import ChannelAdapter
@@ -52,6 +62,19 @@ class IMChannelHandler:
         "get_chat_members",
         "get_recent_messages",
     ]
+
+    # C7 explicit ApprovalClass — deliver = sends to user (interactive);
+    # everything else is read-only IM metadata
+    TOOL_CLASSES = {
+        "deliver_artifacts": ApprovalClass.INTERACTIVE,
+        "get_voice_file": ApprovalClass.READONLY_GLOBAL,
+        "get_image_file": ApprovalClass.READONLY_GLOBAL,
+        "get_chat_history": ApprovalClass.READONLY_GLOBAL,
+        "get_chat_info": ApprovalClass.READONLY_GLOBAL,
+        "get_user_info": ApprovalClass.READONLY_GLOBAL,
+        "get_chat_members": ApprovalClass.READONLY_GLOBAL,
+        "get_recent_messages": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

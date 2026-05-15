@@ -89,6 +89,11 @@ class SlideIrBuilder:
             content = dict(ai_content)
         else:
             content = self._content_for_type(outline_slide, slide_type, table_insights, chart_specs)
+        quality = self._quality_metadata(
+            outline_slide=outline_slide,
+            slide_type=slide_type,
+            content=content,
+        )
         return {
             "id": outline_slide.get("id") or f"slide_{outline_slide.get('index', 1):02d}",
             "index": outline_slide.get("index", 1),
@@ -99,6 +104,7 @@ class SlideIrBuilder:
             "theme": spec_lock.get("theme", {}),
             "content": content,
             "notes": outline_slide.get("speaker_note") or outline_slide.get("purpose", ""),
+            "quality": quality,
         }
 
     def _content_for_type(
@@ -277,6 +283,70 @@ class SlideIrBuilder:
         if slide_type == SlideType.SECTION.value:
             return "section"
         return "content"
+
+    def _quality_metadata(
+        self,
+        *,
+        outline_slide: dict[str, Any],
+        slide_type: str,
+        content: dict[str, Any],
+    ) -> dict[str, Any]:
+        text_units = self._text_units(content)
+        density_score = min(1.0, text_units / 900)
+        visual_role = self._visual_role(slide_type, content)
+        repair_hints: list[str] = []
+        if density_score > 0.78:
+            repair_hints.append("内容密度较高，建议拆页、分栏或压缩文字。")
+        if slide_type == SlideType.DATA_TABLE.value and len(content.get("headers") or []) > 8:
+            repair_hints.append("表格列数超过 8，建议拆分或改为图表。")
+        if slide_type.startswith("chart_") and not (content.get("categories") and content.get("series")):
+            repair_hints.append("图表缺少真实 categories/series，建议补充数据或改为洞察页。")
+        return {
+            "density_score": round(density_score, 3),
+            "content_score": round(max(0.0, 1.0 - density_score), 3),
+            "needs_split": density_score > 0.82,
+            "visual_role": visual_role,
+            "narrative_role": self._narrative_role(outline_slide, slide_type),
+            "repair_hints": repair_hints,
+        }
+
+    def _text_units(self, payload: Any) -> int:
+        if payload is None:
+            return 0
+        if isinstance(payload, str):
+            return len(payload)
+        if isinstance(payload, (int, float, bool)):
+            return len(str(payload))
+        if isinstance(payload, list):
+            return sum(self._text_units(item) for item in payload)
+        if isinstance(payload, dict):
+            return sum(self._text_units(value) for value in payload.values())
+        return len(str(payload))
+
+    @staticmethod
+    def _visual_role(slide_type: str, content: dict[str, Any]) -> str:
+        if slide_type in {SlideType.CHART_BAR.value, SlideType.CHART_LINE.value, SlideType.CHART_PIE.value}:
+            return "chart"
+        if slide_type == SlideType.DATA_TABLE.value:
+            return "table"
+        if slide_type in {SlideType.TIMELINE.value, SlideType.COMPARISON.value, SlideType.METRIC_CARDS.value}:
+            return "diagram"
+        if content.get("image_query"):
+            return "image"
+        return "text"
+
+    @staticmethod
+    def _narrative_role(outline_slide: dict[str, Any], slide_type: str) -> str:
+        index = int(outline_slide.get("index") or 1)
+        if index == 1 or slide_type == SlideType.COVER.value:
+            return "anchor"
+        if slide_type in {SlideType.AGENDA.value, SlideType.SECTION.value}:
+            return "navigation"
+        if slide_type in {SlideType.SUMMARY.value, SlideType.CLOSING.value}:
+            return "closing"
+        if slide_type.startswith("chart_") or slide_type in {SlideType.DATA_TABLE.value, SlideType.METRIC_CARDS.value}:
+            return "evidence"
+        return "supporting"
 
     def _ensure_table_story(
         self,

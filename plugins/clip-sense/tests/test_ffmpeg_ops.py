@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import math
 import struct
-import tempfile
 import wave
 from pathlib import Path
-
-import pytest
 
 from clip_ffmpeg_ops import (
     FFmpegOps,
@@ -84,6 +81,38 @@ class TestSrtGeneration:
         assert "Inside" in srt
         assert "Before" not in srt
         assert "After" not in srt
+
+    def test_with_segment_filter_start_sec_keys(self):
+        """Qwen highlight/topic segments use start_sec/end_sec — SRT filter must accept them."""
+        sentences = [
+            {"start": 10, "end": 15, "text": "Inside"},
+            {"start": 0, "end": 5, "text": "Outside"},
+        ]
+        segments = [{"start_sec": 9.0, "end_sec": 16.0}]
+        srt = FFmpegOps.generate_srt(sentences, segments=segments)
+        assert "Inside" in srt
+        assert "Outside" not in srt
+
+    def test_multi_segment_timeline_offset(self):
+        """Multi-segment SRT timestamps must align with concatenated video timeline."""
+        sentences = [
+            {"start": 10.0, "end": 12.0, "text": "Seg1 line"},
+            {"start": 30.0, "end": 33.0, "text": "Seg2 line"},
+            {"start": 50.0, "end": 52.0, "text": "Outside"},
+        ]
+        segments = [
+            {"start_sec": 10.0, "end_sec": 15.0},
+            {"start_sec": 30.0, "end_sec": 35.0},
+        ]
+        srt = FFmpegOps.generate_srt(sentences, segments=segments)
+        assert "Outside" not in srt
+        assert "Seg1 line" in srt
+        assert "Seg2 line" in srt
+        # seg1=[10,15] duration=5s; seg2=[30,35] duration=5s
+        # "Seg1 line" at original [10,12] → offset [0,2]
+        assert "00:00:00,000 --> 00:00:02,000" in srt
+        # "Seg2 line" at original [30,33] → offset [5+0, 5+3] = [5,8]
+        assert "00:00:05,000 --> 00:00:08,000" in srt
 
 
 def _make_test_wav(path: str, duration_sec: float = 1.0, freq: float = 440.0, sr: int = 16000, amplitude: float = 0.5):

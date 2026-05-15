@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 import typer
@@ -886,7 +887,31 @@ async def run_interactive():
                 channel="cli", chat_id=_cid, user_id="cli_user", create_if_missing=True
             )
             if cs:
+                # C14 re-audit (D2): mark CLI interactive sessions via the
+                # entry classifier so the architectural SoT is consistent
+                # (``run_interactive`` is already TTY-gated upstream, so
+                # classifier returns ``is_unattended=False`` — no-op behavior
+                # but eliminates the "classifier sometimes skipped" pattern).
+                try:
+                    from .core.policy_v2 import (
+                        apply_classification_to_session as _apply_cls,
+                    )
+                    from .core.policy_v2 import (
+                        classify_entry as _classify,
+                    )
+
+                    _apply_cls(cs, _classify("cli"))
+                except Exception:
+                    pass
                 agent._cli_session = cs
+                cs.context.focus_terms = list(getattr(cs.context, "focus_terms", []) or [])
+                cs.context.task_checkpoints = list(getattr(cs.context, "task_checkpoints", []) or [])
+                cs.context.delegation_chain = list(getattr(cs.context, "delegation_chain", []) or [])
+                if getattr(cs.context, "precompact_snapshot", None):
+                    try:
+                        agent.memory_manager.save_precompact_snapshot(cs.context.precompact_snapshot)
+                    except Exception:
+                        logger.debug("[CLI] precompact snapshot hydration skipped", exc_info=True)
                 mc = len(cs.context.get_messages())
                 if mc > 0 and not _cli_force_new_session:
                     console.print(f"[green]✓[/green] 已恢复上次会话 ({mc} 条消息)")
@@ -1285,6 +1310,41 @@ def show_skills():
 
 
 _cli_force_new_session = False
+_cli_permission_mode = "default"
+
+
+def _apply_auto_confirm_flag(*, enabled: bool) -> None:
+    """C18 Phase D — translate ``--auto-confirm`` to the Phase C ENV var.
+
+    Done as a tiny helper (not inlined) so unit tests can exercise it
+    without spinning up typer. The flag intentionally feeds the same
+    ``OPENAKITA_AUTO_CONFIRM`` override registered in
+    ``core.policy_v2.env_overrides``: ENV is the single contract surface
+    every subprocess / engine reload re-reads.
+
+    Importantly, **destructive (mutating_global) tools and safety_immune
+    paths still require confirm** — that gate is in classifier, not in
+    the ConfirmationMode value. So even with ``--auto-confirm``:
+
+    - ``write_file path=/etc/...`` (safety_immune) → CONFIRM
+    - ``rm -rf /`` (destructive) → CONFIRM
+    - ``read_file`` / non-destructive ``run_shell`` → ALLOW
+
+    This is documented in ``--auto-confirm`` help text + audit row.
+    """
+    if not enabled:
+        return
+    import os as _os
+
+    _os.environ["OPENAKITA_AUTO_CONFIRM"] = "1"
+    # Loud signal so operators don't forget they enabled auto-confirm.
+    # Won't trigger AGAIN at every subsequent engine reload (the
+    # underlying ENV var being set is enough; the audit row gets
+    # written by global_engine._audit_env_overrides on first load).
+    console.print(
+        "[yellow]auto-confirm enabled — non-destructive tools will skip confirm. "
+        "destructive (mutating_global) and safety_immune paths still require confirm.[/yellow]"
+    )
 
 
 @app.callback(invoke_without_command=True)
@@ -1292,14 +1352,39 @@ def main(
     ctx: typer.Context,
     version: bool = typer.Option(False, "--version", "-v", help="显示版本信息"),
     new_session: bool = typer.Option(False, "--new", help="强制开启新 CLI 会话，不恢复上次对话"),
+    auto_confirm: bool = typer.Option(
+        False,
+        "--auto-confirm",
+        help=(
+            "Skip confirm for non-destructive tools (C18 Phase D). "
+            "Equivalent to OPENAKITA_AUTO_CONFIRM=1. Destructive "
+            "(mutating_global) and safety_immune paths still require confirm."
+        ),
+    ),
+    permission_mode: str = typer.Option(
+        "default",
+        "--permission-mode",
+        help=(
+            "权限模式兼容参数。Policy V2 以 POLICIES.yaml confirmation.mode "
+            "为准；自动化场景请优先使用 --auto-confirm。"
+        ),
+    ),
 ):
     """
     OpenAkita - 全能自进化AI助手
 
     直接运行进入交互模式
     """
-    global _cli_force_new_session
+    global _cli_force_new_session, _cli_permission_mode
     _cli_force_new_session = new_session
+    _cli_permission_mode = permission_mode
+
+    # C18 Phase D: translate the CLI flag into the Phase C ENV var.
+    # MUST happen before any policy_v2 import in a sub-command, hence we
+    # do it in the top-level callback (typer invokes the callback before
+    # the sub-command). The classify_entry / engine init below all
+    # re-read os.environ, so the flag propagates.
+    _apply_auto_confirm_flag(enabled=auto_confirm)
 
     if version:
         from . import __version__
@@ -1319,6 +1404,29 @@ def main(
                 "请设置 ANTHROPIC_API_KEY，或运行 'openakita init' 配置 data/llm_endpoints.json"
             )
             raise typer.Exit(1)
+
+        # C14 / R4-8: 交互模式需要 TTY 来驱动 prompt_toolkit + Rich 的
+        # security_confirm 提示。stdin 为管道时（``cat ... | openakita`` /
+        # CI 环境 / launchd plist 等），prompt_toolkit 会立刻在第一次输入
+        # 处永久挂死，且 Rich ``Prompt.ask`` 退回原始 ``input()`` 也会同样
+        # block。给一个明确指引而不是挂死。
+        from .core.policy_v2 import classify_entry
+
+        cli_class = classify_entry("cli")
+        if cli_class.is_unattended:
+            console.print("[yellow]检测到 stdin 非 TTY（管道输入或非交互环境）[/yellow]")
+            console.print(
+                "交互式 CLI 需要终端。请改用以下任一非交互入口：\n"
+                "  • [bold]openakita run \"<task>\"[/bold] - 单次任务执行（unattended）\n"
+                "  • [bold]openakita serve[/bold] - 启动 API 服务并通过 /api/chat 调用"
+            )
+            raise typer.Exit(1)
+
+        if _cli_permission_mode != "default":
+            console.print(
+                "[yellow]--permission-mode 是旧 Policy V1 兼容参数；"
+                "当前 Policy V2 请通过配置页或 POLICIES.yaml 调整 confirmation.mode。[/yellow]"
+            )
 
         # 运行交互式 CLI
         asyncio.run(run_interactive())
@@ -1360,14 +1468,43 @@ def init(
 def run(
     task: str = typer.Argument(..., help="要执行的任务"),
 ):
-    """执行单个任务"""
+    """执行单个任务（unattended：CONFIRM 类工具不会等待 TTY 响应）"""
 
     async def _run():
         agent = get_agent()
         await agent.initialize()
 
+        # C14 / R4-8: ``openakita run`` 是一次性非交互入口 — 即使 stdin
+        # 是 TTY 也不应等待 ``security_confirm`` SSE/Prompt。把
+        # PolicyContext 显式标记为 unattended，让 PolicyEngineV2 step 11
+        # 按 ``unattended_strategy`` 路由（默认 ask_owner），CONFIRM-class
+        # 工具走 PendingApproval / DeferredApprovalRequired 路径而非挂死。
+        #
+        # Re-audit (D1): classifier 是 SoT — 这里通过 ``classify_entry``
+        # 拿到完整 (is_unattended, default_strategy) 后再喂给
+        # build_policy_context，避免 strategy 经 "全局默认兜底" 路径绕行。
+        from .core.policy_v2 import (
+            build_policy_context,
+            classify_entry,
+            reset_current_context,
+            set_current_context,
+        )
+
+        _cls = classify_entry("cli", force_unattended=True)
+        cli_ctx = build_policy_context(
+            session_id=f"cli_run_{int(time.time())}",
+            channel="cli",
+            is_unattended=_cls.is_unattended,
+            unattended_strategy=_cls.default_strategy or "",
+            user_message=task,
+        )
+        ctx_token = set_current_context(cli_ctx)
+
         with console.status("[bold green]执行任务中...", spinner="dots"):
-            result = await agent.execute_task_from_message(task)
+            try:
+                result = await agent.execute_task_from_message(task)
+            finally:
+                reset_current_context(ctx_token)
 
         if result.success:
             console.print(

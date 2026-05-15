@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import tempfile
 from pathlib import Path
 
+import aiosqlite
 import pytest
-
 from clip_task_manager import DEFAULT_CONFIG, TaskManager
 
 
@@ -153,7 +152,7 @@ class TestTaskCRUD:
     def test_list_tasks_pagination(self, tm: TaskManager):
         run(tm.init())
         try:
-            for i in range(5):
+            for _i in range(5):
                 run(tm.create_task(mode="silence_clean"))
             result = run(tm.list_tasks(limit=2, offset=0))
             assert len(result["tasks"]) == 2
@@ -261,7 +260,44 @@ class TestTranscriptCRUD:
         run(tm.init())
         try:
             run(tm.create_transcript(source_hash="dup1"))
-            with pytest.raises(Exception):
+            with pytest.raises(aiosqlite.IntegrityError):
                 run(tm.create_transcript(source_hash="dup1"))
+        finally:
+            run(tm.close())
+
+    def test_get_or_create_reuses_row_after_failed(self, tm: TaskManager):
+        run(tm.init())
+        try:
+            first = run(
+                tm.create_transcript(
+                    source_hash="retry_hash",
+                    source_path="/old/path.mp4",
+                    source_name="old.mp4",
+                    duration_sec=10.0,
+                ),
+            )
+            run(
+                tm.update_transcript(
+                    first["id"],
+                    status="failed",
+                    error_message="Paraformer FAILED",
+                ),
+            )
+            second = run(
+                tm.get_or_create_transcript_for_hash(
+                    source_hash="retry_hash",
+                    source_path="/new/path.mp4",
+                    source_name="new.mp4",
+                    duration_sec=11.0,
+                ),
+            )
+            assert second["id"] == first["id"]
+            assert second["status"] == "pending"
+            assert second["source_path"] == "/new/path.mp4"
+            assert second["source_name"] == "new.mp4"
+            assert second["duration_sec"] == 11.0
+            assert second.get("error_message") in (None, "")
+            rows = run(tm.list_transcripts())
+            assert rows["total"] == 1
         finally:
             run(tm.close())

@@ -8,6 +8,14 @@
 - list_recent_tasks: 列出最近任务
 - search_conversation_traces: 搜索完整对话历史
 - trace_memory: 跨层导航（记忆↔情节↔对话）
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import json
@@ -18,6 +26,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
 from ...memory.json_utils import coerce_text, coerce_tool_names
 
 if TYPE_CHECKING:
@@ -45,6 +54,20 @@ class MemoryHandler:
         "get_session_context",
         "memory_delete_by_query",
     ]
+
+    # C7 explicit ApprovalClass
+    TOOL_CLASSES = {
+        "consolidate_memories": ApprovalClass.EXEC_LOW_RISK,
+        "add_memory": ApprovalClass.EXEC_LOW_RISK,
+        "search_memory": ApprovalClass.READONLY_SEARCH,
+        "get_memory_stats": ApprovalClass.READONLY_GLOBAL,
+        "list_recent_tasks": ApprovalClass.READONLY_GLOBAL,
+        "search_conversation_traces": ApprovalClass.READONLY_SEARCH,
+        "trace_memory": ApprovalClass.READONLY_GLOBAL,
+        "search_relational_memory": ApprovalClass.READONLY_SEARCH,
+        "get_session_context": ApprovalClass.READONLY_GLOBAL,
+        "memory_delete_by_query": ApprovalClass.DESTRUCTIVE,
+    }
 
     _SEARCH_TOOLS = frozenset(
         {

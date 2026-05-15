@@ -108,6 +108,16 @@ class PluginManifest(BaseModel):
     permissions: list[str] = Field(default_factory=list)
     requires: dict[str, Any] = Field(default_factory=dict)
     provides: dict[str, Any] = Field(default_factory=dict)
+    # C10：插件自报每个工具的 ApprovalClass。键 = 工具名（与
+    # ``register_tools`` 里的 ``definitions[].name`` 完全一致），值 =
+    # ``policy_v2.ApprovalClass.value``（如 ``"mutating_scoped"``）。未声明
+    # 或值非法时，该工具走 handler / 启发式回退（与 v1 行为一致）。
+    tool_classes: dict[str, str] = Field(default_factory=dict)
+    # C10：plugin 在 ``on_before_tool_use`` hook 中修改 ``tool_input`` 的
+    # 工具白名单。声明后 ``tool_executor`` 才允许 hook 改 params；同时把
+    # 修改 diff 强制写到 ``data/audit/plugin_param_modifications.jsonl``。
+    # 未声明时改 params 不生效（diff 还原）。R2-12 强制审计的载体。
+    mutates_params: list[str] = Field(default_factory=list)
     replaces: list[str] = Field(default_factory=list)  # reserved: plugins this one supersedes
     conflicts: list[str] = Field(default_factory=list)
     depends: list[str] = Field(default_factory=list)  # reserved: inter-plugin dependency
@@ -165,6 +175,43 @@ class PluginManifest(BaseModel):
         if not isinstance(v, list):
             raise ValueError(f"'permissions' must be a list, got {type(v).__name__}")
         return v
+
+    @field_validator("tool_classes", mode="before")
+    @classmethod
+    def _normalize_tool_classes(cls, v: Any) -> dict[str, str]:
+        """C10：归一 tool_classes 为 ``dict[str, str]``，非法值过滤 + WARN。
+
+        值校验放在 ``PluginManager.get_tool_class`` lookup 阶段（懒校验）：
+        manifest 解析期不引入 policy_v2 enum 依赖，避免循环导入和让
+        plugin 安装阶段崩溃。
+        """
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError(
+                f"'tool_classes' must be a dict[tool_name, approval_class], got {type(v).__name__}"
+            )
+        out: dict[str, str] = {}
+        for tool_name, klass in v.items():
+            if not isinstance(tool_name, str) or not tool_name:
+                continue
+            if klass is None:
+                continue
+            out[tool_name] = str(klass).strip().lower()
+        return out
+
+    @field_validator("mutates_params", mode="before")
+    @classmethod
+    def _normalize_mutates_params(cls, v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [v] if v else []
+        if not isinstance(v, list):
+            raise ValueError(
+                f"'mutates_params' must be a list of tool names, got {type(v).__name__}"
+            )
+        return [str(name) for name in v if isinstance(name, str) and name]
 
     @property
     def basic_permissions(self) -> list[str]:

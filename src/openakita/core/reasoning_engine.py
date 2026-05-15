@@ -128,6 +128,32 @@ def _is_im_conversation(conversation_id: str | None) -> bool:
     return str(conversation_id).startswith(_IM_CONVERSATION_PREFIXES)
 
 
+def _compute_confirm_dedup_key(tool_name: str, params: Any) -> str:
+    """C13 §15.5: compute a stable dedup fingerprint for CONFIRM coalescing.
+
+    delegate_parallel siblings often issue identical (tool_name, params),
+    causing the UI to receive N redundant confirm cards. We hash
+    ``(tool_name, json(params, sort_keys=True))`` so the same operation
+    deterministically maps to one key — first sub-agent becomes the leader,
+    later siblings detect the leader via ``UIConfirmBus.find_dedup_leader``
+    and wait on the leader's event instead of emitting their own SSE.
+
+    Returns ``""`` (falsy → opts out of dedup) when params can't be hashed
+    safely; the caller falls back to the normal per-call confirm path.
+    """
+    if not tool_name:
+        return ""
+    try:
+        if isinstance(params, dict):
+            normalized = json.dumps(params, sort_keys=True, default=str)
+        else:
+            normalized = str(params)
+    except Exception:
+        return ""
+    payload = f"{tool_name}|{normalized}".encode("utf-8", errors="ignore")
+    return hashlib.md5(payload).hexdigest()
+
+
 def _tool_result_fingerprint(tool_results: list[dict]) -> str:
     parts: list[str] = []
     for result in tool_results:
@@ -2693,6 +2719,22 @@ class ReasoningEngine:
                     allow_interrupt_checks=self._state.interrupt_enabled,
                     capture_delivery_receipts=True,
                 )
+                _deferred_results = [
+                    tr
+                    for tr in tool_results
+                    if isinstance(tr, dict) and tr.get("_deferred_approval_id")
+                ]
+                if _deferred_results:
+                    from .policy_v2.exceptions import DeferredApprovalRequired
+
+                    _first_deferred = _deferred_results[0]
+                    raise DeferredApprovalRequired(
+                        message=str(_first_deferred.get("content", "")),
+                        pending_id=_first_deferred.get("_deferred_approval_id"),
+                        unattended_strategy=_first_deferred.get(
+                            "_deferred_approval_strategy"
+                        ),
+                    )
                 for _exec_tc, _exec_result in zip(decision.tool_calls, tool_results, strict=False):
                     if isinstance(_exec_result, dict):
                         self._remember_readonly_tool_result(
@@ -4376,44 +4418,136 @@ class ReasoningEngine:
                                 "pet-status-update",
                                 {"status": "tool_execution", "tool_name": t_name},
                             )
-                            # PolicyEngine 检查
-                            from .policy import PolicyDecision, PolicyResult, get_policy_engine
+                            # 决策走 v2（C6 起），UI 状态机 C9b 后走独立 ui_confirm_bus，
+                            # C8b-3 后 resolve 路径也完全脱离 v1（IM/web/CLI 都直接调
+                            # ``policy_v2.apply_resolution`` 写 SessionAllowlistManager
+                            # + UserAllowlistManager，bus 只负责唤醒 waiter）。
+                            # C8b-6a: 直接消费 v2 ``PolicyDecisionV2`` + ``DecisionAction``，
+                            # 不再过 v1 PolicyResult/PolicyDecision shim；config 读 v2
+                            # ``get_config_v2().confirmation``。
+                            from .policy_v2 import get_config_v2
+                            from .policy_v2.adapter import evaluate_via_v2
+                            from .policy_v2.enums import DecisionAction
+                            from .ui_confirm_bus import get_ui_confirm_bus
 
-                            _pe = get_policy_engine()
-                            _pr = _pe.assert_tool_allowed(
+                            _v2_conf = get_config_v2().confirmation
+                            _bus = get_ui_confirm_bus()
+                            _pr = evaluate_via_v2(
                                 t_name, t_args if isinstance(t_args, dict) else {}
                             )
-                            if _pr.decision == PolicyDecision.DENY:
+                            _deferred_tool_result = None
+                            if _pr.action == DecisionAction.DENY:
                                 r = f"⚠️ 策略拒绝: {_pr.reason}"
                                 _tool_is_error = True
-                            elif _pr.decision == PolicyDecision.CONFIRM:
-                                if _is_im_conversation(conversation_id):
-                                    r = (
-                                        f"⚠️ 策略需要桌面确认: {_pr.reason}\n\n"
-                                        "当前请求来自 IM 通道，无法安全完成交互式确认；"
-                                        "该工具调用已中止。若这是可信操作，请在桌面端发起，"
-                                        "或切换到完全信任模式后重试普通风险操作。"
+                            elif _pr.action == DecisionAction.DEFER:
+                                from types import SimpleNamespace
+
+                                _state_task_id = state.task_id
+                                if _state_task_id is None:
+                                    try:
+                                        from ..scheduler.locks import (
+                                            get_current_scheduled_task_id,
+                                        )
+
+                                        _state_task_id = get_current_scheduled_task_id()
+                                    except Exception:
+                                        _state_task_id = None
+                                _deferred_tool_result = (
+                                    await self._tool_executor._defer_unattended_confirm(
+                                        tool_use_id=t_id,
+                                        tool_name=t_name,
+                                        tool_input=t_args if isinstance(t_args, dict) else {},
+                                        perm_decision=SimpleNamespace(
+                                            metadata=dict(_pr.metadata),
+                                            decision_chain=_pr.to_ui_chain(),
+                                            reason=_pr.reason,
+                                        ),
+                                        session_id=conversation_id or "",
+                                        task_id=_state_task_id,
                                     )
-                                    _tool_is_error = True
-                                    _security_confirm_interrupted_ask = True
+                                )
+                                r = str(_deferred_tool_result.get("content", ""))
+                                _tool_is_error = True
+                                _security_confirm_interrupted_ask = True
+                            elif _pr.action == DecisionAction.CONFIRM:
+                                # C8 §2.3 fix：取消 IM 渠道早退。reasoning_engine 永远 yield
+                                # ``security_confirm`` SSE，让 gateway._consume_stream 把事件
+                                # 路由到 ``_handle_im_security_confirm``：桌面端走 SecurityView
+                                # 弹窗，IM 端走卡片 / 文本回退。两条路径最终都会调
+                                # ``policy_v2.apply_resolution``，唤醒此处的 bus.wait_for_resolution。
+                                # 旧实现在 IM CONFIRM 时直接 abort（伪装成"请到桌面确认"），
+                                # 让 gateway 的 IM 卡片链路成为永远不会触发的死代码。
+                                _is_im = _is_im_conversation(conversation_id)
+                                _risk = _pr.metadata.get("risk_level") or "medium"
+                                _needs_sb = _pr.metadata.get("needs_sandbox", False)
+                                # C9a §1: v2 字段（approval_class / policy_version）随 SSE
+                                # 一起下发。SecurityConfirmModal / SecurityView 用 approval_class
+                                # 渲染语义 badge（DESTRUCTIVE/CONTROL_PLANE/...），policy_version=2
+                                # 让前端能区分 v1 兜底事件 vs v2 主决策事件。
+                                # 字段缺失时前端兜回旧路径（risk_level）—— 完全向后兼容。
+                                _approval_class = _pr.metadata.get("approval_class")
+                                # C13 §15.4: 多 agent confirm 冒泡链路 — payload
+                                # 携带 delegate_chain + root_user_id，让 UI 渲染
+                                # "specialist_a (via root) 请求执行 ..."。顶层
+                                # agent 时 chain 空、root_user_id=None，UI 兜回
+                                # 原有行为（无 chain badge）。
+                                from .policy_v2 import (
+                                    get_current_context as _pv2_get_ctx_for_emit,
+                                )
+
+                                _emit_ctx = _pv2_get_ctx_for_emit()
+                                _delegate_chain = (
+                                    list(_emit_ctx.delegate_chain) if _emit_ctx else []
+                                )
+                                _root_user_id = (
+                                    _emit_ctx.root_user_id if _emit_ctx else None
+                                )
+                                # C13 §15.5: dedup — when delegate_parallel
+                                # siblings issue the same (tool, params), only
+                                # the first emits the SSE; siblings attach as
+                                # followers on the leader's confirm event.
+                                _dedup_key = _compute_confirm_dedup_key(
+                                    t_name, t_args
+                                )
+                                _leader_id = _bus.find_dedup_leader(
+                                    session_id=conversation_id or "",
+                                    dedup_key=_dedup_key,
+                                ) if _dedup_key else None
+                                _confirm_timeout = float(_v2_conf.timeout_seconds)
+                                if _is_im:
+                                    _confirm_timeout = max(_confirm_timeout * 4, 180.0)
+                                if _leader_id:
+                                    # Follower path: skip SSE emission, share
+                                    # the leader's event. cleanup() on the
+                                    # leader is deferred until all followers
+                                    # deregister, so we still read _decisions
+                                    # safely.
                                     logger.info(
-                                        "[Security] IM confirmation blocked without waiting: "
-                                        "session=%s tool=%s policy=%s",
-                                        conversation_id,
+                                        "[C13 dedup] tool=%s session=%s join "
+                                        "leader confirm_id=%s",
                                         t_name,
-                                        _pr.policy_name,
+                                        (conversation_id or "")[:12],
+                                        _leader_id[:8],
                                     )
+                                    _bus.register_follower(_leader_id)
+                                    try:
+                                        _decision = await _bus.wait_for_resolution(
+                                            _leader_id, _confirm_timeout
+                                        )
+                                    finally:
+                                        _bus.deregister_follower(_leader_id)
+                                    # Don't call cleanup on the leader from
+                                    # follower path — leader's caller owns it.
                                 else:
-                                    _risk = _pr.metadata.get("risk_level") or "medium"
-                                    _needs_sb = _pr.metadata.get("needs_sandbox", False)
-                                    _pe.store_ui_pending(
+                                    _bus.store_pending(
                                         t_id,
                                         t_name,
                                         t_args if isinstance(t_args, dict) else {},
                                         session_id=conversation_id or "",
                                         needs_sandbox=_needs_sb,
+                                        dedup_key=_dedup_key or None,
                                     )
-                                    _pe.prepare_ui_confirm(t_id)
+                                    _bus.prepare(t_id)
                                     yield {
                                         "type": "security_confirm",
                                         "tool": t_name,
@@ -4422,8 +4556,17 @@ class ReasoningEngine:
                                         "reason": _pr.reason,
                                         "risk_level": _risk,
                                         "needs_sandbox": _needs_sb,
-                                        "timeout_seconds": _pe._config.confirmation.timeout_seconds,
-                                        "default_on_timeout": _pe._config.confirmation.default_on_timeout,
+                                        "timeout_seconds": _v2_conf.timeout_seconds,
+                                        "default_on_timeout": _v2_conf.default_on_timeout,
+                                        "channel": "im" if _is_im else "desktop",
+                                        "approval_class": _approval_class,
+                                        "policy_version": 2,
+                                        "delegate_chain": _delegate_chain,
+                                        "root_user_id": _root_user_id,
+                                        # C23 P2-2: ship decision_chain so the modal can
+                                        # render "决策依据" — plan C9 requirement that
+                                        # was deferred. Empty list when chain is empty.
+                                        "decision_chain": _pr.to_ui_chain(),
                                         "options": [
                                             "allow_once",
                                             "allow_session",
@@ -4432,45 +4575,52 @@ class ReasoningEngine:
                                         ]
                                         + (["sandbox"] if _needs_sb else []),
                                     }
-                                    _decision = await _pe.wait_for_ui_resolution(
+                                    # IM 用户响应延迟更高：卡片走 IM 通道 + 用户切回看消息往往
+                                    # >60s。给 IM 多 4 倍时长（最少 180s 兜底），桌面端沿用配置。
+                                    _decision = await _bus.wait_for_resolution(
                                         t_id,
-                                        float(_pe._config.confirmation.timeout_seconds),
+                                        _confirm_timeout,
                                     )
-                                    _pe.cleanup_ui_confirm(t_id)
-                                    if _decision in (
-                                        "allow",
-                                        "allow_once",
-                                        "allow_session",
-                                        "allow_always",
-                                        "sandbox",
-                                    ):
-                                        try:
-                                            r = await self._tool_executor.execute_tool_with_policy(
-                                                tool_name=t_name,
-                                                tool_input=t_args if isinstance(t_args, dict) else {},
-                                                policy_result=PolicyResult(
-                                                    decision=PolicyDecision.ALLOW,
-                                                    reason=f"用户已允许安全确认: {_decision}",
-                                                    metadata={
-                                                        "confirmed_bypass": True,
-                                                        "needs_sandbox": _decision == "sandbox"
-                                                        or _needs_sb,
-                                                    },
-                                                ),
-                                                session_id=conversation_id,
-                                            )
-                                            r = str(r) if r else ""
-                                            _tool_is_error = False
-                                        except Exception as exc:
-                                            r = f"Tool error after security confirmation: {exc}"
-                                            _tool_is_error = True
-                                    else:
-                                        r = (
-                                            f"用户已拒绝安全确认: {_decision}。"
-                                            "不要再执行该操作，请选择安全替代方案或说明无法继续。"
+                                    _bus.cleanup(t_id)
+                                if _decision in (
+                                    "allow",
+                                    "allow_once",
+                                    "allow_session",
+                                    "allow_always",
+                                    "sandbox",
+                                ):
+                                    try:
+                                        # C8b-6a: pass v2 PolicyDecisionV2 directly;
+                                        # ``execute_tool_with_policy`` only reads ``.metadata``
+                                        # via ``getattr``——duck-typed across v1/v2.
+                                        from .policy_v2.models import PolicyDecisionV2 as _PD2
+
+                                        r = await self._tool_executor.execute_tool_with_policy(
+                                            tool_name=t_name,
+                                            tool_input=t_args if isinstance(t_args, dict) else {},
+                                            policy_result=_PD2(
+                                                action=DecisionAction.ALLOW,
+                                                reason=f"用户已允许安全确认: {_decision}",
+                                                metadata={
+                                                    "confirmed_bypass": True,
+                                                    "needs_sandbox": _decision == "sandbox"
+                                                    or _needs_sb,
+                                                },
+                                            ),
+                                            session_id=conversation_id,
                                         )
+                                        r = str(r) if r else ""
+                                        _tool_is_error = False
+                                    except Exception as exc:
+                                        r = f"Tool error after security confirmation: {exc}"
                                         _tool_is_error = True
-                                    _security_confirm_interrupted_ask = True
+                                else:
+                                    r = (
+                                        f"用户已拒绝安全确认: {_decision}。"
+                                        "不要再执行该操作，请选择安全替代方案或说明无法继续。"
+                                    )
+                                    _tool_is_error = True
+                                _security_confirm_interrupted_ask = True
                             else:
                                 _tool_is_error = False
                                 try:
@@ -4496,14 +4646,36 @@ class ReasoningEngine:
                             # chain_text: 结果摘要
                             if _ask_result_summary:
                                 yield {"type": "chain_text", "content": _ask_result_summary}
-                            tool_results_for_msg.append(
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": t_id,
-                                    "content": r,
-                                    "is_error": _tool_is_error,
-                                }
-                            )
+                            _tool_result_msg = {
+                                "type": "tool_result",
+                                "tool_use_id": t_id,
+                                "content": r,
+                                "is_error": _tool_is_error,
+                            }
+                            if _deferred_tool_result:
+                                _tool_result_msg.update(
+                                    {
+                                        "_deferred_approval_id": _deferred_tool_result.get(
+                                            "_deferred_approval_id"
+                                        ),
+                                        "_deferred_approval_strategy": _deferred_tool_result.get(
+                                            "_deferred_approval_strategy"
+                                        ),
+                                    }
+                                )
+                            tool_results_for_msg.append(_tool_result_msg)
+                            if _deferred_tool_result:
+                                from .policy_v2.exceptions import DeferredApprovalRequired
+
+                                raise DeferredApprovalRequired(
+                                    message=r,
+                                    pending_id=_deferred_tool_result.get(
+                                        "_deferred_approval_id"
+                                    ),
+                                    unattended_strategy=_deferred_tool_result.get(
+                                        "_deferred_approval_strategy"
+                                    ),
+                                )
                             if _security_confirm_interrupted_ask:
                                 break
 
@@ -4734,13 +4906,25 @@ class ReasoningEngine:
                             {"status": "tool_execution", "tool_name": tool_name},
                         )
 
-                        # PolicyEngine 检查（与 execute_batch 一致）
-                        from .policy import PolicyDecision, PolicyResult, get_policy_engine
+                        # PolicyEngine 检查（与 execute_batch 一致）—— C6 起决策走 v2，
+                        # C9b 起 UI confirm 走独立 ui_confirm_bus；C8b-1 起 readonly
+                        # 由 ``DeathSwitchTracker`` 承载（process-wide singleton），与
+                        # v1 ``pe.readonly_mode`` 同源。
+                        # C8b-6a: 直接消费 v2 ``PolicyDecisionV2`` + ``DecisionAction``。
+                        from .policy_v2 import (
+                            get_config_v2,
+                            get_death_switch_tracker,
+                        )
+                        from .policy_v2.adapter import evaluate_via_v2
+                        from .policy_v2.enums import DecisionAction
+                        from .ui_confirm_bus import get_ui_confirm_bus
 
-                        _pe = get_policy_engine()
+                        _v2_conf = get_config_v2().confirmation
+                        _ds_tracker = get_death_switch_tracker()
+                        _bus = get_ui_confirm_bus()
                         _tool_args_dict = tool_args if isinstance(tool_args, dict) else {}
-                        _pr = _pe.assert_tool_allowed(tool_name, _tool_args_dict)
-                        if _pr.decision == PolicyDecision.DENY:
+                        _pr = evaluate_via_v2(tool_name, _tool_args_dict)
+                        if _pr.action == DecisionAction.DENY:
                             result_text = f"⚠️ 策略拒绝: {_pr.reason}"
                             _deny_summary = self._summarize_tool_result(tool_name, result_text)
                             yield {
@@ -4753,10 +4937,11 @@ class ReasoningEngine:
                             }
                             if _deny_summary:
                                 yield {"type": "chain_text", "content": _deny_summary}
-                            if _pe.readonly_mode and not _death_switch_notified:
+                            _readonly_now = _ds_tracker.is_readonly_mode()
+                            if _readonly_now and not _death_switch_notified:
                                 yield {"type": "death_switch", "active": True, "reason": _pr.reason}
                                 _death_switch_notified = True
-                            if _pe.readonly_mode:
+                            if _readonly_now:
                                 result_text = (
                                     f"{result_text}\n\n"
                                     "[DEATH SWITCH] Agent 已进入只读模式，所有非只读操作将被拒绝。"
@@ -4773,73 +4958,145 @@ class ReasoningEngine:
                             )
                             continue
 
+                        if _pr.action == DecisionAction.DEFER:
+                            from types import SimpleNamespace
+
+                            _state_task_id = state.task_id
+                            if _state_task_id is None:
+                                try:
+                                    from ..scheduler.locks import (
+                                        get_current_scheduled_task_id,
+                                    )
+
+                                    _state_task_id = get_current_scheduled_task_id()
+                                except Exception:
+                                    _state_task_id = None
+                            _deferred_tool_result = (
+                                await self._tool_executor._defer_unattended_confirm(
+                                    tool_use_id=tool_id,
+                                    tool_name=tool_name,
+                                    tool_input=_tool_args_dict,
+                                    perm_decision=SimpleNamespace(
+                                        metadata=dict(_pr.metadata),
+                                        decision_chain=_pr.to_ui_chain(),
+                                        reason=_pr.reason,
+                                    ),
+                                    session_id=conversation_id or "",
+                                    task_id=_state_task_id,
+                                )
+                            )
+                            result_text = str(_deferred_tool_result.get("content", ""))
+                            result_summary = (
+                                self._summarize_tool_result(tool_name, result_text) or ""
+                            )
+                            yield {
+                                "type": "tool_call_end",
+                                "tool": tool_name,
+                                "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
+                                "id": tool_id,
+                                "is_error": True,
+                                "result_summary": result_summary,
+                            }
+                            if result_summary:
+                                yield {"type": "chain_text", "content": result_summary}
+                            from .policy_v2.exceptions import DeferredApprovalRequired
+
+                            raise DeferredApprovalRequired(
+                                message=result_text,
+                                pending_id=_deferred_tool_result.get(
+                                    "_deferred_approval_id"
+                                ),
+                                unattended_strategy=_deferred_tool_result.get(
+                                    "_deferred_approval_strategy"
+                                ),
+                            )
+
                         _executed_tool_calls_for_budget.append(tc)
 
-                        if _pr.decision == PolicyDecision.CONFIRM:
+                        if _pr.action == DecisionAction.CONFIRM:
                             _actual_tool_calls_for_budget.append(tc)
-                            if _is_im_conversation(conversation_id):
-                                result_text = (
-                                    f"⚠️ 策略需要桌面确认: {_pr.reason}\n\n"
-                                    "当前请求来自 IM 通道，无法安全完成交互式确认；"
-                                    "该工具调用已中止。若这是可信操作，请在桌面端发起，"
-                                    "或切换到完全信任模式后重试普通风险操作。"
-                                )
-                                logger.info(
-                                    "[Security] IM confirmation blocked without waiting: "
-                                    "session=%s tool=%s policy=%s",
-                                    conversation_id,
-                                    tool_name,
-                                    _pr.policy_name,
-                                )
-                                yield {
-                                    "type": "tool_call_end",
-                                    "tool": tool_name,
-                                    "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
-                                    "id": tool_id,
-                                    "is_error": True,
-                                    "result_summary": self._summarize_tool_result(
-                                        tool_name, result_text
-                                    )
-                                    or "",
-                                }
-                                tool_results_for_msg.append(
-                                    {
-                                        "type": "tool_result",
-                                        "tool_use_id": tool_id,
-                                        "content": result_text,
-                                        "is_error": True,
-                                    }
-                                )
-                                continue
-
+                            # C8 §2.3 fix：取消 IM 渠道早退（同上方 hotspot），让 IM 走
+                            # gateway 卡片确认链路。timeout 对 IM 放宽 4×（最少 180s）。
+                            _is_im = _is_im_conversation(conversation_id)
                             _risk = _pr.metadata.get("risk_level") or "medium"
                             _needs_sb = _pr.metadata.get("needs_sandbox", False)
-                            _pe.store_ui_pending(
-                                tool_id,
-                                tool_name,
-                                _tool_args_dict,
+                            # C9a §1: 见上方 hotspot 同款注释（v2 字段向后兼容下发）
+                            _approval_class = _pr.metadata.get("approval_class")
+                            # C13 §15.4: 见上方 hotspot 同款注释 — 多 agent
+                            # confirm 冒泡 payload。
+                            from .policy_v2 import (
+                                get_current_context as _pv2_get_ctx_for_emit,
+                            )
+
+                            _emit_ctx = _pv2_get_ctx_for_emit()
+                            _delegate_chain = (
+                                list(_emit_ctx.delegate_chain) if _emit_ctx else []
+                            )
+                            _root_user_id = (
+                                _emit_ctx.root_user_id if _emit_ctx else None
+                            )
+                            # C13 §15.5: dedup — 见上方 hotspot 同款注释。
+                            _dedup_key = _compute_confirm_dedup_key(
+                                tool_name, _tool_args_dict
+                            )
+                            _leader_id = _bus.find_dedup_leader(
                                 session_id=conversation_id or "",
-                                needs_sandbox=_needs_sb,
-                            )
-                            _pe.prepare_ui_confirm(tool_id)
-                            yield {
-                                "type": "security_confirm",
-                                "tool": tool_name,
-                                "args": _tool_args_dict,
-                                "id": tool_id,
-                                "reason": _pr.reason,
-                                "risk_level": _risk,
-                                "needs_sandbox": _needs_sb,
-                                "timeout_seconds": _pe._config.confirmation.timeout_seconds,
-                                "default_on_timeout": _pe._config.confirmation.default_on_timeout,
-                                "options": ["allow_once", "allow_session", "allow_always", "deny"]
-                                + (["sandbox"] if _needs_sb else []),
-                            }
-                            _decision = await _pe.wait_for_ui_resolution(
-                                tool_id,
-                                float(_pe._config.confirmation.timeout_seconds),
-                            )
-                            _pe.cleanup_ui_confirm(tool_id)
+                                dedup_key=_dedup_key,
+                            ) if _dedup_key else None
+                            _confirm_timeout = float(_v2_conf.timeout_seconds)
+                            if _is_im:
+                                _confirm_timeout = max(_confirm_timeout * 4, 180.0)
+                            if _leader_id:
+                                logger.info(
+                                    "[C13 dedup] tool=%s session=%s join "
+                                    "leader confirm_id=%s",
+                                    tool_name,
+                                    (conversation_id or "")[:12],
+                                    _leader_id[:8],
+                                )
+                                _bus.register_follower(_leader_id)
+                                try:
+                                    _decision = await _bus.wait_for_resolution(
+                                        _leader_id, _confirm_timeout
+                                    )
+                                finally:
+                                    _bus.deregister_follower(_leader_id)
+                            else:
+                                _bus.store_pending(
+                                    tool_id,
+                                    tool_name,
+                                    _tool_args_dict,
+                                    session_id=conversation_id or "",
+                                    needs_sandbox=_needs_sb,
+                                    dedup_key=_dedup_key or None,
+                                )
+                                _bus.prepare(tool_id)
+                                yield {
+                                    "type": "security_confirm",
+                                    "tool": tool_name,
+                                    "args": _tool_args_dict,
+                                    "id": tool_id,
+                                    "reason": _pr.reason,
+                                    "risk_level": _risk,
+                                    "needs_sandbox": _needs_sb,
+                                    "timeout_seconds": _v2_conf.timeout_seconds,
+                                    "default_on_timeout": _v2_conf.default_on_timeout,
+                                    "channel": "im" if _is_im else "desktop",
+                                    "approval_class": _approval_class,
+                                    "policy_version": 2,
+                                    "delegate_chain": _delegate_chain,
+                                    "root_user_id": _root_user_id,
+                                    # C23 P2-2: ship decision_chain (see other call site
+                                    # above for rationale).
+                                    "decision_chain": _pr.to_ui_chain(),
+                                    "options": ["allow_once", "allow_session", "allow_always", "deny"]
+                                    + (["sandbox"] if _needs_sb else []),
+                                }
+                                _decision = await _bus.wait_for_resolution(
+                                    tool_id,
+                                    _confirm_timeout,
+                                )
+                                _bus.cleanup(tool_id)
                             _confirmed_allowed = _decision in (
                                 "allow",
                                 "allow_once",
@@ -4849,11 +5106,15 @@ class ReasoningEngine:
                             )
                             if _confirmed_allowed:
                                 try:
+                                    # C8b-6a: pass v2 PolicyDecisionV2 directly (duck-typed
+                                    # with v1 PolicyResult on ``.metadata``).
+                                    from .policy_v2.models import PolicyDecisionV2 as _PD2
+
                                     result_text = await self._tool_executor.execute_tool_with_policy(
                                         tool_name=tool_name,
                                         tool_input=_tool_args_dict,
-                                        policy_result=PolicyResult(
-                                            decision=PolicyDecision.ALLOW,
+                                        policy_result=_PD2(
+                                            action=DecisionAction.ALLOW,
                                             reason=f"用户已允许安全确认: {_decision}",
                                             metadata={
                                                 "confirmed_bypass": True,

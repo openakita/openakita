@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core.response_handler import request_expects_artifact
 from .blackboard import OrgBlackboard
+from .command_tracker import UserCommandTracker
 from .event_store import OrgEventStore
 from .failure_diagnoser import format_human_summary
 from .failure_diagnoser import is_soft_verify_incomplete as _is_soft_verify_incomplete
@@ -33,8 +34,30 @@ from .models import (
     OrgStatus,
     _now_iso,
 )
+from .plugin_assets import (
+    PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S as _PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S,
+)
+from .plugin_assets import (
+    PLUGIN_ASSET_MAX_BYTES as _PLUGIN_ASSET_MAX_BYTES,
+)
+from .plugin_assets import (
+    copy_to_workspace as _plugin_copy_to_workspace,
+)
+from .plugin_assets import (
+    download_to_workspace as _plugin_download_to_workspace,
+)
+from .plugin_assets import (
+    ext_for_url as _plugin_ext_for_url,
+)
+from .plugin_assets import (
+    safe_asset_filename as _plugin_safe_asset_filename,
+)
 from .tool_handler import OrgToolHandler
 from .tools import build_org_node_tools
+
+# Re-exported for backward compatibility — external callers still do
+# ``from openakita.orgs.runtime import UserCommandTracker``.
+__all__ = ["OrgRuntime", "UserCommandTracker", "get_runtime"]
 
 if TYPE_CHECKING:
     from .heartbeat import OrgHeartbeat
@@ -80,111 +103,6 @@ class _CachedAgent:
     @property
     def expired(self) -> bool:
         return (time.monotonic() - self.last_used) > AGENT_CACHE_TTL
-
-
-class UserCommandTracker:
-    """Track the lifecycle of a single user command across its delegation chains.
-
-    A user command is considered **truly complete** when:
-      - all chains that were opened *by or under this command's root* are closed
-        (accepted / rejected / cancelled), AND
-      - the root node is IDLE, AND
-      - the root's inbox has no pending messages, AND
-      - no other nodes under this org are still BUSY/WAITING with pending work, AND
-      - (when ``org_root_post_summary`` is enabled) the root has produced a
-        post-summary ReAct after being woken up by the auto-pushed
-        ``task_complete`` notification.
-
-    This tracker is event-driven: `register_chain`/`unregister_chain` are called
-    from `_handle_org_delegate_task` and `_mark_chain_closed` respectively.
-    Completion is signalled via :pyattr:`completed`.
-
-    The :pyattr:`last_progress_at` timestamp is refreshed by `_touch()` whenever
-    any progress signal fires (node status change, org tool call, messenger
-    dispatch, chain event). It is consumed **only** by the command watchdog to
-    decide whether to emit a stuck warning or to soft-stop the organization.
-    It does **not** participate in completion judgement.
-
-    State machine (when ``org_root_post_summary`` enabled):
-      ``running`` → (subtree closed + root idle) → ``awaiting_summary``
-      ``awaiting_summary`` → (root re-activated and back to idle) → ``done``
-    When ``org_root_post_summary`` disabled the tracker behaves like before:
-    once the subtree is closed and root is idle, ``completed`` is set directly
-    (state stays ``running`` for compatibility).
-    """
-
-    __slots__ = (
-        "org_id",
-        "root_node_id",
-        "command_id",
-        "open_chains",
-        "root_chain_id",
-        "completed",
-        "last_progress_at",
-        "started_at",
-        "warned_stuck",
-        "auto_stopped",
-        # 区分 auto_stopped 的来源：True 表示由用户主动调用
-        # `cancel_user_command` 强制终止；False 表示由 _command_watchdog
-        # 卡死兜底触发。仅影响 send_command 终态文案，不改变流程。
-        "user_cancelled",
-        "state",
-        "summary_pushed_at",
-        # BUG-3：保存当前命令的用户原始指令内容，供子节点 system prompt
-        # 渲染（identity.build_org_context_prompt）和 _handle_org_delegate_task
-        # 注入"父任务硬边界"时取用。命令结束时 tracker 一并被 pop，自动失效。
-        "user_command_content",
-        # BUG-5：finalize phase 事件去重，避免同 phase 重复 emit。
-        "_last_phase_emitted",
-    )
-
-    def __init__(
-        self,
-        org_id: str,
-        root_node_id: str,
-        command_id: str | None = None,
-        user_command_content: str = "",
-    ) -> None:
-        self.org_id = org_id
-        self.root_node_id = root_node_id
-        self.command_id = command_id
-        self.open_chains: set[str] = set()
-        # The first chain opened under this command (typically created by
-        # the root node's first `org_delegate_task`). Used by the subtree
-        # walker in ``_maybe_finalize_tracker`` as the root of the chain
-        # tree. ``None`` when the root has not delegated anything yet.
-        self.root_chain_id: str | None = None
-        self.completed: asyncio.Event = asyncio.Event()
-        now = time.monotonic()
-        self.last_progress_at: float = now
-        self.started_at: float = now
-        self.warned_stuck: bool = False
-        self.auto_stopped: bool = False
-        self.user_cancelled: bool = False
-        # See class docstring for state machine details.
-        self.state: str = "running"
-        # monotonic time when summary inbox push happened (debounce).
-        self.summary_pushed_at: float = 0.0
-        self.user_command_content: str = user_command_content or ""
-        self._last_phase_emitted: str | None = None
-
-    def _touch(self) -> None:
-        self.last_progress_at = time.monotonic()
-
-    def register_chain(self, chain_id: str) -> None:
-        if not chain_id:
-            return
-        self.open_chains.add(chain_id)
-        if self.root_chain_id is None:
-            self.root_chain_id = chain_id
-        self._touch()
-        self.completed.clear()
-
-    def unregister_chain(self, chain_id: str) -> None:
-        if not chain_id:
-            return
-        self.open_chains.discard(chain_id)
-        self._touch()
 
 
 class OrgRuntime:
@@ -334,6 +252,17 @@ class OrgRuntime:
         # 产生的真实附件重复落盘。
         # key = "{org_id}:{node_id}"（与 _node_last_activity 对齐），值 = int。
         self._node_files_registered_in_task: dict[str, int] = {}
+
+        # 工作台节点：本任务内由 plugin tool hook 自动登记的附件清单。
+        # _record_plugin_asset_output 成功 register 时 append，
+        # _handle_org_submit_deliverable 在 LLM 未声明 file_attachments 时
+        # 自动取用，避免插件节点必须人工列附件。同样在每次任务起手清空。
+        # key 与 _node_files_registered_in_task 对齐：``{org_id}:{node_id}``。
+        self._node_plugin_attachments_in_task: dict[str, list[dict]] = {}
+        # 工作台节点：本任务内插件工具返回 ok=False 且 terminal=True 时记录
+        # 失败详情。如果叶子工作台随后没有提交交付物，运行时会把本轮视为失败
+        # 并关闭 chain，避免组织命令永远等不到交付。
+        self._node_plugin_failures_in_task: dict[str, dict] = {}
 
         # 工具级在途锁：防止 LLM 在同一 ReAct iter 内 emit 多个相同 tool_use
         # （如 3 次 org_delegate_task 给同一 to_node 同一 chain）造成下游
@@ -1016,14 +945,24 @@ class OrgRuntime:
 
         if tracker.auto_stopped:
             final_result["stopped_by_watchdog"] = True
-            final_result["status"] = "stopped_no_progress"
             if tracker.user_cancelled:
+                final_result["status"] = "cancelled_by_user"
                 final_result["cancelled_by_user"] = True
                 # 覆盖 warning（即使被前置流程 setdefault 过也要换成"用户主动"文案）
                 final_result["warning"] = (
                     "已按用户请求强制终止当前任务，可立即发送新指令。"
                 )
+            elif tracker.deadlock_stopped:
+                final_result["status"] = "stopped_deadlock"
+                final_result["deadlock_stopped"] = True
+                # 覆盖 warning：死锁早停语义和"长时间无进度"不同——
+                # 这里是确认了"全员 IDLE 但还有未关闭 chain"，再等也不会动。
+                final_result["warning"] = (
+                    "组织所有节点都已空闲，但仍有任务链没收到关闭信号；"
+                    "已立即停止以避免空跑。可点击「继续之前任务」或重新下发指令。"
+                )
             else:
+                final_result["status"] = "stopped_no_progress"
                 final_result.setdefault(
                     "warning",
                     "组织长时间无进度，已自动暂停，此为已有阶段性结果。",
@@ -1462,6 +1401,11 @@ class OrgRuntime:
             # 都会让该 counter +1。auto-persist 兜底仅在 counter==0 时触发，
             # 杜绝"LLM 已自己写过文件 + 系统又兜底落盘"的双写。
             self._node_files_registered_in_task[cache_key] = 0
+            # plugin hook 登记附件缓冲清零：本任务内由 _record_plugin_asset_output
+            # 产生的附件会累计到这里，供 _handle_org_submit_deliverable 在 LLM
+            # 未传 file_attachments 时自动取用。
+            self._node_plugin_attachments_in_task[cache_key] = []
+            self._node_plugin_failures_in_task.pop(cache_key, None)
 
             result_text = await self._run_agent_task(
                 agent, prompt, session_id, org, node,
@@ -1623,6 +1567,28 @@ class OrgRuntime:
 
             is_normal = exit_reason in ("normal", "ask_user", "waiting_user") or is_soft_verify
             is_terminated = exit_reason == "loop_terminated"
+            plugin_failure = self._node_plugin_failures_in_task.get(cache_key)
+            # 仅排除"已经在 ReAct 内通过 submit_deliverable 显式上报失败"
+            # 的情况——其它路径（包括 user_command 让 root 直接调插件、
+            # delivery_followup 重活路径）都应让 task 视为失败而非 success。
+            submit_called_for_failure = self._react_trace_has_tool(
+                react_trace, "org_submit_deliverable",
+            )
+            if (
+                is_normal
+                and plugin_failure
+                and not submit_called_for_failure
+            ):
+                exit_reason = "plugin_tool_failed"
+                is_normal = False
+                is_terminated = False
+                msg = (
+                    plugin_failure.get("error")
+                    or plugin_failure.get("message")
+                    or "工作台工具调用失败"
+                )
+                if msg and msg not in (result_text or ""):
+                    result_text = ((result_text or "").rstrip() + "\n\n" + str(msg)).strip()
 
             status_reason = "task_completed" if is_normal else (
                 "task_terminated" if is_terminated else "task_failed"
@@ -2140,6 +2106,22 @@ class OrgRuntime:
 
         is_root = (node.level == 0 or not org.get_parent(node.id))
         is_coordinator = bool(org.get_children(node.id))
+
+        # 工作台节点（plugin_origin 非空）必须是叶子节点：coordinator 路径会
+        # 把 allowed_external 强制清空，导致工作台工具无法放行 → 节点形同虚设。
+        # 这里在运行时再保险一次：检测到非法组合时降级为非工作台节点（保留
+        # external_tools 但剥离 plugin_origin 标识），并 emit warning，让用户
+        # 在前端能看到提示并修复编排。
+        active_plugin_origin = dict(node.plugin_origin) if node.plugin_origin else None
+        if active_plugin_origin and is_coordinator:
+            logger.warning(
+                "[OrgRuntime] workbench node %s in org %s has children — "
+                "plugin_origin will be ignored at runtime. "
+                "Please make workbench nodes leaves.",
+                node.id, org.id,
+            )
+            active_plugin_origin = None
+
         allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT_TOOLS
         if is_coordinator:
             # 管理节点只负责拆解、委派、等待和验收；真实文件/浏览器/命令等
@@ -2206,6 +2188,25 @@ class OrgRuntime:
         agent.file_tool.base_path = org_workspace
         agent.shell_tool.default_cwd = str(org_workspace)
 
+        # 工作台节点：把"插件能力 + 产物交付协议"段拼到 org_context，让 LLM
+        # 在 system prompt 中看到具体可调用的工作台工具名与产物自动登记规则。
+        # 仅对真正"激活"的工作台节点（active_plugin_origin 非空，即叶子节点）
+        # 生效，避免被强制降级的 coordinator 拿到误导性提示。
+        if active_plugin_origin:
+            try:
+                workbench_section = self._build_workbench_prompt_section(
+                    agent, active_plugin_origin,
+                )
+                if workbench_section:
+                    org_context_prompt = (
+                        f"{org_context_prompt}\n\n{workbench_section}"
+                    )
+            except Exception:
+                logger.debug(
+                    "[OrgRuntime] failed to build workbench prompt section",
+                    exc_info=True,
+                )
+
         # A node is an "org coordinator" iff it has direct subordinates —
         # ``build_org_node_tools`` already drops ``org_delegate_task`` for
         # leaf nodes, so this aligns the runtime contract: only nodes that
@@ -2224,8 +2225,10 @@ class OrgRuntime:
             "workspace": org_workspace,
             "is_root": is_root,
             "is_coordinator": is_coordinator,
+            "plugin_origin": active_plugin_origin,
         }
         agent._is_org_coordinator = is_coordinator
+        agent._workbench_plugin_origin = active_plugin_origin
 
         if hasattr(agent, "brain") and hasattr(agent.brain, "set_trace_context"):
             agent.brain.set_trace_context({
@@ -2245,6 +2248,116 @@ class OrgRuntime:
         self._register_org_tool_handler(agent, org.id, node.id)
 
         return agent
+
+    @staticmethod
+    def _build_workbench_prompt_section(
+        agent: Any, plugin_origin: dict,
+    ) -> str:
+        """Compose a "你是【X】工作台节点" section for the system prompt.
+
+        Lists the workbench-specific tools (filtered from
+        ``agent.tool_catalog``) and reiterates the artifact-handoff
+        contract: workbench produces → runtime auto-registers → submit
+        deliverable without re-declaring file_attachments → upstream
+        asset_id / image_url flows back into downstream tool input.
+
+        Returns an empty string when the plugin manager / tool catalog
+        cannot be queried so the caller leaves the original prompt intact.
+        """
+        if not plugin_origin:
+            return ""
+        plugin_id = str(plugin_origin.get("plugin_id") or "").strip()
+        if not plugin_id:
+            return ""
+
+        pm = getattr(agent, "_plugin_manager", None)
+        manifest = None
+        plugin_tool_names: set[str] = set()
+        if pm is not None:
+            try:
+                lp = pm.get_loaded(plugin_id)
+                if lp is not None:
+                    manifest = lp.manifest
+                    for t in getattr(lp.api, "_registered_tools", None) or []:
+                        if isinstance(t, dict) and t.get("name"):
+                            plugin_tool_names.add(t["name"])
+            except Exception:
+                logger.debug(
+                    "[OrgRuntime] _build_workbench_prompt_section: lookup failed",
+                    exc_info=True,
+                )
+
+        display_name = (
+            (getattr(manifest, "display_name_zh", None) or "")
+            or (getattr(manifest, "name", None) or "")
+            or plugin_id
+        )
+
+        active_tool_lines: list[str] = []
+        try:
+            seen: set[str] = set()
+            for t in getattr(agent, "_tools", None) or []:
+                if not isinstance(t, dict):
+                    continue
+                name = t.get("name") or ""
+                if name in plugin_tool_names and name not in seen:
+                    seen.add(name)
+                    desc = (t.get("description") or "").strip()
+                    if desc:
+                        if len(desc) > 160:
+                            desc = desc[:160].rstrip() + "..."
+                        active_tool_lines.append(f"- `{name}` — {desc}")
+                    else:
+                        active_tool_lines.append(f"- `{name}`")
+            # 兜底：若 agent._tools 里没找到任何插件工具（节点被错误配置导致
+            # external_tools 未声明该工具），把已知工具名列出来让 LLM 看到全貌。
+            if not active_tool_lines:
+                for name in sorted(plugin_tool_names):
+                    active_tool_lines.append(f"- `{name}`")
+        except Exception:
+            for name in sorted(plugin_tool_names):
+                active_tool_lines.append(f"- `{name}`")
+
+        tool_block = "\n".join(active_tool_lines) if active_tool_lines else "（暂无工具）"
+
+        return (
+            f"## 你是【{display_name}】工作台节点\n"
+            f"专属能力（请按 input_schema 严格调用）：\n{tool_block}\n\n"
+            "语言与展示要求：\n"
+            "1. 当前用户使用中文时，你的交付说明、进度摘要、镜头标题和用户可见字段"
+            "必须使用中文；\n"
+            "2. 只有传给生图/视频模型的技术提示词可以包含英文关键词，但必须同时提供"
+            "中文镜头说明，不要整段只输出英文 prompt；\n\n"
+            "交付协议：\n"
+            "1. 工作台工具调用成功后，组织 runtime 会把产物（图片/视频/音频/"
+            "本地文件）自动下载到 org workspace 的 `plugin_assets/<workbench>/<task>/` "
+            "目录，并通过 `_register_file_output` 登记为任务附件（黑板 RESOURCE + "
+            "ProjectTask + chat UI 附件 chip）；\n"
+            "2. 你**不需要**在 `org_submit_deliverable` 的 `file_attachments` "
+            "参数里再重复声明这些产物——runtime 会自动把它们随 TASK_DELIVERED "
+            "送给委派人；只需在 `deliverable` 文本里说明产出内容（标题、规格、"
+            "prompt 摘要、`asset_id` 等关键标识）即可；\n"
+            "3. 如果工具返回里出现 `registered_attachments` 字段，那就是 runtime "
+            "已经成功登记的本地路径，你可以在 deliverable 文本里直接引用其中的 "
+            "`filename`；\n"
+            "4. 若上级 prompt 中提供了上游工作台的 `asset_id` 或 `image_url`，"
+            "请如实填入对应工具参数（例如 `seedance_create.from_asset_ids` 或 "
+            "`content[].image_url`）；不要凭空想象资源；\n"
+            "5. 若上级只是问询/讨论（而非真正下单产出），直接用 "
+            "`org_submit_deliverable` 提交文字回答，无需调用工作台工具；\n"
+            "6. 完成后调 `org_submit_deliverable` 把成果交给委派人，等待验收。"
+            + (
+                "\n\n即梦视频工作台补充规则：\n"
+                "- 多镜头任务必须按镜头逐个调用 `seedance_create`：每次只传当前镜头"
+                "对应的一个 `from_asset_ids`，并设置该镜头时长，例如 30 秒/3 镜头"
+                "应设置 `duration=10`；\n"
+                "- 每个镜头的 `prompt` 必须写清楚该镜头独有的画面、运动和风格，"
+                "不要用同一段总主题 prompt 重复生成多个视频；\n"
+                "- Seedance 2.0 支持并发额度，但组织工作台为了稳定交付，会等待"
+                "每个 `seedance_create` 完成后再继续下一个镜头。"
+                if plugin_id == "seedance-video" else ""
+            )
+        )
 
     def _resolve_org_workspace(self, org: Organization) -> Path:
         """Return the effective workspace directory for an organization.
@@ -2810,9 +2923,20 @@ class OrgRuntime:
 
     def get_event_store(self, org_id: str) -> OrgEventStore:
         if org_id not in self._event_stores:
-            org_dir = self._manager._org_dir(org_id)
+            org_dir = self._manager.get_org_dir(org_id)
             self._event_stores[org_id] = OrgEventStore(org_dir, org_id)
         return self._event_stores[org_id]
+
+    def get_project_store(self, org_id: str):
+        """构造一个新的 :class:`ProjectStore` 指向给定组织的目录。
+
+        ProjectStore 内部不缓存连接、随用随建，所以这里不做共享池——
+        每个调用方拿到自己的 store 实例。这是 :pyfunc:`get_event_store`、
+        :pyfunc:`get_blackboard` 之外推荐的"按 org 取数据"统一入口，
+        外部代码不需要再去戳 ``self._manager._org_dir`` 私访。
+        """
+        from openakita.orgs.project_store import ProjectStore
+        return ProjectStore(self._manager.get_org_dir(org_id))
 
     # ------------------------------------------------------------------
     # Verify-context accessors (B4 - 给 reasoning_engine 提供组织视角信号)
@@ -3453,6 +3577,7 @@ class OrgRuntime:
         for (oid, root_id), tracker in list(self._active_user_cmd.items()):
             if oid != org_id or tracker.command_id != command_id:
                 continue
+            blockers = self._collect_tracker_blockers(tracker)
             return {
                 "command_id": tracker.command_id,
                 "root_node_id": root_id,
@@ -3461,6 +3586,13 @@ class OrgRuntime:
                 "root_chain_id": tracker.root_chain_id or "",
                 "open_chains": sorted(tracker.open_chains),
                 "open_chain_count": len(tracker.open_chains),
+                "open_subtree_chains": blockers.get("open_subtree_chains", []),
+                "chain_parent": blockers.get("chain_parent", {}),
+                "root_status": blockers.get("root_status", ""),
+                "busy_nodes": blockers.get("busy_nodes", []),
+                "pending_mailbox": blockers.get("pending_mailbox", []),
+                "blockers": blockers.get("blockers", []),
+                "blocker_summary": blockers.get("summary", ""),
                 "elapsed_s": round(now - tracker.started_at, 1),
                 "last_progress_elapsed_s": round(now - tracker.last_progress_at, 1),
                 "warned_stuck": tracker.warned_stuck,
@@ -3468,6 +3600,83 @@ class OrgRuntime:
                 "user_cancelled": tracker.user_cancelled,
             }
         return None
+
+    def _collect_tracker_blockers(self, tracker: UserCommandTracker) -> dict[str, Any]:
+        """Return structured reasons why a user command is not finalized yet."""
+        org = self.get_org(tracker.org_id)
+        bucket = self._closed_chains.get(tracker.org_id) or {}
+        subtree = self._collect_chain_subtree(tracker.root_chain_id)
+        open_subtree = sorted(cid for cid in subtree if cid not in bucket)
+        if not subtree:
+            open_subtree = sorted(tracker.open_chains)
+
+        root_status = ""
+        busy_nodes: list[dict[str, str]] = []
+        pending_mailbox: list[dict[str, Any]] = []
+        if org:
+            root = org.get_node(tracker.root_node_id)
+            root_status = root.status.value if root else "missing"
+            for node in org.nodes:
+                if node.id != tracker.root_node_id and node.status in (
+                    NodeStatus.BUSY, NodeStatus.WAITING,
+                ):
+                    busy_nodes.append({
+                        "node_id": node.id,
+                        "role_title": node.role_title,
+                        "status": node.status.value,
+                    })
+            messenger = self.get_messenger(tracker.org_id)
+            if messenger:
+                for node in org.nodes:
+                    count = messenger.get_pending_count(node.id)
+                    if count > 0:
+                        pending_mailbox.append({
+                            "node_id": node.id,
+                            "role_title": node.role_title,
+                            "pending": count,
+                        })
+
+        blockers: list[str] = []
+        if open_subtree:
+            blockers.append("open_chains")
+        if root_status and root_status != NodeStatus.IDLE.value:
+            blockers.append("root_not_idle")
+        if busy_nodes:
+            blockers.append("busy_nodes")
+        if pending_mailbox:
+            blockers.append("pending_mailbox")
+        if tracker.state == "awaiting_summary":
+            blockers.append("awaiting_summary")
+
+        summary_parts: list[str] = []
+        if open_subtree:
+            summary_parts.append(f"仍有 {len(open_subtree)} 条任务链未关闭")
+        if root_status and root_status != NodeStatus.IDLE.value:
+            summary_parts.append(f"根节点状态为 {root_status}")
+        if busy_nodes:
+            names = ", ".join(n["role_title"] or n["node_id"] for n in busy_nodes[:3])
+            summary_parts.append(f"忙碌节点: {names}")
+        if pending_mailbox:
+            names = ", ".join(
+                f"{n['role_title'] or n['node_id']}({n['pending']})"
+                for n in pending_mailbox[:3]
+            )
+            summary_parts.append(f"待处理消息: {names}")
+        if tracker.state == "awaiting_summary":
+            summary_parts.append("正在等待根节点生成最终汇总")
+
+        return {
+            "blockers": blockers,
+            "summary": "；".join(summary_parts),
+            "open_subtree_chains": open_subtree,
+            "chain_parent": {
+                cid: self._chain_parent.get(cid)
+                for cid in open_subtree
+            },
+            "root_status": root_status,
+            "busy_nodes": busy_nodes,
+            "pending_mailbox": pending_mailbox,
+        }
 
     async def cancel_user_command(
         self,
@@ -3783,6 +3992,7 @@ class OrgRuntime:
         """
         try:
             subtree = self._collect_chain_subtree(tracker.root_chain_id)
+            blockers = self._collect_tracker_blockers(tracker)
             payload = {
                 "org": tracker.org_id,
                 "root": tracker.root_node_id,
@@ -3795,6 +4005,8 @@ class OrgRuntime:
                     1 for c in subtree
                     if c in (self._closed_chains.get(tracker.org_id) or {})
                 ),
+                "blockers": blockers.get("blockers", []),
+                "blocker_summary": blockers.get("summary", ""),
             }
             payload.update(extra)
             logger.debug("[Finalize] %s", payload)
@@ -3814,6 +4026,11 @@ class OrgRuntime:
                     "decision": decision,
                     "command_id": tracker.command_id or "",
                     "root_chain_id": tracker.root_chain_id or "",
+                    "blockers": blockers.get("blockers", []),
+                    "blocker_summary": blockers.get("summary", ""),
+                    "open_subtree_chains": blockers.get("open_subtree_chains", []),
+                    "busy_nodes": blockers.get("busy_nodes", []),
+                    "pending_mailbox": blockers.get("pending_mailbox", []),
                 },
             )
         except Exception:
@@ -4135,6 +4352,11 @@ class OrgRuntime:
         warn_secs = _cfg("org_command_stuck_warn_secs", 900)
         autostop_secs = _cfg("org_command_stuck_autostop_secs", 3600)
         hard_cap = _cfg("org_command_timeout_secs", 0)
+        # 死锁早停：全员 IDLE + 无消息 + 仍有 open chain 持续多久后立即收口。
+        # 比 autostop 更激进——后者要等 1 小时；deadlock 路径默认 90 秒就能
+        # 把"chain 漏关 / mailbox 路径异常 / root 没收到 task_complete"这类
+        # 真正的死循环识别出来，避免用户对着指挥台干瞪眼。
+        deadlock_grace = _cfg("org_command_deadlock_grace_secs", 90)
 
         # 启用时仍维持合理下限与顺序约束（避免用户配出反直觉的极小值）
         if warn_secs > 0:
@@ -4143,8 +4365,10 @@ class OrgRuntime:
             autostop_secs = max(
                 (warn_secs + 60) if warn_secs > 0 else 60, autostop_secs
             )
+        if deadlock_grace > 0:
+            deadlock_grace = max(15, deadlock_grace)
 
-        active = [t for t in (warn_secs, autostop_secs, hard_cap) if t > 0]
+        active = [t for t in (warn_secs, autostop_secs, hard_cap, deadlock_grace) if t > 0]
         poll_interval = (
             max(5.0, min(30.0, min(active) / 3.0)) if active else 30.0
         )
@@ -4226,6 +4450,32 @@ class OrgRuntime:
                     finally:
                         tracker.completed.set()
                     return
+
+                # ── 死锁早停（独立分支） ─────────────────────────────
+                # autostop 默认 1 小时太久，让用户对着指挥台干瞪眼。
+                # 这里识别"看似空跑"——所有 agent 都不在干活、mailbox 全空、
+                # root 节点也 IDLE，但 tracker 还在 open_chains 里挂着没关。
+                # 这种状态再等下去，也不会有任何信号回来唤醒任何节点。
+                if (
+                    deadlock_grace > 0
+                    and not tracker.deadlock_stopped
+                    and self._is_tracker_quiet_deadlock(tracker)
+                ):
+                    if tracker._quiet_deadlock_since <= 0:
+                        tracker._quiet_deadlock_since = now
+                        logger.info(
+                            "[CmdWatchdog] org=%s root=%s entered quiet-deadlock "
+                            "watch window",
+                            tracker.org_id, tracker.root_node_id,
+                        )
+                    elif (now - tracker._quiet_deadlock_since) >= deadlock_grace:
+                        await self._trigger_deadlock_stop(
+                            tracker, int(now - tracker._quiet_deadlock_since),
+                        )
+                        return
+                else:
+                    if tracker._quiet_deadlock_since > 0:
+                        tracker._quiet_deadlock_since = 0.0
         except asyncio.CancelledError:
             return
         except Exception:
@@ -4233,6 +4483,96 @@ class OrgRuntime:
                 "[CmdWatchdog] unexpected error, exiting watchdog",
                 exc_info=True,
             )
+
+    def _is_tracker_quiet_deadlock(self, tracker: UserCommandTracker) -> bool:
+        """Return True if tracker looks like a "silent deadlock".
+
+        Conditions（必须全部满足）：
+          1. 还有未关闭 chain（subtree 视角）；否则会被 _maybe_finalize_tracker
+             正常收口，不需要 deadlock 路径。
+          2. 没有 BUSY/WAITING 节点（除 root 外）。
+          3. 没有任何节点 mailbox 有待处理消息。
+          4. root 节点 status == IDLE。
+          5. 当前不处于 awaiting_summary 状态——summary push 已经唤醒过 root，
+             如果它正在生成最终汇总就不能误杀。
+        """
+        try:
+            blockers = self._collect_tracker_blockers(tracker)
+        except Exception:
+            logger.debug(
+                "[CmdWatchdog] _collect_tracker_blockers failed",
+                exc_info=True,
+            )
+            return False
+        if tracker.state == "awaiting_summary":
+            return False
+        open_subtree = blockers.get("open_subtree_chains") or []
+        if not open_subtree:
+            return False
+        if blockers.get("busy_nodes"):
+            return False
+        if blockers.get("pending_mailbox"):
+            return False
+        root_status = blockers.get("root_status") or ""
+        if root_status and root_status != NodeStatus.IDLE.value:
+            return False
+        return True
+
+    async def _trigger_deadlock_stop(
+        self, tracker: UserCommandTracker, quiet_secs: int,
+    ) -> None:
+        """Mark tracker as deadlock-stopped and tear down the org-side state.
+
+        Distinct from the no-progress autostop path:
+        - sets ``deadlock_stopped`` (in addition to ``auto_stopped``) so the
+          finalizer in ``send_command`` can surface a different warning;
+        - emits a separate event ``command_deadlock_stopped`` for forensic
+          replay (event store + WS broadcast).
+        """
+        tracker.auto_stopped = True
+        tracker.deadlock_stopped = True
+        logger.warning(
+            "[CmdWatchdog] org=%s root=%s deadlock detected, soft-stopping "
+            "(quiet=%ds, open_chains=%d)",
+            tracker.org_id,
+            tracker.root_node_id,
+            quiet_secs,
+            len(tracker.open_chains),
+        )
+        try:
+            self.get_event_store(tracker.org_id).emit(
+                "command_deadlock_stopped",
+                tracker.root_node_id,
+                {
+                    "command_id": tracker.command_id or "",
+                    "quiet_secs": quiet_secs,
+                    "open_chains": list(tracker.open_chains),
+                },
+            )
+        except Exception:
+            logger.debug(
+                "[CmdWatchdog] emit deadlock event failed", exc_info=True,
+            )
+        try:
+            await self._broadcast_ws("org:command_deadlock_stopped", {
+                "org_id": tracker.org_id,
+                "root_node_id": tracker.root_node_id,
+                "command_id": tracker.command_id or "",
+                "quiet_secs": quiet_secs,
+                "open_chains": list(tracker.open_chains),
+            })
+        except Exception:
+            logger.debug(
+                "[CmdWatchdog] broadcast deadlock event failed", exc_info=True,
+            )
+        try:
+            await self._soft_stop_org(tracker.org_id)
+        except Exception:
+            logger.error(
+                "[CmdWatchdog] soft_stop on deadlock failed", exc_info=True,
+            )
+        finally:
+            tracker.completed.set()
 
     async def _wait_delegation_completion(
         self, org_id: str, root_node_id: str, timeout: int = 300,
@@ -4635,6 +4975,11 @@ class OrgRuntime:
 
     async def _broadcast_ws(self, event: str, data: dict) -> None:
         try:
+            from openakita.orgs.event_router import route_org_event
+            await route_org_event(event, data)
+        except Exception:
+            logger.debug("[OrgRuntime] route_org_event failed: %s %s", event, data, exc_info=True)
+        try:
             from openakita.api.routes.websocket import broadcast_event
             await broadcast_event(event, data)
         except Exception:
@@ -4681,9 +5026,45 @@ class OrgRuntime:
             self._node_last_activity[f"{org_id}:{node_id}"] = time.monotonic()
             if tool_name.startswith("org_"):
                 return await tool_handler.handle(tool_name, tool_input, org_id, node_id)
-            result = await original_with_policy(
-                tool_name, tool_input, policy_result, session_id=session_id,
-            )
+            is_plugin_tool = self._is_plugin_tool(agent, tool_name)
+            if is_plugin_tool:
+                # Plugin 工具往往是长 poll（通义生图分钟级、Seedance 视频
+                # 5–10 分钟）。如果不在工具入口/出口主动 _touch tracker，
+                # 节点会一直 BUSY、无 mailbox 派发、无 org_* 调用，watchdog
+                # 误把"正在等远端结果"判成 stuck（默认 900s warn / 3600s
+                # autostop），多镜头串行很容易触发。
+                self._touch_trackers_for_org(org_id)
+                await self._broadcast_ws("org:workbench_tool_status", {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "tool_name": tool_name,
+                    "status": "running",
+                })
+                self.get_event_store(org_id).emit(
+                    "workbench_tool_started",
+                    node_id,
+                    {"tool_name": tool_name, "input": str(tool_input)[:_LIM_EVENT]},
+                )
+            try:
+                result = await original_with_policy(
+                    tool_name, tool_input, policy_result, session_id=session_id,
+                )
+            except Exception as exc:
+                if is_plugin_tool:
+                    self._touch_trackers_for_org(org_id)
+                    await self._broadcast_ws("org:workbench_tool_status", {
+                        "org_id": org_id,
+                        "node_id": node_id,
+                        "tool_name": tool_name,
+                        "status": "failed",
+                        "error": str(exc)[:_LIM_WS],
+                    })
+                    self.get_event_store(org_id).emit(
+                        "workbench_tool_failed",
+                        node_id,
+                        {"tool_name": tool_name, "error": str(exc)[:_LIM_EVENT]},
+                    )
+                raise
             if tool_name in ("create_plan", "update_plan_step", "complete_plan"):
                 chain_id = getattr(agent, "_org_context", {}).get("current_chain_id") or ""
                 if chain_id:
@@ -4700,6 +5081,44 @@ class OrgRuntime:
                 except Exception:
                     logger.debug(
                         "[OrgRuntime] failed to record file output", exc_info=True,
+                    )
+            elif is_plugin_tool:
+                # 工作台节点：插件工具产出（image_urls / video_url / local_paths /
+                # asset_ids）由 runtime 自动下载到 org workspace 并走 _register_file_output
+                # 登记，让产物进入 chat UI 附件 chip + 任务验收链路。
+                plugin_ok = True
+                try:
+                    import json as _json
+                    parsed = _json.loads(result) if isinstance(result, str) else None
+                    if isinstance(parsed, dict) and parsed.get("ok") is False:
+                        plugin_ok = False
+                except Exception:
+                    plugin_ok = True
+                try:
+                    ws = getattr(agent, "_org_context", {}).get("workspace")
+                    enhanced = await self._record_plugin_asset_output(
+                        agent, org_id, node_id, tool_name, tool_input, result,
+                        workspace=ws,
+                    )
+                    if enhanced is not None:
+                        result = enhanced
+                except Exception:
+                    logger.debug(
+                        "[OrgRuntime] failed to record plugin asset output",
+                        exc_info=True,
+                    )
+                self._touch_trackers_for_org(org_id)
+                if plugin_ok:
+                    await self._broadcast_ws("org:workbench_tool_status", {
+                        "org_id": org_id,
+                        "node_id": node_id,
+                        "tool_name": tool_name,
+                        "status": "finished",
+                    })
+                    self.get_event_store(org_id).emit(
+                        "workbench_tool_succeeded",
+                        node_id,
+                        {"tool_name": tool_name},
                     )
             return result
 
@@ -4807,13 +5226,26 @@ class OrgRuntime:
         )
 
         if entry:
-            asyncio.ensure_future(self._broadcast_ws("org:blackboard_update", {
-                "org_id": org_id, "scope": "org", "node_id": node_id,
+            payload = {
+                "org_id": org_id,
+                "scope": "org",
+                "node_id": node_id,
                 "memory_type": "resource",
                 "filename": resolved_name,
                 "file_path": str(p),
                 "file_size": size_bytes,
-            }))
+            }
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._broadcast_ws("org:blackboard_update", payload))
+            except RuntimeError:
+                logger.debug(
+                    "[OrgRuntime] skip blackboard websocket broadcast outside event loop "
+                    "(org=%s node=%s file=%s)",
+                    org_id,
+                    node_id,
+                    resolved_name,
+                )
 
         _TEXT_EXTS = {".md", ".txt", ".html", ".json", ".yaml", ".yml", ".csv", ".xml"}
         text_preview = ""
@@ -5186,4 +5618,347 @@ class OrgRuntime:
                     workspace=workspace,
                 )
             return
+
+    # ------------------------------------------------------------------
+    # Workbench (plugin) node asset bridging
+    # ------------------------------------------------------------------
+
+    # 这两个常量从 plugin_assets 模块 re-export 以兼容外部测试，旧模块属性
+    # （如 ``OrgRuntime._PLUGIN_ASSET_MAX_BYTES``）一直是"事实公开 API"。
+    _PLUGIN_ASSET_MAX_BYTES: int = _PLUGIN_ASSET_MAX_BYTES
+    _PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S: float = _PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S
+
+    def _is_plugin_tool(self, agent: Any, tool_name: str) -> bool:
+        """Return True iff ``tool_name`` was registered by a loaded plugin
+        on the given agent's PluginManager.
+
+        Caches the per-agent plugin tool name set on ``agent._plugin_tool_names``
+        so the lookup is O(1) per call. Re-computation only happens when the
+        attribute is missing — at which point we walk
+        ``agent._plugin_manager.loaded_plugins.values()`` once.
+        """
+        if not tool_name or tool_name.startswith("org_"):
+            return False
+        cached: set[str] | None = getattr(agent, "_plugin_tool_names", None)
+        if cached is None:
+            cached = set()
+            pm = getattr(agent, "_plugin_manager", None)
+            if pm is not None:
+                try:
+                    for lp in pm.loaded_plugins.values():
+                        for t in getattr(lp.api, "_registered_tools", None) or []:
+                            n = t.get("name") if isinstance(t, dict) else None
+                            if n:
+                                cached.add(n)
+                except Exception:
+                    logger.debug(
+                        "[OrgRuntime] failed to enumerate plugin tool names",
+                        exc_info=True,
+                    )
+            agent._plugin_tool_names = cached
+        return tool_name in cached
+
+    @staticmethod
+    def _plugin_id_for_tool(agent: Any, tool_name: str) -> str:
+        """Best-effort lookup of which plugin registered ``tool_name``.
+
+        Returns the plugin id, or an empty string if the mapping cannot be
+        established (e.g. PluginManager not attached). The result is only
+        used for namespacing the on-disk asset directory.
+        """
+        pm = getattr(agent, "_plugin_manager", None)
+        if pm is None:
+            return ""
+        try:
+            for lp in pm.loaded_plugins.values():
+                for t in getattr(lp.api, "_registered_tools", None) or []:
+                    if isinstance(t, dict) and t.get("name") == tool_name:
+                        return lp.manifest.id
+        except Exception:
+            return ""
+        return ""
+
+    # 以下四个 helper 现在只是对 plugin_assets 子模块的薄包装，保留方法名是
+    # 为了不破坏内部调用方 / 外部老测试（它们直接 patch 这些方法）。
+    @staticmethod
+    def _safe_asset_filename(raw: str, default_ext: str = ".bin") -> str:
+        return _plugin_safe_asset_filename(raw, default_ext)
+
+    @staticmethod
+    def _ext_for_url(url: str, fallback: str = ".bin") -> str:
+        return _plugin_ext_for_url(url, fallback)
+
+    async def _download_to_workspace(self, url: str, dest: Path) -> bool:
+        return await _plugin_download_to_workspace(
+            url, dest,
+            max_bytes=self._PLUGIN_ASSET_MAX_BYTES,
+            timeout_s=self._PLUGIN_ASSET_DOWNLOAD_TIMEOUT_S,
+        )
+
+    @staticmethod
+    def _copy_to_workspace(src: Path, dest: Path) -> bool:
+        return _plugin_copy_to_workspace(src, dest)
+
+    async def _record_plugin_asset_output(
+        self,
+        agent: Any,
+        org_id: str,
+        node_id: str,
+        tool_name: str,
+        tool_input: dict,
+        result: str,
+        *,
+        workspace: Path | None,
+    ) -> str | None:
+        """Parse a workbench tool's JSON return value, materialise any
+        produced artifacts into the org workspace, register them as task
+        attachments, and return a possibly-augmented result string carrying
+        a ``registered_attachments`` field so the LLM can see what was
+        attached on the next ReAct turn.
+
+        Returns:
+          - ``None`` if no enhancement was applied (result not JSON, no
+            artifact references, plugin manager unavailable, or workspace
+            missing). Caller should keep the original result untouched.
+          - a JSON-encoded string with ``registered_attachments`` appended,
+            otherwise. The original payload keys are preserved.
+        """
+        import json as _json
+
+        if not result or workspace is None:
+            return None
+
+        try:
+            payload = _json.loads(result)
+        except (_json.JSONDecodeError, TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        # Skip failed tool calls — only auto-register on success-looking
+        # payloads. Plugins are free to set ok=False; we still respect that.
+        if payload.get("ok") is False:
+            failure = {
+                "tool_name": tool_name,
+                "error": (
+                    payload.get("error")
+                    or payload.get("error_message")
+                    or payload.get("message")
+                    or "插件工具调用失败"
+                ),
+                "status_code": payload.get("status_code"),
+                "terminal": bool(payload.get("terminal", False)),
+            }
+            try:
+                self.get_event_store(org_id).emit(
+                    "workbench_tool_failed",
+                    node_id,
+                    {
+                        "tool_name": tool_name,
+                        "error": str(failure["error"])[:_LIM_EVENT],
+                        "status_code": failure.get("status_code"),
+                        "terminal": failure["terminal"],
+                    },
+                )
+                await self._broadcast_ws("org:workbench_tool_status", {
+                    "org_id": org_id,
+                    "node_id": node_id,
+                    "tool_name": tool_name,
+                    "status": "failed",
+                    "error": str(failure["error"])[:_LIM_WS],
+                    "terminal": failure["terminal"],
+                })
+            except Exception:
+                logger.debug("[OrgRuntime] plugin failure emit failed", exc_info=True)
+            if failure["terminal"]:
+                self._node_plugin_failures_in_task[f"{org_id}:{node_id}"] = failure
+            return None
+
+        plugin_id = self._plugin_id_for_tool(agent, tool_name) or "plugin"
+        task_id = (
+            payload.get("task_id")
+            or tool_input.get("task_id")
+            or "task"
+        )
+        # path-traversal safety: only use the basename of each component
+        plugin_slug = self._safe_asset_filename(str(plugin_id), default_ext="")
+        task_slug = self._safe_asset_filename(str(task_id), default_ext="")
+        target_dir = (
+            Path(workspace) / "plugin_assets" / (plugin_slug or "plugin") / (task_slug or "task")
+        ).resolve()
+
+        # 仅当目标目录确实位于 workspace 内才放行（即便上面 _safe_asset_filename
+        # 已剥离分隔符，做一次显式校验确保万一拼接出绝对路径也能拦下来）。
+        try:
+            workspace_resolved = Path(workspace).resolve()
+            if not str(target_dir).startswith(str(workspace_resolved)):
+                logger.warning(
+                    "[OrgRuntime] refusing plugin asset dir outside workspace: %s",
+                    target_dir,
+                )
+                return None
+        except Exception:
+            return None
+
+        chain_id = self.get_current_chain_id(org_id, node_id)
+
+        # 候选附件来源（按优先级合并）：
+        #   1. local_paths：插件已经在本地有文件，直接 hardlink / copy
+        #   2. asset_ids：通过 Asset Bus 查 source_path / preview_url
+        #   3. image_urls / video_url：远端 URL，httpx 流式下载
+        candidates: list[dict] = []
+
+        for raw in payload.get("local_paths") or []:
+            if isinstance(raw, str) and raw:
+                candidates.append({"kind": "local", "src": raw})
+        # video_path / image_path 也按本地路径处理（plugin 可能用单数字段）
+        for key in ("video_path", "image_path"):
+            v = payload.get(key)
+            if isinstance(v, str) and v:
+                candidates.append({"kind": "local", "src": v})
+
+        for raw in payload.get("asset_ids") or []:
+            if isinstance(raw, str) and raw:
+                candidates.append({"kind": "asset", "asset_id": raw})
+
+        for raw in payload.get("image_urls") or []:
+            if isinstance(raw, str) and raw and not raw.startswith("data:"):
+                candidates.append({"kind": "url", "url": raw, "ext_hint": ".png"})
+        v = payload.get("video_url")
+        if isinstance(v, str) and v and not v.startswith("data:"):
+            candidates.append({"kind": "url", "url": v, "ext_hint": ".mp4"})
+        v = payload.get("audio_url")
+        if isinstance(v, str) and v and not v.startswith("data:"):
+            candidates.append({"kind": "url", "url": v, "ext_hint": ".mp3"})
+
+        if not candidates:
+            return None
+
+        # 对 asset_ids 通过 PluginManager 的 asset_bus 资源拿 source_path / preview_url
+        asset_bus = None
+        pm = getattr(agent, "_plugin_manager", None)
+        if pm is not None:
+            try:
+                asset_bus = pm.host_refs.get("asset_bus") if hasattr(pm, "host_refs") else None
+                if asset_bus is None:
+                    # _host_refs 是 _LiveFilteredHostRefs（dict-like）
+                    asset_bus = (
+                        pm._external_host_refs.get("asset_bus")
+                        if hasattr(pm, "_external_host_refs") else None
+                    )
+            except Exception:
+                asset_bus = None
+
+        registered: list[dict] = []
+        seen_paths: set[str] = set()
+
+        for idx, cand in enumerate(candidates):
+            try:
+                kind = cand["kind"]
+                local_path: Path | None = None
+                if kind == "local":
+                    src_str = cand["src"]
+                    src = Path(src_str)
+                    if not src.is_absolute():
+                        src = (Path(workspace) / src).resolve()
+                    if not src.exists() or not src.is_file():
+                        continue
+                    fname = self._safe_asset_filename(src.name)
+                    dest = (target_dir / fname).resolve()
+                    if not str(dest).startswith(str(workspace_resolved)):
+                        continue
+                    if dest != src and not self._copy_to_workspace(src, dest):
+                        continue
+                    local_path = dest if dest.exists() else src
+                elif kind == "asset" and asset_bus is not None:
+                    aid = cand["asset_id"]
+                    row = None
+                    try:
+                        row = await asset_bus.get(aid, requester_plugin_id=plugin_id)
+                    except Exception:
+                        logger.debug(
+                            "[OrgRuntime] asset_bus.get(%s) failed", aid, exc_info=True
+                        )
+                    if not row:
+                        continue
+                    sp = row.get("source_path")
+                    pu = row.get("preview_url")
+                    ext = ".bin"
+                    if sp:
+                        ext = Path(sp).suffix or ext
+                    elif pu:
+                        ext = self._ext_for_url(pu, fallback=ext)
+                    fname = self._safe_asset_filename(f"{aid}{ext}")
+                    dest = (target_dir / fname).resolve()
+                    if not str(dest).startswith(str(workspace_resolved)):
+                        continue
+                    if sp:
+                        src = Path(sp)
+                        if src.exists() and src.is_file():
+                            if dest != src and not self._copy_to_workspace(src, dest):
+                                continue
+                            local_path = dest if dest.exists() else src
+                    if local_path is None and pu:
+                        ok = await self._download_to_workspace(pu, dest)
+                        if ok:
+                            local_path = dest
+                elif kind == "url":
+                    url = cand["url"]
+                    ext = self._ext_for_url(url, fallback=cand.get("ext_hint", ".bin"))
+                    fname = self._safe_asset_filename(f"{task_slug or 'item'}_{idx}{ext}")
+                    dest = (target_dir / fname).resolve()
+                    if not str(dest).startswith(str(workspace_resolved)):
+                        continue
+                    ok = await self._download_to_workspace(url, dest)
+                    if ok:
+                        local_path = dest
+                else:
+                    continue
+
+                if local_path is None:
+                    continue
+                key = str(local_path)
+                if key in seen_paths:
+                    continue
+                seen_paths.add(key)
+
+                att = self._register_file_output(
+                    org_id, node_id,
+                    chain_id=chain_id,
+                    filename=local_path.name,
+                    file_path=str(local_path),
+                    workspace=Path(workspace),
+                )
+                if att:
+                    registered.append(att)
+                    # 累计到本任务的 plugin-hook 附件缓冲，供 submit_deliverable
+                    # 在 LLM 未声明 file_attachments 时自动取用。
+                    buf = self._node_plugin_attachments_in_task.setdefault(
+                        f"{org_id}:{node_id}", []
+                    )
+                    if not any(
+                        b.get("file_path") == att.get("file_path") for b in buf
+                    ):
+                        buf.append(dict(att))
+            except Exception:
+                logger.debug(
+                    "[OrgRuntime] plugin asset candidate failed: %s",
+                    cand, exc_info=True,
+                )
+                continue
+
+        if not registered:
+            return None
+
+        # 把已登记附件回写 payload，让 LLM 在下一轮 ReAct 中看到具体路径，
+        # 方便它在 org_submit_deliverable 的 deliverable 文本中按文件名引用。
+        payload["registered_attachments"] = registered
+        # Mirror to a stable top-level array of paths for convenience
+        payload.setdefault("local_paths", []).extend(
+            [a["file_path"] for a in registered
+             if a.get("file_path") not in (payload.get("local_paths") or [])]
+        )
+        try:
+            return _json.dumps(payload, ensure_ascii=False)
+        except Exception:
+            return None
 

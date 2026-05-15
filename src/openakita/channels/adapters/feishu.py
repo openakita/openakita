@@ -1087,9 +1087,9 @@ class FeishuAdapter(ChannelAdapter):
         }
         decision = decision_map.get(action, "deny")
         try:
-            from openakita.core.policy import get_policy_engine
+            from openakita.core.policy_v2 import apply_resolution
 
-            get_policy_engine().resolve_ui_confirm(confirm_id, decision)
+            apply_resolution(confirm_id, decision)
             labels = {
                 "allow_once": "✅ 已允许",
                 "deny": "❌ 已拒绝",

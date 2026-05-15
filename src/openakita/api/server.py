@@ -44,7 +44,9 @@ from .routes import (
     logs,
     mcp,
     memory,
+    memory_repair,
     orgs,
+    pending_approvals,
     qqbot_onboard,
     scheduler,
     sessions,
@@ -139,7 +141,7 @@ def _find_docs_dist() -> Path | None:
 
 
 def _deploy_docs(data_dir: Path, app_version: str) -> Path | None:
-    """Deploy bundled docs to data/docs/v{version}/ if not already present.
+    """Deploy bundled docs to data/docs/v{version}/ and refresh same-version assets.
 
     Historical versions are never deleted so users can switch between them.
     """
@@ -153,11 +155,16 @@ def _deploy_docs(data_dir: Path, app_version: str) -> Path | None:
     docs_root = data_dir / "docs"
     version_clean = app_version.split("+")[0]
     version_dir = docs_root / f"v{version_clean}"
+    tmp_dir = docs_root / f".v{version_clean}.tmp"
 
-    if not (version_dir / "index.html").exists():
-        version_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(bundled, version_dir, dirs_exist_ok=True)
-        logger.info(f"Deployed user docs v{version_clean} → {version_dir}")
+    docs_root.mkdir(parents=True, exist_ok=True)
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    shutil.copytree(bundled, tmp_dir)
+    if version_dir.exists():
+        shutil.rmtree(version_dir)
+    tmp_dir.replace(version_dir)
+    logger.info(f"Deployed user docs v{version_clean} → {version_dir}")
 
     versions_file = docs_root / "versions.json"
     try:
@@ -352,6 +359,11 @@ def create_app(
     app.state.org_manager = org_manager
     org_runtime = OrgRuntime(org_manager)
     app.state.org_runtime = org_runtime
+    from openakita.orgs.command_service import OrgCommandService, set_command_service
+
+    org_command_service = OrgCommandService(org_runtime, session_manager)
+    set_command_service(org_command_service)
+    app.state.org_command_service = org_command_service
 
     # Mount routes
     app.include_router(auth_routes.router, tags=["认证"])
@@ -370,7 +382,9 @@ def create_app(
     app.include_router(logs.router, tags=["日志"])
     app.include_router(mcp.router, tags=["MCP"])
     app.include_router(memory.router, tags=["记忆"])
+    app.include_router(memory_repair.router, tags=["记忆修复"])
     app.include_router(scheduler.router, tags=["定时任务"])
+    app.include_router(pending_approvals.router, tags=["待审批"])
     app.include_router(sessions.router, tags=["会话"])
     app.include_router(skills.router, tags=["技能"])
     app.include_router(skill_categories.router, tags=["技能分类"])
@@ -428,8 +442,13 @@ def create_app(
 
         @app.get("/user-docs", include_in_schema=False)
         @app.get("/user-docs/", include_in_schema=False)
-        async def _docs_redirect():
-            return _Redirect(f"/user-docs/v{_docs_ver}/")
+        async def _docs_redirect(request: Request):
+            target = f"/user-docs/v{_docs_ver}/"
+            if request.url.query:
+                target = f"{target}?{request.url.query}"
+            response = _Redirect(target)
+            response.headers["Cache-Control"] = "no-store"
+            return response
 
         app.mount(
             "/user-docs",
@@ -482,6 +501,69 @@ def create_app(
         except Exception as exc:
             logger.warning("Failed to import pending feedback: %s", exc)
             pending.unlink(missing_ok=True)
+
+    @app.on_event("startup")
+    async def _cleanup_memory_recovery_pending():
+        try:
+            from .routes.memory_repair import _cleanup_old_recovery_pending
+
+            await asyncio.to_thread(_cleanup_old_recovery_pending)
+        except Exception as e:
+            logger.debug("[Startup] Memory recovery pending cleanup skipped: %s", e)
+
+    @app.on_event("startup")
+    async def _wire_pending_approvals_sse():
+        """C9c-2: bridge PendingApprovalsStore events to WebSocket broadcast.
+
+        The Store is policy-loop-agnostic; we install a sync hook that does
+        ``asyncio.ensure_future(broadcast_event(...))`` on the API loop. The
+        broadcast helper itself is cross-loop safe (engine_bridge), so this
+        works regardless of which loop the Store mutation happens on.
+        """
+        try:
+            from openakita.api.routes.websocket import fire_event
+            from openakita.core.pending_approvals import get_pending_approvals_store
+
+            def _hook(event_type: str, payload: dict) -> None:
+                fire_event(event_type, payload)
+
+            get_pending_approvals_store().set_event_hook(_hook)
+            logger.info("[Startup] PendingApprovals SSE hook wired")
+        except Exception as e:
+            logger.warning("[Startup] PendingApprovals SSE wire failed: %s", e)
+
+        # C17 Phase B.4：把 UIConfirmBus 的 confirm_initiated /
+        # confirm_revoked 广播绑到同一条 fire_event 通道，让多端 UI 共享
+        # confirm 生命周期信号。
+        try:
+            from openakita.api.routes.websocket import fire_event
+            from openakita.core.ui_confirm_bus import get_ui_confirm_bus
+
+            def _confirm_hook(event_type: str, payload: dict) -> None:
+                fire_event(event_type, payload)
+
+            get_ui_confirm_bus().set_broadcast_hook(_confirm_hook)
+            logger.info("[Startup] UIConfirmBus broadcast hook wired")
+        except Exception as e:
+            logger.warning("[Startup] UIConfirmBus broadcast wire failed: %s", e)
+
+        # C18 Phase A：POLICIES.yaml hot-reload。默认 disabled；用户在
+        # POLICIES.yaml 的 ``hot_reload.enabled: true`` opt-in 即生效。
+        # 失败安全：``start_hot_reloader`` 内部全 try/except，未启动也不
+        # 影响 server 启动。
+        try:
+            from openakita.core.policy_v2.hot_reload import start_hot_reloader
+
+            reloader = start_hot_reloader()
+            if reloader is not None:
+                logger.info("[Startup] PolicyHotReloader started")
+            else:
+                logger.debug(
+                    "[Startup] PolicyHotReloader not started "
+                    "(disabled or no POLICIES.yaml)"
+                )
+        except Exception as e:
+            logger.warning("[Startup] PolicyHotReloader wire failed: %s", e)
 
     @app.post("/api/shutdown", tags=["系统"])
     async def shutdown(request: Request):
@@ -573,6 +655,85 @@ def create_app(
                 await to_engine(app.state.org_runtime.shutdown())
             except Exception as e:
                 logger.warning(f"OrgRuntime shutdown error: {e}")
+
+    @app.on_event("shutdown")
+    async def _shutdown_policy_hot_reloader():
+        try:
+            from openakita.core.policy_v2.hot_reload import stop_hot_reloader
+
+            stop_hot_reloader(timeout=2.0)
+        except Exception as e:
+            logger.debug("[Shutdown] PolicyHotReloader stop skipped: %s", e)
+
+    @app.on_event("shutdown")
+    async def _shutdown_memory_storage():
+        try:
+            from openakita.memory.storage import checkpoint_and_close_all_storages
+
+            await asyncio.wait_for(
+                asyncio.to_thread(checkpoint_and_close_all_storages),
+                timeout=3.0,
+            )
+        except TimeoutError:
+            logger.warning("[Shutdown] Memory checkpoint timeout (3s), proceeding")
+        except Exception as e:
+            logger.warning("[Shutdown] Memory checkpoint skipped: %s", e)
+
+    @app.on_event("startup")
+    async def _start_async_audit_writer():
+        """C22 P3-2 follow-up: wire the async audit writer to the API loop.
+
+        Without this hook the writer is dead code — ``AuditLogger.log()``
+        always sees ``get_async_audit_writer(...)`` returning ``None`` and
+        falls back to the per-row filelock sync path. After this hook the
+        same code path coalesces writes into batches transparently.
+
+        Fail-safe: any exception here logs WARNING and leaves the system
+        on the sync path; nothing downstream relies on the async writer
+        being up.
+        """
+        try:
+            from openakita.core.audit_logger import DEFAULT_AUDIT_PATH
+            from openakita.core.policy_v2.audit_writer import (
+                start_global_audit_writer,
+            )
+
+            try:
+                from openakita.core.policy_v2.global_engine import get_config_v2
+
+                cfg = get_config_v2().audit
+                path = cfg.log_path if (cfg and cfg.enabled) else None
+            except Exception:
+                path = None
+            if not path:
+                path = DEFAULT_AUDIT_PATH
+
+            await start_global_audit_writer(path)
+            logger.info("[Startup] AsyncBatchAuditWriter started for %s", path)
+        except Exception as e:
+            logger.warning(
+                "[Startup] AsyncBatchAuditWriter not started; sync fallback "
+                "remains active: %s",
+                e,
+            )
+
+    @app.on_event("shutdown")
+    async def _shutdown_async_audit_writer():
+        """Drain + stop the async audit writer.
+
+        Bounded by ``stop()``'s internal timeout (split between sentinel
+        delivery and worker drain); anything still queued past that
+        deadline is logged + dropped rather than blocking shutdown.
+        """
+        try:
+            from openakita.core.policy_v2.audit_writer import (
+                stop_global_audit_writer,
+            )
+
+            await stop_global_audit_writer()
+            logger.info("[Shutdown] AsyncBatchAuditWriter stopped")
+        except Exception as e:
+            logger.warning("[Shutdown] AsyncBatchAuditWriter stop error: %s", e)
 
     return app
 
@@ -726,7 +887,7 @@ async def start_api_server(
     proxy_task = asyncio.create_task(_proxy())
     # Keep a handle to the app so the serve process can update late-bound
     # runtime references such as the IM gateway after HTTP is already online.
-    setattr(proxy_task, "_openakita_api_app", app)
+    proxy_task._openakita_api_app = app
     return proxy_task
 
 

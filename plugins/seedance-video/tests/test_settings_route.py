@@ -23,6 +23,7 @@ from _plugin_loader import load_seedance_plugin
 _plugin = load_seedance_plugin()
 ConfigUpdateBody = _plugin.ConfigUpdateBody
 Plugin = _plugin.Plugin
+_normalize_base_url = _plugin._normalize_base_url
 
 
 class _FakeTM:
@@ -66,6 +67,10 @@ async def _call_update_settings(p: Plugin, updates: dict[str, str]) -> dict:
     body = ConfigUpdateBody(updates=updates)
 
     cleaned: dict[str, str] = {k: (v or "").strip() for k, v in body.updates.items()}
+    if "ark_base_url" in cleaned:
+        cleaned["ark_base_url"] = _normalize_base_url(
+            cleaned["ark_base_url"], field="ARK Base URL",
+        )
 
     if "ark_api_key" in cleaned and not cleaned["ark_api_key"]:
         raise HTTPException(
@@ -137,6 +142,37 @@ async def test_update_settings_trims_surrounding_whitespace() -> None:
 
     assert result["config"]["ark_api_key"] == "sk-padded"
     assert tm.store["ark_api_key"] == "sk-padded"
+
+
+@pytest.mark.asyncio
+async def test_update_settings_normalizes_base_url() -> None:
+    p, tm = _make_plugin()
+    result = await _call_update_settings(
+        p, {"ark_base_url": "  https://relay.example.com/api/v3/  "}
+    )
+
+    assert result["config"]["ark_base_url"] == "https://relay.example.com/api/v3"
+    assert tm.store["ark_base_url"] == "https://relay.example.com/api/v3"
+
+
+@pytest.mark.asyncio
+async def test_update_settings_allows_clearing_base_url() -> None:
+    p, tm = _make_plugin()
+    result = await _call_update_settings(p, {"ark_base_url": "   "})
+
+    assert result["config"]["ark_base_url"] == ""
+    assert tm.store["ark_base_url"] == ""
+
+
+@pytest.mark.asyncio
+async def test_update_settings_rejects_invalid_base_url_protocol() -> None:
+    p, tm = _make_plugin()
+    with pytest.raises(HTTPException) as exc:
+        await _call_update_settings(p, {"ark_base_url": "relay.example.com/api/v3"})
+
+    assert exc.value.status_code == 400
+    assert "http:// 或 https://" in exc.value.detail
+    assert tm.set_calls == []
 
 
 # ── Read-back verification: storage drift bubbles up as HTTP 500 ─────────

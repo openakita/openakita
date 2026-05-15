@@ -109,6 +109,10 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   approval_resolved: "org.eventType.approvalResolved",
   tool_call_start: "org.eventType.toolCallStart",
   tool_call_end: "org.eventType.toolCallEnd",
+  workbench_tool_started: "org.eventType.workbenchToolStarted",
+  workbench_tool_succeeded: "org.eventType.workbenchToolSucceeded",
+  workbench_tool_failed: "org.eventType.workbenchToolFailed",
+  command_phase: "org.eventType.commandPhase",
   plan_created: "org.eventType.planCreated",
   plan_completed: "org.eventType.planCompleted",
   plan_cancelled: "org.eventType.planCancelled",
@@ -181,8 +185,12 @@ export const DATA_KEY_LABELS: Record<string, string> = {
   filename: "org.dataKey.filename",
   core_business_len: "org.dataKey.coreBusinessLen",
   tool: "org.dataKey.tool",
+  tool_name: "org.dataKey.toolName",
   args: "org.dataKey.args",
   result: "org.dataKey.result",
+  phase: "org.dataKey.phase",
+  blocker_summary: "org.dataKey.blockerSummary",
+  terminal: "org.dataKey.terminal",
   duration_ms: "org.dataKey.durationMs",
   status: "org.dataKey.status",
   question: "org.dataKey.question",
@@ -375,6 +383,16 @@ export interface OrgNodeData {
   clone_source: string | null;
   external_tools: string[];
   enable_file_tools?: boolean;
+  /**
+   * 工作台节点来源标识。由工作台模板创建时填入，运行时不影响工具放行
+   * （仍由 external_tools 决定），仅用于 UI 渲染徽章、提示词点睛、
+   * 强制保持叶子节点等校验。
+   */
+  plugin_origin?: {
+    plugin_id: string;
+    template_id: string;
+    version?: string;
+  } | null;
   ephemeral: boolean;
   avatar: string | null;
   frozen_by: string | null;

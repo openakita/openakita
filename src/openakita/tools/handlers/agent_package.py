@@ -1,5 +1,13 @@
 """
 Agent Package handler — export_agent, import_agent, list_exportable_agents, inspect_agent_package.
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 from __future__ import annotations
@@ -7,6 +15,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -35,6 +45,15 @@ class AgentPackageHandler:
         "inspect_agent_package",
         "batch_export_agents",
     ]
+
+    # C7 explicit ApprovalClass — import 是引入外部代码到工作区
+    TOOL_CLASSES = {
+        "export_agent": ApprovalClass.MUTATING_SCOPED,
+        "import_agent": ApprovalClass.CONTROL_PLANE,
+        "list_exportable_agents": ApprovalClass.READONLY_GLOBAL,
+        "inspect_agent_package": ApprovalClass.READONLY_GLOBAL,
+        "batch_export_agents": ApprovalClass.MUTATING_SCOPED,
+    }
 
     def __init__(self, agent: Agent):
         self.agent = agent

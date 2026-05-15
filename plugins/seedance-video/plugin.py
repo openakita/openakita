@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import mimetypes
 import time
@@ -52,6 +53,13 @@ from openakita.plugins.api import PluginAPI, PluginBase
 logger = logging.getLogger(__name__)
 
 
+def _normalize_base_url(value: str | None, *, field: str = "Base URL") -> str:
+    base_url = (value or "").strip().rstrip("/")
+    if base_url and not base_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail=f"{field} 必须以 http:// 或 https:// 开头")
+    return base_url
+
+
 # ── Request / Response models ──
 
 class CreateTaskBody(BaseModel):
@@ -73,6 +81,22 @@ class CreateTaskBody(BaseModel):
     execution_expires_after: int | None = None
     client_request_id: str = ""
     content: list[dict] | None = None
+
+class VideoUrlTaskBody(BaseModel):
+    prompt: str = ""
+    source_video_url: str
+    model: str = "2.0"
+    ratio: str = "16:9"
+    duration: int = 5
+    resolution: str = "720p"
+    generate_audio: bool = True
+    seed: int = -1
+    watermark: bool = False
+    service_tier: str = "default"
+    callback_url: str | None = None
+    execution_expires_after: int | None = None
+    client_request_id: str = ""
+    next_scene_prompt: str = ""
 
 class DraftConfirmBody(BaseModel):
     resolution: str = "720p"
@@ -154,7 +178,15 @@ class Plugin(PluginBase):
         api.register_tools([
             {
                 "name": "seedance_create",
-                "description": "Create a Seedance video generation task",
+                "description": (
+                    "Create a Seedance video generation task. Returns JSON: "
+                    "{ok, task_id, status, mode, video_url, video_path, "
+                    "last_frame_url, asset_ids}. Often used as a 'video output' "
+                    "workbench node in org orchestration — set from_asset_ids "
+                    "to the upstream image workbench's asset_ids to feed "
+                    "first_frame/last_frame/reference_image directly without "
+                    "rehosting."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -162,13 +194,29 @@ class Plugin(PluginBase):
                         "mode": {"type": "string", "enum": ["t2v", "i2v", "i2v_end", "multimodal", "edit", "extend"]},
                         "duration": {"type": "integer", "default": 5},
                         "ratio": {"type": "string", "default": "16:9"},
+                        "from_asset_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Asset Bus IDs produced by upstream workbenches "
+                                "(e.g. tongyi-image). Expanded into content[].image_url "
+                                "before submission. Role assignment by index + mode: "
+                                "i2v → first_frame (0), reference_image (1+); "
+                                "i2v_end → first_frame (0), last_frame (1+); "
+                                "multimodal → first_frame (0), reference_image (1+)."
+                            ),
+                        },
                     },
                     "required": ["prompt"],
                 },
             },
             {
                 "name": "seedance_status",
-                "description": "Check status of a Seedance video generation task",
+                "description": (
+                    "Check status of a Seedance video generation task. "
+                    "Returns JSON: {ok, task_id, status, mode, video_url, "
+                    "video_path, last_frame_url, asset_ids, error_message}."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"task_id": {"type": "string"}},
@@ -176,8 +224,73 @@ class Plugin(PluginBase):
                 },
             },
             {
+                "name": "seedance_edit",
+                "description": (
+                    "Edit an existing Seedance video. Requires source_video_url "
+                    "to be a public http(s) cloud video URL, usually the video_url "
+                    "returned by a previous seedance task. Local files/base64 are rejected."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Edit instruction"},
+                        "source_video_url": {"type": "string", "description": "Public http(s) video URL"},
+                        "model": {"type": "string", "default": "2.0"},
+                        "duration": {"type": "integer", "default": 5},
+                        "ratio": {"type": "string", "default": "16:9"},
+                        "resolution": {"type": "string", "default": "720p"},
+                    },
+                    "required": ["prompt", "source_video_url"],
+                },
+            },
+            {
+                "name": "seedance_extend",
+                "description": (
+                    "Extend/continue an existing Seedance video. Requires source_video_url "
+                    "to be a public http(s) cloud video URL, usually the video_url returned "
+                    "by a previous seedance task."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Continuation instruction"},
+                        "source_video_url": {"type": "string", "description": "Public http(s) video URL"},
+                        "model": {"type": "string", "default": "2.0"},
+                        "duration": {"type": "integer", "default": 5},
+                        "ratio": {"type": "string", "default": "16:9"},
+                        "resolution": {"type": "string", "default": "720p"},
+                    },
+                    "required": ["prompt", "source_video_url"],
+                },
+            },
+            {
+                "name": "seedance_transition",
+                "description": (
+                    "Generate an AI transition/bridge clip from the first source video "
+                    "toward the next scene. Uses Seedance cloud generation rather than "
+                    "ffmpeg hard concatenation. Requires source_video_url as public http(s)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "Transition instruction"},
+                        "source_video_url": {"type": "string", "description": "Public http(s) video URL to extend from"},
+                        "next_scene_prompt": {"type": "string", "description": "Description of the target next scene"},
+                        "model": {"type": "string", "default": "2.0"},
+                        "duration": {"type": "integer", "default": 4},
+                        "ratio": {"type": "string", "default": "16:9"},
+                        "resolution": {"type": "string", "default": "720p"},
+                    },
+                    "required": ["prompt", "source_video_url"],
+                },
+            },
+            {
                 "name": "seedance_list",
-                "description": "List recent Seedance video generation tasks",
+                "description": (
+                    "List recent Seedance video generation tasks. Returns JSON: "
+                    "{ok, total, tasks: [{task_id, status, mode, prompt, "
+                    "video_url, video_path, asset_ids, created_at}, ...]}."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {"limit": {"type": "integer", "default": 10}},
@@ -190,9 +303,10 @@ class Plugin(PluginBase):
 
     async def _async_init(self) -> None:
         await self._tm.init()
-        api_key = await self._tm.get_config("ark_api_key")
+        config = await self._tm.get_all_config()
+        api_key = config.get("ark_api_key", "")
         if api_key:
-            self._ark = ArkClient(api_key)
+            self._ark = ArkClient(api_key, base_url=config.get("ark_base_url") or None)
         self._start_polling()
 
     async def on_unload(self) -> None:
@@ -240,21 +354,212 @@ class Plugin(PluginBase):
     # ── Tool handler ──
 
     async def _handle_tool(self, tool_name: str, args: dict) -> str:
+        """LLM-facing tool entry. Returns JSON so OrgRuntime's workbench
+        hook can detect produced artifacts (local_paths / video_url /
+        asset_ids) and register them as task attachments."""
+        import json as _json
+
         if tool_name == "seedance_create":
-            task = await self._create_task_internal(args)
-            return f"Task created: {task['id']} (status: {task['status']})"
-        elif tool_name == "seedance_status":
-            task = await self._tm.get_task(args["task_id"])
+            try:
+                task = await self._create_task_internal(args)
+                task = await self._maybe_wait_for_tool_task(task, args)
+            except HTTPException as e:
+                return _json.dumps(
+                    {
+                        "ok": False,
+                        "error": e.detail if isinstance(e.detail, str) else str(e.detail),
+                        "status_code": e.status_code,
+                        "terminal": self._is_terminal_create_error(e),
+                    },
+                    ensure_ascii=False,
+                )
+            except Exception as e:
+                return _json.dumps(
+                    {"ok": False, "error": str(e), "terminal": True}, ensure_ascii=False
+                )
+            return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+        if tool_name in ("seedance_edit", "seedance_extend", "seedance_transition"):
+            try:
+                mode = "edit" if tool_name == "seedance_edit" else "extend"
+                task_args = self._build_video_url_create_args(args, mode=mode)
+                task = await self._create_task_internal(task_args)
+                task = await self._maybe_wait_for_tool_task(task, args)
+                payload = self._task_to_tool_payload(task)
+                if tool_name == "seedance_transition":
+                    payload["transition_strategy"] = "seedance_extend"
+                    payload["message"] = (
+                        "已通过 Seedance 云端 extend 生成过渡/续写片段；"
+                        "如需最终长片，可再用本地 concat 合成。"
+                    )
+                return _json.dumps(payload, ensure_ascii=False)
+            except HTTPException as e:
+                return _json.dumps(
+                    {
+                        "ok": False,
+                        "error": e.detail if isinstance(e.detail, str) else str(e.detail),
+                        "status_code": e.status_code,
+                        "terminal": self._is_terminal_create_error(e),
+                    },
+                    ensure_ascii=False,
+                )
+            except Exception as e:
+                return _json.dumps(
+                    {"ok": False, "error": str(e), "terminal": True},
+                    ensure_ascii=False,
+                )
+
+        if tool_name == "seedance_status":
+            tid = args.get("task_id") or ""
+            task = await self._tm.get_task(tid) if tid else None
             if not task:
-                return f"Task {args['task_id']} not found"
-            return f"Task {task['id']}: status={task['status']}, video_url={task.get('video_url', 'N/A')}"
-        elif tool_name == "seedance_list":
+                return _json.dumps(
+                    {"ok": False, "task_id": tid, "error": "task not found"},
+                    ensure_ascii=False,
+                )
+            return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+        if tool_name == "seedance_list":
             tasks, total = await self._tm.list_tasks(limit=args.get("limit", 10))
-            lines = [f"Total: {total} tasks"]
-            for t in tasks:
-                lines.append(f"  {t['id']}: {t['status']} - {t['prompt'][:50]}")
-            return "\n".join(lines)
-        return f"Unknown tool: {tool_name}"
+            return _json.dumps(
+                {
+                    "ok": True,
+                    "total": total,
+                    "tasks": [
+                        self._task_to_tool_payload(t, brief=True) for t in tasks
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        return _json.dumps(
+            {"ok": False, "error": f"Unknown tool: {tool_name}"}, ensure_ascii=False
+        )
+
+    @staticmethod
+    def _task_to_tool_payload(task: dict, *, brief: bool = False) -> dict:
+        """Project a task record into the JSON shape expected by the LLM and
+        by ``OrgRuntime._record_plugin_asset_output``. The runtime looks for
+        ``local_paths`` / ``video_url`` / ``asset_ids`` to auto-register
+        produced media as task attachments — keep these keys stable.
+        """
+        local_paths: list[str] = []
+        vp = task.get("local_video_path")
+        if vp:
+            local_paths.append(vp)
+        lf_local = task.get("last_frame_local_path")
+        if lf_local:
+            local_paths.append(lf_local)
+        base = {
+            "ok": task.get("status") != "failed",
+            "task_id": task.get("id"),
+            "status": task.get("status"),
+            "mode": task.get("mode"),
+            "video_url": task.get("video_url") or "",
+            "video_path": vp or "",
+            "last_frame_url": task.get("last_frame_url") or "",
+            "last_frame_path": lf_local or "",
+            "local_paths": local_paths,
+            "asset_ids": list(task.get("asset_ids") or []),
+        }
+        if task.get("error_message"):
+            base["error_message"] = task["error_message"]
+        if brief:
+            base["prompt"] = (task.get("prompt") or "")[:200]
+            base["created_at"] = task.get("created_at")
+        return base
+
+    async def _maybe_wait_for_tool_task(self, task: dict, args: dict) -> dict:
+        """Wait for LLM/workbench tool calls to finish before returning.
+
+        REST/UI callers still get an immediate running task from `/tasks`;
+        this helper is only used by the LLM-facing tool handler.  Without it,
+        org workbench nodes can create a Seedance job, return `running`, and
+        then remain busy forever if the model does not keep polling.
+        """
+        if args.get("wait_for_completion") is False:
+            return task
+        task_id = task.get("id")
+        if not task_id or task.get("status") not in ("pending", "running"):
+            return task
+
+        timeout_s = int(args.get("wait_timeout_s") or 900)
+        deadline = time.time() + max(30, timeout_s)
+        while time.time() < deadline:
+            await self._poll_running_tasks()
+            latest = await self._tm.get_task(task_id)
+            if latest:
+                task = latest
+                if latest.get("status") not in ("pending", "running"):
+                    return latest
+            await asyncio.sleep(10)
+
+        task = await self._tm.get_task(task_id) or task
+        task = dict(task)
+        task["error_message"] = task.get("error_message") or "等待 Seedance 任务完成超时"
+        return task
+
+    @staticmethod
+    def _is_terminal_create_error(exc: HTTPException) -> bool:
+        """Return True when retrying the same create call cannot make progress."""
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        markers = (
+            "API Key",
+            "AuthenticationError",
+            "首帧模式需要",
+            "首尾帧模式需要",
+            "多模态模式至少",
+            "编辑模式需要",
+            "延长模式需要",
+            "公网 http(s) 视频 URL",
+            "from_asset_ids",
+            "Asset Bus",
+            "模型",
+            "不支持",
+        )
+        return exc.status_code in (400, 401, 403, 413) or any(m in detail for m in markers)
+
+    @staticmethod
+    def _build_video_url_create_args(args: dict, *, mode: str) -> dict:
+        """Build a canonical seedance_create payload for edit/extend wrappers."""
+        source_url = (
+            args.get("source_video_url")
+            or args.get("video_url")
+            or args.get("url")
+            or ""
+        )
+        if not isinstance(source_url, str) or not source_url.strip():
+            label = "编辑" if mode == "edit" else "延长/过渡"
+            raise HTTPException(status_code=400, detail=f"{label}模式缺少 source_video_url")
+        source_url = source_url.strip()
+        if not source_url.lower().startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "编辑/延长模式必须使用 Seedance 返回的云端 http(s) video_url，"
+                    "不能直接上传本地视频或 base64。"
+                ),
+            )
+        prompt = (args.get("prompt") or "").strip()
+        if mode == "extend" and args.get("next_scene_prompt"):
+            prompt = (
+                f"{prompt}\n\n请自然过渡到下一场景：{args.get('next_scene_prompt')}"
+                if prompt else f"请自然过渡到下一场景：{args.get('next_scene_prompt')}"
+            )
+        if not prompt:
+            prompt = "保持原视频风格，进行自然续写。"
+        return {
+            **args,
+            "prompt": prompt,
+            "mode": mode,
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "video_url",
+                    "video_url": {"url": source_url},
+                    "role": "reference_video",
+                },
+            ],
+        }
 
     # ── Long-video chain bookkeeping (Sprint 8 / V2) ──
 
@@ -276,6 +581,85 @@ class Plugin(PluginBase):
                 f"{seg.get('duration', 0)}"
             )
         return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _request_signature(params: dict) -> str:
+        """Stable fingerprint for single create/edit/extend requests."""
+        relevant = {
+            "prompt": (params.get("prompt") or "").strip(),
+            "mode": params.get("mode", "t2v"),
+            "model": params.get("model", "2.0"),
+            "ratio": params.get("ratio", "16:9"),
+            "duration": params.get("duration", 5),
+            "resolution": params.get("resolution", "720p"),
+            "from_asset_ids": list(params.get("from_asset_ids") or []),
+            "content": params.get("content") or [],
+        }
+        raw = json.dumps(relevant, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _infer_duration_from_prompt(prompt: str, *, asset_count: int, current: Any) -> int:
+        """Recover per-shot duration when an org prompt says 30s/3 shots.
+
+        LLM tool calls often omit `duration`, which would fall back to the
+        plugin's UI default of 5 seconds. In org video workflows the task text
+        usually carries the real shot duration, so infer the safer value.
+        """
+        try:
+            current_int = int(current)
+        except (TypeError, ValueError):
+            current_int = 5
+        if current_int not in (0, 5):
+            return current_int
+
+        text = prompt or ""
+        import re
+
+        ranges = re.findall(r"(\d{1,3})\s*[-~—到至]\s*(\d{1,3})\s*秒", text)
+        durations = [max(0, int(end) - int(start)) for start, end in ranges]
+        durations = [d for d in durations if d > 0]
+        if asset_count <= 1 and durations:
+            return durations[0]
+
+        each_match = re.search(r"(?:每(?:个|段|镜头).*?|单(?:个|段|镜头).*?)(\d{1,3})\s*秒", text)
+        if each_match:
+            return int(each_match.group(1))
+
+        total_match = re.search(r"(?:总时长|合计|共|生成)?\s*(\d{1,3})\s*秒", text)
+        shot_match = re.search(r"(\d{1,2})\s*个镜头", text)
+        if total_match and shot_match:
+            shots = max(1, int(shot_match.group(1)))
+            return max(1, round(int(total_match.group(1)) / shots))
+
+        return current_int or 5
+
+    async def _find_recent_duplicate_task(self, request_signature: str) -> dict | None:
+        if not request_signature:
+            return None
+        try:
+            listed = await self._tm.list_tasks(limit=80)
+        except Exception:
+            logger.debug("duplicate lookup skipped: list_tasks failed", exc_info=True)
+            return None
+        if isinstance(listed, tuple) and len(listed) >= 1:
+            tasks = listed[0]
+        elif isinstance(listed, list):
+            tasks = listed
+        else:
+            return None
+        now = time.time()
+        for task in tasks:
+            params = task.get("params") or {}
+            if params.get("request_signature") != request_signature:
+                continue
+            # Keep the duplicate window short so deliberate re-renders remain possible.
+            created_at = float(task.get("created_at") or 0)
+            if created_at and now - created_at > 30 * 60:
+                continue
+            if task.get("status") in ("pending", "running", "succeeded"):
+                return task
+        return None
 
     async def _run_chain_bg(
         self,
@@ -326,6 +710,7 @@ class Plugin(PluginBase):
     # ── Internal task creation ──
 
     async def _create_task_internal(self, params: dict) -> dict:
+        params = dict(params)
         if not self._ark:
             raise HTTPException(
                 status_code=400,
@@ -382,6 +767,30 @@ class Plugin(PluginBase):
                 )
 
             content = params.get("content") or [{"type": "text", "text": params.get("prompt", "")}]
+
+            # 工作台编排：from_asset_ids 把上游工作台（例如通义生图）的产物
+            # 通过 Asset Bus 注入到当前任务的 content[]，让 LLM 不必再手动
+            # 上传图片到 Ark。展开角色取决于 mode：
+            #   i2v        → first_frame (0), reference_image (1+)
+            #   i2v_end    → first_frame (0), last_frame (1+)
+            #   multimodal → first_frame (0), reference_image (1+)
+            #   其他       → reference_image
+            from_asset_ids = params.get("from_asset_ids") or []
+            if from_asset_ids and isinstance(from_asset_ids, list):
+                expanded = await self._expand_from_asset_ids(from_asset_ids, mode)
+                if expanded:
+                    if not isinstance(content, list):
+                        content = []
+                    content = list(content) + expanded
+                elif mode in ("i2v", "i2v_end", "multimodal"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "from_asset_ids 未能展开为可提交给 Ark 的图片素材。"
+                            "请确认上游工作台返回的是有效 asset_ids，且 seedance-video "
+                            "已获得 assets.consume 权限。"
+                        ),
+                    )
 
             # ── Mode validation (Sprint 8 / V1) ──
             # User-reported bug: "i2v / multimodal / edit / extend 都生不了任务".
@@ -493,6 +902,29 @@ class Plugin(PluginBase):
                 return normalized
 
             content = _normalize_content_roles(content)
+            params["content"] = content
+            if from_asset_ids:
+                params["from_asset_ids"] = list(from_asset_ids)
+
+            inferred_duration = self._infer_duration_from_prompt(
+                params.get("prompt", ""),
+                asset_count=len(from_asset_ids) if isinstance(from_asset_ids, list) else 0,
+                current=params.get("duration", 5),
+            )
+            params["duration"] = max(
+                model_info.duration_range[0],
+                min(model_info.duration_range[1], inferred_duration),
+            )
+
+            request_signature = self._request_signature(params)
+            existing_duplicate = await self._find_recent_duplicate_task(request_signature)
+            if existing_duplicate:
+                logger.info(
+                    "create_task deduped by request_signature=%s task=%s",
+                    request_signature, existing_duplicate.get("id"),
+                )
+                return existing_duplicate
+            params["request_signature"] = request_signature
 
             for item in content:
                 if not isinstance(item, dict) or item.get("type") != "video_url":
@@ -635,11 +1067,14 @@ class Plugin(PluginBase):
                         updates["last_frame_url"] = last_frame_url
                     await self._tm.update_task(task["id"], **updates)
 
-                    auto_dl = await self._tm.get_config("auto_download")
-                    if auto_dl == "true" and video_url:
-                        self._api.spawn_task(
-                            self._download_video(task["id"], video_url),
-                            name=f"seedance-video:dl:{task['id']}",
+                    # 工作台编排必须拿到本地路径 + asset_ids 才能让 OrgRuntime
+                    # hook 把视频/末帧登记为任务附件，所以**强制**下载+publish
+                    # 一次（不再受 auto_download 配置影响）。失败时降级为
+                    # 仅 URL，由 hook 的远端下载兜底。
+                    if video_url:
+                        await self._download_and_publish_video(
+                            task["id"], video_url, last_frame_url=last_frame_url,
+                            prompt=task.get("prompt") or "",
                         )
 
                     self._broadcast_update(task["id"], "succeeded")
@@ -652,6 +1087,78 @@ class Plugin(PluginBase):
 
             except Exception as e:
                 logger.debug("Poll task %s error: %s", task["id"], e)
+
+    async def _expand_from_asset_ids(
+        self,
+        asset_ids: list[str],
+        mode: str,
+    ) -> list[dict]:
+        """Turn upstream workbench ``asset_ids`` into Ark content items.
+
+        Each successful Asset Bus lookup is materialised as an
+        ``{"type": "image_url", "image_url": {"url": ...}, "role": ...}``
+        entry whose role is derived from the **0-indexed position** within
+        ``asset_ids`` together with ``mode``.
+
+        Unknown / unreadable asset_ids are skipped; callers that require
+        media validate the resulting list and raise a structured 400.
+        """
+        if not asset_ids:
+            return []
+        expanded: list[dict] = []
+        for idx, aid in enumerate(asset_ids):
+            try:
+                asset = await self._api.consume_asset(aid)
+            except Exception as exc:
+                logger.warning("seedance-video: consume_asset(%s) failed: %s", aid, exc)
+                continue
+            if not asset:
+                continue
+            source_path = asset.get("source_path") or ""
+            preview_url = asset.get("preview_url") or ""
+            url = ""
+            if isinstance(source_path, str) and source_path:
+                data_url = self._local_file_to_data_url(source_path)
+                if data_url:
+                    url = data_url
+            if not url and isinstance(preview_url, str) and preview_url:
+                url = preview_url
+            if not url and isinstance(source_path, str):
+                url = source_path
+            if not isinstance(url, str) or not url:
+                continue
+            if mode == "i2v_end":
+                role = "first_frame" if idx == 0 else "last_frame"
+            elif mode in ("i2v", "multimodal"):
+                role = "first_frame" if idx == 0 else "reference_image"
+            else:
+                role = "reference_image"
+            expanded.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": url},
+                    "role": role,
+                }
+            )
+        return expanded
+
+    @staticmethod
+    def _local_file_to_data_url(path_value: str) -> str:
+        """Convert a local image file to a data URI for Ark image inputs."""
+        try:
+            path = Path(path_value)
+            if not path.is_file():
+                return ""
+            mime = mimetypes.guess_type(path.name)[0] or ""
+            if not mime.startswith("image/"):
+                return ""
+            max_bytes = 50 * 1024 * 1024
+            if path.stat().st_size > max_bytes:
+                return ""
+            data = base64.b64encode(path.read_bytes()).decode("ascii")
+            return f"data:{mime};base64,{data}"
+        except Exception:
+            return ""
 
     async def _download_video(self, task_id: str, url: str) -> None:
         """Download video to local output directory."""
@@ -693,6 +1200,133 @@ class Plugin(PluginBase):
         except Exception as e:
             logger.warning("Failed to download video for task %s: %s", task_id, e)
 
+    async def _download_and_publish_video(
+        self,
+        task_id: str,
+        video_url: str,
+        *,
+        last_frame_url: str = "",
+        prompt: str = "",
+    ) -> None:
+        """Download the produced video (and optional last-frame image),
+        persist them under the plugin data dir, then publish each to the
+        Asset Bus so downstream workbenches can consume the asset_ids
+        (e.g. as the first_frame for a follow-up Seedance edit). Errors
+        are non-fatal — the LLM still sees ``video_url`` even when local
+        materialisation fails."""
+        if not video_url:
+            return
+
+        downloads_dir = self._api.get_data_dir() / "downloads" / task_id
+        try:
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.warning(
+                "seedance-video: failed to create download dir %s: %s",
+                downloads_dir, exc,
+            )
+            return
+
+        try:
+            import httpx
+        except ImportError:
+            logger.warning("seedance-video: httpx unavailable, skip download")
+            return
+
+        video_path: Path | None = None
+        last_frame_path: Path | None = None
+        try:
+            async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as http:
+                try:
+                    resp = await http.get(video_url)
+                    resp.raise_for_status()
+                    video_path = downloads_dir / f"{task_id}.mp4"
+                    video_path.write_bytes(resp.content)
+                except Exception as exc:
+                    logger.warning("seedance-video: video download failed: %s", exc)
+                    video_path = None
+                if last_frame_url:
+                    try:
+                        ext = ".png"
+                        low = last_frame_url.lower()
+                        if ".jpg" in low or ".jpeg" in low:
+                            ext = ".jpg"
+                        elif ".webp" in low:
+                            ext = ".webp"
+                        resp2 = await http.get(last_frame_url)
+                        resp2.raise_for_status()
+                        last_frame_path = downloads_dir / f"{task_id}_last_frame{ext}"
+                        last_frame_path.write_bytes(resp2.content)
+                    except Exception as exc:
+                        logger.warning(
+                            "seedance-video: last-frame download failed: %s", exc,
+                        )
+                        last_frame_path = None
+        except Exception as exc:
+            logger.warning("seedance-video: download session error: %s", exc)
+
+        asset_ids: list[str] = []
+        if video_path is not None:
+            try:
+                aid = await self._api.publish_asset(
+                    asset_kind="video",
+                    source_path=str(video_path),
+                    preview_url=video_url,
+                    metadata={
+                        "task_id": task_id,
+                        "prompt": (prompt or "")[:500],
+                        "origin": "seedance-video",
+                        "role": "video",
+                    },
+                    shared_with=["*"],
+                    ttl_seconds=86400,
+                )
+                if aid:
+                    asset_ids.append(aid)
+            except Exception as exc:
+                logger.warning("seedance-video: publish_asset(video) failed: %s", exc)
+        if last_frame_path is not None:
+            try:
+                aid = await self._api.publish_asset(
+                    asset_kind="image",
+                    source_path=str(last_frame_path),
+                    preview_url=last_frame_url or None,
+                    metadata={
+                        "task_id": task_id,
+                        "prompt": (prompt or "")[:500],
+                        "origin": "seedance-video",
+                        "role": "last_frame",
+                    },
+                    shared_with=["*"],
+                    ttl_seconds=86400,
+                )
+                if aid:
+                    asset_ids.append(aid)
+            except Exception as exc:
+                logger.warning(
+                    "seedance-video: publish_asset(last_frame) failed: %s", exc,
+                )
+
+        updates: dict[str, Any] = {"asset_ids": asset_ids}
+        if video_path is not None:
+            updates["local_video_path"] = str(video_path)
+        if last_frame_path is not None:
+            updates["last_frame_local_path"] = str(last_frame_path)
+        try:
+            await self._tm.update_task(task_id, **updates)
+        except Exception as exc:
+            logger.warning(
+                "seedance-video: persist asset metadata failed for %s: %s",
+                task_id, exc,
+            )
+        logger.info(
+            "seedance-video: task %s materialised → video=%s last_frame=%s assets=%d",
+            task_id,
+            bool(video_path),
+            bool(last_frame_path),
+            len(asset_ids),
+        )
+
     def _broadcast_update(self, task_id: str, status: str) -> None:
         try:
             self._api.broadcast_ui_event(
@@ -723,6 +1357,29 @@ class Plugin(PluginBase):
         async def create_task(body: CreateTaskBody) -> dict:
             task = await self._create_task_internal(body.model_dump())
             return {"ok": True, "task": task}
+
+        @router.post("/tasks/edit")
+        async def create_edit_task(body: VideoUrlTaskBody) -> dict:
+            params = self._build_video_url_create_args(body.model_dump(), mode="edit")
+            task = await self._create_task_internal(params)
+            return {"ok": True, "task": task}
+
+        @router.post("/tasks/extend")
+        async def create_extend_task(body: VideoUrlTaskBody) -> dict:
+            params = self._build_video_url_create_args(body.model_dump(), mode="extend")
+            task = await self._create_task_internal(params)
+            return {"ok": True, "task": task}
+
+        @router.post("/tasks/transition")
+        async def create_transition_task(body: VideoUrlTaskBody) -> dict:
+            params = self._build_video_url_create_args(body.model_dump(), mode="extend")
+            task = await self._create_task_internal(params)
+            return {
+                "ok": True,
+                "task": task,
+                "transition_strategy": "seedance_extend",
+                "message": "已通过 Seedance 云端 extend 创建过渡/续写片段。",
+            }
 
         @router.get("/tasks")
         async def list_tasks(
@@ -952,6 +1609,7 @@ class Plugin(PluginBase):
         async def get_settings() -> dict:
             cfg = await self._tm.get_all_config()
             cfg.setdefault("ark_api_key", "")
+            cfg.setdefault("ark_base_url", "")
             return {"ok": True, "config": cfg}
 
         @router.put("/settings")
@@ -962,6 +1620,10 @@ class Plugin(PluginBase):
             # surrounding whitespace and then make Ark calls fail with
             # an opaque "invalid api key" later.
             cleaned: dict[str, str] = {k: (v or "").strip() for k, v in body.updates.items()}
+            if "ark_base_url" in cleaned:
+                cleaned["ark_base_url"] = _normalize_base_url(
+                    cleaned["ark_base_url"], field="ARK Base URL",
+                )
 
             if "ark_api_key" in cleaned and not cleaned["ark_api_key"]:
                 raise HTTPException(
@@ -996,10 +1658,19 @@ class Plugin(PluginBase):
                     "settings.update ark_api_key saved (len=%d, prefix=%s***)",
                     len(key), key[:4],
                 )
+
+            if "ark_api_key" in cleaned or "ark_base_url" in cleaned:
+                key = saved.get("ark_api_key", "")
+                base_url = saved.get("ark_base_url", "") or None
                 if self._ark:
-                    self._ark.update_api_key(key)
-                else:
-                    self._ark = ArkClient(key)
+                    if key:
+                        self._ark.update_api_key(key)
+                        self._ark.update_base_url(base_url)
+                    else:
+                        await self._ark.close()
+                        self._ark = None
+                elif key:
+                    self._ark = ArkClient(key, base_url=base_url)
 
             return {"ok": True, "config": saved}
 

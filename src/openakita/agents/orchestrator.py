@@ -1452,10 +1452,26 @@ class AgentOrchestrator:
         self._ensure_deps()
         self._load_sub_states()
         await self._pool.start()
-        await self._task_queue.start()
+        # Delegate still uses the direct dispatch path. Keep TaskQueue explicit and
+        # stopped until an enqueue caller is wired, avoiding "No handler set" workers.
+        self._task_queue.set_handler(self._handle_queued_task)
         logger.info(
-            "[Orchestrator] Started (task_queue max_concurrent=%d)",
+            "[Orchestrator] Started (task_queue handler ready, max_concurrent=%d)",
             self._task_queue._max_concurrent,
+        )
+
+    async def _handle_queued_task(self, task) -> Any:
+        """Single future queue execution entry; currently delegates to direct dispatch."""
+        payload = task.payload or {}
+        session = payload.get("session")
+        message = payload.get("message", "")
+        if session is None:
+            raise RuntimeError("Queued task missing session")
+        return await self._dispatch(
+            session=session,
+            message=message,
+            agent_profile_id=task.agent_profile_id,
+            depth=int(payload.get("depth", 0) or 0),
         )
 
     async def shutdown(self) -> None:

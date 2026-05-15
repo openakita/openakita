@@ -103,6 +103,257 @@ async def test_save_endpoint_returns_ok_when_runtime_reload_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_path_policy_writes_v2_fields_without_legacy_zones(monkeypatch):
+    state = {"security": {"zones": {"workspace": ["old"], "default_zone": "controlled"}}}
+    written = {}
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+
+    response = await config_routes.write_security_path_policy(
+        config_routes.SecurityPathPolicyUpdate(
+            workspace_paths=["C:/Users/me/Desktop"],
+            safety_immune_paths=["C:/Users/me/.ssh"],
+        )
+    )
+
+    assert response["status"] == "ok"
+    assert written["security"]["workspace"]["paths"] == ["C:/Users/me/Desktop"]
+    assert written["security"]["safety_immune"]["paths"] == ["C:/Users/me/.ssh"]
+    assert "zones" not in written["security"]
+    assert written["security"]["profile"]["current"] == "custom"
+
+
+@pytest.mark.asyncio
+async def test_security_profile_off_requires_exact_ack(monkeypatch):
+    state = {"security": {"profile": {"current": "protect"}}}
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+
+    response = await config_routes.write_security_profile(
+        config_routes.SecurityProfileUpdate(profile="off", ack_phrase="我知道风险")
+    )
+
+    assert response["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_security_profile_off_disables_security_enabled(monkeypatch):
+    """切到 off 时 security.enabled 必须同步置 false（避免双总开关漂移）。"""
+    state = {"security": {"profile": {"current": "protect"}, "enabled": True}}
+    written = {}
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+
+    response = await config_routes.write_security_profile(
+        config_routes.SecurityProfileUpdate(profile="off", ack_phrase=config_routes._SECURITY_PROFILE_OFF_ACK)
+    )
+
+    assert response["status"] == "ok"
+    assert written["security"]["profile"]["current"] == "off"
+    assert written["security"]["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_security_profile_trust_reenables_security_enabled(monkeypatch):
+    """从 off 切到 trust 时 security.enabled 必须复位 true。"""
+    state = {"security": {"profile": {"current": "off", "base": "protect"}, "enabled": False}}
+    written = {}
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+
+    response = await config_routes.write_security_profile(
+        config_routes.SecurityProfileUpdate(profile="trust")
+    )
+
+    assert response["status"] == "ok"
+    assert written["security"]["profile"]["current"] == "trust"
+    assert written["security"]["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_commands_api_writes_shell_risk_not_legacy(monkeypatch):
+    """write_security_commands 必须写到 security.shell_risk，并彻底清理 legacy command_patterns。"""
+    state = {
+        "security": {
+            "command_patterns": {"custom_critical": ["legacy-only"], "blocked_commands": ["legacy"]},
+        }
+    }
+    written = {}
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+
+    response = await config_routes.write_security_commands(
+        config_routes.SecurityCommandsUpdate(
+            custom_critical=["rm -rf /"],
+            custom_high=["sudo rm"],
+            excluded_patterns=[],
+            blocked_commands=["bcdedit"],
+        )
+    )
+
+    assert response["status"] == "ok"
+    assert written["security"]["shell_risk"]["custom_critical"] == ["rm -rf /"]
+    assert written["security"]["shell_risk"]["blocked_commands"] == ["bcdedit"]
+    # legacy 子树彻底丢弃
+    assert "command_patterns" not in written["security"]
+    # 触发 custom profile
+    assert written["security"]["profile"]["current"] == "custom"
+
+
+@pytest.mark.asyncio
+async def test_commands_api_reads_legacy_fallback(monkeypatch):
+    """老 YAML 只有 command_patterns 时，GET 仍能读出来（read fallback）。"""
+    state = {
+        "security": {
+            "command_patterns": {
+                "custom_critical": ["legacy-c"],
+                "custom_high": ["legacy-h"],
+                "excluded_patterns": [],
+                "blocked_commands": ["legacy-bc"],
+            }
+        }
+    }
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+
+    response = await config_routes.read_security_commands()
+
+    assert response["custom_critical"] == ["legacy-c"]
+    assert response["custom_high"] == ["legacy-h"]
+    assert response["blocked_commands"] == ["legacy-bc"]
+
+
+@pytest.mark.asyncio
+async def test_self_protection_api_writes_v2_blocks(monkeypatch):
+    """write_self_protection 必须分发到 death_switch/audit/safety_immune，丢弃 legacy self_protection。"""
+    state = {
+        "security": {
+            "self_protection": {"protected_dirs": ["data/"], "death_switch_threshold": 5},
+        }
+    }
+    written = {}
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+
+    response = await config_routes.write_self_protection(
+        config_routes._SelfProtectionUpdate(
+            enabled=True,
+            protected_dirs=["data/", "identity/"],
+            death_switch_threshold=4,
+            death_switch_total_multiplier=2,
+            audit_to_file=True,
+            audit_path="data/audit/custom.jsonl",
+        )
+    )
+
+    assert response["status"] == "ok"
+    sec_w = written["security"]
+    assert sec_w["death_switch"]["enabled"] is True
+    assert sec_w["death_switch"]["threshold"] == 4
+    assert sec_w["death_switch"]["total_multiplier"] == 2
+    assert sec_w["safety_immune"]["paths"] == ["data/", "identity/"]
+    assert sec_w["audit"]["enabled"] is True
+    assert sec_w["audit"]["log_path"] == "data/audit/custom.jsonl"
+    assert "self_protection" not in sec_w
+    assert sec_w["profile"]["current"] == "custom"
+
+
+@pytest.mark.asyncio
+async def test_granular_write_during_off_leaves_audit_event(monkeypatch):
+    """off 状态下任何细粒度写入都会被提升为 custom 并留下审计事件。"""
+    state = {
+        "security": {
+            "profile": {"current": "off", "base": "protect"},
+            "enabled": False,
+        }
+    }
+    written = {}
+    audit_calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+    monkeypatch.setattr(
+        config_routes,
+        "_write_profile_event",
+        lambda profile, previous=None: audit_calls.append((profile, previous)),
+    )
+
+    response = await config_routes.write_security_commands(
+        config_routes.SecurityCommandsUpdate(
+            custom_critical=["dd if=/dev/zero"],
+            custom_high=[],
+            excluded_patterns=[],
+            blocked_commands=[],
+        )
+    )
+
+    assert response["status"] == "ok"
+    assert written["security"]["profile"]["current"] == "custom"
+    assert written["security"]["enabled"] is True
+    assert ("custom", "off") in audit_calls, (
+        f"off → custom 必须写一条 profile_change 审计事件, got {audit_calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_permission_mode_escape_from_off_is_audited(monkeypatch):
+    """老 chat /api/config/permission-mode 把用户从 off 拽到 baked profile 时必须留审计。"""
+    state = {
+        "security": {
+            "profile": {"current": "off", "base": "protect"},
+            "enabled": False,
+        }
+    }
+    written = {}
+    audit_calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+    monkeypatch.setattr(config_routes, "_write_policies_yaml", lambda data: written.update(data) or True)
+    monkeypatch.setattr(
+        config_routes,
+        "_write_profile_event",
+        lambda profile, previous=None: audit_calls.append((profile, previous)),
+    )
+    monkeypatch.setattr(
+        config_routes,
+        "reset_policy_v2_layer",
+        lambda **kwargs: None,
+        raising=False,
+    )
+
+    result = await config_routes.write_permission_mode(config_routes._PermissionModeBody(mode="smart"))
+
+    assert result["status"] == "ok"
+    # 状态被强行拉到 protect（=smart 的 v2 等价）
+    assert written["security"]["profile"]["current"] == "protect"
+    assert written["security"]["enabled"] is True
+    assert any(
+        target == "protect" and prev == "off" for (target, prev) in audit_calls
+    ), f"off → protect 必须有 profile_change 事件, got {audit_calls}"
+
+
+@pytest.mark.asyncio
+async def test_self_protection_api_reads_legacy_fallback(monkeypatch):
+    state = {
+        "security": {
+            "self_protection": {
+                "enabled": True,
+                "protected_dirs": ["legacy-dir"],
+                "death_switch_threshold": 7,
+                "death_switch_total_multiplier": 8,
+                "audit_to_file": False,
+                "audit_path": "legacy.jsonl",
+            }
+        }
+    }
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+
+    response = await config_routes.read_self_protection()
+
+    assert response["protected_dirs"] == ["legacy-dir"]
+    assert response["death_switch_threshold"] == 7
+    assert response["death_switch_total_multiplier"] == 8
+    assert response["audit_to_file"] is False
+    assert response["audit_path"] == "legacy.jsonl"
+
+
+@pytest.mark.asyncio
 async def test_save_endpoint_ignores_masked_api_key(monkeypatch):
     manager = _FakeEndpointManager()
     manager.endpoints = [

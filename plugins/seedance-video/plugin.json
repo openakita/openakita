@@ -21,7 +21,9 @@
     "config.read",
     "config.write",
     "data.own",
-    "brain.access"
+    "brain.access",
+    "assets.publish",
+    "assets.consume"
   ],
   "requires": {
     "openakita": ">=1.27.0",

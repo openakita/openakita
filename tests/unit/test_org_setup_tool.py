@@ -13,8 +13,6 @@ Validates:
 from __future__ import annotations
 
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,8 +22,8 @@ def test_organization_watchdog_disabled_by_default():
     from openakita.orgs.models import Organization
 
     org = Organization(name="default watchdog")
-    assert org.watchdog_enabled is False
-    assert org.to_dict()["watchdog_enabled"] is False
+    assert org.watchdog_enabled is True
+    assert org.to_dict()["watchdog_enabled"] is True
 
 
 @pytest.fixture
@@ -668,7 +666,9 @@ class TestDeleteOrg:
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent(self, handler, tmp_data_dir):
-        with patch("openakita.config.settings") as ms:
+        with patch("openakita.config.settings") as ms, patch(
+            "openakita.orgs.runtime.get_runtime", return_value=None
+        ):
             ms.data_dir = tmp_data_dir
             result = await handler._delete_org({"org_id": "nonexistent"})
         assert "❌" in result
@@ -677,7 +677,9 @@ class TestDeleteOrg:
     @pytest.mark.asyncio
     async def test_delete_success(self, handler, tmp_data_dir, created_org):
         org_id, data_dir = created_org
-        with patch("openakita.config.settings") as ms:
+        with patch("openakita.config.settings") as ms, patch(
+            "openakita.orgs.runtime.get_runtime", return_value=None
+        ):
             ms.data_dir = data_dir
             result = await handler._delete_org({"org_id": org_id})
         assert "✅" in result

@@ -128,6 +128,14 @@ class OrgManager:
             raise ValueError(f"Invalid org_id: {org_id}")
         return self._orgs_dir / org_id
 
+    def get_org_dir(self, org_id: str) -> Path:
+        """公开版的 :pyfunc:`_org_dir`：返回组织在磁盘上的根目录。
+
+        推荐的访问路径，外部调用方（command_service / api 路由 / 插件）应该
+        通过这里而不是直接戳带前导下划线的私有方法。两者完全等价、无副作用。
+        """
+        return self._org_dir(org_id)
+
     def _org_json(self, org_id: str) -> Path:
         return self._org_dir(org_id) / "org.json"
 
@@ -233,6 +241,23 @@ class OrgManager:
                 OrgEdge.from_dict(e) for e in edges_raw
                 if e.get("source") != e.get("target")
             ]
+
+        # 工作台节点（plugin_origin 非空）必须是叶子节点。把这一规则放在
+        # 边/节点合并完成之后做最终校验，避免任意路径(直接 PATCH 节点 / 编辑
+        # 边后保存)绕过限制。命中时抛 ValueError，由 API 层映射成 422。
+        _violations: list[str] = []
+        for n in org.nodes:
+            if not getattr(n, "plugin_origin", None):
+                continue
+            if org.get_children(n.id):
+                title = (n.role_title or n.id).strip()
+                _violations.append(f"{title}({n.id})")
+        if _violations:
+            raise ValueError(
+                "工作台节点必须是叶子节点，不允许挂下属节点："
+                + "、".join(_violations)
+                + "。请删除其下属节点或移除工作台标识后再保存。"
+            )
 
         org.updated_at = _now_iso()
         self._ensure_node_dirs(org)

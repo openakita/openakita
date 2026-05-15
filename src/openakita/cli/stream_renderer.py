@@ -264,6 +264,25 @@ def _handle_security_confirm_interactive(event: dict, console: Console) -> None:
     needs_sandbox = event.get("needs_sandbox", False)
     args = event.get("args") or {}
 
+    # C14 / R4-5: belt-and-suspenders — main.py 已在 stdin 非 TTY 时拒绝
+    # 进入 interactive 模式，理论上不会走到这里。但 stream_renderer 也可能
+    # 被脚本/测试单独调用，且 ``Prompt.ask`` 在没有 TTY 时会回退到原始
+    # ``input()`` 永久 block。这里再守一层：直接打印告警 + 不发 resolve，
+    # 让 unattended 路径接管（owner 在 setup-center 上看到 pending_approval）。
+    import sys as _sys
+
+    try:
+        _has_tty = bool(_sys.stdin.isatty())
+    except (ValueError, OSError):
+        _has_tty = False
+    if not _has_tty:
+        console.print(
+            f"[yellow]⚠️ 非交互终端无法对 {tool!r} 做安全确认 "
+            f"(confirm_id={confirm_id[:8]}…)；请在 setup-center "
+            f"或通过 /api/pending_approvals 由 owner 处理。[/yellow]"
+        )
+        return
+
     color = "red" if risk.lower() in ("high", "critical") else "yellow"
 
     info_lines = [f"工具: {tool}", f"原因: {reason}", f"风险等级: {risk}"]
@@ -300,10 +319,9 @@ def _handle_security_confirm_interactive(event: dict, console: Console) -> None:
     decision = decision_map.get(decision_str, "deny")
 
     try:
-        from ..core.policy import get_policy_engine
+        from ..core.policy_v2 import apply_resolution
 
-        engine = get_policy_engine()
-        found = engine.resolve_ui_confirm(confirm_id, decision)
+        found = apply_resolution(confirm_id, decision)
         if found:
             labels = {
                 "allow_once": "✅ 已允许（一次）",

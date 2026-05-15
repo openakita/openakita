@@ -16,6 +16,7 @@ required.
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 from _plugin_loader import load_seedance_plugin
@@ -36,6 +37,7 @@ def _make_plugin() -> Plugin:
     p._tm.get_task_by_client_request_id = AsyncMock(return_value=None)
     p._tm.create_task = AsyncMock(side_effect=lambda **kw: {"id": "t-1", **kw})
     p._pending_create_requests = {}
+    p._api = SimpleNamespace(consume_asset=AsyncMock(return_value=None))
     return p
 
 
@@ -204,6 +206,49 @@ async def test_extend_without_video_returns_400() -> None:
         })
     assert excinfo.value.status_code == 400
     assert "延长" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_i2v_with_unresolvable_from_asset_ids_returns_400() -> None:
+    p = _make_plugin()
+    with pytest.raises(HTTPException) as excinfo:
+        await p._create_task_internal({
+            "mode": "i2v",
+            "model": "2.0",
+            "prompt": "hello",
+            "from_asset_ids": ["missing-asset"],
+        })
+    assert excinfo.value.status_code == 400
+    assert "from_asset_ids" in excinfo.value.detail
+    p._ark.create_task.assert_not_awaited()
+
+
+def test_edit_wrapper_requires_cloud_video_url() -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        Plugin._build_video_url_create_args(
+            {"prompt": "edit it", "source_video_url": "C:/tmp/local.mp4"},
+            mode="edit",
+        )
+    assert excinfo.value.status_code == 400
+    assert "video_url" in excinfo.value.detail
+
+
+def test_extend_wrapper_builds_reference_video_content() -> None:
+    args = Plugin._build_video_url_create_args(
+        {
+            "prompt": "continue",
+            "source_video_url": "https://example.com/source.mp4",
+            "next_scene_prompt": "night city",
+        },
+        mode="extend",
+    )
+    assert args["mode"] == "extend"
+    assert args["content"][1] == {
+        "type": "video_url",
+        "video_url": {"url": "https://example.com/source.mp4"},
+        "role": "reference_video",
+    }
+    assert "night city" in args["prompt"]
 
 
 @pytest.mark.asyncio

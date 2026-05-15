@@ -5,6 +5,14 @@ OpenCLI 处理器
 - opencli_list: 发现可用命令（含网站 adapter 列表）
 - opencli_run: 执行命令，返回 JSON 结果
 - opencli_doctor: 诊断 Browser Bridge 连通性
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import asyncio
@@ -14,6 +22,7 @@ import shutil
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -33,6 +42,11 @@ class OpenCLIHandler:
     """OpenCLI 处理器 — 复用用户 Chrome 登录态操作网站。"""
 
     TOOLS = ["opencli_list", "opencli_run", "opencli_doctor"]
+    TOOL_CLASSES = {
+        "opencli_list": ApprovalClass.READONLY_GLOBAL,
+        "opencli_run": ApprovalClass.EXEC_CAPABLE,
+        "opencli_doctor": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

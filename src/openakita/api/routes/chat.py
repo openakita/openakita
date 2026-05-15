@@ -8,6 +8,7 @@ Chat route: POST /api/chat (SSE streaming)
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -394,11 +395,19 @@ async def clear_chat(request: Request):
 
 
 def _cleanup_chat_runtime_state(request: Request, conversation_id: str) -> None:
-    """Clear runtime state that should not survive /api/chat/clear."""
-    try:
-        from ...core.policy import get_policy_engine
+    """Clear runtime state that should not survive /api/chat/clear.
 
-        get_policy_engine().cleanup_session(conversation_id)
+    C8b-3：v1 ``pe.cleanup_session()`` 拆成两件事——
+    (1) ``UIConfirmBus.cleanup_session(sid)`` 删本会话的 pending confirms
+    (2) ``SessionAllowlistManager.clear()`` 清 session 临时白名单（v1 行为
+        也是不论 sid 全清，C8b-3 暂保持一致）
+    """
+    try:
+        from ...core.policy_v2 import get_session_allowlist_manager
+        from ...core.ui_confirm_bus import get_ui_confirm_bus
+
+        get_ui_confirm_bus().cleanup_session(conversation_id)
+        get_session_allowlist_manager().clear()
     except Exception:
         pass
 
@@ -733,6 +742,38 @@ async def _stream_chat(
                 pass
         return False
 
+    # ── C17 Phase B.1/B.2: SSE replay session ──
+    # 每个 conversation_id 对应一个 SSESession（per-session ringbuffer +
+    # 单调 seq）。客户端断线后 ``fetch /api/chat`` 带 ``Last-Event-ID``
+    # header 时，我们先 flush ringbuffer 里 seq > last_seq 的事件再接
+    # active 流。新连接（没带 Last-Event-ID）则 seq 从已有计数继续累加，
+    # 客户端要么从 0 开始接（首次 fetch），要么自己处理 dedup。
+    # 注意：``conversation_id`` 在下方 try 块里才会被赋值（包含 uuid 补全
+    # 逻辑），这里直接读 ``chat_request.conversation_id``——足够当 session
+    # key；如果用户传空字符串就降级回不带 replay 的旧行为。
+    from ...core.sse_replay import (
+        format_sse_frame,
+        parse_last_event_id,
+    )
+    from ...core.sse_replay import (
+        get_registry as _get_sse_registry,
+    )
+
+    _sse_conv_key = chat_request.conversation_id or ""
+    _sse_session = (
+        _get_sse_registry().get_or_create(_sse_conv_key)
+        if _sse_conv_key
+        else None
+    )
+
+    _last_event_id_header = None
+    if http_request is not None:
+        try:
+            _last_event_id_header = http_request.headers.get("last-event-id")
+        except Exception:
+            _last_event_id_header = None
+    _last_event_id = parse_last_event_id(_last_event_id_header)
+
     def _sse(event_type: str, data: dict | None = None) -> str:
         nonlocal _reply_chars, _reply_preview, _full_reply, _chain_reply, _done_sent
         if event_type == "done":
@@ -764,7 +805,16 @@ async def _stream_chat(
             chunk = data["content"]
             _reply_chars += len(chunk)
             _chain_reply += chunk
-        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        data_json = json.dumps(payload, ensure_ascii=False)
+        # When the SSE session is bound, record the event into the
+        # ringbuffer and emit an ``id: <seq>`` line so Last-Event-ID
+        # replay works after disconnect. Without a session (no
+        # conversation_id), fall back to the legacy frame so the existing
+        # contract holds.
+        if _sse_session is not None:
+            evt = _sse_session.add_event(event_type, payload)
+            return format_sse_frame(evt, data_json=data_json)
+        return f"data: {data_json}\n\n"
 
     _disconnect_watcher_task: asyncio.Task | None = None
     _agent_task: asyncio.Task | None = None
@@ -775,6 +825,29 @@ async def _stream_chat(
     conversation_id = chat_request.conversation_id or ""
 
     try:
+        # ── C17 Phase B.2: replay buffered events for reconnecting clients ──
+        # When the client sets ``Last-Event-ID``, flush ringbuffer events
+        # with ``seq > last_seq`` **before** anything new. These frames
+        # carry their original seq so the client can dedup based on
+        # ``seenSequenceNums``; we don't push them back into the buffer
+        # (they're already there) and don't bump _reply_chars / preview
+        # (those state vars only reflect the *new* turn we're about to
+        # generate).
+        if _sse_session is not None and _last_event_id is not None:
+            _missed = _sse_session.replay_from(_last_event_id)
+            if _missed:
+                logger.info(
+                    "[Chat API] replaying %d SSE event(s) for conv=%s after "
+                    "Last-Event-ID=%s",
+                    len(_missed),
+                    conversation_id,
+                    _last_event_id,
+                )
+                for evt in _missed:
+                    yield format_sse_frame(
+                        evt, data_json=json.dumps(evt.payload, ensure_ascii=False)
+                    )
+
         actual_agent = _resolve_agent(agent)
         if actual_agent is None:
             yield _sse("error", {"message": "Agent not initialized"})
@@ -807,6 +880,25 @@ async def _stream_chat(
                     create_if_missing=True,
                 )
                 if session:
+                    # C14 re-audit (D2): make the entry classifier the single
+                    # source of truth for **all** sessions, even attended SSE
+                    # ones. For ``channel="desktop"`` classifier returns
+                    # ``is_unattended=False`` and the idempotent helper is a
+                    # behavioral no-op — but it future-proofs the path: if a
+                    # later subroutine flips the session to unattended,
+                    # downstream policy will see consistent flags.
+                    try:
+                        from openakita.core.policy_v2 import (
+                            apply_classification_to_session as _apply_cls,
+                        )
+                        from openakita.core.policy_v2 import (
+                            classify_entry as _classify,
+                        )
+
+                        _apply_cls(session, _classify("desktop"))
+                    except Exception:
+                        pass
+
                     if chat_request.agent_profile_id:
                         _apply_agent_profile(session, chat_request.agent_profile_id)
                     session.set_metadata("selected_endpoint", chat_request.endpoint or "")
@@ -829,6 +921,8 @@ async def _stream_chat(
             except Exception as e:
                 logger.warning(f"[Chat API] Session management error: {e}")
 
+        from openakita.core.policy_v2 import DeferredApprovalRequired
+
         # ── Background agent task: decoupled from SSE lifecycle ──
         async def _agent_runner():
             try:
@@ -849,6 +943,25 @@ async def _stream_chat(
                     turn_id=turn_id,
                 ):
                     await _agent_queue.put(ev)
+            except DeferredApprovalRequired as exc:
+                approval_id = exc.pending_id or ""
+                await _agent_queue.put(
+                    {
+                        "type": "pending_approval",
+                        "status": "pending_approval",
+                        "approval_id": approval_id,
+                        "approval_url": (
+                            f"/api/pending_approvals/{approval_id}" if approval_id else None
+                        ),
+                        "resolve_url": (
+                            f"/api/pending_approvals/{approval_id}/resolve"
+                            if approval_id
+                            else None
+                        ),
+                        "unattended_strategy": exc.unattended_strategy,
+                        "message": str(exc),
+                    }
+                )
             except Exception as exc:
                 await _agent_queue.put({"type": "__agent_error__", "__exc_msg__": str(exc)[:500]})
             finally:
@@ -1316,6 +1429,144 @@ async def _stream_chat(
                 )
 
 
+async def _stream_org_command_chat(
+    chat_request: ChatRequest,
+    *,
+    request: Request,
+    conversation_id: str,
+    client_id: str,
+    busy_generation: int,
+) -> AsyncIterator[str]:
+    """Stream a desktop-chat initiated org command as summarized SSE events."""
+
+    def _sse(event_type: str, data: dict | None = None) -> str:
+        from ...events import normalize_stream_event
+
+        payload = normalize_stream_event({"type": event_type, **(data or {})})
+        return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    svc = getattr(request.app.state, "org_command_service", None)
+    session_manager = getattr(request.app.state, "session_manager", None)
+    org_id = chat_request.org_id or ""
+    target_node_id = chat_request.org_node_id or None
+    queue = None
+    command_id = ""
+
+    try:
+        if session_manager:
+            session = session_manager.get_session(
+                channel="desktop",
+                chat_id=conversation_id,
+                user_id="desktop_user",
+                create_if_missing=True,
+            )
+            if session:
+                session.set_metadata(
+                    "ui_org_state",
+                    {
+                        "orgMode": bool(chat_request.org_mode and chat_request.org_id),
+                        "orgId": org_id,
+                        "orgNodeId": target_node_id or "",
+                    },
+                )
+                if chat_request.message:
+                    session.add_message("user", chat_request.message)
+                session_manager.mark_dirty()
+
+        if svc is None:
+            yield _sse("error", {"message": "OrgCommandService not initialized"})
+            yield _sse("done")
+            return
+
+        from openakita.orgs.command_service import (
+            OrgCommandError,
+            OrgCommandRequest,
+            OrgCommandSource,
+            OrgCommandSurface,
+            default_scope_for_surface,
+        )
+
+        try:
+            started = svc.submit(
+                OrgCommandRequest(
+                    org_id=org_id,
+                    content=chat_request.message or "",
+                    target_node_id=target_node_id,
+                    source=OrgCommandSource(
+                        channel="desktop",
+                        chat_id=conversation_id,
+                        user_id="desktop_user",
+                        client_id=client_id,
+                    ),
+                    origin_surface=OrgCommandSurface.DESKTOP_CHAT,
+                    output_scope=default_scope_for_surface(OrgCommandSurface.DESKTOP_CHAT),
+                )
+            )
+        except OrgCommandError as exc:
+            yield _sse("error", {"message": str(exc), "org_id": org_id})
+            yield _sse("done")
+            return
+
+        command_id = started["command_id"]
+        queue = svc.subscribe_summary(
+            command_id,
+            surface="desktop_chat",
+            target=conversation_id,
+        )
+        yield _sse("org_command_started", {
+            "org_id": org_id,
+            "command_id": command_id,
+            "root_node_id": started.get("root_node_id", ""),
+        })
+
+        final_text = ""
+        progress_lines: list[str] = []
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30)
+            except TimeoutError:
+                yield _sse("heartbeat", {"org_id": org_id, "command_id": command_id})
+                continue
+
+            if item.get("type") == "org_progress":
+                summary = item.get("summary") or ""
+                if summary:
+                    progress_lines.append(str(summary))
+                    yield _sse("org_progress", item)
+                continue
+
+            if item.get("type") == "org_command_done":
+                result = item.get("result")
+                error = item.get("error")
+                if isinstance(result, dict):
+                    final_text = str(result.get("result") or result.get("error") or "")
+                if error:
+                    final_text = str(error)
+                yield _sse("org_command_done", item)
+                if final_text:
+                    progress_text = "\n".join(f"> {line}" for line in progress_lines)
+                    display_text = f"{progress_text}\n\n---\n\n{final_text}" if progress_text else final_text
+                    yield _sse("text_replace", {"content": display_text})
+                    if session_manager:
+                        session = session_manager.get_session(
+                            channel="desktop",
+                            chat_id=conversation_id,
+                            user_id="desktop_user",
+                            create_if_missing=True,
+                        )
+                        if session:
+                            session.add_message("assistant", final_text)
+                            session_manager.mark_dirty()
+                yield _sse("done")
+                return
+    finally:
+        if queue is not None and command_id and svc is not None:
+            svc.unsubscribe_summary(command_id, queue)
+        if client_id:
+            with contextlib.suppress(Exception):
+                await get_lifecycle_manager().finish(conversation_id, generation=busy_generation)
+
+
 @router.post("/api/chat")
 async def chat(request: Request, body: ChatRequest):
     """
@@ -1387,6 +1638,52 @@ async def chat(request: Request, body: ChatRequest):
     elif pending_response is not None:
         return pending_response
 
+    # ── Busy-lock check (via lifecycle manager) ──
+    lifecycle = get_lifecycle_manager()
+    busy_gen = 0
+    if client_id:
+        try:
+            conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
+        except Exception as exc:
+            return _chat_startup_error_response(
+                exc,
+                conversation_id=conversation_id,
+                request_id=request_id,
+                stage="conversation_lifecycle",
+            )
+        if conflict is not None:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "conversation_busy",
+                    "conversation_id": conversation_id,
+                    "busy_client_id": conflict.client_id,
+                    "busy_since": conflict.start_time,
+                    "message": "该会话正在其他终端进行中，请新建会话或稍后再试",
+                },
+            )
+
+    if body.org_mode and body.org_id:
+        body.conversation_id = conversation_id
+        sse_gen = _stream_org_command_chat(
+            body,
+            request=request,
+            conversation_id=conversation_id,
+            client_id=client_id,
+            busy_generation=busy_gen,
+        )
+        if is_dual_loop():
+            sse_gen = engine_stream(sse_gen)
+        return StreamingResponse(
+            sse_gen,
+            media_type="text/event-stream; charset=utf-8",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     chat_endpoint_names = _chat_endpoint_names()
     if not chat_endpoint_names:
         return JSONResponse(
@@ -1419,31 +1716,6 @@ async def chat(request: Request, body: ChatRequest):
         )
         body.endpoint = None
         body.endpoint_policy = "prefer"
-
-    # ── Busy-lock check (via lifecycle manager) ──
-    lifecycle = get_lifecycle_manager()
-    busy_gen = 0
-    if client_id:
-        try:
-            conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
-        except Exception as exc:
-            return _chat_startup_error_response(
-                exc,
-                conversation_id=conversation_id,
-                request_id=request_id,
-                stage="conversation_lifecycle",
-            )
-        if conflict is not None:
-            return JSONResponse(
-                status_code=409,
-                content={
-                    "error": "conversation_busy",
-                    "conversation_id": conversation_id,
-                    "busy_client_id": conflict.client_id,
-                    "busy_since": conflict.start_time,
-                    "message": "该会话正在其他终端进行中，请新建会话或稍后再试",
-                },
-            )
 
     if body.agent_profile_id:
         from openakita.agents.presets import SYSTEM_PRESETS
@@ -1483,6 +1755,29 @@ async def chat(request: Request, body: ChatRequest):
     effective_mode = body.mode
     if body.plan_mode and effective_mode == "agent":
         effective_mode = "plan"
+    if body.permission_mode == "plan" and effective_mode == "agent":
+        effective_mode = "plan"
+    if session_manager is not None and conversation_id and body.permission_mode:
+        # v1.27.x introduced per-turn product permission_mode via the old
+        # PolicyEngine singleton. Policy V2 keeps that state on the session
+        # so build_policy_context can consume it without reviving core.policy.
+        _mode_map = {
+            "plan": "strict",
+            "default": "default",
+            "accept_edits": "accept_edits",
+            "dont_ask": "dont_ask",
+            "bypass_permissions": "trust",
+        }
+        try:
+            session = session_manager.get_session(
+                channel="desktop",
+                chat_id=conversation_id,
+                user_id="user",
+            )
+            session.confirmation_mode_override = _mode_map.get(body.permission_mode, "default")
+            session_manager.mark_dirty()
+        except Exception:
+            logger.debug("[Chat API] Failed to persist permission mode override", exc_info=True)
 
     msg_preview = (body.message or "")[:100]
     att_count = len(body.attachments) if body.attachments else 0
@@ -1542,6 +1837,228 @@ async def chat(request: Request, body: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/api/chat/sync")
+async def chat_sync(request: Request, body: ChatRequest):
+    """Non-SSE chat endpoint for clients without streaming capability (C14 / R4-6).
+
+    Use when the client can't (or won't) consume Server-Sent Events from
+    ``POST /api/chat``: REST clients, CI pipelines, language-bindings without
+    SSE support, simple scripts piping curl results, etc.
+
+    Semantics differ from ``/api/chat`` in two important ways:
+
+    1. The created session is marked ``is_unattended=True`` (entry classifier
+       ``"api-sync"``). Tools whose policy class is CONFIRM will not block
+       waiting for an SSE ``security_confirm`` response — they instead route
+       through ``PolicyEngineV2`` step 11 → ``unattended_strategy`` (default
+       ``defer_to_inbox`` for this channel) and raise
+       ``DeferredApprovalRequired``.
+    2. The endpoint runs the **non-streaming** ``Agent.chat_with_session``
+       and returns one final JSON response. No incremental output.
+
+    Returns:
+        200 + JSON ``{status: "completed", conversation_id, message, ...}``
+            Agent finished normally; ``message`` is the final reply text.
+        202 + JSON ``{status: "pending_approval", approval_id, approval_url, ...}``
+            A CONFIRM tool was deferred. Client polls ``approval_url`` and
+            owner resolves via ``POST /api/pending_approvals/{id}/resolve``;
+            after approval the original task can be retried (replay-auth
+            window applies via the standard 30s mechanism).
+        4xx/5xx + JSON error envelope on validation/runtime failures.
+    """
+    import uuid as _uuid
+
+    from openakita.core.policy_v2 import (
+        DeferredApprovalRequired,
+        apply_classification_to_session,
+        classify_entry,
+    )
+
+    if not body.conversation_id:
+        body.conversation_id = f"api_sync_{_uuid.uuid4().hex[:12]}"
+    conversation_id = body.conversation_id
+    request_id = f"chat_sync_{_uuid.uuid4().hex[:12]}"
+
+    if not (body.message or "").strip() and not body.attachments:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "empty_message", "message": "消息内容不能为空"},
+        )
+
+    chat_endpoint_names = _chat_endpoint_names()
+    if not chat_endpoint_names:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "no_chat_endpoints_configured",
+                "message": "尚未配置主聊天 LLM 端点。",
+            },
+        )
+
+    try:
+        agent = await _get_agent_for_session(request, conversation_id, body.agent_profile_id)
+        session_manager = getattr(request.app.state, "session_manager", None)
+    except Exception as exc:
+        return _chat_startup_error_response(
+            exc,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            stage="agent_init",
+        )
+
+    actual_agent = _resolve_agent(agent)
+    if actual_agent is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "agent_not_ready", "message": "Agent 未初始化"},
+        )
+
+    if not actual_agent._initialized:
+        await actual_agent.initialize()
+
+    # C14 re-audit (D5): /api/chat/sync MUST enter the conversation
+    # lifecycle busy-lock, otherwise two concurrent sync calls on the
+    # same conversation_id race for the same Session.context message
+    # list. Mirror /api/chat SSE's lock pattern (start → 409 on conflict;
+    # finish in outer ``finally``). client_id is opaque to the lifecycle
+    # manager and only used to identify the holder in 409 responses, so
+    # using ``f"sync_{request_id}"`` is fine.
+    lifecycle = get_lifecycle_manager()
+    busy_gen = 0
+    sync_client_id = f"sync_{request_id}"
+    try:
+        conflict, busy_gen = await lifecycle.start(conversation_id, sync_client_id)
+    except Exception as exc:
+        return _chat_startup_error_response(
+            exc,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            stage="conversation_lifecycle",
+        )
+    if conflict is not None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "conversation_busy",
+                "conversation_id": conversation_id,
+                "busy_client_id": conflict.client_id,
+                "busy_since": conflict.start_time,
+                "message": (
+                    "该会话当前被其他请求占用，请等待空闲后重试 "
+                    "(可调用 GET /api/chat/busy 查询状态)。"
+                ),
+            },
+        )
+
+    try:
+        session = None
+        session_messages_history: list[dict] = []
+        if session_manager:
+            try:
+                session = session_manager.get_session(
+                    channel="api-sync",
+                    chat_id=conversation_id,
+                    user_id="api_sync_user",
+                    create_if_missing=True,
+                )
+                if session is not None:
+                    apply_classification_to_session(session, classify_entry("api-sync"))
+                    session.add_message("user", body.message or "")
+                    session_messages_history = session.context.get_messages()
+            except Exception as exc:
+                logger.warning(
+                    "[Chat API /sync] session bootstrap failed: %s (conv=%s)",
+                    exc,
+                    conversation_id,
+                )
+
+        effective_mode = body.mode or "agent"
+        if body.plan_mode and effective_mode == "agent":
+            effective_mode = "plan"
+
+        try:
+            reply = await actual_agent.chat_with_session(
+                message=body.message or "",
+                session_messages=session_messages_history,
+                session_id=conversation_id,
+                session=session,
+                gateway=None,
+                mode=effective_mode,
+                endpoint_override=body.endpoint,
+                endpoint_policy=body.endpoint_policy,
+                thinking_mode=body.thinking_mode,
+                thinking_depth=body.thinking_depth,
+            )
+        except DeferredApprovalRequired as exc:
+            # C14 / R4-6 / C12 §14.2: CONFIRM-class tool routed through
+            # _handle_unattended → defer_to_inbox (or whatever the session
+            # configured). Hand the client an opaque approval_id + URL so they
+            # can poll the existing /api/pending_approvals/{id} endpoints
+            # without needing SSE.
+            approval_id = exc.pending_id or ""
+            return JSONResponse(
+                status_code=202,
+                headers=(
+                    {"Location": f"/api/pending_approvals/{approval_id}"}
+                    if approval_id
+                    else {}
+                ),
+                content={
+                    "status": "pending_approval",
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                    "approval_id": approval_id,
+                    "approval_url": (
+                        f"/api/pending_approvals/{approval_id}" if approval_id else None
+                    ),
+                    "resolve_url": (
+                        f"/api/pending_approvals/{approval_id}/resolve"
+                        if approval_id
+                        else None
+                    ),
+                    "unattended_strategy": exc.unattended_strategy,
+                    "message": (
+                        "工具调用需要 owner 审批；客户端可轮询 approval_url 获取状态，"
+                        "owner 在 setup-center 或通过 resolve_url 完成确认后请重新提交本次请求。"
+                    ),
+                },
+            )
+        except Exception as exc:
+            logger.exception(
+                "[Chat API /sync] runtime error (conv=%s, request=%s)",
+                conversation_id,
+                request_id,
+            )
+            return _chat_startup_error_response(
+                exc,
+                conversation_id=conversation_id,
+                request_id=request_id,
+                stage="chat_with_session",
+            )
+
+        if session is not None:
+            try:
+                session.add_message("assistant", reply or "")
+            except Exception:
+                pass
+
+        return {
+            "status": "completed",
+            "conversation_id": conversation_id,
+            "request_id": request_id,
+            "message": reply or "",
+        }
+    finally:
+        try:
+            await lifecycle.finish(conversation_id, generation=busy_gen)
+        except Exception:
+            logger.warning(
+                "[Chat API /sync] lifecycle.finish failed (conv=%s, gen=%d)",
+                conversation_id,
+                busy_gen,
+            )
 
 
 @router.get("/api/chat/busy")

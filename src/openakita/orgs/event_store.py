@@ -1,14 +1,32 @@
 """
-OrgEventStore — 事件溯源 + 审计日志 + 组织报告生成
+OrgEventStore — 事件溯源 + 操作记录 + 组织报告生成
 
-所有状态变更以不可变事件流记录，支持审计和状态重建。
-事件按天分文件存储在 events/{YYYYMMDD}.jsonl。
+所有状态变更以追加事件流记录，便于按时间回看与状态重建。事件按天分文件
+存储在 events/{YYYYMMDD}.jsonl。
+
+⚠️ 这是 **非密码学** 操作记录：
+
+OrgEventStore 与 ``core/policy_v2/audit_chain.ChainedJsonlWriter`` 不同——
+后者带哈希链 + 校验，能检测篡改 / 漏行 / 重排；前者只是顺序 append 的
+JSONL，本质上是"运营事件流"。任何对篡改检测有要求的合规场景（用户许可
+决策、shell 高危执行、Policy 变更）必须走 ``ChainedJsonlWriter``，
+不要落到这里。详见 ``docs/policy_v2_research.md`` C17 章节"OrgEventStore
+非密码学审计说明"。
+
+C17 Phase D 在此处加了：
+
+- ``threading.Lock`` 保护同进程多线程 emit（之前在 query 期间被 emit
+  打断会读到撕裂行）。
+- ``filelock.FileLock`` 保护跨进程多 worker emit（多个 ``openakita
+  serve`` 同写一个 org_dir 时不丢行）。
+- ``logger.warning`` 在 write 失败时不再静默，方便排障。
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import threading
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,8 +36,30 @@ from .models import _new_id
 logger = logging.getLogger(__name__)
 
 
+# Optional cross-process lock; ``filelock`` is in pyproject.toml since C16,
+# but a missing import falls back to "single-process safe only" rather than
+# crashing the entire org subsystem.
+try:
+    from filelock import FileLock
+    from filelock import Timeout as _FileLockTimeout
+    _HAS_FILELOCK = True
+except Exception:  # pragma: no cover - extremely unlikely
+    _HAS_FILELOCK = False
+    _FileLockTimeout = Exception  # type: ignore[assignment, misc]
+
+
 class OrgEventStore:
-    """Append-only event store for an organization."""
+    """Append-only event store for an organization.
+
+    Thread-safe within a single process (``_lock``) and best-effort
+    cross-process safe (``_filelock``) so that concurrent ``openakita
+    serve`` workers don't trample each other.
+    """
+
+    # Acquiring a contested filelock for an append should take milliseconds;
+    # if it takes longer than this, something is wedged and we'd rather log
+    # a warning + drop the event than block the caller indefinitely.
+    _FILELOCK_TIMEOUT_SECONDS = 2.0
 
     def __init__(self, org_dir: Path, org_id: str) -> None:
         self._org_dir = org_dir
@@ -30,14 +70,53 @@ class OrgEventStore:
         self._events_dir.mkdir(parents=True, exist_ok=True)
         self._reports_dir.mkdir(parents=True, exist_ok=True)
         self._logs_dir.mkdir(parents=True, exist_ok=True)
+        # In-process write serialization.
+        self._lock = threading.Lock()
+        # Cross-process write serialization; resolves to a .lock sibling of
+        # the events dir so it stays scoped to one org.
+        self._lock_path = self._events_dir / ".write.lock"
+        self._filelock = (
+            FileLock(str(self._lock_path)) if _HAS_FILELOCK else None
+        )
 
     def clear(self) -> None:
-        """Remove all event files (used during org reset)."""
+        """Remove all event files (used during org reset).
+
+        C17 二轮: previously ``shutil.rmtree(self._events_dir)`` also wiped
+        ``.write.lock``, which any sibling worker process was holding for
+        cross-process serialization. After the dir was recreated, the
+        sibling's open file handle pointed at a deleted (or stale) inode
+        and its next ``release()`` raced with whoever recreated the file —
+        in pathological cases two writers could re-enter emit on the same
+        day_file. Now we delete individual ``*.jsonl`` files instead and
+        leave the lockfile intact.
+        """
         import shutil
-        for d in (self._events_dir, self._logs_dir):
-            if d.exists():
-                shutil.rmtree(d, ignore_errors=True)
-                d.mkdir(parents=True, exist_ok=True)
+
+        # Logs dir has no lockfile concern; safe to rmtree.
+        if self._logs_dir.exists():
+            shutil.rmtree(self._logs_dir, ignore_errors=True)
+        self._logs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Events dir: keep the .write.lock and other dotfiles, only blow
+        # away the actual jsonl payload files.
+        if self._events_dir.exists():
+            for child in self._events_dir.iterdir():
+                if child.name == ".write.lock":
+                    continue
+                try:
+                    if child.is_dir():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.warning(
+                        "[EventStore] clear() failed to remove %s: %s",
+                        child,
+                        exc,
+                    )
+        else:
+            self._events_dir.mkdir(parents=True, exist_ok=True)
 
     def emit(
         self,
@@ -59,13 +138,58 @@ class OrgEventStore:
         }
 
         day_file = self._events_dir / f"{now.strftime('%Y%m%d')}.jsonl"
-        try:
-            with open(day_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(event, ensure_ascii=False) + "\n")
-        except Exception as e:
-            logger.error(f"[EventStore] Failed to write event: {e}")
+        line = json.dumps(event, ensure_ascii=False) + "\n"
+
+        # C17 Phase D: serialize writes both inside this process (RLock-equivalent
+        # via Lock — emit is never re-entrant) and across processes (filelock).
+        # On filelock timeout we degrade to a single-process write rather than
+        # dropping silently, but warn so an operator can see the contention.
+        with self._lock:
+            try:
+                acquired_cross_process = False
+                if self._filelock is not None:
+                    try:
+                        self._filelock.acquire(timeout=self._FILELOCK_TIMEOUT_SECONDS)
+                        acquired_cross_process = True
+                    except _FileLockTimeout:
+                        logger.warning(
+                            "[EventStore] cross-process lock timed out after %.1fs "
+                            "for org=%s (writing without it); event_type=%s",
+                            self._FILELOCK_TIMEOUT_SECONDS,
+                            self._org_id,
+                            event_type,
+                        )
+                try:
+                    with open(day_file, "a", encoding="utf-8") as f:
+                        f.write(line)
+                except Exception as e:
+                    logger.error(f"[EventStore] Failed to write event: {e}")
+                finally:
+                    if acquired_cross_process and self._filelock is not None:
+                        try:
+                            self._filelock.release()
+                        except Exception:  # pragma: no cover
+                            pass
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"[EventStore] Unexpected emit error: {e}")
 
         return event
+
+    def _read_jsonl_safely(self, path: Path) -> list[str]:
+        """Read a JSONL day file under ``self._lock`` so we don't see a
+        torn line if another thread is mid-``emit``.
+
+        We acquire only the *in-process* lock, not the filelock — a long
+        query shouldn't block sibling worker processes from writing. Tiny
+        appends (<PIPE_BUF / SafeFileWrite on Windows) are effectively
+        atomic on the OS level, so cross-process torn reads are
+        vanishingly rare for our event sizes (a few hundred bytes).
+        """
+        with self._lock:
+            try:
+                return path.read_text(encoding="utf-8").strip().split("\n")
+            except OSError:
+                return []
 
     def query(
         self,
@@ -94,8 +218,8 @@ class OrgEventStore:
                 if day > until.replace("-", "")[:8]:
                     continue
 
+            lines = self._read_jsonl_safely(f)
             try:
-                lines = f.read_text(encoding="utf-8").strip().split("\n")
                 for line in reversed(lines):
                     if not line.strip():
                         continue
@@ -119,7 +243,7 @@ class OrgEventStore:
                     if len(results) >= limit:
                         return results
             except Exception as e:
-                logger.warning(f"[EventStore] Failed to read {f}: {e}")
+                logger.warning(f"[EventStore] Failed to parse {f}: {e}")
 
         return results
 
@@ -127,8 +251,8 @@ class OrgEventStore:
         """Find the last pending/in-progress event for a node (for restart recovery)."""
         files = sorted(self._events_dir.glob("*.jsonl"), reverse=True)
         for f in files[:3]:
+            lines = self._read_jsonl_safely(f)
             try:
-                lines = f.read_text(encoding="utf-8").strip().split("\n")
                 for line in reversed(lines):
                     if not line.strip():
                         continue

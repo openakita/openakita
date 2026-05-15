@@ -3,9 +3,8 @@
 ; - 卸载时强制杀掉残留进程（Setup Center 本体 + OpenAkita 后台服务）
 ; - 勾选"清理用户数据"时，删除用户目录下的 ~/.openakita
 
-; Declare StrRep from StrFunc.nsh for JSON path escaping
-; (StrFunc.nsh is included by installer.nsi before this file)
-${StrRep}
+; ${StrRep} is activated by installer.nsi alongside the other StrFunc helpers,
+; so we can use it directly below (e.g. for JSON path escaping at L438).
 
 ; ── Legacy install migration ──
 ; Detect old "OpenAkita Desktop" installs so the new "OpenAkitaDesktop"
@@ -203,10 +202,22 @@ Var LegacyMigrated
   FileOpen $R9 "$PLUGINSDIR\_oa_kill.ps1" w
   FileWrite $R9 "param([string]$$InstDir)$\r$\n"
   FileWrite $R9 "$$EA = 'SilentlyContinue'$\r$\n"
+  FileWrite $R9 "function Stop-OAGracefully {$\r$\n"
+  FileWrite $R9 "    try {$\r$\n"
+  FileWrite $R9 "        Invoke-WebRequest -UseBasicParsing -Method POST -Uri 'http://127.0.0.1:18900/api/shutdown' -TimeoutSec 3 -EA $$EA | Out-Null$\r$\n"
+  FileWrite $R9 "        for ($$j = 0; $$j -lt 16; $$j++) {$\r$\n"
+  FileWrite $R9 "            Start-Sleep -Milliseconds 500$\r$\n"
+  FileWrite $R9 "            $$alive = @(Get-Process -Name openakita-server -EA $$EA)$\r$\n"
+  FileWrite $R9 "            if ($$alive.Count -eq 0) { return }$\r$\n"
+  FileWrite $R9 "        }$\r$\n"
+  FileWrite $R9 "    } catch {}$\r$\n"
+  FileWrite $R9 "}$\r$\n"
   ; ── function: Kill all OpenAkita processes ──
   FileWrite $R9 "function Kill-OA {$\r$\n"
-  FileWrite $R9 "    Get-Process -Name openakita-setup-center,openakita-server -EA $$EA |$\r$\n"
+  FileWrite $R9 "    Stop-OAGracefully$\r$\n"
+  FileWrite $R9 "    Get-Process -Name openakita-desktop,openakita-setup-center,openakita-server -EA $$EA |$\r$\n"
   FileWrite $R9 "        Stop-Process -Force -EA $$EA$\r$\n"
+  FileWrite $R9 "    & cmd /c 'taskkill /IM openakita-desktop.exe /T /F >nul 2>&1'$\r$\n"
   FileWrite $R9 "    & cmd /c 'taskkill /IM openakita-setup-center.exe /T /F >nul 2>&1'$\r$\n"
   FileWrite $R9 "    & cmd /c 'taskkill /IM openakita-server.exe /T /F >nul 2>&1'$\r$\n"
   ; Kill by PID files (resolve custom data root first)

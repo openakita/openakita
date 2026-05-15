@@ -113,7 +113,7 @@ from .response_handler import (
     parse_intent_tag,
     strip_thinking_tags,
 )
-from .risk_intent import RiskIntentResult, RiskLevel, classify_risk_intent
+from .risk_intent import RiskIntentResult, RiskLevel, TargetKind, classify_risk_intent
 from .skill_manager import SkillManager
 from .task_monitor import RETROSPECT_PROMPT, TaskMonitor
 from .token_tracking import (
@@ -829,6 +829,61 @@ def _consume_risk_authorization(session: Any, message: str) -> bool:
                     pass
                 consumed_any = True
     return consumed_any
+
+
+# Targets that still require RiskGate confirmation even under trust (yolo) mode.
+#普通用户文件 / 桌面文件 / 未知目标 在信任模式下放行；
+# 安全策略 / 死亡开关 / 安全白名单 / shell 命令 / 已知受保护文件 仍要 confirm。
+# 真正的系统/密钥目录与 CRITICAL shell 由 PolicyEngine baseline 兜底拦截。
+_TRUST_MODE_MUST_CONFIRM_TARGETS = frozenset(
+    {
+        TargetKind.SECURITY_USER_ALLOWLIST,
+        TargetKind.SECURITY_POLICY,
+        TargetKind.DEATH_SWITCH,
+        TargetKind.PROTECTED_FILE,
+        TargetKind.SHELL_COMMAND,
+    }
+)
+
+
+def _check_trust_mode_skip(risk_intent: RiskIntentResult | None) -> str | None:
+    """Skip the pre-LLM RiskGate confirm when the user has chosen trust mode
+    and the intent only touches ordinary user data (e.g. desktop files).
+
+    Sensitive targets (security policy, allowlists, shell commands, protected
+    files) still go through the normal confirm flow even in trust mode.
+
+    C7：保守语义 —— **必须 v1 和 v2 都报 TRUST 才 skip**。
+    - 正常生产链路：reset_policy_engine 已同步 v1+v2（C6），两层值始终一致
+    - 异常链路：若任一层（如 admin UI 直接改 v1 但 v2 还没刷新）报非 trust，
+      宁可让用户多确认一次，也不要在策略不一致时静默放行
+    - v2 不可用：退化到 v1（v1 缺失才返回 None，等同未启用 trust）
+    """
+    if risk_intent is None:
+        return None
+    if risk_intent.target_kind in _TRUST_MODE_MUST_CONFIRM_TARGETS:
+        return None
+
+    # C8b-5: 之前用 v1 ``pe._is_trust_mode()`` + v2 双查 + "保守优先"。
+    # C8b-4 后 v2 ``read_permission_mode_label()`` 已是 SoT，v1
+    # ``_frontend_mode`` 字段已删，二者不再可能 desync——双查无意义。
+    # v2 helper 自带 fail-soft fallback (v2 layer 未初始化时回 "yolo")，
+    # 故失败时退化为"未启用 trust"（fallback 是 "yolo" 但属于 fail-safe，
+    # 真正 v2 异常时不应该误信任）：用显式 try/except 区分 normal vs error。
+    try:
+        from .policy_v2 import ConfirmationMode
+        from .policy_v2.global_engine import get_config_v2
+
+        mode_value = get_config_v2().confirmation.mode
+        is_trust = (
+            mode_value == ConfirmationMode.TRUST or str(mode_value) == "trust"
+        )
+    except Exception:
+        return None  # v2 不可用 → 当作未启用 trust（保守）
+
+    if is_trust:
+        return "trust_mode"
+    return None
 
 
 def _check_trusted_path_skip(
@@ -2011,6 +2066,33 @@ class Agent:
             except Exception as e:
                 logger.debug(f"on_init hook dispatch error: {e}")
 
+        # C10：handler/skill/mcp/plugin 全部加载完毕 → 让 ApprovalClassifier 拿到
+        # 4 个 lookup。explicit_lookup 已由 _register_default_handlers 注入到模块缓存，
+        # 这里只补 skill/mcp/plugin，不需要重传 explicit_lookup（global_engine
+        # 缓存语义保证）。失败降级到启发式分类，**绝不**让一个坏 manifest /
+        # SKILL.md 拖垮 agent 启动。
+        try:
+            from .policy_v2.global_engine import rebuild_engine_v2
+
+            rebuild_engine_v2(
+                skill_lookup=self.skill_registry.get_tool_class,
+                mcp_lookup=self.mcp_client.get_tool_class,
+                plugin_lookup=(
+                    self._plugin_manager.get_tool_class
+                    if hasattr(self, "_plugin_manager") and self._plugin_manager is not None
+                    else None
+                ),
+            )
+            logger.info(
+                "[PolicyV2] global engine rebuilt with skill/mcp/plugin lookups (C10)"
+            )
+        except Exception as exc:
+            logger.warning(
+                "[PolicyV2] failed to inject skill/mcp/plugin lookups: %s — "
+                "those sources will fall back to handler/heuristic classification",
+                exc,
+            )
+
         # 启动记忆会话
         session_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
         self.memory_manager.start_session(session_id)
@@ -2161,6 +2243,7 @@ class Agent:
             self.reasoning_engine._plugin_hooks = self._plugin_manager.hook_registry
         if hasattr(self, "tool_executor") and self.tool_executor:
             self.tool_executor._plugin_hooks = self._plugin_manager.hook_registry
+            self.tool_executor._plugin_manager = self._plugin_manager
 
         from ..plugins.catalog import PluginCatalog
 
@@ -2292,6 +2375,26 @@ class Agent:
             f"Initialized {len(self.handler_registry._handlers)} handlers with {len(self.handler_registry._tool_to_handler)} tools"
         )
 
+        # C7：handler 全部注册完毕 → 让 PolicyEngineV2 classifier 拿到
+        # SystemHandlerRegistry.get_tool_class 作 explicit_lookup。这样 handler
+        # 类的 TOOL_CLASSES 显式声明（C7.6 大批量补的）会优先于启发式生效。
+        # rebuild_engine_v2 会重新读 YAML + 重建 classifier；只调一次即可。
+        try:
+            from .policy_v2.global_engine import rebuild_engine_v2
+
+            rebuild_engine_v2(explicit_lookup=self.handler_registry.get_tool_class)
+            logger.info(
+                "[PolicyV2] global engine rebuilt with explicit_lookup "
+                "(%d tools have explicit ApprovalClass)",
+                len(self.handler_registry._tool_classes),
+            )
+        except Exception as exc:
+            logger.warning(
+                "[PolicyV2] failed to inject explicit_lookup: %s — "
+                "classifier will fall back to heuristics",
+                exc,
+            )
+
     async def _load_installed_skills(self) -> None:
         """
         加载已安装的技能 (遵循 Agent Skills 规范)
@@ -2371,9 +2474,9 @@ class Agent:
         if hasattr(self, "_skill_activation"):
             self._skill_activation.clear()
         try:
-            from .policy import get_policy_engine
+            from .policy_v2 import get_skill_allowlist_manager
 
-            get_policy_engine().clear_skill_allowlists()
+            get_skill_allowlist_manager().clear()
         except Exception:
             pass
 
@@ -4537,6 +4640,34 @@ class Agent:
 
     # ==================== 会话流水线: 共享准备 / 收尾 / 入口 ====================
 
+    @staticmethod
+    def _resolve_memory_workspace_id(session: Any | None) -> str:
+        """Choose the memory workspace for a session.
+
+        IM sessions use the bot namespace so multiple bots do not share long-term
+        memory by accident. Desktop/API/CLI keep the historical "default"
+        workspace unless an explicit metadata override is set.
+        """
+        if session is None:
+            return "default"
+
+        metadata = getattr(session, "metadata", {}) or {}
+        explicit = metadata.get("memory_workspace_id")
+        if explicit:
+            return str(explicit)
+
+        channel = str(getattr(session, "channel", "") or "")
+        if channel in {"desktop", "api", "cli", "web"}:
+            return "default"
+
+        namespace = (
+            getattr(session, "bot_instance_id", None)
+            or metadata.get("bot_instance_id")
+            or channel
+            or "default"
+        )
+        return str(namespace)
+
     async def _prepare_session_context(
         self,
         message: str,
@@ -4592,12 +4723,22 @@ class Agent:
             )
             conversation_safe_id = _memory_key.replace(":", "__")
             conversation_safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", conversation_safe_id)
-            if getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id:
+            memory_workspace_id = self._resolve_memory_workspace_id(session)
+            if (
+                getattr(self.memory_manager, "_current_session_id", None) != conversation_safe_id
+                or getattr(self.memory_manager, "_current_workspace_id", None) != memory_workspace_id
+            ):
                 self.memory_manager.start_session(
                     conversation_safe_id,
                     user_id=getattr(session, "user_id", None) if session else None,
-                    workspace_id="default",
+                    workspace_id=memory_workspace_id,
+                    focus_terms=getattr(getattr(session, "context", None), "focus_terms", None),
                 )
+                attach_session = getattr(self.memory_manager, "attach_session_context", None)
+                if callable(attach_session):
+                    attach_session(session)
+                if session is not None:
+                    session.set_metadata("memory_workspace_id", memory_workspace_id)
                 if hasattr(self, "_memory_handler"):
                     self._memory_handler.reset_guide()
                 # 1.5 新会话时清空 Scratchpad 工作记忆，避免跨会话泄漏
@@ -4949,6 +5090,9 @@ class Agent:
                 _tool_summary = msg.get("tool_summary")
                 if _tool_summary and isinstance(_tool_summary, str) and content:
                     _tool_summary = self._sanitize_replayed_tool_summary(_tool_summary)
+                    from .policy_v2.prompt_hardening import wrap_external_content
+
+                    _tool_summary = wrap_external_content(_tool_summary, source="tool_trace")
                     content = content.rstrip() + "\n\n" + _tool_summary
             if role in ("user", "assistant") and content:
                 if isinstance(content, str) and not _RE_TIME_PREFIX.match(content):
@@ -4975,12 +5119,17 @@ class Agent:
         if session and hasattr(session, "context"):
             sub_records = getattr(session.context, "sub_agent_records", None)
             if sub_records and messages:
+                from .policy_v2.prompt_hardening import wrap_external_content
+
                 summary_parts = []
                 for r in sub_records:
                     name = r.get("agent_name", "unknown")
                     preview = r.get("result_preview", "")
                     if preview:
-                        summary_parts.append(f"- {name}: {preview[:500]}")
+                        wrapped_preview = wrap_external_content(
+                            preview[:500], source=f"sub_agent_preview:{name}"
+                        )
+                        summary_parts.append(f"- {name}:\n{wrapped_preview}")
                 if summary_parts:
                     delegation_summary = "\n\n[委派任务执行记录]\n" + "\n".join(summary_parts)
                     for i in range(len(messages) - 1, -1, -1):
@@ -5667,13 +5816,18 @@ class Agent:
                 self.agent_state.reset_task(session_id=_ct_key)
 
         # P1-7: 清理 PolicyEngine 会话状态 + ToolExecutor 待确认缓存
+        # C8b-3：v1 ``pe.cleanup_session()`` 拆为 v2 两件事
+        # （bus 删 pending + SessionAllowlistManager 清 session 临时白名单）
         try:
-            from .policy import get_policy_engine
+            from .policy_v2 import get_session_allowlist_manager
+            from .ui_confirm_bus import get_ui_confirm_bus
 
-            _pe = get_policy_engine()
+            _bus = get_ui_confirm_bus()
+            _sess_mgr = get_session_allowlist_manager()
             for _clean_id in (_sid, _conv_id):
                 if _clean_id:
-                    _pe.cleanup_session(_clean_id)
+                    _bus.cleanup_session(_clean_id)
+            _sess_mgr.clear()
         except Exception:
             pass
         if hasattr(self, "tool_executor") and hasattr(self.tool_executor, "_pending_confirms"):
@@ -5684,6 +5838,10 @@ class Agent:
             self._pending_cancels.pop(_sid, None)
         if self._current_conversation_id:
             self._pending_cancels.pop(self._current_conversation_id, None)
+        with contextlib.suppress(Exception):
+            from ..logging import get_session_log_buffer
+
+            get_session_log_buffer().clear_current_session()
         self._current_session_id = None
         self._current_conversation_id = None
 
@@ -5797,6 +5955,44 @@ class Agent:
             llm_client.reset_all_cooldowns(force_all=True)
 
         im_tokens = None
+        # C7: 安装 PolicyContext ContextVar，让本轮所有下游 evaluate_via_v2
+        # 调用（permission.check_permission / reasoning_engine 双路径）拿到
+        # 与 v1 RiskGate 同源的 ctx：confirmation_mode（trust/strict/...）+
+        # session_role（mode→role）+ replay/trusted_path 快照（engine 只读，
+        # 消费仍由 _consume_risk_authorization 在 agent.py 完成）。
+        _policy_ctx_token = None
+        try:
+            from .policy_v2 import get_current_context as _pv2_get_ctx
+            from .policy_v2 import set_current_context as _pv2_set_ctx
+            from .policy_v2.adapter import build_policy_context as _pv2_build_ctx
+
+            # C13 §15.4 + R5-16: sub-agent 入口检测父 ctx（ContextVar 跨
+            # asyncio.create_task 已自动透传），存在时走 derive_child 继承
+            # root_user_id / delegate_chain / safety_immune / replay；不再
+            # 重新从 sub-agent 自己的 session 推断（sub-agent 仍共享 parent
+            # 的 session 对象，但 root_user_id / delegate_chain 这些只能从
+            # 父 ctx 拿到）。顶层 agent（_is_sub_agent_call=False）走原路径。
+            _parent_ctx = None
+            if getattr(self, "_is_sub_agent_call", False):
+                _parent_ctx = _pv2_get_ctx()
+            _policy_ctx = _pv2_build_ctx(
+                session=session,
+                session_id=conversation_id or session_id or "",
+                mode=mode,
+                user_message=message,
+                channel=getattr(session, "channel", None) or "desktop",
+                parent_ctx=_parent_ctx,
+                child_agent_name=(
+                    getattr(self, "_agent_profile_id", None) if _parent_ctx else None
+                ),
+            )
+            _policy_ctx_token = _pv2_set_ctx(_policy_ctx)
+        except Exception as _ctx_exc:
+            logger.debug(
+                "[PolicyV2] failed to install ContextVar (sync path): %s; "
+                "downstream evaluate_via_v2 will use fallback ctx",
+                _ctx_exc,
+            )
         try:
             # 准备阶段前检查：仅捕获 prepare 开始前一刻的取消信号
             if self._is_session_cancelled(session_id):
@@ -5898,6 +6094,19 @@ class Agent:
                         session_id,
                         message[:200],
                     )
+                else:
+                    _trust_mode_reason = _check_trust_mode_skip(_risk_intent)
+                    if _trust_mode_reason:
+                        _risk_pre_authorized = True
+                        logger.info(
+                            "[RiskIntentGate] sync path skipped — %s "
+                            "(session=%s, target=%s, op=%s, message=%r)",
+                            _trust_mode_reason,
+                            session_id,
+                            getattr(_risk_intent.target_kind, "value", _risk_intent.target_kind),
+                            getattr(_risk_intent.operation_kind, "value", _risk_intent.operation_kind),
+                            message[:200],
+                        )
             if (
                 mode == "agent"
                 and _intent
@@ -6061,6 +6270,18 @@ class Agent:
                 status="aborted",
             )
             self._cleanup_session_state(im_tokens)
+            # C7: 清 PolicyContext ContextVar（避免跨 task 泄漏；FastAPI worker
+            # 复用 task 时若不 reset，下一轮会读到上轮 ctx 数据）
+            if _policy_ctx_token is not None:
+                try:
+                    from .policy_v2 import reset_current_context as _pv2_reset_ctx
+
+                    _pv2_reset_ctx(_policy_ctx_token)
+                except Exception:
+                    logger.debug(
+                        "[PolicyV2] failed to reset ContextVar (sync path)",
+                        exc_info=True,
+                    )
 
     async def chat_with_session_stream(
         self,
@@ -6170,6 +6391,36 @@ class Agent:
 
         im_tokens = None
         _reply_text = ""
+        # C7: 安装 PolicyContext ContextVar（streaming 路径，与 sync 路径
+        # 同源；详见 chat_with_session 同名块注释）
+        _policy_ctx_token = None
+        try:
+            from .policy_v2 import get_current_context as _pv2_get_ctx
+            from .policy_v2 import set_current_context as _pv2_set_ctx
+            from .policy_v2.adapter import build_policy_context as _pv2_build_ctx
+
+            # C13 §15.4 + R5-16: stream 路径与 sync 路径同源，见 chat_with_session
+            # 同名块的注释。
+            _parent_ctx = None
+            if getattr(self, "_is_sub_agent_call", False):
+                _parent_ctx = _pv2_get_ctx()
+            _policy_ctx = _pv2_build_ctx(
+                session=session,
+                session_id=conversation_id or session_id or "",
+                mode=mode,
+                user_message=message,
+                channel=getattr(session, "channel", None) or "desktop",
+                parent_ctx=_parent_ctx,
+                child_agent_name=(
+                    getattr(self, "_agent_profile_id", None) if _parent_ctx else None
+                ),
+            )
+            _policy_ctx_token = _pv2_set_ctx(_policy_ctx)
+        except Exception as _ctx_exc:
+            logger.debug(
+                "[PolicyV2] failed to install ContextVar (stream path): %s",
+                _ctx_exc,
+            )
         try:
             # 立即发送心跳，让前端知道请求已被接收（准备阶段可能包含多个 LLM 调用）
             yield {"type": "heartbeat"}
@@ -6323,6 +6574,20 @@ class Agent:
                         conversation_id,
                         message[:200],
                     )
+                else:
+                    _trust_mode_reason = _check_trust_mode_skip(_risk_intent)
+                    if _trust_mode_reason:
+                        _risk_pre_authorized = True
+                        logger.info(
+                            "[RiskIntentGate] stream path skipped — %s "
+                            "(session=%s, conversation=%s, target=%s, op=%s, message=%r)",
+                            _trust_mode_reason,
+                            session_id,
+                            conversation_id,
+                            getattr(_risk_intent.target_kind, "value", _risk_intent.target_kind),
+                            getattr(_risk_intent.operation_kind, "value", _risk_intent.operation_kind),
+                            message[:200],
+                        )
             if (
                 mode == "agent"
                 and _intent
@@ -6675,6 +6940,17 @@ class Agent:
                 status="aborted",
             )
             self._cleanup_session_state(im_tokens)
+            # C7: 清 PolicyContext ContextVar（streaming 路径）
+            if _policy_ctx_token is not None:
+                try:
+                    from .policy_v2 import reset_current_context as _pv2_reset_ctx
+
+                    _pv2_reset_ctx(_policy_ctx_token)
+                except Exception:
+                    logger.debug(
+                        "[PolicyV2] failed to reset ContextVar (stream path)",
+                        exc_info=True,
+                    )
 
     def _handle_plan_exit_pending(
         self,
@@ -8083,6 +8359,36 @@ class Agent:
 
             messages.append({"role": "user", "content": tool_results})
 
+            # C12 §14.5: same unattended-deferral bubble-up as in execute_task.
+            # Even on the simpler chat-with-tools loop the unattended decision
+            # path may have triggered (e.g. spawn_agent path, headless API call).
+            _deferred = [
+                tr
+                for tr in tool_results
+                if isinstance(tr, dict) and tr.get("_deferred_approval_id")
+            ]
+            if _deferred:
+                from .policy_v2.exceptions import DeferredApprovalRequired
+
+                _ids = [tr["_deferred_approval_id"] for tr in _deferred]
+                logger.info(
+                    "[chat_loop] %d tool(s) deferred for owner approval; "
+                    "halting loop. pending_ids=%s",
+                    len(_deferred),
+                    _ids,
+                )
+                raise DeferredApprovalRequired(
+                    message=(
+                        f"{len(_deferred)} tool call(s) require owner approval; "
+                        f"task suspended. pending_approvals={_ids}"
+                    ),
+                    pending_id=_ids[0],
+                    unattended_strategy=_deferred[0].get(
+                        "_deferred_approval_strategy", ""
+                    ),
+                    meta={"all_pending_ids": _ids},
+                )
+
             # === 统一处理 skip 反思 + 用户插入消息 ===
             if self.agent_state and self.agent_state.current_task:
                 await self.agent_state.current_task.process_post_tool_signals(messages)
@@ -8188,6 +8494,30 @@ class Agent:
 
         Returns:
             TaskResult
+
+        Note (C7→C14 PolicyContext wiring)
+        ----------------------------------
+        ``execute_task`` 本身**不**安装 PolicyContext ContextVar — 调用方负责。
+        当前 SoT 注入点（按入口分类）：
+
+        - ``openakita run`` (main.py)：C14 起通过
+          ``classify_entry("cli", force_unattended=True)`` 拿到分类结果后
+          ``build_policy_context(is_unattended=True, unattended_strategy=…)`` +
+          ``set_current_context``；``run`` 命令的 finally 配对 reset。
+        - ``scheduler.executor._execute_task``：C12 起显式
+          ``PolicyContext(is_unattended=True, unattended_strategy=…)`` +
+          ``set_current_context`` / ``reset_current_context``（try/finally 对称）。
+        - ``mcp_server._execute_tool`` (openakita_chat)：C14 起同上，
+          ``classify_entry("mcp", force_unattended=True)``。
+        - ``evolution.self_check._attempt_fix``：尚未走 classifier（已知 follow-up
+          gap）；行为上由于 self-fix 多数走非 CONFIRM 路径所以暂无可见症状。
+
+        若调用方未安装 ctx，下游 ``check_permission`` 走
+        ``policy_v2.adapter._build_fallback_context``：workspace=cwd /
+        role=AGENT / confirmation_mode=get_config_v2().mode /
+        ``is_unattended=False`` — 前三项与交互会话一致，但 ``is_unattended=False``
+        会让任何 CONFIRM 类工具按 "等用户回应" 挂起。因此 headless 入口
+        必须由调用方按需覆盖（见上面 4 个 SoT 入口）。
         """
         import time
 
@@ -8689,6 +9019,39 @@ class Agent:
                     has_executed_tools = True
 
                 messages.append({"role": "user", "content": tool_results})
+
+                # C12 §14.5: bubble up unattended deferrals.
+                # ``_deferred_approval_id`` is set by ``ToolExecutor._defer_unattended_confirm``
+                # whenever a CONFIRM decision in unattended context was rerouted
+                # to PendingApprovalsStore. Halt the Ralph loop now so scheduler /
+                # spawn_agent caller can mark the task as AWAITING_APPROVAL —
+                # otherwise the LLM would burn iterations re-trying the deferred tool.
+                _deferred = [
+                    tr
+                    for tr in tool_results
+                    if isinstance(tr, dict) and tr.get("_deferred_approval_id")
+                ]
+                if _deferred:
+                    from .policy_v2.exceptions import DeferredApprovalRequired
+
+                    _ids = [tr["_deferred_approval_id"] for tr in _deferred]
+                    logger.info(
+                        "[execute_task] %d tool(s) deferred for owner approval; "
+                        "halting Ralph loop. pending_ids=%s",
+                        len(_deferred),
+                        _ids,
+                    )
+                    raise DeferredApprovalRequired(
+                        message=(
+                            f"{len(_deferred)} tool call(s) require owner approval; "
+                            f"task suspended. pending_approvals={_ids}"
+                        ),
+                        pending_id=_ids[0],
+                        unattended_strategy=_deferred[0].get(
+                            "_deferred_approval_strategy", ""
+                        ),
+                        meta={"all_pending_ids": _ids, "task_id": task.id},
+                    )
 
                 # === 统一处理 skip 反思 + 用户插入消息 ===
                 if self.agent_state and self.agent_state.current_task:

@@ -43,6 +43,7 @@ static AUTO_START_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// 用于 ``is_backend_auto_starting`` 的超时兜底：超过 ``AUTO_START_TIMEOUT_MS``
 /// 视为后台 spawn 线程已经死掉/卡死，强制返回 false 防止前端 toast 永久卡住。
 static AUTO_START_STARTED_AT_MS: AtomicU64 = AtomicU64::new(0);
+static DESKTOP_SESSION_TOKEN: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 const AUTO_START_TIMEOUT_MS: u64 = 180_000;
 
 /// 后端启动宽限期（秒）。Backend cold-start 在 dual-venv hack 下：
@@ -494,6 +495,58 @@ fn log_to_file(msg: &str) {
         .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
 }
 
+fn desktop_session_token() -> String {
+    let mut guard = DESKTOP_SESSION_TOKEN.lock().unwrap();
+    if let Some(token) = guard.as_ref() {
+        return token.clone();
+    }
+    let mut seed = [0u8; 32];
+    if getrandom::fill(&mut seed).is_err() {
+        let fallback = format!(
+            "{}:{}:{:?}",
+            now_epoch_secs(),
+            std::process::id(),
+            std::thread::current().id()
+        );
+        let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(fallback.as_bytes());
+        *guard = Some(token.clone());
+        return token;
+    }
+    let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(seed);
+    *guard = Some(token.clone());
+    token
+}
+
+#[tauri::command]
+fn openakita_desktop_session_token() -> String {
+    desktop_session_token()
+}
+
+fn tail_serve_log_to_autostart(log_path: &Path, max_bytes: usize) {
+    let Ok(mut file) = fs::File::open(log_path) else {
+        return;
+    };
+    let Ok(meta) = file.metadata() else {
+        return;
+    };
+    let len = meta.len();
+    let start = len.saturating_sub(max_bytes as u64);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return;
+    }
+    let mut buf = Vec::new();
+    if file.read_to_end(&mut buf).is_err() {
+        return;
+    }
+    let text = String::from_utf8_lossy(&buf);
+    log_to_file(&format!(
+        "[serve_log_tail] path={} bytes={}\n{}",
+        log_path.display(),
+        buf.len(),
+        text
+    ));
+}
+
 /// 开始写入安装配置日志，创建带日期的日志文件。返回完整路径供前端展示。
 #[tauri::command]
 fn start_onboarding_log(date_label: String) -> Result<String, String> {
@@ -649,6 +702,14 @@ fn modules_dir() -> PathBuf {
 
 /// 获取内嵌 PyInstaller 打包后端的目录
 fn bundled_backend_dir() -> PathBuf {
+    bundled_resource_dir("openakita-server")
+}
+
+fn bootstrap_resource_dir() -> PathBuf {
+    bundled_resource_dir("bootstrap")
+}
+
+fn bundled_resource_dir(resource_name: &str) -> PathBuf {
     let exe_path = std::env::current_exe().ok();
     let exe_dir = exe_path
         .as_ref()
@@ -665,12 +726,12 @@ fn bundled_backend_dir() -> PathBuf {
             let primary = contents_dir
                 .join("Resources")
                 .join("resources")
-                .join("openakita-server");
+                .join(resource_name);
             if primary.exists() {
                 return primary;
             }
             // 兼容可能的简化布局（无额外 resources/ 前缀）
-            let fallback = contents_dir.join("Resources").join("openakita-server");
+            let fallback = contents_dir.join("Resources").join(resource_name);
             if fallback.exists() {
                 return fallback;
             }
@@ -678,7 +739,7 @@ fn bundled_backend_dir() -> PathBuf {
     }
 
     // Windows / Linux: 主路径 — resources 位于 exe 同级目录
-    let primary = exe_dir.join("resources").join("openakita-server");
+    let primary = exe_dir.join("resources").join(resource_name);
     if primary.exists() {
         return primary;
     }
@@ -697,6 +758,8 @@ fn bundled_backend_dir() -> PathBuf {
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
 
         let static_names: &[&str] = &[
+            "OpenAkitaDesktop",       // tauri.conf.json productName used by deb resource dir
+            "OpenAkita Desktop",      // legacy productName with a space
             "openakita-setup-center", // Cargo.toml package name (Tauri 2.x default)
             "openakita-desktop",      // legacy / mainBinaryName override
             "open-akita-desktop",
@@ -704,16 +767,20 @@ fn bundled_backend_dir() -> PathBuf {
 
         // deb 常见布局: /usr/lib/<app-name>/resources/openakita-server/
         if let Some(ref name) = exe_name {
-            candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/openakita-server",
-                name
-            )));
+            candidates.push(
+                Path::new("/usr/lib")
+                    .join(name)
+                    .join("resources")
+                    .join(resource_name),
+            );
         }
         for app_name in static_names {
-            candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/openakita-server",
-                app_name
-            )));
+            candidates.push(
+                Path::new("/usr/lib")
+                    .join(app_name)
+                    .join("resources")
+                    .join(resource_name),
+            );
         }
 
         // 若 exe 在 /usr/bin/，尝试同级 /usr/lib/<app>/
@@ -724,7 +791,7 @@ fn bundled_backend_dir() -> PathBuf {
                         .join("lib")
                         .join(name)
                         .join("resources")
-                        .join("openakita-server"),
+                        .join(resource_name),
                 );
             }
             for app_name in static_names {
@@ -733,7 +800,7 @@ fn bundled_backend_dir() -> PathBuf {
                         .join("lib")
                         .join(app_name)
                         .join("resources")
-                        .join("openakita-server"),
+                        .join(resource_name),
                 );
             }
         }
@@ -747,7 +814,7 @@ fn bundled_backend_dir() -> PathBuf {
                         .join("lib")
                         .join(name)
                         .join("resources")
-                        .join("openakita-server"),
+                        .join(resource_name),
                 );
             }
             for app_name in static_names {
@@ -756,16 +823,17 @@ fn bundled_backend_dir() -> PathBuf {
                         .join("lib")
                         .join(app_name)
                         .join("resources")
-                        .join("openakita-server"),
+                        .join(resource_name),
                 );
             }
-            candidates.push(mount_root.join("resources").join("openakita-server"));
+            candidates.push(mount_root.join("resources").join(resource_name));
         }
 
         for c in &candidates {
             if c.exists() {
                 eprintln!(
-                    "[bundled_backend_dir] found at Linux fallback: {}",
+                    "[bundled_resource_dir] found {} at Linux fallback: {}",
+                    resource_name,
                     c.display()
                 );
                 return c.clone();
@@ -773,93 +841,12 @@ fn bundled_backend_dir() -> PathBuf {
         }
 
         eprintln!(
-            "[bundled_backend_dir] not found. exe_dir={}, exe_name={:?}, checked {} Linux fallback paths",
+            "[bundled_resource_dir] {} not found. exe_dir={}, exe_name={:?}, checked {} Linux fallback paths",
+            resource_name,
             exe_dir.display(),
             exe_name,
             candidates.len()
         );
-    }
-
-    primary
-}
-
-fn bootstrap_resource_dir() -> PathBuf {
-    let exe_path = std::env::current_exe().ok();
-    let exe_dir = exe_path
-        .as_ref()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(contents_dir) = exe_dir.parent() {
-            let primary = contents_dir
-                .join("Resources")
-                .join("resources")
-                .join("bootstrap");
-            if primary.exists() {
-                return primary;
-            }
-            let fallback = contents_dir.join("Resources").join("bootstrap");
-            if fallback.exists() {
-                return fallback;
-            }
-        }
-    }
-
-    let primary = exe_dir.join("resources").join("bootstrap");
-    if primary.exists() {
-        return primary;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let static_names: &[&str] = &[
-            "openakita-setup-center",
-            "openakita-desktop",
-            "open-akita-desktop",
-        ];
-        let exe_name = exe_path
-            .as_ref()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
-        let mut candidates: Vec<PathBuf> = vec![];
-        if let Some(ref name) = exe_name {
-            candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/bootstrap",
-                name
-            )));
-        }
-        for app_name in static_names {
-            candidates.push(PathBuf::from(format!(
-                "/usr/lib/{}/resources/bootstrap",
-                app_name
-            )));
-        }
-        if let Some(usr_dir) = exe_dir.parent() {
-            if let Some(ref name) = exe_name {
-                candidates.push(
-                    usr_dir
-                        .join("lib")
-                        .join(name)
-                        .join("resources")
-                        .join("bootstrap"),
-                );
-            }
-            for app_name in static_names {
-                candidates.push(
-                    usr_dir
-                        .join("lib")
-                        .join(app_name)
-                        .join("resources")
-                        .join("bootstrap"),
-                );
-            }
-        }
-        for c in candidates {
-            if c.exists() {
-                return c;
-            }
-        }
     }
 
     primary
@@ -2995,6 +2982,30 @@ fn service_pid_file(workspace_id: &str) -> PathBuf {
     run_dir().join(format!("openakita-{}.pid", workspace_id))
 }
 
+fn last_clean_shutdown_marker(workspace_id: &str) -> PathBuf {
+    workspace_dir(workspace_id)
+        .join("data")
+        .join("memory")
+        .join(".last_clean_shutdown")
+}
+
+fn write_last_clean_shutdown_marker(workspace_id: &str, pid: u32, spawn_started_at: u64) {
+    let marker = last_clean_shutdown_marker(workspace_id);
+    if let Some(parent) = marker.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let payload = serde_json::json!({
+        "ts": now_epoch_secs().saturating_mul(1000),
+        "pid": pid,
+        "version": env!("CARGO_PKG_VERSION"),
+        "spawn_started_at": spawn_started_at,
+    });
+    let _ = fs::write(
+        &marker,
+        serde_json::to_string_pretty(&payload).unwrap_or_default(),
+    );
+}
+
 // ── PID 文件 JSON 格式 ──
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct PidFileData {
@@ -3238,9 +3249,9 @@ fn should_cleanup_stale_heartbeat(heartbeat_stale: Option<bool>, http_healthy: b
 /// 尝试通过 HTTP API 优雅关闭 Python 服务（POST /api/shutdown），
 /// 然后等待进程退出。如果 API 调用失败或超时则回退到 kill。
 /// `port`: 可选端口号，默认 18900
-fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
+fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<bool, String> {
     if !is_pid_running(pid) {
-        return Ok(());
+        return Ok(true);
     }
 
     let effective_port = port.unwrap_or(18900);
@@ -3260,10 +3271,10 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
         .unwrap_or(false);
 
     if api_ok {
-        // API 调用成功，给 Python 最多 5 秒优雅退出时间
-        for _ in 0..25 {
+        // API 调用成功，给 Python 最多 10 秒优雅退出时间
+        for _ in 0..50 {
             if !is_pid_running(pid) {
-                return Ok(());
+                return Ok(true);
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
@@ -3272,8 +3283,8 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
     // 第二步：进程仍然存活，强制 kill
     if is_pid_running(pid) {
         kill_pid(pid)?;
-        // 等待最多 2s 确认退出
-        for _ in 0..10 {
+        // 等待最多 3s 确认退出
+        for _ in 0..15 {
             if !is_pid_running(pid) {
                 break;
             }
@@ -3287,7 +3298,7 @@ fn graceful_stop_pid(pid: u32, port: Option<u16>) -> Result<(), String> {
             pid
         ))
     } else {
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -4621,11 +4632,22 @@ fn show_main_window(app: &tauri::AppHandle, reason: &str, open_status: bool) {
 
     // Windows WebView2/tao can crash if show/focus runs re-entrantly from a
     // single-instance or tray callback while the hidden window state is changing.
+    // Keep the delay off-thread, but marshal the actual window operations back to
+    // Tauri's main event loop; WebView/window APIs are not safe to poke directly
+    // from an arbitrary worker thread.
     #[cfg(target_os = "windows")]
     {
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(120));
-            show_main_window_now(&app_handle, &reason, open_status);
+            let app_for_ui = app_handle.clone();
+            let reason_for_log = reason.clone();
+            if let Err(e) = app_handle.run_on_main_thread(move || {
+                show_main_window_now(&app_for_ui, &reason, open_status);
+            }) {
+                log_to_file(&format!(
+                    "[window] run_on_main_thread failed ({reason_for_log}): {e}"
+                ));
+            }
         });
     }
 
@@ -5047,6 +5069,7 @@ fn main() {
             export_python_diagnostic_report,
             check_python_for_pip,
             openakita_runtime_last_error,
+            openakita_desktop_session_token,
             openakita_open_runtime_root,
             install_bundled_python,
             create_venv,
@@ -5794,6 +5817,12 @@ fn openakita_service_start_impl(
     cmd.env("PYTHONUNBUFFERED", "1");
     // Disable colored / styled output to avoid ANSI escape codes in log files.
     cmd.env("NO_COLOR", "1");
+    let spawn_started_at_ms = now_epoch_secs().saturating_mul(1000);
+    cmd.env("OPENAKITA_DESKTOP_SESSION_TOKEN", desktop_session_token());
+    cmd.env(
+        "OPENAKITA_SPAWN_STARTED_AT_MS",
+        spawn_started_at_ms.to_string(),
+    );
 
     // .env 由 Python 端的 load_dotenv(override=True) 自行加载，
     // 不再由 Rust 注入，避免编码/BOM 问题导致 Key 丢失或损坏值抢占。
@@ -5893,6 +5922,7 @@ fn openakita_service_start_impl(
             }
         }
         let _ = fs::remove_file(&pid_file);
+        tail_serve_log_to_autostart(&log_path, 8 * 1024);
         let tail = fs::read_to_string(&log_path)
             .ok()
             .and_then(|s| {
@@ -5928,7 +5958,12 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
         let mut guard = MANAGED_CHILD.lock().unwrap();
         if let Some(mut mp) = guard.take() {
             if mp.workspace_id == workspace_id {
-                let _ = graceful_stop_pid(mp.pid, port);
+                let old_pid = mp.pid;
+                let spawn_started_at = mp.started_at.saturating_mul(1000);
+                let clean_shutdown = graceful_stop_pid(mp.pid, port).unwrap_or(false);
+                if clean_shutdown && !is_pid_running(old_pid) {
+                    write_last_clean_shutdown_marker(&workspace_id, old_pid, spawn_started_at);
+                }
                 if is_pid_running(mp.pid) {
                     let _ = mp.child.kill();
                     let _ = mp.child.wait();
@@ -5953,7 +5988,11 @@ fn openakita_service_stop(workspace_id: String) -> Result<ServiceStatus, String>
     let pid = read_pid_file(&workspace_id).map(|d| d.pid);
     if let Some(pid) = pid {
         // 强制杀干净：如果杀不掉，要显式报错（避免 UI 显示“已停止”但后台仍残留）。
-        graceful_stop_pid(pid, port).map_err(|e| format!("failed to stop service: {e}"))?;
+        let clean_shutdown =
+            graceful_stop_pid(pid, port).map_err(|e| format!("failed to stop service: {e}"))?;
+        if clean_shutdown && !is_pid_running(pid) {
+            write_last_clean_shutdown_marker(&workspace_id, pid, 0);
+        }
     }
     let _ = fs::remove_file(&pid_file);
     remove_heartbeat_file(&workspace_id);
@@ -8205,7 +8244,7 @@ async fn fetch_pypi_versions(package: String, index_url: Option<String>) -> Resu
 
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .user_agent("openakita-setup-center")
+            .user_agent("openakita-desktop/1.0")
             .build()
             .map_err(|e| format!("HTTP client error: {e}"))?;
 

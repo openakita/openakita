@@ -12,6 +12,7 @@ import aiosqlite
 
 DEFAULT_CONFIG: dict[str, str] = {
     "dashscope_api_key": "",
+    "dashscope_base_url": "",
     "default_model": "wan27-pro",
     "default_size": "2K",
     "auto_download": "true",
@@ -63,6 +64,7 @@ class TaskManager:
                 local_image_paths TEXT,
                 error_message TEXT,
                 usage_json TEXT,
+                asset_ids TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -74,6 +76,12 @@ class TaskManager:
                 value TEXT NOT NULL
             );
         """)
+        # 兼容旧库：旧版本没有 asset_ids 列，ALTER TABLE ADD COLUMN
+        # 在已有列时会失败，吞掉即可。
+        try:
+            await self._db.execute("ALTER TABLE tasks ADD COLUMN asset_ids TEXT")
+        except Exception:
+            pass
         await self._db.commit()
 
     async def _seed_config(self) -> None:
@@ -176,9 +184,10 @@ class TaskManager:
         "image_urls": "image_urls",
         "local_image_paths": "local_image_paths",
         "usage": "usage_json",
+        "asset_ids": "asset_ids",
     }
     _JSON_ENCODED_KEYS: frozenset[str] = frozenset(
-        {"params", "image_urls", "local_image_paths", "usage"}
+        {"params", "image_urls", "local_image_paths", "usage", "asset_ids"}
     )
 
     async def update_task(self, task_id: str, **updates: Any) -> None:
@@ -252,13 +261,15 @@ class TaskManager:
     @staticmethod
     def _row_to_dict(row: aiosqlite.Row) -> dict:
         d = dict(row)
-        for jf in ("params_json", "image_urls", "local_image_paths", "usage_json"):
+        for jf in ("params_json", "image_urls", "local_image_paths", "usage_json", "asset_ids"):
             val = d.pop(jf, None)
             key = jf.replace("_json", "") if jf.endswith("_json") else jf
             if key == "params_json":
                 key = "params"
             try:
-                d[key] = json.loads(val) if val else ([] if "urls" in jf or "paths" in jf else {})
+                d[key] = json.loads(val) if val else (
+                    [] if ("urls" in jf or "paths" in jf or jf == "asset_ids") else {}
+                )
             except (json.JSONDecodeError, TypeError):
                 d[key] = {} if "json" in jf else []
         return d

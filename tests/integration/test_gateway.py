@@ -159,24 +159,29 @@ class TestMessageGatewayBroadcast:
 
     @pytest.mark.asyncio
     async def test_trust_mode_im_security_confirm_resolves_without_waiting(self, monkeypatch):
-        class FakePolicyEngine:
-            def __init__(self):
-                self.resolved = None
+        """C8b-6b: gateway IM trust-mode 检测自 C8b-5 起改读 v2
+        ``read_permission_mode_label`` （v1 ``_is_trust_mode`` 已删）。本测试改为
+        mock v2 helper 返回 "yolo" + spy v2 ``apply_resolution`` 来锁死 trust 模式
+        下 IM confirm 应立即 deny 不等待 UI。"""
+        resolved: list[tuple[str, str]] = []
 
-            def _is_trust_mode(self):
-                return True
+        from openakita.core.policy_v2 import (
+            apply_resolution as _apply_resolution_real,  # noqa: F401
+        )
 
-            def resolve_ui_confirm(self, confirm_id, decision):
-                self.resolved = (confirm_id, decision)
-                return True
+        def _spy_apply(confirm_id, decision):
+            resolved.append((confirm_id, decision))
+            return True
 
-            async def wait_for_ui_resolution(self, *_args, **_kwargs):
-                raise AssertionError("IM trust-mode confirm must not wait for UI resolution")
+        # gateway._handle_im_security_confirm 内部 `from ..core.policy_v2 import
+        # read_permission_mode_label` + `from ..core.policy_v2 import apply_resolution`
+        # 都是 module-level lazy import，patch policy_v2 模块即可拦截。
+        import openakita.core.policy_v2 as policy_v2_module
 
-        fake_pe = FakePolicyEngine()
-        import openakita.core.policy as policy_module
-
-        monkeypatch.setattr(policy_module, "get_policy_engine", lambda: fake_pe)
+        monkeypatch.setattr(
+            policy_v2_module, "read_permission_mode_label", lambda: "yolo"
+        )
+        monkeypatch.setattr(policy_v2_module, "apply_resolution", _spy_apply)
 
         gateway = MessageGateway(session_manager=MagicMock())
         session = create_test_session(channel="qqbot:test", chat_id="chat-1", user_id="user-1")
@@ -193,7 +198,7 @@ class TestMessageGatewayBroadcast:
             message=message,
         )
 
-        assert fake_pe.resolved == ("confirm-1", "deny")
+        assert resolved == [("confirm-1", "deny")]
 
     @pytest.mark.asyncio
     async def test_broadcast_sends_normal_text(self):
@@ -220,13 +225,33 @@ class TestMessageGatewayBroadcast:
 
 
 class TestMessageGatewayAgentBinding:
+    def test_resolves_message_bot_instance_from_adapter(self, tmp_path):
+        session_manager = SessionManager(storage_path=tmp_path / "sessions")
+        gateway = MessageGateway(session_manager=session_manager)
+        gateway._adapters["feishu"] = SimpleNamespace(
+            bot_instance_id="feishu:writer",
+            agent_profile_id="writer-agent",
+        )
+        message = create_channel_message(channel="feishu", chat_id="chat-1", user_id="user-1")
+
+        assert gateway._get_message_bot_instance_id(message) == "feishu:writer"
+        assert gateway._get_session_key(message) == "feishu:writer:chat-1:user-1"
+
     def test_applies_adapter_bound_agent_to_new_session(self):
-        session = create_test_session(channel="feishu:writer", chat_id="chat-1", user_id="user-1")
+        session = create_test_session(
+            channel="feishu",
+            bot_instance_id="feishu:writer",
+            chat_id="chat-1",
+            user_id="user-1",
+        )
         session_manager = MagicMock()
         session_manager.mark_dirty = MagicMock()
 
         gateway = MessageGateway(session_manager=session_manager)
-        gateway._adapters["feishu:writer"] = SimpleNamespace(agent_profile_id="writer-agent")
+        gateway._adapters["feishu"] = SimpleNamespace(
+            bot_instance_id="feishu:writer",
+            agent_profile_id="writer-agent",
+        )
 
         gateway._apply_bot_agent_profile(session, "feishu:writer")
 
@@ -235,7 +260,12 @@ class TestMessageGatewayAgentBinding:
         session_manager.mark_dirty.assert_called_once()
 
     def test_preserves_manual_agent_switch_when_applying_bot_default(self):
-        session = create_test_session(channel="feishu:writer", chat_id="chat-1", user_id="user-1")
+        session = create_test_session(
+            channel="feishu",
+            bot_instance_id="feishu:writer",
+            chat_id="chat-1",
+            user_id="user-1",
+        )
         session.context.agent_profile_id = "reviewer-agent"
         session.context.agent_switch_history.append(
             {"from": "writer-agent", "to": "reviewer-agent", "at": "2026-05-08T00:00:00"}
@@ -244,7 +274,10 @@ class TestMessageGatewayAgentBinding:
         session_manager.mark_dirty = MagicMock()
 
         gateway = MessageGateway(session_manager=session_manager)
-        gateway._adapters["feishu:writer"] = SimpleNamespace(agent_profile_id="writer-agent")
+        gateway._adapters["feishu"] = SimpleNamespace(
+            bot_instance_id="feishu:writer",
+            agent_profile_id="writer-agent",
+        )
 
         gateway._apply_bot_agent_profile(session, "feishu:writer")
 
@@ -252,15 +285,43 @@ class TestMessageGatewayAgentBinding:
         assert session.context.agent_profile_id == "reviewer-agent"
         session_manager.mark_dirty.assert_not_called()
 
+    def test_updates_bot_default_when_only_previous_default_history_exists(self):
+        session = create_test_session(
+            channel="feishu",
+            bot_instance_id="feishu:writer",
+            chat_id="chat-1",
+            user_id="user-1",
+        )
+        session.context.agent_profile_id = "old-writer"
+        session.context.agent_switch_history.append(
+            {"from": "default", "to": "old-writer", "source": "bot_default"}
+        )
+        session.set_metadata("_bot_default_agent", "old-writer")
+        session_manager = MagicMock()
+        session_manager.mark_dirty = MagicMock()
+
+        gateway = MessageGateway(session_manager=session_manager)
+        gateway._adapters["feishu"] = SimpleNamespace(
+            bot_instance_id="feishu:writer",
+            agent_profile_id="new-writer",
+        )
+
+        gateway._apply_bot_agent_profile(session, "feishu:writer")
+
+        assert session.context.agent_profile_id == "new-writer"
+        assert session.context.agent_switch_history[-1]["source"] == "bot_default"
+        session_manager.mark_dirty.assert_called_once()
+
 
 class TestMessageGatewayDesktopMirror:
     def test_mirrors_im_turns_into_desktop_conversation(self, tmp_path):
         session_manager = SessionManager(storage_path=tmp_path / "sessions")
         gateway = MessageGateway(session_manager=session_manager)
         im_session = session_manager.get_session(
-            "feishu:writer",
+            "feishu",
             "chat-1",
             "user-1",
+            bot_instance_id="feishu:writer",
             chat_type="private",
             display_name="用户甲",
             chat_name="飞书私聊",
@@ -291,12 +352,76 @@ class TestMessageGatewayDesktopMirror:
 
         assert mirror is not None
         assert mirror.context.agent_profile_id == "writer-agent"
-        assert mirror.get_metadata("source_channel") == "feishu:writer"
+        assert mirror.get_metadata("source_channel") == "feishu"
+        assert mirror.get_metadata("source_bot_instance_id") == "feishu:writer"
         assert mirror.context.messages[0]["role"] == "user"
         assert mirror.context.messages[0]["content"].startswith("[来自飞书")
         assert "帮我检查服务器" in mirror.context.messages[0]["content"]
         assert mirror.context.messages[1]["role"] == "assistant"
         assert mirror.context.messages[1]["tool_summary"] == "checked"
+
+    def test_desktop_mirror_splits_same_chat_by_bot_instance(self, tmp_path):
+        session_manager = SessionManager(storage_path=tmp_path / "sessions")
+        gateway = MessageGateway(session_manager=session_manager)
+        writer = session_manager.get_session(
+            "feishu",
+            "chat-1",
+            "user-1",
+            bot_instance_id="feishu:writer",
+        )
+        reviewer = session_manager.get_session(
+            "feishu",
+            "chat-1",
+            "user-1",
+            bot_instance_id="feishu:reviewer",
+        )
+
+        assert gateway._desktop_mirror_id_for_im(writer) != gateway._desktop_mirror_id_for_im(reviewer)
+
+    def test_desktop_mirror_splits_same_chat_by_thread(self, tmp_path):
+        session_manager = SessionManager(storage_path=tmp_path / "sessions")
+        gateway = MessageGateway(session_manager=session_manager)
+        topic_a = session_manager.get_session(
+            "feishu",
+            "chat-1",
+            "user-1",
+            thread_id="topic-a",
+            bot_instance_id="feishu:writer",
+        )
+        topic_b = session_manager.get_session(
+            "feishu",
+            "chat-1",
+            "user-1",
+            thread_id="topic-b",
+            bot_instance_id="feishu:writer",
+        )
+
+        assert gateway._desktop_mirror_id_for_im(topic_a) != gateway._desktop_mirror_id_for_im(topic_b)
+
+
+class TestMessageGatewayInterruptResolution:
+    def test_prefers_exact_session_id_for_bot_instance_keys(self):
+        task = SimpleNamespace(is_active=True)
+        agent = SimpleNamespace(agent_state=SimpleNamespace(_tasks={"feishu_chat-1_sid": task}))
+
+        resolved = MessageGateway._resolve_task_session_id(
+            "feishu:writer:chat-1:user-1",
+            agent,
+            preferred_session_id="feishu_chat-1_sid",
+        )
+
+        assert resolved == "feishu_chat-1_sid"
+
+    def test_fallback_parses_bot_instance_namespace_from_right(self):
+        task = SimpleNamespace(is_active=True)
+        agent = SimpleNamespace(agent_state=SimpleNamespace(_tasks={"feishu_chat-1_sid": task}))
+
+        resolved = MessageGateway._resolve_task_session_id(
+            "feishu:writer:chat-1:user-1",
+            agent,
+        )
+
+        assert resolved == "feishu_chat-1_sid"
 
 
 class TestMessageGatewayAgentTimeout:

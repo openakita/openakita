@@ -48,3 +48,16 @@ def test_template_deck_ir_records_template_id_and_layout_hint() -> None:
     assert first["layout_hint"]["pptx_layout"] == "Title Slide"
     assert first["layout_hint"]["source"] == "pptx"
 
+
+def test_ir_adds_quality_metadata_for_dense_slides() -> None:
+    outline = OutlineBuilder().build(mode=DeckMode.TOPIC_TO_DECK, title="Dense", slide_count=3)
+    outline["slides"][1]["key_points"] = ["很长的内容" * 80 for _ in range(6)]
+    design = DesignBuilder().build(outline=outline)
+
+    ir = SlideIrBuilder().build(outline=outline, spec_lock=design["spec_lock"])
+    quality = ir["slides"][1]["quality"]
+
+    assert quality["density_score"] > 0
+    assert quality["visual_role"] in {"text", "image", "diagram", "chart", "table"}
+    assert "content_score" in quality
+

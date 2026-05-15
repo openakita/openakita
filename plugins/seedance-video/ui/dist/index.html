@@ -975,12 +975,14 @@ const I18N_DICT = {
     "modes.multimodal": "多模态",
     "modes.edit": "编辑",
     "modes.extend": "延长",
+    "modes.transition": "过渡生成",
     "create.section.mode": "生成模式",
     "create.section.firstFrame": "首帧上传",
     "create.section.firstLastFrame": "首尾帧上传",
     "create.section.multimodal": "参考素材",
     "create.section.editVideo": "原始视频",
     "create.section.extendVideo": "待延长视频",
+    "create.section.transitionVideo": "过渡源视频",
     "create.section.prompt": "提示词",
     "create.section.params": "参数配置",
     "create.section.advanced": "高级选项",
@@ -1022,6 +1024,8 @@ const I18N_DICT = {
     "create.videoUrl.label": "云端视频 URL（必填）",
     "create.videoUrl.placeholder": "粘贴 https://...mp4，例如任务详情里的云端视频 URL",
     "create.videoUrl.hint": "Ark 编辑/延长模式要求 reference_video 是公网 http(s) URL。本地上传的视频只能在插件内预览，云端无法访问。",
+    "create.nextScene.label": "下一场景描述（过渡生成可选）",
+    "create.nextScene.placeholder": "描述过渡片段最终要自然衔接到的下一段画面...",
     "create.upload.uploading": "上传中: {name}",
     "create.upload.uploaded": "已上传: {name}",
     "create.tip.t2v": "文生视频随机性较大，适合激发灵感。如有明确预期，建议先生图再图生视频",
@@ -1030,6 +1034,7 @@ const I18N_DICT = {
     "create.tip.multimodal": "提示词中用「图片1」「视频2」「音频1」引用素材，序号为同类素材上传顺序",
     "create.tip.edit": "描述要替换/增加/删除的元素、时机和位置，强调保持不变的部分",
     "create.tip.extend": "向前/向后延长视频，或多段串联。描述延长内容 + 过渡方式",
+    "create.tip.transition": "基于上一段的云端 video_url 生成 AI 过渡/续写片段；不是本地 ffmpeg 硬拼接",
     "preview.empty.title": "AI 视频制作就绪",
     "preview.empty.hint": "填写参数后点击生成",
     "preview.running.title": "正在生成中...",
@@ -1080,6 +1085,9 @@ const I18N_DICT = {
     "tasks.tag.done": "完成",
     "tasks.btn.retry": "重试",
     "tasks.btn.delete": "删除",
+    "tasks.btn.editVideo": "编辑此视频",
+    "tasks.btn.extendVideo": "延长此视频",
+    "tasks.btn.transitionVideo": "生成过渡",
     "tasks.detail.title": "任务详情",
     "tasks.detail.confirmDelete": "确定要删除这个任务吗？此操作不可恢复。",
     "tasks.detail.id": "任务 ID",
@@ -1172,6 +1180,10 @@ const I18N_DICT = {
     "story.label.resolution": "分辨率",
     "story.label.genMode": "生成模式",
     "story.label.transition": "拼接过渡",
+    "story.gen.serial": "串行：末帧接下一段",
+    "story.gen.serialExtend": "云端续写：video_url 延长",
+    "story.gen.cloudTransition": "云端过渡：AI 生成衔接片段",
+    "story.gen.parallel": "并行：各段独立生成",
     "story.story.placeholder": "请输入你的视频故事内容，AI 会自动拆解为多段分镜脚本...\n\n示例：一只小猫在阳光明媚的花园里探索，先好奇地闻花朵，然后追逐蝴蝶，最后在树荫下打盹。",
     "story.estimate": "预计将拆解为 {n} 个视频片段，每段 {seg} 秒，总时长约 {total} 秒",
     "story.decompose.idle": "AI 分镜拆解",
@@ -1280,6 +1292,9 @@ const I18N_DICT = {
     "banner.perms.cta": "前往授权",
     "settings.label.apiKey": "ARK API Key",
     "settings.api.placeholder": "输入 Volcengine Ark API Key",
+    "settings.label.baseUrl": "Base URL（中转站地址，可选）",
+    "settings.api.baseUrl.placeholder": "默认: https://ark.cn-beijing.volces.com/api/v3",
+    "settings.api.baseUrl.help": "填写兼容火山 Ark API 的中转站根地址；留空则使用官方地址。",
     "settings.api.show": "显示",
     "settings.api.hide": "隐藏",
     "settings.api.save": "保存",
@@ -1415,12 +1430,14 @@ const I18N_DICT = {
     "modes.multimodal": "Multimodal",
     "modes.edit": "Edit",
     "modes.extend": "Extend",
+    "modes.transition": "Transition",
     "create.section.mode": "Mode",
     "create.section.firstFrame": "First Frame",
     "create.section.firstLastFrame": "First & Last Frame",
     "create.section.multimodal": "Reference Assets",
     "create.section.editVideo": "Source Video",
     "create.section.extendVideo": "Video to Extend",
+    "create.section.transitionVideo": "Transition Source Video",
     "create.section.prompt": "Prompt",
     "create.section.params": "Parameters",
     "create.section.advanced": "Advanced",
@@ -1462,6 +1479,8 @@ const I18N_DICT = {
     "create.videoUrl.label": "Cloud video URL (required)",
     "create.videoUrl.placeholder": "Paste https://...mp4, e.g. the cloud URL from task details",
     "create.videoUrl.hint": "Ark edit/extend requires reference_video to be a public http(s) URL. Local uploads are only previewable inside the plugin; Ark cannot fetch them.",
+    "create.nextScene.label": "Next scene description (optional for transition)",
+    "create.nextScene.placeholder": "Describe the next shot this bridge clip should naturally lead into...",
     "create.upload.uploading": "Uploading: {name}",
     "create.upload.uploaded": "Uploaded: {name}",
     "create.tip.t2v": "Text-to-video is exploratory. For predictable results, generate an image first then image-to-video.",
@@ -1470,6 +1489,7 @@ const I18N_DICT = {
     "create.tip.multimodal": "Reference assets in the prompt as 'image1' / 'video2' / 'audio1' by upload order.",
     "create.tip.edit": "Describe what to replace / add / remove, when, and where. Call out what stays the same.",
     "create.tip.extend": "Extend forward, backward, or chain. Describe new content + transition style.",
+    "create.tip.transition": "Generate an AI bridge/continuation clip from a previous cloud video_url. This is not local ffmpeg concatenation.",
     "preview.empty.title": "Ready to create",
     "preview.empty.hint": "Fill in parameters and press generate",
     "preview.running.title": "Generating…",
@@ -1520,6 +1540,9 @@ const I18N_DICT = {
     "tasks.tag.done": "Done",
     "tasks.btn.retry": "Retry",
     "tasks.btn.delete": "Delete",
+    "tasks.btn.editVideo": "Edit this video",
+    "tasks.btn.extendVideo": "Extend this video",
+    "tasks.btn.transitionVideo": "Generate transition",
     "tasks.detail.title": "Task details",
     "tasks.detail.confirmDelete": "Delete this task? This cannot be undone.",
     "tasks.detail.id": "Task ID",
@@ -1612,6 +1635,10 @@ const I18N_DICT = {
     "story.label.resolution": "Resolution",
     "story.label.genMode": "Generation mode",
     "story.label.transition": "Concatenation transition",
+    "story.gen.serial": "Serial: last frame to next shot",
+    "story.gen.serialExtend": "Cloud extend: continue from video_url",
+    "story.gen.cloudTransition": "Cloud transition: AI bridge clip",
+    "story.gen.parallel": "Parallel: independent shots",
     "story.story.placeholder": "Type your story; AI will break it into a sequence of storyboard segments…\n\nExample: A kitten explores a sunny garden — first sniffs flowers, then chases a butterfly, finally naps under a tree.",
     "story.estimate": "Estimated {n} segments × {seg}s ≈ {total}s total",
     "story.decompose.idle": "AI Storyboard",
@@ -1720,6 +1747,9 @@ const I18N_DICT = {
     "banner.perms.cta": "Grant now",
     "settings.label.apiKey": "ARK API Key",
     "settings.api.placeholder": "Paste your Volcengine Ark API Key",
+    "settings.label.baseUrl": "Base URL (relay endpoint, optional)",
+    "settings.api.baseUrl.placeholder": "Default: https://ark.cn-beijing.volces.com/api/v3",
+    "settings.api.baseUrl.help": "Enter a relay endpoint compatible with the Volcengine Ark API. Leave blank to use the official endpoint.",
     "settings.api.show": "Show",
     "settings.api.hide": "Hide",
     "settings.api.save": "Save",
@@ -2394,7 +2424,7 @@ function FolderPickerModal({ open, title, initialPath, onCancel, onSelect }) {
 // ── Constants ──
 // Mode/Tab labels are i18n keys; resolved via t() at render time so locale
 // changes re-render correctly. Order is part of the UI contract — never sort.
-const MODE_IDS = ["t2v", "i2v", "i2v_end", "multimodal", "edit", "extend"];
+const MODE_IDS = ["t2v", "i2v", "i2v_end", "multimodal", "edit", "extend", "transition"];
 const RATIOS = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
 const TAB_IDS = ["create", "storyboard", "tasks", "assets", "guide", "settings"];
 const TAB_ICONS = { create: "squarePlus", tasks: "listTodo", assets: "images", guide: "compass", storyboard: "layoutGrid", settings: "sliders" };
@@ -2666,7 +2696,7 @@ function VideoPlayer({ task }) {
   );
 }
 
-function CreateTab({ models, onGoToTasks }) {
+function CreateTab({ models, onGoToTasks, action }) {
   const [mode, setMode] = useState("t2v");
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("2.0");
@@ -2693,6 +2723,15 @@ function CreateTab({ models, onGoToTasks }) {
   const [multimodalAssets, setMultimodalAssets] = useState([]);
   const [sourceVideo, setSourceVideo] = useState(null);
   const [sourceVideoUrl, setSourceVideoUrl] = useState("");
+  const [nextScenePrompt, setNextScenePrompt] = useState("");
+
+  useEffect(() => {
+    if (!action) return;
+    if (action.mode) setMode(action.mode);
+    if (action.videoUrl) setSourceVideoUrl(action.videoUrl);
+    if (action.prompt) setPrompt(action.prompt);
+    if (action.nextScenePrompt) setNextScenePrompt(action.nextScenePrompt);
+  }, [action?.nonce]);
 
   useEffect(() => {
     if (!activeTask || (activeTask.status !== "running" && activeTask.status !== "pending")) return;
@@ -2724,11 +2763,11 @@ function CreateTab({ models, onGoToTasks }) {
   // Otherwise an image uploaded for i2v could leak into a later edit
   // submission as ghost reference data.
   useEffect(() => {
-    if (mode === "t2v") { setFirstFrame(null); setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); setSourceVideoUrl(""); }
-    else if (mode === "i2v") { setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); setSourceVideoUrl(""); }
-    else if (mode === "i2v_end") { setMultimodalAssets([]); setSourceVideo(null); setSourceVideoUrl(""); }
-    else if (mode === "multimodal") { setFirstFrame(null); setEndFrame(null); setSourceVideo(null); setSourceVideoUrl(""); }
-    else if (mode === "edit" || mode === "extend") { setFirstFrame(null); setEndFrame(null); setMultimodalAssets([]); }
+    if (mode === "t2v") { setFirstFrame(null); setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); setSourceVideoUrl(""); setNextScenePrompt(""); }
+    else if (mode === "i2v") { setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); setSourceVideoUrl(""); setNextScenePrompt(""); }
+    else if (mode === "i2v_end") { setMultimodalAssets([]); setSourceVideo(null); setSourceVideoUrl(""); setNextScenePrompt(""); }
+    else if (mode === "multimodal") { setFirstFrame(null); setEndFrame(null); setSourceVideo(null); setSourceVideoUrl(""); setNextScenePrompt(""); }
+    else if (mode === "edit" || mode === "extend" || mode === "transition") { setFirstFrame(null); setEndFrame(null); setMultimodalAssets([]); setSourceVideo(null); }
   }, [mode]);
 
   // Auto-disable web_search when leaving t2v (Ark only allows it there).
@@ -2821,10 +2860,12 @@ function CreateTab({ models, onGoToTasks }) {
           c.push({ type: "image_url", image_url: { url: a.base64 }, role: "reference_image" });
         }
       });
-    } else if (mode === "edit" || mode === "extend") {
+    } else if (mode === "edit" || mode === "extend" || mode === "transition") {
       const lbl = mode === "edit"
         ? _tr("modes.edit", null, "Edit")
-        : _tr("modes.extend", null, "Extend");
+        : mode === "transition"
+          ? _tr("modes.transition", null, "Transition")
+          : _tr("modes.extend", null, "Extend");
       const publicUrl = sourceVideoUrl.trim();
       if (!publicUrl) {
         throw new Error(_tr("toast.modeNeedPublicVideoUrl", { label: lbl }, "{label} 模式需要公网 http(s) 视频 URL"));
@@ -2860,13 +2901,25 @@ function CreateTab({ models, onGoToTasks }) {
         () => setCreateProgressStage(t("modal.createProgress.waiting")),
         2000
       );
-      const r = await pluginApi("POST", draft ? "/tasks/draft" : "/tasks", {
+      const isVideoUrlMode = mode === "edit" || mode === "extend" || mode === "transition";
+      const endpoint = isVideoUrlMode
+        ? (mode === "edit" ? "/tasks/edit" : mode === "extend" ? "/tasks/extend" : "/tasks/transition")
+        : (draft ? "/tasks/draft" : "/tasks");
+      const payload = isVideoUrlMode ? {
+        prompt,
+        source_video_url: sourceVideoUrl.trim(),
+        next_scene_prompt: mode === "transition" ? nextScenePrompt : "",
+        model, ratio, duration, resolution,
+        generate_audio: audio, seed, watermark, service_tier: serviceTier,
+        client_request_id: clientRequestId,
+      } : {
         prompt, mode, model, ratio, duration, resolution, n: 1,
         generate_audio: audio, seed, watermark, return_last_frame: returnLastFrame,
         web_search: webSearch && canWebSearch, service_tier: serviceTier,
         client_request_id: clientRequestId,
         content,
-      });
+      };
+      const r = await pluginApi("POST", endpoint, payload);
       clearTimeout(slowSubmitTimer);
       if (r.ok && r.body?.task) {
         setActiveTask(r.body.task);
@@ -2926,7 +2979,7 @@ function CreateTab({ models, onGoToTasks }) {
             {MODE_IDS.map(id => (
               <button key={id} className={`mode-btn ${mode===id?"active":""}`}
                 onClick={() => setMode(id)}
-                disabled={currentModel && !currentModel.modes?.includes(id)}
+                disabled={currentModel && !(currentModel.modes?.includes(id) || (id === "transition" && currentModel.modes?.includes("extend")))}
               >{t("modes." + id)}</button>
             ))}
           </div>
@@ -2988,9 +3041,15 @@ function CreateTab({ models, onGoToTasks }) {
           </div>
         )}
 
-        {(mode === "edit" || mode === "extend") && (
+        {(mode === "edit" || mode === "extend" || mode === "transition") && (
           <div className="card">
-            <div className="oa-section-label">{mode === "edit" ? t("create.section.editVideo") : t("create.section.extendVideo")}</div>
+            <div className="oa-section-label">
+              {mode === "edit"
+                ? t("create.section.editVideo")
+                : mode === "transition"
+                  ? t("create.section.transitionVideo")
+                  : t("create.section.extendVideo")}
+            </div>
             <div className="form-row">
               <label className="label">{t("create.videoUrl.label")}</label>
               <input className="input"
@@ -3001,12 +3060,16 @@ function CreateTab({ models, onGoToTasks }) {
                 {t("create.videoUrl.hint")}
               </p>
             </div>
-            <FileUploadZone id="upload-source-video" accept="video/*"
-              onUpload={(file) => doUpload(file, setSourceVideo)}
-              value={sourceVideo}
-              onRemove={() => setSourceVideo(null)}
-              label={mode === "edit" ? t("create.upload.editLabel") : t("create.upload.extendLabel")}
-              hint={t("create.upload.videoHint")} />
+            {mode === "transition" && (
+              <div className="form-row">
+                <label className="label">{t("create.nextScene.label")}</label>
+                <textarea className="input textarea"
+                  value={nextScenePrompt}
+                  onChange={e => setNextScenePrompt(e.target.value)}
+                  placeholder={t("create.nextScene.placeholder")}
+                  rows={3} />
+              </div>
+            )}
           </div>
         )}
 
@@ -3151,7 +3214,7 @@ function CreateTab({ models, onGoToTasks }) {
   );
 }
 
-function TaskListTab({ isActive = true }) {
+function TaskListTab({ isActive = true, onUseVideo }) {
   const t = useT();
   const { tasks, total, reload } = useTasks();
   const [statusFilter, setStatusFilter] = useState("all");
@@ -3205,6 +3268,19 @@ function TaskListTab({ isActive = true }) {
   const handleRetry = async (id) => {
     await pluginApi("POST", `/tasks/${id}/retry`);
     reload();
+  };
+
+  const useSelectedVideo = (mode) => {
+    if (!selected?.video_url || !onUseVideo) return;
+    onUseVideo({
+      mode,
+      videoUrl: selected.video_url,
+      prompt: mode === "edit"
+        ? selected.prompt || ""
+        : mode === "transition"
+          ? _tr("create.tip.transition", null, "")
+          : _tr("create.tip.extend", null, ""),
+    });
   };
 
   return (
@@ -3328,6 +3404,19 @@ function TaskListTab({ isActive = true }) {
                             onClick={() => copyToClipboard(selected.video_url)}>
                       <Ico name="copy"/> {t("preview.btn.copyVideoUrl")}
                     </button>
+                  )}
+                  {selected.status === "succeeded" && selected.video_url && (
+                    <>
+                      <button className="btn btn-sm" onClick={() => useSelectedVideo("edit")}>
+                        <Ico name="scissors"/> {t("tasks.btn.editVideo")}
+                      </button>
+                      <button className="btn btn-sm" onClick={() => useSelectedVideo("extend")}>
+                        <Ico name="rocket"/> {t("tasks.btn.extendVideo")}
+                      </button>
+                      <button className="btn btn-sm" onClick={() => useSelectedVideo("transition")}>
+                        <Ico name="sparkles"/> {t("tasks.btn.transitionVideo")}
+                      </button>
+                    </>
                   )}
                   {selected.status === "failed" && (
                     <button className="btn btn-sm" onClick={() => handleRetry(selected.id)}>
@@ -4113,8 +4202,10 @@ function StoryboardTab({ onGoToSettings }) {
               <div className="form-row">
                 <label className="label">{t("story.label.genMode")}</label>
                 <select className="input select" value={genMode} onChange={e => setGenMode(e.target.value)}>
-                  <option value="serial">{t("story.btn.startGenSerial")}</option>
-                  <option value="parallel">{t("story.btn.startGenParallel")}</option>
+                  <option value="serial">{t("story.gen.serial")}</option>
+                  <option value="serial_extend">{t("story.gen.serialExtend")}</option>
+                  <option value="cloud_transition">{t("story.gen.cloudTransition")}</option>
+                  <option value="parallel">{t("story.gen.parallel")}</option>
                 </select>
               </div>
               <div className="form-row">
@@ -5158,6 +5249,19 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
           </div>
           <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.api.help")}</p>
         </div>
+        <div className="form-row">
+          <label className="label">{t("settings.label.baseUrl")}</label>
+          <div className="flex gap-2">
+            <input className="input flex-1" type="text"
+              value={config.ark_base_url || ""} onChange={e => setConfig({...config, ark_base_url: e.target.value})}
+              placeholder={t("settings.api.baseUrl.placeholder")} />
+            <button className="btn btn-sm btn-primary" disabled={saving} onClick={() => {
+              var baseUrl = (config.ark_base_url || "").trim().replace(/\/+$/, "");
+              save({ark_base_url: baseUrl});
+            }}>{saving ? t("settings.api.saving") : t("settings.api.save")}</button>
+          </div>
+          <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.api.baseUrl.help")}</p>
+        </div>
       </div>
 
       <div className="setting-section oa-settings-section">
@@ -5305,6 +5409,7 @@ function App() {
   const [configLoaded, setConfigLoaded] = useState(false);
   const [keyStatus, setKeyStatus] = useState("");
   const [permsStatus, setPermsStatus] = useState(null);
+  const [createAction, setCreateAction] = useState(null);
 
   useEffect(() => {
     pluginApi("GET", "/settings").then(r => {
@@ -5330,6 +5435,10 @@ function App() {
 
   const settingsIdx = TAB_IDS.indexOf("settings");
   const permsMissing = permsStatus && !permsStatus.all_granted;
+  const openCreateFromTask = (payload) => {
+    setCreateAction({ ...payload, nonce: Date.now() });
+    setActiveTab(0);
+  };
 
   return (
     <div className="app">
@@ -5400,13 +5509,13 @@ function App() {
       )}
       <div className="content">
         <div className={`tab-pane ${activeTab === 0 ? "active" : ""}`}>
-          <CreateTab models={models} onGoToTasks={() => setActiveTab(2)} />
+          <CreateTab models={models} onGoToTasks={() => setActiveTab(2)} action={createAction} />
         </div>
         <div className={`tab-pane ${activeTab === 1 ? "active" : ""}`}>
           <StoryboardTab onGoToSettings={() => setActiveTab(settingsIdx)} />
         </div>
         <div className={`tab-pane ${activeTab === 2 ? "active" : ""}`}>
-          <TaskListTab isActive={activeTab === 2} />
+          <TaskListTab isActive={activeTab === 2} onUseVideo={openCreateFromTask} />
         </div>
         <div className={`tab-pane ${activeTab === 3 ? "active" : ""}`}>
           <AssetsTab isActive={activeTab === 3} />

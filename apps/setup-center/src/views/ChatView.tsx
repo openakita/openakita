@@ -9,6 +9,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ProviderIcon } from "../components/ProviderIcon";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { toast } from "sonner";
 import { setThemePref } from "../theme";
 import type { Theme } from "../theme";
 import { invoke, downloadFile, openFileWithDefault, showInFolder, readFileBase64, onDragDrop, IS_TAURI, IS_WEB, IS_MOBILE_BROWSER, onWsEvent, logger, getAssetUrl } from "../platform";
@@ -330,9 +331,24 @@ export function ChatView({
     tool: string; args: Record<string, unknown>; reason: string;
     riskLevel: string; needsSandbox: boolean; toolId?: string;
     countdown: number; defaultOnTimeout?: string;
+    // C9a §1: v2 字段（向后兼容，缺失时 modal 隐藏对应 UI 元素）
+    approvalClass?: string | null; policyVersion?: number; channel?: string;
+    // C23 P2-2: 决策链（plan C9 要求），缺失时 modal 隐藏对应折叠区
+    decisionChain?: Array<{ name: string; action: string; note: string }>;
   };
   const [securityConfirm, setSecurityConfirm] = useState<SecurityConfirmData | null>(null);
   const securityQueueRef = useRef<SecurityConfirmData[]>([]);
+  // C18 Phase B: surface queue length to JSX so the "Approve all queued"
+  // affordance can light up when ≥1 confirms are stacked behind the
+  // currently-shown modal. We can't read securityQueueRef.current
+  // directly in JSX (refs don't trigger re-render), so keep a state
+  // mirror updated alongside every queue mutation.
+  const [securityQueueLen, setSecurityQueueLen] = useState(0);
+  // C18 Phase B: POLICIES.yaml ``confirmation.aggregation_window_seconds``.
+  // 0 = batch UI hidden; >0 = show "Approve all (N+1)" affordance and
+  // pass as ``within_seconds`` to POST /api/chat/security-confirm/batch
+  // (server clamps to its own config). Loaded once on mount.
+  const [securityAggWindow, setSecurityAggWindow] = useState<number>(0);
   const securityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const handleSecurityClose = useCallback((info?: SecurityCloseInfo) => {
     if (securityTimerRef.current) clearInterval(securityTimerRef.current);
@@ -365,7 +381,46 @@ export function ChatView({
 
     const next = securityQueueRef.current.shift();
     setSecurityConfirm(next ?? null);
+    setSecurityQueueLen(securityQueueRef.current.length);
   }, [apiBaseUrl, securityPolicy]);
+
+  // C18 Phase B：批量 resolve 当前 session 内 confirm。banner 点击进入。
+  const handleSecurityBatchResolve = useCallback(
+    async (decision: "allow_once" | "deny") => {
+      const convId = activeConvIdRef.current;
+      if (!convId) return;
+      try {
+        const r = await safeFetch(`${apiBaseUrl}/api/chat/security-confirm/batch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: convId,
+            decision,
+            within_seconds: securityAggWindow > 0 ? securityAggWindow : undefined,
+          }),
+        });
+        // C18 二轮自审 (IMPROVEMENT-B1)：必须检查 HTTP status 才能
+        // 决定是否清本地 queue。500/4xx 时静默清掉用户会以为搞定，
+        // 实际却什么都没 resolve——后续 SSE waiter 也没醒，IM 卡片
+        // 仍然挂着。出错就让用户单条点。
+        if (!r.ok) {
+          return;
+        }
+        const body = await r.json().catch(() => null) as { status?: string } | null;
+        if (body && body.status === "error") {
+          return;
+        }
+      } catch {
+        // Network error: leave queue alone so user can retry one-by-one.
+        return;
+      }
+      securityQueueRef.current = [];
+      setSecurityQueueLen(0);
+      if (securityTimerRef.current) clearInterval(securityTimerRef.current);
+      setSecurityConfirm(null);
+    },
+    [apiBaseUrl, securityAggWindow],
+  );
   const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
     if (!lightbox) return;
@@ -472,6 +527,43 @@ export function ChatView({
   const streamContexts = useRef<Map<string, StreamContext>>(new Map());
   const activeConvIdRef = useRef(activeConvId);
   const isCurrentConvStreaming = streamContexts.current.get(activeConvId ?? "")?.isStreaming ?? false;
+
+  // C17 Phase B.3: SSE Last-Event-ID dedup state per conversation.
+  //   - lastSeqByConv: max seq we've already processed (sent as
+  //     ``Last-Event-ID`` header on the next /api/chat fetch).
+  //   - seenSeqsByConv: ringbuffer of recently-seen seqs to drop
+  //     duplicates that may arrive during replay→live overlap.
+  // Both are refs (no re-render needed); only the streaming loop reads them.
+  const lastSeqByConv = useRef<Map<string, number>>(new Map());
+  const seenSeqsByConv = useRef<Map<string, Set<number>>>(new Map());
+  const SEEN_SEQ_CAP = 256;  // cap memory per conv
+
+  const rememberSeq = useCallback((convId: string, seq: number) => {
+    if (!convId || !Number.isFinite(seq) || seq <= 0) return;
+    const prev = lastSeqByConv.current.get(convId) ?? 0;
+    if (seq > prev) lastSeqByConv.current.set(convId, seq);
+    let seen = seenSeqsByConv.current.get(convId);
+    if (!seen) {
+      seen = new Set();
+      seenSeqsByConv.current.set(convId, seen);
+    }
+    seen.add(seq);
+    // Cap the dedup set; drop oldest by iteration order (insertion order).
+    if (seen.size > SEEN_SEQ_CAP) {
+      const it = seen.values();
+      const drop = seen.size - SEEN_SEQ_CAP;
+      for (let i = 0; i < drop; i++) {
+        const v = it.next().value;
+        if (typeof v === "number") seen.delete(v);
+      }
+    }
+  }, []);
+
+  const hasSeenSeq = useCallback((convId: string, seq: number): boolean => {
+    if (!convId || !Number.isFinite(seq) || seq <= 0) return false;
+    const seen = seenSeqsByConv.current.get(convId);
+    return seen ? seen.has(seq) : false;
+  }, []);
 
   // ── Multi-device busy lock ──
   const clientIdRef = useRef(() => {
@@ -1338,6 +1430,20 @@ export function ChatView({
     });
   }, [apiBaseUrl]);
 
+  // ── C18 Phase B: load confirmation.aggregation_window_seconds once ──
+  // 默认 0（关）。后端 POLICIES.yaml hot-reload 路径 (C18 Phase A) 改了
+  // 这个字段时，前端不会自动刷新——下次 ChatView 重新挂载（reload / 切
+  // 换页面回来）即可。这与已有的 self-protection 读法保持一致。
+  useEffect(() => {
+    safeFetch(`${apiBaseUrl}/api/config/security/confirmation`)
+      .then(r => r.json())
+      .then(data => {
+        const v = Number(data?.aggregation_window_seconds);
+        if (Number.isFinite(v) && v > 0) setSecurityAggWindow(v);
+      })
+      .catch(() => {});
+  }, [apiBaseUrl]);
+
   // ── Sub-agent real-time updates via WebSocket (reduces polling dependency) ──
   useEffect(() => {
     return onWsEvent((event, raw) => {
@@ -1899,276 +2005,36 @@ export function ChatView({
       }
     }
 
-    if (endpoints.length === 0) {
-      notifyError(t("chat.noChatEndpointConfigured"));
-      return;
-    }
-
-    // @org: 前缀或组织模式 — 路由到组织 API
+    // @org: 前缀或组织模式 — 统一交给 /api/chat 的组织 SSE 摘要路径。
+    // 注意：这里不能再直接订阅全量 org:* WebSocket，否则聊天会泄露指挥台内部交互。
     const orgPrefixMatch = text.match(/^@org:(\S+?)(?:\/(\S+?))?\s+([\s\S]+)/);
-    if (orgPrefixMatch || (orgMode && selectedOrgId)) {
+    let orgRouteOverride: { orgId: string; nodeId: string | null; content: string } | null = null;
+    if (orgPrefixMatch) {
       let targetOrgId = selectedOrgId;
       let targetNodeId = selectedOrgNodeId;
       let msgContent = text;
-      if (orgPrefixMatch) {
-        const orgRef = orgPrefixMatch[1];
-        targetNodeId = orgPrefixMatch[2] || null;
-        msgContent = orgPrefixMatch[3];
-        const match = orgList.find(o => o.name.includes(orgRef) || o.id === orgRef);
-        if (match) {
-          targetOrgId = match.id;
-        } else {
-          notifyError(`未找到组织「${orgRef}」，请检查名称是否正确`);
-          return;
-        }
+      const orgRef = orgPrefixMatch[1];
+      targetNodeId = orgPrefixMatch[2] || null;
+      msgContent = orgPrefixMatch[3];
+      const match = orgList.find(o => o.name.includes(orgRef) || o.id === orgRef);
+      if (match) {
+        targetOrgId = match.id;
+      } else {
+        notifyError(`未找到组织「${orgRef}」，请检查名称是否正确`);
+        return;
       }
       if (targetOrgId) {
+        orgRouteOverride = { orgId: targetOrgId, nodeId: targetNodeId || null, content: msgContent };
         setOrgMode(true);
         setSelectedOrgId(targetOrgId);
         setSelectedOrgNodeId(targetNodeId || null);
-        const orgUserMsg: ChatMessage = { id: genId(), role: "user", content: text, timestamp: Date.now() };
-        const placeholderId = genId();
-        const orgOrgName = orgList.find(o => o.id === targetOrgId)?.name || targetOrgId;
-        const orgConvId = activeConvId;
-        const orgMsgsSnapshot: ChatMessage[] = [...messages, orgUserMsg, {
-          id: placeholderId, role: "assistant" as const,
-          content: "", streaming: true, timestamp: Date.now(),
-        }];
-        let orgMsgsLive = orgMsgsSnapshot;
-
-        const updateOrgMessages = (updater: (msgs: ChatMessage[]) => ChatMessage[]) => {
-          orgMsgsLive = updater(orgMsgsLive);
-          if (activeConvIdRef.current === orgConvId) {
-            setMessages(orgMsgsLive);
-          }
-        };
-
-        setMessages(orgMsgsSnapshot);
-        setInputValue("");
-        orgCommandPendingRef.current = true;
-        setOrgCommandPending(true);
-
-        const progressLines: string[] = [];
-        // 进度行 1s 去重：兜底 WebSocket 事件 fan-out（platform 已做事件级
-        // 去重，这里再加一层 UI 级保险，避免相邻同行被重复 push 到气泡）。
-        let lastProgressLine = "";
-        let lastProgressAtMs = 0;
-        let lastProgressAt = Date.now();
-        const PROGRESS_DEDUPE_MS = 1000;
-        const pushProgress = (line: string) => {
-          const now = Date.now();
-          if (line === lastProgressLine && now - lastProgressAtMs < PROGRESS_DEDUPE_MS) {
-            return;
-          }
-          lastProgressLine = line;
-          lastProgressAtMs = now;
-          lastProgressAt = now;
-          progressLines.push(line);
-          const preview = progressLines.slice(-8).map(l => `> ${l}`).join("\n");
-          updateOrgMessages((prev) => prev.map(m =>
-            m.id === placeholderId ? { ...m, content: preview } : m
-          ));
-        };
-
-        // Reset org flow panel for new command
-        setOrgNodeStates(new Map());
-        setOrgDelegations([]);
-        setOrgFlowPanelOpen(true);
-
-        const unsub = onWsEvent((event, raw) => {
-          const d = raw as Record<string, unknown> | null;
-          if (!d || d.org_id !== targetOrgId) return;
-          const nodeId = (d.node_id || d.from_node || "") as string;
-          const toNode = (d.to_node || "") as string;
-          if (event === "org:node_status") {
-            const st = d.status as string;
-            const task = (d.current_task || "") as string;
-            // Update node state for flow panel
-            setOrgNodeStates(prev => {
-              const m = new Map(prev);
-              m.set(nodeId, { status: st, task: task || undefined, ts: Date.now() });
-              return m;
-            });
-            if (st === "busy") {
-              pushProgress(`● **${nodeId}** 开始处理${task ? `：${task.slice(0, 60)}` : ""}`);
-            } else if (st === "idle") {
-              pushProgress(`✓ **${nodeId}** 完成`);
-            } else if (st === "error") {
-              pushProgress(`✗ **${nodeId}** 出错`);
-            }
-          } else if (event === "org:task_delegated") {
-            const task = (d.task || "") as string;
-            setOrgDelegations(prev => [...prev.slice(-20), { from: nodeId, to: toNode, task, ts: Date.now() }]);
-            pushProgress(`→ **${nodeId}** → **${toNode}** 分配任务：${(task as string).slice(0, 50)}`);
-          } else if (event === "org:message") {
-            const msgType = d.msg_type as string || "消息";
-            pushProgress(`→ **${nodeId}** → **${toNode}** ${msgType}`);
-          } else if (event === "org:escalation") {
-            pushProgress(`↑ **${nodeId}** 向上汇报`);
-          } else if (event === "org:blackboard_update") {
-            pushProgress(`~ **${nodeId}** 更新黑板`);
-          } else if (event === "org:task_complete") {
-            setOrgNodeStates(prev => {
-              const m = new Map(prev);
-              m.set(nodeId, { status: "done", ts: Date.now() });
-              return m;
-            });
-            pushProgress(`✓ **${nodeId}** 任务完成`);
-          } else if (event === "org:task_delivered") {
-            pushProgress(`⇢ **${nodeId}** 向 **${toNode || "上级"}** 提交交付物`);
-          } else if (event === "org:task_accepted") {
-            const acceptedBy = (d.accepted_by || "") as string;
-            pushProgress(`✓ **${acceptedBy || "上级"}** 已验收 **${nodeId}** 的交付物`);
-          } else if (event === "org:task_rejected") {
-            const rejectedBy = (d.rejected_by || "") as string;
-            const reason = ((d.reason || d.feedback || "") as string).slice(0, 80);
-            pushProgress(`! **${rejectedBy || "上级"}** 打回 **${nodeId}** 的交付物${reason ? `：${reason}` : ""}`);
-          } else if (event === "org:task_failed") {
-            const exitReason = (d.exit_reason || "") as string;
-            if (isSoftOrgExitReason(exitReason)) return;
-            const reason =
-              exitReason === "max_iterations" ? "达到迭代上限" :
-              exitReason === "loop_terminated" ? "被系统终止" :
-              "执行未完成";
-            pushProgress(`✗ **${nodeId}** ${reason}`);
-          } else if (event === "org:command_phase") {
-            const activeCmd = activeOrgCommandRef.current;
-            const eventCommandId = (d.command_id || "") as string;
-            if (!eventCommandId || !activeCmd || eventCommandId === activeCmd.commandId) {
-              pushProgress(`… ${formatOrgCommandPhase((d.phase || "") as string)}`);
-            }
-          } else if (event === "org:command_stuck_warning") {
-            const idleSecs = Number(d.idle_secs || 0);
-            pushProgress(`! 组织 ${idleSecs > 0 ? `${Math.round(idleSecs)} 秒` : "一段时间"}无新进展，仍在等待收口`);
-          } else if (event === "org:task_timeout") {
-            setOrgNodeStates(prev => {
-              const m = new Map(prev);
-              m.set(nodeId, { status: "timeout", ts: Date.now() });
-              return m;
-            });
-            pushProgress(`! **${nodeId}** 任务超时`);
-          }
-        });
-
-        try {
-          const submitRes = await safeFetch(`${apiBaseUrl}/api/orgs/${targetOrgId}/command`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: msgContent, target_node_id: targetNodeId }),
-          });
-          const submitData = await submitRes.json();
-          const commandId = submitData.command_id as string | undefined;
-
-          if (!commandId) {
-            const resultText = submitData.result || submitData.error || JSON.stringify(submitData);
-            const progressSummary = progressLines.length > 0
-              ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
-              : "";
-            updateOrgMessages((prev) => prev.map(m =>
-              m.id === placeholderId
-                ? { ...m, content: `${progressSummary}**[${orgOrgName}]** ${resultText}`, streaming: false }
-                : m
-            ));
-          } else {
-            activeOrgCommandRef.current = { orgId: targetOrgId, commandId };
-            let resolved = false;
-            const onDone = onWsEvent((evt, raw) => {
-              const d = raw as Record<string, unknown> | null;
-              if (evt !== "org:command_done" || !d || d.command_id !== commandId) return;
-              resolved = true;
-              const result = d.result as Record<string, unknown> | null;
-              const error = d.error as string | undefined;
-              const resultText = (result && (result.result || result.error)) || error || JSON.stringify(d);
-              const progressSummary = progressLines.length > 0
-                ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
-                : "";
-              updateOrgMessages((prev) => prev.map(m =>
-                m.id === placeholderId
-                  ? { ...m, content: `${progressSummary}**[${orgOrgName}]** ${resultText}`, streaming: false }
-                  : m
-              ));
-            });
-
-            const pollInterval = 5_000;
-            const stallThreshold = 60_000;
-            let lastPhase = "";
-
-            const pollStartTime = Date.now();
-            const MAX_POLL_WAIT_MS = 10 * 60 * 1000;
-
-            while (!resolved && (Date.now() - pollStartTime < MAX_POLL_WAIT_MS)) {
-              await new Promise(r => setTimeout(r, pollInterval));
-              if (resolved) break;
-              try {
-                const pollRes = await safeFetch(
-                  `${apiBaseUrl}/api/orgs/${targetOrgId}/commands/${commandId}`
-                );
-                const pollData = await pollRes.json();
-                const phase = (pollData.phase || pollData.status || "") as string;
-                const openChainCount = typeof pollData.open_chain_count === "number"
-                  ? pollData.open_chain_count
-                  : undefined;
-                if (pollData.status === "running" && phase && phase !== lastPhase) {
-                  lastPhase = phase;
-                  pushProgress(`… ${formatOrgCommandPhase(phase, openChainCount)}`);
-                }
-                if (pollData.warned_stuck && !lastPhase.includes("stuck")) {
-                  lastPhase = `${phase}:stuck`;
-                  pushProgress("! 组织长时间无新进展，仍在等待下级任务或最终汇总");
-                }
-                if (pollData.status === "done" || pollData.status === "error") {
-                  if (!resolved) {
-                    resolved = true;
-                    const resultText = pollData.result?.result || pollData.result?.error || pollData.error || JSON.stringify(pollData);
-                    const progressSummary = progressLines.length > 0
-                      ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
-                      : "";
-                    updateOrgMessages((prev) => prev.map(m =>
-                      m.id === placeholderId
-                        ? { ...m, content: `${progressSummary}**[${orgOrgName}]** ${resultText}`, streaming: false }
-                        : m
-                    ));
-                  }
-                }
-              } catch { /* poll failed, retry next cycle */ }
-
-              if (!resolved && Date.now() - lastProgressAt > stallThreshold) {
-                pushProgress("... 执行时间较长，组织仍在处理中...");
-                lastProgressAt = Date.now();
-              }
-            }
-
-            if (!resolved) {
-              resolved = true;
-              const progressSummary = progressLines.length > 0
-                ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
-                : "";
-              updateOrgMessages((prev) => prev.map(m =>
-                m.id === placeholderId
-                  ? { ...m, content: `${progressSummary}**[${orgOrgName}]** 命令执行超时（已等待 10 分钟），请稍后手动检查结果。`, streaming: false }
-                  : m
-              ));
-            }
-
-            onDone();
-          }
-        } catch (e: any) {
-          updateOrgMessages((prev) => prev.map(m =>
-            m.id === placeholderId
-              ? { ...m, content: `组织命令失败: ${e.message || e}`, streaming: false, role: "system" as const }
-              : m
-          ));
-        } finally {
-          unsub();
-          activeOrgCommandRef.current = null;
-          orgCommandPendingRef.current = false;
-          setOrgCommandPending(false);
-          if (orgConvId) {
-            saveMessagesToStorage(STORAGE_KEY_MSGS_PREFIX + orgConvId, orgMsgsLive);
-          }
-        }
-        return;
       }
+    }
+
+    const orgRouteActive = Boolean(orgRouteOverride || (orgMode && selectedOrgId));
+    if (endpoints.length === 0 && !orgRouteActive) {
+      notifyError(t("chat.noChatEndpointConfigured"));
+      return;
     }
 
     // 创建用户消息
@@ -2416,8 +2282,10 @@ export function ChatView({
 
     try {
       const effectiveMode = modeOverride ?? chatMode;
+      const effectiveOrgId = orgRouteOverride?.orgId || (orgMode && selectedOrgId ? selectedOrgId : null);
+      const effectiveOrgNodeId = orgRouteOverride ? orgRouteOverride.nodeId : (orgMode && selectedOrgId ? selectedOrgNodeId : null);
       const body: Record<string, unknown> = {
-        message: text,
+        message: orgRouteOverride?.content || text,
         conversation_id: convId,
         mode: effectiveMode,
         plan_mode: effectiveMode === "plan",
@@ -2426,9 +2294,9 @@ export function ChatView({
         thinking_mode: thinkingMode !== "auto" ? thinkingMode : null,
         thinking_depth: thinkingMode !== "off" ? thinkingDepth : null,
         agent_profile_id: selectedAgent,
-        org_mode: Boolean(orgMode && selectedOrgId),
-        org_id: orgMode && selectedOrgId ? selectedOrgId : null,
-        org_node_id: orgMode && selectedOrgId ? selectedOrgNodeId : null,
+        org_mode: Boolean(effectiveOrgId),
+        org_id: effectiveOrgId,
+        org_node_id: effectiveOrgNodeId,
         client_id: getClientId(),
       };
 
@@ -2464,9 +2332,16 @@ export function ChatView({
       });
       void logger.flush();
 
+      // C17 Phase B.3: Last-Event-ID 让后端把断点后的事件 replay 给我们。
+      // 首次 fetch 没有 last seq 就不带 header，后端正常推进 seq；重连
+      // 时带上最后看到的 seq，后端 SSE writer 会先 flush 缓冲事件再接
+      // active 流。``lastSeqByConv`` 是 ref，跨重渲染保留。
+      const _lastSeq = thisConvId ? lastSeqByConv.current.get(thisConvId) ?? 0 : 0;
+      const _headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (_lastSeq > 0) _headers["Last-Event-ID"] = String(_lastSeq);
       const response = await safeFetch(`${apiBase}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: _headers,
         body: JSON.stringify(body),
         signal: abort.signal,
       });
@@ -2582,14 +2457,46 @@ export function ChatView({
           buffer = lines.pop() || "";
         }
 
+        // C17 Phase B.3：SSE 帧由 ``id: <seq>\ndata: {json}\n\n`` 组成。
+        // 收到 id 行就记下来；下一条 data 行用该 seq 做 dedup。Spec 允许
+        // ``id`` 是空字符串 → 重置上次 lastEventId，但我们用 0 表示
+        // "本帧没 id"。如果同一 buffer 行里只看到 data 没看到前置 id，
+        // ``pendingSeq=0`` 让 dedup 走 no-op（向后兼容老服务端无 id 帧）。
+        //
+        // C17 二轮：``pendingSeq`` 现在只在两种边界清零：
+        //   1. 空行（SSE 帧分隔符 ``\n\n``）
+        //   2. 下一条 ``id:`` 行覆盖
+        // 之前在 ``rememberSeq`` / hasSeenSeq 命中后立即清零会让 SSE 规范
+        // 允许的 "同 id 多 data 行" 跳过 dedup（虽然后端目前 1:1，但代理 /
+        // IM 网关转发可能合并），保守起见保留 pendingSeq 直到帧结束。
+        let pendingSeq = 0;
         for (const line of lines) {
+          if (line === "") {
+            pendingSeq = 0; // SSE frame separator
+            continue;
+          }
+          if (line.startsWith("id: ")) {
+            const v = Number.parseInt(line.slice(4).trim(), 10);
+            pendingSeq = Number.isFinite(v) && v > 0 ? v : 0;
+            continue;
+          }
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6).trim();
           if (data === "[DONE]") continue;
 
+          // Dedup before parsing: if we already processed this seq, skip.
+          // Keep ``pendingSeq`` non-zero so subsequent data: lines under
+          // the same id (replay duplicates) are also dropped.
+          if (pendingSeq > 0 && thisConvId && hasSeenSeq(thisConvId, pendingSeq)) {
+            continue;
+          }
           try {
             const event: StreamEvent = JSON.parse(data);
             sseParseFailures = 0;
+            if (pendingSeq > 0 && thisConvId) {
+              rememberSeq(thisConvId, pendingSeq);
+              // intentionally NOT zeroing pendingSeq: see C17 二轮 above.
+            }
 
             switch (event.type) {
               case "heartbeat":
@@ -2603,6 +2510,31 @@ export function ChatView({
                   ));
                 }
                 continue;
+              case "org_command_started": {
+                const orgId = (event as any).org_id as string | undefined;
+                const commandId = (event as any).command_id as string | undefined;
+                if (orgId && commandId) {
+                  activeOrgCommandRef.current = { orgId, commandId };
+                  orgCommandPendingRef.current = true;
+                  setOrgCommandPending(true);
+                }
+                currentStreamStatus = t("chat.orgProcessing", "组织正在处理中...");
+                break;
+              }
+              case "org_progress": {
+                const summary = ((event as any).summary || "") as string;
+                if (summary) {
+                  currentStreamStatus = null;
+                  currentContent += `${currentContent ? "\n" : ""}> ${summary}`;
+                }
+                break;
+              }
+              case "org_command_done": {
+                activeOrgCommandRef.current = null;
+                orgCommandPendingRef.current = false;
+                setOrgCommandPending(false);
+                break;
+              }
               case "user_insert": {
                 const insertContent = (event.content || "").trim();
                 if (insertContent) {
@@ -2720,6 +2652,48 @@ export function ChatView({
                 currentStreamStatus = null;
                 currentContent = event.content ?? "";
                 break;
+              case "tool_intent_preview": {
+                // C23 P2-3: tool_executor 在跑批之前先发这个事件，每个 tool_call
+                // 一条，告知 approval_class。
+                // 这里只对"有副作用"的类弹 toast：纯只读 / 搜索 / 交互问询不打扰
+                // 用户。toast id 用 tool_use_id 让同一工具多次预览不会叠多个气泡。
+                const previewClass = String(event.approval_class || "unknown");
+                const noisyClasses = new Set([
+                  "readonly_scoped",
+                  "readonly_global",
+                  "readonly_search",
+                  "interactive",
+                  "unknown",
+                ]);
+                if (!noisyClasses.has(previewClass)) {
+                  const previewTool = String(event.tool_name || "");
+                  const previewId = String(event.tool_use_id || `intent_${previewTool}_${Date.now()}`);
+                  // 取一个 param 摘要给用户看（command / path / url 三选一），
+                  // 避免把整个 params dump 进 toast。
+                  const previewParams = (event.params || {}) as Record<string, unknown>;
+                  const previewSummary =
+                    (typeof previewParams.command === "string" && (previewParams.command as string)) ||
+                    (typeof previewParams.path === "string" && (previewParams.path as string)) ||
+                    (typeof previewParams.url === "string" && (previewParams.url as string)) ||
+                    "";
+                  const previewLabel = previewSummary
+                    ? `${previewTool} · ${previewSummary.length > 80 ? previewSummary.slice(0, 80) + "…" : previewSummary}`
+                    : previewTool;
+                  toast.message(
+                    t("chat.toolIntentPreview", "即将执行：{{label}}", { label: previewLabel }),
+                    {
+                      id: previewId,
+                      duration: 2500,
+                      description: t(
+                        "chat.toolIntentPreviewClass",
+                        "类型：{{cls}}",
+                        { cls: previewClass },
+                      ),
+                    },
+                  );
+                }
+                break;
+              }
               case "tool_call_start": {
                 currentStreamStatus = null;
                 const toolName = event.tool_name || event.tool;
@@ -2970,10 +2944,18 @@ export function ChatView({
                   toolId: scEvt.id,
                   countdown: (event.timeout_seconds as number) || 120,
                   defaultOnTimeout: (event.default_on_timeout as string) || "deny",
+                  approvalClass: (event.approval_class as string | null | undefined) ?? null,
+                  policyVersion: (event.policy_version as number | undefined) ?? undefined,
+                  channel: (event.channel as string | undefined) ?? undefined,
+                  // C23 P2-2: 决策链透传，由 SecurityConfirmModal 折叠渲染
+                  decisionChain: Array.isArray(event.decision_chain)
+                    ? (event.decision_chain as Array<{ name: string; action: string; note: string }>)
+                    : undefined,
                 };
                 setSecurityConfirm((prev) => {
                   if (prev) {
                     securityQueueRef.current.push(newConfirm);
+                    setSecurityQueueLen(securityQueueRef.current.length);
                     return prev;
                   }
                   return newConfirm;
@@ -5517,6 +5499,77 @@ export function ChatView({
           timerRef={securityTimerRef}
           setData={setSecurityConfirm}
         />,
+        document.body,
+      )}
+
+      {/*
+        C18 Phase B：批量 resolve 横幅。仅当
+        (a) POLICIES.yaml ``confirmation.aggregation_window_seconds`` > 0
+        (b) 当前正显示一个 modal
+        (c) queue 还排着 ≥1 个 confirm
+        三者同时成立时显示。点击调用 ``/api/chat/security-confirm/batch``
+        一次性 resolve 当前 session 窗内全部 confirm（包含正在显示的）。
+      */}
+      {securityConfirm && securityAggWindow > 0 && securityQueueLen >= 1 && createPortal(
+        <div
+          role="region"
+          aria-label={t("security.batch.banner_label", "批量确认")}
+          style={{
+            position: "fixed",
+            top: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 10000,
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            padding: "10px 14px",
+            borderRadius: 10,
+            background: "#1f2937",
+            color: "#f9fafb",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+            fontSize: 13,
+            maxWidth: "min(90vw, 720px)",
+          }}
+        >
+          <span style={{ opacity: 0.85 }}>
+            {t(
+              "security.batch.queue_hint",
+              "本会话还有 {{count}} 个待确认操作（{{window}}s 窗内聚合）",
+              { count: securityQueueLen, window: securityAggWindow },
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => handleSecurityBatchResolve("allow_once")}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              background: "#16a34a",
+              color: "#fff",
+              border: "none",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            {t("security.batch.allow_all", "全部允许 ({{n}})", { n: securityQueueLen + 1 })}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSecurityBatchResolve("deny")}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 6,
+              background: "#dc2626",
+              color: "#fff",
+              border: "none",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            {t("security.batch.deny_all", "全部拒绝 ({{n}})", { n: securityQueueLen + 1 })}
+          </button>
+        </div>,
         document.body,
       )}
     </div>

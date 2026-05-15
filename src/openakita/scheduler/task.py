@@ -112,6 +112,7 @@ class TaskStatus(Enum):
     DISABLED = "disabled"  # 已禁用
     CANCELLED = "cancelled"  # 已取消
     MISSED = "missed"  # 错过执行（程序停机期间过期的一次性任务）
+    AWAITING_APPROVAL = "awaiting_approval"  # C12: paused on PendingApproval
 
 
 @dataclass
@@ -390,12 +391,22 @@ class ScheduledTask:
             TaskStatus.FAILED,
             TaskStatus.SCHEDULED,
             TaskStatus.CANCELLED,
+            # C12: scheduler/executor catches DeferredApprovalRequired → marks task awaiting
+            TaskStatus.AWAITING_APPROVAL,
         },
         TaskStatus.COMPLETED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
         TaskStatus.FAILED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
         TaskStatus.DISABLED: {TaskStatus.SCHEDULED, TaskStatus.CANCELLED},
         TaskStatus.CANCELLED: {TaskStatus.SCHEDULED},
         TaskStatus.MISSED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
+        # C12: paused tasks can resume back to SCHEDULED (after approval) or be cancelled.
+        # Forbidden: AWAITING_APPROVAL → COMPLETED directly (must re-run via SCHEDULED).
+        TaskStatus.AWAITING_APPROVAL: {
+            TaskStatus.SCHEDULED,
+            TaskStatus.CANCELLED,
+            TaskStatus.DISABLED,
+            TaskStatus.FAILED,  # explicit denial path
+        },
     }
 
     def _check_transition(self, target: TaskStatus) -> bool:
@@ -504,6 +515,33 @@ class ScheduledTask:
         else:
             self.status = TaskStatus.SCHEDULED
             self.next_run = next_run
+
+    def mark_awaiting_approval(self, marker: str = "") -> None:
+        """C12 §14.5: pause the task on a pending owner approval.
+
+        Used by the scheduler when ``DeferredApprovalRequired`` propagated
+        out of the agent. Does NOT increment fail_count or trigger
+        auto-disable; the task just stops being scheduled until an
+        explicit ``resume_from_approval`` API call (R3-5) brings it back
+        to ``SCHEDULED``.
+        """
+        if self.status != TaskStatus.RUNNING:
+            logger.warning(
+                "Task %s: mark_awaiting_approval called from %s, expected RUNNING",
+                self.id,
+                self.status.value,
+            )
+            return
+        if not self._check_transition(TaskStatus.AWAITING_APPROVAL):
+            return
+        self.last_run = datetime.now()
+        self.updated_at = self.last_run
+        self.status = TaskStatus.AWAITING_APPROVAL
+        self.next_run = None
+        if not self.metadata:
+            self.metadata = {}
+        self.metadata["awaiting_approval_marker"] = marker
+        self.metadata["awaiting_approval_at"] = self.last_run.isoformat()
 
     def mark_failed(self, error: str = None) -> None:
         """标记执行失败"""

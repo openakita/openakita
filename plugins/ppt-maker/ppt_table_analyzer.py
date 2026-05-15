@@ -98,7 +98,7 @@ class TableAnalyzer:
             "quality_warnings": warnings,
         }
 
-    def chart_specs(self, profile: dict[str, Any]) -> list[dict[str, Any]]:
+    def chart_specs(self, profile: dict[str, Any], table: TableData | None = None) -> list[dict[str, Any]]:
         metrics = profile.get("candidate_metrics", [])
         dimensions = profile.get("candidate_dimensions", [])
         specs: list[dict[str, Any]] = []
@@ -106,6 +106,7 @@ class TableAnalyzer:
             first_metric = metrics[0]
             first_dimension = dimensions[0]
             chart_type = ChartType.LINE.value if first_dimension in profile.get("date_columns", []) else ChartType.BAR.value
+            categories, values = self._series_from_table(table, first_dimension, first_metric)
             specs.append(
                 {
                     "id": "chart_primary",
@@ -113,26 +114,32 @@ class TableAnalyzer:
                     "title": f"{first_metric} by {first_dimension}",
                     "x": first_dimension,
                     "y": first_metric,
+                    "categories": categories,
+                    "series": [{"name": first_metric, "values": values}] if values else [],
                     "reason": "Primary metric by the most likely reporting dimension.",
                 }
             )
         if len(metrics) >= 3:
+            metric_cards = self._metric_cards_from_table(table, metrics[:4])
             specs.append(
                 {
                     "id": "metric_cards",
                     "type": ChartType.METRIC_CARDS.value,
                     "title": "Core metric cards",
-                    "metrics": metrics[:4],
+                    "metrics": metric_cards or metrics[:4],
                     "reason": "Multiple numeric columns can become KPI cards.",
                 }
             )
         if metrics and len(dimensions) >= 1:
+            columns = [*dimensions[:3], *metrics[:5]][:8]
             specs.append(
                 {
                     "id": "data_table_summary",
                     "type": ChartType.TABLE.value,
                     "title": "Top records summary",
-                    "columns": [*dimensions[:3], *metrics[:5]][:8],
+                    "columns": columns,
+                    "headers": columns,
+                    "rows": self._table_rows(table, columns),
                     "reason": "A compact table keeps raw evidence visible.",
                 }
             )
@@ -143,6 +150,8 @@ class TableAnalyzer:
                     "type": ChartType.TABLE.value,
                     "title": "Data preview",
                     "columns": profile.get("candidate_dimensions", [])[:8],
+                    "headers": profile.get("candidate_dimensions", [])[:8],
+                    "rows": self._table_rows(table, profile.get("candidate_dimensions", [])[:8]),
                     "reason": "No reliable numeric metric was detected.",
                 }
             )
@@ -170,7 +179,7 @@ class TableAnalyzer:
     def analyze_to_files(self, path: str | Path, output_dir: str | Path) -> dict[str, Any]:
         table = self.load(path)
         profile = self.profile(table)
-        charts = self.chart_specs(profile)
+        charts = self.chart_specs(profile, table)
         insights = self.insights(profile, charts)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
@@ -268,4 +277,56 @@ class TableAnalyzer:
             except ValueError:
                 continue
         return None
+
+    def _series_from_table(
+        self,
+        table: TableData | None,
+        dimension: str,
+        metric: str,
+        *,
+        limit: int = 8,
+    ) -> tuple[list[str], list[float]]:
+        if table is None:
+            return [], []
+        grouped: dict[str, list[float]] = {}
+        for row in table.rows:
+            key = (row.get(dimension) or "未分组").strip() or "未分组"
+            value = self._to_float(row.get(metric, ""))
+            if value is None:
+                continue
+            grouped.setdefault(key, []).append(value)
+        categories = list(grouped)[:limit]
+        values = [round(sum(grouped[key]), 3) for key in categories]
+        return categories, values
+
+    def _metric_cards_from_table(
+        self,
+        table: TableData | None,
+        metrics: list[str],
+    ) -> list[dict[str, str]]:
+        if table is None:
+            return []
+        cards = []
+        for metric in metrics[:4]:
+            values = []
+            for row in table.rows:
+                value = self._to_float(row.get(metric, ""))
+                if value is not None:
+                    values.append(value)
+            if not values:
+                continue
+            cards.append(
+                {
+                    "label": metric,
+                    "value": f"{round(sum(values), 2):g}",
+                    "delta": f"avg {round(mean(values), 2):g}",
+                }
+            )
+        return cards
+
+    @staticmethod
+    def _table_rows(table: TableData | None, columns: list[str], *, limit: int = 8) -> list[list[str]]:
+        if table is None or not columns:
+            return []
+        return [[str(row.get(column, "")) for column in columns] for row in table.rows[:limit]]
 

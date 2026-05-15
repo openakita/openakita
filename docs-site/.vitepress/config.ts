@@ -4,8 +4,22 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const versionData = JSON.parse(readFileSync(resolve(__dirname, "version.json"), "utf-8"));
-const v = versionData.version;
+const rootVersionFile = resolve(__dirname, "../..", "VERSION");
+const localVersionFile = resolve(__dirname, "version.json");
+
+function readDocsVersion(): string {
+  try {
+    const rootVersion = readFileSync(rootVersionFile, "utf-8").trim();
+    if (rootVersion) return rootVersion;
+  } catch {
+    // Fallback supports standalone docs builds that do not include the repo root.
+  }
+
+  const versionData = JSON.parse(readFileSync(localVersionFile, "utf-8"));
+  return String(versionData.version);
+}
+
+const v = readDocsVersion();
 
 export default defineConfig({
   lang: "zh-CN",

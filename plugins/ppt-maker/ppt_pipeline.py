@@ -18,9 +18,13 @@ from ppt_brain_adapter import (
     OutlineDraft,
     PptBrainAdapter,
 )
+from ppt_creative_exporter import CreativeImageExporter
 from ppt_design import DesignBuilder
 from ppt_exporter import PptxExporter
 from ppt_ir import SlideIrBuilder
+from ppt_pptxgenjs_exporter import PptxGenJsExporter
+from ppt_repair import PptRepair
+from ppt_render_model import save_generation_artifacts
 from ppt_maker_inline.file_utils import ensure_dir, safe_name
 from ppt_models import ErrorKind, ProjectStatus, SlideType, TaskCreate, TaskStatus
 from ppt_outline import OutlineBuilder
@@ -292,6 +296,20 @@ class PptPipeline:
             slide_contents=slide_contents,
         )
         slides_ir = await self._resolve_assets(slides_ir, project_id)
+        pre_audit = PptAudit().run(slides_ir)
+        slides_ir, repair_plan = PptRepair().repair(slides_ir, pre_audit)
+        repair_path = PptRepair().save(repair_plan, root)
+        generation_artifacts = save_generation_artifacts(
+            project=project,
+            settings={**settings, **self._settings},
+            outline=outline["outline"],
+            spec_lock=design["spec_lock"],
+            slides_ir=slides_ir,
+            output_dir=root,
+            table_insights=table_insights,
+            chart_specs=chart_specs,
+            brand_tokens=brand_tokens,
+        )
         SlideIrBuilder().save(slides_ir, root)
         await manager.replace_slides(project_id, slides_ir["slides"])
         await self._step(
@@ -304,15 +322,31 @@ class PptPipeline:
             details={
                 "slides": len(slides_ir.get("slides", [])),
                 "ai_filled": len(slide_contents or {}),
+                "generation_artifacts": list(generation_artifacts),
+                "repair_changed": repair_plan.get("changed", False),
             },
         )
 
         # ── Export ─────────────────────────────────────────────────────
         export_dir = _analysis_dir(self._data_root, settings, "exports", project_id)
-        export_path = PptxExporter().export(
-            slides_ir,
-            export_dir / _format_output_filename(project_id, "pptx", settings),
-        )
+        export_target = export_dir / _format_output_filename(project_id, "pptx", settings)
+        merged_settings = {**settings, **self._settings}
+        if merged_settings.get("output_mode") == "creative_image":
+            export_path = CreativeImageExporter().export(slides_ir, export_target)
+        elif merged_settings.get("exporter") == "pptxgenjs":
+            render_model_path = Path(generation_artifacts.get("render_model.json", ""))
+            render_model = _read_json(str(render_model_path)) if render_model_path.exists() else None
+            export_path = PptxGenJsExporter().export(
+                render_model=render_model or {},
+                legacy_slides_ir=slides_ir,
+                output_path=export_target,
+                allow_fallback=True,
+            )
+        else:
+            export_path = PptxExporter().export(
+                slides_ir,
+                export_target,
+            )
         export = await manager.create_export(
             project_id=project_id,
             path=str(export_path),
@@ -353,6 +387,7 @@ class PptPipeline:
             "export_id": export["id"],
             "export_path": str(export_path),
             "audit_path": str(audit_path),
+            "repair_path": str(repair_path),
             "audit_ok": audit.get("ok", False),
         }
 
@@ -836,6 +871,9 @@ def _default_settings() -> dict[str, str]:
         "exports_dir": "",
         "analysis_subdir_mode": "date",
         "export_naming_rule": "{date}_{project_id}",
+        "quality_mode": "standard",
+        "output_mode": "editable",
+        "exporter": "python-pptx",
     }
 
 

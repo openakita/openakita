@@ -29,9 +29,14 @@ class DashScopeError(Exception):
 class DashScopeClient:
     """Thin async wrapper around DashScope image APIs."""
 
-    def __init__(self, api_key: str, base_url: str = DASHSCOPE_BASE_URL, timeout: float = 120):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str | None = None,
+        timeout: float = 120,
+    ):
         self._api_key = api_key
-        self._base_url = base_url.rstrip("/")
+        self._base_url = (base_url or DASHSCOPE_BASE_URL).rstrip("/")
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=httpx.Timeout(timeout, connect=15),
