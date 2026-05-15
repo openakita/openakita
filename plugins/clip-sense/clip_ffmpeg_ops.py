@@ -40,6 +40,19 @@ _SUBTITLE_VIDEO_ARGS = [
 ]
 
 
+def _segment_start_end(seg: dict[str, Any]) -> tuple[float, float]:
+    """Return (start_sec, end_sec) for a cut or SRT boundary dict.
+
+    Qwen analysis returns ``start_sec`` / ``end_sec``; ffmpeg helpers and
+    silence paths use ``start`` / ``end``. Accept both to avoid KeyError.
+    """
+    if not isinstance(seg, dict):
+        return 0.0, 0.0
+    if "start_sec" in seg or "end_sec" in seg:
+        return float(seg.get("start_sec", 0) or 0.0), float(seg.get("end_sec", 0) or 0.0)
+    return float(seg.get("start", 0) or 0.0), float(seg.get("end", 0) or 0.0)
+
+
 class FFmpegError(Exception):
     def __init__(self, message: str, *, kind: str = "dependency") -> None:
         super().__init__(message)
@@ -180,8 +193,8 @@ class FFmpegOps:
         try:
             seg_files: list[Path] = []
             for i, seg in enumerate(segments):
-                start = seg["start"]
-                duration = seg["end"] - seg["start"]
+                start, end = _segment_start_end(seg)
+                duration = end - start
                 if duration <= 0:
                     continue
                 seg_file = tmp_dir / f"seg_{i:04d}.mp4"
@@ -205,7 +218,7 @@ class FFmpegOps:
                 raise FFmpegError("No valid segments to concatenate", kind="format")
 
             if len(seg_files) == 1:
-                seg_files[0].rename(out)
+                shutil.move(str(seg_files[0]), str(out))
                 return out
 
             list_file = tmp_dir / "concat_list.txt"
@@ -246,14 +259,15 @@ class FFmpegOps:
         if total_duration <= 0:
             raise FFmpegError("Cannot determine video duration", kind="format")
 
-        sorted_removes = sorted(remove_list, key=lambda s: s["start"])
+        sorted_removes = sorted(remove_list, key=lambda s: _segment_start_end(s)[0])
         keep_segments: list[dict[str, Any]] = []
         current = 0.0
 
         for rm in sorted_removes:
-            if rm["start"] > current:
-                keep_segments.append({"start": current, "end": rm["start"]})
-            current = max(current, rm["end"])
+            rs, re = _segment_start_end(rm)
+            if rs > current:
+                keep_segments.append({"start": current, "end": rs})
+            current = max(current, re)
         if current < total_duration:
             keep_segments.append({"start": current, "end": total_duration})
 
@@ -327,17 +341,32 @@ class FFmpegOps:
     ) -> str:
         """Generate SRT subtitle content from transcript sentences.
 
-        If segments provided, only include sentences within segment boundaries.
+        If ``segments`` is provided, sentences are filtered to those falling
+        within segment boundaries **and** their timestamps are shifted so
+        that they align with the concatenated output timeline produced by
+        ``cut_segments``.  Without this shift, multi-segment highlight
+        videos would have subtitles at the wrong positions.
+
         Applies out_end fix: if end <= start, force end = start + 0.4
         """
-        filtered = sentences
-        if segments:
-            seg_set = [(s["start"], s["end"]) for s in segments]
-            filtered = [
-                s for s in sentences
-                if any(ss <= s.get("start", 0) and s.get("end", 0) <= se
-                       for ss, se in seg_set)
-            ]
+        if not segments:
+            filtered = sentences
+        else:
+            seg_bounds = [_segment_start_end(s) for s in segments]
+            filtered = []
+            running_offset = 0.0
+            for seg_start, seg_end in seg_bounds:
+                seg_duration = seg_end - seg_start
+                for s in sentences:
+                    s_start = s.get("start", 0.0)
+                    s_end = s.get("end", 0.0)
+                    if seg_start <= s_start and s_end <= seg_end:
+                        filtered.append({
+                            **s,
+                            "start": running_offset + (s_start - seg_start),
+                            "end": running_offset + (s_end - seg_start),
+                        })
+                running_offset += seg_duration
 
         lines: list[str] = []
         cue_idx = 0
@@ -409,7 +438,7 @@ def _refresh_windows_path() -> None:
             except OSError:
                 continue
 
-        current = set(p.lower() for p in os.environ.get("PATH", "").split(";"))
+        current = {p.lower() for p in os.environ.get("PATH", "").split(";")}
         new_parts = [p for p in parts if p.lower() not in current]
         if new_parts:
             os.environ["PATH"] = os.environ.get("PATH", "") + ";" + ";".join(new_parts)

@@ -19,6 +19,7 @@ for _m in (
     "clip_models",
     "clip_task_manager",
     "clip_asr_client",
+    "clip_dashscope_upload",
     "clip_ffmpeg_ops",
     "clip_pipeline",
 ):

@@ -52,9 +52,12 @@ def _walk_sync(
             iterator = root.rglob("*")
         except (OSError, PermissionError):
             continue
+        root_depth = len(root.parts)
         for p in iterator:
             try:
-                if skip_hidden and any(part.startswith(".") for part in p.parts):
+                if skip_hidden and any(
+                    part.startswith(".") for part in p.parts[root_depth:]
+                ):
                     continue
                 if not p.is_file():
                     continue

@@ -7,12 +7,9 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from clip_asr_client import (
     AsrError,
     ClipAsrClient,
-    TranscriptResult,
-    TranscriptSentence,
     _flatten_sentences,
     _format_sentences_for_prompt,
 )
@@ -80,7 +77,11 @@ class TestFormatSentences:
 
 class TestClipAsrClient:
     def test_init(self):
-        c = ClipAsrClient("sk-test")
+        c = ClipAsrClient(
+            "sk-test",
+            analysis_provider="dashscope",
+            analysis_api_key="sk-analysis",
+        )
         assert c._api_key == "sk-test"
 
     def test_update_api_key(self):
@@ -94,7 +95,11 @@ class TestClipAsrClient:
             c._auth_headers()
 
     def test_transcribe_no_url(self):
-        c = ClipAsrClient("sk-test")
+        c = ClipAsrClient(
+            "sk-test",
+            analysis_provider="dashscope",
+            analysis_api_key="sk-analysis",
+        )
         with pytest.raises(AsrError, match="source_url"):
             run(c.transcribe(""))
 
@@ -115,7 +120,11 @@ class TestQwenAnalysis:
         }
         mock_client.post.return_value = mock_resp
 
-        c = ClipAsrClient("sk-test")
+        c = ClipAsrClient(
+            "sk-test",
+            analysis_provider="dashscope",
+            analysis_api_key="sk-analysis",
+        )
         sentences = [{"start": 0, "end": 60, "text": "test content"}]
         result = run(c.analyze_highlights("test", sentences))
         assert len(result) == 1
@@ -135,7 +144,11 @@ class TestQwenAnalysis:
         }
         mock_client.post.return_value = mock_resp
 
-        c = ClipAsrClient("sk-test")
+        c = ClipAsrClient(
+            "sk-test",
+            analysis_provider="dashscope",
+            analysis_api_key="sk-analysis",
+        )
         sentences = [{"start": 0, "end": 60, "text": "test"}]
         result = run(c.analyze_topics("test", sentences))
         assert len(result) == 1
@@ -161,7 +174,11 @@ class TestQwenAnalysis:
 
         mock_client.post.side_effect = [bad_resp, good_resp]
 
-        c = ClipAsrClient("sk-test")
+        c = ClipAsrClient(
+            "sk-test",
+            analysis_provider="dashscope",
+            analysis_api_key="sk-analysis",
+        )
         c._client = mock_client
         sentences = [{"start": 0, "end": 5, "text": "um test"}]
         result = run(c.analyze_filler("um test", sentences))
@@ -179,7 +196,21 @@ class TestQwenAnalysis:
         }
         mock_client.post.return_value = bad_resp
 
-        c = ClipAsrClient("sk-test")
+        c = ClipAsrClient(
+            "sk-test",
+            analysis_provider="dashscope",
+            analysis_api_key="sk-analysis",
+        )
         sentences = [{"start": 0, "end": 5, "text": "test"}]
         result = run(c.analyze_highlights("test", sentences))
         assert result == []
+
+    def test_host_brain_analysis_default(self):
+        class StubBrain:
+            async def chat(self, **kwargs):
+                return json.dumps([{"start_sec": 1, "end_sec": 3, "reason": "ok", "score": 8}])
+
+        c = ClipAsrClient("sk-test", analysis_brain=StubBrain())
+        sentences = [{"start": 0, "end": 5, "text": "test content"}]
+        result = run(c.analyze_highlights("test", sentences))
+        assert result[0]["start_sec"] == 1

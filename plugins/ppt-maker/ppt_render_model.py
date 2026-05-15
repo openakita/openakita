@@ -31,7 +31,7 @@ def build_generation_brief(project: Any, settings: dict[str, str] | None = None)
         output_mode = "editable"
     return GenerationBrief(
         title=getattr(project, "title", "") or "Untitled",
-        mode=getattr(project, "mode"),
+        mode=project.mode,
         prompt=getattr(project, "prompt", "") or "",
         audience=getattr(project, "audience", "") or "",
         style=getattr(project, "style", "") or "tech_business",
@@ -92,6 +92,8 @@ def build_design_system(
         font_heading=theme.get("font_heading") or "Microsoft YaHei",
         font_body=theme.get("font_body") or "Microsoft YaHei",
         chart_palette=[primary, accent, "#4A90D9", "#10B981", "#EF4444"],
+        image_style=_image_style(style),
+        icon_style=_icon_style(style),
         density=density,  # type: ignore[arg-type]
         rules=list(spec_lock.get("rules") or []),
     )
@@ -264,6 +266,27 @@ def _visual_role(slide: dict[str, Any]) -> str:
     if (slide.get("assets") or {}).get("image_path"):
         return "image"
     return "text"
+
+
+def _image_style(style: str) -> str:
+    style = (style or "").lower()
+    if style.startswith("swiss_"):
+        return (
+            "Swiss International Style evidence image: straight edges, single accent color, "
+            "no title, no footer, no page chrome, no logo, no border"
+        )
+    if style == "editorial_ink":
+        return "editorial magazine image, warm paper tone, documentary or crafted infographic feel"
+    return "clean editorial stock-photo style"
+
+
+def _icon_style(style: str) -> str:
+    style = (style or "").lower()
+    if style.startswith("swiss_"):
+        return "minimal single-color line or geometric mark, no emoji, no shadow"
+    if style == "editorial_ink":
+        return "restrained line icon, ink-like, no emoji"
+    return "single-color outline icons"
 
 
 def _asset_slots(content: dict[str, Any]) -> list[dict[str, Any]]:

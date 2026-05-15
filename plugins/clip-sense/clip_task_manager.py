@@ -14,9 +14,10 @@ from typing import Any
 
 import aiosqlite
 
-
 DEFAULT_CONFIG: dict[str, str] = {
     "dashscope_api_key": "",
+    "analysis_provider": "host",
+    "dashscope_analysis_api_key": "",
     "ffmpeg_path": "",
     "default_silence_threshold": "-40",
     "default_subtitle": "false",
@@ -333,6 +334,45 @@ class TaskManager:
         )
         await self._db.commit()
         return await self.get_transcript(tid)  # type: ignore[return-value]
+
+    async def get_or_create_transcript_for_hash(
+        self,
+        *,
+        source_hash: str,
+        source_path: str = "",
+        source_name: str = "",
+        duration_sec: float | None = None,
+    ) -> dict[str, Any]:
+        """Insert or reuse the single transcript row for ``source_hash``.
+
+        ``source_hash`` is UNIQUE. After a failed Paraformer/upload run the row
+        remains; a retry must reset that row instead of ``INSERT`` (otherwise
+        SQLite raises UNIQUE constraint failed).
+        """
+        assert self._db
+        existing = await self.get_transcript_by_hash(source_hash)
+        if existing is None:
+            return await self.create_transcript(
+                source_hash=source_hash,
+                source_path=source_path,
+                source_name=source_name,
+                duration_sec=duration_sec,
+            )
+        tid = existing["id"]
+        await self.update_transcript(
+            tid,
+            status="pending",
+            source_path=source_path,
+            source_name=source_name,
+            duration_sec=duration_sec,
+            error_message=None,
+            sentences=None,
+            full_text=None,
+            language=None,
+            api_task_id=None,
+        )
+        out = await self.get_transcript(tid)
+        return out if out is not None else existing
 
     async def get_transcript(self, tid: str) -> dict[str, Any] | None:
         assert self._db
