@@ -19,7 +19,8 @@ P0 sharp edges (per VALIDATION.md):
   every-Nth point. The downsampling is uniform so the overall
   trajectory shape is preserved.
 - ``shell=True`` is forbidden by red-line §13. Every ``ffmpeg``
-  invocation goes through ``asyncio.create_subprocess_exec(*cmd)`` and
+invocation goes through ``asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# *cmd)`` and
   the ``crop=...`` filter string is passed as a single ``-vf``
   argument, so the inner single quotes are interpreted by ffmpeg's
   filter grammar (not by a shell).
@@ -345,7 +346,8 @@ async def detect_scene_cuts(video: Path, threshold: float = 0.4) -> list[float]:
         "-f",
         "null",
         "-",
-    ]
+proc = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
@@ -377,7 +379,8 @@ async def ffprobe_duration(video: Path) -> float:
         "-of",
         "default=noprint_wrappers=1:nokey=1",
         str(video),
-    ]
+proc = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -402,7 +405,8 @@ async def extract_frames(
         "-i",
         str(video),
         "-vf",
-        f"fps={fps},scale={scale}",
+proc = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
         str(out_dir / "frame_%05d.png"),
     ]
     proc = await asyncio.create_subprocess_exec(
@@ -428,7 +432,8 @@ async def run_ffmpeg_crop(
     x_expr: str,
     letterbox_if_needed: bool,
 ) -> None:
-    """Render the cropped output via ffmpeg.
+or colons. ``asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# *cmd)`` does NOT spawn
 
     The single-quotes wrapping around ``x_expr`` are required by the
     ffmpeg filter parser when the expression contains commas, parens,

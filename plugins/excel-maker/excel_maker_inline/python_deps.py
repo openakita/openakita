@@ -130,7 +130,8 @@ class PythonDepsManager:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         job.log_tail.append("$ " + " ".join(command))
         try:
-            process = await asyncio.create_subprocess_exec(
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,

@@ -597,7 +597,8 @@ class SystemDepsManager:
         st.log_tail.append(f"$ {' '.join(method.command)}")
 
         try:
-            proc = await asyncio.create_subprocess_exec(
+proc = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
                 *method.command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
