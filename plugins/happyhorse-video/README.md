@@ -1,6 +1,6 @@
 # happyhorse-video / 快乐马工作室
 
-> 阿里云百炼一体化视频工作室。HappyHorse 1.0 主力 + 万相 2.6/2.7 + 数字人 5 模式 + CosyVoice/Edge-TTS + 长视频分镜，统一 OSS 签名 URL，单后端 DashScope。
+> 阿里云百炼一体化创作工作室。内置万相/千问生图 + HappyHorse 1.0 主力 + 万相 2.6/2.7 + 数字人 5 模式 + CosyVoice/Edge-TTS + 长视频分镜，统一 OSS 签名 URL，单后端 DashScope。
 > 与 [`plugins/seedance-video`](../seedance-video/)（火山版）/ [`plugins/avatar-studio`](../avatar-studio/)（数字人专项）并列同构、互不替代。
 
 | | |
@@ -9,19 +9,20 @@
 | **SDK 范围** | `>=0.7.0,<0.8.0` |
 | **Plugin API** | `~2` / UI API `~1` |
 | **入口** | `plugin.py` (`PluginBase`) + `ui/dist/index.html` |
-| **形态** | 12 模式 + 7 Tab + 13+ 工具 + 黑色主题 + Iconify SVG |
+| **形态** | 12 视频/数字人模式 + 7 图片模式 + 8 Tab + 20+ 工具 + 黑色主题 + Iconify SVG |
 
 ## 1 · 核心特点
 
 1. **HappyHorse 1.0 主力**：`happyhorse-1.0-t2v` / `-i2v` / `-r2v` / `-video-edit`，原生音视频同步、7 语种唇形、24fps MP4、3-15 秒、720P / 1080P。
-2. **Wan 2.6 / 2.7 备选**：`wan2.6-t2v` / `wan2.6-i2v(-flash)` / `wan2.6-r2v(-flash)` / `wan2.7-i2v`（多模态：首帧 / 首尾帧 / 视频续写）。
-3. **数字人 5 模式**（沿用 avatar-studio 的链路）：照片说话 / 视频换嘴 / 视频换人 / 图生动作 / 数字人合成。
-4. **TTS 双引擎**：CosyVoice-v2（12 系统音色 + 自定义克隆，0.20 元/万字）+ Edge-TTS（免费，12 中文音色）。
-5. **每 mode 可选模型 + Settings 默认**：Create 表单顶部一个 `<select>` 候选来自 registry；不选就回落到 Settings 里的 `default_model_<mode>`。
-6. **长视频流水线**：AI 自动拆分镜、串行 / 并行生成、ffmpeg 拼接（可选交叉淡化）。
-7. **OSS 签名 URL**：用户上传素材自动推到自有 bucket，再以 6h 签名 URL 喂给 DashScope。
-8. **工作台联动**：每个 `hh_*` 工具返回 `video_url` / `video_path` / `local_paths` / `asset_ids`；接受 `from_asset_ids` 消费上游 `tongyi-image` / `wan2.7-image` 等图片工作台的产物，组织运行时自动登记附件。
-9. **黑色主题 UI**：`--bg: #0a0a0a` / `--primary: #fafafa`，Iconify SVG 内联渲染。
+2. **内置图片生成**：`hh_image_create` / edit / style repaint / background / outpaint / sketch / ecommerce，输出图片会下载并发布为 `asset_ids`，可直接接 `hh_i2v`。
+3. **Wan 2.6 / 2.7 备选**：`wan2.6-t2v` / `wan2.6-i2v(-flash)` / `wan2.6-r2v(-flash)` / `wan2.7-i2v`（多模态：首帧 / 首尾帧 / 视频续写）。
+4. **数字人 5 模式**（沿用 avatar-studio 的链路）：照片说话 / 视频换嘴 / 视频换人 / 图生动作 / 数字人合成。
+5. **TTS 双引擎**：CosyVoice-v2（12 系统音色 + 自定义克隆，0.20 元/万字）+ Edge-TTS（免费，12 中文音色）。
+6. **每 mode 可选模型 + Settings 默认**：Create 表单顶部一个 `<select>` 候选来自 registry；不选就回落到 Settings 里的 `default_model_<mode>`。
+7. **长视频流水线**：AI 自动拆分镜、串行 / 并行生成、ffmpeg 拼接（可选交叉淡化）。
+8. **OSS 签名 URL**：用户上传素材自动推到自有 bucket，再以 6h 签名 URL 喂给 DashScope。
+9. **工作台联动**：每个 `hh_*` 工具返回 `video_url` / `image_urls` / `local_paths` / `asset_ids`；接受 `from_asset_ids` 消费上游图片或视频产物，组织运行时自动登记附件。
+10. **黑色主题 UI**：`--bg: #0a0a0a` / `--primary: #fafafa`，Iconify SVG 内联渲染。
 
 ## 2 · 模式与默认模型
 
@@ -41,6 +42,18 @@
 | `long_video` | 长视频拼接 | 复用所选 i2v 模型 | — |
 
 > HappyHorse 1.0 原生音视频同步，t2v / i2v / r2v / video_edit 不需要走 TTS step；其它 mode 仍走 cosyvoice / Edge-TTS。
+
+### 内置图片模式
+
+| Mode | 中文名 | 推荐模型 | 说明 |
+|---|---|---|---|
+| `image_text2img` | 文生图片 | `wan27-pro` | 分镜图、角色图、海报、关键帧 |
+| `image_edit` | 图像编辑 | `wan27-pro` / `wan26` | 多图参考、融合、改图 |
+| `image_style_repaint` | 风格重绘 | `wanx-style-repaint-v1` | 漫画、二次元、国风、未来科技等预设 |
+| `image_background` | 背景生成 | `wanx-background-generation-v2` | 商品图换背景 |
+| `image_outpaint` | 画面扩展 | `image-out-painting` | 扩图、改比例 |
+| `image_sketch` | 涂鸦作画 | `wanx-sketch-to-image-lite` | 草图 + 文字生成成图 |
+| `image_ecommerce` | 电商场景图 | `wan27-pro` | 主图、白底图、场景图、细节图 |
 
 ## 3 · 价格速查（2026 年百炼公开价）
 
@@ -101,6 +114,11 @@ py -3.11 -m ruff check .             # 0 error
 
 ```
 @hh_cost_preview mode=t2v duration=10 resolution=1080P
+@hh_image_create prompt="一张电影感分镜图，雨夜街头，霓虹灯，16:9，真实摄影" model_id=wan27-pro size=2K n=1
+@hh_image_edit prompt="把人物服装改成未来科技风，保持脸部一致" images='["https://...portrait.png"]'
+@hh_image_background prompt="高级咖啡馆桌面，暖色自然光" images='["https://...product.png"]'
+@hh_image_outpaint images='["https://...keyframe.png"]' output_ratio=16:9
+@hh_image_ecommerce product_name="便携咖啡机" prompt="黑色金属质感，高端小家电" ecommerce_scenes='["hero","scene","detail"]'
 @hh_t2v prompt="海上日出，慢镜头" duration=10 resolution=1080P
 @hh_i2v prompt="风吹动主角发丝" first_frame_url=https://... duration=8
 @hh_r2v prompt="角色1对角色2说：你好" reference_urls='["https://...role1.mp4","https://...role2.mp4"]'

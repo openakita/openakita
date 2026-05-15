@@ -4,17 +4,17 @@
   "version": "1.0.0",
   "type": "python",
   "entry": "plugin.py",
-  "description": "Bailian-powered unified video studio — HappyHorse 1.0 (t2v / i2v / r2v / video-edit) + Wan 2.6/2.7 + digital-human (photo speak / video relip / video reface / pose drive / avatar compose) + CosyVoice & Edge-TTS + storyboard long-video pipeline. Single backend (Aliyun DashScope), OSS-backed.",
+  "description": "Bailian-powered unified creative studio — built-in Wan/Qwen image generation + HappyHorse 1.0 (t2v / i2v / r2v / video-edit) + Wan 2.6/2.7 + digital-human (photo speak / video relip / video reface / pose drive / avatar compose) + CosyVoice & Edge-TTS + storyboard long-video pipeline. Single backend (Aliyun DashScope), OSS-backed.",
   "display_name_zh": "快乐马工作室",
   "display_name_en": "HappyHorse Studio",
   "description_i18n": {
-    "zh": "基于阿里云百炼的一体化视频工作室 — HappyHorse 1.0（文生 / 图生 / 参考生 / 视频编辑）+ 万相 2.6/2.7 + 数字人 5 模式 + CosyVoice & Edge-TTS + 长视频分镜拼接，统一 OSS 签名 URL。",
-    "en": "Bailian-powered unified video studio — HappyHorse 1.0 (t2v / i2v / r2v / video-edit) + Wan 2.6/2.7 + 5 digital-human modes + CosyVoice & Edge-TTS + storyboard long-video pipeline, single DashScope backend with OSS signed URLs."
+    "zh": "基于阿里云百炼的一体化创作工作室 — 内置万相/千问生图 + HappyHorse 1.0（文生 / 图生 / 参考生 / 视频编辑）+ 万相 2.6/2.7 + 数字人 5 模式 + CosyVoice & Edge-TTS + 长视频分镜拼接，统一 OSS 签名 URL。",
+    "en": "Bailian-powered unified creative studio — built-in Wan/Qwen image generation + HappyHorse 1.0 (t2v / i2v / r2v / video-edit) + Wan 2.6/2.7 + 5 digital-human modes + CosyVoice & Edge-TTS + storyboard long-video pipeline, single DashScope backend with OSS signed URLs."
   },
   "icon": "icon.svg",
   "author": "OpenAkita",
   "category": "creative",
-  "tags": ["video", "ai", "happyhorse", "wan", "dashscope", "bailian", "digital-human", "tts", "oss"],
+  "tags": ["video", "image", "ai", "happyhorse", "wan", "qwen", "dashscope", "bailian", "digital-human", "tts", "oss"],
   "permissions": [
     "tools.register",
     "routes.register",
@@ -35,6 +35,13 @@
   "provides": {
     "tools": [
       "hh_t2v",
+      "hh_image_create",
+      "hh_image_edit",
+      "hh_image_style_repaint",
+      "hh_image_background",
+      "hh_image_outpaint",
+      "hh_image_sketch",
+      "hh_image_ecommerce",
       "hh_i2v",
       "hh_r2v",
       "hh_video_edit",

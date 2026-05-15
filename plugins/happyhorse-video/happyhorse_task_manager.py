@@ -184,6 +184,9 @@ DEFAULT_CONFIG: dict[str, str] = {
     "default_model_pose_drive": "wan2.2-animate-move",
     "default_model_avatar_compose": "wan2.7-image",
     "default_model_long_video": "happyhorse-1.0-i2v",
+    # Built-in image generation defaults.
+    "default_image_model": "wan27-pro",
+    "default_image_size": "2K",
     # Cost gate.
     "cost_threshold_cny": "5.00",
     # HTTP behaviour.

@@ -42,6 +42,14 @@ def test_prompt_optimizer_imports_clean():
     assert len(happyhorse_prompt_optimizer.PROMPT_TEMPLATES) >= 12
 
 
+def test_image_models_import_clean():
+    import happyhorse_image_models
+
+    catalog = happyhorse_image_models.build_image_catalog()
+    assert len(catalog["modes"]) >= 7
+    assert happyhorse_image_models.image_model_for("").id == "wan27-pro"
+
+
 def test_plugin_module_imports_clean():
     from _plugin_loader import load_happyhorse_plugin
 

@@ -100,6 +100,9 @@ PATH_I2I_SUBMIT = "/api/v1/services/aigc/image2image/image-synthesis"
 
 # wan2.7-image / wan2.7-image-pro multimodal-generation endpoint.
 PATH_WAN27_IMAGE = "/api/v1/services/aigc/multimodal-generation/generation"
+PATH_IMAGE_GEN = "/api/v1/services/aigc/image-generation/generation"
+PATH_BG_GEN = "/api/v1/services/aigc/background-generation/generation/"
+PATH_OUTPAINT = "/api/v1/services/aigc/image2image/out-painting"
 
 # qwen-vl-max prompt-writer.
 PATH_QWEN_VL = "/api/v1/services/aigc/multimodal-generation/generation"
@@ -647,6 +650,128 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             "parameters": params,
         }
         return await self._submit_async(PATH_WAN27_IMAGE, body)
+
+    # ── Built-in image generation (ported from tongyi-image) ────────────
+
+    async def submit_image_multimodal(
+        self,
+        *,
+        prompt: str,
+        model: str = MODEL_WAN27_IMAGE_PRO,
+        images: list[str] | None = None,
+        size: str | None = None,
+        n: int = 1,
+        negative_prompt: str = "",
+        prompt_extend: bool | None = None,
+        watermark: bool = False,
+        seed: int | None = None,
+        thinking_mode: bool | None = None,
+        enable_sequential: bool | None = None,
+        async_mode: bool = True,
+    ) -> dict[str, Any]:
+        content: list[dict[str, str]] = [{"text": prompt}]
+        for image_url in images or []:
+            if image_url:
+                content.append({"image": image_url})
+        params: dict[str, Any] = {"n": max(1, int(n or 1)), "watermark": bool(watermark)}
+        if size:
+            params["size"] = size
+        if negative_prompt:
+            params["negative_prompt"] = negative_prompt
+        if prompt_extend is not None:
+            params["prompt_extend"] = bool(prompt_extend)
+        if seed is not None:
+            params["seed"] = int(seed)
+        if thinking_mode is not None:
+            params["thinking_mode"] = bool(thinking_mode)
+        if enable_sequential is not None:
+            params["enable_sequential"] = bool(enable_sequential)
+        body = {
+            "model": model,
+            "input": {"messages": [{"role": "user", "content": content}]},
+            "parameters": params,
+        }
+        if async_mode:
+            task_id = await self._submit_async(PATH_IMAGE_GEN, body)
+            return {"task_id": task_id, "async": True}
+        return await self.request("POST", PATH_WAN27_IMAGE, json_body=body)
+
+    async def submit_style_repaint(
+        self,
+        *,
+        image_url: str,
+        style_index: int = 0,
+        style_ref_url: str | None = None,
+    ) -> str:
+        inp: dict[str, Any] = {"image_url": image_url, "style_index": int(style_index)}
+        if style_ref_url and int(style_index) == -1:
+            inp["style_ref_url"] = style_ref_url
+        body = {"model": "wanx-style-repaint-v1", "input": inp}
+        return await self._submit_async(PATH_IMAGE_GEN, body)
+
+    async def submit_background_generation(
+        self,
+        *,
+        base_image_url: str,
+        ref_prompt: str = "",
+        ref_image_url: str = "",
+        n: int = 1,
+        noise_level: int = 300,
+        ref_prompt_weight: float = 0.5,
+    ) -> str:
+        inp: dict[str, Any] = {"base_image_url": base_image_url}
+        if ref_prompt:
+            inp["ref_prompt"] = ref_prompt
+        if ref_image_url:
+            inp["ref_image_url"] = ref_image_url
+        params: dict[str, Any] = {"model_version": "v3", "n": max(1, int(n or 1))}
+        if ref_image_url:
+            params["noise_level"] = int(noise_level)
+        if ref_prompt and ref_image_url:
+            params["ref_prompt_weight"] = float(ref_prompt_weight)
+        body = {"model": "wanx-background-generation-v2", "input": inp, "parameters": params}
+        return await self._submit_async(PATH_BG_GEN, body)
+
+    async def submit_outpaint(
+        self,
+        *,
+        image_url: str,
+        output_ratio: str | None = None,
+        x_scale: float | None = None,
+        y_scale: float | None = None,
+        best_quality: bool = False,
+    ) -> str:
+        params: dict[str, Any] = {"best_quality": bool(best_quality), "limit_image_size": True}
+        if output_ratio:
+            params["output_ratio"] = output_ratio
+        if x_scale is not None:
+            params["x_scale"] = float(x_scale)
+        if y_scale is not None:
+            params["y_scale"] = float(y_scale)
+        body = {"model": "image-out-painting", "input": {"image_url": image_url}, "parameters": params}
+        return await self._submit_async(PATH_OUTPAINT, body)
+
+    async def submit_sketch_to_image(
+        self,
+        *,
+        sketch_image_url: str,
+        prompt: str,
+        style: str = "<watercolor>",
+        size: str = "768*768",
+        n: int = 1,
+        sketch_weight: int = 3,
+    ) -> str:
+        body = {
+            "model": "wanx-sketch-to-image-lite",
+            "input": {"sketch_image_url": sketch_image_url, "prompt": prompt},
+            "parameters": {
+                "size": size,
+                "n": max(1, int(n or 1)),
+                "sketch_weight": int(sketch_weight),
+                "style": style,
+            },
+        }
+        return await self._submit_async(PATH_I2I_SUBMIT, body)
 
     # ── Polling / output extraction ───────────────────────────────────
 

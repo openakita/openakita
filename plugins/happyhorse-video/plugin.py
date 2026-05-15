@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -54,6 +55,14 @@ PLUGIN_ID = "happyhorse-video"
 from happyhorse_dashscope_client import (  # noqa: E402
     HappyhorseDashScopeClient,
     make_default_settings,
+)
+from happyhorse_image_models import (  # noqa: E402
+    DEFAULT_IMAGE_MODEL,
+    DEFAULT_IMAGE_SIZE,
+    ECOMMERCE_SCENES,
+    IMAGE_MODE_BY_ID,
+    build_image_catalog,
+    image_model_for,
 )
 from happyhorse_inline.oss_uploader import (  # noqa: E402
     OssUploader,
@@ -129,6 +138,39 @@ class CreateTaskBody(BaseModel):
     client_request_id: str = ""
     from_asset_ids: list[str] = Field(default_factory=list)
     extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageCreateTaskBody(BaseModel):
+    mode: str = "image_text2img"
+    prompt: str = ""
+    model_id: str = ""
+    size: str = ""
+    negative_prompt: str = ""
+    n: int = 1
+    watermark: bool = False
+    seed: int | None = None
+    prompt_extend: bool | None = None
+    thinking_mode: bool | None = None
+    enable_sequential: bool | None = None
+    images: list[str] = Field(default_factory=list)
+    image_url: str = ""
+    ref_image_url: str = ""
+    style_index: int = 0
+    style_ref_url: str = ""
+    ref_prompt: str = ""
+    noise_level: int = 300
+    ref_prompt_weight: float = 0.5
+    output_ratio: str = ""
+    x_scale: float | None = None
+    y_scale: float | None = None
+    best_quality: bool = False
+    sketch_style: str = "<watercolor>"
+    sketch_weight: int = 3
+    ecommerce_scenes: list[str] = Field(default_factory=list)
+    product_name: str = ""
+    client_request_id: str = ""
+    from_asset_ids: list[str] = Field(default_factory=list)
+    wait_for_completion: bool = True
 
 
 class CostPreviewBody(BaseModel):
@@ -349,11 +391,21 @@ class Plugin(PluginBase):
 
         video_path = str(task.get("video_path") or "")
         last_frame_path = str(task.get("last_frame_path") or "")
+        asset_paths = task.get("asset_paths") or {}
+        if not isinstance(asset_paths, dict):
+            asset_paths = {}
+        image_urls = asset_paths.get("image_urls") or []
+        image_paths = asset_paths.get("image_paths") or []
+        if isinstance(image_urls, str):
+            image_urls = [image_urls]
+        if isinstance(image_paths, str):
+            image_paths = [image_paths]
         local_paths: list[str] = []
         if video_path:
             local_paths.append(video_path)
         if last_frame_path:
             local_paths.append(last_frame_path)
+        local_paths.extend(str(p) for p in image_paths if p)
 
         asset_ids = task.get("asset_ids") or []
         if isinstance(asset_ids, str):
@@ -372,6 +424,7 @@ class Plugin(PluginBase):
             "video_path": video_path,
             "last_frame_url": str(task.get("last_frame_url") or ""),
             "last_frame_path": last_frame_path,
+            "image_urls": [str(u) for u in image_urls if u],
             "local_paths": local_paths,
             "asset_ids": list(asset_ids),
         }
@@ -449,7 +502,10 @@ class Plugin(PluginBase):
         out: dict[str, Any] = {}
         if not urls:
             return out
-        if mode == "i2v":
+        if mode.startswith("image_"):
+            out["images"] = list(urls)
+            out["image_url"] = urls[0]
+        elif mode == "i2v":
             out["first_frame_url"] = urls[0]
             if len(urls) > 1:
                 out["reference_urls"] = urls[1:]
@@ -675,9 +731,8 @@ class Plugin(PluginBase):
 
     async def _publish_local_asset(
         self,
-        *,
-        kind: str,
-        local_path: Path | str,
+        local_path: Path | str = "",
+        kind: str = "file",
         preview_url: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> str:
@@ -704,7 +759,298 @@ class Plugin(PluginBase):
             )
             return ""
 
-    # ── LLM tool definitions (13 tools) ───────────────────────────────
+    # ── Built-in image generation ─────────────────────────────────────
+
+    async def _create_image_task_internal(
+        self, body: ImageCreateTaskBody
+    ) -> dict[str, Any]:
+        if body.mode not in IMAGE_MODE_BY_ID:
+            raise HTTPException(status_code=400, detail=f"不支持的图片模式: {body.mode}")
+        if not self._client.has_api_key():
+            raise HTTPException(status_code=400, detail="请先在设置中配置 DashScope API Key")
+
+        params = body.model_dump()
+        if body.from_asset_ids:
+            expanded = await self._expand_from_asset_ids(body.from_asset_ids, body.mode)
+            if expanded.get("images") and not params.get("images"):
+                params["images"] = expanded["images"]
+            if expanded.get("image_url") and not params.get("image_url"):
+                params["image_url"] = expanded["image_url"]
+            params["from_asset_ids"] = list(body.from_asset_ids)
+        if params.get("image_url") and not params.get("images"):
+            params["images"] = [params["image_url"]]
+
+        self._validate_image_required_assets(body.mode, params)
+        cfg = self._read_settings()
+        model_key = body.model_id or str(cfg.get("default_image_model") or DEFAULT_IMAGE_MODEL)
+        size = body.size or str(cfg.get("default_image_size") or DEFAULT_IMAGE_SIZE)
+        params["model_id"] = model_key
+        params["size"] = size
+
+        task_id = await self._tm.create_task(
+            mode=body.mode,
+            model_id=model_key,
+            prompt=body.prompt or body.product_name,
+            params=params,
+            client_request_id=body.client_request_id,
+        )
+        await self._tm.update_task_safe(task_id, status="running")
+        self._broadcast("task_update", {"task_id": task_id, "status": "running", "mode": body.mode})
+
+        if body.wait_for_completion:
+            await self._run_image_task(task_id, params)
+        else:
+            self._api.spawn_task(
+                self._run_image_task(task_id, params),
+                name=f"{PLUGIN_ID}:image:{task_id}",
+            )
+        row = await self._tm.get_task(task_id)
+        return row or {"id": task_id, "status": "running", "mode": body.mode}
+
+    @staticmethod
+    def _validate_image_required_assets(mode: str, params: dict[str, Any]) -> None:
+        if mode in {"image_text2img", "image_ecommerce"} and not (
+            params.get("prompt") or params.get("product_name")
+        ):
+            raise HTTPException(status_code=400, detail="图片生成需要 prompt 或 product_name")
+        if mode in {"image_edit", "image_sketch"} and not params.get("prompt"):
+            raise HTTPException(status_code=400, detail="该图片模式需要 prompt")
+        if mode in {
+            "image_edit",
+            "image_style_repaint",
+            "image_background",
+            "image_outpaint",
+            "image_sketch",
+        } and not params.get("images"):
+            raise HTTPException(status_code=400, detail="该图片模式需要至少 1 张输入图片")
+
+    async def _run_image_task(self, task_id: str, params: dict[str, Any]) -> None:
+        mode = str(params.get("mode") or "image_text2img")
+        try:
+            image_urls = await self._submit_image_request(params)
+            if not image_urls:
+                raise HTTPException(status_code=502, detail="DashScope 未返回图片 URL")
+            image_paths, asset_ids = await self._download_publish_images(
+                task_id=task_id,
+                image_urls=image_urls,
+                prompt=str(params.get("prompt") or params.get("product_name") or ""),
+                mode=mode,
+            )
+            await self._tm.update_task_safe(
+                task_id,
+                status="succeeded",
+                last_frame_url=image_urls[0],
+                last_frame_path=image_paths[0] if image_paths else "",
+                asset_paths_json={"image_urls": image_urls, "image_paths": image_paths},
+                asset_ids_json=asset_ids,
+                completed_at=time.time(),
+            )
+            self._broadcast(
+                "task_update",
+                {"task_id": task_id, "status": "succeeded", "mode": mode, "image_urls": image_urls},
+            )
+        except Exception as exc:  # noqa: BLE001
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            await self._tm.update_task_safe(
+                task_id,
+                status="failed",
+                error_kind="image_generation",
+                error_message=str(detail),
+                completed_at=time.time(),
+            )
+            self._broadcast(
+                "task_update",
+                {"task_id": task_id, "status": "failed", "mode": mode, "error_message": str(detail)},
+            )
+
+    async def _submit_image_request(self, params: dict[str, Any]) -> list[str]:
+        mode = str(params.get("mode") or "image_text2img")
+        model = image_model_for(str(params.get("model_id") or ""))
+        images = [str(u) for u in (params.get("images") or []) if u]
+        n = max(1, min(4, int(params.get("n") or 1)))
+
+        if mode == "image_text2img" or mode == "image_edit":
+            prompt = str(params.get("prompt") or "")
+            if mode == "image_edit" and images:
+                prompt = str(params.get("prompt") or params.get("edit_instruction") or "")
+            result = await self._client.submit_image_multimodal(
+                prompt=prompt,
+                model=model.model_id,
+                images=images,
+                size=str(params.get("size") or DEFAULT_IMAGE_SIZE),
+                n=n,
+                negative_prompt=str(params.get("negative_prompt") or ""),
+                prompt_extend=params.get("prompt_extend"),
+                watermark=bool(params.get("watermark")),
+                seed=params.get("seed"),
+                thinking_mode=params.get("thinking_mode"),
+                enable_sequential=params.get("enable_sequential"),
+                async_mode=model.api_type != "sync",
+            )
+            return await self._image_urls_from_result(result)
+
+        if mode == "image_style_repaint":
+            tid = await self._client.submit_style_repaint(
+                image_url=images[0],
+                style_index=int(params.get("style_index") or 0),
+                style_ref_url=str(params.get("style_ref_url") or "") or None,
+            )
+            return await self._wait_for_image_urls(tid)
+
+        if mode == "image_background":
+            tid = await self._client.submit_background_generation(
+                base_image_url=images[0],
+                ref_prompt=str(params.get("ref_prompt") or params.get("prompt") or ""),
+                ref_image_url=str(params.get("ref_image_url") or ""),
+                n=n,
+                noise_level=int(params.get("noise_level") or 300),
+                ref_prompt_weight=float(params.get("ref_prompt_weight") or 0.5),
+            )
+            return await self._wait_for_image_urls(tid)
+
+        if mode == "image_outpaint":
+            tid = await self._client.submit_outpaint(
+                image_url=images[0],
+                output_ratio=str(params.get("output_ratio") or "") or None,
+                x_scale=params.get("x_scale"),
+                y_scale=params.get("y_scale"),
+                best_quality=bool(params.get("best_quality")),
+            )
+            return await self._wait_for_image_urls(tid)
+
+        if mode == "image_sketch":
+            tid = await self._client.submit_sketch_to_image(
+                sketch_image_url=images[0],
+                prompt=str(params.get("prompt") or ""),
+                style=str(params.get("sketch_style") or "<watercolor>"),
+                size=str(params.get("size") or "768*768"),
+                n=n,
+                sketch_weight=int(params.get("sketch_weight") or 3),
+            )
+            return await self._wait_for_image_urls(tid)
+
+        if mode == "image_ecommerce":
+            product_name = str(params.get("product_name") or "").strip()
+            base_prompt = str(params.get("prompt") or product_name)
+            scene_ids = set(params.get("ecommerce_scenes") or ["hero", "scene"])
+            prompts = []
+            for scene in ECOMMERCE_SCENES:
+                if scene["id"] in scene_ids:
+                    prompts.append(f"{base_prompt}，{scene['prompt']}，商品：{product_name}".strip("，"))
+            if not prompts:
+                prompts = [base_prompt]
+            urls: list[str] = []
+            for prompt in prompts[:4]:
+                result = await self._client.submit_image_multimodal(
+                    prompt=prompt,
+                    model=model.model_id,
+                    size=str(params.get("size") or DEFAULT_IMAGE_SIZE),
+                    n=1,
+                    watermark=bool(params.get("watermark")),
+                    async_mode=model.api_type != "sync",
+                    thinking_mode=params.get("thinking_mode"),
+                )
+                urls.extend(await self._image_urls_from_result(result))
+            return urls
+
+        raise HTTPException(status_code=400, detail=f"不支持的图片模式: {mode}")
+
+    async def _image_urls_from_result(self, result: dict[str, Any]) -> list[str]:
+        task_id = str(result.get("task_id") or "")
+        if result.get("async") and task_id:
+            return await self._wait_for_image_urls(task_id)
+        return self._extract_image_urls(result)
+
+    async def _wait_for_image_urls(
+        self, dashscope_task_id: str, *, timeout_s: int = 180, interval: float = 5.0
+    ) -> list[str]:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            result = await self._client.query_task(dashscope_task_id)
+            if result.get("is_ok"):
+                return self._extract_image_urls(result.get("raw") or result)
+            if result.get("is_done"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=result.get("error_message") or "DashScope 图片任务失败",
+                )
+            await asyncio.sleep(interval)
+        raise HTTPException(status_code=504, detail="等待 DashScope 图片任务完成超时")
+
+    @staticmethod
+    def _extract_image_urls(result: dict[str, Any]) -> list[str]:
+        urls: list[str] = []
+        output = result.get("output") if isinstance(result.get("output"), dict) else {}
+        for choice in output.get("choices", []) if isinstance(output, dict) else []:
+            message = choice.get("message", {}) if isinstance(choice, dict) else {}
+            for item in message.get("content", []) if isinstance(message, dict) else []:
+                if not isinstance(item, dict):
+                    continue
+                value = item.get("image") or item.get("image_url")
+                if isinstance(value, dict):
+                    value = value.get("url")
+                if isinstance(value, str) and value.startswith("http"):
+                    urls.append(value)
+        for source in (output, result):
+            if not isinstance(source, dict):
+                continue
+            for item in source.get("results", []) or []:
+                if isinstance(item, dict):
+                    value = item.get("url") or item.get("image_url") or item.get("image")
+                    if isinstance(value, str) and value.startswith("http"):
+                        urls.append(value)
+                elif isinstance(item, str) and item.startswith("http"):
+                    urls.append(item)
+            for key in ("image_url", "result_url", "output_image_url", "image"):
+                value = source.get(key)
+                if isinstance(value, str) and value.startswith("http"):
+                    urls.append(value)
+            value = source.get("image_urls")
+            if isinstance(value, list):
+                urls.extend(str(u) for u in value if isinstance(u, str) and u.startswith("http"))
+        return list(dict.fromkeys(urls))
+
+    async def _download_publish_images(
+        self,
+        *,
+        task_id: str,
+        image_urls: list[str],
+        prompt: str,
+        mode: str,
+    ) -> tuple[list[str], list[str]]:
+        import httpx
+
+        out_dir = self._data_dir / "outputs" / "images" / task_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        paths: list[str] = []
+        asset_ids: list[str] = []
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=90.0, write=10.0, pool=5.0),
+            follow_redirects=True,
+        ) as cli:
+            for idx, url in enumerate(image_urls, start=1):
+                name = url.split("?", 1)[0].rsplit("/", 1)[-1] or f"image_{idx}.png"
+                if "." not in name:
+                    name = f"{name}.png"
+                safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:120] or f"image_{idx}.png"
+                path = out_dir / f"{idx:02d}_{safe}"
+                resp = await cli.get(url)
+                if resp.status_code != 200:
+                    logger.warning("happyhorse-video image download failed: %s", resp.status_code)
+                    continue
+                path.write_bytes(resp.content)
+                paths.append(str(path))
+                aid = await self._publish_local_asset(
+                    kind="image",
+                    local_path=path,
+                    preview_url=url,
+                    metadata={"plugin": PLUGIN_ID, "task_id": task_id, "mode": mode, "prompt": prompt},
+                )
+                if aid:
+                    asset_ids.append(aid)
+        return paths, asset_ids
+
+    # ── LLM tool definitions (video + image tools) ────────────────────
 
     def _tool_definitions(self) -> list[dict[str, Any]]:
         common_workbench_note = (
@@ -795,7 +1141,85 @@ class Plugin(PluginBase):
                 "_mode": mode,  # internal — not part of MCP schema
             }
 
+        image_note = (
+            "Returns JSON with {ok, task_id, status, mode, model_id, "
+            "image_urls, local_paths, asset_ids}. Generated images are "
+            "downloaded and published to the Asset Bus, so returned asset_ids "
+            "can be passed to hh_i2v / hh_r2v / hh_photo_speak through "
+            "from_asset_ids."
+        )
+
+        def _image_tool(name: str, mode: str, *, description: str) -> dict[str, Any]:
+            return {
+                "name": name,
+                "description": f"{description} {image_note}",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string"},
+                        "model_id": {
+                            "type": "string",
+                            "description": "Image model id, e.g. wan27-pro, wan27, qwen-pro, qwen, wan26.",
+                        },
+                        "size": {"type": "string", "description": "Image size, e.g. 2K, 1024*1024."},
+                        "negative_prompt": {"type": "string"},
+                        "n": {"type": "integer", "default": 1},
+                        "images": {"type": "array", "items": {"type": "string"}},
+                        "image_url": {"type": "string"},
+                        "product_name": {"type": "string"},
+                        "style_index": {"type": "integer"},
+                        "ref_prompt": {"type": "string"},
+                        "output_ratio": {"type": "string"},
+                        "sketch_style": {"type": "string"},
+                        "ecommerce_scenes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "hero / white / scene / detail",
+                        },
+                        "from_asset_ids": {"type": "array", "items": {"type": "string"}},
+                        "wait_for_completion": {"type": "boolean", "default": True},
+                    },
+                    "required": [] if mode in {"image_style_repaint", "image_outpaint"} else ["prompt"],
+                },
+                "_mode": mode,
+            }
+
         return [
+            _image_tool(
+                "hh_image_create",
+                "image_text2img",
+                description="Create images inside HappyHorse Studio using DashScope Wan/Qwen image models.",
+            ),
+            _image_tool(
+                "hh_image_edit",
+                "image_edit",
+                description="Edit or fuse input images using a text instruction.",
+            ),
+            _image_tool(
+                "hh_image_style_repaint",
+                "image_style_repaint",
+                description="Repaint an input image into a preset visual style.",
+            ),
+            _image_tool(
+                "hh_image_background",
+                "image_background",
+                description="Generate or replace product/image backgrounds.",
+            ),
+            _image_tool(
+                "hh_image_outpaint",
+                "image_outpaint",
+                description="Expand an input image to a new ratio or larger canvas.",
+            ),
+            _image_tool(
+                "hh_image_sketch",
+                "image_sketch",
+                description="Turn a sketch image and prompt into a finished image.",
+            ),
+            _image_tool(
+                "hh_image_ecommerce",
+                "image_ecommerce",
+                description="Generate ecommerce hero/white/detail/lifestyle images for a product.",
+            ),
             _video_tool(
                 "hh_t2v",
                 "t2v",
@@ -970,6 +1394,19 @@ class Plugin(PluginBase):
         if tool_name == "hh_long_video_create":
             return await self._tool_long_video_create(args)
 
+        image_mode_lookup = {
+            "hh_image_create": "image_text2img",
+            "hh_image_edit": "image_edit",
+            "hh_image_style_repaint": "image_style_repaint",
+            "hh_image_background": "image_background",
+            "hh_image_outpaint": "image_outpaint",
+            "hh_image_sketch": "image_sketch",
+            "hh_image_ecommerce": "image_ecommerce",
+        }
+        image_mode = image_mode_lookup.get(tool_name)
+        if image_mode is not None:
+            return await self._tool_image(image_mode, args)
+
         # Video / digital-human tools — derive mode from tool name.
         mode_lookup = {
             "hh_t2v": "t2v",
@@ -996,6 +1433,30 @@ class Plugin(PluginBase):
             task = await self._create_task_internal(body)
             if args.get("wait_for_completion", True):
                 task = await self._wait_for_task(task["id"])
+        except HTTPException as e:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "terminal": e.status_code in (400, 401, 403, 413, 422),
+                    "error": e.detail if isinstance(e.detail, str) else str(e.detail),
+                    "status_code": e.status_code,
+                },
+                ensure_ascii=False,
+            )
+        except Exception as e:  # noqa: BLE001
+            return json.dumps(
+                {"ok": False, "error": str(e), "terminal": True},
+                ensure_ascii=False,
+            )
+        return json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
+
+    async def _tool_image(self, mode: str, args: dict[str, Any]) -> str:
+        try:
+            body = ImageCreateTaskBody(
+                mode=mode,
+                **{k: v for k, v in args.items() if k in ImageCreateTaskBody.model_fields},
+            )
+            task = await self._create_image_task_internal(body)
         except HTTPException as e:
             return json.dumps(
                 {
@@ -1147,6 +1608,7 @@ class Plugin(PluginBase):
                     "models": cat.models,
                     "default_models": cat.default_models,
                     "audio_limits": cat.audio_limits,
+                    "image": build_image_catalog(),
                 },
                 "has_api_key": self._client.has_api_key(),
                 "oss_configured": self._oss.is_configured(),
@@ -1211,6 +1673,11 @@ class Plugin(PluginBase):
         @router.post("/tasks")
         async def create_task(body: CreateTaskBody) -> dict:
             row = await self._create_task_internal(body)
+            return {"ok": True, "task": self._task_to_tool_payload(row)}
+
+        @router.post("/image-tasks")
+        async def create_image_task(body: ImageCreateTaskBody) -> dict:
+            row = await self._create_image_task_internal(body)
             return {"ok": True, "task": self._task_to_tool_payload(row)}
 
         @router.get("/tasks")

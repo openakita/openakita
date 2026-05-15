@@ -10,6 +10,13 @@ HappyhorsePlugin = _HH.Plugin
 
 EXPECTED_TOOLS = {
     "hh_t2v",
+    "hh_image_create",
+    "hh_image_edit",
+    "hh_image_style_repaint",
+    "hh_image_background",
+    "hh_image_outpaint",
+    "hh_image_sketch",
+    "hh_image_ecommerce",
     "hh_i2v",
     "hh_r2v",
     "hh_video_edit",
@@ -25,7 +32,7 @@ EXPECTED_TOOLS = {
 }
 
 
-def test_plugin_registers_thirteen_tools():
+def test_plugin_registers_video_and_image_tools():
     plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
     tools = plugin._tool_definitions()
     names = {t["name"] for t in tools}
@@ -81,5 +88,16 @@ def test_long_video_tool_requires_segments():
 def test_module_exposes_pydantic_bodies():
     """plugin.py must export its request bodies so on_load can use them."""
     assert hasattr(_HH, "CreateTaskBody")
+    assert hasattr(_HH, "ImageCreateTaskBody")
     assert hasattr(_HH, "LongVideoCreateBody")
     assert hasattr(_HH, "PromptOptimizeBody")
+
+
+def test_image_tools_publish_asset_ids_contract():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    schema = by_name["hh_image_create"]["input_schema"]
+    assert "from_asset_ids" in schema["properties"]
+    assert "model_id" in schema["properties"]
+    assert "size" in schema["properties"]
