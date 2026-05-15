@@ -248,12 +248,10 @@ jobs:
           cache: npm
           cache-dependency-path: apps/setup-center/package-lock.json
 
-      - name: Isolate Rust from macOS image shims
+      - name: Reset Rust user dirs on macOS
         if: runner.os == 'macOS'
         shell: bash
-        run: |
-          echo "RUSTUP_HOME=$RUNNER_TEMP/openakita-rustup" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=$RUNNER_TEMP/openakita-cargo" >> "$GITHUB_ENV"
+        run: rm -rf "$HOME/.cargo" "$HOME/.rustup"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -268,6 +266,7 @@ jobs:
           workspaces: |
             apps/setup-center/src-tauri -> target
           prefix-key: "release-${{ matrix.suffix }}"
+          cache-bin: false
 
       - name: Build web frontend for remote browser access
         working-directory: apps/setup-center
