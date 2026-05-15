@@ -417,6 +417,10 @@ class Plugin(PluginBase):
                     {"ok": False, "task_id": tid, "error": "task not found"},
                     ensure_ascii=False,
                 )
+            # 视频生成本身就是分钟量级的工作（10s 视频常需 3~5 分钟），
+            # 这里不再做"超过 N 秒就标 timeout"的硬性自动失败——那会把云端
+            # 后期才完成的任务也误杀。改为只回传当前 DB 状态；上层若觉得卡死，
+            # 应该使用 org_escalate / 用户手动 force_close_chain 处理。
             return _json.dumps(self._task_to_tool_payload(task), ensure_ascii=False)
 
         if tool_name == "seedance_list":
@@ -449,10 +453,12 @@ class Plugin(PluginBase):
         lf_local = task.get("last_frame_local_path")
         if lf_local:
             local_paths.append(lf_local)
+        terminal_failures = {"failed", "timeout", "cancelled"}
+        status_str = task.get("status") or ""
         base = {
-            "ok": task.get("status") != "failed",
+            "ok": status_str not in terminal_failures,
             "task_id": task.get("id"),
-            "status": task.get("status"),
+            "status": status_str,
             "mode": task.get("mode"),
             "video_url": task.get("video_url") or "",
             "video_path": vp or "",
@@ -461,8 +467,29 @@ class Plugin(PluginBase):
             "local_paths": local_paths,
             "asset_ids": list(task.get("asset_ids") or []),
         }
+        if status_str in terminal_failures:
+            base["terminal"] = True
         if task.get("error_message"):
             base["error_message"] = task["error_message"]
+        # 等待超时但云端还在跑 → 透传 wait_hint 让 LLM 知道"先轮询 status，
+        # 不要重新 create"。即便 status=running 也会带回这个字段。
+        if task.get("wait_hint"):
+            base["wait_hint"] = task["wait_hint"]
+        # 云端 succeeded 但本地下载未完成（asset_ids=[] / local_paths=[]）：
+        # workbench 节点必须有 asset_ids 才能交付，给 LLM 一个明确的兜底建议，
+        # 否则它会以为任务失败而循环重新生成。
+        if (
+            status_str == "succeeded"
+            and base["video_url"]
+            and not local_paths
+            and not base["asset_ids"]
+        ):
+            base["download_warning"] = (
+                "云端任务已成功（video_url 可用）但本地素材下载/发布失败。"
+                "workbench 节点应直接使用 video_url 作为交付物（org_submit_deliverable "
+                "时把 video_url 写进 deliverable 内容），**不要**再调用 seedance_create "
+                "重新生成；如需重试下载请用 seedance_status 几秒后再查询，后台会补抓。"
+            )
         if brief:
             base["prompt"] = (task.get("prompt") or "")[:200]
             base["created_at"] = task.get("created_at")
@@ -482,8 +509,12 @@ class Plugin(PluginBase):
         if not task_id or task.get("status") not in ("pending", "running"):
             return task
 
-        timeout_s = int(args.get("wait_timeout_s") or 900)
-        deadline = time.time() + max(30, timeout_s)
+        # 默认 30 分钟，足以覆盖 12 秒视频 + 1080p 高负载场景；同步等待退出后
+        # **不会**改写 DB 里的状态——后台 ``_poll_running_tasks`` 仍会继续轮询
+        # 云端任务，云端在 30 分钟之外完成时下载逻辑会自然把 video_url /
+        # local_video_path / asset_ids 补齐。
+        timeout_s = int(args.get("wait_timeout_s") or 1800)
+        deadline = time.time() + max(60, timeout_s)
         while time.time() < deadline:
             await self._poll_running_tasks()
             latest = await self._tm.get_task(task_id)
@@ -493,9 +524,21 @@ class Plugin(PluginBase):
                     return latest
             await asyncio.sleep(10)
 
+        # 等待超时——但任务在云端可能仍在生成。不再硬性把 DB 状态推成 ``timeout``，
+        # 那会让后台轮询不再补抓云端最终结果（导致视频永久丢失）。这里只附带一个
+        # 软性 ``wait_hint`` 字段告诉 LLM "已超过同步等待时长但任务仍可能在跑，
+        # 请稍后用 seedance_status 查询，**不要**重新 seedance_create"，
+        # ``_task_to_tool_payload`` 拿到 status=running 时 ok=true，从而抑制
+        # LLM 的重试创建冲动（之前观察到的 producer 死循环主要诱因）。
         task = await self._tm.get_task(task_id) or task
         task = dict(task)
-        task["error_message"] = task.get("error_message") or "等待 Seedance 任务完成超时"
+        wait_hint = (
+            "同步等待已超过 {mins} 分钟，**任务仍在云端处理中**（DB 状态未变更）。"
+            "请使用 seedance_status(task_id=\"{tid}\") 查询，**不要**再调用 "
+            "seedance_create 重新生成；后台轮询会在云端完成时自动补齐 "
+            "video_url / asset_ids。如需放弃，请直接通过 org_escalate 上报。"
+        ).format(mins=max(1, int(timeout_s / 60)), tid=task_id)
+        task["wait_hint"] = wait_hint
         return task
 
     @staticmethod
@@ -1233,69 +1276,119 @@ class Plugin(PluginBase):
             logger.warning("seedance-video: httpx unavailable, skip download")
             return
 
+        async def _download_with_retries(
+            client: "httpx.AsyncClient",
+            url: str,
+            target: Path,
+            label: str,
+            *,
+            attempts: int = 3,
+            backoff_base: float = 1.5,
+        ) -> bool:
+            """Download ``url`` to ``target`` with exponential backoff.
+
+            Returns True on success, False after exhausting retries.  Common
+            transient failures here are DNS hiccups (``[Errno 11001]
+            getaddrinfo failed`` was the one observed in production) and
+            short TLS resets — both of which usually clear within a few
+            seconds.  Without retries one bad lookup leaves ``asset_ids=[]``
+            forever and the LLM enters an infinite ``seedance_create`` loop.
+            """
+            last_exc: Exception | None = None
+            for attempt in range(1, attempts + 1):
+                try:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+                    target.write_bytes(resp.content)
+                    if attempt > 1:
+                        logger.info(
+                            "seedance-video: %s download succeeded on retry %d",
+                            label, attempt,
+                        )
+                    return True
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < attempts:
+                        delay = backoff_base ** attempt
+                        logger.warning(
+                            "seedance-video: %s download attempt %d/%d failed: %s — "
+                            "retry in %.1fs",
+                            label, attempt, attempts, exc, delay,
+                        )
+                        try:
+                            await asyncio.sleep(delay)
+                        except asyncio.CancelledError:
+                            raise
+                    else:
+                        logger.warning(
+                            "seedance-video: %s download exhausted %d attempts: %s",
+                            label, attempts, exc,
+                        )
+            _ = last_exc  # 留作 logger 上下文（已在循环中输出）。
+            return False
+
         video_path: Path | None = None
         last_frame_path: Path | None = None
         try:
             async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as http:
-                try:
-                    resp = await http.get(video_url)
-                    resp.raise_for_status()
-                    video_path = downloads_dir / f"{task_id}.mp4"
-                    video_path.write_bytes(resp.content)
-                except Exception as exc:
-                    logger.warning("seedance-video: video download failed: %s", exc)
-                    video_path = None
+                video_target = downloads_dir / f"{task_id}.mp4"
+                if await _download_with_retries(http, video_url, video_target, "video"):
+                    video_path = video_target
+
                 if last_frame_url:
-                    try:
-                        ext = ".png"
-                        low = last_frame_url.lower()
-                        if ".jpg" in low or ".jpeg" in low:
-                            ext = ".jpg"
-                        elif ".webp" in low:
-                            ext = ".webp"
-                        resp2 = await http.get(last_frame_url)
-                        resp2.raise_for_status()
-                        last_frame_path = downloads_dir / f"{task_id}_last_frame{ext}"
-                        last_frame_path.write_bytes(resp2.content)
-                    except Exception as exc:
-                        logger.warning(
-                            "seedance-video: last-frame download failed: %s", exc,
-                        )
-                        last_frame_path = None
+                    ext = ".png"
+                    low = last_frame_url.lower()
+                    if ".jpg" in low or ".jpeg" in low:
+                        ext = ".jpg"
+                    elif ".webp" in low:
+                        ext = ".webp"
+                    lf_target = downloads_dir / f"{task_id}_last_frame{ext}"
+                    if await _download_with_retries(
+                        http, last_frame_url, lf_target, "last-frame",
+                    ):
+                        last_frame_path = lf_target
         except Exception as exc:
             logger.warning("seedance-video: download session error: %s", exc)
 
         asset_ids: list[str] = []
-        if video_path is not None:
-            try:
-                aid = await self._api.publish_asset(
-                    asset_kind="video",
-                    source_path=str(video_path),
-                    preview_url=video_url,
-                    metadata={
-                        "task_id": task_id,
-                        "prompt": (prompt or "")[:500],
-                        "origin": "seedance-video",
-                        "role": "video",
-                    },
-                    shared_with=["*"],
-                    ttl_seconds=86400,
-                )
-                if aid:
-                    asset_ids.append(aid)
-            except Exception as exc:
-                logger.warning("seedance-video: publish_asset(video) failed: %s", exc)
-        if last_frame_path is not None:
+        # 视频资源：优先发布带本地文件的 asset；本地下载失败时回退为 URL-only
+        # asset（仅 preview_url），让下游 workbench 仍能拿到 ``asset_ids`` 进行
+        # 后续处理（剪映 / 字幕 / 长视频拼接），避免 LLM 因 asset_ids=[] 误判
+        # 失败而循环重新生成（线上 wb-seedance-video DNS 失败死循环的直接成因）。
+        try:
+            aid = await self._api.publish_asset(
+                asset_kind="video",
+                source_path=str(video_path) if video_path is not None else None,
+                preview_url=video_url,
+                metadata={
+                    "task_id": task_id,
+                    "prompt": (prompt or "")[:500],
+                    "origin": "seedance-video",
+                    "role": "video",
+                    "url_only": video_path is None,
+                },
+                shared_with=["*"],
+                ttl_seconds=86400,
+            )
+            if aid:
+                asset_ids.append(aid)
+        except Exception as exc:
+            logger.warning("seedance-video: publish_asset(video) failed: %s", exc)
+        if last_frame_url:
+            # 末帧同样支持 URL-only 回退（即便本地下载失败也保留可访问 URL）。
             try:
                 aid = await self._api.publish_asset(
                     asset_kind="image",
-                    source_path=str(last_frame_path),
-                    preview_url=last_frame_url or None,
+                    source_path=(
+                        str(last_frame_path) if last_frame_path is not None else None
+                    ),
+                    preview_url=last_frame_url,
                     metadata={
                         "task_id": task_id,
                         "prompt": (prompt or "")[:500],
                         "origin": "seedance-video",
                         "role": "last_frame",
+                        "url_only": last_frame_path is None,
                     },
                     shared_with=["*"],
                     ttl_seconds=86400,
@@ -1320,7 +1413,8 @@ class Plugin(PluginBase):
                 task_id, exc,
             )
         logger.info(
-            "seedance-video: task %s materialised → video=%s last_frame=%s assets=%d",
+            "seedance-video: task %s materialised → video=%s(local) last_frame=%s(local) "
+            "assets=%d (url-only fallback when local=False)",
             task_id,
             bool(video_path),
             bool(last_frame_path),

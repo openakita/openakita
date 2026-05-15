@@ -159,6 +159,13 @@ class OrgRuntime:
         # 需要 coordinator 立即处理的消息时被 set，用于 `org_wait_for_deliverable`
         # 跳出阻塞，避免 coordinator 阻塞导致的死锁。key=org_id:node_id。
         self._node_inbox_events: dict[str, asyncio.Event] = {}
+        # P1 watchdog：同一节点连续 ``org_wait_for_deliverable`` 超时计数。
+        # 超过阈值（``_wait_timeout_escalate_after``）后会在 wait 工具的返回值里
+        # 注入"强制 escalate / submit 阶段性结果"指令，打破等待循环。
+        # 任意一次 wait 提前返回（chain 关闭/inbox 触发）即清零。
+        # key=org_id:node_id。
+        self._node_wait_timeout_streak: dict[str, int] = {}
+        self._wait_timeout_escalate_after: int = 3
         # 已验收/打回/取消的任务链集合（按组织维度）。用于：
         #   1) 抑制已关闭 chain 的消息重新唤醒 agent ReAct；
         #   2) 阻断对已关闭 chain 的 delegate/submit；
@@ -1123,6 +1130,72 @@ class OrgRuntime:
             return False
         bucket = self._closed_chains.get(org_id)
         return bool(bucket and chain_id in bucket)
+
+    def force_close_chain(
+        self,
+        org_id: str,
+        chain_id: str,
+        reason: str = "manual force close",
+    ) -> dict:
+        """Operator escape hatch: force-close a stuck chain and wake all waiters.
+
+        Designed for the scenario observed in production where a workbench
+        tool (e.g. seedance_create) stays in ``running`` long enough for both
+        the leaf node and the parent coordinator to bidirectionally block in
+        ``org_wait_for_deliverable``.  Calling this method:
+
+        1. Marks the chain as closed (so future ``org_wait_for_deliverable``
+           treats it as already finalized).
+        2. Sets the corresponding ``_chain_events`` so any in-flight wait
+           returns immediately.
+        3. Triggers ``_node_inbox_events`` for every node currently subscribed
+           to this chain so coordinators wake up.
+        4. Resets per-node consecutive wait-timeout streak counters.
+
+        Returns a small status dict for API/CLI consumers.
+        """
+        if not org_id or not chain_id:
+            return {
+                "ok": False,
+                "error": "org_id 与 chain_id 都不能为空",
+            }
+        already_closed = self.is_chain_closed(org_id, chain_id)
+        self._mark_chain_closed(org_id, chain_id)
+
+        # 唤醒所有该 org 下、可能被卡在 wait 的节点 inbox 事件，避免它们
+        # 还要等到下一次 60s 超时才感知到我们已经强制关闭。
+        woken_inboxes: list[str] = []
+        prefix = f"{org_id}:"
+        for key, ev in list(self._node_inbox_events.items()):
+            if key.startswith(prefix):
+                try:
+                    ev.set()
+                    woken_inboxes.append(key)
+                except Exception:
+                    logger.debug(
+                        "[force_close_chain] inbox event set failed for %s",
+                        key, exc_info=True,
+                    )
+
+        # 清零相关节点的 wait-timeout 连击计数，避免下次 wait 一进来就
+        # 命中 watchdog escalate 路径。
+        for key in list(self._node_wait_timeout_streak.keys()):
+            if key.startswith(prefix):
+                self._node_wait_timeout_streak[key] = 0
+
+        logger.warning(
+            "[force_close_chain] org=%s chain=%s already_closed=%s reason=%r "
+            "woken_inboxes=%d",
+            org_id, chain_id, already_closed, reason, len(woken_inboxes),
+        )
+        return {
+            "ok": True,
+            "org_id": org_id,
+            "chain_id": chain_id,
+            "already_closed": already_closed,
+            "woken_inboxes": woken_inboxes,
+            "reason": reason,
+        }
 
     def _mark_chain_closed(self, org_id: str, chain_id: str) -> None:
         """Record that a chain has been closed (accept/reject/cancel)."""
@@ -3703,6 +3776,7 @@ class OrgRuntime:
             ``{"ok": True, "cancelled_roots": [...], "command_id": ...}``
         """
         cancelled_roots: list[str] = []
+        chains_to_close: set[str] = set()
         for (oid, root_id), tracker in list(self._active_user_cmd.items()):
             if oid != org_id:
                 continue
@@ -3714,6 +3788,38 @@ class OrgRuntime:
             tracker.auto_stopped = True
             tracker.completed.set()
             cancelled_roots.append(root_id)
+            # 收集 tracker 持有的全部 open chains，连同 root_chain_id 子树。
+            # 这是"真·强制终止"的关键：仅 cancel BUSY 节点不够——已经在
+            # ``org_wait_for_deliverable`` 里阻塞的协调员 / 已派发但未收到
+            # 交付的 wb-* 节点，需要让它们的 chain 立即被标记为 closed，
+            # waiter 才会从 60s 超时阻塞里解锁。
+            try:
+                chains_to_close.update(tracker.open_chains)
+            except Exception:
+                pass
+            if tracker.root_chain_id:
+                chains_to_close.add(tracker.root_chain_id)
+                try:
+                    chains_to_close.update(
+                        self._collect_chain_subtree(tracker.root_chain_id)
+                    )
+                except Exception:
+                    pass
+
+        # 强制关闭所有 tracker 名下的 chain；force_close_chain 会同时唤醒
+        # _chain_events / _node_inbox_events，并清零 wait-timeout streak。
+        for cid in chains_to_close:
+            try:
+                self.force_close_chain(
+                    org_id=org_id,
+                    chain_id=cid,
+                    reason=f"user cancel cmd={command_id or '*'}",
+                )
+            except Exception as e:
+                logger.warning(
+                    "[OrgRuntime] cancel_user_command force_close_chain(%s) failed: %s",
+                    cid, e,
+                )
 
         try:
             await self._soft_stop_org(org_id)
@@ -3735,13 +3841,15 @@ class OrgRuntime:
             pass
 
         logger.info(
-            "[OrgRuntime] cancel_user_command: org=%s cmd=%s roots=%s",
-            org_id, command_id, cancelled_roots,
+            "[OrgRuntime] cancel_user_command: org=%s cmd=%s roots=%s "
+            "chains_closed=%d",
+            org_id, command_id, cancelled_roots, len(chains_to_close),
         )
         return {
             "ok": True,
             "command_id": command_id,
             "cancelled_roots": cancelled_roots,
+            "chains_closed": sorted(chains_to_close),
         }
 
     def _has_active_delegations(self, org_id: str, root_node_id: str) -> bool:

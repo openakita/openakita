@@ -585,6 +585,19 @@ class IntentAnalyzer:
     ) -> IntentResult:
         """Analyze user message intent. Rule-based shortcut for obvious greetings
         and simple queries, LLM analysis for everything else."""
+        # P1 兜底（org-delegate guard）：组织编排在派发任务时，会把 ``task_chain_id=...``
+        # / ``org_submit_deliverable`` / "完成后请用…提交" 等关键短语写进消息体。
+        # 若这种消息被 IntentAnalyzer 误判成 chat（实际生产中观察到 wb-seedance-video
+        # 第一次确实被判成 chat），workbench 节点就会直接回个客套话，不会发起任何工具，
+        # 进而触发 producer 一直等不到 deliverable 的死循环。
+        # 这里在所有 fast-path 之前先用强规则覆盖，无论 LLM 怎么判都强制 TASK。
+        if _looks_like_org_delegated_task(message):
+            logger.info(
+                "[IntentAnalyzer] org-delegated task markers detected — "
+                "forcing intent=task / task_type=creation regardless of LLM"
+            )
+            return _make_org_delegated_intent(message)
+
         # Rule-based fast-path for simple queries (math, date, definitions)
         query_result = _try_fast_query_shortcut(message)
         if query_result is not None:
@@ -610,7 +623,21 @@ class IntentAnalyzer:
                 return _make_default(message)
 
             logger.info(f"[IntentAnalyzer] Raw output: {raw_output[:200]}")
-            return _parse_intent_output(raw_output, message)
+            parsed = _parse_intent_output(raw_output, message)
+
+            # 二次兜底：极少数情况下 LLM 输出虽然合法，但仍把派发任务认成 CHAT/QUERY，
+            # 这里再校一次（与上面 fast-path 形成 belt-and-suspenders）。
+            if (
+                parsed.intent in (IntentType.CHAT, IntentType.QUERY)
+                and _looks_like_org_delegated_task(message)
+            ):
+                logger.warning(
+                    "[IntentAnalyzer] LLM classified org-delegated task as %s — "
+                    "overriding to TASK",
+                    parsed.intent,
+                )
+                return _make_org_delegated_intent(message)
+            return parsed
 
         except Exception as e:
             logger.warning(f"[IntentAnalyzer] LLM analysis failed: {e}, using default")
@@ -662,6 +689,79 @@ def _make_default(message: str) -> IntentResult:
         requires_tools=True,
         evidence_required=False,
         evidence_recommended=rule_evidence,
+        requires_project_context=requires_project_context,
+        risk_level_hint=RiskLevelHint.NONE,
+    )
+
+
+# ----------------------------------------------------------------------------
+# Org-delegated task fallback (P1 鲁棒性 2.2)
+#
+# 组织编排在派发任务时 message 里一定会包含
+#   - "task_chain_id=" 或 "chain_id="
+#   - "org_submit_deliverable" 或 "完成后请用 org_submit_deliverable"
+#   - 可能还会出现 "from_asset_ids" / "deliverable_format"
+# 这种消息**必须**走 task 流程；如果被分流到 chat，会导致 workbench 节点直接
+# 用客套话回应，不发起任何工具调用，最终触发 producer 端的 wait 循环。
+# ----------------------------------------------------------------------------
+
+_ORG_DELEGATED_PRIMARY_MARKERS: tuple[str, ...] = (
+    "task_chain_id=",
+    "task_chain_id:",
+    "chain_id=",
+    "chain_id:",
+)
+
+_ORG_DELEGATED_SECONDARY_MARKERS: tuple[str, ...] = (
+    "org_submit_deliverable",
+    "org_accept_deliverable",
+    "完成后请用",
+    "完成后用",
+    "请用 org_submit",
+    "请使用 org_submit",
+    "from_asset_ids",
+    "deliverable_format",
+    "from_node",
+)
+
+
+def _looks_like_org_delegated_task(message: str | None) -> bool:
+    """Whether the message looks like an org-delegate payload.
+
+    Requires at least one *primary* marker (a task_chain_id/chain_id field)
+    plus one *secondary* marker (a delegation verb or an asset/deliverable
+    keyword) to avoid false positives on unrelated messages that happen to
+    mention the word "chain".
+    """
+    if not message:
+        return False
+    text = str(message)
+    has_primary = any(m in text for m in _ORG_DELEGATED_PRIMARY_MARKERS)
+    if not has_primary:
+        return False
+    return any(m in text for m in _ORG_DELEGATED_SECONDARY_MARKERS)
+
+
+def _make_org_delegated_intent(message: str) -> IntentResult:
+    """Build a high-confidence TASK intent for org-delegated messages."""
+    tool_hints, requires_project_context = _infer_tool_action_hints(message)
+    return IntentResult(
+        intent=IntentType.TASK,
+        confidence=0.95,
+        task_definition=message[:600],
+        task_type="creation",
+        tool_hints=tool_hints,
+        memory_keywords=[],
+        force_tool=True,
+        todo_required=False,
+        raw_output="[fallback:org_delegated]",
+        prompt_depth=PromptDepth.STANDARD,
+        memory_scope=MemoryScope.PINNED_ONLY,
+        capability_scope=[],
+        catalog_scope=[],
+        requires_tools=True,
+        evidence_required=True,
+        evidence_recommended=True,
         requires_project_context=requires_project_context,
         risk_level_hint=RiskLevelHint.NONE,
     )

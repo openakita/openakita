@@ -1852,6 +1852,64 @@ def status():
     asyncio.run(_status())
 
 
+@app.command(name="org-reset-chain")
+def org_reset_chain(
+    org: str = typer.Option(..., "--org", help="组织 ID（例如 org_87e0c922be93）"),
+    chain: str = typer.Option(..., "--chain", help="要强制关闭的 task_chain_id"),
+    reason: str = typer.Option(
+        "manual reset via CLI",
+        "--reason",
+        help="备注，会写入服务端日志便于事后追溯",
+    ),
+    api: str = typer.Option(
+        "http://127.0.0.1:18900",
+        "--api",
+        help="OpenAkita API 服务地址（默认本地 18900）",
+    ),
+):
+    """运营兜底：强制关闭某条卡死的组织任务链。
+
+    用法（需要 ``openakita serve`` 已经在跑）::
+
+        openakita org-reset-chain \\
+            --org org_87e0c922be93 \\
+            --chain "2026-05-15T03:27:45.404881+00:00:producer" \\
+            --reason "seedance 卡死手动终止"
+
+    服务端会立即把该 chain 标记为 closed，唤醒所有正在 ``org_wait_for_deliverable``
+    阻塞的节点，并清零 watchdog streak 计数；执行结果以 JSON 形式打印到终端。
+    """
+    import json as _json
+
+    import httpx as _httpx
+
+    url = f"{api.rstrip('/')}/api/orgs/{org}/chains/force-close"
+    try:
+        resp = _httpx.post(
+            url,
+            json={"chain_id": chain, "reason": reason},
+            timeout=10.0,
+        )
+    except _httpx.HTTPError as exc:
+        console.print(
+            f"[red]调用失败: {exc}[/red]\n"
+            "请确认 ``openakita serve`` 已启动且 --api 地址正确。"
+        )
+        raise typer.Exit(1)
+
+    if resp.status_code >= 400:
+        console.print(
+            f"[red]HTTP {resp.status_code}[/red]: {resp.text}"
+        )
+        raise typer.Exit(1)
+    try:
+        data = resp.json()
+    except _json.JSONDecodeError:
+        console.print(resp.text)
+        return
+    console.print(_json.dumps(data, ensure_ascii=False, indent=2))
+
+
 @app.command()
 def compile(
     force: bool = typer.Option(False, "--force", "-f", help="强制重新编译"),

@@ -2455,6 +2455,77 @@ class OrgToolHandler:
                 c for c, p in runtime._chain_parent.items() if p == my_chain
             ]
 
+        # P0 加固（leaf-node guard）：进程内 ``_chain_parent`` 是 in-memory dict
+        # （重启后丢失、或多会话间残留旧映射），单纯依赖它会让"叶子节点"也匹配出
+        # 非空 target_chains，从而让每次 wait 都阻塞 60s 直到超时——这就是日志里
+        # wb-seedance-video 反向等待 producer 派发的 chain 死循环的根因。
+        #
+        # 过滤策略（双源仲裁）：
+        #   1) 用 ProjectStore 作为权威——查到的 chain 必须 ``delegated_by == node_id``
+        #      才放行；查到但派发人不是自己 → 视为残留，丢弃。
+        #   2) 持久层完全没记录的 chain（任务还没写入或测试 stub 没造数据）→
+        #      回退到 ``_chain_parent`` 的隐式契约：``_chain_parent[c] == my_chain``
+        #      本身就意味着"这是我派出去的"，仍可以视作合法等待目标。
+        #   3) 同时把 ProjectStore 中所有 ``delegated_by=node_id`` 且未关闭的 chain
+        #      合并进来，覆盖 ``_chain_parent`` 因进程重启而丢的真实派发记录。
+        #
+        # 这样既能修复死循环（关键：剔除 delegated_by != node_id 的孤儿），又不会
+        # 把"派发瞬间持久层尚未刷盘"的合法等待误杀。
+        if not explicit_chains:
+            try:
+                from openakita.orgs.project_store import ProjectStore
+
+                _store_for_filter = ProjectStore(
+                    runtime._manager._org_dir(org_id),
+                )
+                # 1+3：从持久层取所有由本节点派发且未关闭的 chain，并入候选集。
+                delegated_tasks = _store_for_filter.all_tasks(
+                    delegated_by=node_id,
+                )
+                persisted_chains: set[str] = set()
+                for t in delegated_tasks:
+                    cid = t.get("chain_id") if isinstance(t, dict) else None
+                    if (
+                        isinstance(cid, str) and cid
+                        and t.get("status") not in ("accepted", "cancelled", "rejected")
+                    ):
+                        persisted_chains.add(cid)
+                target_chains = list(set(target_chains) | persisted_chains)
+
+                # 2：双源仲裁过滤
+                whitelisted: list[str] = []
+                for c in target_chains:
+                    task = _store_for_filter.find_task_by_chain(c)
+                    if task is None:
+                        # 持久层无记录：回退到 _chain_parent 隐式契约——
+                        # 仅当该 chain 显式记录"以我当前 chain 为父"时才放行，
+                        # 否则视为孤儿（可能是其他节点 / 历史会话残留）。
+                        parent = runtime._chain_parent.get(c)
+                        if parent is not None and parent == my_chain:
+                            whitelisted.append(c)
+                        continue
+                    delegator = getattr(task, "delegated_by", None)
+                    if delegator == node_id:
+                        whitelisted.append(c)
+                target_chains = whitelisted
+            except Exception as _filter_err:
+                logger.debug(
+                    "[wait_for_deliverable] delegator filter failed: %s",
+                    _filter_err,
+                )
+                # 过滤失败时退回到原有 target_chains（保守降级，行为同旧版本）。
+
+        # 当 target_chains 在 delegator 过滤后整体为空 → 当前节点压根没派过
+        # 任何任务（典型场景：叶子节点错误地调了 wait_for_deliverable）。
+        # 这种情形和"虽然派了但都已关闭"语义不同，要分开提示。
+        if not target_chains and not explicit_chains:
+            return (
+                "你当前没有派发出去且仍在进行中的子任务，无需调用 "
+                "org_wait_for_deliverable。如果你刚收到任务、需要继续完成自己的工作，"
+                "请直接调用对应的工作台/外部工具开始执行；完成后用 "
+                "org_submit_deliverable 把成果提交给委派人。"
+            )
+
         # 过滤掉已关闭的 chain（不再有意义）
         open_targets = [
             c for c in target_chains
@@ -2520,6 +2591,26 @@ class OrgToolHandler:
         inbox_triggered = inbox_event.is_set()
 
         if not done:
+            # P1 watchdog：累计同一节点连续 wait 超时次数，超阈值后注入 escalate
+            # 指令，打破"叶子 wait → 不响应 → 父 wait → 一起卡死"的循环。
+            streak_key = f"{org_id}:{node_id}"
+            try:
+                streak_dict = runtime._node_wait_timeout_streak
+                if not isinstance(streak_dict, dict):
+                    streak_dict = {}
+                    runtime._node_wait_timeout_streak = streak_dict
+                _prev_streak = streak_dict.get(streak_key, 0)
+                if not isinstance(_prev_streak, int):
+                    _prev_streak = 0
+                current_streak = _prev_streak + 1
+                streak_dict[streak_key] = current_streak
+            except Exception:
+                current_streak = 1
+            _esc_after = getattr(runtime, "_wait_timeout_escalate_after", 3)
+            if not isinstance(_esc_after, int):
+                _esc_after = 3
+            escalate_now = current_streak >= _esc_after
+
             # P0-3：超时时返回各 chain 的任务状态快照，让 LLM 看到"具体卡在哪"，
             # 决定是继续等、放弃此 chain、向用户汇报，避免盲目轮询导致死锁。
             snapshot_lines: list[str] = []
@@ -2551,6 +2642,27 @@ class OrgToolHandler:
                 )
 
             snapshot = "\n".join(snapshot_lines) if snapshot_lines else "  (无法获取任务快照)"
+
+            if escalate_now:
+                # 强制结束等待循环：要求 LLM 立刻向上 escalate 或 submit 阶段性结果。
+                # 该提示会随 wait 返回值一起进入下一轮 ReAct 上下文，并清零 streak
+                # 让节点有机会在 escalate 完成后重新开启正常 wait 流程。
+                try:
+                    if isinstance(runtime._node_wait_timeout_streak, dict):
+                        runtime._node_wait_timeout_streak[streak_key] = 0
+                except Exception:
+                    pass
+                return (
+                    f"[等待超时·已第 {current_streak} 次连续命中——watchdog 触发]\n"
+                    f"未关闭子链快照：\n{snapshot}\n\n"
+                    "⚠️ 你已连续多次调用 org_wait_for_deliverable 都未收到任何交付，"
+                    "继续等待只会让父任务一起卡死。**立即停止 wait 循环**，按以下其一处理：\n"
+                    "  • 若你已经有部分可交付内容 → 调用 `org_submit_deliverable` 提交"
+                    "阶段性结果（说明哪些子任务卡死、为什么）；\n"
+                    "  • 若无法继续 → 调用 `org_escalate` 把问题上报给委派人；\n"
+                    "  • **不要**再调用 org_wait_for_deliverable / 同一工具的轮询。"
+                )
+
             return (
                 f"[等待超时] {timeout}s 内未收到下级新交付/新消息。\n"
                 f"未关闭子链快照：\n{snapshot}\n"
@@ -2559,6 +2671,14 @@ class OrgToolHandler:
                 "  2) 若任务状态为 todo 长期未启动 → 可能下属已僵死，用 org_list_delegated_tasks 复核；\n"
                 "  3) 若已等待较久 → 直接向用户输出阶段性汇总，不要无限轮询。"
             )
+
+        # wait 提前返回 → 清零 watchdog streak
+        try:
+            streak_dict = runtime._node_wait_timeout_streak
+            if isinstance(streak_dict, dict):
+                streak_dict[f"{org_id}:{node_id}"] = 0
+        except Exception:
+            pass
 
         parts: list[str] = []
         if closed_chains_now:

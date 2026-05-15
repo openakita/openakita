@@ -1003,6 +1003,89 @@ def _has_recoverable_tool_issue(tool_results: list[dict] | None) -> bool:
     return False
 
 
+# ----------------------------------------------------------------------------
+# Pseudo-tool-call detection (P1 鲁棒性 2.1)
+#
+# 当 LLM 在 final_answer 文本中写出形如 ```tool_call\norg_accept_deliverable(...)\n```
+# 或裸的 `org_submit_deliverable(...)` 字面量时，ReasoningEngine 不会真的调用工具，
+# 但用户/上级会以为工具已经执行 → 组织编排链路被卡死。
+# 这里提供一个轻量检测器，被 _handle_no_tool_calls() 等路径用于"补救式重试"。
+# ----------------------------------------------------------------------------
+
+_TOOL_CALL_FENCE_RE = re.compile(
+    r"```\s*tool[_-]?call\s*\n(.+?)```",
+    re.DOTALL | re.IGNORECASE,
+)
+
+# 已知会触发"写文本而非调工具"的工具家族前缀。保留前缀化匹配可避免把普通函数
+# 名误判（例如 "list(...)"、"int(...)" 不会命中）。
+_TEXT_TOOL_CALL_PATTERNS: tuple[str, ...] = (
+    "org_",
+    "seedance_",
+    "tongyi_",
+    "clip_",
+    "ppt_",
+    "avatar_",
+    "memory_",
+    "mcp_",
+    "schedule_",
+)
+
+_INLINE_TOOL_CALL_RE = re.compile(
+    r"\b(" + "|".join(re.escape(p) for p in _TEXT_TOOL_CALL_PATTERNS) + r"[a-z0-9_]+)\s*\(",
+)
+
+
+def _detect_text_toolcall_block(text: str) -> list[str]:
+    """Return tool names mentioned as text-only pseudo-calls (deduped).
+
+    Detects two common LLM regression patterns:
+
+    1. Fenced ``\u200b```tool_call ... ```\u200b`` block whose body contains a tool
+       invocation as Markdown text (e.g. ``org_accept_deliverable(task_chain_id=..., ...)``).
+    2. Bare ``func_name(arg=...)`` inline call matching a known plugin/runtime
+       tool prefix.
+
+    Empty list means "no pseudo tool call detected".  Caller should only act on
+    the result when no real tool call happened this turn.
+    """
+    if not text:
+        return []
+    found: set[str] = set()
+    fenced_hit = False
+    for m in _TOOL_CALL_FENCE_RE.finditer(text):
+        fenced_hit = True
+        body = m.group(1) or ""
+        for nm in _INLINE_TOOL_CALL_RE.findall(body):
+            found.add(nm)
+    if not fenced_hit:
+        for nm in _INLINE_TOOL_CALL_RE.findall(text):
+            found.add(nm)
+    return sorted(found)
+
+
+def _guard_text_toolcall_block(
+    text: str,
+    executed_tool_names: list[str],
+    intent: str | None,
+) -> list[str]:
+    """Whether the LLM wrote a tool call as text without actually invoking it.
+
+    Returns the detected tool names so the caller can build a corrective
+    system message.  Returns ``[]`` when:
+
+    - the model actually executed at least one tool this turn,
+    - the LLM tagged the reply as ``[REPLY]`` (it's deliberately discussing a
+      tool, not promising an action), or
+    - no pseudo-call patterns are present.
+    """
+    if executed_tool_names:
+        return []
+    if intent == "REPLY":
+        return []
+    return _detect_text_toolcall_block(text or "")
+
+
 class ReasoningEngine:
     """
     显式推理-行动引擎。
@@ -7212,6 +7295,52 @@ class ReasoningEngine:
         # forcing them into pure explanation or creative-writing turns.
         _ACTION_CLAIM_RE = _get_action_claim_re()
         _txt = (stripped_text or "").strip()
+
+        # P1 修复：拦截"伪 tool_call 文本块"。LLM 偶尔会把工具调用写成
+        # ```tool_call\norg_accept_deliverable(...)\n``` 这样的 Markdown
+        # 文本，但 ReasoningEngine 不会真正执行——上层（producer/wb-tongyi-image）
+        # 误以为工具已经执行就会进入死等。这里检测到后强制再重试一次，
+        # 让 LLM 把伪文本改写为真的 tool_calls。
+        _pseudo_called = _guard_text_toolcall_block(
+            _txt, executed_tool_names, intent
+        )
+        _pseudo_attr = "_pseudo_toolcall_retries"
+        _pseudo_retries = getattr(self, _pseudo_attr, 0)
+        if _pseudo_called and _pseudo_retries < 1:
+            setattr(self, _pseudo_attr, _pseudo_retries + 1)
+            logger.warning(
+                "[PseudoToolCall] Detected text-only tool call(s) %s without "
+                "actual invocation — forcing re-execution as real tool_calls "
+                "(attempt %d/1)",
+                _pseudo_called,
+                _pseudo_retries + 1,
+            )
+            if stripped_text:
+                working_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": stripped_text}],
+                        "reasoning_content": decision.thinking_content or None,
+                    }
+                )
+            tools_listed = ", ".join(_pseudo_called)
+            retry_msg = (
+                "[系统] ⚠️ 你在回复里写了 ```tool_call``` 文本块或形如 "
+                f"`{_pseudo_called[0]}(...)` 的工具调用文字（涉及：{tools_listed}），"
+                "但本轮**没有**真正发起任何工具调用——文本中的调用语句不会被执行。\n"
+                "请立即把它改写为真实的 tool_calls：直接选择对应工具并填好参数发起调用，"
+                "**不要**再用 Markdown / 代码块伪装。如果该工具确实不需要再调，"
+                "请用一句简短的中文说明你已经完成的实际事项，并标注 [REPLY]。"
+            )
+            working_messages.append({"role": "user", "content": retry_msg})
+            return (
+                working_messages,
+                no_tool_call_count,
+                verify_incomplete_count,
+                no_confirmation_text_count,
+                max_no_tool_retries,
+            )
+
         if (
             intent is None
             and _txt

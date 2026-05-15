@@ -305,6 +305,20 @@ class TaskManager:
         await self._db.commit()
         return (result.rowcount or 0) > 0
 
+    async def mark_task_timeout(
+        self, task_id: str, error_message: str = "等待 Seedance 任务完成超时"
+    ) -> bool:
+        """Mark a stuck pending/running task as terminal ``timeout``.
+
+        Used by the wait-for-completion helper and the ``seedance_status`` tool
+        when a task is detected to be running too long.  ``timeout`` is treated
+        as a terminal failure state by ``_task_to_tool_payload`` so the LLM
+        receives ``ok=false`` and stops polling.
+        """
+        return await self.update_task(
+            task_id, status="timeout", error_message=error_message
+        )
+
     async def get_running_tasks(self) -> list[dict]:
         assert self._db
         rows = await self._db.execute_fetchall(

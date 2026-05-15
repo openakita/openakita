@@ -63,6 +63,7 @@ import {
 } from "../icons";
 import { safeFetch } from "../providers";
 import { IS_CAPACITOR, saveFileDialog, IS_TAURI, writeTextFile, openFileDialog, onWsEvent, saveAttachment } from "../platform";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { OrgInboxSidebar } from "../components/OrgInboxSidebar";
 import { WorkbenchNodePicker, type WorkbenchTemplate } from "../components/WorkbenchNodePicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -2230,30 +2231,34 @@ export function OrgEditorView({
           <>
           {viewMode === "dashboard" ? (
             <div style={{ flex: 1, overflow: "hidden" }}>
-              <OrgDashboard
-                orgId={currentOrg.id}
-                apiBaseUrl={apiBaseUrl}
-                orgName={currentOrg.name}
-                onNodeClick={(nodeId) => {
-                  setViewMode("canvas");
-                  const n = nodes.find(nd => nd.id === nodeId);
-                  if (n) {
-                    setSelectedNodeId(nodeId);
-                    setSelectedEdgeId(null);
-                    setShowRightPanel(true);
-                    setPropsTab("overview");
-                  }
-                }}
-              />
+              <ErrorBoundary panelName="组织仪表盘" resetKeys={[currentOrg.id, viewMode]}>
+                <OrgDashboard
+                  orgId={currentOrg.id}
+                  apiBaseUrl={apiBaseUrl}
+                  orgName={currentOrg.name}
+                  onNodeClick={(nodeId) => {
+                    setViewMode("canvas");
+                    const n = nodes.find(nd => nd.id === nodeId);
+                    if (n) {
+                      setSelectedNodeId(nodeId);
+                      setSelectedEdgeId(null);
+                      setShowRightPanel(true);
+                      setPropsTab("overview");
+                    }
+                  }}
+                />
+              </ErrorBoundary>
             </div>
           ) : viewMode === "projects" ? (
             <div style={{ flex: 1, overflow: "hidden" }}>
               {selectedOrgId ? (
-                <OrgProjectBoard
-                  orgId={selectedOrgId}
-                  apiBaseUrl={apiBaseUrl}
-                  nodes={nodes.map(n => ({ id: n.id, role_title: (n.data as any)?.role_title, avatar: (n.data as any)?.avatar }))}
-                />
+                <ErrorBoundary panelName="项目看板" resetKeys={[selectedOrgId, viewMode]}>
+                  <OrgProjectBoard
+                    orgId={selectedOrgId}
+                    apiBaseUrl={apiBaseUrl}
+                    nodes={nodes.map(n => ({ id: n.id, role_title: (n.data as any)?.role_title, avatar: (n.data as any)?.avatar }))}
+                  />
+                </ErrorBoundary>
               ) : (
                 <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", height: "100%" }}>
                   {t("org.editor.selectOrgFirst")}
@@ -2622,24 +2627,28 @@ export function OrgEditorView({
                 style={{ display: activeDrawer ? undefined : "none" }}
               />
               <div className="org-drawer-slide" style={{ display: chatPanelOpen ? undefined : "none" }}>
-                <OrgChatPanel
-                  orgId={selectedOrgId}
-                  nodeId={null}
-                  apiBaseUrl={apiBaseUrl}
-                  showHeader
-                  title={t("org.editor.orgCommandCenter", { name: currentOrg?.name || t("org.editor.orgDefault") })}
-                  onClose={() => setActiveDrawer(null)}
-                  nodeNames={nodeNameMap}
-                />
+                <ErrorBoundary panelName="组织指挥中心" resetKeys={[selectedOrgId, chatPanelOpen]}>
+                  <OrgChatPanel
+                    orgId={selectedOrgId}
+                    nodeId={null}
+                    apiBaseUrl={apiBaseUrl}
+                    showHeader
+                    title={t("org.editor.orgCommandCenter", { name: currentOrg?.name || t("org.editor.orgDefault") })}
+                    onClose={() => setActiveDrawer(null)}
+                    nodeNames={nodeNameMap}
+                  />
+                </ErrorBoundary>
               </div>
               <div className="org-drawer-slide" style={{ display: inboxOpen ? undefined : "none" }}>
-                <OrgInboxSidebar
-                  apiBaseUrl={apiBaseUrl}
-                  orgId={selectedOrgId}
-                  visible={inboxOpen}
-                  onClose={() => setActiveDrawer(null)}
-                  embedded
-                />
+                <ErrorBoundary panelName="组织收件箱" resetKeys={[selectedOrgId, inboxOpen]}>
+                  <OrgInboxSidebar
+                    apiBaseUrl={apiBaseUrl}
+                    orgId={selectedOrgId}
+                    visible={inboxOpen}
+                    onClose={() => setActiveDrawer(null)}
+                    embedded
+                  />
+                </ErrorBoundary>
               </div>
             </>
           )}
@@ -3264,26 +3273,30 @@ export function OrgEditorView({
             </div>
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
-            <OrgChatPanel
-              orgId={selectedOrgId}
-              nodeId={selectedNodeId}
-              apiBaseUrl={apiBaseUrl}
-              compact
-              nodeNames={nodeNameMap}
-            />
+            <ErrorBoundary panelName="节点对话面板" resetKeys={[selectedOrgId, selectedNodeId]}>
+              <OrgChatPanel
+                orgId={selectedOrgId}
+                nodeId={selectedNodeId}
+                apiBaseUrl={apiBaseUrl}
+                compact
+                nodeNames={nodeNameMap}
+              />
+            </ErrorBoundary>
           </div>
         </div>
       )}
 
       {/* ── Monitor Panel (liveMode, desktop only) ── */}
       {liveMode && selectedNode && showRightPanel && !isMobile && selectedOrgId && (
-        <OrgMonitorPanel
-          orgId={selectedOrgId}
-          nodeId={selectedNode.id}
-          apiBaseUrl={apiBaseUrl}
-          nodes={nodes}
-          visible={visible}
-        />
+        <ErrorBoundary panelName="节点监控面板" resetKeys={[selectedOrgId, selectedNode.id]}>
+          <OrgMonitorPanel
+            orgId={selectedOrgId}
+            nodeId={selectedNode.id}
+            apiBaseUrl={apiBaseUrl}
+            nodes={nodes}
+            visible={visible}
+          />
+        </ErrorBoundary>
       )}
 
       {selectedNode && showRightPanel && (
@@ -4671,26 +4684,30 @@ export function OrgEditorView({
             style={{ position: "absolute", inset: 0, zIndex: 35, cursor: "default" }}
           />
           <div style={{ width: 520, flexShrink: 0, borderLeft: "1px solid var(--line)", display: "flex", flexDirection: "column", background: "var(--bg-app)", animation: "org-panel-in 0.3s cubic-bezier(0.4,0,0.2,1) 0s both", zIndex: 36 }}>
-            <OrgBlackboardPanel
-              ref={bbPanelRef}
-              orgId={currentOrg.id}
-              apiBaseUrl={apiBaseUrl}
-              nodes={nodes}
-              fullWidth
-              onClose={() => setShowBlackboardPanel(false)}
-            />
+            <ErrorBoundary panelName="组织黑板（独立）" resetKeys={[currentOrg.id, showBlackboardPanel]}>
+              <OrgBlackboardPanel
+                ref={bbPanelRef}
+                orgId={currentOrg.id}
+                apiBaseUrl={apiBaseUrl}
+                nodes={nodes}
+                fullWidth
+                onClose={() => setShowBlackboardPanel(false)}
+              />
+            </ErrorBoundary>
           </div>
         </>
       )}
 
       {/* ── Right Panel: Org Blackboard (second-layer drawer, alongside settings) ── */}
       {currentOrg && !selectedNode && !selectedEdge && !isMobile && showRightPanel && !showBlackboardPanel && (
-        <OrgBlackboardPanel
-          ref={bbPanelRef}
-          orgId={currentOrg.id}
-          apiBaseUrl={apiBaseUrl}
-          nodes={nodes}
-        />
+        <ErrorBoundary panelName="组织黑板（侧栏）" resetKeys={[currentOrg.id, showRightPanel]}>
+          <OrgBlackboardPanel
+            ref={bbPanelRef}
+            orgId={currentOrg.id}
+            apiBaseUrl={apiBaseUrl}
+            nodes={nodes}
+          />
+        </ErrorBoundary>
       )}
 
       {/* ── Right Panel: Org Settings (when no node/edge selected) ── */}

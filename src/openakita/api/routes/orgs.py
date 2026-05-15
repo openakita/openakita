@@ -608,6 +608,38 @@ async def resume_org(request: Request, org_id: str):
         raise HTTPException(400, str(e))
 
 
+@router.post("/{org_id}/chains/force-close")
+async def force_close_chain(request: Request, org_id: str):
+    """运营兜底：强制关闭组织内某个卡死的 task chain。
+
+    用途：当 ``wb-*`` 节点和上级协调员双向阻塞在 ``org_wait_for_deliverable``、
+    或外部插件（seedance/tongyi 等）任务卡 running 不动时，前端"强制终止当前
+    任务链"按钮调用本接口立刻打破死锁——把 chain_id 标记为 closed、唤醒所有
+    inbox 事件，并清零 watchdog streak 计数。
+
+    Body:
+        ``{"chain_id": "...", "reason": "可选，记录到日志"}``
+    """
+    rt = _get_runtime(request)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    chain_id = (body or {}).get("chain_id") if isinstance(body, dict) else None
+    reason = (body or {}).get("reason") if isinstance(body, dict) else None
+    if not isinstance(chain_id, str) or not chain_id.strip():
+        raise HTTPException(400, "chain_id is required (string)")
+    org = rt.get_org(org_id)
+    if org is None:
+        raise HTTPException(404, f"organization {org_id!r} not found")
+    return rt.force_close_chain(
+        org_id=org_id,
+        chain_id=chain_id.strip(),
+        reason=(reason or "manual force close via API").strip()[:200],
+    )
+
+
 @router.post("/{org_id}/reset")
 async def reset_org(request: Request, org_id: str):
     rt = _get_runtime(request)
