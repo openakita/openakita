@@ -332,22 +332,29 @@ jobs:
         working-directory: apps/setup-center
         run: npm ci
 
+      # macOS runners ship Homebrew Rust shims that can shadow rustup's real cargo and
+      # make `cargo fetch` invoke rustup-init with a bogus "fetch" argv (see GH dryrun).
+      - name: Prefer rustup Cargo on PATH
+        shell: bash
+        run: echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
+
       - name: Preflight Rust dependency check
         working-directory: apps/setup-center/src-tauri
         shell: bash
         run: |
           set -euo pipefail
+          CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
           # Clear cached build-scripts to avoid glibc mismatch across Ubuntu versions
           rm -rf target/debug/build
-          cargo fetch --locked
+          "$CARGO_BIN/cargo" fetch --locked
           CHECK_ARGS=""
           if [ -n "${{ matrix.rust_target }}" ]; then
             CHECK_ARGS="--target ${{ matrix.rust_target }}"
           fi
-          if ! cargo check $CHECK_ARGS; then
+          if ! "$CARGO_BIN/cargo" check $CHECK_ARGS; then
             echo "::warning::Preflight cargo check failed — stale cache detected, cleaning and retrying"
-            cargo clean
-            cargo check $CHECK_ARGS
+            "$CARGO_BIN/cargo" clean
+            "$CARGO_BIN/cargo" check $CHECK_ARGS
           fi
 
       - name: Clean Rust release intermediates for current target
