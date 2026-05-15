@@ -38,7 +38,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-
 ModeId = Literal[
     "t2v",
     "i2v",
@@ -529,7 +528,7 @@ class RegistryPayload:
     defaults: dict[str, str] = field(default_factory=dict)
 
     @classmethod
-    def build(cls) -> "RegistryPayload":
+    def build(cls) -> RegistryPayload:
         defaults: dict[str, str] = {}
         for m in ALL_MODES:
             d = default_model(m)

@@ -56,8 +56,8 @@ from happyhorse_dashscope_client import (  # noqa: E402
     make_default_settings,
 )
 from happyhorse_inline.oss_uploader import (  # noqa: E402
-    OssUploadError,
     OssUploader,
+    OssUploadError,
 )
 from happyhorse_inline.storage_stats import collect_storage_stats  # noqa: E402
 from happyhorse_inline.system_deps import SystemDepsManager  # noqa: E402
@@ -65,14 +65,13 @@ from happyhorse_inline.upload_preview import (  # noqa: E402
     add_upload_preview_route,
     build_preview_url,
 )
-from happyhorse_inline.vendor_client import VendorError  # noqa: E402
 from happyhorse_long_video import (  # noqa: E402
     ChainGenerator,
     concat_videos,
     decompose_storyboard,
     ffmpeg_available,
 )
-from happyhorse_model_registry import RegistryPayload, default_model  # noqa: E402
+from happyhorse_model_registry import default_model  # noqa: E402
 from happyhorse_models import (  # noqa: E402
     MODES_BY_ID,
     SYSTEM_VOICES,
@@ -1549,7 +1548,7 @@ class Plugin(PluginBase):
                             msg = await asyncio.wait_for(
                                 queue.get(), timeout=15.0
                             )
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             yield ": keepalive\n\n"
                             continue
                         body = json.dumps(

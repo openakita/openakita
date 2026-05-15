@@ -1,0 +1,73 @@
+"""Plugin entry — verifies tool registration + workbench schema."""
+
+from __future__ import annotations
+
+from _plugin_loader import load_happyhorse_plugin
+
+_HH = load_happyhorse_plugin()
+HappyhorsePlugin = _HH.Plugin
+
+
+EXPECTED_TOOLS = {
+    "hh_t2v",
+    "hh_i2v",
+    "hh_r2v",
+    "hh_video_edit",
+    "hh_photo_speak",
+    "hh_video_relip",
+    "hh_video_reface",
+    "hh_pose_drive",
+    "hh_avatar_compose",
+    "hh_status",
+    "hh_list",
+    "hh_cost_preview",
+    "hh_long_video_create",
+}
+
+
+def test_plugin_registers_thirteen_tools():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    names = {t["name"] for t in tools}
+    assert names == EXPECTED_TOOLS
+
+
+def test_video_tools_advertise_from_asset_ids_in_schema():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    for tool_name in (
+        "hh_t2v",
+        "hh_i2v",
+        "hh_r2v",
+        "hh_video_edit",
+        "hh_photo_speak",
+        "hh_avatar_compose",
+    ):
+        schema = by_name[tool_name]["input_schema"]
+        assert "from_asset_ids" in schema["properties"], (
+            f"{tool_name} must accept from_asset_ids for workbench chaining"
+        )
+
+
+def test_status_tool_requires_task_id():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    schema = by_name["hh_status"]["input_schema"]
+    assert "task_id" in schema["required"]
+
+
+def test_long_video_tool_requires_segments():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    schema = by_name["hh_long_video_create"]["input_schema"]
+    assert "segments" in schema["required"]
+
+
+def test_module_exposes_pydantic_bodies():
+    """plugin.py must export its request bodies so on_load can use them."""
+    assert hasattr(_HH, "CreateTaskBody")
+    assert hasattr(_HH, "LongVideoCreateBody")
+    assert hasattr(_HH, "PromptOptimizeBody")

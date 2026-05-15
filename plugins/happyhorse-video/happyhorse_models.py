@@ -280,10 +280,7 @@ class VoiceSpec:
     is_system: bool = True
 
     def to_dict(self) -> dict[str, object]:
-        if self.engine == "cosyvoice":
-            dashscope_id = f"{self.id}_v2"
-        else:
-            dashscope_id = self.id
+        dashscope_id = f"{self.id}_v2" if self.engine == "cosyvoice" else self.id
         return {
             "id": self.id,
             "label": self.label_zh,

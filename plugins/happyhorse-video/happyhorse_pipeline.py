@@ -52,7 +52,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -894,7 +894,7 @@ def _relocate_output(
         subdir_mode = "task"
     template = (naming_rule or "{filename}").strip() or "{filename}"
 
-    now = datetime.fromtimestamp(ctx.started_at, tz=timezone.utc).astimezone()
+    now = datetime.fromtimestamp(ctx.started_at, tz=UTC).astimezone()
     date = now.strftime("%Y-%m-%d")
     timestr = now.strftime("%H%M%S")
     datetime_str = f"{date}_{timestr}"
