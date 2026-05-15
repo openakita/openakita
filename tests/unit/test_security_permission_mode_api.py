@@ -16,40 +16,47 @@ def test_permission_mode_accepts_trust_alias():
 
 
 def test_yolo_mode_syncs_low_interrupt_defaults():
-    sec: dict = {"zones": {"default_zone": "protected"}}
+    """trust profile (=v1 yolo): confirmation=trust, sandbox off, but
+    shell_risk / death_switch / checkpoint stay on for fail-safe."""
+    sec: dict = {}
 
     _apply_permission_mode_defaults(sec, "trust")
 
-    assert sec["confirmation"]["mode"] == "yolo"
-    assert sec["zones"]["default_zone"] == "workspace"
+    assert sec["confirmation"]["mode"] == "trust"
     assert sec["sandbox"]["enabled"] is False
-    assert sec["self_protection"]["enabled"] is False
-    assert sec["command_patterns"]["enabled"] is False
+    assert sec["shell_risk"]["enabled"] is True
+    assert sec["death_switch"]["enabled"] is True
+    assert sec["enabled"] is True
+    assert sec["profile"]["current"] == "trust"
     assert _mode_from_security(sec) == "yolo"
 
 
 def test_smart_mode_syncs_protection_defaults():
+    """smart → protect profile: confirmation=default, all defenses on."""
     sec: dict = {}
 
     _apply_permission_mode_defaults(sec, "smart")
 
-    assert sec["confirmation"]["mode"] == "smart"
-    assert sec["zones"]["default_zone"] == "controlled"
+    assert sec["confirmation"]["mode"] == "default"
     assert sec["sandbox"]["enabled"] is True
-    assert sec["self_protection"]["enabled"] is True
-    assert sec["command_patterns"]["enabled"] is True
+    assert sec["shell_risk"]["enabled"] is True
+    assert sec["death_switch"]["enabled"] is True
+    assert sec["enabled"] is True
+    assert sec["profile"]["current"] == "protect"
 
 
 def test_cautious_mode_syncs_strict_defaults():
-    sec: dict = {"zones": {"default_zone": "workspace"}}
+    """cautious → strict profile: confirmation=strict, defenses on."""
+    sec: dict = {}
 
     _apply_permission_mode_defaults(sec, "cautious")
 
-    assert sec["confirmation"]["mode"] == "cautious"
-    assert sec["zones"]["default_zone"] == "protected"
+    assert sec["confirmation"]["mode"] == "strict"
     assert sec["sandbox"]["enabled"] is True
-    assert sec["self_protection"]["enabled"] is True
-    assert sec["command_patterns"]["enabled"] is True
+    assert sec["shell_risk"]["enabled"] is True
+    assert sec["death_switch"]["enabled"] is True
+    assert sec["enabled"] is True
+    assert sec["profile"]["current"] == "strict"
 
 
 @pytest.mark.asyncio

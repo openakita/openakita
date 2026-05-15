@@ -493,11 +493,28 @@ class TaskExecutor:
                             "TaskExecutor: skipping malformed replay auth %r", ra
                         )
 
+            # workspace_roots = security.workspace.paths（用户配置）∪ task cwd。
+            # 不再用单一 cwd 覆盖用户配置——计划任务必须遵守安全页定义的工作区
+            # 边界，与对话路径一致。
+            try:
+                from openakita.core.policy_v2 import get_config_v2 as _get_cfg
+
+                _cfg_roots = tuple(_Path(p) for p in _get_cfg().workspace.paths)
+            except Exception:
+                _cfg_roots = ()
+            _cwd_root = _Path(_os.getcwd())
+            _ws_seen: set[str] = set()
+            _ws_list: list[_Path] = []
+            for _p in (*_cfg_roots, _cwd_root):
+                _k = str(_p)
+                if _k not in _ws_seen:
+                    _ws_seen.add(_k)
+                    _ws_list.append(_p)
             _policy_ctx = PolicyContext(
                 # ScheduledTask has no first-class ``session_id`` field —
                 # fall back to a synthetic id derived from task.id.
                 session_id=getattr(task, "session_id", None) or f"task:{task.id}",
-                workspace=_Path(_os.getcwd()),
+                workspace_roots=tuple(_ws_list),
                 channel="scheduler",
                 is_owner=True,  # scheduler-owned tasks act on behalf of owner
                 is_unattended=True,

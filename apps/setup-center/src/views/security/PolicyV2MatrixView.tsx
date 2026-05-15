@@ -14,64 +14,26 @@
 // 与后端一致性守卫: tests/unit/test_c23_policy_v2_matrix.py 会比较本
 // 文件的 MATRIX 常量与 engine.py 的关键决策分支, 漂移就 fail.
 
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-// === 与 src/openakita/core/policy_v2/enums.py 对齐 ===
-
-const CONFIRMATION_MODES = [
-  { id: "trust",        label: "信任 (trust)",          desc: "全部静默放行（除 immune）" },
-  { id: "default",      label: "默认 (default)",        desc: "中高风险确认，低风险放行" },
-  { id: "accept_edits", label: "接受编辑 (accept_edits)", desc: "写入类自动放行，破坏类仍确认" },
-  { id: "strict",       label: "严格 (strict)",         desc: "几乎全确认，破坏类拒绝" },
-  { id: "dont_ask",     label: "不打扰 (dont_ask)",     desc: "拒绝所有需确认操作（cron 友好）" },
-] as const;
-
-const SESSION_ROLES = [
-  { id: "plan",        label: "Plan",        desc: "只读规划 — 写意图全部 DENY" },
-  { id: "ask",         label: "Ask",         desc: "信息查询 — 写意图全部 DENY" },
-  { id: "agent",       label: "Agent",       desc: "正常执行 — 走下方矩阵" },
-  { id: "coordinator", label: "Coordinator", desc: "多 agent 协调 — 走下方矩阵" },
-] as const;
-
 type Decision = "allow" | "confirm" | "deny";
 
-// 11 ApprovalClass × 5 ConfirmationMode 矩阵.
-// 数据源: src/openakita/core/policy_v2/engine.py 决策链 + plan §3 表.
-// 任何修改必须同步 engine.py + tests/unit/test_c23_policy_v2_matrix.py.
-const MATRIX: Array<{
-  klass: string;
-  label: string;
-  desc: string;
-  trust: Decision;
-  default: Decision;
-  accept_edits: Decision;
-  strict: Decision;
-  dont_ask: Decision;
-}> = [
-  // 只读类 — 任何模式都 ALLOW
-  { klass: "readonly_scoped",  label: "局部只读",   desc: "list_directory / read_file 等",  trust: "allow",   default: "allow",   accept_edits: "allow",   strict: "allow",   dont_ask: "allow" },
-  { klass: "readonly_global",  label: "全局只读",   desc: "search_codebase 全工作区",        trust: "allow",   default: "allow",   accept_edits: "allow",   strict: "allow",   dont_ask: "allow" },
-  { klass: "readonly_search",  label: "搜索",       desc: "grep / glob",                    trust: "allow",   default: "allow",   accept_edits: "allow",   strict: "allow",   dont_ask: "allow" },
+type MatrixRow = {
+  role: string;
+  approval_class: string;
+  decisions: Record<string, Decision>;
+};
 
-  // 修改类 — 严重程度递增
-  { klass: "mutating_scoped",  label: "局部副作用", desc: "write_file 单文件",              trust: "allow",   default: "allow",   accept_edits: "allow",   strict: "confirm", dont_ask: "deny"    },
-  { klass: "mutating_global",  label: "全局副作用", desc: "bulk_edit / repo 级 patch",      trust: "allow",   default: "confirm", accept_edits: "confirm", strict: "confirm", dont_ask: "deny"    },
-  { klass: "destructive",      label: "破坏性",     desc: "delete_file / drop_database",    trust: "confirm", default: "confirm", accept_edits: "confirm", strict: "deny",    dont_ask: "deny"    },
-
-  // 执行类
-  { klass: "exec_low_risk",    label: "低危执行",   desc: "run_shell echo / ls",            trust: "allow",   default: "allow",   accept_edits: "allow",   strict: "confirm", dont_ask: "deny"    },
-  { klass: "exec_capable",     label: "高权执行",   desc: "run_shell 任意 / opencli_run",   trust: "confirm", default: "confirm", accept_edits: "confirm", strict: "confirm", dont_ask: "deny"    },
-
-  // 控制 / 交互 / 网络
-  { klass: "control_plane",    label: "控制面",     desc: "schedule_task / spawn_agent",    trust: "confirm", default: "confirm", accept_edits: "confirm", strict: "confirm", dont_ask: "deny"    },
-  { klass: "interactive",      label: "交互式",     desc: "ask_user 问询",                  trust: "allow",   default: "allow",   accept_edits: "allow",   strict: "allow",   dont_ask: "deny"    },
-  { klass: "network_out",      label: "网络出站",   desc: "web_search / fetch_url",         trust: "allow",   default: "allow",   accept_edits: "allow",   strict: "confirm", dont_ask: "deny"    },
-
-  // UNKNOWN 兜底 — 严格 fail-closed
-  { klass: "unknown",          label: "未分类",     desc: "新工具未声明 ApprovalClass",     trust: "confirm", default: "confirm", accept_edits: "confirm", strict: "confirm", dont_ask: "deny"    },
-];
+type MatrixResponse = {
+  roles: string[];
+  modes: string[];
+  classes: string[];
+  rows: MatrixRow[];
+  baseline_only: boolean;
+};
 
 const DECISION_META: Record<Decision, { label: string; color: string; bg: string }> = {
   allow:   { label: "ALLOW",   color: "#16a34a", bg: "#22c55e1a" },
@@ -100,8 +62,34 @@ function DecisionCell({ decision }: { decision: Decision }) {
   );
 }
 
-export function PolicyV2MatrixView() {
+export function PolicyV2MatrixView({ apiBaseUrl }: { apiBaseUrl: string }) {
   const { t } = useTranslation();
+  const [data, setData] = useState<MatrixResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${apiBaseUrl}/api/config/security/approval-matrix`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (!cancelled) setData(json);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl]);
+
+  const groupedRows = useMemo(() => {
+    const rows = data?.rows || [];
+    return (data?.roles || []).map((role) => ({
+      role,
+      rows: rows.filter((row) => row.role === role),
+    }));
+  }, [data]);
+
   return (
     <div className="space-y-4">
       {/* Session role panel */}
@@ -120,16 +108,16 @@ export function PolicyV2MatrixView() {
             )}
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {SESSION_ROLES.map((r) => (
+            {(data?.roles || []).map((role) => (
               <div
-                key={r.id}
+                key={role}
                 className="rounded-md border border-border/50 bg-muted/30 px-3 py-2"
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <Badge variant="outline" className="text-[10px] uppercase">{r.id}</Badge>
-                  <span className="text-sm font-medium">{r.label}</span>
+                  <Badge variant="outline" className="text-[10px] uppercase">{role}</Badge>
+                  <span className="text-sm font-medium">{role}</span>
                 </div>
-                <div className="text-xs text-muted-foreground">{r.desc}</div>
+                <div className="text-xs text-muted-foreground">由后端 lookup_matrix 生成</div>
               </div>
             ))}
           </div>
@@ -152,41 +140,46 @@ export function PolicyV2MatrixView() {
                 "approval_classes.overrides）影响；下表给出的是没有任何特殊命中时的 baseline。",
             )}
           </p>
-          <div className="overflow-x-auto">
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          {!data && !error && <p className="text-xs text-muted-foreground">正在读取后端审批矩阵...</p>}
+          {data && <div className="overflow-x-auto">
             <table className="w-full border-collapse text-xs">
               <thead>
                 <tr className="border-b border-border/50">
                   <th className="text-left py-2 pr-3 font-medium text-muted-foreground">
                     {t("security.matrixColClass", "ApprovalClass")}
                   </th>
-                  {CONFIRMATION_MODES.map((m) => (
-                    <th key={m.id} className="text-center py-2 px-2 font-medium">
-                      <div className="text-sm">{m.label}</div>
-                      <div className="text-[10px] text-muted-foreground font-normal mt-0.5">{m.desc}</div>
+                  {data.modes.map((mode) => (
+                    <th key={mode} className="text-center py-2 px-2 font-medium">
+                      <div className="text-sm">{mode}</div>
+                      <div className="text-[10px] text-muted-foreground font-normal mt-0.5">confirmation_mode</div>
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {MATRIX.map((row) => (
-                  <tr key={row.klass} className="border-b border-border/30 last:border-b-0">
-                    <td className="py-2 pr-3">
-                      <div className="flex items-center gap-2">
-                        <code className="text-[10px] text-muted-foreground">{row.klass}</code>
-                      </div>
-                      <div className="text-[11px] mt-0.5"><strong>{row.label}</strong></div>
-                      <div className="text-[10px] text-muted-foreground">{row.desc}</div>
+                {groupedRows.flatMap(({ role, rows }) => [
+                  <tr key={`${role}-header`} className="bg-muted/30">
+                    <td colSpan={data.modes.length + 1} className="py-2 font-semibold uppercase">
+                      {role}
                     </td>
-                    <td className="text-center py-2 px-2"><DecisionCell decision={row.trust} /></td>
-                    <td className="text-center py-2 px-2"><DecisionCell decision={row.default} /></td>
-                    <td className="text-center py-2 px-2"><DecisionCell decision={row.accept_edits} /></td>
-                    <td className="text-center py-2 px-2"><DecisionCell decision={row.strict} /></td>
-                    <td className="text-center py-2 px-2"><DecisionCell decision={row.dont_ask} /></td>
-                  </tr>
-                ))}
+                  </tr>,
+                  ...rows.map((row) => (
+                    <tr key={`${row.role}-${row.approval_class}`} className="border-b border-border/30 last:border-b-0">
+                      <td className="py-2 pr-3">
+                        <code className="text-[10px] text-muted-foreground">{row.approval_class}</code>
+                      </td>
+                      {data.modes.map((mode) => (
+                        <td key={mode} className="text-center py-2 px-2">
+                          <DecisionCell decision={row.decisions[mode]} />
+                        </td>
+                      ))}
+                    </tr>
+                  )),
+                ])}
               </tbody>
             </table>
-          </div>
+          </div>}
 
           {/* Legend */}
           <div className="flex flex-wrap items-center gap-3 mt-4 pt-3 border-t border-border/50 text-[11px]">
@@ -208,8 +201,7 @@ export function PolicyV2MatrixView() {
           <p className="text-[10px] text-muted-foreground mt-3 italic">
             {t(
               "security.matrixDataSource",
-              "数据源：src/openakita/core/policy_v2/engine.py 决策链 + plan §3。如果你看到此处与实际行为不符，请在 GitHub 提 issue 附"+
-                "audit JSONL（data/audit/policy_decisions.jsonl）。",
+              "数据源：后端 lookup_matrix()。这里只展示 baseline，不包含路径名单、敏感路径保护、owner_only、death_switch、trusted_path 等后续叠加。",
             )}
           </p>
         </CardContent>
@@ -218,7 +210,4 @@ export function PolicyV2MatrixView() {
   );
 }
 
-// 测试守卫 export — 后端测试可通过 grep 找到 MATRIX 常量并解析一致性
-export const __POLICY_V2_MATRIX_FOR_TESTS = MATRIX;
-export const __POLICY_V2_MODES_FOR_TESTS = CONFIRMATION_MODES;
-export const __POLICY_V2_ROLES_FOR_TESTS = SESSION_ROLES;
+// Matrix data now comes from /api/config/security/approval-matrix.

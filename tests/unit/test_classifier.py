@@ -266,7 +266,7 @@ class TestRefine:
     def _make_ctx(self, workspace: Path) -> PolicyContext:
         return PolicyContext(
             session_id="t",
-            workspace=workspace,
+            workspace_roots=(workspace,),
             session_role=SessionRole.AGENT,
             confirmation_mode=ConfirmationMode.DEFAULT,
         )
@@ -287,6 +287,25 @@ class TestRefine:
         outside = tmp_path.parent / "_outside_dir_99" / "x.txt"
         klass, _ = clf.classify_with_source("write_file", {"path": str(outside)}, ctx)
         assert klass == ApprovalClass.MUTATING_GLOBAL
+
+    def test_write_file_inside_any_workspace_root_stays_scoped(self, tmp_path: Path) -> None:
+        root_a = tmp_path / "a"
+        root_b = tmp_path / "b"
+        root_a.mkdir()
+        root_b.mkdir()
+        ctx = PolicyContext(
+            session_id="t",
+            workspace_roots=(root_a, root_b),
+            session_role=SessionRole.AGENT,
+            confirmation_mode=ConfirmationMode.DEFAULT,
+        )
+        clf = ApprovalClassifier()
+        klass, _ = clf.classify_with_source(
+            "write_file",
+            {"path": str(root_b / "note.txt")},
+            ctx,
+        )
+        assert klass == ApprovalClass.MUTATING_SCOPED
 
     def test_move_file_dst_outside_upgrades(self, tmp_path: Path) -> None:
         """move_file 检查 dst（也检查 src）— 任一外部即升级。"""
@@ -385,7 +404,7 @@ class TestCache:
     def test_refine_not_cached(self, tmp_path: Path) -> None:
         """同一 tool 不同 params/ctx 应得到不同 refined 分类。"""
         clf = ApprovalClassifier()
-        ctx = PolicyContext(session_id="t", workspace=tmp_path)
+        ctx = PolicyContext(session_id="t", workspace_roots=(tmp_path,))
         inside, _ = clf.classify_with_source(
             "write_file", {"path": str(tmp_path / "a.txt")}, ctx
         )
@@ -602,7 +621,7 @@ class TestClassifyFull:
     def _ctx(self, ws: Path) -> PolicyContext:
         return PolicyContext(
             session_id="t",
-            workspace=ws,
+            workspace_roots=(ws,),
             session_role=SessionRole.AGENT,
             confirmation_mode=ConfirmationMode.DEFAULT,
         )

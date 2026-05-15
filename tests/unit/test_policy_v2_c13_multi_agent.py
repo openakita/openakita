@@ -63,7 +63,7 @@ def test_build_policy_context_inherits_from_parent_ctx() -> None:
     assert child.session_id == "child-session"
     assert child.root_user_id == "root-uid"
     assert child.delegate_chain == ["root", "specialist_a"]
-    assert child.workspace == Path("/wsp/root"), "workspace 默认继承父"
+    assert Path("/wsp/root") in child.workspace_roots, "parent workspace must remain in child roots"
     assert child.user_message == "local task message", "user_message 本地覆盖"
     assert child.safety_immune_paths == ("/etc/passwd",), "immune paths 继承"
 

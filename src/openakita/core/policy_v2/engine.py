@@ -40,7 +40,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from .classifier import ApprovalClassifier, ClassificationResult
-from .context import PolicyContext, ReplayAuthorization, TrustedPathOverride
+from .context import (
+    PolicyContext,
+    ReplayAuthorization,
+    TrustedPathOverride,
+    primary_workspace_root,
+)
 from .death_switch import get_death_switch_tracker
 from .enums import (
     ApprovalClass,
@@ -298,6 +303,22 @@ class PolicyEngineV2:
             )
         )
 
+        if not self._config.enabled or self._config.profile.current == "off":
+            off_clf = ClassificationResult(
+                approval_class=ApprovalClass.UNKNOWN,
+                source=DecisionSource.FALLBACK_UNKNOWN,
+                shell_risk_level=None,
+                needs_sandbox=False,
+                needs_checkpoint=False,
+            )
+            return self._finalize(
+                chain=chain,
+                step_name="security_profile_off",
+                action=DecisionAction.ALLOW,
+                reason="security profile is off",
+                clf=off_clf,
+            )
+
         # Step 2: classify（拿 ApprovalClass + meta）
         clf_result = self._classifier.classify_full(tool, event.params, ctx)
         chain.append(
@@ -311,6 +332,7 @@ class PolicyEngineV2:
         # Step 2b: approval_classes.overrides（C5）—— 用户配置 override，但只接受
         # ``most_strict`` 比 classifier 更严的（防止用户错配削弱安全）。
         clf_result = self._apply_class_override(tool, clf_result, chain)
+        clf_result = self._apply_execution_switches(tool, event.params, clf_result)
 
         # Step 3: safety_immune（C5: union config + ctx; C6: PathSpec 完整匹配）
         immune = self._check_safety_immune(tool, event.params, ctx)
@@ -617,6 +639,37 @@ class PolicyEngineV2:
             shell_risk_level=clf_result.shell_risk_level,
             needs_sandbox=clf_result.needs_sandbox,
             needs_checkpoint=clf_result.needs_checkpoint,
+        )
+
+    def _apply_execution_switches(
+        self,
+        tool: str,
+        params: dict[str, Any],
+        clf: ClassificationResult,
+    ) -> ClassificationResult:
+        """Apply sandbox/checkpoint config switches to classifier metadata."""
+        needs_sandbox = clf.needs_sandbox
+        if needs_sandbox:
+            sandbox_cfg = self._config.sandbox
+            command = str(params.get("command") or params.get("script") or "")
+            exempt = any(pat and pat in command for pat in sandbox_cfg.exempt_commands)
+            risk = clf.shell_risk_level.value if clf.shell_risk_level is not None else ""
+            sandbox_levels = {str(level).lower() for level in sandbox_cfg.sandbox_risk_levels}
+            needs_sandbox = (
+                sandbox_cfg.enabled
+                and not exempt
+                and risk.lower() in sandbox_levels
+            )
+
+        needs_checkpoint = clf.needs_checkpoint and self._config.checkpoint.enabled
+        if needs_sandbox == clf.needs_sandbox and needs_checkpoint == clf.needs_checkpoint:
+            return clf
+        return ClassificationResult(
+            approval_class=clf.approval_class,
+            source=clf.source,
+            shell_risk_level=clf.shell_risk_level,
+            needs_sandbox=needs_sandbox,
+            needs_checkpoint=needs_checkpoint,
         )
 
     def _check_safety_immune(
@@ -977,7 +1030,7 @@ class PolicyEngineV2:
 
                 _evo_record(
                     fix_id=ctx.evolution_fix_id,
-                    audit_path=_evo_audit_path(ctx.workspace),
+                    audit_path=_evo_audit_path(primary_workspace_root(ctx)),
                     decision_record={
                         "tool": event.tool,
                         "action": decision.action.value

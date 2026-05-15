@@ -514,3 +514,32 @@ class TestSelfProtectionDisabledSemantics:
         assert v2["security"]["death_switch"]["threshold"] == 3
         # audit 正常迁移
         assert v2["security"]["audit"]["enabled"] is True
+
+
+class TestEnabledProfileCanonicalization:
+    """security.enabled ↔ profile.current=off 单一总开关归一化（cleanup phase）。"""
+
+    def test_enabled_false_promotes_to_profile_off(self) -> None:
+        v1 = {"security": {"enabled": False}}
+        v2, report = migrate_v1_to_v2(v1)
+        assert v2["security"]["enabled"] is False
+        assert v2["security"]["profile"]["current"] == "off"
+        assert any("profile.current=off" in f for f in report.fields_migrated)
+
+    def test_profile_off_forces_enabled_false(self) -> None:
+        """profile.current=off but no explicit enabled → enabled coerced to false."""
+        v2_in = {"security": {"profile": {"current": "off", "base": "protect"}}}
+        v2, _ = migrate_v1_to_v2(v2_in)
+        assert v2["security"]["enabled"] is False
+        assert v2["security"]["profile"]["current"] == "off"
+
+    def test_enabled_true_with_protect_unchanged(self) -> None:
+        v2_in = {
+            "security": {
+                "enabled": True,
+                "profile": {"current": "protect", "base": None},
+            }
+        }
+        v2, _ = migrate_v1_to_v2(v2_in)
+        assert v2["security"]["enabled"] is True
+        assert v2["security"]["profile"]["current"] == "protect"

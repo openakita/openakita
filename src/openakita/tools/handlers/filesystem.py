@@ -157,8 +157,15 @@ class FilesystemHandler:
 
     def _allowed_roots(self) -> list[str]:
         roots = []
-        roots.extend(getattr(self.agent, "allowed_roots", []) or [])
-        roots.append(getattr(self.agent, "default_cwd", None) or str(Path.cwd()))
+        try:
+            from ...core.policy_v2 import get_config_v2
+
+            cfg = get_config_v2()
+            if not cfg.enabled or cfg.profile.current == "off":
+                return []
+            roots.extend(str(p) for p in cfg.workspace.paths if p)
+        except Exception:
+            roots.append(getattr(self.agent, "default_cwd", None) or str(Path.cwd()))
         try:
             roots.append(str(settings.data_dir))
         except Exception:
@@ -166,7 +173,10 @@ class FilesystemHandler:
         return [str(r) for r in roots if r]
 
     def _guard_path_boundary(self, raw_path: str, *, op: str) -> str | None:
-        result = resolve_within_root(raw_path, self._allowed_roots())
+        allowed_roots = self._allowed_roots()
+        if not allowed_roots:
+            return None
+        result = resolve_within_root(raw_path, allowed_roots)
         if result.ok:
             return None
         try:
@@ -182,7 +192,11 @@ class FilesystemHandler:
             )
         except Exception:
             pass
-        return f"❌ 路径安全边界拒绝 {op}: {result.reason} ({result.safe_ref})"
+        return (
+            f"❌ 路径名单拒绝 {op}: {result.reason} ({result.safe_ref})。"
+            "请在 安全策略 → 路径名单 → 允许访问的工作区 中添加该目录，"
+            "或将文件复制到当前工作区。"
+        )
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """

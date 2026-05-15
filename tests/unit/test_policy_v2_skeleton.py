@@ -174,7 +174,7 @@ class _FakeLegacySession:
 def test_context_from_legacy_session_uses_defaults() -> None:
     ctx = PolicyContext.from_session(_FakeLegacySession())
     assert ctx.session_id == "legacy-session-1"
-    assert ctx.workspace == Path("/tmp/work")
+    assert Path("/tmp/work") in ctx.workspace_roots
     assert ctx.session_role == SessionRole.AGENT
     assert ctx.confirmation_mode == ConfirmationMode.DEFAULT
     assert ctx.is_owner is True

@@ -1,7 +1,7 @@
 """PolicyContext: per-call execution context.
 
 PolicyContext 是 PolicyEngineV2 决策的"环境"对象，承载：
-- session 标识 / workspace
+- session 标识 / workspace_roots
 - 渠道（desktop / im:* / cli / api / webhook）与 owner 标识
 - session_role × confirmation_mode 两层正交 mode
 - unattended 标志与策略
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import time
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -96,7 +96,8 @@ class PolicyContext:
     """PolicyEngineV2 决策上下文。"""
 
     session_id: str
-    workspace: Path
+    workspace_roots: tuple[Path, ...] = (Path("."),)
+    workspace: InitVar[Path | str | None] = None
 
     channel: str = "desktop"
     """desktop / cli / api / webhook / im:telegram / im:feishu / ..."""
@@ -157,7 +158,7 @@ class PolicyContext:
     在窗口内可写 identity/runtime 等）作为后续 commit 处理，避免一次性
     扩大攻击面。"""
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, workspace: Path | str | None = None) -> None:
         """构造后归一：把 string 形态的 role/mode 强制转 enum。
 
         Python dataclass 不像 Pydantic 自带 coercion；如果调用方拿了
@@ -172,6 +173,8 @@ class PolicyContext:
             self.session_role = _coerce_role(self.session_role)
         if not isinstance(self.confirmation_mode, ConfirmationMode):
             self.confirmation_mode = _coerce_mode(self.confirmation_mode)
+        roots_raw = workspace if workspace is not None else self.workspace_roots
+        self.workspace_roots = _coerce_workspace_roots(roots_raw)
 
     @classmethod
     def from_session(cls, session: Any, **overrides: Any) -> PolicyContext:
@@ -196,7 +199,30 @@ class PolicyContext:
         session_id = (
             getattr(session, "id", None) or getattr(session, "session_id", None) or "unknown"
         )
-        workspace_raw = getattr(session, "workspace", None) or "."
+        # workspace_roots = config.workspace.paths ∪ session.workspace。Session
+        # 自带的工作目录只是 union 的额外 root，不允许替换/缩小用户在安全页
+        # 配置的工作区集合——这与 build_policy_context() 的语义保持一致。
+        try:
+            from .global_engine import get_config_v2
+
+            cfg = get_config_v2()
+            config_roots = tuple(Path(p) for p in cfg.workspace.paths)
+        except Exception:
+            config_roots = ()
+        session_ws = getattr(session, "workspace_roots", None) or getattr(
+            session, "workspace", None
+        )
+        roots_seq: list[Path] = []
+        seen: set[str] = set()
+        for raw in (*config_roots, session_ws):
+            if not raw:
+                continue
+            for p in _coerce_workspace_roots(raw):
+                k = str(p)
+                if k not in seen:
+                    seen.add(k)
+                    roots_seq.append(p)
+        workspace_raw = tuple(roots_seq) if roots_seq else (Path("."),)
         meta = dict(getattr(session, "metadata", {}) or {})
 
         confirmation_raw = (
@@ -207,7 +233,7 @@ class PolicyContext:
 
         ctx = cls(
             session_id=str(session_id),
-            workspace=Path(workspace_raw),
+            workspace_roots=workspace_raw,
             channel=str(meta.get("channel", "desktop")),
             is_owner=bool(meta.get("is_owner", True)),
             root_user_id=meta.get("root_user_id"),
@@ -251,7 +277,7 @@ class PolicyContext:
         chain = list(self.delegate_chain) + [child_agent_name]
         return PolicyContext(
             session_id=child_session_id,
-            workspace=self.workspace,
+            workspace_roots=self.workspace_roots,
             channel=self.channel,
             is_owner=self.is_owner,
             root_user_id=self.root_user_id or self.session_id,
@@ -349,6 +375,32 @@ def _coerce_trusted_paths(raw: Any) -> list[TrustedPathOverride]:
                 )
             )
     return out
+
+
+def _coerce_workspace_roots(raw: Any) -> tuple[Path, ...]:
+    """Normalize workspace roots to a non-empty tuple of Path objects."""
+    if raw is None:
+        items: list[Any] = []
+    elif isinstance(raw, (str, Path)):
+        items = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        items = list(raw)
+    else:
+        items = [raw]
+    roots: list[Path] = []
+    for item in items:
+        try:
+            text = str(item)
+            if text:
+                roots.append(Path(text))
+        except Exception:
+            continue
+    return tuple(roots or [Path(".")])
+
+
+def primary_workspace_root(ctx: PolicyContext) -> Path:
+    """Return the first workspace root for output/audit locations only."""
+    return ctx.workspace_roots[0] if ctx.workspace_roots else Path(".")
 
 
 def _coerce_role(value: Any) -> SessionRole:

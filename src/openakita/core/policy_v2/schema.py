@@ -120,6 +120,22 @@ class _Strict(BaseModel):
     )
 
 
+class SecurityProfileConfig(_Strict):
+    """Top-level security profile preset.
+
+    ``current`` is the product-facing security plan.  It is intentionally
+    separate from ``confirmation.mode``: a profile writes a bundle of defaults
+    across confirmation/path/sandbox/risk settings, while each mechanism remains
+    independently editable.
+    """
+
+    current: Literal["trust", "protect", "strict", "off", "custom"] = "protect"
+    base: Literal["trust", "protect", "strict", "off"] | None = None
+    off_acknowledged_at: str | None = None
+    off_acknowledged_by: str | None = None
+    off_ack_phrase_hash: str | None = None
+
+
 class WorkspaceConfig(_Strict):
     """workspace 路径列表（替代 v1 ``zones.workspace``）。
 
@@ -258,7 +274,7 @@ class CheckpointConfig(_Strict):
 class SandboxConfig(_Strict):
     """沙箱配置（v1 ``sandbox.network.*`` 在 v2 扁平化为 ``network_*``）。"""
 
-    enabled: _StrictBool = False
+    enabled: _StrictBool = True
     backend: Literal["auto", "docker", "firejail", "wsl", "none"] = "auto"
     sandbox_risk_levels: list[Literal["MEDIUM", "HIGH", "CRITICAL"]] = Field(
         default_factory=lambda: ["HIGH"]
@@ -404,6 +420,7 @@ class PolicyConfigV2(_Strict):
     """
 
     enabled: _StrictBool = True
+    profile: SecurityProfileConfig = Field(default_factory=SecurityProfileConfig)
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     confirmation: ConfirmationConfig = Field(default_factory=ConfirmationConfig)
     session_role: SessionRoleConfig = Field(default_factory=SessionRoleConfig)
@@ -451,6 +468,7 @@ __all__ = [
     "PolicyConfigV2",
     "SafetyImmuneConfig",
     "SandboxConfig",
+    "SecurityProfileConfig",
     "SessionRoleConfig",
     "ShellRiskConfig",
     "UnattendedConfig",

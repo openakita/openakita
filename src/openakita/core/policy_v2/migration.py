@@ -102,6 +102,7 @@ def detect_schema_version(
         "death_switch",
         "audit",
         "workspace",
+        "profile",
         "owner_only",
         "approval_classes",
         "unattended",
@@ -334,6 +335,29 @@ def migrate_v1_to_v2(
             # 体验。但 v2 schema 没这个字段，必须删掉。
             del out_confirm["enabled"]
             report.fields_dropped.append("confirmation.enabled (v2 用 security.enabled 控制整体)")
+
+    # ── enabled ↔ profile.current=off canonicalization ────────────────
+    # 历史 YAML 里两个总开关并存（security.enabled、profile.current="off"）容易
+    # 漂移。这里在迁移完成后做一次幂等归一：任何一边表达"全关"就同步到另一边。
+    # 运行时 engine.preflight 早已"任一为关都短路"，本步只是让导出/UI 看上去
+    # 不再自相矛盾。
+    profile_block = out_sec.get("profile") if isinstance(out_sec.get("profile"), dict) else None
+    explicit_off = bool(profile_block and profile_block.get("current") == "off")
+    sec_disabled = out_sec.get("enabled") is False
+    if explicit_off or sec_disabled:
+        out_sec["enabled"] = False
+        if profile_block is None:
+            out_sec["profile"] = {"current": "off", "base": None}
+            report.fields_migrated.append(
+                "security.enabled=false → profile.current=off （canonicalize）"
+            )
+        else:
+            if profile_block.get("current") != "off":
+                profile_block["base"] = profile_block.get("current")
+                profile_block["current"] = "off"
+                report.fields_migrated.append(
+                    "security.enabled=false → profile.current=off （canonicalize）"
+                )
 
     return {"security": out_sec}, report
 

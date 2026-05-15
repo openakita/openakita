@@ -41,6 +41,7 @@ from .context import (
     ReplayAuthorization,
     TrustedPathOverride,
     get_current_context,
+    primary_workspace_root,
     reset_current_context,
     set_current_context,
 )
@@ -219,6 +220,7 @@ __all__ = [
     "ReplayAuthorization",
     "TrustedPathOverride",
     "get_current_context",
+    "primary_workspace_root",
     "reset_current_context",
     "set_current_context",
     # classifier

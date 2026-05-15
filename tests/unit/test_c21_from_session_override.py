@@ -167,4 +167,4 @@ def test_neither_field_present_uses_default() -> None:
     ctx = PolicyContext.from_session(_NoAttrSession())
     assert ctx.confirmation_mode == ConfirmationMode.DEFAULT
     assert ctx.session_role == SessionRole.AGENT
-    assert ctx.workspace == Path("/tmp/work")
+    assert Path("/tmp/work") in ctx.workspace_roots

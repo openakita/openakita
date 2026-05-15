@@ -228,6 +228,16 @@ class SecurityZonesUpdate(BaseModel):
     default_zone: str = "workspace"
 
 
+class SecurityPathPolicyUpdate(BaseModel):
+    workspace_paths: list[str] = []
+    safety_immune_paths: list[str] = []
+
+
+class SecurityProfileUpdate(BaseModel):
+    profile: str
+    ack_phrase: str | None = None
+
+
 class SecurityCommandsUpdate(BaseModel):
     custom_critical: list[str] = []
     custom_high: list[str] = []
@@ -310,6 +320,102 @@ def _permission_label(mode: str) -> str:
     return "trust" if _normalize_permission_mode(mode) == "yolo" else mode
 
 
+_SECURITY_PROFILE_OFF_ACK = "确认风险同意关闭"
+
+
+def _normalize_security_profile(profile: str) -> str:
+    value = (profile or "protect").strip().lower()
+    aliases = {
+        "yolo": "trust",
+        "smart": "protect",
+        "cautious": "strict",
+    }
+    value = aliases.get(value, value)
+    if value not in ("trust", "protect", "strict", "off", "custom"):
+        value = "protect"
+    return value
+
+
+def _write_profile_event(profile: str, *, previous: str | None = None) -> None:
+    """Write a profile switch event using the audit floor.
+
+    This intentionally uses a default AuditLogger, not get_audit_logger(), so a
+    disabled normal audit config cannot hide off-mode transitions.
+    """
+    try:
+        from openakita.core.audit_logger import AuditLogger
+
+        AuditLogger(enabled=True).log_event(
+            "security_profile_change",
+            {"profile": profile, "previous": previous or ""},
+        )
+    except Exception:
+        logger.debug("[Config API] failed to write security profile audit", exc_info=True)
+
+
+def _apply_security_profile_defaults(sec: dict[str, Any], profile: str) -> None:
+    profile = _normalize_security_profile(profile)
+    prev = (sec.get("profile") or {}).get("current")
+    sec["profile"] = {"current": profile, "base": None if profile != "custom" else prev}
+    conf = sec.setdefault("confirmation", {})
+    sandbox = sec.setdefault("sandbox", {})
+    shell_risk = sec.setdefault("shell_risk", {})
+    death_switch = sec.setdefault("death_switch", {})
+    checkpoint = sec.setdefault("checkpoint", {})
+    if profile == "trust":
+        sec["enabled"] = True
+        conf["mode"] = "trust"
+        sandbox["enabled"] = False
+        shell_risk["enabled"] = True
+        death_switch["enabled"] = True
+        checkpoint["enabled"] = True
+    elif profile == "protect":
+        sec["enabled"] = True
+        conf["mode"] = "default"
+        sandbox["enabled"] = True
+        shell_risk["enabled"] = True
+        death_switch["enabled"] = True
+        checkpoint["enabled"] = True
+    elif profile == "strict":
+        sec["enabled"] = True
+        conf["mode"] = "strict"
+        sandbox["enabled"] = True
+        shell_risk["enabled"] = True
+        death_switch["enabled"] = True
+        checkpoint["enabled"] = True
+    elif profile == "off":
+        # off 同时把 security.enabled 关掉，使二者保持单一语义：
+        # "整套策略停摆"。engine.preflight 任一为关都会短路 ALLOW，
+        # 但只有这里二者同时被写下，未来导出/迁移/审计才不会出现
+        # "enabled=True 但 profile=off" 这种荒谬组合。
+        sec["enabled"] = False
+        conf["mode"] = "trust"
+        sandbox["enabled"] = False
+        shell_risk["enabled"] = False
+        death_switch["enabled"] = False
+        checkpoint["enabled"] = False
+
+
+def _mark_security_profile_custom(sec: dict[str, Any]) -> None:
+    """任何细粒度写入都把方案标成 custom；off→custom 会写审计事件。
+
+    设计取舍：UI 在 off 状态下应隐藏细粒度页，但 API 层不能假设调用方
+    一定来自 UI。这里采取"细粒度写入 = 用户显式希望开启细粒度策略"，
+    把方案从 off 平滑过渡到 custom 并重新启用安全总开关；同时通过审计
+    floor 把这次"逃出 off"事件留痕，便于运维事后排查。
+    """
+    profile = sec.setdefault("profile", {})
+    prev = profile.get("current")
+    leaving_off = prev == "off"
+    if prev != "custom":
+        profile["base"] = prev or "protect"
+        profile["current"] = "custom"
+    # custom 模式下 security.enabled 永远应该是 True（否则不存在意义）。
+    sec["enabled"] = True
+    if leaving_off:
+        _write_profile_event("custom", previous="off")
+
+
 def _mode_from_security(sec: dict[str, Any] | None) -> str:
     conf = (sec or {}).get("confirmation", {})
     mode = conf.get("mode")
@@ -321,29 +427,23 @@ def _mode_from_security(sec: dict[str, Any] | None) -> str:
 
 
 def _apply_permission_mode_defaults(sec: dict[str, Any], mode: str) -> None:
-    """Synchronize high-level permission mode with granular security defaults."""
+    """Synchronize high-level permission mode with granular security defaults.
+
+    chat 视图的快速模式切换器只认 cautious/smart/yolo，但其底层就是
+    profile 预设。该路径如果碰到当前是 off/custom 的用户，会把状态
+    强行带回 trust/protect/strict——这是正向的（重新启用安全），但
+    审计上要留痕，便于事后排查"用户突然从 off 跳出了"。
+    """
     mode = _normalize_permission_mode(mode)
-
-    conf = sec.setdefault("confirmation", {})
-    conf["mode"] = mode
-    conf.pop("auto_confirm", None)
-
-    zones = sec.setdefault("zones", {})
-    if mode == "yolo":
-        zones["default_zone"] = "workspace"
-        sec.setdefault("sandbox", {})["enabled"] = False
-        sec.setdefault("self_protection", {})["enabled"] = False
-        sec.setdefault("command_patterns", {})["enabled"] = False
-    elif mode == "smart":
-        zones["default_zone"] = "controlled"
-        sec.setdefault("sandbox", {})["enabled"] = True
-        sec.setdefault("self_protection", {})["enabled"] = True
-        sec.setdefault("command_patterns", {})["enabled"] = True
-    else:
-        zones["default_zone"] = "protected"
-        sec.setdefault("sandbox", {})["enabled"] = True
-        sec.setdefault("self_protection", {})["enabled"] = True
-        sec.setdefault("command_patterns", {})["enabled"] = True
+    target_profile = {
+        "yolo": "trust",
+        "smart": "protect",
+        "cautious": "strict",
+    }.get(mode, "strict")
+    prev = (sec.get("profile") or {}).get("current")
+    _apply_security_profile_defaults(sec, target_profile)
+    if prev and prev != target_profile and prev in ("off", "custom"):
+        _write_profile_event(target_profile, previous=prev)
 
 
 # ─── Routes ────────────────────────────────────────────────────────────
@@ -1612,14 +1712,17 @@ async def preview_security_config(body: dict | None = None):
             engine = make_preview_engine(cfg)
         else:
             engine = make_preview_engine()
+            from openakita.core.policy_v2.global_engine import get_config_v2
+
+            cfg = get_config_v2()
     except Exception as exc:
         return {"status": "error", "message": f"构建预览引擎失败: {exc}"}
 
     ctx = PolicyContext(
         session_id="dry_run_preview",
-        workspace=_P.cwd(),
+        workspace_roots=tuple(_P(p) for p in cfg.workspace.paths),
         session_role=SessionRole.AGENT,
-        confirmation_mode=ConfirmationMode.DEFAULT,
+        confirmation_mode=ConfirmationMode(cfg.confirmation.mode),
     )
 
     decisions: list[dict[str, object]] = []
@@ -1629,12 +1732,27 @@ async def preview_security_config(body: dict | None = None):
             params_preview = ", ".join(f"{k}={v!s}"[:80] for k, v in params.items())
             decisions.append({
                 "tool": tool,
+                "tool_label_key": f"security.tool.{tool}",
                 "params_preview": params_preview,
                 "decision": d.action.value,
+                "decision_label_key": f"security.decision.{d.action.value}",
                 "reason": d.reason,
+                "reason_code": (d.chain[-1].name if d.chain else "unknown"),
                 "approval_class": d.approval_class.value if d.approval_class else None,
+                "approval_class_label_key": (
+                    f"security.approvalClass.{d.approval_class.value}"
+                    if d.approval_class
+                    else None
+                ),
                 "risk_level": d.shell_risk_level or "",
                 "safety_immune_match": d.safety_immune_match,
+                "flags": {
+                    "safety_immune": bool(d.safety_immune_match),
+                    "needs_sandbox": bool(d.needs_sandbox),
+                    "needs_checkpoint": bool(d.needs_checkpoint),
+                },
+                "effective_confirmation_mode": ctx.confirmation_mode.value,
+                "security_profile": cfg.profile.current,
             })
         except Exception as exc:
             decisions.append({
@@ -1649,91 +1767,166 @@ async def preview_security_config(body: dict | None = None):
     return {"decisions": decisions, "preview_uses_proposed": proposed_security is not None}
 
 
+@router.get("/api/config/security/approval-matrix")
+async def read_security_approval_matrix():
+    from openakita.core.policy_v2 import ApprovalClass, ConfirmationMode, SessionRole
+    from openakita.core.policy_v2.matrix import lookup as lookup_matrix
+
+    rows: list[dict[str, object]] = []
+    for role in SessionRole:
+        for klass in ApprovalClass:
+            cells = {
+                mode.value: lookup_matrix(role, mode, klass).value
+                for mode in ConfirmationMode
+            }
+            rows.append({"role": role.value, "approval_class": klass.value, "decisions": cells})
+    return {
+        "roles": [r.value for r in SessionRole],
+        "modes": [m.value for m in ConfirmationMode],
+        "classes": [c.value for c in ApprovalClass],
+        "rows": rows,
+        "baseline_only": True,
+    }
+
+
 @router.get("/api/config/security/zones")
 async def read_security_zones():
-    """Read zone path configuration."""
-    from openakita.core.policy_v2.defaults import (
-        default_forbidden_paths,
-        default_protected_paths,
-    )
-
+    """Deprecated compatibility view over security.workspace/safety_immune."""
     data = _read_policies_yaml() or {}
     sec = data.get("security", {})
-    mode = _mode_from_security(sec)
-    zones = sec.get("zones", {})
+    workspace = sec.get("workspace", {}) if isinstance(sec.get("workspace"), dict) else {}
+    immune = (
+        sec.get("safety_immune", {})
+        if isinstance(sec.get("safety_immune"), dict)
+        else {}
+    )
     return {
-        "workspace": zones.get("workspace", []),
-        "controlled": zones.get("controlled", []),
-        "protected": zones.get("protected")
-        if zones.get("protected") is not None
-        else default_protected_paths(),
-        "forbidden": zones.get("forbidden")
-        if zones.get("forbidden") is not None
-        else default_forbidden_paths(),
-        "default_zone": zones.get("default_zone", "workspace" if mode == "yolo" else "controlled"),
+        "workspace": workspace.get("paths", ["${CWD}"]),
+        "controlled": [],
+        "protected": immune.get("paths", []),
+        "forbidden": [],
+        "default_zone": "workspace",
+        "deprecated": True,
     }
 
 
 @router.post("/api/config/security/zones")
 async def write_security_zones(body: SecurityZonesUpdate):
-    """Update zone path configuration."""
+    """Deprecated compatibility write into V2 path policy."""
     data = _read_policies_yaml()
     if data is None:
         return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
-    if "security" not in data:
-        data["security"] = {}
-    if "zones" not in data["security"]:
-        data["security"]["zones"] = {}
-    z = data["security"]["zones"]
-    z["workspace"] = body.workspace
-    z["controlled"] = body.controlled
-    z["protected"] = body.protected
-    z["forbidden"] = body.forbidden
-    if body.default_zone in ("workspace", "controlled", "protected", "forbidden"):
-        z["default_zone"] = body.default_zone
+    sec = data.setdefault("security", {})
+    sec["workspace"] = {"paths": body.workspace or ["${CWD}"]}
+    sec["safety_immune"] = {"paths": [*body.protected, *body.forbidden]}
+    sec.pop("zones", None)
+    _mark_security_profile_custom(sec)
     _write_policies_yaml(data)
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
 
-        reset_policy_v2_layer(scope="zones")
+        reset_policy_v2_layer(scope="path_policy")
     except Exception:
         pass
     logger.info("[Config API] Updated security zones")
     return {"status": "ok"}
 
 
+@router.get("/api/config/security/path-policy")
+async def read_security_path_policy():
+    data = _read_policies_yaml() or {}
+    sec = data.get("security", {})
+    workspace = sec.get("workspace", {}) if isinstance(sec.get("workspace"), dict) else {}
+    immune = (
+        sec.get("safety_immune", {})
+        if isinstance(sec.get("safety_immune"), dict)
+        else {}
+    )
+    internal_roots: list[str] = []
+    try:
+        from openakita.config import settings
+
+        internal_roots.append(str(settings.data_dir))
+    except Exception:
+        pass
+    return {
+        "workspace_paths": workspace.get("paths", ["${CWD}"]),
+        "safety_immune_paths": immune.get("paths", []),
+        "internal_allowed_roots": internal_roots,
+    }
+
+
+@router.post("/api/config/security/path-policy")
+async def write_security_path_policy(body: SecurityPathPolicyUpdate):
+    data = _read_policies_yaml()
+    if data is None:
+        return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
+    sec = data.setdefault("security", {})
+    sec["workspace"] = {"paths": body.workspace_paths or ["${CWD}"]}
+    sec["safety_immune"] = {"paths": body.safety_immune_paths}
+    sec.pop("zones", None)
+    profile = sec.setdefault("profile", {})
+    if profile.get("current") != "custom":
+        profile["base"] = profile.get("current") or "protect"
+        profile["current"] = "custom"
+    _write_policies_yaml(data)
+    try:
+        from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
+
+        reset_policy_v2_layer(scope="path_policy")
+    except Exception:
+        pass
+    logger.info("[Config API] Updated security path policy")
+    return {"status": "ok"}
+
+
 @router.get("/api/config/security/commands")
 async def read_security_commands():
-    """Read command pattern configuration."""
+    """Read shell_risk command-pattern configuration.
+
+    本接口是 V2 ``security.shell_risk`` 的 UI 视图。早期版本同时把数据
+    写到 legacy ``security.command_patterns``——这一版彻底切换到 V2
+    字段；如果 YAML 里只剩 legacy 数据，loader.migrate 在加载时已自动
+    迁移过来，本接口直接读 ``security.shell_risk`` 即可。
+    """
     from openakita.core.policy_v2.defaults import default_blocked_commands
 
     data = _read_policies_yaml() or {}
-    cp = data.get("security", {}).get("command_patterns", {})
+    sec = data.get("security", {}) if isinstance(data.get("security"), dict) else {}
+    sr = sec.get("shell_risk", {}) if isinstance(sec.get("shell_risk"), dict) else {}
+    # legacy fallback —— 老 YAML 还没被 migrate 过的情况下回退到 command_patterns，
+    # 但仅作 read fallback，不会把它当作 source-of-truth 回写。
+    cp = sec.get("command_patterns", {}) if isinstance(sec.get("command_patterns"), dict) else {}
     return {
-        "custom_critical": cp.get("custom_critical", []),
-        "custom_high": cp.get("custom_high", []),
-        "excluded_patterns": cp.get("excluded_patterns", []),
-        "blocked_commands": cp.get("blocked_commands")
-        if cp.get("blocked_commands") is not None
-        else default_blocked_commands(),
+        "custom_critical": sr.get("custom_critical", cp.get("custom_critical", [])),
+        "custom_high": sr.get("custom_high", cp.get("custom_high", [])),
+        "excluded_patterns": sr.get("excluded_patterns", cp.get("excluded_patterns", [])),
+        "blocked_commands": (
+            sr.get("blocked_commands")
+            if sr.get("blocked_commands") is not None
+            else cp.get("blocked_commands")
+            if cp.get("blocked_commands") is not None
+            else default_blocked_commands()
+        ),
+        "enabled": sr.get("enabled", True),
     }
 
 
 @router.post("/api/config/security/commands")
 async def write_security_commands(body: SecurityCommandsUpdate):
-    """Update command pattern configuration."""
+    """Update shell_risk configuration (canonical V2 location)."""
     data = _read_policies_yaml()
     if data is None:
         return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
-    if "security" not in data:
-        data["security"] = {}
-    if "command_patterns" not in data["security"]:
-        data["security"]["command_patterns"] = {}
-    cp = data["security"]["command_patterns"]
-    cp["custom_critical"] = body.custom_critical
-    cp["custom_high"] = body.custom_high
-    cp["excluded_patterns"] = body.excluded_patterns
-    cp["blocked_commands"] = body.blocked_commands
+    sec = data.setdefault("security", {})
+    sr = sec.setdefault("shell_risk", {})
+    sr["custom_critical"] = body.custom_critical
+    sr["custom_high"] = body.custom_high
+    sr["excluded_patterns"] = body.excluded_patterns
+    sr["blocked_commands"] = body.blocked_commands
+    # 彻底丢弃 legacy 槽位，避免双源
+    sec.pop("command_patterns", None)
+    _mark_security_profile_custom(sec)
     _write_policies_yaml(data)
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
@@ -1741,7 +1934,7 @@ async def write_security_commands(body: SecurityCommandsUpdate):
         reset_policy_v2_layer(scope="commands")
     except Exception:
         pass
-    logger.info("[Config API] Updated security commands")
+    logger.info("[Config API] Updated security commands (shell_risk)")
     return {"status": "ok"}
 
 
@@ -1780,6 +1973,7 @@ async def write_security_sandbox(body: SecuritySandboxUpdate):
         sb["sandbox_risk_levels"] = body.sandbox_risk_levels
     if body.exempt_commands is not None:
         sb["exempt_commands"] = body.exempt_commands
+    _mark_security_profile_custom(data["security"])
     _write_policies_yaml(data)
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
@@ -1840,6 +2034,51 @@ async def write_permission_mode(body: _PermissionModeBody):
         return {"status": "ok", "mode": mode, "label": _permission_label(mode)}
     except Exception as e:
         logger.warning(f"[Config API] permission-mode write error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@router.get("/api/config/security-profile")
+async def read_security_profile():
+    data = _read_policies_yaml() or {}
+    sec = data.get("security", {})
+    profile = sec.get("profile") or {}
+    current = _normalize_security_profile(str(profile.get("current") or _permission_label(_mode_from_security(sec))))
+    return {
+        "current": current,
+        "base": profile.get("base"),
+        "off_acknowledged_at": profile.get("off_acknowledged_at"),
+    }
+
+
+@router.post("/api/config/security-profile")
+async def write_security_profile(body: SecurityProfileUpdate):
+    profile = _normalize_security_profile(body.profile)
+    if profile == "off" and (body.ack_phrase or "") != _SECURITY_PROFILE_OFF_ACK:
+        return {
+            "status": "error",
+            "message": "必须手动输入【确认风险同意关闭】后才能关闭安全机制",
+        }
+    try:
+        from datetime import UTC, datetime
+
+        from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
+
+        data = _read_policies_yaml()
+        if data is None:
+            return {"status": "error", "message": "无法读取当前配置文件，安全方案未切换"}
+        sec = data.setdefault("security", {})
+        previous = (sec.get("profile") or {}).get("current")
+        _apply_security_profile_defaults(sec, profile)
+        if profile == "off":
+            sec.setdefault("profile", {})["off_acknowledged_at"] = datetime.now(UTC).isoformat()
+            sec.setdefault("profile", {})["off_acknowledged_by"] = "local_user"
+        if not _write_policies_yaml(data):
+            return {"status": "error", "message": "配置写入失败，安全方案未切换"}
+        _write_profile_event(profile, previous=previous)
+        reset_policy_v2_layer(scope="security_profile")
+        return {"status": "ok", "profile": profile}
+    except Exception as e:
+        logger.warning("[Config API] security profile write error: %s", e)
         return {"status": "error", "message": str(e)}
 
 
@@ -2079,11 +2318,12 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
     sec = data.setdefault("security", {})
     conf = sec.setdefault("confirmation", {})
     if body.mode is not None:
-        m = _normalize_permission_mode(body.mode)
-        if m not in ("cautious", "smart", "yolo"):
+        aliases = {"yolo": "trust", "smart": "default", "cautious": "strict"}
+        m = aliases.get(str(body.mode), str(body.mode))
+        if m not in ("trust", "default", "accept_edits", "strict", "dont_ask"):
             return {"status": "error", "message": f"无效 mode: {body.mode}"}
-        _apply_permission_mode_defaults(sec, m)
-        conf = sec.setdefault("confirmation", {})
+        conf["mode"] = m
+        _mark_security_profile_custom(sec)
     if body.timeout_seconds is not None:
         conf["timeout_seconds"] = body.timeout_seconds
     if body.default_on_timeout is not None:
@@ -2102,6 +2342,7 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
                 "message": "aggregation_window_seconds must be in [0, 600]",
             }
         conf["aggregation_window_seconds"] = v
+    _mark_security_profile_custom(sec)
     _write_policies_yaml(data)
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer
@@ -2113,28 +2354,37 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
 
 
 # ── Self-protection config CRUD ──────────────────────────────────────
+#
+# UI 的"自我保护"页其实是三件不同的事：
+#   - protected_dirs  → V2 ``safety_immune.paths``
+#   - death_switch_*  → V2 ``death_switch.*``
+#   - audit_*         → V2 ``audit.*``
+# 早期版本仍把它写入旧的 ``self_protection`` 子树，导致引擎完全不读、UI 又看似生效。
+# 本接口现在直接读写 V2 真源，旧字段只作 read fallback，不再回写。
+
+
+_DEFAULT_PROTECTED_DIRS = ["data/", "identity/", "logs/", "src/"]
 
 
 @router.get("/api/config/security/self-protection")
 async def read_self_protection():
-    """Read self-protection config."""
-    _default_protected_dirs = ["data/", "identity/", "logs/", "src/"]
     data = _read_policies_yaml()
     if data is None:
         return {
-            "enabled": False,
-            "protected_dirs": _default_protected_dirs,
+            "enabled": True,
+            "protected_dirs": _DEFAULT_PROTECTED_DIRS,
             "death_switch_threshold": 3,
             "death_switch_total_multiplier": 3,
             "audit_to_file": True,
             "audit_path": "",
             "readonly_mode": False,
         }
-    sec = data.get("security", {})
-    mode = _mode_from_security(sec)
-    sp = sec.get("self_protection", {})
-    # C8b-6a: v1 ``pe.readonly_mode`` → v2 ``DeathSwitchTracker.is_readonly_mode()``
-    # （process-wide singleton；与 reasoning_engine death-switch 通知同源）。
+    sec = data.get("security", {}) if isinstance(data.get("security"), dict) else {}
+    ds = sec.get("death_switch", {}) if isinstance(sec.get("death_switch"), dict) else {}
+    audit_cfg = sec.get("audit", {}) if isinstance(sec.get("audit"), dict) else {}
+    immune = sec.get("safety_immune", {}) if isinstance(sec.get("safety_immune"), dict) else {}
+    # legacy fallback —— 仅读，写路径不再触碰
+    legacy_sp = sec.get("self_protection", {}) if isinstance(sec.get("self_protection"), dict) else {}
     try:
         from openakita.core.policy_v2 import get_death_switch_tracker
 
@@ -2142,14 +2392,16 @@ async def read_self_protection():
     except Exception:
         readonly = False
     return {
-        "enabled": sp.get("enabled", mode != "yolo"),
-        "protected_dirs": sp.get("protected_dirs")
-        if sp.get("protected_dirs") is not None
-        else _default_protected_dirs,
-        "death_switch_threshold": sp.get("death_switch_threshold", 3),
-        "death_switch_total_multiplier": sp.get("death_switch_total_multiplier", 3),
-        "audit_to_file": sp.get("audit_to_file", True),
-        "audit_path": sp.get("audit_path", ""),
+        "enabled": ds.get("enabled", legacy_sp.get("enabled", True)),
+        "protected_dirs": immune.get("paths", legacy_sp.get("protected_dirs", _DEFAULT_PROTECTED_DIRS)),
+        "death_switch_threshold": ds.get(
+            "threshold", legacy_sp.get("death_switch_threshold", 3)
+        ),
+        "death_switch_total_multiplier": ds.get(
+            "total_multiplier", legacy_sp.get("death_switch_total_multiplier", 3)
+        ),
+        "audit_to_file": audit_cfg.get("enabled", legacy_sp.get("audit_to_file", True)),
+        "audit_path": audit_cfg.get("log_path", legacy_sp.get("audit_path", "")),
         "readonly_mode": readonly,
     }
 
@@ -2165,24 +2417,29 @@ class _SelfProtectionUpdate(BaseModel):
 
 @router.post("/api/config/security/self-protection")
 async def write_self_protection(body: _SelfProtectionUpdate):
-    """Update self-protection config (PATCH semantics)."""
+    """Update self-protection config (PATCH semantics) — writes V2 fields only."""
     data = _read_policies_yaml()
     if data is None:
         return {"status": "error", "message": "无法读取配置"}
     sec = data.setdefault("security", {})
-    sp = sec.setdefault("self_protection", {})
+    ds = sec.setdefault("death_switch", {})
+    audit_cfg = sec.setdefault("audit", {})
+    immune = sec.setdefault("safety_immune", {})
     if body.enabled is not None:
-        sp["enabled"] = body.enabled
+        ds["enabled"] = body.enabled
     if body.protected_dirs is not None:
-        sp["protected_dirs"] = body.protected_dirs
+        immune["paths"] = body.protected_dirs
     if body.death_switch_threshold is not None:
-        sp["death_switch_threshold"] = body.death_switch_threshold
+        ds["threshold"] = body.death_switch_threshold
     if body.death_switch_total_multiplier is not None:
-        sp["death_switch_total_multiplier"] = body.death_switch_total_multiplier
+        ds["total_multiplier"] = body.death_switch_total_multiplier
     if body.audit_to_file is not None:
-        sp["audit_to_file"] = body.audit_to_file
+        audit_cfg["enabled"] = body.audit_to_file
     if body.audit_path is not None:
-        sp["audit_path"] = body.audit_path
+        audit_cfg["log_path"] = body.audit_path
+    # 彻底丢弃 legacy 子树
+    sec.pop("self_protection", None)
+    _mark_security_profile_custom(sec)
     _write_policies_yaml(data)
     try:
         from openakita.core.policy_v2.global_engine import reset_policy_v2_layer

@@ -65,7 +65,8 @@ class TestBuildPolicyContext:
         assert ctx.session_role == SessionRole.AGENT
         assert ctx.replay_authorizations == []
         assert ctx.trusted_path_overrides == []
-        assert ctx.workspace == Path.cwd()
+        # Either Path.cwd() is included directly, or config roots cover it.
+        assert len(ctx.workspace_roots) >= 1
 
     def test_mode_translates_to_session_role(self):
         for mode, expected in [
@@ -78,7 +79,34 @@ class TestBuildPolicyContext:
 
     def test_explicit_workspace_used(self):
         ctx = build_policy_context(session=None, workspace="/tmp/myws")
-        assert ctx.workspace == Path("/tmp/myws")
+        # explicit workspace should be in the union of roots (config ∪ explicit)
+        assert Path("/tmp/myws") in ctx.workspace_roots
+
+    def test_explicit_workspace_unions_with_config_roots(self, monkeypatch):
+        """显式 workspace 不应替换 config.workspace.paths，必须做并集。
+
+        这是清理阶段的硬规则：任何入口都不能因为传入了一个单一 cwd 而
+        缩小用户在安全页配置的工作区授权范围。
+        """
+        from openakita.core.policy_v2 import global_engine
+
+        class _Workspace:
+            paths = ("/configured/root", "/other/configured")
+
+        class _Confirmation:
+            mode = "default"
+
+        class _FakeCfg:
+            workspace = _Workspace()
+            confirmation = _Confirmation()
+
+        monkeypatch.setattr(global_engine, "get_config_v2", lambda: _FakeCfg())
+
+        ctx = build_policy_context(session=None, workspace="/extra/explicit")
+        roots = set(ctx.workspace_roots)
+        assert Path("/configured/root") in roots
+        assert Path("/other/configured") in roots
+        assert Path("/extra/explicit") in roots
 
     def test_user_message_propagated(self):
         ctx = build_policy_context(session=None, user_message="please refactor")
