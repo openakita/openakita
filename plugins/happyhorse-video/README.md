@@ -121,7 +121,9 @@ py -3.11 -m ruff check .             # 0 error
 
 主仓注册了组织模板 [`happyhorse-video-studio`](../../src/openakita/orgs/templates.py)（**百炼 AIGC 视频创作工作室**）：制片人 → 编剧 → `tongyi-image` 工作台（出分镜图）→ 快乐马视频工作台（消费 `from_asset_ids` → 出成片）。
 
-测试脚本见 [`docs/happyhorse-video-test-plan.md`](../../docs/happyhorse-video-test-plan.md)，包含三入口端到端验收（指挥台 / 主聊天 / IM）。
+- 5 分钟烟测：[`USER_TEST_CASES.md`](USER_TEST_CASES.md)
+- 完整端到端三入口测试（指挥台 / 主聊天 / IM）：[`docs/happyhorse-video-test-plan.md`](../../docs/happyhorse-video-test-plan.md)
+- 单元 / workbench 协议 / smoke 测试：[`tests/`](tests/)（`pytest plugins/happyhorse-video/tests/`）
 
 ## 8 · 与其它视频插件的关系
 

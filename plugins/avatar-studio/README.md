@@ -254,3 +254,11 @@ avatar-studio 是**全新一线插件**。它**不**继承
 
 旧的 avatar-speaker 已迁移到 `plugins-archive/` 不再维护，但目录保留以保证
 旧用户的项目不会突然报错。新功能、新 fix 一律走 avatar-studio。
+
+---
+
+## 11 · 相关插件 / Related
+
+- [`happyhorse-video`](../happyhorse-video/) — 「快乐马工作室」：阿里云百炼一体化视频工作室。它把 avatar-studio 的 5 个数字人模式 port 进来，再叠加 HappyHorse 1.0 / Wan 2.6/2.7 视频族 + 长视频分镜流水线 + OSS 签名 URL，形成 12 mode × 7 Tab 的统一台。如果你只需要数字人单点能力，继续用 avatar-studio；如果你要在同一个 UI 里同时做视频/数字人/长视频，并希望统一在 DashScope 后端，选 happyhorse-video。
+- [`seedance-video`](../seedance-video/) — 火山即梦 Ark 视频族，纯文/图/多模态视频生成，没有数字人能力。
+- `tongyi-image` — DashScope 文生图 / 图生图，常作为本插件 `avatar_compose` 的上游。

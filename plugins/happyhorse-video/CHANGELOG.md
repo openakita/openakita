@@ -4,11 +4,7 @@ All notable changes to this plugin are recorded here. The plugin follows
 [SemVer](https://semver.org/) and the project's standard
 "date-versioned changelog" convention.
 
-## [Unreleased]
-
-Skeleton scaffolding for the v1.0.0 cut.
-
-## [1.0.0] — TBD
+## [1.0.0] — 2026-05-15
 
 Initial release. Bailian-powered unified video studio merging the spirit
 of [`plugins/seedance-video`](../seedance-video/) (storyboard long-video

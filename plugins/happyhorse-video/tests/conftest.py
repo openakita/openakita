@@ -10,15 +10,20 @@ collects across plugin trees, so we have to:
    plugin.py / pipeline / client resolve against this plugin.
 2. Drop any cached sibling modules from ``sys.modules`` so the first
    import inside a test pulls THIS plugin's copy.
-3. Stub the ``openakita.plugins.api`` package because the production
-   import requires the host process to be initialised, which we don't
-   need for the unit tests.
+3. Push the per-test ``tests/`` dir to ``sys.path`` so
+   ``from _plugin_loader import ...`` resolves cleanly.
+
+We deliberately do NOT stub ``openakita.plugins.api`` — the
+``openakita`` package is installed by ``pip install -e .[dev]`` and
+both seedance-video and happyhorse-video import ``PluginAPI``/
+``PluginBase`` from the real package, so stubbing here causes
+collisions with the root-level ``tests/conftest.py`` when the entire
+suite is collected together.
 """
 
 from __future__ import annotations
 
 import sys
-import types
 from pathlib import Path
 
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent
@@ -31,21 +36,6 @@ _TESTS_DIR_STR = str(Path(__file__).resolve().parent)
 while _TESTS_DIR_STR in sys.path:
     sys.path.remove(_TESTS_DIR_STR)
 sys.path.insert(0, _TESTS_DIR_STR)
-
-# Stub openakita.plugins.api so plugin.py can be imported standalone.
-if "openakita.plugins.api" not in sys.modules:
-    fake_pkg = types.ModuleType("openakita")
-    fake_plugins = types.ModuleType("openakita.plugins")
-    fake_api = types.ModuleType("openakita.plugins.api")
-
-    class _StubBase:  # noqa: D401 — test stub
-        pass
-
-    fake_api.PluginAPI = _StubBase
-    fake_api.PluginBase = _StubBase
-    sys.modules["openakita"] = fake_pkg
-    sys.modules["openakita.plugins"] = fake_plugins
-    sys.modules["openakita.plugins.api"] = fake_api
 
 # Drop any sibling-plugin modules from previous collections.
 for _m in (

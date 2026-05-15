@@ -67,6 +67,8 @@ curl localhost:8000/api/plugins/seedance-video/storage/stats
 
 ## 相关插件 / Related
 
-- `tongyi-image` — AI 图片生成（用来出首帧参考图，再做图生视频）
-- `storyboard` — 脚本分镜管理（可导出到本插件批量生成视频）
-- `bgm-suggester` — BGM 推荐（为生成的视频配乐）
+- [`happyhorse-video`](../happyhorse-video/) — 阿里云百炼 HappyHorse 1.0 + Wan 2.6/2.7 + 数字人 5 模式 + CosyVoice/Edge-TTS 一体化视频工作室。和本插件双轨并存：火山即梦 vs 百炼 HappyHorse，按团队的云供应商和效果偏好选用。组织模板里也有对偶的「百炼 AIGC 视频创作工作室」。
+- [`avatar-studio`](../avatar-studio/) — 数字人专项（DashScope / RunningHub / ComfyUI 三 backend）。`happyhorse-video` 的数字人 5 模式即从此 port，差异在于 happyhorse 专注 DashScope 单后端 + 视频/语音/数字人融合。
+- `tongyi-image` — AI 图片生成（用来出首帧参考图，再做图生视频）。
+- `storyboard` — 脚本分镜管理（可导出到本插件批量生成视频）。
+- `bgm-suggester` — BGM 推荐（为生成的视频配乐）。
