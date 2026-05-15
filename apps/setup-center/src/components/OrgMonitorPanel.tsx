@@ -14,6 +14,7 @@ import {
   type OrgNodeData,
 } from "../views/orgEditorConstants";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
+import { useSourceTagFormatter } from "../views/chat/components/SourceBadge";
 
 export interface OrgMonitorPanelProps {
   orgId: string;
@@ -145,6 +146,7 @@ const WRAP_TEXT_STYLE = {
 export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: OrgMonitorPanelProps) {
   const { t } = useTranslation();
   const mdModules = useMdModules();
+  const formatSourceTags = useSourceTagFormatter();
   const [nodeEvents, setNodeEvents] = useState<any[]>([]);
   const [nodeSchedules, setNodeSchedules] = useState<any[]>([]);
   const [nodeThinking, setNodeThinking] = useState<any[]>([]);
@@ -341,7 +343,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                         ...WRAP_TEXT_STYLE,
                       }}>
                         {mdModules ? (
-                          <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>{fullText}</mdModules.ReactMarkdown>
+                          <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>{formatSourceTags(fullText)}</mdModules.ReactMarkdown>
                         ) : <div style={{ whiteSpace: "pre-wrap" }}>{fullText}</div>}
                       </div>
                     )}
@@ -412,11 +414,13 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                       }}>
                         {mdModules ? (
                           <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
-                            {isExpanded
-                              ? (item.content || "")
-                              : (item.content || "").length > 150
-                                ? (item.content || "").slice(0, 150) + "…"
-                                : (item.content || "")}
+                            {formatSourceTags(
+                              isExpanded
+                                ? (item.content || "")
+                                : (item.content || "").length > 150
+                                  ? (item.content || "").slice(0, 150) + "…"
+                                  : (item.content || ""),
+                            )}
                           </mdModules.ReactMarkdown>
                         ) : (
                           <div style={{ whiteSpace: "pre-wrap" }}>

@@ -21,16 +21,26 @@ function buildSanitizeSchema(defaultSchema: any) {
   const schema = JSON.parse(JSON.stringify(defaultSchema || {}));
   schema.attributes = schema.attributes || {};
 
-  function ensureClassName(tag: string) {
+  function ensureAttr(tag: string, attr: string) {
     const list = (schema.attributes[tag] || []).slice();
-    if (!list.includes("className") && !list.includes("class")) {
-      list.push("className");
-    }
+    if (!list.includes(attr)) list.push(attr);
     schema.attributes[tag] = list;
+  }
+  function ensureClassName(tag: string) {
+    const list = schema.attributes[tag] || [];
+    if (!list.includes("className") && !list.includes("class")) {
+      ensureAttr(tag, "className");
+    } else {
+      schema.attributes[tag] = list.slice();
+    }
   }
   ["code", "pre", "span", "div", "table", "thead", "tbody", "tr", "td", "th"].forEach(
     ensureClassName,
   );
+  // 反幻觉来源 badge（SourceBadge.tsx）注入 <span class="srcBadge ..." title="...">，
+  // 默认 GitHub schema 只放行 <a>/<img> 的 title，<span> 上的 title 会被剥掉
+  // 导致 tooltip 失效。这里显式放行 span+title。
+  ensureAttr("span", "title");
 
   // 允许 markdown 任务列表中常见的 type=checkbox + disabled
   const inputAttrs = (schema.attributes.input || []).slice();

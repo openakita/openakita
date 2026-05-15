@@ -5081,3 +5081,71 @@ body > div[id*="sm-" i] {
   50% { transform: scale(1.2); opacity: 1; }
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * 来源标签 badge —— 把 [来源:工具] / [来源:历史] / [来源:常识] / [来源:不确定]
+ * 从裸文本渲染成彩色徽章。详见 SourceBadge.tsx。
+ * 配色保持与现有 var(--ok) / var(--brand) / var(--muted) / var(--warn) 语义对齐：
+ *   工具 → 绿色（已被工具验证 → 高可信）
+ *   历史 → 蓝色（信息源自上下文）
+ *   常识 → 灰色（模型训练知识，中性）
+ *   不确定 → 橙色（提醒用户警惕）
+ * ────────────────────────────────────────────────────────────────────────── */
+.srcBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  margin: 0 2px;
+  border-radius: 999px;
+  font-size: 0.78em;
+  font-weight: 600;
+  line-height: 1.45;
+  vertical-align: baseline;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  user-select: none;
+  cursor: help;
+  font-style: normal;
+}
+
+.srcBadge-tool {
+  background: rgba(34, 197, 94, 0.10);
+  color: #16a34a;
+  border-color: rgba(34, 197, 94, 0.25);
+}
+.srcBadge-history {
+  background: rgba(59, 130, 246, 0.10);
+  color: #2563eb;
+  border-color: rgba(59, 130, 246, 0.25);
+}
+.srcBadge-knowledge {
+  background: rgba(148, 163, 184, 0.10);
+  color: #64748b;
+  border-color: rgba(148, 163, 184, 0.30);
+}
+.srcBadge-uncertain {
+  background: rgba(245, 158, 11, 0.10);
+  color: #d97706;
+  border-color: rgba(245, 158, 11, 0.30);
+}
+
+[data-theme="dark"] .srcBadge-tool {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.30);
+}
+[data-theme="dark"] .srcBadge-history {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.30);
+}
+[data-theme="dark"] .srcBadge-knowledge {
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.32);
+}
+[data-theme="dark"] .srcBadge-uncertain {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.32);
+}
+

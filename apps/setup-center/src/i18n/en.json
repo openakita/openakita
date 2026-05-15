@@ -146,6 +146,18 @@
     "stopRecording": "Stop recording",
     "thinking": "Thinking...",
     "thinkingBlock": "Thinking Process",
+    "sourceTag": {
+      "tool": "tool",
+      "history": "history",
+      "knowledge": "knowledge",
+      "uncertain": "uncertain"
+    },
+    "sourceTagTip": {
+      "tool": "Verified by tool calls in this turn",
+      "history": "From this session or prior conversation",
+      "knowledge": "From the model's training knowledge — may be out of date",
+      "uncertain": "The model isn't sure — please verify independently"
+    },
     "toolCall": "Tool Call",
     "plan": "Execution Plan",
     "askUser": "Your answer needed",

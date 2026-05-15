@@ -12,6 +12,7 @@ import { SpinnerTipDisplay } from "./SpinnerTipDisplay";
 import { SourceStrip } from "./SourceStrip";
 import { PlanCard } from "./PlanCard";
 import { MCPCallStrip } from "./MCPCallStrip";
+import { useSourceTagFormatter } from "./SourceBadge";
 import { IconClipboard, IconEdit, IconRefresh, IconRewind } from "../../../icons";
 
 export const FlatMessageItem = memo(function FlatMessageItem({
@@ -48,6 +49,7 @@ export const FlatMessageItem = memo(function FlatMessageItem({
   onPlanStepAction?: (action: "skip" | "retry", stepIdx: number, description: string) => void;
 }) {
   const { t } = useTranslation();
+  const formatSourceTags = useSourceTagFormatter();
   const isUser = msg.role === "user";
   const isAssistant = msg.role === "assistant";
   const isSystem = msg.role === "system";
@@ -79,7 +81,7 @@ export const FlatMessageItem = memo(function FlatMessageItem({
           <div className="chatMdContent">
             {mdModules ? (
               <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
-                {msg.content}
+                {formatSourceTags(msg.content)}
               </mdModules.ReactMarkdown>
             ) : (
               <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
@@ -130,7 +132,7 @@ export const FlatMessageItem = memo(function FlatMessageItem({
             <div className="chatMdContent">
               {mdModules ? (
                 <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
-                  {stripLegacySummary(msg.content)}
+                  {formatSourceTags(stripLegacySummary(msg.content))}
                 </mdModules.ReactMarkdown>
               ) : (
                 <div style={{ whiteSpace: "pre-wrap" }}>{stripLegacySummary(msg.content)}</div>

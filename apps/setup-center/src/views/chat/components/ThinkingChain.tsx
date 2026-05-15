@@ -5,6 +5,7 @@ import {
   IconChevronRight, IconCheck, IconX, IconLoader, IconCircle,
   IconAlertCircle, IconRefresh,
 } from "../../../icons";
+import { TextWithSourceBadges } from "./SourceBadge";
 
 // ── ThinkingBlock: legacy bubble mode ──
 
@@ -23,7 +24,7 @@ export function ThinkingBlock({ content, defaultOpen }: { content: string; defau
       </div>
       {open && (
         <div style={{ padding: "8px 12px", background: "rgba(124,58,237,0.04)", borderRadius: 10, fontSize: 13, lineHeight: 1.6, opacity: 0.75, whiteSpace: "pre-wrap" }}>
-          {content}
+          <TextWithSourceBadges text={content} />
         </div>
       )}
     </div>
@@ -147,7 +148,9 @@ function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?:
       return (
         <div className="chainNarrThinking">
           <span className="chainNarrThinkingLabel">thinking</span>
-          <span className="chainNarrThinkingText">{entry.content}</span>
+          <span className="chainNarrThinkingText">
+            <TextWithSourceBadges text={entry.content} />
+          </span>
         </div>
       );
     case "text": {
@@ -158,7 +161,7 @@ function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?:
           : null;
       return (
         <div className={`chainNarrText${svgIcon ? " chainNarrStatus" : ""}`}>
-          {svgIcon}{entry.content}
+          {svgIcon}<TextWithSourceBadges text={entry.content} />
         </div>
       );
     }

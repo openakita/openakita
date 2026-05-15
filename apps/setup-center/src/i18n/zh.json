@@ -146,6 +146,18 @@
     "stopRecording": "停止录音",
     "thinking": "思考中...",
     "thinkingBlock": "思考过程",
+    "sourceTag": {
+      "tool": "工具",
+      "history": "历史",
+      "knowledge": "常识",
+      "uncertain": "不确定"
+    },
+    "sourceTagTip": {
+      "tool": "由本次工具调用查证的信息",
+      "history": "来自本次会话或历史对话",
+      "knowledge": "来自模型训练知识，可能与最新事实有偏差",
+      "uncertain": "模型对此不太确定，建议进一步核实"
+    },
     "toolCall": "工具调用",
     "plan": "执行计划",
     "askUser": "需要你的回答",

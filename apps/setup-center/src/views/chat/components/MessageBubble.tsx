@@ -12,6 +12,7 @@ import { SpinnerTipDisplay } from "./SpinnerTipDisplay";
 import { SourceStrip } from "./SourceStrip";
 import { PlanCard } from "./PlanCard";
 import { MCPCallStrip } from "./MCPCallStrip";
+import { useSourceTagFormatter } from "./SourceBadge";
 import { IconClipboard, IconEdit, IconRefresh, IconRewind } from "../../../icons";
 
 export const MessageBubble = memo(function MessageBubble({
@@ -48,6 +49,7 @@ export const MessageBubble = memo(function MessageBubble({
   onPlanStepAction?: (action: "skip" | "retry", stepIdx: number, description: string) => void;
 }) {
   const { t } = useTranslation();
+  const formatSourceTags = useSourceTagFormatter();
   const isUser = msg.role === "user";
   const isAssistant = msg.role === "assistant";
   const usageTotal = msg.usage
@@ -107,7 +109,7 @@ export const MessageBubble = memo(function MessageBubble({
           <div className={isUser ? "chatMdContent chatMdContentUser" : "chatMdContent"}>
             {mdModules ? (
               <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
-                {isUser ? msg.content : stripLegacySummary(msg.content)}
+                {formatSourceTags(isUser ? msg.content : stripLegacySummary(msg.content))}
               </mdModules.ReactMarkdown>
             ) : (
               <div style={{ whiteSpace: "pre-wrap" }}>{isUser ? msg.content : stripLegacySummary(msg.content)}</div>

@@ -9,6 +9,7 @@ import { onWsEvent } from "../platform";
 import type { Node } from "@xyflow/react";
 import { fmtShortDate, BB_TYPE_COLORS, BB_TYPE_LABELS } from "../views/orgEditorConstants";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
+import { useSourceTagFormatter } from "../views/chat/components/SourceBadge";
 import { FileAttachmentCard } from "./FileAttachmentCard";
 
 export interface OrgBlackboardPanelProps {
@@ -27,6 +28,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
   function OrgBlackboardPanel({ orgId, apiBaseUrl, nodes, fullWidth, onClose }, ref) {
     const { t } = useTranslation();
     const mdModules = useMdModules();
+    const formatSourceTags = useSourceTagFormatter();
     const [entries, setEntries] = useState<any[]>([]);
     const [scope, setScope] = useState<"all" | "org" | "department" | "node">("all");
     const [loading, setLoading] = useState(false);
@@ -185,7 +187,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
                     <div className="bb-entry-content">
                       {mdModules ? (
                         <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
-                          {entry.content ?? ""}
+                          {formatSourceTags(entry.content ?? "")}
                         </mdModules.ReactMarkdown>
                       ) : (
                         <div style={{ whiteSpace: "pre-wrap" }}>{entry.content ?? ""}</div>
