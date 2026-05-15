@@ -1,5 +1,6 @@
 Unicode true
 ManifestDPIAware true
+ManifestSupportedOS all
 ; Add in `dpiAwareness` `PerMonitorV2` to manifest for Windows 10 1607+ (note this should not affect lower versions since they should be able to ignore this and pick up `dpiAware` `true` set by `ManifestDPIAware true`)
 ; Currently undocumented on NSIS's website but is in the Docs folder of source tree, see
 ; https://github.com/kichik/nsis/blob/5fc0b87b819a9eec006df4967d08e522ddd651c9/Docs/src/attributes.but#L286-L300
@@ -24,6 +25,7 @@ ManifestDPIAwareness PerMonitorV2
 !include "StrFunc.nsh"
 ${StrCase}
 ${StrLoc}
+${StrRep}
 
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
@@ -908,11 +910,27 @@ Section Install
  WriteRegStr SHCTX "${UNINSTKEY}" $MultiUser.InstallMode 1
  !endif
 
- ; Remove old main binary if it doesn't match new main binary name
+ ; ── Main-binary rename migration (single owner) ──
+ ; If the previous install used a different exe filename, every pointer that
+ ; still references the old name has to be redirected here. Centralising the
+ ; logic prevents future renames from sprouting parallel patches.
  ReadRegStr $OldMainBinaryName SHCTX "${UNINSTKEY}" "MainBinaryName"
  ${If} $OldMainBinaryName != ""
  ${AndIf} $OldMainBinaryName != "${MAINBINARYNAME}.exe"
- Delete "$INSTDIR\$OldMainBinaryName"
+   ; 1. Delete the orphaned old executable.
+   Delete "$INSTDIR\$OldMainBinaryName"
+
+   ; 2. Rewrite the HKCU autostart Run entry if it still points to the old
+   ;    exe. tauri-plugin-autostart only re-registers when the app launches,
+   ;    so without this fix an upgraded user with autostart enabled would
+   ;    see the entry silently fail on next boot until they open the app.
+   ReadRegStr $R0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+   ${If} $R0 != ""
+     ${StrRep} $R1 $R0 "$OldMainBinaryName" "${MAINBINARYNAME}.exe"
+     ${If} $R1 != $R0
+       WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" "$R1"
+     ${EndIf}
+   ${EndIf}
  ${EndIf}
 
  ; Save current MAINBINARYNAME for future updates

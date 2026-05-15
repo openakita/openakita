@@ -8244,7 +8244,7 @@ async fn fetch_pypi_versions(package: String, index_url: Option<String>) -> Resu
 
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .user_agent("openakita-setup-center")
+            .user_agent("openakita-desktop/1.0")
             .build()
             .map_err(|e| format!("HTTP client error: {e}"))?;
 

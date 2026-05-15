@@ -8,8 +8,49 @@ fn main() {
     ensure_resource_dir();
     ensure_gitignored_placeholders();
 
-    tauri_build::build()
+    let attrs = tauri_build::Attributes::new();
+
+    // On Windows, embed a custom application manifest declaring asInvoker +
+    // Windows 10/11 supportedOS so the Program Compatibility Assistant does
+    // not fall back to installer heuristics on our main GUI binary.
+    #[cfg(target_os = "windows")]
+    let attrs = attrs.windows_attributes(
+        tauri_build::WindowsAttributes::new().app_manifest(WINDOWS_APP_MANIFEST),
+    );
+
+    tauri_build::try_build(attrs).expect("failed to run Tauri build script");
 }
+
+#[cfg(target_os = "windows")]
+const WINDOWS_APP_MANIFEST: &str = r#"
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>
+"#;
 
 fn ensure_resource_dir() {
     let dir = std::path::Path::new("resources").join("openakita-server");
