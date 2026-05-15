@@ -65,12 +65,16 @@ class TestApplyResolutionMatrix:
         assert entry is not None
         assert entry["needs_sandbox"] is True
 
-    def test_allow_always_writes_session_and_persistent(self, tmp_path) -> None:
+    def test_allow_always_writes_session_and_persistent(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """allow_always must call UserAllowlistManager.add_entry + save_to_yaml.
 
-        We don't actually verify YAML save (that hits production POLICIES.yaml
-        path); just verify the engine's user_allowlist got an entry added.
+        We don't actually verify YAML save here; isolate ``settings.identity_path``
+        so save_to_yaml() does not touch the real ``identity/POLICIES.yaml`` even
+        when that file exists in the workspace.
         """
+        from openakita.config import settings
         from openakita.core.policy_v2 import (
             PolicyConfigV2,
             UserAllowlistConfig,
@@ -80,6 +84,14 @@ class TestApplyResolutionMatrix:
             reset_engine_v2,
             set_engine_v2,
         )
+
+        isolated_identity = tmp_path / "identity"
+        isolated_identity.mkdir(parents=True, exist_ok=True)
+        # identity_path is a derived property on Settings; redirect via
+        # project_root (the underlying Pydantic field) so that save_to_yaml's
+        # default path resolves under tmp_path and never touches the real
+        # identity/POLICIES.yaml in the repo.
+        monkeypatch.setattr(settings, "project_root", tmp_path)
 
         cfg = PolicyConfigV2(
             user_allowlist=UserAllowlistConfig(commands=[], tools=[]),

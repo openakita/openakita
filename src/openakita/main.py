@@ -1429,9 +1429,6 @@ def main(
             )
 
         # 运行交互式 CLI
-        from .core.policy import get_policy_engine
-
-        get_policy_engine().set_permission_mode(_cli_permission_mode)
         asyncio.run(run_interactive())
 
 

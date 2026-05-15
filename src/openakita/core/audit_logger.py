@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
-DEFAULT_AUDIT_PATH = "data/audit/openakita_audit.jsonl"
+DEFAULT_AUDIT_PATH = "data/audit/policy_decisions.jsonl"
 
 
 _SENSITIVE_KEYS = frozenset(
