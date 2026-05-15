@@ -2883,6 +2883,72 @@ export function ChatView({
                 }
                 break;
               }
+              case "config_hint": {
+                // Structured hint emitted right after tool_call_end when a
+                // handler raised ToolConfigError. We MUST surface it in TWO
+                // places:
+                //
+                //   1. ChatMessage.toolCalls[].configHints   — used by the
+                //      legacy ToolCallsGroup render path (only active when
+                //      thinkingChain is empty, e.g. some IM-imported messages).
+                //   2. currentChainGroup.entries [config_hint kind] — used by
+                //      ThinkingChain in the default UX where showChain=true.
+                //      Without this branch, the card would silently disappear
+                //      whenever the agent produced any thinkingChain — which
+                //      is essentially every ReAct turn.
+                //
+                // The hint is intentionally NOT serialized into the LLM
+                // context (backend strips ``_hint`` before tool_result
+                // reaches working_messages) — it only exists in the UI state.
+                const hintToolUseId = event.tool_use_id || "";
+                const hintPayload = {
+                  scope: event.scope,
+                  error_code: event.error_code,
+                  title: event.title,
+                  message: event.message,
+                  actions: event.actions,
+                };
+                // ── 1) legacy ChatToolCall.configHints ──
+                // Skip the silent mass-attach risk: when both sides are empty
+                // strings, ``"" === ""`` would match every id-less tool call.
+                // In practice ``tool_id`` is always a UUID, but guard anyway.
+                if (hintToolUseId) {
+                  currentToolCalls = currentToolCalls.map((tc) => {
+                    if (tc.id !== hintToolUseId) return tc;
+                    const existing = tc.configHints || [];
+                    return { ...tc, configHints: [...existing, hintPayload] };
+                  });
+                }
+                // ── 2) thinkingChain entry — visible in the default UX ──
+                // We append even if currentChainGroup is missing thinking;
+                // the chain UI handles a "tool-only" group fine.
+                if (!currentChainGroup) {
+                  currentChainGroup = { iteration: chainGroups.length + 1, entries: [], toolCalls: [], hasThinking: false, collapsed: false };
+                  chainGroups = [...chainGroups, currentChainGroup];
+                }
+                {
+                  const grp: ChainGroup = currentChainGroup;
+                  // De-dupe by (error_code, scope, title) within the same
+                  // group — handlers that retry the same tool with the same
+                  // failure shouldn't stack identical cards.
+                  const dedupeKey = `${hintPayload.error_code}|${hintPayload.scope}|${hintPayload.title}`;
+                  const alreadyShown = grp.entries.some(
+                    (e) => e.kind === "config_hint" &&
+                      `${e.hint.error_code}|${e.hint.scope}|${e.hint.title}` === dedupeKey,
+                  );
+                  if (!alreadyShown) {
+                    currentChainGroup = {
+                      ...grp,
+                      entries: [
+                        ...grp.entries,
+                        { kind: "config_hint" as const, toolId: hintToolUseId, hint: hintPayload },
+                      ],
+                    };
+                    chainGroups = chainGroups.map((g, i) => i === chainGroups.length - 1 ? currentChainGroup! : g);
+                  }
+                }
+                break;
+              }
               case "todo_created":
                 currentPlan = event.plan;
                 updateMessages((prev) => prev.map((m) =>

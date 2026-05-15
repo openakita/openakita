@@ -21,7 +21,7 @@ type EnvFieldProps = {
   busy?: string | null;
 };
 
-function FieldLabel({ label, help, envKey, htmlFor }: {
+export function FieldLabel({ label, help, envKey, htmlFor }: {
   label: string; help?: string; envKey?: string; htmlFor?: string;
 }) {
   const hasTooltip = !!(help || envKey);

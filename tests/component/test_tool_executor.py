@@ -34,12 +34,17 @@ def executor():
 
 class TestExecuteTool:
     async def test_execute_known_tool(self, executor):
-        result = await executor.execute_tool("read_file", {"path": "/tmp/x"})
+        # ``execute_tool`` returns ``(text, ConfigHint | None)`` after the
+        # web_search provider refactor; legacy tests that only care about
+        # the text portion just unpack here.
+        result, hint = await executor.execute_tool("read_file", {"path": "/tmp/x"})
         assert isinstance(result, str)
+        assert hint is None  # no config-correctable error from a normal handler
 
     async def test_execute_unknown_tool(self, executor):
-        result = await executor.execute_tool("nonexistent_tool", {})
+        result, hint = await executor.execute_tool("nonexistent_tool", {})
         assert "error" in result.lower() or "not found" in result.lower() or isinstance(result, str)
+        assert hint is None
 
     async def test_execute_tool_normalizes_stringified_nested_fields(self):
         registry = MagicMock()

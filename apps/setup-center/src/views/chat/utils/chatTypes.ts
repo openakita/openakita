@@ -82,6 +82,35 @@ export type StreamEvent =
   // 后端 schema 见 src/openakita/core/tool_executor.py:_emit_tool_intent_previews
   | { type: "tool_intent_preview"; tool_use_id?: string; tool_name?: string; params?: Record<string, unknown>; approval_class?: string; session_id?: string | null; batch_size?: number; batch_idx?: number; ts?: number }
   | { type: "tool_call_end"; tool: string; tool_name?: string; result: string; id?: string; call_id?: string; is_error?: boolean; skipped?: boolean; protocol_version?: number }
+  // Structured config hint side-channel — emitted alongside tool_call_end when
+  // a ToolConfigError was raised by a handler (e.g. web_search needs a key).
+  // Backend shape: src/openakita/core/reasoning_engine.py:_build_tool_end_events.
+  // Carries enough metadata for ConfigHintCard to render an actionable card
+  // and (optionally) deep-link into the matching settings panel via
+  // dispatchExpandPanel({ panelId: actions[i].panel_id }).
+  | {
+      type: "config_hint";
+      tool_use_id: string;
+      scope: string;
+      error_code:
+        | "missing_credential"
+        | "auth_failed"
+        | "rate_limited"
+        | "network_unreachable"
+        | "content_filter"
+        | "unknown";
+      title: string;
+      message?: string;
+      actions?: Array<{
+        kind?: string;
+        label?: string;
+        view_id?: string;
+        panel_id?: string;
+        url?: string;
+        env_key?: string;
+        [k: string]: unknown;
+      }>;
+    }
   | { type: "source_used"; tool_name?: string; tool_use_id?: string; requested_url: string; final_url: string; hostname?: string; redirected?: boolean; from_cache?: boolean; status?: string; hint?: string; protocol_version?: number }
   | { type: "mcp_call"; tool_use_id?: string; server: string; tool: string; status?: "ok" | "error" | string; auto_connected?: boolean; reconnected?: boolean; error?: string; protocol_version?: number }
   | { type: "todo_created"; plan: ChatTodo; restored?: boolean }

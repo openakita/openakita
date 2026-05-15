@@ -96,6 +96,43 @@ def mock_response_factory():
 
 
 # ---------------------------------------------------------------------------
+# Helpers for the (text, ConfigHint | None) tuple return type introduced by
+# the web_search provider refactor (see src/openakita/tools/tool_hints.py).
+#
+# Existing tests that only care about the LLM-facing text can use these to
+# stay readable instead of repeating ``text, _ = await executor.execute_tool(...)``
+# everywhere. New tests that DO care about the hint (e.g. the
+# WebSearchHandler tests) should unpack the tuple directly.
+# ---------------------------------------------------------------------------
+
+
+async def call_tool_text(executor, tool_name, tool_input, **kwargs) -> str:
+    """Run ``executor.execute_tool`` and return only the LLM-facing text.
+
+    Drops the ``ConfigHint`` part of the tuple. Use in tests that pre-date
+    the hint side-channel and only assert on the result string.
+    """
+    text, _hint = await executor.execute_tool(tool_name, tool_input, **kwargs)
+    return text
+
+
+async def call_tool_with_policy_text(
+    executor, tool_name, tool_input, policy_result, **kwargs
+) -> str:
+    """Run ``execute_tool_with_policy`` and return only the text portion."""
+    text, _hint = await executor.execute_tool_with_policy(
+        tool_name, tool_input, policy_result, **kwargs
+    )
+    return text
+
+
+@pytest.fixture
+def call_tool_text_helper():
+    """Fixture wrapper around :func:`call_tool_text` for tests that prefer DI."""
+    return call_tool_text
+
+
+# ---------------------------------------------------------------------------
 # C8b-1: 自动隔离 process-wide policy v2 singletons across tests.
 #
 # ``DeathSwitchTracker`` 累积 consecutive_denials；不重置时一个 test 的连续

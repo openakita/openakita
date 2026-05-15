@@ -224,10 +224,14 @@ async def test_tool_executor_applies_current_turn_guard_before_handler():
         _current_turn_input=CurrentTurnInput.from_inputs("读这个 https://example.com/new")
     )
 
-    result = await executor.execute_tool("web_fetch", {"url": "https://example.com/old"})
+    # tuple unpack: current-turn grounding gate returns (text, None)
+    result, hint = await executor.execute_tool(
+        "web_fetch", {"url": "https://example.com/old"}
+    )
 
     assert "正在使用其它 URL" in result
     assert "handled" not in result
+    assert hint is None
 
 
 async def test_tool_executor_policy_path_applies_current_turn_guard():
@@ -238,7 +242,7 @@ async def test_tool_executor_policy_path_applies_current_turn_guard():
         _current_turn_input=CurrentTurnInput.from_inputs("读这个 https://example.com/new")
     )
 
-    result = await executor.execute_tool_with_policy(
+    result, hint = await executor.execute_tool_with_policy(
         "web_fetch",
         {"url": "https://example.com/old"},
         SimpleNamespace(metadata={}),
@@ -246,3 +250,4 @@ async def test_tool_executor_policy_path_applies_current_turn_guard():
 
     assert "正在使用其它 URL" in result
     assert "handled" not in result
+    assert hint is None

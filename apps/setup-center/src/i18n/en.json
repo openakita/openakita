@@ -203,6 +203,33 @@
     "expand": "Expand",
     "args": "Args:",
     "result": "Result:",
+    "configHint": {
+      "actionDefault": "View details",
+      "missing_credential": {
+        "title": "Search provider not configured",
+        "message": "DuckDuckGo is often unreachable in some regions. Please configure Bocha (China-friendly) or Tavily (global) as alternatives."
+      },
+      "auth_failed": {
+        "title": "Search provider rejected the API key",
+        "message": "The active search provider returned 401/403. Please update the key in settings."
+      },
+      "rate_limited": {
+        "title": "Search provider rate-limited",
+        "message": "The active provider is rate-limited. Try again later, or switch to another provider."
+      },
+      "network_unreachable": {
+        "title": "Search provider unreachable",
+        "message": "Cannot reach the active search provider (network or proxy issue). Check connectivity or switch providers."
+      },
+      "content_filter": {
+        "title": "Search query rejected",
+        "message": "The provider rejected the query. Try more specific or neutral keywords."
+      },
+      "unknown": {
+        "title": "Search failed",
+        "message": "Search failed. Try again later, or check the provider configuration in settings."
+      }
+    },
     "planLabel": "Plan: ",
     "answered": "Answered:",
     "startService": "Start Service",
@@ -807,7 +834,7 @@
     "restartFail": "Restart failed, please restart manually",
     "restartNotRunning": "Service not running, config saved (will apply on next start)",
     "toolsTitle": "Tools & Skills",
-    "toolsHint": "Manage Skills, MCP integrations, Desktop Automation, and Network Proxy",
+    "toolsHint": "Manage Skills, MCP integrations, Web Search providers, Desktop Automation, and Network Proxy",
     "toolsSkills": "Skills",
     "toolsSkillsEnabled": "Enabled",
     "toolsSkillsDisabled": "Disabled",
@@ -1128,6 +1155,25 @@
     "cliStatusError": "Failed to query CLI status:",
     "cliRegisterFailed": "Registration failed:",
     "cliUnregisterFailed": "Unregister failed:"
+  },
+  "toolsWebSearch": {
+    "sectionTitle": "Web Search Providers",
+    "intro": "DuckDuckGo is often unreachable in some regions. Configure Bocha (China-friendly) or Tavily (global) as alternatives. Leave the active provider blank for auto-detect — providers are tried in priority order (Bocha -> Tavily -> SearXNG -> Jina -> DuckDuckGo).",
+    "activeProvider": "Active provider",
+    "activeProviderHelp": "Blank = auto-detect by priority. Picking one disables fallback.",
+    "autoDetect": "Auto-detect (recommended)",
+    "loadError": "Failed to load provider list: ",
+    "badgeActive": "Active",
+    "badgeRecommended": "Recommended",
+    "badgeAvailable": "Ready",
+    "badgeUnconfigured": "Not configured",
+    "noKeyNeeded": "No API key required (uses the ddgs Python package; often unreachable in mainland China)",
+    "test": "Test",
+    "testing": "Testing...",
+    "testOk": "Test succeeded — {{n}} result(s) returned",
+    "testFail": "Test failed",
+    "signup": "Get an API key ->",
+    "docs": "Docs"
   },
   "scheduler": {
     "title": "Scheduled Tasks",

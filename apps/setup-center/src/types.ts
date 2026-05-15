@@ -223,12 +223,49 @@ export type ChatMessage = {
 
 // ─── 思维链 (Thinking Chain) 类型 ───
 
+/**
+ * Backend ``config_hint`` SSE event payload (see
+ * src/openakita/core/reasoning_engine.py:_build_tool_end_events).
+ *
+ * Single source of truth for both ChainEntry's ``config_hint`` kind and
+ * ChatToolCall.configHints[]; keeping it in one place prevents the two
+ * sites from drifting (the previous inline duplication was a known smell).
+ */
+export type ConfigHintPayload = {
+  scope: string;
+  error_code:
+    | "missing_credential"
+    | "auth_failed"
+    | "rate_limited"
+    | "network_unreachable"
+    | "content_filter"
+    | "unknown";
+  title: string;
+  message?: string;
+  actions?: Array<{
+    id?: string;
+    label?: string;
+    view?: string;
+    section?: string;
+    anchor?: string;
+    url?: string;
+    [k: string]: unknown;
+  }>;
+};
+
 /** 叙事流条目类型 */
 export type ChainEntry =
   | { kind: "thinking"; content: string }       // LLM extended thinking 内容
   | { kind: "text"; content: string; icon?: string }  // LLM 推理意图 / chain_text / 状态通知
   | { kind: "tool_start"; toolId: string; tool: string; args: Record<string, unknown>; description: string; status?: "running" | "done" | "error" }
   | { kind: "tool_end"; toolId: string; tool: string; result: string; status: "done" | "error" }
+  // Structured config hint inlined into the ReAct chain timeline so the user
+  // sees the actionable card *in the iteration that produced it*, instead of
+  // relying on the legacy ToolCallsGroup which is hidden whenever a
+  // thinkingChain exists (see MessageBubble.tsx / FlatMessageItem.tsx
+  // guards). ``toolId`` is forwarded so we can later cross-link the card
+  // back to the offending tool_start row if needed.
+  | { kind: "config_hint"; toolId: string; hint: ConfigHintPayload }
   | { kind: "compressed"; beforeTokens: number; afterTokens: number };
 
 /** 一个 ReAct 迭代组 = 按时间顺序的叙事流 */
@@ -269,6 +306,12 @@ export type ChatToolCall = {
   args: Record<string, unknown>;
   result?: string | null;
   status: "pending" | "running" | "done" | "error";
+  // Optional structured config hints attached when the backend emitted a
+  // ``config_hint`` SSE event for this tool call. Used by the legacy
+  // ToolCallsGroup path (no thinkingChain). The thinkingChain path renders
+  // hints via ChainEntry "config_hint" kind instead — both reference the
+  // same ConfigHintPayload type to keep the two render sites in sync.
+  configHints?: ConfigHintPayload[];
 };
 
 export type ChatTodo = {

@@ -5008,6 +5008,14 @@ class OrgRuntime:
         ``handler_registry.has_tool()`` check in ``_execute_tool_impl``.
         Without this, org tools are either blocked by the mandatory-todo
         policy or rejected as "unknown tools".
+
+        Return contract: matches ``ToolExecutor.execute_tool_with_policy``,
+        i.e. ``(text, ConfigHint | None)``. ``org_*`` shortcut path returns
+        ``(text, None)`` — org tools are runtime-internal RPCs and don't
+        surface user-correctable config hints. Original-call path forwards
+        any hint through unchanged so a downstream plugin tool that raises
+        :class:`ToolConfigError` (e.g. missing API key) still reaches the
+        chat UI.
         """
         if not hasattr(agent, "reasoning_engine"):
             return
@@ -5022,10 +5030,13 @@ class OrgRuntime:
         async def _patched_with_policy(
             tool_name: str, tool_input: dict, policy_result: Any = None,
             *, session_id: str | None = None,
-        ) -> str:
+        ) -> tuple[str, Any]:
             self._node_last_activity[f"{org_id}:{node_id}"] = time.monotonic()
             if tool_name.startswith("org_"):
-                return await tool_handler.handle(tool_name, tool_input, org_id, node_id)
+                # org_* RPCs return plain str; lift to tuple to match the
+                # caller's expected contract (``ToolResultWithHint``).
+                _org_text = await tool_handler.handle(tool_name, tool_input, org_id, node_id)
+                return _org_text, None
             is_plugin_tool = self._is_plugin_tool(agent, tool_name)
             if is_plugin_tool:
                 # Plugin 工具往往是长 poll（通义生图分钟级、Seedance 视频
@@ -5046,7 +5057,7 @@ class OrgRuntime:
                     {"tool_name": tool_name, "input": str(tool_input)[:_LIM_EVENT]},
                 )
             try:
-                result = await original_with_policy(
+                _raw = await original_with_policy(
                     tool_name, tool_input, policy_result, session_id=session_id,
                 )
             except Exception as exc:
@@ -5065,6 +5076,21 @@ class OrgRuntime:
                         {"tool_name": tool_name, "error": str(exc)[:_LIM_EVENT]},
                     )
                 raise
+
+            # Original returns (text, hint). Unpack so downstream code that
+            # reads ``result`` as a string (json parsing, file output trace,
+            # plan bridging) keeps working. Hint is forwarded unchanged.
+            if isinstance(_raw, tuple) and len(_raw) == 2:
+                result, _hint_passthrough = _raw
+            else:
+                # Defensive: pre-migration shape; treat as plain text.
+                result = _raw
+                _hint_passthrough = None
+            if result is None:
+                result = ""
+            elif not isinstance(result, str):
+                result = str(result)
+
             if tool_name in ("create_plan", "update_plan_step", "complete_plan"):
                 chain_id = getattr(agent, "_org_context", {}).get("current_chain_id") or ""
                 if chain_id:
@@ -5120,7 +5146,7 @@ class OrgRuntime:
                         node_id,
                         {"tool_name": tool_name},
                     )
-            return result
+            return result, _hint_passthrough
 
         executor.execute_tool_with_policy = _patched_with_policy
 

@@ -6,6 +6,7 @@ import {
   IconAlertCircle, IconRefresh,
 } from "../../../icons";
 import { TextWithSourceBadges } from "./SourceBadge";
+import ConfigHintCard, { type ConfigHintPayload } from "../../../components/ConfigHintCard";
 
 // ── ThinkingBlock: legacy bubble mode ──
 
@@ -75,6 +76,27 @@ export function ToolCallDetail({ tc }: { tc: ChatToolCall }) {
 // ── ToolCallsGroup ──
 
 export function ToolCallsGroup({ toolCalls }: { toolCalls: ChatToolCall[] }) {
+  // Aggregate config hints from every child tool call so the card stays
+  // visible even when the group is collapsed. Hints are de-duplicated by
+  // (error_code, scope, title) — duplicates happen when the same tool is
+  // retried multiple times in one turn.
+  const aggregatedHints: ConfigHintPayload[] = [];
+  const seenHints = new Set<string>();
+  for (const tc of toolCalls) {
+    for (const h of tc.configHints || []) {
+      const key = `${h.error_code}|${h.scope}|${h.title}`;
+      if (seenHints.has(key)) continue;
+      seenHints.add(key);
+      aggregatedHints.push(h);
+    }
+  }
+  return <ToolCallsGroupInner toolCalls={toolCalls} hints={aggregatedHints} />;
+}
+
+function ToolCallsGroupInner({
+  toolCalls,
+  hints,
+}: { toolCalls: ChatToolCall[]; hints: ConfigHintPayload[] }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
@@ -109,6 +131,13 @@ export function ToolCallsGroup({ toolCalls }: { toolCalls: ChatToolCall[] }) {
         )}
         <span style={{ fontSize: 11, opacity: 0.5, marginLeft: "auto", flexShrink: 0 }}>{expanded ? t("chat.collapse") : t("chat.expand")}</span>
       </div>
+      {hints.length > 0 && (
+        <div style={{ padding: "8px 8px 0 8px", display: "flex", flexDirection: "column", gap: 6 }}>
+          {hints.map((h, i) => (
+            <ConfigHintCard key={`hint-${i}`} hint={h} />
+          ))}
+        </div>
+      )}
       {expanded && (
         <div style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: 4, background: "var(--panel)" }}>
           {toolCalls.map((tc, i) => (
@@ -200,6 +229,18 @@ function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?:
         <div className={cls}>
           {icon}
           <ToolResultBlock result={entry.result} />
+        </div>
+      );
+    }
+    case "config_hint": {
+      // Render the actionable card directly inline in the ReAct timeline.
+      // This is what makes the "missing API key → click to configure" UX
+      // actually visible — without this branch the ConfigHintCard only
+      // shows in legacy ToolCallsGroup, which the default chat UI hides
+      // whenever a thinkingChain exists (i.e. essentially always).
+      return (
+        <div className="chainNarrConfigHint" data-tool-id={entry.toolId || undefined}>
+          <ConfigHintCard hint={entry.hint} />
         </div>
       );
     }

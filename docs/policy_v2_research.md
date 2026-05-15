@@ -748,7 +748,15 @@ Ruleset                      # OpenCode 风格 dataclass
 
 ### 6.6 `orgs/runtime.py` patches `execute_tool_with_policy`
 
-[`orgs/runtime.py`](../src/openakita/orgs/runtime.py) 对 [`tool_executor.execute_tool_with_policy`](../src/openakita/core/tool_executor.py) 做了 monkey-patch（org 委派路径）。Commit 4 必须保持 `execute_tool_with_policy` 的**函数签名 + 返回类型 + 异常类型**完全不变，否则 org 委派挂掉。
+[`orgs/runtime.py`](../src/openakita/orgs/runtime.py) 对 [`tool_executor.execute_tool_with_policy`](../src/openakita/core/tool_executor.py) 做了 monkey-patch（org 委派路径）。Commit 4 必须保持 `execute_tool_with_policy` 的**函数签名 + 异常类型**完全不变，否则 org 委派挂掉。
+
+> **2026-05 修订（web_search provider 重构）**：上述硬约束中的"返回类型不变"已**作废**。
+> `execute_tool_with_policy` / `execute_tool` / `_execute_tool_impl` / `_execute_with_cancel`
+> 全链路返回类型由 `str` 改为 `tuple[str, ConfigHint | None]`（参见
+> [`tools/tool_hints.py`](../src/openakita/tools/tool_hints.py)），用于把 handler 抛出的
+> `ToolConfigError` 以**侧通道**（SSE `config_hint` 事件）送达前端，而不污染 LLM 上下文。
+> `orgs/runtime.py` 的 monkey-patch 已同步：`org_*` RPC 返回 `(text, None)`；原始调用路径
+> 完整透传 `(result, hint)`。函数签名（参数 + 异常）保持不变，对调用方仅多一个解包步骤。
 
 ---
 

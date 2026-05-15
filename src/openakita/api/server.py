@@ -54,6 +54,7 @@ from .routes import (
     skills,
     token_stats,
     upload,
+    web_search as web_search_routes,
     wechat_onboard,
     wecom_onboard,
     workspace_io,
@@ -390,6 +391,7 @@ def create_app(
     app.include_router(skill_categories.router, tags=["技能分类"])
     app.include_router(token_stats.router, tags=["统计"])
     app.include_router(upload.router, tags=["文件"])
+    app.include_router(web_search_routes.router)
     app.include_router(workspace_io.router, tags=["工作区"])
     app.include_router(workspaces.router, tags=["工作区管理"])
     app.include_router(ws_routes.router, tags=["WebSocket"])

@@ -189,13 +189,16 @@ async def test_execute_tool_with_policy_still_enforces_plan_mode_rules():
     executor = ToolExecutor(registry)
     executor._current_mode = "plan"
 
-    result = await executor.execute_tool_with_policy(
+    # ``execute_tool_with_policy`` returns ``(text, ConfigHint | None)``.
+    # The plan-mode block returns text-only with hint=None.
+    result, hint = await executor.execute_tool_with_policy(
         "run_shell",
         {"command": "echo hi"},
         PolicyDecisionV2(action=DecisionAction.ALLOW),
     )
 
     assert "run_shell" in result
+    assert hint is None
     assert registry.executed == []
 
 
@@ -204,7 +207,7 @@ async def test_execute_tool_with_policy_normalizes_tool_aliases():
     registry = _DummyRegistry()
     executor = ToolExecutor(registry)
 
-    result = await executor.execute_tool_with_policy(
+    result, hint = await executor.execute_tool_with_policy(
         "create-todo",
         {"task_summary": "x", "steps": []},
         PolicyDecisionV2(action=DecisionAction.ALLOW),
@@ -212,6 +215,7 @@ async def test_execute_tool_with_policy_normalizes_tool_aliases():
     )
 
     assert result == "ok:create_todo"
+    assert hint is None
     assert registry.executed == ["create_todo"]
 
 

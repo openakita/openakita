@@ -214,6 +214,38 @@ class Settings(BaseSettings):
         ),
     )
 
+    # === 搜索源（Provider）配置 ===
+    # 调度规则见 src/openakita/tools/web_search/runtime.py：
+    #   - web_search_provider 留空 → 按 auto_detect_order 走可用源 fallback
+    #   - 指定 id → 严格走该源，失败不 fallback
+    # 命名带 `_API_KEY` / `_BASE_URL` 自动被 _mask_value 遮蔽（见 api/routes/config.py）
+    web_search_provider: str = Field(
+        default="",
+        description=(
+            "激活的搜索源 ID（bocha / tavily / searxng / jina / duckduckgo）；"
+            "留空=按优先级自动检测可用源"
+        ),
+    )
+    bocha_api_key: str = Field(
+        default="",
+        description="博查 Bocha 搜索 API Key（国内推荐，申请：https://api.bochaai.com）",
+    )
+    tavily_api_key: str = Field(
+        default="",
+        description="Tavily 搜索 API Key（海外推荐，申请：https://app.tavily.com/home）",
+    )
+    jina_api_key: str = Field(
+        default="",
+        description="Jina 搜索 API Key（可选，无 Key 也能用但限速）",
+    )
+    searxng_base_url: str = Field(
+        default="",
+        description=(
+            "SearXNG 自部署实例地址，例如 http://localhost:8080；"
+            "需开启 server.formats.json 才能返回 JSON"
+        ),
+    )
+
     allow_parallel_tools_with_interrupt_checks: bool = Field(
         default=False,
         description="是否允许在启用“工具间中断检查”时也并行执行工具（会降低中断插入粒度，默认关闭）",

@@ -27,10 +27,28 @@ from ..config import settings
 from ..tools.errors import ToolError, classify_error
 from ..tools.handlers import SystemHandlerRegistry
 from ..tools.input_normalizer import normalize_tool_input
+from ..tools.tool_hints import ConfigHint, ToolConfigError
 from ..tracing.tracer import get_tracer
 from .agent_state import TaskState
 
 logger = logging.getLogger(__name__)
+
+
+# Public return type for the tool execution chain.
+#
+# All ``execute_tool*`` / ``_execute_tool_impl`` / ``_execute_with_cancel`` paths
+# return ``(text, hint)`` where:
+#   - ``text`` is the LLM-visible result string (always populated)
+#   - ``hint`` is an optional :class:`ConfigHint` for the chat UI side-channel,
+#     produced when a handler raises :class:`ToolConfigError` (missing API key,
+#     auth failure, rate limit, etc.). The hint NEVER enters LLM history —
+#     it's forwarded by ``ReasoningEngine`` as a separate ``config_hint`` SSE
+#     event and stripped before tool_result_msg is sent to the model.
+#
+# Why a tuple instead of a wrapper class? Concrete tuple return is easier to
+# reason about at every callsite (`r, hint = await ...`), avoids subclass
+# fragility (``str.__add__`` returning base ``str``), and keeps `mypy` honest.
+ToolResultWithHint = tuple[str, "ConfigHint | None"]
 
 
 class ToolSkipped(Exception):
@@ -356,14 +374,18 @@ class ToolExecutor:
         coro,
         state: TaskState | None,
         tool_name: str,
-    ) -> str:
+    ) -> ToolResultWithHint:
         """
         执行工具协程，同时监听 cancel_event / skip_event / 硬超时 三路竞速。
 
-        - cancel_event 触发 → 返回中断错误（终止整个任务）
+        - cancel_event 触发 → 返回 (中断错误文本, None)（终止整个任务）
         - skip_event 触发 → 抛出 ToolSkipped（仅跳过当前工具）
-        - 硬超时 → 返回超时错误
+        - 硬超时 → 返回 (超时错误文本, None)
         - hard_timeout=0 表示不设硬超时
+
+        返回 ``(text, hint)`` 元组以便上游统一解包。``hint`` 仅在 wrapped
+        coroutine 是 ``execute_tool_with_policy`` 等返回 tuple 的方法、且
+        handler raise ``ToolConfigError`` 时才非 None。
         """
         tool_task = asyncio.ensure_future(coro)
 
@@ -422,7 +444,9 @@ class ToolExecutor:
             except (asyncio.CancelledError, Exception):
                 pass
 
-            return f"⚠️ 工具执行被中断: {reason}。工具 '{tool_name}' 已停止。"
+            # cancel/timeout 不携带 ConfigHint：cancel 是 user-initiated（不是配置问题），
+            # timeout 是任务/handler 性能问题（与 user-correctable config 无关）
+            return f"⚠️ 工具执行被中断: {reason}。工具 '{tool_name}' 已停止。", None
 
         finally:
             for t in [tool_task, timeout_task]:
@@ -446,7 +470,7 @@ class ToolExecutor:
         tool_input: dict,
         *,
         session_id: str | None = None,
-    ) -> str:
+    ) -> ToolResultWithHint:
         """
         执行单个工具调用。
 
@@ -459,7 +483,11 @@ class ToolExecutor:
             session_id: 当前会话 ID（用于 Plan 检查）
 
         Returns:
-            工具执行结果字符串
+            ``(text, hint)`` 元组：``text`` 是 LLM 可见的结果字符串；
+            ``hint`` 仅在 handler 抛出 :class:`ToolConfigError` 时非 None，
+            由 ``ReasoningEngine`` 通过 ``config_hint`` SSE 事件转发到前端，
+            **不会进入 LLM 上下文**。Pre-execution gates（todo/permission/
+            grounding）都返回 ``(text, None)``。
         """
         tool_name = self._canonicalize_tool_name(tool_name)
         if isinstance(tool_input, dict):
@@ -467,15 +495,15 @@ class ToolExecutor:
 
         todo_block = self._check_todo_required(tool_name, session_id)
         if todo_block:
-            return todo_block
+            return todo_block, None
 
         perm_block = self._check_permission_deny_msg(tool_name, tool_input)
         if perm_block:
-            return perm_block
+            return perm_block, None
 
         grounding_block = self._check_current_turn_grounding(tool_name, tool_input)
         if grounding_block:
-            return grounding_block
+            return grounding_block, None
 
         return await self._execute_tool_impl(tool_name, tool_input)
 
@@ -613,8 +641,14 @@ class ToolExecutor:
         self,
         tool_name: str,
         tool_input: dict,
-    ) -> str:
-        """Execute a tool after todo / permission gates have been handled."""
+    ) -> ToolResultWithHint:
+        """Execute a tool after todo / permission gates have been handled.
+
+        Returns ``(text, hint)``. ``hint`` is non-None only when the handler
+        raised :class:`ToolConfigError` — that's the central catch site.
+        Other error paths (``ToolError`` / generic ``Exception``) return
+        ``(error_text, None)``.
+        """
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
         # ★ 拦截 JSON 解析失败的工具调用（参数被 API 截断）
@@ -626,7 +660,7 @@ class ToolExecutor:
             logger.warning(
                 f"[ToolExecutor] Skipping tool '{tool_name}' due to parse error: {err_msg[:200]}"
             )
-            return err_msg
+            return err_msg, None
 
         await self._dispatch_hook(
             "on_before_tool_use", tool_name=tool_name, tool_input=tool_input
@@ -656,7 +690,7 @@ class ToolExecutor:
                         tool_result=suggestion,
                         error="unknown_tool",
                     )
-                    return suggestion
+                    return suggestion, None
 
                 # 获取执行期间产生的新日志（WARNING/ERROR/CRITICAL）
                 all_logs = log_buffer.get_logs(count=500)
@@ -697,7 +731,36 @@ class ToolExecutor:
                     success=True,
                     duration_ms=(time.monotonic() - started_at) * 1000,
                 )
-                return result
+                return result, None
+
+            except ToolConfigError as e:
+                # User-correctable config issue (missing API key, auth failed, …).
+                # The hint reaches the chat UI via a side-channel SSE event;
+                # the LLM only sees a plain natural-language summary so it
+                # can't learn to mimic UI markers in its own outputs.
+                logger.info(
+                    "[ToolExecutor] %s raised ToolConfigError(scope=%s, code=%s): %s",
+                    tool_name, e.hint.scope, e.hint.error_code, e.hint.title,
+                )
+                span.set_attribute("config_hint_scope", e.hint.scope)
+                span.set_attribute("config_hint_code", e.hint.error_code)
+                error_text = e.to_llm_text()
+                await self._dispatch_hook(
+                    "on_after_tool_use",
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    tool_result=error_text,
+                    error=str(e),
+                )
+                self._record_experience(
+                    tool_name,
+                    tool_input,
+                    error_text,
+                    success=False,
+                    duration_ms=(time.monotonic() - started_at) * 1000,
+                    error_type=f"config:{e.hint.error_code}",
+                )
+                return error_text, e.hint
 
             except ToolError as e:
                 logger.warning(f"Tool error ({e.error_type.value}): {tool_name} - {e.message}")
@@ -719,7 +782,7 @@ class ToolExecutor:
                     duration_ms=(time.monotonic() - started_at) * 1000,
                     error_type=e.error_type.value,
                 )
-                return error_result
+                return error_result, None
 
             except ToolSkipped:
                 raise
@@ -745,7 +808,7 @@ class ToolExecutor:
                     duration_ms=(time.monotonic() - started_at) * 1000,
                     error_type=tool_error.error_type.value,
                 )
-                return error_result
+                return error_result, None
 
     def _record_experience(
         self,
@@ -790,11 +853,17 @@ class ToolExecutor:
         policy_result: Any,
         *,
         session_id: str | None = None,
-    ) -> str:
+    ) -> ToolResultWithHint:
         """Execute an already policy-checked tool, applying sandbox/checkpoint hooks.
 
         Permission check is assumed to be done by the caller (execute_batch or
         ReasoningEngine).  Only todo-required gate remains here.
+
+        Returns ``(text, hint)``. ``hint`` is non-None only when the underlying
+        ``_execute_tool_impl`` produced a :class:`ToolConfigError`. All early
+        return paths (todo gate / grounding gate / sandbox) return
+        ``(text, None)`` because they don't carry user-correctable config
+        signals.
         """
         _policy_action = getattr(policy_result, "action", "")
         if str(getattr(_policy_action, "value", _policy_action)) == "defer":
@@ -819,11 +888,11 @@ class ToolExecutor:
 
         todo_block = self._check_todo_required(tool_name, session_id)
         if todo_block:
-            return todo_block
+            return todo_block, None
 
         grounding_block = self._check_current_turn_grounding(tool_name, tool_input)
         if grounding_block:
-            return grounding_block
+            return grounding_block, None
 
         if getattr(policy_result, "metadata", {}).get("needs_checkpoint"):
             try:
@@ -856,7 +925,7 @@ class ToolExecutor:
                 sandbox_output += f"stdout:\n{sb_result.stdout}\n"
             if sb_result.stderr:
                 sandbox_output += f"stderr:\n{sb_result.stderr}\n"
-            return self._guard_truncate(tool_name, sandbox_output)
+            return self._guard_truncate(tool_name, sandbox_output), None
 
         return await self._execute_tool_impl(tool_name, tool_input)
 
@@ -1099,6 +1168,12 @@ class ToolExecutor:
             success = True
             result_str = ""
             receipts: list | None = None
+            # Hint side-channel: when the underlying handler raises ToolConfigError,
+            # ``_execute_tool_impl`` returns ``(text, hint)`` and the hint travels
+            # up here through ``_execute_with_cancel`` (which forwards tuples
+            # transparently). We attach it to the tool_result dict as ``_hint``
+            # so ``ReasoningEngine`` can pop it before sending the dict to the LLM.
+            hint: ConfigHint | None = None
 
             use_parallel_safe_monitor = (
                 parallel_enabled
@@ -1134,7 +1209,22 @@ class ToolExecutor:
                             tool_name,
                         )
 
-                result_content = result if result is not None else "操作已完成"
+                # All paths now return ``(text, hint)``: pre-execution gate
+                # results, sandbox results, success results, ToolError results,
+                # ToolConfigError results, cancel/timeout results.
+                if isinstance(result, tuple) and len(result) == 2:
+                    result_content, hint = result
+                else:
+                    # Defensive: if any path forgot to wrap (shouldn't happen
+                    # after the type sweep), accept the raw value as text.
+                    logger.warning(
+                        "[ToolExecutor] %s returned non-tuple result: %r",
+                        tool_name, type(result).__name__,
+                    )
+                    result_content = result
+                    hint = None
+                if result_content is None:
+                    result_content = "操作已完成"
                 result_str = str(result_content)
 
                 # execute_tool 内部捕获所有异常并返回字符串，不会抛到这里。
@@ -1253,6 +1343,16 @@ class ToolExecutor:
             }
             if not success:
                 tool_result["is_error"] = True
+            # Internal-only field. ``ReasoningEngine`` MUST ``pop("_hint", None)``
+            # before forwarding tool_result to the LLM message stream — the
+            # underscore prefix is a convention also used by ``_security_confirm``
+            # and ``_deferred_approval_id`` to signal "consumed by orchestrator,
+            # not sent to LLM". The LLM-facing converters (see
+            # ``llm/converters/messages.py``) only read ``type`` / ``tool_use_id``
+            # / ``content`` / ``is_error`` from tool_result blocks; unknown keys
+            # are dropped, but we still pop explicitly to avoid drift.
+            if hint is not None:
+                tool_result["_hint"] = hint
 
             return idx, tool_result, tool_name if success else None, receipts
 

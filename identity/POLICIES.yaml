@@ -31,7 +31,7 @@ security:
     default_zone: workspace
   confirmation:
     enabled: true
-    mode: yolo
+    mode: trust
     timeout_seconds: 60
     default_on_timeout: deny
     confirm_ttl: 120.0
@@ -77,3 +77,10 @@ security:
   user_allowlist:
     commands: []
     tools: []
+  profile:
+    current: trust
+    base: null
+  shell_risk:
+    enabled: true
+  death_switch:
+    enabled: true

@@ -89,12 +89,79 @@ _PER_TOOL_NAME_TASK_LIMITS: dict[str, int] = {
 }
 
 
+from ..tools.tool_hints import ConfigHint
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
 from .tool_executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
 _SSE_RESULT_PREVIEW_CHARS = 32000
+
+
+def _unpack_tool_result(value: Any) -> tuple[str, ConfigHint | None]:
+    """Defensively unpack a value returned by ``execute_tool*``.
+
+    All ``ToolExecutor`` paths are supposed to return ``(text, hint)`` after
+    the type sweep. This helper accepts both the new tuple shape and the
+    legacy plain-string shape (in case any callsite outside this module
+    hasn't migrated yet) and normalizes to ``(str, ConfigHint | None)``.
+    Centralizing the unwrap keeps the 5+ tool-call sites in this file short
+    and consistent.
+    """
+    if isinstance(value, tuple) and len(value) == 2:
+        text, hint = value
+        return ("" if text is None else str(text)), hint
+    return ("" if value is None else str(value)), None
+
+
+def _build_tool_end_events(
+    *,
+    tool_name: str,
+    tool_id: str,
+    result_text: str,
+    hint: ConfigHint | None,
+    is_error: bool,
+    result_summary: str = "",
+    extra: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Build the SSE event sequence for a finished tool call.
+
+    Always emits a ``tool_call_end``. When ``hint`` is non-None, also emits a
+    ``config_hint`` event carrying the structured payload that ``ChatView``
+    accumulates into ``currentConfigHints[tool_use_id]`` for ``ConfigHintCard``
+    rendering. ``hint`` is intentionally NOT serialized into the
+    ``tool_result_msg`` content — the LLM never sees it.
+
+    The two-event sequence is required (not a single combined event) so
+    existing frontend code that only knows ``tool_call_end`` keeps working;
+    UIs that opt into the hint just listen for the new event type.
+    """
+    end_event: dict[str, Any] = {
+        "type": "tool_call_end",
+        "tool": tool_name,
+        "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
+        "id": tool_id,
+        "is_error": is_error,
+        "result_summary": result_summary,
+    }
+    if extra:
+        end_event.update(extra)
+    events: list[dict[str, Any]] = [end_event]
+    if hint is not None:
+        events.append({
+            "type": "config_hint",
+            "tool_use_id": tool_id,
+            "scope": hint.scope,
+            "error_code": hint.error_code,
+            "title": hint.title,
+            "message": hint.message,
+            # Copy actions to plain dicts so downstream JSON serializers don't
+            # have to special-case the dataclass; ConfigHint.actions is already
+            # a list[dict] but we re-shallow-copy each entry to be safe against
+            # callers that mutate.
+            "actions": [dict(a) for a in hint.actions],
+        })
+    return events
 _CACHEABLE_READONLY_TOOLS = frozenset({"web_fetch", "web_search", "news_search"})
 _READONLY_EXPLORATION_TOOLS = frozenset({
     "read_file",
@@ -2590,7 +2657,17 @@ class ReasoningEngine:
                         if other_receipts:
                             delivery_receipts = other_receipts
                             self._last_delivery_receipts = other_receipts
-                        # 保留其他工具的 tool_result 内容
+                        # ``run()`` is the non-streaming path (CLI / single-shot
+                        # API): there is no SSE channel to forward hints on, so
+                        # we drop them. We MUST still pop the ``_hint`` field
+                        # to keep it out of LLM history (``working_messages``).
+                        # Streaming paths (``reason_stream`` / ``run_stream``)
+                        # have their own pop-and-yield logic that surfaces the
+                        # hint as a ``config_hint`` SSE event.
+                        if other_results:
+                            for _tr in other_results:
+                                if isinstance(_tr, dict):
+                                    _tr.pop("_hint", None)
                         other_tool_results = other_results if other_results else []
                         all_tool_results.extend(other_tool_results)
                     if _mode_blocked_results:
@@ -2848,6 +2925,15 @@ class ReasoningEngine:
                     allow_interrupt_checks=self._state.interrupt_enabled,
                     capture_delivery_receipts=True,
                 )
+                # ``run()`` is non-streaming — no SSE channel to forward hints
+                # on. Drop the ``_hint`` field after popping so it never reaches
+                # ``working_messages`` (LLM history). Streaming paths
+                # (``reason_stream`` / ``run_stream``) yield ``config_hint``
+                # events from their own pop sites.
+                if tool_results:
+                    for _tr in tool_results:
+                        if isinstance(_tr, dict):
+                            _tr.pop("_hint", None)
                 _deferred_results = [
                     tr
                     for tr in tool_results
@@ -4711,6 +4797,7 @@ class ReasoningEngine:
                                         _confirm_timeout,
                                     )
                                     _bus.cleanup(t_id)
+                                _hint: ConfigHint | None = None
                                 if _decision in (
                                     "allow",
                                     "allow_once",
@@ -4724,7 +4811,7 @@ class ReasoningEngine:
                                         # via ``getattr``——duck-typed across v1/v2.
                                         from .policy_v2.models import PolicyDecisionV2 as _PD2
 
-                                        r = await self._tool_executor.execute_tool_with_policy(
+                                        _raw = await self._tool_executor.execute_tool_with_policy(
                                             tool_name=t_name,
                                             tool_input=t_args if isinstance(t_args, dict) else {},
                                             policy_result=_PD2(
@@ -4738,7 +4825,7 @@ class ReasoningEngine:
                                             ),
                                             session_id=conversation_id,
                                         )
-                                        r = str(r) if r else ""
+                                        r, _hint = _unpack_tool_result(_raw)
                                         _tool_is_error = False
                                     except Exception as exc:
                                         r = f"Tool error after security confirmation: {exc}"
@@ -4752,26 +4839,28 @@ class ReasoningEngine:
                                 _security_confirm_interrupted_ask = True
                             else:
                                 _tool_is_error = False
+                                _hint = None
                                 try:
-                                    r = await self._tool_executor.execute_tool_with_policy(
+                                    _raw = await self._tool_executor.execute_tool_with_policy(
                                         tool_name=t_name,
                                         tool_input=t_args if isinstance(t_args, dict) else {},
                                         policy_result=_pr,
                                         session_id=conversation_id,
                                     )
-                                    r = str(r) if r else ""
+                                    r, _hint = _unpack_tool_result(_raw)
                                 except Exception as exc:
                                     r = f"Tool error: {exc}"
                                     _tool_is_error = True
                             _ask_result_summary = self._summarize_tool_result(t_name, r)
-                            yield {
-                                "type": "tool_call_end",
-                                "tool": t_name,
-                                "result": r[:_SSE_RESULT_PREVIEW_CHARS],
-                                "id": t_id,
-                                "is_error": _tool_is_error,
-                                "result_summary": _ask_result_summary or "",
-                            }
+                            for _evt in _build_tool_end_events(
+                                tool_name=t_name,
+                                tool_id=t_id,
+                                result_text=r,
+                                hint=_hint,
+                                is_error=_tool_is_error,
+                                result_summary=_ask_result_summary or "",
+                            ):
+                                yield _evt
                             # chain_text: 结果摘要
                             if _ask_result_summary:
                                 yield {"type": "chain_text", "content": _ask_result_summary}
@@ -5233,13 +5322,14 @@ class ReasoningEngine:
                                 "allow_always",
                                 "sandbox",
                             )
+                            _confirm_hint: ConfigHint | None = None
                             if _confirmed_allowed:
                                 try:
                                     # C8b-6a: pass v2 PolicyDecisionV2 directly (duck-typed
                                     # with v1 PolicyResult on ``.metadata``).
                                     from .policy_v2.models import PolicyDecisionV2 as _PD2
 
-                                    result_text = await self._tool_executor.execute_tool_with_policy(
+                                    _raw = await self._tool_executor.execute_tool_with_policy(
                                         tool_name=tool_name,
                                         tool_input=_tool_args_dict,
                                         policy_result=_PD2(
@@ -5252,7 +5342,7 @@ class ReasoningEngine:
                                         ),
                                         session_id=conversation_id,
                                     )
-                                    result_text = str(result_text) if result_text else ""
+                                    result_text, _confirm_hint = _unpack_tool_result(_raw)
                                     _confirm_is_error = False
                                 except Exception as exc:
                                     result_text = f"Tool error after security confirmation: {exc}"
@@ -5263,14 +5353,15 @@ class ReasoningEngine:
                                     "不要再执行该操作，请选择安全替代方案或说明无法继续。"
                                 )
                                 _confirm_is_error = True
-                            yield {
-                                "type": "tool_call_end",
-                                "tool": tool_name,
-                                "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
-                                "id": tool_id,
-                                "is_error": _confirm_is_error,
-                                "result_summary": self._summarize_tool_result(tool_name, result_text) or "",
-                            }
+                            for _evt in _build_tool_end_events(
+                                tool_name=tool_name,
+                                tool_id=tool_id,
+                                result_text=result_text,
+                                hint=_confirm_hint,
+                                is_error=_confirm_is_error,
+                                result_summary=self._summarize_tool_result(tool_name, result_text) or "",
+                            ):
+                                yield _evt
                             tool_results_for_msg.append(
                                 {
                                     "type": "tool_result",
@@ -5286,6 +5377,11 @@ class ReasoningEngine:
 
                         # 将工具执行与 cancel_event / skip_event 三路竞速
                         # 注意: 不在此处 clear_skip()，让已到达的 skip 信号自然被竞速消费
+                        # ``_stream_hint`` 仅在 tool_exec_task 自然完成且 handler
+                        # 抛 ToolConfigError 时非 None；cancel/skip/timeout 路径
+                        # 显式置 None（policy: side-channel hint 只反映 handler
+                        # 内部产生的可纠正配置问题，不污染 user-initiated 中断）。
+                        _stream_hint: ConfigHint | None = None
                         try:
                             tool_exec_task = asyncio.create_task(
                                 self._tool_executor.execute_tool_with_policy(
@@ -5329,8 +5425,10 @@ class ReasoningEngine:
                                     f"[SkipStep-Stream] Tool {tool_name} skipped: {_skip_reason}"
                                 )
                             elif tool_exec_task in done_set:
-                                result_text = tool_exec_task.result()
-                                result_text = str(result_text) if result_text else ""
+                                # task.result() 现在是 (text, hint) 元组
+                                result_text, _stream_hint = _unpack_tool_result(
+                                    tool_exec_task.result()
+                                )
                                 self._remember_readonly_tool_result(
                                     tool_name,
                                     tool_args,
@@ -5359,26 +5457,29 @@ class ReasoningEngine:
                                 }
                             session.context.handoff_events.clear()
                         _end_result_summary = self._summarize_tool_result(tool_name, result_text) or ""
-                        # 跳过时发送 tool_call_skipped 事件通知前端
+                        # 跳过 / 取消 / 超时 路径 hint 已显式置 None；只有正常完成
+                        # 路径才会带着 _stream_hint（由 ToolConfigError 触发）。
                         if _stream_skipped:
-                            yield {
-                                "type": "tool_call_end",
-                                "tool": tool_name,
-                                "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
-                                "id": tool_id,
-                                "skipped": True,
-                                "is_error": False,
-                                "result_summary": _end_result_summary,
-                            }
+                            for _evt in _build_tool_end_events(
+                                tool_name=tool_name,
+                                tool_id=tool_id,
+                                result_text=result_text,
+                                hint=None,
+                                is_error=False,
+                                result_summary=_end_result_summary,
+                                extra={"skipped": True},
+                            ):
+                                yield _evt
                         else:
-                            yield {
-                                "type": "tool_call_end",
-                                "tool": tool_name,
-                                "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
-                                "id": tool_id,
-                                "is_error": _tool_is_error,
-                                "result_summary": _end_result_summary,
-                            }
+                            for _evt in _build_tool_end_events(
+                                tool_name=tool_name,
+                                tool_id=tool_id,
+                                result_text=result_text,
+                                hint=_stream_hint if not _stream_cancelled else None,
+                                is_error=_tool_is_error,
+                                result_summary=_end_result_summary,
+                            ):
+                                yield _evt
 
                         if _stream_cancelled:
                             tool_results_for_msg.append(

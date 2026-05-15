@@ -87,8 +87,10 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { useVersionCheck } from "./hooks/useVersionCheck";
 import { useEnvManager } from "./hooks/useEnvManager";
+import { useExpandPanel } from "./hooks/useExpandPanel";
 import { AdvancedView } from "./views/AdvancedView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import WebSearchProviderPanel from "./components/WebSearchProviderPanel";
 
 const THEME_I18N_KEYS: Record<Theme, string> = {
   system: "topbar.themeSystem",
@@ -822,6 +824,12 @@ function MainApp() {
   const envFieldCtx = useMemo<EnvFieldCtx>(() => ({
     envDraft, setEnvDraft, secretShown, setSecretShown, busy, t,
   }), [envDraft, secretShown, busy, t]);
+
+  // Refs for cross-view <details> panels that ConfigHintCard / chat-side
+  // hints can deep-link into via dispatchExpandPanel(anchor).
+  // Anchor names must match the backend ``actions[i].anchor`` strings emitted
+  // by tool handlers (see src/openakita/tools/handlers/web_search.py).
+  const webSearchPanelRef = useExpandPanel("web-search");
 
   async function refreshAll() {
     if (IS_TAURI) {
@@ -3574,6 +3582,7 @@ function MainApp() {
       "DESKTOP_CLICK_DELAY", "DESKTOP_TYPE_INTERVAL", "DESKTOP_MOVE_DURATION",
       "DESKTOP_FAILSAFE", "DESKTOP_PAUSE",
       "GITHUB_TOKEN",
+      "WEB_SEARCH_PROVIDER", "BOCHA_API_KEY", "TAVILY_API_KEY", "JINA_API_KEY", "SEARXNG_BASE_URL",
     ];
 
     const list = skillsDetail || [];
@@ -3759,7 +3768,7 @@ function MainApp() {
           {/* ── Hallucination Guard ── */}
           <details className="group/hguard rounded-lg border border-border mt-2">
             <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
-              <ChevronDown className="size-4 shrink-0 transition-transform group-open/hguard:rotate-180 text-muted-foreground" />
+              <ChevronRight className="size-4 shrink-0 transition-transform group-open/hguard:rotate-90 text-muted-foreground" />
               {t("config.toolsHallucinationGuard")}
             </summary>
             <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
@@ -3785,6 +3794,30 @@ function MainApp() {
                   { value: "3", label: "3" },
                 ] })}
               </div>
+            </div>
+          </details>
+
+          {/* ── Web Search Provider (Bocha / Tavily / SearXNG / Jina / DuckDuckGo) ── */}
+          <details
+            ref={webSearchPanelRef}
+            data-panel-id="web-search"
+            className="group/wsearch rounded-lg border border-border mt-2"
+          >
+            <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium select-none list-none [&::-webkit-details-marker]:hidden hover:bg-accent/50 transition-colors">
+              <ChevronRight className="size-4 shrink-0 transition-transform group-open/wsearch:rotate-90 text-muted-foreground" />
+              {t("toolsWebSearch.sectionTitle", "网页搜索源（Web Search Source）")}
+            </summary>
+            <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
+              <WebSearchProviderPanel
+                envDraft={envDraft}
+                onEnvChange={setEnvDraft}
+                onSaveEnv={async () => {
+                  const keys = ["WEB_SEARCH_PROVIDER", "BOCHA_API_KEY", "TAVILY_API_KEY", "JINA_API_KEY", "SEARXNG_BASE_URL"];
+                  await saveEnvKeys(keys);
+                }}
+                busy={busy}
+                apiBaseUrl={apiBaseUrl}
+              />
             </div>
           </details>
 

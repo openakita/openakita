@@ -203,6 +203,33 @@
     "expand": "展开",
     "args": "参数：",
     "result": "结果：",
+    "configHint": {
+      "actionDefault": "查看详情",
+      "missing_credential": {
+        "title": "搜索源未配置",
+        "message": "DuckDuckGo 在国内常无法访问。请配置博查（国内推荐）或 Tavily（海外推荐）等替代搜索源。"
+      },
+      "auth_failed": {
+        "title": "搜索源 API Key 无效",
+        "message": "当前激活的搜索源拒绝了 API Key（401/403）。请在设置中更新 Key。"
+      },
+      "rate_limited": {
+        "title": "搜索源已限流",
+        "message": "当前搜索源已触发限流。请稍后重试，或切换到其他搜索源。"
+      },
+      "network_unreachable": {
+        "title": "搜索源无法访问",
+        "message": "当前搜索源无法访问（网络/代理问题）。请检查网络连接，或切换到其他搜索源。"
+      },
+      "content_filter": {
+        "title": "搜索关键词被拒绝",
+        "message": "搜索关键词被搜索源拒绝。请换更具体或更中性的关键词重试。"
+      },
+      "unknown": {
+        "title": "搜索失败",
+        "message": "搜索失败。请稍后重试，或在设置中检查搜索源配置。"
+      }
+    },
     "planLabel": "计划：",
     "answered": "已回答：",
     "startService": "启动服务",
@@ -807,8 +834,8 @@
     "restartFail": "重启失败，请手动重启服务",
     "restartNotRunning": "服务未运行，配置已保存（下次启动时生效）",
     "toolsTitle": "工具与技能",
-    "toolsHint": "管理 Skills、MCP 集成、桌面自动化和网络代理",
-    "toolsSkills": "Skills",
+    "toolsHint": "管理 Skills、MCP 集成、网页搜索源、桌面自动化和网络代理",
+    "toolsSkills": "技能（Skills）",
     "toolsSkillsEnabled": "已启用",
     "toolsSkillsDisabled": "已禁用",
     "toolsEnableAll": "启用全部",
@@ -830,7 +857,7 @@
     "proxyAdvancedHint": "大多数情况只需填写上方的「代理地址」即可，此处用于 HTTP 和 HTTPS 需要不同代理的特殊场景",
     "toolsForceIPv4": "强制 IPv4",
     "toolsParallel": "并行数",
-    "toolsMCP": "MCP 集成",
+    "toolsMCP": "外部工具（MCP）",
     "toolsMCPEnable": "启用 MCP",
     "toolsDesktop": "桌面自动化 (Windows)",
     "toolsDesktopEnable": "启用桌面工具",
@@ -1128,6 +1155,25 @@
     "cliStatusError": "查询 CLI 状态失败:",
     "cliRegisterFailed": "注册失败:",
     "cliUnregisterFailed": "注销失败:"
+  },
+  "toolsWebSearch": {
+    "sectionTitle": "网页搜索源（Web Search Source）",
+    "intro": "DuckDuckGo 在国内常无法访问，建议配置博查（国内）或 Tavily（海外）等替代源。留空「激活源」走自动检测，按优先级（博查 → Tavily → SearXNG → Jina → DuckDuckGo）尝试已配置的可用源。",
+    "activeProvider": "激活搜索源",
+    "activeProviderHelp": "留空 = 按优先级自动检测；显式选择某个源时不再 fallback。",
+    "autoDetect": "自动检测（推荐）",
+    "loadError": "加载搜索源列表失败：",
+    "badgeActive": "已激活",
+    "badgeRecommended": "推荐",
+    "badgeAvailable": "可用",
+    "badgeUnconfigured": "未配置",
+    "noKeyNeeded": "无需 API Key（依赖 ddgs Python 包；国内通常不可达）",
+    "test": "测试",
+    "testing": "测试中...",
+    "testOk": "测试成功，返回 {{n}} 条结果",
+    "testFail": "测试失败",
+    "signup": "申请 Key →",
+    "docs": "文档"
   },
   "scheduler": {
     "title": "计划任务",

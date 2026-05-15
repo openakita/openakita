@@ -885,7 +885,7 @@ export function MCPView({
                 <Textarea
                   value={form.args}
                   onChange={e => setForm({ ...form, args: e.target.value })}
-                  placeholder={'如: -m openakita.mcp_servers.web_search\n或每行一个参数:\n-y\n@anthropic/mcp-server-filesystem\n"C:\\My Path\\dir"'}
+                  placeholder={'如: -y\n@modelcontextprotocol/server-filesystem\n或每行一个参数:\n-m\nmcp_server_fetch\n"C:\\My Path\\dir"'}
                   rows={3}
                   className="resize-y font-mono text-xs"
                 />
