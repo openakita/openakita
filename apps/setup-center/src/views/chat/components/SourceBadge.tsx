@@ -27,6 +27,37 @@ export const SOURCE_TYPE_KIND: Record<SourceType, "tool" | "history" | "knowledg
 // Stateful regex must be re-created per scan (see splitTextWithSourceTags).
 const SOURCE_TAG_PATTERN = "\\[来源[:：]\\s*(工具|历史|常识|不确定)\\s*\\]";
 
+// Anchored variant for trailing-tag detection (used by extractTrailingSourceTag).
+// Only matches when the tag is the LAST meaningful token (whitespace-only after).
+const TRAILING_SOURCE_TAG_RE = /\[来源[:：]\s*(工具|历史|常识|不确定)\s*\]\s*$/;
+
+/**
+ * If the message ends with a `[来源:X]` tag, peel it off so the caller can
+ * render it inline with the message footer (timestamp / tokens) instead of
+ * letting it consume a full line at the bottom of the bubble.
+ *
+ * Conservative behavior:
+ *   - Returns original text unchanged when no trailing tag is found.
+ *   - Returns original text unchanged when the would-be-stripped tag sits
+ *     inside an unclosed ``` code fence (tutorial / agent example must stay
+ *     verbatim).
+ */
+export function extractTrailingSourceTag(text: string): {
+  stripped: string;
+  trailingType: SourceType | null;
+} {
+  if (!text) return { stripped: text, trailingType: null };
+  const m = text.match(TRAILING_SOURCE_TAG_RE);
+  if (!m || m.index === undefined) return { stripped: text, trailingType: null };
+  const before = text.slice(0, m.index);
+  const fenceCount = (before.match(/```/g) || []).length;
+  if (fenceCount % 2 === 1) return { stripped: text, trailingType: null };
+  return {
+    stripped: before.replace(/\s+$/, ""),
+    trailingType: m[1] as SourceType,
+  };
+}
+
 export function SourceBadge({ type }: { type: SourceType }) {
   const { t } = useTranslation();
   const kind = SOURCE_TYPE_KIND[type];

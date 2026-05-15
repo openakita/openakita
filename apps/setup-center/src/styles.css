@@ -5038,25 +5038,32 @@ body > div[id*="sm-" i] {
 }
 .plugin-readme-content strong { color: var(--fg); }
 
-/* Message action buttons (edit / regenerate) — hover to show */
+/* Message action buttons (copy / edit / regenerate / rewind) — appear on
+   bubble hover, brighten on direct button hover. Sized to sit comfortably
+   alongside the 11px footer text without dominating the row. */
 .msgActionBtn {
   opacity: 0;
-  transition: opacity 0.18s, background-color 0.15s;
+  transition: opacity 0.18s ease, background-color 0.15s ease;
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
-  font-size: 13px;
-  padding: 3px 5px;
+  font-size: 12px;
+  padding: 2px 4px;
   line-height: 1;
+  color: inherit;
 }
+/* Bubble-hover floor: keep buttons clearly discoverable but not louder
+   than the footer text they sit next to. ~0.4 mirrors the previous
+   effective brightness when the parent .msgActions had opacity: 0.35. */
 .msgBubbleWrap:hover .msgActionBtn,
 .flatMsgItem:hover .msgActionBtn {
-  opacity: 0.95;
+  opacity: 0.45;
 }
+/* Direct hover on the button itself = clear affordance feedback. */
 .msgActionBtn:hover {
   opacity: 1 !important;
-  background-color: var(--accent-bg, rgba(128, 128, 128, 0.15));
+  background-color: var(--accent-bg, rgba(128, 128, 128, 0.12));
 }
 
 /* Quick start cards — hover effect */
@@ -5113,6 +5120,25 @@ body > div[id*="sm-" i] {
   user-select: none;
   cursor: help;
   font-style: normal;
+}
+
+/* When SourceBadge is hosted inside the message footer (msgActions),
+   the surrounding font-size drops to 11px — which would compute the
+   default 0.78em as ~8.6px and become unreadable. Pin a fixed compact
+   size and tighter padding so the badge still reads clearly while
+   matching the slim footer line height. Opacity is dialed down to
+   harmonize with the muted timestamp/tokens line; hovering restores
+   full saturation so the title tooltip remains comfortable to read. */
+.msgActions .srcBadge {
+  font-size: 10px;
+  padding: 0 5px;
+  line-height: 1.5;
+  margin: 0;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+.msgActions .srcBadge:hover {
+  opacity: 1;
 }
 
 .srcBadge-tool {
