@@ -1,0 +1,64 @@
+{
+  "id": "happyhorse-video",
+  "name": "HappyHorse Studio",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Bailian-powered unified video studio — HappyHorse 1.0 (t2v / i2v / r2v / video-edit) + Wan 2.6/2.7 + digital-human (photo speak / video relip / video reface / pose drive / avatar compose) + CosyVoice & Edge-TTS + storyboard long-video pipeline. Single backend (Aliyun DashScope), OSS-backed.",
+  "display_name_zh": "快乐马工作室",
+  "display_name_en": "HappyHorse Studio",
+  "description_i18n": {
+    "zh": "基于阿里云百炼的一体化视频工作室 — HappyHorse 1.0（文生 / 图生 / 参考生 / 视频编辑）+ 万相 2.6/2.7 + 数字人 5 模式 + CosyVoice & Edge-TTS + 长视频分镜拼接，统一 OSS 签名 URL。",
+    "en": "Bailian-powered unified video studio — HappyHorse 1.0 (t2v / i2v / r2v / video-edit) + Wan 2.6/2.7 + 5 digital-human modes + CosyVoice & Edge-TTS + storyboard long-video pipeline, single DashScope backend with OSS signed URLs."
+  },
+  "icon": "icon.svg",
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["video", "ai", "happyhorse", "wan", "dashscope", "bailian", "digital-human", "tts", "oss"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access",
+    "assets.publish",
+    "assets.consume"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0"
+  },
+  "provides": {
+    "tools": [
+      "hh_t2v",
+      "hh_i2v",
+      "hh_r2v",
+      "hh_video_edit",
+      "hh_photo_speak",
+      "hh_video_relip",
+      "hh_video_reface",
+      "hh_pose_drive",
+      "hh_avatar_compose",
+      "hh_status",
+      "hh_list",
+      "hh_cost_preview",
+      "hh_long_video_create"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "icon": "icon.svg",
+    "title": "快乐马工作室",
+    "title_i18n": {
+      "en": "HappyHorse Studio",
+      "zh": "快乐马工作室"
+    },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}
