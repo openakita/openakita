@@ -149,12 +149,8 @@ jobs:
           cache: npm
           cache-dependency-path: apps/setup-center/package-lock.json
 
-      # Preinstalled ~/.cargo can contain broken cargo→rustup-init shims ("fetch" argv error).
-      - name: Reset Rust user dirs on macOS
-        if: runner.os == 'macOS'
-        shell: bash
-        run: rm -rf "$HOME/.cargo" "$HOME/.rustup"
-
+      # cache-bin true + rust-cache post cleanBin strips rustup shims; the saved tarball
+      # can overwrite a fresh toolchain's ~/.cargo/bin on restore (breaks cargo on macOS).
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -162,14 +158,12 @@ jobs:
         if: matrix.rust_target
         run: rustup target add ${{ matrix.rust_target }}
 
-      # cache-bin true + rust-cache post cleanBin strips rustup shims and the saved tarball
-      # can overwrite a fresh toolchain's ~/.cargo/bin on restore.
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: |
             apps/setup-center/src-tauri -> target
-          prefix-key: "dryrun-${{ matrix.suffix }}"
+          prefix-key: "dryrun-nocachebin-v1-${{ matrix.suffix }}"
           cache-bin: false
 
       - name: Build web frontend for remote browser access

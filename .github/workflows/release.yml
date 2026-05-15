@@ -248,11 +248,6 @@ jobs:
           cache: npm
           cache-dependency-path: apps/setup-center/package-lock.json
 
-      - name: Reset Rust user dirs on macOS
-        if: runner.os == 'macOS'
-        shell: bash
-        run: rm -rf "$HOME/.cargo" "$HOME/.rustup"
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -265,7 +260,7 @@ jobs:
         with:
           workspaces: |
             apps/setup-center/src-tauri -> target
-          prefix-key: "release-${{ matrix.suffix }}"
+          prefix-key: "release-nocachebin-v1-${{ matrix.suffix }}"
           cache-bin: false
 
       - name: Build web frontend for remote browser access
