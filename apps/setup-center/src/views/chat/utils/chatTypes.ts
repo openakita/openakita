@@ -65,6 +65,9 @@ export type QueuedMessage = {
 /** SSE stream event union — synced with Python openakita.events / src/streamEvents.ts */
 export type StreamEvent =
   | { type: "heartbeat"; ts?: number }
+  | { type: "org_command_started"; org_id: string; command_id: string; root_node_id?: string }
+  | { type: "org_progress"; org_id: string; command_id: string; event?: string; summary: string; data?: Record<string, unknown> }
+  | { type: "org_command_done"; org_id: string; command_id: string; result?: Record<string, unknown>; error?: string }
   | { type: "iteration_start"; iteration: number }
   | { type: "context_compressed"; before_tokens: number; after_tokens: number }
   | { type: "thinking_start" }
@@ -74,6 +77,10 @@ export type StreamEvent =
   | { type: "text_delta"; content: string }
   | { type: "text_replace"; content: string }
   | { type: "tool_call_start"; tool: string; tool_name?: string; args: Record<string, unknown>; id?: string; call_id?: string; protocol_version?: number }
+  // C23 P2-3: tool_executor 在执行任何工具前先批量发这个事件，
+  // 让前端能在敏感操作真正开始前给用户一个非阻塞 toast 提示。
+  // 后端 schema 见 src/openakita/core/tool_executor.py:_emit_tool_intent_previews
+  | { type: "tool_intent_preview"; tool_use_id?: string; tool_name?: string; params?: Record<string, unknown>; approval_class?: string; session_id?: string | null; batch_size?: number; batch_idx?: number; ts?: number }
   | { type: "tool_call_end"; tool: string; tool_name?: string; result: string; id?: string; call_id?: string; is_error?: boolean; skipped?: boolean; protocol_version?: number }
   | { type: "source_used"; tool_name?: string; tool_use_id?: string; requested_url: string; final_url: string; hostname?: string; redirected?: boolean; from_cache?: boolean; status?: string; hint?: string; protocol_version?: number }
   | { type: "mcp_call"; tool_use_id?: string; server: string; tool: string; status?: "ok" | "error" | string; auto_connected?: boolean; reconnected?: boolean; error?: string; protocol_version?: number }
@@ -88,7 +95,7 @@ export type StreamEvent =
   | { type: "agent_handoff"; from_agent: string; to_agent: string; reason?: string }
   | { type: "sub_agent_state"; agent_id?: string; agentId?: string; session_id?: string; sessionId?: string; status?: string; reason?: string; protocol_version?: number }
   | { type: "artifact"; artifact_type: string; file_url: string; path: string; name: string; caption: string; size?: number }
-  | { type: "security_confirm"; tool: string; tool_name?: string; args: Record<string, unknown>; id?: string; call_id?: string; confirm_id?: string; reason: string; risk_level: string; needs_sandbox: boolean; protocol_version?: number; timeout_seconds?: number; default_on_timeout?: string }
+  | { type: "security_confirm"; tool: string; tool_name?: string; args: Record<string, unknown>; id?: string; call_id?: string; confirm_id?: string; reason: string; risk_level: string; needs_sandbox: boolean; protocol_version?: number; timeout_seconds?: number; default_on_timeout?: string; approval_class?: string | null; policy_version?: number; channel?: string; delegate_chain?: string[]; root_user_id?: string | null; decision_chain?: Array<{ name: string; action: string; note: string }> }
   | { type: "death_switch"; active: boolean; reason?: string }
   | { type: "ui_preference"; theme?: string; language?: string }
   | { type: "endpoint_notice"; reason_code?: string; notice_type?: string; endpoint?: string }

@@ -1,5 +1,13 @@
 """
 Agent Hub handler — search_hub_agents, install_hub_agent, publish_agent, get_hub_agent_detail.
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 from __future__ import annotations
@@ -9,6 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from openakita.memory.types import normalize_tags
+
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -25,6 +35,14 @@ class AgentHubHandler:
         "publish_agent",
         "get_hub_agent_detail",
     ]
+
+    # C7 explicit ApprovalClass — install / publish 修改本地 agents/ 或上传内容
+    TOOL_CLASSES = {
+        "search_hub_agents": ApprovalClass.NETWORK_OUT,
+        "install_hub_agent": ApprovalClass.CONTROL_PLANE,
+        "publish_agent": ApprovalClass.CONTROL_PLANE,
+        "get_hub_agent_detail": ApprovalClass.NETWORK_OUT,
+    }
 
     def __init__(self, agent: Agent):
         self.agent = agent

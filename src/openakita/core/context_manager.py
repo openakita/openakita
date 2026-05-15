@@ -477,6 +477,10 @@ class ContextManager:
         # v2: 压缩前记忆提取 — 确保即将被压缩的消息先保存到记忆
         if memory_manager is not None:
             try:
+                snapshot = self._build_precompact_snapshot(messages, memory_manager)
+                save_snapshot = getattr(memory_manager, "save_precompact_snapshot", None)
+                if snapshot and callable(save_snapshot):
+                    save_snapshot(snapshot)
                 on_compressing = getattr(memory_manager, "on_context_compressing", None)
                 if on_compressing:
                     await on_compressing(messages)
@@ -1478,6 +1482,15 @@ class ContextManager:
 
         truncated = list(messages[drop_until:])
         dropped_messages = list(messages[:drop_until])
+        if dropped_messages:
+            snapshot = self._build_precompact_snapshot(dropped_messages, memory_manager)
+            if snapshot:
+                save_snapshot = getattr(memory_manager, "save_precompact_snapshot", None)
+                if callable(save_snapshot):
+                    try:
+                        save_snapshot(snapshot)
+                    except Exception:
+                        logger.debug("[HardTruncate] save_precompact_snapshot failed", exc_info=True)
         protected_truncated_idx = (
             protected_media_idx - drop_until if protected_media_idx >= drop_until else -1
         )
@@ -1526,6 +1539,57 @@ class ContextManager:
             f"(hard_limit={hard_limit}, messages={len(truncated)})"
         )
         return self._strip_oversized_payload(truncated, overhead_bytes=overhead_bytes)
+
+    @staticmethod
+    def _build_precompact_snapshot(
+        dropped_messages: list[dict],
+        memory_manager: object | None = None,
+        *,
+        max_facts: int = 12,
+    ) -> dict:
+        """Extract high-confidence facts before hard truncation drops messages."""
+        import re
+        import time
+
+        signal_words = (
+            "必须",
+            "不要",
+            "记住",
+            "偏好",
+            "决定",
+            "方案",
+            "todo",
+            "待办",
+            "文件",
+            "路径",
+            "实现",
+            "always",
+            "never",
+            "must",
+        )
+        facts: list[str] = []
+        path_re = re.compile(r"(?:[A-Za-z]:[\\/][^\s\"'<>|]+|[\w./\\-]+\.(?:py|ts|tsx|js|md|json|yaml|toml))")
+        for msg in dropped_messages:
+            if msg.get("role") not in ("user", "assistant"):
+                continue
+            content = msg.get("content", "")
+            if not isinstance(content, str):
+                continue
+            text = re.sub(r"\s+", " ", content).strip()
+            if not text:
+                continue
+            paths = path_re.findall(text)
+            if any(word in text for word in signal_words) or paths:
+                fact = text[:220]
+                if fact not in facts:
+                    facts.append(fact)
+            if len(facts) >= max_facts:
+                break
+        return {
+            "session_id": getattr(memory_manager, "_current_session_id", "") if memory_manager else "",
+            "created_at": time.time(),
+            "facts": facts,
+        }
 
     def _strip_oversized_payload(
         self,

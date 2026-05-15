@@ -12,6 +12,14 @@
 - manage_skill_enabled: 启用/禁用技能
 - execute_skill: 在隔离上下文中执行技能 (F10)
 - uninstall_skill: 卸载外部技能 (F14)
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import asyncio
@@ -20,6 +28,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
 from ...core.tool_executor import MAX_TOOL_RESULT_CHARS, OVERFLOW_MARKER, save_overflow
 from ...skills.catalog import SKILL_INSTRUCTION_ADVISORY
 from ...skills.events import SkillEvent
@@ -51,6 +60,20 @@ class SkillsHandler:
         "execute_skill",
         "uninstall_skill",
     ]
+
+    # C7 explicit ApprovalClass — skills installation modifies skills/ dir
+    TOOL_CLASSES = {
+        "list_skills": ApprovalClass.READONLY_GLOBAL,
+        "get_skill_info": ApprovalClass.READONLY_GLOBAL,
+        "run_skill_script": ApprovalClass.EXEC_CAPABLE,
+        "get_skill_reference": ApprovalClass.READONLY_GLOBAL,
+        "install_skill": ApprovalClass.CONTROL_PLANE,
+        "load_skill": ApprovalClass.CONTROL_PLANE,
+        "reload_skill": ApprovalClass.CONTROL_PLANE,
+        "manage_skill_enabled": ApprovalClass.CONTROL_PLANE,
+        "execute_skill": ApprovalClass.EXEC_CAPABLE,
+        "uninstall_skill": ApprovalClass.DESTRUCTIVE,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent
@@ -286,9 +309,9 @@ class SkillsHandler:
         # F7: inject allowed_tools into policy engine
         if skill.allowed_tools:
             try:
-                from openakita.core.policy import get_policy_engine
+                from openakita.core.policy_v2 import get_skill_allowlist_manager
 
-                get_policy_engine().add_skill_allowlist(skill.skill_id, skill.allowed_tools)
+                get_skill_allowlist_manager().add(skill.skill_id, skill.allowed_tools)
             except Exception as e:
                 logger.warning("Failed to inject skill allowlist for %s: %s", skill.skill_id, e)
 
@@ -817,9 +840,9 @@ class SkillsHandler:
         # F7: inject temporary tool allowlist
         if skill.allowed_tools:
             try:
-                from openakita.core.policy import get_policy_engine
+                from openakita.core.policy_v2 import get_skill_allowlist_manager
 
-                get_policy_engine().add_skill_allowlist(skill.skill_id, skill.allowed_tools)
+                get_skill_allowlist_manager().add(skill.skill_id, skill.allowed_tools)
             except Exception as e:
                 logger.warning(
                     "Failed to inject allowlist for fork skill %s: %s", skill.skill_id, e
@@ -905,9 +928,9 @@ class SkillsHandler:
         """Clean up temporary tool allowlist injected for fork execution."""
         if skill.allowed_tools:
             try:
-                from openakita.core.policy import get_policy_engine
+                from openakita.core.policy_v2 import get_skill_allowlist_manager
 
-                get_policy_engine().remove_skill_allowlist(skill.skill_id)
+                get_skill_allowlist_manager().remove(skill.skill_id)
             except Exception:
                 pass
 
@@ -983,9 +1006,9 @@ class SkillsHandler:
 
         # Clean up policy allowlists
         try:
-            from openakita.core.policy import get_policy_engine
+            from openakita.core.policy_v2 import get_skill_allowlist_manager
 
-            get_policy_engine().remove_skill_allowlist(skill_id)
+            get_skill_allowlist_manager().remove(skill_id)
         except Exception:
             pass
 

@@ -8,6 +8,14 @@ LSP 工具处理器
 - 每个语言服务器独立 asyncio.Lock 防并发竞态
 - 响应读取循环匹配 request id，跳过中间 notification/log
 - 10MB 文件大小限制
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import asyncio
@@ -17,6 +25,8 @@ import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -175,6 +185,10 @@ class LSPHandler:
     """LSP 工具处理器"""
 
     TOOLS = ["lsp"]
+    # LSP 工具支持多种命令（completion / hover / definition / references / ...），
+    # 多数为只读查询；保守归 READONLY_GLOBAL（如有写操作命令未来可在 classifier
+    # _refine_with_params 按 params.command 升级到 MUTATING_SCOPED）
+    TOOL_CLASSES = {"lsp": ApprovalClass.READONLY_GLOBAL}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

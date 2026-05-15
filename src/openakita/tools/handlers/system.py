@@ -5,12 +5,21 @@
 - enable_thinking: 控制深度思考
 - get_session_logs: 获取会话日志
 - get_tool_info: 获取工具信息
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
 from ...skills.exposure import get_skill_source_roots
 
 if TYPE_CHECKING:
@@ -31,6 +40,19 @@ class SystemHandler:
         "set_task_timeout",
         "get_workspace_map",
     ]
+
+    # C7 explicit ApprovalClass
+    TOOL_CLASSES = {
+        "ask_user": ApprovalClass.INTERACTIVE,
+        "enable_thinking": ApprovalClass.EXEC_LOW_RISK,
+        "get_session_logs": ApprovalClass.READONLY_GLOBAL,
+        "get_tool_info": ApprovalClass.READONLY_GLOBAL,
+        # generate_image 是网络出站调用 + 写盘（image gen API），归 NETWORK_OUT；
+        # 实际写文件路径在 cwd，不算 mutating（不是用户文件）
+        "generate_image": ApprovalClass.NETWORK_OUT,
+        "set_task_timeout": ApprovalClass.CONTROL_PLANE,
+        "get_workspace_map": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

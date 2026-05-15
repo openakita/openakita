@@ -22,8 +22,8 @@ ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 
 
 class ArkClient(BaseVendorClient):
-    def __init__(self, api_key: str) -> None:
-        super().__init__(base_url=ARK_BASE_URL, timeout=60.0)
+    def __init__(self, api_key: str, base_url: str | None = None) -> None:
+        super().__init__(base_url=(base_url or ARK_BASE_URL).rstrip("/"), timeout=60.0)
         self._api_key = api_key
 
     def auth_headers(self) -> dict[str, str]:
@@ -31,6 +31,9 @@ class ArkClient(BaseVendorClient):
 
     def update_api_key(self, api_key: str) -> None:
         self._api_key = api_key
+
+    def update_base_url(self, base_url: str | None = None) -> None:
+        self.base_url = (base_url or ARK_BASE_URL).rstrip("/")
 
     async def cancel_task(self, task_id: str) -> bool:
         """Cancel a running Ark task via DELETE."""

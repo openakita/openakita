@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from openakita.orgs.identity import OrgIdentity, ResolvedIdentity
-from openakita.orgs.models import Organization, OrgNode
 from .conftest import make_org, make_node, make_edge
 
 

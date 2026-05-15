@@ -17,6 +17,8 @@ import logging
 import re
 
 from .response_handler import (
+    EXTERNAL_CONTENT_BEGIN_PREFIX,
+    EXTERNAL_CONTENT_END_PREFIX,
     INTERNAL_TRACE_MARKERS,
     INTERNAL_TRACE_SECTION_TERMINATORS,
 )
@@ -61,13 +63,15 @@ class StreamingInternalTraceScrubber:
     都新建实例，scrubber 天然隔离。
     """
 
-    _MARKERS: tuple[str, ...] = INTERNAL_TRACE_MARKERS
+    _MARKERS: tuple[str, ...] = (*INTERNAL_TRACE_MARKERS, EXTERNAL_CONTENT_BEGIN_PREFIX)
     _TERMINATORS: tuple[str, ...] = INTERNAL_TRACE_SECTION_TERMINATORS
 
     # 预编译"换行边界 + marker"正则，支持任意数量 leading \n + 可选缩进。
     _BOUNDARY_MARKER_RE = re.compile(
         r"\n+[ \t]*(?:"
-        + "|".join(re.escape(m) for m in INTERNAL_TRACE_MARKERS)
+        + "|".join(
+            re.escape(m) for m in (*INTERNAL_TRACE_MARKERS, EXTERNAL_CONTENT_BEGIN_PREFIX)
+        )
         + r")"
     )
 
@@ -96,11 +100,23 @@ class StreamingInternalTraceScrubber:
 
         while buf:
             if self._in_section:
+                external_end = self._find_external_content_end(buf)
                 term_idx = self._find_earliest_terminator(buf)
+                if external_end is not None and (
+                    term_idx == -1 or external_end[0] <= term_idx
+                ):
+                    # External-content wrappers have an explicit END tag.
+                    # Consume the END tag itself and resume normal output after it.
+                    buf = buf[external_end[1] :]
+                    self._in_section = False
+                    continue
                 if term_idx == -1:
                     # 未出现终止符 —— hold 尾部可能的"部分终止符"前缀，
                     # 其余全部丢弃。
-                    held = self._max_partial_terminator_suffix(buf)
+                    held = max(
+                        self._max_partial_terminator_suffix(buf),
+                        self._max_partial_external_end_suffix(buf),
+                    )
                     self._buf = buf[-held:] if held else ""
                     return "".join(out)
                 # 找到终止符 —— 保留终止符本体（``\n\n##`` 等是下一段
@@ -188,6 +204,28 @@ class StreamingInternalTraceScrubber:
             if i != -1 and (best == -1 or i < best):
                 best = i
         return best
+
+    def _find_external_content_end(self, buf: str) -> tuple[int, int] | None:
+        start = buf.find(EXTERNAL_CONTENT_END_PREFIX)
+        if start == -1:
+            return None
+        close = buf.find(">>>", start)
+        if close == -1:
+            return None
+        return start, close + 3
+
+    def _max_partial_external_end_suffix(self, buf: str) -> int:
+        # If we have seen the END prefix but not its closing ``>>>`` yet,
+        # keep the whole partial tag so the next chunk can complete it.
+        start = buf.find(EXTERNAL_CONTENT_END_PREFIX)
+        if start != -1 and buf.find(">>>", start) == -1:
+            return len(buf) - start
+
+        max_len = min(len(buf), len(EXTERNAL_CONTENT_END_PREFIX) - 1)
+        for n in range(max_len, 0, -1):
+            if EXTERNAL_CONTENT_END_PREFIX.startswith(buf[-n:]):
+                return n
+        return 0
 
     def _max_partial_marker_suffix(self, buf: str) -> int:
         """返回应 hold 的尾部字符数。

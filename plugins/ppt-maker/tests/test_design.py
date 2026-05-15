@@ -44,3 +44,14 @@ def test_confirm_design_marks_spec_lock_complete() -> None:
     assert confirmed["needs_confirmation"] is False
     assert confirmed["spec_lock"]["confirmed"] is True
 
+
+def test_swiss_design_preset_uses_locked_visual_rules() -> None:
+    outline = OutlineBuilder().build(mode=DeckMode.TOPIC_TO_DECK, title="Swiss Deck", slide_count=3)
+    design = DesignBuilder().build(outline=outline, style="swiss_ikb")
+    spec_lock = design["spec_lock"]
+
+    assert spec_lock["visual_system"] == "swiss_locked_editable"
+    assert spec_lock["theme"]["accent_color"] == "#002FA7"
+    assert spec_lock["spacing"]["radius"] == 0
+    assert any("one high-saturation accent" in rule for rule in spec_lock["rules"])
+

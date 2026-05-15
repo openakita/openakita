@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from openakita.orgs.models import (
     EdgeType,
@@ -136,6 +135,33 @@ class TestOrgNode:
         d = node.to_dict()
         assert d["frozen_by"] == "admin"
         assert d["status"] == "frozen"
+
+    def test_plugin_origin_roundtrip(self):
+        # plugin_origin 标识"工作台节点"（来自工作台模板），to_dict/from_dict
+        # 必须保留三个键 (plugin_id / template_id / version)，否则前端徽章、
+        # 后端校验、运行时提示词都会拿不到来源信息。
+        po = {
+            "plugin_id": "tongyi-image",
+            "template_id": "workbench:tongyi-image",
+            "version": "0.3.0",
+        }
+        node = OrgNode(
+            id="wb1",
+            role_title="通义生图",
+            external_tools=["tongyi_image_create"],
+            plugin_origin=po,
+        )
+        d = node.to_dict()
+        assert d["plugin_origin"] == po
+        restored = OrgNode.from_dict(d)
+        assert restored.plugin_origin == po
+        assert restored.external_tools == ["tongyi_image_create"]
+
+    def test_plugin_origin_default_none(self):
+        node = OrgNode()
+        assert node.plugin_origin is None
+        d = node.to_dict()
+        assert d["plugin_origin"] is None
 
 
 # ---------------------------------------------------------------------------

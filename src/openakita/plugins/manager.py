@@ -233,6 +233,73 @@ class PluginManager:
     def state(self) -> PluginState:
         return self._state
 
+    def get_tool_class(
+        self, tool_name: str
+    ) -> tuple[Any, Any] | None:
+        """C10：插件工具 → ApprovalClass 查表（PolicyEngineV2 ``plugin_lookup``）。
+
+        遍历**已加载且未禁用**的插件，匹配 ``manifest.tool_classes`` 里
+        与 ``tool_name`` 完全相同的键。多个插件声明同一工具名时取严
+        （``ApprovalClass.most_strict``），与 classifier 多源叠加规则一致。
+
+        值不在 ``ApprovalClass`` 枚举内时静默忽略（manifest 解析时已经
+        归一为 lowercase string，但开发者仍可能拼错），不抛异常——绝
+        不让一个坏 manifest 拖垮 PolicyEngine 启动。
+        """
+        try:
+            from ..core.policy_v2.declared_class_trust import (
+                DeclaredClassTrust,
+                compute_effective_class,
+            )
+            from ..core.policy_v2.enums import (
+                ApprovalClass,
+                DecisionSource,
+                most_strict,
+            )
+        except Exception:
+            return None
+
+        candidates: list[tuple[Any, Any]] = []
+        for plugin_id, lp in self._loaded.items():
+            if not self._state.is_enabled(plugin_id):
+                continue
+            klass_str = lp.manifest.tool_classes.get(tool_name)
+            if not klass_str:
+                continue
+            try:
+                klass = ApprovalClass(klass_str)
+            except ValueError:
+                logger.warning(
+                    "Plugin '%s' declares unknown approval_class=%r for tool '%s'; ignored",
+                    plugin_id,
+                    klass_str,
+                    tool_name,
+                )
+                continue
+            effective, source = compute_effective_class(
+                tool_name,
+                klass,
+                DeclaredClassTrust.DEFAULT,
+                source=DecisionSource.PLUGIN_PREFIX,
+            )
+            candidates.append((effective, source))
+        if not candidates:
+            return None
+        return most_strict(candidates)
+
+    def plugin_allows_param_mutation(self, plugin_id: str, tool_name: str) -> bool:
+        """C10：插件是否被允许在 ``on_before_tool_use`` 修改 ``tool_input``。
+
+        ``tool_executor`` 在派发 hook 前后做 deep-diff，发现 params 被改
+        但插件未在 manifest.mutates_params 列出该工具时，diff 会被还原
+        且写一条 audit。在 manifest 列出时，diff 被强制保留并落 jsonl
+        审计——R2-12 的强制审计载体。
+        """
+        lp = self._loaded.get(plugin_id)
+        if lp is None:
+            return False
+        return tool_name in lp.manifest.mutates_params
+
     # --- Version checking ---
 
     @staticmethod
@@ -1216,6 +1283,18 @@ class PluginManager:
         self._unload_plugin_skills(loaded)
         self._unmount_plugin_ui(plugin_id)
 
+        # C10: this plugin's manifest.tool_classes contributions are gone, so
+        # the ApprovalClassifier's LRU cache may hold stale (klass, source)
+        # entries for those tool names. Broadcast a clear so the next
+        # classification falls through the lookup chain again. Cheap and
+        # idempotent — engine may not exist yet (in which case it's a no-op).
+        try:
+            from ..core.policy_v2.global_engine import invalidate_classifier_cache
+
+            invalidate_classifier_cache()
+        except Exception as exc:
+            logger.debug("Plugin '%s' classifier invalidate skipped: %s", plugin_id, exc)
+
         logger.info("Plugin '%s' unloaded", plugin_id)
         return True
 
@@ -1450,6 +1529,22 @@ class PluginManager:
                 timeout=manifest.load_timeout,
             )
             logger.info("Plugin '%s' reloaded after permission grant", plugin_id)
+            # C10: reloaded plugin's manifest.tool_classes may have changed
+            # (typical reload trigger is permission grant — but author may have
+            # also tweaked approval_class for a tool). Invalidate so next
+            # classify() picks up the new declaration instead of the cache.
+            try:
+                from ..core.policy_v2.global_engine import (
+                    invalidate_classifier_cache,
+                )
+
+                invalidate_classifier_cache()
+            except Exception as exc:
+                logger.debug(
+                    "Plugin '%s' post-reload classifier invalidate skipped: %s",
+                    plugin_id,
+                    exc,
+                )
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
             logger.error("Plugin '%s' reload failed: %s", plugin_id, msg)

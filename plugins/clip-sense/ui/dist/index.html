@@ -77,6 +77,10 @@
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .text-sm { font-size: 13px; } .text-xs { font-size: 11px; }
     .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
+    /* Transcript panel: always pair surface + primary text (avoid light box + dark-theme --text). */
+    .transcript-body { background: var(--bg-card); color: var(--text); }
+    .transcript-line .transcript-text { color: var(--text); }
+    .transcript-body pre { color: var(--text); }
     .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
     .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
     .tag-blue { background: rgba(99,102,241,.15); color: #818cf8; }
@@ -252,6 +256,7 @@
 <div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-muted,#64748b);font-size:13px" id="__cs_loading">正在加载插件...</div></div>
 <script>
 window.onerror = function(msg, src, line, col, err) {
+  if (String(msg).indexOf("ResizeObserver") !== -1) return true;
   var el = document.getElementById("root");
   if (el) el.innerHTML = '<div style="padding:24px;color:#ef4444;font-size:13px;word-break:break-word"><b>[clip-sense error]</b><br/>' + String(msg) + '<br/>at ' + String(src) + ':' + line + ':' + col + (err && err.stack ? '<pre style="margin-top:8px;white-space:pre-wrap;font-size:11px;background:#f1f5f9;padding:12px;border-radius:6px;overflow:auto;max-height:300px">' + err.stack + '</pre>' : '') + '</div>';
 };
@@ -362,6 +367,7 @@ if (_inIframe) {
   setTimeout(function() { if (_readyInterval) clearInterval(_readyInterval); }, 20000);
 }
 function onEvent(type, fn) { (_handlers[type] = _handlers[type] || []).push(fn); }
+function emitEvent(type, data) { const h = _handlers[type]; if (h) h.forEach(function(fn) { fn(data); }); }
 
 function uploadFile(file) {
   const base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense");
@@ -378,11 +384,11 @@ function _tr(key, vars, fallback) {
   return key;
 }
 
-async function downloadOutput(taskId, fname) {
+async function downloadOutput(taskId, fname, query) {
   try {
     showToast(_tr("toast.downloading", null, "下载中..."));
     const base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense");
-    const url = base + "/tasks/" + taskId + "/download";
+    const url = base + "/tasks/" + taskId + "/download" + (query || "");
     if (_inIframe && _bridgeConnected) {
       const native = await bridgeDownload(url, fname || "clip_sense_output.mp4");
       if (native && native.ok && native.path && /[\\/]/.test(String(native.path))) {
@@ -507,6 +513,7 @@ const I18N_DICT = {
     "tasks.detail.download": "下载",
     "tasks.detail.confirmDelete": "确定删除?",
     "tasks.detail.runningHint": "正在处理...",
+    "tasks.detail.noSilenceDetected": "未检测到静音段，输出为原视频副本。可尝试调低阈值或缩短最小静音时长。",
     "tasks.detail.id": "ID",
     "tasks.detail.mode": "模式",
     "tasks.detail.duration": "时长",
@@ -529,6 +536,9 @@ const I18N_DICT = {
     "library.uploadBtn": "上传新视频",
     "library.transcribed": "已转写",
     "library.pending": "待转写",
+    "library.use": "使用",
+    "library.loaded": "已加载素材",
+    "library.fromLibrary": "来自素材库",
     "settings.section.api": "API 配置",
     "settings.section.permissions": "插件权限",
     "settings.section.system": "系统组件",
@@ -542,7 +552,14 @@ const I18N_DICT = {
     "settings.api.key.save": "保存",
     "settings.api.key.helpPrefix": "获取地址: ",
     "settings.api.key.helpLink": "阿里云百炼控制台",
-    "settings.api.key.label": "DashScope API Key",
+    "settings.api.key.label": "DashScope ASR Key（语音转写）",
+    "settings.api.key.help": "高光提取、段落拆条、口播精编仍需要百炼 Paraformer 做语音转写；内容分析默认使用 OpenAkita 主程序已配置的大模型。",
+    "settings.api.analysis.advanced": "高级：使用单独百炼 Qwen 做内容分析",
+    "settings.api.analysis.provider": "内容分析模型",
+    "settings.api.analysis.host": "默认：OpenAkita 主程序大模型",
+    "settings.api.analysis.dashscope": "自定义：百炼 Qwen Key",
+    "settings.api.analysis.key.label": "百炼 Qwen API Key",
+    "settings.api.analysis.key.help": "只有选择自定义并填写此 Key 时，内容分析才会绕过主程序大模型，改用百炼 Qwen 接口。",
     "settings.system.intro.strong": "FFmpeg 是 ClipSense 的硬性依赖：4 种剪辑模式都需要它来探测时长、抽取音频、剪切拼接和烧字幕。",
     "settings.system.intro.body": "FFmpeg 是系统级组件（共享 PATH 安装），并非本插件私有——任何已经装好 ffmpeg 的机器都会自动检测到，无需重复安装；同样，安装/卸载也会影响其他用到 ffmpeg 的插件和程序。",
     "settings.system.platform.win": "Windows: 「一键安装」会调用 winget 自动安装 Gyan.FFmpeg，无需管理员权限。",
@@ -592,7 +609,7 @@ const I18N_DICT = {
     "settings.defaults.subtitle": "默认嵌入字幕",
     "settings.defaults.format": "默认输出格式",
     "settings.label.outputDir": "视频输出目录",
-    "settings.outputDir.placeholder": "默认: ~/clip-sense-output/",
+    "settings.outputDir.placeholder": "默认: <插件数据目录>/tasks/",
     "settings.label.uploadsDir": "上传视频缓存目录",
     "settings.uploadsDir.placeholder": "默认: <插件数据目录>/uploads/",
     "settings.btn.browse": "选择",
@@ -605,6 +622,13 @@ const I18N_DICT = {
     "settings.stats.uploadsDir": "上传缓存",
     "settings.stats.tasksDir": "任务工作目录",
     "settings.stats.fileCount": "{n} 个文件",
+    "settings.stats.pathLabel": "扫描路径",
+    "settings.stats.scopeHint": "仅统计上列路径内的文件。用「下载」保存到系统文件夹的视频不计入；在「创建」页上传或任务完成后，此处数字才会增加。每次进入本页会重新统计。",
+    "settings.cache.clearBtn": "清理上传缓存",
+    "settings.cache.clearOutputBtn": "清理输出文件",
+    "settings.cache.confirmClear": "确认清空上传缓存目录？已上传的原始文件将被删除（不影响已完成的任务输出）。",
+    "settings.cache.confirmClearOutput": "确认清空输出目录？所有任务的输出视频和字幕将被删除，任务记录不受影响。",
+    "settings.cache.cleared": "已清理 {mb} MB（{n} 个文件）",
     "settings.storage.title": "存储",
     "settings.storage.files": "文件数",
     "settings.storage.size": "总大小",
@@ -716,6 +740,7 @@ const I18N_DICT = {
     "tasks.detail.download": "Download",
     "tasks.detail.confirmDelete": "Delete this task?",
     "tasks.detail.runningHint": "Processing...",
+    "tasks.detail.noSilenceDetected": "No silence detected. Output is a copy of the original. Try lowering the threshold or min silence duration.",
     "tasks.detail.id": "ID",
     "tasks.detail.mode": "Mode",
     "tasks.detail.duration": "Duration",
@@ -738,6 +763,9 @@ const I18N_DICT = {
     "library.uploadBtn": "Upload Video",
     "library.transcribed": "Transcribed",
     "library.pending": "Pending",
+    "library.use": "Use",
+    "library.loaded": "Loaded from library",
+    "library.fromLibrary": "From library",
     "settings.section.api": "API configuration",
     "settings.section.permissions": "Plugin permissions",
     "settings.section.system": "System components",
@@ -751,7 +779,14 @@ const I18N_DICT = {
     "settings.api.key.save": "Save",
     "settings.api.key.helpPrefix": "Get a key at: ",
     "settings.api.key.helpLink": "Alibaba Cloud Bailian Console",
-    "settings.api.key.label": "DashScope API Key",
+    "settings.api.key.label": "DashScope ASR Key",
+    "settings.api.key.help": "Highlight/topic/talking modes still need Bailian Paraformer for speech transcription. Content analysis uses OpenAkita's main LLM by default.",
+    "settings.api.analysis.advanced": "Advanced: use separate Bailian Qwen for content analysis",
+    "settings.api.analysis.provider": "Content analysis model",
+    "settings.api.analysis.host": "Default: OpenAkita main LLM",
+    "settings.api.analysis.dashscope": "Custom: Bailian Qwen Key",
+    "settings.api.analysis.key.label": "Bailian Qwen API Key",
+    "settings.api.analysis.key.help": "Only when this custom branch is selected and a key is saved will analysis bypass the main LLM and call Bailian Qwen.",
     "settings.system.intro.strong": "FFmpeg is a hard dependency for ClipSense — every editing mode needs it for probing, audio extraction, segment cut/concat, and subtitle burn-in.",
     "settings.system.intro.body": "FFmpeg is a system-level component (installed on the shared PATH) and is NOT private to this plugin. Any machine that already has ffmpeg will be auto-detected with no need to reinstall; conversely, install/uninstall here affects every other plugin and program on your system that uses ffmpeg.",
     "settings.system.platform.win": "Windows: \"Install\" runs winget to install Gyan.FFmpeg, no admin rights required.",
@@ -801,7 +836,7 @@ const I18N_DICT = {
     "settings.defaults.subtitle": "Default burn subtitles",
     "settings.defaults.format": "Default output format",
     "settings.label.outputDir": "Video output folder",
-    "settings.outputDir.placeholder": "Default: ~/clip-sense-output/",
+    "settings.outputDir.placeholder": "Default: <plugin data dir>/tasks/",
     "settings.label.uploadsDir": "Upload cache folder",
     "settings.uploadsDir.placeholder": "Default: <plugin data dir>/uploads/",
     "settings.btn.browse": "Browse",
@@ -814,6 +849,13 @@ const I18N_DICT = {
     "settings.stats.uploadsDir": "Upload cache",
     "settings.stats.tasksDir": "Task workdir",
     "settings.stats.fileCount": "{n} files",
+    "settings.stats.pathLabel": "Scanned path",
+    "settings.stats.scopeHint": "Counts files under the paths shown on each card only. Videos saved with Download to your OS folder are not included. Upload on Create (or finish a task) to see numbers grow. Stats refresh when you open this tab.",
+    "settings.cache.clearBtn": "Clear upload cache",
+    "settings.cache.clearOutputBtn": "Clear output files",
+    "settings.cache.confirmClear": "Delete all files in the upload cache directory? This won't affect completed task outputs.",
+    "settings.cache.confirmClearOutput": "Delete all output videos and subtitles? Task records will remain but output files will be gone.",
+    "settings.cache.cleared": "Cleared {mb} MB ({n} files)",
     "settings.storage.title": "Storage",
     "settings.storage.files": "Files",
     "settings.storage.size": "Total size",
@@ -999,9 +1041,11 @@ function App() {
   const [tabsMounted, setTabsMounted] = useState({ create: true });
   const [tasksRefreshSignal, setTasksRefreshSignal] = useState(0);
 
+  const [settingsStorageTick, setSettingsStorageTick] = useState(0);
   const goToTab = useCallback((id) => {
     setTab(id);
     if (id === "tasks") setTasksRefreshSignal(s => s + 1);
+    if (id === "settings") setSettingsStorageTick(s => s + 1);
   }, []);
 
   useEffect(() => {
@@ -1062,7 +1106,7 @@ function App() {
             </div>
           </div>
           <button className="oa-config-banner__action" type="button"
-                  onClick={() => setTab("settings")}>
+                  onClick={() => goToTab("settings")}>
             {t("banner.noKey.cta")}
             <span className="oa-icon"
                   dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
@@ -1078,10 +1122,14 @@ function App() {
           {tabsMounted.tasks && <TasksTab refreshSignal={tasksRefreshSignal} />}
         </div>
         <div style={{ display: tab === "library" ? "block" : "none", height: "100%" }}>
-          {tabsMounted.library && <LibraryTab />}
+          {tabsMounted.library && <LibraryTab onUseItem={(item) => {
+            emitEvent("plugin:clip-sense:use_library_item", item);
+            goToTab("create");
+          }} />}
         </div>
         <div style={{ display: tab === "settings" ? "block" : "none", height: "100%" }}>
-          {tabsMounted.settings && <SettingsTab onApiKeyChange={k => setApiReady(!!k)}
+          {tabsMounted.settings && <SettingsTab storageRefreshTick={settingsStorageTick}
+                                                onApiKeyChange={k => setApiReady(!!k)}
                                                 onFfmpegChange={v => setFfmpegReady(v)} />}
         </div>
       </div>
@@ -1099,6 +1147,7 @@ function CreateTab({ apiReady, ffmpegReady, goToTasks }) {
   const [creating, setCreating] = useState(false);
   const [taskStartedOpen, setTaskStartedOpen] = useState(false);
   const [previewTask, setPreviewTask] = useState(null);
+  const [previewTopicIdx, setPreviewTopicIdx] = useState(0);
   const fileRef = useRef(null);
 
   const [params, setParams] = useState({
@@ -1107,6 +1156,17 @@ function CreateTab({ apiReady, ffmpegReady, goToTasks }) {
     target_segment_duration: 180, burn_subtitle: false,
   });
   const setP = (k, v) => setParams(p => ({ ...p, [k]: v }));
+
+  useEffect(() => {
+    onEvent("plugin:clip-sense:use_library_item", (item) => {
+      if (item && item.source_path) {
+        setFile(null);
+        setUploadResult({ path: item.source_path, url: "" });
+        setPreviewTask(null);
+        showToast(t("library.loaded") || "已加载素材: " + (item.source_name || item.source_path.split(/[/\\]/).pop()));
+      }
+    });
+  }, []);
 
   const handleUpload = async (f) => {
     setFile(f);
@@ -1125,6 +1185,7 @@ function CreateTab({ apiReady, ffmpegReady, goToTasks }) {
       const r = await pluginApi("POST", "/tasks", body);
       if (r.ok && r.body) {
         setPreviewTask(r.body);
+        setPreviewTopicIdx(0);
         setTaskStartedOpen(true);
         pollTask(r.body.id);
       } else {
@@ -1143,7 +1204,10 @@ function CreateTab({ apiReady, ffmpegReady, goToTasks }) {
         const r = await pluginApi("GET", "/tasks/" + taskId);
         if (r.ok && r.body) {
           setPreviewTask(r.body);
-          if (["succeeded", "failed", "cancelled"].includes(r.body.status)) return;
+          if (["succeeded", "failed", "cancelled"].includes(r.body.status)) {
+            emitEvent("plugin:clip-sense:task_update", { taskId, status: r.body.status });
+            return;
+          }
         }
       } catch {}
       setTimeout(poll, attempts < 10 ? 3000 : 8000);
@@ -1191,6 +1255,18 @@ function CreateTab({ apiReady, ffmpegReady, goToTasks }) {
                     <span className="text-sm" style={{fontWeight:500}}>{file.name}</span>
                   </div>
                   <div className="text-xs text-dim">{(file.size / 1048576).toFixed(1)} MB</div>
+                  <button className="btn btn-sm" style={{marginTop:6}}
+                          onClick={e => { e.stopPropagation(); fileRef.current && fileRef.current.click(); }}>
+                    {t("create.uploadChange")}
+                  </button>
+                </div>
+              ) : uploadResult ? (
+                <div>
+                  <div style={{display:"inline-flex", alignItems:"center", gap:6}}>
+                    <OAIcon name="film" style={{fontSize:20}} />
+                    <span className="text-sm" style={{fontWeight:500}}>{uploadResult.path.split(/[/\\]/).pop()}</span>
+                  </div>
+                  <div className="text-xs text-dim" style={{color: "var(--success)"}}>{t("library.fromLibrary") || "来自素材库"}</div>
                   <button className="btn btn-sm" style={{marginTop:6}}
                           onClick={e => { e.stopPropagation(); fileRef.current && fileRef.current.click(); }}>
                     {t("create.uploadChange")}
@@ -1372,15 +1448,57 @@ function CreateTab({ apiReady, ffmpegReady, goToTasks }) {
                   <span className={`tag ${statusCls("succeeded")}`} style={{marginRight:8}}>{statusLabel("succeeded", t)}</span>
                 </span>
               </div>
-              {previewTask.output_path && (
-                <video className="video-player" controls
-                       src={_detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense") + "/tasks/" + previewTask.id + "/download"} />
-              )}
+              {previewTask.output_path && (() => {
+                const pTopicFiles = (previewTask.params && previewTask.params._topic_files) || [];
+                const pHasMulti = pTopicFiles.length > 1;
+                const pNoSilence = previewTask.params && previewTask.params._no_silence_detected;
+                const pBaseUrl = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense") + "/tasks/" + previewTask.id + "/download";
+                const pVideoSrc = pHasMulti ? pBaseUrl + "?index=" + previewTopicIdx : pBaseUrl;
+                return (
+                  <>
+                    {pNoSilence && (
+                      <div style={{padding:"8px 12px", marginBottom:8, borderRadius:6,
+                                   background:"var(--warning-bg, #fff3cd)", color:"var(--warning-text, #856404)",
+                                   fontSize:13, display:"flex", alignItems:"center", gap:6}}>
+                        <span>⚠️</span>
+                        <span>{t("tasks.detail.noSilenceDetected")}</span>
+                      </div>
+                    )}
+                    <video className="video-player" controls key={pVideoSrc} src={pVideoSrc} />
+                    {pHasMulti && (
+                      <div style={{display:"flex", alignItems:"center", justifyContent:"center", gap:12, marginTop:8}}>
+                        <button className="btn btn-sm" disabled={previewTopicIdx <= 0}
+                                onClick={() => setPreviewTopicIdx(i => Math.max(0, i - 1))}
+                                style={{minWidth:32}}>◀</button>
+                        <span className="text-sm">{previewTopicIdx + 1} / {pTopicFiles.length}</span>
+                        <button className="btn btn-sm" disabled={previewTopicIdx >= pTopicFiles.length - 1}
+                                onClick={() => setPreviewTopicIdx(i => Math.min(pTopicFiles.length - 1, i + 1))}
+                                style={{minWidth:32}}>▶</button>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               <div className="flex gap-2" style={{marginTop: 12}}>
-                <button className="btn btn-primary btn-sm"
-                        onClick={() => downloadOutput(previewTask.id, (previewTask.source_video_path || "output").split(/[/\\]/).pop())}>
-                  <OAIcon name="download" /> {t("preview.downloadVideo")}
-                </button>
+                {(() => {
+                  const pTopicFiles = (previewTask.params && previewTask.params._topic_files) || [];
+                  const pHasMulti = pTopicFiles.length > 1;
+                  const pTopicsZip = (previewTask.params && previewTask.params._topics_zip) || "";
+                  if (pHasMulti && pTopicsZip) {
+                    return (
+                      <button className="btn btn-primary btn-sm"
+                              onClick={() => downloadOutput(previewTask.id, "topics_" + previewTask.id + ".zip", "?index=-1")}>
+                        <OAIcon name="download" /> {t("preview.downloadVideo")} (ZIP)
+                      </button>
+                    );
+                  }
+                  return (
+                    <button className="btn btn-primary btn-sm"
+                            onClick={() => downloadOutput(previewTask.id, (previewTask.source_video_path || "output").split(/[/\\]/).pop())}>
+                      <OAIcon name="download" /> {t("preview.downloadVideo")}
+                    </button>
+                  );
+                })()}
                 {previewTask.subtitle_path && (
                   <button className="btn btn-sm"
                           onClick={() => window.open(_detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense") + "/tasks/" + previewTask.id + "/subtitle")}>
@@ -1479,22 +1597,22 @@ function TranscriptCard({ t, taskId, hasSubtitleFile, loading, error, data, onRe
           <span className="text-sm text-muted">{t("tasks.detail.transcriptEmpty")}</span>
         </div>
       ) : (
-        <div className="transcript-body" style={{maxHeight: 360, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: 10, background: "var(--bg-elevated, #fafbfc)"}}>
+        <div className="transcript-body" style={{maxHeight: 360, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: 10}}>
           {sentences && sentences.length > 0 ? (
             sentences.map((s, i) => {
               const start = s.start_sec != null ? s.start_sec : (s.start != null ? s.start : 0);
               const end = s.end_sec != null ? s.end_sec : (s.end != null ? s.end : 0);
               return (
                 <div key={i} className="transcript-line" style={{display: "flex", gap: 10, padding: "4px 0", borderBottom: i < sentences.length - 1 ? "1px dashed var(--border)" : "none"}}>
-                  <span className="text-xs text-dim" style={{flex: "0 0 auto", fontFamily: "ui-monospace, monospace", paddingTop: 2}}>
+                  <span className="text-xs text-muted" style={{flex: "0 0 auto", fontFamily: "ui-monospace, monospace", paddingTop: 2}}>
                     {_fmtTs(start)}–{_fmtTs(end)}
                   </span>
-                  <span className="text-sm" style={{flex: 1, lineHeight: 1.55, whiteSpace: "pre-wrap"}}>{s.text || ""}</span>
+                  <span className="text-sm transcript-text" style={{flex: 1, lineHeight: 1.55, whiteSpace: "pre-wrap", color: "var(--text)"}}>{s.text || ""}</span>
                 </div>
               );
             })
           ) : (
-            <pre style={{margin: 0, whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, lineHeight: 1.6}}>{fullText}</pre>
+            <pre style={{margin: 0, whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, lineHeight: 1.6, color: "var(--text)"}}>{fullText}</pre>
           )}
         </div>
       )}
@@ -1517,6 +1635,8 @@ function TasksTab({ refreshSignal = 0 }) {
   const [transcriptData, setTranscriptData] = useState(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
   const [transcriptError, setTranscriptError] = useState(null);
+  // ── multi-topic navigation ──
+  const [topicIdx, setTopicIdx] = useState(0);
 
   // Reset transcript view whenever the user picks a different task so
   // we don't show stale text (or stale "loading" / error) from another task.
@@ -1525,6 +1645,7 @@ function TasksTab({ refreshSignal = 0 }) {
     setTranscriptData(null);
     setTranscriptLoading(false);
     setTranscriptError(null);
+    setTopicIdx(0);
   }, [selected?.id]);
 
   const loadTranscript = useCallback(async (taskId) => {
@@ -1563,8 +1684,14 @@ function TasksTab({ refreshSignal = 0 }) {
       if (modeFilter) q += "&mode=" + modeFilter;
       const r = await pluginApi("GET", q);
       if (r.ok && r.body) {
-        setTasks(Array.isArray(r.body.tasks) ? r.body.tasks : []);
+        const list = Array.isArray(r.body.tasks) ? r.body.tasks : [];
+        setTasks(list);
         setTotal(typeof r.body.total === "number" ? r.body.total : 0);
+        setSelected(prev => {
+          if (!prev) return prev;
+          const fresh = list.find(t => t.id === prev.id);
+          return fresh || prev;
+        });
       }
     } catch {}
     setLoading(false);
@@ -1690,20 +1817,60 @@ function TasksTab({ refreshSignal = 0 }) {
                       </span>
                     </button>
                   )}
-                  {selected.status === "succeeded" && (
-                    <button className="btn btn-sm btn-primary"
-                            onClick={() => downloadOutput(selected.id, (selected.source_video_path || "output").split(/[/\\]/).pop())}>
-                      {t("tasks.detail.download")}
-                    </button>
-                  )}
+                  {selected.status === "succeeded" && (() => {
+                    const topicFiles = (selected.params && selected.params._topic_files) || [];
+                    const hasMulti = topicFiles.length > 1;
+                    const topicsZip = (selected.params && selected.params._topics_zip) || "";
+                    if (hasMulti && topicsZip) {
+                      return (
+                        <button className="btn btn-sm btn-primary"
+                                onClick={() => downloadOutput(selected.id, "topics_" + selected.id + ".zip", "?index=-1")}>
+                          {t("tasks.detail.download")} (ZIP)
+                        </button>
+                      );
+                    }
+                    return (
+                      <button className="btn btn-sm btn-primary"
+                              onClick={() => downloadOutput(selected.id, (selected.source_video_path || "output").split(/[/\\]/).pop())}>
+                        {t("tasks.detail.download")}
+                      </button>
+                    );
+                  })()}
                   <button className="btn btn-sm btn-danger" onClick={() => handleDelete(selected.id)}>{t("tasks.detail.delete")}</button>
                 </div>
               </div>
 
-              {selected.status === "succeeded" && selected.output_path && (
-                <video className="video-player" controls style={{marginBottom: 12}}
-                       src={_detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense") + "/tasks/" + selected.id + "/download"} />
-              )}
+              {selected.status === "succeeded" && selected.output_path && (() => {
+                const topicFiles = (selected.params && selected.params._topic_files) || [];
+                const hasMulti = topicFiles.length > 1;
+                const noSilence = selected.params && selected.params._no_silence_detected;
+                const baseUrl = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense") + "/tasks/" + selected.id + "/download";
+                const videoSrc = hasMulti ? baseUrl + "?index=" + topicIdx : baseUrl;
+                return (
+                  <div style={{marginBottom: 12, position: "relative"}}>
+                    {noSilence && (
+                      <div style={{padding:"8px 12px", marginBottom:8, borderRadius:6,
+                                   background:"var(--warning-bg, #fff3cd)", color:"var(--warning-text, #856404)",
+                                   fontSize:13, display:"flex", alignItems:"center", gap:6}}>
+                        <span>⚠️</span>
+                        <span>{t("tasks.detail.noSilenceDetected")}</span>
+                      </div>
+                    )}
+                    <video className="video-player" controls key={videoSrc} src={videoSrc} />
+                    {hasMulti && (
+                      <div style={{display:"flex", alignItems:"center", justifyContent:"center", gap:12, marginTop:8}}>
+                        <button className="btn btn-sm" disabled={topicIdx <= 0}
+                                onClick={() => setTopicIdx(i => Math.max(0, i - 1))}
+                                style={{minWidth:32}}>◀</button>
+                        <span className="text-sm">{topicIdx + 1} / {topicFiles.length}</span>
+                        <button className="btn btn-sm" disabled={topicIdx >= topicFiles.length - 1}
+                                onClick={() => setTopicIdx(i => Math.min(topicFiles.length - 1, i + 1))}
+                                style={{minWidth:32}}>▶</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {(selected.status === "running" || selected.status === "pending") && (
                 <>
@@ -1758,7 +1925,7 @@ function TasksTab({ refreshSignal = 0 }) {
 }
 
 // ─── Library Tab ───
-function LibraryTab() {
+function LibraryTab({ onUseItem }) {
   const t = useT();
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
@@ -1814,6 +1981,11 @@ function LibraryTab() {
               </div>
             </div>
             <div className="flex gap-2 items-center">
+              {item.source_path && onUseItem && (
+                <button className="btn btn-sm btn-primary" onClick={() => onUseItem(item)}>
+                  {t("library.use") || "使用"}
+                </button>
+              )}
               <button className="btn btn-sm btn-danger" onClick={() => handleDelete(item.id)}>
                 {t("tasks.detail.delete")}
               </button>
@@ -2425,13 +2597,36 @@ function FfmpegInstaller({ onInstalled, onUninstalled }) {
   );
 }
 
+// Treat UI hint / placeholder text as empty so it never gets blur-saved into
+// SQLite as a bogus path (matches plugin.py _is_placeholder_or_hint_path).
+function normalizeFolderConfigValue(s) {
+  const v = String(s || "").trim();
+  if (!v) return "";
+  const low = v.toLowerCase();
+  if (v.indexOf("<") !== -1) return "";
+  if (v.indexOf("插件数据") !== -1) return "";
+  if (v.indexOf("默认:") === 0 || low.indexOf("default:") === 0) return "";
+  if (low.indexOf("plugin data dir") !== -1 || low.indexOf("<plugin") !== -1) return "";
+  return v;
+}
+
+function normalizeFolderFieldsInConfig(body) {
+  if (!body || typeof body !== "object") return body;
+  const out = { ...body };
+  ["output_dir", "uploads_dir", "tasks_dir"].forEach((k) => {
+    if (out[k] != null) out[k] = normalizeFolderConfigValue(out[k]);
+  });
+  return out;
+}
+
 // ─── Settings Tab ───
-function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
+function SettingsTab({ storageRefreshTick, onApiKeyChange, onFfmpegChange }) {
   const t = useT();
   const [config, setConfig] = useState({});
   const [storage, setStorage] = useState(null);
   const [permsStatus, setPermsStatus] = useState(null);
   const [keyVisible, setKeyVisible] = useState(false);
+  const [analysisKeyVisible, setAnalysisKeyVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [folderPicker, setFolderPicker] = useState(null);
 
@@ -2453,17 +2648,30 @@ function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
   }, []);
 
   useEffect(() => {
-    pluginApi("GET", "/settings").then(r => { if (r.ok && r.body) setConfig(r.body); }).catch(() => {});
+    pluginApi("GET", "/settings").then(r => {
+      if (r.ok && r.body) setConfig(normalizeFolderFieldsInConfig(r.body));
+    }).catch(() => {});
     refreshStorage();
     refreshPerms();
   }, [refreshStorage, refreshPerms]);
+
+  // Re-fetch stats whenever user switches back to this tab (first mount
+  // often happens before any uploads / completed tasks — otherwise the
+  // three cards stay at 0 MB until a full page reload).
+  useEffect(() => {
+    if (storageRefreshTick > 0) refreshStorage();
+  }, [storageRefreshTick, refreshStorage]);
+
+  useEffect(() => {
+    onEvent("plugin:clip-sense:task_update", () => refreshStorage());
+  }, [refreshStorage]);
 
   const save = async (updates) => {
     setSaving(true);
     try {
       const r = await pluginApi("PUT", "/settings", { updates });
       if (r.ok) {
-        setConfig(prev => ({ ...prev, ...updates }));
+        setConfig(prev => normalizeFolderFieldsInConfig({ ...prev, ...updates }));
         if (updates.dashscope_api_key !== undefined) onApiKeyChange(updates.dashscope_api_key);
         showToast(t("toast.savedSettings"));
       }
@@ -2491,7 +2699,7 @@ function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
     setFolderPicker({
       key: configKey,
       title: _tr(titleKey),
-      initialPath: (config[configKey] || "").trim(),
+      initialPath: normalizeFolderConfigValue(config[configKey] || ""),
     });
   };
   const handleFolderPickerSelect = (path) => {
@@ -2537,11 +2745,55 @@ function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
                     disabled={saving}>{t("settings.api.key.save")}</button>
           </div>
           <div className="text-xs text-dim" style={{marginTop: 4}}>
+            {t("settings.api.key.help")}<br/>
             {t("settings.api.key.helpPrefix")}
             <a href="https://bailian.console.aliyun.com/#/api-key" target="_blank" rel="noopener"
                style={{color: "var(--primary)"}}>{t("settings.api.key.helpLink")}</a>
           </div>
         </div>
+        <details style={{marginTop: 12}}>
+          <summary className="text-sm" style={{cursor: "pointer", color: "var(--text-muted)"}}>
+            {t("settings.api.analysis.advanced")}
+          </summary>
+          <div style={{marginTop: 12, padding: 12, border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg)"}}>
+            <div className="form-row">
+              <div className="label">{t("settings.api.analysis.provider")}</div>
+              <select className="input select"
+                      value={config.analysis_provider || "host"}
+                      onChange={e => {
+                        const v = e.target.value;
+                        updateField("analysis_provider", v);
+                        save({ analysis_provider: v });
+                      }}>
+                <option value="host">{t("settings.api.analysis.host")}</option>
+                <option value="dashscope">{t("settings.api.analysis.dashscope")}</option>
+              </select>
+            </div>
+            {(config.analysis_provider || "host") === "dashscope" && (
+              <div className="form-row" style={{marginBottom: 0}}>
+                <div className="label">{t("settings.api.analysis.key.label")}</div>
+                <div className="flex gap-2">
+                  <input className="input flex-1" type={analysisKeyVisible ? "text" : "password"}
+                         value={config.dashscope_analysis_api_key || ""}
+                         onChange={e => updateField("dashscope_analysis_api_key", e.target.value)}
+                         placeholder="sk-..." />
+                  <button className="btn btn-sm" onClick={() => setAnalysisKeyVisible(!analysisKeyVisible)}>
+                    {analysisKeyVisible ? t("settings.api.key.hide") : t("settings.api.key.show")}
+                  </button>
+                  <button className="btn btn-sm btn-primary"
+                          onClick={() => save({
+                            analysis_provider: "dashscope",
+                            dashscope_analysis_api_key: config.dashscope_analysis_api_key || "",
+                          })}
+                          disabled={saving}>{t("settings.api.key.save")}</button>
+                </div>
+                <div className="text-xs text-dim" style={{marginTop: 4}}>
+                  {t("settings.api.analysis.key.help")}
+                </div>
+              </div>
+            )}
+          </div>
+        </details>
       </div>
 
       {/* ── 2. 插件权限 ── */}
@@ -2627,7 +2879,15 @@ function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
           <div className="folder-row">
             <input className="input" value={config.output_dir || ""} placeholder={t("settings.outputDir.placeholder")}
                    onChange={e => setConfig({...config, output_dir: e.target.value})}
-                   onBlur={e => save({ output_dir: e.target.value })} />
+                   onBlur={e => {
+                     const next = normalizeFolderConfigValue(e.target.value);
+                     const cur = normalizeFolderConfigValue(config.output_dir || "");
+                     if (next !== cur) {
+                       setConfig({ ...config, output_dir: next });
+                       save({ output_dir: next });
+                       setTimeout(refreshStorage, 200);
+                     }
+                   }} />
             <button className="btn btn-sm" onClick={() => openFolderPicker("output_dir", "settings.pickOutput")}>{t("settings.btn.browse")}</button>
             <button className="btn btn-sm" onClick={() => openFolderByKey("output_dir")}>{t("settings.btn.open")}</button>
           </div>
@@ -2638,21 +2898,67 @@ function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
           <div className="folder-row">
             <input className="input" value={config.uploads_dir || ""} placeholder={t("settings.uploadsDir.placeholder")}
                    onChange={e => setConfig({...config, uploads_dir: e.target.value})}
-                   onBlur={e => save({ uploads_dir: e.target.value })} />
+                   onBlur={e => {
+                     const next = normalizeFolderConfigValue(e.target.value);
+                     const cur = normalizeFolderConfigValue(config.uploads_dir || "");
+                     if (next !== cur) {
+                       setConfig({ ...config, uploads_dir: next });
+                       save({ uploads_dir: next });
+                       setTimeout(refreshStorage, 200);
+                     }
+                   }} />
             <button className="btn btn-sm" onClick={() => openFolderPicker("uploads_dir", "settings.pickUploads")}>{t("settings.btn.browse")}</button>
             <button className="btn btn-sm" onClick={() => openFolderByKey("uploads_dir")}>{t("settings.btn.open")}</button>
           </div>
         </div>
 
         {stats && (
-          <div className="grid-3" style={{marginTop:12}}>
-            {Object.entries(stats).map(([k, s]) => (
-              <div key={k} className="card" style={{padding:10,textAlign:"center"}}>
-                <div className="text-xs text-dim">{statKeyMap[k] ? t(statKeyMap[k]) : k}</div>
-                <div style={{fontSize:18,fontWeight:600,color:"var(--primary)",margin:"4px 0"}}>{s.size_mb} MB</div>
-                <div className="text-xs text-dim">{t("settings.stats.fileCount", { n: s.file_count })}</div>
-              </div>
-            ))}
+          <div style={{marginTop:12}}>
+            <div className="grid-3">
+              {Object.entries(stats).map(([k, s]) => (
+                <div key={k} className="card" style={{padding:10,textAlign:"center"}}>
+                  <div className="text-xs text-dim">{statKeyMap[k] ? t(statKeyMap[k]) : k}</div>
+                  <div style={{fontSize:18,fontWeight:600,color:"var(--primary)",margin:"4px 0"}}>{s.size_mb} MB</div>
+                  <div className="text-xs text-dim">{t("settings.stats.fileCount", { n: s.file_count })}</div>
+                  {s.path && (
+                    <div className="text-xs text-dim" style={{marginTop:6,textAlign:"left",wordBreak:"break-all",lineHeight:1.35}}
+                         title={s.path}>
+                      <span style={{opacity:.85}}>{t("settings.stats.pathLabel")}: </span>
+                      {s.path}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted" style={{marginTop:10,lineHeight:1.45}}>
+              {t("settings.stats.scopeHint")}
+            </p>
+            <div style={{marginTop:12, display:"flex", justifyContent:"flex-end", gap:8}}>
+              <button className="btn btn-sm btn-danger" onClick={async () => {
+                if (!confirm(t("settings.cache.confirmClearOutput"))) return;
+                const r = await pluginApi("POST", "/storage/clear-cache?target=output");
+                if (r.ok && r.body) {
+                  showToast(t("settings.cache.cleared", { mb: r.body.freed_mb, n: r.body.removed_files }));
+                  refreshStorage();
+                } else {
+                  showToast(t("toast.error"), "error");
+                }
+              }}>
+                {t("settings.cache.clearOutputBtn")}
+              </button>
+              <button className="btn btn-sm btn-danger" onClick={async () => {
+                if (!confirm(t("settings.cache.confirmClear"))) return;
+                const r = await pluginApi("POST", "/storage/clear-cache?target=uploads");
+                if (r.ok && r.body) {
+                  showToast(t("settings.cache.cleared", { mb: r.body.freed_mb, n: r.body.removed_files }));
+                  refreshStorage();
+                } else {
+                  showToast(t("toast.error"), "error");
+                }
+              }}>
+                {t("settings.cache.clearBtn")}
+              </button>
+            </div>
           </div>
         )}
       </div>

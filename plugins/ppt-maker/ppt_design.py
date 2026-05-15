@@ -18,27 +18,50 @@ class DesignBuilder:
         layout_map: dict[str, Any] | None = None,
         style: str | None = None,
     ) -> dict[str, Any]:
+        style_key = (style or "tech_business").strip().lower()
         brand_tokens = brand_tokens or self._default_brand(style)
         layout_map = layout_map or self._default_layout_map()
         mode = outline.get("mode", "topic_to_deck")
         design_spec = self._markdown(outline, brand_tokens, layout_map)
+        typography = self._typography_for_style(style_key)
+        spacing = self._spacing_for_style(style_key)
+        rules = [
+            "Keep all text editable in PPTX.",
+            "Use table/chart slide types for table_to_deck data pages.",
+            "Use fallback layouts whenever enterprise template layout mapping is incomplete.",
+            "Prefer conclusion-first page titles for executive decks.",
+            "Keep content inside a 60px safe margin unless a cover/section layout says otherwise.",
+            *self._style_rules(style_key),
+        ]
         spec_lock = {
             "version": 1,
             "mode": mode,
+            "visual_system": self._visual_system(style_key),
             "theme": {
                 "primary_color": brand_tokens.get("primary_color"),
                 "secondary_color": brand_tokens.get("secondary_color"),
                 "accent_color": brand_tokens.get("accent_color"),
+                "background_color": brand_tokens.get("background_color", "#FFFFFF"),
                 "font_heading": brand_tokens.get("font_heading"),
                 "font_body": brand_tokens.get("font_body"),
             },
+            "typography": typography,
+            "spacing": spacing,
+            "chart_palette": [
+                brand_tokens.get("primary_color"),
+                brand_tokens.get("accent_color"),
+                "#4A90D9",
+                "#10B981",
+                "#EF4444",
+            ],
+            "density_rules": {
+                "max_bullets_per_slide": 6,
+                "max_table_columns": 8,
+                "prefer_split_when_density_above": 0.78,
+            },
             "layout_map": layout_map,
             "slide_count": len(outline.get("slides", [])),
-            "rules": [
-                "Keep all text editable in PPTX.",
-                "Use table/chart slide types for table_to_deck data pages.",
-                "Use fallback layouts whenever enterprise template layout mapping is incomplete.",
-            ],
+            "rules": rules,
             "confirmed": False,
             "needs_confirmation": True,
         }
@@ -92,6 +115,8 @@ class DesignBuilder:
             f"- Accent color: {brand_tokens.get('accent_color')}",
             f"- Heading font: {brand_tokens.get('font_heading')}",
             f"- Body font: {brand_tokens.get('font_body')}",
+            "- Safe margin: 60px left/right, 50px top/bottom",
+            "- Preferred card radius: 12px; card padding: 24px",
             "",
             "## Layout Contract",
         ]
@@ -110,6 +135,7 @@ class DesignBuilder:
             "primary_color": "#3457D5",
             "secondary_color": "#172033",
             "accent_color": "#FFB000",
+            "background_color": "#FFFFFF",
             "font_heading": "Microsoft YaHei",
             "font_body": "Microsoft YaHei",
         },
@@ -117,6 +143,23 @@ class DesignBuilder:
             "primary_color": "#143D59",
             "secondary_color": "#1F4E79",
             "accent_color": "#F4B41A",
+            "background_color": "#FFFFFF",
+            "font_heading": "Microsoft YaHei",
+            "font_body": "Microsoft YaHei",
+        },
+        "data_insight": {
+            "primary_color": "#0F766E",
+            "secondary_color": "#134E4A",
+            "accent_color": "#F97316",
+            "background_color": "#FFFFFF",
+            "font_heading": "Microsoft YaHei",
+            "font_body": "Microsoft YaHei",
+        },
+        "creative_pitch": {
+            "primary_color": "#7C3AED",
+            "secondary_color": "#111827",
+            "accent_color": "#EC4899",
+            "background_color": "#FFFFFF",
             "font_heading": "Microsoft YaHei",
             "font_body": "Microsoft YaHei",
         },
@@ -124,6 +167,7 @@ class DesignBuilder:
             "primary_color": "#2A9D8F",
             "secondary_color": "#264653",
             "accent_color": "#E9C46A",
+            "background_color": "#FFFFFF",
             "font_heading": "Microsoft YaHei",
             "font_body": "Microsoft YaHei",
         },
@@ -131,6 +175,7 @@ class DesignBuilder:
             "primary_color": "#34495E",
             "secondary_color": "#2C3E50",
             "accent_color": "#8E44AD",
+            "background_color": "#FFFFFF",
             "font_heading": "Microsoft YaHei",
             "font_body": "Microsoft YaHei",
         },
@@ -138,7 +183,48 @@ class DesignBuilder:
             "primary_color": "#1F2933",
             "secondary_color": "#52606D",
             "accent_color": "#F0B429",
+            "background_color": "#FFFFFF",
             "font_heading": "Microsoft YaHei",
+            "font_body": "Microsoft YaHei",
+        },
+        "swiss_ikb": {
+            "primary_color": "#0A0A0A",
+            "secondary_color": "#737373",
+            "accent_color": "#002FA7",
+            "background_color": "#FAFAF8",
+            "font_heading": "Aptos Display",
+            "font_body": "Aptos",
+        },
+        "swiss_lemon": {
+            "primary_color": "#0A0A0A",
+            "secondary_color": "#737373",
+            "accent_color": "#FFD500",
+            "background_color": "#FAFAF8",
+            "font_heading": "Aptos Display",
+            "font_body": "Aptos",
+        },
+        "swiss_lime": {
+            "primary_color": "#0A0A0A",
+            "secondary_color": "#737373",
+            "accent_color": "#C5E803",
+            "background_color": "#FAFAF8",
+            "font_heading": "Aptos Display",
+            "font_body": "Aptos",
+        },
+        "swiss_orange": {
+            "primary_color": "#0A0A0A",
+            "secondary_color": "#737373",
+            "accent_color": "#FF6B35",
+            "background_color": "#FAFAF8",
+            "font_heading": "Aptos Display",
+            "font_body": "Aptos",
+        },
+        "editorial_ink": {
+            "primary_color": "#161411",
+            "secondary_color": "#4F463C",
+            "accent_color": "#A15C38",
+            "background_color": "#F7F0E6",
+            "font_heading": "Georgia",
             "font_body": "Microsoft YaHei",
         },
     }
@@ -147,6 +233,45 @@ class DesignBuilder:
         key = (style or "tech_business").strip().lower()
         preset = self.STYLE_PRESETS.get(key) or self.STYLE_PRESETS["tech_business"]
         return dict(preset)
+
+    def _visual_system(self, style: str) -> str:
+        if style.startswith("swiss_"):
+            return "swiss_locked_editable"
+        if style == "editorial_ink":
+            return "editorial_magazine_editable"
+        return "standard_editable"
+
+    def _typography_for_style(self, style: str) -> dict[str, int]:
+        if style.startswith("swiss_"):
+            return {"hero": 56, "title": 34, "subtitle": 22, "body": 15, "caption": 11}
+        if style == "editorial_ink":
+            return {"hero": 54, "title": 34, "subtitle": 22, "body": 16, "caption": 12}
+        return {"hero": 48, "title": 32, "subtitle": 22, "body": 16, "caption": 12}
+
+    def _spacing_for_style(self, style: str) -> dict[str, int]:
+        if style.startswith("swiss_"):
+            return {"margin_x": 64, "margin_y": 54, "gap": 24, "card_padding": 22, "radius": 0}
+        if style == "editorial_ink":
+            return {"margin_x": 58, "margin_y": 48, "gap": 26, "card_padding": 24, "radius": 4}
+        return {"margin_x": 60, "margin_y": 50, "gap": 24, "card_padding": 24, "radius": 12}
+
+    def _style_rules(self, style: str) -> list[str]:
+        if style.startswith("swiss_"):
+            return [
+                "Use one high-saturation accent color only; do not mix accent colors.",
+                "Prefer left-aligned titles, straight edges, hairline dividers, and generous whitespace.",
+                "Avoid gradients, shadows, rounded cards, emoji icons, and decorative clip art.",
+                "Use images as evidence blocks; bind each image request to a clear slide purpose and crop ratio.",
+                "Vary layouts deliberately; avoid three consecutive slides with the same structure.",
+            ]
+        if style == "editorial_ink":
+            return [
+                "Use magazine-like pacing: hero pages, quotes, image grids, and concise editorial copy.",
+                "Prefer warm paper backgrounds, restrained accent color, and strong title/body contrast.",
+                "Avoid emoji icons and generic stock-art decoration.",
+                "Treat images as first-class narrative material, not filler.",
+            ]
+        return []
 
     def _default_layout_map(self) -> dict[str, Any]:
         return {

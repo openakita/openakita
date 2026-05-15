@@ -15,14 +15,13 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from openakita.orgs.manager import OrgManager
 from openakita.orgs.runtime import OrgRuntime
-from openakita.orgs.models import OrgStatus, NodeStatus
-from .conftest import make_org, make_node, make_edge
+from openakita.orgs.models import NodeStatus
+from .conftest import make_org
 
 _SKIP_REASON = "LLM tests require --api-keys flag or OPENAKITA_LLM_TESTS=1 env"
 

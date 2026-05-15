@@ -630,3 +630,19 @@ async def generate_title(request: Request, body: GenerateTitleRequest):
     except Exception as e:
         logger.warning(f"[Sessions] Title generation failed: {e}")
         return {"title": body.message[:20] or "新对话"}
+
+
+# C17 Phase B.4: 让第二端打开 UI 时主动拉取本 session 还在等待的 confirm，
+# 不依赖错过的 ``confirm_initiated`` 广播。前端拿到列表后渲染 readonly
+# badge，等收到 ``confirm_revoked`` 再清掉。
+@router.get("/api/sessions/{conversation_id}/active_confirms")
+async def active_confirms(conversation_id: str):
+    _validate_id(conversation_id, "conversation_id")
+    try:
+        from openakita.core.ui_confirm_bus import get_ui_confirm_bus
+
+        bus = get_ui_confirm_bus()
+        return {"confirms": bus.active_confirms_for_session(conversation_id)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Sessions] active_confirms(%s) failed: %s", conversation_id, exc)
+        return {"confirms": [], "error": str(exc)[:200]}

@@ -27,13 +27,12 @@ from openakita.channels.adapters.wework_ws import (
     CMD_RESPONSE,
     CMD_SEND_MSG,
     CMD_SUBSCRIBE,
-    STREAM_CONTENT_MAX_BYTES,
     WeWorkWsAdapter,
     WeWorkWsConfig,
     _decrypt_file,
     _generate_req_id,
 )
-from openakita.channels.types import MediaFile, MessageContent, OutgoingMessage
+from openakita.channels.types import MediaFile, OutgoingMessage
 
 
 # ==================== Fixtures ====================
@@ -510,7 +509,7 @@ class TestStreamReply:
         msg.metadata = {}  # no req_id → active push
 
         ack_task = asyncio.create_task(auto_ack())
-        result = await adapter.send_message(msg)
+        await adapter.send_message(msg)
         await ack_task
 
         assert len(sent_frames) == 1
@@ -964,7 +963,7 @@ class TestAdapterProperties:
 
     def test_upload_media_requires_connection(self, adapter):
         with pytest.raises(ConnectionError, match="WebSocket not connected"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 adapter.upload_media(Path("test.jpg"), "image/jpeg")
             )
 

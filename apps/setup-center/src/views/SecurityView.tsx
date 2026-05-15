@@ -19,8 +19,18 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { Loader2, LockKeyhole, RotateCw, Save, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
+import { PolicyV2MatrixView } from "./security/PolicyV2MatrixView";
 
 type SecurityViewProps = {
   apiBaseUrl: string;
@@ -29,10 +39,7 @@ type SecurityViewProps = {
 
 type ZoneConfig = {
   workspace: string[];
-  controlled: string[];
   protected: string[];
-  forbidden: string[];
-  default_zone?: string;
 };
 
 type CommandConfig = {
@@ -67,9 +74,7 @@ type CheckpointEntry = {
 
 const ZONE_META: Record<string, { color: string; tw: string }> = {
   workspace: { color: "#22c55e", tw: "bg-emerald-500" },
-  controlled: { color: "#3b82f6", tw: "bg-blue-500" },
   protected: { color: "#f59e0b", tw: "bg-amber-500" },
-  forbidden: { color: "#ef4444", tw: "bg-red-500" },
 };
 
 const BACKEND_OPTIONS = [
@@ -107,28 +112,61 @@ type AllowlistData = {
   tools: Array<Record<string, unknown>>;
 };
 
-type TabId = "zones" | "commands" | "sandbox" | "audit" | "checkpoints" | "confirmation" | "selfprotection";
-type PermissionMode = "yolo" | "smart" | "cautious";
+type TabId = "zones" | "commands" | "sandbox" | "audit" | "checkpoints" | "confirmation" | "selfprotection" | "imowner" | "dryrun" | "policy_v2_matrix";
+
+// C9a §3: per-channel IM owner allowlist (调用 C8a backend)
+type ImOwnerAllowlistEntry = {
+  channel: string;
+  configured: boolean;
+  owners: string[];
+};
+
+// C9a §4: dry-run preview decision row
+type DryRunDecision = {
+  tool: string;
+  tool_label_key?: string;
+  params_preview: string;
+  decision: string;
+  decision_label_key?: string;
+  reason: string;
+  reason_code?: string;
+  approval_class: string | null;
+  approval_class_label_key?: string | null;
+  risk_level: string;
+  safety_immune_match: string | null;
+  effective_confirmation_mode?: string;
+  security_profile?: string;
+};
+type PermissionMode = "trust" | "protect" | "strict" | "off" | "custom";
+const OFF_ACK_PHRASE = "确认风险同意关闭";
 
 export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityViewProps) {
   const { t } = useTranslation();
 
   const [tab, setTab] = useState<TabId>("zones");
-  const [zones, setZones] = useState<ZoneConfig>({ workspace: [], controlled: [], protected: [], forbidden: [] });
+  const [zones, setZones] = useState<ZoneConfig>({ workspace: [], protected: [] });
   const [commands, setCommands] = useState<CommandConfig>({ custom_critical: [], custom_high: [], excluded_patterns: [], blocked_commands: [] });
   const [sandbox, setSandbox] = useState<SandboxConfig>({ enabled: true, backend: "auto", sandbox_risk_levels: ["HIGH"], exempt_commands: [] });
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
-  const [confirmConfig, setConfirmConfig] = useState<ConfirmConfig>({ mode: "smart", timeout_seconds: 60, default_on_timeout: "deny", confirm_ttl: 120 });
+  const [confirmConfig, setConfirmConfig] = useState<ConfirmConfig>({ mode: "default", timeout_seconds: 60, default_on_timeout: "deny", confirm_ttl: 120 });
   const [selfProtect, setSelfProtect] = useState<SelfProtectConfig>({ enabled: true, protected_dirs: ["data/", "identity/", "logs/", "src/"], death_switch_threshold: 3, death_switch_total_multiplier: 3, audit_to_file: true, audit_path: "", readonly_mode: false });
   const [allowlist, setAllowlist] = useState<AllowlistData>({ commands: [], tools: [] });
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>("yolo");
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("protect");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const [loadingAll, setLoadingAll] = useState(false);
   const [refreshingAudit, setRefreshingAudit] = useState(false);
   const [refreshingCheckpoints, setRefreshingCheckpoints] = useState(false);
   const [rewindingId, setRewindingId] = useState<string | null>(null);
+  // C9a §3 / §4 state
+  const [imOwnerEntries, setImOwnerEntries] = useState<ImOwnerAllowlistEntry[]>([]);
+  const [loadingImOwner, setLoadingImOwner] = useState(false);
+  const [dryRunDecisions, setDryRunDecisions] = useState<DryRunDecision[]>([]);
+  const [loadingDryRun, setLoadingDryRun] = useState(false);
+  const [offDialogOpen, setOffDialogOpen] = useState(false);
+  const [offAckPhrase, setOffAckPhrase] = useState("");
+  const [offAckError, setOffAckError] = useState("");
   const saving = savingAction !== null;
 
   const api = useCallback(async (path: string, method = "GET", body?: unknown) => {
@@ -148,17 +186,25 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     setLoadingAll(true);
     try {
       const [modeRes, zRes, cRes, sRes, cfRes, spRes, alRes] = await Promise.all([
-        api("/api/config/permission-mode"),
-        api("/api/config/security/zones"),
+        api("/api/config/security-profile"),
+        api("/api/config/security/path-policy"),
         api("/api/config/security/commands"),
         api("/api/config/security/sandbox"),
         api("/api/config/security/confirmation"),
         api("/api/config/security/self-protection"),
         api("/api/config/security/allowlist"),
       ]);
-      const m = modeRes?.mode === "trust" ? "yolo" : modeRes?.mode;
-      if (m === "yolo" || m === "smart" || m === "cautious") setPermissionMode(m);
-      if (zRes && Array.isArray(zRes.workspace)) setZones(zRes);
+      const m = modeRes?.current;
+      if (m === "trust" || m === "protect" || m === "strict" || m === "off" || m === "custom") {
+        setPermissionMode(m);
+        setShowAdvanced(m === "custom");
+      }
+      if (zRes && Array.isArray(zRes.workspace_paths)) {
+        setZones({
+          workspace: zRes.workspace_paths,
+          protected: zRes.safety_immune_paths || [],
+        });
+      }
       if (cRes && Array.isArray(cRes.blocked_commands)) setCommands(cRes);
       if (sRes && typeof sRes.enabled === "boolean") setSandbox(sRes);
       if (cfRes && cfRes.mode) setConfirmConfig(cfRes);
@@ -238,12 +284,92 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     }
   }, [api, serviceRunning, t]);
 
+  // C9a §3: load IM channels + their owner allowlists (one fetch per channel)
+  const loadImOwnerAllowlist = useCallback(async (showResult = false) => {
+    if (!serviceRunning) return;
+    setLoadingImOwner(true);
+    try {
+      const channelsRes = await api("/api/im/channels");
+      const channels: string[] = (channelsRes?.channels || []).map(
+        (c: { channel?: string }) => String(c?.channel || ""),
+      ).filter(Boolean);
+      const entries: ImOwnerAllowlistEntry[] = await Promise.all(
+        channels.map(async (ch) => {
+          const r = await api(`/api/im/owner-allowlist?channel=${encodeURIComponent(ch)}`);
+          return {
+            channel: ch,
+            configured: Boolean(r?.configured),
+            owners: Array.isArray(r?.owners) ? r.owners.map(String) : [],
+          };
+        }),
+      );
+      setImOwnerEntries(entries);
+      if (showResult) toast.success(t("security.imOwnerRefreshed", "IM owner 列表已刷新"));
+    } catch (err) {
+      if (showResult) toast.error(t("security.refreshFailed", "刷新失败"), {
+        description: errorMessage(err, t("security.refreshFailed", "刷新失败")),
+      });
+    } finally {
+      setLoadingImOwner(false);
+    }
+  }, [api, serviceRunning, t]);
+
+  const saveImOwnerAllowlist = useCallback(
+    async (channel: string, owners: string[] | null) => {
+      setSavingAction(`imowner-${channel}`);
+      try {
+        await api("/api/im/owner-allowlist", "POST", { channel, owners });
+        toast.success(
+          owners === null
+            ? t("security.imOwnerCleared", "已恢复单用户默认（is_owner=true）")
+            : t("security.imOwnerSaved", "IM owner 列表已保存"),
+        );
+        await loadImOwnerAllowlist(false);
+      } catch (err) {
+        toast.error(t("security.saveFailed"), {
+          description: errorMessage(err, t("security.saveFailed")),
+        });
+      } finally {
+        setSavingAction(null);
+      }
+    },
+    [api, loadImOwnerAllowlist, t],
+  );
+
+  // C9a §4: dry-run preview against current persisted policy config
+  const runDryRunPreview = useCallback(async () => {
+    if (!serviceRunning) return;
+    setLoadingDryRun(true);
+    try {
+      const res = await api("/api/config/security/preview", "POST", {});
+      setDryRunDecisions(Array.isArray(res?.decisions) ? res.decisions : []);
+    } catch (err) {
+      toast.error(t("security.dryRunFailed", "预览失败"), {
+        description: errorMessage(err, t("security.dryRunFailed", "预览失败")),
+      });
+    } finally {
+      setLoadingDryRun(false);
+    }
+  }, [api, serviceRunning, t]);
+
   useEffect(() => {
     if (tab === "audit") loadAudit();
     if (tab === "checkpoints") loadCheckpoints();
-  }, [tab, loadAudit, loadCheckpoints]);
+    if (tab === "imowner") loadImOwnerAllowlist();
+    if (tab === "dryrun" && dryRunDecisions.length === 0) runDryRunPreview();
+  // dryRunDecisions intentionally omitted: only trigger initial load when first opening tab
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, loadAudit, loadCheckpoints, loadImOwnerAllowlist, runDryRunPreview]);
 
   const doSave = async (endpoint: string, body: unknown, successKey: string) => {
+    if (
+      endpoint.startsWith("/api/config/security/")
+      && endpoint !== "/api/config/security-profile"
+      && permissionMode !== "custom"
+    ) {
+      const ok = window.confirm("修改底层安全机制后将切换为自定义方案，是否继续？");
+      if (!ok) return;
+    }
     setSavingAction(endpoint);
     try {
       await api(endpoint, "POST", body);
@@ -258,15 +384,15 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     }
   };
 
-  const selectPermissionMode = async (mode: PermissionMode) => {
+  const applyPermissionMode = async (mode: PermissionMode, ack_phrase?: string) => {
     const previousMode = permissionMode;
     setPermissionMode(mode);
-    setSavingAction("permission-mode");
+    setSavingAction("security-profile");
     try {
-      await api("/api/config/permission-mode", "POST", { mode });
-      toast.success(t("security.permissionModeSaved", "安全模式已更新"));
+      await api("/api/config/security-profile", "POST", { profile: mode, ack_phrase });
+      toast.success(t("security.permissionModeSaved", "安全方案已更新"));
       await load();
-      if (mode !== "yolo") setShowAdvanced(true);
+      setShowAdvanced(mode === "custom");
     } catch (err) {
       setPermissionMode(previousMode);
       toast.error(t("security.saveFailed"), {
@@ -275,6 +401,25 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     } finally {
       setSavingAction(null);
     }
+  };
+
+  const selectPermissionMode = async (mode: PermissionMode) => {
+    if (mode === "off") {
+      setOffAckPhrase("");
+      setOffAckError("");
+      setOffDialogOpen(true);
+      return;
+    }
+    await applyPermissionMode(mode);
+  };
+
+  const confirmOffMode = async () => {
+    if (offAckPhrase.trim() !== OFF_ACK_PHRASE) {
+      setOffAckError(t("security.offAckMismatch", "确认短语不匹配，已阻止关闭。"));
+      return;
+    }
+    setOffDialogOpen(false);
+    await applyPermissionMode("off", offAckPhrase.trim());
   };
 
   const rewindCheckpoint = async (id: string) => {
@@ -329,37 +474,103 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     }
   };
 
-  const TABS: { id: TabId; labelKey: string }[] = [
-    { id: "confirmation", labelKey: "security.confirmation" },
-    { id: "zones", labelKey: "security.zones" },
-    { id: "commands", labelKey: "security.commands" },
-    { id: "sandbox", labelKey: "security.sandbox" },
-    { id: "selfprotection", labelKey: "security.selfProtection" },
-    { id: "audit", labelKey: "security.audit" },
-    { id: "checkpoints", labelKey: "security.checkpoints" },
+  const TABS: { id: TabId; labelKey: string; fallback: string }[] = [
+    { id: "confirmation", labelKey: "security.confirmation", fallback: "确认策略" },
+    // C23 P2-1: policy_v2 审批矩阵（session_role × confirmation_mode × ApprovalClass）
+    { id: "policy_v2_matrix", labelKey: "security.policyV2Matrix", fallback: "审批矩阵" },
+    { id: "zones", labelKey: "security.zones", fallback: "区域" },
+    { id: "commands", labelKey: "security.commands", fallback: "命令" },
+    { id: "sandbox", labelKey: "security.sandbox", fallback: "沙箱" },
+    { id: "selfprotection", labelKey: "security.selfProtection", fallback: "自我保护" },
+    { id: "imowner", labelKey: "security.imOwner", fallback: "IM Owner" },
+    { id: "dryrun", labelKey: "security.dryRun", fallback: "策略预览" },
+    { id: "audit", labelKey: "security.audit", fallback: "审计" },
+    { id: "checkpoints", labelKey: "security.checkpoints", fallback: "快照" },
   ];
-  const advancedVisible = permissionMode !== "yolo" || showAdvanced;
+
+  // 信息架构：3 个并列机制页 + 1 个观测分组。
+  // 把原本平铺的 10 个 tab 按"功能维度"分组，让用户能一眼分辨：
+  //   1. 工具执行：Agent 跑工具时怎么确认/审计/拦截
+  //   2. 沙箱：高风险命令在隔离环境里跑
+  //   3. 路径白名单：Agent 可以访问/写入哪些目录（硬边界）
+  //   4. 观测/历史：策略预览、审计日志、文件快照（事后回溯类）
+  const TAB_GROUPS: {
+    id: string;
+    titleKey: string;
+    titleFallback: string;
+    descKey: string;
+    descFallback: string;
+    tabs: TabId[];
+  }[] = [
+    {
+      id: "execution",
+      titleKey: "security.groupExecutionTitle",
+      titleFallback: "工具执行",
+      descKey: "security.groupExecutionDesc",
+      descFallback: "Agent 调用工具时如何确认、拦截、审计。",
+      tabs: ["confirmation", "policy_v2_matrix", "commands", "selfprotection", "imowner"],
+    },
+    {
+      id: "sandbox",
+      titleKey: "security.groupSandboxTitle",
+      titleFallback: "沙箱隔离",
+      descKey: "security.groupSandboxDesc",
+      descFallback: "高风险命令在受限容器/虚拟环境中执行。",
+      tabs: ["sandbox"],
+    },
+    {
+      id: "paths",
+      titleKey: "security.groupPathsTitle",
+      titleFallback: "路径白名单",
+      descKey: "security.groupPathsDesc",
+      descFallback: "Agent 文件访问的工作区与敏感目录硬边界。",
+      tabs: ["zones"],
+    },
+    {
+      id: "observability",
+      titleKey: "security.groupObservabilityTitle",
+      titleFallback: "观测与历史",
+      descKey: "security.groupObservabilityDesc",
+      descFallback: "策略预览、审计日志、文件快照——事后回溯。",
+      tabs: ["dryrun", "audit", "checkpoints"],
+    },
+  ];
+  const advancedVisible = permissionMode === "custom" || showAdvanced;
   const MODE_CARDS: Array<{ id: PermissionMode; title: string; desc: string; icon: typeof ShieldCheck; tone: string }> = [
     {
-      id: "yolo",
-      title: t("security.modeTrustTitle", "信任模式"),
-      desc: t("security.modeTrustCardDesc", "默认推荐。仅保护系统敏感目录和密钥目录，其他操作不打扰。"),
+      id: "trust",
+      title: t("security.modeTrustTitle", "信任方案"),
+      desc: t("security.modeTrustCardDesc", "默认推荐，减少打扰但保留关键保护。"),
       icon: ShieldCheck,
       tone: "text-emerald-600 bg-emerald-500/10 border-emerald-500/20",
     },
     {
-      id: "smart",
-      title: t("security.modeProtectTitle", "保护模式"),
-      desc: t("security.modeProtectCardDesc", "对高风险命令、受控目录和沙箱执行进行确认或拦截。"),
+      id: "protect",
+      title: t("security.modeProtectTitle", "保护方案"),
+      desc: t("security.modeProtectCardDesc", "对高风险命令和敏感访问进行确认，兼顾安全与效率。"),
       icon: Shield,
       tone: "text-blue-600 bg-blue-500/10 border-blue-500/20",
     },
     {
-      id: "cautious",
-      title: t("security.modeStrictTitle", "严格模式"),
-      desc: t("security.modeStrictCardDesc", "适合企业或高风险环境，策略更保守。"),
+      id: "strict",
+      title: t("security.modeStrictTitle", "严格方案"),
+      desc: t("security.modeStrictCardDesc", "适合企业或高风险环境，采用更保守的拦截策略。"),
       icon: LockKeyhole,
       tone: "text-amber-600 bg-amber-500/10 border-amber-500/20",
+    },
+    {
+      id: "off",
+      title: "关闭方案",
+      desc: "彻底关闭安全机制，不推荐日常使用。",
+      icon: ShieldAlert,
+      tone: "text-red-600 bg-red-500/10 border-red-500/20",
+    },
+    {
+      id: "custom",
+      title: "自定义方案",
+      desc: "使用手动调整后的组合策略，适合精细化控制场景。",
+      icon: Shield,
+      tone: "text-purple-600 bg-purple-500/10 border-purple-500/20",
     },
   ];
 
@@ -387,7 +598,7 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
           <CardTitle className="text-[13px] font-semibold">{t("security.permissionMode", "安全模式")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 px-4 pb-4">
-          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
             {MODE_CARDS.map((mode) => {
               const active = permissionMode === mode.id;
               const ModeIcon = mode.icon;
@@ -397,29 +608,52 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
                   type="button"
                   disabled={saving}
                   onClick={() => selectPermissionMode(mode.id)}
+                  style={active ? { backgroundColor: "#2563eb", borderColor: "#2563eb", color: "#ffffff" } : undefined}
                   className={cn(
-                    "min-h-[104px] rounded-lg border p-3 text-left transition-colors",
-                    active ? "border-primary/70 bg-primary/10 shadow-sm" : "border-border/70 hover:bg-muted/40",
+                    "flex h-[104px] min-w-0 flex-col justify-center overflow-hidden rounded-lg border px-2.5 py-3 text-left transition-all",
+                    active
+                      ? "shadow-md shadow-blue-600/25 ring-1 ring-blue-500/40"
+                      : "border-border/70 hover:bg-muted/40",
                   )}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex min-w-0 items-center gap-2 text-sm font-semibold">
-                      <span className={cn("grid size-7 shrink-0 place-items-center rounded-lg border", mode.tone)}>
-                        <ModeIcon size={15} />
+                  <div className="flex h-7 min-w-0 items-center gap-2">
+                    <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold">
+                      <span
+                        className={cn(
+                          "grid size-6 shrink-0 place-items-center rounded-md border",
+                          active
+                            ? "border-white/30 bg-white/20 text-white"
+                            : mode.tone,
+                        )}
+                      >
+                        <ModeIcon size={14} />
                       </span>
-                      <span className="truncate">{mode.title}</span>
+                      <span className={cn("min-w-0 flex-1 truncate", active && "text-white")}>
+                        {mode.title}
+                      </span>
                     </span>
-                    {active && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{t("security.current", "当前")}</Badge>}
                   </div>
-                  <p className="mt-2 text-[12px] leading-5 text-muted-foreground">{mode.desc}</p>
+                  <p
+                    className={cn(
+                      "mt-2 h-10 overflow-hidden text-[11px] leading-5",
+                      active ? "text-white/85" : "text-muted-foreground",
+                    )}
+                    style={{
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 2,
+                    }}
+                  >
+                    {mode.desc}
+                  </p>
                 </button>
               );
             })}
           </div>
-          {permissionMode === "yolo" && (
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+          {permissionMode !== "custom" && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
               <p className="text-[12px] leading-5 text-muted-foreground">
-                {t("security.trustModeAdvancedHint", "当前为默认无感体验。下方细项属于高级设置，通常无需调整。")}
+                {t("security.trustModeAdvancedHint", "当前方案使用预设配置，高级设置默认隐藏。")}
               </p>
               <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={() => setShowAdvanced((v) => !v)}>
                 {showAdvanced ? t("security.hideAdvanced", "收起高级设置") : t("security.showAdvanced", "显示高级设置")}
@@ -431,27 +665,57 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
 
       {advancedVisible && (
         <>
-      {/* Tab bar */}
-      <div className="flex shrink-0 items-center justify-between overflow-x-auto">
-        <ToggleGroup
-          type="single"
-          value={tab}
-          onValueChange={(v) => { if (v) setTab(v as TabId); }}
-          variant="outline"
-          className="min-w-max shrink-0 gap-1"
-        >
-          {TABS.map((tb) => (
-            <ToggleGroupItem
-              key={tb.id}
-              value={tb.id}
-              className="h-8 px-3 text-xs data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-              title={t(tb.labelKey)}
+      {/* 信息架构重构：把 10 个原始 tab 按"工具执行 / 沙箱 / 路径白名单 / 观测"
+          四类分组渲染。每个 group 自带标题与短句解释，让用户一眼看清"这个
+          机制管什么"。tab 状态本身仍是平铺 TabId，避免 deep nesting 改动。 */}
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+        {TAB_GROUPS.map((group) => {
+          const groupTabs = TABS.filter((tb) => group.tabs.includes(tb.id));
+          if (groupTabs.length === 0) return null;
+          const active = group.tabs.includes(tab);
+          return (
+            <div
+              key={group.id}
+              className={cn(
+                "rounded-lg border px-3 py-2.5 transition-colors",
+                active ? "border-primary/40 bg-primary/[0.03]" : "border-border/60 bg-muted/10",
+              )}
             >
-              {t(tb.labelKey)}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
+              <div className="mb-2 space-y-0.5">
+                <div className="text-[12px] font-semibold tracking-wide text-foreground/90">
+                  {t(group.titleKey, group.titleFallback)}
+                </div>
+                <div className="text-[11px] leading-4 text-muted-foreground">
+                  {t(group.descKey, group.descFallback)}
+                </div>
+              </div>
+              <div className="overflow-x-auto pb-0.5">
+                <ToggleGroup
+                  type="single"
+                  value={tab}
+                  onValueChange={(v) => { if (v) setTab(v as TabId); }}
+                  variant="outline"
+                  className="min-w-max flex-wrap justify-start gap-1"
+                >
+                  {groupTabs.map((tb) => (
+                    <ToggleGroupItem
+                      key={tb.id}
+                      value={tb.id}
+                      className="h-7 rounded-md px-2.5 text-[11px] data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                      title={t(tb.labelKey, tb.fallback)}
+                    >
+                      {t(tb.labelKey, tb.fallback)}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </div>
+            </div>
+          );
+        })}
       </div>
+
+      {/* C23 P2-1: policy_v2 审批矩阵（在 confirmation tab 之前渲染对应 case） */}
+      {tab === "policy_v2_matrix" && <PolicyV2MatrixView apiBaseUrl={apiBaseUrl} />}
 
       {/* Confirmation */}
       {tab === "confirmation" && (
@@ -468,15 +732,15 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
                 <Select value={confirmConfig.mode} onValueChange={(v) => setConfirmConfig((p) => ({ ...p, mode: v }))}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cautious">{t("security.modeCautious", "谨慎 (cautious)")}</SelectItem>
-                    <SelectItem value="smart">{t("security.modeSmart", "智能 (smart)")}</SelectItem>
-                    <SelectItem value="yolo">{t("security.modeYolo", "信任 (yolo)")}</SelectItem>
+                    <SelectItem value="trust">信任确认 (trust)</SelectItem>
+                    <SelectItem value="default">默认确认 (default)</SelectItem>
+                    <SelectItem value="accept_edits">接受编辑 (accept_edits)</SelectItem>
+                    <SelectItem value="strict">严格确认 (strict)</SelectItem>
+                    <SelectItem value="dont_ask">不打扰 (dont_ask)</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  {confirmConfig.mode === "cautious" && t("security.modeCautiousDesc", "中高风险操作均需确认")}
-                  {confirmConfig.mode === "smart" && t("security.modeSmartDesc", "中风险连续允许后自动放行，高风险始终确认")}
-                  {confirmConfig.mode === "yolo" && t("security.modeYoloDesc", "仅拦截极高风险，其余自动允许")}
+                  工具执行策略只控制是否需要确认，不会扩大文件路径名单。
                 </p>
               </div>
               {/* Timeout */}
@@ -625,12 +889,14 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       {tab === "zones" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm">
           <CardHeader className="border-b border-border/50 px-4 py-2.5">
-            <CardTitle className="text-sm font-semibold">{t("security.zones", "安全区域")}</CardTitle>
+            <CardTitle className="text-sm font-semibold">{t("security.zones", "路径名单")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3.5 px-4 pb-4 pt-3">
-            <p className="text-xs leading-5 text-muted-foreground">{t("security.zonesDesc")}</p>
+            <p className="text-xs leading-5 text-muted-foreground">
+              工作区决定 Agent 文件工具可访问哪些目录；信任方案只减少确认，不会自动扩大路径范围。
+            </p>
             <div className="grid grid-cols-1 gap-2.5">
-              {(["workspace", "controlled", "protected", "forbidden"] as const).map((zone) => (
+              {(["workspace", "protected"] as const).map((zone) => (
                 <ZonePanel
                   key={zone}
                   zone={zone}
@@ -639,20 +905,14 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
                 />
               ))}
             </div>
-            <div className="space-y-2 max-w-xs">
-              <Label className="text-sm font-medium">{t("security.defaultZone", "默认区域")}</Label>
-              <Select value={zones.default_zone || "controlled"} onValueChange={(v) => setZones((prev) => ({ ...prev, default_zone: v }))}>
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="workspace">{t("security.zoneWorkspace", "工作区 (workspace)")}</SelectItem>
-                  <SelectItem value="controlled">{t("security.zoneControlled", "受控区 (controlled)")}</SelectItem>
-                  <SelectItem value="protected">{t("security.zoneProtected", "受保护区 (protected)")}</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">{t("security.defaultZoneDesc", "路径不匹配任何区域时使用的默认区域。受控区允许创建/编辑，受保护区拒绝所有写入。")}</p>
-            </div>
             <div className="flex justify-end pt-2">
-              <Button onClick={() => doSave("/api/config/security/zones", zones, "zonesSaved")} disabled={saving}>
+              <Button
+                onClick={() => doSave("/api/config/security/path-policy", {
+                  workspace_paths: zones.workspace,
+                  safety_immune_paths: zones.protected,
+                }, "zonesSaved")}
+                disabled={saving}
+              >
                 {saving ? <Loader2 className="size-4 animate-spin mr-2" /> : <Save size={14} className="mr-2" />}
                 {t("security.save")}
               </Button>
@@ -836,6 +1096,113 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
         </Card>
       )}
 
+      {/* C9a §3: IM Owner Allowlist (per-channel) */}
+      {tab === "imowner" && (
+        <Card className="p-0 gap-0 border-border/50 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50 px-4 py-2.5">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-semibold">{t("security.imOwner", "IM Owner")}</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                {t("security.imOwnerDesc", "限定哪些 IM 用户能调用 CONTROL_PLANE 工具（如 switch_mode、delegate_to_agent 等）。未配置 = 单用户私聊默认（is_owner=true）。")}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => loadImOwnerAllowlist(true)} disabled={loadingImOwner} className="h-8">
+              <RotateCw size={14} className={cn("mr-1.5", loadingImOwner && "animate-spin")} /> {t("security.refresh")}
+            </Button>
+          </CardHeader>
+          <CardContent className="p-4 space-y-3">
+            {imOwnerEntries.length === 0 ? (
+              <div className="flex flex-col items-center py-8 text-center text-sm text-muted-foreground">
+                <ShieldCheck size={32} className="mb-3 opacity-20" />
+                {loadingImOwner
+                  ? t("common.loading", "加载中...")
+                  : t("security.imOwnerNoChannel", "未发现已启用的 IM 渠道")}
+              </div>
+            ) : (
+              imOwnerEntries.map((entry) => (
+                <ImOwnerChannelRow
+                  key={entry.channel}
+                  entry={entry}
+                  saving={savingAction === `imowner-${entry.channel}`}
+                  onSave={saveImOwnerAllowlist}
+                />
+              ))
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* C9a §4: Dry-run preview (current persisted policy decisions for sample tools) */}
+      {tab === "dryrun" && (
+        <Card className="p-0 gap-0 border-border/50 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50 px-4 py-2.5">
+            <div className="space-y-1">
+              <CardTitle className="text-sm font-semibold">{t("security.dryRun", "策略预览")}</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                {t("security.dryRunDesc", "用当前已保存的 policy_v2 配置对常见工具进行试运行，确认配置真实效果（不会执行任何工具）。")}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={runDryRunPreview} disabled={loadingDryRun} className="h-8">
+              <RotateCw size={14} className={cn("mr-1.5", loadingDryRun && "animate-spin")} /> {t("security.dryRunRun", "重新运行")}
+            </Button>
+          </CardHeader>
+          <CardContent className="p-0">
+            {dryRunDecisions.length === 0 ? (
+              <div className="flex flex-col items-center py-10 text-center text-sm text-muted-foreground">
+                <Shield size={32} className="mb-3 opacity-20" />
+                {loadingDryRun ? t("common.loading", "加载中...") : t("security.dryRunEmpty", "尚无预览结果")}
+              </div>
+            ) : (
+              <Table>
+                <TableHeader className="bg-muted/30">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="text-xs h-10 px-5 font-medium">{t("security.dryRunTool", "工具")}</TableHead>
+                    <TableHead className="text-xs h-10 px-4 font-medium">{t("security.dryRunArgs", "参数")}</TableHead>
+                    <TableHead className="text-xs h-10 px-4 font-medium">{t("security.dryRunDecision", "决策")}</TableHead>
+                    <TableHead className="hidden md:table-cell text-xs h-10 px-4 font-medium">{t("security.dryRunClass", "分类")}</TableHead>
+                    <TableHead className="hidden lg:table-cell text-xs h-10 px-4 font-medium">{t("security.dryRunReason", "原因")}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dryRunDecisions.map((d, i) => (
+                    <TableRow key={i} className="border-b-border/50 hover:bg-muted/20">
+                      <TableCell className="px-5 py-2.5 font-mono text-xs">
+                        {d.tool_label_key ? t(d.tool_label_key, d.tool) : d.tool}
+                      </TableCell>
+                      <TableCell className="px-4 py-2.5 font-mono text-xs text-muted-foreground truncate max-w-[260px]" title={d.params_preview}>
+                        {d.params_preview}
+                      </TableCell>
+                      <TableCell className="px-4 py-2.5">
+                        <DecisionBadge decision={d.decision} labelKey={d.decision_label_key} />
+                        {d.safety_immune_match && (
+                          <Badge variant="outline" className="ml-1.5 text-[10px] uppercase border-amber-500/40 text-amber-600">
+                            {t("security.flag.immune", "免疫")}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell px-4 py-2.5">
+                        {d.approval_class ? (
+                          <Badge variant="secondary" className="text-[10px] font-mono">
+                            {d.approval_class_label_key ? t(d.approval_class_label_key, d.approval_class) : d.approval_class}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell px-4 py-2.5 text-xs text-muted-foreground truncate max-w-[280px]" title={d.reason}>
+                        {d.reason_code
+                          ? t(`security.reasonCode.${d.reason_code}`, d.reason || d.reason_code)
+                          : (d.reason || "—")}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Checkpoints */}
       {tab === "checkpoints" && (
         <Card className="p-0 gap-0 border-border/50 shadow-sm overflow-hidden">
@@ -894,17 +1261,197 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       )}
         </>
       )}
+
+      <AlertDialog
+        open={offDialogOpen}
+        onOpenChange={(open) => {
+          if (saving) return;
+          setOffDialogOpen(open);
+          if (!open) {
+            setOffAckPhrase("");
+            setOffAckError("");
+          }
+        }}
+      >
+        <AlertDialogContent className="sm:max-w-[520px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <span className="grid size-8 place-items-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-600">
+                <ShieldAlert size={16} />
+              </span>
+              {t("security.offDialogTitle", "确认关闭安全方案")}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  {t(
+                    "security.offDialogDesc",
+                    "关闭后将停用确认、路径名单、敏感路径保护、沙箱与命令拦截。仅建议在临时排障或完全可信环境中使用。",
+                  )}
+                </p>
+                <div className="rounded-md border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs leading-5 text-red-700 dark:text-red-300">
+                  {t(
+                    "security.offDialogWarning",
+                    "请输入下方确认短语后才能关闭安全方案；这会写入审计日志。",
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-foreground">
+                    {t("security.offAckLabel", "确认短语")}
+                  </Label>
+                  <code className="block rounded-md border bg-muted/40 px-2.5 py-2 text-xs text-foreground">
+                    {OFF_ACK_PHRASE}
+                  </code>
+                  <Input
+                    autoFocus
+                    value={offAckPhrase}
+                    onChange={(e) => {
+                      setOffAckPhrase(e.target.value);
+                      if (offAckError) setOffAckError("");
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void confirmOffMode();
+                      }
+                    }}
+                    placeholder={OFF_ACK_PHRASE}
+                    className="h-9"
+                  />
+                  {offAckError && (
+                    <p className="text-xs text-destructive">{offAckError}</p>
+                  )}
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>
+              {t("common.cancel", "取消")}
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={saving || offAckPhrase.trim() !== OFF_ACK_PHRASE}
+              onClick={() => void confirmOffMode()}
+            >
+              {saving && <Loader2 className="mr-2 size-4 animate-spin" />}
+              {t("security.offDialogConfirm", "确认关闭")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
 /* ─── Sub-components ─── */
 
-function DecisionBadge({ decision }: { decision: string }) {
+// C9a §3: per-channel IM owner allowlist editor row
+function ImOwnerChannelRow({
+  entry,
+  saving,
+  onSave,
+}: {
+  entry: ImOwnerAllowlistEntry;
+  saving: boolean;
+  onSave: (channel: string, owners: string[] | null) => void;
+}) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState<string>(entry.owners.join("\n"));
+  const [pendingClear, setPendingClear] = useState(false);
+
+  const dirty = draft.trim() !== entry.owners.join("\n").trim();
+
+  const handleSave = () => {
+    const owners = draft.split(/[\n,;\s]+/).map((s) => s.trim()).filter(Boolean);
+    onSave(entry.channel, owners);
+  };
+
+  const handleClear = () => {
+    if (pendingClear) {
+      onSave(entry.channel, null);
+      setPendingClear(false);
+      return;
+    }
+    setPendingClear(true);
+    setTimeout(() => setPendingClear(false), 3000);
+  };
+
+  return (
+    <div className="rounded-md border border-border/50 p-3 space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="font-mono text-xs">{entry.channel}</Badge>
+          {entry.configured ? (
+            <Badge variant="secondary" className="text-xs">
+              {entry.owners.length} {t("security.imOwnerCount", "owner")}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-xs text-muted-foreground border-dashed">
+              {t("security.imOwnerUnconfigured", "未配置（is_owner=true）")}
+            </Badge>
+          )}
+        </div>
+        <div className="flex gap-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleClear}
+            disabled={saving || (!entry.configured && !pendingClear)}
+            className={cn("h-7 text-xs", pendingClear && "text-destructive")}
+          >
+            <IconTrash size={12} className="mr-1" />
+            {pendingClear
+              ? t("security.imOwnerClearConfirm", "再次点击清除")
+              : t("security.imOwnerClear", "清除")}
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            className="h-7 text-xs"
+          >
+            {saving && <Loader2 className="mr-1 size-3 animate-spin" />}
+            <Save size={12} className="mr-1" /> {t("common.save", "保存")}
+          </Button>
+        </div>
+      </div>
+      <textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder={t(
+          "security.imOwnerPlaceholder",
+          "每行一个 user_id（也支持逗号/分号/空格分隔）。空 = 显式锁定（CONTROL_PLANE 全员被拒）",
+        )}
+        rows={Math.max(2, draft.split("\n").length)}
+        className="w-full resize-none rounded-md border border-border/50 bg-background px-3 py-2 font-mono text-xs focus:border-primary focus:outline-none"
+      />
+      <p className="text-[11px] text-muted-foreground">
+        {t(
+          "security.imOwnerHint",
+          "三态语义：未配置 → 单用户默认；空列表 → 显式锁定；非空 → 仅列表内 user_id 可调控制面工具。",
+        )}
+      </p>
+    </div>
+  );
+}
+
+function DecisionBadge({ decision, labelKey }: { decision: string; labelKey?: string | null }) {
+  const { t } = useTranslation();
   const variant = decision === "deny" ? "destructive" : decision === "confirm" ? "outline" : "secondary";
+  const fallback = decision === "deny"
+    ? t("security.decision.deny", "拒绝")
+    : decision === "confirm"
+      ? t("security.decision.confirm", "需确认")
+      : decision === "allow"
+        ? t("security.decision.allow", "允许")
+        : decision;
+  const label = labelKey ? t(labelKey, fallback) : fallback;
   return (
     <Badge variant={variant} className="text-[11px] uppercase shrink-0">
-      {decision}
+      {label}
     </Badge>
   );
 }
@@ -915,7 +1462,7 @@ function ZonePanel({ zone, paths, onChange }: {
 }) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
-  const [expanded, setExpanded] = useState(zone === "workspace" || zone === "controlled");
+  const [expanded, setExpanded] = useState(zone === "workspace");
   const meta = ZONE_META[zone];
 
   const add = () => {

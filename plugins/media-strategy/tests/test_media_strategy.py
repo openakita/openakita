@@ -115,39 +115,53 @@ def test_taiwan_package_includes_new_sources() -> None:
         "xinhua-taiwan",
         "people-taiwan",
         "chinanews-taiwan",
+        "huanqiu-taiwan",
+        "crntt-rss",
         "udn-cross-strait",
         "chinatimes-politics",
+        "chinatimes-cross-strait",
         "ettoday-mainland",
         "nownews-politics",
         "taiwan-info",
         # HTML-listing sources for outlets without public RSS.
         "taiwancn-jsbg",
+        "taiwancn-top-news",
         "fjsen-taihai",
         "taihainet-twxw",
+        "taihainet-home",
     ):
         assert required in taiwan_sources, required
     assert SOURCE_DEFS["fjsen-taihai"]["default_enabled"] is True
     assert SOURCE_DEFS["xinhua-taiwan"]["default_enabled"] is True
     assert SOURCE_DEFS["xinhua-taiwan"]["kind"] == "html"
-    for stale_or_broken in (
-        "udn-cross-strait",
-        "nownews-politics",
-    ):
+    for stale_or_broken in ("nownews-politics",):
         assert stale_or_broken in DEPRECATED_SOURCE_IDS
     assert "people-taiwan" not in DEPRECATED_SOURCE_IDS
+    assert "udn-cross-strait" not in DEPRECATED_SOURCE_IDS
+    assert "chinatimes-politics" not in DEPRECATED_SOURCE_IDS
     assert "taihainet-twxw" not in DEPRECATED_SOURCE_IDS
     assert SOURCE_DEFS["people-taiwan"]["kind"] == "html"
     assert SOURCE_DEFS["taihainet-twxw"]["url"] == "https://tw.taihainet.com/"
+    assert SOURCE_DEFS["udn-cross-strait"]["url"] == "https://udn.com/news/rssfeed/6638"
+    assert SOURCE_DEFS["huanqiu-taiwan"]["selectors"]["parser"] == "huanqiu_csr"
 
 
 def test_html_sources_declare_selectors() -> None:
     from media_models import SOURCE_DEFS
 
-    for sid in ("taiwancn-jsbg", "fjsen-taihai", "taihainet-twxw"):
+    for sid in (
+        "taiwancn-jsbg",
+        "taiwancn-top-news",
+        "huanqiu-taiwan",
+        "chinatimes-politics",
+        "fjsen-taihai",
+        "taihainet-twxw",
+        "taihainet-home",
+    ):
         meta = SOURCE_DEFS[sid]
         assert meta.get("kind") == "html", sid
         selectors = meta.get("selectors") or {}
-        assert "item" in selectors and selectors["item"], sid
+        assert selectors.get("item") or selectors.get("parser"), sid
 
 
 def test_default_enabled_strategy_favors_domestic() -> None:
@@ -241,6 +255,67 @@ def test_feed_parser_infers_date_from_url_when_feed_date_missing() -> None:
         rss.FEEDPARSER_AVAILABLE = old
     assert len(items) == 1
     assert items[0].published_at == "2013-10-16T00:00:00Z"
+
+
+def test_feed_parser_skips_placeholder_dates() -> None:
+    from media_fetchers import rss
+
+    body = """<?xml version="1.0"?>
+    <rss version="2.0"><channel><title>x</title>
+      <item><title>旧接口空壳</title><link>https://example.com/a</link>
+      <pubDate>Thu, 01 Jan 1970 08:00:00 +0800</pubDate></item>
+    </channel></rss>"""
+    old = rss.FEEDPARSER_AVAILABLE
+    rss.FEEDPARSER_AVAILABLE = False
+    try:
+        items = rss.parse_feed("demo", body)
+    finally:
+        rss.FEEDPARSER_AVAILABLE = old
+    assert items == []
+
+
+def test_html_parser_handles_huanqiu_csr_blob() -> None:
+    from media_fetchers.html import parse_huanqiu_channel
+
+    html = (
+        "4RXo3VkFDgyarticle有评论称岛内民众期盼和平统一的呼声越来越高，"
+        "国台办：统一是不可阻挡的历史大势taiwan.huanqiu.com1778640892140"
+    )
+    items = parse_huanqiu_channel("huanqiu-taiwan", html, "https://taiwan.huanqiu.com/")
+    assert len(items) == 1
+    assert items[0].url == "https://taiwan.huanqiu.com/article/4RXo3VkFDgy"
+    assert items[0].raw["parser"] == "huanqiu_csr"
+
+
+def test_html_parser_handles_chinatimes_listing() -> None:
+    from media_fetchers.html import parse_chinatimes_listing
+
+    html = """
+    <html><body><a href="/realtimenews/20260513000957-260409">
+    川普今晚抵北京 全球「北京时间」启动 台海议题成焦点
+    </a></body></html>
+    """
+    items = parse_chinatimes_listing(
+        "chinatimes-cross-strait", html, "https://www.chinatimes.com/chinese/"
+    )
+    assert len(items) == 1
+    assert items[0].published_at == "2026-05-13T00:00:00Z"
+
+
+def test_single_article_parser_reads_metadata() -> None:
+    from media_fetchers.html import parse_single_article
+
+    html = """
+    <html><head>
+      <meta property="og:title" content="台海最新动态：两岸交流持续升温">
+      <meta property="article:published_time" content="2026-05-13T10:30:00+08:00">
+      <meta name="description" content="这是一条用于手动补充到雷达的新闻摘要。">
+    </head><body><article><p>正文第一段，补充新闻背景。</p></article></body></html>
+    """
+    item = parse_single_article("manual-url", html, "https://example.com/news/20260513/a.html")
+    assert item.title == "台海最新动态：两岸交流持续升温"
+    assert item.published_at == "2026-05-13T02:30:00Z"
+    assert item.raw["parser"] == "single_article"
 
 
 def test_newsnow_parser_and_rate_limit() -> None:
@@ -523,6 +598,15 @@ async def test_task_manager_seeds_and_upserts_article(tmp_path: Path) -> None:
         )
         assert inserted2 is False
         assert article2["duplicate_count"] == 2
+        html_source = await tm.add_custom_source(
+            name="Demo HTML",
+            url="https://example.com/news/",
+            package_ids=["taiwan"],
+            kind="html",
+            selectors={"parser": "chinatimes_listing"},
+        )
+        assert html_source["kind"] == "html"
+        assert html_source["selectors"]["parser"] == "chinatimes_listing"
 
         await tm.upsert_article(
             {

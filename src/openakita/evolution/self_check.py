@@ -1534,6 +1534,57 @@ ID: {result.test_id}
 
 请开始执行修复。"""
 
+                # C15 §17.1 + C14 follow-up — install an unattended
+                # PolicyContext for the fix agent. Without this the fix
+                # agent inherited fallback ctx with ``is_unattended=False``,
+                # so any CONFIRM-class tool it tried to invoke would hang
+                # waiting for a UI confirmation that's structurally
+                # impossible in this code path. Also open an evolution
+                # audit window so every decision the fix agent makes is
+                # tagged with the ``fix_id`` in
+                # ``data/audit/evolution_decisions.jsonl``.
+                ctx_token = None
+                fix_token = None
+                evo_window = None
+                try:
+                    from ..core.policy_v2 import (
+                        build_policy_context,
+                        classify_entry,
+                        open_window,
+                        set_active_fix_id,
+                        set_current_context,
+                    )
+
+                    evo_window = open_window(
+                        reason="self-fix",
+                        extra={
+                            "error_id": analysis.get("error_id", ""),
+                            "module": analysis.get("module", "unknown"),
+                            "attempt": attempt + 1,
+                        },
+                    )
+                    fix_token = set_active_fix_id(evo_window.fix_id)
+                    cls = classify_entry("evolution", force_unattended=True)
+                    evo_ctx = build_policy_context(
+                        session_id=f"evolution_fix_{evo_window.fix_id}",
+                        channel="evolution",
+                        is_unattended=cls.is_unattended,
+                        unattended_strategy=cls.default_strategy or "",
+                        user_message=fix_instruction or "",
+                        evolution_fix_id=evo_window.fix_id,
+                    )
+                    ctx_token = set_current_context(evo_ctx)
+                except Exception as ctx_exc:
+                    # ctx installation MUST NOT block the fix attempt.
+                    # If anything goes wrong we keep going with the
+                    # legacy fallback ctx — the only side-effect is
+                    # losing the audit linkage for this attempt.
+                    logger.warning(
+                        "[C15] failed to install evolution PolicyContext: %s "
+                        "— fix attempt proceeds without ctx wiring",
+                        ctx_exc,
+                    )
+
                 # 带超时执行修复 Agent
                 try:
                     if hasattr(agent, "execute_task_from_message"):
@@ -1559,6 +1610,31 @@ ID: {result.test_id}
                     )
                     success = False
                     result_msg = f"修复超时（{self.FIX_TIMEOUT_SECONDS}s）"
+                finally:
+                    # Tear down evolution ctx + fix_id contextvar + window
+                    # in reverse order. Each step is independent so a
+                    # failure in one doesn't skip the others.
+                    if ctx_token is not None:
+                        try:
+                            from ..core.policy_v2 import reset_current_context
+
+                            reset_current_context(ctx_token)
+                        except Exception:
+                            pass
+                    if fix_token is not None:
+                        try:
+                            from ..core.policy_v2 import reset_active_fix_id
+
+                            reset_active_fix_id(fix_token)
+                        except Exception:
+                            pass
+                    if evo_window is not None:
+                        try:
+                            from ..core.policy_v2 import close_window
+
+                            close_window(evo_window.fix_id)
+                        except Exception:
+                            pass
 
                 await agent.shutdown()
                 agent = None

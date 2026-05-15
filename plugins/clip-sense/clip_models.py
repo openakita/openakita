@@ -245,6 +245,19 @@ ERROR_HINTS: dict[str, dict[str, Any]] = {
         "hints_zh": ["确认是有效的 mp4/mkv/mov 文件", "视频文件可能已损坏"],
         "hints_en": ["Verify file is valid mp4/mkv/mov", "File may be corrupted"],
     },
+    "no_speech": {
+        "label_zh": "无有效语音",
+        "label_en": "No Speech Detected",
+        "color": "yellow",
+        "hints_zh": [
+            "高光/拆条/口播依赖「可识别的人声」：纯音乐、环境声、几乎静音或只有背景乐时会出现此错误",
+            "请换一段带清晰对白/口播的素材，或在剪辑软件中检查音量、声道（建议导出为常见 AAC 音轨）后重试",
+        ],
+        "hints_en": [
+            "Highlight/topic/talking modes need recognizable speech; music-only or very quiet audio triggers this",
+            "Try a clip with clear dialogue, or re-export with normalised volume and a standard AAC track",
+        ],
+    },
     "duration": {
         "label_zh": "时长超限",
         "label_en": "Duration Exceeded",

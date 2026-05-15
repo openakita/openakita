@@ -3,6 +3,14 @@ Code Quality 处理器
 
 读取 linter 诊断信息：
 - read_lints: 调用项目配置的 linter 获取诊断
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import asyncio
@@ -13,6 +21,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -21,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 class CodeQualityHandler:
     TOOLS = ["read_lints"]
+    TOOL_CLASSES = {"read_lints": ApprovalClass.READONLY_GLOBAL}
 
     def __init__(self, agent: "Agent"):
         self.agent = agent
@@ -114,7 +125,7 @@ class CodeQualityHandler:
                 lines.append(f"  ... and {len(issues) - 50} more")
             return "\n".join(lines)
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return "[ruff] Timed out after 30s"
         except Exception as e:
             logger.warning(f"ruff failed: {e}")
@@ -172,7 +183,7 @@ class CodeQualityHandler:
                 lines.append(f"  ... and {total - 50} more")
             return header + "\n" + "\n".join(lines)
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return "[eslint] Timed out after 60s"
         except Exception as e:
             logger.warning(f"eslint failed: {e}")

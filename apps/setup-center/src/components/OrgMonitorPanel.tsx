@@ -45,11 +45,11 @@ function NodeTasksTabContent({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12, minWidth: 0 }}>
       {nodeActivePlan && (
-        <div className="card" style={{ padding: 10 }}>
+        <div className="card" style={{ padding: 10, minWidth: 0, overflow: "hidden" }}>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#b45309" }}>{t("org.monitor.currentTask")}</div>
-          <div style={{ fontWeight: 500, marginBottom: 6 }}>{nodeActivePlan.title}</div>
+          <div style={{ fontWeight: 500, marginBottom: 6, ...WRAP_TEXT_STYLE }}>{nodeActivePlan.title}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: 10, color: "var(--muted)" }}>{t("org.monitor.progress")}</span>
             <div style={{ flex: 1, height: 4, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
@@ -64,9 +64,9 @@ function NodeTasksTabContent({
                 const icon = st === "completed" ? "✓" : st === "in_progress" ? "→" : "○";
                 const color = st === "completed" ? "#22c55e" : st === "in_progress" ? "#3b82f6" : "var(--muted)";
                 return (
-                  <div key={s.id || i} style={{ display: "flex", gap: 6, alignItems: "flex-start", marginBottom: 4 }}>
+                  <div key={s.id || i} style={{ display: "flex", gap: 6, alignItems: "flex-start", marginBottom: 4, minWidth: 0 }}>
                     <span style={{ color, fontWeight: 600, flexShrink: 0 }}>{icon}</span>
-                    <span style={{ color: "var(--text)" }}>{s.description || s.title || t("org.monitor.step", { n: i + 1 })}</span>
+                    <span style={{ color: "var(--text)", ...WRAP_TEXT_STYLE }}>{s.description || s.title || t("org.monitor.step", { n: i + 1 })}</span>
                   </div>
                 );
               })}
@@ -75,16 +75,16 @@ function NodeTasksTabContent({
         </div>
       )}
 
-      <div className="card" style={{ padding: 10 }}>
+      <div className="card" style={{ padding: 10, minWidth: 0, overflow: "hidden" }}>
         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t("org.monitor.assignedToMe")}</div>
         {(nodeTasks?.assigned?.length ?? 0) === 0 ? (
           <div style={{ fontSize: 11, color: "var(--muted)" }}>{t("org.monitor.none")}</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
             {(nodeTasks?.assigned || []).map((task: any) => (
-              <div key={task.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, var(--bg-card))" }}>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>{task.title}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10 }}>
+              <div key={task.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, var(--bg-card))", minWidth: 0, overflow: "hidden" }}>
+                <div style={{ fontWeight: 500, marginBottom: 4, ...WRAP_TEXT_STYLE }}>{task.title}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, minWidth: 0, flexWrap: "wrap" }}>
                   <span style={{ padding: "1px 5px", borderRadius: 3, background: "var(--bg-app)", color: "var(--muted)" }}>
                     {t(TASK_STATUS_LABELS[task.status] || task.status)}
                   </span>
@@ -99,21 +99,21 @@ function NodeTasksTabContent({
         )}
       </div>
 
-      <div className="card" style={{ padding: 10 }}>
+      <div className="card" style={{ padding: 10, minWidth: 0, overflow: "hidden" }}>
         <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t("org.monitor.delegatedByMe")}</div>
         {(nodeTasks?.delegated?.length ?? 0) === 0 ? (
           <div style={{ fontSize: 11, color: "var(--muted)" }}>{t("org.monitor.none")}</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
             {(nodeTasks?.delegated || []).map((task: any) => (
-              <div key={task.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, var(--bg-card))" }}>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>{task.title}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10 }}>
+              <div key={task.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, var(--bg-card))", minWidth: 0, overflow: "hidden" }}>
+                <div style={{ fontWeight: 500, marginBottom: 4, ...WRAP_TEXT_STYLE }}>{task.title}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, minWidth: 0, flexWrap: "wrap" }}>
                   <span style={{ padding: "1px 5px", borderRadius: 3, background: "var(--bg-app)", color: "var(--muted)" }}>
                     {t(TASK_STATUS_LABELS[task.status] || task.status)}
                   </span>
                   <span style={{ color: "var(--muted)" }}>{(task.progress_pct ?? 0)}%</span>
-                  <span style={{ color: "var(--muted)", marginLeft: "auto" }}>{t("org.monitor.executor", { name: getNodeLabel(task.assignee_node_id) })}</span>
+                  <span style={{ color: "var(--muted)", marginLeft: "auto", ...WRAP_TEXT_STYLE }}>{t("org.monitor.executor", { name: getNodeLabel(task.assignee_node_id) })}</span>
                 </div>
                 <div style={{ marginTop: 4, height: 3, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
                   <div style={{ height: "100%", borderRadius: 2, background: "var(--accent)", width: `${Math.min(100, task.progress_pct ?? 0)}%` }} />
@@ -134,6 +134,13 @@ const MSG_TYPE_COLORS: Record<string, string> = {
   question: "#2563eb", answer: "#0891b2",
   escalation: "#dc2626", deliverable: "#d97706",
 };
+
+const WRAP_TEXT_STYLE = {
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+  whiteSpace: "pre-wrap",
+} as const;
 
 export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: OrgMonitorPanelProps) {
   const { t } = useTranslation();
@@ -226,16 +233,16 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
   return (
     <div
       style={{
-        width: 280, flexShrink: 0,
+        width: 280, flexShrink: 0, minWidth: 0,
         borderLeft: "1px solid var(--line)",
-        overflowY: "auto", scrollbarGutter: "stable",
+        overflowY: "auto", overflowX: "hidden", scrollbarGutter: "stable",
         background: "var(--bg-app)",
         animation: "org-panel-in 0.3s cubic-bezier(0.4,0,0.2,1) 0.05s both",
       }}
     >
-      <div style={{ padding: "12px 12px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontWeight: 600, fontSize: 13 }}>{t("org.monitor.title")}</div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <div style={{ padding: "12px 12px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, flexShrink: 0 }}>{t("org.monitor.title")}</div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "flex-end", minWidth: 0, flexWrap: "wrap" }}>
           <span style={{
             fontSize: 10, padding: "1px 6px", borderRadius: 4,
             background: `${STATUS_COLORS[selectedNode.status] || "var(--muted)"}20`,
@@ -248,7 +255,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
           {selectedNode.ephemeral && <span style={{ fontSize: 9, color: "#b45309" }}>{t("org.monitor.ephemeral")}</span>}
         </div>
       </div>
-      <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 }}>
 
         {/* Tasks */}
         <NodeTasksTabContent
@@ -260,12 +267,12 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
 
         {/* Schedules */}
         {nodeSchedules.length > 0 && (
-          <div className="card" style={{ padding: 10 }}>
+          <div className="card" style={{ padding: 10, minWidth: 0, overflow: "hidden" }}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t("org.monitor.scheduledTasks")}</div>
             {nodeSchedules.map((s: any) => (
-              <div key={s.id} style={{ padding: "4px 0", borderBottom: "1px solid var(--line)", fontSize: 11 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontWeight: 500 }}>{s.name}</span>
+              <div key={s.id} style={{ padding: "4px 0", borderBottom: "1px solid var(--line)", fontSize: 11, minWidth: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, minWidth: 0 }}>
+                  <span style={{ fontWeight: 500, ...WRAP_TEXT_STYLE }}>{s.name}</span>
                   <span style={{
                     fontSize: 10, padding: "1px 5px", borderRadius: 3,
                     background: s.enabled ? "#dcfce7" : "#f3f4f6",
@@ -275,7 +282,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                   </span>
                 </div>
                 {s.last_run_at && (
-                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>{t("org.monitor.lastRun", { time: fmtDateTime(s.last_run_at) })}</div>
+                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2, ...WRAP_TEXT_STYLE }}>{t("org.monitor.lastRun", { time: fmtDateTime(s.last_run_at) })}</div>
                 )}
                 {s.last_result_summary && (
                   <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -288,7 +295,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
         )}
 
         {/* Recent events */}
-        <div className="card" style={{ padding: 10 }}>
+        <div className="card" style={{ padding: 10, minWidth: 0, overflow: "hidden" }}>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
             {t("org.monitor.recentActivity")}
             {nodeEvents.length > 0 && (
@@ -310,15 +317,16 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                       padding: "4px 0", borderBottom: "1px solid var(--line)",
                       fontSize: 11, cursor: "pointer",
                       background: isEvtExpanded ? "var(--bg-subtle, transparent)" : undefined,
+                      minWidth: 0,
                     }}>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0 }}>
                       <span style={{
                         width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
                         background: evt.event_type?.includes("fail") || evt.event_type?.includes("error")
                           ? "var(--danger)"
                           : evt.event_type?.includes("complete") ? "var(--ok)" : "var(--primary)",
                       }} />
-                      <span style={{ fontWeight: 500 }}>
+                      <span style={{ fontWeight: 500, ...WRAP_TEXT_STYLE }}>
                         {t(EVENT_TYPE_LABELS[evt.event_type] || evt.event_type?.replace(/_/g, " "))}
                       </span>
                       <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: "auto" }}>
@@ -330,6 +338,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                         marginTop: 2, marginLeft: 12, fontSize: 10,
                         maxHeight: isEvtExpanded ? "none" : 48,
                         overflow: isEvtExpanded ? "visible" : "hidden",
+                        ...WRAP_TEXT_STYLE,
                       }}>
                         {mdModules ? (
                           <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>{fullText}</mdModules.ReactMarkdown>
@@ -347,7 +356,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
         </div>
 
         {/* Thought chain */}
-        <div className="card" style={{ padding: 10 }}>
+        <div className="card" style={{ padding: 10, minWidth: 0, overflow: "hidden" }}>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
             {t("org.monitor.thinkingChain")}
             {nodeThinking.length > 0 && (
@@ -372,9 +381,10 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                       style={{
                         padding: "6px 0", borderBottom: "1px solid var(--line)", fontSize: 11,
                         cursor: "pointer", background: isExpanded ? "var(--bg-secondary)" : undefined,
+                        minWidth: 0,
                       }}
                     >
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0, flexWrap: "wrap" }}>
                         <span style={{
                           fontSize: 10, padding: "1px 5px", borderRadius: 3,
                           background: isOut ? "rgba(59,130,246,0.12)" : "rgba(245,158,11,0.12)",
@@ -398,6 +408,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                         marginTop: 3, fontSize: 11,
                         maxHeight: isExpanded ? "none" : 60,
                         overflow: isExpanded ? "visible" : "hidden",
+                        ...WRAP_TEXT_STYLE,
                       }}>
                         {mdModules ? (
                           <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
@@ -431,14 +442,15 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                       style={{
                         padding: "4px 0", borderBottom: "1px solid var(--line)", fontSize: 11,
                         cursor: "pointer", background: isExpanded ? "var(--bg-secondary)" : undefined,
+                        minWidth: 0,
                       }}
                     >
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", minWidth: 0 }}>
                         <span style={{
                           width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
                           background: isError ? "var(--danger)" : isComplete ? "var(--ok)" : isToolCall ? "#7c3aed" : "var(--primary)",
                         }} />
-                        <span style={{ fontWeight: 500, fontSize: 10, color: isToolCall ? "#7c3aed" : undefined }}>
+                        <span style={{ fontWeight: 500, fontSize: 10, color: isToolCall ? "#7c3aed" : undefined, ...WRAP_TEXT_STYLE }}>
                           {isToolCall ? "[T] " : ""}{t(EVENT_TYPE_LABELS[evtType] || evtType.replace(/_/g, " "))}
                         </span>
                         <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: "auto" }}>{tsLocal}</span>
@@ -450,7 +462,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                           return `**${t(DATA_KEY_LABELS[k] || k)}**: ${isExpanded ? tv : tv.slice(0, 120)}`;
                         }).join("\n\n");
                         return (
-                          <div className="bb-entry-content" style={{ fontSize: 10, marginTop: 2, marginLeft: 12 }}>
+                          <div className="bb-entry-content" style={{ fontSize: 10, marginTop: 2, marginLeft: 12, ...WRAP_TEXT_STYLE }}>
                             {mdModules ? (
                               <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>{mdText}</mdModules.ReactMarkdown>
                             ) : <span style={{ color: "var(--muted)" }}>{mdText}</span>}

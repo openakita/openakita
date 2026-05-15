@@ -37,6 +37,11 @@
       const stylePresets = [
         ["tech_business", "科技商务", "橙红玫红色系，适合产品、技术、管理层汇报"],
         ["consulting", "咨询汇报", "结构强、结论先行，适合方案和复盘"],
+        ["swiss_ikb", "瑞士风 · 克莱因蓝", "直角网格、单一蓝色锚点，适合 AI/科技/方法论分享"],
+        ["swiss_lemon", "瑞士风 · 柠檬黄", "高反差黄色锚点，适合年轻、零售、活力主题"],
+        ["swiss_lime", "瑞士风 · 柠檬绿", "荧光绿色锚点，适合未来、生态、创业主题"],
+        ["swiss_orange", "瑞士风 · 安全橙", "橙色工业感锚点，适合警示、决策、工程主题"],
+        ["editorial_ink", "杂志风 · 电子墨水", "暖纸底和编辑部气质，适合叙事、观点和图片型分享"],
         ["executive", "高管简报", "内容更克制，适合董事会和经营会"],
         ["education", "课程培训", "阅读友好，适合教学和内部培训"],
         ["custom", "自定义", "手动输入颜色、语气或视觉偏好"],
@@ -2255,6 +2260,27 @@
                       <input type="checkbox" checked={(settings.single_shot_mode || "false") === "true"} onChange={(e) => saveSettings({ single_shot_mode: e.target.checked ? "true" : "false" }).catch(setError)} />
                       Single-shot 模式（跳过用户确认环节，自动产出 PPT）
                     </label>
+                  </div>
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <div className="text-xs text-muted">生成质量模式</div>
+                    <select className="input select" value={settings.quality_mode || "standard"} onChange={(e) => saveSettings({ quality_mode: e.target.value }).catch(setError)}>
+                      <option value="draft">快速草稿（速度优先）</option>
+                      <option value="standard">标准商务（默认）</option>
+                      <option value="deep_design">深度设计（更强版式与审计）</option>
+                    </select>
+                  </div>
+                  <div className="form-row">
+                    <div className="text-xs text-muted">输出 / 导出模式</div>
+                    <select className="input select" value={settings.output_mode || "editable"} onChange={(e) => saveSettings({ output_mode: e.target.value }).catch(setError)}>
+                      <option value="editable">可编辑 PPTX（默认）</option>
+                      <option value="creative_image">创意图片模式（视觉优先，可编辑性有限）</option>
+                    </select>
+                    <select className="input select" value={settings.exporter || "python-pptx"} onChange={(e) => saveSettings({ exporter: e.target.value }).catch(setError)}>
+                      <option value="python-pptx">Python fallback 导出器</option>
+                      <option value="pptxgenjs">PptxGenJS 高级导出器（需安装 Node 依赖）</option>
+                    </select>
                   </div>
                 </div>
               </div>

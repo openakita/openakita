@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from openakita.orgs.models import EdgeType, OrgEdge, OrgNode, Organization
 from openakita.orgs.tool_handler import OrgToolHandler

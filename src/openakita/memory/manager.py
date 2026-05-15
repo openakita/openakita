@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -33,10 +34,12 @@ from pathlib import Path
 
 from ..core.log_health import record_health_event
 from .consolidator import MemoryConsolidator
+from .exceptions import MemoryStorageUnavailable
 from .extractor import MemoryExtractor
 from .json_utils import coerce_text
 from .retention import apply_retention
 from .retrieval import RetrievalEngine
+from .telemetry import emit_memory_health_event
 from .types import (
     Attachment,
     AttachmentDirection,
@@ -59,6 +62,111 @@ _UNSET_OWNER = object()
 
 class MemoryManager:
     """记忆管理器 (v2)"""
+
+    def _ensure_context_vars(self) -> None:
+        """Initialize per-instance contextvars for legacy ``__new__`` test doubles."""
+        if not hasattr(self, "_current_session_id_var"):
+            self._current_session_id_var = contextvars.ContextVar(
+                f"openakita_memory_session_id_{id(self)}",
+                default=None,
+            )
+        if not hasattr(self, "_current_user_id_var"):
+            self._current_user_id_var = contextvars.ContextVar(
+                f"openakita_memory_user_id_{id(self)}",
+                default="default",
+            )
+        if not hasattr(self, "_current_workspace_id_var"):
+            self._current_workspace_id_var = contextvars.ContextVar(
+                f"openakita_memory_workspace_id_{id(self)}",
+                default="default",
+            )
+        if not hasattr(self, "_session_turns_var"):
+            self._session_turns_var = contextvars.ContextVar(
+                f"openakita_memory_session_turns_{id(self)}",
+                default=None,
+            )
+        if not hasattr(self, "_recent_messages_var"):
+            self._recent_messages_var = contextvars.ContextVar(
+                f"openakita_memory_recent_messages_{id(self)}",
+                default=None,
+            )
+        if not hasattr(self, "_session_cited_memories_var"):
+            self._session_cited_memories_var = contextvars.ContextVar(
+                f"openakita_memory_cited_{id(self)}",
+                default=None,
+            )
+
+    @property
+    def _current_session_id(self) -> str | None:
+        self._ensure_context_vars()
+        return self._current_session_id_var.get()
+
+    @_current_session_id.setter
+    def _current_session_id(self, value: str | None) -> None:
+        self._ensure_context_vars()
+        self._current_session_id_var.set(value)
+
+    @property
+    def _current_user_id(self) -> str:
+        self._ensure_context_vars()
+        return self._current_user_id_var.get()
+
+    @_current_user_id.setter
+    def _current_user_id(self, value: str) -> None:
+        self._ensure_context_vars()
+        self._current_user_id_var.set(value or "default")
+
+    @property
+    def _current_workspace_id(self) -> str:
+        self._ensure_context_vars()
+        return self._current_workspace_id_var.get()
+
+    @_current_workspace_id.setter
+    def _current_workspace_id(self, value: str) -> None:
+        self._ensure_context_vars()
+        self._current_workspace_id_var.set(value or "default")
+
+    @property
+    def _session_turns(self) -> list[ConversationTurn]:
+        self._ensure_context_vars()
+        turns = self._session_turns_var.get()
+        if turns is None:
+            turns = []
+            self._session_turns_var.set(turns)
+        return turns
+
+    @_session_turns.setter
+    def _session_turns(self, value: list[ConversationTurn]) -> None:
+        self._ensure_context_vars()
+        self._session_turns_var.set(value)
+
+    @property
+    def _recent_messages(self) -> list[dict]:
+        self._ensure_context_vars()
+        messages = self._recent_messages_var.get()
+        if messages is None:
+            messages = []
+            self._recent_messages_var.set(messages)
+        return messages
+
+    @_recent_messages.setter
+    def _recent_messages(self, value: list[dict]) -> None:
+        self._ensure_context_vars()
+        self._recent_messages_var.set(value)
+
+    @property
+    def _session_cited_memories(self) -> list[dict]:
+        self._ensure_context_vars()
+        memories = self._session_cited_memories_var.get()
+        if memories is None:
+            memories = []
+            self._session_cited_memories_var.set(memories)
+        return memories
+
+    @_session_cited_memories.setter
+    def _session_cited_memories(self, value: list[dict]) -> None:
+        self._ensure_context_vars()
+        self._session_cited_memories_var.set(value)
 
     def __init__(
         self,
@@ -98,20 +206,6 @@ class MemoryManager:
         else:
             self.vector_store = None
 
-        # v2: Unified Store + Search Backend
-        db_path = self.data_dir / "openakita.db"
-        self.store = UnifiedStore(
-            db_path,
-            vector_store=self.vector_store,
-            backend_type=search_backend,
-            api_provider=embedding_api_provider,
-            api_key=embedding_api_key,
-            api_model=embedding_api_model,
-        )
-
-        # v2: Retrieval Engine (with brain for LLM query decomposition)
-        self.retrieval_engine = RetrievalEngine(self.store, brain=brain)
-
         # v3: Relational Memory (Mode 2) — initialized lazily on first use
         self.relational_store = None
         self.relational_encoder = None
@@ -123,6 +217,29 @@ class MemoryManager:
         self.memories_file = self.data_dir / "memories.json"
         self._memories: dict[str, Memory] = {}
         self._memories_lock = threading.RLock()
+
+        self._current_session_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+            f"openakita_memory_session_id_{id(self)}",
+            default=None,
+        )
+        self._current_user_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+            f"openakita_memory_user_id_{id(self)}",
+            default="default",
+        )
+        self._current_workspace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+            f"openakita_memory_workspace_id_{id(self)}",
+            default="default",
+        )
+        self._session_turns_var: contextvars.ContextVar[list[ConversationTurn] | None] = (
+            contextvars.ContextVar(f"openakita_memory_session_turns_{id(self)}", default=None)
+        )
+        self._recent_messages_var: contextvars.ContextVar[list[dict] | None] = contextvars.ContextVar(
+            f"openakita_memory_recent_messages_{id(self)}",
+            default=None,
+        )
+        self._session_cited_memories_var: contextvars.ContextVar[list[dict] | None] = (
+            contextvars.ContextVar(f"openakita_memory_cited_{id(self)}", default=None)
+        )
 
         self._current_session_id: str | None = None
         self._current_user_id: str = "default"
@@ -142,8 +259,72 @@ class MemoryManager:
         # Plugin-provided memory backends (shared dict from host_refs)
         self._plugin_backends: dict | None = None
 
-        # Load existing memories
-        self._load_memories()
+        self.degraded: bool = False
+        self.degraded_reason: str | None = None
+        self.degraded_details: str | None = None
+        self.repair_completed_restart_required: bool = False
+
+        # v2: Unified Store + Search Backend
+        db_path = self.data_dir / "openakita.db"
+        try:
+            self.store = UnifiedStore(
+                db_path,
+                vector_store=self.vector_store,
+                backend_type=search_backend,
+                api_provider=embedding_api_provider,
+                api_key=embedding_api_key,
+                api_model=embedding_api_model,
+            )
+            # v2: Retrieval Engine (with brain for LLM query decomposition)
+            self.retrieval_engine = RetrievalEngine(self.store, brain=brain)
+            # Load existing memories
+            self._load_memories()
+            self._maybe_schedule_snapshot()
+        except MemoryStorageUnavailable as e:
+            from .noop_store import NoopRetrievalEngine, NoopUnifiedStore
+
+            logger.error(
+                "[MemoryManager] Entering degraded mode: reason=%s details=%s",
+                e.reason,
+                e.details,
+                exc_info=True,
+            )
+            self.store = NoopUnifiedStore()
+            self.retrieval_engine = NoopRetrievalEngine()
+            self.degraded = True
+            self.degraded_reason = e.reason
+            self.degraded_details = e.details
+            with contextlib.suppress(Exception):
+                record_health_event("memory_degraded", {"reason": e.reason})
+            emit_memory_health_event("degraded", {"reason": e.reason})
+
+    def _maybe_schedule_snapshot(self) -> None:
+        try:
+            marker = self.data_dir / ".last_memory_snapshot"
+            now = datetime.now()
+            if marker.exists():
+                last = datetime.fromtimestamp(marker.stat().st_mtime)
+                if now - last < timedelta(hours=24):
+                    return
+
+            async def _snapshot():
+                try:
+                    snapshot = await asyncio.to_thread(self.store.db.create_snapshot_incremental)
+                    if snapshot is not None:
+                        marker.touch()
+                except Exception as e:
+                    logger.debug("[Memory] Snapshot skipped: %s", e)
+
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(_snapshot())
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
+        except RuntimeError:
+            # No running loop during sync construction; snapshot is optional and
+            # must never block startup.
+            return
+        except Exception as e:
+            logger.debug("[Memory] Snapshot scheduling skipped: %s", e)
 
     def _stamp_agent_id(self, mem: Memory) -> Memory:
         """Set agent_id on a memory if not already set."""
@@ -322,6 +503,7 @@ class MemoryManager:
         *,
         user_id: str | None | object = _UNSET_OWNER,
         workspace_id: str | None | object = _UNSET_OWNER,
+        focus_terms: list[str] | None = None,
     ) -> None:
         self._current_session_id = session_id
         if user_id is not _UNSET_OWNER:
@@ -349,6 +531,12 @@ class MemoryManager:
         self._recent_messages = []
         self._session_cited_memories = []
         self._set_retrieval_scope_context()
+        retrieval_engine = getattr(self, "retrieval_engine", None)
+        if hasattr(retrieval_engine, "set_focus_terms"):
+            retrieval_engine.set_focus_terms(focus_terms or [])
+        snapshot = getattr(self, "_precompact_snapshot", None)
+        if isinstance(snapshot, dict) and snapshot.get("session_id") != session_id:
+            self._precompact_snapshot = None
         try:
             self._turn_offset = self.store.get_max_turn_index(session_id)
         except Exception:
@@ -1706,6 +1894,36 @@ class MemoryManager:
             recent_messages=self._recent_messages,
             max_tokens=700,
         )
+
+    def save_precompact_snapshot(self, snapshot: dict) -> None:
+        """Store the latest session-scoped compaction snapshot."""
+        if not isinstance(snapshot, dict):
+            return
+        self._precompact_snapshot = snapshot
+        session_obj = getattr(self, "_current_session_obj", None)
+        context = getattr(session_obj, "context", None)
+        if context is not None and hasattr(context, "precompact_snapshot"):
+            context.precompact_snapshot = snapshot
+
+    def attach_session_context(self, session: object | None) -> None:
+        """Attach current Session object so snapshots can be persisted with SessionContext."""
+        self._current_session_obj = session
+        context = getattr(session, "context", None)
+        snapshot = getattr(context, "precompact_snapshot", None)
+        if isinstance(snapshot, dict) and snapshot.get("facts"):
+            self._precompact_snapshot = snapshot
+
+    def get_precompact_snapshot_context(self, max_chars: int = 1200) -> str:
+        """Return session-scoped compaction facts for prompt injection."""
+        snapshot = getattr(self, "_precompact_snapshot", None)
+        if not isinstance(snapshot, dict):
+            return ""
+        if snapshot.get("session_id") and snapshot.get("session_id") != self._current_session_id:
+            return ""
+        facts = [str(item).strip() for item in snapshot.get("facts", []) if str(item).strip()]
+        if not facts:
+            return ""
+        return "\n".join(f"- {fact}" for fact in facts)[:max_chars]
 
     async def get_injection_context_async(
         self, task_description: str = "", scope: str = "global", scope_owner: str = ""

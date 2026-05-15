@@ -408,6 +408,11 @@ jobs:
         working-directory: apps/setup-center
         run: npm ci
 
+      # macOS runners ship Homebrew Rust shims that can shadow rustup's real cargo.
+      - name: Prefer rustup Cargo on PATH
+        shell: bash
+        run: echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
+
       - name: Preflight Rust dependency check
         working-directory: apps/setup-center/src-tauri
         shell: bash
@@ -415,9 +420,10 @@ jobs:
           CARGO_HTTP_MULTIPLEXING: "false"
         run: |
           set -euo pipefail
+          CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
           # Clear cached build-scripts to avoid glibc mismatch across Ubuntu versions
           rm -rf target/debug/build
-          cargo fetch --locked
+          "$CARGO_BIN/cargo" fetch --locked
           CHECK_ARGS=""
           if [ -n "${{ matrix.rust_target }}" ]; then
             CHECK_ARGS="--target ${{ matrix.rust_target }}"
@@ -426,14 +432,14 @@ jobs:
           ATTEMPT=1
           while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
             echo "=== Preflight attempt $ATTEMPT/$MAX_ATTEMPTS ==="
-            if cargo check $CHECK_ARGS; then
+            if "$CARGO_BIN/cargo" check $CHECK_ARGS; then
               echo "Preflight succeeded"
               exit 0
             fi
             echo "Preflight failed (attempt $ATTEMPT)"
             if [ $ATTEMPT -eq 1 ]; then
               echo "::warning::Stale cache detected, running cargo clean before retry"
-              cargo clean
+              "$CARGO_BIN/cargo" clean
             fi
             ATTEMPT=$((ATTEMPT + 1))
             [ $ATTEMPT -le $MAX_ATTEMPTS ] && { echo "Retrying in 30s..."; sleep 30; }

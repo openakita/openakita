@@ -4,6 +4,14 @@ PlanHandler 类 + create_todo_handler 工厂函数
 从 plan.py 拆分而来，负责：
 - PlanHandler 类（工具调用处理、plan 文件持久化、进度展示）
 - create_todo_handler 工厂函数
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import json
@@ -13,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...core.policy_v2 import ApprovalClass
 from .todo_state import (
     _session_handlers,
     force_close_plan,
@@ -42,6 +51,16 @@ class PlanHandler:
         "create_plan_file",
         "exit_plan_mode",
     ]
+
+    # C7 explicit ApprovalClass — todo / plan 都是 agent 内部状态机
+    TOOL_CLASSES = {
+        "create_todo": ApprovalClass.EXEC_LOW_RISK,
+        "update_todo_step": ApprovalClass.EXEC_LOW_RISK,
+        "get_todo_status": ApprovalClass.READONLY_GLOBAL,
+        "complete_todo": ApprovalClass.EXEC_LOW_RISK,
+        "create_plan_file": ApprovalClass.MUTATING_SCOPED,
+        "exit_plan_mode": ApprovalClass.INTERACTIVE,
+    }
 
     def __init__(self, agent: "Agent"):
         self.agent = agent

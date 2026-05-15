@@ -1,0 +1,45 @@
+{
+  "scenarios": [
+    {
+      "id": "topic_tech_roadmap",
+      "mode": "topic_to_deck",
+      "title": "OpenAkita 插件生态路线图",
+      "slide_count": 8,
+      "style": "tech_business",
+      "prompt": "面向工程团队说明插件生态的目标、现状、路线图和下一步。"
+    },
+    {
+      "id": "consulting_strategy_report",
+      "mode": "topic_to_deck",
+      "title": "企业 AI 助手落地战略报告",
+      "slide_count": 10,
+      "style": "consulting",
+      "prompt": "用咨询汇报风格说明现状、问题、方案、收益、风险和实施计划。"
+    },
+    {
+      "id": "table_sales_report",
+      "mode": "table_to_deck",
+      "title": "季度销售数据洞察",
+      "slide_count": 8,
+      "style": "data_insight",
+      "prompt": "从销售数据中提炼核心指标、趋势、区域差异和行动建议。"
+    },
+    {
+      "id": "product_launch_pitch",
+      "mode": "topic_to_deck",
+      "title": "OpenAkita Desktop 新版本发布",
+      "slide_count": 8,
+      "style": "creative_pitch",
+      "prompt": "面向外部用户介绍新版本亮点、价值、场景和行动号召。"
+    },
+    {
+      "id": "files_to_deck_briefing",
+      "mode": "files_to_deck",
+      "title": "资料汇总简报",
+      "slide_count": 8,
+      "style": "tech_business",
+      "prompt": "将上传资料整理成结构清晰、可追溯的汇报材料。"
+    }
+  ]
+}
+

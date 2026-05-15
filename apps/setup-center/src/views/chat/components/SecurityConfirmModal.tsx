@@ -12,6 +12,28 @@ const RISK_LABELS: Record<string, string> = {
   low: "低风险",
 };
 
+// C9a §2: ApprovalClass → 中文 + 颜色（必须与 src/openakita/core/policy_v2/enums.py
+// 的 ApprovalClass StrEnum 字面量逐字对齐——任何漂移都会导致 badge 静默不渲染）。
+const APPROVAL_CLASS_LABELS: Record<string, { label: string; color: string }> = {
+  // 只读类
+  readonly_scoped:  { label: "局部只读",     color: "#10b981" },
+  readonly_global:  { label: "全局只读",     color: "#22c55e" },
+  readonly_search:  { label: "搜索",         color: "#06b6d4" },
+  // 修改类
+  mutating_scoped:  { label: "局部副作用",   color: "#f59e0b" },
+  mutating_global:  { label: "全局副作用",   color: "#ea580c" },
+  destructive:      { label: "破坏性操作",   color: "#dc2626" },
+  // 执行类
+  exec_low_risk:    { label: "低危执行",     color: "#3b82f6" },
+  exec_capable:     { label: "高权执行",     color: "#dc2626" },
+  // 控制 / 交互 / 网络
+  control_plane:    { label: "控制面",       color: "#9333ea" },
+  interactive:      { label: "交互式",       color: "#3b82f6" },
+  network_out:      { label: "网络出站",     color: "#0891b2" },
+  // 兜底
+  unknown:          { label: "未分类",       color: "#6b7280" },
+};
+
 function humanizeArgs(tool: string, args: Record<string, unknown>): string {
   if (tool === "run_shell" && args.command) return `即将执行命令：${args.command}`;
   if ((tool === "write_file" || tool === "edit_file") && args.path) return `即将修改文件：${args.path}`;
@@ -27,6 +49,46 @@ export interface SecurityCloseInfo {
   command: string;
 }
 
+// C23 P2-2: ApprovalClass DecisionAction → 中文短标签 + 颜色（必须与
+// src/openakita/core/policy_v2/enums.py 的 DecisionAction StrEnum 对齐）。
+const ACTION_LABELS: Record<string, { label: string; color: string }> = {
+  allow:   { label: "允许",  color: "#10b981" },
+  confirm: { label: "确认",  color: "#f59e0b" },
+  deny:    { label: "拒绝",  color: "#ef4444" },
+  defer:   { label: "延期",  color: "#9333ea" },
+};
+
+// C23 F7: engine.py 决策链 step.name → 中文短标签。chain step name 是
+// engine 内部英文常量（preflight / classify / matrix / safety_immune / ...）
+// 直接渲染会让中文用户面对一堆英文标识符。这里给出对照表，
+// 命中则展示中文，未命中（例如未来新加的 step）则保留原 name 不破坏渲染。
+// 后端真相来源: src/openakita/core/policy_v2/engine.py 各 DecisionStep
+// 的 name= 参数。
+const STEP_LABELS: Record<string, string> = {
+  engine_crash:              "引擎异常",
+  preflight:                 "预检",
+  classify:                  "分类",
+  safety_immune:             "永不放行检查",
+  owner_only:                "Owner 唯一性",
+  channel_compat:            "信道兼容性",
+  matrix:                    "矩阵决策",
+  matrix_deny:               "矩阵拒绝",
+  matrix_allow:              "矩阵放行",
+  replay:                    "重放检查",
+  trusted_path:              "可信路径",
+  user_allowlist:            "用户白名单",
+  death_switch:              "死亡开关",
+  unattended:                "无人值守模式",
+  finalize:                  "终决",
+  intent_preflight:          "意图预检",
+  intent_role_block:         "角色意图阻断",
+  intent_trust_bypass:       "信任旁路",
+  intent_clean:              "意图清扫",
+  intent_risk:               "意图风险",
+  approval_override_ignored: "覆盖未应用",
+  approval_override_applied: "覆盖已应用",
+};
+
 export function SecurityConfirmModal({
   data, apiBase, onClose, timerRef, setData,
 }: {
@@ -34,6 +96,10 @@ export function SecurityConfirmModal({
     tool: string; args: Record<string, unknown>; reason: string;
     riskLevel: string; needsSandbox: boolean; toolId?: string; countdown: number;
     defaultOnTimeout?: string;
+    // C9a §2: v2 字段（缺失时不渲染对应 UI 元素，向后兼容旧 backend）
+    approvalClass?: string | null; policyVersion?: number; channel?: string;
+    // C23 P2-2: 决策链。缺失或空时不渲染"决策依据"折叠区。
+    decisionChain?: Array<{ name: string; action: string; note: string }>;
   };
   apiBase: string;
   onClose: (info?: SecurityCloseInfo) => void;
@@ -44,6 +110,8 @@ export function SecurityConfirmModal({
   const pausedRef = useRef(false);
   const [postError, setPostError] = useState<string | null>(null);
   const [showMore, setShowMore] = useState(false);
+  // C23 P2-2: 默认折叠，避免把 modal 撑太大；用户主动 expand 才显示。
+  const [showChain, setShowChain] = useState(false);
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -118,15 +186,41 @@ export function SecurityConfirmModal({
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <IconShield size={24} style={{ color: riskColor }} />
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>
-              {t("chat.securityConfirmTitle", "安全确认")}
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>
+                {t("chat.securityConfirmTitle", "安全确认")}
+              </div>
+              {/* C9a §2: approval_class badge (v2 字段；旧 backend 缺失时不渲染) */}
+              {data.approvalClass && APPROVAL_CLASS_LABELS[data.approvalClass] && (
+                <span
+                  title={`policy_v2 ApprovalClass: ${data.approvalClass}`}
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: `${APPROVAL_CLASS_LABELS[data.approvalClass].color}1a`,
+                    color: APPROVAL_CLASS_LABELS[data.approvalClass].color,
+                    border: `1px solid ${APPROVAL_CLASS_LABELS[data.approvalClass].color}55`,
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  {APPROVAL_CLASS_LABELS[data.approvalClass].label}
+                </span>
+              )}
             </div>
-            <div style={{ fontSize: 12, opacity: 0.6 }}>
-              {t("chat.securityRiskLevel", "风险等级")}:{" "}
-              <span style={{ color: riskColor, fontWeight: 700 }}>
-                {RISK_LABELS[data.riskLevel] || data.riskLevel}
+            <div style={{ fontSize: 12, opacity: 0.6, display: "flex", gap: 8, alignItems: "center" }}>
+              <span>
+                {t("chat.securityRiskLevel", "风险等级")}:{" "}
+                <span style={{ color: riskColor, fontWeight: 700 }}>
+                  {RISK_LABELS[data.riskLevel] || data.riskLevel}
+                </span>
               </span>
+              {/* C9a §2: 渠道标识（IM 用户更需要知道是否是远端来源） */}
+              {data.channel === "im" && (
+                <span style={{ opacity: 0.7 }}>· {t("chat.securityChannelIm", "IM 渠道")}</span>
+              )}
             </div>
           </div>
         </div>
@@ -153,6 +247,75 @@ export function SecurityConfirmModal({
             {humanizeArgs(data.tool, data.args)}
           </pre>
         </div>
+
+        {/* C23 P2-2: decision_chain 折叠区。plan C9 要求把"为什么会要确认"
+            的引擎判断链展开给用户看。默认折叠 (showChain=false) 不打扰；
+            点击 disclosure 展开后逐行渲染 name / action badge / note。
+            缺失或空 chain 时整段不渲染（向后兼容旧 backend）。 */}
+        {data.decisionChain && data.decisionChain.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <button
+              onClick={() => setShowChain((s) => !s)}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--text)",
+                opacity: 0.7,
+                fontSize: 11,
+                cursor: "pointer",
+                padding: "2px 0",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+              title={t("chat.securityChainHint", "查看 policy_v2 引擎逐步判定记录")}
+            >
+              <span style={{ display: "inline-block", transform: showChain ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▸</span>
+              {t("chat.securityDecisionChain", "决策依据")} ({data.decisionChain.length})
+            </button>
+            {showChain && (
+              <ol style={{
+                margin: "6px 0 0",
+                padding: "8px 10px 8px 28px",
+                fontSize: 11,
+                lineHeight: 1.5,
+                background: "var(--panel2)",
+                borderRadius: 8,
+                border: "1px solid var(--line)",
+                maxHeight: 180,
+                overflow: "auto",
+                listStyle: "decimal",
+              }}>
+                {data.decisionChain.map((step, idx) => {
+                  const actionMeta = ACTION_LABELS[step.action] || { label: step.action, color: "#6b7280" };
+                  const stepLabel = STEP_LABELS[step.name] || step.name;
+                  return (
+                    <li key={idx} style={{ marginBottom: 4 }}>
+                      <span style={{ fontWeight: 600 }} title={step.name}>{stepLabel}</span>
+                      <span
+                        style={{
+                          marginLeft: 6,
+                          padding: "1px 6px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          borderRadius: 999,
+                          background: `${actionMeta.color}1a`,
+                          color: actionMeta.color,
+                          border: `1px solid ${actionMeta.color}55`,
+                        }}
+                      >
+                        {actionMeta.label}
+                      </span>
+                      {step.note && (
+                        <span style={{ marginLeft: 6, opacity: 0.75, wordBreak: "break-word" }}>{step.note}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </div>
+        )}
 
         {postError && (
           <div style={{

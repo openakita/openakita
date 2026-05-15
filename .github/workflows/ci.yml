@@ -301,6 +301,8 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: apps/setup-center/src-tauri
+          prefix-key: ci-rust-nocachebin-v1
+          cache-bin: false
 
       - name: Create resource placeholder for cargo check
         if: ${{ hashFiles('apps/setup-center/src-tauri/Cargo.toml') != '' }}
@@ -357,6 +359,8 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: apps/setup-center/src-tauri
+          prefix-key: ci-tauri-full-nocachebin-v1
+          cache-bin: false
 
       - name: Install Python project and PyInstaller
         run: |

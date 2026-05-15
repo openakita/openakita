@@ -71,6 +71,12 @@ runs:
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
 
+    # macOS runners may have Homebrew Rust shims earlier on PATH. Prefer the
+    # rustup-managed toolchain installed above for all subsequent cargo calls.
+    - name: Prefer rustup Cargo on PATH
+      shell: bash
+      run: echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
+
     - name: Add Rust cross-compilation target
       if: inputs.rust_target != ''
       shell: bash
@@ -82,6 +88,7 @@ runs:
         workspaces: |
           apps/setup-center/src-tauri -> target
         prefix-key: ${{ inputs.rust_cache_prefix }}
+        cache-bin: false
 
     - name: Build web frontend for remote browser access
       shell: bash

@@ -18,14 +18,13 @@ import asyncio
 import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from openakita.orgs.manager import OrgManager
-from openakita.orgs.models import OrgNode, Organization, NodeStatus
 from openakita.orgs.runtime import OrgRuntime
-from openakita.orgs.tool_categories import expand_tool_categories, TOOL_CATEGORIES
+from openakita.orgs.tool_categories import expand_tool_categories
 
 from tests.fixtures.mock_llm import MockLLMClient, MockBrain, MockResponse
 from tests.orgs.conftest import make_org, make_node, make_edge

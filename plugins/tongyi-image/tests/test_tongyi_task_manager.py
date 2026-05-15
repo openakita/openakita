@@ -279,7 +279,7 @@ async def test_whitelist_keys_are_stable() -> None:
     expected = {
         "status", "error_message", "api_task_id",
         "prompt", "negative_prompt", "model", "mode",
-        "params", "image_urls", "local_image_paths", "usage",
+        "params", "image_urls", "local_image_paths", "usage", "asset_ids",
     }
     assert set(TaskManager._UPDATABLE_COLUMNS) == expected
     # JSON-encoded keys must be a subset of whitelisted keys.
@@ -415,6 +415,7 @@ def test_default_config_has_safe_empty_values() -> None:
     in shipped binaries; non-empty defaults must remain to avoid forcing
     every user to fill in obvious fields."""
     assert DEFAULT_CONFIG["dashscope_api_key"] == ""
+    assert DEFAULT_CONFIG["dashscope_base_url"] == ""
     assert DEFAULT_CONFIG["output_dir"] == ""
     # Sensible defaults that should NOT be empty.
     assert DEFAULT_CONFIG["default_model"]

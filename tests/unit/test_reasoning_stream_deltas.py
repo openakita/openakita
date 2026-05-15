@@ -150,6 +150,76 @@ def test_trace_scrubber_drops_full_tool_trace_in_single_chunk():
     assert decision.text_content.rstrip() == "Visible answer."
 
 
+def test_trace_scrubber_drops_external_content_wrapper_single_chunk():
+    acc = StreamAccumulator()
+    events = acc.feed(
+        _text_delta(
+            "Visible answer.\n\n"
+            "<<<EXTERNAL_CONTENT_BEGIN nonce=8790a5b2 source=tool_trace>>>\n"
+            "<<TOOL_TRACE>>\n- read_file({'path': '333.txt'}) -> ...\n"
+            "<<<EXTERNAL_CONTENT_END nonce=8790a5b2>>>"
+        )
+    )
+    events.extend(acc.feed({"type": "message_stop"}))
+
+    combined = "".join(e["content"] for e in events if e.get("type") == "text_delta")
+    assert "EXTERNAL_CONTENT_BEGIN" not in combined
+    assert "tool_trace" not in combined
+    assert "<<TOOL_TRACE>>" not in combined
+    assert combined.rstrip() == "Visible answer."
+
+
+def test_trace_scrubber_drops_external_content_wrapper_split_across_chunks():
+    acc = StreamAccumulator()
+    events: list[dict] = []
+    for chunk in (
+        "Answer.\n\n<<<EXTERNAL_CONTENT_BEG",
+        "IN nonce=8790a5b2 source=tool_trace>>>\n",
+        "hidden trace\n<<<EXTERNAL_CONTENT_END nonce=8790a5b2>>>",
+    ):
+        events.extend(acc.feed(_text_delta(chunk)))
+    events.extend(acc.feed({"type": "message_stop"}))
+
+    combined = "".join(e["content"] for e in events if e.get("type") == "text_delta")
+    assert "EXTERNAL_CONTENT" not in combined
+    assert "hidden trace" not in combined
+    assert combined.rstrip() == "Answer."
+
+
+def test_trace_scrubber_resumes_after_external_content_end():
+    acc = StreamAccumulator()
+    events = acc.feed(
+        _text_delta(
+            "Before\n\n"
+            "<<<EXTERNAL_CONTENT_BEGIN nonce=abc source=tool_trace>>>\n"
+            "hidden\n"
+            "<<<EXTERNAL_CONTENT_END nonce=abc>>>\n\n"
+            "After"
+        )
+    )
+    events.extend(acc.feed({"type": "message_stop"}))
+
+    combined = "".join(e["content"] for e in events if e.get("type") == "text_delta")
+    assert combined == "Before\n\nAfter"
+
+
+def test_trace_scrubber_resumes_after_external_content_end_split_tag():
+    acc = StreamAccumulator()
+    events: list[dict] = []
+    for chunk in (
+        "Before\n\n<<<EXTERNAL_CONTENT_BEGIN nonce=abc source=tool_trace>>>\n",
+        "hidden\n<<<EXTERNAL_CONTENT_END nonce=ab",
+        "c>>>\n\nAfter",
+    ):
+        events.extend(acc.feed(_text_delta(chunk)))
+    events.extend(acc.feed({"type": "message_stop"}))
+
+    combined = "".join(e["content"] for e in events if e.get("type") == "text_delta")
+    assert "EXTERNAL_CONTENT" not in combined
+    assert "hidden" not in combined
+    assert combined == "Before\n\nAfter"
+
+
 def test_trace_scrubber_holds_marker_split_across_chunks():
     """marker 被拆在多个 chunk → 前半段不会先泄露到前端。"""
     acc = StreamAccumulator()

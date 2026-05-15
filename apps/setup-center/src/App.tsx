@@ -207,13 +207,24 @@ export function App() {
   return <MainApp />;
 }
 
-function UserDocsFrame({ docsBase, title }: { docsBase: string; title: string }) {
+function UserDocsFrame({
+  docsBase,
+  docsVersion,
+  title,
+}: {
+  docsBase: string;
+  docsVersion?: string | null;
+  title: string;
+}) {
   const [available, setAvailable] = useState<"checking" | "yes" | "no">("checking");
-  const docsUrl = `${docsBase}/user-docs/`;
+  const docsCacheKey = docsVersion || "current";
+  const docsUrl = docsVersion
+    ? `${docsBase}/user-docs/v${encodeURIComponent(docsVersion)}/?ov=${encodeURIComponent(docsCacheKey)}`
+    : `${docsBase}/user-docs/?ov=${encodeURIComponent(docsCacheKey)}`;
 
   useEffect(() => {
     let cancelled = false;
-    fetch(docsUrl, { method: "GET", signal: AbortSignal.timeout(5_000) })
+    fetch(docsUrl, { method: "GET", cache: "no-store", signal: AbortSignal.timeout(5_000) })
       .then((res) => {
         if (!cancelled) setAvailable(res.ok ? "yes" : "no");
       })
@@ -5672,7 +5683,7 @@ function MainApp() {
       const docsBase = httpApiBase();
       return (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-          <UserDocsFrame docsBase={docsBase} title={t("sidebar.docs")} />
+          <UserDocsFrame docsBase={docsBase} docsVersion={backendVersion} title={t("sidebar.docs")} />
         </div>
       );
     }
@@ -6000,7 +6011,9 @@ function MainApp() {
           </div>
           <div style={{ display: view === "org_editor" ? undefined : "none", flex: 1, minHeight: 0 }}>
             <ErrorBoundary>
-              <OrgEditorView apiBaseUrl={apiBaseUrl} visible={view === "org_editor"} />
+              <Suspense fallback={<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", opacity: 0.5 }}><div className="spinner" style={{ width: 24, height: 24 }} /></div>}>
+                <OrgEditorView apiBaseUrl={apiBaseUrl} visible={view === "org_editor"} />
+              </Suspense>
             </ErrorBoundary>
           </div>
           <div

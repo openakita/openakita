@@ -11,11 +11,21 @@ Desktop Handler - 桌面自动化工具处理器
 - desktop_window: 窗口管理
 - desktop_wait: 等待元素/窗口
 - desktop_inspect: 检查元素树
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import logging
 import sys
 from typing import Any
+
+from ...core.policy_v2 import ApprovalClass
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +47,19 @@ class DesktopHandler:
     """桌面自动化工具处理器"""
 
     TOOLS = DESKTOP_TOOLS
+
+    # C7 explicit ApprovalClass — desktop interactions are real-world side effects
+    TOOL_CLASSES = {
+        "desktop_screenshot": ApprovalClass.READONLY_GLOBAL,
+        "desktop_find_element": ApprovalClass.READONLY_GLOBAL,
+        "desktop_click": ApprovalClass.EXEC_CAPABLE,
+        "desktop_type": ApprovalClass.EXEC_CAPABLE,
+        "desktop_hotkey": ApprovalClass.EXEC_CAPABLE,
+        "desktop_scroll": ApprovalClass.EXEC_LOW_RISK,
+        "desktop_window": ApprovalClass.EXEC_CAPABLE,
+        "desktop_wait": ApprovalClass.EXEC_LOW_RISK,
+        "desktop_inspect": ApprovalClass.READONLY_GLOBAL,
+    }
 
     def __init__(self, agent):
         self.agent = agent

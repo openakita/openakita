@@ -250,6 +250,171 @@ openakita --auto-confirm
 openakita --mode chat|task|test
 ```
 
+## POLICIES.yaml Configuration (Policy v2)
+
+OpenAkita's security policy lives in `identity/POLICIES.yaml`. Most fields
+have safe defaults; only override what your deployment needs.
+
+### Hot-reload (C18 Phase A)
+
+Watch `POLICIES.yaml` for edits and rebuild the policy engine in-place
+without restarting OpenAkita:
+
+```yaml
+# identity/POLICIES.yaml
+security:
+  hot_reload:
+    enabled: true              # default: false (opt-in)
+    poll_interval_seconds: 5.0 # 0.5 .. 3600
+    debounce_seconds: 0.5      # avoid reading half-written editor saves
+```
+
+Behavior when `enabled: true`:
+
+- A daemon thread polls the YAML file every `poll_interval_seconds`.
+- `mtime` + content-hash dedup skips no-op writes (`touch`,
+  `git checkout` to same SHA, etc.).
+- Validation failure → keep the **last-known-good** config; write a
+  `reload_failed` row to the audit chain. The previous engine keeps
+  running so a typo doesn't lock you out.
+- Validation success → atomic swap of the engine singleton; write a
+  `reload_ok` audit row.
+
+Recommended for: k8s ConfigMap mounts, CI rolling deploys.
+Not recommended for: workstation development (manual `openakita serve`
+restart is fine).
+
+### Batch confirm aggregation (C18 Phase B)
+
+When `>= 2` confirms accumulate in the same conversation, show one
+"Approve all / Deny all" affordance instead of stacking N modals:
+
+```yaml
+security:
+  confirmation:
+    aggregation_window_seconds: 5.0  # default 0 (disabled)
+```
+
+Range: `[0, 600]`. Set to `5.0` for the typical UX. The window anchors
+on the most recent emission — only confirms that arrived within the
+window are batched.
+
+Endpoint: `POST /api/chat/security-confirm/batch` with body
+`{session_id, decision, within_seconds?}`. The server clamps client
+`within_seconds` to the configured value so a malicious client cannot
+resolve every pending confirm with a huge window.
+
+### Environment variable overrides (C18 Phase C)
+
+Five `OPENAKITA_*` variables can override fields without rewriting
+`POLICIES.yaml`. Useful for container deploys where the YAML is mounted
+read-only.
+
+| ENV variable                  | Field overridden                  | Values                                                       |
+| ----------------------------- | --------------------------------- | ------------------------------------------------------------ |
+| `OPENAKITA_POLICY_FILE`       | (path) alternate POLICIES.yaml    | absolute or relative path                                    |
+| `OPENAKITA_POLICY_HOT_RELOAD` | `hot_reload.enabled`              | `true` / `false` / `1` / `0` / `yes` / `no` / `on` / `off`   |
+| `OPENAKITA_AUTO_CONFIRM`      | `confirmation.mode`               | truthy → `trust`; falsy → `default`                          |
+| `OPENAKITA_UNATTENDED_STRATEGY` | `unattended.default_strategy`   | `deny` / `auto_approve` / `defer_to_owner` / `defer_to_inbox` / `ask_owner` |
+| `OPENAKITA_AUDIT_LOG_PATH`    | `audit.log_path`                  | (path; same safe-path rules as the YAML field)               |
+
+Notes:
+
+- ENV is re-read on every config load → hot-reload (Phase A) picks up
+  ENV changes automatically.
+- Invalid values (e.g. `OPENAKITA_POLICY_HOT_RELOAD=yes-please`) log a
+  loud `[PolicyV2]` warning, leave the YAML default in place, and write
+  an `env_override_invalid` audit row.
+- Successful overrides write an `env_override_applied` audit row
+  listing the (env, path, value) tuples.
+- `OPENAKITA_POLICY_FILE` is resolved early (before the override layer
+  itself runs) and takes precedence over `settings.identity_path`.
+
+We intentionally do NOT expose `workspace.paths`, `safety_immune.paths`,
+`user_allowlist`, or any approval-class table via ENV — those must live
+in VCS.
+
+### `--auto-confirm` CLI flag (C18 Phase D)
+
+```bash
+openakita --auto-confirm                 # interactive CLI
+openakita --auto-confirm run "..."       # one-shot task
+openakita --auto-confirm serve           # API server
+```
+
+Equivalent to `OPENAKITA_AUTO_CONFIRM=1`. **Destructive
+(`mutating_global`) tools and `safety_immune` paths still require
+confirm** — this is enforced in the classifier, not in
+`confirmation.mode`. So `--auto-confirm` does NOT mean "yolo mode".
+
+The CLI flag is additive: setting it does not clear a pre-existing
+`OPENAKITA_AUTO_CONFIRM` env var that operators set elsewhere.
+
+### Audit JSONL rotation (C20)
+
+The audit log (`security.audit.log_path`, default `data/audit/policy_decisions.jsonl`)
+is append-only with tamper-evident hash chaining (C16). C20 adds
+optional rotation so a long-running deployment doesn't grow a single
+multi-GB file.
+
+```yaml
+security:
+  audit:
+    log_path: data/audit/policy_decisions.jsonl
+    enabled: true
+    include_chain: true       # C16: hash-chain rows for tamper detection
+
+    # === C20 rotation (default off — no behaviour change from C18) ===
+    rotation_mode: none       # none | daily | size
+    rotation_size_mb: 100     # threshold for "size" mode (1..10240 MiB)
+    rotation_keep_count: 30   # how many archives to retain (0 = unlimited)
+```
+
+**Modes**:
+
+- `none` (default): never rotate. Single file grows forever. Identical
+  to C16/C17/C18 behaviour — operators who haven't touched their YAML
+  see no change.
+- `daily`: when the active file's mtime falls on a UTC day before
+  "today", rename it to `<stem>.YYYY-MM-DD.jsonl` (date = mtime's UTC
+  date) and start a fresh active file for today.
+- `size`: when `stat().st_size + len(new_line) > rotation_size_mb *
+  1024 * 1024`, rename to `<stem>.YYYYMMDDTHHMMSS.jsonl` (UTC stamp at
+  rotation moment).
+
+**Chain head carry-over**: rotation preserves the hash chain across
+files. The first record written to the new active file has
+`prev_hash = <last row_hash of the rotated archive>`. The
+`/api/config/security/audit` endpoint uses
+`verify_chain_with_rotation` to walk archives + active file as one
+continuous chain, so SecurityView correctly reports tamper status
+across rotation boundaries.
+
+**Pruning**: after each rotation, archives matching
+`<stem>.*.jsonl` are sorted by mtime ascending and the oldest beyond
+`rotation_keep_count` are deleted. `0` = keep everything (operator
+runs an external archiver).
+
+**Hot-reload**: rotation parameters are read at each append via the
+lock-free `global_engine._config` attribute, so C18 hot-reload
+(`security.hot_reload.enabled: true`) takes effect on the very next
+audit write — no restart required.
+
+**Operator notes**:
+
+- Multi-process deployments: rotation happens under the same
+  `filelock.FileLock` as appends, so concurrent processes serialize
+  safely. Clocks should stay in sync via NTP (assumption shared with
+  every other audit feature).
+- Existing archives: a pre-existing archive at the would-be rotation
+  target path is never overwritten — rotation skips with a WARN log
+  and the active file keeps growing until the next eligible window.
+  This prevents accidental history loss from clock jumps.
+- Forensics: if the active file is moved aside for offline analysis,
+  the archives still verify on their own via
+  `verify_chain_with_rotation(<active_path>)` — the function
+  tolerates a missing active file as long as archives exist.
+
 ## Advanced Configuration
 
 ### Proxy Settings

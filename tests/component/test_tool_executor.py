@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from openakita.core.tool_executor import OVERFLOW_MARKER, ToolExecutor
+from openakita.core.permission import PermissionDecision
 from openakita.tools.errors import ErrorType, ToolError
 
 
@@ -19,6 +20,10 @@ def _make_registry(*tool_names: str) -> MagicMock:
     registry.get_handler_name_for_tool.return_value = "filesystem"
     registry.get_permission_check.return_value = None
     return registry
+
+
+def _allow_policy(executor: ToolExecutor) -> None:
+    executor.check_permission = MagicMock(return_value=PermissionDecision("allow"))
 
 
 @pytest.fixture
@@ -77,6 +82,7 @@ class TestExecuteTool:
         registry.get_handler_name_for_tool.return_value = "browser"
         registry.get_permission_check.return_value = None
         executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+        _allow_policy(executor)
 
         await executor.execute_tool("browser-click", {"text": "登录"})
 
@@ -100,6 +106,7 @@ class TestExecuteTool:
         registry.get_handler_name_for_tool.return_value = "browser"
         registry.get_permission_check.return_value = None
         executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+        _allow_policy(executor)
 
         await executor.execute_tool("browser_fill", {"field": "password", "value": "root"})
 
@@ -121,6 +128,7 @@ class TestExecuteTool:
         registry.get_handler_name_for_tool.return_value = "browser"
         registry.get_permission_check.return_value = None
         executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+        _allow_policy(executor)
 
         await executor.execute_tool("browser_click", {"action": "login"})
 
@@ -172,6 +180,7 @@ async def test_structured_tool_error_marks_tool_result_as_error():
     )
 
     executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+    _allow_policy(executor)
     tool_results, executed, _ = await executor.execute_batch(
         [{"id": "u1", "name": "install_skill", "input": {"source": "owner/repo"}}]
     )
@@ -196,6 +205,7 @@ async def test_tool_hard_timeout_marks_tool_result_as_error():
 
     registry.execute_by_tool = AsyncMock(side_effect=_slow_tool)
     executor = ToolExecutor(handler_registry=registry, max_parallel=1)
+    _allow_policy(executor)
     executor._hard_timeout_for_tool = lambda _tool_name: 0.01
 
     tool_results, executed, _ = await executor.execute_batch(

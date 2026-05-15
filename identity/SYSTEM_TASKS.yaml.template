@@ -1,0 +1,50 @@
+# C15 §17.2 — operator-authored whitelist of mechanical maintenance tasks
+# that bypass PolicyEngineV2 (R4-10 / R4-11).
+#
+# Copy this template to identity/SYSTEM_TASKS.yaml and regenerate the
+# lock with:
+#
+#     openakita system-tasks regenerate-lock        # (setup-center button
+#     OR via setup-center → Security → System Tasks Lock)
+#
+# Without a matching .openakita/system_tasks.lock, the registry loads
+# empty and NO bypass happens — this is the safe default. The lock is
+# only regenerated through an explicit operator action so a compromised
+# agent cannot quietly broaden its own bypass scope.
+#
+# Each entry:
+#
+# - id              required, stable identifier referenced by callers
+# - description     human-readable note (logged to audit)
+# - tools           tools allowed; calls outside this list fall through
+#                   to PolicyEngine (NOT denied — just not bypassed)
+# - path_globs      every path-bearing param must match one of these;
+#                   ``**`` for recursive (anchored at workspace root)
+# - requires_backup default True. Set False only for tasks whose targets
+#                   ARE backups (irreversible ops on irreplaceable data
+#                   must keep True)
+
+version: 1
+tasks:
+  # Example: rotate audit log when it crosses a size threshold.
+  # Uncomment and customize as needed.
+  #
+  # - id: rotate_audit_log
+  #   description: Rotate policy_decisions.jsonl when size > 100MB
+  #   tools:
+  #     - move_file
+  #     - write_file
+  #   path_globs:
+  #     - data/audit/policy_decisions.jsonl
+  #     - data/audit/policy_decisions.*.jsonl
+  #   requires_backup: true
+
+  # Example: prune old checkpoint snapshots (30+ days).
+  #
+  # - id: cleanup_old_checkpoints
+  #   description: Remove checkpoint snapshots older than 30 days
+  #   tools:
+  #     - delete_file
+  #   path_globs:
+  #     - data/checkpoints/**
+  #   requires_backup: false   # checkpoints are themselves backups

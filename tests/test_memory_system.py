@@ -10,12 +10,11 @@
 
 import pytest
 import json
-import asyncio
 import tempfile
 import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, AsyncMock
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -309,7 +308,7 @@ class TestMemoryExtractor:
         assert any(m.type == MemoryType.PREFERENCE for m in memories)
     
     def test_17_extract_from_task_completion_success(self):
-        """测试任务成功完成时提取"""
+        """任务完成摘要已由 Episode 接管，不再同步抽取低质量 skill 记忆。"""
         extractor = MemoryExtractor()
         memories = extractor.extract_from_task_completion(
             task_description="完成了用户注册功能的开发，包括表单验证和数据库存储",
@@ -317,11 +316,10 @@ class TestMemoryExtractor:
             tool_calls=[{"name": "read"}, {"name": "write"}, {"name": "bash"}],
             errors=[]
         )
-        assert len(memories) >= 1
-        assert any(m.type == MemoryType.SKILL for m in memories)
+        assert memories == []
     
     def test_18_extract_from_task_completion_failure(self):
-        """测试任务失败时提取"""
+        """任务失败摘要已由 Episode 接管，不再同步抽取低质量 error 记忆。"""
         extractor = MemoryExtractor()
         memories = extractor.extract_from_task_completion(
             task_description="尝试部署到生产环境但遇到了各种问题",
@@ -329,8 +327,7 @@ class TestMemoryExtractor:
             tool_calls=[],
             errors=["连接超时导致无法连接服务器", "权限不足导致部署失败无法继续"]
         )
-        assert len(memories) >= 1
-        assert any(m.type == MemoryType.ERROR for m in memories)
+        assert memories == []
     
     def test_19_extract_from_task_short_description(self):
         """测试任务描述太短时不提取"""
@@ -566,7 +563,7 @@ class TestMemoryConsolidator:
     
     def test_40_init_creates_directories(self, temp_data_dir):
         """测试初始化创建目录"""
-        mc = MemoryConsolidator(data_dir=temp_data_dir)
+        MemoryConsolidator(data_dir=temp_data_dir)
         assert (temp_data_dir / "conversation_history").exists()
     
     def test_41_save_conversation_turn(self, temp_data_dir):
@@ -734,7 +731,7 @@ class TestDailyConsolidator:
             data_dir=temp_data_dir,
             memory_md_path=temp_memory_md,
         )
-        assert dc.MEMORY_MD_MAX_CHARS == 800
+        assert dc.MEMORY_MD_MAX_CHARS == 1500
 
 
 # ============================================================

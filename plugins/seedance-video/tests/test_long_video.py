@@ -248,6 +248,32 @@ async def test_chain_serial_chains_last_frame_into_next_first_frame() -> None:
     assert image_parts[0]["role"] == "first_frame"
 
 
+@pytest.mark.asyncio
+async def test_chain_serial_extend_uses_previous_video_url() -> None:
+    """Cloud transition mode should use the previous video_url, not only ffmpeg concat."""
+    cg, ark, tm = _make_chain_gen(create_task_returns={
+        "id": "ark", "last_frame_url": "https://cdn/last.png",
+    })
+    cg._wait_for_task = AsyncMock(side_effect=lambda tid: {
+        "id": tid,
+        "status": "done",
+        "last_frame_url": "https://cdn/last.png",
+        "video_url": "https://cdn/video.mp4",
+    })
+    await cg.generate_chain(
+        segments=[_seg(1), _seg(2)],
+        model_id="m",
+        mode="serial_extend",
+    )
+    second_call = ark.create_task.await_args_list[1]
+    content = second_call.kwargs["content"]
+    video_parts = [p for p in content if p.get("type") == "video_url"]
+    assert len(video_parts) == 1
+    assert video_parts[0]["video_url"]["url"] == "https://cdn/video.mp4"
+    assert video_parts[0]["role"] == "reference_video"
+    assert tm.create_task.await_args_list[1].kwargs["mode"] == "extend"
+
+
 # ── chain_group plumbing (Sprint 8 / V2) ──────────────────────────────
 
 

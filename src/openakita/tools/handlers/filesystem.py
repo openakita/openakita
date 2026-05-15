@@ -11,6 +11,14 @@
 - glob: 文件名模式搜索
 - move_file: 移动或重命名文件/目录
 - delete_file: 删除文件
+
+# ApprovalClass checklist (新增 / 修改工具时必读)
+# 1. 在本文件 Handler 类的 TOOLS 列表加新工具名
+# 2. 在同 Handler 类的 TOOL_CLASSES 字典加 ApprovalClass 显式声明
+#    （或在 agent.py:_init_handlers 的 register() 调用里加 tool_classes={...}）
+# 3. 行为依赖参数 → 在 policy_v2/classifier.py:_refine_with_params 加分支
+# 4. 跑 pytest tests/unit/test_classifier_completeness.py 验证
+# 详见 docs/policy_v2_research.md §4.21
 """
 
 import logging
@@ -20,6 +28,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...config import settings
+from ...core.policy_v2 import ApprovalClass
+from ..path_safety import resolve_within_root
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -85,6 +95,21 @@ class FilesystemHandler:
         "delete_file",
     ]
 
+    # C7：v2 PolicyEngine 显式分类（避免启发式回退到 UNKNOWN）。
+    # 跨盘 / 工作区外路径的升级（MUTATING_SCOPED → MUTATING_GLOBAL）由
+    # classifier._refine_with_params 处理；此处声明 base class 即可。
+    TOOL_CLASSES = {
+        "run_shell": ApprovalClass.EXEC_CAPABLE,
+        "write_file": ApprovalClass.MUTATING_SCOPED,
+        "read_file": ApprovalClass.READONLY_SCOPED,
+        "edit_file": ApprovalClass.MUTATING_SCOPED,
+        "list_directory": ApprovalClass.READONLY_GLOBAL,
+        "grep": ApprovalClass.READONLY_SEARCH,
+        "glob": ApprovalClass.READONLY_SEARCH,
+        "move_file": ApprovalClass.MUTATING_SCOPED,
+        "delete_file": ApprovalClass.DESTRUCTIVE,
+    }
+
     def __init__(self, agent: "Agent"):
         """
         初始化处理器
@@ -129,6 +154,49 @@ class FilesystemHandler:
             except Exception:
                 continue
         return False
+
+    def _allowed_roots(self) -> list[str]:
+        roots = []
+        try:
+            from ...core.policy_v2 import get_config_v2
+
+            cfg = get_config_v2()
+            if not cfg.enabled or cfg.profile.current == "off":
+                return []
+            roots.extend(str(p) for p in cfg.workspace.paths if p)
+        except Exception:
+            roots.append(getattr(self.agent, "default_cwd", None) or str(Path.cwd()))
+        try:
+            roots.append(str(settings.data_dir))
+        except Exception:
+            pass
+        return [str(r) for r in roots if r]
+
+    def _guard_path_boundary(self, raw_path: str, *, op: str) -> str | None:
+        allowed_roots = self._allowed_roots()
+        if not allowed_roots:
+            return None
+        result = resolve_within_root(raw_path, allowed_roots)
+        if result.ok:
+            return None
+        try:
+            from ...core.audit_logger import get_audit_logger
+
+            get_audit_logger().log_event(
+                "path_denial",
+                {
+                    "operation": op,
+                    "reason": result.reason,
+                    "path_ref": result.safe_ref,
+                },
+            )
+        except Exception:
+            pass
+        return (
+            f"❌ 路径名单拒绝 {op}: {result.reason} ({result.safe_ref})。"
+            "请在 安全策略 → 路径名单 → 允许访问的工作区 中添加该目录，"
+            "或将文件复制到当前工作区。"
+        )
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """
@@ -529,6 +597,9 @@ class FilesystemHandler:
             return "❌ write_file 缺少必要参数 'path'。请提供文件路径和内容后重试。"
         if content is None:
             return "❌ write_file 缺少必要参数 'content'。请提供文件内容后重试。"
+        guard = self._guard_path_boundary(path, op="write")
+        if guard:
+            return guard
         if self._looks_like_truncated_tool_preview(content):
             return (
                 "❌ write_file 检测到内容里包含工具分页/截断预览标记，已拒绝写入，"
@@ -595,6 +666,9 @@ class FilesystemHandler:
         unc_err = self._check_unc(path)
         if unc_err:
             return f"❌ {unc_err}"
+        guard = self._guard_path_boundary(path, op="read")
+        if guard:
+            return guard
 
         policy = self._get_fix_policy()
         if policy:
@@ -682,6 +756,9 @@ class FilesystemHandler:
             return "❌ edit_file 缺少必要参数 'new_string'。"
         if old_string == new_string:
             return "❌ old_string 和 new_string 相同，无需替换。"
+        guard = self._guard_path_boundary(path, op="edit")
+        if guard:
+            return guard
 
         policy = self._get_fix_policy()
         if policy:
@@ -721,6 +798,9 @@ class FilesystemHandler:
         path = params.get("path", "")
         if not path:
             return "❌ list_directory 缺少必要参数 'path'。"
+        guard = self._guard_path_boundary(path, op="list")
+        if guard:
+            return guard
 
         policy = self._get_fix_policy()
         if policy:
@@ -775,6 +855,9 @@ class FilesystemHandler:
             return "❌ grep 缺少必要参数 'pattern'。"
 
         path = params.get("path", ".")
+        guard = self._guard_path_boundary(path, op="grep")
+        if guard:
+            return guard
         include = params.get("include")
         context_lines = params.get("context_lines", 0)
         max_results = params.get("max_results", 50)
@@ -887,6 +970,9 @@ class FilesystemHandler:
             return "❌ glob 缺少必要参数 'pattern'。"
 
         path = params.get("path", ".")
+        guard = self._guard_path_boundary(path, op="glob")
+        if guard:
+            return guard
 
         # 不以 **/ 开头的 pattern 自动加 **/ 前缀，使其递归搜索
         if not pattern.startswith("**/"):
@@ -954,6 +1040,10 @@ class FilesystemHandler:
             return "❌ move_file 缺少必要参数 'src' 和 'dst'。"
         if "\x00" in src or "\x00" in dst:
             return "❌ move_file 路径包含无效空字符，请去掉不可见字符后重试。"
+        for raw in (src, dst):
+            guard = self._guard_path_boundary(raw, op="move")
+            if guard:
+                return guard
 
         policy = self._get_fix_policy()
         if policy:
@@ -987,6 +1077,9 @@ class FilesystemHandler:
         path = params.get("path", "")
         if not path:
             return "❌ delete_file 缺少必要参数 'path'。"
+        guard = self._guard_path_boundary(path, op="delete")
+        if guard:
+            return guard
 
         policy = self._get_fix_policy()
         if policy:

@@ -1,13 +1,18 @@
 import pytest
 
-from openakita.core.policy import PolicyDecision, PolicyEngine
 from openakita.core.risk_intent import OperationKind, RiskIntentClassifier, TargetKind
 from openakita.orgs.models import OrgNode
 from openakita.orgs.runtime import OrgRuntime
-from openakita.tools.input_normalizer import normalize_tool_input
 from openakita.tools.handlers.memory import MemoryHandler
 from openakita.tools.handlers.powershell import PowerShellHandler
 from openakita.tools.handlers.todo_handler import PlanHandler
+from openakita.tools.input_normalizer import normalize_tool_input
+
+# C8b-6b：原本 5 个 v1 PolicyEngine 测试（test_workspace_delete_is_confirmed_even_in_trust_mode
+# / test_unknown_mcp_write_tool_requires_confirmation / test_readonly_mcp_tool_is_allowed_in_trust_mode
+# / test_powershell_remove_item_is_confirmed_even_in_trust_mode 等）已随 v1
+# ``policy.py`` 删除一并清理。等价 v2 行为已被 ``test_policy_engine_v2.py`` /
+# ``test_policy_v2_*`` 系列覆盖（v2 PolicyEngine 决策矩阵 + safety_immune + ApprovalClassifier）。
 
 
 def test_desktop_delete_natural_language_requires_confirmation():
@@ -23,57 +28,6 @@ def test_unknown_target_delete_natural_language_requires_confirmation():
 
     assert result.operation_kind == OperationKind.DELETE
     assert result.requires_confirmation is True
-
-
-def test_workspace_delete_is_confirmed_even_in_trust_mode(tmp_path):
-    target = tmp_path / "old.log"
-    target.write_text("x", encoding="utf-8")
-    engine = PolicyEngine()
-    engine.config.zones.workspace = [str(tmp_path)]
-    engine.config.confirmation.mode = "yolo"
-    engine.config.confirmation.auto_confirm = True
-
-    result = engine.assert_tool_allowed("delete_file", {"path": str(target)})
-
-    assert result.decision == PolicyDecision.CONFIRM
-
-
-def test_unknown_mcp_write_tool_requires_confirmation():
-    engine = PolicyEngine()
-    engine.config.confirmation.mode = "yolo"
-    engine.config.confirmation.auto_confirm = True
-
-    result = engine.assert_tool_allowed(
-        "call_mcp_tool",
-        {"server": "db", "tool_name": "delete_record", "arguments": {"id": 1}},
-    )
-
-    assert result.decision == PolicyDecision.CONFIRM
-
-
-def test_readonly_mcp_tool_is_allowed_in_trust_mode():
-    engine = PolicyEngine()
-    engine.config.confirmation.mode = "yolo"
-    engine.config.confirmation.auto_confirm = True
-
-    result = engine.assert_tool_allowed(
-        "call_mcp_tool",
-        {"server": "docs", "tool_name": "search", "arguments": {"q": "openakita"}},
-    )
-
-    assert result.decision == PolicyDecision.ALLOW
-
-
-def test_powershell_remove_item_is_confirmed_even_in_trust_mode():
-    engine = PolicyEngine()
-
-    result = engine.assert_tool_allowed(
-        "run_powershell",
-        {"command": "Remove-Item C:/Users/example/Desktop/old.log"},
-    )
-
-    assert result.decision == PolicyDecision.CONFIRM
-    assert result.policy_name == "BaselineProtection"
 
 
 def test_legacy_org_node_gets_profile_binding():

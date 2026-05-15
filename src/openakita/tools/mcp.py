@@ -210,6 +210,10 @@ class MCPTool:
     name: str
     description: str
     input_schema: dict = field(default_factory=dict)
+    # C10：MCP 协议 2024-11+ ``tool.annotations`` 字段透传。
+    # 解析阶段不做 ApprovalClass 校验（懒校验在 ``MCPClient.get_tool_class``）；
+    # 协议升级 / 厂商扩展加新字段不会破坏 dataclass。
+    annotations: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -247,6 +251,20 @@ class MCPServerConfig:
     url: str = ""  # streamable_http / sse 模式使用
     headers: dict[str, str] = field(default_factory=dict)
     cwd: str = ""  # stdio 模式的工作目录（为空则继承父进程）
+
+    # C15 §17.3 R4-13 / R5-21
+    # ----------------------------------------------------------------
+    # ``trust_level`` 控制 PolicyEngineV2 是否采信 MCP server
+    # ``tool.annotations.approval_class`` 的自报值：
+    #
+    # - ``"default"``（默认 + 历史配置）：自报 class 与 prefix/exact-name
+    #   启发式取严格度大者，防止 server 声明 ``readonly_global`` 但实际
+    #   暴露 ``delete_*`` 类工具。
+    # - ``"trusted"``：operator 在 setup-center 显式标记后采信自报。
+    #
+    # JSON schema 兼容：旧 mcp_servers.json 无本字段时 dataclass 默认值
+    # ``"default"`` 自动套用 —— 比 v1 行为更保守，不存在向后回归。
+    trust_level: str = "default"
 
 
 @dataclass
@@ -328,6 +346,7 @@ class MCPClient:
                     transport=transport,
                     url=server_data.get("url", ""),
                     headers=server_data.get("headers", {}),
+                    trust_level=str(server_data.get("trust_level", "default")),
                 )
                 self.add_server(config)
 
@@ -748,10 +767,20 @@ class MCPClient:
         # 获取工具
         tools_result = await client.list_tools()
         for tool in tools_result.tools:
+            annotations_raw = getattr(tool, "annotations", None) or {}
+            if hasattr(annotations_raw, "model_dump"):
+                annotations = annotations_raw.model_dump(exclude_none=True)
+            elif hasattr(annotations_raw, "dict"):
+                annotations = annotations_raw.dict()
+            elif isinstance(annotations_raw, dict):
+                annotations = dict(annotations_raw)
+            else:
+                annotations = {}
             self._tools[f"{server_name}:{tool.name}"] = MCPTool(
                 name=tool.name,
                 description=tool.description or "",
                 input_schema=tool.inputSchema or {},
+                annotations=annotations,
             )
 
         # 获取资源（可选）
@@ -834,6 +863,7 @@ class MCPClient:
             self._prompts = {
                 k: v for k, v in self._prompts.items() if not k.startswith(f"{server_name}:")
             }
+            self._invalidate_policy_classifier_cache()
             logger.info(f"Disconnected from MCP server: {server_name}")
 
     @staticmethod
@@ -989,6 +1019,7 @@ class MCPClient:
         self._tools = {k: v for k, v in self._tools.items() if not k.startswith(prefix)}
         self._resources = {k: v for k, v in self._resources.items() if not k.startswith(prefix)}
         self._prompts = {k: v for k, v in self._prompts.items() if not k.startswith(prefix)}
+        self._invalidate_policy_classifier_cache()
 
         result = await self.connect(server_name)
         if result.success:
@@ -1266,6 +1297,7 @@ class MCPClient:
         self._tools = {k: v for k, v in self._tools.items() if not k.startswith(prefix)}
         self._resources = {k: v for k, v in self._resources.items() if not k.startswith(prefix)}
         self._prompts = {k: v for k, v in self._prompts.items() if not k.startswith(prefix)}
+        self._invalidate_policy_classifier_cache()
 
     async def reset(self) -> None:
         """断开所有连接并清空全部状态（用于重载配置）"""
@@ -1279,6 +1311,24 @@ class MCPClient:
         self._tools.clear()
         self._resources.clear()
         self._prompts.clear()
+        self._invalidate_policy_classifier_cache()
+
+    @staticmethod
+    def _invalidate_policy_classifier_cache() -> None:
+        """C10: 通知 PolicyEngineV2 classifier LRU 缓存失效。
+
+        MCP server 注册 / 断开 / 重置都会改变 ``mcp_lookup`` 的返回值，
+        若 classifier 已经为同名工具缓存过旧的 base classification（典型
+        现场：reset → 旧 server 的 readonly tool 让位给新 server 的
+        destructive tool），下次 classify 会拿到陈旧 (klass, source)。
+        引擎未初始化或 classifier 没有 invalidate 方法时静默 no-op。
+        """
+        try:
+            from ..core.policy_v2.global_engine import invalidate_classifier_cache
+
+            invalidate_classifier_cache()
+        except Exception as exc:
+            logger.debug("MCP classifier invalidate skipped: %s", exc)
 
     def list_servers(self) -> list[str]:
         """列出所有配置的服务器"""
@@ -1316,12 +1366,129 @@ class MCPClient:
             server_name = key.split(":")[0]
             schemas.append(
                 {
-                    "name": f"mcp_{server_name}_{tool.name}".replace("-", "_"),
+                    "name": self._format_tool_name(server_name, tool.name),
                     "description": f"[MCP:{server_name}] {tool.description}",
                     "input_schema": tool.input_schema,
                 }
             )
         return schemas
+
+    @staticmethod
+    def _format_tool_name(server_name: str, tool_name: str) -> str:
+        """LLM-facing 工具名归一规则。
+
+        与 ``get_tool_schemas`` 必须保持一致——任何分歧都会让
+        ``ApprovalClassifier`` 的 mcp_lookup 查不到。集中在一处也方便
+        ``get_tool_class`` 反向解析。
+        """
+        return f"mcp_{server_name}_{tool_name}".replace("-", "_")
+
+    def get_tool_class(
+        self, tool_name: str
+    ) -> tuple[Any, Any] | None:
+        """C10：MCP 工具 → ApprovalClass 查表（PolicyEngineV2 ``mcp_lookup``）。
+
+        识别策略（按 MCP 协议 2024-11+ ``tool.annotations``）：
+        1. ``annotations.risk_class`` / ``annotations.approval_class``：直接
+           当 :class:`ApprovalClass` 值（必须 lowercase，与 enum value 一致）。
+        2. ``annotations.destructiveHint=True`` → ``DESTRUCTIVE``
+        3. ``annotations.openWorldHint=True`` 且 ``readOnlyHint=False`` →
+           ``MUTATING_GLOBAL``
+        4. ``annotations.readOnlyHint=True`` → ``READONLY_SCOPED``
+
+        多个 server 暴露同名工具 / 多种 hint 同时命中时取严
+        （``most_strict``）。命中失败返回 ``None``，让 classifier 走启发式
+        回退（与现有 v1 行为一致——绝大多数 MCP server 当前没填 hints）。
+
+        C15 §17.3 strictness rule
+        -------------------------
+        Each candidate is post-processed by
+        :func:`policy_v2.declared_class_trust.compute_effective_class`
+        using the originating server's :pyattr:`MCPServerConfig.trust_level`.
+        Untrusted servers (the default) cannot smuggle a too-lax class
+        through ``annotations.approval_class`` — the heuristic floor
+        will still apply. ``destructiveHint`` / ``readOnlyHint`` derived
+        candidates are exempt: those reflect MCP-protocol-level
+        annotations the server runtime sets, not a self-reported
+        ``approval_class``, so they were never the smuggling vector.
+        """
+        try:
+            from ..core.policy_v2.declared_class_trust import (
+                compute_effective_class,
+                infer_mcp_declared_trust,
+            )
+            from ..core.policy_v2.enums import (
+                ApprovalClass,
+                DecisionSource,
+                most_strict,
+            )
+        except Exception:
+            return None
+
+        candidates: list[tuple[Any, Any]] = []
+        for key, tool in self._tools.items():
+            server_name = key.split(":", 1)[0]
+            exposed = self._format_tool_name(server_name, tool.name)
+            if exposed != tool_name:
+                continue
+
+            ann = tool.annotations or {}
+
+            explicit = ann.get("approval_class") or ann.get("risk_class")
+            if isinstance(explicit, str):
+                try:
+                    declared = ApprovalClass(explicit.strip().lower())
+                except ValueError:
+                    logger.warning(
+                        "MCP tool '%s' declares unknown approval_class=%r in annotations; "
+                        "falling back to hint-based inference",
+                        exposed,
+                        explicit,
+                    )
+                else:
+                    # C15: gate the self-declared class by the originating
+                    # server's trust_level before adding to candidates.
+                    # Heuristic check runs against ``tool.name`` (the
+                    # server-side identifier — e.g. ``delete_all``), NOT
+                    # the namespaced exposed form (``mcp_<server>_<tool>``)
+                    # because the latter always starts with ``mcp_`` and
+                    # would never trip a heuristic prefix.
+                    server_cfg = self._servers.get(server_name)
+                    server_trust = getattr(server_cfg, "trust_level", None)
+                    mcp_trust = infer_mcp_declared_trust(
+                        server_trust_level=server_trust
+                    )
+                    try:
+                        effective, src = compute_effective_class(
+                            tool.name,
+                            declared,
+                            mcp_trust,
+                            source=DecisionSource.MCP_ANNOTATION,
+                        )
+                    except Exception:  # pragma: no cover - defensive
+                        effective, src = declared, DecisionSource.MCP_ANNOTATION
+                    candidates.append((effective, src))
+                    continue  # explicit 优先，hints 不再叠加
+
+            destructive = ann.get("destructiveHint")
+            read_only = ann.get("readOnlyHint")
+            open_world = ann.get("openWorldHint")
+            if destructive is True:
+                candidates.append(
+                    (ApprovalClass.DESTRUCTIVE, DecisionSource.MCP_ANNOTATION)
+                )
+            elif open_world is True and read_only is not True:
+                candidates.append(
+                    (ApprovalClass.MUTATING_GLOBAL, DecisionSource.MCP_ANNOTATION)
+                )
+            elif read_only is True:
+                candidates.append(
+                    (ApprovalClass.READONLY_SCOPED, DecisionSource.MCP_ANNOTATION)
+                )
+
+        if not candidates:
+            return None
+        return most_strict(candidates)
 
 
 # 全局客户端

@@ -52,12 +52,42 @@ def _mask_sensitive(text: str, max_len: int = 200) -> str:
     return masked
 
 
-class AuditLogger:
-    """Append-only JSONL audit logger for policy decisions."""
+def _safe_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in metadata.items():
+        key_text = str(key)
+        if key_text.lower() in _SENSITIVE_KEYS:
+            safe[key_text] = "***MASKED***"
+        elif "path" in key_text.lower() and isinstance(value, str):
+            safe[key_text] = value[-120:]
+        else:
+            safe[key_text] = value
+    return safe
 
-    def __init__(self, path: str = DEFAULT_AUDIT_PATH, enabled: bool = True) -> None:
+
+class AuditLogger:
+    """Append-only JSONL audit logger for policy decisions.
+
+    C16 Phase C: when ``include_chain=True`` (the default), each row gains
+    ``prev_hash`` + ``row_hash`` via :class:`policy_v2.audit_chain.ChainedJsonlWriter`,
+    making post-hoc edits detectable. ``safety_immune`` is also promoted
+    to a top-level boolean (read from ``metadata.safety_immune_match``)
+    while keeping the original nested ``meta.safety_immune_match`` copy
+    so existing readers do not break.
+
+    Operators who explicitly disable chain (``audit.include_chain=false``)
+    keep the pre-C16 raw-append behaviour.
+    """
+
+    def __init__(
+        self,
+        path: str = DEFAULT_AUDIT_PATH,
+        enabled: bool = True,
+        include_chain: bool = True,
+    ) -> None:
         self._enabled = enabled
         self._path = Path(path or DEFAULT_AUDIT_PATH)
+        self._include_chain = include_chain
         if self._enabled:
             self._path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -70,18 +100,60 @@ class AuditLogger:
         params_preview: str = "",
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        self.log_event(
+            "policy_decision",
+            {
+                "tool": tool_name,
+                "decision": decision,
+                "reason": reason,
+                "policy": policy,
+                "params": _mask_sensitive(params_preview),
+                "meta": _safe_metadata(metadata or {}),
+            },
+        )
+
+    def log_event(self, event_type: str, data: dict[str, Any]) -> None:
         if not self._enabled:
             return
         entry = {
             "ts": time.time(),
-            "tool": tool_name,
-            "decision": decision,
-            "reason": reason,
-            "policy": policy,
-            "params": _mask_sensitive(params_preview),
+            "event": event_type,
         }
-        if metadata:
-            entry["meta"] = metadata
+        entry.update(data)
+        metadata = entry.get("meta")
+        if isinstance(metadata, dict):
+            # C16: promote safety_immune to top-level so SecurityView /
+            # verifier can filter without parsing meta. Nested copy stays
+            # for backward compat (any external consumer still sees it).
+            si = metadata.get("safety_immune_match")
+            if si is not None:
+                entry["safety_immune"] = bool(si)
+
+        if self._include_chain:
+            # C22 P3-2: prefer async batch writer if started for this
+            # path. Falls through to sync :class:`ChainedJsonlWriter`
+            # when no writer is running (CLI / pre-init / tests) — same
+            # correctness contract, just per-call filelock overhead.
+            try:
+                from .policy_v2.audit_writer import get_async_audit_writer
+
+                async_w = get_async_audit_writer(str(self._path))
+                if async_w is not None and async_w.is_running():
+                    async_w.enqueue(entry)
+                    return
+            except Exception as e:
+                logger.debug(
+                    "[Audit] async writer unavailable, using sync chain: %s", e
+                )
+            try:
+                from .policy_v2.audit_chain import get_writer
+
+                get_writer(self._path).append(entry)
+                return
+            except Exception as e:
+                logger.warning(
+                    "[Audit] Chain write failed, falling back to raw append: %s", e
+                )
         try:
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -105,15 +177,25 @@ _global_audit: AuditLogger | None = None
 
 
 def get_audit_logger() -> AuditLogger:
+    """Return the lazily-constructed global AuditLogger.
+
+    C8b-2: 改读 ``policy_v2.AuditConfig``。v2 把 v1 ``self_protection.audit_*``
+    拆出独立 ``audit`` section，字段名从 ``audit_path``/``audit_to_file`` 变
+    为 ``log_path``/``enabled``。``loader.migrate_v1_to_v2`` 已自动转换旧
+    YAML，所以本函数读 v2 配置即可拿到最新值。
+
+    fail-safe：v2 加载异常 → 退化到 ``AuditLogger()`` 默认（与 v1 同行为）。
+    """
     global _global_audit
     if _global_audit is None:
         try:
-            from .policy import get_policy_engine
+            from .policy_v2.global_engine import get_config_v2
 
-            cfg = get_policy_engine().config.self_protection
+            cfg = get_config_v2().audit
             _global_audit = AuditLogger(
-                path=cfg.audit_path or DEFAULT_AUDIT_PATH,
-                enabled=cfg.audit_to_file,
+                path=cfg.log_path or DEFAULT_AUDIT_PATH,
+                enabled=cfg.enabled,
+                include_chain=getattr(cfg, "include_chain", True),
             )
         except Exception:
             _global_audit = AuditLogger()

@@ -193,3 +193,57 @@ async def broadcast_event(event: str, data: Any = None) -> None:
             return
 
     await manager.broadcast(event, data)
+
+
+def fire_event(event: str, data: Any = None) -> bool:
+    """C12+C9c shared fire-and-forget helper for SSE events.
+
+    Used by emit sites that are NOT in an async function (or that don't
+    want to ``await`` the broadcast). Replaces three near-identical
+    ``get_running_loop() → ensure_future → coroutine.close() on fail``
+    blocks scattered across tool_executor, global_engine, and server
+    startup.
+
+    Returns ``True`` if the event was scheduled, ``False`` if it was
+    dropped (no loop reachable). On the False path, this helper closes
+    the coroutine cleanly — callers never have to worry about
+    ``RuntimeWarning: coroutine was never awaited``.
+
+    Cross-loop safe: routes through ``engine_bridge.fire_in_api`` when
+    the API loop differs from the current loop (e.g. engine thread).
+
+    Failure-mode: any unexpected exception is logged at DEBUG and
+    returns False. SSE is informational; failures must never break the
+    calling business logic.
+    """
+    from openakita.core.engine_bridge import fire_in_api, get_api_loop
+
+    coro = manager.broadcast(event, data)
+    try:
+        api_loop = get_api_loop()
+        if api_loop is not None:
+            fire_in_api(coro)
+            return True
+
+        # No registered API loop: try to schedule on whatever loop is
+        # currently running (e.g. tests with their own pytest-asyncio loop).
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is not None:
+            running.create_task(coro)
+            return True
+
+        # No loop reachable — drop the event but close the coroutine to
+        # avoid the "coroutine was never awaited" RuntimeWarning.
+        coro.close()
+        logger.debug("[fire_event] no loop reachable; dropped %r", event)
+        return False
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[fire_event] failed to schedule %r: %s", event, exc)
+        try:
+            coro.close()
+        except Exception:  # noqa: BLE001
+            pass
+        return False

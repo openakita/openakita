@@ -116,10 +116,14 @@ def consume_session_trust(
 ) -> bool:
     """Check whether the user's prior in-session grant covers this request.
 
-    Returns ``True`` (and **does not** mutate state) when at least one
-    matching grant exists. Unlike ``risk_authorized_replay`` (single-use
-    replay sentinel) trust grants are sticky for the session — that is
-    the whole point of the "本次会话内不再询问" checkbox.
+    Returns ``True`` when at least one *non-expired* matching grant exists.
+    Unlike ``risk_authorized_replay`` (single-use replay sentinel) the
+    matching trust grant itself is **not** consumed — that is the whole
+    point of the "本次会话内不再询问" checkbox. We do, however, garbage-
+    collect grants that have already expired or whose ``expires_at`` is
+    malformed so the session metadata cannot grow without bound (C8 §2.4
+    fix; previously we just ``continue``-d past expired rules and they
+    accumulated forever in long-lived IM sessions).
 
     A sticky grant intentionally does not extend across processes: if the
     session is rebuilt from disk the metadata travels with it; if the
@@ -134,14 +138,25 @@ def consume_session_trust(
     op = (operation or "").lower()
     now = time.time()
 
+    matched = False
+    surviving_rules: list[dict[str, Any]] = []
+    pruned = 0
+
     for rule in rules:
         expires_at = rule.get("expires_at")
         if expires_at is not None:
             try:
                 if float(expires_at) < now:
+                    pruned += 1
                     continue
             except (TypeError, ValueError):
+                pruned += 1
                 continue
+
+        surviving_rules.append(rule)
+
+        if matched:
+            continue
 
         rule_op = (rule.get("operation") or "").lower()
         if rule_op and rule_op != op:
@@ -155,8 +170,16 @@ def consume_session_trust(
             except re.error:
                 continue
 
-        return True
-    return False
+        matched = True
+
+    if pruned:
+        overrides["rules"] = surviving_rules
+        try:
+            session.set_metadata(SESSION_KEY, overrides)
+        except Exception:
+            pass
+
+    return matched
 
 
 def clear_session_trust(session: Any) -> None:

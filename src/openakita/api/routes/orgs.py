@@ -6,7 +6,6 @@ CRUD + 模板 + 节点管理 + 生命周期 + 命令 + 记忆 + 事件
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -20,6 +19,14 @@ from fastapi.responses import JSONResponse
 
 from openakita.core.engine_bridge import to_engine
 from openakita.memory.json_utils import coerce_text
+from openakita.orgs.command_service import (
+    OrgCommandConflict,
+    OrgCommandError,
+    OrgCommandRequest,
+    OrgCommandSource,
+    OrgCommandSurface,
+    OrgOutputScope,
+)
 
 ALLOWED_AVATAR_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml"}
 MAX_AVATAR_SIZE = 2 * 1024 * 1024  # 2 MB
@@ -30,52 +37,6 @@ router = APIRouter(prefix="/api/orgs", tags=["组织编排"])
 _LIM_API = 2000
 
 _VALID_DECISIONS = {"approve", "reject", "批准", "拒绝"}
-
-# In-memory store for async command tracking.
-# Keys are command_id (str), values are dicts with status/result/progress.
-_command_store: dict[str, dict[str, Any]] = {}
-_CMD_TTL = 3600  # purge commands older than 1 hour
-
-# P0-3 D：保证 status/phase 字段在并发更新下的一致性。
-# CPython dict.update 单次调用受 GIL 保护，但跨多个 update 之间可能与
-# 读取（get_command_status）交错，造成 status="done" 但 phase 仍为 "running"
-# 的瞬态。统一通过 _update_command_state 收口，避免出现 status/phase 字段
-# 不一致的窗口期，下游前端凭 status 判断时可拿到与 phase 完全对齐的快照。
-import threading as _threading
-
-_command_store_lock = _threading.Lock()
-
-
-def _update_command_state(
-    command_id: str,
-    *,
-    status: str | None = None,
-    phase: str | None = None,
-    **fields: Any,
-) -> dict[str, Any] | None:
-    """原子更新 _command_store[command_id] 的 status/phase 与其它字段。
-
-    P0-3 D：所有写入 _command_store 的路径必须经此函数，避免 status 与 phase
-    在多线程/异步并发下出现不一致快照。
-
-    传入 status="done" 但未显式传 phase 时，phase 自动跟随 status 一起转 done，
-    保证终态 status/phase 在同一次锁里翻新。
-    """
-    with _command_store_lock:
-        cmd = _command_store.get(command_id)
-        if cmd is None:
-            return None
-        if status is not None:
-            cmd["status"] = status
-            if phase is None and status in ("done", "error"):
-                cmd["phase"] = status
-        if phase is not None:
-            cmd["phase"] = phase
-        for k, v in fields.items():
-            cmd[k] = v
-        cmd["updated_at"] = time.time()
-        return cmd
-
 
 def _safe_int(value: str | None, default: int) -> int:
     """Parse query param to int, returning *default* on failure."""
@@ -99,6 +60,13 @@ def _get_runtime(request: Request):
     if rt is None:
         raise HTTPException(503, "OrgRuntime not initialized")
     return rt
+
+
+def _get_command_service(request: Request):
+    svc = getattr(request.app.state, "org_command_service", None)
+    if svc is None:
+        raise HTTPException(503, "OrgCommandService not initialized")
+    return svc
 
 
 def _require_org_running(rt, org_id: str):
@@ -226,6 +194,22 @@ async def upload_avatar(request: Request, file: UploadFile = _FILE_FIELD):
 async def list_templates(request: Request):
     mgr = _get_manager(request)
     return mgr.list_templates()
+
+
+@router.get("/plugin-workbench-templates")
+async def list_plugin_workbench_templates(request: Request):
+    """List available "workbench" templates derived from loaded plugins.
+
+    A workbench template = a loaded plugin that registered at least one LLM
+    tool. The frontend OrgEditor uses these to seed pre-configured leaf
+    OrgNode instances whose ``external_tools`` directly reference the
+    plugin's tool names.
+    """
+    from openakita.orgs.plugin_workbench_templates import build_workbench_templates
+
+    agent = getattr(request.app.state, "agent", None)
+    pm = getattr(agent, "_plugin_manager", None) if agent else None
+    return build_workbench_templates(pm)
 
 
 @router.get("/templates/{template_id}")
@@ -637,81 +621,6 @@ async def reset_org(request: Request, org_id: str):
 # ---- User commands (async) ----
 
 
-def _purge_old_commands() -> None:
-    """Remove finished commands older than _CMD_TTL."""
-    now = time.time()
-    stale = [
-        cid
-        for cid, cmd in _command_store.items()
-        if (cmd["status"] in ("done", "error") and now - cmd["created_at"] > _CMD_TTL)
-        or (cmd["status"] == "running" and now - cmd["created_at"] > _CMD_TTL * 2)
-    ]
-    for cid in stale:
-        _command_store.pop(cid, None)
-
-
-def _bridge_session_chat_id(org_id: str, target_node_id: str | None) -> str:
-    """Compute the frontend-matching chat_id.
-
-    Must stay in sync with OrgChatPanel.sessionId():
-      nodeId ? `org_${orgId}_node_${nodeId}` : `org_${orgId}`
-    """
-    return f"org_{org_id}_node_{target_node_id}" if target_node_id else f"org_{org_id}"
-
-
-def _resolve_command_root_id(org: Any, target_node_id: str | None) -> str:
-    """Return the node id that owns a submitted org command."""
-    if target_node_id:
-        return target_node_id
-    roots = org.get_root_nodes()
-    return roots[0].id if roots else ""
-
-
-def _bridge_persist_user_message(
-    sm, org_id: str, target_node_id: str | None, content: str,
-) -> None:
-    """Persist user command to session IMMEDIATELY so it survives even if execution fails."""
-    if not sm:
-        return
-    chat_id = _bridge_session_chat_id(org_id, target_node_id)
-    try:
-        session = sm.get_session(
-            channel="desktop", chat_id=chat_id, user_id="desktop_user",
-            create_if_missing=True,
-        )
-        if session:
-            session.add_message("user", content)
-            sm.mark_dirty()
-    except Exception as exc:
-        logger.warning("[OrgCmd] failed to persist user message to session: %s", exc)
-
-
-def _bridge_persist_result(
-    sm, org_id: str, target_node_id: str | None, result: dict,
-) -> None:
-    """Persist command result (assistant reply or error) to session."""
-    if not sm:
-        return
-    chat_id = _bridge_session_chat_id(org_id, target_node_id)
-    try:
-        session = sm.get_session(
-            channel="desktop", chat_id=chat_id, user_id="desktop_user",
-            create_if_missing=True,
-        )
-        if not session:
-            return
-        if result.get("error"):
-            session.add_message("system", f"命令执行失败: {result['error']}")
-        elif result.get("result"):
-            text = result["result"]
-            if isinstance(text, dict):
-                text = text.get("result") or text.get("error") or str(text)
-            session.add_message("assistant", str(text))
-        sm.mark_dirty()
-    except Exception as exc:
-        logger.warning("[OrgCmd] failed to persist result to session: %s", exc)
-
-
 @router.post("/{org_id}/command")
 async def send_command(request: Request, org_id: str):
     """Submit a command to the organization. Returns immediately with a
@@ -720,163 +629,52 @@ async def send_command(request: Request, org_id: str):
     若组织未启动（DORMANT/PAUSED/ARCHIVED），返回 409 让前端提示用户先
     启动组织，而不是让 runtime 默默自动启动。
     """
-    rt = _get_runtime(request)
+    svc = _get_command_service(request)
     body = await request.json()
     content = body.get("content", "")
     target_node = body.get("target_node_id")
     if not content:
         raise HTTPException(400, "content is required")
-
-    org = _require_org_running(rt, org_id)
-    if target_node and not org.get_node(target_node):
-        raise HTTPException(404, f"Node not found: {target_node}")
-    root_node_id = _resolve_command_root_id(org, target_node)
-    if not root_node_id:
-        raise HTTPException(400, "Organization has no root nodes")
-
-    _purge_old_commands()
-
-    command_id = uuid.uuid4().hex[:12]
-    _command_store[command_id] = {
-        "command_id": command_id,
-        "org_id": org_id,
-        "root_node_id": root_node_id,
-        "status": "running",
-        "phase": "running",
-        "result": None,
-        "error": None,
-        "created_at": time.time(),
-        "updated_at": time.time(),
-    }
-
-    sm = getattr(request.app.state, "session_manager", None)
-
-    # Persist user message IMMEDIATELY — survives even if execution crashes
-    _bridge_persist_user_message(sm, org_id, target_node, content)
-
-    async def _run() -> None:
-        from openakita.api.routes.websocket import broadcast_event
-
-        try:
-            result = await rt.send_command(
-                org_id, target_node, content,
-                command_id=command_id,
+    source = OrgCommandSource(
+        channel=str(body.get("source_channel") or "desktop"),
+        chat_id=str(body.get("source_chat_id") or svc.bridge_session_chat_id(org_id, target_node)),
+        user_id=str(body.get("source_user_id") or "desktop_user"),
+        thread_id=body.get("source_thread_id"),
+        client_id=str(body.get("client_id") or ""),
+        display_name=str(body.get("display_name") or ""),
+    )
+    try:
+        return svc.submit(
+            OrgCommandRequest(
+                org_id=org_id,
+                content=content,
+                target_node_id=target_node,
+                source=source,
+                origin_surface=OrgCommandSurface.ORG_CONSOLE,
+                output_scope=OrgOutputScope.CONSOLE_FULL,
+                replace_existing=bool(body.get("replace_existing")),
+                continue_previous=bool(body.get("continue_previous")),
             )
-            _update_command_state(
-                command_id, status="done", phase="done", result=result,
-            )
-            _bridge_persist_result(sm, org_id, target_node, result)
-            try:
-                root_id = root_node_id
-                if not rt._has_active_delegations(org_id, root_id):
-                    inbox = rt.get_inbox(org_id)
-                    result_text = (result or {}).get("result", "")
-                    inbox.push_task_complete(
-                        org_id, root_id,
-                        content[:60],
-                        result_text[:300] if result_text else "命令已完成",
-                    )
-            except Exception:
-                pass
-            try:
-                await broadcast_event(
-                    "org:command_done",
-                    {
-                        "org_id": org_id,
-                        "command_id": command_id,
-                        "result": result,
-                    },
-                )
-            except Exception:
-                logger.warning("[OrgCmd] broadcast org:command_done failed", exc_info=True)
-        except Exception as exc:
-            _update_command_state(
-                command_id, status="error", phase="error", error=str(exc),
-            )
-            _bridge_persist_result(sm, org_id, target_node, {"error": str(exc)})
-            try:
-                await broadcast_event(
-                    "org:command_done",
-                    {
-                        "org_id": org_id,
-                        "command_id": command_id,
-                        "error": str(exc),
-                    },
-                )
-            except Exception:
-                logger.warning("[OrgCmd] broadcast error event failed", exc_info=True)
-
-    from openakita.core.engine_bridge import get_engine_loop
-
-    engine_loop = get_engine_loop()
-    if engine_loop is not None:
-        asyncio.run_coroutine_threadsafe(_run(), engine_loop)
-    else:
-        asyncio.create_task(_run())
-
-    return {"command_id": command_id, "status": "running", "root_node_id": root_node_id}
+        )
+    except OrgCommandConflict as exc:
+        raise HTTPException(
+            exc.status_code,
+            {
+                "code": "org_command_conflict",
+                "message": str(exc),
+                "command_id": exc.command_id,
+            },
+        )
+    except OrgCommandError as exc:
+        raise HTTPException(exc.status_code, str(exc))
 
 
 @router.get("/{org_id}/commands/{command_id}")
 async def get_command_status(request: Request, org_id: str, command_id: str):
     """Poll the status of an async command."""
-    cmd = _command_store.get(command_id)
-    if not cmd or cmd["org_id"] != org_id:
+    result = _get_command_service(request).get_status(org_id, command_id)
+    if result is None:
         raise HTTPException(404, "Command not found")
-
-    rt = _get_runtime(request)
-    try:
-        live = rt.get_command_tracker_snapshot(org_id, command_id)
-    except Exception:
-        live = None
-
-    # phase 透传：优先用 live tracker，其次从最近的 command_phase 事件取细分阶段
-    # （running / awaiting_summary / done），让前端能区分"全员 idle 但 running"
-    # 是真的卡住还是在等 root 汇总。命令已结束（done/error）时 phase 直接对齐
-    # status，避免 stale phase 干扰展示。
-    phase = cmd.get("phase") or cmd["status"]
-    if cmd["status"] == "running":
-        if live:
-            phase = live.get("phase") or phase
-        try:
-            es = rt.get_event_store(org_id)
-            for ev in es.query(event_type="command_phase", limit=20) or []:
-                data = ev.get("data") or {}
-                if data.get("command_id") == command_id:
-                    phase = data.get("phase") or phase
-                    break
-        except Exception:
-            pass
-
-    result = {
-        "command_id": cmd["command_id"],
-        "status": cmd["status"],
-        "phase": phase,
-        "root_node_id": cmd.get("root_node_id", ""),
-        "result": cmd["result"],
-        "error": cmd["error"],
-        "elapsed_s": round(time.time() - cmd["created_at"], 1),
-        "cancel_requested_by_user": bool(cmd.get("cancel_requested_by_user")),
-    }
-    if live:
-        result.update({
-            "root_node_id": live.get("root_node_id") or result["root_node_id"],
-            "tracker_state": live.get("tracker_state"),
-            "root_chain_id": live.get("root_chain_id", ""),
-            "open_chains": live.get("open_chains", []),
-            "open_chain_count": live.get("open_chain_count", 0),
-            "last_progress_elapsed_s": live.get("last_progress_elapsed_s"),
-            "warned_stuck": live.get("warned_stuck", False),
-            "stopped_by_watchdog": live.get("auto_stopped", False),
-            "cancelled_by_user": live.get("user_cancelled", False),
-        })
-    elif isinstance(cmd.get("result"), dict):
-        command_result = cmd["result"]
-        result.update({
-            "warning": command_result.get("warning"),
-            "stopped_by_watchdog": bool(command_result.get("stopped_by_watchdog")),
-            "cancelled_by_user": bool(command_result.get("cancelled_by_user")),
-        })
     return result
 
 
@@ -894,47 +692,17 @@ async def cancel_command(request: Request, org_id: str, command_id: str):
 
     组织保持 RUNNING，用户可立即再发送新指令。
     """
-    cmd = _command_store.get(command_id)
-    if not cmd or cmd["org_id"] != org_id:
-        raise HTTPException(404, "Command not found")
-
-    if cmd["status"] != "running":
-        return {"ok": True, "command_id": command_id, "already_done": True}
-
-    rt = _get_runtime(request)
+    svc = _get_command_service(request)
     try:
-        result = await to_engine(
-            rt.cancel_user_command(org_id, command_id)
-        )
+        result = await to_engine(svc.cancel(org_id, command_id))
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
         logger.warning("[OrgCmd] cancel_command failed: %s", e, exc_info=True)
         raise HTTPException(500, f"cancel failed: {e}")
-
-    # 标记请求来源，方便审计 / 后续可能的 UI 展示。状态字段沿用 _run 自身回写。
-    cmd["cancel_requested_by_user"] = True
-    cmd["cancel_requested_at"] = time.time()
-
-    try:
-        from openakita.api.routes.websocket import broadcast_event
-        await broadcast_event(
-            "org:command_cancelled",
-            {
-                "org_id": org_id,
-                "command_id": command_id,
-                "by": "user",
-                "cancelled_roots": result.get("cancelled_roots", []),
-            },
-        )
-    except Exception:
-        logger.debug("[OrgCmd] broadcast org:command_cancelled failed", exc_info=True)
-
-    return {
-        "ok": True,
-        "command_id": command_id,
-        "cancelled_roots": result.get("cancelled_roots", []),
-    }
+    if result is None:
+        raise HTTPException(404, "Command not found")
+    return result
 
 
 @router.post("/{org_id}/broadcast")

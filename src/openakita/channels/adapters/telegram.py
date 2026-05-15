@@ -695,9 +695,9 @@ class TelegramAdapter(ChannelAdapter):
                 }
                 decision = decision_map.get(decision_key, "deny")
                 try:
-                    from openakita.core.policy import get_policy_engine
+                    from openakita.core.policy_v2 import apply_resolution
 
-                    get_policy_engine().resolve_ui_confirm(confirm_id, decision)
+                    apply_resolution(confirm_id, decision)
                     logger.info(f"[Telegram] Security decision: {decision} for {confirm_id[:8]}")
                 except Exception as e:
                     logger.warning(f"[Telegram] Security callback failed: {e}")

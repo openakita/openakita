@@ -1,9 +1,10 @@
 """L1 Unit Tests: Session state machine, message management."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 
+from openakita.sessions.manager import SessionManager
 from openakita.sessions.session import (
     Session,
     SessionConfig,
@@ -27,6 +28,57 @@ class TestSessionCreation:
         s = Session(id="s1", channel="telegram", chat_id="tg-123", user_id="u1")
         assert s.channel == "telegram"
         assert s.chat_id == "tg-123"
+
+    def test_session_key_uses_bot_instance_namespace(self):
+        s = Session(
+            id="s1",
+            channel="feishu",
+            bot_instance_id="feishu:writer",
+            chat_id="chat-1",
+            user_id="user-1",
+            thread_id="topic-1",
+        )
+
+        assert s.session_key == "feishu:writer:chat-1:user-1:topic-1"
+
+    def test_from_dict_legacy_session_defaults_bot_instance_to_channel(self):
+        s = Session.from_dict({
+            "id": "s1", "channel": "feishu", "chat_id": "chat-1", "user_id": "user-1",
+            "state": "active", "created_at": "2026-01-01T00:00:00",
+            "last_active": "2026-01-01T00:00:00",
+        })
+
+        assert s.bot_instance_id == "feishu"
+        assert s.session_key == "feishu:chat-1:user-1"
+
+    def test_session_manager_splits_same_chat_by_bot_instance(self, tmp_path):
+        manager = SessionManager(storage_path=tmp_path / "sessions")
+
+        writer = manager.get_session(
+            "feishu",
+            "chat-1",
+            "user-1",
+            bot_instance_id="feishu:writer",
+        )
+        reviewer = manager.get_session(
+            "feishu",
+            "chat-1",
+            "user-1",
+            bot_instance_id="feishu:reviewer",
+        )
+
+        assert writer.session_key == "feishu:writer:chat-1:user-1"
+        assert reviewer.session_key == "feishu:reviewer:chat-1:user-1"
+        assert writer is not reviewer
+
+    def test_context_focus_terms_are_session_scoped_and_serialized(self):
+        s = Session(id="s1", channel="cli", chat_id="c1", user_id="u1")
+        s.add_message("user", "继续修改 src/openakita/memory/retrieval.py 的 retrieval gate")
+
+        assert "src/openakita/memory/retrieval.py" in s.context.focus_terms
+
+        restored = Session.from_dict(s.to_dict())
+        assert restored.context.focus_terms == s.context.focus_terms
 
 
 class TestSessionState:
@@ -131,7 +183,6 @@ class TestMetadataTrimming:
                 tool_summary=f"tool-{i}",
                 artifacts=[f"artifact-{i}"],
             )
-        window = Session._METADATA_PRESERVE_WINDOW
         old_msg = s.context.messages[0]
         assert "chain_summary" not in old_msg
         assert "tool_summary" not in old_msg
@@ -148,7 +199,7 @@ class TestMetadataTrimming:
                 f"msg-{i}",
                 chain_summary="big data",
             )
-        for i, msg in enumerate(s.context.messages):
+        for msg in s.context.messages:
             assert "content" in msg
             assert "role" in msg
 

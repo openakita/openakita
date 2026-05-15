@@ -114,6 +114,26 @@ class SessionManager:
         # 加载持久化的会话
         self._load_sessions()
 
+    @staticmethod
+    def build_session_key(
+        channel: str,
+        chat_id: str,
+        user_id: str,
+        thread_id: str | None = None,
+        *,
+        bot_instance_id: str | None = None,
+    ) -> str:
+        """Build the canonical route key for a conversation.
+
+        ``bot_instance_id`` is the first isolation boundary. It falls back to
+        channel so legacy callers and persisted sessions keep their old keys.
+        """
+        namespace = (bot_instance_id or channel or "").strip() or channel
+        key = f"{namespace}:{chat_id}:{user_id}"
+        if thread_id:
+            key += f":{thread_id}"
+        return key
+
     async def start(self) -> None:
         """启动会话管理器"""
         self._running = True
@@ -298,6 +318,7 @@ class SessionManager:
         chat_id: str,
         user_id: str,
         thread_id: str | None = None,
+        bot_instance_id: str | None = None,
         create_if_missing: bool = True,
         config: SessionConfig | None = None,
         chat_type: str = "private",
@@ -321,9 +342,13 @@ class SessionManager:
         Returns:
             Session 或 None
         """
-        session_key = f"{channel}:{chat_id}:{user_id}"
-        if thread_id:
-            session_key += f":{thread_id}"
+        session_key = self.build_session_key(
+            channel,
+            chat_id,
+            user_id,
+            thread_id,
+            bot_instance_id=bot_instance_id,
+        )
 
         with self._sessions_lock:
             if session_key in self._sessions:
@@ -363,6 +388,7 @@ class SessionManager:
                     chat_type=chat_type,
                     display_name=display_name,
                     chat_name=chat_name,
+                    bot_instance_id=bot_instance_id,
                 )
                 self._sessions[session_key] = session
                 self._attach_manager(session)
@@ -478,6 +504,7 @@ class SessionManager:
         chat_type: str = "private",
         display_name: str = "",
         chat_name: str = "",
+        bot_instance_id: str | None = None,
     ) -> Session:
         """创建新会话"""
         # 合并配置
@@ -489,6 +516,7 @@ class SessionManager:
             channel=channel,
             chat_id=chat_id,
             user_id=user_id,
+            bot_instance_id=bot_instance_id or channel,
             thread_id=thread_id,
             config=session_config,
             chat_type=chat_type,
@@ -500,7 +528,7 @@ class SessionManager:
         session.context.memory_scope = f"session_{session.id}"
 
         # 更新通道注册表（持久记录 channel→chat_id 映射，不受 session 过期影响）
-        self._update_channel_registry(channel, chat_id, user_id)
+        self._update_channel_registry(channel, chat_id, user_id, bot_instance_id=bot_instance_id)
 
         return session
 
@@ -729,6 +757,7 @@ class SessionManager:
                     self._channel_registry[session.channel] = {
                         "chat_id": session.chat_id,
                         "user_id": session.user_id,
+                        "bot_instance_id": session.bot_instance_id or session.channel,
                         "last_seen": session_ts,
                     }
             except Exception as e:
@@ -867,7 +896,14 @@ class SessionManager:
         except Exception as e:
             logger.warning(f"Failed to save channel registry: {e}")
 
-    def _update_channel_registry(self, channel: str, chat_id: str, user_id: str) -> None:
+    def _update_channel_registry(
+        self,
+        channel: str,
+        chat_id: str,
+        user_id: str,
+        *,
+        bot_instance_id: str | None = None,
+    ) -> None:
         """
         更新通道注册表
 
@@ -887,14 +923,23 @@ class SessionManager:
 
         # 更新或追加
         found = False
+        namespace = bot_instance_id or channel
         for item in entry:
-            if item.get("chat_id") == chat_id:
+            if item.get("chat_id") == chat_id and item.get("bot_instance_id", channel) == namespace:
                 item["user_id"] = user_id
+                item["bot_instance_id"] = namespace
                 item["last_seen"] = now
                 found = True
                 break
         if not found:
-            entry.append({"chat_id": chat_id, "user_id": user_id, "last_seen": now})
+            entry.append(
+                {
+                    "chat_id": chat_id,
+                    "user_id": user_id,
+                    "bot_instance_id": namespace,
+                    "last_seen": now,
+                }
+            )
 
         # 按 last_seen 排序，保留最近 20 条
         entry.sort(key=lambda x: x.get("last_seen", ""), reverse=True)
@@ -990,10 +1035,11 @@ class SessionManager:
         user_id: str,
         role: str,
         content: str,
+        bot_instance_id: str | None = None,
         **metadata,
     ) -> Session:
         """添加消息到会话"""
-        session = self.get_session(channel, chat_id, user_id)
+        session = self.get_session(channel, chat_id, user_id, bot_instance_id=bot_instance_id)
         session.add_message(role, content, **metadata)
         self.mark_dirty()  # 标记需要保存
         return session
@@ -1004,9 +1050,16 @@ class SessionManager:
         chat_id: str,
         user_id: str,
         limit: int | None = None,
+        bot_instance_id: str | None = None,
     ) -> list[dict]:
         """获取会话历史"""
-        session = self.get_session(channel, chat_id, user_id, create_if_missing=False)
+        session = self.get_session(
+            channel,
+            chat_id,
+            user_id,
+            bot_instance_id=bot_instance_id,
+            create_if_missing=False,
+        )
         if session:
             return session.context.get_messages(limit)
         return []
@@ -1016,9 +1069,16 @@ class SessionManager:
         channel: str,
         chat_id: str,
         user_id: str,
+        bot_instance_id: str | None = None,
     ) -> bool:
         """清空会话历史"""
-        session = self.get_session(channel, chat_id, user_id, create_if_missing=False)
+        session = self.get_session(
+            channel,
+            chat_id,
+            user_id,
+            bot_instance_id=bot_instance_id,
+            create_if_missing=False,
+        )
         if session:
             session.context.clear_messages()
             self.mark_dirty()  # 标记需要保存
@@ -1032,9 +1092,16 @@ class SessionManager:
         user_id: str,
         key: str,
         value: Any,
+        bot_instance_id: str | None = None,
     ) -> bool:
         """设置会话变量"""
-        session = self.get_session(channel, chat_id, user_id, create_if_missing=False)
+        session = self.get_session(
+            channel,
+            chat_id,
+            user_id,
+            bot_instance_id=bot_instance_id,
+            create_if_missing=False,
+        )
         if session:
             session.context.set_variable(key, value)
             self.mark_dirty()  # 标记需要保存
@@ -1048,9 +1115,16 @@ class SessionManager:
         user_id: str,
         key: str,
         default: Any = None,
+        bot_instance_id: str | None = None,
     ) -> Any:
         """获取会话变量"""
-        session = self.get_session(channel, chat_id, user_id, create_if_missing=False)
+        session = self.get_session(
+            channel,
+            chat_id,
+            user_id,
+            bot_instance_id=bot_instance_id,
+            create_if_missing=False,
+        )
         if session:
             return session.context.get_variable(key, default)
         return default

@@ -51,6 +51,13 @@ INTERNAL_TRACE_SECTION_TERMINATORS: tuple[str, ...] = (
     "\n\n---",
 )
 
+# C16 prompt-hardening wrappers（``wrap_external_content``）也只允许进入
+# LLM 上下文，绝不能作为用户可见正文或 assistant 历史持久化出去。它带
+# nonce/source，不能放进 ``INTERNAL_TRACE_MARKERS`` 这种固定字面量列表，
+# 因此单独用 boundary-gated regex 处理。
+EXTERNAL_CONTENT_BEGIN_PREFIX = "<<<EXTERNAL_CONTENT_BEGIN"
+EXTERNAL_CONTENT_END_PREFIX = "<<<EXTERNAL_CONTENT_END"
+
 
 # ==================== 文本清理函数 ====================
 
@@ -200,6 +207,16 @@ _INTERNAL_TRACE_SECTION_RE = re.compile(
     re.DOTALL,
 )
 
+_EXTERNAL_CONTENT_SECTION_RE = re.compile(
+    r"(?:\A|\n+[ \t]*)"
+    r"<<<EXTERNAL_CONTENT_BEGIN\b[^>]*>>>"
+    r".*?"
+    r"(?:<<<EXTERNAL_CONTENT_END\b[^>]*>>>|(?=\Z|"
+    + "|".join(re.escape(t) for t in INTERNAL_TRACE_SECTION_TERMINATORS)
+    + r"))",
+    re.DOTALL,
+)
+
 # fenced code block 检测：匹配整段 ``` ... ``` 以便在清理时跳过。
 _FENCED_CODE_RE = re.compile(r"```.*?```", re.DOTALL)
 
@@ -229,7 +246,9 @@ def strip_internal_trace_markers(text: str) -> str:
         return text
 
     # 没有任何 marker 字面量出现 → 快路径返回原文。
-    if not any(m in text for m in INTERNAL_TRACE_MARKERS):
+    if not any(m in text for m in INTERNAL_TRACE_MARKERS) and (
+        EXTERNAL_CONTENT_BEGIN_PREFIX not in text
+    ):
         return text
 
     # 用占位符保护 fenced code block，避免代码示例里的 marker 被误删。
@@ -241,6 +260,7 @@ def strip_internal_trace_markers(text: str) -> str:
 
     masked = _FENCED_CODE_RE.sub(_stash, text)
     cleaned = _INTERNAL_TRACE_SECTION_RE.sub("", masked)
+    cleaned = _EXTERNAL_CONTENT_SECTION_RE.sub("", cleaned)
 
     # 还原 fenced code block。
     for i, original in enumerate(placeholders):
