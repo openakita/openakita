@@ -17,6 +17,7 @@ from openakita.runtime_env import (
     apply_runtime_pip_environment,
     apply_subprocess_secret_scrub,
     build_user_subprocess_environment,
+    get_bootstrap_manifest_path,
     get_configured_venv_path,
     get_managed_node_seed,
     get_managed_python_seed,
@@ -217,6 +218,33 @@ def test_managed_toolchain_seed_resolvers(monkeypatch, tmp_path):
 
     assert get_managed_python_seed() == str(py)
     assert get_managed_node_seed() == str(node)
+
+
+def test_bootstrap_manifest_path_prefers_explicit_env(monkeypatch, tmp_path):
+    bootstrap = tmp_path / "resources" / "bootstrap"
+    bootstrap.mkdir(parents=True)
+    manifest = bootstrap / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setenv("OPENAKITA_BOOTSTRAP_DIR", str(bootstrap))
+
+    assert get_bootstrap_manifest_path() == manifest
+
+
+def test_bootstrap_manifest_path_resolves_dual_venv_home(monkeypatch, tmp_path):
+    bootstrap = tmp_path / "OpenAkitaDesktop" / "resources" / "bootstrap"
+    bootstrap.mkdir(parents=True)
+    manifest = bootstrap / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+
+    venv = tmp_path / "runtime" / "app-venv"
+    scripts = venv / "Scripts"
+    scripts.mkdir(parents=True)
+    monkeypatch.setattr(sys, "executable", str(scripts / "python.exe"))
+    monkeypatch.delenv("OPENAKITA_BOOTSTRAP_DIR", raising=False)
+    (venv / "pyvenv.cfg").write_text(f"home = {bootstrap / 'python'}\n", encoding="utf-8")
+
+    assert get_bootstrap_manifest_path() == manifest
 
 
 def test_managed_node_environment_uses_runtime_cache(monkeypatch, tmp_path):

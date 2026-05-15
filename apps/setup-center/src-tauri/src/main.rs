@@ -1227,6 +1227,7 @@ fn apply_runtime_env_builder(
     filter_path_for_runtime(cmd);
 
     cmd.env("OPENAKITA_RUNTIME_ROOT", runtime_root_dir());
+    cmd.env("OPENAKITA_BOOTSTRAP_DIR", bootstrap_resource_dir());
     cmd.env("OPENAKITA_ENV_PURPOSE", purpose.as_str());
     cmd.env("OPENAKITA_ENV_TRUST_SOURCE", "host-runtime");
     cmd.env("PYTHONNOUSERSITE", "1");

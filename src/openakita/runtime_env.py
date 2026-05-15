@@ -383,6 +383,10 @@ def _seed_candidates(kind: str, names: list[str]) -> list[Path]:
 
 def get_bootstrap_manifest_path() -> Path | None:
     candidates: list[Path] = []
+    env_bootstrap = os.environ.get("OPENAKITA_BOOTSTRAP_DIR", "").strip()
+    if env_bootstrap:
+        candidates.append(Path(env_bootstrap).expanduser() / "manifest.json")
+
     exe = Path(sys.executable).resolve()
     candidates.extend(
         [
@@ -392,6 +396,28 @@ def get_bootstrap_manifest_path() -> Path | None:
             exe.parent.parent / "resources" / "bootstrap" / "manifest.json",
         ]
     )
+
+    # In dual-venv mode sys.executable points at runtime/app-venv/Scripts/python.exe,
+    # while the immutable bootstrap resources live next to the installed desktop app.
+    # The venv's pyvenv.cfg keeps the seed Python path in `home = .../bootstrap/python`.
+    pyvenv_cfg = exe.parent.parent / "pyvenv.cfg"
+    try:
+        for line in pyvenv_cfg.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.lower().startswith("home"):
+                continue
+            _, raw_home = line.split("=", 1)
+            home = Path(raw_home.strip()).expanduser()
+            candidates.extend(
+                [
+                    home.parent / "manifest.json",
+                    home.parent.parent / "bootstrap" / "manifest.json",
+                    home.parent / "bootstrap" / "manifest.json",
+                ]
+            )
+            break
+    except (OSError, ValueError):
+        pass
+
     for path in candidates:
         if path.is_file():
             return path

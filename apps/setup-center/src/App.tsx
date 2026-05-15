@@ -126,6 +126,11 @@ type RuntimeDiagnostics = {
       mode?: string;
       seed_dirs?: string[];
       workspace_dependency_cache?: string;
+      python_abi?: string;
+      wheel_tag?: string;
+      bootstrap_python_seed_packaged?: boolean;
+      bootstrap_python_seed?: { packaged?: boolean; version?: string; path?: string };
+      bootstrap_node_seed_packaged?: boolean;
     };
     toolchain?: {
       python?: { abi?: string; wheelTag?: string; managed?: string; agent?: string; seedPackaged?: boolean };
@@ -3353,15 +3358,28 @@ function MainApp() {
     const runtimeLogHint = joinPath(joinPath(runtimeRoot, "logs"), "bootstrap.log");
     const nodeInfo = runtimeDiag?.environment?.toolchain?.node;
     const pythonInfo = runtimeDiag?.environment?.toolchain?.python;
+    const runtimeInfo = runtimeDiag?.environment?.runtime;
+    const pythonAbi = pythonInfo?.abi || runtimeInfo?.python_abi || runtimeInfo?.bootstrap_python_seed?.version;
+    const pythonSeedSignals = [
+      pythonInfo?.seedPackaged,
+      runtimeInfo?.bootstrap_python_seed_packaged,
+      runtimeInfo?.bootstrap_python_seed?.packaged,
+    ];
+    const pythonSeedPackaged = pythonSeedSignals.includes(true)
+      ? true
+      : pythonSeedSignals.includes(false)
+        ? false
+        : undefined;
+    const nodeSeedPackaged = nodeInfo?.seedPackaged ?? runtimeInfo?.bootstrap_node_seed_packaged;
     const dependencySummary = [
-      `Python ${pythonInfo?.abi || t("status.unknown")}`,
+      `Python ${pythonAbi || t("status.unknown")}`,
       `Node ${nodeInfo?.node?.version || t("status.notChecked")}`,
       `npm ${nodeInfo?.npm?.version || t("status.notChecked")}`,
     ];
     if (nodeInfo?.managed_node) dependencySummary.push(t("status.managedNodeAvailable"));
-    if (nodeInfo?.seedPackaged === false) dependencySummary.push(t("status.nodeSeedNotPackaged"));
-    if (pythonInfo?.seedPackaged === false) dependencySummary.push(t("status.pythonSeedNotPackaged"));
-    if (runtimeDiag?.environment?.runtime?.seed_dirs?.length) dependencySummary.push(t("status.readonlySeedEnabled"));
+    if (nodeSeedPackaged === false) dependencySummary.push(t("status.nodeSeedNotPackaged"));
+    if (pythonSeedPackaged === false) dependencySummary.push(t("status.pythonSeedNotPackaged"));
+    if (runtimeInfo?.seed_dirs?.length) dependencySummary.push(t("status.readonlySeedEnabled"));
     const runtimeDetailItems = [
       ["App venv", appVenvHint],
       ["Agent venv", agentVenvHint],
