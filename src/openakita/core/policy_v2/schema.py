@@ -437,23 +437,28 @@ class PolicyConfigV2(_Strict):
     hot_reload: HotReloadConfig = Field(default_factory=HotReloadConfig)
 
     def expand_placeholders(self, *, cwd: Path | None = None) -> PolicyConfigV2:
-        """展开 ``${CWD}`` / ``~`` 等占位符，返回新实例（不可变约定）。
+        """展开 ``${CWD}`` / ``${HOME}`` / ``~`` 等占位符，返回新实例（不可变约定）。
 
         ``cwd`` 显式注入便于测试；默认 ``Path.cwd()``。
+
+        历史 bug（P0，修复于 Stage 0）：本方法旧实现使用 ``if p == "${CWD}":``
+        严格相等比较，导致 ``"${CWD}/secrets/**"`` 等含占位符的非纯前缀路径
+        **不被展开**，以字面字符串进入引擎；下游 prefix-match 必失配，使用户
+        在 ``safety_immune.paths`` / ``workspace.paths`` 自定义的占位符路径
+        成为静默 no-op。现统一委托给 :mod:`path_placeholders` 中的
+        ``resolve_path_list``，与 ``safety_immune_defaults.expand_builtin_
+        immune_paths`` 共享同一份展开逻辑。
         """
-        cwd = cwd or Path.cwd()
-        cwd_str = str(cwd).replace("\\", "/")
+        from .path_placeholders import resolve_path_list
 
-        def expand(p: str) -> str:
-            if p == "${CWD}":
-                return cwd_str
-            if p.startswith("~"):
-                return str(Path(p).expanduser()).replace("\\", "/")
-            return p
-
+        cwd_path = cwd or Path.cwd()
         data = self.model_dump()
-        data["workspace"]["paths"] = [expand(p) for p in data["workspace"]["paths"]]
-        data["safety_immune"]["paths"] = [expand(p) for p in data["safety_immune"]["paths"]]
+        data["workspace"]["paths"] = resolve_path_list(
+            data["workspace"]["paths"], cwd=cwd_path
+        )
+        data["safety_immune"]["paths"] = resolve_path_list(
+            data["safety_immune"]["paths"], cwd=cwd_path
+        )
         return PolicyConfigV2.model_validate(data)
 
 

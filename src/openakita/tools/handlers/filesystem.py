@@ -156,12 +156,27 @@ class FilesystemHandler:
         return False
 
     def _allowed_roots(self) -> list[str]:
+        """工作区路径白名单。返回空列表表示"不做白名单检查"。
+
+        Profile 语义：
+
+        - ``off``:    安全策略整体关闭 → 空列表。
+        - ``trust``:  信任 AI 自主选择路径 → 空列表（与 off 在本函数行为一致，
+                      但全局其他机制 safety_immune / shell_risk / confirmation
+                      仍由 engine 各自处理，与本函数无关）。
+        - ``protect`` / ``strict`` / ``custom``: 读取 ``cfg.workspace.paths``，
+                      用户在 SecurityView 里维护的"允许访问的工作区"。
+        - 异常 fallback: agent.default_cwd → Path.cwd()（保留向后兼容）。
+
+        此外永远附加 ``settings.data_dir``（OpenAkita 内部数据目录，读写自身
+        sessions/audit/memory 等不应被白名单卡住）。
+        """
         roots = []
         try:
             from ...core.policy_v2 import get_config_v2
 
             cfg = get_config_v2()
-            if not cfg.enabled or cfg.profile.current == "off":
+            if not cfg.enabled or cfg.profile.current in ("off", "trust"):
                 return []
             roots.extend(str(p) for p in cfg.workspace.paths if p)
         except Exception:

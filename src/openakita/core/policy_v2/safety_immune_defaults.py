@@ -191,19 +191,16 @@ def expand_builtin_immune_paths(cwd: Path | None = None) -> tuple[str, ...]:
     for the lifetime of the engine instance (rebuild on policy reload).
     Caller-provided ``cwd`` lets tests pin a workspace (otherwise we use
     ``Path.cwd()``).
-    """
-    base = Path(cwd) if cwd is not None else Path.cwd()
-    cwd_str = str(base).replace("\\", "/")
 
-    expanded: list[str] = []
-    for raw in BUILTIN_SAFETY_IMMUNE_PATHS:
-        if raw.startswith("~"):
-            expanded.append(str(Path(raw).expanduser()).replace("\\", "/"))
-        elif "${CWD}" in raw:
-            expanded.append(raw.replace("${CWD}", cwd_str))
-        else:
-            expanded.append(raw)
-    return tuple(expanded)
+    Stage 0 (path_placeholders 收口): 实际展开逻辑委托给
+    :mod:`path_placeholders.resolve_path_list`，与
+    ``PolicyConfigV2.expand_placeholders`` 共享同一实现。本函数自身保留
+    作为"按 9 类分组的 builtin 入口"语义层。
+    """
+    from .path_placeholders import resolve_path_list
+
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    return tuple(resolve_path_list(BUILTIN_SAFETY_IMMUNE_PATHS, cwd=base))
 
 
 __all__ = [

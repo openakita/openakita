@@ -917,8 +917,40 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
             <CardTitle className="text-sm font-semibold">{t("security.zones", "路径名单")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3.5 px-4 pb-4 pt-3">
+            {/* Profile-aware enforcement hint — trust 跳过 workspace 白名单；off 全部不生效 */}
+            {permissionMode === "trust" && (
+              <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                <IconAlertCircle size={18} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-500" />
+                <div className="flex-1 space-y-1">
+                  <p className="text-sm font-medium">{t("security.zonesHintTrustTitle", "信任方案：工作区白名单已跳过")}</p>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t(
+                      "security.zonesHintTrustDesc",
+                      "trust 方案下 AI 可访问任意路径，工作区列表仅作为切回保护 / 严格 / 自定义方案时的预置；绝对保护清单仍然生效。",
+                    )}
+                  </p>
+                </div>
+              </div>
+            )}
+            {permissionMode === "off" && (
+              <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                <IconAlertCircle size={18} className="mt-0.5 shrink-0 text-destructive" />
+                <div className="flex-1 space-y-1">
+                  <p className="text-sm font-medium text-destructive">{t("security.zonesHintOffTitle", "安全策略已整体关闭")}</p>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {t(
+                      "security.zonesHintOffDesc",
+                      "off 方案下所有路径配置均不强制生效，仅作为切回其他方案时的预置；包括绝对保护清单也不再拦截。",
+                    )}
+                  </p>
+                </div>
+              </div>
+            )}
             <p className="text-xs leading-5 text-muted-foreground">
-              工作区决定 Agent 文件工具可访问哪些目录；信任方案只减少确认，不会自动扩大路径范围。
+              {t(
+                "security.zonesIntro",
+                "工作区决定 Agent 文件工具可访问的目录范围（trust / off 方案除外）；绝对保护清单在除 off 之外的方案下始终生效，AI 不可读写其中任何路径。",
+              )}
             </p>
             <div className="grid grid-cols-1 gap-2.5">
               {(["workspace", "protected"] as const).map((zone) => (
