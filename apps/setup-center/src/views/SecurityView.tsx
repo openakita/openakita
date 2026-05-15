@@ -167,6 +167,12 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   const [offDialogOpen, setOffDialogOpen] = useState(false);
   const [offAckPhrase, setOffAckPhrase] = useState("");
   const [offAckError, setOffAckError] = useState("");
+  const [customSwitchDialog, setCustomSwitchDialog] = useState<{
+    endpoint: string;
+    body: unknown;
+    successKey: string;
+  } | null>(null);
+  const [rewindDialog, setRewindDialog] = useState<CheckpointEntry | null>(null);
   const saving = savingAction !== null;
 
   const api = useCallback(async (path: string, method = "GET", body?: unknown) => {
@@ -361,15 +367,7 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, loadAudit, loadCheckpoints, loadImOwnerAllowlist, runDryRunPreview]);
 
-  const doSave = async (endpoint: string, body: unknown, successKey: string) => {
-    if (
-      endpoint.startsWith("/api/config/security/")
-      && endpoint !== "/api/config/security-profile"
-      && permissionMode !== "custom"
-    ) {
-      const ok = window.confirm("修改底层安全机制后将切换为自定义方案，是否继续？");
-      if (!ok) return;
-    }
+  const performSave = async (endpoint: string, body: unknown, successKey: string) => {
     setSavingAction(endpoint);
     try {
       await api(endpoint, "POST", body);
@@ -382,6 +380,25 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     } finally {
       setSavingAction(null);
     }
+  };
+
+  const doSave = async (endpoint: string, body: unknown, successKey: string) => {
+    if (
+      endpoint.startsWith("/api/config/security/")
+      && endpoint !== "/api/config/security-profile"
+      && permissionMode !== "custom"
+    ) {
+      setCustomSwitchDialog({ endpoint, body, successKey });
+      return;
+    }
+    await performSave(endpoint, body, successKey);
+  };
+
+  const confirmCustomSwitch = async () => {
+    const pending = customSwitchDialog;
+    if (!pending) return;
+    setCustomSwitchDialog(null);
+    await performSave(pending.endpoint, pending.body, pending.successKey);
   };
 
   const applyPermissionMode = async (mode: PermissionMode, ack_phrase?: string) => {
@@ -422,11 +439,19 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     await applyPermissionMode("off", offAckPhrase.trim());
   };
 
-  const rewindCheckpoint = async (id: string) => {
-    if (!confirm(t("security.rewindConfirm", { id }))) return;
-    setRewindingId(id);
+  const requestRewind = (cp: CheckpointEntry) => {
+    setRewindDialog(cp);
+  };
+
+  const confirmRewind = async () => {
+    const cp = rewindDialog;
+    if (!cp) return;
+    setRewindDialog(null);
+    setRewindingId(cp.checkpoint_id);
     try {
-      await api("/api/config/security/checkpoint/rewind", "POST", { checkpoint_id: id });
+      await api("/api/config/security/checkpoint/rewind", "POST", {
+        checkpoint_id: cp.checkpoint_id,
+      });
       toast.success(t("security.rewound"));
       await loadCheckpoints(false);
     } catch (err) {
@@ -1246,7 +1271,7 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
                         {new Date(cp.timestamp * 1000).toLocaleString()}
                       </TableCell>
                       <TableCell className="px-5 py-3 text-right">
-                        <Button variant="outline" size="sm" onClick={() => rewindCheckpoint(cp.checkpoint_id)} disabled={rewindingId === cp.checkpoint_id} className="h-7 text-xs">
+                        <Button variant="outline" size="sm" onClick={() => requestRewind(cp)} disabled={rewindingId === cp.checkpoint_id} className="h-7 text-xs">
                           {rewindingId === cp.checkpoint_id && <Loader2 className="mr-1 size-3 animate-spin" />}
                           {t("security.rewind")}
                         </Button>
@@ -1337,6 +1362,121 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
             >
               {saving && <Loader2 className="mr-2 size-4 animate-spin" />}
               {t("security.offDialogConfirm", "确认关闭")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={customSwitchDialog !== null}
+        onOpenChange={(open) => {
+          if (saving) return;
+          if (!open) setCustomSwitchDialog(null);
+        }}
+      >
+        <AlertDialogContent className="sm:max-w-[480px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <span className="grid size-8 place-items-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-600">
+                <ShieldAlert size={16} />
+              </span>
+              {t("security.customSwitchTitle", "切换到自定义方案")}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  {t(
+                    "security.customSwitchDesc",
+                    "修改底层安全机制（路径白名单 / 命令拦截 / 沙箱 / 确认策略等）后，当前方案会从预设切换为「自定义方案」。",
+                  )}
+                </p>
+                <p>
+                  {t(
+                    "security.customSwitchHint",
+                    "之后可以随时回到预设方案，已有的自定义改动会被覆盖。",
+                  )}
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>
+              {t("common.cancel", "取消")}
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={saving}
+              onClick={() => void confirmCustomSwitch()}
+            >
+              {saving && <Loader2 className="mr-2 size-4 animate-spin" />}
+              {t("security.customSwitchConfirm", "继续保存")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={rewindDialog !== null}
+        onOpenChange={(open) => {
+          if (rewindingId !== null) return;
+          if (!open) setRewindDialog(null);
+        }}
+      >
+        <AlertDialogContent className="sm:max-w-[480px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <span className="grid size-8 place-items-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-600">
+                <ShieldAlert size={16} />
+              </span>
+              {t("security.rewindDialogTitle", "确认回滚到快照")}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  {t(
+                    "security.rewindDialogDesc",
+                    "回滚后将用快照里的版本覆盖当前文件，本次回滚之后写入的改动会丢失。操作会写入审计日志。",
+                  )}
+                </p>
+                {rewindDialog && (
+                  <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">{t("security.checkpointTool", "工具")}</span>
+                      <span className="font-medium text-foreground">{rewindDialog.tool_name}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">{t("security.checkpointFiles", "文件")}</span>
+                      <span className="font-mono text-foreground">{rewindDialog.file_count}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">{t("security.checkpointTime", "时间")}</span>
+                      <span className="font-mono text-foreground">
+                        {new Date(rewindDialog.timestamp * 1000).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">ID</span>
+                      <span className="truncate font-mono text-foreground" title={rewindDialog.checkpoint_id}>
+                        {rewindDialog.checkpoint_id}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rewindingId !== null}>
+              {t("common.cancel", "取消")}
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={rewindingId !== null}
+              onClick={() => void confirmRewind()}
+            >
+              {rewindingId !== null && <Loader2 className="mr-2 size-4 animate-spin" />}
+              {t("security.rewindDialogConfirm", "确认回滚")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

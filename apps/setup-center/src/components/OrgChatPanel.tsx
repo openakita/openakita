@@ -5,11 +5,22 @@
  */
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { Loader2, ShieldAlert } from "lucide-react";
 import { safeFetch } from "../providers";
 import { onWsEvent } from "../platform";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
 import { FileAttachmentCard } from "./FileAttachmentCard";
 import type { FileAttachment } from "./FileAttachmentCard";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 
 interface ChatMsg {
   id: string;
@@ -137,6 +148,8 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   // - finalizeResult / send 异常 / 不可恢复重连完成时清空
   // 与 _pendingCmds 解耦的目的：组件内的 React state 才能驱动按键 enable/disable。
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
+  const [stopDialogOpen, setStopDialogOpen] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const mountedRef = useRef(true);
@@ -336,10 +349,17 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   // 后端会让 send_command 走"stopped_by_watchdog + cancelled_by_user"分支
   // 正常返回，从而触发 handleSend 中的 finalizeResult 收尾；此处不动本地
   // _pendingCmds / 消息流，避免与 send_command 路径竞争产生重复消息。
-  const handleStop = useCallback(async () => {
+  const handleStop = useCallback(() => {
     if (!pendingCmdId) return;
-    const ok = window.confirm(t("org.chat.confirmForceStop"));
-    if (!ok) return;
+    setStopDialogOpen(true);
+  }, [pendingCmdId]);
+
+  const confirmStop = useCallback(async () => {
+    if (!pendingCmdId) {
+      setStopDialogOpen(false);
+      return;
+    }
+    setStopping(true);
     try {
       await safeFetch(
         `${apiBaseUrl}/api/orgs/${encodeURIComponent(orgId)}/commands/${encodeURIComponent(pendingCmdId)}/cancel`,
@@ -347,6 +367,9 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       );
     } catch (e) {
       console.warn("[OrgChat] cancel command failed", e);
+    } finally {
+      setStopping(false);
+      setStopDialogOpen(false);
     }
   }, [apiBaseUrl, orgId, pendingCmdId]);
 
@@ -928,6 +951,42 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           )}
         </button>
       </div>
+
+      <AlertDialog
+        open={stopDialogOpen}
+        onOpenChange={(open) => {
+          if (stopping) return;
+          setStopDialogOpen(open);
+        }}
+      >
+        <AlertDialogContent className="sm:max-w-[460px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <span className="grid size-8 place-items-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-600">
+                <ShieldAlert size={16} />
+              </span>
+              {t("org.chat.forceStopTitle")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("org.chat.confirmForceStop")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={stopping}>
+              {t("common.cancel", "取消")}
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={stopping}
+              onClick={() => void confirmStop()}
+            >
+              {stopping && <Loader2 className="mr-2 size-4 animate-spin" />}
+              {t("org.chat.forceStopConfirm", "强制终止")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <style>{CHAT_CSS}</style>
     </div>

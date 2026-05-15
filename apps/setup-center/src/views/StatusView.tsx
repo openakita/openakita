@@ -10,11 +10,20 @@ import {
   IM_LOGO_MAP,
   IconAlertCircle,
 } from "../icons";
-import { Activity, ArrowRight, Loader2, Play, Square, RotateCcw, Power, PowerOff, FolderOpen, Server, Download, Zap, Wrench } from "lucide-react";
+import { Activity, ArrowRight, Loader2, Play, Square, RotateCcw, Power, PowerOff, FolderOpen, Server, Download, Zap, Wrench, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { TroubleshootPanel } from "../components/TroubleshootPanel";
 import { LinkDiagnosticsPanel, type LinkDiagnostic } from "../components/LinkDiagnosticsPanel";
@@ -882,6 +891,9 @@ function MemoryRepairDialog({
   const [status, setStatus] = useState<any>(null);
   const [selected, setSelected] = useState<string>("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<
+    "restore" | "recreate" | "run-recover" | null
+  >(null);
 
   const loadStatus = async () => {
     const res = await safeFetch(`${apiBase}/api/memory/repair/status`, {
@@ -901,18 +913,23 @@ function MemoryRepairDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBase]);
 
-  const runAction = async (action: "restore" | "recreate" | "run-recover") => {
+  const runAction = (action: "restore" | "recreate" | "run-recover") => {
     if (!status?.confirmation_token) return;
     if (action === "restore" && !selected) {
       notifyError(t("status.memoryRepairSelectBackup"));
       return;
     }
-    const confirmed = window.confirm(
-      action === "recreate"
-        ? t("status.memoryRepairConfirmRecreate")
-        : t("status.memoryRepairConfirm"),
-    );
-    if (!confirmed) return;
+    setPendingAction(action);
+  };
+
+  const executeAction = async () => {
+    const action = pendingAction;
+    if (!action) return;
+    if (!status?.confirmation_token) {
+      setPendingAction(null);
+      return;
+    }
+    setPendingAction(null);
     setBusyAction(action);
     const toastId = notifyLoading(t("status.memoryRepairRunning"));
     try {
@@ -1021,6 +1038,48 @@ function MemoryRepairDialog({
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={pendingAction !== null}
+        onOpenChange={(open) => {
+          if (busyAction) return;
+          if (!open) setPendingAction(null);
+        }}
+      >
+        <AlertDialogContent className="sm:max-w-[480px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <span className="grid size-8 place-items-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-600">
+                <ShieldAlert size={16} />
+              </span>
+              {pendingAction === "recreate"
+                ? t("status.memoryRepairRecreate")
+                : pendingAction === "restore"
+                  ? t("status.memoryRepairRestore")
+                  : t("status.memoryRepairRecover")}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingAction === "recreate"
+                ? t("status.memoryRepairConfirmRecreate")
+                : t("status.memoryRepairConfirm")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!busyAction}>
+              {t("config.cancel")}
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={!!busyAction}
+              onClick={() => void executeAction()}
+            >
+              {busyAction && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t("status.memoryRepairConfirmAction")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
