@@ -1455,16 +1455,23 @@ class Plugin(PluginBase):
         @router.post("/python-deps/install")
         async def deps_install(body: dict) -> dict:
             target = (body or {}).get("name") or ""
-            if target not in {"oss2", "edge-tts", "mutagen", "dashscope"}:
+            specs = {
+                "oss2": ("oss2", "oss2>=2.18.0"),
+                "edge-tts": ("edge_tts", "edge-tts>=7.0"),
+                "mutagen": ("mutagen", "mutagen>=1.47.0"),
+                "dashscope": ("dashscope", "dashscope>=1.20.0"),
+            }
+            if target not in specs:
                 raise HTTPException(
                     status_code=400, detail=f"unsupported dep: {target}"
                 )
             try:
                 from happyhorse_inline.dep_bootstrap import ensure_importable
 
+                import_name, pip_spec = specs[target]
                 ensure_importable(
-                    target,
-                    f"{target}>=0.0.0",
+                    import_name,
+                    pip_spec,
                     plugin_dir=PLUGIN_DIR,
                     friendly_name=target,
                 )

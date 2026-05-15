@@ -526,6 +526,22 @@ def probe_dependency(
     }
 
 
+def dep_status(*, plugin_dir: Path | None = None) -> list[dict[str, Any]]:
+    """Return status for all plugin-private Python dependencies."""
+    specs = [
+        ("dashscope", "dashscope", "dashscope>=1.20.0"),
+        ("oss2", "oss2", "oss2>=2.18.0"),
+        ("mutagen", "mutagen", "mutagen>=1.47.0"),
+        ("edge-tts", "edge_tts", "edge-tts>=7.0"),
+    ]
+    out: list[dict[str, Any]] = []
+    for dep_id, import_name, pip_spec in specs:
+        item = probe_dependency(dep_id, import_name, plugin_dir=plugin_dir)
+        item["pip_spec"] = pip_spec
+        out.append(item)
+    return out
+
+
 def start_install(
     dep_id: str,
     import_name: str,

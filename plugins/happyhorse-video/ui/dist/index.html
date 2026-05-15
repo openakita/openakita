@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>快乐马工作室 — HappyHorse Studio</title>
+  <title>HappyHorse Studio · 快乐马工作室</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="_assets/styles.css" />
   <script src="_assets/bootstrap.js"></script>
@@ -45,8 +45,52 @@ async function api(method, path, body) {
   return res.json();
 }
 
+const ICONIFY_ICONS = {
+  "wand-sparkles": '<path d="M17.5 2.5 19 6l3.5 1.5L19 9l-1.5 3.5L16 9l-3.5-1.5L16 6z"/><path d="m3 21 9.5-9.5"/><path d="m9 7 8 8"/><path d="m14 2 1 2.5"/><path d="M2 14l2.5 1"/><path d="M8 2l.5 2"/><path d="M2 8l2 .5"/>',
+  list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+  film: '<rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>',
+  video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
+  "image-play": '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/><path d="m12 13 4 2.5-4 2.5z"/>',
+  "image-up": '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/><path d="M12 13V7"/><path d="m9 10 3-3 3 3"/>',
+  "fast-forward": '<polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/>',
+  play: '<polygon points="5 3 19 12 5 21 5 3"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  mic: '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',
+  lips: '<path d="M2 12s3-4 6-4c2 0 2.5 1 4 1s2-1 4-1c3 0 6 4 6 4s-3 4-10 4S2 12 2 12z"/><path d="M2 12h20"/><path d="M8 8c1.2 1.1 2.5 1.6 4 1.6S14.8 9.1 16 8"/>',
+  "user-round-cog": '<circle cx="10" cy="8" r="4"/><path d="M2 21a8 8 0 0 1 12.2-6.8"/><circle cx="18" cy="18" r="2"/><path d="M18 14v1"/><path d="M18 21v1"/><path d="M14 18h1"/><path d="M21 18h1"/><path d="m15.2 15.2.7.7"/><path d="m20.1 20.1.7.7"/><path d="m20.8 15.2-.7.7"/><path d="m15.9 20.1-.7.7"/>',
+  "person-standing": '<circle cx="12" cy="5" r="1"/><path d="M9 20l3-6 3 6"/><path d="M6 8h12"/><path d="M12 6v8"/>',
+  layers: '<path d="m12 2 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/>',
+  "user-square": '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="10" r="3"/><path d="M7 19c.9-2.5 2.6-4 5-4s4.1 1.5 5 4"/>',
+  sparkles: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  "alert-triangle": '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+  inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  rocket: '<path d="M4.5 16.5c-1.5 1.3-2 3-2 5 2 0 3.7-.5 5-2"/><path d="M9 15 4 10l8-7c2.5-2.1 6.4-2.7 9-1-1.7 2.6-1.1 6.5-3 9z"/><path d="m9 15 6-6"/><path d="M15 9h.01"/>',
+  coin: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M8 10h6a2 2 0 1 1 0 4H10a2 2 0 1 0 0 4h6"/>',
+  refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/>',
+  key: '<path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8z"/><path d="M14 9l7-7"/><path d="M15 7l2 2"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9z"/>',
+  package: '<path d="m7.5 4.3 9 5.2"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  "mic-off": '<line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><path d="M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2"/><path d="M19 10v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',
+  "user-plus": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>',
+  save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>',
+};
+
+function iconSvg(name) {
+  const iconName = (name || "").includes(":") ? name.split(":").pop() : name;
+  const factory = window.OpenAkitaIcons && window.OpenAkitaIcons[iconName];
+  if (typeof factory === "function") return factory();
+  const inner = ICONIFY_ICONS[iconName] || ICONIFY_ICONS.info;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+}
+
 function Icon({ name, size = 18, className = "icon" }) {
-  const svg = (window.AkitaIcons && window.AkitaIcons[name]) || "";
+  const svg = iconSvg(name);
   return (
     <span
       className={className}
@@ -91,7 +135,7 @@ function statusKind(status) {
   return "danger";
 }
 
-// ── Sidebar ─────────────────────────────────────────────────────────
+// ── Header navigation ────────────────────────────────────────────────
 
 const TABS = [
   { id: "create", label: "创建", icon: "wand-sparkles" },
@@ -103,27 +147,40 @@ const TABS = [
   { id: "settings", label: "设置", icon: "settings" },
 ];
 
-function Sidebar({ tab, onTab }) {
+function HeaderNav({ tab, onTab, settings }) {
   return (
-    <aside className="sidebar">
-      <div className="brand">
-        <img src="icon.svg" alt="HappyHorse" />
-        <div>快乐马工作室</div>
-      </div>
-      <nav>
+    <>
+      <header className="header">
+        <h1 className="oa-hero-title">
+          <span className="oa-hero-title__icon oa-hero-title__icon--app">
+            <img src="icon.svg" alt="HappyHorse" />
+          </span>
+          <span className="oa-hero-title__text">
+            快乐马工作室
+            <span className="oa-hero-title__sub">HappyHorse Studio</span>
+          </span>
+        </h1>
+        <div className="header-right">
+          <span className={"api-pill " + (settings?.api_key_set ? "" : "api-pill--missing")}>
+            <Icon name={settings?.api_key_set ? "save" : "alert-triangle"} size={13} />
+            {settings?.api_key_set ? "DashScope 已配置" : "待配置 DashScope"}
+          </span>
+          <span>v1.0.0</span>
+        </div>
+      </header>
+      <div className="tabs">
         {TABS.map((t) => (
           <button
             key={t.id}
-            className={tab === t.id ? "active" : ""}
+            className={"tab " + (tab === t.id ? "active" : "")}
             onClick={() => onTab(t.id)}
           >
-            <Icon name={t.icon} size={16} />
+            <Icon name={t.icon} size={15} />
             {t.label}
           </button>
         ))}
-      </nav>
-      <div className="footer">v1.0.0 · 阿里云百炼</div>
-    </aside>
+      </div>
+    </>
   );
 }
 
@@ -140,6 +197,314 @@ const MODE_GROUPS = [
   },
   { label: "长视频", modes: ["long_video"] },
 ];
+
+function taskIdOf(task) {
+  return task?.id || task?.task_id || "";
+}
+
+function taskVideoUrl(task) {
+  return task?.video_url || task?.output_url || "";
+}
+
+function formatTaskTime(ts) {
+  if (!ts) return "—";
+  return new Date(ts * 1000).toLocaleString();
+}
+
+function TaskStatusBadge({ status }) {
+  return <Tag kind={statusKind(status)}>{status || "pending"}</Tag>;
+}
+
+function useTaskHeartbeat(taskId) {
+  const [task, setTask] = useState(null);
+
+  const refresh = useCallback(async () => {
+    if (!taskId) {
+      setTask(null);
+      return;
+    }
+    try {
+      const r = await api("GET", `/tasks/${taskId}`);
+      setTask(r.task || null);
+    } catch (_) {}
+  }, [taskId]);
+
+  useEffect(() => {
+    refresh();
+    if (!taskId) return;
+    const timer = setInterval(refresh, 2500);
+    const sse = new EventSource(apiBase() + "/sse");
+    sse.addEventListener("task_update", (e) => {
+      try {
+        const d = JSON.parse(e.data || "{}");
+        if (!d.task_id || d.task_id === taskId) refresh();
+      } catch (_) {
+        refresh();
+      }
+    });
+    return () => {
+      clearInterval(timer);
+      sse.close();
+    };
+  }, [taskId, refresh]);
+
+  return task;
+}
+
+function ProgressLoader({ task }) {
+  const pct = Math.min(100, Math.max(0, Math.round(Number(task?.progress || 0))));
+  return (
+    <div className="video-player-wrap oa-loader oa-loader--dark">
+      <div className="oa-loader__inner">
+        <div className="oa-loader__spinner" />
+        <div className="oa-loader__title">任务已提交至 DashScope，正在生成视频…</div>
+        {pct > 0 && (
+          <div className="oa-loader__progress">
+            <div className="oa-loader__bar">
+              <div className="oa-loader__bar-fill" style={{ width: `${pct}%` }} />
+            </div>
+            <div className="oa-loader__pct">{pct}%</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CostPreviewCard({ costPreview }) {
+  return (
+    <div className="card cost-card">
+      <div className="card-header">
+        <h3 className="card-title">
+          <Icon name="coin" size={14} /> 成本预估
+        </h3>
+      </div>
+      {costPreview ? (
+        <>
+          <div className="cost-total">
+            {costPreview.formatted_total || `¥${costPreview.total_cny?.toFixed?.(2) || "0.00"}`}
+          </div>
+          <div className="text-xs text-muted mt-2">
+            {(costPreview.items || []).map((it, i) => (
+              <div key={i}>
+                {it.name}：{it.units} {it.unit_label} × ¥{it.unit_price} = ¥{it.subtotal}
+              </div>
+            ))}
+          </div>
+          {costPreview.exceeds_threshold && (
+            <Banner kind="warning">超出预算阈值，提交时会要求二次确认</Banner>
+          )}
+        </>
+      ) : (
+        <Spinner />
+      )}
+    </div>
+  );
+}
+
+function UploadUrlField({ label, value, onChange, accept = "*/*", kind = "image", hint }) {
+  const [uploading, setUploading] = useState(false);
+  const [asset, setAsset] = useState(null);
+  const inputRef = useRef(null);
+
+  const upload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(apiBase() + "/upload", { method: "POST", body: fd });
+      const r = await res.json();
+      if (!r.ok) throw new Error(r.error || "upload failed");
+      setAsset(r);
+      onChange(r.oss_url || r.preview_url || "");
+    } catch (e) {
+      alert(`上传失败：${e.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const preview = asset?.preview_url || value;
+  const isVideo = kind === "video" || /\.(mp4|mov|webm|mkv)(\?|$)/i.test(preview || "");
+  const isImage = kind === "image" || /\.(png|jpe?g|webp|gif|bmp)(\?|$)/i.test(preview || "");
+
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <div className={"upload-zone" + (value ? " is-filled" : "")} onClick={() => inputRef.current?.click()}>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={accept}
+          style={{ display: "none" }}
+          onChange={(e) => upload(e.target.files?.[0])}
+        />
+        {preview && isImage ? (
+          <img src={preview} alt="" className="upload-preview" />
+        ) : preview && isVideo ? (
+          <video src={preview} className="upload-preview" muted />
+        ) : (
+          <div className="upload-zone__body">
+            <span className="upload-zone__icon">
+              {uploading ? <Spinner /> : <Icon name={isVideo ? "video" : "image-play"} size={22} />}
+            </span>
+            <div className="upload-zone__text">
+              <div className="upload-zone__title">{uploading ? "上传中…" : "点击上传素材"}</div>
+              <div className="upload-zone__hint">{hint || "支持本地文件上传，也可以在下方直接粘贴公网 URL"}</div>
+            </div>
+          </div>
+        )}
+      </div>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="https://..." />
+    </div>
+  );
+}
+
+function FileUploadCard({ accept, kind, value, onUploaded, hint }) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef(null);
+
+  const upload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(apiBase() + "/upload", { method: "POST", body: fd });
+      const r = await res.json();
+      if (!r.ok) throw new Error(r.error || "upload failed");
+      onUploaded(r);
+    } catch (e) {
+      alert(`上传失败：${e.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const preview = value?.preview_url || value?.oss_url || "";
+  const isImage = kind === "image";
+  const isAudio = kind === "audio";
+
+  return (
+    <div className={"upload-zone library-upload" + (value ? " is-filled" : "")} onClick={() => inputRef.current?.click()}>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        style={{ display: "none" }}
+        onChange={(e) => upload(e.target.files?.[0])}
+      />
+      {value && isImage ? (
+        <img src={preview} alt="" className="upload-preview" />
+      ) : value && isAudio ? (
+        <div className="upload-zone__body">
+          <span className="upload-zone__icon"><Icon name="mic" size={22} /></span>
+          <div className="upload-zone__text">
+            <div className="upload-zone__title">{value.asset?.original_name || "音频已上传"}</div>
+            <div className="upload-zone__hint">{value.oss_url ? "已生成公网 OSS URL" : "已保存本地预览文件"}</div>
+          </div>
+        </div>
+      ) : (
+        <div className="upload-zone__body">
+          <span className="upload-zone__icon">
+            {uploading ? <Spinner /> : <Icon name={isAudio ? "mic" : "image-up"} size={22} />}
+          </span>
+          <div className="upload-zone__text">
+            <div className="upload-zone__title">{uploading ? "上传中…" : "点击上传素材"}</div>
+            <div className="upload-zone__hint">{hint || "选择本地文件后会自动上传并回填到表单"}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskPreviewPane({ taskId, task, costPreview, onGoTasks, showCost = true }) {
+  const liveTask = task || null;
+  const videoUrl = taskVideoUrl(liveTask);
+  const status = liveTask?.status;
+
+  if (!taskId) {
+    return (
+      <div className="split-right oa-preview-area">
+        <div className="oa-preview-empty">
+          <div className="oa-preview-empty__icon">
+            <Icon name="film" size={34} />
+          </div>
+          <div className="oa-preview-empty__title">暂无当前任务</div>
+          <div className="oa-preview-empty__hint">左侧填写参数并提交后，这里会显示生成进度和视频预览。</div>
+        </div>
+        {showCost && <CostPreviewCard costPreview={costPreview} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="split-right oa-preview-area">
+      <div className="card task-preview-head">
+        <div>
+          <h3 className="card-title">本次任务</h3>
+          <div className="text-xs text-muted font-mono">{taskId}</div>
+        </div>
+        <div className="flex gap-2 items-center">
+          <TaskStatusBadge status={status || "pending"} />
+          {onGoTasks && (
+            <button className="btn btn-sm btn-ghost" onClick={onGoTasks}>
+              <Icon name="list" size={12} /> 任务详情
+            </button>
+          )}
+        </div>
+      </div>
+
+      {(!liveTask || status === "pending" || status === "running") && (
+        <ProgressLoader task={liveTask} />
+      )}
+
+      {(status === "succeeded" || status === "done") && (
+        videoUrl ? (
+          <div className="video-player-wrap">
+            <video src={videoUrl} controls loop />
+          </div>
+        ) : (
+          <div className="video-player-wrap video-player-empty">
+            <Empty icon="alert-triangle" title="任务完成但没有返回视频地址" />
+          </div>
+        )
+      )}
+
+      {(status === "failed" || status === "cancelled" || status === "timeout") && (
+        <div className="card">
+          <Banner kind="danger">{liveTask?.error_message || `任务状态：${status}`}</Banner>
+        </div>
+      )}
+
+      {liveTask && (
+        <div className="card task-meta-card">
+          <div className="task-meta-grid">
+            <div>
+              <span>模式</span>
+              <strong>{liveTask.mode || "—"}</strong>
+            </div>
+            <div>
+              <span>模型</span>
+              <strong>{liveTask.model_id || "—"}</strong>
+            </div>
+            <div>
+              <span>创建时间</span>
+              <strong>{formatTaskTime(liveTask.created_at)}</strong>
+            </div>
+          </div>
+          {liveTask.prompt && (
+            <div className="task-prompt-preview">{liveTask.prompt}</div>
+          )}
+        </div>
+      )}
+
+      {showCost && <CostPreviewCard costPreview={costPreview} />}
+    </div>
+  );
+}
 
 function CreateTab({ catalog, settings, onSubmit }) {
   const [mode, setMode] = useState("t2v");
@@ -159,6 +524,7 @@ function CreateTab({ catalog, settings, onSubmit }) {
   const [audioUrl, setAudioUrl] = useState("");
   const [costPreview, setCostPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [previewTaskId, setPreviewTaskId] = useState("");
 
   const modeSpec = useMemo(
     () => (catalog?.modes || []).find((m) => m.id === mode),
@@ -228,7 +594,8 @@ function CreateTab({ catalog, settings, onSubmit }) {
         client_request_id: `web_${Date.now()}`,
       };
       const r = await api("POST", "/tasks", body);
-      onSubmit?.(r.task);
+      const tid = r.task?.task_id || r.task?.id || "";
+      if (tid) setPreviewTaskId(tid);
     } catch (e) {
       alert(`提交失败: ${e.message}`);
     } finally {
@@ -236,42 +603,55 @@ function CreateTab({ catalog, settings, onSubmit }) {
     }
   };
 
+  const liveTask = useTaskHeartbeat(previewTaskId);
   if (!catalog) return <Spinner />;
 
   return (
-    <div>
-      <h2 className="page-title">
-        <Icon name="wand-sparkles" /> 创建任务
-      </h2>
-      <p className="page-subtitle">
-        选择生成模式与模型，HappyHorse 1.0 系列模型自带原生音视频同步
-      </p>
-
-      {MODE_GROUPS.map((g) => (
-        <div key={g.label}>
-          <p className="mode-group-label">{g.label}</p>
-          <div className="mode-grid">
-            {g.modes.map((mid) => {
-              const m = (catalog.modes || []).find((x) => x.id === mid);
-              if (!m) return null;
-              return (
-                <button
-                  key={mid}
-                  className={"mode-btn" + (mode === mid ? " active" : "")}
-                  onClick={() => setMode(mid)}
-                  title={m.description_zh}
-                >
-                  <Icon name={m.icon || "wand-sparkles"} size={18} />
-                  <div>{m.label_zh}</div>
-                </button>
-              );
-            })}
+    <div className="split-layout workbench-layout">
+      <div className="split-left create-panel">
+        <div className="workbench-title">
+          <div>
+        <h2 className="page-title">
+          <Icon name="wand-sparkles" /> 创建任务
+        </h2>
+            <p className="page-subtitle">左侧配置任务参数，右侧实时显示成本、进度和视频预览。</p>
           </div>
         </div>
-      ))}
 
-      <div className="row">
-        <div className="card flex-1">
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="layers" size={14} /> 生成模式</h3>
+            <span>选择任务类型</span>
+          </div>
+        {MODE_GROUPS.map((g) => (
+            <div key={g.label} className="mode-block">
+            <p className="mode-group-label">{g.label}</p>
+            <div className="mode-grid">
+              {g.modes.map((mid) => {
+                const m = (catalog.modes || []).find((x) => x.id === mid);
+                if (!m) return null;
+                return (
+                  <button
+                    key={mid}
+                    className={"mode-btn" + (mode === mid ? " active" : "")}
+                    onClick={() => setMode(mid)}
+                    title={m.description_zh}
+                  >
+                    <Icon name={m.icon || "wand-sparkles"} size={18} />
+                    <div>{m.label_zh}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        </section>
+
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="settings" size={14} /> 模型与提示词</h3>
+            <span>{modeSpec?.label_zh || mode}</span>
+          </div>
           <div className="field">
             <label>模型 (model_id)</label>
             <select value={modelId} onChange={(e) => setModelId(e.target.value)}>
@@ -292,59 +672,52 @@ function CreateTab({ catalog, settings, onSubmit }) {
               placeholder="例如：电影级画质，5秒，16:9，温暖治愈\n0-2秒：中景，主角推开门\n2-5秒：跟镜头，主角走进花园\n【声音】轻柔钢琴 + 鸟鸣"
             />
           </div>
+        </section>
 
-          <div className="row">
-            <div className="field">
-              <label>时长 (秒)</label>
-              <input
-                type="number"
-                value={duration}
-                onChange={(e) => setDuration(parseInt(e.target.value, 10) || 5)}
-                min={3}
-                max={15}
-              />
-            </div>
-            <div className="field">
-              <label>分辨率</label>
-              <select value={resolution} onChange={(e) => setResolution(e.target.value)}>
-                {(catalog.resolutions || []).map((r) => (
-                  <option key={r}>{r}</option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label>比例</label>
-              <select value={aspect} onChange={(e) => setAspect(e.target.value)}>
-                {(catalog.aspects || []).map((a) => (
-                  <option key={a}>{a}</option>
-                ))}
-              </select>
-            </div>
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="image-up" size={14} /> 素材与台词</h3>
+            <span>按当前模式显示必填项</span>
           </div>
-
           {(modeSpec?.required_assets || []).includes("first_frame_url") && (
-            <div className="field">
-              <label>首帧 URL (first_frame_url)</label>
-              <input value={firstFrame} onChange={(e) => setFirstFrame(e.target.value)} />
-            </div>
+            <UploadUrlField
+              label="首帧素材 (first_frame_url)"
+              value={firstFrame}
+              onChange={setFirstFrame}
+              accept="image/*"
+              kind="image"
+              hint="上传一张作为视频开头的图片"
+            />
           )}
           {(modeSpec?.required_assets || []).includes("last_frame_url") && (
-            <div className="field">
-              <label>尾帧 URL (last_frame_url)</label>
-              <input value={lastFrame} onChange={(e) => setLastFrame(e.target.value)} />
-            </div>
+            <UploadUrlField
+              label="尾帧素材 (last_frame_url)"
+              value={lastFrame}
+              onChange={setLastFrame}
+              accept="image/*"
+              kind="image"
+              hint="上传一张作为视频结尾的图片"
+            />
           )}
           {(modeSpec?.required_assets || []).includes("source_video_url") && (
-            <div className="field">
-              <label>源视频 URL (source_video_url)</label>
-              <input value={sourceVideo} onChange={(e) => setSourceVideo(e.target.value)} />
-            </div>
+            <UploadUrlField
+              label="源视频素材 (source_video_url)"
+              value={sourceVideo}
+              onChange={setSourceVideo}
+              accept="video/*"
+              kind="video"
+              hint="上传需要续写、编辑、换脸或口型重配的视频"
+            />
           )}
           {(modeSpec?.required_assets || []).includes("image_url") && (
-            <div className="field">
-              <label>人脸 / 形象图 URL (image_url)</label>
-              <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
-            </div>
+            <UploadUrlField
+              label="人脸 / 形象图 (image_url)"
+              value={imageUrl}
+              onChange={setImageUrl}
+              accept="image/*"
+              kind="image"
+              hint="正面单人照效果最佳"
+            />
           )}
           {(modeSpec?.required_assets || []).includes("image_urls") && (
             <div className="field">
@@ -376,48 +749,70 @@ function CreateTab({ catalog, settings, onSubmit }) {
                 <label>台词 (text)</label>
                 <input value={text} onChange={(e) => setText(e.target.value)} />
               </div>
-              <div className="field">
-                <label>音频 URL (audio_url，可选；填写后优先于 TTS)</label>
-                <input value={audioUrl} onChange={(e) => setAudioUrl(e.target.value)} />
-              </div>
+              <UploadUrlField
+                label="音频素材 (audio_url，可选；填写后优先于 TTS)"
+                value={audioUrl}
+                onChange={setAudioUrl}
+                accept="audio/*"
+                kind="audio"
+                hint="上传配音音频，或留空使用文字合成"
+              />
             </div>
           )}
+          {modeSpec?.native_audio_sync && !(modeSpec?.required_assets || []).length && (
+            <div className="compact-empty-note">当前模式仅需要提示词和输出参数，无额外素材。</div>
+          )}
+        </section>
 
-          <button className="btn" onClick={submit} disabled={submitting || !prompt}>
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="settings" size={14} /> 输出参数</h3>
+            <span>控制视频规格</span>
+          </div>
+          <div className="settings-grid three">
+            <div className="field">
+              <label>时长 (秒)</label>
+              <input
+                type="number"
+                value={duration}
+                onChange={(e) => setDuration(parseInt(e.target.value, 10) || 5)}
+                min={3}
+                max={15}
+              />
+            </div>
+            <div className="field">
+              <label>分辨率</label>
+              <select value={resolution} onChange={(e) => setResolution(e.target.value)}>
+                {(catalog.resolutions || []).map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>比例</label>
+              <select value={aspect} onChange={(e) => setAspect(e.target.value)}>
+                {(catalog.aspects || []).map((a) => (
+                  <option key={a}>{a}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <div className="create-submit-bar">
+          <button className="btn btn-block" onClick={submit} disabled={submitting || !prompt}>
             {submitting ? <Spinner /> : <Icon name="rocket" size={14} />}
-            {submitting ? "提交中…" : "提交生成"}
+            {submitting ? "提交中…" : "提交任务"}
           </button>
         </div>
-
-        <div style={{ width: 280 }}>
-          <div className="card cost-card">
-            <div className="card-header">
-              <h3 className="card-title">
-                <Icon name="coin" size={14} /> 成本预估
-              </h3>
-            </div>
-            {costPreview ? (
-              <>
-                <div className="cost-total">
-                  {costPreview.formatted_total || `¥${costPreview.total_cny?.toFixed?.(2) || "0.00"}`}
-                </div>
-                <div className="text-xs text-muted mt-2">
-                  {(costPreview.items || []).map((it, i) => (
-                    <div key={i}>
-                      {it.name}：{it.units} {it.unit_label} × ¥{it.unit_price} = ¥{it.subtotal}
-                    </div>
-                  ))}
-                </div>
-                {costPreview.exceeds_threshold && (
-                  <Banner kind="warning">超出预算阈值，提交时会要求二次确认</Banner>
-                )}
-              </>
-            ) : (
-              <Spinner />
-            )}
-          </div>
-        </div>
       </div>
+
+      <TaskPreviewPane
+        taskId={previewTaskId}
+        task={liveTask}
+        costPreview={costPreview}
+        onGoTasks={onSubmit}
+      />
     </div>
   );
 }
@@ -427,6 +822,9 @@ function CreateTab({ catalog, settings, onSubmit }) {
 function TasksTab() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [modeFilter, setModeFilter] = useState("all");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -446,60 +844,144 @@ function TasksTab() {
     return () => sse.close();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!selectedId && tasks.length > 0) setSelectedId(taskIdOf(tasks[0]));
+  }, [tasks, selectedId]);
+
+  const selectedTask = useTaskHeartbeat(selectedId);
+  const modeFilters = useMemo(() => {
+    const seen = new Set();
+    return tasks
+      .map((t) => t.mode || "")
+      .filter((m) => {
+        if (!m || seen.has(m)) return false;
+        seen.add(m);
+        return true;
+      });
+  }, [tasks]);
+  const visibleTasks = useMemo(
+    () => tasks.filter((t) => {
+      const status = t.status || "";
+      const statusOk =
+        statusFilter === "all" ||
+        status === statusFilter ||
+        (statusFilter === "running" && ["processing", "running"].includes(status)) ||
+        (statusFilter === "completed" && ["succeeded", "done", "completed"].includes(status));
+      const modeOk = modeFilter === "all" || t.mode === modeFilter;
+      return statusOk && modeOk;
+    }),
+    [tasks, statusFilter, modeFilter]
+  );
+  const statusFilters = [
+    ["all", "全部"],
+    ["pending", "排队中"],
+    ["running", "处理中"],
+    ["completed", "已完成"],
+    ["failed", "失败"],
+    ["cancelled", "已取消"],
+  ];
+  useEffect(() => {
+    if (!visibleTasks.length) return;
+    if (!visibleTasks.some((t) => taskIdOf(t) === selectedId)) {
+      setSelectedId(taskIdOf(visibleTasks[0]));
+    }
+  }, [visibleTasks, selectedId]);
+  const selectedVisible = visibleTasks.some((t) => taskIdOf(t) === selectedId);
+
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="page-title">
-          <Icon name="list" /> 任务列表
-        </h2>
-        <button className="btn btn-ghost btn-sm" onClick={refresh}>
-          <Icon name="refresh" size={12} /> 刷新
-        </button>
-      </div>
-      {loading ? (
-        <Spinner />
-      ) : tasks.length === 0 ? (
-        <Empty icon="inbox" title="暂无任务" hint="到「创建」页提交第一个任务" />
-      ) : (
-        <div className="card" style={{ padding: 0 }}>
-          <table className="tasks-table">
-            <thead>
-              <tr>
-                <th>状态</th>
-                <th>模式</th>
-                <th>模型</th>
-                <th>提示词</th>
-                <th>视频</th>
-                <th>创建时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    <Tag kind={statusKind(t.status)}>{t.status}</Tag>
-                  </td>
-                  <td className="text-xs">{t.mode}</td>
-                  <td className="text-xs font-mono">{t.model_id}</td>
-                  <td className="text-xs" style={{ maxWidth: 280 }}>
-                    {(t.prompt || "").slice(0, 80)}
-                  </td>
-                  <td>
-                    {t.video_url ? (
-                      <video src={t.video_url} className="video-thumb" />
-                    ) : (
-                      <span className="text-faint text-xs">—</span>
-                    )}
-                  </td>
-                  <td className="text-xs text-faint">
-                    {new Date((t.created_at || 0) * 1000).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <div className="split-layout workbench-layout">
+      <div className="split-left oa-list-panel task-list-panel">
+        <div className="task-panel-head">
+          <div>
+            <h2 className="page-title">
+              <Icon name="list" /> 任务列表
+            </h2>
+            <p className="page-subtitle">筛选左侧任务，点击后在右侧查看生成进度、视频和参数。</p>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={refresh}>
+            <Icon name="refresh" size={12} /> 刷新
+          </button>
         </div>
-      )}
+
+        <div className="task-filter-box">
+          <div className="filter-group">
+            <div className="filter-group__label">状态</div>
+            <div className="filter-group__buttons">
+              {statusFilters.map(([value, label]) => (
+                <button
+                  key={value}
+                  className={"mode-btn" + (statusFilter === value ? " active" : "")}
+                  onClick={() => setStatusFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="filter-group">
+            <div className="filter-group__label">模式</div>
+            <div className="filter-group__buttons">
+              <button
+                className={"mode-btn" + (modeFilter === "all" ? " active" : "")}
+                onClick={() => setModeFilter("all")}
+              >
+                全部模式
+              </button>
+              {modeFilters.map((m) => (
+                <button
+                  key={m}
+                  className={"mode-btn" + (modeFilter === m ? " active" : "")}
+                  onClick={() => setModeFilter(m)}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="task-list-loading"><Spinner /> 正在加载任务…</div>
+        ) : tasks.length === 0 ? (
+          <Empty icon="inbox" title="暂无任务" hint="到「创建」页提交第一个任务" />
+        ) : visibleTasks.length === 0 ? (
+          <Empty icon="inbox" title="没有匹配任务" hint="调整上方筛选条件查看其他任务" />
+        ) : (
+          <div className="task-list">
+            {visibleTasks.map((t) => {
+              const tid = taskIdOf(t);
+              const video = taskVideoUrl(t);
+              return (
+                <button
+                  key={tid}
+                  className={"task-card" + (selectedId === tid ? " selected" : "")}
+                  onClick={() => setSelectedId(tid)}
+                >
+                  <div className="task-thumb">
+                    {video ? <video src={video} muted /> : <Icon name="film" size={20} />}
+                  </div>
+                  <div className="task-info">
+                    <div className="task-info-head">
+                      <strong>{t.mode || "未知模式"}</strong>
+                      <TaskStatusBadge status={t.status} />
+                    </div>
+                    <div className="task-card-prompt">{t.prompt || t.model_id || tid}</div>
+                    <div className="task-meta">
+                      <span className="font-mono">{t.model_id || "—"}</span>
+                      <span>{formatTaskTime(t.created_at)}</span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="oa-list-panel__footer">
+          共 {tasks.length} 个任务 · 当前显示 {visibleTasks.length} 个
+        </div>
+      </div>
+
+      <TaskPreviewPane taskId={selectedVisible ? selectedId : ""} task={selectedVisible ? selectedTask : null} showCost={false} />
     </div>
   );
 }
@@ -640,60 +1122,182 @@ function StoryboardTab({ catalog }) {
 
 function VoicesTab() {
   const [data, setData] = useState({ system: [], cloned: [] });
+  const [showCreate, setShowCreate] = useState(false);
+  const [draft, setDraft] = useState({ label: "", audio: null, language: "zh-CN", gender: "unknown" });
+  const [busy, setBusy] = useState(false);
+  const [previewing, setPreviewing] = useState("");
+  const [previewResult, setPreviewResult] = useState({});
 
-  useEffect(() => {
-    api("GET", "/voices").then(setData);
+  const load = useCallback(() => {
+    api("GET", "/voices").then(setData).catch(() => setData({ system: [], cloned: [] }));
   }, []);
 
+  useEffect(() => { load(); }, [load]);
+
   const preview = async (vid) => {
+    setPreviewing(vid);
     try {
       const r = await api("POST", "/voices/preview", {
         voice_id: vid,
         text: "你好，这是一段试听。",
       });
-      if (!r.ok) alert(r.error);
-      else alert(`已合成：${r.audio_path}`);
+      if (!r.ok) throw new Error(r.error || "preview failed");
+      setPreviewResult((prev) => ({ ...prev, [vid]: r.audio_path || "试听已生成" }));
     } catch (e) {
-      alert(e.message);
+      setPreviewResult((prev) => ({ ...prev, [vid]: `试听失败：${e.message}` }));
+    } finally {
+      setPreviewing("");
     }
   };
 
-  return (
-    <div>
-      <h2 className="page-title">
-        <Icon name="mic" /> 音色库
-      </h2>
-      <div className="card">
-        <h3 className="card-title">系统音色 (CosyVoice + Edge-TTS)</h3>
-        <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
-          {(data.system || []).map((v) => (
-            <div
-              key={v.id}
-              className="template-card"
-              onClick={() => preview(v.id)}
-              style={{ minWidth: 200 }}
-            >
-              <div className="name">{v.label_zh || v.label}</div>
-              <div className="desc">
-                <Tag kind="info">{v.engine}</Tag> {v.gender} · {v.language}
-              </div>
-            </div>
-          ))}
+  const cloneVoice = async () => {
+    if (!draft.label || !draft.audio) {
+      alert("请填写音色名称并上传参考音频");
+      return;
+    }
+    setBusy(true);
+    try {
+      const sample = draft.audio.oss_url || draft.audio.preview_url || draft.audio.local_path || "";
+      const r = await api("POST", "/voices/clone", {
+        label: draft.label,
+        sample_audio_url: sample,
+        language: draft.language,
+        gender: draft.gender,
+      });
+      if (!r.ok) throw new Error(r.error || "clone failed");
+      setDraft({ label: "", audio: null, language: "zh-CN", gender: "unknown" });
+      setShowCreate(false);
+      load();
+    } catch (e) {
+      alert(`克隆失败：${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const del = async (voiceId) => {
+    if (!confirm("确认删除该自定义音色？")) return;
+    await api("DELETE", `/voices/${voiceId}`);
+    load();
+  };
+
+  const VoiceCard = ({ v, custom = false }) => (
+    <div className="lib-card">
+      <div className="lib-card__head">
+        <div className="min-w-0">
+          <div className="lib-card__title">{v.label_zh || v.label || v.id}</div>
+          <div className="lib-card__sub">{v.gender || "unknown"} · {v.language || "zh-CN"}</div>
         </div>
+        <Tag kind={v.engine === "edge" ? "success" : "info"}>{v.engine || "cosyvoice"}</Tag>
       </div>
-      <div className="card">
-        <h3 className="card-title">自定义克隆音色 ({(data.cloned || []).length})</h3>
-        {(data.cloned || []).length === 0 ? (
-          <Empty
-            icon="mic-off"
-            title="尚未克隆音色"
-            hint="到「克隆」按钮上传一段 30s 干净人声样本"
-          />
+      <div className="voice-media">
+        {previewing === v.id ? (
+          <span className="voice-media__busy"><Spinner /> 合成试听中…</span>
+        ) : previewResult[v.id] ? (
+          <span className="voice-media__empty">{previewResult[v.id]}</span>
         ) : (
-          <div className="text-sm">{JSON.stringify(data.cloned, null, 2)}</div>
+          <span className="voice-media__empty">尚未生成试听音频，点击下方按钮</span>
         )}
       </div>
+      <button className="voice-play-btn" onClick={() => preview(v.id)} disabled={previewing === v.id}>
+        <Icon name="play" size={12} /> 试听
+      </button>
+      {custom && (
+        <button className="btn btn-sm btn-danger" onClick={() => del(v.id)}>
+          <Icon name="trash" size={12} /> 删除
+        </button>
+      )}
     </div>
+  );
+
+  const systemVoices = data.system || [];
+  const clonedVoices = data.cloned || [];
+
+  return (
+    <div className="library-page">
+      <div className="library-toolbar">
+        <div>
+          <h2 className="page-title"><Icon name="mic" /> 音色库</h2>
+          <p className="page-subtitle">系统音色来自 CosyVoice / Edge-TTS，自定义音色可用干净人声样本克隆。</p>
+        </div>
+        <button className="btn" onClick={() => setShowCreate(!showCreate)}>
+          <Icon name="plus" size={13} /> 克隆新音色
+        </button>
+      </div>
+
+      <div className="library-callout">
+        <Icon name="info" size={14} />
+        <span>建议使用 5-30 秒、无背景音乐、无混响的人声样本；DashScope 克隆需要可访问的音频 URL。</span>
+      </div>
+
+      {showCreate && (
+        <div className="card library-form">
+          <div className="settings-grid two">
+            <div className="field">
+              <label>音色名称</label>
+              <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="例如：温柔女声" />
+            </div>
+            <div className="field">
+              <label>语言 / 性别</label>
+              <div className="row">
+                <select value={draft.language} onChange={(e) => setDraft({ ...draft, language: e.target.value })}>
+                  <option value="zh-CN">中文</option>
+                  <option value="en-US">英文</option>
+                </select>
+                <select value={draft.gender} onChange={(e) => setDraft({ ...draft, gender: e.target.value })}>
+                  <option value="unknown">未知</option>
+                  <option value="female">女声</option>
+                  <option value="male">男声</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="field">
+            <label>参考音频</label>
+            <FileUploadCard
+              accept="audio/*"
+              kind="audio"
+              value={draft.audio}
+              onUploaded={(audio) => setDraft({ ...draft, audio })}
+              hint="上传 5-30 秒清晰干声，噪音越少克隆越稳定"
+            />
+          </div>
+          <div className="settings-actions">
+            <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>取消</button>
+            <button className="btn" onClick={cloneVoice} disabled={busy}>
+              {busy ? <Spinner /> : <Icon name="save" size={13} />} 提交克隆
+            </button>
+          </div>
+        </div>
+      )}
+
+      <LibrarySection title="系统音色" count={systemVoices.length}>
+        {systemVoices.length === 0 ? (
+          <Empty icon="mic" title="系统音色暂未加载" hint="请刷新页面或检查后端音色目录" />
+        ) : (
+          <div className="lib-grid">{systemVoices.map((v) => <VoiceCard key={v.id} v={v} />)}</div>
+        )}
+      </LibrarySection>
+
+      <LibrarySection title="自定义音色" count={clonedVoices.length}>
+        {clonedVoices.length === 0 ? (
+          <Empty icon="mic-off" title="暂无自定义音色" hint="点击右上角「克隆新音色」上传一段人声样本" />
+        ) : (
+          <div className="lib-grid">{clonedVoices.map((v) => <VoiceCard key={v.id} v={v} custom />)}</div>
+        )}
+      </LibrarySection>
+    </div>
+  );
+}
+
+function LibrarySection({ title, count, children }) {
+  return (
+    <section className="library-section">
+      <div className="library-section__head">
+        <h3>{title} <span>· {count}</span></h3>
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -701,22 +1305,125 @@ function VoicesTab() {
 
 function FiguresTab() {
   const [list, setList] = useState([]);
-  useEffect(() => {
-    api("GET", "/figures").then((r) => setList(r.figures || []));
+  const [showCreate, setShowCreate] = useState(false);
+  const [draft, setDraft] = useState({ label: "", image: null });
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api("GET", "/figures").then((r) => setList(r.figures || [])).catch(() => setList([]));
   }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const createFigure = async () => {
+    if (!draft.label || !draft.image) {
+      alert("请填写形象名称并上传人像图");
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api("POST", "/figures", {
+        label: draft.label,
+        image_path: draft.image.local_path || draft.image.preview_url || "",
+        preview_url: draft.image.preview_url || "",
+        oss_url: draft.image.oss_url || "",
+        oss_key: draft.image.oss_key || "",
+      });
+      if (!r.ok) throw new Error(r.error || "create failed");
+      setDraft({ label: "", image: null });
+      setShowCreate(false);
+      load();
+    } catch (e) {
+      alert(`上传形象失败：${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const del = async (figId) => {
+    if (!confirm("确认删除该形象？")) return;
+    await api("DELETE", `/figures/${figId}`);
+    load();
+  };
+
+  const statusOf = (f) => {
+    if (f.detect_status) return f.detect_status;
+    if (f.detect_pass === true || f.detect_pass === 1) return "pass";
+    if (f.detect_pass === false || f.detect_pass === 0) return "pending";
+    return "skipped";
+  };
+
   return (
-    <div>
-      <h2 className="page-title">
-        <Icon name="user-square" /> 形象库
-      </h2>
+    <div className="library-page">
+      <div className="library-toolbar">
+        <div>
+          <h2 className="page-title"><Icon name="user-square" /> 形象库</h2>
+          <p className="page-subtitle">保存常用人像素材，后续数字人合成、换人和动作驱动可以直接复用。</p>
+        </div>
+        <button className="btn" onClick={() => setShowCreate(!showCreate)}>
+          <Icon name="plus" size={13} /> 上传新形象
+        </button>
+      </div>
+
+      {showCreate && (
+        <div className="card library-form">
+          <div className="field">
+            <label>形象名称</label>
+            <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="例如：商务主持人" />
+          </div>
+          <div className="field">
+            <label>人像图</label>
+            <FileUploadCard
+              accept="image/*"
+              kind="image"
+              value={draft.image}
+              onUploaded={(image) => setDraft({ ...draft, image })}
+              hint="建议上传单人正面照，五官清晰、无遮挡、无水印"
+            />
+          </div>
+          <div className="settings-actions">
+            <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>取消</button>
+            <button className="btn" onClick={createFigure} disabled={busy}>
+              {busy ? <Spinner /> : <Icon name="save" size={13} />} 上传并保存
+            </button>
+          </div>
+        </div>
+      )}
+
       {list.length === 0 ? (
         <Empty
           icon="user-plus"
-          title="还没有自定义形象"
-          hint="到「上传」上传一张正面人脸照，会自动做 wan2.2-s2v-detect 预检"
+          title="形象库为空"
+          hint="点击右上角「上传新形象」添加一张正面人像图"
         />
       ) : (
-        <div className="card">{JSON.stringify(list, null, 2)}</div>
+        <div className="lib-grid figure-grid">
+          {list.map((f) => {
+            const status = statusOf(f);
+            const kind = status === "pass" ? "success" : status === "fail" ? "danger" : status === "pending" ? "warning" : "info";
+            return (
+              <div key={f.id} className="lib-card figure-card">
+                <div className="fig-thumb-wrap">
+                  {f.preview_url ? (
+                    <img className="fig-thumb" src={f.preview_url} alt={f.label} />
+                  ) : (
+                    <div className="fig-thumb-placeholder"><Icon name="user-square" size={32} /></div>
+                  )}
+                </div>
+                <div className="lib-card__head">
+                  <div className="min-w-0">
+                    <div className="lib-card__title">{f.label}</div>
+                    <div className="lib-card__sub">{new Date((f.created_at || 0) * 1000).toLocaleString()}</div>
+                  </div>
+                  <Tag kind={kind}>{status}</Tag>
+                </div>
+                {f.detect_message && <div className="lib-card__hint">{f.detect_message}</div>}
+                <button className="btn btn-sm btn-danger" onClick={() => del(f.id)}>
+                  <Icon name="trash" size={12} /> 删除
+                </button>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -749,52 +1456,351 @@ function PromptTab() {
 
   if (!guide) return <Spinner />;
 
+  const formulas = Object.entries(guide.formulas || {});
+  const templates = guide.templates || [];
+  const cameras = guide.cameras || [];
+  const atmosphere = guide.atmosphere || {};
+
   return (
-    <div>
-      <h2 className="page-title">
-        <Icon name="sparkles" /> 提示词工坊
-      </h2>
-      <div className="card">
-        <div className="row">
-          <div className="field">
-            <label>模式</label>
-            <select value={mode} onChange={(e) => setMode(e.target.value)}>
-              {Object.keys(guide.formulas || {}).map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
+    <div className="prompt-page">
+      <div className="prompt-shell">
+        <h2 className="page-title"><Icon name="sparkles" /> 提示词工坊</h2>
+        <p className="page-subtitle">按 Avatar Studio 的指南页方式整理公式、模板和关键词，同时保留 AI 优化入口。</p>
+
+        <div className="prompt-workbench card">
+          <div className="prompt-workbench__main">
+            <div className="field">
+              <label>生成模式</label>
+              <select value={mode} onChange={(e) => setMode(e.target.value)}>
+                {formulas.map(([m]) => <option key={m}>{m}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label>原始提示词</label>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="输入一句粗略想法，例如：一位主持人在科技发布会现场介绍新品"
+              />
+            </div>
+            <button className="btn" onClick={optimize} disabled={busy || !prompt}>
+              {busy ? <Spinner /> : <Icon name="wand-sparkles" size={14} />} AI 优化
+            </button>
+          </div>
+          <div className="prompt-result">
+            <div className="prompt-result__title">优化结果</div>
+            {result ? <pre className="code-block">{result}</pre> : <Empty icon="sparkles" title="等待优化" hint="左侧输入后点击 AI 优化" />}
           </div>
         </div>
-        <div className="field">
-          <label>原始提示词</label>
-          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-        </div>
-        <button className="btn" onClick={optimize} disabled={busy || !prompt}>
-          <Icon name="wand-sparkles" size={14} /> AI 优化
-        </button>
-        {result && (
-          <div className="card mt-4">
-            <pre className="code-block">{result}</pre>
-          </div>
-        )}
-      </div>
-      <div className="card">
-        <h3 className="card-title">公式速查</h3>
-        <div className="text-sm text-muted">
-          {Object.entries(guide.formulas || {}).map(([m, f]) => (
-            <div key={m} className="mb-2">
-              <strong>{m}</strong>: {f}
+
+        <GuideSection title="各模式配方" defaultOpen>
+          {formulas.map(([m, f]) => (
+            <div key={m} className="guide-row">
+              <strong>{m}</strong>
+              <span>{f}</span>
             </div>
           ))}
-        </div>
+        </GuideSection>
+
+        <GuideSection title="模板示例">
+          <div className="template-grid">
+            {templates.slice(0, 12).map((tpl) => (
+              <button key={tpl.id || tpl.name} className="template-card" onClick={() => setPrompt(tpl.prompt || tpl.template || "")}>
+                <div className="name">{tpl.name || tpl.name_zh || tpl.id}</div>
+                <div className="desc">{tpl.desc || tpl.description || (tpl.modes || []).join(" / ")}</div>
+              </button>
+            ))}
+          </div>
+        </GuideSection>
+
+        <GuideSection title="镜头与氛围关键词">
+          <div className="keyword-panel">
+            {cameras.map((c) => (
+              <span className="keyword-chip" key={c.zh || c.en}>{c.zh || c.en}</span>
+            ))}
+            {Object.entries(atmosphere).map(([group, words]) => (
+              <div className="keyword-group" key={group}>
+                <strong>{group}</strong>
+                {(words || []).slice(0, 12).map((w) => <span className="keyword-chip" key={w}>{w}</span>)}
+              </div>
+            ))}
+          </div>
+        </GuideSection>
       </div>
     </div>
   );
 }
 
+function GuideSection({ title, children, defaultOpen = false }) {
+  return (
+    <details className="guide-section" open={defaultOpen}>
+      <summary><Icon name="info" size={14} /> {title}</summary>
+      <div className="guide-section__body">{children}</div>
+    </details>
+  );
+}
+
 // ── Settings Tab ────────────────────────────────────────────────────
 
+function fmtMb(v) {
+  const n = Number(v || 0);
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} GB`;
+  return `${n.toFixed(1)} MB`;
+}
+
+function SettingSection({ icon, title, desc, children }) {
+  return (
+    <section className="settings-section">
+      <div className="settings-section__head">
+        <div className="settings-section__title">
+          <Icon name={icon || "settings"} size={15} />
+          {title}
+        </div>
+        {desc && <p>{desc}</p>}
+      </div>
+      <div className="settings-section__body">{children}</div>
+    </section>
+  );
+}
+
+function SettingField({ label, hint, children }) {
+  return (
+    <div className="setting-field">
+      <label>{label}</label>
+      {children}
+      {hint && <div className="setting-hint">{hint}</div>}
+    </div>
+  );
+}
+
+function SystemComponentsPanel() {
+  const [items, setItems] = useState([]);
+  const [status, setStatus] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api("GET", "/system/components");
+      setItems(r.items || []);
+    } catch (_) {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!items.some((x) => x.busy || status[x.id]?.busy)) return;
+    const timer = setInterval(async () => {
+      for (const it of items) {
+        try {
+          const r = await api("GET", `/system/${it.id}/status`);
+          setStatus((prev) => ({ ...prev, [it.id]: r }));
+        } catch (_) {}
+      }
+      refresh();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [items, status, refresh]);
+
+  const install = async (id) => {
+    setStatus((prev) => ({ ...prev, [id]: { busy: true, log_tail: [] } }));
+    try {
+      await api("POST", `/system/${id}/install`, { method_index: 0 });
+      refresh();
+    } catch (e) {
+      alert(`安装启动失败：${e.message}`);
+    }
+  };
+
+  if (loading && items.length === 0) {
+    return <div className="sysdep-card"><Spinner /> 正在检测系统组件…</div>;
+  }
+
+  return (
+    <div className="dep-stack">
+      <div className="settings-callout">
+        FFmpeg 用于长视频拼接、视频预览和后续媒体处理。它是系统级组件，如果机器已经安装，本插件会直接复用。
+      </div>
+      {items.map((it) => {
+        const live = status[it.id] || it.last_install || {};
+        const busy = !!(it.busy || live.busy);
+        const found = !!(live.found ?? it.found);
+        const methods = it.methods || [];
+        return (
+          <div key={it.id} className="sysdep-card">
+            <div className="sysdep-card__head">
+              <div className="sysdep-card__title">
+                <Icon name="package" size={18} />
+                <div>
+                  <strong>{it.display_name || it.id}</strong>
+                  <p>{it.description}</p>
+                </div>
+              </div>
+              <span className={"sysdep-badge " + (busy ? "busy" : found ? "ok" : "warn")}>
+                {busy ? "安装中" : found ? `已安装${it.version ? ` ${it.version}` : ""}` : "未安装"}
+              </span>
+            </div>
+            {it.location && <div className="sysdep-path">{it.location}</div>}
+            <div className="sysdep-actions">
+              <button
+                className={"btn btn-sm " + (!found ? "" : "btn-ghost")}
+                disabled={busy || methods.length === 0}
+                onClick={() => install(it.id)}
+              >
+                {busy ? <Spinner /> : <Icon name="download" size={12} />}
+                {found ? "重新安装" : "一键安装"}
+              </button>
+              <button className="btn btn-sm btn-ghost" onClick={refresh} disabled={loading}>
+                <Icon name="refresh" size={12} /> 重新检测
+              </button>
+              {it.homepage && (
+                <a className="btn btn-sm btn-ghost" href={it.homepage} target="_blank" rel="noreferrer">
+                  官方文档
+                </a>
+              )}
+            </div>
+            {!!(live.log_tail || []).length && (
+              <pre className="sysdep-log">{(live.log_tail || []).join("\n")}</pre>
+            )}
+          </div>
+        );
+      })}
+      {items.length === 0 && <div className="text-xs text-muted">没有需要安装的系统组件。</div>}
+    </div>
+  );
+}
+
+function PythonDepsPanel() {
+  const [deps, setDeps] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api("GET", "/python-deps/status");
+      setDeps(r.deps || []);
+    } catch (_) {
+      setDeps([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const install = async (name) => {
+    setDeps((prev) => prev.map((x) => x.id === name ? { ...x, busy: true } : x));
+    try {
+      await api("POST", "/python-deps/install", { name });
+    } catch (e) {
+      alert(`安装失败：${e.message}`);
+    } finally {
+      refresh();
+    }
+  };
+
+  return (
+    <div className="dep-stack">
+      <div className="settings-callout">
+        Python 依赖是插件私有库，用于 OSS 上传、音频时长读取、Edge-TTS 和 CosyVoice 语音能力。
+      </div>
+      {deps.map((dep) => (
+        <div className="pydep-row" key={dep.id}>
+          <div className="pydep-main">
+            <strong>{dep.id}</strong>
+            <span>{dep.version || dep.pip_spec || dep.import_name}</span>
+          </div>
+          <span className={"sysdep-badge " + (dep.busy ? "busy" : dep.ok ? "ok" : "warn")}>
+            {dep.busy ? "安装中" : dep.ok ? "可用" : "缺失"}
+          </span>
+          <button className="btn btn-sm btn-ghost" disabled={dep.busy} onClick={() => install(dep.id)}>
+            {dep.busy ? <Spinner /> : <Icon name="download" size={12} />}
+            {dep.ok ? "重新安装" : "安装"}
+          </button>
+        </div>
+      ))}
+      {loading && deps.length === 0 && <div className="text-xs text-muted">正在检测 Python 依赖…</div>}
+    </div>
+  );
+}
+
+function StorageSettings({ form, setFormValue, save }) {
+  const [stats, setStats] = useState(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await api("GET", "/storage/stats");
+      setStats(r.stats || null);
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const pick = async (key) => {
+    const picked = await window.OpenAkita?.pickFolder?.(`选择 ${key}`);
+    if (!picked) return;
+    setFormValue(key, picked);
+    await save({ [key]: picked });
+    refresh();
+  };
+
+  const open = async (path) => {
+    if (!path) return;
+    try {
+      await api("POST", "/storage/open-folder", { path });
+    } catch (e) {
+      alert(`打开文件夹失败：${e.message}`);
+    }
+  };
+
+  const fields = [
+    ["output_dir", "视频输出目录", "默认保存生成视频和长视频拼接结果"],
+    ["cache_dir", "缓存目录", "保存中间文件，可定期清理"],
+  ];
+
+  return (
+    <div>
+      {fields.map(([key, label, hint]) => (
+        <SettingField key={key} label={label} hint={hint}>
+          <div className="folder-row">
+            <input
+              value={form[key] || ""}
+              onChange={(e) => setFormValue(key, e.target.value)}
+              onBlur={(e) => save({ [key]: e.target.value })}
+              placeholder={`默认：插件数据目录/${key}`}
+            />
+            <button className="btn btn-sm btn-ghost" onClick={() => pick(key)}>选择</button>
+            <button className="btn btn-sm btn-ghost" onClick={() => open(form[key] || stats?.[key]?.path)}>打开</button>
+          </div>
+        </SettingField>
+      ))}
+      {stats && (
+        <div className="storage-grid">
+          {Object.entries(stats).map(([key, s]) => (
+            <div className="storage-card" key={key}>
+              <div className="storage-card__label">{key}</div>
+              <div className="storage-card__value">{fmtMb(s.size_mb)}</div>
+              <div className="storage-card__meta">{s.file_count} 个文件</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsTab({ catalog, settings, onSave }) {
+  catalog = catalog || { modes: [], models: [], default_models: {} };
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
 
@@ -816,6 +1822,19 @@ function SettingsTab({ catalog, settings, onSave }) {
     }
   };
 
+  const savePartial = async (updates) => {
+    setSaving(true);
+    try {
+      await api("PUT", "/settings", { updates });
+      setForm((prev) => ({ ...prev, ...updates }));
+      onSave?.();
+    } catch (e) {
+      alert(`保存失败：${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const testConnection = async () => {
     const rawKey = form.api_key || "";
     const r = await api("POST", "/test-connection", {
@@ -827,24 +1846,27 @@ function SettingsTab({ catalog, settings, onSave }) {
   if (!catalog) return <Spinner />;
 
   return (
-    <div>
-      <h2 className="page-title">
-        <Icon name="settings" /> 设置
-      </h2>
+    <div className="settings-page">
+      <div className="settings-shell">
+        <h2 className="page-title">
+          <Icon name="settings" /> 设置
+        </h2>
+        <p className="page-subtitle">集中管理模型调用、OSS、默认生成参数、依赖组件和文件目录。</p>
 
-      <div className="card">
-        <h3 className="card-title">阿里云百炼</h3>
-        <div className="field">
-          <label>API Key</label>
+        <SettingSection
+          icon="key"
+          title="阿里云百炼"
+          desc="DashScope API（大模型接口）用于提交 HappyHorse / Wan / 数字人任务。"
+        >
+          <SettingField label="API Key" hint={settings?.api_key_set ? "已保存密钥；留空或保持脱敏值不会覆盖旧密钥。" : "请填写 DashScope 控制台生成的 sk-... 密钥。"}>
           <input
             type="password"
             value={form.api_key || ""}
             onChange={(e) => set("api_key", e.target.value)}
             placeholder={settings?.api_key_set ? "(已保存)" : "sk-..."}
           />
-        </div>
-        <div className="field">
-          <label>区域 Endpoint</label>
+          </SettingField>
+          <SettingField label="区域 Endpoint" hint="该配置影响所有 DashScope 请求发往中国区或国际区。">
           <select
             value={form.base_url || "https://dashscope.aliyuncs.com"}
             onChange={(e) => set("base_url", e.target.value)}
@@ -852,78 +1874,75 @@ function SettingsTab({ catalog, settings, onSave }) {
             <option value="https://dashscope.aliyuncs.com">中国（北京）</option>
             <option value="https://dashscope-intl.aliyuncs.com">国际</option>
           </select>
-        </div>
-        <div className="flex gap-2">
+          </SettingField>
+          <div className="settings-actions">
           <button className="btn" onClick={save} disabled={saving}>
             {saving ? <Spinner /> : <Icon name="save" size={14} />} 保存
           </button>
           <button className="btn btn-ghost" onClick={testConnection}>
             测试连接
           </button>
-        </div>
-      </div>
+          </div>
+        </SettingSection>
 
-      <div className="card">
-        <h3 className="card-title">阿里云 OSS（必填，DashScope 输入靠它）</h3>
-        <div className="row">
-          <div className="field">
-            <label>Endpoint</label>
+        <SettingSection
+          icon="cloud"
+          title="阿里云 OSS"
+          desc="DashScope 只能读取公网可访问素材，上传图片/视频/音频时会通过 OSS 生成输入 URL。"
+        >
+          <div className="settings-grid two">
+            <SettingField label="Endpoint">
             <input
               value={form.oss_endpoint || ""}
               onChange={(e) => set("oss_endpoint", e.target.value)}
               placeholder="oss-cn-beijing.aliyuncs.com"
             />
-          </div>
-          <div className="field">
-            <label>Bucket</label>
+            </SettingField>
+            <SettingField label="Bucket">
             <input
               value={form.oss_bucket || ""}
               onChange={(e) => set("oss_bucket", e.target.value)}
             />
-          </div>
-        </div>
-        <div className="row">
-          <div className="field">
-            <label>AccessKey ID</label>
+            </SettingField>
+            <SettingField label="AccessKey ID">
             <input
               value={form.oss_access_key_id || ""}
               onChange={(e) => set("oss_access_key_id", e.target.value)}
             />
-          </div>
-          <div className="field">
-            <label>AccessKey Secret</label>
+            </SettingField>
+            <SettingField label="AccessKey Secret">
             <input
               type="password"
               value={form.oss_access_key_secret || ""}
               onChange={(e) => set("oss_access_key_secret", e.target.value)}
             />
+            </SettingField>
           </div>
-        </div>
-        <div className="field">
-          <label>对象路径前缀</label>
+          <SettingField label="对象路径前缀" hint="用于区分插件上传的文件，建议保持默认。">
           <input
             value={form.oss_path_prefix || "happyhorse-video"}
             onChange={(e) => set("oss_path_prefix", e.target.value)}
           />
-        </div>
-        <button className="btn btn-sm" onClick={save} disabled={saving}>
-          保存 OSS 配置
-        </button>
-      </div>
+          </SettingField>
+          <button className="btn btn-sm" onClick={save} disabled={saving}>
+            保存 OSS 配置
+          </button>
+        </SettingSection>
 
-      <div className="card">
-        <h3 className="card-title">默认模型（每个 mode 一行下拉）</h3>
-        <p className="text-xs text-muted mb-2">
-          在「创建」页未选模型时使用此处配置；不配置则用 registry 内置默认。
-        </p>
-        {(catalog.modes || []).map((m) => {
+        <SettingSection
+          icon="wand-sparkles"
+          title="默认模型"
+          desc="在「创建」页切换模式时自动选中的模型；不配置则使用内置默认。"
+        >
+        <div className="model-default-list">
+          {(catalog.modes || []).map((m) => {
           const opts = (catalog.models || []).filter((x) => x.mode === m.id);
           return (
-            <div key={m.id} className="row" style={{ alignItems: "center" }}>
-              <div style={{ flex: "0 0 140px" }} className="text-sm">
+            <div key={m.id} className="model-default-row">
+              <div className="model-default-name">
                 {m.label_zh}
               </div>
-              <div className="field flex-1">
+              <div>
                 <select
                   value={form[`default_model_${m.id}`] || catalog.default_models?.[m.id] || ""}
                   onChange={(e) => set(`default_model_${m.id}`, e.target.value)}
@@ -937,15 +1956,32 @@ function SettingsTab({ catalog, settings, onSave }) {
               </div>
             </div>
           );
-        })}
-        <button className="btn btn-sm" onClick={save} disabled={saving}>
-          保存默认模型
-        </button>
-      </div>
+          })}
+        </div>
+          <button className="btn btn-sm" onClick={save} disabled={saving}>
+            保存默认模型
+          </button>
+        </SettingSection>
 
-      <div className="card">
-        <h3 className="card-title">关于</h3>
-        <div className="text-sm text-muted">
+        <SettingSection
+          icon="package"
+          title="系统组件"
+          desc="依赖下载器会检测并安装系统级 FFmpeg，避免长视频拼接和预览不可用。"
+        >
+          <SystemComponentsPanel />
+          <PythonDepsPanel />
+        </SettingSection>
+
+        <SettingSection
+          icon="folder"
+          title="文件夹与存储"
+          desc="选择输出和缓存位置，并查看插件当前占用空间。"
+        >
+          <StorageSettings form={form} setFormValue={set} save={savePartial} />
+        </SettingSection>
+
+        <SettingSection icon="info" title="关于">
+          <div className="text-sm text-muted">
           <div>快乐马工作室（HappyHorse Studio）v1.0.0</div>
           <div>
             后端：阿里云百炼 DashScope · HappyHorse 1.0 + Wan 2.6/2.7 + 数字人 5 模式
@@ -956,6 +1992,7 @@ function SettingsTab({ catalog, settings, onSave }) {
             </a>
           </div>
         </div>
+        </SettingSection>
       </div>
     </div>
   );
@@ -986,8 +2023,8 @@ function App() {
 
   return (
     <div className="app">
-      <Sidebar tab={tab} onTab={setTab} />
-      <main className="main">
+      <HeaderNav tab={tab} onTab={setTab} settings={settings} />
+      <main className="content">
         {tab === "create" && (
           <CreateTab
             catalog={catalog}
