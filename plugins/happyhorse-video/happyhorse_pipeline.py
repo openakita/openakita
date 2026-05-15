@@ -323,6 +323,42 @@ async def _step_prepare_assets(
         else:
             ctx.asset_urls[kind] = str(val).strip()
 
+    # UI/tool schemas send the common media fields at the top level, while
+    # older helper code used params.assets. Normalize both shapes here so the
+    # rest of the pipeline can use ctx.asset_urls consistently.
+    for kind in (
+        "first_frame_url",
+        "last_frame_url",
+        "source_video_url",
+        "video_url",
+        "image_url",
+        "audio_url",
+        "reference_urls",
+        "image_urls",
+        "ref_images_url",
+    ):
+        val = ctx.params.get(kind)
+        if val is None or val == "":
+            continue
+        if isinstance(val, list):
+            cleaned = [str(v).strip() for v in val if str(v or "").strip()]
+            if cleaned and kind not in ctx.asset_urls:
+                ctx.asset_urls[kind] = cleaned
+        elif str(val).strip() and kind not in ctx.asset_urls:
+            ctx.asset_urls[kind] = str(val).strip()
+
+    # Compatibility aliases used by the DashScope digital-human methods.
+    if "source_video_url" in ctx.asset_urls and "video_url" not in ctx.asset_urls:
+        ctx.asset_urls["video_url"] = ctx.asset_urls["source_video_url"]
+    if "image_url" in ctx.asset_urls and "ref_images_url" not in ctx.asset_urls:
+        refs = [str(ctx.asset_urls["image_url"])]
+        extra = ctx.asset_urls.get("image_urls")
+        if isinstance(extra, list):
+            refs.extend(str(u) for u in extra if u)
+        elif extra:
+            refs.append(str(extra))
+        ctx.asset_urls["ref_images_url"] = refs
+
     # Surface any obvious local-URL leaks early — DashScope can't reach them.
     for kind, val in list(ctx.asset_urls.items()):
         urls = val if isinstance(val, list) else [val]
@@ -348,9 +384,9 @@ async def _step_prepare_assets(
         "video_edit": ["source_video_url"],
         "r2v": ["reference_urls"],
         "photo_speak": ["image_url"],
-        "video_relip": ["video_url"],
-        "video_reface": ["image_url", "video_url"],
-        "pose_drive": ["image_url", "video_url"],
+        "video_relip": ["source_video_url"],
+        "video_reface": ["image_url", "source_video_url"],
+        "pose_drive": ["image_url", "source_video_url"],
         "avatar_compose": ["ref_images_url"],
     }
     for need in required.get(ctx.mode, []):

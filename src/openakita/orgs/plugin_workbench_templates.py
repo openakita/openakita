@@ -76,6 +76,87 @@ def _tool_summary(tool: dict) -> dict:
     }
 
 
+def _tool_name(tool: Any) -> str:
+    """Extract a tool name from either a tool dict or PluginAPI's name list."""
+    if isinstance(tool, str):
+        return tool
+    if isinstance(tool, dict):
+        return tool.get("name") or tool.get("function", {}).get("name", "")
+    return ""
+
+
+def _host_get(api: Any, key: str) -> Any:
+    host = getattr(api, "_host", None)
+    if host is None or not hasattr(host, "get"):
+        return None
+    try:
+        return host.get(key)
+    except Exception:
+        return None
+
+
+def _lookup_tool_definition(api: Any, name: str) -> dict:
+    """Resolve a registered tool name back to its full definition when possible."""
+    tool_catalog = _host_get(api, "tool_catalog")
+    if tool_catalog is not None and hasattr(tool_catalog, "get_tool_info"):
+        try:
+            info = tool_catalog.get_tool_info(name)
+            if isinstance(info, dict):
+                return info
+        except Exception:
+            logger.debug(
+                "[workbench-templates] failed to read tool_catalog info for %s",
+                name,
+                exc_info=True,
+            )
+
+    tool_definitions = _host_get(api, "tool_definitions")
+    if tool_definitions is not None:
+        try:
+            for defn in tool_definitions:
+                if not isinstance(defn, dict):
+                    continue
+                defn_name = defn.get("name") or defn.get("function", {}).get("name", "")
+                if defn_name == name:
+                    return defn
+        except Exception:
+            logger.debug(
+                "[workbench-templates] failed to scan tool_definitions for %s",
+                name,
+                exc_info=True,
+            )
+
+    return {"name": name, "description": "", "input_schema": {}}
+
+
+def _registered_tool_summaries(api: Any) -> list[dict]:
+    """Return display-ready tool summaries for a plugin's registered tools."""
+    try:
+        raw_tools = list(getattr(api, "_registered_tools", None) or [])
+    except Exception:
+        logger.debug("[workbench-templates] failed to read registered tools", exc_info=True)
+        return []
+
+    summaries: list[dict] = []
+    seen: set[str] = set()
+    for raw in raw_tools:
+        if isinstance(raw, dict):
+            defn = raw
+        else:
+            name = _tool_name(raw)
+            if not name:
+                continue
+            defn = _lookup_tool_definition(api, name)
+
+        summary = _tool_summary(defn)
+        name = summary.get("name", "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        summaries.append(summary)
+    return summaries
+
+
 def build_workbench_templates(pm: PluginManager | None) -> list[dict]:
     """Build workbench node templates from a PluginManager.
 
@@ -88,15 +169,7 @@ def build_workbench_templates(pm: PluginManager | None) -> list[dict]:
 
     templates: list[dict] = []
     for lp in pm.loaded_plugins.values():
-        try:
-            tools = list(getattr(lp.api, "_registered_tools", None) or [])
-        except Exception:
-            logger.debug(
-                "[workbench-templates] failed to read tools for %s",
-                getattr(lp.manifest, "id", "?"),
-                exc_info=True,
-            )
-            tools = []
+        tools = _registered_tool_summaries(lp.api)
         if not tools:
             continue
 
@@ -106,7 +179,7 @@ def build_workbench_templates(pm: PluginManager | None) -> list[dict]:
         display_zh = m.display_name_zh or m.name or plugin_id
         display_en = m.display_name_en or m.name or plugin_id
         desc_i18n = dict(m.description_i18n or {})
-        tool_names = [t.get("name", "") for t in tools if t.get("name")]
+        tool_names = [t["name"] for t in tools]
 
         templates.append(
             {
@@ -119,7 +192,7 @@ def build_workbench_templates(pm: PluginManager | None) -> list[dict]:
                 "description_i18n": desc_i18n,
                 "icon": m.icon or "",
                 "category": m.category or "",
-                "tools": [_tool_summary(t) for t in tools],
+                "tools": tools,
                 "tool_names": tool_names,
                 "suggested_node": {
                     "role_title": display_zh,
@@ -165,7 +238,7 @@ def deprecated_tools_for_node(
     for lp in pm.loaded_plugins.values():
         try:
             for t in getattr(lp.api, "_registered_tools", None) or []:
-                name = t.get("name")
+                name = _tool_name(t)
                 if name:
                     known.add(name)
         except Exception:

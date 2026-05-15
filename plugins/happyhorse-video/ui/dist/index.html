@@ -154,7 +154,9 @@ function CreateTab({ catalog, settings, onSubmit }) {
   const [lastFrame, setLastFrame] = useState("");
   const [sourceVideo, setSourceVideo] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [imageUrls, setImageUrls] = useState("");
   const [referenceUrls, setReferenceUrls] = useState("");
+  const [audioUrl, setAudioUrl] = useState("");
   const [costPreview, setCostPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -194,6 +196,10 @@ function CreateTab({ catalog, settings, onSubmit }) {
   }, [mode, modelId, duration, resolution, aspect, text]);
 
   const submit = async () => {
+    const approved = !costPreview?.exceeds_threshold || window.confirm(
+      `本次预估成本为 ${costPreview.formatted_total || "较高"}，已超过阈值。确认继续提交吗？`
+    );
+    if (!approved) return;
     setSubmitting(true);
     try {
       const body = {
@@ -209,11 +215,16 @@ function CreateTab({ catalog, settings, onSubmit }) {
         last_frame_url: lastFrame,
         source_video_url: sourceVideo,
         image_url: imageUrl,
+        image_urls: imageUrls
+          .split(/[\s,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean),
         reference_urls: referenceUrls
           .split(/[\s,]+/)
           .map((s) => s.trim())
           .filter(Boolean),
-        cost_approved: false,
+        audio_url: audioUrl,
+        cost_approved: !!costPreview?.exceeds_threshold,
         client_request_id: `web_${Date.now()}`,
       };
       const r = await api("POST", "/tasks", body);
@@ -335,6 +346,12 @@ function CreateTab({ catalog, settings, onSubmit }) {
               <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
             </div>
           )}
+          {(modeSpec?.required_assets || []).includes("image_urls") && (
+            <div className="field">
+              <label>额外参考图 URLs (image_urls，英文逗号或换行分隔)</label>
+              <input value={imageUrls} onChange={(e) => setImageUrls(e.target.value)} />
+            </div>
+          )}
           {(modeSpec?.required_assets || []).includes("reference_urls") && (
             <div className="field">
               <label>参考图 URLs (英文逗号分隔)</label>
@@ -358,6 +375,10 @@ function CreateTab({ catalog, settings, onSubmit }) {
               <div className="field">
                 <label>台词 (text)</label>
                 <input value={text} onChange={(e) => setText(e.target.value)} />
+              </div>
+              <div className="field">
+                <label>音频 URL (audio_url，可选；填写后优先于 TTS)</label>
+                <input value={audioUrl} onChange={(e) => setAudioUrl(e.target.value)} />
               </div>
             </div>
           )}
@@ -383,7 +404,7 @@ function CreateTab({ catalog, settings, onSubmit }) {
                 <div className="text-xs text-muted mt-2">
                   {(costPreview.items || []).map((it, i) => (
                     <div key={i}>
-                      {it.label}：{it.unit_qty} × ¥{it.unit_price} = ¥{it.subtotal}
+                      {it.name}：{it.units} {it.unit_label} × ¥{it.unit_price} = ¥{it.subtotal}
                     </div>
                   ))}
                 </div>
@@ -796,8 +817,9 @@ function SettingsTab({ catalog, settings, onSave }) {
   };
 
   const testConnection = async () => {
+    const rawKey = form.api_key || "";
     const r = await api("POST", "/test-connection", {
-      api_key: form.api_key || "",
+      api_key: rawKey.includes("***") ? "" : rawKey,
     });
     alert(r.ok ? "连接成功" : `失败：${r.message || "unknown"}`);
   };

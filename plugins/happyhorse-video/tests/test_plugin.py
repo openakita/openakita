@@ -50,6 +50,18 @@ def test_video_tools_advertise_from_asset_ids_in_schema():
         )
 
 
+def test_video_tools_accept_documented_alias_fields():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    props = by_name["hh_video_edit"]["input_schema"]["properties"]
+    assert "video_url" in props
+    assert "source_video_url" in props
+    assert "task_type" in props
+    assert "mode_pro" in props
+    assert "ref_images_url" in props
+
+
 def test_status_tool_requires_task_id():
     plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
     tools = plugin._tool_definitions()

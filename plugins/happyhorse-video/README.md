@@ -104,12 +104,12 @@ py -3.11 -m ruff check .             # 0 error
 @hh_t2v prompt="海上日出，慢镜头" duration=10 resolution=1080P
 @hh_i2v prompt="风吹动主角发丝" first_frame_url=https://... duration=8
 @hh_r2v prompt="角色1对角色2说：你好" reference_urls='["https://...role1.mp4","https://...role2.mp4"]'
-@hh_video_edit prompt="把背景换成赛博朋克城市" video_url=https://...
+@hh_video_edit prompt="把背景换成赛博朋克城市" source_video_url=https://...
 @hh_photo_speak image_url=... text="你好" voice_id=longxiaochun_v2
-@hh_video_relip video_url=... audio_url=...
-@hh_video_reface image_url=... video_url=... mode_pro=false
-@hh_pose_drive image_url=... video_url=... mode_pro=false
-@hh_avatar_compose ref_images_url=[...] prompt="..." text="..."
+@hh_video_relip source_video_url=... audio_url=...
+@hh_video_reface image_url=... source_video_url=... mode_pro=false
+@hh_pose_drive image_url=... source_video_url=... mode_pro=false
+@hh_avatar_compose image_url=... image_urls='["https://...scene.png"]' prompt="..." text="..."
 @hh_long_video_create story="一只小猫的奇幻冒险" total_duration=30 mode=parallel
 @hh_status task_id=tk_xxx
 @hh_list limit=10

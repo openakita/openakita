@@ -28,6 +28,7 @@ def _make_plugin(
     icon: str = "",
     category: str = "",
     tools: list[dict] | None = None,
+    registered_tools: list | None = None,
 ) -> SimpleNamespace:
     manifest = SimpleNamespace(
         id=plugin_id,
@@ -40,7 +41,10 @@ def _make_plugin(
         icon=icon,
         category=category,
     )
-    api = SimpleNamespace(_registered_tools=list(tools or []))
+    api = SimpleNamespace(
+        _registered_tools=list(registered_tools if registered_tools is not None else tools or []),
+        _host={"tool_definitions": list(tools or [])},
+    )
     return SimpleNamespace(manifest=manifest, api=api)
 
 
@@ -118,6 +122,37 @@ def test_build_workbench_templates_emits_suggested_node():
     # custom_prompt lists the actual tool names so the LLM never has to
     # guess what it's allowed to call
     assert "tongyi_image_create" in suggested["custom_prompt"]
+
+
+def test_build_workbench_templates_resolves_plugin_api_registered_tool_names():
+    pm = _make_pm([
+        _make_plugin(
+            "happyhorse-video",
+            display_zh="快乐马视频",
+            tools=[
+                {
+                    "name": "hh_i2v",
+                    "description": "Image to video",
+                    "input_schema": {"type": "object", "properties": {"prompt": {"type": "string"}}},
+                },
+            ],
+            registered_tools=["hh_i2v"],
+        ),
+    ])
+
+    out = build_workbench_templates(pm)
+
+    assert len(out) == 1
+    tpl = out[0]
+    assert tpl["tool_names"] == ["hh_i2v"]
+    assert tpl["tools"] == [
+        {
+            "name": "hh_i2v",
+            "description": "Image to video",
+            "input_schema": {"type": "object", "properties": {"prompt": {"type": "string"}}},
+        },
+    ]
+    assert tpl["suggested_node"]["external_tools"] == ["hh_i2v"]
 
 
 def test_build_workbench_templates_sorts_by_category_then_name():

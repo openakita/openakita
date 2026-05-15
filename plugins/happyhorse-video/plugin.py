@@ -111,13 +111,20 @@ class CreateTaskBody(BaseModel):
     tts_engine: str = ""
     text: str = ""
     audio_url: str = ""
+    # Compatibility aliases used by docs / older agent prompts. The pipeline
+    # normalizes these to source_video_url / ref_images_url where needed.
+    video_url: str = ""
     first_frame_url: str = ""
     last_frame_url: str = ""
     source_video_url: str = ""
     reference_urls: list[str] = Field(default_factory=list)
     image_url: str = ""
     image_urls: list[str] = Field(default_factory=list)
+    ref_images_url: list[str] = Field(default_factory=list)
     animate_mode: str = "wan-std"
+    mode_pro: bool = False
+    task_type: str = ""
+    compose_prompt: str = ""
     cost_approved: bool = False
     client_request_id: str = ""
     from_asset_ids: list[str] = Field(default_factory=list)
@@ -538,6 +545,12 @@ class Plugin(PluginBase):
 
         try:
             params = body.model_dump()
+            if params.get("video_url") and not params.get("source_video_url"):
+                params["source_video_url"] = params["video_url"]
+            if params.get("ref_images_url") and not params.get("image_urls"):
+                params["image_urls"] = list(params["ref_images_url"])
+            if params.get("ref_images_url") and not params.get("image_url"):
+                params["image_url"] = params["ref_images_url"][0]
             # Expand from_asset_ids before validation so per-mode required
             # asset checks see the materialised URLs.
             if body.from_asset_ids:
@@ -579,6 +592,14 @@ class Plugin(PluginBase):
         spec = MODES_BY_ID.get(mode)
         required = list(getattr(spec, "required_assets", []) or [])
         for key in required:
+            if key == "prompt" and not params.get("prompt"):
+                raise HTTPException(
+                    status_code=400, detail="该模式需要 prompt（生成提示词）"
+                )
+            if key == "story" and not params.get("story") and not params.get("segments"):
+                raise HTTPException(
+                    status_code=400, detail="长视频模式需要 story 或 segments"
+                )
             if key == "first_frame_url" and not params.get("first_frame_url"):
                 raise HTTPException(
                     status_code=400, detail="i2v 模式需要先上传或指定首帧图片"
@@ -599,7 +620,17 @@ class Plugin(PluginBase):
                 raise HTTPException(
                     status_code=400, detail="该模式需要 image_url（人脸 / 形象图）"
                 )
-            if key == "audio_url" and not params.get("audio_url") and not params.get("text"):
+            if key == "image_urls" and not (
+                params.get("image_urls")
+                or params.get("image_url")
+                or params.get("ref_images_url")
+            ):
+                raise HTTPException(
+                    status_code=400, detail="数字人合成至少需要 1 张参考图"
+                )
+            if key in {"audio_url", "audio_or_text"} and not params.get(
+                "audio_url"
+            ) and not params.get("text"):
                 raise HTTPException(
                     status_code=400,
                     detail="该模式需要 audio_url 或 text（用于 TTS 生成音频）",
@@ -713,6 +744,10 @@ class Plugin(PluginBase):
                         "first_frame_url": {"type": "string"},
                         "last_frame_url": {"type": "string"},
                         "source_video_url": {"type": "string"},
+                        "video_url": {
+                            "type": "string",
+                            "description": "Alias for source_video_url.",
+                        },
                         "reference_urls": {
                             "type": "array", "items": {"type": "string"}
                         },
@@ -720,9 +755,17 @@ class Plugin(PluginBase):
                         "image_urls": {
                             "type": "array", "items": {"type": "string"}
                         },
+                        "ref_images_url": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Alias for image_url + image_urls.",
+                        },
                         "voice_id": {"type": "string"},
                         "text": {"type": "string"},
                         "audio_url": {"type": "string"},
+                        "task_type": {"type": "string"},
+                        "mode_pro": {"type": "boolean"},
+                        "compose_prompt": {"type": "string"},
                         "from_asset_ids": {
                             "type": "array",
                             "items": {"type": "string"},
@@ -1133,7 +1176,23 @@ class Plugin(PluginBase):
 
         @router.put("/settings")
         async def put_settings(body: SettingsUpdateBody) -> dict:
-            cleaned = {k: (v or "").strip() for k, v in body.updates.items()}
+            # The GET /settings route returns sensitive values redacted so the
+            # DOM never contains real secrets. When the UI later saves unrelated
+            # settings, preserve existing secrets instead of writing "***" or
+            # an empty placeholder back into SQLite.
+            current = await self._tm.get_all_config()
+            sensitive_keys = {
+                "api_key",
+                "ark_api_key",
+                "oss_access_key_id",
+                "oss_access_key_secret",
+            }
+            cleaned: dict[str, str] = {}
+            for k, raw in body.updates.items():
+                v = (raw or "").strip()
+                if k in sensitive_keys and current.get(k) and (not v or "***" in v):
+                    continue
+                cleaned[k] = v
             await self._tm.set_configs(cleaned)
             await self._reload_settings_cache()
             self._client.update_api_key(self._settings_cache.get("api_key", ""))
