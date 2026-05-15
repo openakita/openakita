@@ -260,6 +260,34 @@ class TestStripInternalTraceMarkers:
         text = "Visible answer.\n\n<<TOOL_TRACE>>\n- web_search({'q': 'x'}) -> ..."
         assert strip_internal_trace_markers(text) == "Visible answer."
 
+    def test_strip_external_content_tool_trace_wrapper(self):
+        text = (
+            "桌面 333.txt 文件的内容是：\n\n"
+            "你好\n\n"
+            "<<<EXTERNAL_CONTENT_BEGIN nonce=8790a5b2 source=tool_trace>>>\n"
+            "<<TOOL_TRACE>>\n- read_file({'path': '333.txt'}) -> ...\n"
+            "<<<EXTERNAL_CONTENT_END nonce=8790a5b2>>>"
+        )
+        assert strip_internal_trace_markers(text) == "桌面 333.txt 文件的内容是：\n\n你好"
+
+    def test_strip_external_content_unclosed_begin(self):
+        text = (
+            "Visible answer.\n\n"
+            "<<<EXTERNAL_CONTENT_BEGIN nonce=8790a5b2 source=tool_trace>>>\n"
+        )
+        assert strip_internal_trace_markers(text) == "Visible answer."
+
+    def test_external_content_inside_fenced_code_block_preserved(self):
+        text = (
+            "Example:\n\n"
+            "```\n"
+            "<<<EXTERNAL_CONTENT_BEGIN nonce=demo source=tool_trace>>>\n"
+            "```\n"
+        )
+        # strip_internal_trace_markers historically rstrip()s final whitespace;
+        # the important invariant is that the fenced marker itself is preserved.
+        assert strip_internal_trace_markers(text) == text.rstrip()
+
     def test_strip_delegation_trace_section(self):
         text = "Done.\n\n<<DELEGATION_TRACE>>\n1. [foo] task: ..."
         assert strip_internal_trace_markers(text) == "Done."
