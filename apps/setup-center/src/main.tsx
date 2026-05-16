@@ -31,8 +31,31 @@ initTheme();
 
 // ── Global error capture ──
 // Catches JS errors and unhandled promise rejections that React ErrorBoundary cannot.
+// We attach a `kind` so the feedback bundle can distinguish:
+//   * `react_dom_corruption` — removeChild/insertBefore on stale DOM. A
+//     strong signal that React reconciled against a node Edge already
+//     freed; precedes WebView2 native crashes on Windows.
+//   * `script_load_error` — chunk loading errors (Vite dynamic import
+//     failure, network blip).
+//   * `global_error` — fallback bucket.
+function classifyGlobalError(message: string): "react_dom_corruption" | "script_load_error" | "global_error" {
+  if (
+    /Failed to execute '(removeChild|insertBefore|appendChild)' on 'Node'/i.test(message) ||
+    /The node to be removed is not a child of this node/i.test(message)
+  ) {
+    return "react_dom_corruption";
+  }
+  if (/Loading chunk \d+ failed|Failed to fetch dynamically imported module|Importing a module script failed/i.test(message)) {
+    return "script_load_error";
+  }
+  return "global_error";
+}
+
 window.addEventListener("error", (event) => {
-  logger.error("Global", `Uncaught error: ${event.message}`, {
+  const message = event.message || "";
+  const kind = classifyGlobalError(message);
+  logger.error("Global", `Uncaught error: ${message}`, {
+    kind,
     filename: event.filename,
     lineno: event.lineno,
     colno: event.colno,
@@ -43,7 +66,15 @@ window.addEventListener("error", (event) => {
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event.reason;
   const message = reason instanceof Error ? reason.message : String(reason);
-  logger.error("Global", `Unhandled promise rejection: ${message}`, {
+  // AbortError is a normal flow signal (fetch.cancel / route change) —
+  // log it at warn instead of error so it doesn't pollute crash triage.
+  const isAbort =
+    reason instanceof Error &&
+    (reason.name === "AbortError" || /aborted|cancelled/i.test(reason.message));
+  const kind = isAbort ? "rejection_aborted" : "unhandled_rejection";
+  const fn = isAbort ? logger.warn : logger.error;
+  fn("Global", `Unhandled promise rejection: ${message}`, {
+    kind,
     stack: reason instanceof Error ? reason.stack?.slice(0, 500) : undefined,
   });
 });
@@ -70,7 +101,12 @@ class GlobalErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    // `kind: "react_error_boundary"` lets feedback triage distinguish a
+    // recoverable React render error (we showed a fallback UI) from a
+    // hard native crash (no UI ever rendered, only crash.log + .dmp).
     logger.error("ErrorBoundary", `React render error: ${error.message}`, {
+      kind: "react_error_boundary",
+      errorName: error.name,
       stack: error.stack?.slice(0, 500),
       componentStack: errorInfo.componentStack?.slice(0, 500),
     });

@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+mod crash_handler;
 mod migrations;
 
 use base64::Engine as _;
@@ -476,6 +477,13 @@ fn run_dir() -> PathBuf {
 /// 安装配置日志目录：~/.openakita/logs/
 fn setup_logs_dir() -> PathBuf {
     openakita_root_dir().join("logs")
+}
+
+/// 进程内 minidump 落地目录：~/.openakita/crashdumps/
+/// 由 crash_handler 在启动时 ensure dir 并安装 SEH filter；
+/// build_feedback_zip 会把这个目录里的 *.dmp 自动打包进反馈包。
+fn crashdumps_dir() -> PathBuf {
+    openakita_root_dir().join("crashdumps")
 }
 
 /// Append a diagnostic line to `~/.openakita/logs/autostart.log`.
@@ -4685,6 +4693,15 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_millis(1500));
     }
 
+    // Native crash handler: capture SEH exceptions (access violation /
+    // heap corruption / illegal instruction) to ~/.openakita/crashdumps/
+    // *.dmp.  std::panic::set_hook only sees Rust panics, not C-level
+    // crashes from WebView2 / DLLs / GPU drivers, which is where the
+    // 0xc0000005 / 0xc0000374 / 0xc000001d reports actually originate.
+    // No admin / HKLM LocalDumps writes required — the handler runs
+    // entirely in-process.
+    crash_handler::install(crashdumps_dir());
+
     // Global panic hook: capture panics to crash.log + show dialog.
     // 进程级自愈：检测 tao Windows 事件循环的已知 panic
     // ("cannot move state from Destroyed"，对应上游 tao#1180)，落
@@ -5118,6 +5135,7 @@ fn main() {
             http_get_json,
             http_proxy_request,
             backend_fetch,
+            backend_fetch_cancel,
             read_file_base64,
             download_file,
             copy_file_to_downloads,
@@ -8417,9 +8435,67 @@ enum BackendFetchEvent {
     Error { message: String },
 }
 
+/// Active streaming fetches keyed by the frontend-supplied `fetch_id`.
+///
+/// When the JS-side `ReadableStream.cancel()` fires (user closes a chat
+/// turn, navigates away, AbortController.abort, …) the frontend now calls
+/// `backend_fetch_cancel(fetch_id)`. We flip the matching `AtomicBool`
+/// and the spawned chunk loop exits on its next iteration, dropping the
+/// `reqwest::Response` which in turn closes the TCP/SSE connection and
+/// frees the chunk buffers. Without this, the Rust task would continue
+/// reading from a backend that may not stop sending (LLM streams in
+/// particular run to completion), uselessly piling chunks into IPC and
+/// keeping ~10-50 MB of intermediate strings allocated.
+///
+/// Pre-cancel race: if `backend_fetch_cancel` arrives *before*
+/// `backend_fetch` has registered (extremely tight but possible across
+/// the IPC boundary), we still insert the entry as already-cancelled so
+/// the subsequent fetch sees `true` on its first check and short-circuits.
+use std::sync::Arc;
+static MANAGED_FETCHES: Lazy<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn fetch_cancel_handle(fetch_id: &str) -> Arc<AtomicBool> {
+    if let Ok(mut map) = MANAGED_FETCHES.lock() {
+        return map
+            .entry(fetch_id.to_string())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+            .clone();
+    }
+    // Mutex poisoned (a previous panic left the map in an indeterminate
+    // state). Hand the caller a fresh detached handle so the fetch still
+    // runs — it just won't be cancellable from JS. Better than panicking
+    // the Tauri command thread.
+    Arc::new(AtomicBool::new(false))
+}
+
+fn fetch_unregister(fetch_id: &str) {
+    if let Ok(mut map) = MANAGED_FETCHES.lock() {
+        map.remove(fetch_id);
+    }
+}
+
+/// Frontend-callable cancel: flips the cancel flag for an in-flight
+/// `backend_fetch`. Idempotent and never errors — calling cancel on an
+/// unknown id (because the fetch already finished, or hadn't yet
+/// registered) pre-arms a flag so the registration sees it.
+#[tauri::command]
+fn backend_fetch_cancel(fetch_id: String) {
+    let map = MANAGED_FETCHES.lock();
+    if let Ok(mut map) = map {
+        match map.get(&fetch_id) {
+            Some(flag) => flag.store(true, Ordering::SeqCst),
+            None => {
+                map.insert(fetch_id, Arc::new(AtomicBool::new(true)));
+            }
+        }
+    }
+}
+
 #[tauri::command]
 async fn backend_fetch(
     on_event: tauri::ipc::Channel<BackendFetchEvent>,
+    fetch_id: String,
     url: String,
     method: Option<String>,
     headers: Option<std::collections::HashMap<String, String>>,
@@ -8430,15 +8506,30 @@ async fn backend_fetch(
         return Err("backend_fetch only allows localhost URLs".into());
     }
 
+    // Register cancel flag *before* the network round-trip so a cancel
+    // arriving mid-handshake (e.g. user hits stop right after submit)
+    // still aborts.
+    let cancel = fetch_cancel_handle(&fetch_id);
+    if cancel.load(Ordering::SeqCst) {
+        fetch_unregister(&fetch_id);
+        return Err("backend_fetch cancelled before start".into());
+    }
+
     let mut builder = reqwest::Client::builder()
         .no_proxy()
         .connect_timeout(std::time::Duration::from_secs(10));
     if let Some(t) = timeout_secs {
         builder = builder.timeout(std::time::Duration::from_secs(t));
     }
-    let client = builder
-        .build()
-        .map_err(|e| format!("HTTP client error: {e}"))?;
+    let client = match builder.build() {
+        Ok(c) => c,
+        Err(e) => {
+            // Important: unregister before returning so the cancel-flag
+            // entry doesn't leak forever in MANAGED_FETCHES.
+            fetch_unregister(&fetch_id);
+            return Err(format!("HTTP client error: {e}"));
+        }
+    };
 
     let m = method.as_deref().unwrap_or("GET").to_uppercase();
     let mut req = match m.as_str() {
@@ -8457,10 +8548,13 @@ async fn backend_fetch(
         req = req.body(b);
     }
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("HTTP {} failed ({}): {}", m, url, e))?;
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            fetch_unregister(&fetch_id);
+            return Err(format!("HTTP {} failed ({}): {}", m, url, e));
+        }
+    };
 
     let status = resp.status().as_u16();
     let resp_headers: std::collections::HashMap<String, String> = resp
@@ -8469,9 +8563,15 @@ async fn backend_fetch(
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
 
+    let fetch_id_for_task = fetch_id.clone();
     tauri::async_runtime::spawn(async move {
         let mut response = resp;
         loop {
+            if cancel.load(Ordering::SeqCst) {
+                // Drop happens implicitly on loop exit; explicit log here
+                // would be nice but isn't worth the perf cost.
+                break;
+            }
             match response.chunk().await {
                 Ok(Some(chunk)) => {
                     let text = String::from_utf8_lossy(&chunk).to_string();
@@ -8491,6 +8591,9 @@ async fn backend_fetch(
                 }
             }
         }
+        // response drops here → closes TCP connection, frees chunk buffers
+        drop(response);
+        fetch_unregister(&fetch_id_for_task);
     });
 
     Ok(serde_json::json!({
@@ -9464,6 +9567,12 @@ fn build_feedback_zip(
         "global_logs/crash.log",
         opts,
     );
+    zip_add_file(
+        &mut zw,
+        &global_logs.join("autostart.log"),
+        "global_logs/autostart.log",
+        opts,
+    );
     for entry in fs::read_dir(&global_logs).into_iter().flatten().flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
@@ -9477,8 +9586,196 @@ fn build_feedback_zip(
         }
     }
 
+    // ── Native crash dumps ──
+    // Our SetUnhandledExceptionFilter-based crash handler writes
+    // ~5 MB mini dumps to ~/.openakita/crashdumps/openakita-*.dmp.
+    // Cap aggregate at 25 MB so a single bad report cannot blow past
+    // the 30 MB upload limit; keeps newest dumps first.
+    zip_add_dir_capped(
+        &mut zw,
+        &crashdumps_dir(),
+        "crashdumps",
+        opts,
+        25 * 1024 * 1024,
+    );
+
+    // ── Windows Error Reporting metadata + system event log ──
+    // Only available on Windows; on macOS / Linux these calls are no-ops
+    // and contribute nothing to the zip.
+    collect_windows_crash_artifacts(&mut zw, opts);
+
     zw.finish().map_err(|e| format!("zip finish: {e}"))?;
     Ok(dest.to_string_lossy().to_string())
+}
+
+/// Pull Windows-only diagnostic artifacts into a feedback zip:
+///   * `wer/Report.wer` files from `%LOCALAPPDATA%\Microsoft\Windows\WER\
+///     ReportArchive\*` that mention our exe (metadata only — no PII
+///     beyond version + faulting module + exception code).
+///   * The last 30 Application Error / Windows Error Reporting events
+///     for our exe via `wevtutil qe Application`. Plain XML, ~50 KB max.
+///
+/// This is purely additive: any failure (permission denied, WER service
+/// disabled, wevtutil missing) is swallowed silently so the rest of the
+/// bundle still builds.
+#[cfg(windows)]
+fn collect_windows_crash_artifacts(
+    zw: &mut zip::ZipWriter<fs::File>,
+    opts: zip::write::SimpleFileOptions,
+) {
+    let local_appdata = match std::env::var_os("LOCALAPPDATA") {
+        Some(v) => PathBuf::from(v),
+        None => return,
+    };
+    let wer_archive = local_appdata
+        .join("Microsoft")
+        .join("Windows")
+        .join("WER")
+        .join("ReportArchive");
+
+    // WER report directories aren't reliably named: some are
+    // `AppCrash_openakita-setup-center.exe_<hash>`, others are just
+    // `Report.<hash>`. The exe name is always present in the Report.wer
+    // body though, so we filter by (a) dir-name fast path first, (b)
+    // fall back to reading the (small, <30 KB) Report.wer text. Limit
+    // the candidate set to the 30 most recently modified directories so
+    // even a heavily-crashed host doesn't spend minutes scanning.
+    let needle = "openakita";
+    let mut candidates: Vec<(PathBuf, std::time::SystemTime)> = fs::read_dir(&wer_archive)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            if !p.is_dir() {
+                return None;
+            }
+            let m = fs::metadata(&p).and_then(|md| md.modified()).ok()?;
+            Some((p, m))
+        })
+        .collect();
+    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.truncate(30);
+
+    for (report_dir, _) in candidates {
+        let report_wer = report_dir.join("Report.wer");
+        if !report_wer.is_file() {
+            continue;
+        }
+        let dir_name_lower = report_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let matched = if dir_name_lower.contains(needle) {
+            true
+        } else {
+            // Body match: Report.wer is a tiny INI-like text file with
+            // AppName / AppPath / FaultingModule keys. Read at most
+            // 64 KB to bound worst-case I/O.
+            match fs::read(&report_wer) {
+                Ok(bytes) => {
+                    let scan_len = bytes.len().min(64 * 1024);
+                    let s = String::from_utf8_lossy(&bytes[..scan_len]);
+                    s.to_ascii_lowercase().contains(needle)
+                }
+                Err(_) => false,
+            }
+        };
+        if !matched {
+            continue;
+        }
+        let zip_name = format!(
+            "wer/{}-Report.wer",
+            report_dir.file_name().unwrap_or_default().to_string_lossy()
+        );
+        if zw.start_file(&zip_name, opts).is_ok() {
+            let _ = zw.write_all(&fs::read(&report_wer).unwrap_or_default());
+        }
+    }
+
+    // Pull recent Application Error / WER events for our exe. Narrowing
+    // the XPath to the last 7 days bounds the index scan on busy hosts.
+    let xpath = "*[System[Provider[@Name='Application Error' or @Name='Windows Error Reporting'] \
+                 and TimeCreated[timediff(@SystemTime) <= 604800000]]]"; // last 7 days
+    let ps_cmd = format!(
+        "$ev = Get-WinEvent -LogName Application -MaxEvents 200 -FilterXPath \"{}\" \
+         -ErrorAction SilentlyContinue | \
+         Where-Object {{ $_.Message -match 'openakita' }} | \
+         Select-Object -First 30; \
+         if ($ev) {{ $ev | ForEach-Object {{ \
+           '[{{0}}] {{1}}: {{2}}' -f \
+             $_.TimeCreated.ToString('s'), $_.ProviderName, ($_.Message -replace '\\r?\\n', ' | ') \
+         }} }}",
+        xpath
+    );
+
+    if let Some(out) = run_powershell_with_timeout(&ps_cmd, std::time::Duration::from_secs(15)) {
+        if !out.is_empty() && zw.start_file("wer/event_log_recent.txt", opts).is_ok() {
+            let _ = zw.write_all(&out);
+        }
+    }
+}
+
+/// Spawn `powershell.exe -Command <cmd>` and bound the wall-clock wait.
+/// Returns captured stdout on success, or `None` if the process never
+/// started, was killed by timeout, or printed nothing.
+///
+/// Why custom timeout: `std::process::Command::output()` waits forever
+/// for the child. A pathological Application event log (corrupted index,
+/// remote SACL audit pulling from a slow DC, …) could block the
+/// "send feedback" UI indefinitely. We pump stdout from a reader thread
+/// and use mpsc::recv_timeout to enforce the deadline without taking on
+/// a new crate dependency.
+#[cfg(windows)]
+fn run_powershell_with_timeout(cmd: &str, timeout: std::time::Duration) -> Option<Vec<u8>> {
+    use std::io::Read;
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let mut child = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            cmd,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .ok()?;
+
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::with_capacity(4096);
+        let _ = stdout.read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(buf) => {
+            let _ = child.wait();
+            Some(buf)
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn collect_windows_crash_artifacts(
+    _zw: &mut zip::ZipWriter<fs::File>,
+    _opts: zip::write::SimpleFileOptions,
+) {
 }
 
 /// Simple days-since-epoch to civil date (year, month, day).

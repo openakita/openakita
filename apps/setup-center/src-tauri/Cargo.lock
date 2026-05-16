@@ -2868,6 +2868,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "windows-sys 0.59.0",
  "winreg 0.55.0",
  "zip 2.4.2",
 ]

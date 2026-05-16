@@ -47,4 +47,18 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
+# Used by src/crash_handler.rs to install SetUnhandledExceptionFilter +
+# MiniDumpWriteDump for native crashes (0xc0000005 / 0xc0000374 / 0xc000001d).
+# Dumps land in ~/.openakita/crashdumps/openakita-{pid}-{ts}.dmp and are
+# auto-packaged by build_feedback_zip so users can submit them via the
+# normal "send feedback" flow without admin rights or HKLM LocalDumps.
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Kernel",
+  "Win32_System_Memory",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+] }
 

@@ -27,6 +27,27 @@ type FetchStreamEvent =
   | { event: "done" }
   | { event: "error"; data: { message: string } };
 
+let _fetchIdCounter = 0;
+
+/** Generate an id unique within this WebView session.
+ *
+ *  Used to address an in-flight `backend_fetch` so the matching Rust task
+ *  can be cancelled (see `backend_fetch_cancel`). `crypto.randomUUID` is
+ *  available in WebView2 / WKWebView, but the older WKWebView on macOS 11
+ *  doesn't expose it on `window.crypto`; the counter fallback is fine
+ *  because uniqueness only matters within one renderer process. */
+function makeFetchId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* fall through */
+  }
+  _fetchIdCounter += 1;
+  return `${Date.now()}-${_fetchIdCounter}`;
+}
+
 export function installLocalFetchOverride(): void {
   if (
     typeof window === "undefined" ||
@@ -80,6 +101,35 @@ export function installLocalFetchOverride(): void {
       );
     }
 
+    // Each backend_fetch gets a unique id so the Rust task can be
+    // cancelled (drops the reqwest::Response → closes TCP → stops the
+    // chunk loop) when the consumer aborts. Without this, the Rust task
+    // kept reading from the backend until natural EOF, queueing chunks
+    // into IPC that nobody reads — burning RAM and CPU especially during
+    // long LLM streams that the user already closed.
+    const fetchId = makeFetchId();
+    const makeAbortError = () =>
+      new DOMException(
+        signal?.reason?.message || "The operation was aborted",
+        "AbortError",
+      );
+    let cancelSent = false;
+    const sendCancel = () => {
+      if (cancelSent) return;
+      cancelSent = true;
+      invoke("backend_fetch_cancel", { fetchId }).catch(() => {
+        /* tab unloading / Rust already cleaned up — silent */
+      });
+    };
+    let bodyAbortAttached = false;
+    let bodyAbortHandler: (() => void) | null = null;
+    const cleanupBodyAbort = () => {
+      if (signal && bodyAbortAttached && bodyAbortHandler) {
+        signal.removeEventListener("abort", bodyAbortHandler);
+        bodyAbortAttached = false;
+      }
+    };
+
     // Channel → ReadableStream bridge: chunks arrive from Rust via IPC,
     // are enqueued into a ReadableStream that the Response body wraps.
     const channel = new Channel<FetchStreamEvent>();
@@ -90,6 +140,15 @@ export function installLocalFetchOverride(): void {
       start(controller) {
         streamController = controller;
       },
+      // Fires when a consumer calls .cancel() on the stream OR the
+      // surrounding Response body is GC'd while still open. Crucially,
+      // `response.body.getReader().cancel()` from useStream / SSE parser
+      // routes through here, giving us a reliable hook to tell Rust to
+      // stop reading.
+      cancel() {
+        sendCancel();
+        cleanupBodyAbort();
+      },
     });
 
     channel.onmessage = (msg: FetchStreamEvent) => {
@@ -97,8 +156,10 @@ export function installLocalFetchOverride(): void {
         if (msg.event === "chunk") {
           streamController.enqueue(encoder.encode(msg.data.text));
         } else if (msg.event === "done") {
+          cleanupBodyAbort();
           streamController.close();
         } else if (msg.event === "error") {
+          cleanupBodyAbort();
           streamController.error(new Error(msg.data.message));
         }
       } catch {
@@ -110,6 +171,7 @@ export function installLocalFetchOverride(): void {
       "backend_fetch",
       {
         onEvent: channel,
+        fetchId,
         url,
         method,
         headers,
@@ -117,36 +179,79 @@ export function installLocalFetchOverride(): void {
       },
     );
 
-    // Handle AbortSignal: race the invoke against the abort event.
-    // If aborted, the Rust background task will eventually stop when it
-    // detects the channel is closed.
-    const metaPromise = signal
-      ? Promise.race([
-          doInvoke,
-          new Promise<never>((_resolve, reject) => {
-            const onAbort = () =>
-              reject(
-                new DOMException(
-                  signal.reason?.message || "The operation was aborted",
-                  "AbortError",
-                ),
-              );
-            signal.addEventListener("abort", onAbort, { once: true });
-            doInvoke
-              .then(() => signal.removeEventListener("abort", onAbort))
-              .catch(() => signal.removeEventListener("abort", onAbort));
-          }),
-        ])
-      : doInvoke;
+    // Abort handling has two distinct concerns:
+    //
+    // (a) `abortPromise` races against `doInvoke` so that `fetch()`
+    //     rejects with AbortError *synchronously* on abort, matching
+    //     standard Fetch API behaviour. This listener is one-shot and
+    //     removed via `cleanupAbort` once the fetch settles, otherwise
+    //     it would dangle holding a closure over `streamController`
+    //     and prevent the AbortController from being GC'd.
+    //
+    // (b) Body-lifetime listener that calls `sendCancel` whenever the
+    //     signal aborts. *Critical* for LLM streaming: the HTTP headers
+    //     come back in tens of ms, so `fetch()` resolves long before
+    //     the body has finished streaming. If the user hits "stop"
+    //     mid-body, the (a) listener is already gone — only this
+    //     persistent listener can still tell Rust to stop forwarding
+    //     chunks. `sendCancel` is idempotent (`cancelSent` flag) so
+    //     repeat invocations are safe. We also error the body stream
+    //     here; otherwise Rust may stop forwarding chunks without
+    //     sending a final done/error event and `reader.read()` would
+    //     hang forever.
+    if (signal) {
+      bodyAbortHandler = () => {
+        sendCancel();
+        cleanupBodyAbort();
+        try {
+          streamController.error(makeAbortError());
+        } catch {
+          /* already closed */
+        }
+      };
+      signal.addEventListener("abort", bodyAbortHandler);
+      bodyAbortAttached = true;
+    }
+
+    let onAbort: (() => void) | null = null;
+    const abortPromise = signal
+      ? new Promise<never>((_resolve, reject) => {
+          onAbort = () => {
+            // sendCancel also runs from the body-lifetime listener; the
+            // duplicate call is a no-op thanks to `cancelSent`.
+            sendCancel();
+            try {
+              streamController.error(makeAbortError());
+            } catch {
+              /* already closed */
+            }
+            reject(makeAbortError());
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+        })
+      : null;
+
+    const cleanupAbort = () => {
+      if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+    };
 
     try {
-      const meta = await metaPromise;
+      const meta = abortPromise
+        ? await Promise.race([doInvoke, abortPromise])
+        : await doInvoke;
+      cleanupAbort();
       return new Response(stream, {
         status: meta.status,
         headers: meta.headers,
       });
     } catch (err) {
-      // Close the stream so readers don't hang
+      cleanupAbort();
+      cleanupBodyAbort();
+      // Tell Rust to stop too — covers the case where invoke itself
+      // rejects (e.g. AbortError, IPC error) before backend_fetch
+      // finished setup. sendCancel is idempotent so calling it again
+      // after onAbort already did is fine.
+      sendCancel();
       try {
         streamController.error(err);
       } catch {
