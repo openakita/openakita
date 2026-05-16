@@ -19,7 +19,7 @@ import { notifySuccess, notifyError, notifyLoading, dismissLoading } from "../ut
 import { STT_RECOMMENDED_MODELS } from "../constants";
 import {
   IconChevronUp, IconEdit, IconTrash, IconEye, IconEyeOff, IconPower, IconCircle,
-  DotGreen, DotGray,
+  IconRefresh, DotGreen, DotGray,
 } from "../icons";
 import { ChevronRight, XIcon, Inbox, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -1174,6 +1174,51 @@ export function LLMView(props: LLMViewProps) {
     }
   }
 
+  // Sync the actual model catalog of a relay/aggregator endpoint.
+  // POST /api/config/sync-endpoint-models calls GET /v1/models on the
+  // upstream and writes the result to llm_endpoints.json so:
+  //   1. the UI dropdown can grey out models the relay does not carry
+  //   2. LLMClient skips endpoints whose configured model is missing
+  //      from their own catalog (no more 404 several seconds in)
+  // Errors are non-fatal: the previous catalog is preserved and the
+  // user sees a Chinese banner via notifyError instead of a blank list.
+  async function doSyncEndpointModels(
+    name: string,
+    endpointType: "endpoints" | "compiler_endpoints" | "stt_endpoints" = "endpoints",
+  ) {
+    if (!currentWorkspaceId && dataMode !== "remote") return;
+    if (!ensureEndpointConfigApiReady()) return;
+    const busy = notifyLoading(`正在同步 "${name}" 的模型列表…`);
+    try {
+      const res = await safeFetch(`${httpApiBase()}/api/config/sync-endpoint-models`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, endpoint_type: endpointType, timeout: 15 }),
+      });
+      const json = await res.json();
+      if (json.status === "not_found") {
+        notifyError(`端点 "${name}" 不存在`);
+        return;
+      }
+      if (json.status !== "ok") {
+        notifyError(json.error || "模型列表同步失败");
+        loadSavedEndpoints().catch(() => {});
+        return;
+      }
+      notifySuccess(
+        `已同步 ${json.model_count} 个模型` +
+          (json.reload?.status === "failed"
+            ? "（配置已保存，但运行时未刷新；下次启动生效）"
+            : ""),
+      );
+      loadSavedEndpoints().catch(() => {});
+    } catch (e) {
+      notifyError(String(e));
+    } finally {
+      dismissLoading(busy);
+    }
+  }
+
   async function doToggleEndpointEnabled(name: string, endpointType: "endpoints" | "compiler_endpoints" | "stt_endpoints" = "endpoints") {
     if (!currentWorkspaceId && dataMode !== "remote") return;
     if (!ensureEndpointConfigApiReady()) return;
@@ -1320,10 +1365,38 @@ export function LLMView(props: LLMViewProps) {
                         {savedEndpoints[0]?.name === e.name && e.enabled !== false && <span className="ml-1.5 text-[10px] font-extrabold text-primary">{t("llm.primary")}</span>}
                         {e.enabled === false && <span className="ml-1.5 text-[10px] font-bold text-muted-foreground">{t("llm.disabled")}</span>}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{e.model}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        <div className="flex items-center gap-1.5">
+                          <span>{e.model}</span>
+                          {/* Catalog mismatch warning: if Sync Models ran and the
+                              relay's catalog does NOT include this endpoint's
+                              configured model, LLMClient will skip it. Show a
+                              warning icon so the user fixes the model name. */}
+                          {Array.isArray(e.supported_models) && e.supported_models.length > 0 &&
+                            !e.supported_models.some(
+                              (m) => (m || "").trim().toLowerCase() === (e.model || "").trim().toLowerCase(),
+                            ) && (
+                            <span
+                              className="inline-flex items-center text-amber-600 dark:text-amber-400"
+                              title={`此模型不在中转站目录中（最近同步：${e.models_synced_at ? new Date(e.models_synced_at * 1000).toLocaleString() : "未知"}）。可选模型：${e.supported_models.slice(0, 5).join(", ")}${e.supported_models.length > 5 ? "…" : ""}`}
+                            >
+                              <AlertTriangle size={12} />
+                            </span>
+                          )}
+                          {e.models_sync_error && (
+                            <span
+                              className="inline-flex items-center text-red-600 dark:text-red-400"
+                              title={`上次同步失败：${e.models_sync_error}`}
+                            >
+                              <AlertTriangle size={12} />
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell>
                         <div className="flex gap-1 justify-end">
                           <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" style={savedEndpoints[0]?.name === e.name ? { visibility: "hidden" } : undefined} onClick={() => doMoveUp(e.name, savedEndpoints)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.moveUp")}><IconChevronUp size={14} /></Button>
+                          <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doSyncEndpointModels(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : `同步模型列表（中转站目录）${e.models_synced_at ? `\n上次同步：${new Date(e.models_synced_at * 1000).toLocaleString()}` : ""}`}><IconRefresh size={14} /></Button>
                           <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
                           <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditEndpoint(e.name)} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("llm.edit")}><IconEdit size={14} /></Button>
                           <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteEndpoint(e.name))} disabled={endpointConfigDisabled} title={!endpointConfigApiReady ? endpointConfigUnavailableMessage : t("common.delete")}><IconTrash size={14} /></Button>

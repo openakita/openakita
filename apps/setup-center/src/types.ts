@@ -53,6 +53,13 @@ export type EndpointDraft = {
   note?: string | null;
   pricing_tiers?: { max_input: number; input_price: number; output_price: number }[];
   enabled?: boolean;
+  // Relay capability discovery (filled by POST /api/config/sync-endpoint-models).
+  // When set, the UI can grey out unavailable models and the LLMClient
+  // skips this endpoint when its `model` is not in the catalog. Absence
+  // means "never probed" — the endpoint is still considered usable.
+  supported_models?: string[];
+  models_synced_at?: number | null;
+  models_sync_error?: string | null;
 };
 
 export type PythonCandidate = {
