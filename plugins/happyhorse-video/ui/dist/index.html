@@ -610,6 +610,27 @@ function UploadUrlField({ label, value, onChange, accept = "*/*", kind = "image"
   const isAudio = kind === "audio" || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(preview || "");
   const isImage = kind === "image" || /\.(png|jpe?g|webp|gif|bmp)(\?|$)/i.test(preview || "");
 
+  // ── Asset probe summary line ─────────────────────────────────────
+  // The /upload endpoint returns ``probe`` with width/height/duration/
+  // format/size after running ffprobe + PIL. Surface it inline so the
+  // user can verify the file matches the model's spec *before*
+  // submission burns vendor credit (e.g. wan2.2-animate caps video at
+  // 30 s; videoretalk caps audio at 30 MB).
+  const probe = asset?.probe || null;
+  const sizeMb = asset?.size_bytes
+    ? (asset.size_bytes / 1048576).toFixed(2) + " MB"
+    : "";
+  const probeSummary = probe
+    ? [
+        probe.format,
+        probe.width && probe.height ? `${probe.width}×${probe.height}` : "",
+        probe.duration_sec ? `${probe.duration_sec.toFixed(2)}s` : "",
+        sizeMb,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+
   return (
     <div className="field">
       <label>{label}</label>
@@ -637,6 +658,11 @@ function UploadUrlField({ label, value, onChange, accept = "*/*", kind = "image"
           </div>
         )}
       </div>
+      {probeSummary && (
+        <div className="upload-probe-meta" style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+          已上传：{probeSummary}
+        </div>
+      )}
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="https://..." />
     </div>
   );

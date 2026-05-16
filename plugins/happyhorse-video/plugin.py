@@ -695,6 +695,22 @@ class Plugin(PluginBase):
             # an actionable Chinese hint instead of a 5xx 12 minutes later).
             self._validate_required_assets(body.mode, params)
 
+            # Per-endpoint asset spec pre-flight. Only fires when the
+            # caller passed a local file path we can probe (most uploads
+            # land here via the /upload endpoint which records
+            # ``local_path`` on the asset row); remote URLs are skipped
+            # so the create call still works for bring-your-own-URL
+            # flows. Hard violations raise HTTP 422 with an actionable
+            # Chinese hint, sparing the user a wasted vendor submission.
+            try:
+                await self._preflight_asset_specs(body.mode, params)
+            except HTTPException:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "preflight asset probe failed (non-blocking): %s", exc
+                )
+
             task_id = await self._tm.create_task(
                 mode=body.mode,
                 model_id=body.model_id,
@@ -715,6 +731,110 @@ class Plugin(PluginBase):
         finally:
             if body.client_request_id:
                 self._pending_create.pop(body.client_request_id, None)
+
+    async def _preflight_asset_specs(
+        self, mode: str, params: dict[str, Any]
+    ) -> None:
+        """Probe local-file inputs and assert per-endpoint vendor specs.
+
+        Only the modes that drive a vendor with strict input-validation
+        run probes; the rest (HappyHorse 1.0 / Wan 2.6 / 2.7 native
+        video synthesis) accept a much wider range of inputs and the
+        vendor surfaces clear 422s if they're truly malformed.
+
+        The function MAY swallow probe failures (logged in
+        ``_create_task_internal`` caller) — only :class:`AssetSpecError`
+        is escalated to :class:`HTTPException(422)`.
+        """
+        try:
+            from happyhorse_inline.asset_probe import (
+                AssetSpecError,
+                assert_animate_image,
+                assert_animate_video,
+                assert_s2v_audio,
+                assert_s2v_image,
+                assert_videoretalk_audio,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.info("asset_probe import failed: %s — skipping preflight", exc)
+            return
+
+        uploads_root = self._uploads_dir()
+
+        def _resolve_to_local(val: object) -> Path | None:
+            """Map a params URL/path to a probable local file path.
+
+            Handles three common upload shapes:
+
+            - Bare filesystem path (``D:/.../uploads/audios/abc.mp3``)
+            - Relative ``/uploads/audios/abc.mp3`` URL emitted by
+              ``build_preview_url`` for the local static route
+            - Full ``http(s)://<host>/uploads/<plugin>/audios/abc.mp3``
+              URL — we strip the prefix and look up under
+              ``uploads_root``
+
+            Anything else (DashScope OSS URL, third-party HTTPS link)
+            returns ``None`` and the caller skips the probe.
+            """
+            if not val or not isinstance(val, str):
+                return None
+            s = val.strip()
+            # Local absolute / relative path.
+            if not s.startswith(("http://", "https://")):
+                p = Path(s)
+                try:
+                    if p.exists() and p.is_file():
+                        return p
+                except OSError:
+                    return None
+            # /uploads/<plugin>/<sub>/<file> or http(s)://*/uploads/<plugin>/<sub>/<file>.
+            marker = f"/uploads/{PLUGIN_ID}/"
+            idx = s.find(marker)
+            if idx >= 0:
+                rel = s[idx + len(marker):].split("?", 1)[0].split("#", 1)[0]
+                candidate = uploads_root / rel
+                try:
+                    if candidate.exists() and candidate.is_file():
+                        return candidate
+                except OSError:
+                    return None
+            return None
+
+        def _local_path(key: str) -> Path | None:
+            return _resolve_to_local(params.get(key))
+
+        async def _run(func, path):
+            try:
+                await asyncio.to_thread(func, path)
+            except AssetSpecError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        if mode == "video_relip":
+            ap = _local_path("audio_url")
+            if ap is not None:
+                await _run(assert_videoretalk_audio, ap)
+        elif mode == "photo_speak":
+            ip = _local_path("image_url")
+            if ip is not None:
+                await _run(assert_s2v_image, ip)
+            ap = _local_path("audio_url")
+            if ap is not None:
+                await _run(assert_s2v_audio, ap)
+        elif mode in {"video_reface", "pose_drive"}:
+            ip = _local_path("image_url")
+            if ip is not None:
+                await _run(assert_animate_image, ip)
+            vp = _local_path("source_video_url") or _local_path("video_url")
+            if vp is not None:
+                await _run(assert_animate_video, vp)
+        elif mode == "avatar_compose":
+            # Animate uses one composed image; s2v also accepts the
+            # uploaded portraits. Probe each ``image_urls`` entry at
+            # the looser s2v image spec since composition will resize.
+            for u in params.get("image_urls") or []:
+                p = _resolve_to_local(u)
+                if p is not None:
+                    await _run(assert_s2v_image, p)
 
     @staticmethod
     def _validate_required_assets(mode: str, params: dict[str, Any]) -> None:
@@ -2633,6 +2753,41 @@ class Plugin(PluginBase):
             original_name=file.filename,
             size_bytes=len(content),
         )
+
+        # ── Probe metadata (width/height/duration/format) ─────────────
+        # Surface ffprobe / PIL probe results so the frontend can warn
+        # the user at upload time if the file is going to be rejected
+        # by an endpoint they'll select next. Probes are best-effort —
+        # an unreachable ffprobe simply omits duration fields. They
+        # NEVER fail the upload itself; per-endpoint hard assertions
+        # run later in `_create_task_internal` once we know the target.
+        probe_meta: dict[str, Any] = {"format": (ext.lstrip(".") or "unknown").lower()}
+        try:
+            from happyhorse_inline.asset_probe import (
+                probe_audio,
+                probe_image,
+                probe_video,
+            )
+
+            if kind == "image":
+                p = await asyncio.to_thread(probe_image, local_path)
+                probe_meta.update({
+                    "width": p.width, "height": p.height, "format": p.fmt,
+                })
+            elif kind == "audio":
+                p = await asyncio.to_thread(probe_audio, local_path)
+                probe_meta.update({
+                    "duration_sec": round(p.duration_sec, 2), "format": p.fmt,
+                })
+            elif kind == "video":
+                p = await asyncio.to_thread(probe_video, local_path)
+                probe_meta.update({
+                    "width": p.width, "height": p.height,
+                    "duration_sec": round(p.duration_sec, 2), "format": p.fmt,
+                })
+        except Exception as exc:  # noqa: BLE001
+            logger.info("upload probe failed (%s, %s); returning size-only", file.filename, exc)
+
         return {
             "ok": True,
             "kind": kind,
@@ -2642,4 +2797,5 @@ class Plugin(PluginBase):
             "oss_key": oss_key,
             "local_path": str(local_path),
             "asset": asset_row,
+            "probe": probe_meta,
         }
