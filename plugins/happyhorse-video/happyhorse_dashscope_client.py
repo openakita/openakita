@@ -132,6 +132,24 @@ def make_default_settings() -> dict[str, Any]:
         "timeout": 60.0,
         "timeout_sec": 60.0,
         "max_retries": 2,
+        # ── Optional relay-station integration ─────────────────────────
+        # When ``relay_endpoint`` is set to the name of a relay registered
+        # in OpenAkita's shared relay registry (see openakita.relay), the
+        # client uses that relay's base_url + api_key INSTEAD of the per-
+        # plugin api_key / base_url above. Lets one workspace point ten
+        # plugins at the same relay station without copy-pasting keys.
+        #
+        # ``relay_fallback_policy`` controls what happens when the relay
+        # cannot be resolved (typo, disabled, deleted) OR when the
+        # relay's probed catalog does not include the requested model:
+        #
+        #   - "official"  (default): silently fall back to the per-plugin
+        #     api_key + base_url so the user is never blocked.
+        #   - "strict": raise a VendorError so the user knows the relay
+        #     misconfig must be fixed before continuing. Use this once
+        #     you trust the relay and want to detect drift.
+        "relay_endpoint": "",
+        "relay_fallback_policy": "official",
     }
 
 
@@ -290,6 +308,61 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             cur = {}
         merged = make_default_settings()
         merged.update({k: v for k, v in cur.items() if v not in (None, "")})
+
+        # ── Optional relay override ────────────────────────────────────
+        # Pull base_url + api_key from the shared relay registry when
+        # the user picked a relay in plugin Settings. Failure mode is
+        # governed by relay_fallback_policy: "official" (default) just
+        # warns and keeps the per-plugin values, "strict" raises so the
+        # user must fix the relay name. Either way we never silently
+        # send a request to a relay the user did not configure for.
+        relay_name = str(merged.get("relay_endpoint") or "").strip()
+        if relay_name:
+            try:
+                # Import lazily so the plugin still loads in environments
+                # where the openakita package is not on sys.path (e.g.
+                # bundled exe variants that ship plugins separately).
+                from openakita.relay import RelayNotFound, resolve_relay_endpoint
+
+                ref = resolve_relay_endpoint(relay_name, required_capability="video")
+            except (ImportError, ModuleNotFoundError) as exc:
+                logger.info(
+                    "happyhorse-video: openakita.relay not importable (%s); "
+                    "keeping per-plugin base_url/api_key.",
+                    exc,
+                )
+            except RelayNotFound as exc:
+                if str(merged.get("relay_fallback_policy") or "official") == "strict":
+                    raise VendorError(
+                        kind=ERROR_KIND_CLIENT,
+                        message=(
+                            f"中转站 {relay_name!r} 未找到或已禁用："
+                            f"{exc.available!r}。请在 LLM 配置页检查 relay_endpoints。"
+                        ),
+                        retryable=False,
+                    ) from exc
+                logger.warning(
+                    "happyhorse-video: relay %r missing (%s); falling back to per-plugin settings",
+                    relay_name,
+                    exc,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "happyhorse-video: relay resolution failed for %r: %s; "
+                    "falling back to per-plugin settings",
+                    relay_name,
+                    exc,
+                )
+            else:
+                if ref.base_url:
+                    merged["base_url"] = ref.base_url
+                if ref.api_key:
+                    merged["api_key"] = ref.api_key
+                # Stash the resolved reference so the pipeline can
+                # consult ``supports_model`` before submitting a job
+                # (avoids paying the vendor for a known-404 request).
+                merged["_relay_reference"] = ref
+
         try:
             self.timeout = float(merged.get("timeout_sec") or merged.get("timeout") or 60.0)
         except (TypeError, ValueError):
