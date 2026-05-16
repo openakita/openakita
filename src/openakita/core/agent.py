@@ -4645,29 +4645,17 @@ class Agent:
     def _resolve_memory_workspace_id(session: Any | None) -> str:
         """Choose the memory workspace for a session.
 
-        IM sessions use the bot namespace so multiple bots do not share long-term
-        memory by accident. Desktop/API/CLI keep the historical "default"
-        workspace unless an explicit metadata override is set.
+        Phase 2a：抽到 ``memory.workspace_resolver`` 模块。
+
+        默认行为保持与 v3 一致：IM session 用 bot namespace、desktop/api/cli/web
+        用 "default"。当用户**显式 opt-in**（环境变量
+        ``OPENAKITA_DESKTOP_PROJECT_WORKSPACE=1`` 或 session.metadata
+        ``memory_workspace_mode='project'``）时才切到项目哈希工作区，
+        让不同项目目录下的桌面对话互相隔离。
         """
-        if session is None:
-            return "default"
+        from ..memory.workspace_resolver import resolve_memory_workspace_id
 
-        metadata = getattr(session, "metadata", {}) or {}
-        explicit = metadata.get("memory_workspace_id")
-        if explicit:
-            return str(explicit)
-
-        channel = str(getattr(session, "channel", "") or "")
-        if channel in {"desktop", "api", "cli", "web"}:
-            return "default"
-
-        namespace = (
-            getattr(session, "bot_instance_id", None)
-            or metadata.get("bot_instance_id")
-            or channel
-            or "default"
-        )
-        return str(namespace)
+        return resolve_memory_workspace_id(session)
 
     async def _prepare_session_context(
         self,

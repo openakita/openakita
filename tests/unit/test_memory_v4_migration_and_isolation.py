@@ -128,7 +128,7 @@ def _build_v3_db_with_legacy_rows(
             """,
             ("mem-true-legacy", now, now),
         )
-        for idx, sess in enumerate(extra_turn_sessions or []):
+        for sess in extra_turn_sessions or []:
             conn.execute(
                 """
                 INSERT INTO conversation_turns
@@ -225,6 +225,174 @@ def test_v3_to_v4_backfills_session_tenants_from_conversation_turns(tmp_path: Pa
     assert "" not in mapping
 
 
+def test_workspace_resolver_default_behavior(monkeypatch):
+    """Phase 2a：默认情况（无 opt-in）resolver 返回与历史一致的字符串。"""
+    from openakita.memory.workspace_resolver import (
+        LEGACY_DEFAULT_WORKSPACE_ID,
+        resolve_memory_workspace_id,
+    )
+
+    monkeypatch.delenv("OPENAKITA_DESKTOP_PROJECT_WORKSPACE", raising=False)
+
+    class _S:
+        def __init__(self, channel="desktop", metadata=None, bot_instance_id=None):
+            self.channel = channel
+            self.metadata = metadata or {}
+            self.bot_instance_id = bot_instance_id
+
+    # session=None → "default"
+    assert resolve_memory_workspace_id(None) == LEGACY_DEFAULT_WORKSPACE_ID
+
+    # desktop / api / cli / web → 仍是 "default"
+    for ch in ("desktop", "api", "cli", "web"):
+        assert resolve_memory_workspace_id(_S(channel=ch)) == LEGACY_DEFAULT_WORKSPACE_ID
+
+    # IM 通道：用 bot_instance_id 或 channel 名
+    assert resolve_memory_workspace_id(_S(channel="telegram", bot_instance_id="bot-1")) == "bot-1"
+    assert resolve_memory_workspace_id(_S(channel="feishu")) == "feishu"
+
+    # metadata 显式覆盖一切
+    assert resolve_memory_workspace_id(
+        _S(channel="desktop", metadata={"memory_workspace_id": "explicit-ws"})
+    ) == "explicit-ws"
+
+
+def test_workspace_resolver_opt_in_project_mode(monkeypatch, tmp_path):
+    """Phase 2a：opt-in（env or session metadata）后 desktop 改用项目哈希。"""
+    from openakita.memory.workspace_resolver import (
+        is_project_workspace,
+        resolve_desktop_workspace_id,
+        resolve_memory_workspace_id,
+    )
+
+    class _S:
+        def __init__(self, channel="desktop", metadata=None):
+            self.channel = channel
+            self.metadata = metadata or {}
+
+    # 路径相同时 → workspace_id 相同；不同路径 → 不同
+    p1 = tmp_path / "proj-a"
+    p1.mkdir()
+    p2 = tmp_path / "proj-b"
+    p2.mkdir()
+    ws_a = resolve_desktop_workspace_id(p1)
+    ws_b = resolve_desktop_workspace_id(p2)
+    assert ws_a != ws_b
+    assert is_project_workspace(ws_a)
+    assert resolve_desktop_workspace_id(p1) == ws_a  # 稳定
+
+    # 通过 metadata 切到 project 模式
+    monkeypatch.chdir(p1)
+    via_meta = resolve_memory_workspace_id(
+        _S(channel="desktop", metadata={"memory_workspace_mode": "project"})
+    )
+    assert is_project_workspace(via_meta)
+
+    # 通过 env 切到 project 模式
+    monkeypatch.setenv("OPENAKITA_DESKTOP_PROJECT_WORKSPACE", "1")
+    via_env = resolve_memory_workspace_id(_S(channel="desktop"))
+    assert is_project_workspace(via_env)
+
+
+def test_search_memories_workspace_fallback(tmp_path):
+    """Phase 2a：search_memories 显式传 fallback_workspace_id 时，主 workspace
+    命中不足 limit 会从 fallback 桶补齐；命中充足则不补。"""
+    from openakita.memory.manager import MemoryManager
+
+    manager = MemoryManager(
+        data_dir=tmp_path / "memory",
+        memory_md_path=tmp_path / "MEMORY.md",
+        search_backend="fts5",
+    )
+    manager.start_session("sess-1", user_id="alice", workspace_id="proj-a")
+
+    # alice 在 proj-a workspace 下有 1 条记忆，在 default 下有 2 条
+    for content, ws in [
+        ("alice in proj-a", "proj-a"),
+        ("alice fallback A", "default"),
+        ("alice fallback B", "default"),
+    ]:
+        mem = SemanticMemory(
+            type=MemoryType.FACT,
+            priority=MemoryPriority.LONG_TERM,
+            content=content,
+        )
+        manager.store.save_semantic(
+            mem, scope="user", scope_owner="", user_id="alice", workspace_id=ws
+        )
+    manager._reload_from_sqlite()
+
+    # 不带 fallback：只看主 workspace
+    primary = manager.search_memories(
+        query="alice", scope="user", user_id="alice", workspace_id="proj-a", limit=10,
+    )
+    assert {m.content for m in primary} == {"alice in proj-a"}
+
+    # 带 fallback：主不足时补 fallback 内容
+    with_fallback = manager.search_memories(
+        query="alice", scope="user", user_id="alice", workspace_id="proj-a",
+        fallback_workspace_id="default", limit=10,
+    )
+    contents = {m.content for m in with_fallback}
+    assert contents == {"alice in proj-a", "alice fallback A", "alice fallback B"}
+
+
+def test_storage_migrate_workspace_id(tmp_path):
+    """Phase 2a：storage.migrate_workspace_id 只移目标 (scope, user_id,
+    workspace_id) 组合的行，其他用户 / 其他 scope / 其他 workspace 不动。"""
+    from openakita.memory.unified_store import UnifiedStore
+
+    store = UnifiedStore(db_path=tmp_path / "memory.db", backend_type="fts5")
+
+    # 用 alice (default) + bob (default) + alice (proj-a) 三种组合
+    for content, user_id, ws in [
+        ("alice default 1", "alice", "default"),
+        ("alice default 2", "alice", "default"),
+        ("bob default keep", "bob", "default"),
+        ("alice proj-a keep", "alice", "proj-a"),
+    ]:
+        mem = SemanticMemory(
+            type=MemoryType.FACT,
+            priority=MemoryPriority.LONG_TERM,
+            content=content,
+        )
+        store.save_semantic(
+            mem, scope="user", scope_owner="", user_id=user_id, workspace_id=ws
+        )
+
+    moved = store.migrate_workspace_id(
+        from_workspace_id="default", to_workspace_id="proj-a", user_id="alice"
+    )
+    assert moved == 2
+
+    # alice 的 default 桶清空，proj-a 桶变成 3 条
+    alice_default = store.load_all_memories(
+        scope="user", scope_owner="", user_id="alice", workspace_id="default"
+    )
+    alice_proj_a = store.load_all_memories(
+        scope="user", scope_owner="", user_id="alice", workspace_id="proj-a"
+    )
+    assert alice_default == []
+    assert len(alice_proj_a) == 3
+
+    # bob 完全没动
+    bob_default = store.load_all_memories(
+        scope="user", scope_owner="", user_id="bob", workspace_id="default"
+    )
+    assert len(bob_default) == 1
+    assert bob_default[0].content == "bob default keep"
+
+    # audit 表记录两条 workspace_migrate
+    rows = store.db._conn.execute(
+        "SELECT memory_id, reason, migration_version FROM _memory_scope_audit "
+        "WHERE migration_version = 'workspace_migrate'"
+    ).fetchall()
+    assert len(rows) == 2
+    for _mid, reason, ver in rows:
+        assert reason == "workspace_migrate:default->proj-a"
+        assert ver == "workspace_migrate"
+
+
 def test_iter_cached_excludes_isolated_buckets_by_default(tmp_path: Path):
     """Phase 1B：iter_cached 默认排除 legacy_quarantine / pending_consolidation；
     显式 include_isolated=True 才能看到。"""
@@ -316,6 +484,7 @@ def test_backfill_sentinel_archives_legacy_json_once(tmp_path: Path):
     """Phase 1A：第一次启动看到 memories.json 时执行 backfill，归档文件，写
     sentinel；第二次启动不再读取原文件，也不需要重做 backfill。"""
     import json as _json
+
     from openakita.memory.manager import MemoryManager
 
     data_dir = tmp_path / "memory"

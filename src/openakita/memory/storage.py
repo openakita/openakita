@@ -1707,6 +1707,74 @@ class MemoryStorage:
             logger.debug(f"[MemoryStorage] list_known_tenants failed: {e}")
             return []
 
+    def migrate_workspace_id(
+        self,
+        *,
+        from_workspace_id: str,
+        to_workspace_id: str,
+        user_id: str,
+        scope: str = "user",
+    ) -> int:
+        """Phase 2a：把同一 (scope, user_id) 下、workspace_id=from 的 memories
+        全部改成 workspace_id=to。返回更新行数。
+
+        典型场景：用户从默认 ``workspace_id="default"`` 切换到项目专属工作区，
+        想把原来共享桶里的记忆"携过来"。
+        - 仅修改 ``memories.workspace_id`` 字段，不动 content / scope / user_id；
+        - 全程在事务内，单语句 UPDATE，失败回滚；
+        - 写入 _memory_scope_audit 表记录每条变更，便于审计与可能的回滚。
+        """
+        if not self._conn:
+            return 0
+        if (
+            not from_workspace_id or not to_workspace_id
+            or from_workspace_id == to_workspace_id
+            or not user_id
+        ):
+            return 0
+        now = datetime.now().isoformat()
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                # 先写审计
+                self._conn.execute(
+                    """
+                    INSERT INTO _memory_scope_audit
+                        (memory_id, old_scope, new_scope, old_user_id, new_user_id,
+                         reason, migrated_at, migration_version)
+                    SELECT id, scope, scope, user_id, user_id,
+                           'workspace_migrate:' || ? || '->' || ?,
+                           ?, 'workspace_migrate'
+                    FROM memories
+                    WHERE scope = ? AND user_id = ? AND workspace_id = ?
+                    """,
+                    (from_workspace_id, to_workspace_id, now, scope, user_id, from_workspace_id),
+                )
+                cur = self._conn.execute(
+                    """
+                    UPDATE memories
+                    SET workspace_id = ?, updated_at = ?
+                    WHERE scope = ? AND user_id = ? AND workspace_id = ?
+                    """,
+                    (to_workspace_id, now, scope, user_id, from_workspace_id),
+                )
+                moved = cur.rowcount if cur.rowcount is not None else 0
+                self._conn.execute("COMMIT")
+                if moved:
+                    logger.info(
+                        "[MemoryStorage] workspace migrate: %d rows scope=%s user_id=%s "
+                        "from %s → %s",
+                        moved, scope, user_id, from_workspace_id, to_workspace_id,
+                    )
+                return moved
+            except Exception as e:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                logger.warning(f"[MemoryStorage] migrate_workspace_id failed: {e}")
+                return 0
+
     def record_scope_audit(
         self,
         memory_id: str,

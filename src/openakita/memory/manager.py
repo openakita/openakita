@@ -1838,8 +1838,16 @@ class MemoryManager:
         scope_owner: str = "",
         user_id: str | None = None,
         workspace_id: str | None = None,
+        fallback_workspace_id: str | None = None,
     ) -> list[Memory]:
-        results = []
+        """搜索可见记忆。
+
+        Phase 2a：``fallback_workspace_id`` 可选参数。当主 workspace 命中数
+        < limit 时，再从 fallback_workspace_id 补充结果（按 id 去重）。
+        用于桌面用户从 ``"default"`` 平滑切换到项目专属工作区时仍能看到
+        历史共享记忆 —— 调用方可以传 ``fallback_workspace_id="default"``
+        激活。**默认 None 时与历史行为完全一致**。
+        """
         now = datetime.now()
         if scope == "global":
             scope = "user"
@@ -1847,29 +1855,54 @@ class MemoryManager:
             "system" if scope == "system" else "legacy" if scope == "legacy_quarantine" else self._current_user_id
         ) or "default"
         workspace_id = workspace_id or self._current_workspace_id or "default"
-        with self._memories_lock:
-            for memory in self._memories.values():
-                if memory.superseded_by:
+
+        def _collect(target_workspace_id: str) -> list[Memory]:
+            collected: list[Memory] = []
+            with self._memories_lock:
+                for memory in self._memories.values():
+                    if memory.superseded_by:
+                        continue
+                    if memory.expires_at and memory.expires_at < now:
+                        continue
+                    mem_scope = getattr(memory, "scope", "global") or "global"
+                    if mem_scope == "global":
+                        mem_scope = "user"
+                    mem_owner = getattr(memory, "scope_owner", "") or ""
+                    if mem_scope != scope or mem_owner != scope_owner:
+                        continue
+                    if (getattr(memory, "user_id", "default") or "default") != user_id:
+                        continue
+                    if (
+                        getattr(memory, "workspace_id", "default") or "default"
+                    ) != target_workspace_id:
+                        continue
+                    if memory_type and memory.type != memory_type:
+                        continue
+                    if tags and not any(tag in memory.tags for tag in tags):
+                        continue
+                    if query and query.lower() not in memory.content.lower():
+                        continue
+                    collected.append(memory)
+            return collected
+
+        results = _collect(workspace_id)
+
+        # Phase 2a：可选 workspace fallback。仅在主 workspace 命中不足 limit
+        # 且 fallback_workspace_id 与主不同时触发，按 id 去重再合并。
+        if (
+            fallback_workspace_id
+            and fallback_workspace_id != workspace_id
+            and len(results) < limit
+        ):
+            seen_ids = {m.id for m in results}
+            for mem in _collect(fallback_workspace_id):
+                if mem.id in seen_ids:
                     continue
-                if memory.expires_at and memory.expires_at < now:
-                    continue
-                mem_scope = getattr(memory, "scope", "global") or "global"
-                if mem_scope == "global":
-                    mem_scope = "user"
-                mem_owner = getattr(memory, "scope_owner", "") or ""
-                if mem_scope != scope or mem_owner != scope_owner:
-                    continue
-                if (getattr(memory, "user_id", "default") or "default") != user_id:
-                    continue
-                if (getattr(memory, "workspace_id", "default") or "default") != workspace_id:
-                    continue
-                if memory_type and memory.type != memory_type:
-                    continue
-                if tags and not any(tag in memory.tags for tag in tags):
-                    continue
-                if query and query.lower() not in memory.content.lower():
-                    continue
-                results.append(memory)
+                results.append(mem)
+                seen_ids.add(mem.id)
+                if len(results) >= limit:
+                    break
+
         results.sort(key=lambda m: (m.importance_score, m.access_count), reverse=True)
         return results[:limit]
 

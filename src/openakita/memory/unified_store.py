@@ -472,6 +472,21 @@ class UnifiedStore:
     def list_known_tenants(self) -> list[tuple[str, str]]:
         return self.db.list_known_tenants()
 
+    def migrate_workspace_id(
+        self,
+        *,
+        from_workspace_id: str,
+        to_workspace_id: str,
+        user_id: str,
+        scope: str = "user",
+    ) -> int:
+        return self.db.migrate_workspace_id(
+            from_workspace_id=from_workspace_id,
+            to_workspace_id=to_workspace_id,
+            user_id=user_id,
+            scope=scope,
+        )
+
     def record_scope_audit(
         self,
         memory_id: str,

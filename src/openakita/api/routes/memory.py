@@ -7,6 +7,7 @@ Provides HTTP API for the frontend Memory Management Panel.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -100,6 +101,15 @@ class MemoryCreateRequest(BaseModel):
 class ClaimLegacyRequest(BaseModel):
     include_inactive: bool = True
     include_default_graph_nodes: bool = True
+
+
+class MigrateWorkspaceRequest(BaseModel):
+    """Phase 2a：把当前 user 在 ``from_workspace_id`` 里的记忆迁到
+    ``to_workspace_id``。空 ``to_workspace_id`` 时取当前 session 的
+    workspace_id（一般是用户切到 project 模式后的项目哈希值）。"""
+    from_workspace_id: str = "default"
+    to_workspace_id: str = ""
+    scope: str = "user"
 
 
 IDENTITY_SLOT_ALIASES: dict[str, str] = {
@@ -694,6 +704,62 @@ async def claim_legacy_memories(request: Request, body: ClaimLegacyRequest | Non
         "conflict_skipped": report["conflict_skipped"],
         "graph_nodes_updated": graph_updated,
         "current_owner": {"user_id": user_id, "workspace_id": workspace_id},
+    }
+
+
+@router.post("/migrate-workspace")
+async def migrate_workspace(request: Request, body: MigrateWorkspaceRequest):
+    """Phase 2a：把当前 user 在某个 workspace_id 下的记忆迁到另一个 workspace_id。
+
+    典型场景：用户启用了项目专属工作区（``OPENAKITA_DESKTOP_PROJECT_WORKSPACE=1``
+    或 session metadata ``memory_workspace_mode='project'``）之后，想把原来
+    在共享 ``"default"`` 工作区里的记忆"携过来"。
+
+    安全约束：
+    - 只动当前请求会话身份所属 ``user_id`` 的记忆，不会跨用户搬运；
+    - 默认 scope='user'，不动 legacy_quarantine / pending_consolidation / session 桶；
+    - 操作有事务保护，失败 ROLLBACK；
+    - 每条迁徙记录写入 ``_memory_scope_audit`` 表，可审计。
+    """
+    store = _get_store(request)
+    if not store:
+        raise HTTPException(503, "Memory store not available")
+    user_id, current_workspace_id = _current_owner(request)
+
+    from_workspace_id = (body.from_workspace_id or "").strip() or "default"
+    to_workspace_id = (body.to_workspace_id or "").strip() or current_workspace_id
+    if not to_workspace_id:
+        raise HTTPException(400, "to_workspace_id is required (and current session has none)")
+    if from_workspace_id == to_workspace_id:
+        return {
+            "ok": True,
+            "moved": 0,
+            "reason": "from and to workspace are identical",
+            "from_workspace_id": from_workspace_id,
+            "to_workspace_id": to_workspace_id,
+            "user_id": user_id,
+        }
+
+    moved = store.migrate_workspace_id(
+        from_workspace_id=from_workspace_id,
+        to_workspace_id=to_workspace_id,
+        user_id=user_id,
+        scope=body.scope or "user",
+    )
+
+    # 刷新内存缓存，让 UI 立即看到迁过来的记忆。
+    mm = _get_manager(request)
+    if mm and hasattr(mm, "_reload_from_sqlite"):
+        with contextlib.suppress(Exception):
+            mm._reload_from_sqlite()
+
+    return {
+        "ok": True,
+        "moved": moved,
+        "from_workspace_id": from_workspace_id,
+        "to_workspace_id": to_workspace_id,
+        "user_id": user_id,
+        "scope": body.scope or "user",
     }
 
 
