@@ -1378,6 +1378,32 @@ class LLMClient:
         # 按优先级排序
         eligible.sort(key=lambda p: p.config.priority)
 
+        # ── Directed fallback chain ────────────────────────────────────
+        # When an endpoint configures ``fallback_enabled=True`` and
+        # ``fallback_endpoint=<name>``, promote that named endpoint to
+        # be tried IMMEDIATELY AFTER this one (overriding the priority
+        # order for that one slot). This lets the user say "if my relay
+        # fails, prefer official Anthropic" without juggling priorities
+        # against every other endpoint in the list. The chain is one
+        # hop deep on purpose — multi-hop fallback is almost always a
+        # configuration smell that hides a real availability problem.
+        # No-op when no endpoint opts in, so legacy behaviour is the
+        # default and the next-eligible-by-priority path is unaffected.
+        if any(p.config.fallback_enabled and p.config.fallback_endpoint for p in eligible):
+            by_name = {p.name: p for p in eligible}
+            seen: set[str] = set()
+            ordered: list = []
+            for prov in eligible:
+                if prov.name in seen:
+                    continue
+                ordered.append(prov)
+                seen.add(prov.name)
+                fb = (prov.config.fallback_endpoint or "").strip()
+                if prov.config.fallback_enabled and fb and fb in by_name and fb not in seen:
+                    ordered.append(by_name[fb])
+                    seen.add(fb)
+            eligible = ordered
+
         # 端点亲和性：有工具上下文时，将上次成功的端点提升到队列前端
         # 这样 failover 后的下一次调用会继续使用成功的端点，而不是回到高优先级的故障端点
         if prefer_endpoint:

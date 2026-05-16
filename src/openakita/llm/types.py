@@ -578,6 +578,16 @@ class EndpointConfig:
     supported_models: list[str] | None = None
     models_synced_at: float | None = None  # epoch seconds of last sync
     models_sync_error: str | None = None  # last sync error (kept for UI)
+    # ── Directed fallback chain ────────────────────────────────────────
+    # When ``fallback_enabled`` is True and ``fallback_endpoint`` names
+    # another endpoint in the same llm_endpoints.json, that endpoint is
+    # promoted to be tried immediately after this one (instead of the
+    # next priority-sorted entry). Lets the user express "if my yunwu
+    # relay fails, prefer official Anthropic" without juggling priorities
+    # against the other ten endpoints. Disabled by default so legacy
+    # configs are unaffected.
+    fallback_endpoint: str | None = None
+    fallback_enabled: bool = False
 
     def __post_init__(self):
         if self.capabilities is None:
@@ -768,6 +778,12 @@ class EndpointConfig:
             ),
             models_synced_at=data.get("models_synced_at"),
             models_sync_error=data.get("models_sync_error"),
+            fallback_endpoint=(
+                str(data["fallback_endpoint"]).strip()
+                if data.get("fallback_endpoint")
+                else None
+            ),
+            fallback_enabled=bool(data.get("fallback_enabled", False)),
         )
 
     def to_dict(self) -> dict:
@@ -809,6 +825,10 @@ class EndpointConfig:
             result["models_synced_at"] = self.models_synced_at
         if self.models_sync_error:
             result["models_sync_error"] = self.models_sync_error
+        if self.fallback_endpoint:
+            result["fallback_endpoint"] = self.fallback_endpoint
+        if self.fallback_enabled:
+            result["fallback_enabled"] = True
         return result
 
 
