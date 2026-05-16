@@ -190,15 +190,23 @@ class Plugin(PluginBase):
         self._start_polling()
 
     async def _ensure_client_from_config(self) -> None:
-        api_key = await self._tm.get_config("dashscope_api_key") or ""
-        analysis_provider = await self._tm.get_config("analysis_provider") or "host"
-        analysis_api_key = await self._tm.get_config("dashscope_analysis_api_key") or ""
+        cfg = await self._tm.get_all_config()
+        api_key, base_url = self._resolve_asr_endpoint(cfg)
+        analysis_provider = cfg.get("analysis_provider") or "host"
+        analysis_api_key = cfg.get("dashscope_analysis_api_key") or ""
         brain = self._get_host_brain()
         if api_key:
-            if self._client:
+            # Rebuild on relay swap so the new base_url actually takes
+            # effect (update_api_key alone keeps the previous transport
+            # client). Cost is negligible — settings updates are rare.
+            if self._client and not base_url:
                 self._client.update_api_key(api_key)
             else:
-                self._client = ClipAsrClient(api_key)
+                self._client = (
+                    ClipAsrClient(api_key, base_url=base_url)
+                    if base_url
+                    else ClipAsrClient(api_key)
+                )
             self._client.configure_analysis(
                 provider=analysis_provider,
                 brain=brain,
@@ -206,6 +214,47 @@ class Plugin(PluginBase):
             )
         else:
             self._client = None
+
+    def _resolve_asr_endpoint(self, cfg: dict) -> tuple[str, str]:
+        """Resolve ASR api_key + base_url honouring an optional relay.
+
+        Same shape as the other vendor plugins. Strict policy + missing
+        relay raises HTTPException(400) so the Settings UI banner has
+        actionable text.
+        """
+        api_key = (cfg.get("dashscope_api_key") or "").strip()
+        relay_name = (cfg.get("dashscope_relay_endpoint") or "").strip()
+        if not relay_name:
+            return api_key, ""
+        try:
+            from openakita.relay import (
+                SettingsRelayResolutionError,
+                apply_relay_override,
+            )
+
+            merged = apply_relay_override(
+                {
+                    "api_key": api_key,
+                    "base_url": "",
+                    "relay_endpoint": relay_name,
+                    "relay_fallback_policy": (
+                        cfg.get("dashscope_relay_fallback_policy") or "official"
+                    ),
+                },
+                required_capability="audio",
+                plugin_name="clip-sense",
+            )
+        except (ImportError, ModuleNotFoundError) as exc:
+            logger.info(
+                "clip-sense: openakita.relay not importable (%s); "
+                "keeping per-plugin DashScope endpoint",
+                exc,
+            )
+            return api_key, ""
+        except SettingsRelayResolutionError as exc:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        return (merged.get("api_key") or "").strip(), (merged.get("base_url") or "").strip()
 
     def _get_host_brain(self) -> Any:
         try:
@@ -500,6 +549,8 @@ class Plugin(PluginBase):
                     "dashscope_api_key",
                     "analysis_provider",
                     "dashscope_analysis_api_key",
+                    "dashscope_relay_endpoint",
+                    "dashscope_relay_fallback_policy",
                 )
             ):
                 await self._ensure_client_from_config()

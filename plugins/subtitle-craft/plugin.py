@@ -248,11 +248,54 @@ class Plugin(PluginBase):
 
     async def _async_init(self) -> None:
         await self._tm.init()
-        api_key = await self._tm.get_config("dashscope_api_key") or ""
+        cfg = await self._tm.get_all_config()
+        api_key, base_url = self._resolve_asr_endpoint(cfg)
         if api_key:
-            self._asr = self._build_asr_client(api_key)
+            self._asr = self._build_asr_client(api_key, base_url=base_url)
         self._ffmpeg_path = await self._tm.get_config("ffmpeg_path") or ""
         self._start_polling()
+
+    def _resolve_asr_endpoint(self, cfg: dict) -> tuple[str, str]:
+        """Resolve ASR api_key + base_url honouring optional relay.
+
+        Returns ``("", "")`` when no api_key is set. Returns
+        ``(api_key, "")`` when no relay override applies (base_url
+        defaults to DashScope's official endpoint inside the client).
+        Strict-policy + missing relay raises HTTPException(400).
+        """
+        api_key = (cfg.get("dashscope_api_key") or "").strip()
+        relay_name = (cfg.get("dashscope_relay_endpoint") or "").strip()
+        if not relay_name:
+            return api_key, ""
+        try:
+            from openakita.relay import (
+                SettingsRelayResolutionError,
+                apply_relay_override,
+            )
+
+            merged = apply_relay_override(
+                {
+                    "api_key": api_key,
+                    "base_url": "",
+                    "relay_endpoint": relay_name,
+                    "relay_fallback_policy": (
+                        cfg.get("dashscope_relay_fallback_policy") or "official"
+                    ),
+                },
+                required_capability="audio",
+                plugin_name="subtitle-craft",
+            )
+        except (ImportError, ModuleNotFoundError) as exc:
+            logger.info(
+                "subtitle-craft: openakita.relay not importable (%s); "
+                "keeping per-plugin DashScope endpoint",
+                exc,
+            )
+            return api_key, ""
+        except SettingsRelayResolutionError as exc:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        return (merged.get("api_key") or "").strip(), (merged.get("base_url") or "").strip()
 
     async def on_unload(self) -> None:
         # 1. Cancel the polling task (cooperative).
@@ -300,7 +343,13 @@ class Plugin(PluginBase):
     # ASR client construction
     # ------------------------------------------------------------------
 
-    def _build_asr_client(self, api_key: str) -> SubtitleAsrClient:
+    def _build_asr_client(self, api_key: str, *, base_url: str = "") -> SubtitleAsrClient:
+        # base_url defaults to the client's own DASHSCOPE_BASE_URL when
+        # the caller passes an empty string. We avoid threading a None
+        # through because the client's keyword default is the official
+        # URL and forwarding "" would silently strip that.
+        if base_url:
+            return SubtitleAsrClient(api_key, base_url=base_url)
         return SubtitleAsrClient(api_key)
 
     # ------------------------------------------------------------------
@@ -632,13 +681,19 @@ class Plugin(PluginBase):
         @router.put("/settings")
         async def update_settings(body: ConfigUpdateBody) -> dict[str, str]:
             await self._tm.set_configs(body.updates)
-            if "dashscope_api_key" in body.updates:
-                key = body.updates["dashscope_api_key"]
+            endpoint_keys = {
+                "dashscope_api_key",
+                "dashscope_relay_endpoint",
+                "dashscope_relay_fallback_policy",
+            }
+            if endpoint_keys & body.updates.keys():
+                saved_full = await self._tm.get_all_config()
+                key, base_url = self._resolve_asr_endpoint(saved_full)
                 if key:
-                    if self._asr is not None:
-                        self._asr.update_api_key(key)
-                    else:
-                        self._asr = self._build_asr_client(key)
+                    # Always rebuild on relay swap so the new base_url
+                    # actually takes effect (update_api_key alone keeps
+                    # the previous transport client bound to old host).
+                    self._asr = self._build_asr_client(key, base_url=base_url)
                 else:
                     # No persistent socket state to close (BaseVendorClient
                     # uses per-request httpx.AsyncClient). Drop the ref.

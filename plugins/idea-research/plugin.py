@@ -226,10 +226,15 @@ class Plugin(PluginBase):
         self._tm = IdeaTaskManager(db_path=data_dir / "idea.sqlite")
         self._mdrm = MdrmAdapter(api, plugin_id=PLUGIN_ID)
         self._http = httpx.AsyncClient(timeout=60.0)
-        self._dashscope = DashScopeClient(
-            client=self._http,
-            api_key=self._read_setting("dashscope_api_key") or os.environ.get("DASHSCOPE_API_KEY"),
+        api_key, base_url = self._resolve_dashscope_endpoint(
+            self._read_setting("dashscope_api_key") or os.environ.get("DASHSCOPE_API_KEY") or "",
+            self._read_setting("dashscope_relay_endpoint") or "",
+            self._read_setting("dashscope_relay_fallback_policy") or "official",
         )
+        ds_kwargs: dict[str, Any] = {"client": self._http, "api_key": api_key}
+        if base_url:
+            ds_kwargs["base_url"] = base_url
+        self._dashscope = DashScopeClient(**ds_kwargs)
         self._cookies_vault = CookiesVault(db_path=data_dir / "idea.sqlite")
         self._playwright_driver = PlaywrightDriver(max_concurrent=2)
         self._collectors = CollectorRegistry(
@@ -309,6 +314,53 @@ class Plugin(PluginBase):
         except Exception:
             cfg = {}
         return cfg.get(key, default)
+
+    def _resolve_dashscope_endpoint(
+        self,
+        api_key: str,
+        relay_name: str,
+        relay_policy: str,
+    ) -> tuple[str, str]:
+        """Resolve DashScope (api_key, base_url) honouring optional relay.
+
+        Returns ``(api_key, "")`` when ``relay_name`` is empty so the
+        caller can fall back to ``DashScopeClient``'s built-in base URL
+        default. Strict policy + missing relay raises ``HTTPException``
+        so the Settings UI banner has actionable text.
+        """
+        relay_name = (relay_name or "").strip()
+        if not relay_name:
+            return api_key, ""
+        try:
+            from openakita.relay import (
+                SettingsRelayResolutionError,
+                apply_relay_override,
+            )
+
+            merged = apply_relay_override(
+                {
+                    "api_key": api_key,
+                    "base_url": "",
+                    "relay_endpoint": relay_name,
+                    "relay_fallback_policy": relay_policy or "official",
+                },
+                required_capability="chat",
+                plugin_name="idea-research",
+            )
+        except (ImportError, ModuleNotFoundError) as exc:
+            _LOG.info(
+                "[%s] openakita.relay not importable (%s); keeping per-plugin DashScope endpoint",
+                PLUGIN_ID,
+                exc,
+            )
+            return api_key, ""
+        except SettingsRelayResolutionError as exc:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        return (
+            str(merged.get("api_key") or "").strip(),
+            str(merged.get("base_url") or "").strip(),
+        )
 
     async def _read_settings_async(self) -> dict[str, Any]:
         if self._tm is None:
@@ -557,10 +609,28 @@ class Plugin(PluginBase):
         @r.put("/settings")
         async def update_settings(body: SettingsUpdateBody) -> dict[str, Any]:
             assert plugin._tm is not None and plugin._dashscope is not None
-            for key, value in (body.updates or {}).items():
+            updates = body.updates or {}
+            for key, value in updates.items():
                 await plugin._tm.set_setting(key, value)
-                if key == "dashscope_api_key" and isinstance(value, str):
-                    plugin._dashscope.api_key = value
+            endpoint_keys = {
+                "dashscope_api_key",
+                "dashscope_relay_endpoint",
+                "dashscope_relay_fallback_policy",
+            }
+            if endpoint_keys & updates.keys():
+                saved = await plugin._tm.get_all_settings()
+                api_key, base_url = plugin._resolve_dashscope_endpoint(
+                    str(saved.get("dashscope_api_key") or ""),
+                    str(saved.get("dashscope_relay_endpoint") or ""),
+                    str(saved.get("dashscope_relay_fallback_policy") or "official"),
+                )
+                # Live-swap the existing client. DashScopeClient sub-classes
+                # VendorClient which stores base_url on the instance —
+                # writing the attribute is enough; future requests pick up
+                # the new host via ``self.base_url``.
+                plugin._dashscope.api_key = api_key
+                if base_url:
+                    plugin._dashscope.base_url = base_url
             return await plugin._tm.get_all_settings()
 
         # 16 GET /sources
