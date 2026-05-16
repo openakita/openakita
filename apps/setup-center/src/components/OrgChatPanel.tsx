@@ -5,8 +5,10 @@
  */
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, ShieldAlert } from "lucide-react";
+import { Loader2, ShieldAlert, Copy as IconCopy } from "lucide-react";
+import { toast } from "sonner";
 import { safeFetch } from "../providers";
+import { copyToClipboard } from "../utils/clipboard";
 import { onWsEvent } from "../platform";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
 import { FileAttachmentCard } from "./FileAttachmentCard";
@@ -811,7 +813,26 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         <div className="ocp-header">
           <div className="ocp-header-info">
             <div className="ocp-header-dot" />
-            <span className="ocp-header-title">{title || (nodeId ? t("org.chat.conversationTitle", { name: nodeId }) : t("org.chat.commandCenter"))}</span>
+            <div className="ocp-header-titles">
+              <span className="ocp-header-title">{title || (nodeId ? t("org.chat.conversationTitle", { name: nodeId }) : t("org.chat.commandCenter"))}</span>
+              {orgId && (
+                <button
+                  type="button"
+                  className="ocp-header-id"
+                  title={`${t("org.chat.copyOrgId")} · ${orgId}`}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const ok = await copyToClipboard(orgId);
+                    if (ok) toast.success(t("org.chat.orgIdCopied"));
+                    else toast.error(t("org.chat.orgIdCopyFailed"));
+                  }}
+                >
+                  <span className="ocp-header-id-label">ID</span>
+                  <code className="ocp-header-id-value">{orgId}</code>
+                  <IconCopy size={10} />
+                </button>
+              )}
+            </div>
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             {messages.length > 0 && (
@@ -1016,6 +1037,32 @@ const CHAT_CSS = `
 }
 @keyframes ocp-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 .ocp-header-title { font-size: 13px; font-weight: 600; }
+.ocp-header-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ocp-header-id {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  border: 1px dashed var(--border, rgba(99,102,241,0.35));
+  background: transparent;
+  color: var(--muted, #64748b);
+  cursor: pointer;
+  width: fit-content;
+  max-width: 260px;
+  user-select: none;
+  transition: all 0.15s;
+}
+.ocp-header-id:hover {
+  background: var(--hover-bg, rgba(99,102,241,0.08));
+  color: var(--primary, #6366f1);
+  border-color: var(--primary, #6366f1);
+}
+.ocp-header-id-label { font-weight: 600; letter-spacing: 0.05em; opacity: 0.75; }
+.ocp-header-id-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .ocp-close {
   width: 28px; height: 28px; border: none; border-radius: 6px;
   background: transparent; color: var(--muted, #64748b);

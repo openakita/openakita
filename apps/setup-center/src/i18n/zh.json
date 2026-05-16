@@ -3155,7 +3155,10 @@
       "orgInputPlaceholder": "输入组织命令...",
       "forceStopTitle": "强制终止当前任务",
       "forceStopConfirm": "强制终止",
-      "noRunningTask": "当前没有正在执行的任务"
+      "noRunningTask": "当前没有正在执行的任务",
+      "copyOrgId": "复制组织 ID",
+      "orgIdCopied": "已复制组织 ID 到剪贴板",
+      "orgIdCopyFailed": "复制失败，请手动选中再复制"
     },
     "editor": {
       "fromNode": "来自 {{name}}",
@@ -3230,6 +3233,11 @@
       "createFromTemplateLong": "从模板创建",
       "nodeCount": "{{count}} 节点",
       "emptyOrgHint": "暂无组织，点击上方创建",
+      "copyOrgId": "复制组织 ID",
+      "copyOrgIdHint": "点击复制完整 ID（可粘贴到 IM 用 /org bind <id> 绑定）",
+      "orgIdCopied": "已复制组织 ID 到剪贴板",
+      "orgIdCopyFailed": "复制失败，请手动选中再复制",
+      "orgIdMissing": "未找到组织 ID",
       "addNodeTitle": "添加节点",
       "roleName": "岗位名称 *",
       "roleNamePlaceholder": "例如：产品经理",

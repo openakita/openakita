@@ -3140,7 +3140,10 @@
       "orgInputPlaceholder": "Type org command...",
       "forceStopTitle": "Force stop current task",
       "forceStopConfirm": "Force Stop",
-      "noRunningTask": "No running task"
+      "noRunningTask": "No running task",
+      "copyOrgId": "Copy organization ID",
+      "orgIdCopied": "Organization ID copied to clipboard",
+      "orgIdCopyFailed": "Copy failed — please select and copy manually"
     },
     "editor": {
       "fromNode": "From {{name}}",
@@ -3215,6 +3218,11 @@
       "createFromTemplateLong": "Create from template",
       "nodeCount": "{{count}} nodes",
       "emptyOrgHint": "No orgs yet, click above to create",
+      "copyOrgId": "Copy organization ID",
+      "copyOrgIdHint": "Click to copy the full ID (paste into IM with /org bind <id>)",
+      "orgIdCopied": "Organization ID copied to clipboard",
+      "orgIdCopyFailed": "Copy failed — please select and copy manually",
+      "orgIdMissing": "Organization ID not found",
       "addNodeTitle": "Add Node",
       "roleName": "Role Name *",
       "roleNamePlaceholder": "e.g. Product Manager",

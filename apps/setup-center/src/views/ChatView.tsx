@@ -1736,15 +1736,74 @@ export function ChatView({
         setMessages((prev) => [...prev, { id: genId(), role: "system", content: "可用角色: default, business, tech_expert, butler, girlfriend, boyfriend, family, jarvis\n用法: /persona <角色ID>", timestamp: Date.now() }]);
       }
     }},
-    { id: "agent", label: "切换 Agent", description: "在多 Agent 间切换（handoff 模式）", action: (args) => {
-      if (args) {
-        setInputValue(`请切换到 Agent「${args}」来处理接下来的任务。`);
-      } else {
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "用法: /agent <Agent名称>。在 handoff 模式下，AI 会自动在 Agent 间切换。", timestamp: Date.now() }]);
+    { id: "agent", label: "切换 Agent", description: "切换当前会话的 Agent", action: (args) => {
+      // 真切换：直接写 selectedAgent（下一条消息会随 chat 请求带上 agent_profile_id
+      // 由后端 _apply_agent_profile 写入 session.context，与 IM `/切换` 语义对齐）。
+      const trimmed = (args || "").trim();
+      if (!trimmed) {
+        const lines = agentProfiles.map((p) => {
+          const marker = p.id === selectedAgent ? " ⬅️ 当前" : "";
+          return `- \`${p.id}\` — ${p.icon || "🤖"} ${p.name}: ${p.description}${marker}`;
+        });
+        const body = lines.length
+          ? `**可用 Agent**（共 ${agentProfiles.length} 个）：\n${lines.join("\n")}\n\n用法：\`/agent <agent_id>\``
+          : "暂无可用 Agent。请检查 Agent 配置或稍后再试。";
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: body, timestamp: Date.now() }]);
+        return;
       }
+      const q = trimmed.toLowerCase();
+      // 与 @ 选择器一致：先精确 id 命中，再宽松匹配 id/name
+      const exact = agentProfiles.find((p) => p.id.toLowerCase() === q);
+      const candidates = exact ? [exact] : agentProfiles.filter(
+        (p) => p.id.toLowerCase().includes(q) || p.name.toLowerCase().includes(q),
+      );
+      if (candidates.length === 0) {
+        setMessages((prev) => [...prev, {
+          id: genId(), role: "system",
+          content: `❌ 未找到 Agent \`${trimmed}\`。\n发送 \`/agent\` 不带参数可以查看所有 Agent。`,
+          timestamp: Date.now(),
+        }]);
+        return;
+      }
+      if (candidates.length > 1) {
+        const lines = candidates.map((p) => `- \`${p.id}\` — ${p.icon || "🤖"} ${p.name}`);
+        setMessages((prev) => [...prev, {
+          id: genId(), role: "system",
+          content: `🔍 匹配到 ${candidates.length} 个 Agent，请用更精确的 id：\n${lines.join("\n")}`,
+          timestamp: Date.now(),
+        }]);
+        return;
+      }
+      const target = candidates[0];
+      if (target.id === selectedAgent) {
+        setMessages((prev) => [...prev, {
+          id: genId(), role: "system",
+          content: `ℹ️ 当前已是 ${target.icon || "🤖"} **${target.name}**`,
+          timestamp: Date.now(),
+        }]);
+        return;
+      }
+      setSelectedAgent(target.id);
+      setMessages((prev) => [...prev, {
+        id: genId(), role: "system",
+        content: `✅ 已切换到 ${target.icon || "🤖"} **${target.name}** (\`${target.id}\`)`,
+        timestamp: Date.now(),
+      }]);
     }},
     { id: "agents", label: "查看 Agent 列表", description: "显示可用的 Agent 列表", action: () => {
-      setMessages((prev) => [...prev, { id: genId(), role: "system", content: "Agent 列表取决于 handoff 配置。当前可通过 /agent <名称> 手动请求切换。", timestamp: Date.now() }]);
+      if (!agentProfiles.length) {
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "暂无可用 Agent。请检查 Agent 配置或稍后再试。", timestamp: Date.now() }]);
+        return;
+      }
+      const lines = agentProfiles.map((p) => {
+        const marker = p.id === selectedAgent ? " ⬅️ 当前" : "";
+        return `- \`${p.id}\` — ${p.icon || "🤖"} ${p.name}: ${p.description}${marker}`;
+      });
+      setMessages((prev) => [...prev, {
+        id: genId(), role: "system",
+        content: `**可用 Agent**（共 ${agentProfiles.length} 个）：\n${lines.join("\n")}\n\n切换：\`/agent <agent_id>\``,
+        timestamp: Date.now(),
+      }]);
     }},
     { id: "org", label: "组织模式", description: "切换到组织编排模式，向组织下命令", action: (args) => {
       if (args === "off" || args === "关闭") {
@@ -1848,7 +1907,7 @@ export function ChatView({
       };
     }
     return cmds;
-  }, [endpoints, chatMode, orgList, orgMode, thinkingMode, thinkingDepth, activeConvId, apiBase]);
+  }, [endpoints, chatMode, orgList, orgMode, thinkingMode, thinkingDepth, activeConvId, apiBase, agentProfiles, selectedAgent]);
 
   // ── 新建对话 ──
   const newConversation = useCallback(() => {
