@@ -47,8 +47,14 @@ logger = logging.getLogger(__name__)
 
 PEXELS_ENDPOINT = "https://api.pexels.com/v1/search"
 PIXABAY_ENDPOINT = "https://pixabay.com/api/"
-DASHSCOPE_T2I_SUBMIT = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis"
-DASHSCOPE_TASK_QUERY = "https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
+DASHSCOPE_DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com"
+DASHSCOPE_T2I_SUBMIT_PATH = "/api/v1/services/aigc/text2image/image-synthesis"
+DASHSCOPE_TASK_QUERY_PATH = "/api/v1/tasks/{task_id}"
+
+# Kept as module-level constants for backwards compat — callers that
+# don't override base_url still see the official endpoints.
+DASHSCOPE_T2I_SUBMIT = f"{DASHSCOPE_DEFAULT_BASE_URL}{DASHSCOPE_T2I_SUBMIT_PATH}"
+DASHSCOPE_TASK_QUERY = f"{DASHSCOPE_DEFAULT_BASE_URL}{DASHSCOPE_TASK_QUERY_PATH}"
 
 
 ICON_TABLE: dict[str, dict[str, Any]] = {
@@ -215,11 +221,20 @@ class PptAssetProvider:
         if not api_key:
             return None
         model = (self._settings.get("dashscope_image_model") or "wanx-v1").strip()
+        # Optional relay-station base URL injected by the plugin layer's
+        # _apply_relay_overrides — keeps the official DashScope host
+        # when empty so existing deployments are unaffected.
+        base_url = (
+            (self._settings.get("dashscope_base_url") or "").strip().rstrip("/")
+            or DASHSCOPE_DEFAULT_BASE_URL
+        )
+        submit_url = f"{base_url}{DASHSCOPE_T2I_SUBMIT_PATH}"
+        query_url_tpl = f"{base_url}{DASHSCOPE_TASK_QUERY_PATH}"
         import httpx
 
         async with httpx.AsyncClient(timeout=60) as client:
             submit = await client.post(
-                DASHSCOPE_T2I_SUBMIT,
+                submit_url,
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "X-DashScope-Async": "enable",
@@ -238,7 +253,7 @@ class PptAssetProvider:
             for _ in range(30):
                 await asyncio.sleep(2)
                 poll = await client.get(
-                    DASHSCOPE_TASK_QUERY.format(task_id=task_id),
+                    query_url_tpl.format(task_id=task_id),
                     headers={"Authorization": f"Bearer {api_key}"},
                 )
                 poll.raise_for_status()

@@ -186,14 +186,34 @@ class Plugin(PluginBase):
 
         @router.put("/settings")
         async def update_settings(payload: SettingsUpdateRequest) -> dict[str, Any]:
-            settings = _load_settings(data_dir)
+            # apply_relay=False so the relay-resolved dashscope_base_url
+            # never gets persisted to disk — it's recomputed on every
+            # _load_settings(apply_relay=True) call from the user-chosen
+            # relay_endpoint name.
+            settings = _load_settings(data_dir, apply_relay=False)
             allowed = set(_default_settings())
             for key, value in payload.updates.items():
                 if key not in allowed:
                     raise HTTPException(status_code=400, detail=f"Unknown setting: {key}")
                 settings[key] = str(value)
             _save_settings(data_dir, settings)
-            return {"ok": True, "settings": settings, "resolved": _resolved_storage_paths(data_dir, settings)}
+            # Rebuild the asset provider so a relay-endpoint change actually
+            # repoints the next DashScope T2I request without a plugin reload.
+            if self._asset_provider is not None:
+                try:
+                    from ppt_asset_provider import PptAssetProvider
+                    self._asset_provider = PptAssetProvider(
+                        settings=_load_settings(data_dir),
+                        data_root=data_dir,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            resolved_view = _load_settings(data_dir)
+            return {
+                "ok": True,
+                "settings": resolved_view,
+                "resolved": _resolved_storage_paths(data_dir, resolved_view),
+            }
 
         @router.get("/system/python-deps")
         async def list_python_deps() -> dict[str, Any]:
@@ -1426,6 +1446,10 @@ def _default_settings() -> dict[str, str]:
         "pixabay_api_key": "",
         "dashscope_api_key": "",
         "dashscope_image_model": "wanx-v1",
+        # Optional relay-station overrides — empty string keeps the
+        # official DashScope endpoint. See src/openakita/relay/.
+        "dashscope_relay_endpoint": "",
+        "dashscope_relay_fallback_policy": "official",
     }
 
 
@@ -1433,7 +1457,7 @@ def _settings_path(data_dir: Path) -> Path:
     return data_dir / "settings.json"
 
 
-def _load_settings(data_dir: Path) -> dict[str, str]:
+def _load_settings(data_dir: Path, *, apply_relay: bool = True) -> dict[str, str]:
     settings = _default_settings()
     path = _settings_path(data_dir)
     if path.exists():
@@ -1443,6 +1467,65 @@ def _load_settings(data_dir: Path) -> dict[str, str]:
                 settings.update({key: str(value) for key, value in raw.items() if key in settings})
         except (OSError, ValueError, TypeError):
             pass
+    # apply_relay=False is for the PUT /settings handler which needs the
+    # *raw* persisted values so we don't accidentally persist a relay-
+    # resolved base_url. Everywhere else (GET /settings, hot-path callers)
+    # benefits from the resolved view.
+    if apply_relay:
+        return _apply_relay_overrides(dict(settings))
+    return settings
+
+
+def _apply_relay_overrides(settings: dict[str, str]) -> dict[str, str]:
+    """Apply optional relay-station overrides to DashScope credentials.
+
+    PptAssetProvider receives the returned dict at construction time —
+    we resolve the relay HERE so a Settings change forces a rebuild
+    (see the PUT /settings handler) and the asset provider sees the
+    new base URL on its very next request.
+
+    Failure modes:
+      * relay endpoint blank          -> noop (most common path)
+      * openakita.relay missing       -> noop, settings keep per-plugin
+      * strict policy + miss          -> raises HTTPException(400),
+        surfaced verbatim to the Settings UI banner
+    """
+    relay_name = (settings.get("dashscope_relay_endpoint") or "").strip()
+    if not relay_name:
+        return settings
+    try:
+        from openakita.relay import (
+            SettingsRelayResolutionError,
+            apply_relay_override,
+        )
+
+        merged = apply_relay_override(
+            {
+                "api_key": settings.get("dashscope_api_key") or "",
+                "base_url": "",
+                "relay_endpoint": relay_name,
+                "relay_fallback_policy": (
+                    settings.get("dashscope_relay_fallback_policy") or "official"
+                ),
+            },
+            required_capability="image",
+            plugin_name="ppt-maker",
+        )
+    except (ImportError, ModuleNotFoundError):
+        return settings
+    except Exception as exc:  # SettingsRelayResolutionError
+        from fastapi import HTTPException
+
+        # The helper only raises this concrete type for strict-policy
+        # misses; re-raise as HTTPException so the UI sees a 400.
+        msg = getattr(exc, "user_message", str(exc))
+        raise HTTPException(status_code=400, detail=msg) from exc
+    base = str(merged.get("base_url") or "").strip()
+    if base:
+        settings["dashscope_api_key"] = str(merged.get("api_key") or "")
+        # PptAssetProvider keys off ``dashscope_base_url`` — empty means
+        # the provider keeps its hard-coded official URL constants.
+        settings["dashscope_base_url"] = base
     return settings
 
 
