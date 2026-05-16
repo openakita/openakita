@@ -1356,6 +1356,23 @@ class LLMClient:
             if require_pdf and not config.has_capability("pdf"):
                 continue
 
+            # Relay capability filter: if the user ran "Sync models" and
+            # the relay's catalog does NOT include this endpoint's
+            # configured model, drop it early instead of letting the
+            # request blow up with a 404 several seconds later. When
+            # no catalog has ever been probed, supports_model() returns
+            # True so legacy / first-run setups still work.
+            if not config.supports_model(config.model):
+                logger.info(
+                    "[LLM] endpoint=%s skipped: relay catalog does not "
+                    "include model %r (last synced at %s). Run Sync "
+                    "Models again or change the model.",
+                    name,
+                    config.model,
+                    config.models_synced_at,
+                )
+                continue
+
             eligible.append(provider)
 
         # 按优先级排序
