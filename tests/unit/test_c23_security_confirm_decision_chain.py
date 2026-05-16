@@ -178,3 +178,17 @@ class TestPayloadIntegration:
 
         models_src = Path("src/openakita/core/policy_v2/models.py").read_text(encoding="utf-8")
         assert "def to_ui_chain" in models_src
+
+    def test_frontend_localizes_backend_reason_and_notes(self) -> None:
+        """The modal should not show raw policy_v2 English internals to users."""
+        from pathlib import Path
+
+        modal_src = Path(
+            "apps/setup-center/src/views/chat/components/SecurityConfirmModal.tsx"
+        ).read_text(encoding="utf-8")
+        assert "formatPolicyReason(data.reason)" in modal_src
+        assert "formatDecisionNote(step.note)" in modal_src
+        assert "策略矩阵要求确认" in modal_src
+        assert "会话角色：" in modal_src
+        assert "工具分类：" in modal_src
+        assert "PowerShell 命令" in modal_src

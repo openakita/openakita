@@ -34,8 +34,50 @@ const APPROVAL_CLASS_LABELS: Record<string, { label: string; color: string }> = 
   unknown:          { label: "未分类",       color: "#6b7280" },
 };
 
+const TOOL_LABELS: Record<string, string> = {
+  run_shell: "Shell 命令",
+  run_powershell: "PowerShell 命令",
+  write_file: "写入文件",
+  edit_file: "编辑文件",
+  delete_file: "删除文件",
+  delegate_to_agent: "委托给 Agent",
+  switch_mode: "切换模式",
+};
+
+const SOURCE_LABELS: Record<string, string> = {
+  explicit_register_param: "显式注册参数",
+  explicit_handler_attr: "工具处理器声明",
+  skill_metadata: "Skill 元数据",
+  mcp_annotation: "MCP 注解",
+  plugin_prefix: "插件声明",
+  heuristic_prefix: "工具名前缀推断",
+  fallback_unknown: "兜底未知",
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  plan: "计划模式",
+  ask: "问答模式",
+  agent: "Agent 模式",
+  coordinator: "协作编排模式",
+};
+
+const MODE_LABELS: Record<string, string> = {
+  trust: "信任确认",
+  default: "默认确认",
+  accept_edits: "接受编辑",
+  strict: "严格确认",
+  dont_ask: "不询问",
+};
+
+function formatToolName(tool: string): string {
+  const label = TOOL_LABELS[tool];
+  return label ? `${label} (${tool})` : tool;
+}
+
 function humanizeArgs(tool: string, args: Record<string, unknown>): string {
-  if (tool === "run_shell" && args.command) return `即将执行命令：${args.command}`;
+  if ((tool === "run_shell" || tool === "run_powershell") && args.command) {
+    return `即将执行命令：${args.command}`;
+  }
   if ((tool === "write_file" || tool === "edit_file") && args.path) return `即将修改文件：${args.path}`;
   if (tool === "delete_file" && args.path) return `即将删除文件：${args.path}`;
   return JSON.stringify(args, null, 2);
@@ -88,6 +130,50 @@ const STEP_LABELS: Record<string, string> = {
   approval_override_ignored: "覆盖未应用",
   approval_override_applied: "覆盖已应用",
 };
+
+function approvalClassLabel(value: string): string {
+  return APPROVAL_CLASS_LABELS[value]?.label ?? value;
+}
+
+function formatPolicyReason(reason: string): string {
+  if (!reason) return "";
+  if (reason === "matrix says CONFIRM (no relax matched)") {
+    return "策略矩阵要求确认（未命中重放授权、可信路径或用户白名单）";
+  }
+  if (reason === "matrix says ALLOW") return "策略矩阵允许执行";
+  if (reason === "matrix says DENY") return "策略矩阵拒绝执行";
+  if (reason === "security profile is off") return "安全方案已关闭，允许执行";
+  if (reason === "death_switch active") return "只读保护已触发，阻止继续执行";
+  if (reason.startsWith("safety_immune match:")) {
+    return `命中绝对保护规则：${reason.slice("safety_immune match:".length).trim()}`;
+  }
+  if (reason.startsWith("engine_crash:")) {
+    return `策略引擎异常：${reason.slice("engine_crash:".length).trim()}`;
+  }
+  return reason;
+}
+
+function formatDecisionNote(note: string): string {
+  if (!note) return "";
+
+  const classSource = note.match(/^class=([a-z_]+)\s+source=([a-z_]+)$/);
+  if (classSource) {
+    return `工具分类：${approvalClassLabel(classSource[1])}；来源：${SOURCE_LABELS[classSource[2]] ?? classSource[2]}`;
+  }
+
+  const roleMode = note.match(/^role=([a-z_]+)\s+mode=([a-z_]+)$/);
+  if (roleMode) {
+    return `会话角色：${ROLE_LABELS[roleMode[1]] ?? roleMode[1]}；确认模式：${MODE_LABELS[roleMode[2]] ?? roleMode[2]}`;
+  }
+
+  const tool = note.match(/^tool=([a-z_]+)$/);
+  if (tool) return `工具：${formatToolName(tool[1])}`;
+
+  const approvalClass = note.match(/^approval_class=([a-z_]+)$/);
+  if (approvalClass) return `工具分类：${approvalClassLabel(approvalClass[1])}`;
+
+  return formatPolicyReason(note);
+}
 
 export function SecurityConfirmModal({
   data, apiBase, onClose, timerRef, setData,
@@ -231,13 +317,15 @@ export function SecurityConfirmModal({
         }}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
             <IconAlertCircle size={16} style={{ color: riskColor, marginTop: 2, flexShrink: 0 }} />
-            <div style={{ fontSize: 13, lineHeight: 1.5 }}>{data.reason}</div>
+            <div style={{ fontSize: 13, lineHeight: 1.5 }} title={data.reason}>
+              {formatPolicyReason(data.reason)}
+            </div>
           </div>
         </div>
 
         <div style={{ fontSize: 13, marginBottom: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>
-            {t("chat.securityTool", "工具")}: <code>{data.tool}</code>
+            {t("chat.securityTool", "工具")}: <code title={data.tool}>{formatToolName(data.tool)}</code>
           </div>
           <pre style={{
             margin: 0, fontSize: 11, maxHeight: 120, overflow: "auto",
@@ -307,7 +395,12 @@ export function SecurityConfirmModal({
                         {actionMeta.label}
                       </span>
                       {step.note && (
-                        <span style={{ marginLeft: 6, opacity: 0.75, wordBreak: "break-word" }}>{step.note}</span>
+                        <span
+                          title={step.note}
+                          style={{ marginLeft: 6, opacity: 0.75, wordBreak: "break-word" }}
+                        >
+                          {formatDecisionNote(step.note)}
+                        </span>
                       )}
                     </li>
                   );
