@@ -1868,14 +1868,19 @@ function StoryboardTab({ catalog }) {
 
   return (
     <div className="storyboard-page">
-      <div className="library-toolbar">
+      <div className="library-toolbar storyboard-hero">
         <div>
           <h2 className="page-title"><Icon name="film" /> 长视频分镜</h2>
-          <p className="page-subtitle">把故事梳理、分镜编辑、分段生成和成片拼接放在一个工作台里；你可以从大纲开始，也可以直接录入已有分镜。</p>
+          <p className="page-subtitle">梳理大纲 → 编辑分镜 → 批量生成 → 拼接成片，四步走完整条长视频生产线。</p>
         </div>
-        <button className="btn" onClick={addSegment}>
-          <Icon name="plus" size={13} /> 新增分镜
-        </button>
+        <div className="storyboard-hero__actions">
+          <span className="storyboard-hero__count">
+            <Icon name="list" size={12} /> {segments.length} 段
+          </span>
+          <button className="btn" onClick={addSegment}>
+            <Icon name="plus" size={13} /> 新增分镜
+          </button>
+        </div>
       </div>
 
       <div className="story-workflow-tabs">
@@ -1893,8 +1898,7 @@ function StoryboardTab({ catalog }) {
       </div>
 
       {activeStep === "outline" && (
-        <div className="storyboard-workbench storyboard-workbench--outline">
-        <section className="card create-section storyboard-panel">
+        <section className="card create-section storyboard-panel storyboard-outline-panel">
           <div className="create-section__head">
             <h3><Icon name="wand-sparkles" size={14} /> 大纲梳理</h3>
             <span>把故事变成一组有连续逻辑的视频分镜</span>
@@ -1926,173 +1930,204 @@ function StoryboardTab({ catalog }) {
               />
             </div>
           </div>
-          <button className="btn" onClick={decompose} disabled={busy || !story.trim()}>
-            {busy ? <Spinner /> : <Icon name="wand-sparkles" size={14} />} 生成分镜草稿
-          </button>
-        </section>
-
-        <section className="card create-section storyboard-panel">
-          <div className="create-section__head">
-            <h3><Icon name="info" size={14} /> 工作流说明</h3>
-            <span>可以跳过大纲</span>
+          <div className="storyboard-outline-actions">
+            <button className="btn btn-block" onClick={decompose} disabled={busy || !story.trim()}>
+              {busy ? <Spinner /> : <Icon name="wand-sparkles" size={14} />} 生成分镜草稿
+            </button>
+            <button className="btn btn-ghost" onClick={() => setActiveStep("segments")}>
+              已有脚本，直接编辑分镜 →
+            </button>
           </div>
-          <div className="story-workflow-note">
-            <p>如果你已经有分镜脚本，可以直接进入「编辑分镜」手动新增段落。</p>
-            <p>完成分镜后，再进入「生成进度」提交批量生成，最后在「结果拼接」生成完整视频。</p>
+          <div className="storyboard-tips">
+            <Icon name="info" size={14} />
+            <div>
+              <strong>工作流提示</strong>
+              <span>提交大纲后 AI 自动拆段；也可以跳过大纲，进入「编辑分镜」手动录入；分镜确认后再去「生成进度」批量生成，最后在「结果拼接」生成完整视频。</span>
+            </div>
           </div>
-          <button className="btn btn-ghost" onClick={() => setActiveStep("segments")}>
-            跳过大纲，直接编辑分镜
-          </button>
         </section>
-        </div>
       )}
 
       {activeStep === "segments" && (
         <section className="card create-section storyboard-segments">
-        <div className="create-section__head">
-          <h3><Icon name="list" size={14} /> 分镜编辑</h3>
-          <span>{segments.length ? `${segments.length} 段待生成` : "可以手动新增，或返回大纲页 AI 拆分"}</span>
-        </div>
-        <div className="storyboard-segments__toolbar">
-          <div className="text-sm text-muted">
-            每段分镜会生成一个视频任务；串行模式会尽量用上一段结果承接下一段，适合完整故事。
-          </div>
-          <div className="row">
-            <button className="btn btn-ghost" onClick={() => setActiveStep("outline")}>
-              返回大纲
-            </button>
-            <button className="btn btn-ghost" onClick={addSegment}>
-              <Icon name="plus" size={13} /> 新增分镜
-            </button>
-          </div>
-        </div>
-
-        {segments.length === 0 ? (
-          <CompactLibraryEmpty
-            icon="film"
-            title="还没有分镜"
-            hint="可以返回「输入大纲」自动拆解，也可以点击「新增分镜」直接录入已有脚本。"
-          />
-        ) : (
-          <div className="story-segment-list">
-            {segments.map((s, i) => (
-              <div key={i} className="story-segment-card">
-                <div className="story-segment-card__head">
-                  <strong>#{s.index || i + 1}</strong>
-                  <button className="btn btn-sm btn-ghost" onClick={() => removeSegment(i)}>
-                    <Icon name="trash" size={12} /> 删除
-                  </button>
-                </div>
-                <div className="settings-grid two">
-                  <div className="field">
-                    <label>时长 (秒)</label>
-                    <input
-                      type="number"
-                      value={s.duration || segDuration}
-                      onChange={(e) => updateSegment(i, { duration: parseInt(e.target.value, 10) || segDuration })}
-                    />
-                  </div>
-                  <div className="field">
-                    <label>转场</label>
-                    <select
-                      value={s.transition_to_next || "cut"}
-                      onChange={(e) => updateSegment(i, { transition_to_next: e.target.value })}
-                    >
-                      <option value="cut">直接切</option>
-                      <option value="fade">淡入淡出</option>
-                      <option value="match">动作承接</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="field">
-                  <label>本段提示词</label>
-                  <textarea
-                    value={s.prompt || ""}
-                    onChange={(e) => updateSegment(i, { prompt: e.target.value })}
-                    placeholder="描述这一段的主体、动作、镜头、环境、声音和与前后段的衔接方式"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="storyboard-next-bar">
-          <button className="btn" onClick={() => setActiveStep("progress")} disabled={!segments.length}>
-            下一步：配置并生成
-          </button>
-        </div>
-        </section>
-      )}
-
-      {activeStep === "progress" && (
-        <div className="storyboard-workbench storyboard-workbench--generate">
-        <section className="card create-section storyboard-panel">
           <div className="create-section__head">
-            <h3><Icon name="settings" size={14} /> 生成配置</h3>
-            <span>{segments.length} 个分镜待生成</span>
-          </div>
-          <div className="field">
-            <label>基础模型</label>
-            <select value={model} onChange={(e) => setModel(e.target.value)}>
-              {modelOptions.length ? (
-                modelOptions.map((m) => (
-                  <option key={m.model_id} value={m.model_id}>
-                    {m.label_zh}
-                  </option>
-                ))
-              ) : (
-                <option value="happyhorse-1.0-i2v">HappyHorse 1.0 图生视频</option>
-              )}
-            </select>
-          </div>
-          <div className="field">
-            <label>串接方式</label>
-            <select value={chainMode} onChange={(e) => setChainMode(e.target.value)}>
-              <option value="serial">串行（首尾帧承接）</option>
-              <option value="parallel">并行（独立生成）</option>
-              <option value="cloud_extend">云端续写</option>
-            </select>
-          </div>
-          <div className="create-helper-card">
-            <Icon name="info" size={16} />
-            <div>
-              <strong>生成逻辑</strong>
-              <span>提交后会为每段分镜创建独立视频任务，并用同一个 chain_group 追踪整组进度。</span>
+            <h3><Icon name="list" size={14} /> 分镜编辑</h3>
+            <div className="storyboard-segments__head-actions">
+              <button className="btn btn-sm btn-ghost" onClick={() => setActiveStep("outline")}>
+                <Icon name="arrow-left" size={12} /> 返回大纲
+              </button>
+              <button className="btn btn-sm" onClick={addSegment}>
+                <Icon name="plus" size={12} /> 新增分镜
+              </button>
             </div>
           </div>
-          <button className="btn btn-block" onClick={submit} disabled={busy || !segments.length}>
-            {busy ? <Spinner /> : <Icon name="rocket" size={14} />} 提交生成
-          </button>
-        </section>
-
-        <section className="card create-section storyboard-panel">
-          <div className="create-section__head">
-            <h3><Icon name="list" size={14} /> 生成进度</h3>
-            <span>{chainGroupId ? `chain_group: ${chainGroupId.slice(0, 8)}…` : "尚未提交"}</span>
+          <div className="storyboard-segments__hint">
+            <Icon name="info" size={13} />
+            <span>每段分镜会生成一个视频任务；串行模式尽量用上一段结果承接下一段，适合完整故事。</span>
+            <span className="text-faint">共 {segments.length} 段</span>
           </div>
-          {!chainGroupId ? (
-            <CompactLibraryEmpty icon="rocket" title="等待提交生成" hint="左侧确认模型和串接方式后提交，即可在这里跟踪每段视频。" />
-          ) : chainTasks.length === 0 ? (
-            <div className="task-list-loading"><Spinner /> 正在创建分镜任务…</div>
+
+          {segments.length === 0 ? (
+            <CompactLibraryEmpty
+              full
+              icon="film"
+              title="还没有分镜"
+              hint="可以返回「输入大纲」让 AI 自动拆解，也可以直接点「新增分镜」录入已有脚本。"
+            >
+              <button className="btn btn-ghost" onClick={() => setActiveStep("outline")}>
+                <Icon name="arrow-left" size={13} /> 返回输入大纲
+              </button>
+              <button className="btn" onClick={addSegment}>
+                <Icon name="plus" size={13} /> 新增第一段
+              </button>
+            </CompactLibraryEmpty>
           ) : (
-            <div className="story-progress-list">
-              {chainTasks.map((t, i) => (
-                <div key={taskIdOf(t) || i} className="story-progress-item">
-                  <span>#{i + 1}</span>
-                  <div>
-                    <strong>{t.model_id || t.mode || "分镜任务"}</strong>
-                    <small>{taskIdOf(t)}</small>
+            <div className="story-segment-list">
+              {segments.map((s, i) => (
+                <div key={i} className="story-segment-card">
+                  <div className="story-segment-card__head">
+                    <strong>#{s.index || i + 1}</strong>
+                    <button className="btn btn-sm btn-ghost" onClick={() => removeSegment(i)}>
+                      <Icon name="trash" size={12} /> 删除
+                    </button>
                   </div>
-                  <TaskStatusBadge status={t.status} />
+                  <div className="settings-grid two">
+                    <div className="field">
+                      <label>时长 (秒)</label>
+                      <input
+                        type="number"
+                        value={s.duration || segDuration}
+                        onChange={(e) => updateSegment(i, { duration: parseInt(e.target.value, 10) || segDuration })}
+                      />
+                    </div>
+                    <div className="field">
+                      <label>转场</label>
+                      <select
+                        value={s.transition_to_next || "cut"}
+                        onChange={(e) => updateSegment(i, { transition_to_next: e.target.value })}
+                      >
+                        <option value="cut">直接切</option>
+                        <option value="fade">淡入淡出</option>
+                        <option value="match">动作承接</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>本段提示词</label>
+                    <textarea
+                      value={s.prompt || ""}
+                      onChange={(e) => updateSegment(i, { prompt: e.target.value })}
+                      placeholder="描述这一段的主体、动作、镜头、环境、声音和与前后段的衔接方式"
+                    />
+                  </div>
                 </div>
               ))}
             </div>
           )}
           <div className="storyboard-next-bar">
-            <button className="btn btn-ghost" onClick={() => refreshChainTasks()} disabled={!chainGroupId}>刷新进度</button>
-            <button className="btn" onClick={() => setActiveStep("result")} disabled={!chainGroupId}>查看拼接</button>
+            <button className="btn btn-ghost" onClick={() => setActiveStep("outline")}>
+              <Icon name="arrow-left" size={12} /> 返回大纲
+            </button>
+            <button className="btn" onClick={() => setActiveStep("progress")} disabled={!segments.length}>
+              下一步：配置并生成 →
+            </button>
           </div>
         </section>
+      )}
+
+      {activeStep === "progress" && (
+        <div className="storyboard-workbench storyboard-workbench--generate">
+          <section className="card create-section storyboard-panel">
+            <div className="create-section__head">
+              <h3><Icon name="settings" size={14} /> 生成配置</h3>
+              <span>{segments.length} 个分镜待生成</span>
+            </div>
+            <div className="field">
+              <label>基础模型</label>
+              <select value={model} onChange={(e) => setModel(e.target.value)}>
+                {modelOptions.length ? (
+                  modelOptions.map((m) => (
+                    <option key={m.model_id} value={m.model_id}>
+                      {m.label_zh}
+                    </option>
+                  ))
+                ) : (
+                  <option value="happyhorse-1.0-i2v">HappyHorse 1.0 图生视频</option>
+                )}
+              </select>
+            </div>
+            <div className="field">
+              <label>串接方式</label>
+              <select value={chainMode} onChange={(e) => setChainMode(e.target.value)}>
+                <option value="serial">串行（首尾帧承接）</option>
+                <option value="parallel">并行（独立生成）</option>
+                <option value="cloud_extend">云端续写</option>
+              </select>
+            </div>
+            <div className="create-helper-card">
+              <Icon name="info" size={16} />
+              <div>
+                <strong>生成逻辑</strong>
+                <span>提交后会为每段分镜创建独立视频任务，并用同一个 chain_group 追踪整组进度。</span>
+              </div>
+            </div>
+            <div className="storyboard-panel__footer">
+              <button className="btn btn-ghost" onClick={() => setActiveStep("segments")}>
+                <Icon name="arrow-left" size={12} /> 返回分镜
+              </button>
+              <button className="btn btn-block" onClick={submit} disabled={busy || !segments.length}>
+                {busy ? <Spinner /> : <Icon name="rocket" size={14} />} 提交生成
+              </button>
+            </div>
+          </section>
+
+          <section className="card create-section storyboard-panel">
+            <div className="create-section__head">
+              <h3><Icon name="list" size={14} /> 生成进度</h3>
+              <span>{chainGroupId ? `chain_group: ${chainGroupId.slice(0, 8)}…` : "尚未提交"}</span>
+            </div>
+            <div className="storyboard-panel__body">
+              {!chainGroupId ? (
+                <CompactLibraryEmpty
+                  full
+                  icon="rocket"
+                  title="等待提交生成"
+                  hint="左侧确认模型和串接方式后提交，即可在这里跟踪每段视频的生成进度。"
+                />
+              ) : chainTasks.length === 0 ? (
+                <div className="task-list-loading"><Spinner /> 正在创建分镜任务…</div>
+              ) : (
+                <div className="story-progress-list">
+                  {chainTasks.map((t, i) => (
+                    <div key={taskIdOf(t) || i} className="story-progress-item">
+                      <span>#{i + 1}</span>
+                      <div>
+                        <strong>{t.model_id || t.mode || "分镜任务"}</strong>
+                        <small>{taskIdOf(t)}</small>
+                      </div>
+                      <TaskStatusBadge status={t.status} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="storyboard-panel__footer">
+              <button
+                className="btn btn-ghost"
+                onClick={() => refreshChainTasks()}
+                disabled={!chainGroupId}
+              >
+                <Icon name="refresh" size={12} /> 刷新进度
+              </button>
+              <button
+                className="btn"
+                onClick={() => setActiveStep("result")}
+                disabled={!chainGroupId}
+              >
+                查看拼接 →
+              </button>
+            </div>
+          </section>
         </div>
       )}
 
@@ -2124,7 +2159,7 @@ function StoryboardTab({ catalog }) {
               ；可在「任务」页查看。
             </div>
           )}
-          {chainTasks.length > 0 && (
+          {chainTasks.length > 0 ? (
             <div className="story-progress-list">
               {chainTasks.map((t, i) => (
                 <div key={taskIdOf(t) || i} className="story-progress-item">
@@ -2137,10 +2172,27 @@ function StoryboardTab({ catalog }) {
                 </div>
               ))}
             </div>
+          ) : (
+            <CompactLibraryEmpty
+              full
+              icon="film"
+              title="还没有可拼接的成片"
+              hint="先在「生成进度」提交，等待每段视频完成后回到这里点「拼接完整视频」。"
+            >
+              <button className="btn btn-ghost" onClick={() => setActiveStep("progress")}>
+                <Icon name="arrow-left" size={13} /> 返回进度
+              </button>
+            </CompactLibraryEmpty>
           )}
           <div className="storyboard-next-bar">
-            <button className="btn btn-ghost" onClick={() => setActiveStep("progress")}>返回进度</button>
-            <button className="btn" onClick={concat} disabled={concatBusy || !chainDone || completedTasks.length < 2}>
+            <button className="btn btn-ghost" onClick={() => setActiveStep("progress")}>
+              <Icon name="arrow-left" size={12} /> 返回进度
+            </button>
+            <button
+              className="btn"
+              onClick={concat}
+              disabled={concatBusy || !chainDone || completedTasks.length < 2}
+            >
               {concatBusy ? <Spinner /> : <Icon name="film" size={14} />} 拼接完整视频
             </button>
           </div>
@@ -2403,13 +2455,15 @@ function VoicesTab({ settings }) {
   );
 }
 
-function CompactLibraryEmpty({ icon, title, hint }) {
+function CompactLibraryEmpty({ icon, title, hint, full, children }) {
+  const cls = "compact-library-empty" + (full ? " compact-library-empty--full" : "");
   return (
-    <div className="compact-library-empty">
-      <Icon name={icon || "inbox"} size={18} />
-      <div>
+    <div className={cls}>
+      <div className="compact-library-empty__icon"><Icon name={icon || "inbox"} size={full ? 32 : 18} /></div>
+      <div className="compact-library-empty__body">
         <strong>{title}</strong>
         <span>{hint}</span>
+        {children ? <div className="compact-library-empty__actions">{children}</div> : null}
       </div>
     </div>
   );
@@ -2532,10 +2586,15 @@ function FiguresTab() {
 
       {list.length === 0 ? (
         <CompactLibraryEmpty
+          full
           icon="user-plus"
           title="还没有形象素材"
           hint="点击「上传新形象」添加第一张人像图，之后在数字人创建流程里直接复用。"
-        />
+        >
+          <button className="btn" onClick={() => setShowCreate(true)}>
+            <Icon name="plus" size={13} /> 上传新形象
+          </button>
+        </CompactLibraryEmpty>
       ) : (
         <div className="lib-grid figure-grid">
           {list.map((f) => {
@@ -3111,33 +3170,52 @@ function StorageSettings({ form, setFormValue }) {
         </SettingField>
       </div>
 
-      {stats && (
-        <>
-          <div className="storage-total-card" title={stats.data_dir?.path} onClick={() => open(stats.data_dir?.path)}>
-            <div>
-              <div className="storage-total-card__label">当前总占用</div>
-              <div className="storage-total-card__path">{stats.data_dir?.path || dataDirPath}</div>
-            </div>
-            <div className="storage-total-card__value">
-              <strong>{fmtMb(totalSizeMb)}</strong>
-              <span>{totalFiles} 个文件</span>
-            </div>
+      <div
+        className="storage-total-card"
+        title={stats?.data_dir?.path || dataDirPath || ""}
+        onClick={() => open(stats?.data_dir?.path || dataDirPath)}
+      >
+        <div>
+          <div className="storage-total-card__label">当前总占用</div>
+          <div className="storage-total-card__path">
+            {stats?.data_dir?.path || dataDirPath || "尚未确定数据目录"}
           </div>
-          <div className="storage-grid">
-            {statCards.map(([key, label]) => {
-              const s = stats[key];
-              if (!s) return null;
-              return (
-              <div className="storage-card" key={key} title={s.path} onClick={() => open(s.path)}>
-                <div className="storage-card__label">{label}</div>
-                <div className="storage-card__value">{fmtMb(s.size_mb)}</div>
-                <div className="storage-card__meta">{s.file_count} 个文件{s.truncated ? " +" : ""}</div>
+        </div>
+        <div className="storage-total-card__value">
+          <strong>{stats ? fmtMb(totalSizeMb) : "—"}</strong>
+          <span>{stats ? `${totalFiles} 个文件` : "等待统计"}</span>
+        </div>
+        <button
+          className="btn btn-sm btn-ghost storage-total-card__refresh"
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            refresh();
+          }}
+        >
+          <Icon name="refresh" size={12} /> 刷新
+        </button>
+      </div>
+      <div className="storage-grid">
+        {statCards.map(([key, label]) => {
+          const s = stats?.[key];
+          const hasData = !!s;
+          return (
+            <div
+              className={"storage-card" + (hasData ? "" : " storage-card--empty")}
+              key={key}
+              title={s?.path || ""}
+              onClick={() => hasData && open(s.path)}
+            >
+              <div className="storage-card__label">{label}</div>
+              <div className="storage-card__value">{hasData ? fmtMb(s.size_mb) : "—"}</div>
+              <div className="storage-card__meta">
+                {hasData ? `${s.file_count} 个文件${s.truncated ? " +" : ""}` : "等待统计"}
               </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+            </div>
+          );
+        })}
+      </div>
       <SettingField label="保留天数" hint={`清理 ${form.retention_days || 30} 天前的过期任务。`}>
         <div className="cleanup-row">
         <input
