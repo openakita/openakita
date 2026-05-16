@@ -4292,6 +4292,23 @@ export function ChatView({
     [filteredConversations]
   );
 
+  const quickStartItems = useMemo(() => [
+    { id: "research", icon: <IconBarChart size={20} />, text: t("chat.quickStart.research", "帮我做一份 OpenAkita 竞品分析") },
+    { id: "ppt", icon: <IconPlan size={20} />, text: t("chat.quickStart.ppt", "帮我生成一份项目汇报 PPT 大纲") },
+    { id: "search", icon: <IconGlobe size={20} />, text: t("chat.quickStart.search", "帮我搜索 OpenAkita 的最新动态") },
+    { id: "email", icon: <IconMail size={20} />, text: t("chat.quickStart.email", "帮我写一封商务邮件") },
+    { id: "summary", icon: <IconClipboard size={20} />, text: t("chat.quickStart.summary", "帮我总结一下今天的工作内容") },
+    { id: "translate", icon: <IconGlobe size={20} />, text: t("chat.quickStart.translate", "帮我把这段话翻译成英文") },
+  ], [i18n.language, t]);
+  const quickStartCardWidth = useMemo(() => {
+    const textUnits = Math.max(
+      ...quickStartItems.map((item) =>
+        Array.from(item.text).reduce((total, char) => total + (char.charCodeAt(0) <= 0xff ? 0.55 : 1), 0)
+      )
+    );
+    return `calc(${textUnits}em + 82px)`;
+  }, [quickStartItems]);
+
   // ── 未启动服务提示 ──
   if (!serviceRunning) {
     return (
@@ -4607,21 +4624,15 @@ export function ChatView({
                 <div className="text-base font-semibold">{t("chat.emptyTitle")}</div>
                 <div className="mt-1 text-sm text-muted-foreground">{t("chat.emptyDesc")}</div>
               </div>
-              <div className="grid w-full max-w-[520px] grid-cols-1 gap-3 sm:grid-cols-2">
-                {[
-                  { id: "research", icon: <IconBarChart size={20} />, text: t("chat.quickStart.research", "帮我做一份 OpenAkita 竞品分析") },
-                  { id: "ppt", icon: <IconPlan size={20} />, text: t("chat.quickStart.ppt", "帮我生成一份项目汇报 PPT 大纲") },
-                  { id: "search", icon: <IconGlobe size={20} />, text: t("chat.quickStart.search", "帮我搜索 OpenAkita 的最新动态") },
-                  { id: "email", icon: <IconMail size={20} />, text: t("chat.quickStart.email", "帮我写一封商务邮件") },
-                  { id: "summary", icon: <IconClipboard size={20} />, text: t("chat.quickStart.summary", "帮我总结一下今天的工作内容") },
-                  { id: "translate", icon: <IconGlobe size={20} />, text: t("chat.quickStart.translate", "帮我把这段话翻译成英文") },
-                ].map((item) => (
+              <div className="inline-grid max-w-full grid-cols-1 gap-3 sm:grid-cols-2">
+                {quickStartItems.map((item) => (
                   <button
                     key={item.id}
                     onClick={() => setInputValue(item.text)}
                     className="quickStartCard"
                     style={{
                       display: "flex", alignItems: "center", gap: 10,
+                      width: quickStartCardWidth, maxWidth: "100%",
                       padding: "14px 16px", borderRadius: 14,
                       border: "1px solid var(--line)", background: "var(--panel2)",
                       cursor: "pointer", textAlign: "left", fontSize: 13,
