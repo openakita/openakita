@@ -1327,6 +1327,9 @@ class MessageGateway:
                 "  `/org unbind` / `/组织 解绑` — 解除绑定",
                 "  `@组织 <任务>` / `@org <task>` — 向已绑定组织下达指令",
                 "  `/org <组织名> <任务>` / `/组织 <组织名> <任务>` — 直接下达（不需先绑定）",
+                "  `/org running` / `/组织 在跑` — 查看正在跑的命令进度",
+                "  `/org cancel` / `/组织 取消` — 立即取消正在跑的命令",
+                "  `/org last` / `/组织 上次` — 重新看上一条命令的结果",
                 "",
             ]
         )
@@ -2391,6 +2394,25 @@ class MessageGateway:
             return
         # ==================== /终极重启指令拦截 ====================
 
+        # ==================== 组织控制 fast-path ====================
+        # /org cancel  /org running  /org last —— 这三条**不能**进消息队列：
+        # 当一条 `/org <name> <task>` 已经在 _try_handle_org_command 的等待循环
+        # 里阻塞时，session 的处理 task 还在运行，新消息默认会被加入中断队列、
+        # 直到旧任务结束才被处理。但这三条本来就是用来 "对正在运行的命令进行
+        # 干预 / 查询" 的，必须立刻执行——因此在这里直通处理后 return，绕过
+        # _message_queue 与 per-session 串行机制。
+        _org_ctrl = self._is_org_control_command(_raw_text)
+        if _org_ctrl is not None:
+            try:
+                handled = await self._handle_org_control_command(message, _org_ctrl)
+            except Exception as exc:
+                logger.warning("[IM] org control command failed: %s", exc, exc_info=True)
+                handled = False
+                await self._send_response(message, f"指令执行失败：{_format_user_error(exc)}")
+            if handled:
+                return
+        # ==================== /组织控制 fast-path ====================
+
         # ==================== 中断快路径（无锁检测） ====================
         # 在获取 interrupt_lock 之前做低成本文本检测，减少锁竞争
         if self._processing_sessions.get(session_key, False) and self._is_abort_text(_raw_text):
@@ -2945,6 +2967,201 @@ class MessageGateway:
         except Exception:
             return None
 
+    # ------------------------------------------------------------------
+    # 组织命令在 IM 会话上的"当前/历史"追踪
+    # ------------------------------------------------------------------
+    # 给 /org cancel /org running /org last 三条 fast-path 命令使用：
+    # - current_org_command: 正在跑的命令信息（提交后写入，结束/取消后清空）
+    # - last_org_command: 上一条已结束的命令（用 /org last 可重新拉到）
+    # 两个字段都存在 session.metadata 里，跨重启亦可恢复（受 session 持久化）。
+
+    @staticmethod
+    def _record_current_org_command(
+        session: Session,
+        *,
+        org_id: str,
+        org_name: str,
+        command_id: str,
+        task_preview: str,
+    ) -> None:
+        import time as _time
+
+        session.set_metadata(
+            "current_org_command",
+            {
+                "org_id": org_id,
+                "org_name": org_name,
+                "command_id": command_id,
+                "task_preview": (task_preview or "")[:200],
+                "started_at": _time.time(),
+            },
+        )
+
+    @staticmethod
+    def _finish_current_org_command(
+        session: Session,
+        *,
+        result_text: str,
+    ) -> None:
+        """把 current_org_command 迁移到 last_org_command 槽位（成功或失败结尾都调一次）。"""
+        import time as _time
+
+        cur = session.get_metadata("current_org_command") or None
+        if isinstance(cur, dict):
+            session.set_metadata(
+                "last_org_command",
+                {
+                    **cur,
+                    "result_text": (result_text or "")[:4000],
+                    "finished_at": _time.time(),
+                },
+            )
+        session.set_metadata("current_org_command", None)
+
+    def _format_current_org_command(self, session: Session) -> str:
+        """`/org running` 的回复体生成。会主动调一次命令服务拿最新 phase / busy。"""
+        cur = session.get_metadata("current_org_command") or None
+        if not isinstance(cur, dict) or not cur.get("command_id"):
+            return (
+                "当前没有正在跑的组织命令。\n"
+                "用 `/org bind <组织名>` 绑定后，再 `@组织 <任务>` 派发。"
+            )
+        org_id = str(cur.get("org_id") or "")
+        command_id = str(cur.get("command_id") or "")
+        org_name = str(cur.get("org_name") or "")
+        preview = str(cur.get("task_preview") or "")
+        try:
+            from openakita.orgs.command_service import get_command_service
+
+            svc = get_command_service()
+            status_obj = svc.get_status(org_id, command_id) if svc else None
+        except Exception:
+            status_obj = None
+
+        head = f"「{org_name}」(ID: {org_id})" if org_name else org_id
+        lines = [
+            f"📍 当前正在跑：{head}",
+            f"  • 命令 ID：`{command_id}`",
+            f"  • 任务：{preview}",
+        ]
+        if isinstance(status_obj, dict):
+            phase = status_obj.get("phase") or status_obj.get("status") or "unknown"
+            lines.append(f"  • 阶段：{phase}")
+            elapsed = status_obj.get("elapsed_s")
+            if isinstance(elapsed, (int, float)):
+                lines.append(f"  • 已运行：{elapsed:.0f} 秒")
+            busy = status_obj.get("busy_nodes") or []
+            if isinstance(busy, list) and busy:
+                shown = ", ".join(str(n) for n in busy[:5])
+                more = f" 等 {len(busy)} 个" if len(busy) > 5 else ""
+                lines.append(f"  • 忙碌节点：{shown}{more}")
+            blockers = status_obj.get("blockers") or []
+            if isinstance(blockers, list) and blockers:
+                lines.append(f"  • 阻塞数：{len(blockers)}")
+            warn = status_obj.get("warning")
+            if warn:
+                lines.append(f"  • ⚠️ {warn}")
+        lines.append("\n如要叫停，发送 `/org cancel`。")
+        return "\n".join(lines)
+
+    def _format_last_org_command(self, session: Session) -> str:
+        """`/org last` 的回复体生成。"""
+        last = session.get_metadata("last_org_command") or None
+        if not isinstance(last, dict):
+            return "本会话还没有任何已完成的组织命令记录。"
+        org_name = str(last.get("org_name") or "")
+        org_id = str(last.get("org_id") or "")
+        preview = str(last.get("task_preview") or "")
+        result = str(last.get("result_text") or "")
+        head = f"「{org_name}」(ID: {org_id})" if org_name else org_id
+        lines = [f"📜 上次组织命令：{head}", f"  • 任务：{preview}", "", "结果："]
+        lines.append(result if result else "(无结果)")
+        return "\n".join(lines)
+
+    async def _handle_org_control_command(
+        self,
+        message: UnifiedMessage,
+        normalized: str,
+    ) -> bool:
+        """fast-path 处理 /org cancel /org running /org last 三条命令。
+
+        返回 True 表示命令已处理（调用方应立即 return，不要继续走消息队列）。
+        这条 fast-path 不依赖 session.lock / processing_sessions，因此即使
+        当前会话已有一条组织命令在 `await queue.get()` 阻塞，新指令仍能立刻
+        响应——这正是修这三条命令要解决的核心痛点。
+        """
+        session = self.session_manager.get_session(
+            channel=message.channel,
+            chat_id=message.chat_id,
+            user_id=message.user_id,
+            thread_id=message.thread_id,
+            bot_instance_id=self._get_message_bot_instance_id(message),
+            create_if_missing=False,
+        )
+        if session is None:
+            await self._send_response(message, "当前会话不存在或已过期，请先发送一条普通消息建立会话。")
+            return True
+
+        if normalized in ("/org cancel", "/组织 取消"):
+            cur = session.get_metadata("current_org_command") or None
+            if not isinstance(cur, dict) or not cur.get("command_id"):
+                await self._send_response(message, "当前没有正在跑的组织命令可以取消。")
+                return True
+            org_id = str(cur.get("org_id") or "")
+            command_id = str(cur.get("command_id") or "")
+            try:
+                from openakita.orgs.command_service import get_command_service
+
+                svc = get_command_service()
+                if svc is None:
+                    await self._send_response(message, "组织命令服务尚未初始化，请稍后再试。")
+                    return True
+                result = await svc.cancel(org_id, command_id)
+            except Exception as exc:
+                logger.warning("[IM] /org cancel failed: %s", exc, exc_info=True)
+                await self._send_response(message, f"取消失败：{_format_user_error(exc)}")
+                return True
+            if not result:
+                await self._send_response(message, "未找到该组织命令（可能已被清理）。")
+                return True
+            if result.get("already_done"):
+                await self._send_response(message, "命令已经结束，无需取消。")
+                return True
+            await self._send_response(
+                message,
+                f"✅ 已发起取消，命令 ID：`{command_id}`。\n"
+                "组织会在执行完当前最小步骤后停止；最终结果（含「cancelled_by_user」）"
+                "将通过此前那条派发回执的等待循环发回。",
+            )
+            return True
+
+        if normalized in ("/org running", "/组织 在跑"):
+            await self._send_response(message, self._format_current_org_command(session))
+            return True
+
+        if normalized in ("/org last", "/组织 上次"):
+            await self._send_response(message, self._format_last_org_command(session))
+            return True
+
+        return False
+
+    @staticmethod
+    def _is_org_control_command(text: str) -> str | None:
+        """识别 fast-path 控制指令；命中返回归一化后的小写字符串，否则 None。"""
+        if not text:
+            return None
+        t = text.strip().lower()
+        if t in (
+            "/org cancel",
+            "/org running",
+            "/org last",
+            "/组织 取消",
+            "/组织 在跑",
+            "/组织 上次",
+        ):
+            return t
+        return None
+
     def _resolve_org_query(self, query: str) -> tuple[str | None, str | None]:
         """把用户在 IM 里输入的"组织名或 ID"解析成真实 org_id。
 
@@ -3098,22 +3315,34 @@ class MessageGateway:
                 surface="im",
                 target=f"{message.channel}:{message.chat_id}:{message.user_id}",
             )
+            mgr = self._get_org_manager()
+            org_name = ""
+            if mgr is not None:
+                try:
+                    org_obj = mgr.get(org_id)
+                    org_name = org_obj.name if org_obj else ""
+                except Exception:
+                    org_name = ""
+            self._record_current_org_command(
+                session,
+                org_id=org_id,
+                org_name=org_name,
+                command_id=command_id,
+                task_preview=task,
+            )
+            self.session_manager.mark_dirty()
             try:
                 if chat_type != "group":
-                    mgr = self._get_org_manager()
-                    org_display = org_id
-                    if mgr is not None:
-                        try:
-                            org_obj = mgr.get(org_id)
-                            if org_obj and org_obj.name:
-                                org_display = f"「{org_obj.name}」"
-                        except Exception:
-                            pass
+                    org_display = f"「{org_name}」" if org_name else org_id
                     await self._send_response(
                         message,
-                        f"已向组织 {org_display} 下发指令，命令 ID：{command_id}\n"
-                        f"（期间您发的其他消息会排队等待；如需立即取消，请到桌面端「组织编排」面板按取消按钮）",
+                        f"已向组织 {org_display} 下发指令，命令 ID：`{command_id}`\n"
+                        f"• 查看进度：`/org running`\n"
+                        f"• 立即取消：`/org cancel`\n"
+                        f"• 重看上次结果：`/org last`\n"
+                        f"（期间您发的其他普通消息会排队等待至命令结束）",
                     )
+                final_text = ""
                 while True:
                     item = await queue.get()
                     if item.get("type") == "org_progress":
@@ -3130,11 +3359,18 @@ class MessageGateway:
                             final_text = str(error or result or "组织命令已完成")
                         session.add_message("user", text, message_id=message.id)
                         session.add_message("assistant", final_text)
+                        self._finish_current_org_command(session, result_text=final_text)
                         self.session_manager.mark_dirty()
                         await self._send_response(message, final_text)
                         return True
             finally:
                 svc.unsubscribe_summary(command_id, queue)
+                # 防御：如果 finally 走到这里时 current_org_command 还没被清，
+                # 强制把它转入 last_org_command 槽位，避免后续 /org running 误指。
+                cur_now = session.get_metadata("current_org_command") or None
+                if isinstance(cur_now, dict) and cur_now.get("command_id") == command_id:
+                    self._finish_current_org_command(session, result_text="(无最终回复)")
+                    self.session_manager.mark_dirty()
         except Exception as exc:
             logger.warning("[IM] org command failed: %s", exc, exc_info=True)
             await self._send_response(message, f"组织命令提交失败：{_format_user_error(exc)}")
