@@ -21,10 +21,13 @@ ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 class EcomVideoClient:
     """Async client for Ark video generation APIs."""
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, base_url: str | None = None) -> None:
+        # Allow callers to point the client at a relay station / mirror.
+        # ``None`` falls back to the official Volcengine Ark endpoint.
         self._api_key = api_key
+        self._base_url = (base_url or ARK_BASE_URL).rstrip("/")
         self._client = httpx.AsyncClient(
-            base_url=ARK_BASE_URL,
+            base_url=self._base_url,
             timeout=60.0,
             headers={"Authorization": f"Bearer {api_key}"},
         )
@@ -35,6 +38,39 @@ class EcomVideoClient:
     def update_api_key(self, api_key: str) -> None:
         self._api_key = api_key
         self._client.headers["Authorization"] = f"Bearer {api_key}"
+
+    def update_base_url(self, base_url: str | None) -> None:
+        """Swap the base URL on the live client.
+
+        Used when the user changes the Ark relay endpoint in Settings:
+        we close the old httpx client (so connection-pooled sockets to
+        the previous host are released) and create a new one bound to
+        the new base. Cheaper than re-doing init since auth + key
+        carry over.
+        """
+        new_base = (base_url or ARK_BASE_URL).rstrip("/")
+        if new_base == self._base_url:
+            return
+        # Close and recreate so connection pool / DNS resolution to the
+        # old host is cleared. We can't mutate AsyncClient.base_url in
+        # place — httpx normalises and caches it at construction.
+        old_client = self._client
+        self._client = httpx.AsyncClient(
+            base_url=new_base,
+            timeout=60.0,
+            headers=dict(old_client.headers),
+        )
+        self._base_url = new_base
+        # Schedule close of the old client without blocking — the
+        # plugin runtime owns an event loop and on_unload reaps any
+        # remaining httpx clients during shutdown anyway.
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(old_client.aclose())
+        except RuntimeError:
+            # No running loop (test context) — best-effort: do nothing.
+            pass
 
     async def create_task(
         self,

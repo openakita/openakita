@@ -168,17 +168,83 @@ class Plugin(PluginBase):
         self._tm = TaskManager(self._data_dir / "ecommerce.db")
         await self._tm.init()
 
-        dashscope_key = await self._tm.get_config("dashscope_api_key")
+        dashscope_key, dashscope_base_url = self._resolve_relay_endpoint(
+            "dashscope_api_key", "dashscope_relay_endpoint",
+            "dashscope_relay_fallback_policy",
+            required_capability="image",
+            await_config=await self._tm.get_all_config(),
+        )
         if dashscope_key:
             from ecom_client import EcomClient
-            self._dashscope = EcomClient(dashscope_key)
+            self._dashscope = EcomClient(dashscope_key, base_url=dashscope_base_url or None)
 
-        ark_key = await self._tm.get_config("ark_api_key")
+        ark_key, ark_base_url = self._resolve_relay_endpoint(
+            "ark_api_key", "ark_relay_endpoint",
+            "ark_relay_fallback_policy",
+            required_capability="video",
+            await_config=await self._tm.get_all_config(),
+        )
         if ark_key:
             from ecom_video_client import EcomVideoClient
-            self._ark = EcomVideoClient(ark_key)
+            self._ark = EcomVideoClient(ark_key, base_url=ark_base_url or None)
 
         self._start_polling()
+
+    def _resolve_relay_endpoint(
+        self,
+        key_field: str,
+        relay_field: str,
+        policy_field: str,
+        *,
+        required_capability: str,
+        await_config: dict,
+    ) -> tuple[str, str]:
+        """Resolve (api_key, base_url) honouring an optional relay reference.
+
+        ``await_config`` is the result of ``self._tm.get_all_config()``
+        — passed in so this method stays sync and easy to unit-test
+        without an event loop. ``key_field`` is the per-plugin api_key
+        config key (e.g. ``dashscope_api_key``); ``relay_field`` is the
+        optional relay-name override; ``policy_field`` controls strict
+        / official fallback.
+
+        On strict-policy + missing relay raises HTTPException(400)
+        with a Chinese user_message so the Settings UI banner can
+        surface it verbatim.
+        """
+        api_key = str(await_config.get(key_field) or "")
+        relay_name = str(await_config.get(relay_field) or "").strip()
+        if not relay_name:
+            return api_key, ""
+        try:
+            from openakita.relay import (
+                SettingsRelayResolutionError,
+                apply_relay_override,
+            )
+
+            merged = apply_relay_override(
+                {
+                    "api_key": api_key,
+                    "base_url": "",
+                    "relay_endpoint": relay_name,
+                    "relay_fallback_policy": str(
+                        await_config.get(policy_field) or "official"
+                    ),
+                },
+                required_capability=required_capability,
+                plugin_name="ecommerce-image",
+            )
+        except (ImportError, ModuleNotFoundError) as exc:
+            logger.info(
+                "ecommerce-image: openakita.relay not importable (%s); "
+                "keeping per-plugin endpoint for %s",
+                exc,
+                key_field,
+            )
+            return api_key, ""
+        except SettingsRelayResolutionError as exc:
+            raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        return str(merged.get("api_key") or ""), str(merged.get("base_url") or "")
 
     def _load_features(self) -> None:
         """Load all 19 feature definitions from config module.
@@ -1004,18 +1070,48 @@ class Plugin(PluginBase):
                             "请检查是否误粘了路径/命令/带空格的字符串。",
                         )
             await self._tm.set_configs(body.updates)
-            if "dashscope_api_key" in body.updates and body.updates["dashscope_api_key"]:
-                from ecom_client import EcomClient
-                if self._dashscope:
-                    self._dashscope.update_api_key(body.updates["dashscope_api_key"])
-                else:
-                    self._dashscope = EcomClient(body.updates["dashscope_api_key"])
-            if "ark_api_key" in body.updates and body.updates["ark_api_key"]:
-                from ecom_video_client import EcomVideoClient
-                if self._ark:
-                    self._ark.update_api_key(body.updates["ark_api_key"])
-                else:
-                    self._ark = EcomVideoClient(body.updates["ark_api_key"])
+            saved_full = await self._tm.get_all_config()
+            ds_endpoint_keys = {
+                "dashscope_api_key",
+                "dashscope_relay_endpoint",
+                "dashscope_relay_fallback_policy",
+            }
+            ark_endpoint_keys = {
+                "ark_api_key",
+                "ark_relay_endpoint",
+                "ark_relay_fallback_policy",
+            }
+            if ds_endpoint_keys & body.updates.keys():
+                ds_key, ds_base = self._resolve_relay_endpoint(
+                    "dashscope_api_key",
+                    "dashscope_relay_endpoint",
+                    "dashscope_relay_fallback_policy",
+                    required_capability="image",
+                    await_config=saved_full,
+                )
+                if ds_key:
+                    from ecom_client import EcomClient
+                    if self._dashscope:
+                        self._dashscope.update_api_key(ds_key)
+                        if hasattr(self._dashscope, "update_base_url"):
+                            self._dashscope.update_base_url(ds_base or None)
+                    else:
+                        self._dashscope = EcomClient(ds_key, base_url=ds_base or None)
+            if ark_endpoint_keys & body.updates.keys():
+                ark_key, ark_base = self._resolve_relay_endpoint(
+                    "ark_api_key",
+                    "ark_relay_endpoint",
+                    "ark_relay_fallback_policy",
+                    required_capability="video",
+                    await_config=saved_full,
+                )
+                if ark_key:
+                    from ecom_video_client import EcomVideoClient
+                    if self._ark:
+                        self._ark.update_api_key(ark_key)
+                        self._ark.update_base_url(ark_base or None)
+                    else:
+                        self._ark = EcomVideoClient(ark_key, base_url=ark_base or None)
             return {"ok": True}
 
         # --- Storage management (mirrors seedance-video for UI parity) ---

@@ -54,6 +54,31 @@ class EcomClient:
         self._api_key = key
         self._client.headers.update({"Authorization": f"Bearer {key}"})
 
+    def update_base_url(self, base_url: str | None) -> None:
+        """Repoint the live client at a new base URL.
+
+        Used when the user selects a different relay station in
+        Settings. We tear down the existing httpx client (so the old
+        host's connection pool is released) and rebuild bound to the
+        new base. Cheaper than re-doing __init__ since auth carries.
+        """
+        new_base = (base_url or DASHSCOPE_BASE_URL).rstrip("/")
+        if new_base == self._base_url:
+            return
+        old_client = self._client
+        self._client = httpx.AsyncClient(
+            base_url=new_base,
+            timeout=old_client.timeout,
+            headers=dict(old_client.headers),
+        )
+        self._base_url = new_base
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(old_client.aclose())
+        except RuntimeError:
+            pass
+
     async def close(self) -> None:
         await self._client.aclose()
 
