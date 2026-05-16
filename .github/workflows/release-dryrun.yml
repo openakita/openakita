@@ -77,13 +77,17 @@ jobs:
             {"platform":"ubuntu-22.04-arm","bundles":"deb","suffix":"ubuntu22-arm64","target_platform":"linux-arm64"},
             {"platform":"ubuntu-24.04","bundles":"deb","suffix":"ubuntu24-amd64","target_platform":"linux-x64"},
             {"platform":"ubuntu-24.04-arm","bundles":"deb","suffix":"ubuntu24-arm64","target_platform":"linux-arm64"},
-            {"platform":"macos-latest","bundles":"app,dmg","args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","suffix":"macos-arm64","target_platform":"mac-arm64"},
-            {"platform":"macos-15-intel","bundles":"app,dmg","args":"--target x86_64-apple-darwin","rust_target":"x86_64-apple-darwin","suffix":"macos-x64","target_platform":"mac-x64"}
+            {"platform":"macos-latest","bundles":"app","args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","suffix":"macos-arm64","target_platform":"mac-arm64"},
+            {"platform":"macos-15-intel","bundles":"app","args":"--target x86_64-apple-darwin","rust_target":"x86_64-apple-darwin","suffix":"macos-x64","target_platform":"mac-x64"}
           ]}'
+          # NOTE: macOS bundles uses "app" (not "app,dmg"). DMG is built in
+          # the dedicated "Build macOS DMG bundle" step below to avoid the
+          # bundle_dmg.sh hang on macos-15-intel. See release.yml for the
+          # full rationale.
           SMOKE='{"include":[
             {"platform":"windows-latest","bundles":"nsis","suffix":"windows-x64","target_platform":"win-x64"},
             {"platform":"ubuntu-24.04","bundles":"deb","suffix":"ubuntu24-amd64","target_platform":"linux-x64"},
-            {"platform":"macos-latest","bundles":"app,dmg","args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","suffix":"macos-arm64","target_platform":"mac-arm64"}
+            {"platform":"macos-latest","bundles":"app","args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","suffix":"macos-arm64","target_platform":"mac-arm64"}
           ]}'
 
           if [ "$SCOPE" = "smoke" ]; then
@@ -458,122 +462,141 @@ jobs:
             codesign --verify --deep --strict --verbose=2 "${app}"
           done
 
-          # Install create-dmg for polished DMG installer layout
+      - name: Build macOS DMG bundle
+        if: runner.os == 'macOS'
+        # See release.yml for full rationale. Short version: tauri build
+        # uses --bundles app and skips bundle_dmg.sh (which hangs on
+        # macos-15-intel via osascript). DMG is produced here, decoupled
+        # from the codesign step so it runs even without Apple secrets.
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_BASE="apps/setup-center/src-tauri/target"
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            BUNDLE_DIR="${TARGET_BASE}/${{ matrix.rust_target }}/release/bundle"
+          else
+            BUNDLE_DIR="${TARGET_BASE}/release/bundle"
+          fi
+
+          MACOS_BUNDLE_DIR="${BUNDLE_DIR}/macos"
+          APPS=()
+          if [ -d "${MACOS_BUNDLE_DIR}" ]; then
+            while IFS= read -r -d '' app; do
+              APPS+=("${app}")
+            done < <(find "${MACOS_BUNDLE_DIR}" -maxdepth 1 -type d -name "*.app" -print0)
+          fi
+          if [ "${#APPS[@]}" -eq 0 ]; then
+            echo "No .app bundles found under ${MACOS_BUNDLE_DIR}" >&2
+            exit 1
+          fi
+          app="${APPS[0]}"
+          app_name="$(basename "${app}" .app)"
+
+          case "${{ matrix.rust_target }}" in
+            aarch64-apple-darwin) arch_suffix="aarch64" ;;
+            x86_64-apple-darwin)  arch_suffix="x64" ;;
+            *) arch_suffix="$(uname -m)" ;;
+          esac
+          version="$(plutil -extract CFBundleShortVersionString raw "${app}/Contents/Info.plist" 2>/dev/null \
+            || defaults read "${app}/Contents/Info" CFBundleShortVersionString 2>/dev/null \
+            || echo "0.0.0")"
+          DMG_DIR="${BUNDLE_DIR}/dmg"
+          mkdir -p "${DMG_DIR}"
+          dmg_file="${DMG_DIR}/${app_name}_${version}_${arch_suffix}.dmg"
+          echo "Building DMG: ${dmg_file}"
+          echo "  source app : ${app}"
+
           brew install create-dmg 2>/dev/null || true
 
-          # Recreate DMG from the signed .app.
-          # Tauri creates the DMG during build BEFORE our re-signing,
-          # so the DMG contains the original Tauri-signed app without runtime
-          # hardening or timestamps.  We must rebuild it.
-          #
-          # The old DMG may still be held open by diskimages-helper (macOS
-          # auto-mounts DMGs for verification). Detach all volumes and retry
-          # to avoid "Resource busy" failures.
-          DMG_DIR="${BUNDLE_DIR}/dmg"
-          if [ -d "${DMG_DIR}" ]; then
-            for dmg_file in "${DMG_DIR}"/*.dmg; do
-              [ -f "${dmg_file}" ] || continue
-              if [ "${#APPS[@]}" -gt 0 ]; then
-                app="${APPS[0]}"
-                app_name="$(basename "${app}" .app)"
-                echo "Recreating DMG from signed app: ${dmg_file}"
+          for vol in /Volumes/"${app_name}"*; do
+            [ -d "${vol}" ] && hdiutil detach "${vol}" -force 2>/dev/null || true
+          done
+          sleep 1
 
-                # Detach any volumes mounted from the old DMG
-                for vol in /Volumes/"${app_name}"*; do
-                  [ -d "${vol}" ] && hdiutil detach "${vol}" -force 2>/dev/null || true
-                done
-                sleep 1
+          rm -f "${dmg_file}"
+          DMG_STAGE="$(mktemp -d)"
+          cp -a "${app}" "${DMG_STAGE}/"
 
-                rm -f "${dmg_file}"
+          if command -v create-dmg &>/dev/null; then
+            DMG_BG="/tmp/dmg_bg_$$.png"
+            if command -v magick &>/dev/null; then
+              magick -size 660x400 xc:'#EDEDED' \
+                -fill '#A8A8AD' \
+                -draw "rectangle 290,195 340,205" \
+                -draw "polygon 335,178 368,200 335,222" \
+                "${DMG_BG}" 2>/dev/null || true
+            elif command -v convert &>/dev/null; then
+              convert -size 660x400 xc:'#EDEDED' \
+                -fill '#A8A8AD' \
+                -draw "rectangle 290,195 340,205" \
+                -draw "polygon 335,178 368,200 335,222" \
+                "${DMG_BG}" 2>/dev/null || true
+            fi
 
-                DMG_STAGE="$(mktemp -d)"
-                cp -a "${app}" "${DMG_STAGE}/"
+            CREATE_DMG_ARGS=(
+              --volname "${app_name}"
+              --window-pos 200 120
+              --window-size 660 400
+              --icon-size 100
+              --icon "${app_name}.app" 180 200
+              --hide-extension "${app_name}.app"
+              --app-drop-link 480 200
+              --no-internet-enable
+            )
+            [ -f "${DMG_BG:-}" ] && CREATE_DMG_ARGS+=(--background "${DMG_BG}")
 
-                # Use create-dmg for polished layout: App (left) → arrow → Applications (right)
-                if command -v create-dmg &>/dev/null; then
-                  # Generate background image with a directional arrow (ImageMagick is pre-installed)
-                  DMG_BG="/tmp/dmg_bg_$$.png"
-                  if command -v magick &>/dev/null; then
-                    magick -size 660x400 xc:'#EDEDED' \
-                      -fill '#A8A8AD' \
-                      -draw "rectangle 290,195 340,205" \
-                      -draw "polygon 335,178 368,200 335,222" \
-                      "${DMG_BG}" 2>/dev/null || true
-                  elif command -v convert &>/dev/null; then
-                    convert -size 660x400 xc:'#EDEDED' \
-                      -fill '#A8A8AD' \
-                      -draw "rectangle 290,195 340,205" \
-                      -draw "polygon 335,178 368,200 335,222" \
-                      "${DMG_BG}" 2>/dev/null || true
-                  fi
-
-                  CREATE_DMG_ARGS=(
-                    --volname "${app_name}"
-                    --window-pos 200 120
-                    --window-size 660 400
-                    --icon-size 100
-                    --icon "${app_name}.app" 180 200
-                    --hide-extension "${app_name}.app"
-                    --app-drop-link 480 200
-                    --no-internet-enable
-                  )
-                  [ -f "${DMG_BG:-}" ] && CREATE_DMG_ARGS+=(--background "${DMG_BG}")
-
-                  dmg_created=false
-                  for attempt in 1 2; do
-                    rm -f "${dmg_file}"
-                    # Timeout guard: create-dmg can hang on Intel runners
-                    create-dmg "${CREATE_DMG_ARGS[@]}" \
-                      "${dmg_file}" "${DMG_STAGE}/" &
-                    CREATE_DMG_PID=$!
-                    ( sleep 300 && kill "$CREATE_DMG_PID" 2>/dev/null && echo "create-dmg timed out after 300s" ) &
-                    TIMER_PID=$!
-                    wait "$CREATE_DMG_PID" 2>/dev/null || true
-                    kill "$TIMER_PID" 2>/dev/null || true
-                    wait "$TIMER_PID" 2>/dev/null || true
-                    if [ -f "${dmg_file}" ]; then
-                      echo "DMG created with custom layout: ${dmg_file}"
-                      dmg_created=true
-                      break
-                    fi
-                    echo "create-dmg attempt ${attempt} failed or timed out, retrying in 3s..."
-                    sleep 3
-                  done
-                  rm -f "${DMG_BG:-}" 2>/dev/null || true
-                  # Clean up temp DMGs left by killed create-dmg (rw.<pid>.<name>.dmg)
-                  find "$(dirname "${dmg_file}")" -maxdepth 1 -name "rw.*.dmg" -delete 2>/dev/null || true
-
-                  # Fallback to basic hdiutil if create-dmg failed
-                  if [ "${dmg_created}" != "true" ]; then
-                    echo "create-dmg failed; falling back to hdiutil (UDRW → convert UDZO)"
-                    ln -sf /Applications "${DMG_STAGE}/Applications"
-                    # Two-step DMG: create uncompressed first (fast), then convert.
-                    # Single-step UDZO can hang on Intel runners with large bundles.
-                    hdiutil create -volname "${app_name}" \
-                      -srcfolder "${DMG_STAGE}" -ov -format UDRW "/tmp/_rw_$$.dmg"
-                    hdiutil convert "/tmp/_rw_$$.dmg" -format UDZO -o "${dmg_file}"
-                    rm -f "/tmp/_rw_$$.dmg"
-                  fi
-                else
-                  # Fallback: create-dmg not available
-                  ln -s /Applications "${DMG_STAGE}/Applications"
-                  for attempt in 1 2 3; do
-                    if hdiutil create \
-                      -volname "${app_name}" \
-                      -srcfolder "${DMG_STAGE}" \
-                      -ov -format UDZO \
-                      "${dmg_file}"; then
-                      echo "DMG recreated: ${dmg_file}"
-                      break
-                    fi
-                    echo "hdiutil create attempt ${attempt} failed, retrying in 3s..."
-                    sleep 3
-                  done
-                fi
-                rm -rf "${DMG_STAGE}"
+            dmg_created=false
+            for attempt in 1 2; do
+              rm -f "${dmg_file}"
+              create-dmg "${CREATE_DMG_ARGS[@]}" \
+                "${dmg_file}" "${DMG_STAGE}/" &
+              CREATE_DMG_PID=$!
+              ( sleep 300 && kill "$CREATE_DMG_PID" 2>/dev/null && echo "create-dmg timed out after 300s" ) &
+              TIMER_PID=$!
+              wait "$CREATE_DMG_PID" 2>/dev/null || true
+              kill "$TIMER_PID" 2>/dev/null || true
+              wait "$TIMER_PID" 2>/dev/null || true
+              if [ -f "${dmg_file}" ]; then
+                echo "DMG created with custom layout: ${dmg_file}"
+                dmg_created=true
+                break
               fi
+              echo "create-dmg attempt ${attempt} failed or timed out, retrying in 3s..."
+              sleep 3
+            done
+            rm -f "${DMG_BG:-}" 2>/dev/null || true
+            find "$(dirname "${dmg_file}")" -maxdepth 1 -name "rw.*.dmg" -delete 2>/dev/null || true
+
+            if [ "${dmg_created}" != "true" ]; then
+              echo "create-dmg failed; falling back to hdiutil (UDRW → convert UDZO)"
+              ln -sf /Applications "${DMG_STAGE}/Applications"
+              hdiutil create -volname "${app_name}" \
+                -srcfolder "${DMG_STAGE}" -ov -format UDRW "/tmp/_rw_$$.dmg"
+              hdiutil convert "/tmp/_rw_$$.dmg" -format UDZO -o "${dmg_file}"
+              rm -f "/tmp/_rw_$$.dmg"
+            fi
+          else
+            ln -s /Applications "${DMG_STAGE}/Applications"
+            for attempt in 1 2 3; do
+              if hdiutil create \
+                -volname "${app_name}" \
+                -srcfolder "${DMG_STAGE}" \
+                -ov -format UDZO \
+                "${dmg_file}"; then
+                echo "DMG created: ${dmg_file}"
+                break
+              fi
+              echo "hdiutil create attempt ${attempt} failed, retrying in 3s..."
+              sleep 3
             done
           fi
+          rm -rf "${DMG_STAGE}"
+
+          if [ ! -f "${dmg_file}" ]; then
+            echo "ERROR: DMG creation failed: ${dmg_file}" >&2
+            exit 1
+          fi
+          ls -la "${dmg_file}"
 
       - name: Notarize macOS artifacts (manual notarytool)
         if: runner.os == 'macOS' && (github.event_name != 'workflow_dispatch' || inputs.enable_notarization == true || inputs.enable_notarization == 'true')
