@@ -21,6 +21,7 @@
  */
 
 const LOCAL_RE = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?(?:\/|$)/;
+const TEXTUAL_BODY_RE = /^(application\/json\b|text\/|application\/x-www-form-urlencoded\b)/i;
 
 type FetchStreamEvent =
   | { event: "chunk"; data: { text: string } }
@@ -72,27 +73,41 @@ export function installLocalFetchOverride(): void {
       return nativeFetch(input, init);
     }
 
-    // Non-string bodies (FormData, Blob, etc.) can't be serialised through IPC.
-    // Fall back to native fetch for these rare cases (e.g. feedback file upload).
-    if (init?.body && typeof init.body !== "string") {
-      return nativeFetch(input, init);
-    }
-
     const { invoke, Channel } = await import("@tauri-apps/api/core");
 
-    const method = init?.method ?? "GET";
+    const requestInput = input instanceof Request ? input : null;
+    const method = init?.method ?? requestInput?.method ?? "GET";
     const headers: Record<string, string> = {};
-    if (init?.headers) {
+    const headerSource = init?.headers ?? requestInput?.headers;
+    if (headerSource) {
       const h =
-        init.headers instanceof Headers
-          ? init.headers
-          : new Headers(init.headers as HeadersInit);
+        headerSource instanceof Headers
+          ? headerSource
+          : new Headers(headerSource as HeadersInit);
       h.forEach((v, k) => {
         headers[k] = v;
       });
     }
-    const body = typeof init?.body === "string" ? init.body : null;
-    const signal = init?.signal;
+    let body: string | null = null;
+    if (init && "body" in init && init.body != null) {
+      // Non-string bodies (FormData, Blob, etc.) can't be safely serialised
+      // through IPC. Fall back to native fetch for these rare cases
+      // (e.g. feedback file upload).
+      if (typeof init.body !== "string") {
+        return nativeFetch(input, init);
+      }
+      body = init.body;
+    } else if (requestInput && method.toUpperCase() !== "GET" && method.toUpperCase() !== "HEAD") {
+      const contentType = requestInput.headers.get("content-type") ?? "";
+      if (
+        requestInput.bodyUsed ||
+        (contentType && !TEXTUAL_BODY_RE.test(contentType))
+      ) {
+        return nativeFetch(input, init);
+      }
+      body = await requestInput.clone().text();
+    }
+    const signal = init?.signal ?? requestInput?.signal;
 
     if (signal?.aborted) {
       throw new DOMException(

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +24,12 @@ import pytest
 _HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HERE))
 
-from plugin import Plugin as SeedanceVideoPlugin  # noqa: E402
+_SPEC = importlib.util.spec_from_file_location("seedance_video_plugin_under_test", _HERE / "plugin.py")
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = _MODULE
+_SPEC.loader.exec_module(_MODULE)
+SeedanceVideoPlugin = _MODULE.Plugin
 
 
 def test_task_payload_includes_workbench_fields():

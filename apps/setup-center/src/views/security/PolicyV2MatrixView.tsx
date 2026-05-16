@@ -6,13 +6,13 @@
 //   2. confirmation_mode (5) × ApprovalClass (11):
 //      —— 给出 "在 X 模式下, Y 类操作自动 (ALLOW / CONFIRM / DENY)"
 //
-// 这个组件**不是 live editor** —— policy_v2 的矩阵在 engine.py 12-step
-// 决策链里, 不存在单一可序列化的"行 = (class, mode), 值 = decision"映射,
-// 因为还要叠加 safety_immune / unattended / mode_ruleset 等条件. 所以
-// 这里渲染的是**文档化静态矩阵**, 来源是 engine.py 注释 + plan §3.
+// 这个组件**不是 live editor** —— 它从后端
+// /api/config/security/approval-matrix 读取 baseline 矩阵，让 UI 跟随
+// policy_v2.matrix.lookup 的真相源。具体运行时决策还会叠加
+// safety_immune / unattended / mode_ruleset 等条件。
 //
-// 与后端一致性守卫: tests/unit/test_c23_policy_v2_matrix.py 会比较本
-// 文件的 MATRIX 常量与 engine.py 的关键决策分支, 漂移就 fail.
+// 与后端一致性守卫: tests/unit/test_c23_policy_v2_matrix.py 会确认
+// API 覆盖所有 enum 值，并检查组件仍读取该 API。
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";

@@ -194,8 +194,9 @@ security:
 
         cfg, report = load_policies_yaml(real)
         assert isinstance(cfg, PolicyConfigV2)
-        # Real file is v1 schema (auto_confirm/yolo mode + zones.* etc.)
-        assert report.schema_detected == "v1"
+        # The checked-in file may be either legacy v1 or a transitional
+        # v1/v2 mix while the policy_v2 migration remains backwards-compatible.
+        assert report.schema_detected in {"v1", "mixed"}
         assert report.has_changes()
 
     def test_invalid_yaml_returns_defaults(self, tmp_path: Path) -> None:
