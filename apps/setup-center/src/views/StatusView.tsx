@@ -29,7 +29,7 @@ import { TroubleshootPanel } from "../components/TroubleshootPanel";
 import { LinkDiagnosticsPanel, type LinkDiagnostic } from "../components/LinkDiagnosticsPanel";
 import { SkillConflictsPanel } from "../components/SkillConflictsPanel";
 import { ProviderIcon } from "../components/ProviderIcon";
-import type { EnvMap, WorkspaceSummary, ViewId } from "../types";
+import type { EnvMap, ViewId, WorkspaceSummary } from "../types";
 import type { UpdateInfo } from "../platform";
 
 export interface StatusViewProps {
@@ -89,6 +89,7 @@ export interface StatusViewProps {
   doStopService: (wsId?: string | null) => Promise<void>;
   waitForServiceDown: (base: string, maxMs?: number) => Promise<boolean>;
   doStartLocalService: (wsId: string) => Promise<void>;
+  onOpenRuntimeEnvironment: () => void;
   setView: (view: ViewId) => void;
 }
 
@@ -106,6 +107,7 @@ export function StatusView(props: StatusViewProps) {
     shouldUseHttpApi, httpApiBase,
     startLocalServiceWithConflictCheck, refreshStatus,
     doStopService, waitForServiceDown, doStartLocalService,
+    onOpenRuntimeEnvironment,
     setView,
   } = props;
 
@@ -391,6 +393,14 @@ export function StatusView(props: StatusViewProps) {
               ? <><Loader2 className="animate-spin mr-1" size={14} />{busy || t("topbar.starting")}</>
               : <><Play size={14} className="mr-1" />{t("topbar.start")}</>}
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onOpenRuntimeEnvironment}
+          >
+            <ArrowRight size={14} className="mr-1" />
+            查看运行环境
+          </Button>
           </CardContent>
         </Card>
       )}
@@ -424,6 +434,11 @@ export function StatusView(props: StatusViewProps) {
                 : isRunning ? t("topbar.running")
                 : t("topbar.stopped")}
               </Badge>
+              {isRunning && !phaseStarting && (
+                <Badge variant="default" className="statusBadgeInline statusBadgeOk">
+                  环境正常
+                </Badge>
+              )}
             </div>
             <div className="statusPanelDesc">
               {serviceStatus?.pid ? `PID ${serviceStatus.pid}` : ""}

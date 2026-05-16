@@ -53,6 +53,8 @@ export interface AdvancedViewProps {
   desktopVersion: string;
   shouldUseHttpApi: () => boolean;
   httpApiBase: () => string;
+  backendBootPhase: "unknown" | "starting" | "running" | "stopped" | "error";
+  onOpenRuntimeEnvironment: () => void;
   askConfirm: (msg: string, onConfirm: () => void) => void;
   refreshAll: () => Promise<void>;
   restartService: () => Promise<void>;
@@ -64,7 +66,9 @@ export function AdvancedView(props: AdvancedViewProps) {
     envDraft, setEnvDraft, busy,
     workspaces, currentWorkspaceId, serviceStatus, dataMode, info,
     storeVisible, setStoreVisible, desktopVersion,
-    shouldUseHttpApi, httpApiBase, askConfirm,
+    shouldUseHttpApi, httpApiBase,
+    backendBootPhase, onOpenRuntimeEnvironment,
+    askConfirm,
     refreshAll, restartService, setView,
   } = props;
 
@@ -171,6 +175,10 @@ export function AdvancedView(props: AdvancedViewProps) {
     { label: t("adv.opsLogsPath"), path: opsLogsPath },
     { label: t("adv.opsIdentityPath"), path: opsIdentityPath },
   ];
+  const runtimeHealthy =
+    !!serviceStatus?.running &&
+    backendBootPhase === "running" &&
+    serviceStatus?.heartbeatReady !== false;
 
   async function opsOpenFolder(p: string) {
     if (!p) return;
@@ -924,6 +932,28 @@ export function AdvancedView(props: AdvancedViewProps) {
             </div>
           )}
         </Section>
+
+        {IS_TAURI && (
+          <Section
+            title="OpenAkita 运行环境"
+            subtitle="runtime venv / agent tools venv"
+            className="mt-2"
+          >
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5">
+              <div className="min-w-[180px] flex-1">
+                <div className="text-sm font-medium">
+                  {runtimeHealthy ? "环境正常" : backendBootPhase === "error" ? "运行环境需检查" : "运行环境信息"}
+                </div>
+                <div className="mt-0.5 text-xs text-muted-foreground">
+                  查看 runtime venv、agent tools venv、Node/npm 与种子包状态；异常时可在弹窗内修复。
+                </div>
+              </div>
+              <Button size="sm" variant="outline" onClick={onOpenRuntimeEnvironment}>
+                查看与修复
+              </Button>
+            </div>
+          </Section>
+        )}
 
         {IS_TAURI && (
           <Section title={t("adv.opsPaths")} className="mt-2">

@@ -33,6 +33,7 @@ import { AgentSystemView } from "./views/AgentSystemView";
 import { MyFeedbackView } from "./views/MyFeedbackView";
 import { LLMView } from "./views/LLMView";
 import { StatusView } from "./views/StatusView";
+import { RuntimeEnvironmentDialog, type RuntimeDiagnostics } from "./components/RuntimeEnvironmentPanel";
 import type {
   EndpointSummary as EndpointSummaryType,
   PlatformInfo, WorkspaceSummary, ProviderInfo,
@@ -43,7 +44,7 @@ import {
   IconCheckCircle, IconXCircle, IconInfo,
   IconLightbulb, IconAlertCircle, IconCheck, IconPartyPopper,
 } from "./icons";
-import { Activity, ChevronRight, ChevronDown, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ChevronRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -117,40 +118,6 @@ const HTTP_READY_POLL_INTERVAL_MS = 2_000;
 // pid-based checks can be false. Keep the UI monotonic in "starting" there.
 const BACKEND_STARTUP_HOLD_MS = 180_000;
 const BACKEND_STARTUP_PROBE_HOLD_MS = 30_000;
-
-type ToolProbe = { available?: boolean; path?: string; version?: string };
-type RuntimeDiagnostics = {
-  summary?: string;
-  environment?: {
-    runtime?: {
-      mode?: string;
-      seed_dirs?: string[];
-      workspace_dependency_cache?: string;
-      python_abi?: string;
-      wheel_tag?: string;
-      bootstrap_python_seed_packaged?: boolean;
-      bootstrap_python_seed?: { packaged?: boolean; version?: string; path?: string };
-      bootstrap_node_seed_packaged?: boolean;
-    };
-    toolchain?: {
-      python?: { abi?: string; wheelTag?: string; managed?: string; agent?: string; seedPackaged?: boolean };
-      node?: {
-        managed_node?: string;
-        managed_bin?: string;
-        seedPackaged?: boolean;
-        node?: ToolProbe;
-        npm?: ToolProbe;
-        corepack?: ToolProbe;
-        pnpm?: ToolProbe;
-        yarn?: ToolProbe;
-        workspace_cache?: string;
-        npm_cache?: string;
-        npm_prefix?: string;
-        corepack_home?: string;
-      };
-    };
-  };
-};
 
 interface EnvFieldCtx {
   envDraft: EnvMap;
@@ -713,9 +680,9 @@ function MainApp() {
   const [pypiVersions, setPypiVersions] = useState<string[]>([]);
   const [pypiVersionsLoading, setPypiVersionsLoading] = useState(false);
   const [selectedPypiVersion, setSelectedPypiVersion] = useState<string>(""); // "" = 推荐同版本
-  const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(false);
   const [runtimeDiag, setRuntimeDiag] = useState<RuntimeDiagnostics | null>(null);
   const [runtimeDiagChecking, setRuntimeDiagChecking] = useState(false);
+  const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
 
   // providers & models
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -2057,10 +2024,16 @@ function MainApp() {
   }, [serviceStatus?.running, dataMode, apiBaseUrl]);
 
   useEffect(() => {
-    if (view === "status" && serviceStatus?.running) {
+    if ((view === "status" || (view === "wizard" && stepId === "advanced")) && serviceStatus?.running) {
       void refreshRuntimeDiagnostics();
     }
-  }, [view, serviceStatus?.running, refreshRuntimeDiagnostics]);
+  }, [view, stepId, serviceStatus?.running, refreshRuntimeDiagnostics]);
+
+  useEffect(() => {
+    if (runtimeDialogOpen && serviceStatus?.running) {
+      void refreshRuntimeDiagnostics();
+    }
+  }, [runtimeDialogOpen, serviceStatus?.running, refreshRuntimeDiagnostics]);
 
   // ── Disabled views management ──
   const fetchDisabledViews = useCallback(async () => {
@@ -3294,7 +3267,6 @@ function MainApp() {
   function renderStatus() {
     return (
       <div className="space-y-4">
-        {renderRuntimeBootstrapPanel()}
         <StatusView
           currentWorkspaceId={currentWorkspaceId}
           workspaces={workspaces}
@@ -3328,174 +3300,9 @@ function MainApp() {
           doStopService={doStopService}
           waitForServiceDown={waitForServiceDown}
           doStartLocalService={doStartLocalService}
+          onOpenRuntimeEnvironment={() => setRuntimeDialogOpen(true)}
           setView={navigateToView}
         />
-      </div>
-    );
-  }
-
-  function renderRuntimeBootstrapPanel() {
-    const backendReady = serviceStatus?.running && backendBootPhase === "running" && serviceStatus?.heartbeatReady !== false;
-    const heartbeatPhase = serviceStatus?.heartbeatPhase || "";
-    const stage = installProgress?.stage
-      || (heartbeatPhase === "starting_im" ? "HTTP API 已就绪，正在启动 IM 通道和后台连接"
-        : heartbeatPhase === "http_ready" ? "HTTP API 已就绪，后台服务仍在继续初始化"
-        : backendBootPhase === "starting" ? t("status.backendStarting")
-        : backendReady ? "运行环境已就绪"
-        : serviceStatus?.running ? "后端正在完成初始化"
-        : backendBootPhase === "error" ? t("status.backendStartFailed")
-        : "等待启动后端");
-    const percent = installProgress?.percent
-      ?? (backendBootPhase === "starting" ? 60
-        : backendReady ? 100
-        : serviceStatus?.running ? 85
-        : 0);
-    const runtimeRoot = info?.openakitaRootDir
-      ? joinPath(info.openakitaRootDir, "runtime")
-      : "~/.openakita/runtime";
-    const appVenvHint = joinPath(runtimeRoot, "app-venv");
-    const agentVenvHint = joinPath(runtimeRoot, "agent-venv");
-    const runtimeLogHint = joinPath(joinPath(runtimeRoot, "logs"), "bootstrap.log");
-    const nodeInfo = runtimeDiag?.environment?.toolchain?.node;
-    const pythonInfo = runtimeDiag?.environment?.toolchain?.python;
-    const runtimeInfo = runtimeDiag?.environment?.runtime;
-    const pythonAbi = pythonInfo?.abi || runtimeInfo?.python_abi || runtimeInfo?.bootstrap_python_seed?.version;
-    const pythonSeedSignals = [
-      pythonInfo?.seedPackaged,
-      runtimeInfo?.bootstrap_python_seed_packaged,
-      runtimeInfo?.bootstrap_python_seed?.packaged,
-    ];
-    const pythonSeedPackaged = pythonSeedSignals.includes(true)
-      ? true
-      : pythonSeedSignals.includes(false)
-        ? false
-        : undefined;
-    const nodeSeedPackaged = nodeInfo?.seedPackaged ?? runtimeInfo?.bootstrap_node_seed_packaged;
-    const dependencySummary = [
-      `Python ${pythonAbi || t("status.unknown")}`,
-      `Node ${nodeInfo?.node?.version || t("status.notChecked")}`,
-      `npm ${nodeInfo?.npm?.version || t("status.notChecked")}`,
-    ];
-    if (nodeInfo?.managed_node) dependencySummary.push(t("status.managedNodeAvailable"));
-    if (nodeSeedPackaged === false) dependencySummary.push(t("status.nodeSeedNotPackaged"));
-    if (pythonSeedPackaged === false) dependencySummary.push(t("status.pythonSeedNotPackaged"));
-    if (runtimeInfo?.seed_dirs?.length) dependencySummary.push(t("status.readonlySeedEnabled"));
-    const runtimeDetailItems = [
-      ["App venv", appVenvHint],
-      ["Agent venv", agentVenvHint],
-      ["默认镜像", indexUrl || "https://mirrors.aliyun.com/pypi/simple/"],
-      ["日志路径", runtimeLogHint],
-      ...(nodeInfo?.workspace_cache ? [[t("status.workspaceCache"), nodeInfo.workspace_cache]] : []),
-    ];
-
-    // "修复" 真正干活：调 Tauri repair_runtime_env 把 app-venv/agent-venv/manifest 删掉重建，
-    // 否则 ensure_venv 的早期健康检查会被残骸 launcher 蒙混通过，怎么点都修不好。
-    const onRepair = async () => {
-      if (!currentWorkspaceId) return;
-      const _b = notifyLoading(t("status.runtimeRepairing"));
-      try {
-        // 先停掉 fallback 的 bundled 后端，避免新 venv 创建过程中 import 冲突。
-        try { await doStopService(currentWorkspaceId); } catch { /* ignore */ }
-        const report = await invoke<string>("repair_runtime_env");
-        notifySuccess(report.split("\n").slice(0, 3).join("\n"));
-        await doStartLocalService(currentWorkspaceId);
-      } catch (e) {
-        notifyError(t("status.runtimeRepairFailed", { err: String(e) }));
-      } finally {
-        dismissLoading(_b);
-      }
-    };
-
-    return (
-      <div className="mx-auto w-full max-w-6xl px-6 pt-5">
-        <div className="card border border-blue-200/70 bg-blue-50/50 py-3 dark:border-blue-500/30 dark:bg-blue-950/20">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-[220px] flex-1">
-              <h3 className="text-base font-bold tracking-tight">OpenAkita 运行环境准备</h3>
-            </div>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={refreshRuntimeDiagnostics}
-                disabled={runtimeDiagChecking || !serviceStatus?.running}
-                title={t("status.workspaceDependencies")}
-              >
-                {runtimeDiagChecking ? <Loader2 className="mr-1 animate-spin" size={14} /> : <Activity className="mr-1" size={14} />}
-                {t("status.check")}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!!busy || !currentWorkspaceId || backendBootPhase === "starting"}
-                onClick={() => currentWorkspaceId && doStartLocalService(currentWorkspaceId)}
-              >
-                重试启动
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={!!busy || !currentWorkspaceId}
-                onClick={onRepair}
-                title={t("status.runtimeRepairHint")}
-              >
-                {t("status.runtimeRepairTitle")}
-              </Button>
-            </div>
-          </div>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            桌面端会优先创建 app runtime venv 和 agent tools venv；失败时回退到 legacy PyInstaller 兼容模式。
-          </p>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-blue-100 dark:bg-blue-950">
-            <div
-              className="h-full bg-blue-500 transition-all"
-              style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
-            />
-          </div>
-          <div className="mt-2.5 rounded-xl border border-blue-200/60 bg-white/60 px-3 py-2 shadow-sm dark:border-blue-500/20 dark:bg-slate-950/20">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-              <Badge variant="outline" className="border-blue-300/70 bg-blue-500/10 text-blue-700 dark:text-blue-300">{stage}</Badge>
-              <span className="font-medium text-foreground">
-                {venvStatus || (backendReady ? "后端运行中" : serviceStatus?.running ? "后端初始化中" : "尚未启动")}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground" title={dependencySummary.join(" · ")}>
-                {dependencySummary.join(" · ")}
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 px-2 text-xs"
-                onClick={() => setRuntimeDetailsOpen((v) => !v)}
-              >
-                {runtimeDetailsOpen ? "隐藏详情" : "查看详情"}
-                {runtimeDetailsOpen ? <ChevronDown className="ml-1" size={13} /> : <ChevronRight className="ml-1" size={13} />}
-              </Button>
-            </div>
-            {runtimeDetailsOpen && (
-              <div className="mt-2 grid gap-2 md:grid-cols-2">
-                {runtimeDetailItems.map(([label, value]) => (
-                  <div
-                    key={label}
-                    className="min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2"
-                    title={value}
-                  >
-                    <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      {label}
-                    </div>
-                    <div className="mt-1 truncate font-mono text-[11px] text-foreground/80">
-                      {value}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          {installLiveLog && (
-            <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-200">
-              {installLiveLog.slice(-4000)}
-            </pre>
-          )}
-        </div>
       </div>
     );
   }
@@ -3877,6 +3684,8 @@ function MainApp() {
         desktopVersion={desktopVersion}
         shouldUseHttpApi={shouldUseHttpApi}
         httpApiBase={httpApiBase}
+        backendBootPhase={backendBootPhase}
+        onOpenRuntimeEnvironment={() => setRuntimeDialogOpen(true)}
         askConfirm={askConfirm}
         refreshAll={refreshAll}
         restartService={restartService}
@@ -6303,6 +6112,24 @@ function MainApp() {
         )}
 
         <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
+        <RuntimeEnvironmentDialog
+          open={runtimeDialogOpen}
+          onOpenChange={setRuntimeDialogOpen}
+          serviceStatus={serviceStatus}
+          backendBootPhase={backendBootPhase}
+          installProgress={installProgress}
+          info={info}
+          runtimeDiag={runtimeDiag}
+          runtimeDiagChecking={runtimeDiagChecking}
+          venvStatus={venvStatus}
+          indexUrl={indexUrl}
+          installLiveLog={installLiveLog}
+          busy={busy}
+          currentWorkspaceId={currentWorkspaceId}
+          refreshRuntimeDiagnostics={refreshRuntimeDiagnostics}
+          doStopService={doStopService}
+          doStartLocalService={doStartLocalService}
+        />
         <Toaster position="top-right" richColors closeButton />
 
         {view === "wizard" ? (() => {
