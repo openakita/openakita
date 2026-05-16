@@ -198,12 +198,70 @@ class Plugin(PluginBase):
     async def _async_init(self) -> None:
         await self._tm.init()
         config = await self._tm.get_all_config()
-        api_key = config.get("dashscope_api_key", "")
+        api_key, base_url = self._resolve_effective_endpoint(config)
         if api_key:
             self._client = DashScopeClient(
-                api_key, base_url=config.get("dashscope_base_url") or None,
+                api_key, base_url=base_url or None,
             )
         self._start_polling()
+
+    def _resolve_effective_endpoint(self, config: dict[str, Any]) -> tuple[str, str]:
+        """Resolve api_key + base_url for the DashScope client, honouring
+        an optional relay_endpoint reference in plugin settings.
+
+        When ``dashscope_relay_endpoint`` names a relay registered in
+        OpenAkita's shared relay registry (see ``openakita.relay``),
+        its base_url + api_key win over the per-plugin fields. Failure
+        mode is governed by ``dashscope_relay_fallback_policy``:
+        ``"official"`` (default) warns and keeps the per-plugin values,
+        ``"strict"`` raises HTTPException so the user must fix the
+        relay name before continuing.
+
+        Import is lazy so the plugin still loads in distributions that
+        ship without the openakita host package.
+        """
+        api_key = str(config.get("dashscope_api_key") or "")
+        base_url = str(config.get("dashscope_base_url") or "")
+        relay_name = str(config.get("dashscope_relay_endpoint") or "").strip()
+        if not relay_name:
+            return api_key, base_url
+        try:
+            from openakita.relay import (
+                SettingsRelayResolutionError,
+                apply_relay_override,
+            )
+
+            merged = apply_relay_override(
+                {
+                    "api_key": api_key,
+                    "base_url": base_url,
+                    "relay_endpoint": relay_name,
+                    "relay_fallback_policy": str(
+                        config.get("dashscope_relay_fallback_policy") or "official"
+                    ),
+                },
+                required_capability="image",
+                plugin_name="tongyi-image",
+            )
+        except (ImportError, ModuleNotFoundError) as exc:
+            logger.info(
+                "tongyi-image: openakita.relay not importable (%s); "
+                "keeping per-plugin DashScope endpoint",
+                exc,
+            )
+            return api_key, base_url
+        except SettingsRelayResolutionError as exc:
+            # strict policy + missing relay → surface the user_message so
+            # the plugin Settings UI banner has actionable text. We use
+            # the same DashScopeError type the rest of the plugin uses
+            # for vendor-config errors so the UI handler does not need a
+            # new branch.
+            raise DashScopeError(
+                code="RelayResolutionError",
+                message=exc.user_message,
+                status_code=400,
+            ) from exc
+        return str(merged.get("api_key") or ""), str(merged.get("base_url") or "")
 
     async def on_unload(self) -> None:
         if self._poll_task and not self._poll_task.done():
@@ -1109,6 +1167,8 @@ class Plugin(PluginBase):
             cfg = await self._tm.get_all_config()
             cfg.setdefault("dashscope_api_key", "")
             cfg.setdefault("dashscope_base_url", "")
+            cfg.setdefault("dashscope_relay_endpoint", "")
+            cfg.setdefault("dashscope_relay_fallback_policy", "official")
             return {"ok": True, "config": cfg}
 
         @router.put("/settings")
@@ -1121,14 +1181,19 @@ class Plugin(PluginBase):
             await self._tm.set_configs(cleaned)
             saved = await self._tm.get_all_config()
 
-            if "dashscope_api_key" in cleaned or "dashscope_base_url" in cleaned:
-                key = saved.get("dashscope_api_key", "")
-                base_url = saved.get("dashscope_base_url", "") or None
+            endpoint_keys = {
+                "dashscope_api_key",
+                "dashscope_base_url",
+                "dashscope_relay_endpoint",
+                "dashscope_relay_fallback_policy",
+            }
+            if endpoint_keys & cleaned.keys():
+                key, base_url = self._resolve_effective_endpoint(saved)
                 if self._client is not None:
                     await self._client.close()
                     self._client = None
                 if key:
-                    self._client = DashScopeClient(key, base_url=base_url)
+                    self._client = DashScopeClient(key, base_url=base_url or None)
             return {"ok": True, "config": saved}
 
         @router.get("/models")

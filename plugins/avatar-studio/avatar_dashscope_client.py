@@ -146,6 +146,10 @@ def make_default_settings() -> dict[str, Any]:
         "api_key": "",
         "base_url": DASHSCOPE_BASE_URL_BJ,
         "timeout": 60.0,
+        # Shared relay registry (see openakita.relay). Empty by default so
+        # users who never set up a relay keep the per-plugin direct path.
+        "relay_endpoint": "",
+        "relay_fallback_policy": "official",
     }
 
 
@@ -251,6 +255,42 @@ class AvatarDashScopeClient(BaseVendorClient):
             cur = {}
         merged = make_default_settings()
         merged.update({k: v for k, v in cur.items() if v not in (None, "")})
+
+        # Relay override (optional): when ``relay_endpoint`` is set the
+        # plugin's effective base_url/api_key come from the shared
+        # registry. Failure mode is governed by relay_fallback_policy.
+        # Import is lazy so plugin still loads if openakita.relay is
+        # missing (e.g. bundled distribution without the host package).
+        if str(merged.get("relay_endpoint") or "").strip():
+            try:
+                from openakita.relay import (
+                    SettingsRelayResolutionError,
+                    apply_relay_override,
+                )
+
+                merged = apply_relay_override(
+                    merged,
+                    default_base_url=DASHSCOPE_BASE_URL_BJ,
+                    required_capability="video",
+                    plugin_name="avatar-studio",
+                )
+            except (ImportError, ModuleNotFoundError) as exc:
+                logger.info(
+                    "avatar-studio: openakita.relay not importable (%s); "
+                    "keeping per-plugin base_url/api_key.",
+                    exc,
+                )
+            except SettingsRelayResolutionError as exc:
+                # Strict-policy mis-config — surface as our own vendor
+                # error so the plugin UI shows the same error shape it
+                # already shows for auth / quota issues.
+                raise VendorError(
+                    exc.user_message,
+                    status=None,
+                    retryable=False,
+                    kind=ERROR_KIND_CLIENT,
+                ) from exc
+
         # Live-update inherited fields so retry/timeout reflect Settings.
         try:
             self.timeout = float(merged.get("timeout") or 60.0)

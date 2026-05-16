@@ -304,10 +304,57 @@ class Plugin(PluginBase):
     async def _async_init(self) -> None:
         await self._tm.init()
         config = await self._tm.get_all_config()
-        api_key = config.get("ark_api_key", "")
+        api_key, base_url = self._resolve_effective_ark_endpoint(config)
         if api_key:
-            self._ark = ArkClient(api_key, base_url=config.get("ark_base_url") or None)
+            self._ark = ArkClient(api_key, base_url=base_url or None)
         self._start_polling()
+
+    def _resolve_effective_ark_endpoint(self, config: dict) -> tuple[str, str]:
+        """Resolve Ark api_key + base_url, honouring an optional relay.
+
+        Same shape as tongyi-image / avatar-studio: when
+        ``ark_relay_endpoint`` names a relay in the shared registry
+        the relay's base_url + api_key win over the per-plugin Ark
+        fields. Failure mode controlled by
+        ``ark_relay_fallback_policy`` (``official`` default, ``strict``
+        raises HTTPException so the user sees the config error).
+
+        Import is lazy so the plugin still loads when openakita.relay
+        is not on sys.path (bundled distributions).
+        """
+        api_key = str(config.get("ark_api_key") or "")
+        base_url = str(config.get("ark_base_url") or "")
+        relay_name = str(config.get("ark_relay_endpoint") or "").strip()
+        if not relay_name:
+            return api_key, base_url
+        try:
+            from openakita.relay import (
+                SettingsRelayResolutionError,
+                apply_relay_override,
+            )
+
+            merged = apply_relay_override(
+                {
+                    "api_key": api_key,
+                    "base_url": base_url,
+                    "relay_endpoint": relay_name,
+                    "relay_fallback_policy": str(
+                        config.get("ark_relay_fallback_policy") or "official"
+                    ),
+                },
+                required_capability="video",
+                plugin_name="seedance-video",
+            )
+        except (ImportError, ModuleNotFoundError) as exc:
+            logger.info(
+                "seedance-video: openakita.relay not importable (%s); "
+                "keeping per-plugin Ark endpoint",
+                exc,
+            )
+            return api_key, base_url
+        except SettingsRelayResolutionError as exc:
+            raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        return str(merged.get("api_key") or ""), str(merged.get("base_url") or "")
 
     async def on_unload(self) -> None:
         if self._poll_task and not self._poll_task.done():
@@ -1610,6 +1657,8 @@ class Plugin(PluginBase):
             cfg = await self._tm.get_all_config()
             cfg.setdefault("ark_api_key", "")
             cfg.setdefault("ark_base_url", "")
+            cfg.setdefault("ark_relay_endpoint", "")
+            cfg.setdefault("ark_relay_fallback_policy", "official")
             return {"ok": True, "config": cfg}
 
         @router.put("/settings")
@@ -1659,9 +1708,15 @@ class Plugin(PluginBase):
                     len(key), key[:4],
                 )
 
-            if "ark_api_key" in cleaned or "ark_base_url" in cleaned:
-                key = saved.get("ark_api_key", "")
-                base_url = saved.get("ark_base_url", "") or None
+            endpoint_keys = {
+                "ark_api_key",
+                "ark_base_url",
+                "ark_relay_endpoint",
+                "ark_relay_fallback_policy",
+            }
+            if endpoint_keys & cleaned.keys():
+                key, base_url_str = self._resolve_effective_ark_endpoint(saved)
+                base_url = base_url_str or None
                 if self._ark:
                     if key:
                         self._ark.update_api_key(key)
