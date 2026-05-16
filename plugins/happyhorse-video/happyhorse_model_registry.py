@@ -70,6 +70,16 @@ EndpointFamily = Literal[
 ]
 ProtocolVersion = Literal["new_async", "legacy_async", "sdk"]
 SizeFormat = Literal["resolution_p", "size_star", "size_x"]
+# ``input_protocol`` decides how the client packs first/last/clip URLs
+# into the request:
+# - ``url_fields`` (default, legacy & HappyHorse 1.0): plain
+#   ``input.first_frame_url`` / ``last_frame_url`` / ``source_video_url``
+#   keys + ``parameters.task_type`` selector.
+# - ``media_array`` (wan2.7-i2v family per official 2026-04 docs): a
+#   single ``input.media: [{"type": "first_frame|last_frame|first_clip|
+#   driving_audio", "url": "..."}]`` array. The task type is implicit in
+#   which entries the array contains; no ``task_type`` parameter exists.
+InputProtocol = Literal["url_fields", "media_array"]
 
 
 @dataclass(frozen=True)
@@ -95,9 +105,15 @@ class ModelEntry:
     aspects: tuple[str, ...] = ("16:9", "9:16", "1:1", "4:3", "3:4")
     # Allowed video durations in seconds (HappyHorse: 3-15; Wan 2.6: 5/10/15).
     duration_range: tuple[int, int] = (3, 15)
-    # Optional sub-task selector (only ``wan2.7-i2v`` uses this so far —
-    # ``first-frame`` / ``first-and-last-frame`` / ``video-continuation``).
+    # Optional sub-task selector. Used by url_fields-style models that
+    # need a ``parameters.task_type`` selector; ignored for media_array
+    # models (wan2.7-i2v selects sub-task implicitly via media[].type).
     task_types: tuple[str, ...] = ()
+    # How input URLs (first frame / last frame / first clip / driving
+    # audio) are packed in the request body. Default is url_fields for
+    # backwards compatibility; wan2.7-i2v family overrides to
+    # ``media_array`` per its official 2026-04 spec.
+    input_protocol: InputProtocol = "url_fields"
     # Parameter keys the model REJECTS — sent verbatim to the client
     # as the validation deny-list. HappyHorse 1.0 rejects with_audio /
     # size / quality / fps / audio per official docs.
@@ -125,6 +141,7 @@ class ModelEntry:
             "aspects": list(self.aspects),
             "duration_range": list(self.duration_range),
             "task_types": list(self.task_types),
+            "input_protocol": self.input_protocol,
             "forbidden_params": list(self.forbidden_params),
             "requires_oss": self.requires_oss,
             "native_audio_sync": self.native_audio_sync,
@@ -231,14 +248,13 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="new_async",
         size_format="resolution_p",
-        cost_note="支持首帧 / 首尾帧 / 视频续写",
+        cost_note="支持首帧 / 首尾帧 / 视频续写（input.media[]）",
         resolutions=_WAN_NEW_RES,
-        duration_range=(5, 15),
-        task_types=(
-            "first-frame",
-            "first-and-last-frame",
-            "video-continuation",
-        ),
+        duration_range=(2, 15),
+        # No task_types: wan2.7-i2v selects the sub-task implicitly via
+        # which media[].type entries appear (first_frame / last_frame /
+        # first_clip / driving_audio). Per the 2026-04 official API.
+        input_protocol="media_array",
     ),
     # ── i2v_end (first + last frame) ───────────────────────────────────
     ModelEntry(
@@ -249,10 +265,10 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="new_async",
         size_format="resolution_p",
-        cost_note="使用 wan2.7-i2v 的 first-and-last-frame task type",
+        cost_note="使用 wan2.7-i2v 首帧+尾帧（input.media[]）",
         resolutions=_WAN_NEW_RES,
-        duration_range=(5, 15),
-        task_types=("first-and-last-frame",),
+        duration_range=(2, 15),
+        input_protocol="media_array",
         is_default=True,
     ),
     # ── video_extend (continuation) ────────────────────────────────────
@@ -264,10 +280,10 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="new_async",
         size_format="resolution_p",
-        cost_note="使用 wan2.7-i2v 的 video-continuation task type",
+        cost_note="使用 wan2.7-i2v 视频续写（input.media[first_clip]）",
         resolutions=_WAN_NEW_RES,
-        duration_range=(5, 15),
-        task_types=("video-continuation",),
+        duration_range=(2, 15),
+        input_protocol="media_array",
         is_default=True,
     ),
     # ── r2v (reference-to-video, multi-character) ──────────────────────

@@ -410,6 +410,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         aspect: str | None = None,
         duration: float | None = None,
         task_type: str | None = None,
+        driving_audio_url: str | None = None,
         extra_parameters: dict[str, Any] | None = None,
     ) -> str:
         """Submit a HappyHorse 1.0 / Wan 2.6 / Wan 2.7 video-generation job.
@@ -478,39 +479,84 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             except (TypeError, ValueError):
                 pass
 
-        if task_type:
-            if entry.task_types and task_type not in entry.task_types:
+        # task_type only applies to url_fields-style entries that
+        # declare task_types. media_array entries (wan2.7-i2v) ignore
+        # task_type — the sub-task is encoded in which media[].type
+        # entries appear.
+        if entry.input_protocol == "url_fields":
+            if task_type:
+                if entry.task_types and task_type not in entry.task_types:
+                    raise VendorError(
+                        f"task_type {task_type!r} not allowed for {model_id!r}; "
+                        f"accepted: {list(entry.task_types)}",
+                        status=422,
+                        retryable=False,
+                        kind=ERROR_KIND_CLIENT,
+                    )
+                params["task_type"] = task_type
+            elif entry.task_types and entry.protocol_version == "new_async":
+                params.setdefault("task_type", entry.task_types[0])
+
+        # ── input dispatch (per input_protocol) ──────────────────────
+        input_obj: dict[str, Any] = {}
+        if prompt:
+            input_obj["prompt"] = prompt
+
+        if entry.input_protocol == "media_array":
+            # wan2.7-i2v family: pack URLs into input.media[]. Order of
+            # types in the array is not significant per the official
+            # docs, but we use first_frame → last_frame → first_clip →
+            # driving_audio for readable bodies. The DashScope service
+            # rejects duplicate ``type`` entries (each may appear once
+            # at most), and our SDK callers already pass at most one of
+            # each, so we don't dedupe here.
+            media: list[dict[str, str]] = []
+            if first_frame_url:
+                media.append({"type": "first_frame", "url": first_frame_url})
+            if last_frame_url:
+                media.append({"type": "last_frame", "url": last_frame_url})
+            if source_video_url:
+                media.append({"type": "first_clip", "url": source_video_url})
+            if driving_audio_url:
+                media.append({"type": "driving_audio", "url": driving_audio_url})
+            if not media:
                 raise VendorError(
-                    f"task_type {task_type!r} not allowed for {model_id!r}; "
-                    f"accepted: {list(entry.task_types)}",
+                    f"model {model_id!r} requires at least one of "
+                    "first_frame_url / last_frame_url / source_video_url "
+                    "/ driving_audio_url (got none)",
                     status=422,
                     retryable=False,
                     kind=ERROR_KIND_CLIENT,
                 )
-            params["task_type"] = task_type
-        elif entry.task_types and entry.protocol_version == "new_async":
-            # Default for wan2.7-i2v: pick the registry's first task type.
-            params.setdefault("task_type", entry.task_types[0])
-
-        # ── input dispatch (mode-specific) ───────────────────────────
-        input_obj: dict[str, Any] = {}
-        if prompt:
-            input_obj["prompt"] = prompt
-        if first_frame_url:
-            input_obj["first_frame_url"] = first_frame_url
-        if last_frame_url:
-            input_obj["last_frame_url"] = last_frame_url
-        if reference_urls:
-            input_obj["reference_urls"] = list(reference_urls)
-        if source_video_url:
-            # Different models call this different things — Wan 2.7 video
-            # continuation uses ``source_video_url``, Wan 2.6 uses
-            # ``video_url``, video_edit uses ``video_url``. We normalise
-            # to ``video_url`` for legacy and ``source_video_url`` for new.
-            if entry.protocol_version == "new_async":
-                input_obj["source_video_url"] = source_video_url
-            else:
+            if reference_urls:
+                # wan2.7-i2v does not accept reference_urls — those go to
+                # wan2.6-r2v / happyhorse-r2v. Fail loudly so the UI
+                # doesn't silently drop the user's reference images.
+                raise VendorError(
+                    f"model {model_id!r} does not accept reference_urls; "
+                    "use a wan2.6-r2v / happyhorse-1.0-r2v model for "
+                    "multi-character reference videos.",
+                    status=422,
+                    retryable=False,
+                    kind=ERROR_KIND_CLIENT,
+                )
+            input_obj["media"] = media
+        else:
+            if first_frame_url:
+                input_obj["first_frame_url"] = first_frame_url
+            if last_frame_url:
+                input_obj["last_frame_url"] = last_frame_url
+            if reference_urls:
+                input_obj["reference_urls"] = list(reference_urls)
+            if source_video_url:
+                # Wan 2.6 legacy uses ``video_url`` (video_edit /
+                # video-to-video). New-async non-media_array variants
+                # (e.g. happyhorse video_edit) also use ``video_url``.
                 input_obj["video_url"] = source_video_url
+            if driving_audio_url:
+                # Wan 2.6 audio injection — official spec calls it
+                # ``audio_url`` (see audio_url section of the t2v doc).
+                input_obj["audio_url"] = driving_audio_url
 
         body = {
             "model": model_id,

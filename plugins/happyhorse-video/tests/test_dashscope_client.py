@@ -97,3 +97,106 @@ async def test_image_multimodal_falls_back_when_async_is_not_allowed(monkeypatch
 
     assert second["async"] is False
     assert calls == ["async", "sync", "sync"]
+
+
+@pytest.mark.asyncio
+async def test_wan27_i2v_packs_media_array_not_url_fields(monkeypatch):
+    """wan2.7-i2v official 2026-04 spec uses ``input.media[]`` instead
+    of ``input.first_frame_url`` / ``last_frame_url`` and rejects any
+    ``parameters.task_type`` selector. Regression guard for the
+    historical url_fields request that 422'd on every submit."""
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    captured: dict[str, object] = {}
+
+    async def fake_submit_async(path, body):
+        captured["path"] = path
+        captured["body"] = body
+        return "task-123"
+
+    monkeypatch.setattr(c, "_submit_async", fake_submit_async)
+
+    task_id = await c.submit_video_synth(
+        mode="i2v_end",
+        model_id="wan2.7-i2v",
+        prompt="a cinematic shot",
+        first_frame_url="https://example.test/first.png",
+        last_frame_url="https://example.test/last.png",
+        resolution="720P",
+        duration=5,
+    )
+
+    assert task_id == "task-123"
+    body = captured["body"]
+    inp = body["input"]
+    assert "first_frame_url" not in inp
+    assert "last_frame_url" not in inp
+    media = inp["media"]
+    assert {"type": "first_frame", "url": "https://example.test/first.png"} in media
+    assert {"type": "last_frame", "url": "https://example.test/last.png"} in media
+    assert "task_type" not in body["parameters"]
+    assert body["parameters"]["duration"] == 5
+    assert body["parameters"]["resolution"] == "720P"
+
+
+@pytest.mark.asyncio
+async def test_wan27_i2v_rejects_reference_urls(monkeypatch):
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    monkeypatch.setattr(c, "_submit_async", lambda *a, **kw: None)
+    with pytest.raises(VendorError) as ei:
+        await c.submit_video_synth(
+            mode="i2v",
+            model_id="wan2.7-i2v",
+            prompt="x",
+            first_frame_url="https://example.test/f.png",
+            reference_urls=["https://example.test/r.png"],
+        )
+    assert "reference_urls" in str(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_wan26_t2v_keeps_legacy_url_fields(monkeypatch):
+    """Wan 2.6 (and HappyHorse 1.0) keep the legacy url_fields contract —
+    they MUST NOT be wrapped in a media[] array or DashScope rejects
+    them. This pins the dispatch boundary."""
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    captured: dict[str, object] = {}
+
+    async def fake_submit_async(path, body):
+        captured["body"] = body
+        return "task-26"
+
+    monkeypatch.setattr(c, "_submit_async", fake_submit_async)
+    await c.submit_video_synth(
+        mode="i2v",
+        model_id="wan2.6-i2v",
+        prompt="x",
+        first_frame_url="https://example.test/f.png",
+        resolution="720P",
+        duration=5,
+    )
+    body = captured["body"]
+    assert "media" not in body["input"]
+    assert body["input"]["first_frame_url"] == "https://example.test/f.png"
+
+
+@pytest.mark.asyncio
+async def test_video_synth_duration_is_int_for_vendor(monkeypatch):
+    """DashScope ``parameters.duration`` must be integer. The earlier
+    bug converted it to ``float(3.0)`` and triggered a 422 — pin the
+    serialization shape here so it never regresses."""
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    captured: dict[str, object] = {}
+
+    async def fake_submit_async(path, body):
+        captured["body"] = body
+        return "t"
+
+    monkeypatch.setattr(c, "_submit_async", fake_submit_async)
+    await c.submit_video_synth(
+        mode="t2v",
+        model_id="happyhorse-1.0-t2v",
+        prompt="x",
+        duration="3",  # legacy string-shaped path
+    )
+    assert captured["body"]["parameters"]["duration"] == 3
+    assert isinstance(captured["body"]["parameters"]["duration"], int)

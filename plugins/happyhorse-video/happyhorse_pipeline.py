@@ -679,6 +679,7 @@ async def _step_video_synth(
             last_frame_url=last_frame_url or None,
             reference_urls=reference_urls or None,
             source_video_url=source_video_url or None,
+            driving_audio_url=str(ctx.params.get("driving_audio_url") or "") or None,
             resolution=resolution or None,
             aspect=aspect or None,
             duration=duration,
