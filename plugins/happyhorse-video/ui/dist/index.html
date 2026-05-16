@@ -535,7 +535,8 @@ function CostPreviewCard({ costPreview }) {
       {costPreview ? (
         <>
           <div className="cost-total">
-            {costPreview.formatted_total || `¥${costPreview.total_cny?.toFixed?.(2) || "0.00"}`}
+            {costPreview.formatted_total
+              || `¥${Number(costPreview.total ?? costPreview.total_cny ?? 0).toFixed(2)}`}
           </div>
           <div className="text-xs text-muted mt-2">
             {(costPreview.items || []).map((it, i) => (
@@ -682,6 +683,16 @@ function FileUploadCard({ accept, kind, value, onUploaded, hint }) {
       const r = await res.json();
       if (!r.ok) throw new Error(r.error || "upload failed");
       onUploaded(r);
+      // Mirror UploadUrlField's OSS-missing warning so the user knows
+      // the asset is local-only and DashScope models that need a public
+      // URL (face-detect, s2v, videoretalk, animate-mix) will fail.
+      if (!r.oss_url) {
+        alert(
+          "素材已上传到本地预览，但未配置 OSS。\n\n" +
+          "DashScope 需要公网可访问的 URL；请先在「设置 → OSS」配置 endpoint/bucket/key/secret，" +
+          "或手动输入一个公网 URL 后再提交任务。"
+        );
+      }
     } catch (e) {
       alert(`上传失败：${e.message}`);
     } finally {
@@ -888,7 +899,24 @@ function CreateTab({
     setVoiceId(settings?.default_voice || voiceValue(voices[0]) || "");
   }, [catalog, settings, voiceId]);
 
-  // Cost preview (debounced).
+  // Engine is fully derived from the chosen voice; centralize the rule
+  // so cost preview and submit can never disagree (and tests can target
+  // a single source).
+  const ttsEngine = useMemo(
+    () => (voiceId.startsWith("zh-") ? "edge" : "cosyvoice"),
+    [voiceId]
+  );
+
+  // Stable idempotency token per form lifetime — reset after each
+  // successful submission. Without this, the previous `web_${Date.now()}`
+  // form generated a fresh token on every click, defeating the backend's
+  // ``client_request_id`` double-submit guard for rapid double-clicks.
+  const requestIdRef = useRef(`web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+
+  // Cost preview (debounced). The dependency array intentionally includes
+  // ``ttsEngine`` so switching from a cosyvoice voice to an Edge-TTS
+  // voice (or vice versa) re-runs the preview — both engines have
+  // different per-10k-char prices in PRICE_TABLE.
   useEffect(() => {
     if (!mode) return;
     const t = setTimeout(async () => {
@@ -900,13 +928,13 @@ function CreateTab({
           resolution,
           aspect_ratio: aspect,
           text,
-          tts_engine: voiceId.startsWith("zh-") ? "edge" : "cosyvoice",
+          tts_engine: ttsEngine,
         });
         setCostPreview(r);
       } catch (_) {}
     }, 300);
     return () => clearTimeout(t);
-  }, [mode, modelId, duration, resolution, aspect, text]);
+  }, [mode, modelId, duration, resolution, aspect, text, ttsEngine]);
 
   const submit = async () => {
     const approved = !costPreview?.exceeds_threshold || window.confirm(
@@ -923,7 +951,7 @@ function CreateTab({
         resolution,
         aspect_ratio: aspect,
         voice_id: voiceId,
-        tts_engine: voiceId.startsWith("zh-") ? "edge" : "cosyvoice",
+        tts_engine: ttsEngine,
         text,
         first_frame_url: firstFrame,
         last_frame_url: lastFrame,
@@ -933,11 +961,14 @@ function CreateTab({
         reference_urls: (referenceUrls || []).map((s) => (s || "").trim()).filter(Boolean),
         audio_url: audioUrl,
         cost_approved: !!costPreview?.exceeds_threshold,
-        client_request_id: `web_${Date.now()}`,
+        client_request_id: requestIdRef.current,
       };
       const r = await api("POST", "/tasks", body);
       const tid = r.task?.task_id || r.task?.id || "";
       if (tid) setPreviewTaskId(tid);
+      // Reset the token so the next legitimate submit doesn't reuse this
+      // one (which would short-circuit to the just-created task row).
+      requestIdRef.current = `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     } catch (e) {
       alert(`提交失败: ${e.message}`);
     } finally {
@@ -1234,12 +1265,29 @@ function ImageTab({ catalog, settings, onSubmit, onSettings }) {
     setSize(settings?.default_image_size || imageCatalog.default_size || "2K");
   }, [settings, imageCatalog.default_model, imageCatalog.default_size]);
 
+  // Image models declare wildly different size spaces ("2K" vs
+  // "1024*1024" vs "1664*928"...). When the user switches models, the
+  // previously-chosen size is almost always invalid for the new model
+  // and DashScope rejects the request with a 400. Auto-snap the size
+  // back into the new model's allowed set whenever the model id
+  // changes (or the catalog reloads).
+  useEffect(() => {
+    const m = models.find((x) => x.id === modelId);
+    const allowed = m?.sizes?.length ? m.sizes : (imageCatalog.sizes || []);
+    if (allowed.length && !allowed.includes(size)) {
+      setSize(m?.default_size || allowed[0]);
+    }
+  }, [modelId, models, imageCatalog.sizes]);
+
   const selectedModel = models.find((m) => m.id === modelId) || models[0];
   const sizes = selectedModel?.sizes?.length ? selectedModel.sizes : (imageCatalog.sizes || ["2K"]);
   const modeSpec = modes.find((m) => m.id === mode);
   const requiresImages = (modeSpec?.required_assets || []).includes("images");
   const parsedImages = imageUrls.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
   const liveTask = useTaskHeartbeat(previewTaskId);
+
+  // Stable per-form-lifetime idempotency token (see CreateTab notes).
+  const imageRequestIdRef = useRef(`web_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
 
   const submit = async () => {
     setBusy(true);
@@ -1257,11 +1305,13 @@ function ImageTab({ catalog, settings, onSubmit, onSettings }) {
         output_ratio: outputRatio,
         sketch_style: sketchStyle,
         ecommerce_scenes: scenes,
-        client_request_id: `web_img_${Date.now()}`,
+        client_request_id: imageRequestIdRef.current,
         wait_for_completion: false,
       });
       const tid = r.task?.task_id || r.task?.id || "";
       if (tid) setPreviewTaskId(tid);
+      // Roll the token so the next submit is treated as a new request.
+      imageRequestIdRef.current = `web_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       onSubmit?.();
     } catch (e) {
       alert(`提交失败：${e.message}`);
@@ -1413,6 +1463,7 @@ function TasksTab() {
   const [selectedId, setSelectedId] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [modeFilter, setModeFilter] = useState("all");
+  const [actionBusy, setActionBusy] = useState({});
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1423,6 +1474,30 @@ function TasksTab() {
       setLoading(false);
     }
   }, []);
+
+  const runAction = useCallback(async (taskId, action) => {
+    if (!taskId || !action) return;
+    setActionBusy((prev) => ({ ...prev, [taskId]: action }));
+    try {
+      if (action === "delete") {
+        if (!window.confirm(`确认删除任务 ${taskId}？相关本地文件不会被删除。`)) return;
+        await api("DELETE", `/tasks/${taskId}`);
+      } else if (action === "cancel") {
+        await api("POST", `/tasks/${taskId}/cancel`);
+      } else if (action === "retry") {
+        await api("POST", `/tasks/${taskId}/retry`);
+      }
+      await refresh();
+    } catch (e) {
+      alert(`操作失败：${e.message}`);
+    } finally {
+      setActionBusy((prev) => {
+        const next = { ...prev };
+        delete next[taskId];
+        return next;
+      });
+    }
+  }, [refresh]);
 
   useEffect(() => {
     refresh();
@@ -1562,27 +1637,69 @@ function TasksTab() {
               const tid = taskIdOf(t);
               const video = taskVideoUrl(t);
               const images = taskImageUrls(t);
+              const status = t.status || "";
+              const canCancel = ["pending", "queued", "running", "processing"].includes(status);
+              const canRetry = ["failed", "timeout", "cancelled"].includes(status);
+              const busyAction = actionBusy[tid];
               return (
-                <button
+                <div
                   key={tid}
                   className={"task-card" + (selectedId === tid ? " selected" : "")}
-                  onClick={() => setSelectedId(tid)}
                 >
-                  <div className="task-thumb">
-                    {video ? <video src={video} muted /> : images.length ? <img src={images[0]} alt="" /> : <Icon name="film" size={20} />}
-                  </div>
-                  <div className="task-info">
-                    <div className="task-info-head">
-                      <strong>{t.mode || "未知模式"}</strong>
-                      <TaskStatusBadge status={t.status} />
+                  <button
+                    type="button"
+                    className="task-card__main"
+                    onClick={() => setSelectedId(tid)}
+                  >
+                    <div className="task-thumb">
+                      {video ? <video src={video} muted /> : images.length ? <img src={images[0]} alt="" /> : <Icon name="film" size={20} />}
                     </div>
-                    <div className="task-card-prompt">{t.prompt || t.model_id || tid}</div>
-                    <div className="task-meta">
-                      <span className="font-mono">{t.model_id || "—"}</span>
-                      <span>{formatTaskTime(t.created_at)}</span>
+                    <div className="task-info">
+                      <div className="task-info-head">
+                        <strong>{t.mode || "未知模式"}</strong>
+                        <TaskStatusBadge status={status} />
+                      </div>
+                      <div className="task-card-prompt">{t.prompt || t.model_id || tid}</div>
+                      <div className="task-meta">
+                        <span className="font-mono">{t.model_id || "—"}</span>
+                        <span>{formatTaskTime(t.created_at)}</span>
+                      </div>
                     </div>
+                  </button>
+                  <div className="task-card__actions" onClick={(e) => e.stopPropagation()}>
+                    {canCancel && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        disabled={!!busyAction}
+                        onClick={() => runAction(tid, "cancel")}
+                        title="取消运行中的任务"
+                      >
+                        {busyAction === "cancel" ? <Spinner /> : <Icon name="x" size={12} />} 取消
+                      </button>
+                    )}
+                    {canRetry && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        disabled={!!busyAction}
+                        onClick={() => runAction(tid, "retry")}
+                        title="按相同参数重新提交"
+                      >
+                        {busyAction === "retry" ? <Spinner /> : <Icon name="refresh" size={12} />} 重试
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      disabled={!!busyAction}
+                      onClick={() => runAction(tid, "delete")}
+                      title="从列表中删除（不会删除本地文件）"
+                    >
+                      {busyAction === "delete" ? <Spinner /> : <Icon name="trash" size={12} />} 删除
+                    </button>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -1611,6 +1728,7 @@ function StoryboardTab({ catalog }) {
   const [chainGroupId, setChainGroupId] = useState("");
   const [chainTasks, setChainTasks] = useState([]);
   const [concatResult, setConcatResult] = useState("");
+  const [concatResultMeta, setConcatResultMeta] = useState(null);
   const [concatBusy, setConcatBusy] = useState(false);
 
   const modelOptions = (catalog?.models || []).filter((m) => m.mode === "i2v");
@@ -1680,6 +1798,18 @@ function StoryboardTab({ catalog }) {
       alert("请先生成或手动添加至少一个分镜");
       return;
     }
+    // Parallel mode renders all segments simultaneously, which means
+    // none of them can chain on the previous segment's last frame. Warn
+    // up front so users aren't surprised by visual discontinuity in the
+    // final concat — the only segment that respects ``first_frame_url``
+    // is segment #1.
+    if (chainMode === "parallel" && segments.length > 1) {
+      const ok = window.confirm(
+        "并行模式会同时生成所有分段，分段之间无法用上一段的尾帧驱动，画面可能出现风格跳变。\n\n" +
+        "如需保证视觉连贯，请改用「串行」模式。是否仍然以并行模式提交？"
+      );
+      if (!ok) return;
+    }
     setBusy(true);
     try {
       const r = await api("POST", "/long-video/create", {
@@ -1690,6 +1820,7 @@ function StoryboardTab({ catalog }) {
       setChainGroupId(r.chain_group_id || "");
       setChainTasks([]);
       setConcatResult("");
+      setConcatResultMeta(null);
       setActiveStep("progress");
       if (r.chain_group_id) refreshChainTasks(r.chain_group_id);
     } catch (e) {
@@ -1709,10 +1840,17 @@ function StoryboardTab({ catalog }) {
     try {
       const r = await api("POST", "/long-video/concat", {
         task_ids: taskIds,
-        transition: "fade",
+        // Use the canonical "crossfade" identifier so the backend can
+        // match it directly; the alias map handles legacy "fade" too.
+        transition: "crossfade",
         fade_duration: 0.5,
       });
       setConcatResult(r.output_path || "拼接完成");
+      setConcatResultMeta({
+        preview_url: r.preview_url || "",
+        task_id: r.task_id || "",
+        asset_ids: r.asset_ids || [],
+      });
       setActiveStep("result");
     } catch (e) {
       alert(`拼接失败：${e.message}`);
@@ -1974,6 +2112,18 @@ function StoryboardTab({ catalog }) {
               <span>{concatResult || "等待分段完成后拼接"}</span>
             </div>
           </div>
+          {concatResultMeta?.preview_url && (
+            <div className="video-player-wrap">
+              <video src={concatResultMeta.preview_url} controls loop />
+            </div>
+          )}
+          {concatResultMeta?.task_id && (
+            <div className="text-xs text-muted mt-2">
+              已生成长视频任务 <span className="font-mono">{concatResultMeta.task_id}</span>
+              {concatResultMeta.asset_ids?.length ? `，发布到 Asset Bus (${concatResultMeta.asset_ids.length})` : ""}
+              ；可在「任务」页查看。
+            </div>
+          )}
           {chainTasks.length > 0 && (
             <div className="story-progress-list">
               {chainTasks.map((t, i) => (
@@ -3232,7 +3382,15 @@ function SettingsTab({ catalog, settings, onSave }) {
                 onChange={(e) => set("default_image_model", e.target.value, { immediate: true })}
               >
                 {(catalog.image?.models || []).map((o) => (
-                  <option key={o.id} value={o.id}>{o.label_zh}</option>
+                  // Use the short id as the option value to stay
+                  // compatible with the existing settings rows already
+                  // written by older builds. The backend's
+                  // ``image_model_for`` accepts both the short id and
+                  // the real ``model_id`` and always resolves to the
+                  // real DashScope id before persisting the task row.
+                  <option key={o.id} value={o.id}>
+                    {o.label_zh}（{o.model_id}）
+                  </option>
                 ))}
               </select>
             </div>
@@ -3244,9 +3402,19 @@ function SettingsTab({ catalog, settings, onSave }) {
                 value={form.default_image_size || catalog.image?.default_size || "2K"}
                 onChange={(e) => set("default_image_size", e.target.value, { immediate: true })}
               >
-                {(catalog.image?.sizes || ["1K", "2K", "4K", "1024*1024"]).map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
+                {(() => {
+                  // Show only the sizes supported by the currently
+                  // selected default model — different image models
+                  // share zero size strings ("2K" vs "1024*1024"), so a
+                  // global default size that doesn't match the model
+                  // produces an instant 400 on submit.
+                  const selectedId = form.default_image_model || catalog.image?.default_model || "";
+                  const selected = (catalog.image?.models || []).find((m) => m.id === selectedId || m.model_id === selectedId);
+                  const list = selected?.sizes?.length
+                    ? selected.sizes
+                    : (catalog.image?.sizes || ["1K", "2K", "4K", "1024*1024"]);
+                  return list.map((s) => <option key={s} value={s}>{s}</option>);
+                })()}
               </select>
             </div>
           </div>
