@@ -130,6 +130,51 @@ def _find_bundled_channel_wheels(py_path: Path) -> Path | None:
     return None
 
 
+def _purge_incompatible_websockets(target_dir: Path) -> list[str]:
+    """清理 channel-deps 里残留的不兼容 ``websockets`` 安装。
+
+    背景：``lark-oapi 1.6.x`` 间接要求 ``websockets<16``，但 ``--target`` 模式
+    下 pip 不会主动卸载已存在的更高版本，于是 `websockets 16.x` 的 dist-info
+    会一直挂在 channel-deps 里，让后续 `lark-oapi` 安装解析失败。
+
+    本函数只动 ``channel-deps`` 这个隔离目录，绝不动用户全局 site-packages。
+    返回被清理掉的条目名（用于日志/事件）。
+    """
+    if not target_dir.is_dir():
+        return []
+
+    removed: list[str] = []
+    import re
+    import shutil
+
+    pattern = re.compile(r"^websockets-(\d+)\.[^-]+\.dist-info$", re.IGNORECASE)
+    for entry in target_dir.iterdir():
+        match = pattern.match(entry.name)
+        if not match:
+            continue
+        try:
+            major = int(match.group(1))
+        except ValueError:
+            continue
+        if major < 16:
+            continue
+        try:
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                entry.unlink(missing_ok=True)
+            removed.append(entry.name)
+        except Exception as exc:
+            logger.warning("Failed to purge stale dist-info %s: %s", entry.name, exc)
+
+    if removed:
+        logger.info(
+            "Purged %d incompatible websockets entries from channel-deps: %s",
+            len(removed), ", ".join(removed),
+        )
+    return removed
+
+
 def _select_pip_python() -> str | None:
     py = get_app_python_executable() or get_python_executable()
     if not py or (IS_FROZEN and py == sys.executable):
@@ -259,6 +304,23 @@ def ensure_channel_dependencies(
         except Exception:
             logger.debug("failed to inject module paths after channel deps install", exc_info=True)
 
+    # 安装前先清掉 channel-deps 里残留的不兼容 websockets 16.x dist-info。
+    # 即使本轮没指定 lark-oapi（例如只装钉钉），残留也无害；命中时只是把
+    # 由 wework_ws / qqbot / onebot 在新版本约束下重装的 websockets 15.x
+    # 升回干净状态。
+    purged = _purge_incompatible_websockets(target_dir)
+    if purged and print_fn:
+        print_fn(
+            f"[yellow]⚙[/yellow] 清理 channel-deps 残留的不兼容 websockets dist-info"
+            f"（共 {len(purged)} 项），避免阻塞 lark-oapi 安装"
+        )
+
+    # 子进程超时：lark-oapi 间接拉 httpx/pycryptodome/qrcode/anyio 等近 30MB，
+    # 国内镜像首次下载可能 >120s。统一抬到 600s（10 分钟）足够覆盖最坏情况，
+    # pip 自己的 socket --timeout 同步从 60s 提到 120s。
+    subprocess_timeout = 600
+    pip_socket_timeout = "120"
+
     installed = False
     bundled_wheels = _find_bundled_channel_wheels(py_path) if IS_FROZEN else None
     if bundled_wheels is not None:
@@ -285,7 +347,7 @@ def ensure_channel_dependencies(
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=180,
+                timeout=subprocess_timeout,
                 **extra,
             )
             if offline.returncode == 0:
@@ -298,8 +360,10 @@ def ensure_channel_dependencies(
 
     last_err = ""
 
-    def _pip_install_via_mirrors(packages: list[str], label_prefix: str = "") -> bool:
+    def _pip_install_via_mirrors(packages: list[str], label_prefix: str = "") -> tuple[bool, str]:
+        """返回 ``(success, last_err_tail)``。所有镜像源都失败时返回 ``(False, 错误尾巴)``。"""
         nonlocal last_err
+        local_err = ""
         for idx, (index_url, trusted_host) in enumerate(_default_mirrors()):
             source_label = trusted_host or index_url
             if print_fn:
@@ -321,7 +385,7 @@ def ensure_channel_dependencies(
                 index_url,
                 "--prefer-binary",
                 "--timeout",
-                "60",
+                pip_socket_timeout,
                 *packages,
             ]
             if trusted_host:
@@ -334,44 +398,68 @@ def ensure_channel_dependencies(
                     text=True,
                     encoding="utf-8",
                     errors="replace",
-                    timeout=120,
+                    timeout=subprocess_timeout,
                     **extra,
                 )
                 if result.returncode == 0:
                     _on_install_success(source_label, packages)
-                    return True
-                last_err = (result.stderr or result.stdout or "").strip()[-500:]
-                logger.warning("镜像源 %s 安装失败 (exit %s): %s", source_label, result.returncode, last_err[-300:])
+                    return True, ""
+                local_err = (result.stderr or result.stdout or "").strip()[-500:]
+                last_err = local_err
+                logger.warning("镜像源 %s 安装失败 (exit %s): %s", source_label, result.returncode, local_err[-300:])
             except subprocess.TimeoutExpired:
-                last_err = f"镜像源 {source_label} 安装超时"
-                logger.warning(last_err)
+                local_err = (
+                    f"镜像源 {source_label} 在 {subprocess_timeout}s 内未完成下载"
+                )
+                last_err = local_err
+                logger.warning(local_err)
             except Exception as exc:
-                last_err = f"镜像源 {source_label} 安装异常: {exc}"
-                logger.warning(last_err)
-        return False
+                local_err = f"镜像源 {source_label} 安装异常: {exc}"
+                last_err = local_err
+                logger.warning(local_err)
+        return False, local_err
 
     installed_packages: list[str] = []
     failed_packages: list[str] = []
+    install_errors: dict[str, str] = {}
     if not installed:
-        installed = _pip_install_via_mirrors(missing)
+        installed, batch_err = _pip_install_via_mirrors(missing)
         if installed:
             installed_packages = list(missing)
+        elif batch_err and len(missing) == 1:
+            # 单包模式下，批量失败 == 这个包失败；记下来供上层透传。
+            install_errors[missing[0]] = batch_err
 
     if not installed and len(missing) > 1:
         logger.info("批量安装失败，尝试逐个安装 ...")
         for package in missing:
-            if _pip_install_via_mirrors([package], label_prefix="[逐个] "):
+            ok, err_tail = _pip_install_via_mirrors([package], label_prefix="[逐个] ")
+            if ok:
                 installed_packages.append(package)
             else:
                 failed_packages.append(package)
+                if err_tail:
+                    install_errors[package] = err_tail
         installed = bool(installed_packages)
 
     if not installed:
-        message = f"安装失败: {last_err or pkg_list}"
-        logger.error("所有镜像源均安装失败: %s", pkg_list)
+        # 把每个包的错误尾巴拼进 message，运维一眼就能看出"超时/冲突/网络"。
+        detail_pairs = [f"{pkg}: {err[-200:]}" for pkg, err in install_errors.items()]
+        detail = " | ".join(detail_pairs) if detail_pairs else (last_err or pkg_list)
+        message = f"安装失败: {detail}"
+        logger.error("所有镜像源均安装失败: %s | errors=%s", pkg_list, install_errors)
         if print_fn:
-            print_fn(f"[red]✗[/red] 依赖安装失败（已尝试所有镜像源）: {pkg_list}\n  请检查网络连接，或前往「设置中心 → Python 环境」点击「一键修复」")
-        return {"status": "error", "installed": [], "missing": missing, "message": message}
+            print_fn(
+                f"[red]✗[/red] 依赖安装失败（已尝试所有镜像源）: {pkg_list}\n"
+                "  请检查网络连接，或前往「设置中心 → Python 环境」点击「一键修复」"
+            )
+        return {
+            "status": "error",
+            "installed": [],
+            "missing": missing,
+            "message": message,
+            "errors": install_errors,
+        }
 
     still_broken: list[str] = []
     wrong_source: list[str] = []
@@ -408,4 +496,5 @@ def ensure_channel_dependencies(
         "message": message,
         "wrong_source": wrong_source,
         "still_broken": still_broken,
+        "errors": install_errors,
     }

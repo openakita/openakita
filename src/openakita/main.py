@@ -137,6 +137,7 @@ async def _init_orchestrator():
     _orchestrator = AgentOrchestrator()
     if _message_gateway:
         _orchestrator.set_gateway(_message_gateway)
+        _message_gateway.set_orchestrator(_orchestrator)
     logger.info("[MultiAgent] AgentOrchestrator initialized")
     try:
         from openakita.agents.presets import ensure_presets_on_mode_enable
@@ -146,11 +147,16 @@ async def _init_orchestrator():
         logger.warning(f"[Main] Failed to deploy presets on orchestrator init: {e}")
 
 
-def _ensure_channel_deps() -> None:
-    """检查已启用 IM 通道依赖，并安装到隔离 channel-deps 目录。"""
+def _ensure_channel_deps() -> dict:
+    """检查已启用 IM 通道依赖，并安装到隔离 channel-deps 目录。
+
+    返回 ``ensure_channel_dependencies`` 的结果字典，调用方可以读 ``errors``
+    字段拿到逐包 pip 错误（``{"lark-oapi": "...timeout..."}``），用于在
+    Gateway 适配器启动失败时补充更具体的提示。
+    """
     from openakita.runtime_channel_deps import ensure_channel_dependencies
 
-    ensure_channel_dependencies(print_fn=console.print)
+    return ensure_channel_dependencies(print_fn=console.print) or {}
 
 
 def _create_bot_adapter(
@@ -360,9 +366,9 @@ async def start_im_channels(agent_or_master):
                 _session_manager._plugin_hooks = agent_or_master._plugin_manager.hook_registry
         return
 
-    # 自动安装缺失的 IM 通道依赖
+    channel_deps_result: dict = {}
     try:
-        _ensure_channel_deps()
+        channel_deps_result = _ensure_channel_deps()
     except Exception as e:
         logger.error(
             f"IM channel dependency check failed ({type(e).__name__}: {e}), "
@@ -391,8 +397,16 @@ async def start_im_channels(agent_or_master):
         stt_client=stt_client,  # 在线 STT 客户端
     )
 
+    # 把"逐包 pip 错误"快照挂到 Gateway 上：适配器启动失败时若 reason 只是
+    # "缺少依赖: pip install xxx"，Gateway 会用这个表回退查具体原因
+    # （超时 / 版本冲突 / 网络错误），让前端 IM 行 tooltip 真正可读。
+    install_errors = channel_deps_result.get("errors") if channel_deps_result else None
+    if install_errors:
+        _message_gateway.set_channel_install_errors(install_errors)
+
     if _orchestrator is not None:
         _orchestrator.set_gateway(_message_gateway)
+        _message_gateway.set_orchestrator(_orchestrator)
 
     # 注册启用的适配器
     adapters_started = []

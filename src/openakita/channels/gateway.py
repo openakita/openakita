@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..sessions import Session, SessionManager
 from ..utils.errors import format_user_friendly_error as format_user_friendly_error  # re-export
@@ -991,6 +991,21 @@ class MessageGateway:
         # 外部注入的 shutdown_event（由 main.py 调用 set_shutdown_event 设置）
         self._shutdown_event: asyncio.Event | None = None
 
+        # 外部注入的 AgentOrchestrator 引用（由 main.py 调用 set_orchestrator 设置）
+        # 用途：
+        #   1. /切换 /状态 /重置 等多Agent命令的可用性判断
+        #   2. 流式/非流式分支决策（有编排时禁用 wait_for 墙钟超时，
+        #      改由 Orchestrator 自带的 idle/hard timeout 监控活跃度）
+        #   3. 流式 IM 路径在有编排时改走 handle_message，保证多 Bot/profile 路由生效
+        self._orchestrator_ref: Any = None
+
+        # 外部注入的 channel-deps 安装错误快照（由 main.py 调用 set_channel_install_errors）
+        # 形如 ``{"lark-oapi": "镜像源 ... 在 600s 内未完成下载", ...}``。
+        # 仅作为 fallback：当适配器 start() 抛 ImportError 但 reason 里只有
+        # "缺少依赖: pip install xxx" 这种笼统提示时，用 pip 包名反查更具体
+        # 的错误尾巴，附加到 _failed_adapter_reasons 里供 IM 行 tooltip 渲染。
+        self._channel_install_errors: dict[str, str] = {}
+
         # ==================== 进度事件流（Plan/Deliver 等）====================
         # 目标：把“执行过程进度展示”下沉到网关侧，避免模型/工具刷屏。
         self._progress_buffers: dict[str, list[str]] = {}  # session_key -> [lines]
@@ -1808,7 +1823,14 @@ class MessageGateway:
                 logger.info(f"Started adapter: {name}")
             except Exception as e:
                 failed.append(name)
-                failed_reasons[name] = str(e)
+                reason = str(e)
+                # 若 reason 只是 "缺少依赖: pip install xxx" 之类笼统提示，
+                # 用 channel-deps 安装错误快照补充更具体的根因（超时/版本冲突/网络）
+                install_err = self._resolve_install_error_for_adapter(name)
+                if install_err and ("缺少依赖" in reason or "ImportError" in reason
+                                    or "No module" in reason or not reason):
+                    reason = f"{reason}（原因：{install_err}）" if reason else install_err
+                failed_reasons[name] = reason
                 adapter._running = False
                 logger.error(f"Failed to start adapter {name}: {e}")
 
@@ -2205,6 +2227,43 @@ class MessageGateway:
         self._shutdown_event = event
         self._restart_cmd_handler._shutdown_event = event
         logger.debug("RestartCommandHandler shutdown_event set")
+
+    def set_orchestrator(self, orchestrator: Any) -> None:
+        """注入 AgentOrchestrator 引用（由 main.py 在 Orchestrator/Gateway 都就绪后调用）。
+
+        必须双向注入（这里 + ``orchestrator.set_gateway(gateway)``），否则：
+        - IM 输入 ``/状态`` ``/切换`` 等命令会被告知"系统正在初始化"
+        - 流式 IM 路径会绕过 Orchestrator，多 Bot 的 ``agent_profile_id`` 路由失效
+        """
+        self._orchestrator_ref = orchestrator
+        logger.info(
+            "[Gateway] AgentOrchestrator reference set "
+            "(stream-routing and /switch /status /reset commands now enabled)"
+        )
+
+    def set_channel_install_errors(self, errors: dict[str, str]) -> None:
+        """注入 channel-deps 自动安装的逐包错误快照（由 main.py 在依赖巡检后调用）。
+
+        让适配器启动失败时，IM 行 tooltip 能从"缺少依赖: pip install lark-oapi"
+        升级到"缺少依赖: pip install lark-oapi（原因：镜像源 ... 在 600s 内
+        未完成下载）"。
+        """
+        self._channel_install_errors = dict(errors or {})
+
+    def _resolve_install_error_for_adapter(self, adapter_name: str) -> str | None:
+        """根据适配器名查 channel-deps 安装错误快照里对应 pip 包的错误尾巴。"""
+        if not self._channel_install_errors:
+            return None
+        try:
+            from openakita.channels.deps import CHANNEL_DEPS
+        except Exception:
+            return None
+        channel_type = str(adapter_name).split(":", 1)[0]
+        for _, pip_name in CHANNEL_DEPS.get(channel_type, []):
+            err = self._channel_install_errors.get(pip_name)
+            if err:
+                return f"{pip_name}: {err[-200:]}"
+        return None
 
     # ==================== 适配器管理 ====================
 

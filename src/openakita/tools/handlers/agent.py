@@ -582,6 +582,8 @@ class AgentToolHandler:
                 gw = _main_mod._message_gateway
                 if gw:
                     orch.set_gateway(gw)
+                    if hasattr(gw, "set_orchestrator"):
+                        gw.set_orchestrator(orch)
                 _main_mod._orchestrator = orch
                 logger.warning(
                     "[AgentToolHandler] Orchestrator was None — lazily created as fallback"
