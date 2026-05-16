@@ -356,6 +356,105 @@ class EndpointManager:
         config = self._read_json()
         return config.get(endpoint_type, [])
 
+    def sync_endpoint_models(
+        self,
+        name: str,
+        endpoint_type: str = "endpoints",
+        *,
+        timeout: float = 15.0,
+    ) -> dict:
+        """Probe a relay endpoint's actual model catalog and persist it.
+
+        Looks up the endpoint by name, fetches its catalog via
+        :func:`openakita.llm.model_probe.probe_models`, writes the
+        result into ``supported_models`` / ``models_synced_at`` on the
+        endpoint, and returns a small status dict the API/UI can
+        render directly. Failures populate ``models_sync_error``
+        instead of raising — the user always sees the previous
+        catalog plus a clear last-error string, never an empty list
+        plus an exception traceback.
+
+        Returns::
+
+            {
+                "ok": bool,
+                "name": str,
+                "model_count": int,
+                "models": list[str],
+                "synced_at": float | None,
+                "error": str | None,   # user-facing if ok=False
+            }
+        """
+        from time import time as _now
+
+        from .model_probe import (
+            ProbeError,
+            probe_models,
+        )
+
+        if endpoint_type not in _ENDPOINT_LISTS:
+            raise ValueError(f"Invalid endpoint_type: {endpoint_type}")
+
+        with self._lock:
+            config, _ = self._read_json_versioned()
+            ep_list = config.get(endpoint_type, [])
+            target = next((e for e in ep_list if e.get("name") == name), None)
+            if target is None:
+                raise KeyError(f"endpoint {name!r} not found in {endpoint_type}")
+
+            env = _parse_env(_read_text_robust(self._env_path))
+            api_key = ""
+            env_var = target.get("api_key_env") or ""
+            if env_var:
+                api_key = env.get(env_var) or os.environ.get(env_var, "")
+            if not api_key:
+                api_key = target.get("api_key", "") or ""
+
+            base_url = str(target.get("base_url") or "")
+            api_type = str(target.get("api_type") or "")
+            provider = str(target.get("provider") or "")
+
+            error_msg: str | None = None
+            models: list[str] = []
+            try:
+                models = probe_models(
+                    api_type=api_type,
+                    base_url=base_url,
+                    api_key=api_key,
+                    provider=provider,
+                    timeout=timeout,
+                )
+            except ProbeError as exc:
+                error_msg = exc.user_message
+                logger.info(
+                    "sync_endpoint_models name=%s status=err msg=%s",
+                    name,
+                    exc,
+                )
+
+            now_ts = _now()
+            if error_msg is None:
+                target["supported_models"] = models
+                target["models_synced_at"] = now_ts
+                # Clear any stale error message on a successful sync.
+                target.pop("models_sync_error", None)
+            else:
+                # Preserve previous supported_models list (do not wipe);
+                # only refresh the timestamp + error so the UI shows
+                # "last attempted at HH:MM, last success was earlier".
+                target["models_sync_error"] = error_msg
+                target.setdefault("models_synced_at", None)
+
+            self._write_json(config)
+            return {
+                "ok": error_msg is None,
+                "name": name,
+                "model_count": len(models),
+                "models": list(models),
+                "synced_at": target.get("models_synced_at"),
+                "error": error_msg,
+            }
+
     def get_all_config(self) -> dict:
         """Read the entire llm_endpoints.json content."""
         return self._read_json()
