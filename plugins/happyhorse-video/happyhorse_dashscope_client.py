@@ -184,6 +184,19 @@ def _is_async_ok(status: str) -> bool:
     return status.upper() == "SUCCEEDED"
 
 
+def _is_async_call_unsupported(exc: VendorError) -> bool:
+    """Detect DashScope keys that can call image APIs only synchronously."""
+    body = exc.body if isinstance(exc.body, dict) else {}
+    code = str(body.get("code") or body.get("error_code") or "").lower()
+    message = str(body.get("message") or body.get("error_message") or exc).lower()
+    return (
+        exc.status == 403
+        and ("accessdenied" in code or "access denied" in message)
+        and "synchronous" in message
+        and "asynchronous" in message
+    )
+
+
 # ─── Aspect → W*H helpers (Wan 2.6 legacy size format) ────────────────
 
 
@@ -248,6 +261,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         self._read_settings = read_settings
         self._submit_lock = asyncio.Semaphore(1)
         self._cancelled: set[str] = set()
+        self._image_async_supported: bool | None = None
         self._last_settings: dict[str, Any] = {}
         # Prime base_url / timeout from settings so the first ``request()``
         # call already has the right URL prefix even if the caller never
@@ -460,7 +474,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
 
         if duration is not None and "duration" not in (entry.forbidden_params or ()):
             try:
-                params["duration"] = float(duration)
+                params["duration"] = int(round(float(duration)))
             except (TypeError, ValueError):
                 pass
 
@@ -542,7 +556,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
     ) -> str:
         params: dict[str, Any] = {"resolution": resolution}
         if duration is not None:
-            params["duration"] = float(duration)
+            params["duration"] = int(round(float(duration)))
         body = {
             "model": MODEL_S2V,
             "input": {"image_url": image_url, "audio_url": audio_url},
@@ -715,9 +729,20 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         # to image-generation/generation, but that endpoint expects the
         # legacy {input: {prompt: ...}} shape and would reject the
         # messages payload, breaking wan2.7-image / wan2.6-image.
-        if async_mode:
-            task_id = await self._submit_async(PATH_WAN27_IMAGE, body)
-            return {"task_id": task_id, "async": True}
+        if async_mode and self._image_async_supported is not False:
+            try:
+                task_id = await self._submit_async(PATH_WAN27_IMAGE, body)
+                self._image_async_supported = True
+                return {"task_id": task_id, "async": True}
+            except VendorError as exc:
+                if not _is_async_call_unsupported(exc):
+                    raise
+                self._image_async_supported = False
+                logger.info(
+                    "DashScope account does not support async image calls; "
+                    "falling back to synchronous %s",
+                    model,
+                )
         # Tag sync results with ``async=False`` so callers can branch on
         # one consistent key instead of "if not result.get('async')".
         sync_result = await self.request("POST", PATH_WAN27_IMAGE, json_body=body)

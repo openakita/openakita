@@ -199,6 +199,10 @@ class SettingsUpdateBody(BaseModel):
     updates: dict[str, str]
 
 
+class SecretRevealBody(BaseModel):
+    key: str
+
+
 class TestConnectionBody(BaseModel):
     api_key: str = ""
 
@@ -1881,9 +1885,84 @@ class Plugin(PluginBase):
             self._client.update_api_key(self._settings_cache.get("api_key", ""))
             return {"ok": True}
 
+        @router.post("/settings/reveal-secret")
+        async def reveal_secret(body: SecretRevealBody) -> dict:
+            # Only reveal whitelisted local secrets, and only after an explicit
+            # UI action such as clicking "显示". The normal GET /settings stays
+            # redacted so the page does not expose credentials by default.
+            allowed = {
+                "api_key",
+                "ark_api_key",
+                "oss_access_key_id",
+                "oss_access_key_secret",
+            }
+            key = (body.key or "").strip()
+            if key not in allowed:
+                raise HTTPException(status_code=400, detail="unsupported secret key")
+            cfg = await self._tm.get_all_config()
+            return {"ok": True, "key": key, "value": cfg.get(key, "")}
+
         @router.post("/test-connection")
         async def test_connection(body: TestConnectionBody) -> dict:
             return await self._client.ping_api_key(body.api_key or None)
+
+        @router.post("/oss/test")
+        async def oss_test() -> dict:
+            """Probe the configured Aliyun OSS bucket.
+
+            Reads the current settings, validates the OSS fields, and
+            calls ``bucket.list_objects(max_keys=1)`` which exercises both
+            credentials and bucket reachability without uploading
+            anything. Returns ``{ok, message, bucket, endpoint}`` so the
+            UI can render a green / red status line in the OSS panel.
+            """
+            from happyhorse_inline.oss_uploader import (
+                OssConfig,
+                OssNotConfigured,
+                OssUploadError,
+            )
+
+            settings = self._read_settings()
+            try:
+                cfg = OssConfig.from_settings(settings)
+            except OssNotConfigured as exc:
+                return {
+                    "ok": False,
+                    "kind": "client",
+                    "message": str(exc),
+                }
+            try:
+                bucket = await asyncio.to_thread(self._oss._bucket, cfg)
+                result = await asyncio.to_thread(
+                    bucket.list_objects, prefix=cfg.path_prefix, max_keys=1
+                )
+            except OssUploadError as exc:
+                return {
+                    "ok": False,
+                    "kind": "dependency",
+                    "message": str(exc),
+                    "bucket": cfg.bucket,
+                    "endpoint": cfg.endpoint,
+                }
+            except Exception as exc:  # noqa: BLE001
+                return {
+                    "ok": False,
+                    "kind": "vendor",
+                    "message": f"{type(exc).__name__}: {exc}",
+                    "bucket": cfg.bucket,
+                    "endpoint": cfg.endpoint,
+                }
+            count = len(getattr(result, "object_list", []) or [])
+            return {
+                "ok": True,
+                "message": (
+                    f"OSS 配置可用：bucket={cfg.bucket} endpoint={cfg.endpoint}，"
+                    f"已读到 {count} 个对象（前缀 {cfg.path_prefix!r}）。"
+                ),
+                "bucket": cfg.bucket,
+                "endpoint": cfg.endpoint,
+                "prefix": cfg.path_prefix,
+            }
 
         # Upload ---------------------------------------------------------
         @router.post("/upload")
@@ -2304,10 +2383,16 @@ class Plugin(PluginBase):
         @router.post("/voices/preview")
         async def preview_voice(body: VoicePreviewBody) -> dict:
             try:
-                preview_path = self._active_data_dir() / "previews"
+                # Write under uploads/previews/ so the existing
+                # GET /uploads/{rel_path} static route can serve it back
+                # to the UI as a playable URL. Earlier this returned the
+                # raw Windows absolute path which the <audio> tag could
+                # not load, leaving the user with no audible preview.
+                preview_subdir = "previews"
+                preview_path = self._uploads_dir() / preview_subdir
                 preview_path.mkdir(parents=True, exist_ok=True)
-                out = preview_path / f"{uuid.uuid4().hex[:8]}.mp3"
-                # Engine selection — same logic as pipeline step-4.
+                filename = f"{uuid.uuid4().hex[:8]}.mp3"
+                out = preview_path / filename
                 voice_id = await self._resolve_tts_voice_id(body.voice_id)
                 engine = (
                     "edge"
@@ -2328,7 +2413,15 @@ class Plugin(PluginBase):
                         voice_id=voice_id,
                     )
                     out.write_bytes(synth_result["audio_bytes"])
-                return {"ok": True, "audio_path": str(out)}
+                rel = f"{preview_subdir}/{filename}"
+                preview_url = build_preview_url(PLUGIN_ID, rel)
+                return {
+                    "ok": True,
+                    "audio_path": str(out),
+                    "preview_url": preview_url,
+                    "url": preview_url,
+                    "engine": engine,
+                }
             except Exception as exc:  # noqa: BLE001
                 return {"ok": False, "error": str(exc)}
 

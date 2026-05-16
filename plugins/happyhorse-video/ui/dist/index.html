@@ -26,8 +26,11 @@ const PLUGIN_ID = "happyhorse-video";
 
 function apiBase() {
   const meta = (window.OpenAkita && window.OpenAkita.meta) || {};
-  if (meta.apiBase) return meta.apiBase.replace(/\/$/, "");
-  return `/api/plugins/${PLUGIN_ID}`;
+  const injected = (meta.apiBase || "").replace(/\/$/, "");
+  if (injected.includes("/api/plugins/")) {
+    return injected;
+  }
+  return `${injected}/api/plugins/${PLUGIN_ID}`;
 }
 
 async function api(method, path, body) {
@@ -57,6 +60,24 @@ function friendlyApiMessage(error, fallback) {
     } catch (_) {}
   }
   return msg.replace(/\s*\{.*\}\s*$/, "").trim() || fallback;
+}
+
+function friendlyTaskError(message, fallback = "任务执行失败") {
+  const msg = String(message || "");
+  const jsonStart = msg.indexOf("{");
+  if (jsonStart >= 0) {
+    try {
+      const payload = JSON.parse(msg.slice(jsonStart));
+      if (/asynchronous calls/i.test(payload.message || "")) {
+        return "当前 DashScope API Key 不支持异步图片调用，已尝试自动改用同步调用；如果仍失败，请切换到千问图片模型或检查账号权限。";
+      }
+      return payload.detail || payload.message || payload.error || fallback;
+    } catch (_) {}
+  }
+  if (/asynchronous calls/i.test(msg)) {
+    return "当前 DashScope API Key 不支持异步图片调用，请切换到同步图片模型或检查账号权限。";
+  }
+  return msg || fallback;
 }
 
 const ICONIFY_ICONS = {
@@ -786,7 +807,7 @@ function TaskPreviewPane({ taskId, task, costPreview, onGoTasks, showCost = true
             <video src={videoUrl} controls loop />
           </div>
         ) : imageUrls.length ? (
-          <div className="image-result-grid">
+          <div className={"image-result-grid" + (imageUrls.length === 1 ? " image-result-grid--single" : "")}>
             {imageUrls.map((url, idx) => (
               <a key={url + idx} href={url} target="_blank" rel="noreferrer" className="image-result-card">
                 <img src={url} alt={`生成图片 ${idx + 1}`} />
@@ -803,7 +824,9 @@ function TaskPreviewPane({ taskId, task, costPreview, onGoTasks, showCost = true
 
       {(status === "failed" || status === "cancelled" || status === "timeout") && (
         <div className="card">
-          <Banner kind="danger">{liveTask?.error_message || `任务状态：${status}`}</Banner>
+          <Banner kind="danger">
+            {friendlyTaskError(liveTask?.error_message, `任务状态：${status}`)}
+          </Banner>
         </div>
       )}
 
@@ -893,6 +916,47 @@ function CreateTab({
     setModelId(fromSettings || fromCatalog || modelOptions[0]?.model_id || "");
   }, [mode, catalog, settings]);
 
+  // Per-model allowed resolutions / durations / aspects. The global
+  // catalog.resolutions list is just the union of every model; using it
+  // verbatim lets the user pick e.g. "480P" for happyhorse-1.0-t2v which
+  // only accepts 720P/1080P, and DashScope then 422s on submit.
+  const modelEntry = useMemo(
+    () => modelOptions.find((m) => m.model_id === modelId || m.id === modelId),
+    [modelOptions, modelId]
+  );
+  const allowedResolutions = useMemo(() => {
+    const list = (modelEntry?.resolutions && modelEntry.resolutions.length)
+      ? modelEntry.resolutions
+      : (catalog.resolutions || ["480P", "720P", "1080P"]);
+    return list;
+  }, [modelEntry, catalog]);
+  const allowedAspects = useMemo(() => {
+    const list = (modelEntry?.aspects && modelEntry.aspects.length)
+      ? modelEntry.aspects
+      : (catalog.aspects || ["16:9", "9:16", "1:1", "4:3", "3:4"]);
+    return list;
+  }, [modelEntry, catalog]);
+  const allowedDuration = useMemo(() => {
+    const range = modelEntry?.duration_range;
+    return Array.isArray(range) && range.length === 2 ? range : [3, 15];
+  }, [modelEntry]);
+
+  useEffect(() => {
+    if (allowedResolutions.length && !allowedResolutions.includes(resolution)) {
+      setResolution(allowedResolutions[0]);
+    }
+  }, [allowedResolutions]);
+  useEffect(() => {
+    if (allowedAspects.length && !allowedAspects.includes(aspect)) {
+      setAspect(allowedAspects[0]);
+    }
+  }, [allowedAspects]);
+  useEffect(() => {
+    const [lo, hi] = allowedDuration;
+    if (duration < lo) setDuration(lo);
+    else if (duration > hi) setDuration(hi);
+  }, [allowedDuration]);
+
   useEffect(() => {
     if (voiceId) return;
     const voices = (catalog.voices || []).length ? catalog.voices : FALLBACK_SYSTEM_VOICES;
@@ -969,6 +1033,7 @@ function CreateTab({
       // Reset the token so the next legitimate submit doesn't reuse this
       // one (which would short-circuit to the just-created task row).
       requestIdRef.current = `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      if (tid) onSubmit?.({ taskId: tid, label: "视频任务" });
     } catch (e) {
       alert(`提交失败: ${e.message}`);
     } finally {
@@ -1196,15 +1261,23 @@ function CreateTab({
               <input
                 type="number"
                 value={duration}
-                onChange={(e) => setDuration(parseInt(e.target.value, 10) || 5)}
-                min={3}
-                max={15}
+                onChange={(e) => {
+                  const [lo, hi] = allowedDuration;
+                  const v = parseInt(e.target.value, 10);
+                  if (Number.isFinite(v)) {
+                    setDuration(Math.max(lo, Math.min(hi, v)));
+                  } else {
+                    setDuration(lo);
+                  }
+                }}
+                min={allowedDuration[0]}
+                max={allowedDuration[1]}
               />
             </div>
             <div className="field">
               <label>分辨率</label>
               <select value={resolution} onChange={(e) => setResolution(e.target.value)}>
-                {(catalog.resolutions || []).map((r) => (
+                {allowedResolutions.map((r) => (
                   <option key={r}>{r}</option>
                 ))}
               </select>
@@ -1212,7 +1285,7 @@ function CreateTab({
             <div className="field">
               <label>比例</label>
               <select value={aspect} onChange={(e) => setAspect(e.target.value)}>
-                {(catalog.aspects || []).map((a) => (
+                {allowedAspects.map((a) => (
                   <option key={a}>{a}</option>
                 ))}
               </select>
@@ -1232,7 +1305,7 @@ function CreateTab({
         taskId={previewTaskId}
         task={liveTask}
         costPreview={costPreview}
-        onGoTasks={onSubmit}
+        onGoTasks={() => onSubmit?.({ goTasks: true })}
       />
     </div>
   );
@@ -1312,7 +1385,7 @@ function ImageTab({ catalog, settings, onSubmit, onSettings }) {
       if (tid) setPreviewTaskId(tid);
       // Roll the token so the next submit is treated as a new request.
       imageRequestIdRef.current = `web_img_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      onSubmit?.();
+      if (tid) onSubmit?.({ taskId: tid, label: "图片任务" });
     } catch (e) {
       alert(`提交失败：${e.message}`);
     } finally {
@@ -1450,7 +1523,12 @@ function ImageTab({ catalog, settings, onSubmit, onSettings }) {
         </div>
       </div>
 
-      <TaskPreviewPane taskId={previewTaskId} task={liveTask} showCost={false} onGoTasks={onSubmit} />
+      <TaskPreviewPane
+        taskId={previewTaskId}
+        task={liveTask}
+        showCost={false}
+        onGoTasks={() => onSubmit?.({ goTasks: true })}
+      />
     </div>
   );
 }
@@ -1657,7 +1735,6 @@ function TasksTab() {
                     <div className="task-info">
                       <div className="task-info-head">
                         <strong>{t.mode || "未知模式"}</strong>
-                        <TaskStatusBadge status={status} />
                       </div>
                       <div className="task-card-prompt">{t.prompt || t.model_id || tid}</div>
                       <div className="task-meta">
@@ -1666,38 +1743,41 @@ function TasksTab() {
                       </div>
                     </div>
                   </button>
-                  <div className="task-card__actions" onClick={(e) => e.stopPropagation()}>
-                    {canCancel && (
+                  <div className="task-card__side" onClick={(e) => e.stopPropagation()}>
+                    <TaskStatusBadge status={status} />
+                    <div className="task-card__actions">
+                      {canCancel && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          disabled={!!busyAction}
+                          onClick={() => runAction(tid, "cancel")}
+                          title="取消运行中的任务"
+                        >
+                          {busyAction === "cancel" ? <Spinner /> : <Icon name="x" size={12} />} 取消
+                        </button>
+                      )}
+                      {canRetry && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          disabled={!!busyAction}
+                          onClick={() => runAction(tid, "retry")}
+                          title="按相同参数重新提交"
+                        >
+                          {busyAction === "retry" ? <Spinner /> : <Icon name="refresh" size={12} />} 重试
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="btn btn-sm btn-ghost"
                         disabled={!!busyAction}
-                        onClick={() => runAction(tid, "cancel")}
-                        title="取消运行中的任务"
+                        onClick={() => runAction(tid, "delete")}
+                        title="从列表中删除（不会删除本地文件）"
                       >
-                        {busyAction === "cancel" ? <Spinner /> : <Icon name="x" size={12} />} 取消
+                        {busyAction === "delete" ? <Spinner /> : <Icon name="trash" size={12} />} 删除
                       </button>
-                    )}
-                    {canRetry && (
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-ghost"
-                        disabled={!!busyAction}
-                        onClick={() => runAction(tid, "retry")}
-                        title="按相同参数重新提交"
-                      >
-                        {busyAction === "retry" ? <Spinner /> : <Icon name="refresh" size={12} />} 重试
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
-                      disabled={!!busyAction}
-                      onClick={() => runAction(tid, "delete")}
-                      title="从列表中删除（不会删除本地文件）"
-                    >
-                      {busyAction === "delete" ? <Spinner /> : <Icon name="trash" size={12} />} 删除
-                    </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -2241,12 +2321,22 @@ function VoicesTab({ settings }) {
         text: "你好，这是一段试听。",
       });
       if (!r.ok) throw new Error(r.error || "preview failed");
-      setPreviewResult((prev) => ({ ...prev, [vid]: r.audio_path || "试听已生成" }));
+      const url = r.preview_url || r.url || "";
+      setPreviewResult((prev) => ({
+        ...prev,
+        [vid]: { url, label: url ? "试听已就绪" : (r.audio_path || "试听已生成") },
+      }));
+      if (url) {
+        try {
+          const audio = new Audio(url);
+          audio.play().catch(() => {});
+        } catch (_) {}
+      }
     } catch (e) {
       const msg = settings?.api_key_set
         ? friendlyApiMessage(e, "试听服务暂不可用，请稍后重试。")
         : "请先在设置里配置 DashScope Key。";
-      setPreviewResult((prev) => ({ ...prev, [vid]: `试听失败：${msg}` }));
+      setPreviewResult((prev) => ({ ...prev, [vid]: { url: "", label: `试听失败：${msg}` } }));
     } finally {
       setPreviewing("");
     }
@@ -2326,8 +2416,12 @@ function VoicesTab({ settings }) {
       <div className="voice-media">
         {previewing === v.id ? (
           <span className="voice-media__busy"><Spinner /> 合成试听中…</span>
+        ) : previewResult[v.id]?.url ? (
+          <audio controls src={previewResult[v.id].url} style={{ width: "100%" }} />
+        ) : previewResult[v.id]?.label ? (
+          <span className="voice-media__empty">{previewResult[v.id].label}</span>
         ) : previewResult[v.id] ? (
-          <span className="voice-media__empty">{previewResult[v.id]}</span>
+          <span className="voice-media__empty">{String(previewResult[v.id])}</span>
         ) : (
           <span className="voice-media__empty">尚未生成试听音频，点击下方按钮</span>
         )}
@@ -3170,65 +3264,105 @@ function StorageSettings({ form, setFormValue }) {
         </SettingField>
       </div>
 
-      <div
-        className="storage-total-card"
-        title={stats?.data_dir?.path || dataDirPath || ""}
-        onClick={() => open(stats?.data_dir?.path || dataDirPath)}
-      >
-        <div>
-          <div className="storage-total-card__label">当前总占用</div>
-          <div className="storage-total-card__path">
-            {stats?.data_dir?.path || dataDirPath || "尚未确定数据目录"}
-          </div>
-        </div>
-        <div className="storage-total-card__value">
-          <strong>{stats ? fmtMb(totalSizeMb) : "—"}</strong>
-          <span>{stats ? `${totalFiles} 个文件` : "等待统计"}</span>
-        </div>
-        <button
-          className="btn btn-sm btn-ghost storage-total-card__refresh"
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            refresh();
-          }}
+      <div className="storage-stats-block">
+        <div
+          className="storage-total-card"
+          title={stats?.data_dir?.path || dataDirPath || ""}
+          onClick={() => open(stats?.data_dir?.path || dataDirPath)}
         >
-          <Icon name="refresh" size={12} /> 刷新
-        </button>
-      </div>
-      <div className="storage-grid">
-        {statCards.map(([key, label]) => {
-          const s = stats?.[key];
-          const hasData = !!s;
-          return (
-            <div
-              className={"storage-card" + (hasData ? "" : " storage-card--empty")}
-              key={key}
-              title={s?.path || ""}
-              onClick={() => hasData && open(s.path)}
-            >
-              <div className="storage-card__label">{label}</div>
-              <div className="storage-card__value">{hasData ? fmtMb(s.size_mb) : "—"}</div>
-              <div className="storage-card__meta">
-                {hasData ? `${s.file_count} 个文件${s.truncated ? " +" : ""}` : "等待统计"}
-              </div>
+          <div className="storage-total-card__main">
+            <div className="storage-total-card__label">当前总占用</div>
+            <div className="storage-total-card__path">
+              {stats?.data_dir?.path || dataDirPath || "尚未确定数据目录"}
             </div>
-          );
-        })}
+          </div>
+          <div className="storage-total-card__value">
+            <strong>{stats ? fmtMb(totalSizeMb) : "—"}</strong>
+            <span>{stats ? `${totalFiles} 个文件` : "等待统计"}</span>
+          </div>
+          <button
+            className="btn btn-sm btn-ghost storage-total-card__refresh"
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              refresh();
+            }}
+          >
+            <Icon name="refresh" size={12} /> 刷新
+          </button>
+        </div>
+        <div className="storage-grid">
+          {statCards.map(([key, label]) => {
+            const s = stats?.[key];
+            const hasData = !!s;
+            return (
+              <div
+                className={"storage-card" + (hasData ? "" : " storage-card--empty")}
+                key={key}
+                title={s?.path || ""}
+                onClick={() => hasData && open(s.path)}
+              >
+                <div className="storage-card__label">{label}</div>
+                <div className="storage-card__value">{hasData ? fmtMb(s.size_mb) : "—"}</div>
+                <div className="storage-card__meta">
+                  {hasData ? `${s.file_count} 个文件${s.truncated ? " +" : ""}` : "等待统计"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
       <SettingField label="保留天数" hint={`清理 ${form.retention_days || 30} 天前的过期任务。`}>
         <div className="cleanup-row">
-        <input
-          className="retention-input"
-          type="number"
-          min="1"
-          value={form.retention_days || "30"}
-          onChange={(e) => setFormValue("retention_days", e.target.value)}
-        />
-        <span className="text-xs text-muted">清理 {form.retention_days || 30} 天前的过期任务。</span>
-        <button className="btn btn-sm btn-ghost" onClick={cleanup}>立即清理</button>
+          <div className="cleanup-input-group">
+            <input
+              className="retention-input"
+              type="number"
+              min="1"
+              value={form.retention_days || "30"}
+              onChange={(e) => setFormValue("retention_days", e.target.value)}
+            />
+            <span>天</span>
+          </div>
+          <div className="cleanup-copy">
+            <strong>清理过期任务</strong>
+            <span>删除超过 {form.retention_days || 30} 天的历史任务和临时文件，释放本地空间。</span>
+          </div>
+          <button className="btn btn-sm btn-ghost" onClick={cleanup}>立即清理</button>
         </div>
       </SettingField>
+    </div>
+  );
+}
+
+function TestResult({ status, onDismiss }) {
+  if (!status) return null;
+  const { kind, title, detail, time } = status;
+  const iconNode =
+    kind === "ok" ? <Icon name="check" size={14} />
+    : kind === "fail" ? <Icon name="alert-triangle" size={14} />
+    : kind === "warn" ? <Icon name="alert-triangle" size={14} />
+    : <Spinner />;
+  return (
+    <div className={"settings-test-result settings-test-result--" + kind} role="status">
+      <span className="settings-test-result__icon">{iconNode}</span>
+      <div className="settings-test-result__body">
+        <div className="settings-test-result__head">
+          <strong className="settings-test-result__title">{title}</strong>
+          {time && <span className="settings-test-result__time">{time}</span>}
+        </div>
+        {detail && <div className="settings-test-result__detail">{detail}</div>}
+      </div>
+      {onDismiss && (
+        <button
+          type="button"
+          className="settings-test-result__close"
+          onClick={onDismiss}
+          aria-label="关闭"
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }
@@ -3237,14 +3371,23 @@ function SettingsTab({ catalog, settings, onSave }) {
   catalog = catalog || { modes: [], models: [], default_models: {} };
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [apiStatus, setApiStatus] = useState(null);
+  const [apiTesting, setApiTesting] = useState(false);
+  const [ossStatus, setOssStatus] = useState(null);
+  const [ossTesting, setOssTesting] = useState(false);
   const autosaveTimers = useRef({});
+
+  const nowStr = () =>
+    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   useEffect(() => {
     setForm(settings || {});
   }, [settings]);
 
   useEffect(() => (
-    () => Object.values(autosaveTimers.current).forEach((timer) => clearTimeout(timer))
+    () => {
+      Object.values(autosaveTimers.current).forEach((timer) => clearTimeout(timer));
+    }
   ), []);
 
   const savePartial = async (updates) => {
@@ -3260,7 +3403,7 @@ function SettingsTab({ catalog, settings, onSave }) {
     try {
       await api("PUT", "/settings", { updates: cleanUpdates });
       setForm((prev) => ({ ...prev, ...cleanUpdates }));
-      onSave?.();
+      onSave?.(cleanUpdates, "设置已自动保存");
     } catch (e) {
       alert(`保存失败：${e.message}`);
     } finally {
@@ -3279,12 +3422,181 @@ function SettingsTab({ catalog, settings, onSave }) {
     return undefined;
   };
 
+  const [apiKeySavedThisSession, setApiKeySavedThisSession] = useState(false);
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  const [apiKeyPlaintext, setApiKeyPlaintext] = useState("");
+  const [apiKeyDirty, setApiKeyDirty] = useState(false);
+  const apiKeyConfigured = !!(
+    apiKeySavedThisSession || form.api_key_set || settings?.api_key_set
+  );
+  const apiKeyDraft = String(form.api_key || "");
+  const apiKeyNeedsSave = apiKeyDirty && !!apiKeyDraft.trim() && !apiKeyDraft.includes("***");
+
+  const updateApiKeyDraft = (value) => {
+    clearTimeout(autosaveTimers.current.api_key);
+    setApiKeyPlaintext(value);
+    setApiKeyDirty(true);
+    setForm((prev) => ({ ...prev, api_key: value }));
+  };
+
+  const toggleApiKeyVisible = async () => {
+    if (apiKeyVisible) {
+      setApiKeyVisible(false);
+      return;
+    }
+    const current = String(form.api_key || "");
+    if (current.includes("***") && !apiKeyPlaintext) {
+      setApiStatus({
+        kind: "info",
+        title: "正在读取密钥…",
+        detail: "只在点击显示时读取本地保存的完整 Key。",
+        time: nowStr(),
+      });
+      try {
+        const r = await api("POST", "/settings/reveal-secret", { key: "api_key" });
+        const value = String(r?.value || "");
+        setApiKeyPlaintext(value);
+        setApiKeyDirty(false);
+        setForm((prev) => ({ ...prev, api_key: value, api_key_set: !!value }));
+        setApiStatus(null);
+      } catch (e) {
+        setApiStatus({
+          kind: "fail",
+          title: "读取密钥失败",
+          detail: String(e?.message || e),
+          time: nowStr(),
+        });
+        return;
+      }
+    }
+    setApiKeyVisible(true);
+  };
+
+  const saveApiKey = async () => {
+    const text = apiKeyDraft.trim();
+    if (!text || text.includes("***")) {
+      setApiStatus({
+        kind: "warn",
+        title: apiKeyConfigured ? "无需重复保存" : "请先填写 API Key",
+        detail: apiKeyConfigured
+          ? "当前密钥已保存。如需更换，请重新粘贴后再点保存密钥。"
+          : "把阿里云百炼控制台的 sk-… 粘贴到输入框，再点保存密钥。",
+        time: nowStr(),
+      });
+      return;
+    }
+    setSaving(true);
+    setApiStatus({ kind: "info", title: "保存中…", detail: "正在写入本地配置。", time: nowStr() });
+    try {
+      await api("PUT", "/settings", { updates: { api_key: text } });
+      const next = { api_key: text, api_key_set: true };
+      setForm((prev) => ({ ...prev, ...next }));
+      setApiKeyPlaintext(text);
+      setApiKeyDirty(false);
+      setApiKeySavedThisSession(true);
+      onSave?.(next, "DashScope API Key 已保存");
+      setApiStatus({
+        kind: "ok",
+        title: "保存成功",
+        detail: "DashScope API Key 已写入本地配置，可点击「测试连接」验证。",
+        time: nowStr(),
+      });
+    } catch (e) {
+      setApiStatus({
+        kind: "fail",
+        title: "保存失败",
+        detail: String(e?.message || e),
+        time: nowStr(),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const testConnection = async () => {
-    const rawKey = form.api_key || "";
-    const r = await api("POST", "/test-connection", {
-      api_key: rawKey.includes("***") ? "" : rawKey,
-    });
-    alert(r.ok ? "连接成功" : `失败：${r.message || "unknown"}`);
+    setApiTesting(true);
+    setApiStatus({ kind: "info", title: "测试中…", detail: "正在请求 DashScope /v1/models。", time: nowStr() });
+    try {
+      const rawKey = apiKeyPlaintext || form.api_key || "";
+      const r = await api("POST", "/test-connection", {
+        api_key: rawKey.includes("***") ? "" : rawKey,
+      });
+      if (r?.ok) {
+        setApiStatus({
+          kind: "ok",
+          title: "连接成功",
+          detail: `当前 Key 可用${r.status ? `（HTTP ${r.status}）` : ""}。`,
+          time: nowStr(),
+        });
+      } else {
+        setApiStatus({
+          kind: "fail",
+          title: "连接失败",
+          detail: String(r?.message || "未知错误"),
+          time: nowStr(),
+        });
+      }
+    } catch (e) {
+      setApiStatus({
+        kind: "fail",
+        title: "测试连接失败",
+        detail: String(e?.message || e),
+        time: nowStr(),
+      });
+    } finally {
+      setApiTesting(false);
+    }
+  };
+
+  const ossFieldsFilled = !!(
+    String(form.oss_endpoint || "").trim() &&
+    String(form.oss_bucket || "").trim() &&
+    String(form.oss_access_key_id || "").trim() &&
+    String(form.oss_access_key_secret || "").trim()
+  );
+
+  const testOss = async () => {
+    if (!ossFieldsFilled) {
+      setOssStatus({
+        kind: "warn",
+        title: "请先填写 OSS 凭据",
+        detail: "需要 Endpoint、Bucket、AccessKey ID 和 AccessKey Secret 四个字段同时不为空。",
+        time: nowStr(),
+      });
+      return;
+    }
+    setOssTesting(true);
+    setOssStatus({ kind: "info", title: "测试中…", detail: "正在调用 OSS list_objects 探测连通性与权限。", time: nowStr() });
+    try {
+      const r = await api("POST", "/oss/test", {});
+      if (r?.ok) {
+        const meta = [r.bucket && `bucket=${r.bucket}`, r.endpoint && `endpoint=${r.endpoint}`, r.prefix && `prefix=${r.prefix}`]
+          .filter(Boolean)
+          .join("  ·  ");
+        setOssStatus({
+          kind: "ok",
+          title: "OSS 配置可用",
+          detail: r.message || meta || "凭据有效，bucket 可读。",
+          time: nowStr(),
+        });
+      } else {
+        setOssStatus({
+          kind: "fail",
+          title: "OSS 测试失败",
+          detail: String(r?.message || "未知错误"),
+          time: nowStr(),
+        });
+      }
+    } catch (e) {
+      setOssStatus({
+        kind: "fail",
+        title: "OSS 测试失败",
+        detail: String(e?.message || e),
+        time: nowStr(),
+      });
+    } finally {
+      setOssTesting(false);
+    }
   };
 
   if (!catalog) return <Spinner />;
@@ -3309,31 +3621,38 @@ function SettingsTab({ catalog, settings, onSave }) {
           icon="key"
           title="阿里云百炼"
           desc="DashScope API（大模型接口）用于提交 HappyHorse / Wan / 数字人任务。"
-          className={settings?.api_key_set ? "" : "api-key-section api-key-section--missing"}
+          className={apiKeyConfigured ? "" : "api-key-section api-key-section--missing"}
         >
-          <SettingField label="DashScope API Key" hint={settings?.api_key_set ? "已保存密钥；留空或保持脱敏值不会覆盖旧密钥。" : "获取地址：阿里云百炼控制台"}>
+          <SettingField label="DashScope API Key" hint={apiKeyConfigured ? "密钥已保存。默认以密码框隐藏；点击「显示」可查看完整 Key，如需更换请重新粘贴后保存。" : "获取地址：阿里云百炼控制台；填写后请点击保存密钥。"}>
           <div className="api-key-input-row">
             <input
-              type="password"
+              type={apiKeyVisible ? "text" : "password"}
               value={form.api_key || ""}
-              onChange={(e) => set("api_key", e.target.value, { delay: 900 })}
-              placeholder={settings?.api_key_set ? "(已保存)" : "sk-xxxxxxxxxxxxxxxx"}
+              onChange={(e) => updateApiKeyDraft(e.target.value)}
+              placeholder={apiKeyConfigured ? "(已保存；重新粘贴可更换)" : "sk-xxxxxxxxxxxxxxxx"}
+              autoComplete="off"
+              spellCheck={false}
             />
+            <button className="btn" type="button" onClick={saveApiKey} disabled={saving || !apiKeyNeedsSave}>
+              {saving ? <Spinner /> : <Icon name="save" size={12} />} 保存密钥
+            </button>
             <button
               className="btn btn-ghost"
               type="button"
-              onClick={(e) => {
-                const input = e.currentTarget.parentElement?.querySelector("input");
-                if (input) input.type = input.type === "password" ? "text" : "password";
-              }}
+              onClick={toggleApiKeyVisible}
+              aria-pressed={apiKeyVisible}
+              title={apiKeyVisible ? "隐藏密钥" : "显示密钥"}
             >
-              显示
+              {apiKeyVisible ? "隐藏" : "显示"}
             </button>
-            <button className="btn btn-ghost" onClick={testConnection} disabled={saving}>
-              测试连接
+            <button className="btn btn-ghost" type="button" onClick={testConnection} disabled={saving || apiTesting}>
+              {apiTesting ? <Spinner /> : <Icon name="play" size={12} />} 测试连接
             </button>
           </div>
           </SettingField>
+          {apiStatus && (
+            <TestResult status={apiStatus} onDismiss={() => setApiStatus(null)} />
+          )}
           <SettingField label="区域 Endpoint" hint="该配置影响所有 DashScope 请求发往中国区或国际区。">
           <select
             value={form.base_url || "https://dashscope.aliyuncs.com"}
@@ -3384,6 +3703,24 @@ function SettingsTab({ catalog, settings, onSave }) {
             onChange={(e) => set("oss_path_prefix", e.target.value)}
           />
           </SettingField>
+          <div className="settings-test-bar">
+            <div className="text-xs text-muted">
+              {ossFieldsFilled
+                ? "已填写四个字段，可点击右侧按钮真实连通一次 OSS。"
+                : "请先填写 Endpoint、Bucket、AccessKey ID、AccessKey Secret 后再测试。"}
+            </div>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={testOss}
+              disabled={ossTesting || !ossFieldsFilled}
+            >
+              {ossTesting ? <Spinner /> : <Icon name="play" size={12} />} 测试 OSS
+            </button>
+          </div>
+          {ossStatus && (
+            <TestResult status={ossStatus} onDismiss={() => setOssStatus(null)} />
+          )}
         </SettingSection>
 
         <SettingSection icon="mic" title="TTS 引擎">
@@ -3592,6 +3929,8 @@ function App() {
   const [tab, setTab] = useState("image");
   const [catalog, setCatalog] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [saveToast, setSaveToast] = useState(null);
+  const toastTimer = useRef(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -3607,10 +3946,55 @@ function App() {
   useEffect(() => {
     loadAll();
     if (window.OpenAkita?.ready) window.OpenAkita.ready();
+    return () => clearTimeout(toastTimer.current);
   }, [loadAll]);
+
+  const notifySaved = useCallback((message = "设置已自动保存") => {
+    clearTimeout(toastTimer.current);
+    setSaveToast({
+      id: Date.now(),
+      message,
+      detail: "已写入本地配置",
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    });
+    toastTimer.current = setTimeout(() => setSaveToast(null), 3000);
+  }, []);
+
+  const notifyTaskSubmitted = useCallback(({ taskId = "", label = "任务" } = {}) => {
+    clearTimeout(toastTimer.current);
+    setSaveToast({
+      id: Date.now(),
+      message: `${label}已提交`,
+      detail: taskId ? `已在右侧显示进度，任务 ID：${taskId}` : "已在右侧显示进度",
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    });
+    toastTimer.current = setTimeout(() => setSaveToast(null), 3500);
+  }, []);
+
+  const handleSettingsSaved = useCallback(async (updates, message) => {
+    if (updates) {
+      setSettings((prev) => ({ ...(prev || {}), ...updates }));
+    }
+    notifySaved(message || "设置已自动保存");
+    await loadAll();
+    if (updates) {
+      setSettings((prev) => ({ ...(prev || {}), ...updates }));
+    }
+  }, [loadAll, notifySaved]);
 
   return (
     <div className="app">
+      {saveToast && (
+        <div className="settings-save-toast" role="status" aria-live="polite">
+          <div className="settings-save-toast__main">
+            <Icon name="check" size={15} />
+            <div>
+              <strong>{saveToast.message}</strong>
+              <span>{saveToast.time} {saveToast.detail}</span>
+            </div>
+          </div>
+        </div>
+      )}
       <HeaderNav tab={tab} onTab={setTab} />
       <main className="content">
         <div className="app-alert-region">
@@ -3620,7 +4004,7 @@ function App() {
           <CreateTab
             catalog={catalog}
             settings={settings}
-            onSubmit={() => setTab("tasks")}
+            onSubmit={(payload) => payload?.goTasks ? setTab("tasks") : notifyTaskSubmitted(payload)}
             onSettings={() => setTab("settings")}
             initialMode="t2v"
             title="视频生成"
@@ -3633,7 +4017,7 @@ function App() {
           <CreateTab
             catalog={catalog}
             settings={settings}
-            onSubmit={() => setTab("tasks")}
+            onSubmit={(payload) => payload?.goTasks ? setTab("tasks") : notifyTaskSubmitted(payload)}
             onSettings={() => setTab("settings")}
             initialMode="photo_speak"
             title="数字人"
@@ -3646,7 +4030,7 @@ function App() {
           <ImageTab
             catalog={catalog}
             settings={settings}
-            onSubmit={() => setTab("tasks")}
+            onSubmit={(payload) => payload?.goTasks ? setTab("tasks") : notifyTaskSubmitted(payload)}
             onSettings={() => setTab("settings")}
           />
         )}
@@ -3656,7 +4040,7 @@ function App() {
         {tab === "figures" && <FiguresTab />}
         {tab === "prompt" && <PromptTab settings={settings} />}
         {tab === "settings" && (
-          <SettingsTab catalog={catalog} settings={settings} onSave={loadAll} />
+          <SettingsTab catalog={catalog} settings={settings} onSave={handleSettingsSaved} />
         )}
       </main>
     </div>

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
 from happyhorse_dashscope_client import (
     DASHSCOPE_BASE_URL_BJ,
     HappyhorseDashScopeClient,
     make_default_settings,
 )
+from happyhorse_inline.vendor_client import VendorError
 
 
 def _read_settings_factory(api_key: str = "", base_url: str = ""):
@@ -58,3 +60,40 @@ def test_auth_headers_use_settings_api_key():
     c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-from-settings"))
     headers = c.auth_headers()
     assert headers["Authorization"].endswith("sk-from-settings")
+
+
+@pytest.mark.asyncio
+async def test_image_multimodal_falls_back_when_async_is_not_allowed(monkeypatch):
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-from-settings"))
+    calls: list[str] = []
+
+    async def fake_submit_async(path, body):
+        calls.append("async")
+        raise VendorError(
+            "HTTP 403: async not allowed",
+            status=403,
+            body={
+                "code": "AccessDenied",
+                "message": "current user api does not support asynchronous calls",
+            },
+            retryable=False,
+            kind="auth",
+        )
+
+    async def fake_request(method, path, **kwargs):
+        calls.append("sync")
+        return {"output": {"image_url": "https://example.test/out.png"}}
+
+    monkeypatch.setattr(c, "_submit_async", fake_submit_async)
+    monkeypatch.setattr(c, "request", fake_request)
+
+    result = await c.submit_image_multimodal(prompt="一匹小马", async_mode=True)
+
+    assert result["async"] is False
+    assert result["output"]["image_url"] == "https://example.test/out.png"
+    assert calls == ["async", "sync"]
+
+    second = await c.submit_image_multimodal(prompt="一匹小马", async_mode=True)
+
+    assert second["async"] is False
+    assert calls == ["async", "sync", "sync"]
