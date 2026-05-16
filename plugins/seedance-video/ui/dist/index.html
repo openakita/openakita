@@ -5262,6 +5262,25 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
           </div>
           <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.api.baseUrl.help")}</p>
         </div>
+        <div className="grid-2">
+          <div className="form-row">
+            <label className="label">共享中转站名称（可选）</label>
+            <input className="input" type="text"
+              value={config.ark_relay_endpoint || ""}
+              onChange={e => setConfig({...config, ark_relay_endpoint: e.target.value})}
+              onBlur={e => save({ark_relay_endpoint: e.target.value.trim()})}
+              placeholder="例如: yunwu-video" />
+            <p className="text-xs text-dim" style={{marginTop:4}}>来自 LLM 配置页 relay_endpoints；填写后优先使用共享中转站。</p>
+          </div>
+          <div className="form-row">
+            <label className="label">中转站失败策略</label>
+            <select className="input select" value={config.ark_relay_fallback_policy || "official"}
+              onChange={e => save({ark_relay_fallback_policy: e.target.value})}>
+              <option value="official">official：失败时回官方/插件配置</option>
+              <option value="strict">strict：失败时阻止提交</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <div className="setting-section oa-settings-section">

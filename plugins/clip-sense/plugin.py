@@ -196,17 +196,15 @@ class Plugin(PluginBase):
         analysis_api_key = cfg.get("dashscope_analysis_api_key") or ""
         brain = self._get_host_brain()
         if api_key:
-            # Rebuild on relay swap so the new base_url actually takes
-            # effect (update_api_key alone keeps the previous transport
-            # client). Cost is negligible — settings updates are rare.
-            if self._client and not base_url:
-                self._client.update_api_key(api_key)
-            else:
-                self._client = (
-                    ClipAsrClient(api_key, base_url=base_url)
-                    if base_url
-                    else ClipAsrClient(api_key)
-                )
+            # Always rebuild on endpoint changes so switching relay -> official
+            # resets the stored base_url as well as the key.
+            if self._client is not None:
+                await self._client.close()
+            self._client = (
+                ClipAsrClient(api_key, base_url=base_url)
+                if base_url
+                else ClipAsrClient(api_key)
+            )
             self._client.configure_analysis(
                 provider=analysis_provider,
                 brain=brain,
@@ -254,6 +252,23 @@ class Plugin(PluginBase):
         except SettingsRelayResolutionError as exc:
             from fastapi import HTTPException
             raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        ref = merged.get("_relay_reference")
+        unsupported = [
+            model
+            for model in ("paraformer-v2", "qwen-plus")
+            if ref is not None and hasattr(ref, "supports_model") and not ref.supports_model(model)
+        ]
+        if unsupported:
+            policy = str(cfg.get("dashscope_relay_fallback_policy") or "official")
+            msg = (
+                f"中转站 {relay_name!r} 不支持 clip-sense 需要的模型: "
+                f"{', '.join(unsupported)}"
+            )
+            if policy == "strict":
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail=msg)
+            logger.warning("%s; falling back to per-plugin DashScope endpoint", msg)
+            return api_key, ""
         return (merged.get("api_key") or "").strip(), (merged.get("base_url") or "").strip()
 
     def _get_host_brain(self) -> Any:

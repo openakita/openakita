@@ -295,6 +295,15 @@ class Plugin(PluginBase):
         except SettingsRelayResolutionError as exc:
             from fastapi import HTTPException
             raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        ref = merged.get("_relay_reference")
+        if ref is not None and hasattr(ref, "supports_model") and not ref.supports_model("paraformer-v2"):
+            policy = str(cfg.get("dashscope_relay_fallback_policy") or "official")
+            msg = f"中转站 {relay_name!r} 不支持 subtitle-craft 需要的模型: paraformer-v2"
+            if policy == "strict":
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail=msg)
+            logger.warning("%s; falling back to per-plugin DashScope endpoint", msg)
+            return api_key, ""
         return (merged.get("api_key") or "").strip(), (merged.get("base_url") or "").strip()
 
     async def on_unload(self) -> None:

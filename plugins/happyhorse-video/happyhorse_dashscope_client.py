@@ -383,6 +383,23 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             "Content-Type": "application/json",
         }
 
+    def _assert_relay_supports_model(self, model: str) -> None:
+        """Fail before submitting when a probed relay catalog excludes model."""
+        s = self._settings()
+        ref = s.get("_relay_reference")
+        if ref is None or not hasattr(ref, "supports_model") or ref.supports_model(model):
+            return
+        relay_name = str(s.get("relay_endpoint") or "").strip() or getattr(ref, "name", "")
+        raise VendorError(
+            (
+                f"中转站 {relay_name!r} 的模型目录不包含 {model!r}。"
+                "请在 LLM 配置页重新 Sync Models，或切换到该中转站支持的模型。"
+            ),
+            status=422,
+            retryable=False,
+            kind=ERROR_KIND_CLIENT,
+        )
+
     def update_api_key(self, api_key: str) -> None:
         if not isinstance(api_key, str):
             raise TypeError("api_key must be a string")
@@ -513,6 +530,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 retryable=False,
                 kind=ERROR_KIND_CLIENT,
             )
+        self._assert_relay_supports_model(entry.model)
 
         # Validate forbidden params (HappyHorse 1.0 family).
         if entry.forbidden_params and extra_parameters:
@@ -847,6 +865,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 retryable=False,
                 kind=ERROR_KIND_CLIENT,
             )
+        self._assert_relay_supports_model(model)
         params: dict[str, Any] = {"n": 1}
         if size:
             params["size"] = size
@@ -874,6 +893,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 retryable=False,
                 kind=ERROR_KIND_CLIENT,
             )
+        self._assert_relay_supports_model(model)
         content: list[dict[str, str]] = [{"text": prompt}]
         for url in ref_images_url:
             content.append({"image": url})
@@ -905,6 +925,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         enable_sequential: bool | None = None,
         async_mode: bool = True,
     ) -> dict[str, Any]:
+        self._assert_relay_supports_model(model)
         content: list[dict[str, str]] = [{"text": prompt}]
         for image_url in images or []:
             if image_url:
@@ -1108,6 +1129,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 retryable=False,
                 kind=ERROR_KIND_AUTH,
             )
+        self._assert_relay_supports_model(MODEL_COSYVOICE_V2)
 
         base_url = str(s.get("base_url") or DASHSCOPE_BASE_URL_BJ).rstrip("/")
         # "native" = the two official DashScope hosts WITHOUT the

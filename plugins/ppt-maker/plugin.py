@@ -37,8 +37,8 @@ from ppt_models import DeckMode, ProjectCreate, ProjectStatus, SourceStatus
 from ppt_outline import OutlineBuilder
 from ppt_pipeline import PptPipeline
 from ppt_pptxgenjs_exporter import PptxGenJsExporter
-from ppt_repair import PptRepair
 from ppt_render_model import save_generation_artifacts
+from ppt_repair import PptRepair
 from ppt_source_loader import MissingDependencyError, SourceLoader, SourceParseError
 from ppt_table_analyzer import TableAnalyzer
 from ppt_task_manager import PptTaskManager
@@ -181,7 +181,7 @@ class Plugin(PluginBase):
 
         @router.get("/settings")
         async def get_settings() -> dict[str, Any]:
-            settings = _load_settings(data_dir)
+            settings = _load_settings(data_dir, apply_relay=False)
             return {"ok": True, "settings": settings, "resolved": _resolved_storage_paths(data_dir, settings)}
 
         @router.put("/settings")
@@ -208,7 +208,7 @@ class Plugin(PluginBase):
                     )
                 except Exception:  # noqa: BLE001
                     pass
-            resolved_view = _load_settings(data_dir)
+            resolved_view = _load_settings(data_dir, apply_relay=False)
             return {
                 "ok": True,
                 "settings": resolved_view,
@@ -1494,10 +1494,7 @@ def _apply_relay_overrides(settings: dict[str, str]) -> dict[str, str]:
     if not relay_name:
         return settings
     try:
-        from openakita.relay import (
-            SettingsRelayResolutionError,
-            apply_relay_override,
-        )
+        from openakita.relay import apply_relay_override
 
         merged = apply_relay_override(
             {
@@ -1520,6 +1517,15 @@ def _apply_relay_overrides(settings: dict[str, str]) -> dict[str, str]:
         # misses; re-raise as HTTPException so the UI sees a 400.
         msg = getattr(exc, "user_message", str(exc))
         raise HTTPException(status_code=400, detail=msg) from exc
+    ref = merged.get("_relay_reference")
+    model = str(settings.get("dashscope_image_model") or "wanx-v1")
+    if ref is not None and hasattr(ref, "supports_model") and not ref.supports_model(model):
+        policy = str(settings.get("dashscope_relay_fallback_policy") or "official")
+        msg = f"中转站 {relay_name!r} 不支持 ppt-maker 当前图片模型: {model}"
+        if policy == "strict":
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail=msg)
+        return settings
     base = str(merged.get("base_url") or "").strip()
     if base:
         settings["dashscope_api_key"] = str(merged.get("api_key") or "")

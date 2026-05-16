@@ -3837,6 +3837,24 @@ function SettingsTab({ catalog, settings, onSave }) {
             <option value="https://dashscope-intl.aliyuncs.com">国际</option>
           </select>
           </SettingField>
+          <div className="settings-grid two">
+            <SettingField label="共享中转站名称" hint="来自 LLM 配置页 relay_endpoints；填写后优先使用共享中转站。">
+              <input
+                value={form.relay_endpoint || ""}
+                onChange={(e) => set("relay_endpoint", e.target.value)}
+                placeholder="例如: yunwu-video"
+              />
+            </SettingField>
+            <SettingField label="中转站失败策略" hint="official 会回退到上面的官方/插件配置；strict 会直接阻止提交。">
+              <select
+                value={form.relay_fallback_policy || "official"}
+                onChange={(e) => set("relay_fallback_policy", e.target.value, { immediate: true })}
+              >
+                <option value="official">official：失败时回官方/插件配置</option>
+                <option value="strict">strict：失败时阻止提交</option>
+              </select>
+            </SettingField>
+          </div>
         </SettingSection>
 
         <SettingSection

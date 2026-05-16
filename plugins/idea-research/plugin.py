@@ -56,8 +56,9 @@ except Exception as exc:  # noqa: BLE001
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from openakita.plugins.api import PluginBase
 from pydantic import BaseModel, ConfigDict, Field
+
+from openakita.plugins.api import PluginBase
 
 
 def _purge_idea_research_module_cache() -> int:
@@ -92,7 +93,7 @@ def _purge_idea_research_module_cache() -> int:
 _PURGED_MODULES_ON_IMPORT = _purge_idea_research_module_cache()
 
 from idea_collectors import CollectorRegistry, Normalizer, Ranker
-from idea_dashscope_client import DashScopeClient
+from idea_dashscope_client import DASHSCOPE_BASE, DashScopeClient
 from idea_engine_crawler import CookiesVault, PlaywrightDriver
 from idea_models import (
     PLUGIN_ID,
@@ -629,8 +630,7 @@ class Plugin(PluginBase):
                 # writing the attribute is enough; future requests pick up
                 # the new host via ``self.base_url``.
                 plugin._dashscope.api_key = api_key
-                if base_url:
-                    plugin._dashscope.base_url = base_url
+                plugin._dashscope.base_url = base_url or DASHSCOPE_BASE
             return await plugin._tm.get_all_settings()
 
         # 16 GET /sources

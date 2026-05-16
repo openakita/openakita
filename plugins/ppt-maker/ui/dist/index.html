@@ -2313,6 +2313,18 @@
                   <input type="password" className="input" placeholder="https://dashscope.console.aliyun.com 申请" value={settings.dashscope_api_key || ""} onChange={(e) => setSettings({ ...settings, dashscope_api_key: e.target.value })} onBlur={(e) => saveSettings({ dashscope_api_key: e.target.value }).catch(setError)} />
                 </div>
                 <div className="form-row">
+                  <div className="text-xs text-muted">共享中转站名称（可选）</div>
+                  <input className="input" placeholder="例如: yunwu-image" value={settings.dashscope_relay_endpoint || ""} onChange={(e) => setSettings({ ...settings, dashscope_relay_endpoint: e.target.value })} onBlur={(e) => saveSettings({ dashscope_relay_endpoint: e.target.value.trim() }).catch(setError)} />
+                  <div className="text-xs text-muted">来自 LLM 配置页 relay_endpoints；填写后 DashScope AI 生图优先走该中转站。</div>
+                </div>
+                <div className="form-row">
+                  <div className="text-xs text-muted">中转站失败策略</div>
+                  <select className="input select" value={settings.dashscope_relay_fallback_policy || "official"} onChange={(e) => saveSettings({ dashscope_relay_fallback_policy: e.target.value }).catch(setError)}>
+                    <option value="official">official：失败时回官方/插件配置</option>
+                    <option value="strict">strict：失败时阻止提交</option>
+                  </select>
+                </div>
+                <div className="form-row">
                   <div className="text-xs text-muted">百炼图像模型</div>
                   <select className="input select" value={settings.dashscope_image_model || "wanx-v1"} onChange={(e) => saveSettings({ dashscope_image_model: e.target.value }).catch(setError)}>
                     <option value="wanx-v1">wanx-v1（通用）</option>

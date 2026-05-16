@@ -255,6 +255,23 @@ class Plugin(PluginBase):
         except SettingsRelayResolutionError as exc:
             from fastapi import HTTPException
             raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        ref = merged.get("_relay_reference")
+        unsupported = [
+            model
+            for model in ("qwen-vl-max", "qwen-plus")
+            if ref is not None and hasattr(ref, "supports_model") and not ref.supports_model(model)
+        ]
+        if unsupported:
+            policy = str(cfg.get("dashscope_relay_fallback_policy") or "official")
+            msg = (
+                f"中转站 {relay_name!r} 不支持 media-post 需要的模型: "
+                f"{', '.join(unsupported)}"
+            )
+            if policy == "strict":
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail=msg)
+            logger.warning("%s; falling back to per-plugin DashScope endpoint", msg)
+            return api_key, ""
         return str(merged.get("api_key") or ""), str(merged.get("base_url") or "")
 
     async def on_unload(self) -> None:
@@ -516,14 +533,16 @@ class Plugin(PluginBase):
                             else MediaPostVlmClient(key)
                         )
                     else:
-                        self._vlm_client.update_api_key(key)
-                        # VLM client has no update_base_url helper today;
-                        # the cheapest correct path is to drop and rebuild
-                        # so a relay switch actually re-targets future
-                        # requests. The previous client gets GC'd along
-                        # with its httpx pool.
-                        if base_url:
-                            self._vlm_client = MediaPostVlmClient(key, base_url=base_url)
+                        # VLM client has no update_base_url helper today.
+                        # Rebuild on every endpoint change so relay -> official
+                        # also resets the stored host instead of keeping the old
+                        # relay base_url alive.
+                        await self._vlm_client.close()
+                        self._vlm_client = (
+                            MediaPostVlmClient(key, base_url=base_url)
+                            if base_url
+                            else MediaPostVlmClient(key)
+                        )
                 else:
                     self._vlm_client = None
             return {"status": "ok"}
