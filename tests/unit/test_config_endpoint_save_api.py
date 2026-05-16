@@ -170,6 +170,36 @@ async def test_security_profile_trust_reenables_security_enabled(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_security_confirmation_read_normalizes_legacy_mode(monkeypatch):
+    """GET must return v2 values so the setup-center Select does not render blank."""
+    state = {"security": {"profile": {"current": "trust"}, "confirmation": {"mode": "yolo"}}}
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+
+    response = await config_routes.read_security_confirmation()
+
+    assert response["mode"] == "trust"
+
+
+@pytest.mark.asyncio
+async def test_security_preview_uses_current_yaml_not_stale_global_engine(monkeypatch):
+    """Dry-run should reflect the YAML that SecurityView just read.
+
+    This catches the UI mismatch where the card showed trust but the preview
+    still reported protect/default from a stale global engine cache.
+    """
+    state = {"security": {"profile": {"current": "trust"}, "confirmation": {"mode": "trust"}}}
+    monkeypatch.setattr(config_routes, "_read_policies_yaml", lambda: json.loads(json.dumps(state)))
+
+    response = await config_routes.preview_security_config({})
+
+    assert response["preview_uses_proposed"] is False
+    run_shell = next(item for item in response["decisions"] if item["tool"] == "run_shell" and "ls" in item["params_preview"])
+    assert run_shell["effective_confirmation_mode"] == "trust"
+    assert run_shell["security_profile"] == "trust"
+    assert run_shell["decision"] == "allow"
+
+
+@pytest.mark.asyncio
 async def test_commands_api_writes_shell_risk_not_legacy(monkeypatch):
     """write_security_commands 必须写到 security.shell_risk，并彻底清理 legacy command_patterns。"""
     state = {

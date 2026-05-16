@@ -426,6 +426,15 @@ def _mode_from_security(sec: dict[str, Any] | None) -> str:
     return "smart" if sec else "yolo"
 
 
+def _normalize_confirmation_mode(mode: Any) -> str:
+    """Return the canonical policy_v2 confirmation mode for UI consumers."""
+    aliases = {"yolo": "trust", "smart": "default", "cautious": "strict"}
+    value = aliases.get(str(mode or "").strip().lower(), str(mode or "").strip().lower())
+    if value in ("trust", "default", "accept_edits", "strict", "dont_ask"):
+        return value
+    return "default"
+
+
 def _apply_permission_mode_defaults(sec: dict[str, Any], mode: str) -> None:
     """Synchronize high-level permission mode with granular security defaults.
 
@@ -1711,10 +1720,13 @@ async def preview_security_config(body: dict | None = None):
             cfg, _report = load_policies_from_dict({"security": proposed_security}, strict=False)
             engine = make_preview_engine(cfg)
         else:
-            engine = make_preview_engine()
-            from openakita.core.policy_v2.global_engine import get_config_v2
+            from openakita.core.policy_v2.loader import load_policies_from_dict
 
-            cfg = get_config_v2()
+            data = _read_policies_yaml()
+            if data is None:
+                return {"status": "error", "message": "无法读取当前配置文件"}
+            cfg, _report = load_policies_from_dict(data, strict=False)
+            engine = make_preview_engine(cfg)
     except Exception as exc:
         return {"status": "error", "message": f"构建预览引擎失败: {exc}"}
 
@@ -2284,15 +2296,16 @@ async def read_security_confirmation():
     data = _read_policies_yaml()
     if data is None:
         return {
-            "mode": "yolo",
+            "mode": "trust",
             "timeout_seconds": 60,
             "default_on_timeout": "deny",
             "confirm_ttl": 120,
             "aggregation_window_seconds": 0.0,
         }
     c = data.get("security", {}).get("confirmation", {})
+    raw_mode = c.get("mode", _mode_from_security(data.get("security", {})))
     return {
-        "mode": c.get("mode", _mode_from_security(data.get("security", {}))),
+        "mode": _normalize_confirmation_mode(raw_mode),
         "timeout_seconds": c.get("timeout_seconds", 60),
         "default_on_timeout": c.get("default_on_timeout", "deny"),
         "confirm_ttl": c.get("confirm_ttl", 120),
@@ -2318,9 +2331,18 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
     sec = data.setdefault("security", {})
     conf = sec.setdefault("confirmation", {})
     if body.mode is not None:
-        aliases = {"yolo": "trust", "smart": "default", "cautious": "strict"}
-        m = aliases.get(str(body.mode), str(body.mode))
-        if m not in ("trust", "default", "accept_edits", "strict", "dont_ask"):
+        raw_mode = str(body.mode).strip().lower()
+        m = _normalize_confirmation_mode(raw_mode)
+        if raw_mode not in (
+            "trust",
+            "default",
+            "accept_edits",
+            "strict",
+            "dont_ask",
+            "yolo",
+            "smart",
+            "cautious",
+        ):
             return {"status": "error", "message": f"无效 mode: {body.mode}"}
         conf["mode"] = m
         _mark_security_profile_custom(sec)
