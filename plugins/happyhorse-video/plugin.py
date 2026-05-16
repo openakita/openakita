@@ -7,10 +7,18 @@ Wires together the 12 generation modes (HappyHorse 1.0 + Wan 2.6/2.7 +
   (catalog / settings / probe / upload / tasks / cost-preview /
   storyboard / long-video / storage / healthz / python-deps /
   voices / figures / SSE).
-- 13 LLM tools registered through ``api.register_tools`` so an org
+- 20 LLM tools registered through ``api.register_tools`` so an org
   agent (e.g. the new HAPPYHORSE_VIDEO_STUDIO template) can drive
   every mode by name and the OrgRuntime hook can ingest the produced
-  ``video_url`` / ``last_frame_url`` / ``asset_ids`` automatically.
+  ``video_url`` / ``image_urls`` / ``last_frame_url`` / ``asset_ids``
+  automatically. The ``hh_image_*`` family covers seven image studio
+  modes (text-to-image, edit, style repaint, background, outpaint,
+  sketch-to-image, e-commerce); ``hh_t2v`` / ``hh_i2v`` / ``hh_r2v``
+  / ``hh_video_edit`` / ``hh_photo_speak`` / ``hh_video_relip`` /
+  ``hh_video_reface`` / ``hh_pose_drive`` / ``hh_avatar_compose`` cover
+  video and digital-human pipelines; ``hh_long_video_create`` drives
+  storyboard chains; ``hh_status`` / ``hh_list`` / ``hh_cost_preview``
+  are utility tools.
 - Plugin lifecycle (``on_load`` / ``on_unload``) that boots the SQLite
   task manager, the DashScope client, and a lazy ``oss2`` /
   ``edge-tts`` / ``mutagen`` background install via dep_bootstrap.
@@ -299,8 +307,10 @@ class Plugin(PluginBase):
         api.register_tools(self._tool_definitions(), handler=self._handle_tool)
 
         api.spawn_task(self._async_init(), name=f"{PLUGIN_ID}:init")
+        registered_tools = len(self._tool_definitions())
         api.log(
-            "happyhorse-video loaded — 12 modes, 13 tools, single DashScope backend",
+            f"happyhorse-video loaded — Studio modes (video + image), "
+            f"{registered_tools} tools, single DashScope backend",
         )
 
     async def _async_init(self) -> None:
@@ -1537,16 +1547,23 @@ class Plugin(PluginBase):
             chain = ChainGenerator(
                 self._client, self._tm, chain_group_id=chain_group_id
             )
+
+            async def _run() -> None:
+                try:
+                    await chain.generate_chain(
+                        segments=body.segments,
+                        model_id=body.model_id,
+                        ratio=body.aspect_ratio,
+                        resolution=body.resolution,
+                        mode=body.mode,
+                        max_parallel=body.max_parallel,
+                        first_frame_url=body.first_frame_url or None,
+                    )
+                finally:
+                    self._chain_tasks.pop(chain_group_id, None)
+
             task = self._api.spawn_task(
-                chain.generate_chain(
-                    segments=body.segments,
-                    model_id=body.model_id,
-                    ratio=body.aspect_ratio,
-                    resolution=body.resolution,
-                    mode=body.mode,
-                    max_parallel=body.max_parallel,
-                    first_frame_url=body.first_frame_url or None,
-                ),
+                _run(),
                 name=f"{PLUGIN_ID}:chain:{chain_group_id}",
             )
             self._chain_tasks[chain_group_id] = task

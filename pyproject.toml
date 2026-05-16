@@ -172,8 +172,8 @@ all = [
     "pywinauto>=0.6.8; platform_system == 'Windows'",
     "pyperclip>=1.8.2",
     "psutil>=5.9.0",
-    # -- AI 媒体插件脚手架 --
-    "openakita-plugin-sdk>=0.3.0",
+    # -- AI 媒体插件脚手架（保持与 [project.optional-dependencies].plugins 同步）--
+    "openakita-plugin-sdk>=0.7.0",
 ]
 
 # 开发依赖

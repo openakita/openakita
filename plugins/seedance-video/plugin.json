@@ -32,7 +32,14 @@
     "sdk": ">=0.7.0,<0.8.0"
   },
   "provides": {
-    "tools": ["seedance_create", "seedance_status", "seedance_list"],
+    "tools": [
+      "seedance_create",
+      "seedance_status",
+      "seedance_edit",
+      "seedance_extend",
+      "seedance_transition",
+      "seedance_list"
+    ],
     "routes": true
   },
   "ui": {

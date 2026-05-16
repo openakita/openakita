@@ -300,10 +300,23 @@ jobs:
             echo "# User Custom Persona (placeholder)" > identity/personas/user_custom.md
           fi
 
+      # macOS runners ship Homebrew Rust shims that can shadow rustup's real
+      # cargo and make `cargo` invoke an unrelated wrapper (see Release Dry Run
+      # post-mortem). Mirror release-dryrun.yml so CI fails for the same
+      # reasons Dry Run does, instead of greenlighting a broken toolchain.
+      - name: Prefer rustup Cargo on PATH
+        if: ${{ hashFiles('apps/setup-center/src-tauri/Cargo.toml') != '' }}
+        shell: bash
+        run: echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
+
       - name: Cargo check
         if: ${{ hashFiles('apps/setup-center/src-tauri/Cargo.toml') != '' }}
         working-directory: apps/setup-center/src-tauri
-        run: cargo check
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+          "$CARGO_BIN/cargo" check
 
       - name: Skip Rust check (project not present)
         if: ${{ hashFiles('apps/setup-center/src-tauri/Cargo.toml') == '' }}
