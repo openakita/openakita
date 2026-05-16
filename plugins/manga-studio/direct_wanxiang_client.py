@@ -147,14 +147,23 @@ class MangaWanxiangClient(BaseVendorClient):
             return {}
 
     def _refresh_settings(self) -> dict[str, Any]:
-        """Re-read settings + push to inherited ``base_url`` / ``timeout``."""
+        """Re-read settings + push to inherited ``base_url`` / ``timeout``.
+
+        ``dashscope_base_url`` (set by the plugin layer when a relay
+        endpoint is active) wins over the region-based default — that's
+        how relay station overrides actually take effect on the wire.
+        """
         cur = self._current_settings()
-        region = str(cur.get("dashscope_region") or "beijing").lower()
-        self.base_url = (
-            DASHSCOPE_BASE_URL_SG
-            if region in ("sg", "singapore", "intl")
-            else DASHSCOPE_BASE_URL_BJ
-        )
+        relay_base = str(cur.get("dashscope_base_url") or "").strip()
+        if relay_base:
+            self.base_url = relay_base
+        else:
+            region = str(cur.get("dashscope_region") or "beijing").lower()
+            self.base_url = (
+                DASHSCOPE_BASE_URL_SG
+                if region in ("sg", "singapore", "intl")
+                else DASHSCOPE_BASE_URL_BJ
+            )
         try:
             t = float(cur.get("dashscope_timeout") or 60.0)
             if t > 0:

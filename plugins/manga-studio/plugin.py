@@ -601,8 +601,61 @@ class Plugin(PluginBase):
 
         Returns a fresh merged settings dict on every call so users can
         edit API keys in Settings without reloading the plugin.
+
+        Also applies optional relay-station overrides for ``ark_*`` and
+        ``dashscope_*`` credentials so the Phase 2/3 clients (which
+        consult this callable on every request) transparently switch
+        to the relay's base_url + api_key without each client needing
+        its own resolver. Failures here NEVER raise — relay misconfig
+        in a request hot path would crash unrelated calls; we log and
+        keep the per-plugin values instead.
         """
-        return self._load_settings()
+        cfg = self._load_settings()
+        try:
+            from openakita.relay import (
+                SettingsRelayResolutionError,
+                apply_relay_override,
+            )
+        except (ImportError, ModuleNotFoundError):
+            return cfg
+
+        def _override(prefix: str, capability: str) -> None:
+            relay_name = str(cfg.get(f"{prefix}_relay_endpoint") or "").strip()
+            if not relay_name:
+                return
+            try:
+                merged = apply_relay_override(
+                    {
+                        "api_key": str(cfg.get(f"{prefix}_api_key") or ""),
+                        "base_url": "",
+                        "relay_endpoint": relay_name,
+                        "relay_fallback_policy": str(
+                            cfg.get(f"{prefix}_relay_fallback_policy") or "official"
+                        ),
+                    },
+                    required_capability=capability,
+                    plugin_name="manga-studio",
+                )
+            except SettingsRelayResolutionError as exc:
+                # Strict-policy miss — log loudly so the user knows the
+                # relay name didn't resolve but DO NOT raise (we're in a
+                # hot request path; the auth_headers path will surface a
+                # clearer 401 if the per-plugin key is also absent).
+                logger.warning(
+                    "manga-studio: %s relay '%s' unresolved (%s); using per-plugin endpoint",
+                    prefix,
+                    relay_name,
+                    exc.user_message,
+                )
+                return
+            cfg[f"{prefix}_api_key"] = str(merged.get("api_key") or "")
+            base = str(merged.get("base_url") or "").strip()
+            if base:
+                cfg[f"{prefix}_base_url"] = base
+
+        _override("ark", "video")
+        _override("dashscope", "image")
+        return cfg
 
     def _build_episode_video_url(self, episode_id: str, filename: str) -> str:
         """Build the ``<video src=...>``-friendly URL for an episode artefact.
