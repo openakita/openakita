@@ -3836,6 +3836,46 @@ function Settings({ t, settings, setSettings, toast }) {
             </select>
           </div>
         </Collapsible>
+        <Collapsible title="共享中转站">
+          <div className="grid-2">
+            <div className="form-row">
+              <div className="label">Ark 中转站（视频）</div>
+              <input className="input"
+                     value={draft.ark_relay_endpoint || ""}
+                     placeholder="例如: yunwu-video"
+                     onChange={function(e) { patch({ ark_relay_endpoint: e.target.value }); }}
+                     onBlur={function() { savePatch({ ark_relay_endpoint: (draft.ark_relay_endpoint || "").trim() }, { silent: true }); }} />
+              <div className="text-xs text-muted mt-2">来自 LLM 配置页 relay_endpoints；用于 Seedance 视频生成。</div>
+            </div>
+            <div className="form-row">
+              <div className="label">Ark 失败策略</div>
+              <select className="input select"
+                      value={draft.ark_relay_fallback_policy || "official"}
+                      onChange={function(e) { patch({ ark_relay_fallback_policy: e.target.value }); savePatch({ ark_relay_fallback_policy: e.target.value }, { silent: true }); }}>
+                <option value="official">official：失败时回官方/插件配置</option>
+                <option value="strict">strict：失败时阻止提交</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <div className="label">DashScope 中转站（图像）</div>
+              <input className="input"
+                     value={draft.dashscope_relay_endpoint || ""}
+                     placeholder="例如: yunwu-image"
+                     onChange={function(e) { patch({ dashscope_relay_endpoint: e.target.value }); }}
+                     onBlur={function() { savePatch({ dashscope_relay_endpoint: (draft.dashscope_relay_endpoint || "").trim() }, { silent: true }); }} />
+              <div className="text-xs text-muted mt-2">来自 LLM 配置页 relay_endpoints；用于 Wanxiang 图像生成。</div>
+            </div>
+            <div className="form-row">
+              <div className="label">DashScope 失败策略</div>
+              <select className="input select"
+                      value={draft.dashscope_relay_fallback_policy || "official"}
+                      onChange={function(e) { patch({ dashscope_relay_fallback_policy: e.target.value }); savePatch({ dashscope_relay_fallback_policy: e.target.value }, { silent: true }); }}>
+                <option value="official">official：失败时回官方/插件配置</option>
+                <option value="strict">strict：失败时阻止提交</option>
+              </select>
+            </div>
+          </div>
+        </Collapsible>
       </div>
 
       {/* ── OSS ──────────────────────────────────────────────── */}

@@ -652,6 +652,9 @@ class Plugin(PluginBase):
             base = str(merged.get("base_url") or "").strip()
             if base:
                 cfg[f"{prefix}_base_url"] = base
+            ref = merged.get("_relay_reference")
+            if ref is not None and hasattr(ref, "supported_models"):
+                cfg[f"{prefix}_supported_models"] = list(ref.supported_models or [])
 
         _override("ark", "video")
         _override("dashscope", "image")

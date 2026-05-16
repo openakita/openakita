@@ -1529,6 +1529,42 @@ function SettingsPage({ onPurge }) {
             获取地址：<a href="https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey" target="_blank" rel="noopener noreferrer" style={{color:"var(--primary)"}}>火山方舟控制台</a>
           </p>
         </div>
+        <div className="grid-2">
+          <div className="form-row">
+            <label className="label">DashScope 共享中转站（可选）</label>
+            <input className="input" type="text"
+              value={config.dashscope_relay_endpoint || ""}
+              onChange={e => setConfig({...config, dashscope_relay_endpoint: e.target.value})}
+              onBlur={e => save({ dashscope_relay_endpoint: e.target.value.trim() })}
+              placeholder="例如: yunwu-image" />
+            <p className="text-xs text-dim" style={{marginTop:4}}>用于通义万相图片能力，来自 LLM 配置页 relay_endpoints。</p>
+          </div>
+          <div className="form-row">
+            <label className="label">DashScope 失败策略</label>
+            <select className="input select" value={config.dashscope_relay_fallback_policy || "official"}
+              onChange={e => save({ dashscope_relay_fallback_policy: e.target.value })}>
+              <option value="official">official：失败时回官方/插件配置</option>
+              <option value="strict">strict：失败时阻止提交</option>
+            </select>
+          </div>
+          <div className="form-row">
+            <label className="label">Ark 共享中转站（可选）</label>
+            <input className="input" type="text"
+              value={config.ark_relay_endpoint || ""}
+              onChange={e => setConfig({...config, ark_relay_endpoint: e.target.value})}
+              onBlur={e => save({ ark_relay_endpoint: e.target.value.trim() })}
+              placeholder="例如: yunwu-video" />
+            <p className="text-xs text-dim" style={{marginTop:4}}>用于火山 Ark 视频能力，来自 LLM 配置页 relay_endpoints。</p>
+          </div>
+          <div className="form-row">
+            <label className="label">Ark 失败策略</label>
+            <select className="input select" value={config.ark_relay_fallback_policy || "official"}
+              onChange={e => save({ ark_relay_fallback_policy: e.target.value })}>
+              <option value="official">official：失败时回官方/插件配置</option>
+              <option value="strict">strict：失败时阻止提交</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* ── 默认参数 ── */}

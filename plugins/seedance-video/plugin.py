@@ -309,7 +309,12 @@ class Plugin(PluginBase):
             self._ark = ArkClient(api_key, base_url=base_url or None)
         self._start_polling()
 
-    def _resolve_effective_ark_endpoint(self, config: dict) -> tuple[str, str]:
+    def _resolve_effective_ark_endpoint(
+        self,
+        config: dict,
+        *,
+        target_model: str = "",
+    ) -> tuple[str, str]:
         """Resolve Ark api_key + base_url, honouring an optional relay.
 
         Same shape as tongyi-image / avatar-studio: when
@@ -354,6 +359,19 @@ class Plugin(PluginBase):
             return api_key, base_url
         except SettingsRelayResolutionError as exc:
             raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        ref = merged.get("_relay_reference")
+        if (
+            target_model
+            and ref is not None
+            and hasattr(ref, "supports_model")
+            and not ref.supports_model(target_model)
+        ):
+            policy = str(config.get("ark_relay_fallback_policy") or "official")
+            msg = f"中转站 {relay_name!r} 不支持 seedance-video 当前模型: {target_model}"
+            if policy == "strict":
+                raise HTTPException(status_code=400, detail=msg)
+            logger.warning("%s; falling back to per-plugin Ark endpoint", msg)
+            return api_key, base_url
         return str(merged.get("api_key") or ""), str(merged.get("base_url") or "")
 
     async def on_unload(self) -> None:
@@ -997,6 +1015,16 @@ class Plugin(PluginBase):
             expires = params.get("execution_expires_after")
             if service_tier == "flex" and not expires:
                 expires = 172800
+            key, base_url_str = self._resolve_effective_ark_endpoint(
+                config,
+                target_model=model_info.model_id,
+            )
+            if key:
+                if self._ark:
+                    self._ark.update_api_key(key)
+                    self._ark.update_base_url(base_url_str or None)
+                else:
+                    self._ark = ArkClient(key, base_url=base_url_str or None)
 
             try:
                 result = await self._ark.create_task(

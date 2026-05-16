@@ -1426,6 +1426,18 @@ function SettingsTab({ mdrmStats, onMdrmRefresh }) {
             <small style={{ color: "var(--ir-muted)" }}>{t("st_key_dashscope_hint")}</small>
           </div>
           <div className="ir-field">
+            <label className="ir-field__label">DashScope 共享中转站（可选）</label>
+            <input className="ir-input" defaultValue={settings.dashscope_relay_endpoint || ""} onBlur={e => setSetting("dashscope_relay_endpoint", e.target.value.trim())} placeholder="例如: yunwu-chat" />
+            <small style={{ color: "var(--ir-muted)" }}>来自 LLM 配置页 relay_endpoints；填写后 DashScope 分析请求优先走该中转站。</small>
+          </div>
+          <div className="ir-field">
+            <label className="ir-field__label">中转站失败策略</label>
+            <select className="ir-input" value={settings.dashscope_relay_fallback_policy || "official"} onChange={e => setSetting("dashscope_relay_fallback_policy", e.target.value)}>
+              <option value="official">official：失败时回官方/插件配置</option>
+              <option value="strict">strict：失败时阻止提交</option>
+            </select>
+          </div>
+          <div className="ir-field">
             <label className="ir-field__label">{t("st_key_youtube")}</label>
             <input className="ir-input" type="password" defaultValue={settings.youtube_api_key || ""} onBlur={e => setSetting("youtube_api_key", e.target.value)} />
             <small style={{ color: "var(--ir-muted)" }}>{t("st_key_youtube_hint")}</small>

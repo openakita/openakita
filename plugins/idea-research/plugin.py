@@ -358,6 +358,15 @@ class Plugin(PluginBase):
         except SettingsRelayResolutionError as exc:
             from fastapi import HTTPException
             raise HTTPException(status_code=400, detail=exc.user_message) from exc
+        ref = merged.get("_relay_reference")
+        if ref is not None and hasattr(ref, "supports_model") and not ref.supports_model("qwen-max"):
+            policy = relay_policy or "official"
+            msg = f"中转站 {relay_name!r} 不支持 idea-research 默认文本模型: qwen-max"
+            if policy == "strict":
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail=msg)
+            _LOG.warning("[%s] %s; keeping per-plugin DashScope endpoint", PLUGIN_ID, msg)
+            return api_key, ""
         return (
             str(merged.get("api_key") or "").strip(),
             str(merged.get("base_url") or "").strip(),

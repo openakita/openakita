@@ -254,6 +254,15 @@ class MangaWanxiangClient(BaseVendorClient):
             raise ValueError(
                 f"unknown model {model!r}; expected {DEFAULT_MODEL!r} or {DEFAULT_MODEL_PRO!r}"
             )
+        supported = self._current_settings().get("dashscope_supported_models") or []
+        if supported and model.strip().lower() not in {
+            str(m or "").strip().lower() for m in supported
+        }:
+            raise VendorError(
+                f"中转站模型目录不包含 DashScope 图像模型 {model!r}",
+                kind=ERROR_KIND_CLIENT,
+                status=422,
+            )
 
         content: list[dict[str, str]] = [{"text": prompt}]
         for url in refs:

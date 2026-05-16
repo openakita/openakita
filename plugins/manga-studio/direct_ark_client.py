@@ -127,6 +127,16 @@ class MangaArkClient(BaseVendorClient):
         callback_url: str | None = None,
         execution_expires_after: int | None = None,
     ) -> dict:
+        supported = self._current_settings().get("ark_supported_models") or []
+        if supported and model.strip().lower() not in {
+            str(m or "").strip().lower() for m in supported
+        }:
+            raise VendorError(
+                f"中转站模型目录不包含 Ark 视频模型 {model!r}",
+                status=422,
+                retryable=False,
+                kind="client",
+            )
         body: dict[str, Any] = {"model": model, "content": content}
         if ratio:
             body["ratio"] = ratio

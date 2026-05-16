@@ -308,6 +308,22 @@ class AvatarDashScopeClient(BaseVendorClient):
             "Content-Type": "application/json",
         }
 
+    def _assert_relay_supports_model(self, model: str) -> None:
+        s = self._settings()
+        ref = s.get("_relay_reference")
+        if ref is None or not hasattr(ref, "supports_model") or ref.supports_model(model):
+            return
+        relay_name = str(s.get("relay_endpoint") or "").strip() or getattr(ref, "name", "")
+        raise VendorError(
+            (
+                f"中转站 {relay_name!r} 的模型目录不包含 {model!r}。"
+                "请在 LLM 配置页重新 Sync Models，或切换到该中转站支持的模型。"
+            ),
+            status=422,
+            retryable=False,
+            kind=ERROR_KIND_CLIENT,
+        )
+
     def update_api_key(self, api_key: str) -> None:
         """Fast path used by ``PUT /settings``; the next call also re-reads."""
         if not isinstance(api_key, str):
@@ -605,6 +621,7 @@ class AvatarDashScopeClient(BaseVendorClient):
             "model": MODEL_S2V_DETECT,
             "input": {"image_url": image_url},
         }
+        self._assert_relay_supports_model(MODEL_S2V_DETECT)
         try:
             resp = await self.post_json(PATH_S2V_DETECT, json_body=body, timeout=30.0)
         except VendorError as e:
@@ -640,6 +657,7 @@ class AvatarDashScopeClient(BaseVendorClient):
         params: dict[str, Any] = {"resolution": resolution}
         if duration is not None:
             params["duration"] = float(duration)
+        self._assert_relay_supports_model(MODEL_S2V)
         body = {
             "model": MODEL_S2V,
             "input": {"image_url": image_url, "audio_url": audio_url},
@@ -672,6 +690,7 @@ class AvatarDashScopeClient(BaseVendorClient):
         input_obj: dict[str, Any] = {"video_url": video_url, "audio_url": audio_url}
         if ref_image_url:
             input_obj["ref_image_url"] = ref_image_url
+        self._assert_relay_supports_model(MODEL_VIDEORETALK)
         body = {
             "model": MODEL_VIDEORETALK,
             "input": input_obj,
@@ -692,6 +711,7 @@ class AvatarDashScopeClient(BaseVendorClient):
         mode_pro: bool = False,
         watermark: bool = False,
     ) -> str:
+        self._assert_relay_supports_model(MODEL_ANIMATE_MIX)
         body = {
             "model": MODEL_ANIMATE_MIX,
             "input": {"image_url": image_url, "video_url": video_url},
@@ -710,6 +730,7 @@ class AvatarDashScopeClient(BaseVendorClient):
         mode_pro: bool = False,
         watermark: bool = False,
     ) -> str:
+        self._assert_relay_supports_model(MODEL_ANIMATE_MOVE)
         body = {
             "model": MODEL_ANIMATE_MOVE,
             "input": {
@@ -748,6 +769,7 @@ class AvatarDashScopeClient(BaseVendorClient):
         # function arg is kept as ``ref_images_url`` for symmetry with
         # the wan2.7 method and the UI's payload key. See
         # https://help.aliyun.com/zh/model-studio/wan2-5-image-edit-api-reference
+        self._assert_relay_supports_model(MODEL_I2I)
         body = {
             "model": MODEL_I2I,
             "input": {"prompt": prompt, "images": list(ref_images_url)},
@@ -771,6 +793,7 @@ class AvatarDashScopeClient(BaseVendorClient):
                 retryable=False,
                 kind=ERROR_KIND_CLIENT,
             )
+        self._assert_relay_supports_model(model)
         content: list[dict[str, str]] = [{"text": prompt}]
         for url in ref_images_url:
             content.append({"image": url})
@@ -860,6 +883,7 @@ class AvatarDashScopeClient(BaseVendorClient):
                 retryable=False,
                 kind="auth",
             )
+        self._assert_relay_supports_model(MODEL_COSYVOICE_V2)
 
         # The dashscope SDK reads credentials from a *module-level* global
         # (`dashscope.api_key`) or the `DASHSCOPE_API_KEY` env var rather
