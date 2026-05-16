@@ -1,0 +1,3104 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HappyHorse Studio · 快乐马工作室</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="_assets/styles.css" />
+  <script src="_assets/bootstrap.js"></script>
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/i18n.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
+  <script src="_assets/react.production.min.js"></script>
+  <script src="_assets/react-dom.production.min.js"></script>
+  <script src="_assets/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+const PLUGIN_ID = "happyhorse-video";
+
+function apiBase() {
+  const meta = (window.OpenAkita && window.OpenAkita.meta) || {};
+  if (meta.apiBase) return meta.apiBase.replace(/\/$/, "");
+  return `/api/plugins/${PLUGIN_ID}`;
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const url = apiBase() + path;
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${text || res.statusText}`);
+  }
+  return res.json();
+}
+
+function friendlyApiMessage(error, fallback) {
+  const msg = String(error?.message || error || "");
+  if (/404\b/.test(msg)) return fallback;
+  if (/api key|api_key|DashScope API Key|未配置|empty/i.test(msg)) return "";
+  const jsonStart = msg.indexOf("{");
+  if (jsonStart >= 0) {
+    try {
+      const payload = JSON.parse(msg.slice(jsonStart));
+      return payload.detail || payload.message || payload.error || fallback;
+    } catch (_) {}
+  }
+  return msg.replace(/\s*\{.*\}\s*$/, "").trim() || fallback;
+}
+
+const ICONIFY_ICONS = {
+  "wand-sparkles": '<path d="M17.5 2.5 19 6l3.5 1.5L19 9l-1.5 3.5L16 9l-3.5-1.5L16 6z"/><path d="m3 21 9.5-9.5"/><path d="m9 7 8 8"/><path d="m14 2 1 2.5"/><path d="M2 14l2.5 1"/><path d="M8 2l.5 2"/><path d="M2 8l2 .5"/>',
+  list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+  film: '<rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>',
+  video: '<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
+  "image-play": '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/><path d="m12 13 4 2.5-4 2.5z"/>',
+  "image-up": '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/><path d="M12 13V7"/><path d="m9 10 3-3 3 3"/>',
+  "fast-forward": '<polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/>',
+  play: '<polygon points="5 3 19 12 5 21 5 3"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  mic: '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',
+  lips: '<path d="M2 12s3-4 6-4c2 0 2.5 1 4 1s2-1 4-1c3 0 6 4 6 4s-3 4-10 4S2 12 2 12z"/><path d="M2 12h20"/><path d="M8 8c1.2 1.1 2.5 1.6 4 1.6S14.8 9.1 16 8"/>',
+  "user-round-cog": '<circle cx="10" cy="8" r="4"/><path d="M2 21a8 8 0 0 1 12.2-6.8"/><circle cx="18" cy="18" r="2"/><path d="M18 14v1"/><path d="M18 21v1"/><path d="M14 18h1"/><path d="M21 18h1"/><path d="m15.2 15.2.7.7"/><path d="m20.1 20.1.7.7"/><path d="m20.8 15.2-.7.7"/><path d="m15.9 20.1-.7.7"/>',
+  "person-standing": '<circle cx="12" cy="5" r="1"/><path d="M9 20l3-6 3 6"/><path d="M6 8h12"/><path d="M12 6v8"/>',
+  layers: '<path d="m12 2 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/>',
+  "user-square": '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="10" r="3"/><path d="M7 19c.9-2.5 2.6-4 5-4s4.1 1.5 5 4"/>',
+  sparkles: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  "alert-triangle": '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+  inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  rocket: '<path d="M4.5 16.5c-1.5 1.3-2 3-2 5 2 0 3.7-.5 5-2"/><path d="M9 15 4 10l8-7c2.5-2.1 6.4-2.7 9-1-1.7 2.6-1.1 6.5-3 9z"/><path d="m9 15 6-6"/><path d="M15 9h.01"/>',
+  coin: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M8 10h6a2 2 0 1 1 0 4H10a2 2 0 1 0 0 4h6"/>',
+  refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/>',
+  key: '<path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8z"/><path d="M14 9l7-7"/><path d="M15 7l2 2"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9z"/>',
+  package: '<path d="m7.5 4.3 9 5.2"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  "mic-off": '<line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><path d="M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2"/><path d="M19 10v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>',
+  "user-plus": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>',
+  check: '<polyline points="20 6 9 17 4 12"/>',
+  save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>',
+};
+
+function iconSvg(name) {
+  const iconName = (name || "").includes(":") ? name.split(":").pop() : name;
+  const factory = window.OpenAkitaIcons && window.OpenAkitaIcons[iconName];
+  if (typeof factory === "function") return factory();
+  const inner = ICONIFY_ICONS[iconName] || ICONIFY_ICONS.info;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+}
+
+function Icon({ name, size = 18, className = "icon" }) {
+  const svg = iconSvg(name);
+  return (
+    <span
+      className={className}
+      style={{ width: size, height: size, display: "inline-flex" }}
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+}
+
+function Tag({ children, kind }) {
+  const cls = kind ? `tag tag-${kind}` : "tag";
+  return <span className={cls}>{children}</span>;
+}
+
+function Banner({ kind = "warning", children }) {
+  return (
+    <div className={`banner banner-${kind}`}>
+      <Icon name={kind === "danger" ? "alert-triangle" : "info"} size={16} />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function Empty({ icon, title, hint }) {
+  return (
+    <div className="empty">
+      <Icon name={icon || "inbox"} size={40} className="icon" />
+      <div>{title}</div>
+      {hint && <div className="text-xs mt-2">{hint}</div>}
+    </div>
+  );
+}
+
+function Spinner() {
+  return <span className="spinner" />;
+}
+
+const FALLBACK_SYSTEM_VOICES = [
+  { id: "longxiaochun", label_zh: "龙小淳", label: "Long Xiaochun", gender: "female", language: "zh-CN", engine: "cosyvoice" },
+  { id: "longxiaobai", label_zh: "龙小白", label: "Long Xiaobai", gender: "female", language: "zh-CN", engine: "cosyvoice" },
+  { id: "longxiaocheng", label_zh: "龙小诚", label: "Long Xiaocheng", gender: "male", language: "zh-CN", engine: "cosyvoice" },
+  { id: "longxiaoxia", label_zh: "龙小夏", label: "Long Xiaoxia", gender: "female", language: "zh-CN", engine: "cosyvoice" },
+  { id: "zh-CN-XiaoxiaoNeural", label_zh: "晓晓 (Xiaoxiao)", label: "Xiaoxiao", gender: "female", language: "zh-CN", engine: "edge" },
+  { id: "zh-CN-YunxiNeural", label_zh: "云希 (Yunxi)", label: "Yunxi", gender: "male", language: "zh-CN", engine: "edge" },
+  { id: "zh-CN-YunyangNeural", label_zh: "云扬 (Yunyang)", label: "Yunyang", gender: "male", language: "zh-CN", engine: "edge" },
+  { id: "zh-CN-XiaoyiNeural", label_zh: "晓伊 (Xiaoyi)", label: "Xiaoyi", gender: "female", language: "zh-CN", engine: "edge" },
+];
+
+const DEFAULT_CATALOG = {
+  modes: [
+    { id: "t2v", label_zh: "文生视频", label_en: "Text to Video", icon: "video", group: "video", required_assets: ["prompt"], description_zh: "一句描述生成 3-15 秒视频。" },
+    { id: "i2v", label_zh: "图生视频", label_en: "Image to Video", icon: "image-play", group: "video", required_assets: ["first_frame_url"], description_zh: "一张首帧图加提示词生成视频。" },
+    { id: "i2v_end", label_zh: "首尾帧生视频", label_en: "First and Last Frame", icon: "image-up", group: "video", required_assets: ["first_frame_url", "last_frame_url"], description_zh: "首帧和尾帧生成连贯过渡。" },
+    { id: "video_extend", label_zh: "视频续写", label_en: "Video Continuation", icon: "fast-forward", group: "video", required_assets: ["source_video_url"], description_zh: "从已有视频末尾继续生成。" },
+    { id: "r2v", label_zh: "多模态参考生视频", label_en: "Reference to Video", icon: "users", group: "video", required_assets: ["reference_urls"], description_zh: "用多张参考图生成角色或物品一致的视频。" },
+    { id: "video_edit", label_zh: "视频编辑", label_en: "Video Edit", icon: "wand-sparkles", group: "video", required_assets: ["source_video_url"], description_zh: "对已有视频做风格转换、替换或增强。" },
+    { id: "photo_speak", label_zh: "照片说话", label_en: "Photo Speak", icon: "mic", group: "digital_human", required_assets: ["image_url", "audio_or_text"], description_zh: "人像图加台词或音频生成会说话视频。" },
+    { id: "video_relip", label_zh: "视频换嘴", label_en: "Video Relip", icon: "lips", group: "digital_human", required_assets: ["source_video_url", "audio_or_text"], description_zh: "给已有视频换一段台词并同步口型。" },
+    { id: "video_reface", label_zh: "视频换人", label_en: "Video Reface", icon: "user-round-cog", group: "digital_human", required_assets: ["image_url", "source_video_url"], description_zh: "保留视频动作，把主角替换为指定人像。" },
+    { id: "pose_drive", label_zh: "图生动作", label_en: "Pose Drive", icon: "person-standing", group: "digital_human", required_assets: ["image_url", "source_video_url"], description_zh: "把参考视频动作迁移到一张人像。" },
+    { id: "avatar_compose", label_zh: "数字人合成", label_en: "Avatar Compose", icon: "layers", group: "digital_human", required_assets: ["image_url", "image_urls", "audio_or_text"], description_zh: "融合人像与场景生成数字人口播。" },
+  ],
+  models: [
+    { mode: "t2v", model_id: "happyhorse-1.0-t2v", label_zh: "HappyHorse 1.0 文生视频" },
+    { mode: "t2v", model_id: "wan2.6-t2v", label_zh: "万相 2.6 文生视频" },
+    { mode: "i2v", model_id: "happyhorse-1.0-i2v", label_zh: "HappyHorse 1.0 图生视频" },
+    { mode: "i2v", model_id: "wan2.7-i2v", label_zh: "万相 2.7 多模态图生视频" },
+    { mode: "i2v_end", model_id: "wan2.7-i2v", label_zh: "万相 2.7 首尾帧生视频" },
+    { mode: "video_extend", model_id: "wan2.7-i2v", label_zh: "万相 2.7 视频续写" },
+    { mode: "r2v", model_id: "happyhorse-1.0-r2v", label_zh: "HappyHorse 1.0 参考生视频" },
+    { mode: "video_edit", model_id: "happyhorse-1.0-video-edit", label_zh: "HappyHorse 1.0 视频编辑" },
+    { mode: "photo_speak", model_id: "wan2.2-s2v", label_zh: "万相 S2V 照片说话" },
+    { mode: "video_relip", model_id: "videoretalk", label_zh: "VideoReTalk 视频换嘴" },
+    { mode: "video_reface", model_id: "wan2.2-animate-mix", label_zh: "万相 Animate Mix 视频换人" },
+    { mode: "pose_drive", model_id: "wan2.2-animate", label_zh: "万相 Animate 图生动作" },
+    { mode: "avatar_compose", model_id: "wan2.2-s2v", label_zh: "万相 S2V 数字人合成" },
+  ],
+  default_models: {
+    t2v: "happyhorse-1.0-t2v",
+    i2v: "happyhorse-1.0-i2v",
+    i2v_end: "wan2.7-i2v",
+    video_extend: "wan2.7-i2v",
+    r2v: "happyhorse-1.0-r2v",
+    video_edit: "happyhorse-1.0-video-edit",
+    photo_speak: "wan2.2-s2v",
+    video_relip: "videoretalk",
+    video_reface: "wan2.2-animate-mix",
+    pose_drive: "wan2.2-animate",
+    avatar_compose: "wan2.2-s2v",
+  },
+  voices: FALLBACK_SYSTEM_VOICES,
+  resolutions: ["480P", "720P", "1080P"],
+  aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+  image: {
+    modes: [
+      { id: "image_text2img", label_zh: "文生图片", icon: "image-play", required_assets: ["prompt"], description_zh: "用文字生成关键帧、海报或分镜图。" },
+      { id: "image_edit", label_zh: "图像编辑", icon: "wand-sparkles", required_assets: ["prompt", "images"], description_zh: "上传参考图后按提示词改图。" },
+      { id: "image_style_repaint", label_zh: "风格重绘", icon: "sparkles", required_assets: ["images"], description_zh: "将图片转换为不同视觉风格。" },
+      { id: "image_background", label_zh: "背景生成", icon: "layers", required_assets: ["images"], description_zh: "保留主体并生成新背景。" },
+      { id: "image_outpaint", label_zh: "画面扩展", icon: "image-up", required_assets: ["images"], description_zh: "扩展图片画幅和比例。" },
+      { id: "image_sketch", label_zh: "涂鸦作画", icon: "wand-sparkles", required_assets: ["prompt", "images"], description_zh: "草图加文字生成完整图片。" },
+      { id: "image_ecommerce", label_zh: "电商场景图", icon: "package", required_assets: ["prompt"], description_zh: "生成商品主图和场景图。" },
+    ],
+    models: [
+      { id: "wan27-pro", model_id: "wan2.7-image-pro", label_zh: "万相 2.7 Pro", sizes: ["1K", "2K", "4K"] },
+      { id: "wan27", model_id: "wan2.7-image", label_zh: "万相 2.7", sizes: ["1K", "2K"] },
+      { id: "qwen-pro", model_id: "qwen-image-2.0-pro", label_zh: "千问 2.0 Pro", sizes: ["512*512", "1024*1024", "1536*1024"], supports_negative: true },
+    ],
+    default_model: "wan27-pro",
+    default_size: "2K",
+    sizes: ["1K", "2K", "4K", "1024*1024", "1536*1024"],
+    style_presets: [{ index: 0, name: "复古漫画" }, { index: 1, name: "3D童话" }, { index: 2, name: "二次元" }],
+    sketch_styles: [{ id: "<watercolor>", name: "水彩" }, { id: "<anime>", name: "二次元" }, { id: "<flat>", name: "扁平插画" }],
+    ecommerce_scenes: [{ id: "hero", name: "商品主图" }, { id: "white", name: "白底图" }, { id: "scene", name: "场景图" }, { id: "detail", name: "细节图" }],
+  },
+};
+
+const DEFAULT_PROMPT_GUIDE = {
+  formulas: {
+    t2v: "主体 + 场景 + 动作 + 镜头运动 + 光线氛围 + 风格 + 时长/比例",
+    i2v: "保留首帧主体 + 补充动作变化 + 镜头推进/环绕 + 环境细节 + 情绪氛围",
+    r2v: "参考图主体/风格 + 新场景 + 动作目标 + 镜头语言 + 视觉一致性约束",
+    "avatar-compose": "人物形象 + 口播主题 + 语气情绪 + 背景环境 + 镜头构图 + 字幕/品牌要求",
+  },
+  templates: [
+    {
+      id: "product-launch",
+      name: "科技产品发布",
+      desc: "发布会现场、主持人口播、品牌质感",
+      prompt: "一位专业主持人在现代科技发布会舞台中央介绍新品，蓝紫色灯光，背景大屏展示产品轮廓，镜头缓慢推进，画面高级、真实、商业广告质感。",
+    },
+    {
+      id: "city-lifestyle",
+      name: "城市生活方式",
+      desc: "人物 + 城市场景 + 轻电影感",
+      prompt: "清晨城市街角，一位年轻女性手持咖啡走过玻璃幕墙，阳光从高楼间洒下，镜头跟拍，浅景深，温暖自然，电影感。",
+    },
+    {
+      id: "ecommerce-demo",
+      name: "电商产品展示",
+      desc: "产品特写、卖点展示、干净背景",
+      prompt: "一款精致消费电子产品在纯净浅色背景上旋转展示，镜头从产品细节拉到整体，柔和棚拍光，突出材质纹理和高级感。",
+    },
+    {
+      id: "talking-avatar",
+      name: "数字人口播",
+      desc: "形象稳定、口型同步、自然表达",
+      prompt: "一位亲和力强的数字人主播面对镜头进行产品讲解，表情自然，口型同步准确，背景为明亮简洁的直播间，构图稳定，专业可信。",
+    },
+  ],
+  cameras: [
+    { zh: "缓慢推进" },
+    { zh: "环绕镜头" },
+    { zh: "手持跟拍" },
+    { zh: "浅景深特写" },
+    { zh: "俯拍转平视" },
+    { zh: "电影感长镜头" },
+  ],
+  atmosphere: {
+    光线: ["柔和自然光", "金色夕阳", "蓝紫科技光", "棚拍柔光", "高对比轮廓光"],
+    风格: ["商业广告", "真实摄影", "电影感", "极简高级", "温暖治愈", "科技未来感"],
+    质量: ["主体清晰", "细节丰富", "运动自然", "构图稳定", "质感高级"],
+  },
+};
+
+const FALLBACK_PYTHON_DEPS = [
+  {
+    id: "oss2",
+    import_name: "oss2",
+    pip_spec: "oss2>=2.18.0",
+    display_name: "阿里云 OSS SDK",
+    description: "上传图片、音频、视频到 OSS，给 DashScope 提供公网 URL。",
+  },
+  {
+    id: "mutagen",
+    import_name: "mutagen",
+    pip_spec: "mutagen>=1.47.0",
+    display_name: "Mutagen",
+    description: "读取音频时长，避免数字人口播视频被固定为 5 秒。",
+  },
+  {
+    id: "dashscope",
+    import_name: "dashscope",
+    pip_spec: "dashscope>=1.20.0",
+    display_name: "DashScope SDK",
+    description: "部分旧流程或第三方扩展会直接调用 DashScope Python SDK。",
+  },
+  {
+    id: "edge-tts",
+    import_name: "edge_tts",
+    pip_spec: "edge-tts>=7.0",
+    display_name: "Edge-TTS",
+    description: "使用微软免费 TTS 引擎生成快速试听音频。",
+  },
+];
+
+function statusKind(status) {
+  if (["succeeded", "done", "completed", "downloaded"].includes(status)) return "success";
+  if (["running", "processing", "pending", "queued"].includes(status)) return "info";
+  if (status === "cancelled") return "warning";
+  return "danger";
+}
+
+// ── Header navigation ────────────────────────────────────────────────
+
+const TABS = [
+  { id: "image", label: "生图", icon: "image-play" },
+  { id: "figures", label: "形象", icon: "user-square" },
+  { id: "voices", label: "音色", icon: "mic" },
+  { id: "prompt", label: "提示词", icon: "sparkles" },
+  { id: "t2v", label: "文生视频", icon: "video" },
+  { id: "i2v", label: "图生视频", icon: "image-play" },
+  { id: "i2v_end", label: "首尾帧", icon: "image-up" },
+  { id: "r2v", label: "多模态", icon: "users" },
+  { id: "video_extend", label: "视频续写", icon: "fast-forward" },
+  { id: "video_edit", label: "视频编辑", icon: "wand-sparkles" },
+  { id: "digital", label: "数字人", icon: "user-square" },
+  { id: "storyboard", label: "分镜", icon: "film" },
+  { id: "tasks", label: "任务", icon: "list" },
+  { id: "settings", label: "设置", icon: "settings" },
+];
+
+function HeaderNav({ tab, onTab, settings }) {
+  return (
+    <>
+      <header className="header">
+        <h1 className="oa-hero-title">
+          <span className="oa-hero-title__icon oa-hero-title__icon--app">
+            <img src="icon.svg" alt="HappyHorse" />
+          </span>
+          <span className="oa-hero-title__text">
+            快乐马工作室
+            <span className="oa-hero-title__sub">HappyHorse Studio</span>
+          </span>
+        </h1>
+        <div className="header-right">
+          <span className={"api-pill " + (settings?.api_key_set ? "" : "api-pill--missing")}>
+            <Icon name={settings?.api_key_set ? "save" : "alert-triangle"} size={13} />
+            {settings?.api_key_set ? "DashScope 已配置" : "待配置 DashScope"}
+          </span>
+          <span>v1.0.0</span>
+        </div>
+      </header>
+      <div className="tabs">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            className={"tab " + (tab === t.id ? "active" : "")}
+            onClick={() => onTab(t.id)}
+          >
+            <Icon name={t.icon} size={15} />
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function MissingDashScopeBanner({ settings, onSettings }) {
+  if (settings?.api_key_set) return null;
+  return (
+    <div className="missing-key-banner">
+      <div className="missing-key-banner__main">
+        <Icon name="alert-triangle" size={15} />
+        <div>
+          <strong>尚未配置 DashScope API Key</strong>
+          <span>请到「设置」中填写百炼 API Key 后再提交任务。</span>
+        </div>
+      </div>
+      <button className="missing-key-banner__btn" onClick={onSettings}>
+        去设置 <Icon name="play" size={11} />
+      </button>
+    </div>
+  );
+}
+
+// ── Create Tab ──────────────────────────────────────────────────────
+
+const MODE_GROUPS = [
+  {
+    label: "视频生成",
+    modes: ["t2v", "i2v", "i2v_end", "video_extend", "r2v", "video_edit"],
+  },
+  {
+    label: "数字人",
+    modes: ["photo_speak", "video_relip", "video_reface", "pose_drive", "avatar_compose"],
+  },
+  { label: "长视频", modes: ["long_video"] },
+];
+
+function taskIdOf(task) {
+  return task?.id || task?.task_id || "";
+}
+
+function taskVideoUrl(task) {
+  return task?.video_url || task?.output_url || "";
+}
+
+function taskImageUrls(task) {
+  const assetPaths = task?.asset_paths || {};
+  const urls = task?.image_urls || assetPaths.image_urls || [];
+  if (Array.isArray(urls) && urls.length) return urls;
+  if (task?.last_frame_url && (task?.mode || "").startsWith("image_")) return [task.last_frame_url];
+  return [];
+}
+
+function formatTaskTime(ts) {
+  if (!ts) return "—";
+  return new Date(ts * 1000).toLocaleString();
+}
+
+function TaskStatusBadge({ status }) {
+  return <Tag kind={statusKind(status)}>{status || "pending"}</Tag>;
+}
+
+function useTaskHeartbeat(taskId) {
+  const [task, setTask] = useState(null);
+
+  const refresh = useCallback(async () => {
+    if (!taskId) {
+      setTask(null);
+      return;
+    }
+    try {
+      const r = await api("GET", `/tasks/${taskId}`);
+      setTask(r.task || null);
+    } catch (_) {}
+  }, [taskId]);
+
+  useEffect(() => {
+    refresh();
+    if (!taskId) return;
+    const timer = setInterval(refresh, 2500);
+    const sse = new EventSource(apiBase() + "/sse");
+    sse.addEventListener("task_update", (e) => {
+      try {
+        const d = JSON.parse(e.data || "{}");
+        if (!d.task_id || d.task_id === taskId) refresh();
+      } catch (_) {
+        refresh();
+      }
+    });
+    return () => {
+      clearInterval(timer);
+      sse.close();
+    };
+  }, [taskId, refresh]);
+
+  return task;
+}
+
+function ProgressLoader({ task }) {
+  const pct = Math.min(100, Math.max(0, Math.round(Number(task?.progress || 0))));
+  return (
+    <div className="video-player-wrap oa-loader oa-loader--dark">
+      <div className="oa-loader__inner">
+        <div className="oa-loader__spinner" />
+        <div className="oa-loader__title">任务已提交至 DashScope，正在生成视频…</div>
+        {pct > 0 && (
+          <div className="oa-loader__progress">
+            <div className="oa-loader__bar">
+              <div className="oa-loader__bar-fill" style={{ width: `${pct}%` }} />
+            </div>
+            <div className="oa-loader__pct">{pct}%</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CostPreviewCard({ costPreview }) {
+  return (
+    <div className="card cost-card">
+      <div className="card-header">
+        <h3 className="card-title">
+          <Icon name="coin" size={14} /> 成本预估
+        </h3>
+      </div>
+      {costPreview ? (
+        <>
+          <div className="cost-total">
+            {costPreview.formatted_total || `¥${costPreview.total_cny?.toFixed?.(2) || "0.00"}`}
+          </div>
+          <div className="text-xs text-muted mt-2">
+            {(costPreview.items || []).map((it, i) => (
+              <div key={i}>
+                {it.name}：{it.units} {it.unit_label} × ¥{it.unit_price} = ¥{it.subtotal}
+              </div>
+            ))}
+          </div>
+          {costPreview.exceeds_threshold && (
+            <Banner kind="warning">超出预算阈值，提交时会要求二次确认</Banner>
+          )}
+        </>
+      ) : (
+        <Spinner />
+      )}
+    </div>
+  );
+}
+
+function UploadUrlField({ label, value, onChange, accept = "*/*", kind = "image", hint }) {
+  const [uploading, setUploading] = useState(false);
+  const [asset, setAsset] = useState(null);
+  const inputRef = useRef(null);
+
+  const upload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(apiBase() + "/upload", { method: "POST", body: fd });
+      const r = await res.json();
+      if (!r.ok) throw new Error(r.error || "upload failed");
+      setAsset(r);
+      onChange(r.oss_url || r.preview_url || "");
+    } catch (e) {
+      alert(`上传失败：${e.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const preview = asset?.preview_url || value;
+  const isVideo = kind === "video" || /\.(mp4|mov|webm|mkv)(\?|$)/i.test(preview || "");
+  const isImage = kind === "image" || /\.(png|jpe?g|webp|gif|bmp)(\?|$)/i.test(preview || "");
+
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <div className={"upload-zone" + (value ? " is-filled" : "")} onClick={() => inputRef.current?.click()}>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={accept}
+          style={{ display: "none" }}
+          onChange={(e) => upload(e.target.files?.[0])}
+        />
+        {preview && isImage ? (
+          <img src={preview} alt="" className="upload-preview" />
+        ) : preview && isVideo ? (
+          <video src={preview} className="upload-preview" muted />
+        ) : (
+          <div className="upload-zone__body">
+            <span className="upload-zone__icon">
+              {uploading ? <Spinner /> : <Icon name={isVideo ? "video" : "image-play"} size={22} />}
+            </span>
+            <div className="upload-zone__text">
+              <div className="upload-zone__title">{uploading ? "上传中…" : "点击上传素材"}</div>
+              <div className="upload-zone__hint">{hint || "支持本地文件上传，也可以在下方直接粘贴公网 URL"}</div>
+            </div>
+          </div>
+        )}
+      </div>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="https://..." />
+    </div>
+  );
+}
+
+function FileUploadCard({ accept, kind, value, onUploaded, hint }) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef(null);
+
+  const upload = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(apiBase() + "/upload", { method: "POST", body: fd });
+      const r = await res.json();
+      if (!r.ok) throw new Error(r.error || "upload failed");
+      onUploaded(r);
+    } catch (e) {
+      alert(`上传失败：${e.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const preview = value?.preview_url || value?.oss_url || "";
+  const isImage = kind === "image";
+  const isAudio = kind === "audio";
+
+  return (
+    <div className={"upload-zone library-upload" + (value ? " is-filled" : "")} onClick={() => inputRef.current?.click()}>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        style={{ display: "none" }}
+        onChange={(e) => upload(e.target.files?.[0])}
+      />
+      {value && isImage ? (
+        <img src={preview} alt="" className="upload-preview" />
+      ) : value && isAudio ? (
+        <div className="upload-zone__body">
+          <span className="upload-zone__icon"><Icon name="mic" size={22} /></span>
+          <div className="upload-zone__text">
+            <div className="upload-zone__title">{value.asset?.original_name || "音频已上传"}</div>
+            <div className="upload-zone__hint">{value.oss_url ? "已生成公网 OSS URL" : "已保存本地预览文件"}</div>
+          </div>
+        </div>
+      ) : (
+        <div className="upload-zone__body">
+          <span className="upload-zone__icon">
+            {uploading ? <Spinner /> : <Icon name={isAudio ? "mic" : "image-up"} size={22} />}
+          </span>
+          <div className="upload-zone__text">
+            <div className="upload-zone__title">{uploading ? "上传中…" : "点击上传素材"}</div>
+            <div className="upload-zone__hint">{hint || "选择本地文件后会自动上传并回填到表单"}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskPreviewPane({ taskId, task, costPreview, onGoTasks, showCost = true }) {
+  const liveTask = task || null;
+  const videoUrl = taskVideoUrl(liveTask);
+  const imageUrls = taskImageUrls(liveTask);
+  const status = liveTask?.status;
+
+  if (!taskId) {
+    return (
+      <div className="split-right oa-preview-area">
+        <div className="oa-preview-empty">
+          <div className="oa-preview-empty__icon">
+            <Icon name="film" size={34} />
+          </div>
+          <div className="oa-preview-empty__title">暂无当前任务</div>
+          <div className="oa-preview-empty__hint">左侧填写参数并提交后，这里会显示生成进度和视频预览。</div>
+        </div>
+        {showCost && <CostPreviewCard costPreview={costPreview} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="split-right oa-preview-area">
+      <div className="card task-preview-head">
+        <div>
+          <h3 className="card-title">本次任务</h3>
+          <div className="text-xs text-muted font-mono">{taskId}</div>
+        </div>
+        <div className="flex gap-2 items-center">
+          <TaskStatusBadge status={status || "pending"} />
+          {onGoTasks && (
+            <button className="btn btn-sm btn-ghost" onClick={onGoTasks}>
+              <Icon name="list" size={12} /> 任务详情
+            </button>
+          )}
+        </div>
+      </div>
+
+      {(!liveTask || status === "pending" || status === "running") && (
+        <ProgressLoader task={liveTask} />
+      )}
+
+      {(status === "succeeded" || status === "done") && (
+        videoUrl ? (
+          <div className="video-player-wrap">
+            <video src={videoUrl} controls loop />
+          </div>
+        ) : imageUrls.length ? (
+          <div className="image-result-grid">
+            {imageUrls.map((url, idx) => (
+              <a key={url + idx} href={url} target="_blank" rel="noreferrer" className="image-result-card">
+                <img src={url} alt={`生成图片 ${idx + 1}`} />
+                <span>图片 {idx + 1}</span>
+              </a>
+            ))}
+          </div>
+        ) : (
+          <div className="video-player-wrap video-player-empty">
+            <Empty icon="alert-triangle" title="任务完成但没有返回可预览素材" />
+          </div>
+        )
+      )}
+
+      {(status === "failed" || status === "cancelled" || status === "timeout") && (
+        <div className="card">
+          <Banner kind="danger">{liveTask?.error_message || `任务状态：${status}`}</Banner>
+        </div>
+      )}
+
+      {liveTask && (
+        <div className="card task-meta-card">
+          <div className="task-meta-grid">
+            <div>
+              <span>模式</span>
+              <strong>{liveTask.mode || "—"}</strong>
+            </div>
+            <div>
+              <span>模型</span>
+              <strong>{liveTask.model_id || "—"}</strong>
+            </div>
+            <div>
+              <span>创建时间</span>
+              <strong>{formatTaskTime(liveTask.created_at)}</strong>
+            </div>
+          </div>
+          {liveTask.prompt && (
+            <div className="task-prompt-preview">{liveTask.prompt}</div>
+          )}
+        </div>
+      )}
+
+      {showCost && <CostPreviewCard costPreview={costPreview} />}
+    </div>
+  );
+}
+
+function CreateTab({
+  catalog,
+  settings,
+  onSubmit,
+  onSettings,
+  initialMode = "t2v",
+  title = "视频生成",
+  subtitle = "按左侧步骤补齐素材、提示词和输出参数，右侧查看成本、进度与预览。",
+  showModeChooser = false,
+  modeIds = null,
+}) {
+  catalog = catalog || DEFAULT_CATALOG;
+  const [mode, setMode] = useState(initialMode);
+  const [modelId, setModelId] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [duration, setDuration] = useState(5);
+  const [resolution, setResolution] = useState("720P");
+  const [aspect, setAspect] = useState("16:9");
+  const [voiceId, setVoiceId] = useState("");
+  const [text, setText] = useState("");
+  const [firstFrame, setFirstFrame] = useState("");
+  const [lastFrame, setLastFrame] = useState("");
+  const [sourceVideo, setSourceVideo] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [imageUrls, setImageUrls] = useState("");
+  const [referenceUrls, setReferenceUrls] = useState("");
+  const [audioUrl, setAudioUrl] = useState("");
+  const [costPreview, setCostPreview] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [previewTaskId, setPreviewTaskId] = useState("");
+  const modeIdSet = useMemo(() => (modeIds ? new Set(modeIds) : null), [modeIds]);
+  const visibleModeGroups = useMemo(
+    () => MODE_GROUPS
+      .map((g) => ({ ...g, modes: g.modes.filter((mid) => !modeIdSet || modeIdSet.has(mid)) }))
+      .filter((g) => g.modes.length),
+    [modeIdSet]
+  );
+
+  useEffect(() => {
+    setMode(initialMode);
+    setPreviewTaskId("");
+  }, [initialMode]);
+
+  const modeSpec = useMemo(
+    () => (catalog?.modes || []).find((m) => m.id === mode),
+    [catalog, mode]
+  );
+  const modelOptions = useMemo(
+    () => (catalog?.models || []).filter((m) => m.mode === mode),
+    [catalog, mode]
+  );
+
+  // Default model — settings override → registry default → first option.
+  useEffect(() => {
+    const fromSettings = settings?.[`default_model_${mode}`];
+    const fromCatalog = catalog?.default_models?.[mode];
+    setModelId(fromSettings || fromCatalog || modelOptions[0]?.model_id || "");
+  }, [mode, catalog, settings]);
+
+  // Cost preview (debounced).
+  useEffect(() => {
+    if (!mode) return;
+    const t = setTimeout(async () => {
+      try {
+        const r = await api("POST", "/cost-preview", {
+          mode,
+          model_id: modelId,
+          duration,
+          resolution,
+          aspect_ratio: aspect,
+          text,
+        });
+        setCostPreview(r);
+      } catch (_) {}
+    }, 300);
+    return () => clearTimeout(t);
+  }, [mode, modelId, duration, resolution, aspect, text]);
+
+  const submit = async () => {
+    const approved = !costPreview?.exceeds_threshold || window.confirm(
+      `本次预估成本为 ${costPreview.formatted_total || "较高"}，已超过阈值。确认继续提交吗？`
+    );
+    if (!approved) return;
+    setSubmitting(true);
+    try {
+      const body = {
+        mode,
+        model_id: modelId,
+        prompt,
+        duration,
+        resolution,
+        aspect_ratio: aspect,
+        voice_id: voiceId,
+        text,
+        first_frame_url: firstFrame,
+        last_frame_url: lastFrame,
+        source_video_url: sourceVideo,
+        image_url: imageUrl,
+        image_urls: imageUrls
+          .split(/[\s,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+        reference_urls: referenceUrls
+          .split(/[\s,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+        audio_url: audioUrl,
+        cost_approved: !!costPreview?.exceeds_threshold,
+        client_request_id: `web_${Date.now()}`,
+      };
+      const r = await api("POST", "/tasks", body);
+      const tid = r.task?.task_id || r.task?.id || "";
+      if (tid) setPreviewTaskId(tid);
+    } catch (e) {
+      alert(`提交失败: ${e.message}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const liveTask = useTaskHeartbeat(previewTaskId);
+  return (
+    <div className="split-layout workbench-layout">
+      <div className="split-left create-panel">
+        <div className="workbench-title">
+          <div>
+        <h2 className="page-title">
+          <Icon name={modeSpec?.icon || "wand-sparkles"} /> {title}
+        </h2>
+            <p className="page-subtitle">{subtitle}</p>
+          </div>
+        </div>
+
+        <MissingDashScopeBanner settings={settings} onSettings={onSettings} />
+
+        {showModeChooser ? (
+          <section className="card create-section create-section--mode">
+            <div className="create-section__head">
+              <h3><Icon name="layers" size={14} /> 生成模式</h3>
+              <span>选择当前大类下的具体能力</span>
+            </div>
+            {visibleModeGroups.map((g) => (
+              <div key={g.label} className="mode-block">
+                <p className="mode-group-label">{g.label}</p>
+                <div className="mode-grid">
+                  {g.modes.map((mid) => {
+                    const m = (catalog.modes || []).find((x) => x.id === mid);
+                    if (!m) return null;
+                    return (
+                      <button
+                        key={mid}
+                        className={"mode-btn" + (mode === mid ? " active" : "")}
+                        onClick={() => setMode(mid)}
+                        title={m.description_zh}
+                      >
+                        <Icon name={m.icon || "wand-sparkles"} size={18} />
+                        <div>{m.label_zh}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </section>
+        ) : (
+          <div className="flow-steps">
+            <div className="flow-step active"><span>1</span>选择模式</div>
+            <div className="flow-step"><span>2</span>写提示词</div>
+            <div className="flow-step"><span>3</span>补素材</div>
+            <div className="flow-step"><span>4</span>生成预览</div>
+          </div>
+        )}
+
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="settings" size={14} /> 模型与提示词</h3>
+            <span>{modeSpec?.label_zh || mode}</span>
+          </div>
+          <div className="field">
+            <label>模型 (model_id)</label>
+            <select value={modelId} onChange={(e) => setModelId(e.target.value)}>
+              {modelOptions.map((m) => (
+                <option key={m.model_id} value={m.model_id}>
+                  {m.label_zh}
+                  {catalog.default_models?.[mode] === m.model_id ? "（默认）" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label>提示词 (prompt)</label>
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="例如：电影级画质，5秒，16:9，温暖治愈\n0-2秒：中景，主角推开门\n2-5秒：跟镜头，主角走进花园\n【声音】轻柔钢琴 + 鸟鸣"
+            />
+          </div>
+        </section>
+
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="image-up" size={14} /> 素材与台词</h3>
+            <span>按当前模式显示必填项</span>
+          </div>
+          {(modeSpec?.required_assets || []).includes("first_frame_url") && (
+            <UploadUrlField
+              label="首帧素材 (first_frame_url)"
+              value={firstFrame}
+              onChange={setFirstFrame}
+              accept="image/*"
+              kind="image"
+              hint="上传一张作为视频开头的图片"
+            />
+          )}
+          {(modeSpec?.required_assets || []).includes("last_frame_url") && (
+            <UploadUrlField
+              label="尾帧素材 (last_frame_url)"
+              value={lastFrame}
+              onChange={setLastFrame}
+              accept="image/*"
+              kind="image"
+              hint="上传一张作为视频结尾的图片"
+            />
+          )}
+          {(modeSpec?.required_assets || []).includes("source_video_url") && (
+            <UploadUrlField
+              label="源视频素材 (source_video_url)"
+              value={sourceVideo}
+              onChange={setSourceVideo}
+              accept="video/*"
+              kind="video"
+              hint="上传需要续写、编辑、换脸或口型重配的视频"
+            />
+          )}
+          {(modeSpec?.required_assets || []).includes("image_url") && (
+            <UploadUrlField
+              label="人脸 / 形象图 (image_url)"
+              value={imageUrl}
+              onChange={setImageUrl}
+              accept="image/*"
+              kind="image"
+              hint="正面单人照效果最佳"
+            />
+          )}
+          {(modeSpec?.required_assets || []).includes("image_urls") && (
+            <div className="field">
+              <label>额外参考图 URLs (image_urls，英文逗号或换行分隔)</label>
+              <input value={imageUrls} onChange={(e) => setImageUrls(e.target.value)} />
+            </div>
+          )}
+          {(modeSpec?.required_assets || []).includes("reference_urls") && (
+            <div className="field">
+              <label>参考图 URLs (英文逗号分隔)</label>
+              <input value={referenceUrls} onChange={(e) => setReferenceUrls(e.target.value)} />
+            </div>
+          )}
+
+          {!modeSpec?.native_audio_sync && (
+            <div className="create-audio-grid">
+              <div className="create-audio-fields">
+                <div className="settings-grid two">
+                  <div className="field">
+                    <label>音色 (voice_id)</label>
+                    <select value={voiceId} onChange={(e) => setVoiceId(e.target.value)}>
+                      <option value="">(无)</option>
+                      {((catalog.voices || []).length ? catalog.voices : FALLBACK_SYSTEM_VOICES).map((v) => (
+                        <option key={v.id} value={v.id}>
+                          [{v.engine}] {v.label_zh || v.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>台词 (text)</label>
+                    <input value={text} onChange={(e) => setText(e.target.value)} placeholder="填写台词，或右侧上传现成音频" />
+                  </div>
+                </div>
+                <div className="create-helper-card">
+                  <Icon name="mic" size={16} />
+                  <div>
+                    <strong>两种配音方式</strong>
+                    <span>选择音色并填写台词会自动 TTS（文字转语音）；如果已有成品配音，直接上传右侧音频即可优先使用。</span>
+                  </div>
+                </div>
+              </div>
+              <UploadUrlField
+                label="音频素材 (audio_url，可选；填写后优先于 TTS)"
+                value={audioUrl}
+                onChange={setAudioUrl}
+                accept="audio/*"
+                kind="audio"
+                hint="上传配音音频，或留空使用文字合成"
+              />
+            </div>
+          )}
+          {modeSpec?.native_audio_sync && !(modeSpec?.required_assets || []).length && (
+            <div className="compact-empty-note">当前模式仅需要提示词和输出参数，无额外素材。</div>
+          )}
+        </section>
+
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="settings" size={14} /> 输出参数</h3>
+            <span>控制视频规格</span>
+          </div>
+          <div className="settings-grid three">
+            <div className="field">
+              <label>时长 (秒)</label>
+              <input
+                type="number"
+                value={duration}
+                onChange={(e) => setDuration(parseInt(e.target.value, 10) || 5)}
+                min={3}
+                max={15}
+              />
+            </div>
+            <div className="field">
+              <label>分辨率</label>
+              <select value={resolution} onChange={(e) => setResolution(e.target.value)}>
+                {(catalog.resolutions || []).map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>比例</label>
+              <select value={aspect} onChange={(e) => setAspect(e.target.value)}>
+                {(catalog.aspects || []).map((a) => (
+                  <option key={a}>{a}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <div className="create-submit-bar">
+          <button className="btn btn-block" onClick={submit} disabled={submitting || !prompt}>
+            {submitting ? <Spinner /> : <Icon name="rocket" size={14} />}
+            {submitting ? "提交中…" : "提交任务"}
+          </button>
+        </div>
+      </div>
+
+      <TaskPreviewPane
+        taskId={previewTaskId}
+        task={liveTask}
+        costPreview={costPreview}
+        onGoTasks={onSubmit}
+      />
+    </div>
+  );
+}
+
+// ── Image Tab ───────────────────────────────────────────────────────
+
+function ImageTab({ catalog, settings, onSubmit, onSettings }) {
+  catalog = catalog || DEFAULT_CATALOG;
+  const imageCatalog = catalog?.image || {};
+  const modes = imageCatalog.modes || [];
+  const models = imageCatalog.models || [];
+  const [mode, setMode] = useState("image_text2img");
+  const [modelId, setModelId] = useState(settings?.default_image_model || imageCatalog.default_model || "wan27-pro");
+  const [size, setSize] = useState(settings?.default_image_size || imageCatalog.default_size || "2K");
+  const [prompt, setPrompt] = useState("");
+  const [productName, setProductName] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState("");
+  const [n, setN] = useState(1);
+  const [imageUrls, setImageUrls] = useState("");
+  const [styleIndex, setStyleIndex] = useState(0);
+  const [outputRatio, setOutputRatio] = useState("");
+  const [sketchStyle, setSketchStyle] = useState("<watercolor>");
+  const [scenes, setScenes] = useState(["hero", "scene"]);
+  const [busy, setBusy] = useState(false);
+  const [previewTaskId, setPreviewTaskId] = useState("");
+
+  useEffect(() => {
+    setModelId(settings?.default_image_model || imageCatalog.default_model || "wan27-pro");
+    setSize(settings?.default_image_size || imageCatalog.default_size || "2K");
+  }, [settings, imageCatalog.default_model, imageCatalog.default_size]);
+
+  const selectedModel = models.find((m) => m.id === modelId) || models[0];
+  const sizes = selectedModel?.sizes?.length ? selectedModel.sizes : (imageCatalog.sizes || ["2K"]);
+  const modeSpec = modes.find((m) => m.id === mode);
+  const requiresImages = (modeSpec?.required_assets || []).includes("images");
+  const parsedImages = imageUrls.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  const liveTask = useTaskHeartbeat(previewTaskId);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await api("POST", "/image-tasks", {
+        mode,
+        prompt,
+        product_name: productName,
+        model_id: modelId,
+        size,
+        negative_prompt: negativePrompt,
+        n,
+        images: parsedImages,
+        image_url: parsedImages[0] || "",
+        style_index: styleIndex,
+        output_ratio: outputRatio,
+        sketch_style: sketchStyle,
+        ecommerce_scenes: scenes,
+        client_request_id: `web_img_${Date.now()}`,
+        wait_for_completion: false,
+      });
+      const tid = r.task?.task_id || r.task?.id || "";
+      if (tid) setPreviewTaskId(tid);
+      onSubmit?.();
+    } catch (e) {
+      alert(`提交失败：${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="split-layout workbench-layout">
+      <div className="split-left create-panel">
+        <div className="workbench-title">
+          <div>
+            <h2 className="page-title"><Icon name="image" /> 图片生成</h2>
+            <p className="page-subtitle">先生成分镜图、角色图、电商图，再用 asset_ids 继续图生视频。</p>
+          </div>
+        </div>
+
+        <MissingDashScopeBanner settings={settings} onSettings={onSettings} />
+
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="layers" size={14} /> 图片模式</h3>
+            <span>万相 / 千问图片能力</span>
+          </div>
+          <div className="mode-grid image-mode-grid">
+            {modes.map((m) => (
+              <button key={m.id} className={"mode-btn" + (mode === m.id ? " active" : "")} onClick={() => setMode(m.id)} title={m.description_zh}>
+                <Icon name={m.icon || "image"} size={18} />
+                <div>{m.label_zh}</div>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="settings" size={14} /> 模型与提示词</h3>
+            <span>{modeSpec?.label_zh || mode}</span>
+          </div>
+          <div className="settings-grid two">
+            <div className="field">
+              <label>图片模型</label>
+              <select value={modelId} onChange={(e) => setModelId(e.target.value)}>
+                {models.map((m) => <option key={m.id} value={m.id}>{m.label_zh}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label>尺寸</label>
+              <select value={size} onChange={(e) => setSize(e.target.value)}>
+                {sizes.map((s) => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="field">
+            <label>{mode === "image_ecommerce" ? "商品/画面提示词" : "提示词"}</label>
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="描述主体、场景、风格、构图、用途和质量要求" />
+          </div>
+          {selectedModel?.supports_negative && (
+            <div className="field">
+              <label>反向提示词 (negative_prompt)</label>
+              <input value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} placeholder="不想出现的元素" />
+            </div>
+          )}
+        </section>
+
+        <section className="card create-section">
+          <div className="create-section__head">
+            <h3><Icon name="upload" size={14} /> 素材与专用参数</h3>
+            <span>{requiresImages ? "当前模式需要输入图" : "可直接文生图"}</span>
+          </div>
+          {requiresImages && (
+            <UploadUrlField
+              label="输入图片 URLs（可上传；多个用逗号或换行分隔）"
+              value={imageUrls}
+              onChange={setImageUrls}
+              accept="image/*"
+              kind="image"
+              hint="用于编辑、重绘、扩图或草图生成"
+            />
+          )}
+          <div className="settings-grid three">
+            <div className="field">
+              <label>生成张数</label>
+              <input type="number" min="1" max="4" value={n} onChange={(e) => setN(parseInt(e.target.value, 10) || 1)} />
+            </div>
+            {mode === "image_style_repaint" && (
+              <div className="field">
+                <label>风格</label>
+                <select value={styleIndex} onChange={(e) => setStyleIndex(parseInt(e.target.value, 10) || 0)}>
+                  {(imageCatalog.style_presets || []).map((s) => <option key={s.index} value={s.index}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
+            {mode === "image_outpaint" && (
+              <div className="field">
+                <label>扩图比例</label>
+                <select value={outputRatio} onChange={(e) => setOutputRatio(e.target.value)}>
+                  <option value="">自动</option>
+                  <option value="1:1">1:1</option>
+                  <option value="16:9">16:9</option>
+                  <option value="9:16">9:16</option>
+                  <option value="4:3">4:3</option>
+                </select>
+              </div>
+            )}
+            {mode === "image_sketch" && (
+              <div className="field">
+                <label>草图风格</label>
+                <select value={sketchStyle} onChange={(e) => setSketchStyle(e.target.value)}>
+                  {(imageCatalog.sketch_styles || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+          {mode === "image_ecommerce" && (
+            <>
+              <div className="field">
+                <label>商品名称</label>
+                <input value={productName} onChange={(e) => setProductName(e.target.value)} placeholder="例如：黑色便携咖啡机" />
+              </div>
+              <div className="filter-group__buttons">
+                {(imageCatalog.ecommerce_scenes || []).map((s) => (
+                  <button key={s.id} className={"mode-btn" + (scenes.includes(s.id) ? " active" : "")} onClick={() => setScenes((prev) => prev.includes(s.id) ? prev.filter((x) => x !== s.id) : [...prev, s.id])}>
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+
+        <div className="create-submit-bar">
+          <button className="btn btn-block" onClick={submit} disabled={busy || (!prompt && !productName && mode !== "image_style_repaint" && mode !== "image_outpaint") || (requiresImages && !parsedImages.length)}>
+            {busy ? <Spinner /> : <Icon name="rocket" size={14} />}
+            {busy ? "提交中…" : "提交图片任务"}
+          </button>
+        </div>
+      </div>
+
+      <TaskPreviewPane taskId={previewTaskId} task={liveTask} showCost={false} onGoTasks={onSubmit} />
+    </div>
+  );
+}
+
+// ── Tasks Tab ───────────────────────────────────────────────────────
+
+function TasksTab() {
+  const [tasks, setTasks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [modeFilter, setModeFilter] = useState("all");
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api("GET", "/tasks?limit=100");
+      setTasks(r.tasks || []);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const sse = new EventSource(apiBase() + "/sse");
+    sse.addEventListener("task_update", () => refresh());
+    sse.addEventListener("chain_update", () => refresh());
+    return () => sse.close();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!selectedId && tasks.length > 0) setSelectedId(taskIdOf(tasks[0]));
+  }, [tasks, selectedId]);
+
+  const selectedTask = useTaskHeartbeat(selectedId);
+  const modeFilters = useMemo(() => {
+    const seen = new Set();
+    return tasks
+      .map((t) => t.mode || "")
+      .filter((m) => {
+        if (!m || seen.has(m)) return false;
+        seen.add(m);
+        return true;
+      });
+  }, [tasks]);
+  const visibleTasks = useMemo(
+    () => tasks.filter((t) => {
+      const status = t.status || "";
+      const statusOk =
+        statusFilter === "all" ||
+        status === statusFilter ||
+        (statusFilter === "running" && ["processing", "running"].includes(status)) ||
+        (statusFilter === "completed" && ["succeeded", "done", "completed"].includes(status));
+      const modeOk = modeFilter === "all" || t.mode === modeFilter;
+      return statusOk && modeOk;
+    }),
+    [tasks, statusFilter, modeFilter]
+  );
+  const statusFilters = [
+    ["all", "全部"],
+    ["pending", "排队中"],
+    ["running", "处理中"],
+    ["completed", "已完成"],
+    ["failed", "失败"],
+    ["cancelled", "已取消"],
+  ];
+  useEffect(() => {
+    if (!visibleTasks.length) return;
+    if (!visibleTasks.some((t) => taskIdOf(t) === selectedId)) {
+      setSelectedId(taskIdOf(visibleTasks[0]));
+    }
+  }, [visibleTasks, selectedId]);
+  const selectedVisible = visibleTasks.some((t) => taskIdOf(t) === selectedId);
+
+  return (
+    <div className="split-layout workbench-layout">
+      <div className="split-left oa-list-panel task-list-panel">
+        <div className="task-panel-head">
+          <div>
+            <h2 className="page-title">
+              <Icon name="list" /> 任务列表
+            </h2>
+            <p className="page-subtitle">筛选左侧任务，点击后在右侧查看生成进度、视频和参数。</p>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={refresh}>
+            <Icon name="refresh" size={12} /> 刷新
+          </button>
+        </div>
+
+        <div className="task-filter-box">
+          <div className="filter-group">
+            <div className="filter-group__label">状态</div>
+            <div className="filter-group__buttons">
+              {statusFilters.map(([value, label]) => (
+                <button
+                  key={value}
+                  className={"mode-btn" + (statusFilter === value ? " active" : "")}
+                  onClick={() => setStatusFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="filter-group">
+            <div className="filter-group__label">模式</div>
+            <div className="filter-group__buttons">
+              <button
+                className={"mode-btn" + (modeFilter === "all" ? " active" : "")}
+                onClick={() => setModeFilter("all")}
+              >
+                全部模式
+              </button>
+              {modeFilters.map((m) => (
+                <button
+                  key={m}
+                  className={"mode-btn" + (modeFilter === m ? " active" : "")}
+                  onClick={() => setModeFilter(m)}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="task-list-loading"><Spinner /> 正在加载任务…</div>
+        ) : tasks.length === 0 ? (
+          <Empty icon="inbox" title="暂无任务" hint="到「创建」页提交第一个任务" />
+        ) : visibleTasks.length === 0 ? (
+          <Empty icon="inbox" title="没有匹配任务" hint="调整上方筛选条件查看其他任务" />
+        ) : (
+          <div className="task-list">
+            {visibleTasks.map((t) => {
+              const tid = taskIdOf(t);
+              const video = taskVideoUrl(t);
+              const images = taskImageUrls(t);
+              return (
+                <button
+                  key={tid}
+                  className={"task-card" + (selectedId === tid ? " selected" : "")}
+                  onClick={() => setSelectedId(tid)}
+                >
+                  <div className="task-thumb">
+                    {video ? <video src={video} muted /> : images.length ? <img src={images[0]} alt="" /> : <Icon name="film" size={20} />}
+                  </div>
+                  <div className="task-info">
+                    <div className="task-info-head">
+                      <strong>{t.mode || "未知模式"}</strong>
+                      <TaskStatusBadge status={t.status} />
+                    </div>
+                    <div className="task-card-prompt">{t.prompt || t.model_id || tid}</div>
+                    <div className="task-meta">
+                      <span className="font-mono">{t.model_id || "—"}</span>
+                      <span>{formatTaskTime(t.created_at)}</span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="oa-list-panel__footer">
+          共 {tasks.length} 个任务 · 当前显示 {visibleTasks.length} 个
+        </div>
+      </div>
+
+      <TaskPreviewPane taskId={selectedVisible ? selectedId : ""} task={selectedVisible ? selectedTask : null} showCost={false} />
+    </div>
+  );
+}
+
+// ── Storyboard / Long-Video Tab ─────────────────────────────────────
+
+function StoryboardTab({ catalog }) {
+  const [story, setStory] = useState("");
+  const [totalDuration, setTotalDuration] = useState(60);
+  const [segDuration, setSegDuration] = useState(10);
+  const [segments, setSegments] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [model, setModel] = useState("happyhorse-1.0-i2v");
+  const [chainMode, setChainMode] = useState("serial");
+  const outlineRef = useRef(null);
+  const segmentsRef = useRef(null);
+  const configRef = useRef(null);
+
+  const jumpTo = (ref) => {
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const modelOptions = (catalog?.models || []).filter((m) => m.mode === "i2v");
+
+  const addSegment = () => {
+    const nextIndex = segments.length + 1;
+    setSegments((prev) => [
+      ...prev,
+      {
+        index: nextIndex,
+        duration: segDuration,
+        prompt: "",
+        transition_to_next: "cut",
+      },
+    ]);
+    setTimeout(() => jumpTo(segmentsRef), 0);
+  };
+
+  const updateSegment = (index, patch) => {
+    setSegments((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
+  };
+
+  const removeSegment = (index) => {
+    setSegments((prev) => prev.filter((_, i) => i !== index).map((s, i) => ({ ...s, index: i + 1 })));
+  };
+
+  const decompose = async () => {
+    if (!story.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api("POST", "/storyboard/decompose", {
+        story,
+        total_duration: totalDuration,
+        segment_duration: segDuration,
+      });
+      if (r.ok) setSegments(r.segments || []);
+      else alert(r.error || "拆分镜失败");
+    } catch (e) {
+      alert(`拆分镜失败：${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = async () => {
+    if (!segments.length) {
+      alert("请先生成或手动添加至少一个分镜");
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api("POST", "/long-video/create", {
+        segments,
+        model_id: model,
+        mode: chainMode,
+      });
+      alert(`已提交，chain_group_id: ${r.chain_group_id}`);
+    } catch (e) {
+      alert(`提交失败：${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="storyboard-page">
+      <div className="library-toolbar">
+        <div>
+          <h2 className="page-title"><Icon name="film" /> 长视频分镜</h2>
+          <p className="page-subtitle">不是单向向导。你可以从大纲、分镜草稿或生成配置任意一步进入，再继续往下做。</p>
+        </div>
+        <button className="btn" onClick={addSegment}>
+          <Icon name="plus" size={13} /> 新增分镜
+        </button>
+      </div>
+
+      <div className="story-flow-grid">
+        <button className="story-flow-card" onClick={() => jumpTo(outlineRef)}>
+          <Icon name="wand-sparkles" size={18} />
+          <strong>从故事大纲开始</strong>
+          <span>写一句话或一段故事，让 AI 先拆成可编辑分镜。</span>
+        </button>
+        <button className="story-flow-card" onClick={addSegment}>
+          <Icon name="film" size={18} />
+          <strong>从分镜草稿开始</strong>
+          <span>已有脚本时直接新增分镜，不必先跑 AI 拆解。</span>
+        </button>
+        <button className="story-flow-card" onClick={() => jumpTo(configRef)}>
+          <Icon name="settings" size={18} />
+          <strong>从生成配置开始</strong>
+          <span>先选模型和串接方式，再回头补齐每段提示词。</span>
+        </button>
+      </div>
+
+      <div className="storyboard-workbench">
+        <section className="card create-section storyboard-panel" ref={outlineRef}>
+          <div className="create-section__head">
+            <h3><Icon name="wand-sparkles" size={14} /> 大纲拆分</h3>
+            <span>可选入口</span>
+          </div>
+          <div className="field">
+            <label>故事 / 大纲</label>
+            <textarea
+              value={story}
+              onChange={(e) => setStory(e.target.value)}
+              placeholder="一句话或一段话描述你的故事，AI 会自动拆分镜并生成每段的提示词"
+              className="story-outline-input"
+            />
+          </div>
+          <div className="settings-grid two">
+            <div className="field">
+              <label>总时长 (秒)</label>
+              <input
+                type="number"
+                value={totalDuration}
+                onChange={(e) => setTotalDuration(parseInt(e.target.value, 10) || 60)}
+              />
+            </div>
+            <div className="field">
+              <label>每段时长 (秒)</label>
+              <input
+                type="number"
+                value={segDuration}
+                onChange={(e) => setSegDuration(parseInt(e.target.value, 10) || 10)}
+              />
+            </div>
+          </div>
+          <button className="btn" onClick={decompose} disabled={busy || !story.trim()}>
+            {busy ? <Spinner /> : <Icon name="wand-sparkles" size={14} />} AI 拆分镜
+          </button>
+        </section>
+
+        <section className="card create-section storyboard-panel" ref={configRef}>
+          <div className="create-section__head">
+            <h3><Icon name="settings" size={14} /> 生成配置</h3>
+            <span>{segments.length} 个分镜待生成</span>
+          </div>
+          <div className="field">
+            <label>基础模型</label>
+            <select value={model} onChange={(e) => setModel(e.target.value)}>
+              {modelOptions.length ? (
+                modelOptions.map((m) => (
+                  <option key={m.model_id} value={m.model_id}>
+                    {m.label_zh}
+                  </option>
+                ))
+              ) : (
+                <option value="happyhorse-1.0-i2v">HappyHorse 1.0 图生视频</option>
+              )}
+            </select>
+          </div>
+          <div className="field">
+            <label>串接方式</label>
+            <select value={chainMode} onChange={(e) => setChainMode(e.target.value)}>
+              <option value="serial">串行（首尾帧承接）</option>
+              <option value="parallel">并行（独立生成）</option>
+              <option value="cloud_extend">云端续写</option>
+            </select>
+          </div>
+          <div className="create-helper-card">
+            <Icon name="info" size={16} />
+            <div>
+              <strong>可以先配置，也可以最后配置</strong>
+              <span>分镜列表支持手动新增和编辑；提交时会按这里的模型与串接方式生成长视频链路。</span>
+            </div>
+          </div>
+          <button className="btn btn-block" onClick={submit} disabled={busy || !segments.length}>
+            {busy ? <Spinner /> : <Icon name="rocket" size={14} />} 提交生成
+          </button>
+        </section>
+      </div>
+
+      <section className="card create-section storyboard-segments" ref={segmentsRef}>
+        <div className="create-section__head">
+          <h3><Icon name="list" size={14} /> 分镜草稿</h3>
+          <span>可从这里直接开始</span>
+        </div>
+        <div className="storyboard-segments__toolbar">
+          <div className="text-sm text-muted">
+            {segments.length ? `已准备 ${segments.length} 段，可继续编辑或直接提交。` : "还没有分镜。你可以从大纲 AI 拆分，也可以手动新增第一段。"}
+          </div>
+          <div className="row">
+            <button className="btn btn-ghost" onClick={addSegment}>
+              <Icon name="plus" size={13} /> 手动新增
+            </button>
+            <button className="btn" onClick={submit} disabled={busy || !segments.length}>
+              {busy ? <Spinner /> : <Icon name="rocket" size={14} />} 提交生成
+            </button>
+          </div>
+        </div>
+
+        {segments.length === 0 ? (
+          <CompactLibraryEmpty
+            icon="film"
+            title="可以从任意流程开始"
+            hint="写大纲让 AI 拆分，或者点击「手动新增」直接录入已有分镜脚本。"
+          />
+        ) : (
+          <div className="story-segment-list">
+            {segments.map((s, i) => (
+              <div key={i} className="story-segment-card">
+                <div className="story-segment-card__head">
+                  <strong>#{s.index || i + 1}</strong>
+                  <button className="btn btn-sm btn-ghost" onClick={() => removeSegment(i)}>
+                    <Icon name="trash" size={12} /> 删除
+                  </button>
+                </div>
+                <div className="settings-grid two">
+                  <div className="field">
+                    <label>时长 (秒)</label>
+                    <input
+                      type="number"
+                      value={s.duration || segDuration}
+                      onChange={(e) => updateSegment(i, { duration: parseInt(e.target.value, 10) || segDuration })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>转场</label>
+                    <select
+                      value={s.transition_to_next || "cut"}
+                      onChange={(e) => updateSegment(i, { transition_to_next: e.target.value })}
+                    >
+                      <option value="cut">cut（直接切）</option>
+                      <option value="fade">fade（淡入淡出）</option>
+                      <option value="match">match（动作承接）</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="field">
+                  <label>本段提示词</label>
+                  <textarea
+                    value={s.prompt || ""}
+                    onChange={(e) => updateSegment(i, { prompt: e.target.value })}
+                    placeholder="描述这一段的主体、动作、镜头和氛围"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ── Voices Tab ──────────────────────────────────────────────────────
+
+function VoicesTab({ settings }) {
+  const [data, setData] = useState({ system: FALLBACK_SYSTEM_VOICES, cloned: [] });
+  const [showCreate, setShowCreate] = useState(false);
+  const [draft, setDraft] = useState({ label: "", audio: null, language: "zh-CN", gender: "unknown" });
+  const [busy, setBusy] = useState(false);
+  const [previewing, setPreviewing] = useState("");
+  const [previewResult, setPreviewResult] = useState({});
+  const [loadWarning, setLoadWarning] = useState("");
+
+  const load = useCallback(() => {
+    api("GET", "/voices")
+      .then((r) => {
+        const system = (r.system || []).length ? r.system : FALLBACK_SYSTEM_VOICES;
+        setData({ system, cloned: r.cloned || [] });
+        setLoadWarning((r.system || []).length ? "" : "后端暂未返回系统音色，当前显示内置常用音色。");
+      })
+      .catch((e) => {
+        setData({ system: FALLBACK_SYSTEM_VOICES, cloned: [] });
+        if (!settings?.api_key_set) {
+          setLoadWarning("");
+          return;
+        }
+        const msg = friendlyApiMessage(e, "后端暂未提供音色列表，当前显示内置常用音色。");
+        setLoadWarning(msg ? `已切换为内置常用音色：${msg}` : "");
+      });
+  }, [settings?.api_key_set]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const preview = async (vid) => {
+    setPreviewing(vid);
+    try {
+      const r = await api("POST", "/voices/preview", {
+        voice_id: vid,
+        text: "你好，这是一段试听。",
+      });
+      if (!r.ok) throw new Error(r.error || "preview failed");
+      setPreviewResult((prev) => ({ ...prev, [vid]: r.audio_path || "试听已生成" }));
+    } catch (e) {
+      const msg = settings?.api_key_set
+        ? friendlyApiMessage(e, "试听服务暂不可用，请稍后重试。")
+        : "请先在设置里配置 DashScope Key。";
+      setPreviewResult((prev) => ({ ...prev, [vid]: `试听失败：${msg}` }));
+    } finally {
+      setPreviewing("");
+    }
+  };
+
+  const cloneVoice = async () => {
+    if (!draft.label || !draft.audio) {
+      alert("请填写音色名称并上传参考音频");
+      return;
+    }
+    setBusy(true);
+    try {
+      const sample = draft.audio.oss_url || draft.audio.preview_url || draft.audio.local_path || "";
+      const r = await api("POST", "/voices/clone", {
+        label: draft.label,
+        sample_audio_url: sample,
+        language: draft.language,
+        gender: draft.gender,
+      });
+      if (!r.ok) throw new Error(r.error || "clone failed");
+      setDraft({ label: "", audio: null, language: "zh-CN", gender: "unknown" });
+      setShowCreate(false);
+      load();
+    } catch (e) {
+      const msg = settings?.api_key_set
+        ? friendlyApiMessage(e, "音色克隆服务暂不可用，请稍后重试。")
+        : "请先在设置里配置 DashScope Key。";
+      alert(`克隆失败：${msg}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const del = async (voiceId) => {
+    if (!confirm("确认删除该自定义音色？")) return;
+    await api("DELETE", `/voices/${voiceId}`);
+    load();
+  };
+
+  const VoiceCard = ({ v, custom = false }) => (
+    <div className="lib-card">
+      <div className="lib-card__head">
+        <div className="min-w-0">
+          <div className="lib-card__title">{v.label_zh || v.label || v.id}</div>
+          <div className="lib-card__sub">{v.gender || "unknown"} · {v.language || "zh-CN"}</div>
+        </div>
+        <Tag kind={v.engine === "edge" ? "success" : "info"}>{v.engine || "cosyvoice"}</Tag>
+      </div>
+      <div className="voice-media">
+        {previewing === v.id ? (
+          <span className="voice-media__busy"><Spinner /> 合成试听中…</span>
+        ) : previewResult[v.id] ? (
+          <span className="voice-media__empty">{previewResult[v.id]}</span>
+        ) : (
+          <span className="voice-media__empty">尚未生成试听音频，点击下方按钮</span>
+        )}
+      </div>
+      <button className="voice-play-btn" onClick={() => preview(v.id)} disabled={previewing === v.id}>
+        <Icon name="play" size={12} /> 试听
+      </button>
+      {custom && (
+        <button className="btn btn-sm btn-danger" onClick={() => del(v.id)}>
+          <Icon name="trash" size={12} /> 删除
+        </button>
+      )}
+    </div>
+  );
+
+  const systemVoices = data.system || [];
+  const clonedVoices = data.cloned || [];
+
+  return (
+    <div className="library-page library-page--voices">
+      <div className="library-hero">
+        <div className="library-toolbar">
+        <div>
+          <h2 className="page-title"><Icon name="mic" /> 音色库</h2>
+          <p className="page-subtitle">先选稳定系统音色，需要品牌声线时再上传干净人声样本克隆。</p>
+        </div>
+        <button className="btn" onClick={() => setShowCreate(!showCreate)}>
+          <Icon name="plus" size={13} /> 克隆新音色
+        </button>
+        </div>
+        <div className="library-metrics">
+          <div><strong>{systemVoices.length}</strong><span>系统音色</span></div>
+          <div><strong>{clonedVoices.length}</strong><span>自定义音色</span></div>
+          <div><strong>{settings?.api_key_set ? "可用" : "待配置"}</strong><span>DashScope</span></div>
+        </div>
+      </div>
+
+      <div className="library-callout library-callout--compact">
+        <Icon name="info" size={14} />
+        <span>建议使用 5-30 秒、无背景音乐、无混响的人声样本；DashScope 克隆需要可访问的音频 URL。</span>
+      </div>
+      {loadWarning && (
+        <div className="library-callout library-callout--warning">
+          <Icon name="alert-triangle" size={14} />
+          <span>{loadWarning}</span>
+        </div>
+      )}
+
+      {showCreate && (
+        <div className="card library-form">
+          <div className="settings-grid two">
+            <div className="field">
+              <label>音色名称</label>
+              <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="例如：温柔女声" />
+            </div>
+            <div className="field">
+              <label>语言 / 性别</label>
+              <div className="row">
+                <select value={draft.language} onChange={(e) => setDraft({ ...draft, language: e.target.value })}>
+                  <option value="zh-CN">中文</option>
+                  <option value="en-US">英文</option>
+                </select>
+                <select value={draft.gender} onChange={(e) => setDraft({ ...draft, gender: e.target.value })}>
+                  <option value="unknown">未知</option>
+                  <option value="female">女声</option>
+                  <option value="male">男声</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="field">
+            <label>参考音频</label>
+            <FileUploadCard
+              accept="audio/*"
+              kind="audio"
+              value={draft.audio}
+              onUploaded={(audio) => setDraft({ ...draft, audio })}
+              hint="上传 5-30 秒清晰干声，噪音越少克隆越稳定"
+            />
+          </div>
+          <div className="settings-actions">
+            <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>取消</button>
+            <button className="btn" onClick={cloneVoice} disabled={busy}>
+              {busy ? <Spinner /> : <Icon name="save" size={13} />} 提交克隆
+            </button>
+          </div>
+        </div>
+      )}
+
+      <LibrarySection title="系统音色" count={systemVoices.length}>
+        {systemVoices.length === 0 ? (
+          <CompactLibraryEmpty icon="mic" title="系统音色暂未加载" hint="请刷新页面或检查后端音色目录。页面不会再撑出大块空白。" />
+        ) : (
+          <div className="lib-grid voice-grid">{systemVoices.map((v) => <VoiceCard key={v.id} v={v} />)}</div>
+        )}
+      </LibrarySection>
+
+      <LibrarySection title="自定义音色" count={clonedVoices.length}>
+        {clonedVoices.length === 0 ? (
+          <CompactLibraryEmpty icon="mic-off" title="暂无自定义音色" hint="点击右上角「克隆新音色」上传一段人声样本。" />
+        ) : (
+          <div className="lib-grid voice-grid">{clonedVoices.map((v) => <VoiceCard key={v.id} v={v} custom />)}</div>
+        )}
+      </LibrarySection>
+    </div>
+  );
+}
+
+function CompactLibraryEmpty({ icon, title, hint }) {
+  return (
+    <div className="compact-library-empty">
+      <Icon name={icon || "inbox"} size={18} />
+      <div>
+        <strong>{title}</strong>
+        <span>{hint}</span>
+      </div>
+    </div>
+  );
+}
+
+function LibrarySection({ title, count, children }) {
+  return (
+    <section className="library-section">
+      <div className="library-section__head">
+        <h3>{title} <span>· {count}</span></h3>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+// ── Figures Tab ─────────────────────────────────────────────────────
+
+function FiguresTab() {
+  const [list, setList] = useState([]);
+  const [showCreate, setShowCreate] = useState(false);
+  const [draft, setDraft] = useState({ label: "", image: null });
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api("GET", "/figures").then((r) => setList(r.figures || [])).catch(() => setList([]));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const createFigure = async () => {
+    if (!draft.label || !draft.image) {
+      alert("请填写形象名称并上传人像图");
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api("POST", "/figures", {
+        label: draft.label,
+        image_path: draft.image.local_path || draft.image.preview_url || "",
+        preview_url: draft.image.preview_url || "",
+        oss_url: draft.image.oss_url || "",
+        oss_key: draft.image.oss_key || "",
+      });
+      if (!r.ok) throw new Error(r.error || "create failed");
+      setDraft({ label: "", image: null });
+      setShowCreate(false);
+      load();
+    } catch (e) {
+      alert(`上传形象失败：${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const del = async (figId) => {
+    if (!confirm("确认删除该形象？")) return;
+    await api("DELETE", `/figures/${figId}`);
+    load();
+  };
+
+  const statusOf = (f) => {
+    if (f.detect_status) return f.detect_status;
+    if (f.detect_pass === true || f.detect_pass === 1) return "pass";
+    if (f.detect_pass === false || f.detect_pass === 0) return "pending";
+    return "skipped";
+  };
+
+  return (
+    <div className="library-page library-page--figures">
+      <div className="library-hero library-hero--figures">
+        <div className="library-toolbar">
+          <div>
+            <h2 className="page-title"><Icon name="user-square" /> 形象库</h2>
+            <p className="page-subtitle">集中管理可复用的人像素材，用于数字人口播、换人和动作驱动。</p>
+          </div>
+          <button className="btn" onClick={() => setShowCreate(!showCreate)}>
+            <Icon name="plus" size={13} /> 上传新形象
+          </button>
+        </div>
+        <div className="figure-guide-grid">
+          <div><Icon name="user-plus" size={16} /><strong>正面清晰</strong><span>单人、无遮挡、五官完整</span></div>
+          <div><Icon name="image-play" size={16} /><strong>素材复用</strong><span>上传一次，多种数字人模式可直接选用</span></div>
+          <div><Icon name="info" size={16} /><strong>检测状态</strong><span>通过检测后合成效果更稳定</span></div>
+        </div>
+      </div>
+
+      {showCreate && (
+        <div className="card library-form figure-form">
+          <div>
+            <div className="field">
+              <label>形象名称</label>
+              <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder="例如：商务主持人" />
+            </div>
+            <div className="create-helper-card">
+              <Icon name="info" size={16} />
+              <div>
+                <strong>建议用正面半身照</strong>
+                <span>五官清晰、光线均匀、无遮挡和无水印，会减少后续检测失败。</span>
+              </div>
+            </div>
+          </div>
+          <div className="field">
+            <label>人像图</label>
+            <FileUploadCard
+              accept="image/*"
+              kind="image"
+              value={draft.image}
+              onUploaded={(image) => setDraft({ ...draft, image })}
+              hint="上传后会保存到形象库，可在数字人模式复用"
+            />
+          </div>
+          <div className="settings-actions">
+            <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>取消</button>
+            <button className="btn" onClick={createFigure} disabled={busy}>
+              {busy ? <Spinner /> : <Icon name="save" size={13} />} 上传并保存
+            </button>
+          </div>
+        </div>
+      )}
+
+      {list.length === 0 ? (
+        <CompactLibraryEmpty
+          icon="user-plus"
+          title="还没有形象素材"
+          hint="点击「上传新形象」添加第一张人像图，之后在数字人创建流程里直接复用。"
+        />
+      ) : (
+        <div className="lib-grid figure-grid">
+          {list.map((f) => {
+            const status = statusOf(f);
+            const kind = status === "pass" ? "success" : status === "fail" ? "danger" : status === "pending" ? "warning" : "info";
+            return (
+              <div key={f.id} className="lib-card figure-card">
+                <div className="fig-thumb-wrap">
+                  {f.preview_url ? (
+                    <img className="fig-thumb" src={f.preview_url} alt={f.label} />
+                  ) : (
+                    <div className="fig-thumb-placeholder"><Icon name="user-square" size={32} /></div>
+                  )}
+                </div>
+                <div className="lib-card__head">
+                  <div className="min-w-0">
+                    <div className="lib-card__title">{f.label}</div>
+                    <div className="lib-card__sub">{new Date((f.created_at || 0) * 1000).toLocaleString()}</div>
+                  </div>
+                  <Tag kind={kind}>{status}</Tag>
+                </div>
+                {f.detect_message && <div className="lib-card__hint">{f.detect_message}</div>}
+                <button className="btn btn-sm btn-danger" onClick={() => del(f.id)}>
+                  <Icon name="trash" size={12} /> 删除
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Prompt Tab ──────────────────────────────────────────────────────
+
+function PromptTab({ settings }) {
+  const [guide, setGuide] = useState(DEFAULT_PROMPT_GUIDE);
+  const [prompt, setPrompt] = useState("");
+  const [mode, setMode] = useState("t2v");
+  const [result, setResult] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [guideWarning, setGuideWarning] = useState("");
+
+  useEffect(() => {
+    api("GET", "/prompt-guide")
+      .then((r) => {
+        setGuide({
+          formulas: Object.keys(r.formulas || {}).length ? r.formulas : DEFAULT_PROMPT_GUIDE.formulas,
+          templates: (r.templates || []).length ? r.templates : DEFAULT_PROMPT_GUIDE.templates,
+          cameras: (r.cameras || []).length ? r.cameras : DEFAULT_PROMPT_GUIDE.cameras,
+          atmosphere: Object.keys(r.atmosphere || {}).length ? r.atmosphere : DEFAULT_PROMPT_GUIDE.atmosphere,
+        });
+        setGuideWarning("");
+      })
+      .catch((e) => {
+        setGuide(DEFAULT_PROMPT_GUIDE);
+        if (!settings?.api_key_set) {
+          setGuideWarning("");
+          return;
+        }
+        const msg = friendlyApiMessage(e, "后端暂未提供提示词指南，当前使用内置模板。");
+        setGuideWarning(msg ? `当前使用内置模板：${msg}` : "");
+      });
+  }, [settings?.api_key_set]);
+
+  const optimize = async () => {
+    setBusy(true);
+    try {
+      const r = await api("POST", "/prompt-optimize", { prompt, mode });
+      setResult(r.ok ? r.result : `失败：${r.error}`);
+    } catch (e) {
+      const msg = settings?.api_key_set
+        ? friendlyApiMessage(e, "AI 优化服务暂不可用，请稍后重试。")
+        : "请先在设置里配置 DashScope Key。";
+      setResult(`失败：${msg}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const formulas = Object.entries(guide.formulas || {});
+  const templates = guide.templates || [];
+  const cameras = guide.cameras || [];
+  const atmosphere = guide.atmosphere || {};
+  const selectedFormula = guide.formulas?.[mode] || "";
+
+  return (
+    <div className="prompt-page">
+      <div className="prompt-shell">
+        <div className="prompt-hero">
+          <div>
+            <h2 className="page-title"><Icon name="sparkles" /> 提示词工坊</h2>
+            <p className="page-subtitle">把一句粗略想法整理成可生成的视频提示词，也可以直接套用模板。</p>
+          </div>
+          <div className="prompt-hero__steps">
+            <span>1 写想法</span>
+            <span>2 选模式</span>
+            <span>3 AI 优化</span>
+          </div>
+        </div>
+        {guideWarning && (
+          <div className="library-callout library-callout--warning">
+            <Icon name="alert-triangle" size={14} />
+            <span>{guideWarning}</span>
+          </div>
+        )}
+
+        <div className="prompt-workbench card">
+          <div className="prompt-workbench__main">
+            <div className="prompt-mode-row">
+              <div className="field">
+                <label>生成模式</label>
+                <select value={mode} onChange={(e) => setMode(e.target.value)}>
+                  {formulas.map(([m]) => <option key={m}>{m}</option>)}
+                </select>
+              </div>
+              {selectedFormula && (
+                <div className="formula-card">
+                  <span>推荐结构</span>
+                  <strong>{selectedFormula}</strong>
+                </div>
+              )}
+            </div>
+            <div className="field">
+              <label>原始提示词</label>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="输入一句粗略想法，例如：一位主持人在科技发布会现场介绍新品"
+              />
+            </div>
+            <div className="prompt-action-row">
+            <button className="btn" onClick={optimize} disabled={busy || !prompt}>
+              {busy ? <Spinner /> : <Icon name="wand-sparkles" size={14} />} AI 优化
+            </button>
+            <span>提示：先写“主体 + 场景 + 动作”，细节可交给 AI 补齐。</span>
+            </div>
+          </div>
+          <div className="prompt-result">
+            <div className="prompt-result__title">优化结果</div>
+            {result ? <pre className="code-block">{result}</pre> : <Empty icon="sparkles" title="等待优化" hint="左侧输入后点击 AI 优化" />}
+          </div>
+        </div>
+
+        <GuideSection title="模板示例" defaultOpen>
+          <div className="template-grid">
+            {templates.slice(0, 12).map((tpl) => (
+              <button key={tpl.id || tpl.name} className="template-card" onClick={() => setPrompt(tpl.prompt || tpl.template || "")}>
+                <div className="name">{tpl.name || tpl.name_zh || tpl.id}</div>
+                <div className="desc">{tpl.desc || tpl.description || (tpl.modes || []).join(" / ")}</div>
+              </button>
+            ))}
+          </div>
+        </GuideSection>
+
+        <GuideSection title="各模式配方">
+          {formulas.map(([m, f]) => (
+            <button key={m} className="guide-row guide-row--button" onClick={() => setMode(m)}>
+              <strong>{m}</strong>
+              <span>{f}</span>
+            </button>
+          ))}
+        </GuideSection>
+
+        <GuideSection title="镜头与氛围关键词">
+          <div className="keyword-panel">
+            {cameras.map((c) => (
+              <span className="keyword-chip" key={c.zh || c.en}>{c.zh || c.en}</span>
+            ))}
+            {Object.entries(atmosphere).map(([group, words]) => (
+              <div className="keyword-group" key={group}>
+                <strong>{group}</strong>
+                {(words || []).slice(0, 12).map((w) => <span className="keyword-chip" key={w}>{w}</span>)}
+              </div>
+            ))}
+          </div>
+        </GuideSection>
+      </div>
+    </div>
+  );
+}
+
+function GuideSection({ title, children, defaultOpen = false }) {
+  return (
+    <details className="guide-section" open={defaultOpen}>
+      <summary><Icon name="info" size={14} /> {title}</summary>
+      <div className="guide-section__body">{children}</div>
+    </details>
+  );
+}
+
+// ── Settings Tab ────────────────────────────────────────────────────
+
+function fmtMb(v) {
+  const n = Number(v || 0);
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} GB`;
+  return `${n.toFixed(1)} MB`;
+}
+
+function SettingSection({ icon, title, desc, action, className = "", children }) {
+  return (
+    <section className={"setting-section oa-settings-section " + className}>
+      <div className="settings-section__head">
+        <div>
+        <div className="settings-section__title">
+          <Icon name={icon || "settings"} size={15} />
+          {title}
+        </div>
+        {desc && <p>{desc}</p>}
+        </div>
+        {action}
+      </div>
+      <div className="settings-section__body">{children}</div>
+    </section>
+  );
+}
+
+function SettingField({ label, hint, children }) {
+  return (
+    <div className="setting-field form-row">
+      <label className="label">{label}</label>
+      {children}
+      {hint && <div className="setting-hint">{hint}</div>}
+    </div>
+  );
+}
+
+function SystemComponentsPanel() {
+  const [items, setItems] = useState([]);
+  const [status, setStatus] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api("GET", "/system/components");
+      setItems(r.items || []);
+    } catch (_) {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!items.some((x) => x.busy || status[x.id]?.busy)) return;
+    const timer = setInterval(async () => {
+      for (const it of items) {
+        try {
+          const r = await api("GET", `/system/${it.id}/status`);
+          setStatus((prev) => ({ ...prev, [it.id]: r }));
+        } catch (_) {}
+      }
+      refresh();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [items, status, refresh]);
+
+  const install = async (id) => {
+    setStatus((prev) => ({ ...prev, [id]: { busy: true, log_tail: [] } }));
+    try {
+      await api("POST", `/system/${id}/install`, { method_index: 0 });
+      refresh();
+    } catch (e) {
+      alert(`安装启动失败：${e.message}`);
+    }
+  };
+
+  if (loading && items.length === 0) {
+    return <div className="sysdep-card"><Spinner /> 正在检测系统组件…</div>;
+  }
+
+  return (
+    <div className="dep-stack">
+      <div className="settings-callout">
+        FFmpeg 用于长视频拼接、视频预览和后续媒体处理。它是系统级组件，如果机器已经安装，本插件会直接复用。
+      </div>
+      {items.map((it) => {
+        const live = status[it.id] || it.last_install || {};
+        const busy = !!(it.busy || live.busy);
+        const found = !!(live.found ?? it.found);
+        const methods = it.methods || [];
+        return (
+          <div key={it.id} className="sysdep-card">
+            <div className="sysdep-card__head">
+              <div className="sysdep-card__title">
+                <Icon name="package" size={18} />
+                <div>
+                  <strong>{it.display_name || it.id}</strong>
+                  <p>{it.description}</p>
+                </div>
+              </div>
+              <span className={"sysdep-badge " + (busy ? "busy" : found ? "ok" : "warn")}>
+                {busy ? "安装中" : found ? `已安装${it.version ? ` ${it.version}` : ""}` : "未安装"}
+              </span>
+            </div>
+            {it.location && <div className="sysdep-path">{it.location}</div>}
+            <div className="sysdep-actions">
+              <button
+                className={"btn btn-sm " + (!found ? "" : "btn-ghost")}
+                disabled={busy || methods.length === 0}
+                onClick={() => install(it.id)}
+              >
+                {busy ? <Spinner /> : <Icon name="download" size={12} />}
+                {found ? "重新安装" : "一键安装"}
+              </button>
+              <button className="btn btn-sm btn-ghost" onClick={refresh} disabled={loading}>
+                <Icon name="refresh" size={12} /> 重新检测
+              </button>
+              {it.homepage && (
+                <a className="btn btn-sm btn-ghost" href={it.homepage} target="_blank" rel="noreferrer">
+                  官方文档
+                </a>
+              )}
+            </div>
+            {!!(live.log_tail || []).length && (
+              <pre className="sysdep-log">{(live.log_tail || []).join("\n")}</pre>
+            )}
+          </div>
+        );
+      })}
+      {items.length === 0 && <div className="text-xs text-muted">没有需要安装的系统组件。</div>}
+    </div>
+  );
+}
+
+function PythonDepsPanel() {
+  const [deps, setDeps] = useState(FALLBACK_PYTHON_DEPS);
+  const [loading, setLoading] = useState(false);
+  const [warning, setWarning] = useState("");
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api("GET", "/python-deps/status");
+      const fromApi = Array.isArray(r.deps) ? r.deps : [];
+      setDeps(
+        FALLBACK_PYTHON_DEPS.map((fallback) => ({
+          ...fallback,
+          ...(fromApi.find((dep) => dep.id === fallback.id) || {}),
+        }))
+      );
+      setWarning(fromApi.length ? "" : "后端暂未返回依赖状态，已显示待检测清单。");
+    } catch (_) {
+      setDeps(FALLBACK_PYTHON_DEPS);
+      setWarning("依赖状态接口暂不可用，已显示待检测清单。");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const install = async (name) => {
+    setDeps((prev) => prev.map((x) => x.id === name ? { ...x, busy: true } : x));
+    try {
+      await api("POST", "/python-deps/install", { name });
+    } catch (e) {
+      alert(`安装失败：${e.message}`);
+    } finally {
+      refresh();
+    }
+  };
+
+  const total = deps.length;
+  const ready = deps.filter((dep) => dep.ok).length;
+  const busyCount = deps.filter((dep) => dep.busy).length;
+
+  return (
+    <div className="dep-panel">
+      <div className="dep-panel__intro">
+        <div>
+          <div className="dep-panel__intro-title">插件运行依赖</div>
+          <div className="dep-panel__intro-text">
+            打包版会使用独立 Python 环境。这里可以检查并修复插件私有依赖，不需要手动打开命令行。
+          </div>
+        </div>
+        <div className="dep-summary" aria-label="依赖状态汇总">
+          <span className="dep-summary__item"><Icon name="check" size={12} /> {ready}/{total || "—"} 可用</span>
+          {busyCount > 0 && <span className="dep-summary__item"><Spinner /> {busyCount} 安装中</span>}
+          <button className="btn btn-sm btn-ghost" type="button" onClick={refresh} disabled={loading}>
+            {loading ? <Spinner /> : <Icon name="refresh" size={12} />} 刷新
+          </button>
+        </div>
+      </div>
+      {loading && deps.length === 0 && <div className="text-xs text-muted">正在检测依赖…</div>}
+      {warning && <div className="compact-empty-note">{warning}</div>}
+      <div className="dep-grid">
+        {deps.map((dep) => {
+          const ok = !!dep.ok;
+          const busy = !!dep.busy;
+          const statusCls = busy ? "busy" : ok ? "ok" : "warn";
+          const statusText = busy ? "安装中" : ok ? "可用" : "需安装";
+          const logTail = dep.log_tail || [];
+          return (
+            <div key={dep.id} className={"dep-card dep-card--" + statusCls}>
+              <div className="dep-card__head">
+                <div className="dep-card__title-row">
+                  <span className="dep-icon"><Icon name={ok ? "check" : "package"} size={16} /></span>
+                  <div className="min-w-0">
+                    <div className="dep-title">{dep.display_name || dep.label || dep.id}</div>
+                    <div className="dep-desc">{dep.description || dep.import_name || dep.pip_spec}</div>
+                  </div>
+                </div>
+                <span className={"dep-status dep-status--" + statusCls}>
+                  {busy ? <Spinner /> : ok ? <Icon name="check" size={11} /> : null}
+                  {statusText}
+                </span>
+              </div>
+              <div className="dep-meta">
+                <div className="dep-meta-row">
+                  <span className="dep-meta-label">包</span>
+                  <code>{dep.pip_spec || dep.import_name || dep.id}</code>
+                </div>
+                {dep.version && (
+                  <div className="dep-meta-row">
+                    <span className="dep-meta-label">版本</span>
+                    <code>{dep.version}</code>
+                  </div>
+                )}
+                {dep.module_file && (
+                  <div className="dep-meta-row">
+                    <span className="dep-meta-label">路径</span>
+                    <code title={dep.module_file}>{dep.module_file}</code>
+                  </div>
+                )}
+                {!ok && dep.error && (
+                  <div className="dep-meta-row text-danger">
+                    <span className="dep-meta-label">错误</span>
+                    <span>{dep.error}</span>
+                  </div>
+                )}
+                {dep.last_error && (
+                  <div className="dep-meta-row text-danger">
+                    <span className="dep-meta-label">最近</span>
+                    <span>{dep.last_error}</span>
+                  </div>
+                )}
+              </div>
+              <div className="dep-card__actions">
+                <button className={"btn btn-sm " + (!ok ? "" : "btn-ghost")} disabled={busy} onClick={() => install(dep.id)}>
+                  {busy ? <Spinner /> : <Icon name="download" size={12} />}
+                  {ok ? "重新安装" : "安装依赖"}
+                </button>
+                <button className="btn btn-sm btn-ghost" type="button" onClick={refresh}>重新检测</button>
+              </div>
+              {!!logTail.length && <pre className="dep-log text-xs">{logTail.slice(-8).join("\n")}</pre>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StorageSettings({ form, setFormValue, save }) {
+  const [stats, setStats] = useState(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await api("GET", "/storage/stats");
+      setStats(r.stats || null);
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const pick = async (key) => {
+    const picked = await window.OpenAkita?.pickFolder?.(`选择 ${key}`);
+    if (!picked) return;
+    setFormValue(key, picked);
+    await save({ [key]: picked });
+    refresh();
+  };
+
+  const open = async (path) => {
+    if (!path) return;
+    try {
+      await api("POST", "/storage/open-folder", { path });
+    } catch (e) {
+      alert(`打开文件夹失败：${e.message}`);
+    }
+  };
+
+  const cleanup = async () => {
+    try {
+      const r = await api("POST", "/cleanup", { retention_days: Number(form.retention_days || 30) });
+      alert(`已清理 ${r.removed || 0} 条过期任务`);
+      refresh();
+    } catch (e) {
+      alert(`清理失败：${e.message}`);
+    }
+  };
+
+  const dataDirPath = form.custom_data_dir || stats?.data_dir?.path || "";
+  const statCards = [
+    ["data_dir", "数据目录"],
+    ["output_dir", "成品 outputs"],
+    ["uploads", "原始素材 uploads"],
+    ["tasks", "任务缓存 tasks"],
+  ];
+
+  return (
+    <div>
+      <SettingField label="数据目录" hint={dataDirPath ? `当前生效：${dataDirPath}` : "留空 = 使用默认目录（由 OpenAkita 管理）"}>
+        <div className="folder-row">
+          <input
+            value={form.custom_data_dir || ""}
+            onChange={(e) => setFormValue("custom_data_dir", e.target.value)}
+            onBlur={(e) => save({ custom_data_dir: e.target.value })}
+            placeholder="留空 = 使用默认目录（由 OpenAkita 管理）"
+          />
+          <button className="btn btn-sm btn-ghost" onClick={() => pick("custom_data_dir")}>浏览</button>
+          <button className="btn btn-sm btn-ghost" onClick={() => open(dataDirPath)}>打开</button>
+        </div>
+      </SettingField>
+
+      <div className="settings-grid two storage-options-grid">
+        <SettingField label="子目录结构" hint="可改成更大的盘 / 别的用户目录，仅支持绝对路径。">
+          <select
+            value={form.output_subdir_mode || "task"}
+            onChange={(e) => {
+              setFormValue("output_subdir_mode", e.target.value);
+              save({ output_subdir_mode: e.target.value });
+            }}
+          >
+            <option value="task">按任务（tasks/{"{task_id}"}，默认）</option>
+            <option value="date">按日期（YYYY-MM-DD）</option>
+            <option value="mode">按模式（mode）</option>
+            <option value="date_mode">日期 / 模式</option>
+            <option value="flat">平铺 outputs</option>
+          </select>
+        </SettingField>
+        <SettingField label="文件命名规则" hint="可用占位符：{task_id} {short_id} {date} {time} {datetime} {mode} {filename} {ext}">
+          <select
+            value={form.output_naming_rule || "{filename}"}
+            onChange={(e) => {
+              setFormValue("output_naming_rule", e.target.value);
+              save({ output_naming_rule: e.target.value });
+            }}
+          >
+            <option value="{filename}">{"{filename}"}（DashScope 原始文件名，默认）</option>
+            <option value="{task_id}">{"{task_id}"}</option>
+            <option value="{date}_{mode}_{short_id}">{"{date}_{mode}_{short_id}"}</option>
+            <option value="{date}_{time}_{short_id}">{"{date}_{time}_{short_id}"}</option>
+            <option value="{mode}_{short_id}">{"{mode}_{short_id}"}</option>
+          </select>
+        </SettingField>
+      </div>
+
+      {stats && (
+        <div className="storage-grid">
+          {statCards.map(([key, label]) => {
+            const s = stats[key];
+            if (!s) return null;
+            return (
+            <div className="storage-card" key={key} title={s.path} onClick={() => open(s.path)}>
+              <div className="storage-card__label">{label}</div>
+              <div className="storage-card__value">{fmtMb(s.size_mb)}</div>
+              <div className="storage-card__meta">{s.file_count} 个文件{s.truncated ? " +" : ""}</div>
+            </div>
+            );
+          })}
+        </div>
+      )}
+      <SettingField label="保留天数" hint={`清理 ${form.retention_days || 30} 天前的过期任务。`}>
+        <div className="cleanup-row">
+        <input
+          className="retention-input"
+          type="number"
+          min="1"
+          value={form.retention_days || "30"}
+          onChange={(e) => setFormValue("retention_days", e.target.value)}
+          onBlur={(e) => save({ retention_days: e.target.value })}
+        />
+        <span className="text-xs text-muted">清理 {form.retention_days || 30} 天前的过期任务。</span>
+        <button className="btn btn-sm btn-ghost" onClick={cleanup}>立即清理</button>
+        </div>
+      </SettingField>
+    </div>
+  );
+}
+
+function SettingsTab({ catalog, settings, onSave }) {
+  catalog = catalog || { modes: [], models: [], default_models: {} };
+  const [form, setForm] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setForm(settings || {});
+  }, [settings]);
+
+  const set = (k, v) => setForm({ ...form, [k]: v });
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api("PUT", "/settings", { updates: form });
+      onSave?.();
+    } catch (e) {
+      alert(`保存失败：${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const savePartial = async (updates) => {
+    setSaving(true);
+    try {
+      await api("PUT", "/settings", { updates });
+      setForm((prev) => ({ ...prev, ...updates }));
+      onSave?.();
+    } catch (e) {
+      alert(`保存失败：${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const testConnection = async () => {
+    const rawKey = form.api_key || "";
+    const r = await api("POST", "/test-connection", {
+      api_key: rawKey.includes("***") ? "" : rawKey,
+    });
+    alert(r.ok ? "连接成功" : `失败：${r.message || "unknown"}`);
+  };
+
+  if (!catalog) return <Spinner />;
+
+  return (
+    <div className="settings-page">
+      <div className="settings-shell">
+        <h2 className="page-title">
+          <Icon name="settings" /> 设置
+        </h2>
+        <p className="page-subtitle">集中管理模型调用、OSS、默认生成参数、依赖组件和文件目录。</p>
+
+        <SettingSection
+          icon="key"
+          title="阿里云百炼"
+          desc="DashScope API（大模型接口）用于提交 HappyHorse / Wan / 数字人任务。"
+          className={settings?.api_key_set ? "" : "api-key-section api-key-section--missing"}
+          action={
+            <button className="btn btn-sm btn-ghost" onClick={testConnection}>
+              测试连接
+            </button>
+          }
+        >
+          <SettingField label="DashScope API Key" hint={settings?.api_key_set ? "已保存密钥；留空或保持脱敏值不会覆盖旧密钥。" : "获取地址：阿里云百炼控制台"}>
+          <div className="api-key-input-row">
+            <input
+              type="password"
+              value={form.api_key || ""}
+              onChange={(e) => set("api_key", e.target.value)}
+              placeholder={settings?.api_key_set ? "(已保存)" : "sk-xxxxxxxxxxxxxxxx"}
+            />
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={(e) => {
+                const input = e.currentTarget.parentElement?.querySelector("input");
+                if (input) input.type = input.type === "password" ? "text" : "password";
+              }}
+            >
+              显示
+            </button>
+            <button className="btn" onClick={save} disabled={saving}>
+              保存
+            </button>
+          </div>
+          </SettingField>
+          <SettingField label="区域 Endpoint" hint="该配置影响所有 DashScope 请求发往中国区或国际区。">
+          <select
+            value={form.base_url || "https://dashscope.aliyuncs.com"}
+            onChange={(e) => set("base_url", e.target.value)}
+          >
+            <option value="https://dashscope.aliyuncs.com">中国（北京）</option>
+            <option value="https://dashscope-intl.aliyuncs.com">国际</option>
+          </select>
+          </SettingField>
+        </SettingSection>
+
+        <SettingSection
+          icon="cloud"
+          title="阿里云 OSS"
+          desc="DashScope 只能读取公网可访问素材，上传图片/视频/音频时会通过 OSS 生成输入 URL。"
+        >
+          <div className="settings-grid two">
+            <SettingField label="Endpoint">
+            <input
+              value={form.oss_endpoint || ""}
+              onChange={(e) => set("oss_endpoint", e.target.value)}
+              placeholder="oss-cn-beijing.aliyuncs.com"
+            />
+            </SettingField>
+            <SettingField label="Bucket">
+            <input
+              value={form.oss_bucket || ""}
+              onChange={(e) => set("oss_bucket", e.target.value)}
+            />
+            </SettingField>
+            <SettingField label="AccessKey ID">
+            <input
+              value={form.oss_access_key_id || ""}
+              onChange={(e) => set("oss_access_key_id", e.target.value)}
+            />
+            </SettingField>
+            <SettingField label="AccessKey Secret">
+            <input
+              type="password"
+              value={form.oss_access_key_secret || ""}
+              onChange={(e) => set("oss_access_key_secret", e.target.value)}
+            />
+            </SettingField>
+          </div>
+          <SettingField label="对象路径前缀" hint="用于区分插件上传的文件，建议保持默认。">
+          <input
+            value={form.oss_path_prefix || "happyhorse-video"}
+            onChange={(e) => set("oss_path_prefix", e.target.value)}
+          />
+          </SettingField>
+          <button className="btn btn-sm" onClick={save} disabled={saving}>
+            保存 OSS 配置
+          </button>
+        </SettingSection>
+
+        <SettingSection icon="mic" title="TTS 引擎">
+          <div className="tts-radio-row">
+            <label>
+              <input
+                type="radio"
+                name="tts_engine"
+                checked={(form.tts_engine || "cosyvoice") === "cosyvoice"}
+                onChange={() => set("tts_engine", "cosyvoice")}
+              />
+              CosyVoice（百炼付费）
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="tts_engine"
+                checked={form.tts_engine === "edge"}
+                onChange={() => set("tts_engine", "edge")}
+              />
+              Edge-TTS（免费）
+            </label>
+          </div>
+          <div className="text-xs text-muted">
+            CosyVoice 音色在创建任务时选择，使用百炼 API Key 计费；Edge-TTS 适合快速免费试听。
+          </div>
+        </SettingSection>
+
+        <SettingSection icon="settings" title="默认偏好">
+          <div className="settings-grid two">
+            <SettingField label="默认分辨率">
+              <select
+                value={form.default_resolution || "720P"}
+                onChange={(e) => set("default_resolution", e.target.value)}
+              >
+                {["480P", "720P", "1080P"].map((resolution) => (
+                  <option key={resolution} value={resolution}>{resolution}</option>
+                ))}
+              </select>
+            </SettingField>
+            <SettingField label="默认音色">
+              <select
+                value={form.default_voice || "longxiaochun_v2"}
+                onChange={(e) => set("default_voice", e.target.value)}
+              >
+                {FALLBACK_SYSTEM_VOICES.map((voice) => (
+                  <option key={voice.id} value={voice.id}>{voice.label_zh || voice.label || voice.id}</option>
+                ))}
+              </select>
+            </SettingField>
+          </div>
+          <SettingField label="成本确认阈值（元）" hint="单次任务超过此金额时弹窗确认。">
+            <input
+              type="number"
+              min="0"
+              step="0.5"
+              value={form.cost_threshold_cny || "5"}
+              onChange={(e) => set("cost_threshold_cny", e.target.value)}
+            />
+          </SettingField>
+        </SettingSection>
+
+        <SettingSection
+          icon="wand-sparkles"
+          title="默认模型"
+          desc="在「创建」页切换模式时自动选中的模型；不配置则使用内置默认。"
+        >
+        <div className="model-default-list">
+          <div className="model-default-row">
+            <div className="model-default-name">默认图片模型</div>
+            <div>
+              <select
+                value={form.default_image_model || catalog.image?.default_model || "wan27-pro"}
+                onChange={(e) => set("default_image_model", e.target.value)}
+              >
+                {(catalog.image?.models || []).map((o) => (
+                  <option key={o.id} value={o.id}>{o.label_zh}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="model-default-row">
+            <div className="model-default-name">默认图片尺寸</div>
+            <div>
+              <select
+                value={form.default_image_size || catalog.image?.default_size || "2K"}
+                onChange={(e) => set("default_image_size", e.target.value)}
+              >
+                {(catalog.image?.sizes || ["1K", "2K", "4K", "1024*1024"]).map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {(catalog.modes || []).map((m) => {
+          const opts = (catalog.models || []).filter((x) => x.mode === m.id);
+          return (
+            <div key={m.id} className="model-default-row">
+              <div className="model-default-name">
+                {m.label_zh}
+              </div>
+              <div>
+                <select
+                  value={form[`default_model_${m.id}`] || catalog.default_models?.[m.id] || ""}
+                  onChange={(e) => set(`default_model_${m.id}`, e.target.value)}
+                >
+                  {opts.map((o) => (
+                    <option key={o.model_id} value={o.model_id}>
+                      {o.label_zh}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          );
+          })}
+        </div>
+          <button className="btn btn-sm" onClick={save} disabled={saving}>
+            保存默认模型
+          </button>
+        </SettingSection>
+
+        <SettingSection
+          icon="package"
+          title="Python 依赖"
+        >
+          <PythonDepsPanel />
+        </SettingSection>
+
+        <SettingSection
+          icon="package"
+          title="系统组件"
+          desc="依赖下载器会检测并安装系统级 FFmpeg，避免长视频拼接和预览不可用。"
+        >
+          <SystemComponentsPanel />
+        </SettingSection>
+
+        <SettingSection
+          icon="folder"
+          title="文件夹与存储"
+          desc="选择输出和缓存位置，并查看插件当前占用空间。"
+        >
+          <StorageSettings form={form} setFormValue={set} save={savePartial} />
+        </SettingSection>
+
+        <SettingSection icon="info" title="高级">
+          <div className="settings-grid two">
+            <SettingField label="DashScope 请求超时（秒）">
+              <input
+                type="number"
+                min="10"
+                max="600"
+                value={form.timeout_sec || "60"}
+                onChange={(e) => set("timeout_sec", e.target.value)}
+              />
+            </SettingField>
+            <SettingField label="最大重试次数">
+              <input
+                type="number"
+                min="0"
+                max="5"
+                value={form.max_retries || "2"}
+                onChange={(e) => set("max_retries", e.target.value)}
+              />
+            </SettingField>
+          </div>
+        </SettingSection>
+
+        <SettingSection icon="info" title="关于">
+          <div className="text-sm text-muted">
+          <div>快乐马工作室（HappyHorse Studio）v1.0.0</div>
+          <div>
+            后端：阿里云百炼 DashScope · HappyHorse 1.0 + Wan 2.6/2.7 + 数字人 5 模式
+          </div>
+          <div>
+            <a href="https://bailian.console.aliyun.com" target="_blank" rel="noreferrer">
+              百炼控制台
+            </a>
+          </div>
+        </div>
+        </SettingSection>
+
+        <button className="btn btn-block settings-save-btn" onClick={save} disabled={saving}>
+          {saving ? <Spinner /> : <Icon name="check" size={14} />} 保存设置
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── App ─────────────────────────────────────────────────────────────
+
+function App() {
+  const [tab, setTab] = useState("image");
+  const [catalog, setCatalog] = useState(null);
+  const [settings, setSettings] = useState(null);
+
+  const loadAll = useCallback(async () => {
+    try {
+      const c = await api("GET", "/catalog");
+      setCatalog(c.catalog);
+    } catch (_) {}
+    try {
+      const s = await api("GET", "/settings");
+      setSettings(s.config);
+    } catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    loadAll();
+    if (window.OpenAkita?.ready) window.OpenAkita.ready();
+  }, [loadAll]);
+
+  return (
+    <div className="app">
+      <HeaderNav tab={tab} onTab={setTab} settings={settings} />
+      <main className="content">
+        {tab === "t2v" && (
+          <CreateTab
+            catalog={catalog}
+            settings={settings}
+            onSubmit={() => setTab("tasks")}
+            onSettings={() => setTab("settings")}
+            initialMode="t2v"
+            title="文生视频"
+            subtitle="从一句提示词开始，补充镜头、氛围、时长和比例后直接生成视频。"
+          />
+        )}
+        {tab === "i2v" && (
+          <CreateTab
+            catalog={catalog}
+            settings={settings}
+            onSubmit={() => setTab("tasks")}
+            onSettings={() => setTab("settings")}
+            initialMode="i2v"
+            title="图生视频"
+            subtitle="先上传首帧图，再描述动作、镜头运动和氛围，让静态画面动起来。"
+          />
+        )}
+        {tab === "i2v_end" && (
+          <CreateTab
+            catalog={catalog}
+            settings={settings}
+            onSubmit={() => setTab("tasks")}
+            onSettings={() => setTab("settings")}
+            initialMode="i2v_end"
+            title="首尾帧生视频"
+            subtitle="上传开头和结尾两张图，由模型生成中间的自然过渡。"
+          />
+        )}
+        {tab === "video_extend" && (
+          <CreateTab
+            catalog={catalog}
+            settings={settings}
+            onSubmit={() => setTab("tasks")}
+            onSettings={() => setTab("settings")}
+            initialMode="video_extend"
+            title="视频续写"
+            subtitle="上传已有视频，从结尾继续延展新的镜头内容。"
+          />
+        )}
+        {tab === "r2v" && (
+          <CreateTab
+            catalog={catalog}
+            settings={settings}
+            onSubmit={() => setTab("tasks")}
+            onSettings={() => setTab("settings")}
+            initialMode="r2v"
+            title="多模态参考生视频"
+            subtitle="用角色、物品或场景参考图保持一致性，再用提示词控制互动和镜头。"
+          />
+        )}
+        {tab === "video_edit" && (
+          <CreateTab
+            catalog={catalog}
+            settings={settings}
+            onSubmit={() => setTab("tasks")}
+            onSettings={() => setTab("settings")}
+            initialMode="video_edit"
+            title="视频编辑"
+            subtitle="上传已有视频，用提示词描述风格转换、局部替换或画面增强目标。"
+          />
+        )}
+        {tab === "digital" && (
+          <CreateTab
+            catalog={catalog}
+            settings={settings}
+            onSubmit={() => setTab("tasks")}
+            onSettings={() => setTab("settings")}
+            initialMode="photo_speak"
+            title="数字人"
+            subtitle="围绕人像、源视频和台词创建口播、换嘴、换人或动作驱动任务。"
+            showModeChooser
+            modeIds={["photo_speak", "video_relip", "video_reface", "pose_drive", "avatar_compose"]}
+          />
+        )}
+        {tab === "image" && (
+          <ImageTab
+            catalog={catalog}
+            settings={settings}
+            onSubmit={() => setTab("tasks")}
+            onSettings={() => setTab("settings")}
+          />
+        )}
+        {tab === "tasks" && <TasksTab />}
+        {tab === "storyboard" && <StoryboardTab catalog={catalog} />}
+        {tab === "voices" && <VoicesTab settings={settings} />}
+        {tab === "figures" && <FiguresTab />}
+        {tab === "prompt" && <PromptTab settings={settings} />}
+        {tab === "settings" && (
+          <SettingsTab catalog={catalog} settings={settings} onSave={loadAll} />
+        )}
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

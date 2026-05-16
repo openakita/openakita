@@ -1,0 +1,46 @@
+# happyhorse-video Python runtime dependencies.
+#
+# All HTTP-async DashScope endpoints (HappyHorse 1.0 / Wan 2.6 / Wan 2.7 i2v /
+# wan2.2-s2v / videoretalk / wan2.2-animate-mix / wan2.2-animate-move /
+# wan2.7-image / qwen-vl-max) are reached over plain HTTP via
+# happyhorse_inline/vendor_client.py — **no vendor SDK needed** for those.
+#
+# CosyVoice-v2 TTS, however, is the *only* DashScope service that has
+# **no synchronous HTTP endpoint** — the official path is a streaming
+# WebSocket wrapped by `dashscope.audio.tts_v2.SpeechSynthesizer`.
+# Reimplementing the WS protocol locally would add ~300 LOC of
+# maintenance burden, so we depend on the official SDK only for TTS.
+#
+# The import is *lazy* (see `synth_voice` in happyhorse_dashscope_client.py)
+# — if the SDK is missing the plugin still loads and every video mode
+# (HappyHorse t2v/i2v/r2v/video-edit, Wan 2.6/2.7, photo speak with
+# user-supplied audio, etc.) keeps working. Only TTS / voice preview
+# will raise a friendly `error_kind: dependency` until you `pip install`.
+dashscope>=1.20.0
+
+# Aliyun OSS Python SDK — used by happyhorse_inline/oss_uploader.py to
+# push user-uploaded image/video/audio (and pipeline-generated TTS audio)
+# to a bucket the user owns, then hand DashScope a *signed* HTTPS URL.
+#
+# Required because all DashScope video models (HappyHorse 1.0 / wan2.6-* /
+# wan2.7-i2v / wan2.2-s2v / wan2.2-animate-* / videoretalk) need a
+# server-side-fetchable URL — the plugin's local
+# `/api/plugins/happyhorse-video/uploads/...` route does not satisfy that.
+#
+# Without `oss2` installed (or with OSS settings empty), every
+# task-creation route returns HTTP 400 with a clear "configure OSS"
+# hint, and the UI shows a yellow setup banner.
+oss2>=2.18.0
+
+# Audio metadata reader — used to compute the *actual* mp3/wav duration
+# of cosyvoice-v2 TTS output so step 6 (s2v / videoretalk) gets the
+# correct `duration` parameter (DashScope bills per generated second).
+# Without this we fall back to a 5-second placeholder which makes the
+# cost preview wildly inaccurate for anything longer than a one-liner.
+mutagen>=1.47.0
+
+# Edge-TTS — free Microsoft TTS engine via the Edge browser service.
+# Used by happyhorse_tts_edge.py as an alternative to the paid
+# cosyvoice-v2 DashScope TTS. Import is lazy — when not installed,
+# selecting the Edge-TTS engine will show a friendly error.
+edge-tts>=7.0

@@ -925,11 +925,244 @@ AIGC_VIDEO_STUDIO: dict = {
 }
 
 
+# ---------------------------------------------------------------------------
+# 百炼 AIGC 视频创作工作室（HappyHorse 版） — 与上面的「即梦版」并列存在
+#
+# 与 AIGC_VIDEO_STUDIO 的差异：
+#   - 视频工作台节点从 `wb-seedance-video` (基于火山即梦 ARK) 换成
+#     `wb-happyhorse-video` (基于阿里云百炼 DashScope，主力 HappyHorse 1.0
+#     + Wan 2.6/2.7，含原生音视频同步、多语种唇形、长视频分镜串接)
+#   - 工作台白名单工具：hh_t2v / hh_i2v / hh_r2v / hh_video_edit /
+#     hh_status / hh_list / hh_long_video_create
+#   - 通义生图节点保持不变（同样是百炼生态）
+#
+# 安装前置：在「插件管理」里安装并启用 `tongyi-image` 与 `happyhorse-video`，
+# 两者都需要 DASHSCOPE_API_KEY；happyhorse-video 还推荐配置 OSS（在它的
+# Settings Tab 里）以便首帧/参考图通过签名 URL 注入 DashScope。
+# ---------------------------------------------------------------------------
+
+HAPPYHORSE_VIDEO_STUDIO: dict = {
+    "name": "百炼 AIGC 视频创作工作室",
+    "description": (
+        "由制片人统筹、编剧产出脚本、通义生图工作台出分镜、快乐马视频工作台合成"
+        "成片的端到端 AIGC 短片流水线。需要预先在「插件管理」中启用 tongyi-image "
+        "与 happyhorse-video 两个工作台插件。"
+    ),
+    "icon": "🐎",
+    "tags": ["aigc", "video", "workbench", "tongyi-image", "happyhorse-video", "bailian"],
+    "user_persona": {
+        "title": "出品方",
+        "display_name": "出品方",
+        "description": "短片选题与最终成片验收人",
+    },
+    "core_business": (
+        "围绕短视频/广告片选题，按「脚本 → 分镜图 → 成片」三段式流水线快速生产 "
+        "AIGC 视频。后端统一走阿里云百炼 DashScope：分镜由通义生图出，成片由"
+        "快乐马（HappyHorse 1.0 / Wan 2.6/2.7）合成，所有产出会自动落到组织"
+        " workspace 的 plugin_assets/ 目录并附在任务交付上。"
+    ),
+    "heartbeat_enabled": False,
+    "heartbeat_interval_s": 3600,
+    "heartbeat_prompt": "审视当前选题进度，识别脚本/分镜/成片阶段的卡点。",
+    "standup_enabled": False,
+    "standup_cron": "0 10 * * 1-5",
+    "standup_agenda": "脚本、分镜、视频成片三个阶段的产出与阻塞同步。",
+    "allow_cross_level": True,
+    "max_delegation_depth": 3,
+    "conflict_resolution": "manager",
+    "scaling_enabled": False,
+    "max_nodes": 8,
+    "scaling_approval": "manager",
+    "nodes": [
+        {
+            "id": "producer",
+            "role_title": "制片人",
+            "role_goal": (
+                "把出品方的选题拆成可执行的工序——找编剧细化脚本与分镜，"
+                "再把分镜描述派给通义生图工作台出图，最后把 asset_ids 透传给"
+                "快乐马视频工作台合成视频，并对最终成片负责。"
+            ),
+            "role_backstory": "AIGC 短片制片人，擅长把粗糙的创意拆成可标准化的视觉工序。",
+            "agent_source": "local",
+            "agent_profile_id": "project-manager",
+            "position": {"x": 400, "y": 0},
+            "level": 0,
+            "department": "制作部",
+            "avatar": "ceo",
+            "external_tools": ["research", "planning", "filesystem", "memory"],
+            "custom_prompt": (
+                "你是百炼 AIGC 视频创作工作室的制片人。\n"
+                "工作流：\n"
+                "1. 把出品方的选题派给『编剧』节点，让他用 org_submit_deliverable "
+                "返回脚本（含人物/场景/分镜描述与对白）。\n"
+                "2. 收到脚本后，把每个镜头的中文画面说明与模型提示词整理成清单，调用 "
+                "org_delegate_task 派给『通义生图工作台』节点，请求按镜头出图。\n"
+                "3. 通义生图工作台交付时，runtime 已经把图片下载到 workspace 并附"
+                "在 TASK_DELIVERED 上；同时它的 deliverable 文本会包含 asset_ids。"
+                "把这些 asset_ids 与对应镜头的中文画面说明、镜头运动、时长、风格"
+                "一起派给『快乐马视频工作台』节点。多镜头视频必须明确要求快乐马按镜"
+                "头逐个调用 hh_i2v：每次只消费一个镜头的 from_asset_ids，并按分镜"
+                "时长设置 duration（例如 30 秒/3 镜头就是每段 10 秒），不要用同一"
+                "总主题 prompt 重复生成多个视频。\n"
+                "4. 视频工作台返回 video_url + 本地路径后，最终向出品方交付：剧本"
+                "（文字）+ 分镜图（附件）+ 成片（附件）。\n"
+                "5. 如果选题需要长视频/连续片段（≥ 3 段），可以让快乐马调用 "
+                "hh_long_video_create：runtime 会自动做 ffmpeg 拼接。"
+            ),
+        },
+        {
+            "id": "screenwriter",
+            "role_title": "编剧",
+            "role_goal": "把选题拆成分镜脚本，给每个镜头写出可直接用于生图的视觉描述。",
+            "role_backstory": "广告短片编剧，熟悉 AIGC 工具的 prompt 写法。",
+            "agent_source": "local",
+            "agent_profile_id": "content-creator",
+            "position": {"x": 150, "y": 180},
+            "level": 1,
+            "department": "创意",
+            "avatar": "writer",
+            "external_tools": ["research", "planning", "filesystem", "memory"],
+            "custom_prompt": (
+                "你是组织里的编剧节点。收到选题后产出：(a) 一个完整剧本（场景、"
+                "人物、对白）；(b) 每个镜头的中文画面说明、镜头语言、时长和模型"
+                "提示词。中文语境下，交付内容必须以中文为主；如需英文关键词辅助"
+                "生图，只能放在“模型提示词”字段里，不能整段只输出英文。最终用 "
+                "org_submit_deliverable 交付，并把脚本同时落盘为 markdown 文件作为附件。"
+            ),
+        },
+        {
+            "id": "wb-tongyi-image",
+            "role_title": "通义生图工作台",
+            "role_goal": "按制片人/编剧给定的分镜 prompt 调用通义生图，产出关键帧静态画面。",
+            "role_backstory": "工作台节点，背靠 tongyi-image 插件，专职文生图与图生图。",
+            "agent_source": "local",
+            "agent_profile_id": "default",
+            "position": {"x": 400, "y": 180},
+            "level": 1,
+            "department": "图像生成",
+            "avatar": "designer-f",
+            "external_tools": [
+                "tongyi_image_create",
+                "tongyi_image_status",
+                "tongyi_image_list",
+            ],
+            "enable_file_tools": False,
+            "can_delegate": False,
+            "plugin_origin": {
+                "plugin_id": "tongyi-image",
+                "template_id": "workbench:tongyi-image",
+            },
+            "custom_prompt": (
+                "你是【通义生图】工作台节点。只在收到 org_delegate_task 时启动，"
+                "按 input_schema 调用 tongyi_image_create 出图。组织 runtime 会把"
+                "图片下载到 workspace 并自动登记为附件；调 org_submit_deliverable "
+                "时只需在 deliverable 文本里说明产出（镜头号、中文画面摘要、模型"
+                "提示词摘要、生成的 asset_id），不要重复声明 file_attachments。"
+                "中文语境下，用户可见交付必须使用中文；模型提示词可以保留少量英文"
+                "关键词，但不要整段只输出英文。若上级仅是问询/讨论"
+                "（没有明确派单），直接用 org_submit_deliverable 返回文字答复，"
+                "不要凭空调用工具。"
+            ),
+        },
+        {
+            "id": "wb-happyhorse-video",
+            "role_title": "快乐马视频工作台",
+            "role_goal": (
+                "用编剧脚本与通义生图的分镜画面，调用快乐马（HappyHorse 1.0 / "
+                "Wan 2.6/2.7）合成短片成片。"
+            ),
+            "role_backstory": (
+                "工作台节点，背靠 happyhorse-video 插件，统一接入阿里云百炼 "
+                "DashScope 的 HappyHorse + Wan 视频族。"
+            ),
+            "agent_source": "local",
+            "agent_profile_id": "default",
+            "position": {"x": 650, "y": 180},
+            "level": 1,
+            "department": "视频生成",
+            "avatar": "media",
+            "external_tools": [
+                "hh_t2v",
+                "hh_i2v",
+                "hh_r2v",
+                "hh_video_edit",
+                "hh_status",
+                "hh_list",
+                "hh_long_video_create",
+            ],
+            "enable_file_tools": False,
+            "can_delegate": False,
+            "plugin_origin": {
+                "plugin_id": "happyhorse-video",
+                "template_id": "workbench:happyhorse-video",
+            },
+            "custom_prompt": (
+                "你是【快乐马视频】工作台节点。只在收到 org_delegate_task 时启动；"
+                "当上级的派单 prompt 里给了上游通义生图的 asset_ids 时，如果是多"
+                "镜头任务，必须按镜头逐个调用 hh_i2v：每次只传当前镜头的一个 "
+                "from_asset_ids（插件会展开为 first_frame_url），并设置该镜头的 "
+                "duration（例如 30 秒/3 镜头就是每段 10 秒）。每次调用的 prompt 必"
+                "须写清当前镜头独有的中文画面、镜头运动和风格，不要用同一段总主"
+                "题 prompt 重复生成多个视频。\n"
+                "模型选择策略：默认沿用 happyhorse-1.0-i2v（原生 24fps + 音视频"
+                "同步 + 7 语种唇形）；若编剧明确写了「无人声」「纯空镜」「快速预览」"
+                "可以指定 model_id=wan2.6-i2v-flash 节省成本；首尾帧关键帧切换则"
+                "改 model_id=wan2.7-i2v 并在 prompt 里描述目标画面。\n"
+                "若任务是「编辑/换风格」走 hh_video_edit；如果任务是「连续片段拼"
+                "接」（≥ 3 段），改用 hh_long_video_create 一次性给出每段的描述与"
+                "首帧 asset_id，runtime 会自动调度并 ffmpeg 拼接。\n"
+                "生成成功后 runtime 会把 video.mp4 与 last_frame 自动下载并登记"
+                "为附件。提交 org_submit_deliverable 时只需写文字说明（含 task_id "
+                "/ video_url），不要重复声明 file_attachments。"
+            ),
+        },
+    ],
+    "edges": [
+        {
+            "id": "e-prod-writer",
+            "source": "producer",
+            "target": "screenwriter",
+            "edge_type": "hierarchy",
+            "label": "",
+        },
+        {
+            "id": "e-prod-tongyi",
+            "source": "producer",
+            "target": "wb-tongyi-image",
+            "edge_type": "hierarchy",
+            "label": "",
+        },
+        {
+            "id": "e-prod-happyhorse",
+            "source": "producer",
+            "target": "wb-happyhorse-video",
+            "edge_type": "hierarchy",
+            "label": "",
+        },
+        {
+            "id": "e-writer-tongyi",
+            "source": "screenwriter",
+            "target": "wb-tongyi-image",
+            "edge_type": "collaborate",
+            "label": "提供分镜 prompt",
+        },
+        {
+            "id": "e-tongyi-happyhorse",
+            "source": "wb-tongyi-image",
+            "target": "wb-happyhorse-video",
+            "edge_type": "collaborate",
+            "label": "传递 asset_ids 作为首帧/参考帧",
+        },
+    ],
+}
+
+
 ALL_TEMPLATES: dict[str, dict] = {
     "startup-company": STARTUP_COMPANY,
     "software-team": SOFTWARE_TEAM,
     "content-ops": CONTENT_OPS,
     "aigc-video-studio": AIGC_VIDEO_STUDIO,
+    "happyhorse-video-studio": HAPPYHORSE_VIDEO_STUDIO,
 }
 
 
@@ -938,6 +1171,7 @@ TEMPLATE_POLICY_MAP: dict[str, str] = {
     "software-team": "software-team",
     "content-ops": "content-ops",
     "aigc-video-studio": "default",
+    "happyhorse-video-studio": "default",
 }
 
 

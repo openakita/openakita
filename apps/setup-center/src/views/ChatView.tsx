@@ -469,11 +469,6 @@ export function ChatView({
   const orgCommandPendingRef = useRef(false);
   const activeOrgCommandRef = useRef<{ orgId: string; commandId: string } | null>(null);
 
-  // Org 协调可视化面板状态
-  const [orgNodeStates, setOrgNodeStates] = useState<Map<string, { status: string; task?: string; ts: number }>>(new Map());
-  const [orgFlowPanelOpen, setOrgFlowPanelOpen] = useState(true);
-  const [orgDelegations, setOrgDelegations] = useState<{ from: string; to: string; task: string; ts: number }[]>([]);
-
   useEffect(() => {
     if (!orgMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -2078,9 +2073,11 @@ export function ChatView({
         agentProfileId: selectedAgent,
         endpointId: selectedEndpoint !== "auto" ? selectedEndpoint : undefined,
         endpointPolicy: selectedEndpoint !== "auto" ? selectedEndpointPolicy : undefined,
-        orgMode: Boolean(orgMode && selectedOrgId),
-        orgId: orgMode && selectedOrgId ? selectedOrgId : undefined,
-        orgNodeId: orgMode && selectedOrgId ? selectedOrgNodeId || undefined : undefined,
+        orgMode: Boolean(orgRouteOverride || (orgMode && selectedOrgId)),
+        orgId: orgRouteOverride?.orgId || (orgMode && selectedOrgId ? selectedOrgId : undefined),
+        orgNodeId: orgRouteOverride
+          ? orgRouteOverride.nodeId || undefined
+          : (orgMode && selectedOrgId ? selectedOrgNodeId || undefined : undefined),
       }, ...prev]);
     } else {
       updateConvStatus(convId, "running");
@@ -4802,59 +4799,6 @@ export function ChatView({
                 onRemove={() => setPendingAttachments((prev) => prev.filter((_, i) => i !== idx))}
               />
             ))}
-          </div>
-        )}
-
-        {/* Org Flow Status Panel */}
-        {orgCommandPending && orgNodeStates.size > 0 && (
-          <div style={{
-            margin: "0 16px 8px", borderRadius: 12,
-            border: "1px solid var(--border, rgba(255,255,255,0.1))",
-            background: "var(--card, rgba(0,0,0,0.03))",
-            overflow: "hidden",
-            transition: "opacity 0.2s ease",
-            flexShrink: 0,
-          }}>
-            <button
-              onClick={() => setOrgFlowPanelOpen(p => !p)}
-              style={{
-                width: "100%", display: "flex", alignItems: "center", gap: 8,
-                padding: "8px 14px", border: "none", background: "transparent",
-                color: "var(--text)", cursor: "pointer", fontSize: 13, fontWeight: 600,
-              }}
-            >
-              <span>{orgFlowPanelOpen ? "▼" : "▶"}</span>
-              <span>{t("chat.orgFlowPanel", "组织协调状态")}</span>
-              <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.6 }}>
-                {orgNodeStates.size} {t("chat.orgNodes", "节点")}
-              </span>
-            </button>
-            {orgFlowPanelOpen && (
-              <div style={{ padding: "4px 14px 12px", display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 120, overflowY: "auto" }}>
-                {Array.from(orgNodeStates.entries()).map(([nid, ns]) => {
-                  const color = ns.status === "busy" ? "#22c55e" : ns.status === "done" || ns.status === "idle" ? "#3b82f6" : ns.status === "error" ? "#ef4444" : ns.status === "timeout" ? "#f59e0b" : "#6b7280";
-                  const dotColor = ns.status === "busy" ? "#22c55e" : ns.status === "done" || ns.status === "idle" ? "#3b82f6" : ns.status === "error" ? "#ef4444" : ns.status === "timeout" ? "#eab308" : "#9ca3af";
-                  return (
-                    <div key={nid} style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      padding: "4px 10px", borderRadius: 8, fontSize: 12,
-                      background: `${color}15`, border: `1px solid ${color}30`,
-                    }}>
-                      <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: dotColor }} />
-                      <span style={{ fontWeight: 600 }}>{nid}</span>
-                      {ns.task && <span style={{ opacity: 0.7, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ns.task}</span>}
-                    </div>
-                  );
-                })}
-                {orgDelegations.length > 0 && (
-                  <div style={{ width: "100%", marginTop: 4, fontSize: 11, opacity: 0.6 }}>
-                    {orgDelegations.slice(-5).map((d, i) => (
-                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 4 }}><IconClipboard size={11} /> {d.from} → {d.to}: {d.task.slice(0, 40)}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
 
