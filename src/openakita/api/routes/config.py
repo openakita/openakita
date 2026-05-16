@@ -1129,6 +1129,59 @@ async def reorder_endpoints(body: ReorderEndpointsRequest, request: Request):
     }
 
 
+class SyncEndpointModelsRequest(BaseModel):
+    name: str
+    endpoint_type: str = "endpoints"
+    timeout: float = 15.0
+
+
+@router.post("/api/config/sync-endpoint-models")
+async def sync_endpoint_models(body: SyncEndpointModelsRequest, request: Request):
+    """Probe a relay/aggregator endpoint's actual model catalog.
+
+    Returns the freshly probed model list plus persistence metadata.
+    On probe failure (auth, network, unsupported route) returns
+    ``{"status": "error", "error": ...}`` with the previous catalog
+    preserved on disk — the UI keeps showing the old dropdown plus
+    the new error banner instead of going blank.
+
+    Body::
+
+        {"name": "yunwu-relay", "endpoint_type": "endpoints", "timeout": 15.0}
+    """
+    mgr = _get_endpoint_manager()
+    try:
+        result = mgr.sync_endpoint_models(
+            body.name,
+            endpoint_type=body.endpoint_type,
+            timeout=max(2.0, min(60.0, float(body.timeout or 15.0))),
+        )
+    except KeyError as e:
+        return {"status": "not_found", "error": str(e), "name": body.name}
+    except ValueError as e:
+        return {"status": "error", "error": str(e), "name": body.name}
+    except Exception as e:  # noqa: BLE001 — surface raw error to UI
+        logger.error("[Config API] sync-endpoint-models failed: %s", e, exc_info=True)
+        return {"status": "error", "error": str(e), "name": body.name}
+
+    # Live providers carry an in-memory copy of EndpointConfig; refresh
+    # so the catalog filter in LLMClient._filter_eligible_endpoints
+    # takes effect immediately without requiring a process restart.
+    reload_result = _trigger_reload(request)
+
+    return {
+        "status": "ok" if result["ok"] else "error",
+        "ok": result["ok"],
+        "name": result["name"],
+        "model_count": result["model_count"],
+        "models": result["models"],
+        "synced_at": result["synced_at"],
+        "error": result["error"],
+        "version": mgr.get_version(),
+        "reload": reload_result,
+    }
+
+
 @router.post("/api/config/update-settings")
 async def update_endpoint_settings(body: UpdateSettingsRequest, request: Request):
     """Merge settings into llm_endpoints.json via EndpointManager."""
