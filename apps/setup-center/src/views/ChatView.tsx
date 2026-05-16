@@ -2063,6 +2063,10 @@ export function ChatView({
     if (!convId) {
       convId = genId();
       skipConvLoadRef.current = true;
+      // React state updates asynchronously; update refs immediately so the
+      // optimistic first turn renders before SSE/WebSocket events arrive.
+      activeConvIdRef.current = convId;
+      latestActiveConvIdRef.current = convId;
       setActiveConvId(convId);
       setConversations((prev) => [{
         id: convId!,
