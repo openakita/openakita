@@ -1857,13 +1857,15 @@ class Plugin(PluginBase):
         @router.get("/storage/stats")
         async def storage_stats_route() -> dict:
             stats: dict[str, dict] = {}
+            cfg = self._settings_cache or {}
+            data_dir = Path(cfg.get("custom_data_dir") or self._data_dir)
             for key, default in [
-                ("output_dir", str(self._data_dir / "outputs")),
-                ("cache_dir", str(self._data_dir / "cache")),
-                ("uploads", str(self._data_dir / "uploads")),
-                ("tasks", str(self._data_dir / "tasks")),
+                ("data_dir", str(data_dir)),
+                ("output_dir", str(data_dir / "outputs")),
+                ("cache_dir", str(data_dir / "cache")),
+                ("uploads", str(data_dir / "uploads")),
+                ("tasks", str(data_dir / "tasks")),
             ]:
-                cfg = self._settings_cache or {}
                 d = Path(cfg.get(key) or default)
                 report = await collect_storage_stats(
                     d, max_files=20000, sample_paths=0, skip_hidden=True
@@ -1898,6 +1900,12 @@ class Plugin(PluginBase):
                     status_code=500, detail=f"cannot open: {exc}"
                 ) from exc
             return {"ok": True, "path": str(target)}
+
+        @router.post("/cleanup")
+        async def cleanup_route(body: dict) -> dict:
+            retention_days = int((body or {}).get("retention_days") or 30)
+            removed = await self._tm.cleanup_expired(retention_days=retention_days)
+            return {"ok": True, "removed": removed}
 
         # Health + python-deps ------------------------------------------
         @router.get("/healthz")
