@@ -72,14 +72,17 @@ ProtocolVersion = Literal["new_async", "legacy_async", "sdk"]
 SizeFormat = Literal["resolution_p", "size_star", "size_x"]
 # ``input_protocol`` decides how the client packs first/last/clip URLs
 # into the request:
-# - ``url_fields`` (default, legacy & HappyHorse 1.0): plain
-#   ``input.first_frame_url`` / ``last_frame_url`` / ``source_video_url``
-#   keys + ``parameters.task_type`` selector.
-# - ``media_array`` (wan2.7-i2v family per official 2026-04 docs): a
+# - ``url_fields`` (default, legacy & HappyHorse 1.0 t2v/i2v/r2v): plain
+#   ``input.first_frame_url`` / ``last_frame_url`` / ``video_url`` /
+#   ``audio_url`` + ``parameters.task_type`` selector.
+# - ``media_array_i2v`` (wan2.7-i2v family per official 2026-04 docs): a
 #   single ``input.media: [{"type": "first_frame|last_frame|first_clip|
 #   driving_audio", "url": "..."}]`` array. The task type is implicit in
 #   which entries the array contains; no ``task_type`` parameter exists.
-InputProtocol = Literal["url_fields", "media_array"]
+# - ``media_array_v2v`` (happyhorse-1.0-video-edit): ``input.media``
+#   contains exactly one ``{"type": "video", "url": "..."}`` entry plus
+#   0-5 optional ``{"type": "image", "url": "..."}`` reference images.
+InputProtocol = Literal["url_fields", "media_array_i2v", "media_array_v2v"]
 
 
 @dataclass(frozen=True)
@@ -254,7 +257,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         # No task_types: wan2.7-i2v selects the sub-task implicitly via
         # which media[].type entries appear (first_frame / last_frame /
         # first_clip / driving_audio). Per the 2026-04 official API.
-        input_protocol="media_array",
+        input_protocol="media_array_i2v",
     ),
     # ── i2v_end (first + last frame) ───────────────────────────────────
     ModelEntry(
@@ -268,7 +271,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         cost_note="使用 wan2.7-i2v 首帧+尾帧（input.media[]）",
         resolutions=_WAN_NEW_RES,
         duration_range=(2, 15),
-        input_protocol="media_array",
+        input_protocol="media_array_i2v",
         is_default=True,
     ),
     # ── video_extend (continuation) ────────────────────────────────────
@@ -283,7 +286,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         cost_note="使用 wan2.7-i2v 视频续写（input.media[first_clip]）",
         resolutions=_WAN_NEW_RES,
         duration_range=(2, 15),
-        input_protocol="media_array",
+        input_protocol="media_array_i2v",
         is_default=True,
     ),
     # ── r2v (reference-to-video, multi-character) ──────────────────────
@@ -335,10 +338,14 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="new_async",
         size_format="resolution_p",
-        cost_note="按输入与输出视频时长计费",
+        # Official spec: input.media must contain exactly one
+        # {type:"video", url:"..."} entry plus 0-5 optional
+        # {type:"image", url:"..."} reference images.
+        cost_note="按输入与输出视频时长计费（input.media[video] + 0-5 张可选参考图）",
         resolutions=_HAPPYHORSE_RES,
         duration_range=_HAPPYHORSE_DUR,
         forbidden_params=_HAPPYHORSE_FORBIDDEN,
+        input_protocol="media_array_v2v",
         native_audio_sync=True,
         is_default=True,
     ),

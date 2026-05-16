@@ -480,9 +480,8 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 pass
 
         # task_type only applies to url_fields-style entries that
-        # declare task_types. media_array entries (wan2.7-i2v) ignore
-        # task_type — the sub-task is encoded in which media[].type
-        # entries appear.
+        # declare task_types. media_array_* entries ignore task_type —
+        # the sub-task is encoded in which media[].type entries appear.
         if entry.input_protocol == "url_fields":
             if task_type:
                 if entry.task_types and task_type not in entry.task_types:
@@ -502,14 +501,13 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         if prompt:
             input_obj["prompt"] = prompt
 
-        if entry.input_protocol == "media_array":
-            # wan2.7-i2v family: pack URLs into input.media[]. Order of
-            # types in the array is not significant per the official
-            # docs, but we use first_frame → last_frame → first_clip →
-            # driving_audio for readable bodies. The DashScope service
-            # rejects duplicate ``type`` entries (each may appear once
-            # at most), and our SDK callers already pass at most one of
-            # each, so we don't dedupe here.
+        if entry.input_protocol == "media_array_i2v":
+            # wan2.7-i2v family: pack URLs into input.media[]. Order
+            # is not significant per the official docs, but we use
+            # first_frame → last_frame → first_clip → driving_audio for
+            # readable bodies. The service rejects duplicate ``type``
+            # entries (each may appear once at most); our SDK callers
+            # already pass at most one of each, so we don't dedupe.
             media: list[dict[str, str]] = []
             if first_frame_url:
                 media.append({"type": "first_frame", "url": first_frame_url})
@@ -540,6 +538,46 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                     retryable=False,
                     kind=ERROR_KIND_CLIENT,
                 )
+            input_obj["media"] = media
+        elif entry.input_protocol == "media_array_v2v":
+            # happyhorse-1.0-video-edit: exactly one {type:"video"}
+            # entry, plus up to 5 optional {type:"image"} reference
+            # frames. Anything else (first_frame_url / last_frame_url /
+            # driving_audio_url) is not part of this model's spec.
+            if not source_video_url:
+                raise VendorError(
+                    f"model {model_id!r} requires source_video_url "
+                    "(the video to edit) — got empty",
+                    status=422,
+                    retryable=False,
+                    kind=ERROR_KIND_CLIENT,
+                )
+            for label, val in (
+                ("first_frame_url", first_frame_url),
+                ("last_frame_url", last_frame_url),
+                ("driving_audio_url", driving_audio_url),
+            ):
+                if val:
+                    raise VendorError(
+                        f"model {model_id!r} does not accept {label}; "
+                        "use a wan2.7-i2v variant for first/last frame "
+                        "or driving audio.",
+                        status=422,
+                        retryable=False,
+                        kind=ERROR_KIND_CLIENT,
+                    )
+            refs = list(reference_urls or [])
+            if len(refs) > 5:
+                raise VendorError(
+                    f"model {model_id!r} accepts at most 5 reference "
+                    f"images (got {len(refs)})",
+                    status=422,
+                    retryable=False,
+                    kind=ERROR_KIND_CLIENT,
+                )
+            media = [{"type": "video", "url": source_video_url}]
+            for r in refs:
+                media.append({"type": "image", "url": r})
             input_obj["media"] = media
         else:
             if first_frame_url:

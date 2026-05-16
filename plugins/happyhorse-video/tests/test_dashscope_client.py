@@ -180,6 +180,57 @@ async def test_wan26_t2v_keeps_legacy_url_fields(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_video_edit_packs_media_v2v_with_optional_refs(monkeypatch):
+    """happyhorse-1.0-video-edit's official spec is ``input.media``
+    containing exactly one {type:"video"} plus 0-5 optional
+    {type:"image"} reference frames — NOT input.video_url. Lock the
+    shape down so the historical url_fields request can't reappear."""
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    captured: dict[str, object] = {}
+
+    async def fake_submit_async(path, body):
+        captured["body"] = body
+        return "t-edit"
+
+    monkeypatch.setattr(c, "_submit_async", fake_submit_async)
+
+    await c.submit_video_synth(
+        mode="video_edit",
+        model_id="happyhorse-1.0-video-edit",
+        prompt="replace the sky with sunset",
+        source_video_url="https://example.test/in.mp4",
+        reference_urls=[
+            "https://example.test/ref1.png",
+            "https://example.test/ref2.png",
+        ],
+        resolution="720P",
+    )
+    body = captured["body"]
+    assert "video_url" not in body["input"]
+    assert body["input"]["media"] == [
+        {"type": "video", "url": "https://example.test/in.mp4"},
+        {"type": "image", "url": "https://example.test/ref1.png"},
+        {"type": "image", "url": "https://example.test/ref2.png"},
+    ]
+    assert "task_type" not in body["parameters"]
+
+
+@pytest.mark.asyncio
+async def test_video_edit_rejects_more_than_5_references(monkeypatch):
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    monkeypatch.setattr(c, "_submit_async", lambda *a, **kw: None)
+    with pytest.raises(VendorError) as ei:
+        await c.submit_video_synth(
+            mode="video_edit",
+            model_id="happyhorse-1.0-video-edit",
+            prompt="x",
+            source_video_url="https://example.test/in.mp4",
+            reference_urls=[f"https://example.test/r{i}.png" for i in range(6)],
+        )
+    assert "at most 5" in str(ei.value)
+
+
+@pytest.mark.asyncio
 async def test_video_synth_duration_is_int_for_vendor(monkeypatch):
     """DashScope ``parameters.duration`` must be integer. The earlier
     bug converted it to ``float(3.0)`` and triggered a 422 — pin the
