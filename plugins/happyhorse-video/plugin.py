@@ -92,6 +92,7 @@ from happyhorse_model_registry import default_model  # noqa: E402
 from happyhorse_models import (  # noqa: E402
     MODES_BY_ID,
     SYSTEM_VOICES,
+    VOICES_BY_ID,
     build_catalog,
     estimate_cost,
 )
@@ -188,6 +189,7 @@ class CostPreviewBody(BaseModel):
     resolution: str = "720P"
     aspect_ratio: str = "16:9"
     text: str = ""
+    tts_engine: str = ""
     audio_duration_sec: float | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
@@ -301,7 +303,7 @@ class Plugin(PluginBase):
             )
 
         router = APIRouter()
-        add_upload_preview_route(router, base_dir=self._data_dir / "uploads")
+        add_upload_preview_route(router, base_dir=self._uploads_dir)
         self._register_routes(router)
         api.register_api_routes(router)
         api.register_tools(self._tool_definitions(), handler=self._handle_tool)
@@ -378,7 +380,49 @@ class Plugin(PluginBase):
         for k, v in (self._settings_cache or {}).items():
             if v not in (None, ""):
                 merged[k] = v
+        if merged.get("timeout_sec"):
+            merged["timeout"] = merged["timeout_sec"]
         return merged
+
+    def _active_data_dir(self) -> Path:
+        raw = str(self._read_settings().get("custom_data_dir") or "").strip()
+        return Path(raw).expanduser() if raw else self._data_dir
+
+    def _uploads_dir(self) -> Path:
+        return self._active_data_dir() / "uploads"
+
+    @staticmethod
+    def _system_voice_to_catalog(v: Any) -> dict[str, Any]:
+        return dict(v.to_dict())
+
+    @staticmethod
+    def _custom_voice_to_catalog(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **row,
+            "id": row.get("id") or "",
+            "label": row.get("label") or row.get("id") or "",
+            "label_zh": row.get("label") or row.get("id") or "",
+            "label_en": row.get("label") or row.get("id") or "",
+            "engine": "custom",
+            "language": row.get("language") or "zh-CN",
+            "gender": row.get("gender") or "unknown",
+            "style": "自定义克隆",
+            "style_zh": "自定义克隆",
+            "is_system": False,
+            "dashscope_voice_id": row.get("dashscope_voice_id") or row.get("id") or "",
+        }
+
+    async def _resolve_tts_voice_id(self, voice_id: str) -> str:
+        vid = str(voice_id or "").strip()
+        if not vid:
+            return ""
+        custom = await self._tm.get_voice(vid)
+        if custom and custom.get("dashscope_voice_id"):
+            return str(custom["dashscope_voice_id"])
+        spec = VOICES_BY_ID.get(vid)
+        if spec and spec.engine == "cosyvoice":
+            return str(spec.to_dict().get("dashscope_voice_id") or vid)
+        return vid
 
     async def _reload_settings_cache(self) -> None:
         try:
@@ -719,6 +763,7 @@ class Plugin(PluginBase):
         # downloaded videos. Inject the bound method here.
         params = dict(params)
         params["_publish_asset"] = self._publish_local_asset
+        params["_resolve_voice_id"] = self._resolve_tts_voice_id
 
         ctx = HappyhorsePipelineContext(
             task_id=task_id,
@@ -734,7 +779,9 @@ class Plugin(PluginBase):
             client=self._client,
             emit=emit,
             plugin_id=PLUGIN_ID,
-            base_data_dir=self._data_dir,
+            base_data_dir=self._active_data_dir(),
+            output_subdir_mode=str(self._read_settings().get("output_subdir_mode") or "task"),
+            output_naming_rule=str(self._read_settings().get("output_naming_rule") or "{filename}"),
         )
         task = self._api.spawn_task(coro, name=f"{PLUGIN_ID}:pipe:{task_id}")
         self._poll_tasks[task_id] = task
@@ -1030,7 +1077,7 @@ class Plugin(PluginBase):
     ) -> tuple[list[str], list[str]]:
         import httpx
 
-        out_dir = self._data_dir / "outputs" / "images" / task_id
+        out_dir = self._active_data_dir() / "outputs" / "images" / task_id
         out_dir.mkdir(parents=True, exist_ok=True)
         paths: list[str] = []
         asset_ids: list[str] = []
@@ -1612,11 +1659,15 @@ class Plugin(PluginBase):
         @router.get("/catalog")
         async def get_catalog() -> dict:
             cat = build_catalog()
+            cloned = [
+                self._custom_voice_to_catalog(v)
+                for v in await self._tm.list_voices()
+            ]
             return {
                 "ok": True,
                 "catalog": {
                     "modes": cat.modes,
-                    "voices": cat.voices,
+                    "voices": [*cat.voices, *cloned],
                     "resolutions": cat.resolutions,
                     "aspects": cat.aspects,
                     "animate_modes": cat.animate_modes,
@@ -1856,7 +1907,7 @@ class Plugin(PluginBase):
                     status_code=400,
                     detail="至少需要 2 段已下载的视频片段才能拼接",
                 )
-            output_dir = self._data_dir / "outputs" / "concat"
+            output_dir = self._active_data_dir() / "outputs" / "concat"
             output_dir.mkdir(parents=True, exist_ok=True)
             output_name = body.output_name or f"concat_{uuid.uuid4().hex[:8]}.mp4"
             output_path = output_dir / output_name
@@ -1875,7 +1926,7 @@ class Plugin(PluginBase):
         async def storage_stats_route() -> dict:
             stats: dict[str, dict] = {}
             cfg = self._settings_cache or {}
-            data_dir = Path(cfg.get("custom_data_dir") or self._data_dir)
+            data_dir = self._active_data_dir()
             for key, default in [
                 ("data_dir", str(data_dir)),
                 ("output_dir", str(data_dir / "outputs")),
@@ -1977,18 +2028,18 @@ class Plugin(PluginBase):
             cloned = await self._tm.list_voices()
             return {
                 "ok": True,
-                "system": [v.to_dict() for v in SYSTEM_VOICES],
-                "cloned": cloned,
+                "system": [self._system_voice_to_catalog(v) for v in SYSTEM_VOICES],
+                "cloned": [self._custom_voice_to_catalog(v) for v in cloned],
             }
 
         @router.post("/voices/preview")
         async def preview_voice(body: VoicePreviewBody) -> dict:
             try:
-                preview_path = self._data_dir / "previews"
+                preview_path = self._active_data_dir() / "previews"
                 preview_path.mkdir(parents=True, exist_ok=True)
                 out = preview_path / f"{uuid.uuid4().hex[:8]}.mp3"
                 # Engine selection — same logic as pipeline step-4.
-                voice_id = body.voice_id
+                voice_id = await self._resolve_tts_voice_id(body.voice_id)
                 engine = (
                     "edge"
                     if voice_id.startswith(("zh-CN", "zh-HK", "zh-TW"))
@@ -2003,11 +2054,11 @@ class Plugin(PluginBase):
                         output_path=out,
                     )
                 else:
-                    audio_bytes = await self._client.synth_voice(
+                    synth_result = await self._client.synth_voice(
                         text=body.text or "你好，这是一段试听。",
-                        voice=voice_id,
+                        voice_id=voice_id,
                     )
-                    out.write_bytes(audio_bytes)
+                    out.write_bytes(synth_result["audio_bytes"])
                 return {"ok": True, "audio_path": str(out)}
             except Exception as exc:  # noqa: BLE001
                 return {"ok": False, "error": str(exc)}
@@ -2015,14 +2066,16 @@ class Plugin(PluginBase):
         @router.post("/voices/clone")
         async def clone_voice(body: VoiceCloneBody) -> dict:
             try:
-                cosyvoice_id = await self._client.clone_voice(
-                    label=body.label,
-                    sample_audio_url=body.sample_audio_url,
+                clone_result = await self._client.clone_voice(
+                    sample_url=body.sample_audio_url,
+                    prefix=re.sub(r"[^A-Za-z0-9]+", "", body.label)[:10] or "happyhorse",
+                    language=body.language,
                 )
+                dashscope_voice_id = str(clone_result.get("voice_id") or "")
                 voice_id = await self._tm.create_custom_voice(
                     label=body.label,
                     source_audio_path=body.sample_audio_url,
-                    dashscope_voice_id=cosyvoice_id,
+                    dashscope_voice_id=dashscope_voice_id,
                     sample_url=body.sample_audio_url,
                     language=body.language,
                     gender=body.gender,
@@ -2177,7 +2230,7 @@ class Plugin(PluginBase):
                 "ext": ext or "(none)",
             }
 
-        uploads_dir = self._data_dir / "uploads" / subdir
+        uploads_dir = self._uploads_dir() / subdir
         uploads_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{uuid.uuid4().hex[:8]}_{file.filename or 'file'}"
         local_path = uploads_dir / filename

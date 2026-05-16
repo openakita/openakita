@@ -130,6 +130,8 @@ def make_default_settings() -> dict[str, Any]:
         "api_key": "",
         "base_url": DASHSCOPE_BASE_URL_BJ,
         "timeout": 60.0,
+        "timeout_sec": 60.0,
+        "max_retries": 2,
     }
 
 
@@ -275,7 +277,11 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         merged = make_default_settings()
         merged.update({k: v for k, v in cur.items() if v not in (None, "")})
         try:
-            self.timeout = float(merged.get("timeout") or 60.0)
+            self.timeout = float(merged.get("timeout_sec") or merged.get("timeout") or 60.0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            self.max_retries = max(0, int(merged.get("max_retries") or self.max_retries))
         except (TypeError, ValueError):
             pass
         self.base_url = str(merged.get("base_url") or DASHSCOPE_BASE_URL_BJ)
@@ -313,7 +319,9 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         if not key:
             return {"ok": False, "status": None, "message": "API Key is empty"}
 
-        url = "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
+        settings = self._settings()
+        base_url = str(settings.get("base_url") or DASHSCOPE_BASE_URL_BJ).rstrip("/")
+        url = f"{base_url}/compatible-mode/v1/models"
         headers = {"Authorization": f"Bearer {key}"}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:

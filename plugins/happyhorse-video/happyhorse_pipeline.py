@@ -459,6 +459,14 @@ async def _step_tts_synth(
             kind="client",
         )
 
+    resolver = ctx.params.get("_resolve_voice_id")
+    if callable(resolver):
+        resolved_voice_id = resolver(str(voice_id))
+        if asyncio.iscoroutine(resolved_voice_id):
+            resolved_voice_id = await resolved_voice_id
+        if resolved_voice_id:
+            voice_id = str(resolved_voice_id)
+
     # Decide engine: edge if voice id starts with 'zh-' (Microsoft Edge
     # neural voices), cosyvoice otherwise. The user can also pin
     # ``params['tts_engine']`` to force a choice.

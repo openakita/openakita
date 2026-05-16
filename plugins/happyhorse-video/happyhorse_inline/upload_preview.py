@@ -64,7 +64,7 @@ def build_preview_url(plugin_id: str, rel_path: str | Path) -> str:
 def add_upload_preview_route(
     router: Any,
     *,
-    base_dir: Path | str,
+    base_dir: Path | str | Callable[[], Path | str],
     route_path: str = "/uploads/{rel_path:path}",
     allowed_extensions: Iterable[str] | None = DEFAULT_PREVIEW_EXTENSIONS,
     max_bytes: int | None = 50 * 1024 * 1024,
@@ -74,8 +74,9 @@ def add_upload_preview_route(
 
     Args:
         router: A FastAPI ``APIRouter``.
-        base_dir: Absolute directory to serve files from.  Resolved once for
-            canonical comparison; created if missing.
+        base_dir: Absolute directory to serve files from, or a callable that
+            returns it. A callable lets Settings change the active data
+            directory without re-registering the route.
         route_path: The route path; default exposes files at
             ``/uploads/<rel>`` under the plugin's API prefix.
         allowed_extensions: Iterable of allowed extensions (no dot, case-
@@ -92,14 +93,19 @@ def add_upload_preview_route(
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
 
-    base = Path(base_dir).resolve()
-    base.mkdir(parents=True, exist_ok=True)
     allowed = _normalize_extensions(allowed_extensions)
+
+    def _base() -> Path:
+        raw = base_dir() if callable(base_dir) else base_dir
+        base = Path(raw).resolve()
+        base.mkdir(parents=True, exist_ok=True)
+        return base
 
     @router.get(route_path, response_class=FileResponse)
     async def _serve(rel_path: str):
         if not rel_path or "\x00" in rel_path:
             raise HTTPException(status_code=404, detail="not found")
+        base = _base()
         try:
             candidate = (base / rel_path).resolve()
         except (OSError, ValueError) as e:
