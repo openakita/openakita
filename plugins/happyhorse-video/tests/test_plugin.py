@@ -101,3 +101,33 @@ def test_image_tools_publish_asset_ids_contract():
     assert "from_asset_ids" in schema["properties"]
     assert "model_id" in schema["properties"]
     assert "size" in schema["properties"]
+
+
+# ─── Bug 6 regression — hh_image_ecommerce schema accepts product_name ─
+
+
+def test_image_ecommerce_schema_accepts_either_prompt_or_product_name():
+    """hh_image_ecommerce historically required ``prompt`` even though
+    the backend builds prompts from ``product_name`` alone. The schema
+    now exposes ``anyOf`` so LLMs can call the tool with whichever
+    field they have.
+    """
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    schema = by_name["hh_image_ecommerce"]["input_schema"]
+    assert "required" not in schema or "prompt" not in schema.get("required", [])
+    assert "anyOf" in schema
+    required_groups = [grp.get("required", []) for grp in schema["anyOf"]]
+    assert ["prompt"] in required_groups
+    assert ["product_name"] in required_groups
+
+
+def test_image_text2img_schema_still_requires_prompt():
+    """The relaxation for hh_image_ecommerce must not leak into other
+    image tools — text-to-image still needs a prompt."""
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    schema = by_name["hh_image_create"]["input_schema"]
+    assert schema.get("required") == ["prompt"]

@@ -947,13 +947,35 @@ class Plugin(PluginBase):
         self._validate_image_required_assets(body.mode, params)
         cfg = self._read_settings()
         model_key = body.model_id or str(cfg.get("default_image_model") or DEFAULT_IMAGE_MODEL)
+        # Resolve short id (e.g. "wan27-pro") to the real DashScope model
+        # id (e.g. "wan2.7-image-pro") so the ``tasks.model_id`` column
+        # is consistent with the video pipeline. Without this, the same
+        # column held either form depending on which path produced the
+        # task, breaking group-by-model dashboards downstream.
+        resolved = image_model_for(model_key)
         size = body.size or str(cfg.get("default_image_size") or DEFAULT_IMAGE_SIZE)
-        params["model_id"] = model_key
+        # If the requested size isn't supported by the chosen model the
+        # downstream DashScope call would 400. Fall back to the model's
+        # own first allowed size and warn rather than silently submit a
+        # losing request. The UI also gates this client-side; the guard
+        # exists for LLM tools and direct API callers.
+        allowed_sizes = list(resolved.sizes) if resolved.sizes else []
+        if allowed_sizes and size not in allowed_sizes:
+            logger.info(
+                "happyhorse-video: image size %r not supported by %s, "
+                "falling back to %s",
+                size,
+                resolved.model_id,
+                allowed_sizes[0],
+            )
+            size = allowed_sizes[0]
+        params["model_id"] = resolved.model_id
+        params["model_short_id"] = resolved.id
         params["size"] = size
 
         task_id = await self._tm.create_task(
             mode=body.mode,
-            model_id=model_key,
+            model_id=resolved.model_id,
             prompt=body.prompt or body.product_name,
             params=params,
             client_request_id=body.client_request_id,
@@ -1314,37 +1336,57 @@ class Plugin(PluginBase):
         )
 
         def _image_tool(name: str, mode: str, *, description: str) -> dict[str, Any]:
+            # Per-mode required-field policy. ``image_ecommerce`` is the
+            # only mode where a bare ``product_name`` is enough (the
+            # backend builds the per-scene prompt itself), so accept
+            # either ``prompt`` or ``product_name`` via ``anyOf``. Without
+            # this, the LLM gets a stricter contract than the actual
+            # backend enforces and refuses to call the tool with the
+            # exact payload the UI also submits.
+            schema: dict[str, Any] = {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "model_id": {
+                        "type": "string",
+                        "description": "Image model id, e.g. wan27-pro, wan27, qwen-pro, qwen, wan26.",
+                    },
+                    "size": {
+                        "type": "string",
+                        "description": (
+                            "Image size, e.g. 2K, 1024*1024. Allowed values "
+                            "are per-model — see /catalog.image.models[].sizes."
+                        ),
+                    },
+                    "negative_prompt": {"type": "string"},
+                    "n": {"type": "integer", "default": 1},
+                    "images": {"type": "array", "items": {"type": "string"}},
+                    "image_url": {"type": "string"},
+                    "product_name": {"type": "string"},
+                    "style_index": {"type": "integer"},
+                    "ref_prompt": {"type": "string"},
+                    "output_ratio": {"type": "string"},
+                    "sketch_style": {"type": "string"},
+                    "ecommerce_scenes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "hero / white / scene / detail",
+                    },
+                    "from_asset_ids": {"type": "array", "items": {"type": "string"}},
+                    "wait_for_completion": {"type": "boolean", "default": True},
+                },
+            }
+            if mode == "image_ecommerce":
+                schema["anyOf"] = [
+                    {"required": ["prompt"]},
+                    {"required": ["product_name"]},
+                ]
+            elif mode not in {"image_style_repaint", "image_outpaint"}:
+                schema["required"] = ["prompt"]
             return {
                 "name": name,
                 "description": f"{description} {image_note}",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string"},
-                        "model_id": {
-                            "type": "string",
-                            "description": "Image model id, e.g. wan27-pro, wan27, qwen-pro, qwen, wan26.",
-                        },
-                        "size": {"type": "string", "description": "Image size, e.g. 2K, 1024*1024."},
-                        "negative_prompt": {"type": "string"},
-                        "n": {"type": "integer", "default": 1},
-                        "images": {"type": "array", "items": {"type": "string"}},
-                        "image_url": {"type": "string"},
-                        "product_name": {"type": "string"},
-                        "style_index": {"type": "integer"},
-                        "ref_prompt": {"type": "string"},
-                        "output_ratio": {"type": "string"},
-                        "sketch_style": {"type": "string"},
-                        "ecommerce_scenes": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "hero / white / scene / detail",
-                        },
-                        "from_asset_ids": {"type": "array", "items": {"type": "string"}},
-                        "wait_for_completion": {"type": "boolean", "default": True},
-                    },
-                    "required": [] if mode in {"image_style_repaint", "image_outpaint"} else ["prompt"],
-                },
+                "input_schema": schema,
                 "_mode": mode,
             }
 
@@ -1963,6 +2005,30 @@ class Plugin(PluginBase):
 
         @router.post("/long-video/create")
         async def long_video_create(body: LongVideoCreateBody) -> dict:
+            # Fail fast with a clear 400 instead of building an empty
+            # chain or surfacing a 401 mid-flight from DashScope.
+            if not self._client.has_api_key():
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "尚未配置百炼 API Key — 请到「设置 → 阿里云百炼」"
+                        "填写 DashScope 密钥后再提交长视频。"
+                    ),
+                )
+            if not body.segments:
+                raise HTTPException(
+                    status_code=400,
+                    detail="至少需要 1 段分镜才能生成长视频。",
+                )
+            valid_modes = {"serial", "parallel", "cloud_extend"}
+            if body.mode not in valid_modes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"未知的 chain 模式 {body.mode!r}；"
+                        f"可选: {sorted(valid_modes)}"
+                    ),
+                )
             chain_group_id = uuid.uuid4().hex
             chain = ChainGenerator(
                 self._client,
@@ -2013,16 +2079,24 @@ class Plugin(PluginBase):
         @router.post("/long-video/concat")
         async def long_video_concat(body: ConcatBody) -> dict:
             paths: list[str] = []
+            source_chain_group_ids: set[str] = set()
             for tid in body.task_ids:
                 row = await self._tm.get_task(tid)
                 if row and row.get("video_path"):
                     paths.append(row["video_path"])
+                    if row.get("chain_group_id"):
+                        source_chain_group_ids.add(str(row["chain_group_id"]))
             if len(paths) < 2:
                 raise HTTPException(
                     status_code=400,
                     detail="至少需要 2 段已下载的视频片段才能拼接",
                 )
-            output_dir = self._active_data_dir() / "outputs" / "concat"
+            # Store the concat output under uploads/ so the standard
+            # preview route (mounted on the uploads_dir) can stream it
+            # back to the browser. Without this the produced file lives
+            # outside the served directory and the UI can never <video
+            # src=...> it.
+            output_dir = self._uploads_dir() / "videos" / "concat"
             output_dir.mkdir(parents=True, exist_ok=True)
             output_name = body.output_name or f"concat_{uuid.uuid4().hex[:8]}.mp4"
             output_path = output_dir / output_name
@@ -2034,7 +2108,87 @@ class Plugin(PluginBase):
             )
             if not ok:
                 raise HTTPException(status_code=500, detail="ffmpeg concat failed")
-            return {"ok": True, "output_path": str(output_path)}
+
+            # Materialise the concat result as a real task row + Asset
+            # Bus entry so the user can find it from the Tasks tab and
+            # downstream workbenches can chain off ``asset_ids``. Without
+            # this step the finished long video was effectively orphaned
+            # on disk after the user closed the Storyboard tab.
+            preview_url = build_preview_url(
+                PLUGIN_ID,
+                f"videos/concat/{output_name}",
+            )
+            concat_params: dict[str, Any] = {
+                "task_ids": list(body.task_ids),
+                "transition": body.transition,
+                "fade_duration": body.fade_duration,
+                "source_paths": paths,
+                "source_chain_group_ids": sorted(source_chain_group_ids),
+                "output_name": output_name,
+            }
+            concat_task_id = ""
+            asset_ids: list[str] = []
+            try:
+                concat_task_id = await self._tm.create_task(
+                    mode="long_video_concat",
+                    model_id="ffmpeg-concat",
+                    prompt=f"ffmpeg concat ({len(paths)} segments)",
+                    params=concat_params,
+                )
+                await self._tm.update_task_safe(
+                    concat_task_id,
+                    status="succeeded",
+                    video_path=str(output_path),
+                    video_url=preview_url,
+                    completed_at=time.time(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "happyhorse-video: failed to persist concat task: %s",
+                    exc,
+                )
+            try:
+                aid = await self._publish_local_asset(
+                    local_path=output_path,
+                    kind="video",
+                    preview_url=preview_url,
+                    metadata={
+                        "plugin": PLUGIN_ID,
+                        "task_id": concat_task_id,
+                        "mode": "long_video_concat",
+                        "source_task_ids": list(body.task_ids),
+                        "source_chain_group_ids": sorted(source_chain_group_ids),
+                        "transition": body.transition,
+                    },
+                )
+                if aid:
+                    asset_ids.append(aid)
+                    if concat_task_id:
+                        await self._tm.update_task_safe(
+                            concat_task_id, asset_ids_json=asset_ids
+                        )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "happyhorse-video: failed to publish concat asset: %s",
+                    exc,
+                )
+            if concat_task_id:
+                self._broadcast(
+                    "task_update",
+                    {
+                        "task_id": concat_task_id,
+                        "status": "succeeded",
+                        "mode": "long_video_concat",
+                        "video_url": preview_url,
+                    },
+                )
+            return {
+                "ok": True,
+                "output_path": str(output_path),
+                "preview_url": preview_url,
+                "task_id": concat_task_id,
+                "asset_ids": asset_ids,
+            }
 
         # Storage --------------------------------------------------------
         @router.get("/storage/stats")
