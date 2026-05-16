@@ -1,3 +1,9 @@
+---
+name: footage-gate
+description: Review source media, cut silence, auto color grade, and run cut-boundary QC through Footage Gate.
+risk_class: mutating_scoped
+---
+
 # Skill — Footage Gate · 成片质量门
 
 > Operator manual for the `footage-gate` plugin (v1.0.0). Use this when you

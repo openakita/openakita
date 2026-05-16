@@ -26,7 +26,7 @@
   ],
   "requires": {
     "openakita": ">=1.27.0",
-    "plugin_api": "~1",
+    "plugin_api": "~2",
     "plugin_ui_api": "~1",
     "sdk": ">=0.7.0,<0.8.0",
     "python": ">=3.11"
@@ -49,6 +49,21 @@
     ],
     "routes": true,
     "skill": "SKILL.md"
+  },
+  "tool_classes": {
+    "excel_start_project": "mutating_scoped",
+    "excel_import_workbook": "mutating_scoped",
+    "excel_profile_workbook": "readonly_scoped",
+    "excel_clarify_requirements": "network_out",
+    "excel_generate_report_plan": "network_out",
+    "excel_generate_formula": "network_out",
+    "excel_plan_cleanup": "mutating_scoped",
+    "excel_apply_operations": "mutating_scoped",
+    "excel_build_workbook": "mutating_scoped",
+    "excel_audit_workbook": "readonly_scoped",
+    "excel_export_workbook": "readonly_scoped",
+    "excel_list_projects": "readonly_scoped",
+    "excel_cancel": "mutating_scoped"
   },
   "ui": {
     "entry": "ui/dist/index.html",

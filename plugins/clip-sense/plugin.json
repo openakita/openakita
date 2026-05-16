@@ -39,6 +39,12 @@
     ],
     "routes": true
   },
+  "tool_classes": {
+    "clip_sense_create": "mutating_scoped",
+    "clip_sense_status": "readonly_scoped",
+    "clip_sense_list": "readonly_scoped",
+    "clip_sense_cancel": "mutating_scoped"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "icon.svg",

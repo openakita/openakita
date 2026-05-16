@@ -46,6 +46,19 @@
     ],
     "routes": true
   },
+  "tool_classes": {
+    "manga_create_series": "network_out",
+    "manga_create_episode": "network_out",
+    "manga_episode_status": "readonly_scoped",
+    "manga_list_episodes": "readonly_scoped",
+    "manga_create_character": "network_out",
+    "manga_list_characters": "readonly_scoped",
+    "manga_quick_drama": "network_out",
+    "manga_split_script": "network_out",
+    "manga_render_panel": "network_out",
+    "manga_cost_preview": "readonly_scoped",
+    "manga_workflow_test": "network_out"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "icon.svg",

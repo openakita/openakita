@@ -3,6 +3,12 @@ name: ppt-maker
 description: Guided PPT generation for editable PowerPoint decks, table-driven reports, and enterprise-template presentations.
 ---
 
+---
+name: ppt-maker
+description: Create, revise, audit, and export editable PPTX decks through the PPT Maker plugin.
+risk_class: mutating_scoped
+---
+
 # ppt-maker Skill Card
 
 Use this plugin when the user asks to create, revise, audit, or export a PPT

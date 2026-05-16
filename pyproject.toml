@@ -153,6 +153,7 @@ windows = [
 # 不强制拉所有 IM 通道依赖；channel deps 由 Tauri runtime manager / channel
 # bootstrap 在 agent-venv / app-venv 按需安装。
 desktop = [
+    "openakita-plugin-sdk>=0.7.0",
     "websockets>=15.0,<16.0",
     "psutil>=5.9.0",
     "pyperclip>=1.8.2",

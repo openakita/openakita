@@ -860,7 +860,7 @@ fn bundled_resource_dir(resource_name: &str) -> PathBuf {
     primary
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct RuntimePipIndex {
     id: String,
     url: String,
@@ -884,6 +884,12 @@ struct RuntimeManifest {
     app_version: String,
     wheel_hash: String,
     python_version: String,
+    #[serde(default)]
+    python_seed_fingerprint: String,
+    #[serde(default)]
+    extras: Vec<String>,
+    #[serde(default)]
+    uv_path: String,
     app_venv: RuntimeEnvState,
     agent_venv: RuntimeEnvState,
     pip_index: RuntimePipIndex,
@@ -905,6 +911,8 @@ struct BootstrapManifest {
     wheel: BootstrapWheel,
     #[serde(default)]
     default_pip_index: Option<RuntimePipIndex>,
+    #[serde(default)]
+    wheelhouse: Option<serde_json::Value>,
     #[serde(default)]
     python_seed: Option<serde_json::Value>,
     #[serde(default)]
@@ -1109,11 +1117,6 @@ fn read_runtime_manifest() -> Option<RuntimeManifest> {
 }
 
 fn resolve_runtime_pip_index() -> RuntimePipIndex {
-    if let Some(manifest) = read_runtime_manifest() {
-        if !manifest.pip_index.url.trim().is_empty() {
-            return manifest.pip_index;
-        }
-    }
     if let Ok(url) = std::env::var("OPENAKITA_PIP_INDEX_URL") {
         if !url.trim().is_empty() {
             let trusted_host = std::env::var("OPENAKITA_PIP_TRUSTED_HOST")
@@ -1134,6 +1137,18 @@ fn resolve_runtime_pip_index() -> RuntimePipIndex {
                 url,
                 trusted_host,
             };
+        }
+    }
+    if let Ok(bootstrap) = read_bootstrap_manifest() {
+        if let Some(index) = bootstrap.default_pip_index {
+            if !index.url.trim().is_empty() {
+                return index;
+            }
+        }
+    }
+    if let Some(manifest) = read_runtime_manifest() {
+        if !manifest.pip_index.url.trim().is_empty() {
+            return manifest.pip_index;
         }
     }
     default_pip_index()
@@ -1159,6 +1174,94 @@ fn bootstrap_uv_path() -> PathBuf {
     } else {
         PathBuf::from("uv")
     }
+}
+
+fn app_runtime_extras() -> Vec<String> {
+    vec!["desktop".to_string()]
+}
+
+fn bootstrap_python_seed_fingerprint(bootstrap: &BootstrapManifest) -> String {
+    let Some(seed) = bootstrap.python_seed.as_ref() else {
+        return String::new();
+    };
+    if let Some(hash) = seed.get("sha256").and_then(|v| v.as_str()) {
+        return hash.to_string();
+    }
+    serde_json::to_string(seed).unwrap_or_default()
+}
+
+fn runtime_manifest_mismatch(
+    manifest: &RuntimeManifest,
+    bootstrap: &BootstrapManifest,
+    pip_index: &RuntimePipIndex,
+) -> Option<String> {
+    let expected_version = env!("CARGO_PKG_VERSION");
+    let expected_extras = app_runtime_extras();
+    let expected_python_seed = bootstrap_python_seed_fingerprint(bootstrap);
+    let expected_uv_path = bootstrap_uv_path().to_string_lossy().to_string();
+
+    if manifest.app_version != expected_version {
+        return Some(format!(
+            "app_version changed (manifest={}, expected={})",
+            manifest.app_version, expected_version
+        ));
+    }
+    if manifest.wheel_hash != bootstrap.wheel.sha256 {
+        return Some("wheel_hash changed".into());
+    }
+    if manifest.python_version != bootstrap.python_version {
+        return Some(format!(
+            "python_version changed (manifest={}, expected={})",
+            manifest.python_version, bootstrap.python_version
+        ));
+    }
+    if manifest.python_seed_fingerprint != expected_python_seed {
+        return Some("python_seed changed".into());
+    }
+    if manifest.extras != expected_extras {
+        return Some(format!(
+            "extras changed (manifest={:?}, expected={:?})",
+            manifest.extras, expected_extras
+        ));
+    }
+    if manifest.pip_index != *pip_index {
+        return Some("pip_index changed".into());
+    }
+    if !manifest.uv_path.is_empty() && manifest.uv_path != expected_uv_path {
+        return Some("uv_path changed".into());
+    }
+    if manifest.legacy_mode {
+        return Some("legacy_mode=true".into());
+    }
+    None
+}
+
+fn bootstrap_wheelhouse_dir() -> PathBuf {
+    bootstrap_resource_dir().join("wheels")
+}
+
+fn bootstrap_declares_complete_wheelhouse(bootstrap: &BootstrapManifest) -> bool {
+    let Some(wheelhouse) = bootstrap.wheelhouse.as_ref() else {
+        return false;
+    };
+    wheelhouse
+        .get("complete")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn wheelhouse_has_locked_deps(wheel_path: &Path) -> bool {
+    let wheelhouse = bootstrap_wheelhouse_dir();
+    let Ok(entries) = fs::read_dir(&wheelhouse) else {
+        return false;
+    };
+    let target = wheel_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        path.extension().and_then(|e| e.to_str()) == Some("whl")
+            && !name.eq_ignore_ascii_case(target)
+    })
 }
 
 fn managed_python_seed_path() -> Option<PathBuf> {
@@ -1719,13 +1822,10 @@ fn ensure_app_venv(
     let started = Instant::now();
     let log_path = runtime_logs_dir().join("app-venv.log");
     let app_py = runtime_venv_python_path(&app_venv_dir());
-    let expected_version = env!("CARGO_PKG_VERSION");
-    let manifest_ok = read_runtime_manifest()
-        .map(|m| {
-            m.app_version == expected_version
-                && m.wheel_hash == bootstrap.wheel.sha256
-                && !m.legacy_mode
-        })
+    let manifest_result = read_runtime_manifest();
+    let manifest_ok = manifest_result
+        .as_ref()
+        .map(|m| runtime_manifest_mismatch(m, bootstrap, pip_index).is_none())
         .unwrap_or(false);
     if manifest_ok && health_check_python(&app_py, &app_runtime_health_code(&app_venv_dir()), &log_path) {
         log_to_file(&format!(
@@ -1735,7 +1835,16 @@ fn ensure_app_venv(
         return Ok(app_py);
     }
 
-    log_to_file("[runtime] ensure_app_venv rebuilding app runtime");
+    if let Some(manifest) = manifest_result.as_ref() {
+        let reason = runtime_manifest_mismatch(manifest, bootstrap, pip_index)
+            .unwrap_or_else(|| "health_check failed".to_string());
+        log_to_file(&format!(
+            "[runtime] ensure_app_venv rebuilding app runtime: {}",
+            reason
+        ));
+    } else {
+        log_to_file("[runtime] ensure_app_venv rebuilding app runtime: missing manifest");
+    }
     let app_py = ensure_venv(&app_venv_dir(), &bootstrap.python_version, &log_path)?;
     let wheel_path = bootstrap_resource_dir().join(&bootstrap.wheel.name);
     if !wheel_path.exists() {
@@ -1744,7 +1853,12 @@ fn ensure_app_venv(
             wheel_path.display()
         ));
     }
-    let wheel_arg = format!("{}[desktop]", wheel_path.display());
+    let extras = app_runtime_extras();
+    let wheel_arg = if extras.is_empty() {
+        wheel_path.display().to_string()
+    } else {
+        format!("{}[{}]", wheel_path.display(), extras.join(","))
+    };
     let mut cmd = Command::new(bootstrap_uv_path());
     cmd.args(["pip", "install", "--python"]);
     cmd.arg(&app_py);
@@ -1757,9 +1871,29 @@ fn ensure_app_venv(
     cmd.args(["--reinstall-package", "openakita"]);
     // `uv pip install` does not support pip's `--prefer-binary` flag.
     // Keep binary preference on Python-side `pip install` calls only.
-    cmd.args(["--index-url", &pip_index.url]);
-    if !pip_index.trusted_host.trim().is_empty() {
-        cmd.args(["--trusted-host", &pip_index.trusted_host]);
+    if bootstrap_declares_complete_wheelhouse(bootstrap) && wheelhouse_has_locked_deps(&wheel_path) {
+        let wheelhouse = bootstrap_wheelhouse_dir();
+        log_to_file(&format!(
+            "[runtime] app wheel install using bundled wheelhouse: {}",
+            wheelhouse.display()
+        ));
+        cmd.arg("--no-index");
+        cmd.arg("--find-links");
+        cmd.arg(wheelhouse);
+    } else {
+        log_to_file(&format!(
+            "[runtime] app wheel install using pip index: {}",
+            pip_index.url
+        ));
+        cmd.args(["--index-url", &pip_index.url]);
+        if !pip_index.trusted_host.trim().is_empty() {
+            cmd.args(["--trusted-host", &pip_index.trusted_host]);
+        }
+        if bootstrap_wheelhouse_dir().is_dir() {
+            log_to_file(
+                "[runtime] bundled wheelhouse present but not marked complete; using pip index",
+            );
+        }
     }
     apply_runtime_bootstrap_env(&mut cmd, Some(pip_index));
     apply_no_window(&mut cmd);
@@ -1818,6 +1952,9 @@ fn write_runtime_manifest(info: &RuntimeEnvInfo, bootstrap: &BootstrapManifest) 
         app_version: env!("CARGO_PKG_VERSION").into(),
         wheel_hash: bootstrap.wheel.sha256.clone(),
         python_version: bootstrap.python_version.clone(),
+        python_seed_fingerprint: bootstrap_python_seed_fingerprint(bootstrap),
+        extras: app_runtime_extras(),
+        uv_path: bootstrap_uv_path().to_string_lossy().to_string(),
         app_venv: RuntimeEnvState {
             path: info.app_venv.to_string_lossy().to_string(),
             status: "ready".into(),
@@ -1856,6 +1993,9 @@ fn mark_legacy_runtime_mode(error: &str) {
         app_version: env!("CARGO_PKG_VERSION").into(),
         wheel_hash,
         python_version,
+        python_seed_fingerprint: String::new(),
+        extras: app_runtime_extras(),
+        uv_path: bootstrap_uv_path().to_string_lossy().to_string(),
         app_venv: RuntimeEnvState {
             path: app_venv_dir().to_string_lossy().to_string(),
             status: "failed".into(),
@@ -1889,6 +2029,9 @@ fn write_runtime_failure_manifest(error: &str) {
         app_version: env!("CARGO_PKG_VERSION").into(),
         wheel_hash,
         python_version,
+        python_seed_fingerprint: String::new(),
+        extras: app_runtime_extras(),
+        uv_path: bootstrap_uv_path().to_string_lossy().to_string(),
         app_venv: RuntimeEnvState {
             path: app_venv_dir().to_string_lossy().to_string(),
             status: "failed".into(),
@@ -1912,10 +2055,18 @@ fn write_runtime_failure_manifest(error: &str) {
 
 fn ensure_dual_runtime_env() -> Result<RuntimeEnvInfo, String> {
     let started = Instant::now();
+    log_to_file("[runtime] phase=prepare-runtime-layout");
     ensure_runtime_layout()?;
     let bootstrap = read_bootstrap_manifest()?;
     let pip_index = resolve_runtime_pip_index();
+    log_to_file(&format!(
+        "[runtime] phase=ensure-app-venv uv={} extras={:?} pip_index={}",
+        bootstrap_uv_path().display(),
+        app_runtime_extras(),
+        pip_index.url
+    ));
     let app_python = ensure_app_venv(&bootstrap, &pip_index)?;
+    log_to_file("[runtime] phase=ensure-agent-venv");
     let agent_python = ensure_agent_venv(&bootstrap, &pip_index)?;
     let info = RuntimeEnvInfo {
         app_python,

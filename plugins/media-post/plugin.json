@@ -39,6 +39,12 @@
     ],
     "routes": true
   },
+  "tool_classes": {
+    "media_post_create": "mutating_scoped",
+    "media_post_status": "readonly_scoped",
+    "media_post_list": "readonly_scoped",
+    "media_post_cancel": "mutating_scoped"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "icon.svg",

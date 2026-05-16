@@ -1,9 +1,10 @@
 """Runtime dependency bootstrap for footage-gate.
 
 The desktop build can load a freshly-added plugin before the host has a
-usable ``numpy`` on ``sys.path``.  ``plugin.py`` imports the local pipeline at
-module load time, and that pipeline imports ``footage_gate_ffmpeg`` /
-``footage_gate_silence`` / ``footage_gate_qc``; all three need NumPy.
+usable ``numpy`` on ``sys.path``.  ``plugin.py`` registers routes immediately,
+then imports the local pipeline only when a task actually runs.  That pipeline
+imports ``footage_gate_ffmpeg`` / ``footage_gate_silence`` / ``footage_gate_qc``;
+all three need NumPy.
 
 This helper keeps the fallback local to the plugin:
 

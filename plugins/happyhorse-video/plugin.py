@@ -272,12 +272,12 @@ class Plugin(PluginBase):
         self._api = api
         self._data_dir: Path = api.get_data_dir()
         self._tm = HappyhorseTaskManager(self._data_dir / "happyhorse.db")
+        self._settings_cache: dict[str, Any] = {}
         self._client = HappyhorseDashScopeClient(self._read_settings)
         self._oss = OssUploader(
             read_settings=self._read_settings, plugin_dir=PLUGIN_DIR
         )
         self._sysdeps = SystemDepsManager()
-        self._settings_cache: dict[str, Any] = {}
         self._poll_tasks: dict[str, asyncio.Task[Any]] = {}
         self._chain_tasks: dict[str, asyncio.Task[Any]] = {}
         self._pending_create: dict[str, asyncio.Future[Any]] = {}

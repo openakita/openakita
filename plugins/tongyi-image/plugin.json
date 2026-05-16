@@ -27,13 +27,18 @@
   ],
   "requires": {
     "openakita": ">=1.27.0",
-    "plugin_api": "~1",
+    "plugin_api": "~2",
     "plugin_ui_api": "~1",
     "sdk": ">=0.7.0,<0.8.0"
   },
   "provides": {
     "tools": ["tongyi_image_create", "tongyi_image_status", "tongyi_image_list"],
     "routes": true
+  },
+  "tool_classes": {
+    "tongyi_image_create": "network_out",
+    "tongyi_image_status": "readonly_scoped",
+    "tongyi_image_list": "readonly_scoped"
   },
   "ui": {
     "entry": "ui/dist/index.html",

@@ -3,6 +3,12 @@ name: word-maker
 description: Guided Word document generation for editable DOCX reports, proposals, minutes, contracts, SOPs, and enterprise templates.
 ---
 
+---
+name: word-maker
+description: Create, revise, audit, and export Word documents through the Word Maker plugin.
+risk_class: mutating_scoped
+---
+
 # word-maker Skill Card
 
 Use this plugin when the user asks to create, revise, audit, or export a Word

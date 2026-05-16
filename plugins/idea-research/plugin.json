@@ -49,6 +49,17 @@
     "routes": true,
     "skill": "SKILL.md"
   },
+  "tool_classes": {
+    "idea_radar_pull": "network_out",
+    "idea_breakdown_url": "network_out",
+    "idea_compare_accounts": "network_out",
+    "idea_script_remix": "network_out",
+    "idea_subscribe": "mutating_scoped",
+    "idea_unsubscribe": "mutating_scoped",
+    "idea_list_subscriptions": "readonly_scoped",
+    "idea_export": "readonly_scoped",
+    "idea_cancel": "mutating_scoped"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "icon.svg",

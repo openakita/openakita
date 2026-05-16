@@ -1,3 +1,9 @@
+---
+name: media-post
+description: Prepare launch assets, cover picks, SEO packs, and publishing material through the Media Post plugin.
+risk_class: mutating_scoped
+---
+
 # Media Post Skill Definition
 
 Single source of truth: [`docs/media-post-plan.md`](../../docs/media-post-plan.md) v1.0.

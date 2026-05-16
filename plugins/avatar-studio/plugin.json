@@ -25,7 +25,7 @@
   ],
   "requires": {
     "openakita": ">=1.27.0",
-    "plugin_api": "~1",
+    "plugin_api": "~2",
     "plugin_ui_api": "~1",
     "sdk": ">=0.7.0,<0.8.0"
   },
@@ -35,6 +35,7 @@
       "avatar_video_relip",
       "avatar_video_reface",
       "avatar_compose",
+      "avatar_pose_drive",
       "avatar_voice_create",
       "avatar_voice_delete",
       "avatar_figure_create",
@@ -42,6 +43,18 @@
       "avatar_cost_preview"
     ],
     "routes": true
+  },
+  "tool_classes": {
+    "avatar_photo_speak": "network_out",
+    "avatar_video_relip": "network_out",
+    "avatar_video_reface": "network_out",
+    "avatar_compose": "network_out",
+    "avatar_pose_drive": "network_out",
+    "avatar_voice_create": "network_out",
+    "avatar_voice_delete": "mutating_scoped",
+    "avatar_figure_create": "mutating_scoped",
+    "avatar_figure_delete": "mutating_scoped",
+    "avatar_cost_preview": "readonly_scoped"
   },
   "ui": {
     "entry": "ui/dist/index.html",

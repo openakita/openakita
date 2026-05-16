@@ -47,6 +47,15 @@
     ],
     "routes": true
   },
+  "tool_classes": {
+    "fin_pulse_create": "network_out",
+    "fin_pulse_status": "readonly_scoped",
+    "fin_pulse_list": "readonly_scoped",
+    "fin_pulse_cancel": "mutating_scoped",
+    "fin_pulse_settings_get": "readonly_scoped",
+    "fin_pulse_settings_set": "mutating_scoped",
+    "fin_pulse_search_news": "readonly_search"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "finpulse-brand.svg",

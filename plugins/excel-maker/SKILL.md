@@ -1,3 +1,9 @@
+---
+name: excel-maker
+description: Create, organize, improve, audit, and export Excel report workbooks from CSV or XLSX data.
+risk_class: mutating_scoped
+---
+
 # Excel Maker Skill
 
 Use this skill when the user wants to create, organize, improve, audit, or export an Excel report workbook from CSV/XLSX data.

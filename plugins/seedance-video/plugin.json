@@ -42,6 +42,14 @@
     ],
     "routes": true
   },
+  "tool_classes": {
+    "seedance_create": "network_out",
+    "seedance_status": "readonly_scoped",
+    "seedance_edit": "network_out",
+    "seedance_extend": "network_out",
+    "seedance_transition": "network_out",
+    "seedance_list": "readonly_scoped"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "icon.svg",

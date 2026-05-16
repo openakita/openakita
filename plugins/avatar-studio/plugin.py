@@ -741,7 +741,7 @@ class Plugin(PluginBase):
             api.log(
                 "avatar-studio: DashScope API Key not configured — set it in "
                 "Settings before submitting any task",
-                level="warning",
+                level="info",
             )
 
         router = APIRouter()
@@ -756,7 +756,7 @@ class Plugin(PluginBase):
         api.register_tools(self._tool_definitions(), handler=self._handle_tool)
 
         api.spawn_task(self._async_init(), name=f"{PLUGIN_ID}:init")
-        api.log("avatar-studio loaded (5 modes, 3 backends, 9 tools)")
+        api.log("avatar-studio loaded (5 modes, 3 backends, 10 tools)")
 
     async def _async_init(self) -> None:
         await self._tm.init()

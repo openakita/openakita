@@ -46,23 +46,6 @@ from typing import Any
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 
-# ``footage_gate_pipeline`` imports modules with top-level ``import numpy``.
-# Bootstrap NumPy before those local imports so a freshly-added plugin can
-# load in the PyInstaller desktop build even when the host lacks NumPy.
-try:
-    from footage_gate_inline.dep_bootstrap import DepInstallFailed, ensure_importable
-
-    ensure_importable(
-        "numpy",
-        "numpy>=1.24.0",
-        plugin_dir=PLUGIN_DIR,
-        friendly_name="NumPy",
-    )
-except DepInstallFailed:
-    raise
-except Exception as exc:  # noqa: BLE001
-    raise RuntimeError(f"footage-gate dependency bootstrap failed: {exc}") from exc
-
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from footage_gate_inline.storage_stats import collect_storage_stats
 from footage_gate_inline.system_deps import SystemDepsManager
@@ -71,7 +54,6 @@ from footage_gate_inline.upload_preview import (
     build_preview_url,
 )
 from footage_gate_models import ERROR_HINTS, MODE_IDS, MODES
-from footage_gate_pipeline import PipelineContext, run_pipeline
 from footage_gate_task_manager import DEFAULT_CONFIG, FootageGateTaskManager
 from pydantic import BaseModel, Field, field_validator
 
@@ -407,6 +389,16 @@ class Plugin(PluginBase):
         )
 
         try:
+            from footage_gate_inline.dep_bootstrap import ensure_importable
+
+            ensure_importable(
+                "numpy",
+                "numpy>=1.24.0",
+                plugin_dir=PLUGIN_DIR,
+                friendly_name="NumPy",
+            )
+            from footage_gate_pipeline import PipelineContext, run_pipeline
+
             ctx.params.setdefault(
                 "ffmpeg_timeout_sec",
                 float(cfg.get("ffmpeg_timeout_sec") or 600),

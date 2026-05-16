@@ -54,6 +54,22 @@
     "routes": true,
     "skill": "SKILL.md"
   },
+  "tool_classes": {
+    "omni_post_publish": "network_out",
+    "omni_post_schedule": "network_out",
+    "omni_post_cancel": "mutating_global",
+    "omni_post_retry": "network_out",
+    "omni_post_list_tasks": "readonly_scoped",
+    "omni_post_get_task": "readonly_scoped",
+    "omni_post_list_accounts": "readonly_scoped",
+    "omni_post_add_account": "mutating_global",
+    "omni_post_remove_account": "mutating_global",
+    "omni_post_refresh_account": "network_out",
+    "omni_post_list_assets": "readonly_scoped",
+    "omni_post_delete_asset": "mutating_scoped",
+    "omni_post_pull_from_asset_bus": "mutating_scoped",
+    "omni_post_export_report": "readonly_scoped"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "icon.svg",

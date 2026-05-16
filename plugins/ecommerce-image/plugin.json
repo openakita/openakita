@@ -40,6 +40,12 @@
     ],
     "routes": true
   },
+  "tool_classes": {
+    "ecom_image_create": "network_out",
+    "ecom_video_create": "network_out",
+    "ecom_task_status": "readonly_scoped",
+    "ecom_task_list": "readonly_scoped"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "icon.svg",

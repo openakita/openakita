@@ -1,3 +1,9 @@
+---
+name: media-strategy
+description: Track RSS/news hotspots, verify source packs, and produce editorial plans through the Media Strategy plugin.
+risk_class: readonly_search
+---
+
 # SKILL: 融媒智策 Media Strategy
 
 Use this skill when the user asks to track media hotspots, RSS news,

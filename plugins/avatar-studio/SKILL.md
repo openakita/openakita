@@ -3,6 +3,12 @@ name: avatar-studio
 description: DashScope-powered digital human studio — photo speak, video relip, video reface, avatar compose. Use when the user asks for an AI talking-head video, lip-sync replacement on an existing video, replacing a person inside a video, or composing a new character from multiple reference images.
 ---
 
+---
+name: avatar-studio
+description: Generate digital-human speaking photos, relip/reface videos, voices, and avatar compositions through Avatar Studio.
+risk_class: network_out
+---
+
 # avatar-studio · Cursor Skill Card
 
 > 一线插件。DashScope 万相 + s2v + cosyvoice + qwen-vl 全链路。

@@ -1,3 +1,9 @@
+---
+name: subtitle-craft
+description: Create, translate, repair, and burn subtitles through the Subtitle Craft plugin.
+risk_class: mutating_scoped
+---
+
 # Subtitle Craft Skill Definition
 
 ## 1. Trigger Scenarios

@@ -1,3 +1,9 @@
+---
+name: fin-pulse
+description: Track finance headlines, daily market radar, and source-backed financial news through Fin Pulse.
+risk_class: readonly_search
+---
+
 # fin-pulse — finance news radar for the OpenAkita Brain
 
 Use this skill whenever the user asks about **finance headlines, daily

@@ -3,6 +3,12 @@ name: omni-post
 description: Multi-platform, multi-account social publishing engine — Douyin, RedNote, Bilibili today, 10 platforms end of S2. Use when the user wants to post the same video or image-text to N platforms and M accounts in one click, schedule cross-timezone rollouts, or reuse one upload as a reference for other plugins via the Asset Bus.
 ---
 
+---
+name: omni-post
+description: Publish assets across multiple social platforms and accounts through the Omni Post plugin.
+risk_class: network_out
+---
+
 # omni-post · Cursor Skill Card
 
 > 一线插件。一次创作 → N 平台 × M 账号 → 统一任务/截图/秒传归档。

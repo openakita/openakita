@@ -1,3 +1,9 @@
+---
+name: idea-research
+description: Research, score, and plan content ideas through the Idea Research plugin.
+risk_class: network_out
+---
+
 # SKILL: idea-research 选题研析室
 
 > 给后续 AI agent 提供修改 skill — 10 节，每节是一个独立"为什么/怎么改"小问答。

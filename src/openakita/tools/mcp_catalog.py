@@ -308,8 +308,15 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
             elif stype == "sse":
                 transport = "sse"
             url = metadata.get("url", "")
-            headers = _resolve_headers(metadata.get("headers") or {}, env_values)
+            raw_headers = metadata.get("headers") or {}
+            headers = _resolve_headers(raw_headers, env_values)
             auto_connect = metadata.get("autoConnect", False)
+            if auto_connect and raw_headers and len(headers) < len(raw_headers):
+                logger.info(
+                    "MCP server %s autoConnect disabled until required header env vars are configured",
+                    server_id,
+                )
+                auto_connect = False
             enabled = metadata.get("enabled", True)
             memory_provider = metadata.get("memoryProvider") or {}
             if memory_provider is True:

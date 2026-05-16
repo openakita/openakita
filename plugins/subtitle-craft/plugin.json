@@ -40,6 +40,13 @@
     ],
     "routes": true
   },
+  "tool_classes": {
+    "subtitle_craft_create": "mutating_scoped",
+    "subtitle_craft_status": "readonly_scoped",
+    "subtitle_craft_list": "readonly_scoped",
+    "subtitle_craft_cancel": "mutating_scoped",
+    "subtitle.hook_pick": "network_out"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "icon.svg",

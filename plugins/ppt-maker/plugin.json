@@ -26,7 +26,7 @@
   ],
   "requires": {
     "openakita": ">=1.27.0",
-    "plugin_api": "~1",
+    "plugin_api": "~2",
     "plugin_ui_api": "~1",
     "sdk": ">=0.7.0,<0.8.0",
     "python": ">=3.11"
@@ -53,6 +53,25 @@
     ],
     "routes": true,
     "skill": "SKILL.md"
+  },
+  "tool_classes": {
+    "ppt_start_project": "mutating_scoped",
+    "ppt_ingest_sources": "mutating_scoped",
+    "ppt_ingest_table": "mutating_scoped",
+    "ppt_profile_table": "readonly_scoped",
+    "ppt_generate_table_insights": "network_out",
+    "ppt_upload_template": "mutating_scoped",
+    "ppt_diagnose_template": "readonly_scoped",
+    "ppt_generate_outline": "network_out",
+    "ppt_confirm_outline": "mutating_scoped",
+    "ppt_generate_design": "network_out",
+    "ppt_confirm_design": "mutating_scoped",
+    "ppt_generate_deck": "mutating_scoped",
+    "ppt_revise_slide": "mutating_scoped",
+    "ppt_audit": "readonly_scoped",
+    "ppt_export": "readonly_scoped",
+    "ppt_list_projects": "readonly_scoped",
+    "ppt_cancel": "mutating_scoped"
   },
   "ui": {
     "entry": "ui/dist/index.html",

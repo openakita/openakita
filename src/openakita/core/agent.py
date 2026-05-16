@@ -2716,6 +2716,7 @@ class Agent:
                         description=server.name or "",
                         transport=transport,
                         url=server.url or "",
+                        headers=dict(server.headers or {}),
                         cwd=server.config_dir or "",
                     )
                 )

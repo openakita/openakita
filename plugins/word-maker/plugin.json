@@ -27,7 +27,7 @@
   ],
   "requires": {
     "openakita": ">=1.27.0",
-    "plugin_api": "~1",
+    "plugin_api": "~2",
     "plugin_ui_api": "~1",
     "sdk": ">=0.7.0,<0.8.0",
     "python": ">=3.11"
@@ -49,6 +49,20 @@
     ],
     "routes": true,
     "skill": "SKILL.md"
+  },
+  "tool_classes": {
+    "word_start_project": "mutating_scoped",
+    "word_ingest_sources": "mutating_scoped",
+    "word_upload_template": "mutating_scoped",
+    "word_extract_template_vars": "readonly_scoped",
+    "word_generate_outline": "network_out",
+    "word_confirm_outline": "mutating_scoped",
+    "word_fill_template": "mutating_scoped",
+    "word_rewrite_section": "mutating_scoped",
+    "word_audit": "readonly_scoped",
+    "word_export": "readonly_scoped",
+    "word_list_projects": "readonly_scoped",
+    "word_cancel": "mutating_scoped"
   },
   "ui": {
     "entry": "ui/dist/index.html",

@@ -1,3 +1,9 @@
+---
+name: clip-sense
+description: Guide AI-powered video editing, highlight extraction, silence removal, and talking-head polish through ClipSense.
+risk_class: mutating_scoped
+---
+
 # ClipSense Skill Definition
 
 ## 1. Trigger Scenarios

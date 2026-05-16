@@ -39,6 +39,13 @@
     ],
     "routes": true
   },
+  "tool_classes": {
+    "footage_gate_create": "mutating_scoped",
+    "footage_gate_status": "readonly_scoped",
+    "footage_gate_list": "readonly_scoped",
+    "footage_gate_cancel": "mutating_scoped",
+    "footage_gate_settings_get": "readonly_scoped"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "footage-gate-brand.svg",

@@ -57,6 +57,28 @@
     ],
     "routes": true
   },
+  "tool_classes": {
+    "hh_t2v": "network_out",
+    "hh_image_create": "network_out",
+    "hh_image_edit": "network_out",
+    "hh_image_style_repaint": "network_out",
+    "hh_image_background": "network_out",
+    "hh_image_outpaint": "network_out",
+    "hh_image_sketch": "network_out",
+    "hh_image_ecommerce": "network_out",
+    "hh_i2v": "network_out",
+    "hh_r2v": "network_out",
+    "hh_video_edit": "network_out",
+    "hh_photo_speak": "network_out",
+    "hh_video_relip": "network_out",
+    "hh_video_reface": "network_out",
+    "hh_pose_drive": "network_out",
+    "hh_avatar_compose": "network_out",
+    "hh_status": "readonly_scoped",
+    "hh_list": "readonly_scoped",
+    "hh_cost_preview": "readonly_scoped",
+    "hh_long_video_create": "network_out"
+  },
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "icon.svg",

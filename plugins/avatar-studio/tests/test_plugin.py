@@ -94,10 +94,10 @@ def plugin(tmp_path: Path) -> Any:
 # ─── Tests ──────────────────────────────────────────────────────────────
 
 
-def test_plugin_loads_without_api_key_only_warns(plugin: tuple[Any, _StubAPI]) -> None:
+def test_plugin_loads_without_api_key_reports_status(plugin: tuple[Any, _StubAPI]) -> None:
     _p, api = plugin
-    warns = [m for lvl, m in api.logs if lvl == "warning"]
-    assert any("API Key" in m for m in warns)
+    info = [m for lvl, m in api.logs if lvl == "info"]
+    assert any("API Key" in m for m in info)
 
 
 def test_plugin_registers_one_router(plugin: tuple[Any, _StubAPI]) -> None:
@@ -130,7 +130,7 @@ def test_plugin_registers_at_least_16_routes(plugin: tuple[Any, _StubAPI]) -> No
     assert expected_subset.issubset(paths), f"missing: {expected_subset - paths}"
 
 
-def test_plugin_registers_nine_tools(plugin: tuple[Any, _StubAPI]) -> None:
+def test_plugin_registers_ten_tools(plugin: tuple[Any, _StubAPI]) -> None:
     _p, api = plugin
     names = {t["name"] for t in api.tools}
     assert names == {
@@ -139,6 +139,7 @@ def test_plugin_registers_nine_tools(plugin: tuple[Any, _StubAPI]) -> None:
         "avatar_video_reface",
         # mode_id "avatar_compose" already namespaced — no double prefix.
         "avatar_compose",
+        "avatar_pose_drive",
         "avatar_voice_create",
         "avatar_voice_delete",
         "avatar_figure_create",
