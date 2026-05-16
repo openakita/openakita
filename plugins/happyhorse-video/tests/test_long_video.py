@@ -8,6 +8,7 @@ from happyhorse_long_video import (
     ChainGenerator,
     decompose_storyboard,
     ffmpeg_available,
+    normalize_transition,
 )
 
 
@@ -52,3 +53,30 @@ async def test_decompose_storyboard_parses_fenced_json(monkeypatch):
 def test_chain_generator_constructor_does_not_raise():
     chain = ChainGenerator(client=None, task_manager=None, chain_group_id="g1")
     assert chain._chain_group_id == "g1"
+
+
+# ─── Bug 2 regression — transition alias normalization ───────────────
+
+
+@pytest.mark.parametrize(
+    "alias,expected",
+    [
+        ("fade", "crossfade"),
+        ("crossfade", "crossfade"),
+        ("CROSSFADE", "crossfade"),
+        ("xfade", "crossfade"),
+        ("dissolve", "crossfade"),
+        ("none", "none"),
+        ("cut", "none"),
+        ("hard", "none"),
+        ("", "none"),
+        (None, "none"),
+        ("totally-bogus", "none"),
+    ],
+)
+def test_normalize_transition_aliases(alias, expected):
+    """Regression: the frontend ships 'fade' and historical agent prompts
+    use 'xfade' / 'dissolve'. All of these must drive the crossfade
+    branch — previously only the exact string 'crossfade' worked, so the
+    UI button silently fell back to a hard cut."""
+    assert normalize_transition(alias) == expected

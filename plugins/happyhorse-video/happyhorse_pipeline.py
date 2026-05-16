@@ -63,6 +63,7 @@ from happyhorse_inline.vendor_client import VendorError
 from happyhorse_model_registry import ModelEntry
 from happyhorse_models import (
     MODES_BY_ID,
+    _normalize_tts_engine,
     check_audio_duration,
     estimate_cost,
     hint_for,
@@ -469,10 +470,16 @@ async def _step_tts_synth(
 
     # Decide engine: edge if voice id starts with 'zh-' (Microsoft Edge
     # neural voices), cosyvoice otherwise. The user can also pin
-    # ``params['tts_engine']`` to force a choice.
-    engine_pin = str(ctx.params.get("tts_engine") or "").strip().lower()
-    if engine_pin in {"edge", "cosyvoice"}:
-        engine = engine_pin
+    # ``params['tts_engine']`` to force a choice. The pin is normalised
+    # through the same helper as estimate_cost so cost preview and
+    # actual synthesis never disagree on which engine billed which job.
+    raw_pin = str(ctx.params.get("tts_engine") or "").strip().lower()
+    if raw_pin:
+        engine = (
+            "cosyvoice"
+            if _normalize_tts_engine(raw_pin) == "cosyvoice-v2"
+            else "edge"
+        )
     elif str(voice_id).startswith(("zh-CN", "zh-HK", "zh-TW")):
         engine = "edge"
     else:
@@ -818,8 +825,21 @@ async def _step_finalize(
     # ── Asset Bus integration ────────────────────────────────────────
     # The plugin layer optionally injects ``_publish_asset`` to register
     # the produced video / last_frame as Asset Bus rows. Returns asset_ids
-    # which downstream workbenches consume via ``from_asset_ids``.
+    # which downstream workbenches consume via ``from_asset_ids``. The
+    # metadata payload keeps task lineage (task_id / mode / model_id /
+    # cost / dashscope_id) on every asset row so downstream tools can
+    # filter without round-tripping through the SQLite ``tasks`` table.
     publish_fn = ctx.params.get("_publish_asset")
+    base_metadata: dict[str, Any] = {
+        "plugin": "happyhorse-video",
+        "task_id": ctx.task_id,
+        "mode": ctx.mode,
+        "model_id": ctx.model_id,
+        "dashscope_id": ctx.dashscope_id,
+        "dashscope_endpoint": ctx.dashscope_endpoint,
+        "duration_sec": ctx.video_duration_sec,
+        "cost_breakdown": ctx.cost_breakdown,
+    }
     if callable(publish_fn):
         try:
             if ctx.video_path is not None:
@@ -827,6 +847,7 @@ async def _step_finalize(
                     str(ctx.video_path),
                     "video",
                     ctx.video_url or "",
+                    {**base_metadata, "preview_url": ctx.video_url or ""},
                 )
                 if aid:
                     ctx.asset_ids.append(str(aid))
@@ -835,6 +856,11 @@ async def _step_finalize(
                     str(ctx.last_frame_path),
                     "image",
                     ctx.last_frame_url or "",
+                    {
+                        **base_metadata,
+                        "role": "last_frame",
+                        "preview_url": ctx.last_frame_url or "",
+                    },
                 )
                 if aid:
                     ctx.asset_ids.append(str(aid))

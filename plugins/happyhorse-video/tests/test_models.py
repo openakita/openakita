@@ -93,3 +93,50 @@ def test_build_catalog_smoke():
     assert cat.cost_threshold > 0
     assert isinstance(cat.default_models, dict)
     assert all(isinstance(v, str) for v in cat.default_models.values())
+
+
+# ─── Bug 1 regression — TTS engine normalization ─────────────────────
+
+
+@pytest.mark.parametrize(
+    "engine_alias",
+    ["cosyvoice", "cosyvoice-v2", "CosyVoice", "cosyvoice_v2", "qwen-tts"],
+)
+def test_cosyvoice_aliases_bill_at_cosyvoice_v2_rate(engine_alias):
+    """Regression for issue #480: any cosyvoice alias must produce a
+    non-zero TTS subtotal in long_video / digital-human cost previews.
+
+    The pre-fix bug folded ``"cosyvoice"`` into the edge-tts (free)
+    bucket so the user saw ¥0 for paid cosyvoice synthesis and the
+    cost-approval gate never triggered.
+    """
+    preview = estimate_cost(
+        "photo_speak",
+        {"model": "wan2.2-s2v", "resolution": "480P", "tts_engine": engine_alias},
+        audio_duration_sec=10.0,
+        text_chars=5000,
+    )
+    tts_items = [it for it in preview["items"] if "TTS" in it["name"]]
+    assert tts_items, f"engine={engine_alias!r}: no TTS line found"
+    tts = tts_items[0]
+    assert tts["name"] == "cosyvoice-v2 TTS"
+    assert tts["unit_price"] == pytest.approx(
+        PRICE_TABLE["cosyvoice-v2"]["per_10k_chars"]
+    )
+    assert tts["subtotal"] > 0, (
+        f"engine={engine_alias!r}: cosyvoice was billed as free"
+    )
+
+
+@pytest.mark.parametrize("engine_alias", ["edge", "edge-tts", "EDGE"])
+def test_edge_aliases_bill_as_free(engine_alias):
+    preview = estimate_cost(
+        "photo_speak",
+        {"model": "wan2.2-s2v", "resolution": "480P", "tts_engine": engine_alias},
+        audio_duration_sec=10.0,
+        text_chars=5000,
+    )
+    tts_items = [it for it in preview["items"] if "TTS" in it["name"]]
+    assert tts_items
+    assert tts_items[0]["name"] == "edge-tts TTS"
+    assert tts_items[0]["subtotal"] == 0

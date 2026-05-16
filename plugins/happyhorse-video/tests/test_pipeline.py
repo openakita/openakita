@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from happyhorse_pipeline import (
     _DIGITAL_HUMAN_MODES,
@@ -9,6 +11,7 @@ from happyhorse_pipeline import (
     _VIDEO_SYNTH_MODES,
     DEFAULT_POLL,
     HappyhorsePipelineContext,
+    _step_finalize,
     _step_prepare_assets,
 )
 
@@ -121,3 +124,64 @@ async def test_prepare_assets_aliases_source_video_for_digital_humans():
     assert ctx.asset_urls["source_video_url"] == "https://oss.example/source.mp4"
     assert ctx.asset_urls["video_url"] == "https://oss.example/source.mp4"
     assert ctx.asset_urls["ref_images_url"] == ["https://oss.example/face.png"]
+
+
+# ─── Bug 3 regression — _publish_asset receives 4 args + metadata ────
+
+
+@pytest.mark.asyncio
+async def test_finalize_calls_publish_with_metadata(tmp_path: Path):
+    """``_step_finalize`` must pass the per-task metadata dict as the
+    4th positional argument to ``_publish_asset`` so Asset Bus rows
+    inherit task lineage (task_id / mode / model_id / cost). Pre-fix
+    the call was 3-arg and Asset Bus saw an empty metadata blob, which
+    broke downstream consumers that filter by mode / task_id.
+    """
+    fake_video = tmp_path / "video.mp4"
+    fake_video.write_bytes(b"00")
+    fake_frame = tmp_path / "frame.png"
+    fake_frame.write_bytes(b"00")
+
+    captured: list[tuple] = []
+
+    async def fake_publish(path, kind, preview_url, metadata):
+        captured.append((path, kind, preview_url, metadata))
+        return f"aid-{len(captured)}"
+
+    ctx = HappyhorsePipelineContext(
+        task_id="task-xyz",
+        mode="t2v",
+        model_id="happyhorse-1.0-t2v",
+        params={"_publish_asset": fake_publish},
+    )
+    ctx.task_dir = tmp_path / "task_dir"
+    ctx.task_dir.mkdir()
+    ctx.video_path = fake_video
+    ctx.last_frame_path = fake_frame
+    ctx.video_url = "https://cdn.example/video.mp4"
+    ctx.last_frame_url = "https://cdn.example/frame.png"
+    ctx.cost_breakdown = {"total": 1.23, "currency": "CNY"}
+    ctx.dashscope_id = "ds-001"
+    ctx.dashscope_endpoint = "happyhorse-1.0-t2v"
+
+    await _step_finalize(
+        ctx,
+        "happyhorse-video",
+        _FakeTaskManager(),
+        _noop_emit,
+        base_data_dir=tmp_path,
+    )
+
+    assert len(captured) == 2, "video + last_frame should both publish"
+    video_call, frame_call = captured
+    assert video_call[1] == "video"
+    assert frame_call[1] == "image"
+    for _path, _kind, _url, meta in captured:
+        assert isinstance(meta, dict) and meta, "metadata must be present"
+        assert meta.get("task_id") == "task-xyz"
+        assert meta.get("mode") == "t2v"
+        assert meta.get("model_id") == "happyhorse-1.0-t2v"
+        assert meta.get("dashscope_id") == "ds-001"
+        assert meta.get("cost_breakdown") == {"total": 1.23, "currency": "CNY"}
+    assert frame_call[3].get("role") == "last_frame"
+    assert ctx.asset_ids == ["aid-1", "aid-2"]

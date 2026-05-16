@@ -718,7 +718,12 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         if async_mode:
             task_id = await self._submit_async(PATH_WAN27_IMAGE, body)
             return {"task_id": task_id, "async": True}
-        return await self.request("POST", PATH_WAN27_IMAGE, json_body=body)
+        # Tag sync results with ``async=False`` so callers can branch on
+        # one consistent key instead of "if not result.get('async')".
+        sync_result = await self.request("POST", PATH_WAN27_IMAGE, json_body=body)
+        if isinstance(sync_result, dict) and "async" not in sync_result:
+            sync_result = {**sync_result, "async": False}
+        return sync_result
 
     async def submit_style_repaint(
         self,

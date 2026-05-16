@@ -154,9 +154,17 @@ async def synth_voice(
             if last_exc is not None:
                 raise last_exc
 
+    # NOTE: the caller (happyhorse_pipeline._step_tts_synth) only reads
+    # ``duration_sec`` / ``format`` and uses the on-disk path directly
+    # for the subsequent OSS upload, so we no longer read the full file
+    # back into memory. This drops one 5-10 MB allocation per call and
+    # avoids a wasted round-trip through the page cache on long videos.
     duration = _get_duration(out)
-    audio_bytes = out.read_bytes()
-    return {"bytes": audio_bytes, "duration_sec": duration, "format": "mp3"}
+    return {
+        "path": str(out),
+        "duration_sec": duration,
+        "format": "mp3",
+    }
 
 
 def _get_duration(path: Path) -> float:

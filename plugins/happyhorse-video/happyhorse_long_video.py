@@ -145,6 +145,35 @@ async def decompose_storyboard(
 # ─── Concat / crossfade ───────────────────────────────────────────────
 
 
+# Frontend / docs / older agent prompts call the crossfade transition by
+# several names. Normalise everything to the two values the ffmpeg side
+# actually understands. Treat empty / unknown values as ``"none"``
+# (lossless concat) — the historical default — instead of crashing.
+_TRANSITION_ALIASES: dict[str, str] = {
+    "": "none",
+    "none": "none",
+    "cut": "none",
+    "hard": "none",
+    "concat": "none",
+    "fade": "crossfade",
+    "crossfade": "crossfade",
+    "xfade": "crossfade",
+    "dissolve": "crossfade",
+}
+
+
+def normalize_transition(transition: str | None) -> str:
+    """Coerce a transition string to either ``"none"`` or ``"crossfade"``.
+
+    Single source of truth used by ``concat_videos`` and the plugin's
+    ``/long-video/concat`` route so the frontend's ``"fade"`` value (and
+    other historical aliases) actually drive the xfade filter instead of
+    silently falling back to a hard cut.
+    """
+    key = (transition or "").strip().lower()
+    return _TRANSITION_ALIASES.get(key, "none")
+
+
 async def concat_videos(
     video_paths: list[str],
     output_path: str,
@@ -156,10 +185,12 @@ async def concat_videos(
     Args:
         video_paths: List of input video file paths.
         output_path: Output file path.
-        transition: ``"none"`` for lossless concat, ``"crossfade"`` for
-            xfade filter (forces re-encode).
-        fade_duration: Duration of crossfade (only used when transition=
-            ``"crossfade"``).
+        transition: ``"none"`` / ``"cut"`` for lossless concat, or any of
+            ``"crossfade"`` / ``"fade"`` / ``"xfade"`` / ``"dissolve"``
+            for the xfade filter (forces re-encode). Unknown values are
+            treated as ``"none"`` and logged so callers can self-correct.
+        fade_duration: Duration of crossfade (only used when the
+            normalised transition is ``"crossfade"``).
 
     Returns:
         True on success, False on failure (logs the reason; never raises).
@@ -174,11 +205,15 @@ async def concat_videos(
             return True
         return False
 
-    if transition == "none":
-        return await _concat_lossless(video_paths, output_path)
-    if transition == "crossfade":
+    raw = (transition or "").strip().lower()
+    normalised = normalize_transition(raw)
+    if raw and raw not in _TRANSITION_ALIASES:
+        logger.warning(
+            "Unknown transition '%s', falling back to lossless concat",
+            transition,
+        )
+    if normalised == "crossfade":
         return await _concat_crossfade(video_paths, output_path, fade_duration)
-    logger.warning("Unknown transition '%s', falling back to lossless", transition)
     return await _concat_lossless(video_paths, output_path)
 
 

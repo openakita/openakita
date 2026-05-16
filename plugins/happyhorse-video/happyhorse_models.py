@@ -518,9 +518,27 @@ def _item_image(model_id: str, count: int) -> CostItem:
     )
 
 
+def _normalize_tts_engine(engine: str | None) -> str:
+    """Map any UI / pipeline TTS engine alias to a PRICE_TABLE key.
+
+    The frontend historically sent ``"cosyvoice"`` (without the ``-v2``
+    suffix) and the pipeline normalizes to ``"cosyvoice"`` / ``"edge"``
+    before calling the actual provider. Without a normalization step,
+    every CosyVoice TTS job was billed as ``"edge-tts"`` (free) in the
+    cost preview, which both hid real spend from the user and bypassed
+    the cost-approval gate. Keep this helper as the single source of
+    truth for engine identity across cost estimation and pipeline
+    dispatch.
+    """
+    raw = (engine or "").strip().lower().replace("_", "-")
+    if raw in {"cosyvoice", "cosyvoice-v2", "cosyvoice2", "cosy", "qwen-tts"}:
+        return "cosyvoice-v2"
+    return "edge-tts"
+
+
 def _item_tts(text_chars: int, *, engine: str = "cosyvoice-v2") -> CostItem:
     units = max(1, text_chars) / 10000.0
-    table_key = "cosyvoice-v2" if engine == "cosyvoice-v2" else "edge-tts"
+    table_key = _normalize_tts_engine(engine)
     per = PRICE_TABLE[table_key]["per_10k_chars"]
     return CostItem(
         name=f"{table_key} TTS",
@@ -878,6 +896,7 @@ __all__ = [
     "SYSTEM_VOICES",
     "VOICES_BY_ID",
     "VoiceSpec",
+    "_normalize_tts_engine",
     "build_catalog",
     "check_audio_duration",
     "default_model",
