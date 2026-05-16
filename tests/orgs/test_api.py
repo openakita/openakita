@@ -76,6 +76,49 @@ class TestOrgCRUDRoutes:
         assert resp.status_code == 200
         assert resp.json()["name"] == "新名"
 
+    async def test_create_duplicate_name_returns_409(self, app_client):
+        """组织名字必须全局唯一 — 创建时碰到同名应直接 409，
+        以保证聊天/IM 端可以放心按名字调用。"""
+        client, manager, _ = app_client
+        manager.create({"name": "唯一名"})
+        resp = await client.post("/api/orgs", json={"name": "唯一名"})
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["code"] == "org_name_conflict"
+        assert detail["name"] == "唯一名"
+        assert detail["conflict_org_id"]
+
+    async def test_update_to_existing_name_returns_409(self, app_client):
+        client, manager, _ = app_client
+        manager.create({"name": "已被占用"})
+        other = manager.create({"name": "另一个"})
+        resp = await client.put(f"/api/orgs/{other.id}", json={"name": "已被占用"})
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "org_name_conflict"
+
+    async def test_duplicate_with_conflict_name_returns_409(self, app_client):
+        client, manager, _ = app_client
+        manager.create({"name": "目标占用名"})
+        src = manager.create({"name": "源组织"})
+        resp = await client.post(
+            f"/api/orgs/{src.id}/duplicate", json={"name": "目标占用名"}
+        )
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "org_name_conflict"
+
+    async def test_from_template_with_conflict_override_returns_409(self, app_client):
+        client, manager, _ = app_client
+        # 准备一个模板，并先用同名占住
+        seed = manager.create({"name": "模板源"})
+        manager.save_as_template(seed.id, "tpl-conflict")
+        manager.create({"name": "已被占用-tpl"})
+        resp = await client.post(
+            "/api/orgs/from-template",
+            json={"template_id": "tpl-conflict", "name": "已被占用-tpl"},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "org_name_conflict"
+
     async def test_delete_org(self, app_client):
         client, manager, _ = app_client
         org = manager.create({"name": "删除"})

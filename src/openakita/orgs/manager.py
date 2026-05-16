@@ -26,6 +26,30 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+
+class OrgNameConflictError(ValueError):
+    """组织名字与已有组织重复时抛出。
+
+    Args:
+        name: 用户提交的、已经被占用的名字（保留原始大小写）。
+        conflict_org_id: 占用该名字的现有组织 id；REST 层据此返回 409 + 提示。
+    """
+
+    def __init__(self, name: str, conflict_org_id: str) -> None:
+        super().__init__(f"Organization name already exists: {name!r}")
+        self.name = name
+        self.conflict_org_id = conflict_org_id
+
+
+def _normalize_org_name(name: str | None) -> str:
+    """将组织名归一化，便于做 case/空白不敏感的唯一性比对。
+
+    去掉首尾空白并转小写。所有"已存在则视为重复"的判断都基于这个归一化形式，
+    用户层面则保留原始大小写。
+    """
+    return (name or "").strip().casefold()
+
+
 _LAYOUT_NODE_W = 240
 _LAYOUT_NODE_H = 100
 _LAYOUT_GAP_X = 40
@@ -187,8 +211,76 @@ class OrgManager:
         except FileNotFoundError:
             return None
 
+    def find_by_name(
+        self,
+        name: str,
+        *,
+        exclude_org_id: str | None = None,
+        include_archived: bool = True,
+    ) -> list[dict]:
+        """按"归一化名字"查询匹配的组织（去首尾空白、大小写不敏感）。
+
+        返回列表里每个元素和 :pyfunc:`list_orgs` 一致的摘要 dict（含 id/name/...）。
+        ``exclude_org_id`` 用于"改名时不要把自己算成重名"。
+
+        归档（ARCHIVED）默认也参与查重——归档后改名能复活老组织名容易让人困惑；
+        如果调用方明确要忽略归档，可显式传 ``include_archived=False``。
+        """
+        norm = _normalize_org_name(name)
+        if not norm:
+            return []
+        result: list[dict] = []
+        for item in self.list_orgs(include_archived=include_archived):
+            if exclude_org_id and item.get("id") == exclude_org_id:
+                continue
+            if _normalize_org_name(item.get("name", "")) == norm:
+                result.append(item)
+        return result
+
+    def resolve_id_by_name_or_id(self, query: str) -> tuple[str | None, list[dict]]:
+        """聊天/IM 端用：给一段用户输入，优先按 id 命中，否则按名字查找。
+
+        返回 ``(org_id, candidates)``：
+
+        - 用户输入恰好是已有 org 的 id（精确匹配）：``(id, [])``。
+        - 名字精确匹配且只有一个：``(id, [])``。
+        - 名字匹配多个：``(None, [候选 dict, ...])`` —— 由调用方让用户消歧。
+        - 都不匹配：``(None, [])``。
+
+        归一化规则与 :pyfunc:`find_by_name` 一致：去首尾空白、大小写不敏感。
+        """
+        q = (query or "").strip()
+        if not q:
+            return None, []
+        if self.get(q) is not None:
+            return q, []
+        matches = self.find_by_name(q)
+        if len(matches) == 1:
+            return str(matches[0].get("id") or ""), []
+        if len(matches) > 1:
+            return None, matches
+        return None, []
+
+    def _ensure_name_unique(self, name: str, *, exclude_org_id: str | None = None) -> None:
+        """重名校验入口；冲突直接抛 :class:`OrgNameConflictError`。
+
+        在 :pyfunc:`create`、:pyfunc:`update`、:pyfunc:`duplicate` 三处统一调用，
+        从根本上保证"用户在任何路径下都不可能把两个组织起成同一个名字"。
+        """
+        clean = (name or "").strip()
+        if not clean:
+            raise ValueError("Organization name is required")
+        conflicts = self.find_by_name(clean, exclude_org_id=exclude_org_id)
+        if conflicts:
+            raise OrgNameConflictError(clean, str(conflicts[0].get("id") or ""))
+
     def create(self, data: dict) -> Organization:
-        """Create a new organization from dict payload."""
+        """Create a new organization from dict payload.
+
+        Raises:
+            OrgNameConflictError: 名字与已有组织重复（大小写/空白不敏感）。
+        """
+        self._ensure_name_unique(data.get("name", ""))
         org = Organization.from_dict(data)
         if not org.id:
             org.id = _new_id("org_")
@@ -200,10 +292,21 @@ class OrgManager:
         return org
 
     def update(self, org_id: str, data: dict) -> Organization:
-        """Update an existing organization. Merges provided fields."""
+        """Update an existing organization. Merges provided fields.
+
+        Raises:
+            OrgNameConflictError: 改名时与其他组织重名。
+        """
         org = self._load(org_id)
         nodes_raw = data.pop("nodes", None)
         edges_raw = data.pop("edges", None)
+
+        if "name" in data:
+            new_name = data.get("name")
+            if isinstance(new_name, str) and _normalize_org_name(new_name) != _normalize_org_name(
+                org.name
+            ):
+                self._ensure_name_unique(new_name, exclude_org_id=org_id)
 
         for key, val in data.items():
             if key in ("id", "created_at"):
@@ -296,11 +399,26 @@ class OrgManager:
         return self.update(org_id, {"status": "active"})
 
     def duplicate(self, org_id: str, new_name: str | None = None) -> Organization:
-        """Deep-copy an organization."""
+        """Deep-copy an organization.
+
+        如果 ``new_name`` 未指定，按 "<原名> (副本)" → "<原名> (副本 2)" 顺序
+        自动寻找一个未被占用的名字，避免连续复制时撞名。
+        显式传入的 ``new_name`` 不会再加后缀；若它已被占用，
+        :pyfunc:`create` 会抛 :class:`OrgNameConflictError`。
+        """
         src = self._load(org_id)
         data = src.to_dict()
         data["id"] = _new_id("org_")
-        data["name"] = new_name or f"{src.name} (副本)"
+        if new_name:
+            data["name"] = new_name
+        else:
+            base = f"{src.name} (副本)"
+            candidate = base
+            n = 2
+            while self.find_by_name(candidate):
+                candidate = f"{base} {n}"
+                n += 1
+            data["name"] = candidate
         data["status"] = OrgStatus.DORMANT.value
         data["created_at"] = _now_iso()
         data["updated_at"] = data["created_at"]
@@ -413,14 +531,34 @@ class OrgManager:
     def create_from_template(
         self, template_id: str, overrides: dict | None = None
     ) -> Organization:
+        """从模板创建组织。
+
+        名字冲突策略：
+
+        - **用户显式覆盖了 ``overrides["name"]``** → 严格使用该名字；撞名时由
+          :pyfunc:`create` 抛 :class:`OrgNameConflictError`，路由层返回 409，
+          让用户明确改个名字。
+        - **未覆盖、沿用模板自带名** → 若已被占用，自动加 ``(2)/(3)`` 后缀，
+          这样反复实例化同一个模板才不会被全局唯一约束卡住。
+        """
         tpl = self.get_template(template_id)
         if tpl is None:
             raise FileNotFoundError(f"Template not found: {template_id}")
         tpl.pop("is_template", None)
         tpl["id"] = _new_id("org_")
         tpl["status"] = OrgStatus.DORMANT.value
+        name_explicitly_overridden = bool(overrides and isinstance(overrides.get("name"), str))
         if overrides:
             tpl.update(overrides)
+        if not name_explicitly_overridden:
+            base_name = (tpl.get("name") or "").strip()
+            if base_name and self.find_by_name(base_name):
+                candidate = base_name
+                n = 2
+                while self.find_by_name(candidate):
+                    candidate = f"{base_name} ({n})"
+                    n += 1
+                tpl["name"] = candidate
         for node in tpl.get("nodes", []) or []:
             if isinstance(node, dict) and not node.get("agent_profile_id"):
                 node["agent_profile_id"] = infer_agent_profile_id_for_node(node)

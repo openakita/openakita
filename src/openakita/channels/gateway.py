@@ -1320,6 +1320,14 @@ class MessageGateway:
                 "  `/状态` / `/status` — 查看当前 Agent 信息",
                 "  `/重置` / `/agent_reset` — 重置为默认 Agent",
                 "",
+                "**组织（Org）指挥台:**",
+                "  `/org list` / `/组织 列表` — 列出可用组织",
+                "  `/org bind <组织名>` / `/组织 绑定 <组织名>` — 绑定当前会话",
+                "  `/org status` / `/组织 状态` — 查看当前绑定",
+                "  `/org unbind` / `/组织 解绑` — 解除绑定",
+                "  `@组织 <任务>` / `@org <task>` — 向已绑定组织下达指令",
+                "  `/org <组织名> <任务>` / `/组织 <组织名> <任务>` — 直接下达（不需先绑定）",
+                "",
             ]
         )
 
@@ -2921,6 +2929,48 @@ class MessageGateway:
                     return str(org_id), task
         return None
 
+    def _get_org_manager(self):
+        """从 OrgCommandService 链路上取出 OrgManager 单例。
+
+        IM 端按名字/ID 解析组织时用。拿不到（服务未就绪）时返回 None。
+        """
+        try:
+            from openakita.orgs.command_service import get_command_service
+
+            svc = get_command_service()
+            if svc is None:
+                return None
+            runtime = getattr(svc, "_runtime", None)
+            return getattr(runtime, "_manager", None) if runtime else None
+        except Exception:
+            return None
+
+    def _resolve_org_query(self, query: str) -> tuple[str | None, str | None]:
+        """把用户在 IM 里输入的"组织名或 ID"解析成真实 org_id。
+
+        返回 ``(org_id, error_message)``：
+        - 解析成功：``(org_id, None)``。
+        - 失败/歧义：``(None, 用户可见的中文提示)``，调用方直接把提示回给用户。
+        """
+        q = (query or "").strip()
+        if not q:
+            return None, "用法：/org bind <组织名 或 组织ID>"
+        mgr = self._get_org_manager()
+        if mgr is None:
+            return None, "组织管理器尚未就绪，请稍后再试。"
+        org_id, candidates = mgr.resolve_id_by_name_or_id(q)
+        if org_id:
+            return org_id, None
+        if candidates:
+            lines = [f"找到 {len(candidates)} 个名为「{q}」的组织，请用更精确的名字或直接用 ID 指定："]
+            for c in candidates[:10]:
+                created = (c.get("created_at") or "")[:10]
+                lines.append(f"  • {c.get('name', '')}  ID: {c.get('id', '')}  创建于 {created}")
+            if len(candidates) > 10:
+                lines.append(f"  …还有 {len(candidates) - 10} 个未显示")
+            return None, "\n".join(lines)
+        return None, f"未找到组织「{q}」。请用 `/org list` 或在桌面端查看可用组织名。"
+
     async def _try_handle_org_command(
         self,
         message: UnifiedMessage,
@@ -2932,11 +2982,25 @@ class MessageGateway:
         if lowered.startswith(("/org bind ", "/组织 绑定 ")):
             parts = text.split(maxsplit=2)
             if len(parts) < 3:
-                await self._send_response(message, "用法：/org bind <org_id>")
+                await self._send_response(message, "用法：/org bind <组织名 或 组织ID>")
                 return True
-            session.set_metadata("bound_org_id", parts[2].strip())
+            query = parts[2].strip()
+            org_id, err = self._resolve_org_query(query)
+            if err:
+                await self._send_response(message, err)
+                return True
+            mgr = self._get_org_manager()
+            display_name = ""
+            if mgr is not None:
+                try:
+                    org_obj = mgr.get(org_id) if org_id else None
+                    display_name = org_obj.name if org_obj else ""
+                except Exception:
+                    display_name = ""
+            session.set_metadata("bound_org_id", org_id)
             self.session_manager.mark_dirty()
-            await self._send_response(message, f"已绑定组织：{parts[2].strip()}")
+            label = f"「{display_name}」(ID: {org_id})" if display_name else org_id
+            await self._send_response(message, f"已绑定组织：{label}")
             return True
         if lowered in ("/org unbind", "/组织 解绑"):
             session.set_metadata("bound_org_id", "")
@@ -2944,14 +3008,59 @@ class MessageGateway:
             await self._send_response(message, "已取消当前 IM 会话的组织绑定。")
             return True
         if lowered in ("/org status", "/组织 状态"):
-            org_id = session.get_metadata("bound_org_id") or ""
-            await self._send_response(message, f"当前绑定组织：{org_id or '未绑定'}")
+            bound = session.get_metadata("bound_org_id") or ""
+            if not bound:
+                await self._send_response(message, "当前未绑定组织。用 `/org bind <组织名>` 绑定。")
+                return True
+            mgr = self._get_org_manager()
+            display_name = ""
+            if mgr is not None:
+                try:
+                    org_obj = mgr.get(bound)
+                    display_name = org_obj.name if org_obj else ""
+                except Exception:
+                    display_name = ""
+            if display_name:
+                await self._send_response(message, f"当前绑定组织：「{display_name}」(ID: {bound})")
+            else:
+                await self._send_response(message, f"当前绑定组织：{bound}（注意：该组织可能已被删除或归档）")
+            return True
+        if lowered in ("/org list", "/组织 列表"):
+            mgr = self._get_org_manager()
+            if mgr is None:
+                await self._send_response(message, "组织管理器尚未就绪，请稍后再试。")
+                return True
+            try:
+                orgs = mgr.list_orgs(include_archived=False)
+            except Exception as exc:
+                await self._send_response(message, f"列出组织失败：{exc}")
+                return True
+            if not orgs:
+                await self._send_response(message, "当前没有任何已创建的组织。")
+                return True
+            lines = [f"当前共 {len(orgs)} 个组织："]
+            for o in orgs[:20]:
+                lines.append(
+                    f"  • {o.get('name', '')}  [{o.get('status', '')}]  ID: {o.get('id', '')}"
+                )
+            if len(orgs) > 20:
+                lines.append(f"  …还有 {len(orgs) - 20} 个未显示")
+            lines.append("\n下达指令：`/org bind <组织名>` 后用 `@组织 <任务>`")
+            await self._send_response(message, "\n".join(lines))
             return True
 
         parsed = self._parse_org_command(text, session)
         if parsed is None:
             return False
-        org_id, task = parsed
+        org_query, task = parsed
+
+        # 把用户输入的"组织名或 ID"解析为真实 ID。@组织/@org 简短形式时
+        # ``_parse_org_command`` 已经返回 session 里 bound 好的真实 id，再走一遍解析
+        # 仍然安全（id 精确匹配自身）。
+        org_id, err = self._resolve_org_query(org_query)
+        if err:
+            await self._send_response(message, err)
+            return True
 
         try:
             from openakita.orgs.command_service import (
@@ -2991,7 +3100,20 @@ class MessageGateway:
             )
             try:
                 if chat_type != "group":
-                    await self._send_response(message, f"已向组织 {org_id} 下发指令，命令 ID：{command_id}")
+                    mgr = self._get_org_manager()
+                    org_display = org_id
+                    if mgr is not None:
+                        try:
+                            org_obj = mgr.get(org_id)
+                            if org_obj and org_obj.name:
+                                org_display = f"「{org_obj.name}」"
+                        except Exception:
+                            pass
+                    await self._send_response(
+                        message,
+                        f"已向组织 {org_display} 下发指令，命令 ID：{command_id}\n"
+                        f"（期间您发的其他消息会排队等待；如需立即取消，请到桌面端「组织编排」面板按取消按钮）",
+                    )
                 while True:
                     item = await queue.get()
                     if item.get("type") == "org_progress":

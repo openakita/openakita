@@ -55,6 +55,26 @@ def _get_manager(request: Request):
     return mgr
 
 
+def _raise_org_name_conflict(exc: Any) -> None:
+    """把 :class:`OrgNameConflictError` 转成统一格式的 409 HTTP 响应。
+
+    所有创建/更新/复制/从模板创建路径共用这个 helper，保证错误体结构一致
+    （前端可统一识别 ``detail.code == "org_name_conflict"``）。
+    """
+    raise HTTPException(
+        409,
+        {
+            "code": "org_name_conflict",
+            "message": (
+                f"已存在同名组织「{exc.name}」，请改个名字。"
+                "为了在聊天和 IM 中能用名字直接调用组织，组织名字必须全局唯一。"
+            ),
+            "name": exc.name,
+            "conflict_org_id": exc.conflict_org_id,
+        },
+    )
+
+
 def _get_runtime(request: Request):
     rt = getattr(request.app.state, "org_runtime", None)
     if rt is None:
@@ -139,7 +159,12 @@ async def list_orgs(request: Request, include_archived: bool = False):
 async def create_org(request: Request):
     mgr = _get_manager(request)
     body = await request.json()
-    org = mgr.create(body)
+    from openakita.orgs.manager import OrgNameConflictError
+
+    try:
+        org = mgr.create(body)
+    except OrgNameConflictError as exc:
+        _raise_org_name_conflict(exc)
     return org.to_dict()
 
 
@@ -228,10 +253,14 @@ async def create_from_template(request: Request):
     template_id = body.pop("template_id", None)
     if not template_id:
         raise HTTPException(400, "template_id is required")
+    from openakita.orgs.manager import OrgNameConflictError
+
     try:
         org = mgr.create_from_template(template_id, overrides=body)
     except FileNotFoundError:
         raise HTTPException(404, f"Template not found: {template_id}")
+    except OrgNameConflictError as exc:
+        _raise_org_name_conflict(exc)
     return org.to_dict()
 
 
@@ -309,6 +338,7 @@ async def update_org(request: Request, org_id: str):
     if mgr.get(org_id) is None:
         raise HTTPException(404, f"Organization not found: {org_id}")
     body = await request.json()
+    from openakita.orgs.manager import OrgNameConflictError
     rt = getattr(request.app.state, "org_runtime", None)
     live_org = (
         rt._active_orgs.get(org_id)
@@ -325,6 +355,8 @@ async def update_org(request: Request, org_id: str):
             }
     try:
         org = mgr.update(org_id, body)
+    except OrgNameConflictError as exc:
+        _raise_org_name_conflict(exc)
     except (ValueError, TypeError, KeyError) as e:
         raise HTTPException(400, f"Invalid org data: {e}")
     if live_node_state:
@@ -359,7 +391,12 @@ async def duplicate_org(request: Request, org_id: str):
         raise HTTPException(404, f"Organization not found: {org_id}")
     body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
     new_name = body.get("name")
-    org = mgr.duplicate(org_id, new_name=new_name)
+    from openakita.orgs.manager import OrgNameConflictError
+
+    try:
+        org = mgr.duplicate(org_id, new_name=new_name)
+    except OrgNameConflictError as exc:
+        _raise_org_name_conflict(exc)
     return org.to_dict()
 
 
