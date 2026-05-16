@@ -1,68 +1,32 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="HappyHorse Studio">
   <title>HappyHorse Studio</title>
+  <desc>App icon rendered with Iconify tabler:horse-toy and an Alibaba Cloud inspired orange theme.</desc>
   <defs>
-    <linearGradient id="hh-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%"   stop-color="#0a0a0a"/>
-      <stop offset="60%"  stop-color="#171717"/>
-      <stop offset="100%" stop-color="#262626"/>
+    <linearGradient id="hh-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFB15E"/>
+      <stop offset="0.48" stop-color="#FF6A00"/>
+      <stop offset="1" stop-color="#C84700"/>
     </linearGradient>
-    <linearGradient id="hh-mane" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%"  stop-color="#ffffff"/>
-      <stop offset="100%" stop-color="#e4e4e7"/>
+    <linearGradient id="hh-mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.68" stop-color="#FFF2E6"/>
+      <stop offset="1" stop-color="#FFE1BF"/>
     </linearGradient>
-    <linearGradient id="hh-spark" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%"  stop-color="#fde68a"/>
-      <stop offset="100%" stop-color="#f59e0b"/>
-    </linearGradient>
-    <filter id="hh-glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="1.2" result="b"/>
-      <feMerge>
-        <feMergeNode in="b"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+    <filter id="hh-soft-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="2" stdDeviation="1.2" flood-color="#7A2A00" flood-opacity="0.28"/>
     </filter>
   </defs>
-
-  <!-- Rounded black background -->
-  <rect x="0" y="0" width="64" height="64" rx="14" ry="14" fill="url(#hh-bg)"/>
-  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" ry="13.5"
-        fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-
-  <!-- Horse head silhouette (Iconify mdi:horse-variant inspired path,
-       redrawn at 64x64 to fit visually). Pure white on black for theme. -->
-  <g fill="url(#hh-mane)">
-    <path d="M44 14 C 47 16 49 19 50 23 C 52 24 53 26 53 28 C 53 30 52 32 50 33
-             L 50 35 C 50 37 49 39 47 40
-             L 47 47 C 47 49 46 50 44 50
-             L 41 50 C 39 50 38 49 38 47
-             L 38 44 C 38 43 38 42 39 41
-             L 39 38 C 36 38 33 37 31 35
-             L 28 35 C 26 35 25 36 25 38
-             L 25 47 C 25 49 24 50 22 50
-             L 19 50 C 17 50 16 49 16 47
-             L 16 36 C 16 33 17 30 19 28
-             C 21 25 24 23 27 22
-             L 30 21 L 32 18 C 33 16 35 14 38 14 Z"/>
+  <rect width="64" height="64" rx="18" fill="url(#hh-bg)"/>
+  <circle cx="51" cy="12" r="18" fill="#FFD7B0" opacity="0.28"/>
+  <circle cx="11" cy="53" r="18" fill="#FFFFFF" opacity="0.16"/>
+  <rect x="6" y="6" width="52" height="52" rx="15" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.26)" stroke-width="1.5"/>
+  <path d="M11 15h8M10 19h5M45 48h8M42 52h10" stroke="#FFFFFF" stroke-width="1.2" stroke-linecap="round" opacity="0.32"/>
+  <!-- Iconify tabler:horse-toy, scaled from the original 24x24 stroke icon. -->
+  <g transform="translate(6.5 7.5) scale(2.18)" fill="none" stroke="url(#hh-mark)" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9" filter="url(#hh-soft-shadow)">
+    <path d="M3.5 17.5c5.667 4.667 11.333 4.667 17 0"/>
+    <path d="M19 18.5l-2 -8.5l1 -2l2 1l1.5 -1.5l-2.5 -4.5c-5.052 .218 -5.99 3.133 -7 6h-6a3 3 0 0 0 -3 3"/>
+    <path d="M5 18.5l2 -9.5"/>
+    <path d="M8 20l2 -5h4l2 5"/>
   </g>
-
-  <!-- Eye dot -->
-  <circle cx="42.5" cy="22" r="1.4" fill="#0a0a0a"/>
-
-  <!-- Mane flowing accent -->
-  <path d="M37 13 C 39 11 42 11 44 13 C 43 14 41 15 39 15 C 38 15 37 14 37 13 Z"
-        fill="url(#hh-mane)" opacity="0.85"/>
-
-  <!-- Play triangle inside chest area (video studio hint) -->
-  <polygon points="29,40 29,46 34,43" fill="#0a0a0a" opacity="0.85"/>
-
-  <!-- AI sparkle (top-right) -->
-  <g filter="url(#hh-glow)">
-    <path d="M52 8 L53.5 12 L57.5 13.5 L53.5 15 L52 19 L50.5 15 L46.5 13.5 L50.5 12 Z"
-          fill="url(#hh-spark)" opacity="0.95"/>
-  </g>
-  <!-- Tiny secondary sparkle -->
-  <path d="M9 12 L10 14 L12 15 L10 16 L9 18 L8 16 L6 15 L8 14 Z"
-        fill="#fde68a" opacity="0.6"/>
-  <path d="M55 50 L55.8 51.6 L57.4 52.4 L55.8 53.2 L55 54.8 L54.2 53.2 L52.6 52.4 L54.2 51.6 Z"
-        fill="#fde68a" opacity="0.5"/>
+  <path d="M48 10l1.2 3.1l3.1 1.2l-3.1 1.2L48 19.6l-1.2 -3.1l-3.1 -1.2l3.1 -1.2z" fill="#FFFFFF" opacity="0.72"/>
 </svg>
