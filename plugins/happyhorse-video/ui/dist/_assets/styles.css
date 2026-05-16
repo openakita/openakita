@@ -3226,3 +3226,26 @@ a:hover { text-decoration: underline; }
     width: 100%;
   }
 }
+
+/* Multi-upload field — N-row uploader for reference_urls / image_urls */
+.multi-upload-field {
+  gap: 8px;
+}
+
+.multi-upload-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.multi-upload-row .field {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.multi-upload-row .btn-sm {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 22px;
+}
+

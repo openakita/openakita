@@ -487,7 +487,10 @@ function useTaskHeartbeat(taskId) {
     sse.addEventListener("task_update", (e) => {
       try {
         const d = JSON.parse(e.data || "{}");
-        if (!d.task_id || d.task_id === taskId) refresh();
+        // Backend wraps the payload as `{event, data: {task_id, ...}}`.
+        // Older revisions sent it flat, so accept either shape.
+        const tid = d?.data?.task_id || d?.task_id;
+        if (!tid || tid === taskId) refresh();
       } catch (_) {
         refresh();
       }
@@ -613,6 +616,54 @@ function UploadUrlField({ label, value, onChange, accept = "*/*", kind = "image"
         )}
       </div>
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="https://..." />
+    </div>
+  );
+}
+
+// MultiUploadUrlField — N-row upload editor backed by an array of URLs.
+// Used by CreateTab for `reference_urls` and `image_urls` so the user
+// can either upload several files (each pushed to OSS) or paste public
+// URLs, instead of having to comma-separate them in a single textbox.
+function MultiUploadUrlField({ label, values, onChange, accept = "*/*", kind = "image", hint, max = 9 }) {
+  const list = Array.isArray(values) ? values : [];
+  const setAt = (idx, v) => {
+    const next = [...list];
+    next[idx] = v;
+    onChange(next.filter((s, i) => s || i < next.length - 1));
+  };
+  const removeAt = (idx) => {
+    onChange(list.filter((_, i) => i !== idx));
+  };
+  const append = () => {
+    if (list.length >= max) return;
+    onChange([...list, ""]);
+  };
+  const rows = list.length ? list : [""];
+  return (
+    <div className="field multi-upload-field">
+      <label>{label}</label>
+      {rows.map((url, idx) => (
+        <div key={idx} className="multi-upload-row">
+          <UploadUrlField
+            label={`#${idx + 1}`}
+            value={url}
+            onChange={(v) => setAt(idx, v)}
+            accept={accept}
+            kind={kind}
+            hint={idx === 0 ? hint : ""}
+          />
+          {rows.length > 1 && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeAt(idx)}>
+              <Icon name="trash" size={12} /> 删除
+            </button>
+          )}
+        </div>
+      ))}
+      {list.length < max && (
+        <button type="button" className="btn btn-ghost btn-sm" onClick={append}>
+          <Icon name="plus" size={12} /> 添加一张
+        </button>
+      )}
     </div>
   );
 }
@@ -796,8 +847,8 @@ function CreateTab({
   const [lastFrame, setLastFrame] = useState("");
   const [sourceVideo, setSourceVideo] = useState("");
   const [imageUrl, setImageUrl] = useState("");
-  const [imageUrls, setImageUrls] = useState("");
-  const [referenceUrls, setReferenceUrls] = useState("");
+  const [imageUrls, setImageUrls] = useState([]);
+  const [referenceUrls, setReferenceUrls] = useState([]);
   const [audioUrl, setAudioUrl] = useState("");
   const [costPreview, setCostPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -878,14 +929,8 @@ function CreateTab({
         last_frame_url: lastFrame,
         source_video_url: sourceVideo,
         image_url: imageUrl,
-        image_urls: imageUrls
-          .split(/[\s,]+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
-        reference_urls: referenceUrls
-          .split(/[\s,]+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
+        image_urls: (imageUrls || []).map((s) => (s || "").trim()).filter(Boolean),
+        reference_urls: (referenceUrls || []).map((s) => (s || "").trim()).filter(Boolean),
         audio_url: audioUrl,
         cost_approved: !!costPreview?.exceeds_threshold,
         client_request_id: `web_${Date.now()}`,
@@ -901,6 +946,21 @@ function CreateTab({
   };
 
   const liveTask = useTaskHeartbeat(previewTaskId);
+
+  // Digital-human modes drive purely from image + audio/voice and don't
+  // need a text prompt; their MODE spec on the backend reflects that.
+  // ``CreateTab`` used to disable submit on `!prompt`, blocking these
+  // perfectly valid task shapes.
+  const PROMPT_OPTIONAL_MODES = new Set([
+    "photo_speak",
+    "video_relip",
+    "video_reface",
+    "pose_drive",
+    "avatar_compose",
+  ]);
+  const promptRequired = !PROMPT_OPTIONAL_MODES.has(mode);
+  const submitDisabled = submitting || (promptRequired && !prompt.trim());
+
   return (
     <div className="split-layout workbench-layout">
       <div className="split-left create-panel">
@@ -1017,16 +1077,24 @@ function CreateTab({
             />
           )}
           {(modeSpec?.required_assets || []).includes("image_urls") && (
-            <div className="field">
-              <label>额外参考图 URLs (image_urls，英文逗号或换行分隔)</label>
-              <input value={imageUrls} onChange={(e) => setImageUrls(e.target.value)} />
-            </div>
+            <MultiUploadUrlField
+              label="额外参考图 (image_urls)"
+              values={imageUrls}
+              onChange={setImageUrls}
+              accept="image/*"
+              kind="image"
+              hint="按需上传 1-9 张额外参考图，会一并发给 DashScope"
+            />
           )}
           {(modeSpec?.required_assets || []).includes("reference_urls") && (
-            <div className="field">
-              <label>参考图 URLs (英文逗号分隔)</label>
-              <input value={referenceUrls} onChange={(e) => setReferenceUrls(e.target.value)} />
-            </div>
+            <MultiUploadUrlField
+              label="参考人物图 (reference_urls)"
+              values={referenceUrls}
+              onChange={setReferenceUrls}
+              accept="image/*"
+              kind="image"
+              hint="r2v / long_video 接受多张参考人物图，多角色互动时建议每个角色一张"
+            />
           )}
 
           {!modeSpec?.native_audio_sync && (
@@ -1122,7 +1190,7 @@ function CreateTab({
         </section>
 
         <div className="create-submit-bar">
-          <button className="btn btn-block" onClick={submit} disabled={submitting || !prompt}>
+          <button className="btn btn-block" onClick={submit} disabled={submitDisabled}>
             {submitting ? <Spinner /> : <Icon name="rocket" size={14} />}
             {submitting ? "提交中…" : "提交任务"}
           </button>
@@ -1185,7 +1253,6 @@ function ImageTab({ catalog, settings, onSubmit, onSettings }) {
         negative_prompt: negativePrompt,
         n,
         images: parsedImages,
-        image_url: parsedImages[0] || "",
         style_index: styleIndex,
         output_ratio: outputRatio,
         sketch_style: sketchStyle,

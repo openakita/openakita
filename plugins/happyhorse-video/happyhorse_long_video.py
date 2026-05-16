@@ -16,10 +16,12 @@ Modes:
                      ``run_parallel`` concurrency. Used when the user
                      wants speed and accepts the lack of visual
                      continuity (cuts).
-- ``cloud_extend`` — placeholder for HappyHorse / Wan video_extend
-                     when the model is wan2.7-i2v with task_type =
-                     video-continuation; falls back to ``serial`` if
-                     the registry doesn't accept the chosen model.
+- ``cloud_extend`` — currently behaves identically to ``serial`` (each
+                     segment is seeded with the previous segment's
+                     last frame). The slot is reserved for a future
+                     true HappyHorse / Wan ``video-continuation``
+                     dispatch — once that lands, this branch will
+                     submit a video_extend task instead of an i2v.
 """
 
 from __future__ import annotations
@@ -29,11 +31,15 @@ import logging
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from happyhorse_inline.llm_json_parser import parse_llm_json_object
 from happyhorse_inline.parallel_executor import run_parallel
+
+EmitFn = Callable[[str, dict[str, Any]], Awaitable[None]]
+DownloadFn = Callable[[str, str], Awaitable[str]]
 
 logger = logging.getLogger(__name__)
 
@@ -309,10 +315,43 @@ class ChainGenerator:
         task_manager: Any,
         *,
         chain_group_id: str = "",
+        emit: EmitFn | None = None,
+        download_segment: DownloadFn | None = None,
     ) -> None:
+        """Build a chain generator.
+
+        Args:
+            client: A :class:`HappyhorseDashScopeClient` (or fake) used
+                for ``submit_video_synth`` / ``query_task``.
+            task_manager: A :class:`HappyhorseTaskManager` (or fake)
+                used to persist per-segment task rows.
+            chain_group_id: Stable id stamped on every segment row so
+                the UI can group segments into a single chain.
+            emit: Optional async ``(event, payload)`` callback. When
+                provided, every status transition is fanned out as a
+                ``task_update`` SSE event so the Tasks tab updates in
+                real time instead of waiting for the polling tick.
+            download_segment: Optional async ``(url, filename) -> path``
+                callback. When provided, the generated segment video
+                is downloaded to local storage and ``video_path`` is
+                stamped onto the task row — this is what makes
+                ``/long-video/concat`` actually able to find the files.
+        """
         self._client = client
         self._tm = task_manager
         self._chain_group_id = chain_group_id
+        self._emit = emit
+        self._download_segment = download_segment
+
+    async def _safe_emit(self, event: str, payload: dict[str, Any]) -> None:
+        if self._emit is None:
+            return
+        try:
+            await self._emit(event, payload)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "long_video: emit %s failed: %s", event, exc
+            )
 
     async def generate_chain(
         self,
@@ -336,7 +375,8 @@ class ChainGenerator:
             ratio: Aspect ratio (used by Wan size dispatch).
             resolution: ``720P`` / ``1080P``.
             mode: ``"serial"`` chains via last_frame, ``"parallel"`` runs
-                independently, ``"cloud_extend"`` uses video_extend.
+                independently, ``"cloud_extend"`` is currently aliased to
+                ``"serial"`` (reserved for a future video_extend dispatch).
             max_parallel: Concurrency cap (parallel mode only).
             first_frame_url: Optional seed frame for the first segment.
         """
@@ -360,6 +400,8 @@ class ChainGenerator:
             prompt = str(seg.get("prompt") or "")
             duration = int(seg.get("duration") or 5)
 
+            seg_index = seg.get("index", idx + 1)
+
             # Persist a DB row up front so the UI can show the
             # segment as `pending` immediately.
             task_id = await self._tm.create_task(
@@ -372,12 +414,23 @@ class ChainGenerator:
                     "resolution": resolution,
                     "aspect_ratio": ratio,
                     "first_frame_url": seg_first_frame,
-                    "segment_index": seg.get("index", idx + 1),
+                    "segment_index": seg_index,
                     "transition_to_next": seg.get("transition_to_next"),
                 },
                 chain_group_id=self._chain_group_id,
-                chain_index=seg.get("index", idx + 1),
+                chain_index=seg_index,
                 chain_total=total,
+            )
+            await self._safe_emit(
+                "task_update",
+                {
+                    "task_id": task_id,
+                    "status": "pending",
+                    "mode": seg_mode,
+                    "chain_group_id": self._chain_group_id,
+                    "chain_index": seg_index,
+                    "chain_total": total,
+                },
             )
 
             try:
@@ -402,6 +455,17 @@ class ChainGenerator:
                     error_kind="server",
                     error_message=str(e),
                 )
+                await self._safe_emit(
+                    "task_update",
+                    {
+                        "task_id": task_id,
+                        "status": "failed",
+                        "mode": seg_mode,
+                        "chain_group_id": self._chain_group_id,
+                        "chain_index": seg_index,
+                        "error_message": str(e),
+                    },
+                )
                 return self._make_error(seg, e, task_id)
 
             await self._tm.update_task_safe(
@@ -410,22 +474,71 @@ class ChainGenerator:
                 dashscope_id=dashscope_id,
                 dashscope_endpoint=model_id,
             )
-            completed = await self._wait_for_task(dashscope_id)
-            await self._tm.update_task_safe(
-                task_id,
-                status="succeeded" if completed.get("is_ok") else "failed",
-                video_url=str(completed.get("output_url") or ""),
-                last_frame_url=str(completed.get("last_frame_url") or ""),
-                error_kind=completed.get("error_kind") if not completed.get("is_ok") else None,
-                error_message=completed.get("error_message") if not completed.get("is_ok") else None,
+            await self._safe_emit(
+                "task_update",
+                {
+                    "task_id": task_id,
+                    "status": "running",
+                    "mode": seg_mode,
+                    "chain_group_id": self._chain_group_id,
+                    "chain_index": seg_index,
+                },
             )
+            completed = await self._wait_for_task(dashscope_id)
+            ok = bool(completed.get("is_ok"))
+            video_url = str(completed.get("output_url") or "")
+            last_frame_url = str(completed.get("last_frame_url") or "")
+
+            # Download the segment locally so /long-video/concat can find
+            # video_path. Without this step the concat route always
+            # bails with "至少需要 2 段已下载的视频片段才能拼接".
+            video_path = ""
+            if ok and video_url and self._download_segment is not None:
+                try:
+                    fname = (
+                        f"chain_{self._chain_group_id or 'noid'}"
+                        f"_seg{seg_index:03d}.mp4"
+                    )
+                    video_path = await self._download_segment(video_url, fname)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "long_video: download segment %d failed: %s",
+                        seg_index,
+                        exc,
+                    )
+
+            update_kwargs: dict[str, Any] = {
+                "status": "succeeded" if ok else "failed",
+                "video_url": video_url,
+                "last_frame_url": last_frame_url,
+                "error_kind": completed.get("error_kind") if not ok else None,
+                "error_message": completed.get("error_message") if not ok else None,
+            }
+            if video_path:
+                update_kwargs["video_path"] = video_path
+            await self._tm.update_task_safe(task_id, **update_kwargs)
+
             row = await self._tm.get_task(task_id) or {}
+            await self._safe_emit(
+                "task_update",
+                {
+                    "task_id": task_id,
+                    "status": row.get("status"),
+                    "mode": seg_mode,
+                    "chain_group_id": self._chain_group_id,
+                    "chain_index": seg_index,
+                    "video_url": row.get("video_url") or "",
+                    "last_frame_url": row.get("last_frame_url") or "",
+                    "error_message": row.get("error_message") or None,
+                },
+            )
             return {
                 "task_id": task_id,
-                "index": seg.get("index", idx + 1),
+                "index": seg_index,
                 "status": row.get("status"),
                 "prompt": prompt,
                 "video_url": row.get("video_url") or "",
+                "video_path": row.get("video_path") or "",
                 "last_frame_url": row.get("last_frame_url") or "",
             }
 

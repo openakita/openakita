@@ -82,6 +82,7 @@ from happyhorse_inline.upload_preview import (  # noqa: E402
     add_upload_preview_route,
     build_preview_url,
 )
+from happyhorse_inline.vendor_client import VendorError  # noqa: E402
 from happyhorse_long_video import (  # noqa: E402
     ChainGenerator,
     concat_videos,
@@ -764,6 +765,16 @@ class Plugin(PluginBase):
         params = dict(params)
         params["_publish_asset"] = self._publish_local_asset
         params["_resolve_voice_id"] = self._resolve_tts_voice_id
+        # Inject the OSS audio uploader so happyhorse_pipeline._step_tts_synth
+        # can hand DashScope a public URL for synthesized speech.
+        # Without this callback, every text-driven digital-human task
+        # (photo_speak / video_relip / avatar_compose / etc.) hard-failed
+        # at TTS step with a misleading "OSS not configured" error even
+        # when OSS was correctly configured.
+        params["_oss_upload_audio"] = self._oss_upload_audio
+        # Soft-injection: the safety hook is optional inside the pipeline,
+        # but having it wired keeps the avatar_compose path consistent.
+        params["_ensure_images_safe"] = self._ensure_images_safe
 
         ctx = HappyhorsePipelineContext(
             task_id=task_id,
@@ -815,6 +826,102 @@ class Plugin(PluginBase):
                 "happyhorse-video: publish_asset(%s) failed: %s", kind, exc
             )
             return ""
+
+    async def _oss_upload_audio(
+        self, local_path: Path | str, filename: str
+    ) -> str:
+        """Push a TTS-synthesized audio file to OSS and return a signed URL.
+
+        Wired into the pipeline through
+        ``ctx.params['_oss_upload_audio']``. ``_step_tts_synth`` calls
+        this with ``(audio_path, audio_path.name)`` after writing the
+        synthesized clip to disk; the returned URL is what DashScope's
+        videoretalk / s2v / avatar models actually consume.
+
+        Errors are surfaced as :class:`VendorError` so the pipeline's
+        exception step turns them into structured task failures.
+        """
+        if not self._oss.is_configured():
+            raise VendorError(
+                "TTS audio cannot be sent to DashScope without OSS configured. "
+                "Open Settings → OSS and fill in the four fields.",
+                status=400,
+                retryable=False,
+                kind="client",
+            )
+        path = Path(local_path)
+        oss_key = self._oss.build_object_key(
+            scope="uploads/audios", filename=filename or path.name
+        )
+        try:
+            return await asyncio.to_thread(
+                self._oss.upload_file, path, key=oss_key
+            )
+        except OssUploadError as exc:
+            raise VendorError(
+                f"OSS upload of TTS audio failed: {exc}",
+                status=502,
+                retryable=False,
+                kind="server",
+            ) from exc
+
+    async def _chain_emit(self, event: str, payload: dict[str, Any]) -> None:
+        """Async wrapper around ``_broadcast`` for ChainGenerator's emit hook.
+
+        ``_broadcast`` is sync (it only puts into queues); ``ChainGenerator``
+        expects an awaitable, so wrap it.
+        """
+        self._broadcast(event, payload)
+
+    async def _download_chain_segment(self, url: str, filename: str) -> str:
+        """Download a long-video chain segment to local outputs and return
+        the absolute path.
+
+        Without this, ``/long-video/concat`` could never find any
+        ``video_path`` for chained segments and always returned 400.
+        """
+        import httpx
+
+        if not url:
+            raise ValueError("no url to download")
+        target_dir = self._active_data_dir() / "outputs" / "long_video"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / filename
+        timeout = httpx.Timeout(connect=5.0, read=180.0, write=15.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as cli:
+            resp = await cli.get(url)
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"chain segment download failed HTTP {resp.status_code}"
+                )
+            target.write_bytes(resp.content)
+        return str(target)
+
+    async def _ensure_images_safe(self, urls: list[str]) -> list[str]:
+        """Best-effort face-detect on input images before composing.
+
+        Wired through ``ctx.params['_ensure_images_safe']`` for the
+        ``avatar_compose`` path. Today we just drop URLs the vendor
+        rejects so the user sees a clearer downstream error instead of
+        a generic content-moderation failure mid-render. If face-detect
+        itself blows up we log and return the originals — pipeline-side
+        is already wrapped in try/except so a hiccup here never aborts
+        the whole task.
+        """
+        clean: list[str] = []
+        for url in urls:
+            if not url:
+                continue
+            try:
+                await self._client.face_detect(url)
+                clean.append(url)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "happyhorse-video: face_detect rejected %s: %s",
+                    url,
+                    exc,
+                )
+        return clean or list(urls)
 
     # ── Built-in image generation ─────────────────────────────────────
 
@@ -1592,7 +1699,11 @@ class Plugin(PluginBase):
             body = LongVideoCreateBody(**args)
             chain_group_id = uuid.uuid4().hex
             chain = ChainGenerator(
-                self._client, self._tm, chain_group_id=chain_group_id
+                self._client,
+                self._tm,
+                chain_group_id=chain_group_id,
+                emit=self._chain_emit,
+                download_segment=self._download_chain_segment,
             )
 
             async def _run() -> None:
@@ -1854,7 +1965,11 @@ class Plugin(PluginBase):
         async def long_video_create(body: LongVideoCreateBody) -> dict:
             chain_group_id = uuid.uuid4().hex
             chain = ChainGenerator(
-                self._client, self._tm, chain_group_id=chain_group_id
+                self._client,
+                self._tm,
+                chain_group_id=chain_group_id,
+                emit=self._chain_emit,
+                download_segment=self._download_chain_segment,
             )
 
             async def _run() -> None:

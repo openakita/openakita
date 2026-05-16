@@ -370,6 +370,16 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             logger.info("cancel_task %s returned %s (non-fatal)", task_id, e.kind)
             return False
 
+    async def aclose(self) -> None:
+        """No persistent HTTP client to close — :class:`BaseVendorClient`
+        opens an :class:`httpx.AsyncClient` per request. The plugin's
+        ``on_unload`` still calls this for symmetry with other vendor
+        clients, so we expose a tidy no-op instead of raising
+        ``AttributeError`` and relying on the outer try/except to swallow
+        it.
+        """
+        return None
+
     # ── Registry-driven video-synthesis dispatch ───────────────────────
 
     async def submit_video_synth(
@@ -699,8 +709,14 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             "input": {"messages": [{"role": "user", "content": content}]},
             "parameters": params,
         }
+        # Both sync and async share the multimodal-generation/generation
+        # endpoint because the body is already in messages-shape (which is
+        # what that endpoint expects). Earlier code routed the async branch
+        # to image-generation/generation, but that endpoint expects the
+        # legacy {input: {prompt: ...}} shape and would reject the
+        # messages payload, breaking wan2.7-image / wan2.6-image.
         if async_mode:
-            task_id = await self._submit_async(PATH_IMAGE_GEN, body)
+            task_id = await self._submit_async(PATH_WAN27_IMAGE, body)
             return {"task_id": task_id, "async": True}
         return await self.request("POST", PATH_WAN27_IMAGE, json_body=body)
 
