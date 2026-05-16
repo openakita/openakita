@@ -19,7 +19,18 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_ENDPOINT_LISTS = ("endpoints", "compiler_endpoints", "stt_endpoints")
+_ENDPOINT_LISTS = (
+    "endpoints",
+    "compiler_endpoints",
+    "stt_endpoints",
+    # "relay_endpoints" holds shared relay / aggregator targets that
+    # plugins (happyhorse-video, tongyi-image, avatar-studio, ...)
+    # can reference by name instead of re-pasting base_url + api_key
+    # per plugin. Capability metadata (capabilities=["image"|"video"|
+    # "audio"|"tts"]) tells the UI which plugins can pick which relay.
+    # Reuses the same probe / save / toggle code path as LLM endpoints.
+    "relay_endpoints",
+)
 
 
 def _strip_bom(raw: bytes) -> bytes:
