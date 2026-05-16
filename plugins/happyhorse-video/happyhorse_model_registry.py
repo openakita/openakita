@@ -199,7 +199,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="legacy_async",
         size_format="size_star",
-        cost_note="按官网定价",
+        cost_note="720P 0.60 元/秒；1080P 1.00 元/秒",
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
     ),
@@ -227,7 +227,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="legacy_async",
         size_format="size_star",
-        cost_note="按官网定价",
+        cost_note="720P 0.60 元/秒；1080P 1.00 元/秒",
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
     ),
@@ -239,7 +239,10 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="legacy_async",
         size_format="size_star",
-        cost_note="比标准版更便宜",
+        cost_note=(
+            "有声：720P 0.30 / 1080P 0.50 元/秒；"
+            "无声：720P 0.15 / 1080P 0.25 元/秒"
+        ),
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
     ),
@@ -251,7 +254,10 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="new_async",
         size_format="resolution_p",
-        cost_note="支持首帧 / 首尾帧 / 视频续写（input.media[]）",
+        cost_note=(
+            "720P 0.60 元/秒；1080P 1.00 元/秒"
+            "（支持首帧 / 首尾帧 / 视频续写 input.media[]）"
+        ),
         resolutions=_WAN_NEW_RES,
         duration_range=(2, 15),
         # No task_types: wan2.7-i2v selects the sub-task implicitly via
@@ -313,7 +319,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="legacy_async",
         size_format="size_star",
-        cost_note="多角色互动，按官网定价",
+        cost_note="720P 0.60 元/秒；1080P 1.00 元/秒（多角色互动）",
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
     ),
@@ -325,7 +331,10 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="video_synthesis",
         protocol_version="legacy_async",
         size_format="size_star",
-        cost_note="比标准版更便宜",
+        cost_note=(
+            "有声：720P 0.30 / 1080P 0.50 元/秒；"
+            "无声：720P 0.15 / 1080P 0.25 元/秒"
+        ),
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
     ),
@@ -372,7 +381,7 @@ REGISTRY: tuple[ModelEntry, ...] = (
         endpoint_family="videoretalk",
         protocol_version="legacy_async",
         size_format="size_x",
-        cost_note="0.30 元/秒（按音频时长）",
+        cost_note="0.08 元/秒（按音频时长）",
         resolutions=("720P",),
         duration_range=(2, 120),
         is_default=True,

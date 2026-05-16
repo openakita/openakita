@@ -95,7 +95,7 @@ MODES: tuple[ModeSpec, ...] = (
         required_assets=("prompt",),
         description_zh="一句中英文描述生成 3-15 秒视频。HappyHorse 1.0 原生音视频同步。",
         description_en="Generate a 3-15 s video from a text prompt. HappyHorse 1.0 emits audio synced natively.",
-        cost_strategy="HappyHorse 720P 0.90元/秒 / 1080P 1.60元/秒；Wan 2.6 按官网定价",
+        cost_strategy="HappyHorse 720P 0.90 / 1080P 1.60 元/秒；Wan 2.6 720P 0.60 / 1080P 1.00 元/秒",
     ),
     ModeSpec(
         id="i2v",
@@ -106,7 +106,7 @@ MODES: tuple[ModeSpec, ...] = (
         required_assets=("first_frame_url",),
         description_zh="一张首帧图 + prompt 生成 3-15 秒视频。",
         description_en="Generate a 3-15 s video from a first-frame image + prompt.",
-        cost_strategy="同 t2v；Wan 2.6 i2v-flash 更便宜",
+        cost_strategy="同 t2v；Wan 2.6 i2v-flash 有声 0.30/0.50、无声 0.15/0.25 元/秒",
     ),
     ModeSpec(
         id="i2v_end",
@@ -139,7 +139,7 @@ MODES: tuple[ModeSpec, ...] = (
         required_assets=("reference_urls",),
         description_zh="多角色 / 物品参考图生成互动视频，支持中英对话与镜头切换。",
         description_en="Multi-character reference-driven video with dialogue and cuts.",
-        cost_strategy="HappyHorse 720P 0.90元/秒 / 1080P 1.60元/秒",
+        cost_strategy="HappyHorse 720P 0.90 / 1080P 1.60 元/秒；Wan 2.6 r2v 0.60/1.00 元/秒",
     ),
     ModeSpec(
         id="video_edit",
@@ -162,7 +162,7 @@ MODES: tuple[ModeSpec, ...] = (
         required_assets=("image_url", "audio_or_text"),
         description_zh="一张正面人像 + 一段语音/文本 → 会说话的视频。",
         description_en="One frontal portrait + speech/text → talking-head video.",
-        cost_strategy="detect 0.004元/张 + s2v 0.50/0.90元/秒（按音频时长）+ TTS 0.20元/万字",
+        cost_strategy="detect 0.004 元/张 + s2v 0.50/0.90 元/秒（按音频时长）+ TTS 2.00 元/万字",
     ),
     ModeSpec(
         id="video_relip",
@@ -173,7 +173,7 @@ MODES: tuple[ModeSpec, ...] = (
         required_assets=("source_video_url", "audio_or_text"),
         description_zh="给已有视频换一段台词，自动同步口型。",
         description_en="Replace a video's speech and resync lip motion.",
-        cost_strategy="videoretalk 0.30元/秒（按音频时长）+ TTS 0.20元/万字",
+        cost_strategy="videoretalk 0.08 元/秒（按音频时长）+ TTS 2.00 元/万字",
     ),
     ModeSpec(
         id="video_reface",
@@ -349,35 +349,62 @@ DEFAULT_COST_THRESHOLD_CNY: float = 5.00
 
 # ─── Price table (officially documented DashScope unit prices, CNY) ──────
 
+#
+# Pricing source: https://help.aliyun.com/zh/model-studio/model-pricing
+# Region: 中国大陆 (CN) — international tier is ~22.3% higher (e.g.
+# happyhorse-1.0-t2v 720P 中国 ¥0.9/s vs 国际 ¥1.049188/s); we bill at
+# the CN tier since the plugin posts to dashscope.aliyuncs.com by
+# default. Undercount is a billing-shock risk — when in doubt round up.
+#
+# Verified 2026-05 against the official help page. Values that changed
+# from earlier placeholders are documented inline (with magnitude) so a
+# future drift audit can grep for "was ".
 PRICE_TABLE: dict[str, dict[str, float]] = {
-    # HappyHorse 1.0 family (4 endpoints, same per-second pricing):
+    # ── HappyHorse 1.0 family (4 endpoints, same per-second pricing) ──
     "happyhorse-1.0-t2v": {"720P_per_sec": 0.90, "1080P_per_sec": 1.60},
     "happyhorse-1.0-i2v": {"720P_per_sec": 0.90, "1080P_per_sec": 1.60},
     "happyhorse-1.0-r2v": {"720P_per_sec": 0.90, "1080P_per_sec": 1.60},
     "happyhorse-1.0-video-edit": {"720P_per_sec": 0.90, "1080P_per_sec": 1.60},
-    # Wan 2.6 / 2.7 family — placeholder pricing (kept aligned with public
-    # docs at v1.0.0 release; tests freeze a copy so a remote drift is
-    # caught on next CI run):
-    "wan2.6-t2v": {"720P_per_sec": 0.70, "1080P_per_sec": 1.20},
-    "wan2.6-i2v": {"720P_per_sec": 0.70, "1080P_per_sec": 1.20},
-    "wan2.6-i2v-flash": {"720P_per_sec": 0.30, "1080P_per_sec": 0.50},
-    "wan2.6-r2v": {"720P_per_sec": 0.70, "1080P_per_sec": 1.20},
-    "wan2.6-r2v-flash": {"720P_per_sec": 0.30, "1080P_per_sec": 0.50},
-    "wan2.7-i2v": {"720P_per_sec": 0.85, "1080P_per_sec": 1.50},
-    # Digital-human family (unchanged from avatar-studio):
+    # ── Wan 2.6 t2v / i2v / r2v: 0.60 / 1.00 ¥/s
+    #    (was 0.70 / 1.20 → -14% / -17%) ─────────────────────────────
+    "wan2.6-t2v": {"720P_per_sec": 0.60, "1080P_per_sec": 1.00},
+    "wan2.6-i2v": {"720P_per_sec": 0.60, "1080P_per_sec": 1.00},
+    "wan2.6-r2v": {"720P_per_sec": 0.60, "1080P_per_sec": 1.00},
+    # ── Wan 2.6 *-flash: officially priced by audio=true|false tier.
+    #    `_video_synth_item` picks the right tier from params.
+    #    (was 0.30 / 0.50 single-tier → audio-false silent video tier
+    #    was missing entirely, ~50% undercount on silent jobs.) ──────
+    "wan2.6-i2v-flash": {
+        "audio-true_720P_per_sec": 0.30,
+        "audio-true_1080P_per_sec": 0.50,
+        "audio-false_720P_per_sec": 0.15,
+        "audio-false_1080P_per_sec": 0.25,
+    },
+    "wan2.6-r2v-flash": {
+        "audio-true_720P_per_sec": 0.30,
+        "audio-true_1080P_per_sec": 0.50,
+        "audio-false_720P_per_sec": 0.15,
+        "audio-false_1080P_per_sec": 0.25,
+    },
+    # ── Wan 2.7 i2v: 0.60 / 1.00 ¥/s (was 0.85 / 1.50 → -29% / -33%) ─
+    "wan2.7-i2v": {"720P_per_sec": 0.60, "1080P_per_sec": 1.00},
+    # ── Digital-human family ─────────────────────────────────────────
     "wan2.2-s2v-detect": {"per_image": 0.004},
     "wan2.2-s2v": {"480P_per_sec": 0.50, "720P_per_sec": 0.90},
-    "videoretalk": {"per_sec": 0.30},
+    # videoretalk: 0.08 ¥/s (was 0.30 → ~275% overestimate; the largest
+    # single billing-shock risk we just removed). ───────────────────
+    "videoretalk": {"per_sec": 0.08},
     "wan2.2-animate-mix": {"wan-std_per_sec": 0.60, "wan-pro_per_sec": 1.20},
     "wan2.2-animate-move": {"wan-std_per_sec": 0.40, "wan-pro_per_sec": 0.60},
-    # Image edit:
+    # ── Image generation / edit ──────────────────────────────────────
     "wan2.5-i2i-preview": {"per_image": 0.20},
     "wan2.7-image": {"per_image": 0.20},
     "wan2.7-image-pro": {"per_image": 0.50},
-    # Auxiliary:
+    # ── Auxiliary ────────────────────────────────────────────────────
     "qwen-vl-max": {"per_1k_input_token": 0.02, "per_1k_output_token": 0.06},
-    "cosyvoice-v2": {"per_10k_chars": 0.20},
-    # Edge-TTS is free; included as zero so the cost row renders explicitly.
+    # cosyvoice-v2: 2.00 ¥/万字 (was 0.20 → 10× undercount; a 10k-char
+    # TTS script silently billed ¥0.20 instead of the correct ¥2.00). ─
+    "cosyvoice-v2": {"per_10k_chars": 2.00},
     "edge-tts": {"per_10k_chars": 0.0},
 }
 
@@ -429,17 +456,55 @@ def _duration_seconds(
     return float(raw)
 
 
+def _audio_tier_suffix(params: dict[str, object]) -> str:
+    """Pick the ``audio-true`` / ``audio-false`` price tier for *-flash models.
+
+    Wan 2.6 ``i2v-flash`` / ``r2v-flash`` officially halve their per-second
+    rate when the generated video is silent (``audio=false``). The UI may
+    surface this either as an explicit ``audio: True/False`` flag or by
+    setting (or omitting) a background ``audio_url`` / ``driving_audio_url``.
+    We treat any *truthy* signal as "audio enabled" and bill at the higher
+    tier — i.e. when in doubt round up so the cost preview never under-
+    estimates the bill.
+    """
+    if "audio" in params:
+        return "audio-true" if bool(params.get("audio")) else "audio-false"
+    if params.get("audio_url") or params.get("driving_audio_url"):
+        return "audio-true"
+    return "audio-false"
+
+
 def _video_synth_item(
     model_id: str, params: dict[str, object], audio_duration_sec: float | None
 ) -> CostItem:
-    """Per-second cost for HappyHorse / Wan video models (resolution-tiered)."""
+    """Per-second cost for HappyHorse / Wan video models (resolution-tiered).
+
+    For Wan 2.6 ``-flash`` variants the price table is also keyed by the
+    audio tier (``audio-true_720P_per_sec`` / ``audio-false_720P_per_sec``).
+    We detect the tier from ``params`` via :func:`_audio_tier_suffix` and
+    fall back to the legacy ``720P_per_sec`` shape for non-tiered models.
+    """
     table = PRICE_TABLE.get(model_id, {})
     res = _resolution_key(params, default="720P")
     sec = _duration_seconds(params, audio_duration_sec)
-    key = f"{res}_per_sec"
-    per_sec = float(table.get(key, table.get("720P_per_sec", 0.0)))
+    # Try tiered key first (flash models), then legacy key.
+    tier = _audio_tier_suffix(params)
+    candidates = (
+        f"{tier}_{res}_per_sec",
+        f"{res}_per_sec",
+        f"{tier}_720P_per_sec",
+        "720P_per_sec",
+    )
+    per_sec = 0.0
+    for k in candidates:
+        if k in table:
+            per_sec = float(table[k])
+            break
+    label = f"{model_id} {res}"
+    if any(k.startswith("audio-") for k in table):
+        label += f" ({tier})"
     return CostItem(
-        name=f"{model_id} {res}",
+        name=label,
         units=sec,
         unit_label="秒",
         unit_price=per_sec,
