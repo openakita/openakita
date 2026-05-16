@@ -1081,8 +1081,56 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         format: str = "mp3",
     ) -> dict[str, Any]:
         """Synthesise speech via cosyvoice-v2; returns ``{audio_bytes, format,
-        duration_sec}``. The dashscope SDK is **lazy-imported** here.
+        duration_sec}``.
+
+        Two transport paths exist:
+
+        * **OpenAI-compatible HTTP** (``_synth_voice_via_http``) — used
+          whenever the resolved ``base_url`` is anything other than the
+          official DashScope native host. This is the only path that
+          works for relay stations: most relays expose
+          ``/v1/audio/speech`` but cannot mediate the proprietary
+          DashScope SDK protocol. We pick it automatically so users
+          who set ``relay_endpoint`` in Settings (or who paste an
+          OpenAI-compatible base_url) get working TTS without an
+          extra knob.
+        * **Native DashScope SDK** — kept for users who point the
+          plugin straight at ``dashscope.aliyuncs.com``: the SDK adds
+          format / streaming features that the OpenAI shim lacks and
+          we don't want to regress that path.
         """
+        s = self._settings()
+        api_key = str(s.get("api_key") or "").strip()
+        if not api_key:
+            raise VendorError(
+                "DashScope API Key is empty; configure it in Settings",
+                status=401,
+                retryable=False,
+                kind=ERROR_KIND_AUTH,
+            )
+
+        base_url = str(s.get("base_url") or DASHSCOPE_BASE_URL_BJ).rstrip("/")
+        # "native" = the two official DashScope hosts WITHOUT the
+        # /compatible-mode/v1 path suffix. The OpenAI-compat shim on
+        # DashScope itself also speaks /v1/audio/speech, so we route
+        # it through the HTTP path too — that keeps SDK usage limited
+        # to the genuinely-native DashScope SDK protocol that needs
+        # WebSocket / signed-URL primitives the HTTP path cannot do.
+        host = base_url
+        is_native = (
+            host in (DASHSCOPE_BASE_URL_BJ, DASHSCOPE_BASE_URL_SG)
+            or host == DASHSCOPE_BASE_URL_BJ + "/"
+            or host == DASHSCOPE_BASE_URL_SG + "/"
+        )
+        if not is_native:
+            return await self._synth_voice_via_http(
+                text=text,
+                voice_id=voice_id,
+                format=format,
+                base_url=base_url,
+                api_key=api_key,
+            )
+
         try:
             import dashscope
             from dashscope.audio.tts_v2 import (
@@ -1097,21 +1145,12 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 f"请在 OpenAkita 运行的 Python 环境中执行：\n"
                 f"    {sys.executable} -m pip install dashscope\n"
                 "（happyhorse-video 仅在调用 cosyvoice-v2 TTS 时才需要此 SDK；"
-                "其他模式与「上传现成音频 / Edge-TTS」流程不受影响。）",
+                "其他模式与「上传现成音频 / Edge-TTS」流程不受影响。\n"
+                "或在 Settings 选择一个 OpenAI 兼容的中转站，TTS 将自动走 HTTP 路径。）",
                 status=None,
                 retryable=False,
                 kind=ERROR_KIND_DEPENDENCY,
             ) from e
-
-        s = self._settings()
-        api_key = str(s.get("api_key") or "").strip()
-        if not api_key:
-            raise VendorError(
-                "DashScope API Key is empty; configure it in Settings",
-                status=401,
-                retryable=False,
-                kind=ERROR_KIND_AUTH,
-            )
 
         # The dashscope SDK reads credentials from a *module-level* global
         # (``dashscope.api_key``) — hot-set on every call to follow A10.
@@ -1183,6 +1222,136 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 len(audio_bytes),
             )
 
+        return {"audio_bytes": audio_bytes, "format": detected, "duration_sec": None}
+
+    async def _synth_voice_via_http(
+        self,
+        *,
+        text: str,
+        voice_id: str,
+        format: str,
+        base_url: str,
+        api_key: str,
+    ) -> dict[str, Any]:
+        """OpenAI-compatible ``POST /v1/audio/speech`` path for relay
+        stations.
+
+        DashScope's OpenAI-compat shim and most generic relays accept
+        the same body shape::
+
+            { "model": "cosyvoice-v2", "voice": <voice_id>,
+              "input": <text>, "response_format": "mp3"|"wav"|"opus"|"aac"|"flac" }
+
+        and stream back raw audio bytes with the matching
+        ``Content-Type`` header. We do NOT call the relay's ``/models``
+        first — that would double the latency of every TTS call.
+        """
+        import httpx
+
+        # DashScope's OpenAI-compat path is "/compatible-mode/v1"; bare
+        # OpenAI / OneAPI / yunwu use "/v1". We respect what the user
+        # actually configured rather than forcing one shape — if the
+        # base_url already ends in /v1 or /compatible-mode/v1 we just
+        # tack on /audio/speech, otherwise we add the missing /v1.
+        if base_url.endswith("/v1") or base_url.endswith("/compatible-mode/v1"):
+            url = f"{base_url}/audio/speech"
+        else:
+            url = f"{base_url}/v1/audio/speech"
+
+        # response_format alignment with OpenAI's /audio/speech enum.
+        fmt_l = (format or "mp3").lower()
+        if fmt_l not in ("mp3", "wav", "opus", "aac", "flac"):
+            fmt_l = "mp3"
+
+        payload = {
+            "model": MODEL_COSYVOICE_V2,
+            "input": text,
+            "voice": voice_id,
+            "response_format": fmt_l,
+        }
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": f"audio/{fmt_l}",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+        except httpx.TimeoutException as e:
+            raise VendorError(
+                f"cosyvoice-v2 HTTP timeout ({self.timeout:.0f}s) calling {url}",
+                retryable=True,
+                kind=ERROR_KIND_SERVER,
+            ) from e
+        except httpx.HTTPError as e:
+            raise VendorError(
+                f"cosyvoice-v2 HTTP error calling {url}: {e}",
+                retryable=True,
+                kind=ERROR_KIND_SERVER,
+            ) from e
+
+        if resp.status_code in (401, 403):
+            raise VendorError(
+                f"cosyvoice-v2 HTTP {resp.status_code}: API Key 被拒绝 "
+                f"({resp.text[:200]})",
+                status=resp.status_code,
+                retryable=False,
+                kind=ERROR_KIND_AUTH,
+            )
+        if resp.status_code == 404:
+            raise VendorError(
+                f"中转站不支持 /audio/speech 路径 ({url})；"
+                "请确认该中转站是否提供 cosyvoice-v2 TTS。",
+                status=404,
+                retryable=False,
+                kind=ERROR_KIND_DEPENDENCY,
+            )
+        if resp.status_code >= 400:
+            # Many relays return text/json on error even when the success
+            # path is audio/*. Surface the body verbatim — users debug
+            # these by hand.
+            raise VendorError(
+                f"cosyvoice-v2 HTTP {resp.status_code}: {resp.text[:300]}",
+                status=resp.status_code,
+                retryable=resp.status_code >= 500,
+                kind=ERROR_KIND_SERVER,
+            )
+
+        audio_bytes = resp.content or b""
+        if not audio_bytes:
+            raise VendorError(
+                "cosyvoice-v2 returned empty audio (HTTP)",
+                retryable=False,
+                kind=ERROR_KIND_DEPENDENCY,
+            )
+
+        # Header sniffing is identical to the SDK path so downstream
+        # ffmpeg / probe code does not care which transport produced
+        # the file.
+        head = audio_bytes[:16]
+        detected: str | None = None
+        if head.startswith(b"ID3") or (
+            len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0
+        ):
+            detected = "mp3"
+        elif head.startswith(b"RIFF") and audio_bytes[8:12] == b"WAVE":
+            detected = "wav"
+        elif head.startswith(b"OggS"):
+            detected = "ogg"
+        elif head.startswith(b"fLaC"):
+            detected = "flac"
+        if detected is None:
+            # Some relays return raw PCM despite response_format=mp3.
+            # Wrap it so the rest of the pipeline (ffmpeg concat) does
+            # not choke on a missing header.
+            audio_bytes = _wrap_pcm_as_wav(audio_bytes)
+            detected = "wav"
+            logger.warning(
+                "cosyvoice-v2 (HTTP) returned headerless audio (%d bytes); "
+                "wrapped as WAV 22050Hz mono 16bit",
+                len(audio_bytes),
+            )
         return {"audio_bytes": audio_bytes, "format": detected, "duration_sec": None}
 
     async def clone_voice(
