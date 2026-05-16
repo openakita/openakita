@@ -251,3 +251,147 @@ async def test_video_synth_duration_is_int_for_vendor(monkeypatch):
     )
     assert captured["body"]["parameters"]["duration"] == 3
     assert isinstance(captured["body"]["parameters"]["duration"], int)
+
+
+# ─── Advanced (Wan 2.6 / 2.7) parameter transmission ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_wan26_t2v_forwards_advanced_params(monkeypatch):
+    """Wan 2.6 t2v supports prompt_extend / negative_prompt / watermark /
+    shot_type. Verify all four land in ``parameters`` verbatim."""
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    captured: dict[str, object] = {}
+
+    async def fake_submit_async(path, body):
+        captured["body"] = body
+        return "t"
+
+    monkeypatch.setattr(c, "_submit_async", fake_submit_async)
+    await c.submit_video_synth(
+        mode="t2v",
+        model_id="wan2.6-t2v",
+        prompt="x",
+        resolution="720P",
+        duration=5,
+        prompt_extend=True,
+        negative_prompt="模糊, 低画质",
+        watermark=False,
+        shot_type="multi",
+    )
+    p = captured["body"]["parameters"]
+    assert p["prompt_extend"] is True
+    assert p["negative_prompt"] == "模糊, 低画质"
+    assert p["watermark"] is False
+    assert p["shot_type"] == "multi"
+
+
+@pytest.mark.asyncio
+async def test_happyhorse_silently_drops_unsupported_advanced_params(monkeypatch):
+    """HappyHorse 1.0 doesn't advertise any of the advanced flags.
+    The client must SILENTLY DROP them so the UI can send a uniform
+    payload regardless of model — otherwise users get random 422s
+    after switching from Wan back to HappyHorse."""
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    captured: dict[str, object] = {}
+
+    async def fake_submit_async(path, body):
+        captured["body"] = body
+        return "t"
+
+    monkeypatch.setattr(c, "_submit_async", fake_submit_async)
+    await c.submit_video_synth(
+        mode="t2v",
+        model_id="happyhorse-1.0-t2v",
+        prompt="x",
+        resolution="720P",
+        duration=5,
+        prompt_extend=True,
+        negative_prompt="x",
+        watermark=True,
+    )
+    p = captured["body"]["parameters"]
+    assert "prompt_extend" not in p
+    assert "negative_prompt" not in p
+    assert "watermark" not in p
+
+
+@pytest.mark.asyncio
+async def test_wan26_t2v_rejects_invalid_shot_type(monkeypatch):
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    monkeypatch.setattr(c, "_submit_async", lambda *a, **kw: None)
+    with pytest.raises(VendorError) as ei:
+        await c.submit_video_synth(
+            mode="t2v",
+            model_id="wan2.6-t2v",
+            prompt="x",
+            resolution="720P",
+            shot_type="quad",  # not in ("single","multi")
+        )
+    assert "shot_type" in str(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_wan26_i2v_writes_audio_url_to_input(monkeypatch):
+    """Wan 2.6 legacy spec puts background audio at ``input.audio_url``."""
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    captured: dict[str, object] = {}
+
+    async def fake_submit_async(path, body):
+        captured["body"] = body
+        return "t"
+
+    monkeypatch.setattr(c, "_submit_async", fake_submit_async)
+    await c.submit_video_synth(
+        mode="i2v",
+        model_id="wan2.6-i2v",
+        prompt="x",
+        first_frame_url="https://example.test/f.png",
+        resolution="720P",
+        duration=5,
+        driving_audio_url="https://example.test/bg.mp3",
+    )
+    inp = captured["body"]["input"]
+    assert inp["audio_url"] == "https://example.test/bg.mp3"
+    assert "media" not in inp
+
+
+@pytest.mark.asyncio
+async def test_wan27_i2v_writes_driving_audio_into_media_array(monkeypatch):
+    """Wan 2.7 i2v puts driving audio into input.media[{type:'driving_audio'}]."""
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    captured: dict[str, object] = {}
+
+    async def fake_submit_async(path, body):
+        captured["body"] = body
+        return "t"
+
+    monkeypatch.setattr(c, "_submit_async", fake_submit_async)
+    await c.submit_video_synth(
+        mode="i2v",
+        model_id="wan2.7-i2v",
+        prompt="x",
+        first_frame_url="https://example.test/f.png",
+        resolution="720P",
+        duration=5,
+        driving_audio_url="https://example.test/voice.mp3",
+    )
+    media = captured["body"]["input"]["media"]
+    assert {"type": "driving_audio", "url": "https://example.test/voice.mp3"} in media
+
+
+@pytest.mark.asyncio
+async def test_happyhorse_t2v_rejects_driving_audio(monkeypatch):
+    """HappyHorse 1.0 does not support background/driving audio — the
+    client must surface a 422 instead of silently sending it."""
+    c = HappyhorseDashScopeClient(_read_settings_factory(api_key="sk-x"))
+    monkeypatch.setattr(c, "_submit_async", lambda *a, **kw: None)
+    with pytest.raises(VendorError) as ei:
+        await c.submit_video_synth(
+            mode="t2v",
+            model_id="happyhorse-1.0-t2v",
+            prompt="x",
+            resolution="720P",
+            driving_audio_url="https://example.test/bg.mp3",
+        )
+    assert "audio" in str(ei.value).lower()

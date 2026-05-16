@@ -411,6 +411,11 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         duration: float | None = None,
         task_type: str | None = None,
         driving_audio_url: str | None = None,
+        prompt_extend: bool | None = None,
+        negative_prompt: str | None = None,
+        watermark: bool | None = None,
+        shot_type: str | None = None,
+        audio: bool | None = None,
         extra_parameters: dict[str, Any] | None = None,
     ) -> str:
         """Submit a HappyHorse 1.0 / Wan 2.6 / Wan 2.7 video-generation job.
@@ -448,9 +453,40 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                     kind=ERROR_KIND_CLIENT,
                 )
 
+        # ── Advanced parameters (per capability flags) ───────────────
+        # Silently drop unsupported flags so the UI can pass a uniform
+        # payload regardless of which model is selected — this keeps
+        # per-model branching out of the React layer.
         params: dict[str, Any] = {}
         if extra_parameters:
             params.update(extra_parameters)
+        if prompt_extend is not None and entry.supports_prompt_extend:
+            params["prompt_extend"] = bool(prompt_extend)
+        if (
+            negative_prompt is not None
+            and str(negative_prompt).strip()
+            and entry.supports_negative_prompt
+        ):
+            params["negative_prompt"] = str(negative_prompt).strip()
+        if watermark is not None and entry.supports_watermark:
+            params["watermark"] = bool(watermark)
+        # ``audio`` controls whether the synthesised video carries an
+        # audio track (Wan 2.6 -flash) and toggles the price tier in
+        # the cost preview. Only flash variants accept this currently.
+        if audio is not None and "audio" not in (entry.forbidden_params or ()):
+            params["audio"] = bool(audio)
+        # shot_type is currently only a Wan 2.6 t2v concept; enforce
+        # the enum if the model declares it.
+        if shot_type is not None and entry.shot_types:
+            if shot_type not in entry.shot_types:
+                raise VendorError(
+                    f"shot_type {shot_type!r} not allowed for {model_id!r}; "
+                    f"accepted: {list(entry.shot_types)}",
+                    status=422,
+                    retryable=False,
+                    kind=ERROR_KIND_CLIENT,
+                )
+            params["shot_type"] = shot_type
 
         # ── size / resolution dispatch (size_format) ─────────────────
         if entry.size_format == "resolution_p":
@@ -592,8 +628,19 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 # (e.g. happyhorse video_edit) also use ``video_url``.
                 input_obj["video_url"] = source_video_url
             if driving_audio_url:
+                if not entry.supports_audio_url:
+                    raise VendorError(
+                        f"model {model_id!r} does not accept "
+                        "driving_audio_url / audio_url — only Wan 2.6 "
+                        "i2v / r2v / *-flash and Wan 2.7 i2v support "
+                        "background / driving audio.",
+                        status=422,
+                        retryable=False,
+                        kind=ERROR_KIND_CLIENT,
+                    )
                 # Wan 2.6 audio injection — official spec calls it
-                # ``audio_url`` (see audio_url section of the t2v doc).
+                # ``input.audio_url`` (see audio_url section of the
+                # i2v doc).
                 input_obj["audio_url"] = driving_audio_url
 
         body = {

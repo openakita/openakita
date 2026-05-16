@@ -671,6 +671,20 @@ async def _step_video_synth(
         # ``mode='long_video'`` on the parent task and per-segment tasks
         # use their own mode (i2v / t2v).
         ctx.dashscope_endpoint = ctx.model_id
+        # Pick up advanced parameters from ctx.params. The frontend
+        # may send either ``audio_url`` (Wan 2.6 legacy field name) or
+        # ``driving_audio_url`` (Wan 2.7 media[] field name) — accept
+        # both spellings and forward as a single ``driving_audio_url``
+        # since the client dispatches per ``input_protocol``.
+        adv_audio_url = (
+            str(ctx.params.get("driving_audio_url") or ctx.params.get("audio_url") or "")
+            or None
+        )
+        adv_prompt_extend = ctx.params.get("prompt_extend")
+        adv_negative_prompt = ctx.params.get("negative_prompt")
+        adv_watermark = ctx.params.get("watermark")
+        adv_shot_type = ctx.params.get("shot_type")
+        adv_audio_flag = ctx.params.get("audio")
         ctx.dashscope_id = await client.submit_video_synth(
             mode=ctx.mode,
             model_id=ctx.model_id,
@@ -679,11 +693,16 @@ async def _step_video_synth(
             last_frame_url=last_frame_url or None,
             reference_urls=reference_urls or None,
             source_video_url=source_video_url or None,
-            driving_audio_url=str(ctx.params.get("driving_audio_url") or "") or None,
+            driving_audio_url=adv_audio_url,
             resolution=resolution or None,
             aspect=aspect or None,
             duration=duration,
             task_type=str(task_type) if task_type else None,
+            prompt_extend=bool(adv_prompt_extend) if adv_prompt_extend is not None else None,
+            negative_prompt=str(adv_negative_prompt) if adv_negative_prompt else None,
+            watermark=bool(adv_watermark) if adv_watermark is not None else None,
+            shot_type=str(adv_shot_type) if adv_shot_type else None,
+            audio=bool(adv_audio_flag) if adv_audio_flag is not None else None,
         )
 
     elif ctx.mode == "photo_speak":

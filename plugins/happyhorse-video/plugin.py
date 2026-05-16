@@ -144,6 +144,15 @@ class CreateTaskBody(BaseModel):
     mode_pro: bool = False
     task_type: str = ""
     compose_prompt: str = ""
+    # ── Advanced (Wan 2.6 / 2.7) parameters — silently dropped by the
+    #    client when the selected model doesn't advertise the matching
+    #    ``supports_*`` capability. See happyhorse_model_registry. ──
+    prompt_extend: bool | None = None
+    negative_prompt: str = ""
+    watermark: bool = False
+    shot_type: str = ""
+    driving_audio_url: str = ""
+    audio: bool | None = None
     cost_approved: bool = False
     client_request_id: str = ""
     from_asset_ids: list[str] = Field(default_factory=list)
@@ -192,6 +201,11 @@ class CostPreviewBody(BaseModel):
     text: str = ""
     tts_engine: str = ""
     audio_duration_sec: float | None = None
+    # ``audio`` and ``driving_audio_url`` switch the price tier for
+    # Wan 2.6 -flash variants — the cost preview must accept them to
+    # mirror what the actual submission will be billed at.
+    audio: bool | None = None
+    driving_audio_url: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
 
 

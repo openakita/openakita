@@ -884,6 +884,19 @@ function CreateTab({
   const [imageUrls, setImageUrls] = useState([]);
   const [referenceUrls, setReferenceUrls] = useState([]);
   const [audioUrl, setAudioUrl] = useState("");
+  // ── Advanced parameters (Wan 2.6 / 2.7 family) ─────────────────────
+  // Each field is silently dropped by the backend when the selected
+  // model doesn't advertise the matching ``supports_*`` capability,
+  // so users can leave the panel collapsed without breaking anything.
+  const [advOpen, setAdvOpen] = useState(false);
+  const [promptExtend, setPromptExtend] = useState(true);
+  const [negativePrompt, setNegativePrompt] = useState("");
+  const [watermark, setWatermark] = useState(false);
+  const [shotType, setShotType] = useState("");
+  const [drivingAudioUrl, setDrivingAudioUrl] = useState("");
+  // ``audioEnabled`` only affects Wan 2.6 *-flash; null = inherit
+  // default (the model decides). We initialise to null on first paint.
+  const [audioEnabled, setAudioEnabled] = useState(null);
   const [costPreview, setCostPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [previewTaskId, setPreviewTaskId] = useState("");
@@ -993,12 +1006,17 @@ function CreateTab({
           aspect_ratio: aspect,
           text,
           tts_engine: ttsEngine,
+          // ``audio`` / ``driving_audio_url`` shift the price tier for
+          // Wan 2.6 -flash variants; include them so the preview tracks
+          // the real cost as the user toggles "background audio".
+          ...(audioEnabled !== null ? { audio: audioEnabled } : {}),
+          ...(drivingAudioUrl ? { driving_audio_url: drivingAudioUrl } : {}),
         });
         setCostPreview(r);
       } catch (_) {}
     }, 300);
     return () => clearTimeout(t);
-  }, [mode, modelId, duration, resolution, aspect, text, ttsEngine]);
+  }, [mode, modelId, duration, resolution, aspect, text, ttsEngine, audioEnabled, drivingAudioUrl]);
 
   const submit = async () => {
     const approved = !costPreview?.exceeds_threshold || window.confirm(
@@ -1024,6 +1042,16 @@ function CreateTab({
         image_urls: (imageUrls || []).map((s) => (s || "").trim()).filter(Boolean),
         reference_urls: (referenceUrls || []).map((s) => (s || "").trim()).filter(Boolean),
         audio_url: audioUrl,
+        // ── Advanced (Wan 2.6 / 2.7) parameters ──────────────────────
+        // Always sent; the backend silently drops fields the selected
+        // model doesn't advertise via ``supports_*``, so the wire
+        // payload is consistent regardless of model.
+        prompt_extend: !!promptExtend,
+        negative_prompt: (negativePrompt || "").trim(),
+        watermark: !!watermark,
+        shot_type: (shotType || "").trim(),
+        driving_audio_url: (drivingAudioUrl || "").trim(),
+        ...(audioEnabled !== null ? { audio: audioEnabled } : {}),
         cost_approved: !!costPreview?.exceeds_threshold,
         client_request_id: requestIdRef.current,
       };
@@ -1292,6 +1320,127 @@ function CreateTab({
             </div>
           </div>
         </section>
+
+        {/*
+          ── 高级参数面板 ──
+          Only render fields the *selected model* actually supports
+          (capability flags from the catalog). Wan 2.6 / 2.7 models
+          surface most; HappyHorse 1.0 surfaces none (it rejects the
+          underlying parameters server-side). The whole section is
+          hidden when no advanced field is supported, so the UI stays
+          clean for HappyHorse users.
+        */}
+        {modelEntry && (
+          modelEntry.supports_prompt_extend ||
+          modelEntry.supports_negative_prompt ||
+          modelEntry.supports_watermark ||
+          modelEntry.supports_audio_url ||
+          (modelEntry.shot_types && modelEntry.shot_types.length)
+        ) && (
+          <section className="card create-section">
+            <div className="create-section__head">
+              <h3>
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={() => setAdvOpen((v) => !v)}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+                  title="点击展开/收起高级参数"
+                >
+                  <Icon name={advOpen ? "chevron-down" : "chevron-right"} size={14} />
+                  高级参数（Wan 2.6 / 2.7）
+                </button>
+              </h3>
+              <span>仅当前所选模型支持的项才会显示</span>
+            </div>
+            {advOpen && (
+              <div className="settings-grid two" style={{ gap: 12 }}>
+                {modelEntry.supports_prompt_extend && (
+                  <div className="field">
+                    <label title="开启后由模型自动改写润色提示词；首次尝试建议开启">
+                      <input
+                        type="checkbox"
+                        checked={!!promptExtend}
+                        onChange={(e) => setPromptExtend(e.target.checked)}
+                        style={{ marginRight: 6 }}
+                      />
+                      智能扩写 (prompt_extend)
+                    </label>
+                  </div>
+                )}
+                {modelEntry.supports_watermark && (
+                  <div className="field">
+                    <label title="开启后在画面右下角打印「AI 生成」水印">
+                      <input
+                        type="checkbox"
+                        checked={!!watermark}
+                        onChange={(e) => setWatermark(e.target.checked)}
+                        style={{ marginRight: 6 }}
+                      />
+                      显示水印 (watermark)
+                    </label>
+                  </div>
+                )}
+                {modelEntry.shot_types && modelEntry.shot_types.length > 0 && (
+                  <div className="field">
+                    <label>镜头类型 (shot_type)</label>
+                    <select value={shotType} onChange={(e) => setShotType(e.target.value)}>
+                      <option value="">（模型默认）</option>
+                      {modelEntry.shot_types.map((s) => (
+                        <option key={s} value={s}>
+                          {s === "single" ? "单镜头 single" : s === "multi" ? "多镜头 multi" : s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {/* Wan 2.6 *-flash variants accept an audio on/off
+                    toggle that halves the per-second price when off. */}
+                {modelEntry.model_id && /flash/.test(modelEntry.model_id) && (
+                  <div className="field">
+                    <label title="关闭则生成无声视频；万相 2.6 *-flash 无声档单价减半">
+                      生成音轨 (audio)
+                    </label>
+                    <select
+                      value={audioEnabled === null ? "" : audioEnabled ? "true" : "false"}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setAudioEnabled(v === "" ? null : v === "true");
+                      }}
+                    >
+                      <option value="">（模型默认）</option>
+                      <option value="true">开启 audio=true</option>
+                      <option value="false">关闭 audio=false（更便宜）</option>
+                    </select>
+                  </div>
+                )}
+                {modelEntry.supports_audio_url && (
+                  <div className="field" style={{ gridColumn: "1 / -1" }}>
+                    <UploadUrlField
+                      label="背景 / 驱动音频 URL (driving_audio_url)"
+                      kind="audio"
+                      value={drivingAudioUrl}
+                      onChange={setDrivingAudioUrl}
+                      accept="audio/*"
+                      hint="可选：上传/粘贴音频。Wan 2.7 i2v 用作驱动音；Wan 2.6 i2v/r2v/-flash 用作背景音"
+                    />
+                  </div>
+                )}
+                {modelEntry.supports_negative_prompt && (
+                  <div className="field" style={{ gridColumn: "1 / -1" }}>
+                    <label>反向提示词 (negative_prompt)</label>
+                    <textarea
+                      rows={2}
+                      value={negativePrompt}
+                      onChange={(e) => setNegativePrompt(e.target.value)}
+                      placeholder="描述你不希望出现的元素：模糊、低画质、变形、文字水印…"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
 
         <div className="create-submit-bar">
           <button className="btn btn-block" onClick={submit} disabled={submitDisabled}>

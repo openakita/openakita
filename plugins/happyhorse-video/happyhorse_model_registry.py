@@ -121,6 +121,31 @@ class ModelEntry:
     # as the validation deny-list. HappyHorse 1.0 rejects with_audio /
     # size / quality / fps / audio per official docs.
     forbidden_params: tuple[str, ...] = ()
+    # ── Advanced-parameter capability flags ─────────────────────────
+    # These advertise to the UI / client whether a given model accepts
+    # the corresponding parameter from the official Bailian docs.
+    # Models that don't support a flag silently drop it, so the UI can
+    # render one uniform "advanced options" panel and the pipeline
+    # doesn't need per-model branching.
+    #
+    # - ``supports_prompt_extend``: ``parameters.prompt_extend`` (bool)
+    #   — enable LLM-driven prompt rewriting before generation. Wan 2.6
+    #   t2v/i2v/r2v + Wan 2.7 i2v support it; HappyHorse rejects it.
+    # - ``supports_negative_prompt``: ``parameters.negative_prompt``
+    #   (str) — describe what NOT to render. Wan family supports it.
+    # - ``supports_watermark``: ``parameters.watermark`` (bool) — print
+    #   the "AI generated" mark in the lower-right corner. Wan family.
+    # - ``supports_audio_url``: ``input.audio_url`` (Wan 2.6 legacy) or
+    #   ``input.media[driving_audio]`` (Wan 2.7) — supply a background
+    #   / driving audio. Only i2v / r2v / v2v variants accept it; t2v
+    #   does not because there is no visual base to sync to.
+    # - ``shot_types``: enumerable list for ``parameters.shot_type``;
+    #   currently only Wan 2.6 t2v exposes ``("single", "multi")``.
+    supports_prompt_extend: bool = False
+    supports_negative_prompt: bool = False
+    supports_watermark: bool = False
+    supports_audio_url: bool = False
+    shot_types: tuple[str, ...] = ()
     # When True, this model expects an OSS-fetchable signed URL for any
     # input image / video / audio.
     requires_oss: bool = True
@@ -146,6 +171,11 @@ class ModelEntry:
             "task_types": list(self.task_types),
             "input_protocol": self.input_protocol,
             "forbidden_params": list(self.forbidden_params),
+            "supports_prompt_extend": self.supports_prompt_extend,
+            "supports_negative_prompt": self.supports_negative_prompt,
+            "supports_watermark": self.supports_watermark,
+            "supports_audio_url": self.supports_audio_url,
+            "shot_types": list(self.shot_types),
             "requires_oss": self.requires_oss,
             "native_audio_sync": self.native_audio_sync,
             "is_default": self.is_default,
@@ -202,6 +232,11 @@ REGISTRY: tuple[ModelEntry, ...] = (
         cost_note="720P 0.60 元/秒；1080P 1.00 元/秒",
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
+        supports_prompt_extend=True,
+        supports_negative_prompt=True,
+        supports_watermark=True,
+        # T2V has no visual base, so no driving/background audio input.
+        shot_types=("single", "multi"),
     ),
     # ── i2v (first frame) ──────────────────────────────────────────────
     ModelEntry(
@@ -230,6 +265,10 @@ REGISTRY: tuple[ModelEntry, ...] = (
         cost_note="720P 0.60 元/秒；1080P 1.00 元/秒",
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
+        supports_prompt_extend=True,
+        supports_negative_prompt=True,
+        supports_watermark=True,
+        supports_audio_url=True,
     ),
     ModelEntry(
         mode="i2v",
@@ -245,6 +284,10 @@ REGISTRY: tuple[ModelEntry, ...] = (
         ),
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
+        supports_prompt_extend=True,
+        supports_negative_prompt=True,
+        supports_watermark=True,
+        supports_audio_url=True,
     ),
     ModelEntry(
         mode="i2v",
@@ -264,6 +307,11 @@ REGISTRY: tuple[ModelEntry, ...] = (
         # which media[].type entries appear (first_frame / last_frame /
         # first_clip / driving_audio). Per the 2026-04 official API.
         input_protocol="media_array_i2v",
+        supports_prompt_extend=True,
+        supports_negative_prompt=True,
+        supports_watermark=True,
+        # Driving-audio is packed into input.media[{type:"driving_audio"}].
+        supports_audio_url=True,
     ),
     # ── i2v_end (first + last frame) ───────────────────────────────────
     ModelEntry(
@@ -322,6 +370,10 @@ REGISTRY: tuple[ModelEntry, ...] = (
         cost_note="720P 0.60 元/秒；1080P 1.00 元/秒（多角色互动）",
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
+        supports_prompt_extend=True,
+        supports_negative_prompt=True,
+        supports_watermark=True,
+        supports_audio_url=True,
     ),
     ModelEntry(
         mode="r2v",
@@ -337,6 +389,10 @@ REGISTRY: tuple[ModelEntry, ...] = (
         ),
         resolutions=_WAN_LEGACY_RES,
         duration_range=(5, 15),
+        supports_prompt_extend=True,
+        supports_negative_prompt=True,
+        supports_watermark=True,
+        supports_audio_url=True,
     ),
     # ── video_edit ─────────────────────────────────────────────────────
     ModelEntry(
