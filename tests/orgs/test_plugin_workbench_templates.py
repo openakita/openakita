@@ -44,8 +44,15 @@ def _make_plugin(
     return SimpleNamespace(manifest=manifest, api=api)
 
 
-def _make_pm(plugins: list[SimpleNamespace]) -> SimpleNamespace:
-    return SimpleNamespace(loaded_plugins={p.manifest.id: p for p in plugins})
+def _make_pm(
+    plugins: list[SimpleNamespace],
+    *,
+    tool_definitions: list[dict] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        loaded_plugins={p.manifest.id: p for p in plugins},
+        _external_host_refs={"tool_definitions": list(tool_definitions or [])},
+    )
 
 
 def test_build_workbench_templates_empty_when_pm_is_none():
@@ -156,3 +163,90 @@ def test_deprecated_tools_for_node_flags_removed_tools():
 def test_deprecated_tools_for_node_empty_inputs():
     assert deprecated_tools_for_node([], None) == []
     assert deprecated_tools_for_node([], _make_pm([])) == []
+
+
+def test_build_workbench_templates_handles_registered_tools_as_strings():
+    """Regression: PluginAPI._registered_tools is list[str] in production.
+
+    The workbench picker was crashing with ``AttributeError: 'str' object
+    has no attribute 'get'`` because it assumed dict entries. The fix
+    resolves the full tool schema from the host's ``tool_definitions``
+    list when the plugin stored only names.
+    """
+    plugin = _make_plugin(
+        "tongyi-image",
+        display_zh="通义生图",
+        tools=["tongyi_image_create", "tongyi_image_status"],
+    )
+    pm = _make_pm(
+        [plugin],
+        tool_definitions=[
+            {
+                "name": "tongyi_image_create",
+                "description": "Create image",
+                "input_schema": {"type": "object"},
+            },
+            {
+                "name": "tongyi_image_status",
+                "description": "Check status",
+                "input_schema": {"type": "object"},
+            },
+            {"name": "unrelated_tool", "description": "noise", "input_schema": {}},
+        ],
+    )
+    out = build_workbench_templates(pm)
+    assert len(out) == 1
+    tpl = out[0]
+    assert tpl["tool_names"] == ["tongyi_image_create", "tongyi_image_status"]
+    by_name = {t["name"]: t for t in tpl["tools"]}
+    assert by_name["tongyi_image_create"]["description"] == "Create image"
+    assert by_name["tongyi_image_create"]["input_schema"] == {"type": "object"}
+    assert tpl["suggested_node"]["external_tools"] == [
+        "tongyi_image_create",
+        "tongyi_image_status",
+    ]
+
+
+def test_build_workbench_templates_handles_openai_function_envelope():
+    """Tool definitions may use the OpenAI ``{"function": {...}}`` shape."""
+    plugin = _make_plugin("foo", display_zh="Foo", tools=["foo_run"])
+    pm = _make_pm(
+        [plugin],
+        tool_definitions=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "foo_run",
+                    "description": "Run foo",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ],
+    )
+    out = build_workbench_templates(pm)
+    assert len(out) == 1
+    tool = out[0]["tools"][0]
+    assert tool["name"] == "foo_run"
+    assert tool["description"] == "Run foo"
+    assert tool["input_schema"] == {"type": "object", "properties": {}}
+
+
+def test_build_workbench_templates_string_tools_without_host_defs():
+    """If host tool_definitions is missing, names still surface (empty schema)."""
+    plugin = _make_plugin("bare", display_zh="Bare", tools=["x", "y"])
+    pm = SimpleNamespace(loaded_plugins={"bare": plugin})  # no _external_host_refs
+    out = build_workbench_templates(pm)
+    assert len(out) == 1
+    assert out[0]["tool_names"] == ["x", "y"]
+    for t in out[0]["tools"]:
+        assert t["description"] == ""
+        assert t["input_schema"] == {}
+
+
+def test_deprecated_tools_for_node_with_string_registered_tools():
+    """deprecated_tools_for_node must also accept list[str] entries."""
+    plugin = _make_plugin("p1", tools=["p1_alpha"])
+    pm = _make_pm([plugin])
+    assert deprecated_tools_for_node(
+        ["research", "p1_alpha", "p1_removed"], pm,
+    ) == ["p1_removed"]

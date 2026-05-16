@@ -76,6 +76,72 @@ def _tool_summary(tool: dict) -> dict:
     }
 
 
+def _collect_host_tool_defs(pm: PluginManager | None) -> dict[str, dict]:
+    """Index host-level ``tool_definitions`` by tool name.
+
+    Plugin-registered tools store their full schema in the host's shared
+    ``tool_definitions`` list (see ``PluginAPI.register_tools``), while
+    ``PluginAPI._registered_tools`` only keeps tool *names*. We need the
+    full definitions to surface description/input_schema in the workbench
+    picker UI, so we build a name → def map up front.
+
+    Both Anthropic-flavoured (``{"name", "description", "input_schema"}``)
+    and OpenAI-flavoured (``{"type": "function", "function": {...}}``)
+    shapes are supported.
+    """
+    if pm is None:
+        return {}
+    out: dict[str, dict] = {}
+    refs = getattr(pm, "_external_host_refs", None) or {}
+    tool_defs = refs.get("tool_definitions") if isinstance(refs, dict) else None
+    if not tool_defs:
+        return out
+    try:
+        for td in tool_defs:
+            if not isinstance(td, dict):
+                continue
+            name = td.get("name")
+            if not name:
+                fn = td.get("function")
+                if isinstance(fn, dict):
+                    name = fn.get("name")
+            if name:
+                out[name] = td
+    except Exception:
+        logger.debug("[workbench-templates] failed to index host tool_definitions",
+                     exc_info=True)
+    return out
+
+
+def _resolve_tool_dict(entry: Any, host_defs: dict[str, dict]) -> dict | None:
+    """Turn a ``_registered_tools`` entry into a UI-friendly tool dict.
+
+    ``PluginAPI._registered_tools`` is ``list[str]`` in production (just
+    the registered tool names). Older paths / unit tests sometimes pass
+    full dicts here, so we keep tolerating both shapes.
+    """
+    if isinstance(entry, str):
+        name = entry
+        defn = host_defs.get(name)
+    elif isinstance(entry, dict):
+        name = entry.get("name") or ""
+        defn = entry if name else None
+    else:
+        return None
+    if not name:
+        return None
+    if defn is None:
+        return {"name": name, "description": "", "input_schema": {}}
+    # Unwrap OpenAI function-tool envelope so the UI sees a flat shape.
+    fn = defn.get("function") if isinstance(defn.get("function"), dict) else None
+    base = fn or defn
+    return {
+        "name": name,
+        "description": base.get("description", "") or "",
+        "input_schema": base.get("input_schema") or base.get("parameters") or {},
+    }
+
+
 def build_workbench_templates(pm: PluginManager | None) -> list[dict]:
     """Build workbench node templates from a PluginManager.
 
@@ -86,18 +152,28 @@ def build_workbench_templates(pm: PluginManager | None) -> list[dict]:
     if pm is None:
         return []
 
+    host_tool_defs = _collect_host_tool_defs(pm)
+
     templates: list[dict] = []
     for lp in pm.loaded_plugins.values():
         try:
-            tools = list(getattr(lp.api, "_registered_tools", None) or [])
+            raw_tools = list(getattr(lp.api, "_registered_tools", None) or [])
         except Exception:
             logger.debug(
                 "[workbench-templates] failed to read tools for %s",
                 getattr(lp.manifest, "id", "?"),
                 exc_info=True,
             )
-            tools = []
-        if not tools:
+            raw_tools = []
+        if not raw_tools:
+            continue
+
+        tool_dicts: list[dict] = []
+        for entry in raw_tools:
+            resolved = _resolve_tool_dict(entry, host_tool_defs)
+            if resolved is not None:
+                tool_dicts.append(resolved)
+        if not tool_dicts:
             continue
 
         m = lp.manifest
@@ -106,7 +182,7 @@ def build_workbench_templates(pm: PluginManager | None) -> list[dict]:
         display_zh = m.display_name_zh or m.name or plugin_id
         display_en = m.display_name_en or m.name or plugin_id
         desc_i18n = dict(m.description_i18n or {})
-        tool_names = [t.get("name", "") for t in tools if t.get("name")]
+        tool_names = [t["name"] for t in tool_dicts if t.get("name")]
 
         templates.append(
             {
@@ -119,7 +195,7 @@ def build_workbench_templates(pm: PluginManager | None) -> list[dict]:
                 "description_i18n": desc_i18n,
                 "icon": m.icon or "",
                 "category": m.category or "",
-                "tools": [_tool_summary(t) for t in tools],
+                "tools": [_tool_summary(t) for t in tool_dicts],
                 "tool_names": tool_names,
                 "suggested_node": {
                     "role_title": display_zh,
@@ -165,7 +241,12 @@ def deprecated_tools_for_node(
     for lp in pm.loaded_plugins.values():
         try:
             for t in getattr(lp.api, "_registered_tools", None) or []:
-                name = t.get("name")
+                if isinstance(t, str):
+                    name = t
+                elif isinstance(t, dict):
+                    name = t.get("name")
+                else:
+                    name = None
                 if name:
                     known.add(name)
         except Exception:
