@@ -226,6 +226,38 @@ class TestOrgLastCommand:
         assert "没有任何已完成的组织命令" in reply
 
 
+class TestOrgCommandsDoNotStartTyping:
+    async def test_org_list_returns_before_typing_placeholder(self, gateway, session_manager):
+        """短组织命令应直接回复，不创建“思考中”占位卡片。"""
+        session = create_test_session(chat_id="chat-list", channel="telegram")
+        session_manager.get_session = MagicMock(return_value=session)
+        gateway.bot_config.is_enabled = MagicMock(return_value=True)
+        fake_adapter = SimpleNamespace(
+            send_typing=AsyncMock(),
+            clear_typing=AsyncMock(),
+        )
+        gateway._adapters["telegram"] = fake_adapter
+        fake_mgr = MagicMock()
+        fake_mgr.list_orgs = MagicMock(
+            return_value=[
+                {
+                    "name": "内容工作室",
+                    "status": "active",
+                    "id": "org_content",
+                }
+            ]
+        )
+        msg = create_channel_message(text="/org list", chat_id="chat-list")
+
+        with patch.object(gateway, "_get_org_manager", return_value=fake_mgr):
+            await gateway._handle_message(msg)
+
+        gateway._send_response.assert_awaited()
+        reply = gateway._send_response.await_args.args[1]
+        assert "当前共 1 个组织" in reply
+        fake_adapter.send_typing.assert_not_awaited()
+
+
 class TestSessionMetadataLifecycle:
     """current_org_command / last_org_command 两个 metadata 槽位的迁移正确性。"""
 

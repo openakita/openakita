@@ -3188,6 +3188,116 @@ class MessageGateway:
             return None, "\n".join(lines)
         return None, f"未找到组织「{q}」。请用 `/org list` 或在桌面端查看可用组织名。"
 
+    @staticmethod
+    def _format_org_command_status_card(
+        *,
+        org_display: str,
+        command_id: str,
+        progress_lines: list[str],
+        done: bool = False,
+    ) -> str:
+        lines = [
+            f"已向组织 {org_display} 下发指令，命令 ID：`{command_id}`",
+            "• 查看进度：`/org running`",
+            "• 立即取消：`/org cancel`",
+            "• 重看上次结果：`/org last`",
+            "（期间您发的其他普通消息会排队等待至命令结束）",
+            "",
+            "组织进度：",
+        ]
+        if progress_lines:
+            for line in progress_lines[-12:]:
+                lines.append(f"• {line}")
+        else:
+            lines.append("• 等待组织开始处理")
+        if done:
+            lines.append("")
+            lines.append("✅ 命令已完成")
+        return "\n".join(lines)
+
+    async def _send_org_status_card(
+        self,
+        message: UnifiedMessage,
+        content: str,
+    ) -> str | None:
+        """发送可更新的组织状态卡片；失败时退回普通发送。"""
+        adapter = self._adapters.get(message.channel)
+        if not adapter:
+            await self._send_response(message, content)
+            return None
+        outgoing_meta = dict(message.metadata) if message.metadata else {}
+        if message.channel_user_id:
+            outgoing_meta["channel_user_id"] = message.channel_user_id
+        outgoing = OutgoingMessage.text(
+            chat_id=message.chat_id,
+            text=content,
+            reply_to=message.channel_message_id,
+            thread_id=message.thread_id,
+            parse_mode="markdown",
+            metadata=outgoing_meta,
+        )
+        try:
+            msg_id = await adapter.send_message(outgoing)
+            if not self._is_im_send_delivered(msg_id):
+                return None
+            return str(msg_id or "") or None
+        except Exception:
+            logger.debug("[IM] org status card send failed; falling back", exc_info=True)
+            await self._send_response(message, content)
+            return None
+
+    async def _patch_org_status_card(
+        self,
+        message: UnifiedMessage,
+        card_id: str | None,
+        content: str,
+        *,
+        done: bool = False,
+    ) -> bool:
+        """尽量就地更新组织状态卡片，目前飞书/Lark 支持最稳定。"""
+        if not card_id:
+            return False
+        base_channel = (message.channel or "").split(":")[0].split("_")[0]
+        if base_channel not in {"feishu", "lark"}:
+            return False
+        adapter = self._adapters.get(message.channel)
+        if not adapter or not hasattr(adapter, "_patch_card_content"):
+            return False
+        sk = None
+        if hasattr(adapter, "_make_session_key"):
+            try:
+                sk = adapter._make_session_key(message.chat_id, message.thread_id)
+            except Exception:
+                sk = None
+        try:
+            return bool(await adapter._patch_card_content(card_id, content, sk, final=done))
+        except TypeError:
+            try:
+                return bool(await adapter._patch_card_content(card_id, content, sk))
+            except Exception:
+                return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _append_attachment_media_lines(final_text: str, attachments: list[dict]) -> str:
+        media_lines: list[str] = []
+        seen: set[str] = set()
+        for att in attachments:
+            if not isinstance(att, dict):
+                continue
+            file_path = str(att.get("file_path") or att.get("path") or "").strip()
+            if not file_path:
+                continue
+            key = file_path.lower().replace("\\", "/")
+            if key in seen:
+                continue
+            seen.add(key)
+            media_lines.append(f"MEDIA: {file_path}")
+        if not media_lines:
+            return final_text
+        return (final_text or "文件已生成。").rstrip() + "\n\n" + "\n".join(media_lines)
+
     async def _try_handle_org_command(
         self,
         message: UnifiedMessage,
@@ -3332,35 +3442,71 @@ class MessageGateway:
             )
             self.session_manager.mark_dirty()
             try:
+                progress_lines: list[str] = []
+                progress_seen: set[str] = set()
+                org_display = f"「{org_name}」" if org_name else org_id
+                status_card_id: str | None = None
                 if chat_type != "group":
-                    org_display = f"「{org_name}」" if org_name else org_id
-                    await self._send_response(
+                    status_card_id = await self._send_org_status_card(
                         message,
-                        f"已向组织 {org_display} 下发指令，命令 ID：`{command_id}`\n"
-                        f"• 查看进度：`/org running`\n"
-                        f"• 立即取消：`/org cancel`\n"
-                        f"• 重看上次结果：`/org last`\n"
-                        f"（期间您发的其他普通消息会排队等待至命令结束）",
+                        self._format_org_command_status_card(
+                            org_display=org_display,
+                            command_id=command_id,
+                            progress_lines=progress_lines,
+                        ),
                     )
                 final_text = ""
                 while True:
                     item = await queue.get()
                     if item.get("type") == "org_progress":
-                        summary = item.get("summary") or ""
+                        summary = str(item.get("summary") or "").strip()
                         if summary and chat_type != "group":
-                            await self._send_response(message, f"组织进度：{summary}")
+                            if summary in progress_seen:
+                                continue
+                            progress_seen.add(summary)
+                            progress_lines.append(summary)
+                            status_text = self._format_org_command_status_card(
+                                org_display=org_display,
+                                command_id=command_id,
+                                progress_lines=progress_lines,
+                            )
+                            patched = await self._patch_org_status_card(
+                                message,
+                                status_card_id,
+                                status_text,
+                            )
+                            if not patched and not status_card_id:
+                                await self._send_response(message, f"组织进度：{summary}")
                         continue
                     if item.get("type") == "org_command_done":
                         result = item.get("result")
                         error = item.get("error")
+                        attachments: list[dict] = []
                         if isinstance(result, dict):
                             final_text = str(result.get("result") or result.get("error") or result)
+                            raw_attachments = result.get("file_attachments") or []
+                            if isinstance(raw_attachments, list):
+                                attachments = [a for a in raw_attachments if isinstance(a, dict)]
                         else:
                             final_text = str(error or result or "组织命令已完成")
+                        if attachments:
+                            final_text = self._append_attachment_media_lines(final_text, attachments)
                         session.add_message("user", text, message_id=message.id)
                         session.add_message("assistant", final_text)
                         self._finish_current_org_command(session, result_text=final_text)
                         self.session_manager.mark_dirty()
+                        if chat_type != "group":
+                            await self._patch_org_status_card(
+                                message,
+                                status_card_id,
+                                self._format_org_command_status_card(
+                                    org_display=org_display,
+                                    command_id=command_id,
+                                    progress_lines=progress_lines,
+                                    done=True,
+                                ),
+                                done=True,
+                            )
                         await self._send_response(message, final_text)
                         return True
             finally:
@@ -3596,29 +3742,14 @@ class MessageGateway:
             # ==================== 正常消息处理流程 ====================
 
             # 0. Bot 开关检查（必须在 typing 之前，避免禁用会话触发 typing）
-            bot_namespace = self._get_message_bot_instance_id(message)
             if not self.bot_config.is_enabled(bot_namespace, message.chat_id, message.user_id):
                 logger.debug(
                     f"[Gateway] Bot disabled for {bot_namespace}:{message.chat_id}:{message.user_id}, skipping"
                 )
                 return
 
-            # 1. 启动持续 typing 状态（覆盖预处理 + Agent 全流程）
-            typing_task = asyncio.create_task(self._keep_typing(message))
-
-            # 2. 预处理钩子
-            for hook in self._pre_process_hooks:
-                try:
-                    message = await hook(message)
-                except Exception as hook_err:
-                    logger.warning(
-                        f"[Gateway] Pre-process hook {hook.__qualname__} failed: {hook_err}"
-                    )
-
-            # 3. 媒体预处理（下载图片、语音转文字）
-            await self._preprocess_media(message)
-
-            # 4. 获取或创建会话
+            # 1. 先获取或创建会话。组织指挥台命令会在启动 typing 之前处理，
+            # 避免飞书/Telegram 先创建“思考中...”卡片，短命令回复后又被补发或撤回。
             _msg_sender_name = (message.metadata or {}).get("sender_name", "")
             _msg_chat_name = (message.metadata or {}).get("chat_name", "")
             session = self.session_manager.get_session(
@@ -3662,6 +3793,23 @@ class MessageGateway:
             org_handled = await self._try_handle_org_command(message, session, user_text)
             if org_handled:
                 return
+
+            # 2. 启动持续 typing 状态（覆盖预处理 + Agent 全流程）。
+            # 只有会进入普通 Agent 的消息才需要这个提示；/org list、/org bind、
+            # /org <组织名> 的解析错误等都会在上面直接返回。
+            typing_task = asyncio.create_task(self._keep_typing(message))
+
+            # 3. 预处理钩子
+            for hook in self._pre_process_hooks:
+                try:
+                    message = await hook(message)
+                except Exception as hook_err:
+                    logger.warning(
+                        f"[Gateway] Pre-process hook {hook.__qualname__} failed: {hook_err}"
+                    )
+
+            # 4. 媒体预处理（下载图片、语音转文字）
+            await self._preprocess_media(message)
 
             # 4.1 多Bot绑定：将 adapter 配置的 agent_profile_id 写入新 session
             self._apply_bot_agent_profile(session, bot_namespace)
