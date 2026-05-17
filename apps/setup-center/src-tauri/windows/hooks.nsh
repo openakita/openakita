@@ -189,13 +189,23 @@ Var LegacyMigrated
 ;   1. Kills by process name (Stop-Process + taskkill /T for child trees)
 ;   2. Kills by PID files (reads openakita-*.pid from data dirs)
 ;   3. Kills by install path (catches orphaned/detached child processes)
-;   4. Batch-verifies file locks on every *.dll/*.pyd/*.exe under resources/
-;      (single-file VCRUNTIME140.dll sentinel gives false negatives because AV
-;       releases MS-signed runtimes first while still holding bundled .pyd files)
-;   5. Retries with increasing delays; on persistent lock, writes _oa_locked.txt
-;      so NSIS_HOOK_PREINSTALL / PREUNINSTALL can MessageBox + Abort with a
-;      clear message instead of letting NSIS's native File command surface a
-;      cryptic "Cannot open file for writing" dialog.
+;   4. Batch-verifies file locks on every *.dll/*.pyd/*.exe under resources/ as
+;      a DIAGNOSTIC ONLY: writes the locked list to _oa_locked.txt + a
+;      timestamped copy under %USERPROFILE%\.openakita\logs\, but ALWAYS exits
+;      with code 0 so NSIS's native File command (with its built-in retry loop
+;      and "Retry/Cancel" dialog) can take over.
+;
+;      Why exit 0 even when locked:
+;        Earlier 7aa8eab2 used exit 1 + MessageBox + Abort, but Test-Locked
+;        opens files with FileShare.None — that gets confused by AV oplocks,
+;        Windows Search, file-readonly bits, SmartScreen tail scans, and even
+;        an open Explorer thumbnail handle. With ~700 .pyd files in the
+;        embedded Python resources, the 4-round × 20s budget is far too tight
+;        for AV scanners that run a full scan on freshly extracted DLLs after
+;        an old uninstall, which led to "无法继续安装" dead-ends with no user
+;        bypass — including this exact regression report.
+;        NSIS's File command already retries with a user-visible Retry/Cancel
+;        dialog, so we surface the diagnostic but do NOT block.
 ; All logic in ONE PowerShell process — eliminates 6+ separate PS startup overhead.
 !macro _OpenAkita_WriteKillScript
   InitPluginsDir
@@ -287,9 +297,21 @@ Var LegacyMigrated
   FileWrite $R9 "        exit 0$\r$\n"
   FileWrite $R9 "    }$\r$\n"
   FileWrite $R9 "}$\r$\n"
-  ; Persistent lock — surface to NSIS instead of silent exit 0 + obscure File error.
+  ; Persistent lock — write diagnostic file (NSIS uses it for DetailPrint warning)
+  ; and copy to the user log dir so it survives PLUGINSDIR cleanup. We DO NOT
+  ; abort here; NSIS's native File command has its own Retry/Cancel dialog and
+  ; in practice the leftover oplocks are released before the File loop reaches
+  ; them. See the macro header for the regression-driven rationale.
   FileWrite $R9 "$$stillLocked | Out-File -FilePath $$lockedListPath -Encoding utf8 -Force$\r$\n"
-  FileWrite $R9 "exit 1$\r$\n"
+  FileWrite $R9 "try {$\r$\n"
+  FileWrite $R9 "    $$logDir = Join-Path $$env:USERPROFILE '.openakita\logs'$\r$\n"
+  FileWrite $R9 "    if (-not (Test-Path -LiteralPath $$logDir)) {$\r$\n"
+  FileWrite $R9 "        New-Item -ItemType Directory -Path $$logDir -Force -EA $$EA | Out-Null$\r$\n"
+  FileWrite $R9 "    }$\r$\n"
+  FileWrite $R9 "    $$ts = Get-Date -Format 'yyyyMMdd_HHmmss'$\r$\n"
+  FileWrite $R9 "    $$stillLocked | Out-File -FilePath (Join-Path $$logDir ('install_locked_' + $$ts + '.log')) -Encoding utf8 -Force$\r$\n"
+  FileWrite $R9 "} catch {}$\r$\n"
+  FileWrite $R9 "exit 0$\r$\n"
   FileClose $R9
 !macroend
 
@@ -306,16 +328,20 @@ Var LegacyMigrated
   DetailPrint "Stopping OpenAkita processes..."
   !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
 
-  ; Persistent file lock detected by _oa_kill.ps1 (4 rounds × 20s could not
-  ; release every *.dll/*.pyd/*.exe under resources/). Abort with a clear
-  ; instruction instead of letting NSIS's native File command fail later
-  ; with the obscure "Cannot open file for writing" dialog.
-  ; /SD IDOK: defensive default for any future /S (silent) invocation —
-  ; passive mode (/P used by Tauri updater) does not call SetSilent so the
-  ; MessageBox still shows interactively; this only kicks in if /S is added.
+  ; If _oa_kill.ps1 left a diagnostic _oa_locked.txt (couldn't release every
+  ; *.dll/*.pyd/*.exe under resources/ within the 20s budget), surface it as a
+  ; DetailPrint warning only — NSIS's native File command retries on its own
+  ; and in practice the residual oplocks (typically AV tail-scans) clear
+  ; before the File loop reaches them. The full locked-file list is also
+  ; copied to %USERPROFILE%\.openakita\logs\install_locked_*.log for support.
+  ;
+  ; Why no MessageBox + Abort: 7aa8eab2 originally aborted here, but with
+  ; ~700 .pyd files in the embedded Python runtime + Test-Locked treating
+  ; every IO exception (UnauthorizedAccess / SmartScreen / Defender oplock /
+  ; readonly bit) as a hard lock, this caused unrecoverable "无法继续安装"
+  ; dead-ends with no user bypass — a regression vs every prior installer.
   ${If} ${FileExists} "$PLUGINSDIR\_oa_locked.txt"
-    MessageBox MB_OK|MB_ICONSTOP "$(installAbortLocked)" /SD IDOK
-    Abort
+    DetailPrint "$(installAbortLocked)"
   ${EndIf}
 
   ; ── Legacy "OpenAkita Desktop" → "OpenAkitaDesktop" migration ──
@@ -399,11 +425,13 @@ Var LegacyMigrated
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
 
-  ; Same persistent-lock guard as PREINSTALL (uninstaller has its own
+  ; Same diagnostic-only handling as PREINSTALL (uninstaller has its own
   ; $PLUGINSDIR, so the marker file is independent of the install side).
+  ; Detail-print warning only — uninstaller mostly removes files which has
+  ; its own retry/skip semantics and locked binaries are usually deletable
+  ; via MOVEFILE_DELAY_UNTIL_REBOOT (see Delete /REBOOTOK at install end).
   ${If} ${FileExists} "$PLUGINSDIR\_oa_locked.txt"
-    MessageBox MB_OK|MB_ICONSTOP "$(installAbortLocked)" /SD IDOK
-    Abort
+    DetailPrint "$(installAbortLocked)"
   ${EndIf}
 !macroend
 

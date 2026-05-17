@@ -678,9 +678,15 @@ LangString cliPathHint ${LANG_ENGLISH} "Tip: After adding to PATH, you can type 
 LangString cliExamples ${LANG_SIMPCHINESE} "命令示例：$\n  oa serve    — 启动后端服务$\n  oa status   — 查看运行状态$\n  openakita run — 单次执行"
 LangString cliExamples ${LANG_ENGLISH} "Examples:$\n  oa serve    — Start backend service$\n  oa status   — Check running status$\n  openakita run — Run a single task"
 
-; Persistent file-lock abort (consumed by NSIS_HOOK_PREINSTALL / PREUNINSTALL in hooks.nsh)
-LangString installAbortLocked ${LANG_SIMPCHINESE} "无法继续安装：检测到 OpenAkita 的部分文件被系统占用且无法释放。$\n$\n请尝试以下步骤：$\n1. 关闭所有 OpenAkita 窗口和命令行进程$\n2. 在任务管理器中结束所有 openakita-* 进程$\n3. 若仍失败，请重启电脑后再次运行安装程序"
-LangString installAbortLocked ${LANG_ENGLISH} "Cannot continue installation: some OpenAkita files are locked by the system and cannot be released.$\n$\nPlease try:$\n1. Close all OpenAkita windows and CLI processes$\n2. End all openakita-* processes in Task Manager$\n3. If the issue persists, restart your computer and re-run the installer"
+; Diagnostic-only warning surfaced by NSIS_HOOK_PREINSTALL / PREUNINSTALL in hooks.nsh
+; via DetailPrint when _oa_kill.ps1 could not confirm every *.dll/*.pyd/*.exe was
+; unlocked within its 20s budget. Installation continues regardless — NSIS's
+; native File command has its own Retry/Cancel dialog and the residual oplocks
+; (typically AV tail-scans) usually clear before the File loop reaches them.
+; The full locked-file list is written to %USERPROFILE%\.openakita\logs\
+; install_locked_<timestamp>.log for post-mortem inspection.
+LangString installAbortLocked ${LANG_SIMPCHINESE} "提示：检测到部分 OpenAkita 文件可能仍被占用（杀毒软件扫描或 Windows 索引常见），安装将继续。如最终失败，请查看 %USERPROFILE%\.openakita\logs\install_locked_*.log，关闭相关 openakita-* 进程后重试。"
+LangString installAbortLocked ${LANG_ENGLISH} "Notice: Some OpenAkita files may still be in use (commonly AV scans or Windows indexing). Installation will proceed. If it ultimately fails, see %USERPROFILE%\.openakita\logs\install_locked_*.log, close related openakita-* processes, and retry."
 
 Function .onInit
  ${GetOptions} $CMDLINE "/P" $PassiveMode
