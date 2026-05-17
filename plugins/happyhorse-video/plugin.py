@@ -7,8 +7,9 @@ Wires together the 12 generation modes (HappyHorse 1.0 + Wan 2.6/2.7 +
   (catalog / settings / probe / upload / tasks / cost-preview /
   storyboard / long-video / storage / healthz / python-deps /
   voices / figures / SSE).
-- 20 LLM tools registered through ``api.register_tools`` so an org
-  agent (e.g. the new HAPPYHORSE_VIDEO_STUDIO template) can drive
+- 22 LLM tools registered through ``api.register_tools`` so an org
+  agent (e.g. the default ``aigc-video-studio`` template which now
+  splits this plugin into per-category workbench nodes) can drive
   every mode by name and the OrgRuntime hook can ingest the produced
   ``video_url`` / ``image_urls`` / ``last_frame_url`` / ``asset_ids``
   automatically. The ``hh_image_*`` family covers seven image studio
@@ -17,8 +18,11 @@ Wires together the 12 generation modes (HappyHorse 1.0 + Wan 2.6/2.7 +
   / ``hh_video_edit`` / ``hh_photo_speak`` / ``hh_video_relip`` /
   ``hh_video_reface`` / ``hh_pose_drive`` / ``hh_avatar_compose`` cover
   video and digital-human pipelines; ``hh_long_video_create`` drives
-  storyboard chains; ``hh_status`` / ``hh_list`` / ``hh_cost_preview``
-  are utility tools.
+  storyboard chains; ``hh_storyboard_decompose`` wraps the Brain LLM
+  call that turns a free-form story into a structured segments JSON;
+  ``hh_video_concat`` exposes the ffmpeg-based long-video concatenation
+  with transition normalisation; ``hh_status`` / ``hh_list`` /
+  ``hh_cost_preview`` are utility tools.
 - Plugin lifecycle (``on_load`` / ``on_unload``) that boots the SQLite
   task manager, the DashScope client, and a lazy ``oss2`` /
   ``edge-tts`` / ``mutagen`` background install via dep_bootstrap.
@@ -47,13 +51,16 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 import time
 import uuid
+from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 PLUGIN_ID = "happyhorse-video"
@@ -88,6 +95,7 @@ from happyhorse_long_video import (  # noqa: E402
     concat_videos,
     decompose_storyboard,
     ffmpeg_available,
+    normalize_transition,
 )
 from happyhorse_model_registry import default_model  # noqa: E402
 from happyhorse_models import (  # noqa: E402
@@ -301,7 +309,10 @@ class Plugin(PluginBase):
         self._sysdeps = SystemDepsManager()
         self._poll_tasks: dict[str, asyncio.Task[Any]] = {}
         self._chain_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._figure_detect_tasks: dict[str, asyncio.Task[Any]] = {}
         self._pending_create: dict[str, asyncio.Future[Any]] = {}
+        self._storyboard_decompose_lock = asyncio.Lock()
+        self._storyboard_decompose_running = False
         self._sse_subscribers: list[asyncio.Queue[dict[str, Any]]] = []
 
         # Lazy preinstall — non-fatal if it fails (install on first use).
@@ -349,6 +360,18 @@ class Plugin(PluginBase):
         except Exception as exc:  # noqa: BLE001
             logger.warning("happyhorse-video: stale task drain error: %s", exc)
 
+
+        try:
+            pending_figures = await self._tm.list_pending_figures()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("happyhorse-video: resume figure detects failed: %s", exc)
+            pending_figures = []
+        for fig in pending_figures:
+            self._spawn_figure_detect(
+                str(fig.get("id") or ""),
+                str(fig.get("oss_url") or fig.get("preview_url") or ""),
+            )
+
     async def on_unload(self) -> None:
         for tid, t in list(self._poll_tasks.items()):
             if not t.done():
@@ -376,6 +399,19 @@ class Plugin(PluginBase):
                         gid,
                         exc,
                     )
+        for fid, t in list(self._figure_detect_tasks.items()):
+            if not t.done():
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "happyhorse-video: figure detect %s drain error: %s",
+                        fid,
+                        exc,
+                    )
         for fut in list(self._pending_create.values()):
             if not fut.done():
                 fut.cancel()
@@ -391,6 +427,70 @@ class Plugin(PluginBase):
             await self._tm.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("happyhorse-video: tm close error: %s", exc)
+
+    # ── Figure pre-check ───────────────────────────────────────────────
+
+    def _spawn_figure_detect(self, fig_id: str, image_url: str) -> None:
+        if not fig_id:
+            return
+        running = self._figure_detect_tasks.get(fig_id)
+        if running is not None and not running.done():
+            return
+        task = self._api.spawn_task(
+            self._run_figure_detect(fig_id, image_url),
+            name=f"{PLUGIN_ID}:figure-detect:{fig_id}",
+        )
+        self._figure_detect_tasks[fig_id] = task
+
+    async def _run_figure_detect(self, fig_id: str, image_url: str) -> None:
+        image_url = (image_url or "").strip()
+        if not image_url:
+            await self._tm.update_figure_detect(
+                fig_id,
+                status="skipped",
+                message="OSS 未配置或上传失败，DashScope 无法读取本地预览图；请修正 OSS 后重新上传。",
+            )
+            self._figure_detect_tasks.pop(fig_id, None)
+            return
+        if not self._client.has_api_key():
+            await self._tm.update_figure_detect(
+                fig_id,
+                status="skipped",
+                message="DashScope API Key 未配置，已跳过预检；配置后请重新上传。",
+            )
+            self._figure_detect_tasks.pop(fig_id, None)
+            return
+        try:
+            result = await self._client.face_detect(image_url)
+            await self._tm.update_figure_detect(
+                fig_id,
+                status="pass",
+                message="预检通过：检测到可用于数字人的清晰真人正脸。",
+                humanoid=bool(result.get("humanoid")),
+            )
+        except asyncio.CancelledError:
+            raise
+        except VendorError as exc:
+            raw = str(exc)
+            low = raw.lower()
+            hint = ""
+            if "humanoid" in low or "face-detect rejected" in low:
+                hint = "未检测到清晰真人正脸，请换单人正面、无遮挡、五官清晰的人像图。"
+            elif "datainspection" in low.replace(".", "").replace("_", ""):
+                hint = "图片未通过 DashScope 数据审查，请改用标准 jpg/png/webp，避免水印、多人或过大图片。"
+            elif "accessdenied" in low.replace(" ", "") or "403" in raw:
+                hint = "DashScope 权限不足或地域不匹配，请检查 API Key、业务空间和 wan2.2-s2v-detect 权限。"
+            message = f"{hint}\n[{exc.kind}] {raw[:240]}".strip()
+            await self._tm.update_figure_detect(fig_id, status="fail", message=message)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("happyhorse-video: figure detect %s crashed", fig_id)
+            await self._tm.update_figure_detect(
+                fig_id,
+                status="fail",
+                message=f"预检异常：{exc!s}"[:500],
+            )
+        finally:
+            self._figure_detect_tasks.pop(fig_id, None)
 
     # ── Settings I/O (sync read used by client / oss / pipeline) ──────
 
@@ -1035,6 +1135,91 @@ class Plugin(PluginBase):
             target.write_bytes(resp.content)
         return str(target)
 
+    @staticmethod
+    def _safe_output_segment(value: object, *, fallback: str = "output") -> str:
+        text = str(value or "").strip()
+        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", text)
+        text = text.strip(" .") or fallback
+        return text[:120]
+
+    def _configured_output_path(
+        self,
+        *,
+        kind: str,
+        task_id: str,
+        mode: str,
+        model_id: str,
+        source_name: str,
+        index: int = 1,
+        created_at: float | None = None,
+    ) -> Path:
+        """Build an output path that honors Settings → Storage.
+
+        Image tasks do not use ``happyhorse_pipeline._step_finalize``, so
+        without this helper they kept writing to ``outputs/images/{task_id}``
+        and ignored the user's subdirectory / naming preferences.
+        """
+
+        cfg = self._read_settings()
+        subdir_mode = str(cfg.get("output_subdir_mode") or "task")
+        naming_rule = str(cfg.get("output_naming_rule") or "{filename}").strip() or "{filename}"
+        if subdir_mode not in {"task", "date", "mode", "date_mode", "flat"}:
+            subdir_mode = "task"
+
+        now = datetime.fromtimestamp(created_at or time.time()).astimezone()
+        date = now.strftime("%Y-%m-%d")
+        timestr = now.strftime("%H%M%S")
+        datetime_str = f"{date}_{timestr}"
+        source = Path(source_name or f"{kind}_{index}.png")
+        ext = source.suffix.lstrip(".") or ("png" if kind in {"image", "images"} else "bin")
+        filename = source.stem or f"{kind}_{index}"
+        mode_part = self._safe_output_segment(mode, fallback="mode")
+
+        root = self._active_data_dir() / "outputs" / self._safe_output_segment(kind, fallback="files")
+        if subdir_mode == "task":
+            out_dir = root / self._safe_output_segment(task_id, fallback="task")
+        elif subdir_mode == "date":
+            out_dir = root / date
+        elif subdir_mode == "mode":
+            out_dir = root / mode_part
+        elif subdir_mode == "date_mode":
+            out_dir = root / date / mode_part
+        else:
+            out_dir = root
+
+        values = {
+            "task_id": task_id,
+            "short_id": task_id[:8],
+            "date": date,
+            "time": timestr,
+            "datetime": datetime_str,
+            "mode": mode_part,
+            "model": self._safe_output_segment(model_id, fallback="model"),
+            "filename": self._safe_output_segment(filename, fallback=f"{kind}_{index}"),
+            "ext": ext,
+        }
+
+        class _Defaults(dict):
+            def __missing__(self, key: str) -> str:
+                return "{" + key + "}"
+
+        stem = naming_rule.format_map(_Defaults(values))
+        stem = self._safe_output_segment(stem, fallback=f"{kind}_{index}")
+        if stem.lower().endswith("." + ext.lower()):
+            stem = stem[: -(len(ext) + 1)]
+        name = f"{stem}.{ext}"
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        target = out_dir / name
+        if target.exists():
+            n = 2
+            while True:
+                candidate = out_dir / f"{stem}-{n}.{ext}"
+                if not candidate.exists():
+                    return candidate
+                n += 1
+        return target
+
     async def _ensure_images_safe(self, urls: list[str]) -> list[str]:
         """Best-effort face-detect on input images before composing.
 
@@ -1070,6 +1255,10 @@ class Plugin(PluginBase):
             raise HTTPException(status_code=400, detail=f"不支持的图片模式: {body.mode}")
         if not self._client.has_api_key():
             raise HTTPException(status_code=400, detail="请先在设置中配置 DashScope API Key")
+        if body.client_request_id:
+            existing = await self._tm.get_task_by_client_request_id(body.client_request_id)
+            if existing:
+                return existing
 
         params = body.model_dump()
         if body.from_asset_ids:
@@ -1151,7 +1340,11 @@ class Plugin(PluginBase):
     async def _run_image_task(self, task_id: str, params: dict[str, Any]) -> None:
         mode = str(params.get("mode") or "image_text2img")
         try:
-            image_urls = await self._submit_image_request(params)
+            if mode == "image_background":
+                images = [str(u) for u in (params.get("images") or []) if u]
+                if images:
+                    await self._assert_background_source_has_transparency(images[0])
+            image_urls = await self._submit_image_request(params, local_task_id=task_id)
             if not image_urls:
                 raise HTTPException(status_code=502, detail="DashScope 未返回图片 URL")
             image_paths, asset_ids = await self._download_publish_images(
@@ -1159,6 +1352,7 @@ class Plugin(PluginBase):
                 image_urls=image_urls,
                 prompt=str(params.get("prompt") or params.get("product_name") or ""),
                 mode=mode,
+                model_id=str(params.get("model_id") or ""),
             )
             await self._tm.update_task_safe(
                 task_id,
@@ -1175,6 +1369,13 @@ class Plugin(PluginBase):
             )
         except Exception as exc:  # noqa: BLE001
             detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            logger.exception(
+                "happyhorse-video: image task failed task_id=%s mode=%s model_id=%s detail=%s",
+                task_id,
+                mode,
+                params.get("model_id") or "",
+                detail,
+            )
             await self._tm.update_task_safe(
                 task_id,
                 status="failed",
@@ -1187,7 +1388,49 @@ class Plugin(PluginBase):
                 {"task_id": task_id, "status": "failed", "mode": mode, "error_message": str(detail)},
             )
 
-    async def _submit_image_request(self, params: dict[str, Any]) -> list[str]:
+    async def _assert_background_source_has_transparency(self, image_url: str) -> None:
+        """DashScope background generation expects an RGBA cutout, not a full photo."""
+        import httpx
+        from PIL import Image
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.get(image_url)
+                resp.raise_for_status()
+            with Image.open(BytesIO(resp.content)) as img:
+                bands = img.getbands()
+                if "A" not in bands:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "背景生成需要上传带透明背景的 PNG 抠图（RGBA 四通道）。"
+                            "当前输入图没有透明通道，模型会把整张照片当作主体保留，"
+                            "因此背景看起来不会被替换。请先抠出主体并导出透明 PNG，"
+                            "或改用「图像编辑」模式描述“保持人物不变，替换背景”。"
+                        ),
+                    )
+                alpha = img.getchannel("A")
+                alpha_min, _ = alpha.getextrema()
+                if int(alpha_min) >= 250:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "背景生成需要主体外侧存在透明区域。当前 PNG 虽有 Alpha 通道，"
+                            "但几乎全图不透明，模型会保留原背景。请上传已抠图的透明 PNG。"
+                        ),
+                    )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "happyhorse-video: background source transparency probe skipped for %s: %s",
+                image_url,
+                exc,
+            )
+
+    async def _submit_image_request(
+        self, params: dict[str, Any], *, local_task_id: str | None = None
+    ) -> list[str]:
         mode = str(params.get("mode") or "image_text2img")
         model = image_model_for(str(params.get("model_id") or ""))
         images = [str(u) for u in (params.get("images") or []) if u]
@@ -1219,6 +1462,8 @@ class Plugin(PluginBase):
                 style_index=int(params.get("style_index") or 0),
                 style_ref_url=str(params.get("style_ref_url") or "") or None,
             )
+            if local_task_id:
+                await self._tm.update_task_safe(local_task_id, dashscope_id=tid)
             return await self._wait_for_image_urls(tid)
 
         if mode == "image_background":
@@ -1230,6 +1475,8 @@ class Plugin(PluginBase):
                 noise_level=int(params.get("noise_level") or 300),
                 ref_prompt_weight=float(params.get("ref_prompt_weight") or 0.5),
             )
+            if local_task_id:
+                await self._tm.update_task_safe(local_task_id, dashscope_id=tid)
             return await self._wait_for_image_urls(tid)
 
         if mode == "image_outpaint":
@@ -1240,6 +1487,8 @@ class Plugin(PluginBase):
                 y_scale=params.get("y_scale"),
                 best_quality=bool(params.get("best_quality")),
             )
+            if local_task_id:
+                await self._tm.update_task_safe(local_task_id, dashscope_id=tid)
             return await self._wait_for_image_urls(tid)
 
         if mode == "image_sketch":
@@ -1251,6 +1500,8 @@ class Plugin(PluginBase):
                 n=n,
                 sketch_weight=int(params.get("sketch_weight") or 3),
             )
+            if local_task_id:
+                await self._tm.update_task_safe(local_task_id, dashscope_id=tid)
             return await self._wait_for_image_urls(tid)
 
         if mode == "image_ecommerce":
@@ -1341,11 +1592,15 @@ class Plugin(PluginBase):
         image_urls: list[str],
         prompt: str,
         mode: str,
+        model_id: str = "",
     ) -> tuple[list[str], list[str]]:
         import httpx
 
-        out_dir = self._active_data_dir() / "outputs" / "images" / task_id
-        out_dir.mkdir(parents=True, exist_ok=True)
+        task_row = await self._tm.get_task(task_id)
+        created_at = None
+        if isinstance(task_row, dict):
+            created_at = task_row.get("created_at")
+            model_id = model_id or str(task_row.get("model_id") or "")
         paths: list[str] = []
         asset_ids: list[str] = []
         async with httpx.AsyncClient(
@@ -1356,8 +1611,15 @@ class Plugin(PluginBase):
                 name = url.split("?", 1)[0].rsplit("/", 1)[-1] or f"image_{idx}.png"
                 if "." not in name:
                     name = f"{name}.png"
-                safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:120] or f"image_{idx}.png"
-                path = out_dir / f"{idx:02d}_{safe}"
+                path = self._configured_output_path(
+                    kind="images",
+                    task_id=task_id,
+                    mode=mode,
+                    model_id=model_id,
+                    source_name=name,
+                    index=idx,
+                    created_at=float(created_at or time.time()),
+                )
                 resp = await cli.get(url)
                 if resp.status_code != 200:
                     logger.warning("happyhorse-video image download failed: %s", resp.status_code)
@@ -1724,6 +1986,105 @@ class Plugin(PluginBase):
                     "required": ["segments"],
                 },
             },
+            {
+                "name": "hh_storyboard_decompose",
+                "description": (
+                    "Decompose a story / brief into a structured "
+                    "storyboard JSON using the platform Brain LLM. "
+                    "Returns {ok, task_id, segments: [...], total_duration, "
+                    "segment_duration, aspect_ratio, style}. Each segment "
+                    "carries prompt / duration / key_frame_description / "
+                    "end_frame_description / transition_to_next (cut, "
+                    "crossfade, ai_extend) / camera_notes — directly "
+                    "consumable by hh_long_video_create."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "story": {
+                            "type": "string",
+                            "description": "中文剧本 / 选题 / 故事概要。",
+                        },
+                        "total_duration": {
+                            "type": "integer",
+                            "default": 60,
+                            "description": "成片总时长（秒）。",
+                        },
+                        "segment_duration": {
+                            "type": "integer",
+                            "default": 10,
+                            "description": "每段分镜时长（秒）。",
+                        },
+                        "aspect_ratio": {
+                            "type": "string",
+                            "default": "16:9",
+                        },
+                        "style": {
+                            "type": "string",
+                            "default": "电影级画质",
+                            "description": "整体视觉风格描述。",
+                        },
+                    },
+                    "required": ["story"],
+                },
+            },
+            {
+                "name": "hh_video_concat",
+                "description": (
+                    "Concatenate finished segment videos into a final "
+                    "long video via ffmpeg. Pass the task_ids of "
+                    "completed hh_i2v / hh_long_video_create segments "
+                    "(each must already have a local video_path). "
+                    "Transition is normalised to 'none' (lossless cut) "
+                    "or 'crossfade' (xfade). Returns {ok, task_id, "
+                    "output_path, preview_url, asset_ids, transition}."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "task_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "至少 2 个已完成且本地落盘的视频任务 ID，"
+                                "按出场顺序排列；插件会按 chain_index 二次"
+                                "排序。"
+                            ),
+                        },
+                        "transition": {
+                            "type": "string",
+                            "enum": [
+                                "none",
+                                "cut",
+                                "crossfade",
+                                "fade",
+                                "xfade",
+                                "dissolve",
+                                "ai_extend",
+                            ],
+                            "default": "none",
+                            "description": (
+                                "转场方式；插件会归一化为 'none' "
+                                "或 'crossfade'。"
+                            ),
+                        },
+                        "fade_duration": {
+                            "type": "number",
+                            "default": 0.5,
+                            "description": (
+                                "crossfade 转场时长（秒），仅在 "
+                                "transition 归一化为 crossfade 时生效。"
+                            ),
+                        },
+                        "output_name": {
+                            "type": "string",
+                            "default": "",
+                            "description": "成片文件名（可为空，默认 完整长视频.mp4）。",
+                        },
+                    },
+                    "required": ["task_ids"],
+                },
+            },
         ]
 
     # ── LLM tool dispatch ──────────────────────────────────────────────
@@ -1737,6 +2098,10 @@ class Plugin(PluginBase):
             return await self._tool_cost_preview(args)
         if tool_name == "hh_long_video_create":
             return await self._tool_long_video_create(args)
+        if tool_name == "hh_storyboard_decompose":
+            return await self._tool_storyboard_decompose(args)
+        if tool_name == "hh_video_concat":
+            return await self._tool_video_concat(args)
 
         image_mode_lookup = {
             "hh_image_create": "image_text2img",
@@ -1922,6 +2287,393 @@ class Plugin(PluginBase):
                 {"ok": False, "error": str(e), "terminal": True},
                 ensure_ascii=False,
             )
+
+    async def _tool_storyboard_decompose(self, args: dict[str, Any]) -> str:
+        """LLM-tool wrapper around ``POST /storyboard/decompose``.
+
+        Unlike the REST route (which returns a task_id and runs in the
+        background), the tool path awaits the Brain call synchronously
+        so the calling agent can immediately consume the segments JSON.
+        We still create a task row + emit broadcasts so the run shows
+        up in the Tasks tab, and share the same ``_storyboard_decompose_lock``
+        to keep Brain calls serialised.
+        """
+        if not self._api.has_permission("brain.access"):
+            return json.dumps(
+                {"ok": False, "error": "missing brain.access permission", "terminal": True},
+                ensure_ascii=False,
+            )
+        brain = self._api.get_brain()
+        if not brain:
+            return json.dumps(
+                {"ok": False, "error": "brain unavailable", "terminal": True},
+                ensure_ascii=False,
+            )
+        try:
+            body = StoryboardDecomposeBody(**args)
+        except ValidationError as exc:
+            return json.dumps(
+                {"ok": False, "error": str(exc), "terminal": True},
+                ensure_ascii=False,
+            )
+        request_params: dict[str, Any] = {
+            "story": body.story,
+            "total_duration": body.total_duration,
+            "segment_duration": body.segment_duration,
+            "aspect_ratio": body.aspect_ratio,
+            "style": body.style,
+        }
+        prompt_preview = (body.story or "").strip()
+        if len(prompt_preview) > 200:
+            prompt_preview = prompt_preview[:200] + "…"
+        try:
+            task_id = await self._tm.create_task(
+                mode="storyboard_decompose",
+                model_id="brain",
+                prompt=prompt_preview or "分镜草稿",
+                params=request_params,
+            )
+            await self._tm.update_task_safe(task_id, status="running")
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps(
+                {"ok": False, "error": str(exc), "terminal": True},
+                ensure_ascii=False,
+            )
+        self._broadcast(
+            "task_update",
+            {
+                "task_id": task_id,
+                "status": "running",
+                "mode": "storyboard_decompose",
+            },
+        )
+        try:
+            async with self._storyboard_decompose_lock:
+                self._storyboard_decompose_running = True
+                try:
+                    result = await decompose_storyboard(
+                        brain=brain,
+                        story=body.story,
+                        total_duration=body.total_duration,
+                        segment_duration=body.segment_duration,
+                        ratio=body.aspect_ratio,
+                        style=body.style,
+                    )
+                finally:
+                    self._storyboard_decompose_running = False
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "happyhorse-video: storyboard decompose tool crashed task=%s",
+                task_id,
+            )
+            await self._tm.update_task_safe(
+                task_id,
+                status="failed",
+                error_kind="server",
+                error_message=str(exc) or "拆分镜失败",
+                completed_at=time.time(),
+            )
+            self._broadcast(
+                "task_update",
+                {"task_id": task_id, "status": "failed"},
+            )
+            return json.dumps(
+                {"ok": False, "task_id": task_id, "error": str(exc), "terminal": True},
+                ensure_ascii=False,
+            )
+        segments = result.get("segments") or [] if isinstance(result, dict) else []
+        ok = isinstance(result, dict) and "error" not in result
+        if not ok:
+            err = (result or {}).get("error") if isinstance(result, dict) else "拆分镜失败"
+            await self._tm.update_task_safe(
+                task_id,
+                status="failed",
+                error_kind="model",
+                error_message=str(err) or "拆分镜失败",
+                completed_at=time.time(),
+            )
+            self._broadcast(
+                "task_update",
+                {"task_id": task_id, "status": "failed"},
+            )
+            return json.dumps(
+                {"ok": False, "task_id": task_id, "error": err or "拆分镜失败"},
+                ensure_ascii=False,
+            )
+        final_params = {**request_params, **(result or {})}
+        await self._tm.update_task_safe(
+            task_id,
+            status="succeeded",
+            params_json=final_params,
+            completed_at=time.time(),
+        )
+        self._broadcast(
+            "task_update",
+            {
+                "task_id": task_id,
+                "status": "succeeded",
+                "mode": "storyboard_decompose",
+            },
+        )
+        row = await self._tm.get_task(task_id)
+        base = self._task_to_tool_payload(row) if row else {
+            "ok": True,
+            "task_id": task_id,
+            "status": "succeeded",
+            "mode": "storyboard_decompose",
+            "model_id": "brain",
+            "video_url": "",
+            "video_path": "",
+            "last_frame_url": "",
+            "last_frame_path": "",
+            "image_urls": [],
+            "local_paths": [],
+            "asset_ids": [],
+        }
+        payload: dict[str, Any] = {
+            **base,
+            "segments": segments,
+            "total_duration": body.total_duration,
+            "segment_duration": body.segment_duration,
+            "aspect_ratio": body.aspect_ratio,
+            "style": body.style,
+        }
+        for key in ("title", "summary", "characters", "scene_refs"):
+            if isinstance(result, dict) and key in result:
+                payload[key] = result[key]
+        return json.dumps(payload, ensure_ascii=False)
+
+    async def _tool_video_concat(self, args: dict[str, Any]) -> str:
+        """LLM-tool wrapper around ``POST /long-video/concat``.
+
+        Mirrors the REST handler: collect each task's downloaded
+        ``video_path``, order by ``chain_index``, run ffmpeg, persist a
+        ``long_video_concat`` task row, publish an Asset Bus entry, and
+        return ``{ok, task_id, output_path, preview_url, asset_ids,
+        transition}``.
+        """
+        try:
+            body = ConcatBody(**args)
+        except ValidationError as exc:
+            return json.dumps(
+                {"ok": False, "error": str(exc), "terminal": True},
+                ensure_ascii=False,
+            )
+        ordered_segments: list[tuple[int, int, dict[str, Any]]] = []
+        source_chain_group_ids: set[str] = set()
+        for order, tid in enumerate(body.task_ids):
+            row = await self._tm.get_task(tid)
+            if row and row.get("video_path"):
+                params = row.get("params") or {}
+                raw_index = (
+                    row.get("chain_index")
+                    or params.get("segment_index")
+                    or params.get("chain_index")
+                )
+                try:
+                    chain_index = int(raw_index)
+                except (TypeError, ValueError):
+                    chain_index = order + 1
+                ordered_segments.append((chain_index, order, row))
+                if row.get("chain_group_id"):
+                    source_chain_group_ids.add(str(row["chain_group_id"]))
+        ordered_segments.sort(key=lambda item: (item[0], item[1]))
+        paths = [str(row["video_path"]) for _, _, row in ordered_segments]
+        ordered_task_ids = [str(row["id"]) for _, _, row in ordered_segments]
+        if len(paths) < 2:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": "至少需要 2 段已下载的视频片段才能拼接",
+                    "terminal": True,
+                },
+                ensure_ascii=False,
+            )
+
+        concat_task_id = await self._tm.create_task(
+            mode="long_video_concat",
+            model_id="ffmpeg-concat",
+            prompt=f"完整长视频拼接成片（{len(paths)} 段）",
+            params={
+                "task_ids": ordered_task_ids,
+                "requested_task_ids": list(body.task_ids),
+                "transition": body.transition,
+                "fade_duration": body.fade_duration,
+                "source_paths": paths,
+                "source_order": [
+                    {"task_id": row["id"], "chain_index": chain_index}
+                    for chain_index, _, row in ordered_segments
+                ],
+                "source_chain_group_ids": sorted(source_chain_group_ids),
+            },
+        )
+        await self._tm.update_task_safe(concat_task_id, status="running")
+        self._broadcast(
+            "task_update",
+            {
+                "task_id": concat_task_id,
+                "status": "running",
+                "mode": "long_video_concat",
+            },
+        )
+
+        source_name = body.output_name or "完整长视频.mp4"
+        output_path = self._configured_output_path(
+            kind="videos",
+            task_id=concat_task_id,
+            mode="long_video_concat",
+            model_id="ffmpeg-concat",
+            source_name=source_name,
+        )
+        try:
+            ok = await concat_videos(
+                paths,
+                str(output_path),
+                transition=body.transition,
+                fade_duration=body.fade_duration,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "happyhorse-video: video concat tool crashed task=%s",
+                concat_task_id,
+            )
+            await self._tm.update_task_safe(
+                concat_task_id,
+                status="failed",
+                error_kind="ffmpeg",
+                error_message=str(exc) or "ffmpeg concat failed",
+                completed_at=time.time(),
+            )
+            self._broadcast(
+                "task_update",
+                {"task_id": concat_task_id, "status": "failed", "mode": "long_video_concat"},
+            )
+            return json.dumps(
+                {"ok": False, "task_id": concat_task_id, "error": str(exc), "terminal": True},
+                ensure_ascii=False,
+            )
+        if not ok:
+            await self._tm.update_task_safe(
+                concat_task_id,
+                status="failed",
+                error_kind="ffmpeg",
+                error_message="ffmpeg concat failed",
+                completed_at=time.time(),
+            )
+            self._broadcast(
+                "task_update",
+                {"task_id": concat_task_id, "status": "failed", "mode": "long_video_concat"},
+            )
+            return json.dumps(
+                {
+                    "ok": False,
+                    "task_id": concat_task_id,
+                    "error": "ffmpeg concat failed",
+                    "terminal": True,
+                },
+                ensure_ascii=False,
+            )
+
+        preview_dir = self._uploads_dir() / "videos" / "concat"
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        preview_name = f"{concat_task_id}_{output_path.name}"
+        preview_path = preview_dir / preview_name
+        if preview_path.resolve() != output_path.resolve():
+            shutil.copy2(output_path, preview_path)
+        preview_url = build_preview_url(PLUGIN_ID, f"videos/concat/{preview_name}")
+        normalised_transition = normalize_transition(body.transition)
+        concat_params: dict[str, Any] = {
+            "task_ids": ordered_task_ids,
+            "requested_task_ids": list(body.task_ids),
+            "transition": body.transition,
+            "normalised_transition": normalised_transition,
+            "fade_duration": body.fade_duration,
+            "source_paths": paths,
+            "source_order": [
+                {"task_id": row["id"], "chain_index": chain_index}
+                for chain_index, _, row in ordered_segments
+            ],
+            "source_chain_group_ids": sorted(source_chain_group_ids),
+            "output_name": output_path.name,
+            "output_path": str(output_path),
+            "preview_path": str(preview_path),
+        }
+        asset_ids: list[str] = []
+        try:
+            await self._tm.update_task_safe(
+                concat_task_id,
+                status="succeeded",
+                video_path=str(output_path),
+                video_url=preview_url,
+                params_json=concat_params,
+                completed_at=time.time(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "happyhorse-video: failed to persist concat tool task: %s",
+                exc,
+            )
+        try:
+            aid = await self._publish_local_asset(
+                local_path=output_path,
+                kind="video",
+                preview_url=preview_url,
+                metadata={
+                    "plugin": PLUGIN_ID,
+                    "task_id": concat_task_id,
+                    "mode": "long_video_concat",
+                    "source_task_ids": ordered_task_ids,
+                    "requested_task_ids": list(body.task_ids),
+                    "source_chain_group_ids": sorted(source_chain_group_ids),
+                    "transition": body.transition,
+                },
+            )
+            if aid:
+                asset_ids.append(aid)
+                await self._tm.update_task_safe(
+                    concat_task_id, asset_ids_json=asset_ids
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "happyhorse-video: failed to publish concat tool asset: %s",
+                exc,
+            )
+        self._broadcast(
+            "task_update",
+            {
+                "task_id": concat_task_id,
+                "status": "succeeded",
+                "mode": "long_video_concat",
+                "video_url": preview_url,
+                "video_path": str(output_path),
+            },
+        )
+        row = await self._tm.get_task(concat_task_id)
+        base = self._task_to_tool_payload(row) if row else {
+            "ok": True,
+            "task_id": concat_task_id,
+            "status": "succeeded",
+            "mode": "long_video_concat",
+            "model_id": "ffmpeg-concat",
+            "video_url": preview_url,
+            "video_path": str(output_path),
+            "last_frame_url": "",
+            "last_frame_path": "",
+            "image_urls": [],
+            "local_paths": [str(output_path)],
+            "asset_ids": list(asset_ids),
+        }
+        return json.dumps(
+            {
+                **base,
+                "output_path": str(output_path),
+                "preview_url": preview_url,
+                "transition": normalised_transition,
+                "fade_duration": body.fade_duration,
+                "segments_used": ordered_task_ids,
+            },
+            ensure_ascii=False,
+        )
 
     async def _wait_for_task(
         self, task_id: str, *, timeout_s: int = 1800, interval: float = 5.0
@@ -2177,6 +2929,45 @@ class Plugin(PluginBase):
             row = await self._tm.get_task(task_id)
             if row is None:
                 raise HTTPException(status_code=404, detail="task not found")
+            chain_group_id = str(row.get("chain_group_id") or "")
+            if row.get("mode") == "long_video" and chain_group_id:
+                handle = self._chain_tasks.get(chain_group_id)
+                if handle is not None and not handle.done():
+                    handle.cancel()
+                rows = await self._tm.list_tasks(chain_group_id=chain_group_id, limit=200)
+                active_statuses = {"pending", "queued", "running", "processing"}
+                for item in rows:
+                    tid = str(item.get("id") or "")
+                    if not tid or item.get("status") not in active_statuses:
+                        continue
+                    dashscope_id = str(item.get("dashscope_id") or "")
+                    if dashscope_id:
+                        try:
+                            await self._client.cancel_task(dashscope_id)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "happyhorse-video: cancel chain segment %s failed: %s",
+                                tid,
+                                exc,
+                            )
+                    await self._tm.update_task_safe(
+                        tid,
+                        status="cancelled",
+                        completed_at=time.time(),
+                    )
+                    self._broadcast(
+                        "task_update",
+                        {
+                            "task_id": tid,
+                            "status": "cancelled",
+                            "chain_group_id": chain_group_id,
+                        },
+                    )
+                self._broadcast(
+                    "chain_update",
+                    {"chain_group_id": chain_group_id, "status": "cancelled"},
+                )
+                return {"ok": True}
             if row.get("dashscope_id"):
                 await self._client.cancel_task(row["dashscope_id"])
             t = self._poll_tasks.get(task_id)
@@ -2213,15 +3004,135 @@ class Plugin(PluginBase):
             brain = self._api.get_brain()
             if not brain:
                 return {"ok": False, "error": "brain unavailable"}
-            result = await decompose_storyboard(
-                brain=brain,
-                story=body.story,
-                total_duration=body.total_duration,
-                segment_duration=body.segment_duration,
-                ratio=body.aspect_ratio,
-                style=body.style,
+            if self._storyboard_decompose_running or self._storyboard_decompose_lock.locked():
+                logger.info(
+                    "happyhorse-video: storyboard decompose rejected because previous request is running",
+                )
+                return {
+                    "ok": False,
+                    "error": "已有分镜草稿正在生成，请到「任务」Tab 查看进度，完成后再修改参数重新生成。",
+                }
+            self._storyboard_decompose_running = True
+
+            # Record the LLM call as a task entry so it shows up in the
+            # Tasks tab grouped under the storyboard / long-video category.
+            # The route returns immediately after creating the task; the
+            # actual Brain call runs in the background without a hard timeout.
+            request_params: dict[str, Any] = {
+                "story": body.story,
+                "total_duration": body.total_duration,
+                "segment_duration": body.segment_duration,
+                "aspect_ratio": body.aspect_ratio,
+                "style": body.style,
+            }
+            prompt_preview = (body.story or "").strip()
+            if len(prompt_preview) > 200:
+                prompt_preview = prompt_preview[:200] + "…"
+            try:
+                task_id = await self._tm.create_task(
+                    mode="storyboard_decompose",
+                    model_id="brain",
+                    prompt=prompt_preview or "分镜草稿",
+                    params=request_params,
+                )
+                await self._tm.update_task_safe(task_id, status="running")
+            except Exception:
+                self._storyboard_decompose_running = False
+                raise
+            self._broadcast(
+                "task_update",
+                {
+                    "task_id": task_id,
+                    "status": "running",
+                    "mode": "storyboard_decompose",
+                },
             )
-            return {"ok": "error" not in result, **result}
+
+            async def _run_storyboard_decompose() -> None:
+                try:
+                    async with self._storyboard_decompose_lock:
+                        try:
+                            logger.info(
+                                "happyhorse-video: storyboard decompose started "
+                                "task=%s story_chars=%s total=%s segment=%s",
+                                task_id,
+                                len(body.story or ""),
+                                body.total_duration,
+                                body.segment_duration,
+                            )
+                            result = await decompose_storyboard(
+                                brain=brain,
+                                story=body.story,
+                                total_duration=body.total_duration,
+                                segment_duration=body.segment_duration,
+                                ratio=body.aspect_ratio,
+                                style=body.style,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.exception(
+                                "happyhorse-video: storyboard decompose crashed task=%s",
+                                task_id,
+                            )
+                            await self._tm.update_task_safe(
+                                task_id,
+                                status="failed",
+                                error_kind="server",
+                                error_message=str(exc) or "拆分镜失败",
+                                completed_at=time.time(),
+                            )
+                            self._broadcast(
+                                "task_update",
+                                {"task_id": task_id, "status": "failed"},
+                            )
+                            return
+
+                    segments = result.get("segments") or [] if isinstance(result, dict) else []
+                    ok = isinstance(result, dict) and "error" not in result
+                    logger.info(
+                        "happyhorse-video: storyboard decompose finished task=%s ok=%s segments=%s",
+                        task_id,
+                        ok,
+                        len(segments),
+                    )
+
+                    if ok:
+                        final_params = {**request_params, **(result or {})}
+                        await self._tm.update_task_safe(
+                            task_id,
+                            status="succeeded",
+                            params_json=final_params,
+                            completed_at=time.time(),
+                        )
+                        self._broadcast(
+                            "task_update",
+                            {
+                                "task_id": task_id,
+                                "status": "succeeded",
+                                "mode": "storyboard_decompose",
+                            },
+                        )
+                        return
+
+                    err = (result or {}).get("error") if isinstance(result, dict) else "拆分镜失败"
+                    await self._tm.update_task_safe(
+                        task_id,
+                        status="failed",
+                        error_kind="model",
+                        error_message=str(err) or "拆分镜失败",
+                        completed_at=time.time(),
+                    )
+                    self._broadcast(
+                        "task_update",
+                        {"task_id": task_id, "status": "failed"},
+                    )
+                finally:
+                    self._storyboard_decompose_running = False
+
+            self._api.spawn_task(
+                _run_storyboard_decompose(),
+                name=f"{PLUGIN_ID}:storyboard:{task_id}",
+            )
+            return {"ok": True, "task_id": task_id, "status": "running"}
 
         @router.post("/long-video/create")
         async def long_video_create(body: LongVideoCreateBody) -> dict:
@@ -2250,6 +3161,29 @@ class Plugin(PluginBase):
                     ),
                 )
             chain_group_id = uuid.uuid4().hex
+            root_task_id = await self._tm.create_task(
+                mode="long_video",
+                model_id=body.model_id,
+                prompt=f"长视频分镜生成（{len(body.segments)} 段）",
+                params={
+                    **body.model_dump(),
+                    "chain_group_id": chain_group_id,
+                    "segments_total": len(body.segments),
+                },
+                chain_group_id=chain_group_id,
+                chain_total=len(body.segments),
+            )
+            await self._tm.update_task_safe(root_task_id, status="running")
+            self._broadcast(
+                "task_update",
+                {
+                    "task_id": root_task_id,
+                    "status": "running",
+                    "mode": "long_video",
+                    "chain_group_id": chain_group_id,
+                    "chain_total": len(body.segments),
+                },
+            )
             chain = ChainGenerator(
                 self._client,
                 self._tm,
@@ -2260,7 +3194,7 @@ class Plugin(PluginBase):
 
             async def _run() -> None:
                 try:
-                    await chain.generate_chain(
+                    results = await chain.generate_chain(
                         segments=body.segments,
                         model_id=body.model_id,
                         ratio=body.aspect_ratio,
@@ -2268,6 +3202,44 @@ class Plugin(PluginBase):
                         mode=body.mode,
                         max_parallel=body.max_parallel,
                         first_frame_url=body.first_frame_url or None,
+                    )
+                    failed = [r for r in results if r.get("error") or r.get("status") == "failed"]
+                    await self._tm.update_task_safe(
+                        root_task_id,
+                        status="failed" if failed else "succeeded",
+                        error_kind="long_video" if failed else None,
+                        error_message=(
+                            f"{len(failed)} 个分镜片段生成失败" if failed else None
+                        ),
+                        completed_at=time.time(),
+                    )
+                    self._broadcast(
+                        "task_update",
+                        {
+                            "task_id": root_task_id,
+                            "status": "failed" if failed else "succeeded",
+                            "mode": "long_video",
+                            "chain_group_id": chain_group_id,
+                        },
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("happyhorse-video: long video chain failed")
+                    await self._tm.update_task_safe(
+                        root_task_id,
+                        status="failed",
+                        error_kind="long_video",
+                        error_message=str(exc),
+                        completed_at=time.time(),
+                    )
+                    self._broadcast(
+                        "task_update",
+                        {
+                            "task_id": root_task_id,
+                            "status": "failed",
+                            "mode": "long_video",
+                            "chain_group_id": chain_group_id,
+                            "error_message": str(exc),
+                        },
                     )
                 finally:
                     self._chain_tasks.pop(chain_group_id, None)
@@ -2283,6 +3255,7 @@ class Plugin(PluginBase):
             return {
                 "ok": True,
                 "chain_group_id": chain_group_id,
+                "task_id": root_task_id,
                 "segments_total": len(body.segments),
             }
 
@@ -2296,30 +3269,123 @@ class Plugin(PluginBase):
                 ],
             }
 
+        @router.post("/long-video/chains/{chain_group_id}/cancel")
+        async def long_video_cancel_chain(chain_group_id: str) -> dict:
+            chain_group_id = str(chain_group_id or "").strip()
+            if not chain_group_id:
+                raise HTTPException(status_code=400, detail="missing chain_group_id")
+
+            handle = self._chain_tasks.get(chain_group_id)
+            if handle is not None and not handle.done():
+                handle.cancel()
+
+            rows = await self._tm.list_tasks(chain_group_id=chain_group_id, limit=200)
+            active_statuses = {"pending", "queued", "running", "processing"}
+            cancelled = 0
+            for row in rows:
+                tid = str(row.get("id") or "")
+                if not tid or row.get("status") not in active_statuses:
+                    continue
+                dashscope_id = str(row.get("dashscope_id") or "")
+                if dashscope_id:
+                    try:
+                        await self._client.cancel_task(dashscope_id)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "happyhorse-video: cancel chain segment %s failed: %s",
+                            tid,
+                            exc,
+                        )
+                await self._tm.update_task_safe(
+                    tid,
+                    status="cancelled",
+                    completed_at=time.time(),
+                )
+                cancelled += 1
+                self._broadcast(
+                    "task_update",
+                    {
+                        "task_id": tid,
+                        "status": "cancelled",
+                        "chain_group_id": chain_group_id,
+                    },
+                )
+
+            self._broadcast(
+                "chain_update",
+                {"chain_group_id": chain_group_id, "status": "cancelled"},
+            )
+            return {"ok": True, "chain_group_id": chain_group_id, "cancelled": cancelled}
+
         @router.post("/long-video/concat")
         async def long_video_concat(body: ConcatBody) -> dict:
-            paths: list[str] = []
+            ordered_segments: list[tuple[int, int, dict[str, Any]]] = []
             source_chain_group_ids: set[str] = set()
-            for tid in body.task_ids:
+            for order, tid in enumerate(body.task_ids):
                 row = await self._tm.get_task(tid)
                 if row and row.get("video_path"):
-                    paths.append(row["video_path"])
+                    params = row.get("params") or {}
+                    raw_index = (
+                        row.get("chain_index")
+                        or params.get("segment_index")
+                        or params.get("chain_index")
+                    )
+                    try:
+                        chain_index = int(raw_index)
+                    except (TypeError, ValueError):
+                        chain_index = order + 1
+                    ordered_segments.append((chain_index, order, row))
                     if row.get("chain_group_id"):
                         source_chain_group_ids.add(str(row["chain_group_id"]))
+            ordered_segments.sort(key=lambda item: (item[0], item[1]))
+            paths = [str(row["video_path"]) for _, _, row in ordered_segments]
+            ordered_task_ids = [str(row["id"]) for _, _, row in ordered_segments]
             if len(paths) < 2:
                 raise HTTPException(
                     status_code=400,
                     detail="至少需要 2 段已下载的视频片段才能拼接",
                 )
-            # Store the concat output under uploads/ so the standard
-            # preview route (mounted on the uploads_dir) can stream it
-            # back to the browser. Without this the produced file lives
-            # outside the served directory and the UI can never <video
-            # src=...> it.
-            output_dir = self._uploads_dir() / "videos" / "concat"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            output_name = body.output_name or f"concat_{uuid.uuid4().hex[:8]}.mp4"
-            output_path = output_dir / output_name
+
+            # Materialise the concat result as a real task row + Asset
+            # Bus entry so the user can find it from the Tasks tab and
+            # downstream workbenches can chain off ``asset_ids``. Without
+            # this step the finished long video was effectively orphaned
+            # on disk after the user closed the Storyboard tab.
+            concat_task_id = await self._tm.create_task(
+                mode="long_video_concat",
+                model_id="ffmpeg-concat",
+                prompt=f"完整长视频拼接成片（{len(paths)} 段）",
+                params={
+                    "task_ids": ordered_task_ids,
+                    "requested_task_ids": list(body.task_ids),
+                    "transition": body.transition,
+                    "fade_duration": body.fade_duration,
+                    "source_paths": paths,
+                    "source_order": [
+                        {"task_id": row["id"], "chain_index": chain_index}
+                        for chain_index, _, row in ordered_segments
+                    ],
+                    "source_chain_group_ids": sorted(source_chain_group_ids),
+                },
+            )
+            await self._tm.update_task_safe(concat_task_id, status="running")
+            self._broadcast(
+                "task_update",
+                {
+                    "task_id": concat_task_id,
+                    "status": "running",
+                    "mode": "long_video_concat",
+                },
+            )
+
+            source_name = body.output_name or "完整长视频.mp4"
+            output_path = self._configured_output_path(
+                kind="videos",
+                task_id=concat_task_id,
+                mode="long_video_concat",
+                model_id="ffmpeg-concat",
+                source_name=source_name,
+            )
             ok = await concat_videos(
                 paths,
                 str(output_path),
@@ -2327,39 +3393,56 @@ class Plugin(PluginBase):
                 fade_duration=body.fade_duration,
             )
             if not ok:
+                await self._tm.update_task_safe(
+                    concat_task_id,
+                    status="failed",
+                    error_kind="ffmpeg",
+                    error_message="ffmpeg concat failed",
+                    completed_at=time.time(),
+                )
+                self._broadcast(
+                    "task_update",
+                    {
+                        "task_id": concat_task_id,
+                        "status": "failed",
+                        "mode": "long_video_concat",
+                    },
+                )
                 raise HTTPException(status_code=500, detail="ffmpeg concat failed")
 
-            # Materialise the concat result as a real task row + Asset
-            # Bus entry so the user can find it from the Tasks tab and
-            # downstream workbenches can chain off ``asset_ids``. Without
-            # this step the finished long video was effectively orphaned
-            # on disk after the user closed the Storyboard tab.
-            preview_url = build_preview_url(
-                PLUGIN_ID,
-                f"videos/concat/{output_name}",
-            )
+            # Keep the canonical file in the configured output location,
+            # and copy a browser-preview copy under uploads/ because the
+            # preview route only serves files from uploads_dir.
+            preview_dir = self._uploads_dir() / "videos" / "concat"
+            preview_dir.mkdir(parents=True, exist_ok=True)
+            preview_name = f"{concat_task_id}_{output_path.name}"
+            preview_path = preview_dir / preview_name
+            if preview_path.resolve() != output_path.resolve():
+                shutil.copy2(output_path, preview_path)
+            preview_url = build_preview_url(PLUGIN_ID, f"videos/concat/{preview_name}")
             concat_params: dict[str, Any] = {
-                "task_ids": list(body.task_ids),
+                "task_ids": ordered_task_ids,
+                "requested_task_ids": list(body.task_ids),
                 "transition": body.transition,
                 "fade_duration": body.fade_duration,
                 "source_paths": paths,
+                "source_order": [
+                    {"task_id": row["id"], "chain_index": chain_index}
+                    for chain_index, _, row in ordered_segments
+                ],
                 "source_chain_group_ids": sorted(source_chain_group_ids),
-                "output_name": output_name,
+                "output_name": output_path.name,
+                "output_path": str(output_path),
+                "preview_path": str(preview_path),
             }
-            concat_task_id = ""
             asset_ids: list[str] = []
             try:
-                concat_task_id = await self._tm.create_task(
-                    mode="long_video_concat",
-                    model_id="ffmpeg-concat",
-                    prompt=f"ffmpeg concat ({len(paths)} segments)",
-                    params=concat_params,
-                )
                 await self._tm.update_task_safe(
                     concat_task_id,
                     status="succeeded",
                     video_path=str(output_path),
                     video_url=preview_url,
+                    params_json=concat_params,
                     completed_at=time.time(),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -2376,7 +3459,8 @@ class Plugin(PluginBase):
                         "plugin": PLUGIN_ID,
                         "task_id": concat_task_id,
                         "mode": "long_video_concat",
-                        "source_task_ids": list(body.task_ids),
+                        "source_task_ids": ordered_task_ids,
+                        "requested_task_ids": list(body.task_ids),
                         "source_chain_group_ids": sorted(source_chain_group_ids),
                         "transition": body.transition,
                     },
@@ -2400,6 +3484,7 @@ class Plugin(PluginBase):
                         "status": "succeeded",
                         "mode": "long_video_concat",
                         "video_url": preview_url,
+                        "video_path": str(output_path),
                     },
                 )
             return {
@@ -2438,20 +3523,52 @@ class Plugin(PluginBase):
 
         @router.post("/storage/open-folder")
         async def open_folder(body: dict) -> dict:
+            """Open a folder (or highlight a file) in the OS file manager.
+
+            Body shape:
+                ``{"path": "..."}``       — open a directory
+                ``{"file_path": "..."}``  — highlight a file inside its parent
+            """
             raw_path = (body.get("path") or "").strip()
-            if not raw_path:
+            raw_file = (body.get("file_path") or "").strip()
+            if not raw_path and not raw_file:
                 raise HTTPException(status_code=400, detail="missing path")
-            target = Path(raw_path).expanduser()
-            target.mkdir(parents=True, exist_ok=True)
             import subprocess
             import sys
             try:
+                if raw_file:
+                    target = Path(raw_file).expanduser()
+                    if not target.exists():
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"file not found: {target}",
+                        )
+                    if sys.platform == "win32":
+                        # ``/select,`` highlights the file in Explorer — the
+                        # comma is part of the flag per the documented
+                        # Explorer.exe syntax. Passing ``/select,`` and the
+                        # path as separate argv entries lets Python escape
+                        # the path correctly even when it contains spaces.
+                        subprocess.Popen(
+                            ["explorer", "/select,", str(target)]
+                        )
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", "-R", str(target)])
+                    else:
+                        # Most Linux file managers do not have a "select"
+                        # equivalent; just open the parent directory.
+                        subprocess.Popen(["xdg-open", str(target.parent)])
+                    return {"ok": True, "path": str(target)}
+                target = Path(raw_path).expanduser()
+                target.mkdir(parents=True, exist_ok=True)
                 if sys.platform == "win32":
                     subprocess.Popen(["explorer", str(target)])
                 elif sys.platform == "darwin":
                     subprocess.Popen(["open", str(target)])
                 else:
                     subprocess.Popen(["xdg-open", str(target)])
+            except HTTPException:
+                raise
             except (OSError, FileNotFoundError) as exc:
                 raise HTTPException(
                     status_code=500, detail=f"cannot open: {exc}"
@@ -2569,6 +3686,12 @@ class Plugin(PluginBase):
         @router.post("/voices/clone")
         async def clone_voice(body: VoiceCloneBody) -> dict:
             try:
+                logger.info(
+                    "happyhorse-video: voice clone requested label=%r language=%s gender=%s",
+                    body.label,
+                    body.language,
+                    body.gender,
+                )
                 clone_result = await self._client.clone_voice(
                     sample_url=body.sample_audio_url,
                     prefix=re.sub(r"[^A-Za-z0-9]+", "", body.label)[:10] or "happyhorse",
@@ -2583,8 +3706,20 @@ class Plugin(PluginBase):
                     language=body.language,
                     gender=body.gender,
                 )
-                return {"ok": True, "voice_id": voice_id}
+                logger.info(
+                    "happyhorse-video: voice clone created local_id=%s dashscope_voice_id=%s request_id=%s",
+                    voice_id,
+                    dashscope_voice_id,
+                    clone_result.get("request_id") or "",
+                )
+                return {
+                    "ok": True,
+                    "voice_id": voice_id,
+                    "dashscope_voice_id": dashscope_voice_id,
+                    "request_id": clone_result.get("request_id") or "",
+                }
             except Exception as exc:  # noqa: BLE001
+                logger.exception("happyhorse-video: voice clone failed")
                 return {"ok": False, "error": str(exc)}
 
         @router.delete("/voices/{voice_id}")
@@ -2599,17 +3734,36 @@ class Plugin(PluginBase):
 
         @router.post("/figures")
         async def create_figure(body: FigureCreateBody) -> dict:
+            oss_url = (body.oss_url or "").strip()
+            initial_status = "pending" if oss_url else "skipped"
+            initial_message = (
+                None
+                if oss_url
+                else "OSS 未配置或上传失败，DashScope 无法读取本地预览图；请修正 OSS 后重新上传。"
+            )
             fid = await self._tm.create_figure(
                 label=body.label,
                 image_path=body.image_path,
                 preview_url=body.preview_url,
-                oss_url=body.oss_url,
+                oss_url=oss_url,
                 oss_key=body.oss_key,
+                detect_status=initial_status,
+                detect_message=initial_message,
             )
-            return {"ok": True, "figure_id": fid}
+            if oss_url:
+                self._spawn_figure_detect(fid, oss_url)
+            return {
+                "ok": True,
+                "figure_id": fid,
+                "detect_status": initial_status,
+                "oss_configured": bool(oss_url),
+            }
 
         @router.delete("/figures/{fig_id}")
         async def delete_figure(fig_id: str) -> dict:
+            handle = self._figure_detect_tasks.pop(fig_id, None)
+            if handle is not None and not handle.done():
+                handle.cancel()
             ok = await self._tm.delete_figure(fig_id)
             return {"ok": ok}
 
@@ -2743,6 +3897,7 @@ class Plugin(PluginBase):
 
         oss_url = ""
         oss_key = ""
+        oss_error = ""
         if self._oss.is_configured():
             try:
                 oss_key = self._oss.build_object_key(
@@ -2752,6 +3907,7 @@ class Plugin(PluginBase):
                     self._oss.upload_file, local_path, key=oss_key
                 )
             except OssUploadError as exc:
+                oss_error = str(exc)
                 logger.warning("happyhorse-video: OSS upload failed: %s", exc)
 
         asset_row = await self._tm.create_asset(
@@ -2802,6 +3958,8 @@ class Plugin(PluginBase):
             "preview_url": preview_url,
             "oss_url": oss_url,
             "oss_key": oss_key,
+            "oss_configured": self._oss.is_configured(),
+            "oss_error": oss_error,
             "local_path": str(local_path),
             "asset": asset_row,
             "probe": probe_meta,

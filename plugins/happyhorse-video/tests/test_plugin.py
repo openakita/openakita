@@ -29,6 +29,8 @@ EXPECTED_TOOLS = {
     "hh_list",
     "hh_cost_preview",
     "hh_long_video_create",
+    "hh_storyboard_decompose",
+    "hh_video_concat",
 }
 
 
@@ -83,6 +85,34 @@ def test_long_video_tool_requires_segments():
     by_name = {t["name"]: t for t in tools}
     schema = by_name["hh_long_video_create"]["input_schema"]
     assert "segments" in schema["required"]
+
+
+def test_storyboard_decompose_tool_schema():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    schema = by_name["hh_storyboard_decompose"]["input_schema"]
+    assert "story" in schema["required"]
+    props = schema["properties"]
+    for field in ("story", "total_duration", "segment_duration", "aspect_ratio", "style"):
+        assert field in props, f"hh_storyboard_decompose missing field: {field}"
+
+
+def test_video_concat_tool_schema():
+    plugin = HappyhorsePlugin.__new__(HappyhorsePlugin)
+    tools = plugin._tool_definitions()
+    by_name = {t["name"]: t for t in tools}
+    schema = by_name["hh_video_concat"]["input_schema"]
+    assert "task_ids" in schema["required"]
+    props = schema["properties"]
+    assert props["task_ids"]["type"] == "array"
+    assert "transition" in props
+    assert "fade_duration" in props
+    assert "output_name" in props
+    transition_enum = set(props["transition"]["enum"])
+    assert {"none", "crossfade", "cut"}.issubset(transition_enum), (
+        f"transition enum missing expected aliases: {transition_enum}"
+    )
 
 
 def test_module_exposes_pydantic_bodies():
