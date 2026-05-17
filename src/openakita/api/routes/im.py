@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from openakita.memory.json_utils import coerce_text
+from openakita.utils.errors import format_user_friendly_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -138,7 +139,7 @@ async def list_channels(request: Request):
         if status == "offline":
             reasons = getattr(gateway, "_failed_adapter_reasons", {}) if gateway is not None else {}
             if name in reasons:
-                entry["error"] = reasons[name]
+                entry["error"] = format_user_friendly_error(str(reasons[name]))
         channels.append(entry)
 
     seen_channels = {str(c.get("channel") or "") for c in channels}
