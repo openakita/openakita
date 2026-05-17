@@ -1014,6 +1014,8 @@ export function OrgEditorView({
       ) {
         void fetchOrg(orgId);
         bbPanelRef.current?.refresh();
+      } else if (ev === "org:command_started") {
+        bbPanelRef.current?.refresh();
       } else if (ev === "org:command_phase") {
         // command_phase is emitted by polling/diagnostics and can arrive every few seconds.
         // Avoid reloading the whole canvas here; node_status/task events already update live state.
@@ -2809,9 +2811,10 @@ export function OrgEditorView({
             .org-topbar {
               min-height: 36px;
               padding: 2px 0;
-              display: flex;
+              display: grid;
+              grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
               align-items: center;
-              justify-content: space-between;
+              justify-content: initial;
               gap: 8px;
 
               background: var(--card-bg, #fff);
@@ -2830,10 +2833,12 @@ export function OrgEditorView({
             }
             .org-topbar-left {
               display: flex; align-items: center; gap: 6px;
+              justify-self: start;
               flex-shrink: 1; min-width: 0; overflow: hidden;
             }
             .org-topbar-center {
               display: flex; align-items: center; justify-content: center;
+              justify-self: center;
               align-self: stretch; flex: 0 0 auto;
             }
             .org-topbar-tabs {
@@ -2941,7 +2946,7 @@ export function OrgEditorView({
 
             /* ── Right actions ── */
             .org-topbar-right {
-              display: flex; align-items: center; gap: 3px; flex-shrink: 0;
+              display: flex; align-items: center; gap: 3px; justify-self: end; flex-shrink: 0;
             }
             .org-tb-btn {
               display: inline-flex; align-items: center; gap: 4px;

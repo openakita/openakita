@@ -211,6 +211,44 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     return () => { cancelled = true; };
   }, [convId, apiBaseUrl]);
 
+  // IM / 主聊天组织模式在下发命令时会立刻写入桥接会话；已打开的指挥台需主动拉取
+  // 历史，否则要等到用户手动刷新或命令结束事件。
+  useEffect(() => {
+    if (!loaded) return;
+    const unsub = onWsEvent((event, raw) => {
+      if (event !== "org:command_started") return;
+      const d = raw as Record<string, unknown> | null;
+      if (!d || String(d.org_id) !== orgId) return;
+      const targetRaw = d.target_node_id;
+      const target = targetRaw != null && String(targetRaw).trim() !== "" ? String(targetRaw) : "";
+      const panelNode = nodeId != null && String(nodeId).trim() !== "" ? String(nodeId) : "";
+      if (panelNode) {
+        if (target !== panelNode) return;
+      } else if (target) {
+        return;
+      }
+      const url = `${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history?limit=${ORG_HISTORY_PAGE_LIMIT}`;
+      void (async () => {
+        try {
+          const res = await safeFetch(url);
+          const data = await res.json();
+          if (!mountedRef.current) return;
+          const msgs: ChatMsg[] = (data.messages || []).map((m: any) => ({
+            id: m.id || genId(),
+            role: m.role || "assistant",
+            content: m.content || "",
+            timestamp: m.timestamp || Date.now(),
+          }));
+          if (msgs.length > 0) {
+            setMessages(msgs);
+            saveToLocalStorage(convId, msgs);
+          }
+        } catch { /* ignore */ }
+      })();
+    });
+    return unsub;
+  }, [loaded, orgId, nodeId, convId, apiBaseUrl]);
+
   // Debounced localStorage write on every messages change
   useEffect(() => {
     if (!loaded) return;
