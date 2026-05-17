@@ -7,6 +7,7 @@ human-readable messages. Used by CLI, IM gateway, and API layers.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 
@@ -68,15 +69,64 @@ _CATEGORY_MESSAGES: dict[ErrorCategory, str] = {
 }
 
 
+_WINDOWS_PATH_RE = re.compile(r"[A-Za-z]:\\[^\s`'\"<>]+")
+_TRACEBACK_RE = re.compile(r"(?i)(traceback \(most recent call last\)|\n\s*file \"[^\"]+\", line \d+)")
+
+
+def _format_local_permission_error(error: str, lower: str) -> str | None:
+    """Hide local filesystem details before returning errors to IM users."""
+
+    permission_markers = (
+        "winerror 5",
+        "permissionerror",
+        "access is denied",
+        "access denied",
+        "unauthorizedaccess",
+        "拒绝访问",
+        "访问被拒绝",
+    )
+    if not any(marker in lower for marker in permission_markers):
+        return None
+
+    if ".openakita" in lower and ("site-packages" in lower or "\\modules\\" in lower):
+        return "⚠️ 插件依赖缓存目录权限异常，已跳过不可访问目录；如仍失败，请清理插件缓存后重试。"
+    if _WINDOWS_PATH_RE.search(error) or "/" in error or "\\" in error:
+        return "⚠️ 本地文件权限异常，已记录到日志；请检查相关文件权限后重试。"
+    return None
+
+
+def _format_channel_config_error(error: str, lower: str) -> str | None:
+    """Normalize IM channel credential errors shown in Setup Center."""
+
+    if "853000" in lower or "invalid bot_id" in lower or "invalid secret" in lower:
+        return "⚠️ 企业微信 Bot ID / Secret 配置无效，请重新检查该机器人的凭据后重试。"
+    if "telegram bot token" in lower or "botfather" in lower:
+        return "⚠️ Telegram Bot Token 无效或未配置，请在 @BotFather 重新获取 Token 后重试。"
+    return None
+
+
 def format_user_friendly_error(error: str) -> str:
     """Map a technical error string to a user-visible message.
 
     Keeps the full error for logging; only the return value should be
     shown to end users (IM / CLI / Desktop).
     """
+    lower = error.lower()
+    local_permission = _format_local_permission_error(error, lower)
+    if local_permission:
+        return local_permission
+
+    channel_config = _format_channel_config_error(error, lower)
+    if channel_config:
+        return channel_config
+
     cat = classify_error(error)
     msg = _CATEGORY_MESSAGES.get(cat)
     if msg:
         return msg
+
+    if _TRACEBACK_RE.search(error) or _WINDOWS_PATH_RE.search(error):
+        return "⚠️ 处理出错，详细错误已记录到本地日志，请稍后重试。"
+
     short = error[:120].split("\n")[0]
     return f"⚠️ 处理出错: {short}"
