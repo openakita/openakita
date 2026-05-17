@@ -258,6 +258,9 @@ def _history_entry(session, conversation_id: str, original_idx: int, msg: dict) 
     attachments = msg.get("attachments")
     if attachments:
         entry["attachments"] = attachments
+    org_timeline = msg.get("org_timeline")
+    if org_timeline:
+        entry["org_timeline"] = org_timeline
     ask_user = msg.get("ask_user")
     if ask_user:
         entry["ask_user"] = ask_user

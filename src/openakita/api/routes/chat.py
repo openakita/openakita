@@ -13,6 +13,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -1549,7 +1550,9 @@ async def _stream_org_command_chat(
         })
 
         final_text = ""
-        progress_lines: list[str] = []
+        # 进度行只用于历史持久化中的 org_timeline 字段，前端已经通过 org_progress
+        # 事件实时构建独立的 timeline 卡片，不再需要把它塞进 text_replace 正文。
+        progress_entries: list[dict] = []
         while True:
             try:
                 item = await asyncio.wait_for(queue.get(), timeout=30)
@@ -1560,7 +1563,13 @@ async def _stream_org_command_chat(
             if item.get("type") == "org_progress":
                 summary = item.get("summary") or ""
                 if summary:
-                    progress_lines.append(str(summary))
+                    progress_entries.append({
+                        "status": "progress",
+                        "summary": str(summary),
+                        "node_id": item.get("node_id"),
+                        "category": item.get("category") or item.get("label"),
+                        "timestamp": int(time.time() * 1000),
+                    })
                     yield _sse("org_progress", item)
                 continue
 
@@ -1577,12 +1586,13 @@ async def _stream_org_command_chat(
                     final_text = str(error)
                 yield _sse("org_command_done", item)
                 if final_text:
-                    progress_text = "\n".join(f"> {line}" for line in progress_lines)
-                    display_text = f"{progress_text}\n\n---\n\n{final_text}" if progress_text else final_text
                     chat_attachments = _org_file_attachments_to_chat_attachments(attachments)
+                    # text_replace 只承载最终回复正文；过程展示由前端的 OrgTimelineCard
+                    # 通过 org_progress 累计渲染，避免"过程引用 + 分隔线 + 回复"
+                    # 全塞在一坨 markdown 里。
                     yield _sse(
                         "text_replace",
-                        {"content": display_text, "attachments": chat_attachments},
+                        {"content": final_text, "attachments": chat_attachments},
                     )
                     if session_manager:
                         session = session_manager.get_session(
@@ -1592,7 +1602,18 @@ async def _stream_org_command_chat(
                             create_if_missing=True,
                         )
                         if session:
-                            meta = {"attachments": chat_attachments} if chat_attachments else {}
+                            meta: dict[str, Any] = {}
+                            if chat_attachments:
+                                meta["attachments"] = chat_attachments
+                            if progress_entries:
+                                meta["org_timeline"] = [
+                                    *progress_entries,
+                                    {
+                                        "status": "done",
+                                        "summary": "组织命令已结束",
+                                        "timestamp": int(time.time() * 1000),
+                                    },
+                                ]
                             session.add_message("assistant", final_text, **meta)
                             session_manager.mark_dirty()
                 yield _sse("done")
