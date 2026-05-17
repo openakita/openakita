@@ -132,22 +132,15 @@ def make_default_settings() -> dict[str, Any]:
         "timeout": 60.0,
         "timeout_sec": 60.0,
         "max_retries": 2,
-        # ── Optional relay-station integration ─────────────────────────
-        # When ``relay_endpoint`` is set to the name of a relay registered
-        # in OpenAkita's shared relay registry (see openakita.relay), the
-        # client uses that relay's base_url + api_key INSTEAD of the per-
-        # plugin api_key / base_url above. Lets one workspace point ten
-        # plugins at the same relay station without copy-pasting keys.
-        #
-        # ``relay_fallback_policy`` controls what happens when the relay
-        # cannot be resolved (typo, disabled, deleted) OR when the
-        # relay's probed catalog does not include the requested model:
-        #
-        #   - "official"  (default): silently fall back to the per-plugin
-        #     api_key + base_url so the user is never blocked.
-        #   - "strict": raise a VendorError so the user knows the relay
-        #     misconfig must be fixed before continuing. Use this once
-        #     you trust the relay and want to detect drift.
+        # ── Optional plugin-local relay endpoint ───────────────────────
+        # This is intentionally independent from the host LLM endpoint list:
+        # installed users should be able to paste the relay URL/key directly
+        # in this plugin's Settings tab without creating a global relay entry.
+        "relay_base_url": "",
+        "relay_api_key": "",
+        # Back-compat only: older builds treated this as a name in the host
+        # openakita.relay registry. New UI no longer exposes it, but keeping it
+        # prevents existing installs from losing their saved relay reference.
         "relay_endpoint": "",
         "relay_fallback_policy": "official",
     }
@@ -309,15 +302,20 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         merged = make_default_settings()
         merged.update({k: v for k, v in cur.items() if v not in (None, "")})
 
-        # ── Optional relay override ────────────────────────────────────
-        # Pull base_url + api_key from the shared relay registry when
-        # the user picked a relay in plugin Settings. Failure mode is
-        # governed by relay_fallback_policy: "official" (default) just
-        # warns and keeps the per-plugin values, "strict" raises so the
-        # user must fix the relay name. Either way we never silently
-        # send a request to a relay the user did not configure for.
+        # ── Optional plugin-local relay override ───────────────────────
+        # The UI exposes relay_base_url / relay_api_key. relay_api_key is
+        # optional because some relays reuse the official DashScope key.
+        relay_base_url = str(merged.get("relay_base_url") or "").strip().rstrip("/")
+        if relay_base_url:
+            merged["base_url"] = relay_base_url
+            relay_key = str(merged.get("relay_api_key") or "").strip()
+            if relay_key:
+                merged["api_key"] = relay_key
+
+        # ── Back-compat shared registry path ───────────────────────────
+        # Only used when no plugin-local relay URL is configured.
         relay_name = str(merged.get("relay_endpoint") or "").strip()
-        if relay_name:
+        if relay_name and not relay_base_url:
             try:
                 # Import lazily so the plugin still loads in environments
                 # where the openakita package is not on sys.path (e.g.
@@ -530,7 +528,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 retryable=False,
                 kind=ERROR_KIND_CLIENT,
             )
-        self._assert_relay_supports_model(entry.model)
+        self._assert_relay_supports_model(entry.model_id)
 
         # Validate forbidden params (HappyHorse 1.0 family).
         if entry.forbidden_params and extra_parameters:
@@ -1112,7 +1110,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
           works for relay stations: most relays expose
           ``/v1/audio/speech`` but cannot mediate the proprietary
           DashScope SDK protocol. We pick it automatically so users
-          who set ``relay_endpoint`` in Settings (or who paste an
+          who set ``relay_base_url`` in Settings (or who paste an
           OpenAI-compatible base_url) get working TTS without an
           extra knob.
         * **Native DashScope SDK** — kept for users who point the

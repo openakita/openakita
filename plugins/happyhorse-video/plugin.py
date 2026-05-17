@@ -1983,6 +1983,7 @@ class Plugin(PluginBase):
             redacted = dict(cfg)
             for sensitive in (
                 "api_key",
+                "relay_api_key",
                 "ark_api_key",
                 "oss_access_key_id",
                 "oss_access_key_secret",
@@ -2004,6 +2005,7 @@ class Plugin(PluginBase):
             current = await self._tm.get_all_config()
             sensitive_keys = {
                 "api_key",
+                "relay_api_key",
                 "ark_api_key",
                 "oss_access_key_id",
                 "oss_access_key_secret",
@@ -2026,6 +2028,7 @@ class Plugin(PluginBase):
             # redacted so the page does not expose credentials by default.
             allowed = {
                 "api_key",
+                "relay_api_key",
                 "ark_api_key",
                 "oss_access_key_id",
                 "oss_access_key_secret",

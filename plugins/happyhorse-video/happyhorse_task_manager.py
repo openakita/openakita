@@ -156,6 +156,14 @@ DEFAULT_CONFIG: dict[str, str] = {
     # Aliyun DashScope (Bailian) credentials.
     "api_key": "",
     "base_url": "https://dashscope.aliyuncs.com",
+    # Optional plugin-local relay endpoint. This is independent from the
+    # host LLM endpoint list so installed plugins can be configured in-place.
+    "relay_base_url": "",
+    "relay_api_key": "",
+    "relay_fallback_policy": "official",
+    # Back-compat only: older builds used this as a name lookup into the host
+    # openakita.relay registry. New UI no longer exposes it.
+    "relay_endpoint": "",
     # OSS — required for any DashScope video task.
     "oss_endpoint": "",
     "oss_bucket": "",

@@ -3568,7 +3568,7 @@ function SettingsTab({ catalog, settings, onSave }) {
   const savePartial = async (updates) => {
     const cleanUpdates = Object.fromEntries(
       Object.entries(updates).filter(([key, value]) => {
-        if (key !== "api_key") return true;
+        if (key !== "api_key" && key !== "relay_api_key") return true;
         const text = String(value || "").trim();
         return !!text && !text.includes("***");
       })
@@ -3838,12 +3838,32 @@ function SettingsTab({ catalog, settings, onSave }) {
           </select>
           </SettingField>
           <div className="settings-grid two">
-            <SettingField label="共享中转站名称" hint="来自 LLM 配置页 relay_endpoints；填写后优先使用共享中转站。">
+            <SettingField label="插件中转站 Base URL" hint="独立于主程序 LLM 端点；填写兼容 DashScope 的中转站地址，留空则使用上方官方区域 Endpoint。">
               <input
-                value={form.relay_endpoint || ""}
-                onChange={(e) => set("relay_endpoint", e.target.value)}
-                placeholder="例如: yunwu-video"
+                value={form.relay_base_url || ""}
+                onChange={(e) => set("relay_base_url", e.target.value)}
+                placeholder="例如: https://relay.example.com"
               />
+            </SettingField>
+            <SettingField label="中转站 API Key（可选）" hint="留空时复用上方 DashScope API Key；如果中转站给了单独 Key，请填在这里。">
+              <div className="api-key-input-row">
+                <input
+                  type="password"
+                  value={form.relay_api_key || ""}
+                  onChange={(e) => setForm((prev) => ({ ...prev, relay_api_key: e.target.value }))}
+                  placeholder="可选：中转站专用 sk-..."
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => savePartial({ relay_api_key: String(form.relay_api_key || "").trim() })}
+                  disabled={saving || !String(form.relay_api_key || "").trim() || String(form.relay_api_key || "").includes("***")}
+                >
+                  {saving ? <Spinner /> : <Icon name="save" size={12} />} 保存
+                </button>
+              </div>
             </SettingField>
             <SettingField label="中转站失败策略" hint="official 会回退到上面的官方/插件配置；strict 会直接阻止提交。">
               <select

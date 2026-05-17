@@ -29,7 +29,6 @@ from types import SimpleNamespace
 
 import pytest
 from happyhorse_dashscope_client import (
-    DASHSCOPE_BASE_URL_BJ,
     HappyhorseDashScopeClient,
     make_default_settings,
 )
@@ -128,6 +127,39 @@ def test_relay_overrides_base_url_and_api_key(monkeypatch):
     assert h["Authorization"] == "Bearer sk-yunwu"
 
 
+def test_plugin_local_relay_url_overrides_without_host_registry(monkeypatch):
+    """The Settings tab exposes a plugin-local relay URL/key. This path
+    must not require openakita.relay or a global LLM relay entry."""
+    monkeypatch.setitem(sys.modules, "openakita.relay", None)
+    c = HappyhorseDashScopeClient(
+        _read_settings_factory(
+            api_key="sk-direct",
+            relay_base_url="https://local-relay.example.com/compatible-mode/v1/",
+            relay_api_key="sk-local-relay",
+            relay_endpoint="should-not-be-resolved",
+        )
+    )
+    s = c._settings()
+    assert s["base_url"] == "https://local-relay.example.com/compatible-mode/v1"
+    assert s["api_key"] == "sk-local-relay"
+    assert "_relay_reference" not in s
+    assert c.auth_headers()["Authorization"] == "Bearer sk-local-relay"
+
+
+def test_plugin_local_relay_reuses_dashscope_key_when_key_blank(monkeypatch):
+    monkeypatch.setitem(sys.modules, "openakita.relay", None)
+    c = HappyhorseDashScopeClient(
+        _read_settings_factory(
+            api_key="sk-direct",
+            relay_base_url="https://local-relay.example.com",
+            relay_api_key="",
+        )
+    )
+    s = c._settings()
+    assert s["base_url"] == "https://local-relay.example.com"
+    assert s["api_key"] == "sk-direct"
+
+
 def test_relay_with_empty_apikey_keeps_per_plugin_key(monkeypatch):
     """A relay with no key (public/anon endpoints exist) should fall
     back to the per-plugin api_key instead of clearing auth."""
@@ -204,6 +236,8 @@ def test_default_settings_carry_relay_keys():
     """Plugin Settings UI reflects on make_default_settings to render
     the form; the two new fields must be in there."""
     d = make_default_settings()
+    assert d["relay_base_url"] == ""
+    assert d["relay_api_key"] == ""
     assert "relay_endpoint" in d
     assert d["relay_endpoint"] == ""
     assert d["relay_fallback_policy"] == "official"
