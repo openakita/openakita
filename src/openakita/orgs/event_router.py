@@ -40,7 +40,9 @@ def summarize_org_event(event: str, data: dict[str, Any]) -> str | None:
         if status == "busy":
             return f"{node} 开始处理" + (f"：{task[:80]}" if task else "")
         if status == "idle":
-            return f"{node} 已完成当前步骤"
+            # IM 端随后通常会收到 org:task_complete，继续推 idle 只会形成
+            # “已完成当前步骤 / 任务完成”两条近似重复消息。
+            return None
         if status == "error":
             return f"{node} 执行出错"
         return None

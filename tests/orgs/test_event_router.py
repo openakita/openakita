@@ -20,6 +20,10 @@ def test_summarize_internal_events_without_leaking_message_body():
         "org:node_status",
         {"node_id": "writer", "status": "busy", "current_task": "写一版文案"},
     ) == "writer 开始处理：写一版文案"
+    assert summarize_org_event(
+        "org:node_status",
+        {"node_id": "writer", "status": "idle"},
+    ) is None
     assert summarize_org_event("org:message", {"content": "内部细节"}) is None
 
 
