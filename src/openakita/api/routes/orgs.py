@@ -1116,6 +1116,208 @@ async def query_events(request: Request, org_id: str):
     return events
 
 
+# ---- Activity stream (unified timeline across IM / desktop / org console) ----
+
+_ACTIVITY_INTERESTING_EVENTS: frozenset[str] = frozenset({
+    "user_command",
+    "user_command_cancelled",
+    "task_assigned",
+    "task_completed",
+    "task_cancelled",
+    "broadcast",
+    "node_activated",
+    "command_phase",
+    "workbench_tool_started",
+    "workbench_tool_succeeded",
+    "workbench_tool_failed",
+})
+
+_ACTIVITY_KIND_BY_EVENT: dict[str, str] = {
+    "user_command": "user_command",
+    "user_command_cancelled": "user_command_cancelled",
+    "task_assigned": "delegate",
+    "task_completed": "task_completed",
+    "task_cancelled": "task_cancelled",
+    "broadcast": "broadcast",
+    "node_activated": "node_activated",
+    "command_phase": "command_phase",
+    "workbench_tool_started": "workbench_started",
+    "workbench_tool_succeeded": "workbench_succeeded",
+    "workbench_tool_failed": "workbench_failed",
+}
+
+
+def _activity_preview(text: Any, limit: int = 240) -> str:
+    """Trim long content for an activity feed."""
+    if text is None:
+        return ""
+    s = str(text)
+    if len(s) <= limit:
+        return s
+    return s[:limit].rstrip() + "…"
+
+
+@router.get("/{org_id}/activity")
+async def query_activity(request: Request, org_id: str):
+    """Unified activity feed for the org command console.
+
+    Merges (in time-descending order):
+      - Org event store entries (user_command / task_assigned /
+        task_completed / broadcast / workbench_* / command_phase …).
+      - Inter-node messages from ``logs/communications.jsonl``
+        (org_send_message / org_reply_message).
+      - Recent command_service rows so IM-originated commands surface
+        on the desktop console even before any event has fired.
+
+    Designed for the OrgChatPanel "whole-org timeline" view so the user
+    sees every input source (IM, desktop chat, org console) and every
+    node-to-node exchange in a single feed — regardless of which chat
+    surface the command was issued from.
+    """
+    rt = _get_runtime(request)
+    mgr = _get_manager(request)
+    limit = max(1, min(_safe_int(request.query_params.get("limit"), 100), 500))
+    since = request.query_params.get("since")
+
+    items: list[dict[str, Any]] = []
+
+    # --- Events ----------------------------------------------------------
+    try:
+        es = rt.get_event_store(org_id)
+        ev_kinds = (
+            request.query_params.get("kind")
+            or request.query_params.get("event_type")
+        )
+        events: list[dict[str, Any]] = []
+        if ev_kinds:
+            for kind in ev_kinds.split(","):
+                events.extend(
+                    es.query(event_type=kind.strip(), since=since, limit=limit)
+                    or []
+                )
+        else:
+            events = es.query(since=since, limit=limit * 3) or []
+        for ev in events:
+            evt_type = str(ev.get("event_type") or "")
+            if evt_type not in _ACTIVITY_INTERESTING_EVENTS:
+                continue
+            data = ev.get("data") or {}
+            metadata = ev.get("metadata") or {}
+            kind = _ACTIVITY_KIND_BY_EVENT.get(evt_type, evt_type)
+            from_node = ev.get("actor")
+            to_node = (
+                data.get("to")
+                or data.get("to_node")
+                or data.get("target_node_id")
+                or None
+            )
+            content_raw = (
+                data.get("task")
+                or data.get("content")
+                or data.get("prompt")
+                or data.get("result_preview")
+                or data.get("summary")
+                or ""
+            )
+            items.append({
+                "id": ev.get("event_id"),
+                "ts": ev.get("timestamp"),
+                "kind": kind,
+                "source": {
+                    "surface": metadata.get("origin_surface") or "org",
+                    "channel": metadata.get("channel") or "",
+                    "display_name": metadata.get("display_name") or "",
+                },
+                "from_node": from_node,
+                "to_node": to_node,
+                "content": _activity_preview(content_raw),
+                "command_id": data.get("command_id"),
+                "chain_id": data.get("chain_id") or data.get("root_chain_id"),
+                "event_type": evt_type,
+            })
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[Activity] event store query failed: %s", exc)
+
+    # --- Inter-node messages --------------------------------------------
+    try:
+        comm_log = mgr._org_dir(org_id) / "logs" / "communications.jsonl"
+        if comm_log.is_file():
+            text = comm_log.read_text(encoding="utf-8")
+            for line in reversed(text.strip().split("\n")):
+                if not line.strip():
+                    continue
+                try:
+                    msg = json.loads(line)
+                except Exception:
+                    continue
+                items.append({
+                    "id": msg.get("id") or msg.get("message_id"),
+                    "ts": msg.get("ts") or msg.get("timestamp"),
+                    "kind": "message",
+                    "source": {"surface": "org", "channel": "", "display_name": ""},
+                    "from_node": msg.get("from_node"),
+                    "to_node": msg.get("to_node"),
+                    "content": _activity_preview(msg.get("content")),
+                    "command_id": msg.get("metadata", {}).get("command_id"),
+                    "chain_id": msg.get("metadata", {}).get("task_chain_id"),
+                    "event_type": "communication",
+                    "msg_type": msg.get("msg_type"),
+                })
+                if len(items) >= limit * 3:
+                    break
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[Activity] communications log read failed: %s", exc)
+
+    # --- Recent commands from command_service --------------------------
+    try:
+        svc = getattr(request.app.state, "org_command_service", None)
+        if svc is None:
+            from openakita.orgs.command_service import get_command_service
+            svc = get_command_service()
+        if svc is not None:
+            for cmd_id, cmd in svc.commands.items():
+                if cmd.get("org_id") != org_id:
+                    continue
+                src = cmd.get("source") or {}
+                items.append({
+                    "id": f"cmd_{cmd_id}",
+                    "ts": cmd.get("created_at"),
+                    "kind": "command",
+                    "source": {
+                        "surface": cmd.get("origin_surface") or "org_console",
+                        "channel": src.get("channel") or "",
+                        "display_name": src.get("display_name") or "",
+                    },
+                    "from_node": src.get("user_id") or "user",
+                    "to_node": cmd.get("target_node_id") or cmd.get("root_node_id"),
+                    "content": "",
+                    "command_id": cmd_id,
+                    "chain_id": None,
+                    "event_type": "command_state",
+                    "status": cmd.get("status"),
+                    "phase": cmd.get("phase"),
+                })
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[Activity] command_service snapshot failed: %s", exc)
+
+    def _ts_key(item: dict[str, Any]) -> float:
+        ts = item.get("ts")
+        if isinstance(ts, int | float):
+            return float(ts)
+        if isinstance(ts, str) and ts:
+            try:
+                from datetime import datetime
+                return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                return 0.0
+        return 0.0
+
+    items.sort(key=_ts_key, reverse=True)
+    if len(items) > limit:
+        items = items[:limit]
+    return {"items": items, "count": len(items)}
+
+
 # ---- Messages (communication log) ----
 
 

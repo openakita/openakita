@@ -169,25 +169,99 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   // Load history: backend first, localStorage fallback
+  // 整组织视图额外合并 /api/orgs/{org}/activity（含 IM/桌面/指挥台所有来源），
+  // 让 IM 来的指令、节点互发的消息也能在指挥台直接看到。
   useEffect(() => {
     let cancelled = false;
     setLoaded(false);
     const url = `${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history?limit=${ORG_HISTORY_PAGE_LIMIT}`;
+    const wholeOrgView = !nodeId || String(nodeId).trim() === "";
+
+    const fetchActivityAsMsgs = async (): Promise<ChatMsg[]> => {
+      if (!wholeOrgView) return [];
+      try {
+        const r = await safeFetch(
+          `${apiBaseUrl}/api/orgs/${encodeURIComponent(orgId)}/activity?limit=${ORG_HISTORY_PAGE_LIMIT}`,
+        );
+        const j = await r.json();
+        const arr = Array.isArray(j?.items) ? j.items : [];
+        return arr
+          .slice()
+          .reverse()
+          .map((item: any): ChatMsg => {
+            const ts = typeof item.ts === "string"
+              ? new Date(item.ts).getTime()
+              : (typeof item.ts === "number" ? item.ts * 1000 : Date.now());
+            const sourceCn = (() => {
+              const s = item?.source?.surface;
+              if (s === "im") return `IM·${item?.source?.channel || ""}`;
+              if (s === "desktop_chat") return "桌面聊天";
+              if (s === "org_console") return "指挥台";
+              return s || "组织";
+            })();
+            const flow = item.to_node
+              ? `${item.from_node || "?"} → ${item.to_node}`
+              : (item.from_node || "");
+            const kindLabel = (() => {
+              switch (item.kind) {
+                case "user_command": return "用户指令";
+                case "user_command_cancelled": return "指令取消";
+                case "delegate": return "派单";
+                case "message": return "节点消息";
+                case "broadcast": return "广播";
+                case "task_completed": return "任务完成";
+                case "task_cancelled": return "任务取消";
+                case "command_phase": return "命令状态";
+                case "node_activated": return "节点激活";
+                case "workbench_started": return "工作台开始";
+                case "workbench_succeeded": return "工作台完成";
+                case "workbench_failed": return "工作台失败";
+                case "command": return "指令";
+                default: return item.kind || "事件";
+              }
+            })();
+            const preview = item.content ? `\n> ${String(item.content).slice(0, 240)}` : "";
+            const content = `**[${kindLabel}]** ${sourceCn}${flow ? ` · ${flow}` : ""}${preview}`;
+            return {
+              id: `act-${item.id || ts}`,
+              role: "system",
+              content,
+              timestamp: ts,
+            };
+          });
+      } catch {
+        return [];
+      }
+    };
+
     (async () => {
       try {
-        const res = await safeFetch(url);
+        const [res, activityMsgs] = await Promise.all([
+          safeFetch(url),
+          fetchActivityAsMsgs(),
+        ]);
         const data = await res.json();
         if (cancelled) return;
-        const msgs: ChatMsg[] = (data.messages || []).map((m: any) => ({
+        const histMsgs: ChatMsg[] = (data.messages || []).map((m: any) => ({
           id: m.id || genId(),
           role: m.role || "assistant",
           content: m.content || "",
           timestamp: m.timestamp || Date.now(),
         }));
-        if (msgs.length > 0) {
-          console.log(`[OrgChat] Loaded ${msgs.length} messages from backend for ${convId}`);
-          setMessages(msgs);
-          saveToLocalStorage(convId, msgs);
+        const merged = [...activityMsgs, ...histMsgs].sort(
+          (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
+        );
+        const deduped: ChatMsg[] = [];
+        const seen = new Set<string>();
+        for (const m of merged) {
+          if (m.id && seen.has(m.id)) continue;
+          if (m.id) seen.add(m.id);
+          deduped.push(m);
+        }
+        if (deduped.length > 0) {
+          console.log(`[OrgChat] Loaded ${deduped.length} entries (hist=${histMsgs.length}, activity=${activityMsgs.length}) for ${convId}`);
+          setMessages(deduped);
+          saveToLocalStorage(convId, deduped);
         } else {
           const local = loadFromLocalStorage(convId);
           if (local.length > 0) {
@@ -213,40 +287,109 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
 
   // IM / 主聊天组织模式在下发命令时会立刻写入桥接会话；已打开的指挥台需主动拉取
   // 历史，否则要等到用户手动刷新或命令结束事件。
+  //
+  // 整组织视图（panelNode 为空）会接收所有 IM / 桌面 / org_console 发起的命令并刷新；
+  // 节点视图（panelNode 非空）严格按 target 过滤，避免一个节点页面被无关命令污染。
+  // 这与 P1 的设计文档"指挥台 = 所有来源的统一时间线"一致：根视图不再因为
+  // IM 指令带了 target_node_id 就把整个事件丢弃。
   useEffect(() => {
     if (!loaded) return;
+    const wholeOrgView = !nodeId || String(nodeId).trim() === "";
+    const orgEvents = new Set([
+      "org:command_started",
+      "org:command_done",
+      "org:command_cancelled",
+      "org:message",
+      "org:broadcast",
+      "org:task_delegated",
+      "org:blackboard_update",
+      "org:workbench_tool_status",
+    ]);
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const refresh = async (): Promise<void> => {
+      try {
+        const histPromise = safeFetch(
+          `${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history?limit=${ORG_HISTORY_PAGE_LIMIT}`,
+        ).then(r => r.json()).catch(() => ({}));
+        const activityPromise = wholeOrgView
+          ? safeFetch(
+              `${apiBaseUrl}/api/orgs/${encodeURIComponent(orgId)}/activity?limit=${ORG_HISTORY_PAGE_LIMIT}`,
+            ).then(r => r.json()).catch(() => ({ items: [] }))
+          : Promise.resolve({ items: [] });
+        const [histData, actData] = await Promise.all([histPromise, activityPromise]);
+        if (!mountedRef.current) return;
+        const histMsgs: ChatMsg[] = (histData.messages || []).map((m: any) => ({
+          id: m.id || genId(),
+          role: m.role || "assistant",
+          content: m.content || "",
+          timestamp: m.timestamp || Date.now(),
+        }));
+        const actMsgs: ChatMsg[] = (Array.isArray(actData?.items) ? actData.items : [])
+          .slice()
+          .reverse()
+          .map((item: any): ChatMsg => {
+            const ts = typeof item.ts === "string"
+              ? new Date(item.ts).getTime()
+              : (typeof item.ts === "number" ? item.ts * 1000 : Date.now());
+            const sourceCn = (() => {
+              const s = item?.source?.surface;
+              if (s === "im") return `IM·${item?.source?.channel || ""}`;
+              if (s === "desktop_chat") return "桌面聊天";
+              if (s === "org_console") return "指挥台";
+              return s || "组织";
+            })();
+            const flow = item.to_node
+              ? `${item.from_node || "?"} → ${item.to_node}`
+              : (item.from_node || "");
+            const preview = item.content ? `\n> ${String(item.content).slice(0, 240)}` : "";
+            const content = `**[${item.kind || "事件"}]** ${sourceCn}${flow ? ` · ${flow}` : ""}${preview}`;
+            return {
+              id: `act-${item.id || ts}`,
+              role: "system",
+              content,
+              timestamp: ts,
+            };
+          });
+        const merged = [...actMsgs, ...histMsgs].sort(
+          (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
+        );
+        const deduped: ChatMsg[] = [];
+        const seen = new Set<string>();
+        for (const m of merged) {
+          if (m.id && seen.has(m.id)) continue;
+          if (m.id) seen.add(m.id);
+          deduped.push(m);
+        }
+        if (deduped.length > 0) {
+          setMessages(deduped);
+          saveToLocalStorage(convId, deduped);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
     const unsub = onWsEvent((event, raw) => {
-      if (event !== "org:command_started") return;
+      if (!orgEvents.has(event)) return;
       const d = raw as Record<string, unknown> | null;
       if (!d || String(d.org_id) !== orgId) return;
-      const targetRaw = d.target_node_id;
-      const target = targetRaw != null && String(targetRaw).trim() !== "" ? String(targetRaw) : "";
       const panelNode = nodeId != null && String(nodeId).trim() !== "" ? String(nodeId) : "";
       if (panelNode) {
-        if (target !== panelNode) return;
-      } else if (target) {
-        return;
+        const target = String(
+          d.target_node_id ?? d.to_node ?? d.from_node ?? "",
+        ).trim();
+        if (target && target !== panelNode) return;
       }
-      const url = `${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history?limit=${ORG_HISTORY_PAGE_LIMIT}`;
-      void (async () => {
-        try {
-          const res = await safeFetch(url);
-          const data = await res.json();
-          if (!mountedRef.current) return;
-          const msgs: ChatMsg[] = (data.messages || []).map((m: any) => ({
-            id: m.id || genId(),
-            role: m.role || "assistant",
-            content: m.content || "",
-            timestamp: m.timestamp || Date.now(),
-          }));
-          if (msgs.length > 0) {
-            setMessages(msgs);
-            saveToLocalStorage(convId, msgs);
-          }
-        } catch { /* ignore */ }
-      })();
+      // 多个 WS 事件常常密集到达；用 250ms debounce 合并刷新一次，
+      // 避免短时间内连发多次 history/activity 请求。
+      if (pendingTimer) clearTimeout(pendingTimer);
+      pendingTimer = setTimeout(() => { void refresh(); }, 250);
     });
-    return unsub;
+    return () => {
+      unsub();
+      if (pendingTimer) clearTimeout(pendingTimer);
+    };
   }, [loaded, orgId, nodeId, convId, apiBaseUrl]);
 
   // Debounced localStorage write on every messages change

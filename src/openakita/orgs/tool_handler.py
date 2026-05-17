@@ -1027,6 +1027,12 @@ class OrgToolHandler:
         await messenger.send(msg)
         self._runtime._mark_effective_action(org_id, node_id)
         self._runtime._on_inbound_for_node(org_id, to_node)
+        # 让指挥台/活动流能看到回复事件，与 send_message 保持事件对称。
+        await self._runtime._broadcast_ws("org:message", {
+            "org_id": org_id, "from_node": node_id, "to_node": to_node,
+            "msg_type": "answer", "reply_to": args.get("reply_to", ""),
+            "content": coerce_text(args.get("content"))[:_LIM_WS],
+        })
         return "已回复"
 
     async def _handle_org_delegate_task(
