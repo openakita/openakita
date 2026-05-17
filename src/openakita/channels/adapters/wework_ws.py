@@ -1022,8 +1022,11 @@ class WeWorkWsAdapter(ChannelAdapter):
         # Per-peer serialization lock (A6): serialize messages from the same chat
         lock = self._get_peer_lock(chat_id)
         async with lock:
-            # thinking indicator MUST be sent before _emit_message
-            await self._maybe_send_thinking_indicator(req_id)
+            # thinking indicator MUST be sent before _emit_message for normal Agent work.
+            # /org commands are handled synchronously by MessageGateway; pre-sending a
+            # stream here would leave a visible "thinking" frame before quick replies.
+            if self._should_presend_thinking(content.text or ""):
+                await self._maybe_send_thinking_indicator(req_id)
             await self._emit_message(unified)
 
     def _prune_seen_msg_ids(self, now: float) -> None:
@@ -1210,6 +1213,12 @@ class WeWorkWsAdapter(ChannelAdapter):
             logger.debug(f"Unhandled event type: {event_type}")
 
     # ==================== Thinking indicator ====================
+
+    @staticmethod
+    def _should_presend_thinking(text: str) -> bool:
+        """Return False for lightweight gateway commands that do not enter Agent reasoning."""
+        t = (text or "").strip().lower()
+        return not t.startswith(("/org", "/组织", "@组织", "@org"))
 
     async def _maybe_send_thinking_indicator(self, req_id: str) -> None:
         """Pre-send an animated 'thinking' stream and start a counting task."""

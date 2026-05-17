@@ -611,6 +611,40 @@ class TestThinkingIndicator:
         assert "req_think_2" not in adapter._pre_streams
 
     @pytest.mark.asyncio
+    async def test_org_command_skips_presend_thinking(self, connected_adapter):
+        """Org control commands are handled by gateway without a pre-created thinking stream."""
+        adapter = connected_adapter
+        sent_frames = []
+
+        async def mock_send(frame_json):
+            sent_frames.append(json.loads(frame_json))
+
+        adapter._ws.send = mock_send
+
+        frame = {
+            "cmd": CMD_CALLBACK,
+            "headers": {"req_id": "req_org_list"},
+            "body": {
+                "msgid": "org_msg_1",
+                "msgtype": "text",
+                "chattype": "single",
+                "from": {"userid": "user1"},
+                "chatid": "chat1",
+                "text": {"content": "/org list"},
+            },
+        }
+
+        with patch.object(adapter, "_emit_message", new_callable=AsyncMock) as emit_message:
+            with patch("openakita.config.settings") as mock_settings:
+                mock_settings.wework_ws_thinking_indicator = True
+                await adapter._route_frame(frame)
+                await asyncio.sleep(0.1)
+
+        emit_message.assert_awaited_once()
+        assert len(sent_frames) == 0
+        assert "req_org_list" not in adapter._pre_streams
+
+    @pytest.mark.asyncio
     async def test_stream_reply_reuses_pre_stream_id(self, connected_adapter):
         """_send_stream_reply should reuse a pre-created stream_id."""
         adapter = connected_adapter
