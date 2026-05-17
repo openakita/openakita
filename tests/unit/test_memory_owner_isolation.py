@@ -352,6 +352,38 @@ def test_claim_legacy_clears_banner_dismiss_sentinel(tmp_path):
     assert status_final["show_banner"] is True
 
 
+def test_dismiss_endpoint_is_idempotent(tmp_path):
+    """Phase 4 回归：dismiss API 反复点不会爆，set_meta 幂等。"""
+    manager = _manager(tmp_path)
+    manager.start_session("session-a", user_id="desktop_user")
+    client = _memory_client(manager)
+
+    for _ in range(5):
+        res = client.post("/api/memories/legacy/dismiss")
+        assert res.status_code == 200
+        assert res.json() == {"ok": True, "dismissed": True}
+
+    # 没有任何 legacy 也应能 dismiss，不依赖 legacy 存在。
+    status = client.get("/api/memories/migration-status").json()
+    assert status["banner_dismissed"] is True
+    assert status["show_banner"] is False
+
+
+def test_dismiss_endpoint_returns_503_when_store_missing():
+    """没有 memory store 时端点必须给出明确错误，而不是 500。"""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from openakita.api.routes.memory import router as memory_router
+
+    app = FastAPI()
+    app.include_router(memory_router)
+    # 不挂 app.state.agent → _get_store 会返回 None
+    client = TestClient(app)
+    res = client.post("/api/memories/legacy/dismiss")
+    assert res.status_code == 503
+
+
 def test_migration_status_no_banner_when_no_legacy(tmp_path):
     """没有任何 legacy 时，show_banner 必须是 False，
     哪怕 pending_consolidation 桶有东西也不能误亮（那是 DevOps 字段）。"""

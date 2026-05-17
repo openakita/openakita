@@ -2485,13 +2485,21 @@ def _get_core_memory(memory_manager: Optional["MemoryManager"], max_chars: int =
 
         truncated = truncate_memory_md(content, max_chars)
         # 按插入顺序丢弃旧条目，避免长期运行下缓存膨胀。
+        # 并发模型：缓存是 in-process dict，GIL 保证单个 key 写入是原子的，
+        # mtime 是 key 的一部分意味着不会读到脏数据。多线程同时触发 eviction
+        # 时可能短暂超过上限或重复 pop 同一 key，都是无害的自纠正情况；
+        # 极罕见的 ``RuntimeError: dictionary changed size during iteration``
+        # 也吞掉，让本次调用走未缓存路径即可。
         if len(_CORE_MEMORY_CACHE) >= _CORE_MEMORY_CACHE_MAX:
             try:
                 oldest_key = next(iter(_CORE_MEMORY_CACHE))
                 _CORE_MEMORY_CACHE.pop(oldest_key, None)
-            except StopIteration:
+            except (StopIteration, RuntimeError):
                 pass
-        _CORE_MEMORY_CACHE[cache_key] = truncated
+        try:
+            _CORE_MEMORY_CACHE[cache_key] = truncated
+        except Exception:
+            pass
         return truncated
 
     return ""

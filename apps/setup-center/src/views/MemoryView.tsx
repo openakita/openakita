@@ -357,6 +357,16 @@ export function MemoryView({ serviceRunning, apiBaseUrl = "" }: Props) {
         conflicts: data.conflict_skipped ?? 0,
         graph: data.graph_nodes_updated ?? 0,
       }));
+      // Phase 4：用户主动整理过了，本会话 snooze 也应该清掉。
+      // 否则后续真的又出现新 legacy 时（极端：用户导入了别人的旧 db），banner 会被
+      // 残留的 sessionStorage 静默拦住。后端 dismiss sentinel 已在路由里被清，
+      // 这里把前端 snooze 一起对齐。
+      try {
+        window.sessionStorage.removeItem("openakita.legacy_banner_snoozed");
+      } catch {
+        /* ignore */
+      }
+      setSessionLegacyDismissed(false);
       await Promise.all([loadMemories(), loadStats(), loadMigrationStatus()]);
       setGraphRefreshKey((v) => v + 1);
     } catch (e: any) {
