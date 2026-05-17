@@ -37,11 +37,18 @@ from typing import Any
 
 from happyhorse_inline.llm_json_parser import parse_llm_json_object
 from happyhorse_inline.parallel_executor import run_parallel
+from happyhorse_model_registry import default_model
 
 EmitFn = Callable[[str, dict[str, Any]], Awaitable[None]]
 DownloadFn = Callable[[str, str], Awaitable[str]]
 
 logger = logging.getLogger(__name__)
+
+_T2V_COMPANION_BY_I2V_MODEL: dict[str, str] = {
+    "happyhorse-1.0-i2v": "happyhorse-1.0-t2v",
+    "wan2.6-i2v": "wan2.6-t2v",
+    "wan2.6-i2v-flash": "wan2.6-t2v",
+}
 
 
 def ffmpeg_available() -> bool:
@@ -301,6 +308,22 @@ async def _xfade_two(
         )
         dur_a = float(probe.stdout.decode().strip()) if probe.returncode == 0 else 5.0
         offset = max(0, dur_a - fade_dur)
+        has_audio_a = await _has_audio_stream(path_a)
+        has_audio_b = await _has_audio_stream(path_b)
+
+        filter_complex = f"[0:v][1:v]xfade=transition=fade:duration={fade_dur}:offset={offset}[v]"
+        maps = ["-map", "[v]"]
+        audio_args: list[str] = []
+        if has_audio_a and has_audio_b:
+            filter_complex += f";[0:a][1:a]acrossfade=d={fade_dur}:c1=tri:c2=tri[a]"
+            maps += ["-map", "[a]"]
+            audio_args = ["-c:a", "aac", "-b:a", "192k"]
+        elif has_audio_a:
+            maps += ["-map", "0:a?"]
+            audio_args = ["-c:a", "aac", "-b:a", "192k"]
+        elif has_audio_b:
+            maps += ["-map", "1:a?"]
+            audio_args = ["-c:a", "aac", "-b:a", "192k"]
 
         cmd = [
             "ffmpeg",
@@ -310,13 +333,16 @@ async def _xfade_two(
             "-i",
             path_b,
             "-filter_complex",
-            f"xfade=transition=fade:duration={fade_dur}:offset={offset}",
+            filter_complex,
+            *maps,
             "-c:v",
             "libx264",
             "-preset",
             "fast",
             "-crf",
             "23",
+            *audio_args,
+            "-shortest",
             output,
         ]
         result = await asyncio.to_thread(
@@ -328,6 +354,30 @@ async def _xfade_two(
         return True
     except Exception as e:  # noqa: BLE001
         logger.error("xfade error: %s", e)
+        return False
+
+
+async def _has_audio_stream(path: str) -> bool:
+    """Return whether ``path`` has at least one audio stream."""
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=index",
+        "-of",
+        "csv=p=0",
+        path,
+    ]
+    try:
+        probe = await asyncio.to_thread(
+            subprocess.run, cmd, capture_output=True, timeout=10
+        )
+        return probe.returncode == 0 and bool(probe.stdout.decode().strip())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("audio probe failed for %s: %s", path, exc)
         return False
 
 
@@ -436,15 +486,17 @@ class ChainGenerator:
             duration = int(seg.get("duration") or 5)
 
             seg_index = seg.get("index", idx + 1)
+            segment_model_id = self._model_for_segment_mode(seg_mode, model_id)
 
             # Persist a DB row up front so the UI can show the
             # segment as `pending` immediately.
             task_id = await self._tm.create_task(
                 mode=seg_mode,
-                model_id=model_id,
+                model_id=segment_model_id,
                 prompt=prompt,
                 params={
-                    "model": model_id,
+                    "model": segment_model_id,
+                    "base_model": model_id,
                     "duration": duration,
                     "resolution": resolution,
                     "aspect_ratio": ratio,
@@ -471,7 +523,7 @@ class ChainGenerator:
             try:
                 dashscope_id = await self._client.submit_video_synth(
                     mode=seg_mode,
-                    model_id=model_id,
+                    model_id=segment_model_id,
                     prompt=prompt,
                     first_frame_url=seg_first_frame or None,
                     resolution=resolution,
@@ -507,7 +559,7 @@ class ChainGenerator:
                 task_id,
                 status="running",
                 dashscope_id=dashscope_id,
-                dashscope_endpoint=model_id,
+                dashscope_endpoint=segment_model_id,
             )
             await self._safe_emit(
                 "task_update",
@@ -608,6 +660,27 @@ class ChainGenerator:
             return results
 
         raise ValueError(f"unknown chain mode {mode!r}")
+
+    @staticmethod
+    def _model_for_segment_mode(seg_mode: str, model_id: str) -> str:
+        """Pick a model that matches the per-segment mode.
+
+        Long-video chains usually let the user choose an i2v base model,
+        but the first segment has no previous last-frame unless the user
+        supplied a seed image. Submitting that first text-only segment to
+        an i2v model makes DashScope reject the request with
+        ``Field required: input.media``. Use the same-family t2v model
+        for text-only segments, then switch back to the selected i2v model
+        once a previous last-frame exists.
+        """
+        if seg_mode != "t2v":
+            return model_id
+        if model_id in _T2V_COMPANION_BY_I2V_MODEL:
+            return _T2V_COMPANION_BY_I2V_MODEL[model_id]
+        if model_id.endswith("-t2v"):
+            return model_id
+        fallback = default_model("t2v")
+        return fallback.model_id if fallback is not None else model_id
 
     @staticmethod
     def _make_error(seg: dict, exc: Exception, task_id: str) -> dict:

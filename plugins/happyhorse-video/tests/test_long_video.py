@@ -55,6 +55,24 @@ def test_chain_generator_constructor_does_not_raise():
     assert chain._chain_group_id == "g1"
 
 
+def test_text_only_first_segment_uses_t2v_companion_model():
+    """The first serial segment has no previous last-frame, so it must not
+    submit a text-only request to an i2v model that requires input.media.
+    """
+    assert (
+        ChainGenerator._model_for_segment_mode("t2v", "happyhorse-1.0-i2v")
+        == "happyhorse-1.0-t2v"
+    )
+    assert (
+        ChainGenerator._model_for_segment_mode("t2v", "wan2.6-i2v")
+        == "wan2.6-t2v"
+    )
+    assert (
+        ChainGenerator._model_for_segment_mode("i2v", "happyhorse-1.0-i2v")
+        == "happyhorse-1.0-i2v"
+    )
+
+
 # ─── Bug 2 regression — transition alias normalization ───────────────
 
 
