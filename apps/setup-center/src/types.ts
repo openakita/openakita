@@ -198,6 +198,21 @@ export type ChatErrorInfo = {
   raw?: string;
 };
 
+/** Single row in the organization-command live timeline. */
+export type OrgTimelineEntry = {
+  /** "started" – command accepted; "progress" – sub-agent emitted a summary;
+   *  "done" – command finished (success or error). */
+  status: "started" | "progress" | "done";
+  /** Plain-text summary (already user-facing, no internal payload). */
+  summary: string;
+  /** Optional category – e.g. node id, role label, mailbox type. */
+  category?: string | null;
+  /** Optional originating node id from org runtime. */
+  nodeId?: string | null;
+  /** Epoch millis when the event arrived in the browser. */
+  timestamp: number;
+};
+
 export type ChatMessage = {
   id: string;
   /** Stable backend history index used for paged history loading. */
@@ -214,6 +229,14 @@ export type ChatMessage = {
   sources?: ChatSource[] | null;
   mcpCalls?: ChatMcpCall[] | null;
   thinkingChain?: ChainGroup[] | null;
+  /** Live timeline of organization command progress (org-mode only).
+   *
+   * Populated by `org_command_started` / `org_progress` / `org_command_done`
+   * SSE events. Rendered as a collapsible card above the final answer so
+   * users can see which sub-agents fired without the progress text leaking
+   * into the assistant's textual reply.
+   */
+  orgTimeline?: OrgTimelineEntry[] | null;
   errorInfo?: ChatErrorInfo | null;
   usage?: {
     input_tokens: number;

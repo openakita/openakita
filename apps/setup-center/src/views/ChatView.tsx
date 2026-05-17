@@ -37,6 +37,7 @@ import type {
   ChainSummaryItem,
   ChatDisplayMode,
   PlanApprovalEvent,
+  OrgTimelineEntry,
 } from "../types";
 import { genId, formatTime, formatDate, timeAgo } from "../utils";
 import { notifyError } from "../utils/notify";
@@ -824,7 +825,7 @@ export function ChatView({
   const hydrateSeqRef = useRef(0);
 
   const mapBackendHistoryToMessages = useCallback(
-    (rows: { id: string; index?: number; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[]; artifacts?: ChatArtifact[]; attachments?: ChatAttachment[]; ask_user?: { question: string; options?: { id: string; label: string }[]; questions?: ChatAskQuestion[] }; usage?: ChatMessage["usage"] }[]): ChatMessage[] => {
+    (rows: { id: string; index?: number; role: string; content: string; timestamp: number; chain_summary?: ChainSummaryItem[]; artifacts?: ChatArtifact[]; attachments?: ChatAttachment[]; org_timeline?: OrgTimelineEntry[]; ask_user?: { question: string; options?: { id: string; label: string }[]; questions?: ChatAskQuestion[] }; usage?: ChatMessage["usage"] }[]): ChatMessage[] => {
       return rows.map((m) => ({
         id: m.id,
         ...(typeof m.index === "number" ? { historyIndex: m.index } : {}),
@@ -834,6 +835,7 @@ export function ChatView({
         ...(m.chain_summary?.length ? { thinkingChain: buildChainFromSummary(m.chain_summary) } : {}),
         ...(m.artifacts?.length ? { artifacts: m.artifacts } : {}),
         ...(m.attachments?.length ? { attachments: m.attachments } : {}),
+        ...(m.org_timeline?.length ? { orgTimeline: m.org_timeline } : {}),
         ...(m.ask_user ? { askUser: m.ask_user, content: "" } : {}),
         ...(m.usage ? { usage: m.usage } : {}),
       }));
@@ -2494,6 +2496,7 @@ export function ChatView({
       let currentAgent: string | null = null;
       let currentArtifacts: ChatArtifact[] = [];
       let currentAttachments: ChatAttachment[] = [];
+      let currentOrgTimeline: OrgTimelineEntry[] = [];
       let currentSources: ChatSource[] = [];
       let currentMcpCalls: ChatMcpCall[] = [];
       let currentError: ChatErrorInfo | null = null;
@@ -2605,13 +2608,34 @@ export function ChatView({
                   setOrgCommandPending(true);
                 }
                 currentStreamStatus = t("chat.orgProcessing", "组织正在处理中...");
+                // 把"命令已下发"写进 timeline 而不是 currentContent，
+                // 这样组织的过程展示与最终回复彻底分离。
+                currentOrgTimeline = [
+                  ...currentOrgTimeline,
+                  {
+                    status: "started",
+                    summary: t("chat.orgTimelineStartedFull", "组织命令已下发，等待节点接管…"),
+                    timestamp: Date.now(),
+                  },
+                ];
                 break;
               }
               case "org_progress": {
                 const summary = ((event as any).summary || "") as string;
+                const nodeId = ((event as any).node_id || "") as string;
+                const category = ((event as any).category || (event as any).label || "") as string;
                 if (summary) {
                   currentStreamStatus = null;
-                  currentContent += `${currentContent ? "\n" : ""}> ${summary}`;
+                  currentOrgTimeline = [
+                    ...currentOrgTimeline,
+                    {
+                      status: "progress",
+                      summary,
+                      nodeId: nodeId || null,
+                      category: category || null,
+                      timestamp: Date.now(),
+                    },
+                  ];
                 }
                 break;
               }
@@ -2619,6 +2643,14 @@ export function ChatView({
                 activeOrgCommandRef.current = null;
                 orgCommandPendingRef.current = false;
                 setOrgCommandPending(false);
+                currentOrgTimeline = [
+                  ...currentOrgTimeline,
+                  {
+                    status: "done",
+                    summary: t("chat.orgTimelineDoneFull", "组织命令已结束"),
+                    timestamp: Date.now(),
+                  },
+                ];
                 break;
               }
               case "user_insert": {
@@ -3253,6 +3285,7 @@ export function ChatView({
                     sources: currentSources.length > 0 ? [...currentSources] : null,
                     mcpCalls: currentMcpCalls.length > 0 ? [...currentMcpCalls] : null,
                     thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
+                    orgTimeline: currentOrgTimeline.length > 0 ? currentOrgTimeline.map(e => ({ ...e })) : null,
                     streaming: true,
                   }];
                 });
@@ -3452,9 +3485,11 @@ export function ChatView({
                     askUser: currentAsk,
                     errorInfo: currentError,
                     artifacts: currentArtifacts.length > 0 ? [...currentArtifacts] : null,
+                    attachments: currentAttachments.length > 0 ? [...currentAttachments] : null,
                     sources: currentSources.length > 0 ? [...currentSources] : null,
                     mcpCalls: currentMcpCalls.length > 0 ? [...currentMcpCalls] : null,
                     thinkingChain: chainGroups.length > 0 ? chainGroups.map(g => ({ ...g })) : null,
+                    orgTimeline: currentOrgTimeline.length > 0 ? currentOrgTimeline.map(e => ({ ...e })) : null,
                     usage: assistantMsg.usage ?? m.usage,
                     streaming: event.type !== "done",
                     streamStatus: event.type === "done" ? null : currentStreamStatus,

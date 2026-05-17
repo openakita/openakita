@@ -5,6 +5,7 @@ import { stripLegacySummary } from "../utils/chatHelpers";
 import { formatTime } from "../../../utils";
 import { ThinkingChain, ThinkingBlock, ToolCallsGroup } from "./ThinkingChain";
 import { ArtifactList } from "./Artifacts";
+import { OrgTimelineCard } from "./OrgTimeline";
 import { AskUserBlock } from "./AskUser";
 import { ErrorCard } from "./ErrorCard";
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -97,6 +98,10 @@ export const MessageBubble = memo(function MessageBubble({
 
         {msg.thinkingChain && msg.thinkingChain.length > 0 && (
           <ThinkingChain chain={msg.thinkingChain} streaming={!!msg.streaming} showChain={showChain} onSkipStep={onSkipStep} />
+        )}
+
+        {msg.orgTimeline && msg.orgTimeline.length > 0 && (
+          <OrgTimelineCard entries={msg.orgTimeline} streaming={!!msg.streaming} />
         )}
 
         {msg.streaming && !msg.content && msg.streamStatus && msg.thinkingChain && msg.thinkingChain.length > 0 && (
