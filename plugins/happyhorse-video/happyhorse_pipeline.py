@@ -563,7 +563,7 @@ async def _step_image_compose(
         single = str(ctx.asset_urls.get("image_url") or "").strip()
         refs = [single] if single else []
 
-    prompt = (ctx.params.get("compose_prompt") or "").strip()
+    prompt = (ctx.params.get("compose_prompt") or ctx.params.get("prompt") or "").strip()
     if not prompt:
         prompt = "把人物自然地融合到场景中，保留人物的面部特征"
     if not refs:

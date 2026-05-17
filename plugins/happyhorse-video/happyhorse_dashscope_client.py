@@ -1235,7 +1235,21 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 result["last_frame_url"] = last
         if status == "FAILED":
             result["error_kind"] = _classify_dashscope_body(out, ERROR_KIND_SERVER)
-            result["error_message"] = out.get("message") or out.get("error_message") or ""
+            result["error_message"] = (
+                out.get("message")
+                or out.get("error_message")
+                or resp.get("message")
+                or resp.get("error_message")
+                or resp.get("code")
+                or ""
+            )
+            logger.warning(
+                "DashScope task failed task_id=%s status=%s error=%r raw=%r",
+                task_id,
+                status,
+                result["error_message"],
+                resp,
+            )
         return result
 
     # ── TTS (cosyvoice-v2 — SDK only) ─────────────────────────────────
@@ -1563,6 +1577,17 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 kind=ERROR_KIND_CLIENT,
             )
         dashscope.api_key = api_key
+        language_hint = {
+            "zh-cn": "zh",
+            "zh": "zh",
+            "en-us": "en",
+            "en": "en",
+            "ja-jp": "ja",
+            "ja": "ja",
+            "ko-kr": "ko",
+            "ko": "ko",
+            "yue": "yue",
+        }.get(str(language or "").strip().lower(), str(language or "").strip())
 
         def _sync() -> tuple[str, str | None]:
             svc = VoiceEnrollmentService()
@@ -1570,7 +1595,7 @@ class HappyhorseDashScopeClient(BaseVendorClient):
                 target_model=MODEL_COSYVOICE_V2,
                 prefix=str(prefix)[:10] or "happyhorse",
                 url=sample_url,
-                language_hints=[language] if language else None,
+                language_hints=[language_hint] if language_hint else None,
             )
             try:
                 req_id = svc.get_last_request_id()

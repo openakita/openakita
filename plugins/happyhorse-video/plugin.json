@@ -1,7 +1,7 @@
 {
   "id": "happyhorse-video",
   "name": "HappyHorse Studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Bailian-powered unified creative studio — built-in Wan/Qwen image generation + HappyHorse 1.0 (t2v / i2v / r2v / video-edit) + Wan 2.6/2.7 + digital-human (photo speak / video relip / video reface / pose drive / avatar compose) + CosyVoice & Edge-TTS + storyboard long-video pipeline. Single backend (Aliyun DashScope), OSS-backed.",
@@ -53,7 +53,9 @@
       "hh_status",
       "hh_list",
       "hh_cost_preview",
-      "hh_long_video_create"
+      "hh_long_video_create",
+      "hh_storyboard_decompose",
+      "hh_video_concat"
     ],
     "routes": true
   },
@@ -77,7 +79,9 @@
     "hh_status": "readonly_scoped",
     "hh_list": "readonly_scoped",
     "hh_cost_preview": "readonly_scoped",
-    "hh_long_video_create": "network_out"
+    "hh_long_video_create": "network_out",
+    "hh_storyboard_decompose": "network_out",
+    "hh_video_concat": "exec_low_risk"
   },
   "ui": {
     "entry": "ui/dist/index.html",
