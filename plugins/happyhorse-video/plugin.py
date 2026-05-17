@@ -2043,6 +2043,10 @@ class Plugin(PluginBase):
         async def test_connection(body: TestConnectionBody) -> dict:
             return await self._client.ping_api_key(body.api_key or None)
 
+        @router.post("/relay/test")
+        async def relay_test() -> dict:
+            return await self._client.probe_relay_models()
+
         @router.post("/oss/test")
         async def oss_test() -> dict:
             """Probe the configured Aliyun OSS bucket.

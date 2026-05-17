@@ -160,6 +160,46 @@ def test_plugin_local_relay_reuses_dashscope_key_when_key_blank(monkeypatch):
     assert s["api_key"] == "sk-direct"
 
 
+def test_request_channel_official_ignores_configured_relay(monkeypatch):
+    """The Settings page lets users choose the effective request path.
+
+    When official direct mode is selected, saved relay fields are kept for
+    later but must not override the DashScope endpoint used for the next call.
+    """
+    monkeypatch.setitem(sys.modules, "openakita.relay", None)
+    c = HappyhorseDashScopeClient(
+        _read_settings_factory(
+            api_key="sk-direct",
+            base_url="https://dashscope.aliyuncs.com",
+            request_channel="official",
+            relay_base_url="https://local-relay.example.com",
+            relay_api_key="sk-local-relay",
+        )
+    )
+
+    s = c._settings()
+    assert s["base_url"] == "https://dashscope.aliyuncs.com"
+    assert s["api_key"] == "sk-direct"
+    assert c.auth_headers()["Authorization"] == "Bearer sk-direct"
+
+
+def test_request_channel_relay_uses_configured_relay(monkeypatch):
+    monkeypatch.setitem(sys.modules, "openakita.relay", None)
+    c = HappyhorseDashScopeClient(
+        _read_settings_factory(
+            api_key="sk-direct",
+            base_url="https://dashscope.aliyuncs.com",
+            request_channel="relay",
+            relay_base_url="https://local-relay.example.com",
+            relay_api_key="sk-local-relay",
+        )
+    )
+
+    s = c._settings()
+    assert s["base_url"] == "https://local-relay.example.com"
+    assert s["api_key"] == "sk-local-relay"
+
+
 def test_relay_with_empty_apikey_keeps_per_plugin_key(monkeypatch):
     """A relay with no key (public/anon endpoints exist) should fall
     back to the per-plugin api_key instead of clearing auth."""
@@ -238,6 +278,7 @@ def test_default_settings_carry_relay_keys():
     d = make_default_settings()
     assert d["relay_base_url"] == ""
     assert d["relay_api_key"] == ""
+    assert d["request_channel"] == ""
     assert "relay_endpoint" in d
     assert d["relay_endpoint"] == ""
     assert d["relay_fallback_policy"] == "official"

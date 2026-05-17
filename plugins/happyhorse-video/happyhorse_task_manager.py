@@ -200,6 +200,10 @@ DEFAULT_CONFIG: dict[str, str] = {
     # HTTP behaviour.
     "timeout_sec": "60",
     "max_retries": "2",
+    # Empty keeps older installs compatible: if a relay URL/name already
+    # exists, the client treats it as relay-first until the user explicitly
+    # chooses official or relay in Settings.
+    "request_channel": "",
     # Storage / cleanup.
     "custom_data_dir": "",
     "output_subdir_mode": "task",

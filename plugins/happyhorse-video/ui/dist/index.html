@@ -3548,6 +3548,9 @@ function SettingsTab({ catalog, settings, onSave }) {
   const [saving, setSaving] = useState(false);
   const [apiStatus, setApiStatus] = useState(null);
   const [apiTesting, setApiTesting] = useState(false);
+  const [relayStatus, setRelayStatus] = useState(null);
+  const [relayTesting, setRelayTesting] = useState(false);
+  const [relayModels, setRelayModels] = useState([]);
   const [ossStatus, setOssStatus] = useState(null);
   const [ossTesting, setOssTesting] = useState(false);
   const autosaveTimers = useRef({});
@@ -3606,6 +3609,22 @@ function SettingsTab({ catalog, settings, onSave }) {
   );
   const apiKeyDraft = String(form.api_key || "");
   const apiKeyNeedsSave = apiKeyDirty && !!apiKeyDraft.trim() && !apiKeyDraft.includes("***");
+  const hasRelayConfig = !!(
+    String(form.relay_base_url || "").trim() || String(form.relay_endpoint || "").trim()
+  );
+  const requestChannel = form.request_channel || (hasRelayConfig ? "relay" : "official");
+  const effectiveChannelText = requestChannel === "relay"
+    ? (hasRelayConfig ? "当前会优先通过中转站提交；中转站未配置时会自动使用官方直连。" : "已选择中转站优先，但还没有填写中转站地址。")
+    : "当前会直接请求阿里云百炼官方 Endpoint，不使用中转站。";
+  const expectedRelayModels = Array.from(new Set([
+    ...(catalog.models || []).map((m) => m.model_id),
+    ...((catalog.image?.models || []).map((m) => m.model_id)),
+    "cosyvoice-v2",
+    "qwen-vl-max",
+  ].filter(Boolean)));
+  const relayModelSet = new Set((relayModels || []).map((m) => String(m || "").toLowerCase()));
+  const relaySupported = expectedRelayModels.filter((m) => relayModelSet.has(String(m).toLowerCase()));
+  const relayMissing = expectedRelayModels.filter((m) => !relayModelSet.has(String(m).toLowerCase()));
 
   const updateApiKeyDraft = (value) => {
     clearTimeout(autosaveTimers.current.api_key);
@@ -3723,6 +3742,50 @@ function SettingsTab({ catalog, settings, onSave }) {
     }
   };
 
+  const testRelay = async () => {
+    if (!String(form.relay_base_url || "").trim()) {
+      setRelayStatus({
+        kind: "warn",
+        title: "请先填写中转站地址",
+        detail: "需要先填写中转站 Base URL，才能探测连接和模型列表。",
+        time: nowStr(),
+      });
+      return;
+    }
+    setRelayTesting(true);
+    setRelayModels([]);
+    setRelayStatus({ kind: "info", title: "测试中…", detail: "正在请求中转站模型列表。", time: nowStr() });
+    try {
+      const r = await api("POST", "/relay/test", {});
+      const models = Array.isArray(r?.models) ? r.models : [];
+      setRelayModels(models);
+      if (r?.ok) {
+        setRelayStatus({
+          kind: "ok",
+          title: "中转站可用",
+          detail: `${r.message || `已获取 ${models.length} 个模型。`}${r.url ? ` 探测接口：${r.url}` : ""}`,
+          time: nowStr(),
+        });
+      } else {
+        setRelayStatus({
+          kind: "fail",
+          title: "中转站测试失败",
+          detail: String(r?.message || "无法获取模型列表"),
+          time: nowStr(),
+        });
+      }
+    } catch (e) {
+      setRelayStatus({
+        kind: "fail",
+        title: "中转站测试失败",
+        detail: String(e?.message || e),
+        time: nowStr(),
+      });
+    } finally {
+      setRelayTesting(false);
+    }
+  };
+
   const ossFieldsFilled = !!(
     String(form.oss_endpoint || "").trim() &&
     String(form.oss_bucket || "").trim() &&
@@ -3828,7 +3891,7 @@ function SettingsTab({ catalog, settings, onSave }) {
           {apiStatus && (
             <TestResult status={apiStatus} onDismiss={() => setApiStatus(null)} />
           )}
-          <SettingField label="区域 Endpoint" hint="该配置影响所有 DashScope 请求发往中国区或国际区。">
+          <SettingField label="官方 Endpoint" hint="选择官方直连时生效；用于决定 DashScope 请求发往中国区或国际区。">
           <select
             value={form.base_url || "https://dashscope.aliyuncs.com"}
             onChange={(e) => set("base_url", e.target.value, { immediate: true })}
@@ -3837,8 +3900,17 @@ function SettingsTab({ catalog, settings, onSave }) {
             <option value="https://dashscope-intl.aliyuncs.com">国际</option>
           </select>
           </SettingField>
+          <SettingField label="优先请求通道" hint={effectiveChannelText}>
+            <select
+              value={requestChannel}
+              onChange={(e) => set("request_channel", e.target.value, { immediate: true })}
+            >
+              <option value="official">官方直连优先：直接请求阿里云百炼</option>
+              <option value="relay">中转站优先：先使用下面填写的中转站</option>
+            </select>
+          </SettingField>
           <div className="settings-grid two">
-            <SettingField label="插件中转站 Base URL" hint="独立于主程序 LLM 端点；填写兼容 DashScope 的中转站地址，留空则使用上方官方区域 Endpoint。">
+            <SettingField label="中转站 Base URL" hint="填写兼容 DashScope 的中转站地址。只有「优先请求通道」选择中转站时才会优先使用它。">
               <input
                 value={form.relay_base_url || ""}
                 onChange={(e) => set("relay_base_url", e.target.value)}
@@ -3865,16 +3937,39 @@ function SettingsTab({ catalog, settings, onSave }) {
                 </button>
               </div>
             </SettingField>
-            <SettingField label="中转站失败策略" hint="official 会回退到上面的官方/插件配置；strict 会直接阻止提交。">
+            <SettingField label="中转不可用时" hint="只在选择「中转站优先」但中转站配置不可用时生效；任务提交后的厂商错误仍会按正常错误显示。">
               <select
                 value={form.relay_fallback_policy || "official"}
                 onChange={(e) => set("relay_fallback_policy", e.target.value, { immediate: true })}
               >
-                <option value="official">official：失败时回官方/插件配置</option>
-                <option value="strict">strict：失败时阻止提交</option>
+                <option value="official">自动改用官方直连</option>
+                <option value="strict">停止提交并提示我修正中转站</option>
               </select>
             </SettingField>
           </div>
+          <div className="settings-test-bar">
+            <div className="text-xs text-muted">
+              测试会请求中转站模型列表，并和当前插件内置模型做一次匹配；如果中转站不提供模型列表，仍可手动提交，但无法提前判断模型是否支持。
+            </div>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              onClick={testRelay}
+              disabled={relayTesting || !String(form.relay_base_url || "").trim()}
+            >
+              {relayTesting ? <Spinner /> : <Icon name="play" size={12} />} 测试中转站模型
+            </button>
+          </div>
+          {relayStatus && (
+            <TestResult status={relayStatus} onDismiss={() => setRelayStatus(null)} />
+          )}
+          {!!relayModels.length && (
+            <div className="text-xs text-muted">
+              <div>中转站返回 {relayModels.length} 个模型；当前插件命中 {relaySupported.length} 个，未在列表中发现 {relayMissing.length} 个。</div>
+              <div>命中：{relaySupported.slice(0, 10).join("、") || "无"}{relaySupported.length > 10 ? " 等" : ""}</div>
+              <div>未发现：{relayMissing.slice(0, 10).join("、") || "无"}{relayMissing.length > 10 ? " 等" : ""}</div>
+            </div>
+          )}
         </SettingSection>
 
         <SettingSection

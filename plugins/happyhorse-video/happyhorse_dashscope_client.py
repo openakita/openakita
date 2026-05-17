@@ -132,6 +132,10 @@ def make_default_settings() -> dict[str, Any]:
         "timeout": 60.0,
         "timeout_sec": 60.0,
         "max_retries": 2,
+        # "official" = use the DashScope regional endpoint directly.
+        # "relay" = use the relay URL/name first. Empty keeps pre-existing
+        # installs compatible: relay settings still take effect if present.
+        "request_channel": "",
         # ── Optional plugin-local relay endpoint ───────────────────────
         # This is intentionally independent from the host LLM endpoint list:
         # installed users should be able to paste the relay URL/key directly
@@ -302,20 +306,30 @@ class HappyhorseDashScopeClient(BaseVendorClient):
         merged = make_default_settings()
         merged.update({k: v for k, v in cur.items() if v not in (None, "")})
 
-        # ── Optional plugin-local relay override ───────────────────────
+        request_channel = str(merged.get("request_channel") or "").strip().lower()
+        if request_channel not in {"official", "relay"}:
+            request_channel = ""
+
+        # ── Optional relay override ────────────────────────────────────
         # The UI exposes relay_base_url / relay_api_key. relay_api_key is
         # optional because some relays reuse the official DashScope key.
+        #
+        # request_channel is the user's explicit priority choice. If it is
+        # blank, keep the historical behaviour: any configured relay wins.
         relay_base_url = str(merged.get("relay_base_url") or "").strip().rstrip("/")
-        if relay_base_url:
+        use_relay = request_channel == "relay" or (
+            request_channel == "" and bool(relay_base_url or str(merged.get("relay_endpoint") or "").strip())
+        )
+        if relay_base_url and use_relay:
             merged["base_url"] = relay_base_url
             relay_key = str(merged.get("relay_api_key") or "").strip()
             if relay_key:
                 merged["api_key"] = relay_key
 
         # ── Back-compat shared registry path ───────────────────────────
-        # Only used when no plugin-local relay URL is configured.
+        # Only used when no direct relay URL is configured.
         relay_name = str(merged.get("relay_endpoint") or "").strip()
-        if relay_name and not relay_base_url:
+        if relay_name and use_relay and not relay_base_url:
             try:
                 # Import lazily so the plugin still loads in environments
                 # where the openakita package is not on sys.path (e.g.
@@ -445,6 +459,140 @@ class HappyhorseDashScopeClient(BaseVendorClient):
             "ok": False,
             "status": resp.status_code,
             "message": f"DashScope 响应异常 (HTTP {resp.status_code})",
+        }
+
+    @staticmethod
+    def _parse_model_ids(payload: Any) -> list[str]:
+        items: list[Any] = []
+        if isinstance(payload, dict):
+            for key in ("data", "models", "list"):
+                val = payload.get(key)
+                if isinstance(val, list):
+                    items = val
+                    break
+        elif isinstance(payload, list):
+            items = payload
+
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            if isinstance(item, str):
+                name = item.strip()
+            elif isinstance(item, dict):
+                name = str(item.get("id") or item.get("name") or "").strip()
+            else:
+                continue
+            key = name.lower()
+            if not name or key in seen:
+                continue
+            seen.add(key)
+            out.append(name)
+        return out
+
+    @staticmethod
+    def _model_catalog_urls(base_url: str) -> list[str]:
+        base = str(base_url or "").strip().rstrip("/")
+        if not base:
+            return []
+        candidates: list[str]
+        if base.endswith(("/v1", "/compatible-mode/v1")):
+            candidates = [f"{base}/models"]
+        else:
+            candidates = [
+                f"{base}/compatible-mode/v1/models",
+                f"{base}/v1/models",
+                f"{base}/models",
+            ]
+        out: list[str] = []
+        seen: set[str] = set()
+        for url in candidates:
+            if url not in seen:
+                seen.add(url)
+                out.append(url)
+        return out
+
+    async def probe_relay_models(self) -> dict[str, Any]:
+        """Probe the configured relay's model catalog for Settings UI.
+
+        This is intentionally separate from ``ping_api_key``: the latter
+        tests the currently effective request channel, while this method
+        always tests the relay fields so users can inspect a relay before
+        switching generation traffic to it.
+        """
+        try:
+            import httpx
+        except ImportError as e:
+            return {"ok": False, "message": f"httpx missing: {e}", "models": []}
+
+        raw = self._read_settings() or {}
+        base_url = str(raw.get("relay_base_url") or "").strip().rstrip("/")
+        if not base_url:
+            return {
+                "ok": False,
+                "kind": "client",
+                "message": "请先填写中转站 Base URL。",
+                "models": [],
+            }
+        key = str(raw.get("relay_api_key") or raw.get("api_key") or "").strip()
+        urls = self._model_catalog_urls(base_url)
+        if not urls:
+            return {"ok": False, "message": "中转站 Base URL 为空。", "models": []}
+
+        headers = {"Accept": "application/json"}
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+            headers["x-api-key"] = key
+
+        last_status: int | None = None
+        last_message = ""
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            for url in urls:
+                try:
+                    resp = await client.get(url, headers=headers)
+                except httpx.TimeoutException:
+                    last_message = f"请求 {url} 超时（12s）"
+                    continue
+                except httpx.NetworkError as e:
+                    last_message = f"无法访问 {url}: {e}"
+                    continue
+                last_status = resp.status_code
+                if resp.status_code == 404:
+                    last_message = f"{url} 没有模型列表接口（HTTP 404）"
+                    continue
+                if resp.status_code in (401, 403):
+                    return {
+                        "ok": False,
+                        "kind": "auth",
+                        "status": resp.status_code,
+                        "url": url,
+                        "message": f"中转站拒绝了 Key（HTTP {resp.status_code}）。",
+                        "models": [],
+                    }
+                if resp.status_code >= 400:
+                    last_message = f"中转站响应异常（HTTP {resp.status_code}）：{resp.text[:120]}"
+                    continue
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    last_message = f"{url} 返回的不是 JSON 模型列表。"
+                    continue
+                models = self._parse_model_ids(payload)
+                return {
+                    "ok": True,
+                    "status": resp.status_code,
+                    "url": url,
+                    "base_url": base_url,
+                    "model_count": len(models),
+                    "models": models,
+                    "message": f"已获取 {len(models)} 个模型。",
+                }
+
+        return {
+            "ok": False,
+            "status": last_status,
+            "base_url": base_url,
+            "message": last_message or "未能获取中转站模型列表。",
+            "models": [],
         }
 
     # ── cancellation ──────────────────────────────────────────────────
