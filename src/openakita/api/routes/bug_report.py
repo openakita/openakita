@@ -49,6 +49,7 @@ FRONTEND_LOG_TAIL_BYTES = 512 * 1024  # last 512 KB of frontend log
 MAX_ZIP_SIZE = 30 * 1024 * 1024  # 30 MB
 RECENT_DAYS = 3  # how far back to collect dated files
 DIR_MAX_BYTES = 5 * 1024 * 1024  # default per-directory byte budget
+CRASHDUMP_MAX_BYTES = 12 * 1024 * 1024  # keep room under MAX_ZIP_SIZE
 
 
 def _get_bug_report_endpoint() -> str:
@@ -272,6 +273,125 @@ def _resolve_global_logs_dir() -> Path:
 
         root = os.environ.get("OPENAKITA_ROOT", "").strip()
         return Path(root) / "logs" if root else Path.home() / ".openakita" / "logs"
+
+
+def _resolve_openakita_home_dir() -> Path:
+    """Return the OpenAkita home directory shared with the desktop shell."""
+    try:
+        from openakita.config import settings
+
+        return settings.openakita_home
+    except Exception:
+        import os
+
+        root = os.environ.get("OPENAKITA_ROOT", "").strip()
+        return Path(root) if root else Path.home() / ".openakita"
+
+
+def _add_windows_crash_artifacts(zf: zipfile.ZipFile) -> None:
+    """Add desktop native crash evidence to the backend-built feedback zip.
+
+    Normal desktop submissions go through this FastAPI route while the backend
+    is healthy. The Tauri offline IPC path has its own equivalent collector,
+    but relying only on that path misses the common case where the app crashed,
+    restarted, and the user submits feedback after the backend is running.
+    """
+    if platform.system() != "Windows":
+        return
+
+    _add_dir_recent(
+        zf,
+        _resolve_openakita_home_dir() / "crashdumps",
+        "crashdumps",
+        days=30,
+        patterns=("*.dmp",),
+        max_total_bytes=CRASHDUMP_MAX_BYTES,
+    )
+
+    _add_wer_reports(zf)
+    event_log = _collect_windows_event_log()
+    if event_log:
+        try:
+            zf.writestr("wer/event_log_recent.txt", event_log)
+        except Exception:
+            pass
+
+
+def _add_wer_reports(zf: zipfile.ZipFile) -> None:
+    """Add recent WER Report.wer files that mention OpenAkita."""
+    import os
+
+    local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+    if not local_appdata:
+        return
+    wer_archive = Path(local_appdata) / "Microsoft" / "Windows" / "WER" / "ReportArchive"
+    if not wer_archive.exists():
+        return
+
+    candidates: list[Path] = []
+    try:
+        dirs = [p for p in wer_archive.iterdir() if p.is_dir()]
+        dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        candidates = dirs[:30]
+    except Exception:
+        return
+
+    for report_dir in candidates:
+        report_wer = report_dir / "Report.wer"
+        if not report_wer.is_file():
+            continue
+        matched = "openakita" in report_dir.name.lower()
+        if not matched:
+            try:
+                sample = report_wer.read_bytes()[:64 * 1024]
+                matched = "openakita" in sample.decode("utf-8", "ignore").lower()
+            except Exception:
+                matched = False
+        if matched:
+            _add_file(zf, report_wer, f"wer/{report_dir.name}-Report.wer")
+
+
+def _collect_windows_event_log() -> bytes:
+    """Collect recent Application Error/WER events mentioning OpenAkita."""
+    import subprocess
+
+    xpath = (
+        "*[System[Provider[@Name='Application Error' or "
+        "@Name='Windows Error Reporting'] and "
+        "TimeCreated[timediff(@SystemTime) <= 604800000]]]"
+    )
+    ps_cmd = (
+        f"$ev = Get-WinEvent -LogName Application -MaxEvents 200 -FilterXPath \"{xpath}\" "
+        "-ErrorAction SilentlyContinue | "
+        "Where-Object { $_.Message -match 'openakita' } | Select-Object -First 30; "
+        "if ($ev) { $ev | ForEach-Object { "
+        "'[{0}] {1}: {2}' -f $_.TimeCreated.ToString('s'), $_.ProviderName, "
+        "($_.Message -replace '\\r?\\n', ' | ') } }"
+    )
+    kwargs: dict = {
+        "capture_output": True,
+        "timeout": 15,
+        "stdin": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if platform.system() == "Windows":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        proc = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                ps_cmd,
+            ],
+            **kwargs,
+        )
+        return proc.stdout or b""
+    except Exception:
+        return b""
 
 
 def _recent_files(
@@ -918,6 +1038,13 @@ async def _build_bug_zip(
                     )
             except Exception:
                 pass
+
+        # Always include native desktop crash evidence for bug reports when
+        # available. This intentionally does not depend on the upload_logs /
+        # upload_debug checkboxes: users submit these reports after a crash,
+        # and the minidump/WER files are the only reliable evidence for
+        # WebView2/Tauri native failures.
+        _add_windows_crash_artifacts(zf)
 
     return buf.getvalue()
 
