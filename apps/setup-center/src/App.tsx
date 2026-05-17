@@ -1132,6 +1132,7 @@ function MainApp() {
           let readinessImReady: boolean | undefined;
           let readinessFullyReady: boolean | undefined;
           let lastLinkDiagnostic: LinkDiagnostic | null | undefined;
+          let healthPid: number | null | undefined;
           // 提取后端版本与 readiness
           try {
             const data = await res.json();
@@ -1143,6 +1144,7 @@ function MainApp() {
             readinessImReady = readiness.im_ready;
             readinessFullyReady = readiness.ready;
             lastLinkDiagnostic = data.last_link_diagnostic || null;
+            healthPid = typeof data.pid === "number" ? data.pid : undefined;
           } catch { /* ignore */ }
           const wasReady = lastReadinessReadyRef.current;
           lastReadinessReadyRef.current = readinessReady;
@@ -1150,7 +1152,7 @@ function MainApp() {
           setServiceStatus(prev => ({
             ...(prev || { pid: null, pidFile: "" }),
             running: true,
-            pid: typeof data.pid === "number" ? data.pid : (prev?.pid ?? null),
+            pid: healthPid ?? prev?.pid ?? null,
             heartbeatPhase: readinessPhase || prev?.heartbeatPhase,
             heartbeatHttpReady: readinessHttpReady ?? prev?.heartbeatHttpReady,
             heartbeatImReady: readinessImReady ?? prev?.heartbeatImReady,
