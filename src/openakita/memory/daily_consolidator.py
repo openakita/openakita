@@ -479,87 +479,152 @@ class DailyConsolidator:
         if not self.memory_manager:
             return 0
 
-        # Phase 1B：去重只对正常可见桶做，隔离桶（legacy_quarantine、
-        # pending_consolidation）有独立的 promotion 流程不参与。
-        memories = list(self.memory_manager.iter_cached())
-        if len(memories) < 2:
-            return 0
+        # Phase 3：跨租户去重是真 bug —— 多用户 IM 部署上 user A 的记忆和 user B 的
+        # 记忆只要语义相似就会被合掉。这里改成**按 (user_id, workspace_id) 分组**，
+        # 每组内独立去重；找不到任何已知租户时（desktop 单用户场景），退回到全量
+        # 模式，保持原行为。隔离桶（legacy_quarantine / pending_consolidation）依
+        # 然通过 iter_cached 默认排除，不进入任何去重批次。
+        try:
+            tenants_iter = list(self.memory_manager.store.list_known_tenants())
+        except Exception as e:
+            logger.debug("[Consolidator] list_known_tenants failed, fallback to flat dedup: %s", e)
+            tenants_iter = []
 
-        logger.info(f"Checking {len(memories)} memories for duplicates...")
-
-        deleted_ids = set()
-        checked_pairs = set()  # 避免重复检查同一对
-
-        for memory in memories:
-            if memory.id in deleted_ids:
-                continue
-
-            if (
-                self.memory_manager.vector_store is not None
-                and self.memory_manager.vector_store.enabled
-            ):
-                similar = self.memory_manager.vector_store.search(
-                    memory.content,
-                    limit=5,
-                    filter_type=memory.type.value,  # 只在同类型中查找
+        if tenants_iter:
+            tenant_groups: list[tuple[str | None, str | None, list]] = [
+                (
+                    user_id,
+                    workspace_id,
+                    list(
+                        self.memory_manager.iter_cached(
+                            user_id=user_id, workspace_id=workspace_id
+                        )
+                    ),
                 )
+                for user_id, workspace_id in tenants_iter
+            ]
+        else:
+            tenant_groups = [(None, None, list(self.memory_manager.iter_cached()))]
 
-                for other_id, distance in similar:
-                    if other_id == memory.id or other_id in deleted_ids:
-                        continue
+        # 把 (None, None) 那组也跑一遍以兜底"未登记 session 但写到 default 桶"的旧数据：
+        # 否则升级前已有的 default 桶记忆永远不会被这次循环覆盖到。
+        if tenants_iter and not any(
+            user_id == "default" and workspace_id == "default" for user_id, workspace_id, _ in tenant_groups
+        ):
+            extra = list(
+                self.memory_manager.iter_cached(user_id="default", workspace_id="default")
+            )
+            if extra:
+                tenant_groups.append(("default", "default", extra))
 
-                    pair_key = tuple(sorted([memory.id, other_id]))
-                    if pair_key in checked_pairs:
-                        continue
-                    checked_pairs.add(pair_key)
-
-                    if distance > self.DUPLICATE_DISTANCE_THRESHOLD:
-                        continue
-
-                    other_memory = self.memory_manager._memories.get(other_id)
-                    if not other_memory:
-                        continue
-
-                    is_dup = await self.memory_manager._check_duplicate_with_llm(
-                        memory.content, other_memory.content
-                    )
-
-                    if is_dup:
-                        keep, remove = self._decide_which_to_keep(memory, other_memory)
-                        logger.info(
-                            f"Duplicate found: '{remove.content}' -> keeping '{keep.content}'"
-                        )
-                        self.memory_manager.delete_memory(remove.id)
-                        deleted_ids.add(remove.id)
-            else:
-                # 回退：字符串前缀匹配去重（向量库不可用时）
-                strip = self.memory_manager._strip_common_prefix
-                core_a = strip(memory.content)
-                for other in memories:
-                    if other.id == memory.id or other.id in deleted_ids:
-                        continue
-                    if other.type != memory.type:
-                        continue
-
-                    pair_key = tuple(sorted([memory.id, other.id]))
-                    if pair_key in checked_pairs:
-                        continue
-                    checked_pairs.add(pair_key)
-
-                    core_b = strip(other.content)
-                    if core_a == core_b:
-                        keep, remove = self._decide_which_to_keep(memory, other)
-                        logger.info(
-                            f"Duplicate found (string match): "
-                            f"'{remove.content}' -> keeping '{keep.content}'"
-                        )
-                        self.memory_manager.delete_memory(remove.id)
-                        deleted_ids.add(remove.id)
+        deleted_ids: set[str] = set()
+        for user_id, workspace_id, memories in tenant_groups:
+            if len(memories) < 2:
+                continue
+            logger.info(
+                "Checking %d memories for duplicates (tenant=%s/%s)...",
+                len(memories), user_id or "*", workspace_id or "*",
+            )
+            checked_pairs: set[tuple[str, str]] = set()
+            for memory in memories:
+                if memory.id in deleted_ids:
+                    continue
+                newly = await self._dedup_one_memory(
+                    memory,
+                    memories,
+                    checked_pairs=checked_pairs,
+                    deleted_ids=deleted_ids,
+                )
+                deleted_ids.update(newly)
 
         if deleted_ids:
             logger.info(f"Removed {len(deleted_ids)} duplicate memories")
 
         return len(deleted_ids)
+
+    async def _dedup_one_memory(
+        self,
+        memory: Memory,
+        memories: list,
+        *,
+        checked_pairs: set[tuple[str, str]],
+        deleted_ids: set[str],
+    ) -> set[str]:
+        """对单条 memory 找重复，返回新删除的 id 集合。
+
+        - 向量库可用 → 向量相似度初筛 + LLM 复核；
+        - 向量库不可用 → 同 tenant_group 内字符串去前缀完全匹配兜底。
+
+        比较范围已被调用方按 tenant 分组限制；这里再做一次显式 (user_id,
+        workspace_id) 兜底检查，因为向量库的 search() 是全库召回。
+        """
+        newly: set[str] = set()
+        mm = self.memory_manager
+        vector_store = getattr(mm, "vector_store", None)
+
+        if vector_store is not None and getattr(vector_store, "enabled", False):
+            similar = vector_store.search(
+                memory.content,
+                limit=5,
+                filter_type=memory.type.value,
+            )
+            for other_id, distance in similar:
+                if other_id == memory.id or other_id in deleted_ids or other_id in newly:
+                    continue
+                pair_key = tuple(sorted([memory.id, other_id]))
+                if pair_key in checked_pairs:
+                    continue
+                checked_pairs.add(pair_key)
+                if distance > self.DUPLICATE_DISTANCE_THRESHOLD:
+                    continue
+                other_memory = mm._memories.get(other_id)
+                if not other_memory:
+                    continue
+                # 不能让隔离桶条目成为合并对象。
+                other_scope = getattr(other_memory, "scope", "user") or "user"
+                if other_scope in {"legacy_quarantine", "pending_consolidation"}:
+                    continue
+                # 兜底 tenant 一致性 —— 向量库 search() 是全库召回，可能跨 tenant。
+                if (
+                    (getattr(other_memory, "user_id", "default") or "default")
+                    != (getattr(memory, "user_id", "default") or "default")
+                    or (getattr(other_memory, "workspace_id", "default") or "default")
+                    != (getattr(memory, "workspace_id", "default") or "default")
+                ):
+                    continue
+                is_dup = await mm._check_duplicate_with_llm(memory.content, other_memory.content)
+                if is_dup:
+                    keep, remove = self._decide_which_to_keep(memory, other_memory)
+                    logger.info(
+                        "Duplicate found: '%s' -> keeping '%s'",
+                        remove.content, keep.content,
+                    )
+                    mm.delete_memory(remove.id)
+                    newly.add(remove.id)
+        else:
+            # 字符串前缀匹配兜底（向量库不可用时）。
+            strip = mm._strip_common_prefix
+            core_a = strip(memory.content)
+            for other in memories:
+                if other.id == memory.id or other.id in deleted_ids or other.id in newly:
+                    continue
+                if other.type != memory.type:
+                    continue
+                pair_key = tuple(sorted([memory.id, other.id]))
+                if pair_key in checked_pairs:
+                    continue
+                checked_pairs.add(pair_key)
+                core_b = strip(other.content)
+                if core_a == core_b:
+                    keep, remove = self._decide_which_to_keep(memory, other)
+                    logger.info(
+                        "Duplicate found (string match): '%s' -> keeping '%s'",
+                        remove.content, keep.content,
+                    )
+                    mm.delete_memory(remove.id)
+                    newly.add(remove.id)
+
+        return newly
 
     def _decide_which_to_keep(self, mem1: Memory, mem2: Memory) -> tuple[Memory, Memory]:
         """

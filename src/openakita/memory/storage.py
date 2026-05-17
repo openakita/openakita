@@ -1485,14 +1485,42 @@ class MemoryStorage:
         outcome: str | None = None,
         days: int | None = None,
         limit: int = 20,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[dict]:
+        """搜索 episodes。
+
+        Phase 2b.5 新增 ``user_id`` / ``workspace_id`` 过滤：通过 INNER JOIN
+        ``session_tenants`` 表把 episode 收敛到给定租户。
+
+        兼容性：
+        - 不传 ``user_id`` 和 ``workspace_id`` 时回退到旧行为（全库扫描），
+          老调用方完全不感知；
+        - 显式传任一参数后，未在 ``session_tenants`` 登记的 session 对应的
+          episode（v3 之前的老数据）会被自然过滤掉 —— 这是有意的安全默认。
+          调用方如果想包含历史孤儿数据，可以在迁徙工具里单独走 raw SQL。
+        """
         if not self._conn:
             return []
         conditions: list[str] = []
         params: list[Any] = []
 
+        use_tenant_filter = user_id is not None or workspace_id is not None
+        table_expr = "episodes"
+        if use_tenant_filter:
+            table_expr = (
+                "episodes INNER JOIN session_tenants st "
+                "ON episodes.session_id = st.session_id"
+            )
+            if user_id is not None:
+                conditions.append("st.user_id = ?")
+                params.append(user_id)
+            if workspace_id is not None:
+                conditions.append("st.workspace_id = ?")
+                params.append(workspace_id)
+
         if session_id:
-            conditions.append("session_id = ?")
+            conditions.append("episodes.session_id = ?" if use_tenant_filter else "session_id = ?")
             params.append(session_id)
         if entity:
             conditions.append("entities LIKE ?")
@@ -1511,9 +1539,12 @@ class MemoryStorage:
         where = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
 
+        select_cols = "episodes.*" if use_tenant_filter else "*"
+
         try:
             cur = self._conn.execute(
-                f"SELECT * FROM episodes WHERE {where} ORDER BY started_at DESC LIMIT ?",
+                f"SELECT {select_cols} FROM {table_expr} WHERE {where} "
+                "ORDER BY started_at DESC LIMIT ?",
                 params,
             )
             return self._rows_to_dicts(
@@ -2045,33 +2076,70 @@ class MemoryStorage:
         session_id: str | None = None,
         days_back: int = 7,
         limit: int = 20,
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[dict]:
-        """按关键词搜索 conversation_turns（content + tool_calls + tool_results）"""
+        """按关键词搜索 conversation_turns（content + tool_calls + tool_results）。
+
+        Phase 2b.5：新增 ``user_id`` / ``workspace_id`` 过滤，通过 JOIN
+        ``session_tenants`` 限定结果到给定租户。和 ``search_episodes`` 一样，
+        不传则保持旧的全库扫描行为（向后兼容）。
+        """
         if not self._conn or not keyword:
             return []
         cutoff = (datetime.now() - timedelta(days=days_back)).isoformat()
         pattern = f"%{keyword}%"
+
+        use_tenant_filter = user_id is not None or workspace_id is not None
+        if use_tenant_filter:
+            table_expr = (
+                "conversation_turns AS ct "
+                "INNER JOIN session_tenants AS st ON ct.session_id = st.session_id"
+            )
+            select_cols = (
+                "ct.session_id, ct.turn_index, ct.role, ct.content, "
+                "ct.tool_calls, ct.tool_results, ct.timestamp, ct.episode_id"
+            )
+        else:
+            table_expr = "conversation_turns"
+            select_cols = (
+                "session_id, turn_index, role, content, "
+                "tool_calls, tool_results, timestamp, episode_id"
+            )
+
+        conditions: list[str] = []
+        params: list[Any] = []
+        if use_tenant_filter and user_id is not None:
+            conditions.append("st.user_id = ?")
+            params.append(user_id)
+        if use_tenant_filter and workspace_id is not None:
+            conditions.append("st.workspace_id = ?")
+            params.append(workspace_id)
+        if session_id:
+            conditions.append(
+                "ct.session_id = ?" if use_tenant_filter else "session_id = ?"
+            )
+            params.append(session_id)
+        conditions.append(("ct." if use_tenant_filter else "") + "timestamp >= ?")
+        params.append(cutoff)
+        # LIKE 三选一
+        cols_prefix = "ct." if use_tenant_filter else ""
+        conditions.append(
+            f"({cols_prefix}content LIKE ? OR {cols_prefix}tool_calls LIKE ? "
+            f"OR {cols_prefix}tool_results LIKE ?)"
+        )
+        params.extend([pattern, pattern, pattern])
+        params.append(limit)
+
+        where = " AND ".join(conditions)
+        ordering = "ct.timestamp DESC" if use_tenant_filter else "timestamp DESC"
         try:
-            if session_id:
-                cur = self._conn.execute(
-                    "SELECT session_id, turn_index, role, content, "
-                    "tool_calls, tool_results, timestamp, episode_id "
-                    "FROM conversation_turns "
-                    "WHERE session_id = ? AND timestamp >= ? "
-                    "AND (content LIKE ? OR tool_calls LIKE ? OR tool_results LIKE ?) "
-                    "ORDER BY timestamp DESC LIMIT ?",
-                    (session_id, cutoff, pattern, pattern, pattern, limit),
-                )
-            else:
-                cur = self._conn.execute(
-                    "SELECT session_id, turn_index, role, content, "
-                    "tool_calls, tool_results, timestamp, episode_id "
-                    "FROM conversation_turns "
-                    "WHERE timestamp >= ? "
-                    "AND (content LIKE ? OR tool_calls LIKE ? OR tool_results LIKE ?) "
-                    "ORDER BY timestamp DESC LIMIT ?",
-                    (cutoff, pattern, pattern, pattern, limit),
-                )
+            cur = self._conn.execute(
+                f"SELECT {select_cols} FROM {table_expr} WHERE {where} "
+                f"ORDER BY {ordering} LIMIT ?",
+                params,
+            )
             return self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
         except Exception as e:
             logger.warning(f"Failed to search turns for '{keyword}': {e}")

@@ -437,8 +437,17 @@ class UnifiedStore:
         rows = self.db.search_episodes(**kwargs)
         return [Episode.from_dict(r) for r in rows]
 
-    def get_recent_episodes(self, days: int = 7, limit: int = 10) -> list[Episode]:
-        return self.search_episodes(days=days, limit=limit)
+    def get_recent_episodes(
+        self,
+        days: int = 7,
+        limit: int = 10,
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> list[Episode]:
+        return self.search_episodes(
+            days=days, limit=limit, user_id=user_id, workspace_id=workspace_id
+        )
 
     def update_episode(self, episode_id: str, updates: dict) -> bool:
         return self.db.update_episode(episode_id, updates)

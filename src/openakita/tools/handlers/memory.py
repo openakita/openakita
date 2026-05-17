@@ -790,7 +790,23 @@ class MemoryHandler:
         if not store:
             return "记忆系统未初始化"
 
-        episodes = store.get_recent_episodes(days=days, limit=limit)
+        # Phase 2b.5：把 episode 列表限制到当前 (user_id, workspace_id)。
+        # 多用户 IM 部署下，原实现会把别人的任务也列给当前用户的 LLM —— 隐私泄漏。
+        # mm._current_owner() 在 v4 之后由 start_session 设好；session_tenants
+        # 表里登记的 episode 才会被返回（v3 之前的孤儿数据被自然过滤）。
+        owner_user_id: str | None = None
+        owner_workspace_id: str | None = None
+        try:
+            if hasattr(mm, "_current_owner"):
+                owner_user_id, owner_workspace_id = mm._current_owner()
+        except Exception as e:
+            logger.debug("[Tool] _current_owner failed, falling back to unfiltered: %s", e)
+        episodes = store.get_recent_episodes(
+            days=days,
+            limit=limit,
+            user_id=owner_user_id,
+            workspace_id=owner_workspace_id,
+        )
         if not episodes:
             return f"最近 {days} 天没有已完成的任务记录。"
 
@@ -845,6 +861,16 @@ class MemoryHandler:
 
         # === 数据源 1: SQLite conversation_turns（主数据源） ===
         store = getattr(self.agent.memory_manager, "store", None)
+        # Phase 2b.5：把 turn 搜索限制到当前 (user_id, workspace_id)。多用户
+        # IM 部署下，原实现会让 alice 的 search_conversation_traces 搜到 bob 的对话。
+        owner_user_id: str | None = None
+        owner_workspace_id: str | None = None
+        try:
+            mm = self.agent.memory_manager
+            if hasattr(mm, "_current_owner"):
+                owner_user_id, owner_workspace_id = mm._current_owner()
+        except Exception as e:
+            logger.debug("[Tool] _current_owner failed in trace search: %s", e)
         if store:
             try:
                 rows = []
@@ -855,6 +881,8 @@ class MemoryHandler:
                         session_id=session_id_filter or None,
                         days_back=days_back,
                         limit=max_results,
+                        user_id=owner_user_id,
+                        workspace_id=owner_workspace_id,
                     ):
                         key = (
                             str(row.get("session_id", "")),

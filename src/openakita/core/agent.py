@@ -2139,11 +2139,22 @@ class Agent:
                 logger.debug(f"[Sticker] initialization skipped/failed: {e}")
 
         # === 从记忆系统加载 PERSONA_TRAIT ===
+        # Phase 3：用 iter_cached 替代直接遍历 _memories，自动排除
+        # legacy_quarantine / pending_consolidation 这两个隔离桶 ——
+        # persona_trait 是塑造 Agent 人格的高优先级数据，绝不能让旧版本身份
+        # 冲突的 trait 或后台合成产物悄悄混进来。
         try:
+            iter_cached = getattr(self.memory_manager, "iter_cached", None)
+            if iter_cached is None:
+                cached_iter = (
+                    m for m in self.memory_manager._memories.values()
+                )  # 老接口降级（理论上 v4+ 都走 iter_cached）
+            else:
+                cached_iter = iter_cached()
             persona_memories = [
                 m.to_dict()
-                for m in self.memory_manager._memories.values()
-                if m.type.value == "persona_trait"
+                for m in cached_iter
+                if getattr(getattr(m, "type", None), "value", "") == "persona_trait"
             ]
             if persona_memories:
                 self.persona_manager.load_traits_from_memories(persona_memories)

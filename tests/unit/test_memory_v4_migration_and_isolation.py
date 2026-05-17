@@ -733,6 +733,197 @@ class _FakeStore:
         return list(self._data.get((user_id, workspace_id), []))
 
 
+def test_search_episodes_tenant_filter_phase_2b5(tmp_path: Path):
+    """Phase 2b.5：search_episodes 带 user_id/workspace_id 时通过 JOIN session_tenants
+    只返回该租户的 episode；不传则保持旧的全库扫描行为，向后兼容。"""
+    storage = MemoryStorage(tmp_path / "openakita.db")
+    storage.upsert_session_tenant("sess-alice", "alice", "proj-a")
+    storage.upsert_session_tenant("sess-bob", "bob", "proj-a")
+
+    storage.save_episode({
+        "id": "ep-alice-1",
+        "session_id": "sess-alice",
+        "summary": "alice 写了一份 PRD",
+        "started_at": "2026-05-15T10:00:00",
+        "outcome": "completed",
+    })
+    storage.save_episode({
+        "id": "ep-bob-1",
+        "session_id": "sess-bob",
+        "summary": "bob 改了一个 bug",
+        "started_at": "2026-05-15T11:00:00",
+        "outcome": "completed",
+    })
+    # 老数据：v3 之前没有 session_tenants 登记，session 也不在表里
+    storage.save_episode({
+        "id": "ep-orphan-1",
+        "session_id": "sess-orphan",
+        "summary": "古老 v2 时期遗留的 episode",
+        "started_at": "2026-05-15T09:00:00",
+        "outcome": "completed",
+    })
+
+    # 不传过滤 → 全库（兼容旧调用）
+    all_eps = storage.search_episodes(limit=10)
+    assert len(all_eps) == 3
+
+    alice_eps = storage.search_episodes(user_id="alice", workspace_id="proj-a", limit=10)
+    assert {ep["id"] for ep in alice_eps} == {"ep-alice-1"}
+
+    bob_eps = storage.search_episodes(user_id="bob", workspace_id="proj-a", limit=10)
+    assert {ep["id"] for ep in bob_eps} == {"ep-bob-1"}
+
+    # 只传 workspace 也能工作（同 workspace 多用户 → 取并集）
+    proj_eps = storage.search_episodes(workspace_id="proj-a", limit=10)
+    assert {ep["id"] for ep in proj_eps} == {"ep-alice-1", "ep-bob-1"}
+
+    # 未登记的 orphan session 在带 tenant filter 时被自然排除
+    assert "ep-orphan-1" not in {ep["id"] for ep in alice_eps}
+    assert "ep-orphan-1" not in {ep["id"] for ep in bob_eps}
+
+
+def test_search_turns_tenant_filter_phase_2b5(tmp_path: Path):
+    """Phase 2b.5：search_turns 同样应该按 (user_id, workspace_id) 过滤。"""
+    storage = MemoryStorage(tmp_path / "openakita.db")
+    storage.upsert_session_tenant("sess-alice", "alice", "proj-a")
+    storage.upsert_session_tenant("sess-bob", "bob", "proj-a")
+
+    storage.save_turn(
+        session_id="sess-alice",
+        turn_index=0,
+        role="user",
+        content="今天的 PRD 写完了吗 内容是什么",
+        timestamp=datetime.now().isoformat(),
+    )
+    storage.save_turn(
+        session_id="sess-bob",
+        turn_index=0,
+        role="user",
+        content="今天的 PRD bug 是怎么修的",
+        timestamp=datetime.now().isoformat(),
+    )
+
+    all_rows = storage.search_turns(keyword="PRD", days_back=30)
+    assert len(all_rows) == 2
+
+    alice_rows = storage.search_turns(
+        keyword="PRD", days_back=30, user_id="alice", workspace_id="proj-a"
+    )
+    assert len(alice_rows) == 1
+    assert alice_rows[0]["session_id"] == "sess-alice"
+
+    bob_rows = storage.search_turns(
+        keyword="PRD", days_back=30, user_id="bob", workspace_id="proj-a"
+    )
+    assert len(bob_rows) == 1
+    assert bob_rows[0]["session_id"] == "sess-bob"
+
+
+@pytest.mark.asyncio
+async def test_daily_consolidator_dedup_does_not_cross_tenants(tmp_path: Path):
+    """Phase 3：dedup 必须按 (user_id, workspace_id) 分组。
+
+    场景：alice 和 bob 都说了"我喜欢用简体中文"，没有理由让它们互相 dedup —— 这是
+    多用户 IM 部署下最容易被忽视的真 bug。
+    """
+    from openakita.memory.daily_consolidator import DailyConsolidator
+    from openakita.memory.manager import MemoryManager
+
+    mm = MemoryManager(
+        data_dir=tmp_path / "memory",
+        memory_md_path=tmp_path / "MEMORY.md",
+        search_backend="fts5",
+    )
+
+    # 显式登记两个 tenant
+    mm.store.upsert_session_tenant("sess-alice", "alice", "proj-a")
+    mm.store.upsert_session_tenant("sess-bob", "bob", "proj-a")
+
+    # 各自塞一条**几乎相同**的偏好记忆到 user scope
+    alice_mem = SemanticMemory(
+        type=MemoryType.PREFERENCE,
+        priority=MemoryPriority.LONG_TERM,
+        content="我喜欢用简体中文回答",
+        importance_score=0.8,
+    )
+    bob_mem = SemanticMemory(
+        type=MemoryType.PREFERENCE,
+        priority=MemoryPriority.LONG_TERM,
+        content="我喜欢用简体中文回答",
+        importance_score=0.8,
+    )
+    mm.store.save_semantic(alice_mem, scope="user", scope_owner="",
+                           user_id="alice", workspace_id="proj-a")
+    mm.store.save_semantic(bob_mem, scope="user", scope_owner="",
+                           user_id="bob", workspace_id="proj-a")
+    # 刷新内存缓存
+    if hasattr(mm, "_reload_from_sqlite"):
+        mm._reload_from_sqlite()
+
+    # 在没有向量库的环境下，dedup 走字符串前缀匹配兜底路径。两条 content 完全相同。
+    # 改造后的实现应按 tenant 分组，alice 和 bob 各自只有 1 条，互不见，不会被删。
+    consolidator = DailyConsolidator(
+        data_dir=tmp_path / "memory",
+        memory_md_path=tmp_path / "MEMORY.md",
+        memory_manager=mm,
+        brain=None,
+    )
+    deleted = await consolidator._cleanup_duplicate_memories()
+    assert deleted == 0, "alice 和 bob 的同质偏好不能被跨租户合并"
+
+    # 验证两条都还在
+    alice_left = mm.store.load_all_memories(scope="user", scope_owner="",
+                                            user_id="alice", workspace_id="proj-a")
+    bob_left = mm.store.load_all_memories(scope="user", scope_owner="",
+                                          user_id="bob", workspace_id="proj-a")
+    assert len(alice_left) == 1
+    assert len(bob_left) == 1
+
+
+@pytest.mark.asyncio
+async def test_daily_consolidator_dedup_still_works_within_one_tenant(tmp_path: Path):
+    """Phase 3：跨租户被禁，但**同一个**租户内的重复仍然要被去掉。"""
+    from openakita.memory.daily_consolidator import DailyConsolidator
+    from openakita.memory.manager import MemoryManager
+
+    mm = MemoryManager(
+        data_dir=tmp_path / "memory",
+        memory_md_path=tmp_path / "MEMORY.md",
+        search_backend="fts5",
+    )
+    mm.store.upsert_session_tenant("sess-alice", "alice", "proj-a")
+
+    # 同一租户两条完全一样的偏好
+    for content in ["我喜欢用简体中文回答", "我喜欢用简体中文回答"]:
+        mm.store.save_semantic(
+            SemanticMemory(
+                type=MemoryType.PREFERENCE,
+                priority=MemoryPriority.LONG_TERM,
+                content=content,
+                importance_score=0.8,
+            ),
+            scope="user",
+            scope_owner="",
+            user_id="alice",
+            workspace_id="proj-a",
+            skip_dedup=True,  # 跳过写入侧 dedup，强制造两条
+        )
+    if hasattr(mm, "_reload_from_sqlite"):
+        mm._reload_from_sqlite()
+
+    consolidator = DailyConsolidator(
+        data_dir=tmp_path / "memory",
+        memory_md_path=tmp_path / "MEMORY.md",
+        memory_manager=mm,
+        brain=None,
+    )
+    deleted = await consolidator._cleanup_duplicate_memories()
+    assert deleted == 1, "同租户内的完全重复应该被合掉"
+    remaining = mm.store.load_all_memories(scope="user", scope_owner="",
+                                           user_id="alice", workspace_id="proj-a")
+    assert len(remaining) == 1
+
+
 @pytest.mark.asyncio
 async def test_global_store_source_blocks_cross_user():
     from openakita.agents.factory import _GlobalStoreSource
