@@ -255,6 +255,9 @@ def _history_entry(session, conversation_id: str, original_idx: int, msg: dict) 
     artifacts = msg.get("artifacts")
     if artifacts:
         entry["artifacts"] = artifacts
+    attachments = msg.get("attachments")
+    if attachments:
+        entry["attachments"] = attachments
     ask_user = msg.get("ask_user")
     if ask_user:
         entry["ask_user"] = ask_user

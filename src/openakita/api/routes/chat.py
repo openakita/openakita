@@ -1429,6 +1429,35 @@ async def _stream_chat(
                 )
 
 
+def _org_file_attachments_to_chat_attachments(attachments: list[dict]) -> list[dict]:
+    """Convert org runtime file attachments to ChatView attachment objects."""
+    from pathlib import Path
+
+    converted: list[dict] = []
+    seen: set[str] = set()
+    for att in attachments or []:
+        if not isinstance(att, dict):
+            continue
+        file_path = str(att.get("file_path") or att.get("path") or "").strip()
+        if not file_path:
+            continue
+        key = file_path.lower().replace("\\", "/")
+        if key in seen:
+            continue
+        seen.add(key)
+        name = str(att.get("filename") or Path(file_path).name or "file")
+        suffix = Path(name).suffix.lower()
+        att_type = "document" if suffix in {".doc", ".docx", ".pdf", ".md", ".txt"} else "file"
+        converted.append({
+            "type": att_type,
+            "name": name,
+            "localPath": file_path,
+            "size": att.get("file_size") or att.get("size"),
+            "uploadStatus": "uploaded",
+        })
+    return converted
+
+
 async def _stream_org_command_chat(
     chat_request: ChatRequest,
     *,
@@ -1538,15 +1567,23 @@ async def _stream_org_command_chat(
             if item.get("type") == "org_command_done":
                 result = item.get("result")
                 error = item.get("error")
+                attachments: list[dict] = []
                 if isinstance(result, dict):
                     final_text = str(result.get("result") or result.get("error") or "")
+                    raw_attachments = result.get("file_attachments") or []
+                    if isinstance(raw_attachments, list):
+                        attachments = [a for a in raw_attachments if isinstance(a, dict)]
                 if error:
                     final_text = str(error)
                 yield _sse("org_command_done", item)
                 if final_text:
                     progress_text = "\n".join(f"> {line}" for line in progress_lines)
                     display_text = f"{progress_text}\n\n---\n\n{final_text}" if progress_text else final_text
-                    yield _sse("text_replace", {"content": display_text})
+                    chat_attachments = _org_file_attachments_to_chat_attachments(attachments)
+                    yield _sse(
+                        "text_replace",
+                        {"content": display_text, "attachments": chat_attachments},
+                    )
                     if session_manager:
                         session = session_manager.get_session(
                             channel="desktop",
@@ -1555,7 +1592,8 @@ async def _stream_org_command_chat(
                             create_if_missing=True,
                         )
                         if session:
-                            session.add_message("assistant", final_text)
+                            meta = {"attachments": chat_attachments} if chat_attachments else {}
+                            session.add_message("assistant", final_text, **meta)
                             session_manager.mark_dirty()
                 yield _sse("done")
                 return

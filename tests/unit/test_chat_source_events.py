@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from openakita.api.routes.chat import _extract_mcp_call, _extract_source_used
+from openakita.api.routes.chat import (
+    _extract_mcp_call,
+    _extract_source_used,
+    _org_file_attachments_to_chat_attachments,
+)
 
 
 def test_extract_source_used_from_openakita_marker():
@@ -57,3 +61,29 @@ def test_extract_mcp_call_ignores_other_tools():
     assert _extract_mcp_call({"type": "tool_call_end", "tool": "web_fetch", "result": "[OPENAKITA_MCP] {}"}) is None
     assert _extract_mcp_call({"type": "tool_call_end", "tool": "call_mcp_tool", "result": "no marker"}) is None
     assert _extract_mcp_call({"type": "tool_call_end", "tool": "call_mcp_tool", "result": "[OPENAKITA_MCP] not-json"}) is None
+
+
+def test_org_file_attachments_convert_to_chat_attachments():
+    attachments = _org_file_attachments_to_chat_attachments([
+        {
+            "filename": "方案.md",
+            "file_path": r"D:\OpenAkita\workspace\方案.md",
+            "file_size": 128,
+        },
+        {
+            "filename": "方案.md",
+            "file_path": r"d:\openakita\workspace\方案.md",
+            "file_size": 128,
+        },
+        {"filename": "ignored.md"},
+    ])
+
+    assert attachments == [
+        {
+            "type": "document",
+            "name": "方案.md",
+            "localPath": r"D:\OpenAkita\workspace\方案.md",
+            "size": 128,
+            "uploadStatus": "uploaded",
+        }
+    ]
