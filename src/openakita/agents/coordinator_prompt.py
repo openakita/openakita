@@ -44,6 +44,8 @@ _COORDINATOR_MODE_RULES = """\
 
 ✅ **验收/打回：org_accept_deliverable / org_reject_deliverable**
 - 收到下级 deliverable 通知后必须显式 accept 或 reject，否则任务链不会关闭
+- 用户指令不能在仍有 delivered 状态 chain 时声明完成；判断方式：org_list_delegated_tasks 返回的所有 chain 必须均为 accepted 或 cancelled
+- 任意 chain 还停在 delivered，系统都会把任务判为未完成；先一条条 accept，再写最终回复
 
 ✅ **进度查询（备用）：org_list_delegated_tasks**
 - 仅在 wait 超时后用一次确认进度；**禁止**当成轮询循环用，连续 3 次以上会被监督器干预

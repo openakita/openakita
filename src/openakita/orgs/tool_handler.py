@@ -151,8 +151,9 @@ class OrgToolHandler:
                 str(t.get("chain_id") or "") for t in candidates[:5]
             ]
             return raw, (
-                f"任务链 {raw} 匹配到多个候选，无法安全验收。"
-                f"请使用完整 task_chain_id：{candidate_ids}"
+                f"任务链前缀 {raw!r} 匹配到 {len(candidates)} 个候选，无法安全验收。"
+                f"请先调用 org_list_delegated_tasks 查询当前可验收的完整 chain_id，"
+                f"再用完整 task_chain_id 重新调用。候选列表：{candidate_ids}"
             )
         except Exception:
             logger.debug(
@@ -2247,7 +2248,11 @@ class OrgToolHandler:
                 recent = events.query(event_type="task_accepted", limit=50)
                 for ev in recent:
                     if ev.get("data", {}).get("chain_id") == chain_id:
-                        return f"Deliverable for chain {chain_id} has already been accepted"
+                        return (
+                            f"任务链 {chain_id} 已被验收过，不必重复操作；"
+                            "请继续推进下一个 chain 或调用 org_list_delegated_tasks "
+                            "确认所有 chain 均为 accepted/cancelled 后向上级宣告完成。"
+                        )
 
         feedback = args.get("feedback", "验收通过")
 
@@ -2369,7 +2374,11 @@ class OrgToolHandler:
                 recent = events.query(event_type="task_accepted", limit=50)
                 for ev in recent:
                     if ev.get("data", {}).get("chain_id") == chain_id:
-                        return f"Deliverable for chain {chain_id} has already been accepted"
+                        return (
+                            f"任务链 {chain_id} 已被验收过，不必重复操作；"
+                            "请继续推进下一个 chain 或调用 org_list_delegated_tasks "
+                            "确认所有 chain 均为 accepted/cancelled 后向上级宣告完成。"
+                        )
 
         reason = args.get("reason", "")
 
