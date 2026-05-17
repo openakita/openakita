@@ -54,19 +54,61 @@ class TestTemplateData:
 class TestAigcVideoStudioTemplate:
     """Workbench-specific invariants for the AIGC video studio template.
 
-    The template ships workbench leaf nodes that depend on the
-    `tongyi-image` and `seedance-video` plugins. The runtime / manager will
-    refuse to run if a workbench node has hierarchy children, so the
-    template's structural shape must hold even before any plugin is loaded.
+    Starting with v1.1.0 the default template splits a single
+    ``happyhorse-video`` plugin into four per-category workbench leaves
+    (image / video / digital-human / long-video post) plus three
+    coordination roles (producer / screenwriter / art-director). The
+    runtime / manager refuses to run if a workbench node has hierarchy
+    children, so the template's structural shape must hold even before
+    any plugin is loaded.
     """
+
+    HAPPYHORSE_WORKBENCH_NODES: dict[str, set[str]] = {
+        "wb-hh-image": {
+            "hh_image_create",
+            "hh_image_edit",
+            "hh_image_style_repaint",
+            "hh_image_background",
+            "hh_image_outpaint",
+            "hh_image_sketch",
+            "hh_image_ecommerce",
+            "hh_status",
+            "hh_cost_preview",
+        },
+        "wb-hh-video": {
+            "hh_t2v",
+            "hh_i2v",
+            "hh_r2v",
+            "hh_video_edit",
+            "hh_status",
+            "hh_cost_preview",
+        },
+        "wb-hh-human": {
+            "hh_photo_speak",
+            "hh_video_relip",
+            "hh_video_reface",
+            "hh_pose_drive",
+            "hh_avatar_compose",
+            "hh_status",
+            "hh_cost_preview",
+        },
+        "wb-hh-long": {
+            "hh_long_video_create",
+            "hh_video_concat",
+            "hh_status",
+            "hh_list",
+            "hh_cost_preview",
+        },
+    }
 
     def test_workbench_nodes_carry_plugin_origin(self):
         org = Organization.from_dict(AIGC_VIDEO_STUDIO)
         wb_nodes = [n for n in org.nodes if n.plugin_origin]
         plugin_ids = {n.plugin_origin["plugin_id"] for n in wb_nodes}
-        assert plugin_ids == {"tongyi-image", "seedance-video"}
+        assert plugin_ids == {"happyhorse-video"}
+        assert len(wb_nodes) == len(self.HAPPYHORSE_WORKBENCH_NODES)
         for n in wb_nodes:
-            assert n.plugin_origin.get("template_id", "").startswith("workbench:")
+            assert n.plugin_origin.get("template_id", "") == "workbench:happyhorse-video"
             assert n.can_delegate is False
             assert n.enable_file_tools is False
 
@@ -85,36 +127,64 @@ class TestAigcVideoStudioTemplate:
         )
 
     def test_workbench_external_tools_match_plugin_tool_names(self):
-        """`external_tools` on workbench nodes must list the exact tool names
-        the plugins register (``tongyi_image_*``, ``seedance_*``)."""
+        """Each workbench leaf must whitelist exactly the ``hh_*`` tool
+        names ``happyhorse-video`` registers for that category."""
         tpl = AIGC_VIDEO_STUDIO
-        expected = {
-            "tongyi-image": {"tongyi_image_create", "tongyi_image_status", "tongyi_image_list"},
-            "seedance-video": {
-                "seedance_create",
-                "seedance_edit",
-                "seedance_extend",
-                "seedance_transition",
-                "seedance_status",
-                "seedance_list",
-            },
-        }
-        for node in tpl["nodes"]:
-            po = node.get("plugin_origin")
-            if not po:
-                continue
-            pid = po["plugin_id"]
-            assert pid in expected
-            assert set(node["external_tools"]) == expected[pid]
+        keyed = {node["id"]: node for node in tpl["nodes"]}
+        for node_id, expected_tools in self.HAPPYHORSE_WORKBENCH_NODES.items():
+            assert node_id in keyed, f"missing workbench node: {node_id}"
+            node = keyed[node_id]
+            assert node["plugin_origin"]["plugin_id"] == "happyhorse-video"
+            assert set(node["external_tools"]) == expected_tools, (
+                f"node {node_id} external_tools drift: "
+                f"expected={sorted(expected_tools)} "
+                f"actual={sorted(node['external_tools'])}"
+            )
+
+    def test_screenwriter_can_decompose_storyboard(self):
+        """The screenwriter role must be able to call
+        ``hh_storyboard_decompose`` so it can produce the segments JSON
+        consumed by the long-video workbench."""
+        tpl = AIGC_VIDEO_STUDIO
+        keyed = {node["id"]: node for node in tpl["nodes"]}
+        screenwriter = keyed["screenwriter"]
+        assert "hh_storyboard_decompose" in screenwriter["external_tools"]
+
+    def test_art_director_owns_all_workbench_nodes(self):
+        """The art-director must be the *single* hierarchy parent of all
+        four happyhorse workbench leaves.
+
+        ``OrgGraph.get_parent`` returns the first matching hierarchy edge
+        and ``org_delegate_task`` only accepts targets in
+        ``get_children``. If we let producer also keep hierarchy edges to
+        the workbenches (double-parent), ``org_submit_deliverable``'s
+        ``get_parent`` fallback would silently route deliverables to
+        producer instead of the art-director that actually delegated the
+        task — so make the single-parent invariant explicit.
+        """
+        org = Organization.from_dict(AIGC_VIDEO_STUDIO)
+        wb_ids = set(self.HAPPYHORSE_WORKBENCH_NODES.keys())
+        art_children = {c.id for c in org.get_children("art-director")}
+        assert wb_ids.issubset(art_children), (
+            f"art-director hierarchy children missing workbench nodes: "
+            f"expected={sorted(wb_ids)} actual={sorted(art_children)}"
+        )
+        for wb_id in wb_ids:
+            parent = org.get_parent(wb_id)
+            assert parent is not None, f"workbench {wb_id} has no hierarchy parent"
+            assert parent.id == "art-director", (
+                f"workbench {wb_id} parent must be art-director, "
+                f"got {parent.id}"
+            )
 
     def test_template_round_trips_plugin_origin(self):
-        """Plugin origin must survive ``from_dict``/``to_dict`` (used during
-        save/load and create_from_template)."""
+        """Plugin origin must survive ``from_dict``/``to_dict`` (used
+        during save/load and create_from_template)."""
         org = Organization.from_dict(AIGC_VIDEO_STUDIO)
         data = org.to_dict()
         keyed = {n["id"]: n for n in data["nodes"]}
-        assert keyed["wb-tongyi-image"]["plugin_origin"]["plugin_id"] == "tongyi-image"
-        assert keyed["wb-seedance-video"]["plugin_origin"]["plugin_id"] == "seedance-video"
+        for node_id in self.HAPPYHORSE_WORKBENCH_NODES:
+            assert keyed[node_id]["plugin_origin"]["plugin_id"] == "happyhorse-video"
 
 
 class TestEnsureBuiltinTemplates:
