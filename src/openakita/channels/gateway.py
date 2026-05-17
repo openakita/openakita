@@ -3254,30 +3254,60 @@ class MessageGateway:
         *,
         done: bool = False,
     ) -> bool:
-        """尽量就地更新组织状态卡片，目前飞书/Lark 支持最稳定。"""
+        """尽量就地更新组织状态卡片。
+
+        - 飞书 / Lark：走 CardKit / PatchMessage（``_patch_card_content``），无新消息。
+        - 其它带 ``edit_message`` 能力的通道（Telegram 等）：调 ``edit_message``，
+          这样在 Telegram 等聊天里也能像飞书一样**只更新同一条消息**，
+          而不是每条进度都新发一条灰色消息。
+        - DingTalk 的 ``_patch_card_content`` 需要 ``_CardState``，gateway 这里
+          没法构造；DingTalk 退化为重新发普通消息（与之前一致）。
+        """
         if not card_id:
             return False
-        base_channel = (message.channel or "").split(":")[0].split("_")[0]
-        if base_channel not in {"feishu", "lark"}:
-            return False
         adapter = self._adapters.get(message.channel)
-        if not adapter or not hasattr(adapter, "_patch_card_content"):
+        if not adapter:
             return False
-        sk = None
-        if hasattr(adapter, "_make_session_key"):
+
+        base_channel = (message.channel or "").split(":")[0].split("_")[0]
+
+        # 飞书 / Lark 走原有 CardKit 路径，UI 一致性最好。
+        if base_channel in {"feishu", "lark"} and hasattr(adapter, "_patch_card_content"):
+            sk = None
+            if hasattr(adapter, "_make_session_key"):
+                try:
+                    sk = adapter._make_session_key(message.chat_id, message.thread_id)
+                except Exception:
+                    sk = None
             try:
-                sk = adapter._make_session_key(message.chat_id, message.thread_id)
-            except Exception:
-                sk = None
-        try:
-            return bool(await adapter._patch_card_content(card_id, content, sk, final=done))
-        except TypeError:
-            try:
-                return bool(await adapter._patch_card_content(card_id, content, sk))
+                return bool(await adapter._patch_card_content(card_id, content, sk, final=done))
+            except TypeError:
+                try:
+                    return bool(await adapter._patch_card_content(card_id, content, sk))
+                except Exception:
+                    return False
             except Exception:
                 return False
-        except Exception:
-            return False
+
+        # 其它支持原生编辑消息的通道（Telegram 等）。
+        if getattr(adapter, "has_capability", None) and adapter.has_capability("edit_message"):
+            try:
+                ok = await adapter.edit_message(
+                    message.chat_id,
+                    card_id,
+                    content,
+                    parse_mode="markdown",
+                )
+                return bool(ok)
+            except TypeError:
+                try:
+                    return bool(await adapter.edit_message(message.chat_id, card_id, content))
+                except Exception:
+                    return False
+            except Exception:
+                return False
+
+        return False
 
     @staticmethod
     def _append_attachment_media_lines(final_text: str, attachments: list[dict]) -> str:

@@ -258,6 +258,58 @@ class TestOrgCommandsDoNotStartTyping:
         fake_adapter.send_typing.assert_not_awaited()
 
 
+class TestPatchOrgStatusCard:
+    """``_patch_org_status_card`` 在不同通道上的就地更新行为。"""
+
+    async def test_telegram_uses_edit_message(self, gateway):
+        """带 ``edit_message`` 能力的通道（Telegram 等）应该走 edit_message
+        而不是退化为新发一条消息——这是消除"灰色进度条刷屏"的核心。"""
+        msg = create_channel_message(text="/org noop", chat_id="chat-tg-1")
+        msg.channel = "telegram"
+        fake_adapter = MagicMock()
+        fake_adapter.has_capability = MagicMock(return_value=True)
+        fake_adapter.edit_message = AsyncMock(return_value=True)
+        gateway._adapters["telegram"] = fake_adapter
+
+        ok = await gateway._patch_org_status_card(msg, "msg_42", "新进度内容")
+
+        assert ok is True
+        fake_adapter.edit_message.assert_awaited_once()
+        call_args, call_kwargs = fake_adapter.edit_message.await_args
+        assert call_args[0] == "chat-tg-1"
+        assert call_args[1] == "msg_42"
+        assert call_args[2] == "新进度内容"
+        assert call_kwargs.get("parse_mode") == "markdown"
+
+    async def test_feishu_uses_patch_card_content(self, gateway):
+        """飞书继续走 CardKit/PatchMessage，签名兼容 ``final`` 关键字。"""
+        msg = create_channel_message(text="/org noop", chat_id="chat-fs-1")
+        msg.channel = "feishu"
+        fake_adapter = MagicMock()
+        fake_adapter._patch_card_content = AsyncMock(return_value=True)
+        fake_adapter._make_session_key = MagicMock(return_value="chat-fs-1")
+        gateway._adapters["feishu"] = fake_adapter
+
+        ok = await gateway._patch_org_status_card(msg, "card_x", "进度", done=True)
+
+        assert ok is True
+        fake_adapter._patch_card_content.assert_awaited_once()
+        _, kwargs = fake_adapter._patch_card_content.await_args
+        assert kwargs.get("final") is True
+
+    async def test_no_capability_returns_false(self, gateway):
+        """未具备 ``edit_message`` 能力的非飞书通道应返回 False，由调用方决定
+        要不要退化为新发一条消息。"""
+        msg = create_channel_message(text="/org noop", chat_id="chat-x")
+        msg.channel = "wework_bot"
+        fake_adapter = MagicMock()
+        fake_adapter.has_capability = MagicMock(return_value=False)
+        gateway._adapters["wework_bot"] = fake_adapter
+
+        ok = await gateway._patch_org_status_card(msg, "msg_1", "content")
+        assert ok is False
+
+
 class TestSessionMetadataLifecycle:
     """current_org_command / last_org_command 两个 metadata 槽位的迁移正确性。"""
 
