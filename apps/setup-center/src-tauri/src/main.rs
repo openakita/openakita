@@ -486,11 +486,38 @@ fn crashdumps_dir() -> PathBuf {
     openakita_root_dir().join("crashdumps")
 }
 
+/// Soft size cap for `autostart.log`. Once exceeded, the current file is
+/// rotated to `autostart.log.1` (overwriting any previous rotation) and a
+/// fresh empty file is started. We keep exactly one rotated generation —
+/// this log is diagnostic chatter, not an audit trail, so unbounded
+/// retention isn't useful and a single hot+cold pair caps disk use at
+/// roughly `2 * AUTOSTART_LOG_MAX_BYTES`.
+const AUTOSTART_LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Best-effort size-based rotation. Any IO failure here is swallowed because
+/// the caller (`log_to_file`) is best-effort diagnostics — losing a rotation
+/// just means the next call may overshoot the cap slightly, which is fine.
+fn rotate_autostart_log_if_needed(path: &Path) {
+    let len = match fs::metadata(path) {
+        Ok(m) => m.len(),
+        Err(_) => return,
+    };
+    if len < AUTOSTART_LOG_MAX_BYTES {
+        return;
+    }
+    let rotated = path.with_extension("log.1");
+    // Drop any existing .1 first; rename on Windows fails if the target
+    // already exists, unlike POSIX semantics.
+    let _ = fs::remove_file(&rotated);
+    let _ = fs::rename(path, &rotated);
+}
+
 /// Append a diagnostic line to `~/.openakita/logs/autostart.log`.
 fn log_to_file(msg: &str) {
     let log_dir = setup_logs_dir();
     let _ = fs::create_dir_all(&log_dir);
     let path = log_dir.join("autostart.log");
+    rotate_autostart_log_if_needed(&path);
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -3860,12 +3887,42 @@ fn kill_openakita_orphans() -> Vec<u32> {
             win::CloseHandle(snap);
         }
 
-        // Step 1.5: 直接 kill 孤立的 openakita-server.exe (PyInstaller bundled backend)
+        // Step 1.5: kill orphaned openakita-server.exe (PyInstaller bundled
+        // backend). The original code killed every process named like that on
+        // sight, which is unsafe when the user has another OpenAkita install
+        // running (e.g. portable + installed side by side) — we'd terminate
+        // the other instance's backend. Mirror the python branch and verify
+        // the command line contains the `serve` subcommand before killing;
+        // any other invocation (CLI help, --version, custom scripts launched
+        // by the user) is skipped.
         for ppid in bundled_pids {
-            if is_pid_running(ppid) {
-                let _ = kill_pid(ppid);
-                killed.push(ppid);
+            if !is_pid_running(ppid) {
+                continue;
             }
+            let mut c = Command::new("powershell");
+            c.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!(
+                    "(Get-CimInstance Win32_Process -Filter 'ProcessId={}').CommandLine",
+                    ppid
+                ),
+            ]);
+            apply_no_window(&mut c);
+            let cmdline = c
+                .output()
+                .ok()
+                .map(|out| String::from_utf8_lossy(&out.stdout).to_lowercase())
+                .unwrap_or_default();
+            // Match the canonical backend invocation. We deliberately don't
+            // try to match install-path here — overlapping installs will be
+            // caught by per-workspace PID files in step 1.
+            if !cmdline.contains("serve") {
+                continue;
+            }
+            let _ = kill_pid(ppid);
+            killed.push(ppid);
         }
 
         // Step 2: 对每个 python 进程查命令行，判断是否是 openakita serve 进程
@@ -8717,13 +8774,58 @@ async fn backend_fetch(
     let fetch_id_for_task = fetch_id.clone();
     tauri::async_runtime::spawn(async move {
         let mut response = resp;
+        // Chunk-read inactivity timeout. `response.chunk().await` has no
+        // built-in deadline: if the backend sent headers and then stops
+        // emitting bytes without closing (Python deadlock, TCP half-open,
+        // kernel buffer wedged), this future hangs forever, the cancel flag
+        // is never observed, the tokio task and the underlying connection
+        // both leak.
+        //
+        // 90s is conservative: legitimate slow models still stream tokens
+        // continuously (long pauses happen during initial prefill or tool
+        // round-trips, both of which complete in seconds). If a real upstream
+        // legitimately needs >90s of silence we surface it as a stream
+        // error — frontend's recovery polling will still rebuild state from
+        // backend session history.
+        const CHUNK_INACTIVITY_TIMEOUT: std::time::Duration =
+            std::time::Duration::from_secs(90);
         loop {
             if cancel.load(Ordering::SeqCst) {
                 // Drop happens implicitly on loop exit; explicit log here
                 // would be nice but isn't worth the perf cost.
                 break;
             }
-            match response.chunk().await {
+            // Convert the chunk to Vec<u8> inside the async block so the
+            // Output type doesn't depend on `bytes::Bytes` (which isn't a
+            // direct dependency of this crate and confuses type inference
+            // when the future is wrapped). The copy is cheap — chunks are
+            // typically a few KB of SSE payload that we'd be converting to
+            // String::from_utf8_lossy anyway.
+            let timed: Result<
+                reqwest::Result<Option<Vec<u8>>>,
+                tokio::time::error::Elapsed,
+            > = tokio::time::timeout(CHUNK_INACTIVITY_TIMEOUT, async {
+                response
+                    .chunk()
+                    .await
+                    .map(|opt| opt.map(|b| b.to_vec()))
+            })
+            .await;
+            let chunk_res = match timed {
+                Ok(r) => r,
+                Err(_) => {
+                    // Inactivity timeout. Surface as error so frontend tears
+                    // down the stream and reconciles via session history.
+                    let _ = on_event.send(BackendFetchEvent::Error {
+                        message: format!(
+                            "backend stream stalled for {}s",
+                            CHUNK_INACTIVITY_TIMEOUT.as_secs()
+                        ),
+                    });
+                    break;
+                }
+            };
+            match chunk_res {
                 Ok(Some(chunk)) => {
                     let text = String::from_utf8_lossy(&chunk).to_string();
                     if on_event.send(BackendFetchEvent::Chunk { text }).is_err() {
