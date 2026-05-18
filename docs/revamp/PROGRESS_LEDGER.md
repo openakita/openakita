@@ -164,7 +164,8 @@ long-tail Decision cascade; ``core/reasoning_engine.py`` collapses to a thin laz
 | `5cc10705` | P-RC-5 P5.6a | refactor(runtime/state_graph/guards): extract unbacked-action-claim guard | +146 (unbacked_action.py) / -133 (3 legacy bodies replaced by 1 re-import); core/reasoning_engine 8484 -> 8360; baseline rebased | 0 (tests follow in P5.6b) | ADR-0001, ADR-0002 |
 | `73ef0867` | P-RC-5 P5.6b | test(runtime/state_graph/guards): 17 cases for unbacked-action-claim guard | +144 (test_unbacked_action.py) | +17 (2 action_claim_re + 4 extract behaviour + 5 guard behaviour + 5 guard parity + 1 extract parity) | ADR-0001 |
 | `7fd1a349` | P-RC-5 P5.7a | refactor(runtime/state_graph/guards): extract conversation-state guards | +180 (conversation_state.py) / -135 (6 legacy symbols replaced by 1 re-import); core/reasoning_engine 8360 -> 8237; baseline rebased | 0 (tests follow in P5.7b) | ADR-0001, ADR-0002 |
-| _this commit_ | P-RC-5 P5.7b | test(runtime/state_graph/guards): 21 cases for conversation-state guards | +108 (test_conversation_state.py) | +21 (1 anchor + 4 looks behaviour + 6 looks parity + 4 recoverable behaviour + 6 recoverable parity) | ADR-0001 |
+| `c68961c6` | P-RC-5 P5.7b | test(runtime/state_graph/guards): 21 cases for conversation-state guards | +108 (test_conversation_state.py) | +21 (1 anchor + 4 looks behaviour + 6 looks parity + 4 recoverable behaviour + 6 recoverable parity) | ADR-0001 |
+| _this commit_ | P-RC-5 P5.8a | refactor(runtime/state_graph/guards): extract tool-filter guards | +234 (tool_filters.py) / -195 (7 helpers/constants replaced by 1 re-import block); core/reasoning_engine 8237 -> 8057; baseline rebased | 0 (tests follow in P5.8b) | ADR-0001, ADR-0002 |
 
 ## P-RC-6 — Phase 2 real slim-down: agent.py
 

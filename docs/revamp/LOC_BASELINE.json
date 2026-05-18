@@ -3,7 +3,7 @@
   "agent_growth_budget": 50,
   "files": {
     "src/openakita/core/agent.py": 9602,
-    "src/openakita/core/reasoning_engine.py": 8237,
+    "src/openakita/core/reasoning_engine.py": 8057,
     "src/openakita/core/brain.py": 26,
     "src/openakita/core/tool_executor.py": 41,
     "src/openakita/core/context_manager.py": 36,
