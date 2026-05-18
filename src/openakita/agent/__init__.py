@@ -12,6 +12,7 @@ from :mod:`openakita.agent.facade` once the rewrite slices land.
 from __future__ import annotations
 
 from .errors import UserCancelledError
+from .identity import Identity
 from .output_formatter import (
     JSONFormatter,
     OutputFormatter,
@@ -35,6 +36,7 @@ from .working_facts import (
 __all__ = [
     "CODE_EXEC_TOOLS",
     "DISCLAIMER_TEXT",
+    "Identity",
     "JSONFormatter",
     "OutputFormatter",
     "StreamJSONFormatter",

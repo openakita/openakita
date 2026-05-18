@@ -51,7 +51,7 @@ default unless a parity test surfaces a better placement.
 | File | LOC | Verdict | New home | Notes |
 |---|---:|---|---|---|
 | `permission.py` | 455 | **MOVE** | `agent/permission.py` | Tight, well-tested module. Used by tools and runtime; no v2 contract change needed today. Plan §2 explicitly anticipates this is a move. |
-| `identity.py` | 495 | **MOVE** | `agent/identity.py` | Reads `identity/` files; pure data assembly. Move keeps the existing tests intact. |
+| `identity.py` | 495 | **MOVE — done** | `agent/identity.py` | Shipped 2026-05-18 in commit `feat(agent): port identity (MOVE)`. Byte-equivalent copy + docstring refresh; legacy path is now a re-export shim. The existing `tests/unit/test_identity.py` (17 tests) still passes through the shim, transitively anchoring the move. |
 | `persona.py` | 467 | **MOVE** | `agent/persona.py` | Persona compilation; touched by prompt builder. Stable. |
 | `validators.py` | 416 | **MOVE** | `agent/validators.py` | Pure functions. |
 | `agent_state.py` | 431 | **MOVE** | `agent/state.py` (already exists; merge) | Fold into the existing v2 `agent/state.py` so there's a single state container. |
@@ -142,8 +142,8 @@ below maps to one commit in the Phase 2 series.
    The remaining halves of the audit's grouping (`identity.py` 495,
    `persona.py` 467) are larger and merit their own commits; they
    become commits 4 and 5 below.
-4. `feat(agent): port identity (MOVE)` (was: half of original step 3).
-5. `feat(agent): port persona (MOVE)` (was: half of original step 3).
+4. **Done** — `feat(agent): port identity (MOVE)` landed 2026-05-18.
+5. `feat(agent): port persona (MOVE)`.
 4. `feat(agent): port permission, audit, validators (MOVE)` — covers
    plan §8 keep-as-is candidates.
 5. `feat(agent): port pending_approvals, confirmation, ui_confirm_bus, hooks (MOVE)`.
