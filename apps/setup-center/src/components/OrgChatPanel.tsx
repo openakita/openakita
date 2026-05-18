@@ -31,6 +31,14 @@ interface ChatMsg {
   timestamp: number;
   streaming?: boolean;
   attachments?: FileAttachment[];
+  /**
+   * P11: 内容种类的细粒度标记，用于让样式（bubble 颜色 / class 名）跟"语义"
+   * 解耦。例如 role="system" 同时被用于真正的错误通知（红色合理）和
+   * IM/桌面/指挥台事件流（应当中性、不要红）。kind="activity" 即一组组织
+   * 事件聚合后渲染出的活动时间线 bubble，CSS 用 `.ocp-msg-activity` 给中性
+   * 颜色覆盖。
+   */
+  kind?: "activity";
 }
 
 /** 后端 failure_diagnoser 生成的结构化诊断 payload */
@@ -135,6 +143,195 @@ function isSoftOrgExitReason(reason?: string): boolean {
   return !reason || SOFT_ORG_EXIT_REASONS.has(reason);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// P11: 组织活动时间线（/api/orgs/{org}/activity）的中性渲染器。
+//
+// 之前的行为是把每个 activity item（user_command / task_assigned /
+// workbench_started / workbench_succeeded / task_completed …）映射成一条
+// 独立的 role="system" 消息——而 `.ocp-msg-system` 用了红色样式（语义上
+// 是错误通知），导致整个 IM 转发流量看起来全是"红色错误条"，并且 raw
+// event_type 直接打到标题上（[workbench_started] / [task_completed]），
+// 视觉非常吵闹、信息密度极低。
+//
+// 这里把同一条 user_command（command_id 相同）下产生的所有事件聚合到一条
+// "活动 bubble" 里，bubble 内部按时间顺序逐行渲染图标 + 行为简述，整体
+// 仍是 markdown 内容（保留 details/collapsed 等能力），而 bubble 本身用
+// kind="activity" 标记，CSS 走中性色而不是红色。
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ActivityItem {
+  id?: string;
+  ts?: string | number;
+  kind?: string;
+  source?: { surface?: string; channel?: string; display_name?: string };
+  from_node?: string;
+  to_node?: string;
+  content?: string;
+  command_id?: string;
+  chain_id?: string;
+  event_type?: string;
+  msg_type?: string;
+  status?: string;
+  phase?: string;
+}
+
+function activitySourceLabel(item: ActivityItem): string {
+  const s = item?.source?.surface;
+  if (s === "im") {
+    const ch = item?.source?.channel || "";
+    return ch ? `IM·${ch}` : "IM";
+  }
+  if (s === "desktop_chat") return "桌面聊天";
+  if (s === "org_console") return "指挥台";
+  if (s === "org" || !s) return "组织";
+  return s;
+}
+
+function activityTs(item: ActivityItem): number {
+  const ts = item?.ts;
+  if (typeof ts === "number") return ts * 1000;
+  if (typeof ts === "string" && ts) {
+    const t = Date.parse(ts);
+    if (!Number.isNaN(t)) return t;
+  }
+  return Date.now();
+}
+
+function fmtClock(ms: number): string {
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+/** 单条活动事件渲染成一行（不含时间戳前缀；时间戳由 group 渲染器统一加）。 */
+function formatActivityLine(item: ActivityItem, opts?: { nameFmt?: (id: string) => string }): string {
+  const nameFmt = opts?.nameFmt || ((id: string) => id);
+  const from = item.from_node ? nameFmt(item.from_node) : "";
+  const to = item.to_node ? nameFmt(item.to_node) : "";
+  const flowArrow = to ? `${from || "?"} → ${to}` : (from || "?");
+  // content 已经在 backend 端被 _activity_preview 截到 240 字符
+  const c = (item.content || "").trim();
+  const inlineContent = c ? c.replace(/\s+/g, " ").slice(0, 200) : "";
+  const summary = inlineContent ? `：${inlineContent}` : "";
+  // tool_name 在 backend 里被合到 content；这里就不再二次解析。
+  switch (item.kind) {
+    case "user_command":
+      return `🎯 **用户指令**${summary}`;
+    case "user_command_cancelled":
+      return `⏹ 用户取消指令`;
+    case "command":
+      return `📡 命令登记：${item.status || ""}${item.phase ? `·${item.phase}` : ""}`;
+    case "command_phase":
+      return `📡 ${flowArrow} 命令状态变更${summary}`;
+    case "delegate":
+      return `↪ ${flowArrow} 派单${summary}`;
+    case "task_completed":
+      return `✓ ${from || "?"} 任务完成${summary}`;
+    case "task_cancelled":
+      return `⏹ ${from || "?"} 任务取消${summary}`;
+    case "broadcast":
+      return `📢 ${from || "?"} 广播${summary}`;
+    case "node_activated":
+      return `🟢 ${from || "?"} 节点激活${summary}`;
+    case "workbench_started":
+      return `▶ ${from || "?"} 启动工具${summary}`;
+    case "workbench_succeeded":
+      return `✓ ${from || "?"} 工具完成${summary}`;
+    case "workbench_failed":
+      return `✗ ${from || "?"} 工具失败${summary}`;
+    case "message":
+      return `💬 ${flowArrow}${summary}`;
+    default:
+      return `· ${flowArrow}${item.kind ? `（${item.kind}）` : ""}${summary}`;
+  }
+}
+
+/** 按 command_id（缺失时退化到 chain_id / "ungrouped"）聚合到 bubble。 */
+function activityItemsToMessages(
+  items: ActivityItem[],
+  nameFmt?: (id: string) => string,
+): ChatMsg[] {
+  if (!items || items.length === 0) return [];
+  // 1. 按 command_id 分组
+  const groups = new Map<string, ActivityItem[]>();
+  const groupOrder: string[] = [];
+  for (const it of items) {
+    const key = (it.command_id && String(it.command_id))
+      || (it.chain_id && `chain:${it.chain_id}`)
+      || `solo:${it.id || it.ts || it.kind || "anon"}`;
+    let bucket = groups.get(key);
+    if (!bucket) {
+      bucket = [];
+      groups.set(key, bucket);
+      groupOrder.push(key);
+    }
+    bucket.push(it);
+  }
+  // 2. 每组组内按 ts asc
+  const msgs: ChatMsg[] = [];
+  for (const key of groupOrder) {
+    const bucket = (groups.get(key) || []).slice();
+    bucket.sort((a, b) => activityTs(a) - activityTs(b));
+    if (bucket.length === 0) continue;
+    const first = bucket[0];
+    const groupTs = activityTs(first);
+    const sourceLbl = activitySourceLabel(first);
+    // command_id 在很多事件上是同一个值；以第一条带 user_command 的为锚显示
+    const cmdItem = bucket.find(i => i.kind === "user_command") || first;
+    const cmdSummary = (cmdItem.content || "").trim().replace(/\s+/g, " ").slice(0, 200);
+    const headerBits: string[] = [`📥 来自 **${sourceLbl}**`];
+    if (cmdItem.kind === "user_command" && cmdSummary) {
+      headerBits.push(`· 指令：${cmdSummary}`);
+    } else if (cmdItem.command_id) {
+      headerBits.push(`· command_id=\`${cmdItem.command_id}\``);
+    }
+    const header = headerBits.join(" ");
+    // 时间线内容：每条加上 hh:mm:ss 时间戳
+    const lines = bucket.map(it => {
+      const clock = fmtClock(activityTs(it));
+      const line = formatActivityLine(it, { nameFmt });
+      return `\`${clock}\` ${line}`;
+    });
+    // 折叠：>4 条时把"工具进度细节"折叠，把 user_command/task_completed/task_cancelled
+    // 这些"门面事件"始终可见。
+    const isHeadline = (it: ActivityItem) => (
+      it.kind === "user_command"
+      || it.kind === "user_command_cancelled"
+      || it.kind === "task_completed"
+      || it.kind === "task_cancelled"
+      || it.kind === "command"
+    );
+    let body: string;
+    if (bucket.length > 5) {
+      const headlineLines: string[] = [];
+      const detailLines: string[] = [];
+      bucket.forEach((it, ix) => {
+        const ln = lines[ix];
+        if (isHeadline(it)) headlineLines.push(ln);
+        else detailLines.push(ln);
+      });
+      body = [
+        ...headlineLines,
+        detailLines.length > 0
+          ? `<details>\n<summary>展开过程细节（${detailLines.length} 条）</summary>\n\n${detailLines.join("\n\n")}\n\n</details>`
+          : "",
+      ].filter(Boolean).join("\n\n");
+    } else {
+      body = lines.join("\n\n");
+    }
+    msgs.push({
+      id: `act-grp-${key}`,
+      role: "system",
+      kind: "activity",
+      content: `${header}\n\n${body}`,
+      timestamp: groupTs,
+    });
+  }
+  return msgs;
+}
+
 function saveToLocalStorage(cid: string, msgs: ChatMsg[]): void {
   try {
     const windowed = msgs.length > ORG_STORED_MESSAGE_WINDOW
@@ -142,9 +339,10 @@ function saveToLocalStorage(cid: string, msgs: ChatMsg[]): void {
       : msgs;
     const slim = windowed
       .filter(m => !m.streaming)
-      .map(({ id, role, content, timestamp, attachments }) => {
+      .map(({ id, role, content, timestamp, attachments, kind }) => {
         const o: Record<string, unknown> = { id, role, content, timestamp };
         if (attachments && attachments.length > 0) o.attachments = attachments;
+        if (kind) o.kind = kind;
         return o;
       });
     localStorage.setItem(LS_PREFIX + cid, JSON.stringify(slim));
@@ -241,6 +439,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     const url = `${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}/history?limit=${ORG_HISTORY_PAGE_LIMIT}`;
     const wholeOrgView = !nodeId || String(nodeId).trim() === "";
 
+    const nameFmt = (id: string) => nodeNamesRef.current?.[id] || id;
     const fetchActivityAsMsgs = async (): Promise<ChatMsg[]> => {
       if (!wholeOrgView) return [];
       try {
@@ -248,51 +447,8 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           `${apiBaseUrl}/api/orgs/${encodeURIComponent(orgId)}/activity?limit=${ORG_HISTORY_PAGE_LIMIT}`,
         );
         const j = await r.json();
-        const arr = Array.isArray(j?.items) ? j.items : [];
-        return arr
-          .slice()
-          .reverse()
-          .map((item: any): ChatMsg => {
-            const ts = typeof item.ts === "string"
-              ? new Date(item.ts).getTime()
-              : (typeof item.ts === "number" ? item.ts * 1000 : Date.now());
-            const sourceCn = (() => {
-              const s = item?.source?.surface;
-              if (s === "im") return `IM·${item?.source?.channel || ""}`;
-              if (s === "desktop_chat") return "桌面聊天";
-              if (s === "org_console") return "指挥台";
-              return s || "组织";
-            })();
-            const flow = item.to_node
-              ? `${item.from_node || "?"} → ${item.to_node}`
-              : (item.from_node || "");
-            const kindLabel = (() => {
-              switch (item.kind) {
-                case "user_command": return "用户指令";
-                case "user_command_cancelled": return "指令取消";
-                case "delegate": return "派单";
-                case "message": return "节点消息";
-                case "broadcast": return "广播";
-                case "task_completed": return "任务完成";
-                case "task_cancelled": return "任务取消";
-                case "command_phase": return "命令状态";
-                case "node_activated": return "节点激活";
-                case "workbench_started": return "工作台开始";
-                case "workbench_succeeded": return "工作台完成";
-                case "workbench_failed": return "工作台失败";
-                case "command": return "指令";
-                default: return item.kind || "事件";
-              }
-            })();
-            const preview = item.content ? `\n> ${String(item.content).slice(0, 240)}` : "";
-            const content = `**[${kindLabel}]** ${sourceCn}${flow ? ` · ${flow}` : ""}${preview}`;
-            return {
-              id: `act-${item.id || ts}`,
-              role: "system",
-              content,
-              timestamp: ts,
-            };
-          });
+        const arr = Array.isArray(j?.items) ? (j.items as ActivityItem[]) : [];
+        return activityItemsToMessages(arr, nameFmt);
       } catch {
         return [];
       }
@@ -389,32 +545,11 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           content: m.content || "",
           timestamp: m.timestamp || Date.now(),
         }));
-        const actMsgs: ChatMsg[] = (Array.isArray(actData?.items) ? actData.items : [])
-          .slice()
-          .reverse()
-          .map((item: any): ChatMsg => {
-            const ts = typeof item.ts === "string"
-              ? new Date(item.ts).getTime()
-              : (typeof item.ts === "number" ? item.ts * 1000 : Date.now());
-            const sourceCn = (() => {
-              const s = item?.source?.surface;
-              if (s === "im") return `IM·${item?.source?.channel || ""}`;
-              if (s === "desktop_chat") return "桌面聊天";
-              if (s === "org_console") return "指挥台";
-              return s || "组织";
-            })();
-            const flow = item.to_node
-              ? `${item.from_node || "?"} → ${item.to_node}`
-              : (item.from_node || "");
-            const preview = item.content ? `\n> ${String(item.content).slice(0, 240)}` : "";
-            const content = `**[${item.kind || "事件"}]** ${sourceCn}${flow ? ` · ${flow}` : ""}${preview}`;
-            return {
-              id: `act-${item.id || ts}`,
-              role: "system",
-              content,
-              timestamp: ts,
-            };
-          });
+        const nameFmt2 = (id: string) => nodeNamesRef.current?.[id] || id;
+        const actMsgs: ChatMsg[] = activityItemsToMessages(
+          (Array.isArray(actData?.items) ? actData.items : []) as ActivityItem[],
+          nameFmt2,
+        );
         const merged = [...actMsgs, ...histMsgs].sort(
           (a, b) => (a.timestamp || 0) - (b.timestamp || 0),
         );
@@ -1208,7 +1343,15 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           </div>
         )}
         {messages.map(m => (
-          <div key={m.id} className={`ocp-msg ocp-msg-${m.role} ${m.streaming ? "ocp-msg-streaming" : ""}`}>
+          <div
+            key={m.id}
+            className={[
+              "ocp-msg",
+              `ocp-msg-${m.role}`,
+              m.kind ? `ocp-msg-${m.kind}` : "",
+              m.streaming ? "ocp-msg-streaming" : "",
+            ].filter(Boolean).join(" ")}
+          >
             <div className={`ocp-msg-bubble ${m.role !== "user" ? "chatMdContent" : ""}`}>
               {m.role === "user" ? (
                 m.content
@@ -1482,6 +1625,30 @@ const CHAT_CSS = `
   color: #fca5a5;
   border-bottom-left-radius: 4px;
 }
+/* P11: activity bubble（组织事件聚合）走中性色而非红色——红色只留给真正
+   的错误/警告通知。class 同时叠加到 role="system" 上，所以放在 system 之
+   后才能覆盖；视觉上与 assistant 接近，但用 surface 标签和"活动事件"小
+   chip 在 bubble 头部点明这是事件流。 */
+.ocp-msg-activity .ocp-msg-bubble {
+  background: var(--bg-subtle, rgba(30,41,59,0.55));
+  border: 1px solid var(--line, rgba(100,116,139,0.25));
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+.ocp-msg-activity .ocp-msg-bubble.chatMdContent code {
+  font-size: 11px;
+  padding: 0 4px;
+  background: var(--bg-app, rgba(0,0,0,0.25));
+  border-radius: 3px;
+  color: var(--muted-foreground, #94a3b8);
+}
+.ocp-msg-activity .ocp-msg-bubble.chatMdContent blockquote {
+  margin: 4px 0; padding: 4px 10px;
+  border-left: 2px solid var(--line, rgba(100,116,139,0.35));
+  color: var(--muted-foreground, #94a3b8);
+  background: transparent;
+}
+.ocp-msg-activity .ocp-msg-bubble.chatMdContent p { margin: 4px 0; }
 .ocp-msg-streaming .ocp-msg-bubble {
   border-color: rgba(99,102,241,0.3);
 }
