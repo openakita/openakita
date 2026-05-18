@@ -50,6 +50,8 @@ from .token_tracking import (
     record_usage as _record_token_usage,
 )
 
+from ..runtime.llm import EndpointFailoverView
+
 logger = logging.getLogger(__name__)
 
 
@@ -109,6 +111,11 @@ class Brain:
             # 如果没有配置文件，创建空客户端
             self._llm_client = LLMClient()
             logger.warning("No llm_endpoints.json found, LLMClient may not work")
+
+        # Failover/endpoint view (P-RC-4 extraction). Borrows the
+        # client; the nine Brain wrappers below delegate here so the
+        # agent rewrite can compose the same surface freshly.
+        self._failover_view = EndpointFailoverView(self._llm_client)
 
         # Prompt Compiler 专用 LLMClient（独立于主模型，使用快速小模型）
         self._compiler_client: LLMClient | None = None
@@ -627,6 +634,8 @@ class Brain:
     # ========================================================================
     # 核心方法：messages_create
     # ========================================================================
+        """Return current-endpoint info dict; delegates to EndpointFailoverView."""
+        return self._failover_view.current_endpoint_info()
 
     def messages_create(
         self, use_thinking: bool = None, thinking_depth: str | None = None, **kwargs
@@ -1795,6 +1804,8 @@ class Brain:
     # ========================================================================
     # 动态模型切换
     # ========================================================================
+        """Health-probe every endpoint; delegates to EndpointFailoverView."""
+        return await self._failover_view.health_check()
 
     def switch_model(
         self,
@@ -1804,113 +1815,38 @@ class Brain:
         conversation_id: str | None = None,
         policy: str = "prefer",
     ) -> tuple[bool, str]:
-        """
-        临时切换到指定模型
-
-        Args:
-            endpoint_name: 端点名称
-            hours: 有效时间（小时），默认 12 小时
-            reason: 切换原因
-
-        Returns:
-            (成功, 消息)
-        """
-        return self._llm_client.switch_model(
-            endpoint_name, hours, reason, conversation_id=conversation_id, policy=policy
+        """Temporarily switch to a given endpoint; delegates to EndpointFailoverView."""
+        return self._failover_view.switch_model(
+            endpoint_name,
+            hours,
+            reason,
+            conversation_id=conversation_id,
+            policy=policy,
         )
 
     def get_fallback_model(self, conversation_id: str | None = None) -> str:
-        """
-        获取下一优先级的备用模型端点名称
-
-        按端点配置的 priority 排序，返回当前端点之后的下一个健康端点。
-        用于 TaskMonitor 的动态 fallback 模型选择，替代硬编码。
-
-        Args:
-            conversation_id: 可选的会话 ID
-
-        Returns:
-            下一个端点名称，无可用备选时返回空字符串
-        """
-        next_ep = self._llm_client.get_next_endpoint(conversation_id)
-        return next_ep or ""
+        """Return next-priority fallback endpoint name (empty when none)."""
+        return self._failover_view.next_fallback_model(conversation_id)
 
     def restore_default_model(self, conversation_id: str | None = None) -> tuple[bool, str]:
-        """
-        恢复默认模型（清除临时覆盖）
-
-        Returns:
-            (成功, 消息)
-        """
-        return self._llm_client.restore_default(conversation_id=conversation_id)
+        """Drop the manual override and revert to default priority."""
+        return self._failover_view.restore_default(conversation_id=conversation_id)
 
     def get_current_model_info(self, conversation_id: str | None = None) -> dict:
-        """
-        获取当前使用的模型信息
-
-        Args:
-            conversation_id: 对话 ID（传入时会检查 per-conversation override）
-
-        Returns:
-            模型信息字典
-        """
-        model = self._llm_client.get_current_model(conversation_id=conversation_id)
-        if not model:
-            return {"error": "无可用模型"}
-
-        return {
-            "name": model.name,
-            "model": model.model,
-            "provider": model.provider,
-            "is_healthy": model.is_healthy,
-            "is_override": model.is_override,
-            "capabilities": model.capabilities,
-            "note": model.note,
-        }
+        """Render current ModelInfo as dict; delegates to EndpointFailoverView."""
+        return self._failover_view.current_model_info(conversation_id=conversation_id)
 
     def list_available_models(self) -> list[dict]:
-        """
-        列出所有可用模型
-
-        Returns:
-            模型信息列表
-        """
-        models = self._llm_client.list_available_models()
-        return [
-            {
-                "name": m.name,
-                "model": m.model,
-                "provider": m.provider,
-                "priority": m.priority,
-                "is_healthy": m.is_healthy,
-                "is_current": m.is_current,
-                "is_override": m.is_override,
-                "capabilities": m.capabilities,
-                "note": m.note,
-            }
-            for m in models
-        ]
+        """List every available ModelInfo as dicts."""
+        return self._failover_view.list_models()
 
     def get_override_status(self) -> dict | None:
-        """
-        获取当前覆盖状态
-
-        Returns:
-            覆盖状态信息，无覆盖时返回 None
-        """
-        return self._llm_client.get_override_status()
+        """Return current override status, or None."""
+        return self._failover_view.override_status()
 
     def update_model_priority(self, priority_order: list[str]) -> tuple[bool, str]:
-        """
-        更新模型优先级顺序（永久生效）
-
-        Args:
-            priority_order: 模型名称列表，按优先级从高到低排序
-
-        Returns:
-            (成功, 消息)
-        """
-        return self._llm_client.update_priority(priority_order)
+        """Update model priority order and persist."""
+        return self._failover_view.update_priority(priority_order)
 
     async def plan(self, task: str, context: Context | None = None) -> str:
         """为任务生成执行计划"""
