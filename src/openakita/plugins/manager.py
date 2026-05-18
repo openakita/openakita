@@ -574,6 +574,23 @@ class PluginManager:
             logger.debug("LLM registry reload skipped: %s", e)
 
     async def _load_single(self, manifest: PluginManifest, plugin_dir: Path) -> None:
+        # 幂等防护：如果同一 plugin_id 已经在 _loaded 里，再调一次 _load_single
+        # 会造成两件糟糕的事：(1) 重复执行 on_load，重新 boot SQLite / DashScope
+        # client / 后台轮询协程，撕掉前一份还在用的状态；(2) handler_registry
+        # 里出现 "工具名冲突" warning，因为同一 plugin tool 被 register 两次。
+        # 真正想"换一份新的 on_load 状态"的调用方应该走 reload_plugin（它会
+        # 先 unload_plugin 把 _loaded 表 pop 掉再走这里），所以这里看到
+        # 已 loaded 直接 no-op + WARN 是安全的退路。
+        existing = self._loaded.get(manifest.id)
+        if existing is not None:
+            logger.warning(
+                "Plugin '%s' is already loaded (v%s); skipping duplicate "
+                "_load_single. Use reload_plugin() to force a re-init.",
+                manifest.id,
+                existing.manifest.version,
+            )
+            return
+
         state_entry = self._state.ensure_entry(manifest.id)
         granted = self._resolve_permissions(manifest, state_entry.granted_permissions)
         state_entry.granted_permissions = granted
