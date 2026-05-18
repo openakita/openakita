@@ -50,7 +50,11 @@ from .token_tracking import (
     record_usage as _record_token_usage,
 )
 
-from ..runtime.llm import CompilerCircuitBreaker, EndpointFailoverView
+from ..runtime.llm import (
+    CompilerCircuitBreaker,
+    EndpointFailoverView,
+    response_to_anthropic_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1180,91 +1184,8 @@ class Brain:
         return configured
 
     def _convert_response_to_anthropic(self, response: LLMResponse) -> AnthropicMessage:
-        """将 LLMClient Response 转换为 Anthropic Message
-
-        支持 MiniMax M2.1 的 Interleaved Thinking：
-        - thinking 块转换为带 <thinking> 标签的文本
-        - Agent 层会保留完整内容用于消息历史回传
-        """
-        # 转换内容块
-        content_blocks = []
-        thinking_texts = []
-
-        for block in response.content:
-            if isinstance(block, ThinkingBlock):
-                # MiniMax M2.1 Interleaved Thinking 支持
-                # 转换为 <thinking> 标签包裹的文本，保持与其他模型一致的处理方式
-                # 在发送消息历史给 MiniMax 时会转换回 thinking 块格式
-                thinking_texts.append(f"<thinking>{block.thinking}</thinking>")
-            elif isinstance(block, TextBlock):
-                content_blocks.append(AnthropicTextBlock(type="text", text=block.text))
-            elif isinstance(block, ToolUseBlock):
-                content_blocks.append(
-                    AnthropicToolUseBlock(
-                        type="tool_use",
-                        id=block.id,
-                        name=block.name,
-                        input=block.input,
-                    )
-                )
-
-        # 保存 OpenAI-compatible 响应中的 reasoning_content（DeepSeek / Kimi / Zhipu 等）
-        # 将其包装为 <thinking> 标签嵌入文本，与 Anthropic ThinkingBlock 走同一条路径。
-        # 下一轮 _extract_thinking_content() 会自动提取出真实推理内容回传给 API，
-        # 而非使用占位符 "..."。
-        if response.reasoning_content and not thinking_texts:
-            thinking_texts.append(f"<thinking>{response.reasoning_content}</thinking>")
-
-        # 如果有 thinking 内容，添加到文本块前面
-        if thinking_texts:
-            thinking_content = "\n".join(thinking_texts)
-            if content_blocks and hasattr(content_blocks[0], "text"):
-                # 合并到第一个文本块
-                content_blocks[0] = AnthropicTextBlock(
-                    type="text", text=thinking_content + "\n" + content_blocks[0].text
-                )
-            else:
-                # 插入新的文本块
-                content_blocks.insert(0, AnthropicTextBlock(type="text", text=thinking_content))
-
-        # 如果没有内容，添加空文本块
-        if not content_blocks:
-            content_blocks.append(AnthropicTextBlock(type="text", text=""))
-
-        # 转换 stop_reason
-        stop_reason_map = {
-            StopReason.END_TURN: "end_turn",
-            StopReason.MAX_TOKENS: "max_tokens",
-            StopReason.TOOL_USE: "tool_use",
-            StopReason.STOP_SEQUENCE: "stop_sequence",
-        }
-        stop_reason = stop_reason_map.get(response.stop_reason, "end_turn")
-
-        msg = AnthropicMessage(
-            id=response.id,
-            type="message",
-            role="assistant",
-            content=content_blocks,
-            model=response.model,
-            stop_reason=stop_reason,
-            stop_sequence=None,
-            usage=AnthropicUsage(
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-            ),
-        )
-        # 透传端点信息供 reasoning_engine 检测 failover / thinking 降级
-        if hasattr(response, 'endpoint_name'):
-            msg.endpoint_name = response.endpoint_name  # type: ignore[attr-defined]
-        if hasattr(response, '_failover_from'):
-            msg._failover_from = response._failover_from  # type: ignore[attr-defined]
-        if hasattr(response, '_thinking_fallback'):
-            msg._thinking_fallback = response._thinking_fallback  # type: ignore[attr-defined]
-        return msg
-
-    # ========================================================================
-    # 高级方法：think（向后兼容）
-    # ========================================================================
+        """Project an LLMResponse to an AnthropicMessage; delegates to runtime/llm/multimodal."""
+        return response_to_anthropic_message(response)
 
     async def think(
         self,
