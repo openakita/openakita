@@ -36,7 +36,14 @@ from .llm_node import (
     ToolCallRequest,
     TranscriptTurn,
 )
+from .manifest import (
+    WorkbenchManifest,
+    WorkbenchManifestError,
+    WorkbenchMode,
+    WorkbenchUI,
+)
 from .tool_node import ToolInvocation, ToolNode, ToolResult, ToolRunner
+from .workbench_node import WorkbenchNode
 
 __all__ = [
     "BaseNode",
@@ -62,4 +69,9 @@ __all__ = [
     "ToolResult",
     "ToolRunner",
     "TranscriptTurn",
+    "WorkbenchManifest",
+    "WorkbenchManifestError",
+    "WorkbenchMode",
+    "WorkbenchNode",
+    "WorkbenchUI",
 ]
