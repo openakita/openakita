@@ -750,6 +750,22 @@ class Settings(BaseSettings):
         description="只读探索连续无新信息的硬终止轮数，0=禁用（默认）。建议值 10~15",
     )
 
+    # === Runtime v2（fork 重写运行时）开关 ===
+    # 控制 src/openakita/runtime/ 下的 v2 运行时（dual-ledger Supervisor、
+    # NodeProtocol、TemplateRegistry 等）是否被外部 API / channels 暴露。
+    # 默认关闭：v2 还在并行验证阶段，旧 orgs/ 路径继续作为生产路径。
+    # 打开后：
+    #   - /api/v2/orgs/templates 系列路由被挂载（来自 runtime/templates/）
+    #   - 后续 Phase 6 的 channels gateway 会按 org 选择 v2 supervisor 路径
+    # 设置：在 .env 里写 RUNTIME_V2_ENABLED=true 或在 settings 上动态切换。
+    runtime_v2_enabled: bool = Field(
+        default=False,
+        description=(
+            "灰度开关：是否启用 src/openakita/runtime/ 下的 v2 运行时及其 API "
+            "facade（v2 模板、v2 supervisor）。默认关闭；Phase 7 cutover 时翻转为 True。"
+        ),
+    )
+
     # === Harness 配置 ===
     # 默认全部关闭/不限，对齐 Claude Code 风格（CLI 真人场景不强加业务护栏）。
     # 仅在程序化场景（CI/SDK 批跑、定时任务、组织看门狗等）需要兜底时打开。

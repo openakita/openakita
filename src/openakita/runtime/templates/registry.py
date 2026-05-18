@@ -43,7 +43,9 @@ from .schema import (
 
 __all__ = [
     "GLOBAL_REGISTRY",
+    "TEMPLATE_FACTORY_MARK",
     "TemplateRegistry",
+    "collect_builtin_factories",
     "discover_builtins",
     "template",
 ]
@@ -64,17 +66,40 @@ when the template is actually instantiated.
 """
 
 
+TEMPLATE_FACTORY_MARK = "__openakita_template_factory__"
+"""Attribute name set on a function by :func:`template`.
+
+We need a *survivable* marker because some callers (FastAPI app
+bootstrap, test fixtures that mock out ``_PENDING``) want to
+collect every built-in factory by walking the ``runtime.templates
+.builtin`` package, *without* depending on the lazy queue having
+been populated in this exact process state.
+"""
+
+
 _PENDING: list[TemplateFactory] = []
 
 
 def template(factory: TemplateFactory) -> TemplateFactory:
-    """Decorator that schedules a built-in template for registration.
+    """Decorator that registers a built-in template factory.
 
-    The factory is queued in a process-global list; the registry's
-    :meth:`bootstrap` method drains it. We do the work lazily so
-    importing :mod:`runtime.templates` has no side effects.
+    The factory is queued in :data:`_PENDING` (drained by
+    :meth:`TemplateRegistry.bootstrap`) and *also* marked with
+    :data:`TEMPLATE_FACTORY_MARK` so :func:`collect_builtin_factories`
+    can find it later by walking the package. Using both mechanisms
+    means callers can pick the cheaper one for their situation:
+
+    - Application bootstrap path:
+      ``discover_builtins() + GLOBAL_REGISTRY.bootstrap()`` —
+      straightforward, drains the queue once.
+    - Test / hot-reload path:
+      ``GLOBAL_REGISTRY.bootstrap(collect_builtin_factories(...))`` —
+      survives a previously-drained queue and a previously-imported
+      module list, because the marker attribute lives on the function
+      object, not in the queue.
     """
     _PENDING.append(factory)
+    setattr(factory, TEMPLATE_FACTORY_MARK, True)
     return factory
 
 
@@ -281,7 +306,8 @@ def discover_builtins(package: str = "openakita.runtime.templates.builtin") -> i
     """Import every submodule of ``package`` so its ``@template``
     decorators register themselves.
 
-    Returns the number of modules imported.
+    Returns the number of modules imported (or already cached, since
+    re-importing a cached module is a no-op).
     """
     try:
         pkg = importlib.import_module(package)
@@ -297,6 +323,43 @@ def discover_builtins(package: str = "openakita.runtime.templates.builtin") -> i
         importlib.import_module(f"{package}.{info.name}")
         imported += 1
     return imported
+
+
+def collect_builtin_factories(
+    package: str = "openakita.runtime.templates.builtin",
+) -> list[TemplateFactory]:
+    """Walk ``package`` and return every ``@template``-decorated factory.
+
+    Unlike :func:`discover_builtins` + :meth:`TemplateRegistry.bootstrap`,
+    this helper does not consume the queue — it inspects the imported
+    modules and returns every callable that carries the
+    :data:`TEMPLATE_FACTORY_MARK` attribute. This is the path the API
+    facade uses, so a previously-drained ``_PENDING`` queue (e.g.
+    after running unit tests that monkeypatched it) cannot starve the
+    application of templates.
+    """
+    try:
+        pkg = importlib.import_module(package)
+    except ModuleNotFoundError:
+        return []
+    if not hasattr(pkg, "__path__"):
+        return []
+    found: list[TemplateFactory] = []
+    seen: set[int] = set()
+    for info in pkgutil.iter_modules(pkg.__path__):
+        if info.name.startswith("_"):
+            continue
+        mod = importlib.import_module(f"{package}.{info.name}")
+        for value in vars(mod).values():
+            if not callable(value):
+                continue
+            if not getattr(value, TEMPLATE_FACTORY_MARK, False):
+                continue
+            if id(value) in seen:
+                continue
+            seen.add(id(value))
+            found.append(value)
+    return found
 
 
 # ---------------------------------------------------------------------------

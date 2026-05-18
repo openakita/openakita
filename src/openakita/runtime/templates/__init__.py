@@ -19,7 +19,9 @@ from __future__ import annotations
 
 from .registry import (
     GLOBAL_REGISTRY,
+    TEMPLATE_FACTORY_MARK,
     TemplateRegistry,
+    collect_builtin_factories,
     discover_builtins,
     template,
 )
@@ -41,10 +43,12 @@ __all__ = [
     "GuardrailSpec",
     "NodeRuntimeOverridesSpec",
     "NodeSpec",
+    "TEMPLATE_FACTORY_MARK",
     "TemplateRegistry",
     "TemplateSpec",
     "TemplateValidationError",
     "WorkbenchBindingSpec",
+    "collect_builtin_factories",
     "discover_builtins",
     "template",
 ]

@@ -6,6 +6,7 @@ import pytest
 
 from openakita.runtime.models import EdgeKind, NodeStatus, NodeType, OrgStatus
 from openakita.runtime.templates import (
+    TEMPLATE_FACTORY_MARK,
     DefaultsSpec,
     EdgeSpec,
     GuardrailSpec,
@@ -15,6 +16,7 @@ from openakita.runtime.templates import (
     TemplateSpec,
     TemplateValidationError,
     WorkbenchBindingSpec,
+    collect_builtin_factories,
     template,
 )
 from openakita.runtime.templates.registry import _PENDING
@@ -271,3 +273,39 @@ def test_discover_builtins_returns_zero_for_missing_package() -> None:
 
     n = discover_builtins(package="openakita.runtime.templates.builtin_does_not_exist")
     assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# collect_builtin_factories — survivable marker-based discovery
+# ---------------------------------------------------------------------------
+
+
+def test_template_decorator_attaches_survivable_factory_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``@template`` must mark the factory so :func:`collect_builtin_factories`
+    can find it again even after the lazy queue has been drained."""
+    monkeypatch.setattr(
+        "openakita.runtime.templates.registry._PENDING", [], raising=False
+    )
+
+    @template
+    def _t() -> TemplateSpec:
+        return _spec(sid="markdemo")
+
+    assert getattr(_t, TEMPLATE_FACTORY_MARK, False) is True
+
+
+def test_collect_builtin_factories_finds_every_marked_function() -> None:
+    """The four flagship templates must all be discoverable via the
+    marker even when ``_PENDING`` has been drained earlier."""
+    factories = collect_builtin_factories()
+    ids = {factory().id for factory in factories}
+    assert {"aigc_video_studio", "software_team", "startup_company", "content_ops"} <= ids
+
+
+def test_collect_builtin_factories_returns_empty_for_missing_package() -> None:
+    factories = collect_builtin_factories(
+        package="openakita.runtime.templates.builtin_does_not_exist"
+    )
+    assert factories == []
