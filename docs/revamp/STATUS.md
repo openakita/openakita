@@ -16,7 +16,7 @@ A user-led ADR review is the gate to flip them all to `Accepted`.
 |---|---|---|---|
 | 0 — ADRs (10 docs) | **Complete** | 10 | n/a |
 | 1 — Foundation (runtime/ leaf modules) | **Complete** | 8 | 99 runtime tests |
-| 2 — Agent rewrite | **In progress (audit + 5 MOVE commits)** | 5 (`agent/state.py`; `agent/errors.py`+`agent/working_facts.py`; `agent/output_guard.py`+`agent/output_formatter.py`; `agent/identity.py`; `agent/persona.py`) + 1 audit doc | 70 agent tests + 17 legacy identity tests + 12 legacy persona test files still green via shims |
+| 2 — Agent rewrite | **Complete (MOVE 6–12 + REWRITE 14–18 + parity 13/19)** | 19 sub-commits per `core_audit.md` plan | 721 tests green (incl. 30 parity cases @ 100%) |
 | 3 — Runtime engine (supervisor + messenger + guardrail + state graph) | **Complete (G3 review pending)** | 6 (`ledger`, `stall_detector`, `supervisor`, `messenger`, `guardrail/`, `state_graph`) | 110 new runtime tests |
 | 4 — Nodes | **Complete incl. plugin loader (G4 review pending)** | 7 (`base`+sig fix, `tool_node`, `llm_node`, `condition_node`+`human_review_node`, `workbench_node`+`manifest`, `happyhorse-video` adoption, `plugins/manager.py` WORKBENCH discovery) | 89 new tests (`test_nodes_*`) + 5 plugin smoke tests + 5 manifest discovery tests |
 | 5 — Templates | **Schema + registry + 4 builtins shipped (G5 review pending)** | 7 (`schema`, `registry`, `aigc_video_studio`, `software_team`, `startup_company`, `content_ops`+discovery test, parent_id-from-HIERARCHY fix) | 88 template tests (incl. 5 new parent-id regression tests) |
@@ -24,12 +24,14 @@ A user-led ADR review is the gate to flip them all to `Accepted`.
 | 7 — Cutover + data migration | Pending | 0 | — |
 | 8 — Legacy removal | Pending | 0 | — |
 
-Total to date: **45 code commits + 10 ADR commits + 4 docs commits =
-59 commits on `revamp/v2`**, all lint-clean (ruff over the v2 surface),
-test-green (642 / 642 across `tests/runtime/`, `tests/agent/`,
-`tests/api/`, `tests/unit/test_plugins/`, plus 227-strong legacy
-slice on `-k "persona or identity or output or working_fact or error"`
-to anchor the move shims).
+Total to date: **59 code commits + 10 ADR commits + 5 docs commits +
+5 gate-review commits = 79+ commits on `revamp/v2`**, all lint-clean
+(ruff over the v2 surface), test-green (721 / 721 across
+`tests/runtime/`, `tests/agent/`, `tests/api/`,
+`tests/unit/test_plugins/`, `tests/parity/`, plus the legacy slice
+on `-k "persona or identity or permission or output or working_fact
+or error or cancel"` to anchor the move shims). Parity harness
+maintains 30 / 30 cases at 100 % pass rate.
 
 ### 2026-05-18 mid-cycle plan-vs-reality review
 
@@ -282,40 +284,32 @@ log` reader can diff the world before / after.
 1. Read this `STATUS.md` first, then `docs/revamp/PLAN_AUDIT.md`
    and `docs/revamp/core_audit.md` for the rationale behind the
    Phase 2 commit plan.
-2. **Recommended next slice — Phase 2 commit 6**:
-   `feat(agent): port permission, audit, validators (MOVE)`. These
-   three legacy modules are tight, well-tested, and sit on the
-   permission-flow critical path that the channels gateway will
-   need next. `permission.py` (455 LOC) is the largest. Group them
-   in one commit because their importers overlap. Phase 2 commit 5
-   (`persona.py`) shipped 2026-05-18.
-3. After (2): walk the MOVE list in `core_audit.md` in the order
-   given. Each commit:
-   * moves one tightly-scoped legacy file to `agent/`,
-   * leaves a re-export shim at the old path until Phase 8,
-   * runs the existing test suite — no new tests needed for moves.
-4. After the MOVE list is done: bootstrap `tests/parity/` with 5
-   baseline cases (commit 11 in the audit's plan), then begin the
-   REWRITE commits in the audit-prescribed order
-   (`tools` → `context` → `brain` → `reasoning` → `core`).
-5. Lower priority but still on the radar:
-   * **Phase 6 frontend** — `apps/setup-center/src/api/orgs.ts` v2
-     wrapper + template-picker drawer. Backend already serves.
-   * **Phase 6 channels gateway flag** — teach
-     `channels/gateway.py` to consult ``settings.runtime_v2_enabled``
-     per message; will plug into ``runtime/state_graph.compile_from_org``
-     for routing.
-   * **Gate review notes** — write `docs/revamp/gates/G1.md` …
-     `G6.md` (one commit each, paperwork only).
-6. Always:
+2. **Phase 2 is complete.** All MOVE commits (6–12), REWRITE
+   commits (14–18), parity bootstrap (13), and parity expansion to
+   30 cases (19) have landed. G2 is signed off (parity 100 %).
+3. **Recommended next slice — Phase 6 remaining work**:
+   * `runtime/api/v2/orgs/{id}` resource CRUD under
+     `src/openakita/api/routes/orgs_v2.py`, gated by
+     `settings.runtime_v2_enabled`.
+   * `src/openakita/channels/gateway.py` per-org v2 routing — on
+     each inbound message, check the flag and dispatch to
+     `runtime/state_graph.compile_from_org` instead of the legacy
+     orgs path.
+   * Frontend updates in `apps/setup-center/` — see Phase 6
+     section above for the file list.
+4. After Phase 6 ships, walk Phase 7 (data migration script +
+   bootstrap + flip default flag) and Phase 8 (mechanical removal
+   of legacy `orgs/` and the shimmed `core/*.py` modules).
+5. Always:
    * one logical change per commit, English commit body, mention
      the relevant ADR;
-   * `python -m pytest tests/runtime tests/agent tests/api --no-header -q`
+   * `python -m pytest tests/runtime tests/agent tests/api
+     tests/unit/test_plugins tests/parity --no-header -q`
      before every commit;
    * `python -m ruff check src/openakita/runtime src/openakita/agent
      src/openakita/plugins/manager.py tests/runtime tests/agent
-     tests/api` before every commit.
-7. Never edit the plan file or the ADR `Status:` lines without a
+     tests/api tests/parity` before every commit.
+6. Never edit the plan file or the ADR `Status:` lines without a
    user-led review.
 
 ## How to *use* what already exists today
