@@ -360,6 +360,35 @@ class Plugin(PluginBase):
         except Exception as exc:  # noqa: BLE001
             logger.warning("happyhorse-video: stale task drain error: %s", exc)
 
+        # 同步排干"pending + 已提交 DashScope"的孤儿任务。
+        # 背景：早前每个 sub-agent 都会重挂插件，把进行中的 _poll_tasks
+        # 全部 cancel 掉；本地 DB 的 status 还是 'pending'，但已经没人去
+        # DashScope 拉结果——用户看到的就是"照片说话永远卡在排队中"。
+        # 现在 sub-agent 共享主 Agent 的 PluginManager 后这种重挂不该再
+        # 发生，但万一进程整体重启（升级 / 崩溃恢复）还是会留下这种孤儿，
+        # 这里清一遍并给出明确错误，避免下游一直 wait_for_completion 死等。
+        try:
+            orphan_pending = await self._tm.find_pending_dashscope_ids()
+            count = 0
+            for task_id, dashscope_id, _endpoint, _model_id in orphan_pending:
+                await self._tm.update_task_safe(
+                    task_id,
+                    status="failed",
+                    error_kind="server",
+                    error_message=(
+                        f"plugin restarted while task was pending "
+                        f"(dashscope_id={dashscope_id}); please resubmit."
+                    ),
+                )
+                count += 1
+            if count:
+                logger.warning(
+                    "happyhorse-video: drained %d orphaned pending task(s) "
+                    "after plugin (re)start", count,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("happyhorse-video: orphan pending drain error: %s", exc)
+
 
         try:
             pending_figures = await self._tm.list_pending_figures()
