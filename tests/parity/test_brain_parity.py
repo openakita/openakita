@@ -174,3 +174,92 @@ def test_brain_parity_against_fixture(fixture_path: Path, v1_v2_modules) -> None
         assert v2_result["tool_sequence"] == [list(pair) for pair in expected["tool_sequence"]]
     if "stop_reason" in expected:
         assert v2_result["stop_reason"] == expected["stop_reason"]
+
+
+# ---------------------------------------------------------------------------
+# N6 (P-RC-4 audit / P-RC-5 P5.0c): exercise the runtime/llm/failover.py
+# view through a real Brain instance built with a stub LLMClient. The
+# original brain parity bypassed the constructor; this fixture covers
+# the v2 surface (``brain.get_current_endpoint_info()``) end-to-end and
+# asserts v1 == v2 results.
+# ---------------------------------------------------------------------------
+
+
+class _StubLLMEndpoint:
+    """Minimal LLM endpoint descriptor for :class:`_StubLLMClient`."""
+
+    def __init__(self, name: str, model: str) -> None:
+        self.name = name
+        self.model = model
+
+
+class _StubLLMClient:
+    """Stub :class:`openakita.llm.client.LLMClient` for parity exercises.
+
+    The real :class:`Brain` constructor reaches into ``llm_client.endpoints``
+    and ``llm_client.providers`` to build its
+    :class:`runtime.llm.EndpointFailoverView`. We mirror just enough of
+    that surface to drive ``get_current_endpoint_info()`` without
+    touching a real provider config.
+    """
+
+    def __init__(self) -> None:
+        # One healthy primary + one unhealthy secondary keeps the
+        # failover-view branch coverage non-trivial.
+        self.endpoints = [
+            _StubLLMEndpoint(name="primary", model="m-1"),
+            _StubLLMEndpoint(name="secondary", model="m-2"),
+        ]
+
+        class _Provider:
+            def __init__(self, model: str, is_healthy: bool) -> None:
+                self.model = model
+                self.is_healthy = is_healthy
+
+        self.providers = {
+            "primary": _Provider("m-1", is_healthy=True),
+            "secondary": _Provider("m-2", is_healthy=False),
+        }
+
+    async def health_check(self) -> dict[str, bool]:
+        return {"primary": True, "secondary": False}
+
+
+def _build_brain_with_stub(brain_cls):
+    """Construct a Brain instance backed by :class:`_StubLLMClient`.
+
+    Uses ``__new__`` + minimal attribute seeding so we avoid the heavy
+    constructor (which reads settings, configures a real LLMClient,
+    initialises a CompilerCircuitBreaker, etc.). The
+    :class:`EndpointFailoverView` only needs ``_llm_client`` to be
+    attached to the instance to render
+    ``current_endpoint_info()``.
+    """
+    from openakita.runtime.llm import EndpointFailoverView
+
+    inst = brain_cls.__new__(brain_cls)
+    inst._llm_client = _StubLLMClient()
+    inst._failover_view = EndpointFailoverView(inst._llm_client)
+    return inst
+
+
+def test_failover_endpoint_info_parity(v1_v2_modules) -> None:
+    """N6: ``brain.get_current_endpoint_info()`` must match v1<->v2.
+
+    Exercises the real :class:`runtime.llm.EndpointFailoverView` through
+    the v2 :class:`Brain` surface (and through the shim-redirected v1
+    path). Asserts both return the same dict shape and the same
+    ``{name, model, healthy}`` content; mismatches surface a regression
+    in either the shim, the failover view, or the v2 Brain wrapper.
+    """
+    v1_module, v2_module = v1_v2_modules
+    v1_brain = _build_brain_with_stub(v1_module.Brain)
+    v2_brain = _build_brain_with_stub(v2_module.Brain)
+
+    v1_info = v1_brain.get_current_endpoint_info()
+    v2_info = v2_brain.get_current_endpoint_info()
+
+    assert v1_info == v2_info, f"endpoint-info parity drift: {v1_info!r} != {v2_info!r}"
+    # Primary is healthy so the view should pick it; structure pinned
+    # so a future refactor that drops the ``healthy`` key fails loudly.
+    assert v1_info == {"name": "primary", "model": "m-1", "healthy": True}
