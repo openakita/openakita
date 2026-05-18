@@ -264,6 +264,116 @@ def test_instantiate_rejects_per_node_override_for_unknown_node() -> None:
 
 
 # ---------------------------------------------------------------------------
+# parent_id derivation from HIERARCHY edges
+# ---------------------------------------------------------------------------
+
+
+def _hierarchy_spec() -> TemplateSpec:
+    """A 3-node spec with a real hierarchy: lead -> {writer, editor}."""
+
+    return TemplateSpec(
+        id="hier_demo",
+        name="Hier Demo",
+        category="content_production",
+        description="d",
+        version=1,
+        nodes=(
+            NodeSpec(id="lead", type=NodeType.LLM, role="lead", label="Lead"),
+            NodeSpec(id="writer", type=NodeType.LLM, role="writer", label="Writer"),
+            NodeSpec(id="editor", type=NodeType.LLM, role="editor", label="Editor"),
+        ),
+        edges=(
+            EdgeSpec(src="lead", dst="writer", kind=EdgeKind.HIERARCHY),
+            EdgeSpec(src="lead", dst="editor", kind=EdgeKind.HIERARCHY),
+            EdgeSpec(src="writer", dst="editor", kind=EdgeKind.COLLABORATE),
+        ),
+        defaults=DefaultsSpec(),
+    )
+
+
+def test_instantiate_stamps_parent_id_from_hierarchy_edges() -> None:
+    reg = TemplateRegistry()
+    reg.register(_hierarchy_spec())
+    org = reg.instantiate("hier_demo", name="ok")
+
+    by_role = {n.role: n for n in org.nodes}
+    assert by_role["lead"].parent_id is None
+    assert by_role["writer"].parent_id == by_role["lead"].id
+    assert by_role["editor"].parent_id == by_role["lead"].id
+
+    roots = org.root_nodes()
+    assert [n.role for n in roots] == ["lead"]
+    children = sorted(n.role for n in org.children_of(by_role["lead"].id))
+    assert children == ["editor", "writer"]
+
+
+def test_instantiate_collaborate_edges_do_not_set_parent() -> None:
+    reg = TemplateRegistry()
+    reg.register(_hierarchy_spec())
+    org = reg.instantiate("hier_demo", name="ok")
+
+    by_role = {n.role: n for n in org.nodes}
+    # editor has lead as HIERARCHY parent and writer as COLLABORATE peer;
+    # only the HIERARCHY edge should contribute to parent_id.
+    assert by_role["editor"].parent_id == by_role["lead"].id
+
+
+def test_instantiate_rejects_node_with_two_hierarchy_parents() -> None:
+    spec = TemplateSpec(
+        id="bad",
+        name="Bad",
+        category="content_production",
+        description="d",
+        version=1,
+        nodes=(
+            NodeSpec(id="a", type=NodeType.LLM, role="a", label="A"),
+            NodeSpec(id="b", type=NodeType.LLM, role="b", label="B"),
+            NodeSpec(id="c", type=NodeType.LLM, role="c", label="C"),
+        ),
+        edges=(
+            EdgeSpec(src="a", dst="c", kind=EdgeKind.HIERARCHY),
+            EdgeSpec(src="b", dst="c", kind=EdgeKind.HIERARCHY),
+        ),
+        defaults=DefaultsSpec(),
+    )
+    reg = TemplateRegistry()
+    reg.register(spec)
+    with pytest.raises(TemplateValidationError, match="multiple HIERARCHY parents"):
+        reg.instantiate("bad", name="ok")
+
+
+def test_instantiate_idempotent_on_repeat_hierarchy_edges() -> None:
+    """Two HIERARCHY edges with the same (src, dst) must collapse to one parent.
+
+    Templates can sometimes encode the same parent relationship twice as a
+    side effect of programmatic generation; we should treat that as benign,
+    not as a multi-parent violation.
+    """
+
+    spec = TemplateSpec(
+        id="repeat",
+        name="Repeat",
+        category="content_production",
+        description="d",
+        version=1,
+        nodes=(
+            NodeSpec(id="a", type=NodeType.LLM, role="a", label="A"),
+            NodeSpec(id="b", type=NodeType.LLM, role="b", label="B"),
+        ),
+        edges=(
+            EdgeSpec(src="a", dst="b", kind=EdgeKind.HIERARCHY),
+            EdgeSpec(src="a", dst="b", kind=EdgeKind.HIERARCHY),
+        ),
+        defaults=DefaultsSpec(),
+    )
+    reg = TemplateRegistry()
+    reg.register(spec)
+    org = reg.instantiate("repeat", name="ok")
+    by_role = {n.role: n for n in org.nodes}
+    assert by_role["b"].parent_id == by_role["a"].id
+
+
+# ---------------------------------------------------------------------------
 # discover_builtins
 # ---------------------------------------------------------------------------
 

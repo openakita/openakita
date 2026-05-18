@@ -41,7 +41,6 @@ from openakita.runtime.state_graph import (
 )
 from openakita.runtime.supervisor import DelegationResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -178,7 +177,7 @@ class TestRouting:
         assert nxt == "messenger_role::editor"
 
     @pytest.mark.asyncio
-    async def test_delegation_hint_END_returns_none(self) -> None:
+    async def test_delegation_hint_end_returns_none(self) -> None:
         g = StateGraph()
         g.add_node("a")
         g.set_entry_point("a")

@@ -25,6 +25,7 @@ from ..models import (
     DefaultsSpec as RuntimeDefaultsSpec,
 )
 from ..models import (
+    EdgeKind,
     EdgeV2,
     NodeRuntimeOverrides,
     NodeV2,
@@ -241,6 +242,37 @@ class TemplateRegistry:
         # Mint fresh NodeIds and remember the mapping role-handle -> NodeId.
         id_map: dict[str, str] = {n.id: new_node_id() for n in spec.nodes}
 
+        # Derive parent_id from HIERARCHY edges *before* constructing
+        # NodeV2s so OrgV2.children_of() and OrgV2.root_nodes() return
+        # correct trees on the produced org. The legacy v1 schema
+        # carried parent_id as the canonical hierarchy field; v2 made
+        # edges canonical but kept ``NodeV2.parent_id`` as a cache for
+        # fast tree traversals (used by the IM dispatcher and the
+        # supervisor's escalation path). Skipping this step would
+        # produce orgs where every node thinks it is a root, silently
+        # breaking those consumers.
+        #
+        # COLLABORATE / CONSULT edges are *not* parent relationships;
+        # they connect peers and advisors and must not contribute to
+        # parent_id. Only EdgeKind.HIERARCHY counts.
+        #
+        # A node may not have two distinct hierarchy parents; multi-
+        # parent organisations are template-modelled as one HIERARCHY
+        # edge plus N COLLABORATE edges. We surface a violation
+        # loudly here rather than picking one parent at random.
+        spec_parent_of: dict[str, str] = {}
+        for spec_edge in spec.edges:
+            if spec_edge.kind != EdgeKind.HIERARCHY:
+                continue
+            existing = spec_parent_of.get(spec_edge.dst)
+            if existing is not None and existing != spec_edge.src:
+                raise TemplateValidationError(
+                    f"node {spec_edge.dst!r} has multiple HIERARCHY parents "
+                    f"({existing!r}, {spec_edge.src!r}); a node may have at "
+                    "most one parent. Use COLLABORATE for cross-team links."
+                )
+            spec_parent_of[spec_edge.dst] = spec_edge.src
+
         nodes: list[NodeV2] = []
         for spec_node in spec.nodes:
             persona = node_personas.get(spec_node.id, spec_node.persona_prompt)
@@ -257,6 +289,7 @@ class TemplateRegistry:
                 if spec_node.workbench is not None
                 else None
             )
+            parent_handle = spec_parent_of.get(spec_node.id)
             nodes.append(
                 NodeV2(
                     id=id_map[spec_node.id],
@@ -268,6 +301,9 @@ class TemplateRegistry:
                     tool_subset=spec_node.tool_subset,
                     workbench=wb,
                     runtime_overrides=runtime,
+                    parent_id=(
+                        id_map[parent_handle] if parent_handle is not None else None
+                    ),
                 )
             )
 

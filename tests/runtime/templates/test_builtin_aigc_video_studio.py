@@ -187,6 +187,36 @@ def test_template_instantiates_into_orgv2_with_fresh_ids() -> None:
     assert by_role["long_video_director"].workbench.mode == "art_director"
 
 
+def test_instantiated_org_has_producer_as_sole_root_with_correct_children() -> None:
+    """After instantiate(), the AIGC org must look like a real tree.
+
+    Regression for a bug where parent_id was never derived from the
+    HIERARCHY edges, so every node reported as a root and the IM
+    dispatcher could not walk the org chart. The fix lives in
+    ``TemplateRegistry.instantiate``; this test pins the contract.
+    """
+    reg = _fresh_registry()
+    org = reg.instantiate("aigc_video_studio", name="Acme studio")
+    by_role = {n.role: n for n in org.nodes}
+
+    roots = org.root_nodes()
+    assert [n.role for n in roots] == ["producer"]
+    assert by_role["producer"].parent_id is None
+
+    producer_children = sorted(n.role for n in org.children_of(by_role["producer"].id))
+    assert producer_children == ["art_director", "screenwriter"]
+
+    art_dir_children = sorted(
+        n.role for n in org.children_of(by_role["art_director"].id)
+    )
+    assert art_dir_children == [
+        "image_artist",
+        "long_video_director",
+        "portrait_actor",
+        "video_animator",
+    ]
+
+
 def test_two_instantiations_have_disjoint_node_id_sets() -> None:
     reg = _fresh_registry()
     a = reg.instantiate("aigc_video_studio", name="A")
