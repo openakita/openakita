@@ -25,7 +25,7 @@ from fastapi.responses import StreamingResponse
 
 from openakita.config import settings
 from openakita.runtime.orgs import OrgNotFound, get_default_store
-from openakita.runtime.stream import StreamEvent, Subscription
+from openakita.runtime.stream import StreamEvent
 from openakita.runtime.stream_registry import get_or_create_org_stream_bus
 
 __all__ = ["router"]
@@ -63,17 +63,16 @@ async def _event_stream(request: Request, org_id: str) -> AsyncIterator[str]:
     """Yield SSE-formatted strings until the client disconnects."""
     bus = get_or_create_org_stream_bus(org_id)
 
-    # Attach the Subscription manually before the first yield so
-    # the bus has us in its subscriber list before any byte goes
-    # out. ``StreamBus.subscribe`` defers the append until the
-    # iterator is first stepped, which races the SSE handshake.
-    sub = Subscription(
-        channels=frozenset(DEFAULT_SSE_CHANNELS),
-        queue=asyncio.Queue(maxsize=bus._max_queue),
+    # Attach via the public API (P-RC-3 T5) so this route does not
+    # reach into bus._lock / bus._subscriptions / bus._max_queue.
+    # Eager-close (drain_on_close=False) matches the previous
+    # behaviour: an SSE consumer that disconnects must release
+    # immediately without holding bus.close() on a drained queue.
+    sub = bus.make_subscription(
+        DEFAULT_SSE_CHANNELS,
         drain_on_close=False,
     )
-    async with bus._lock:
-        bus._subscriptions.append(sub)
+    await bus.register_subscription(sub)
 
     # The try/finally must wrap every yield so ``aclose`` reliably
     # detaches the subscription regardless of which yield point
@@ -104,10 +103,7 @@ async def _event_stream(request: Request, org_id: str) -> AsyncIterator[str]:
     except asyncio.CancelledError:
         pass
     finally:
-        async with bus._lock:
-            if sub in bus._subscriptions:
-                bus._subscriptions.remove(sub)
-        sub.closed.set()
+        await bus.detach_subscription(sub)
 
 
 @router.get("/{org_id}/stream", summary="SSE stream of v2 supervisor progress for one org")

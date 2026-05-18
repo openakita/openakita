@@ -90,7 +90,8 @@ runs identical cases against both backends.
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | `f26863c5` | P-RC-3 P3.0 | chore(revamp): bump ledger to P-RC-3 + add commit_guard script (T1) | +332 (script+tests+ledger+ruff) | +11 (commit_guard) | — |
-| _this commit_ | P-RC-3 P3.1 | docs(revamp): correct G-RC-2 5ms polling wording (T2) | +4 / -2 (gate doc) | 0 | — |
+| `20021b71` | P-RC-3 P3.1 | docs(revamp): correct G-RC-2 5ms polling wording (T2) | +4 / -2 (gate doc) | 0 | — |
+| _this commit_ | P-RC-3 P3.2 | feat(runtime): add closed-gate to StreamBus + public subscription API (T3+T5) | +156 / -14 | +5 (closed-gate + public-api) | ADR-0006 |
 
 ## P-RC-4 — Phase 2 real slim-down: brain / tools / context
 

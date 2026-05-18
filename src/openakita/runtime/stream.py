@@ -170,6 +170,11 @@ class StreamBus:
         self._strict = strict
         self._total_emitted = 0
         self._total_dropped = 0
+        # P-RC-3 T3: once True, subscribe() raises and emit() is a
+        # silent no-op. Set inside close() before drain begins so a
+        # re-entrant close() returns promptly and late publishers
+        # cannot land events after shutdown.
+        self._closed = False
 
     # ------------------------------------------------------------------
     # Subscription management
@@ -199,6 +204,8 @@ class StreamBus:
         """
         if not channels:
             raise ValueError("subscribe() requires at least one channel name")
+        if self._closed:
+            raise RuntimeError("StreamBus is closed")
         for ch in channels:
             if ch not in STANDARD_CHANNELS and not ch.startswith("custom."):
                 logger.debug(
@@ -254,6 +261,10 @@ class StreamBus:
         proceeds -- pathological consumers must never be able to
         wedge a bus shutdown.
         """
+        # Re-entrancy: a second close() is a no-op.
+        if self._closed:
+            return
+        self._closed = True
         async with self._lock:
             subs = list(self._subscriptions)
             self._subscriptions.clear()
@@ -346,6 +357,12 @@ class StreamBus:
 
     async def _fanout(self, event: StreamEvent) -> None:
         """Push ``event`` to every matching subscriber."""
+        if self._closed:
+            logger.debug(
+                "StreamBus._fanout: dropping %s event on closed bus",
+                event.channel,
+            )
+            return
         # Snapshot the subscriber list so emitters never block on
         # subscribe / unsubscribe lock contention.
         async with self._lock:
@@ -372,6 +389,66 @@ class StreamBus:
                 # defensive anyway, drop the new event.
                 sub.dropped += 1
                 self._total_dropped += 1
+
+    # ------------------------------------------------------------------
+    # Public subscription surface (P-RC-3 T5)
+    #
+    # ``api/routes/orgs_v2_stream.py`` previously reached into
+    # ``self._lock`` / ``self._subscriptions`` / ``self._max_queue``
+    # to attach a manually-built ``Subscription`` before the SSE
+    # handshake. These small helpers expose the same primitives via
+    # a documented surface so the route does not depend on private
+    # attributes.
+    # ------------------------------------------------------------------
+
+    @property
+    def is_closed(self) -> bool:
+        """True once :meth:`close` has been called."""
+        return self._closed
+
+    def subscription_capacity(self) -> int:
+        """Return the per-subscriber bounded queue size."""
+        return self._max_queue
+
+    def make_subscription(
+        self,
+        channels: tuple[str, ...] | frozenset[str],
+        *,
+        drain_on_close: bool = True,
+    ) -> Subscription:
+        """Build a fresh :class:`Subscription` bound to this bus.
+
+        The returned subscription is NOT yet attached; callers must
+        feed it to :meth:`register_subscription` (or close it via
+        :meth:`detach_subscription`).
+        """
+        return Subscription(
+            channels=frozenset(channels),
+            queue=asyncio.Queue(maxsize=self._max_queue),
+            drain_on_close=drain_on_close,
+        )
+
+    async def register_subscription(self, sub: Subscription) -> None:
+        """Attach a caller-built :class:`Subscription` to the bus.
+
+        Raises ``RuntimeError`` if the bus is already closed.
+        """
+        if self._closed:
+            raise RuntimeError("StreamBus is closed")
+        async with self._lock:
+            self._subscriptions.append(sub)
+
+    async def detach_subscription(self, sub: Subscription) -> None:
+        """Remove ``sub`` from the bus and signal its close event."""
+        async with self._lock:
+            if sub in self._subscriptions:
+                self._subscriptions.remove(sub)
+        sub.closed.set()
+
+    @property
+    def subscriber_count(self) -> int:
+        """Snapshot of currently attached subscribers (race-prone; do not loop on it)."""
+        return len(self._subscriptions)
 
     # ------------------------------------------------------------------
     # Telemetry

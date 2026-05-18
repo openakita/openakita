@@ -458,6 +458,75 @@ async def test_close_mixed_eager_and_drain_subscribers() -> None:
     assert isinstance(eager_received, list)
 
 
+
+
+# ---------------------------------------------------------------------------
+# Closed-gate semantics (P-RC-3 T3) + public subscription surface (P-RC-3 T5)
+# ---------------------------------------------------------------------------
+
+
+async def test_subscribe_after_close_raises_runtime_error() -> None:
+    bus = StreamBus()
+    await bus.close()
+    assert bus.is_closed
+    gen = bus.subscribe('updates')
+    with pytest.raises(RuntimeError, match='closed'):
+        await gen.__anext__()
+
+
+async def test_emit_after_close_is_silent_and_debug_logged(caplog) -> None:
+    bus = StreamBus()
+    await bus.close()
+    import logging
+    with caplog.at_level(logging.DEBUG, logger='openakita.runtime.stream'):
+        ev = await bus.emit('updates', 'u_post_close', {}, command_id='c', org_id='o')
+    assert ev.type == 'u_post_close'
+    assert bus.total_emitted == 0
+    assert bus.total_dropped == 0
+    assert any('closed bus' in r.getMessage() for r in caplog.records)
+
+
+async def test_close_is_reentrant() -> None:
+    bus = StreamBus()
+    await bus.close()
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    await bus.close()
+    elapsed = loop.time() - t0
+    assert elapsed < 0.05
+    assert bus.is_closed
+
+
+async def test_public_subscription_api_is_equivalent_to_private() -> None:
+    """`make_subscription` + `register_subscription` deliver the same
+    semantics the SSE route previously achieved by poking
+    `bus._lock` / `bus._subscriptions` / `bus._max_queue` directly.
+    """
+    bus = StreamBus(max_queue_size=8)
+    assert bus.subscription_capacity() == 8
+    sub = bus.make_subscription(('updates', 'messages'), drain_on_close=False)
+    assert sub.channels == frozenset({'updates', 'messages'})
+    assert sub.queue.maxsize == 8
+    assert sub.drain_on_close is False
+    await bus.register_subscription(sub)
+    assert bus.subscriber_count == 1
+    await bus.emit('updates', 'u1', {}, command_id='c', org_id='o')
+    await bus.emit('debug', 'ignored', {}, command_id='c', org_id='o')
+    ev = await asyncio.wait_for(sub.queue.get(), timeout=1.0)
+    assert ev.type == 'u1'
+    await bus.detach_subscription(sub)
+    assert bus.subscriber_count == 0
+    assert sub.closed.is_set()
+
+
+async def test_register_subscription_after_close_raises() -> None:
+    bus = StreamBus()
+    sub = bus.make_subscription(('updates',), drain_on_close=False)
+    await bus.close()
+    with pytest.raises(RuntimeError, match='closed'):
+        await bus.register_subscription(sub)
+
+
 # Ensure no orphaned tasks pollute the event loop between tests.
 
 @pytest.fixture(autouse=True)
