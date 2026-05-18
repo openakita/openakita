@@ -50,7 +50,7 @@ from .token_tracking import (
     record_usage as _record_token_usage,
 )
 
-from ..runtime.llm import EndpointFailoverView
+from ..runtime.llm import CompilerCircuitBreaker, EndpointFailoverView
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +91,8 @@ class Brain:
         model: str | None = None,
         max_tokens: int | None = None,
     ):
-        # Compiler 熔断器 —— 实例级，避免跨实例共享状态
-        self._compiler_fail_count: int = 0
-        self._compiler_circuit_open: bool = False
-        self._compiler_circuit_open_at: float = 0.0
-        self._compiler_auth_failed: bool = False
+        # Compiler circuit breaker (P-RC-4 extraction).
+        self._compiler_breaker = CompilerCircuitBreaker()
 
         # max_tokens=0 表示"使用合理默认值"：
         # - 对 OpenAI 兼容 API：使用端点配置值或兜底 16384（部分 API 如 NVIDIA NIM 默认极低）
@@ -121,10 +118,6 @@ class Brain:
         self._compiler_client: LLMClient | None = None
         self._init_compiler_client()
 
-        # Compiler 熔断器常量（实例级，允许测试覆盖）
-        self._COMPILER_FAIL_THRESHOLD: int = 5
-        self._COMPILER_CIRCUIT_RESET_S: float = 300.0
-        self._COMPILER_AUTH_CIRCUIT_RESET_S: float = 1800.0
 
         # 公开属性（从 LMClient 获取）
         self._update_public_attrs()
@@ -185,78 +178,18 @@ class Brain:
             logger.warning(f"Failed to init compiler client: {e}")
 
     def _compiler_available(self) -> bool:
-        """Check if the compiler client is usable (not circuit-broken)."""
+        """True when the compiler client exists and the breaker is closed."""
         if not self._compiler_client:
             return False
-        if not self._compiler_circuit_open:
-            return True
-        import time
-
-        elapsed = time.monotonic() - self._compiler_circuit_open_at
-        reset_s = (
-            self._COMPILER_AUTH_CIRCUIT_RESET_S
-            if self._compiler_auth_failed
-            else self._COMPILER_CIRCUIT_RESET_S
-        )
-        if elapsed >= reset_s:
-            self._compiler_circuit_open = False
-            self._compiler_fail_count = 0
-            self._compiler_auth_failed = False
-            logger.info("[Brain] Compiler circuit breaker reset, will retry compiler endpoint")
-            return True
-        return False
+        return self._compiler_breaker.is_available()
 
     def _compiler_on_success(self) -> None:
-        self._compiler_fail_count = 0
-        if self._compiler_circuit_open:
-            self._compiler_circuit_open = False
-            logger.info("[Brain] Compiler circuit breaker closed (success)")
+        """Record a compiler success on the breaker."""
+        self._compiler_breaker.on_success()
 
     def _compiler_on_failure(self, error_str: str = "") -> None:
-        self._compiler_fail_count += 1
-
-        _is_auth = (
-            any(
-                kw in error_str.lower()
-                for kw in (
-                    "invalid_api_key",
-                    "authentication",
-                    "unauthorized",
-                    "401",
-                    "api key",
-                    "auth_failed",
-                )
-            )
-            if error_str
-            else False
-        )
-
-        if _is_auth:
-            import time
-
-            self._compiler_auth_failed = True
-            self._compiler_circuit_open = True
-            self._compiler_circuit_open_at = time.monotonic()
-            logger.error(
-                f"[Brain] Compiler circuit breaker OPEN (auth failure), "
-                f"skipping compiler for {self._COMPILER_AUTH_CIRCUIT_RESET_S}s. "
-                f"Fix the API key in settings to restore."
-            )
-            return
-
-        if (
-            not self._compiler_circuit_open
-            and self._compiler_fail_count >= self._COMPILER_FAIL_THRESHOLD
-        ):
-            import time
-
-            self._compiler_circuit_open = True
-            self._compiler_circuit_open_at = time.monotonic()
-            logger.warning(
-                f"[Brain] Compiler circuit breaker OPEN after "
-                f"{self._compiler_fail_count} consecutive failures, "
-                f"skipping compiler for {self._COMPILER_CIRCUIT_RESET_S}s"
-            )
+        """Record a compiler failure on the breaker."""
+        self._compiler_breaker.on_failure(error_str)
 
     def reload_compiler_client(self) -> bool:
         """热重载编译端点配置。
@@ -273,11 +206,8 @@ class Brain:
             else:
                 self._compiler_client = None
                 logger.info("Compiler endpoints cleared (none configured)")
-            # 重载配置后重置熔断器，允许用户修复 API key 后恢复
-            self._compiler_circuit_open = False
-            self._compiler_fail_count = 0
-            self._compiler_auth_failed = False
-            self._compiler_circuit_open_at = 0.0
+            # Reset breaker on config reload so a fixed API key recovers.
+            self._compiler_breaker.force_reset()
             return True
         except Exception as e:
             logger.warning(f"Failed to reload compiler client: {e}")
