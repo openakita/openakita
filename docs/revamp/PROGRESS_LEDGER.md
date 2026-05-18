@@ -139,7 +139,8 @@ loses its sentinel allowance for these three files.
 | `5ba4711b` | P-RC-4 P4.14 | feat(agent): implement real agent/context.py on extracted helpers (~340 LOC) | +279 (agent/context.py 57->336; +208 real SLOC) | 0 (parity tests cover behaviour) | ADR-0001 |
 | `11eaec49` | P-RC-4 P4.15a | refactor(core): rename core/context_manager.py to _context_manager_legacy.py (pure git mv) | rename only | 0 | ADR-0001 |
 | `0af43180` | P-RC-4 P4.15b | refactor(core): replace core/context_manager.py body with thin import shim | core/context_manager.py 1799->36 (lazy __getattr__ re-export); agent/context.py imports updated to use _context_manager_legacy | 0 | ADR-0001 |
-| _this commit_ | P-RC-4 P4.16 | test(parity): real parity for ContextManager (5 fixtures + __file__ divergence) | +112 (test_context_parity.py) + 5 JSON fixtures | +7 (5 fixtures + __file__ + class-identity) | ADR-0001 |
+| `7b46216e` | P-RC-4 P4.16 | test(parity): real parity for ContextManager (5 fixtures + __file__ divergence) | +112 (test_context_parity.py) + 5 JSON fixtures | +7 (5 fixtures + __file__ + class-identity) | ADR-0001 |
+| _this commit_ | P-RC-4 P4.17 | docs(revamp): G-RC-4 gate review + STATUS scoreboard update | +174 (gates/G-RC-4.md) + STATUS scoreboard row | 0 | ADR-0001 |
 | _this commit_ | P-RC-4 P4.10 | feat(agent): implement real agent/tools.py on extracted helpers (~280 LOC) | +330 (agent/tools.py 56->401) | -0 (no new tests; parity tests cover behaviour) | ADR-0001 |
  refactor(core): replace core/brain.py body with thin import shim | core/brain 2015 -> 19 (shim), _brain_legacy preserves legacy body | 0 | ADR-0001, ADR-0003 |
 
