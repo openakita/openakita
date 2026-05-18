@@ -139,3 +139,28 @@ Once the underlying v2 issue is fixed:
   — the rollback mitigation requirement this file fulfils.
 - Continuation plan `openakita_revamp_continuation_plan_d6192647.plan.md`
   P-RC-0 commit 2 — the work item that produced this document.
+
+## 4. Switching back to JSON from the SQLite backend (P-RC-3)
+
+P-RC-3 introduced an opt-in SQLite backend for the v2 OrgV2
+store (``settings.orgs_v2_backend = "sqlite"``). Operators who
+promoted an organisation to ``ORGS_V2_BACKEND=sqlite`` and want
+to roll back to JSON should:
+
+1. In ``.env``, set ``ORGS_V2_BACKEND=json`` (or remove the override
+   entirely -- ``json`` is the built-in default).
+2. Restart the server. ``runtime.orgs.get_default_store()`` now
+   dispatches to :class:`JsonOrgStore` again and reads
+   ``data/orgs_v2.json`` as the source of truth.
+3. The leftover ``data/orgs_v2.sqlite`` file is now a stale copy.
+   It is safe to delete at leisure, but leaving it in place is
+   harmless -- the JSON backend never opens it.
+
+Important: the migration script
+(``scripts/migrate_orgs_v2_json_to_sqlite.py``) is **one-way** by
+design. It copies orgs from JSON -> SQLite; mutations made
+while ``ORGS_V2_BACKEND=sqlite`` was active live only in the
+SQLite file and will NOT be reflected back into ``orgs_v2.json``.
+Operators planning a long-lived rollback should re-export from
+SQLite before flipping the flag back; the export tool is
+tracked under post-RC follow-up and is not shipped in P-RC-3.
