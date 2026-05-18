@@ -129,7 +129,8 @@ loses its sentinel allowance for these three files.
 | `4b5d385c` | P-RC-4 P4.7 | test(parity): real parity for Brain (5 fixtures + __file__ divergence) | +176 (test_brain_parity.py) + 5 JSON fixtures | +7 (5 fixtures + __file__ + class-identity) | ADR-0001, ADR-0003 |
 | `bf5559e2` | P-RC-4 P4.8 | refactor(runtime/io): extract truncate + overflow from core.tool_executor | +307 (truncate.py + overflow.py + __init__ + tests) | +8 (truncate / overflow / cleanup / constant) | ADR-0001 |
 | `0fc70c82` | P-RC-4 P4.9 | refactor(runtime/llm): collapse tool_executor routing/retry into RetryPolicy | +108 (retry_policy.py +50 / test_retry_policy_tool.py +85) | +10 (tool retry predicate + default policy) | ADR-0001, ADR-0004 |
-| _this commit_ | P-RC-4 P4.10pre | refactor(runtime/io): re-anchor v2 smart_truncate marker to legacy Chinese text for byte-faithful parity | +/-3 (truncate.py marker text) | 0 (test updated, no count delta) | ADR-0001 |
+| `b010bdae` | P-RC-4 P4.10pre | refactor(runtime/io): re-anchor v2 smart_truncate marker to legacy Chinese text for byte-faithful parity | +/-3 (truncate.py marker text) | 0 (test updated, no count delta) | ADR-0001 |
+| _this commit_ | P-RC-4 P4.10 | feat(agent): implement real agent/tools.py on extracted helpers (~280 LOC) | +346 (agent/tools.py 56->347; +221 real SLOC) | 0 (parity tests already cover behaviour; new methods covered indirectly) | ADR-0001 |
 | _this commit_ | P-RC-4 P4.10 | feat(agent): implement real agent/tools.py on extracted helpers (~280 LOC) | +330 (agent/tools.py 56->401) | -0 (no new tests; parity tests cover behaviour) | ADR-0001 |
  refactor(core): replace core/brain.py body with thin import shim | core/brain 2015 -> 19 (shim), _brain_legacy preserves legacy body | 0 | ADR-0001, ADR-0003 |
 
