@@ -1444,6 +1444,32 @@ class OrgToolHandler:
         except Exception:
             pass
 
+        # ── 工作台路由硬护栏（AIGC 编排优化 P1-A）──
+        # 防止 art-director 把"跳舞/全身动作/运镜"类镜头错派给 wb-hh-human
+        # （数字人工作台只能做说话头像/唇形/换脸/姿态驱动，不能从零生成
+        # 全身舞蹈视频）。命中关键词时立即拒绝并给出正确路径建议，避免
+        # 工作台 LLM 拿到错误工具后又调 hh_photo_speak 死循环。
+        _dance_keywords = (
+            "跳舞", "舞蹈", "全身", "运镜", "武打", "动作戏",
+            "dance", "dancing", "full body", "full-body", "choreograph",
+        )
+        if to_node == "wb-hh-human":
+            _task_lower = str(args.get("task", "")).lower()
+            _hit = next(
+                (kw for kw in _dance_keywords if kw in args.get("task", "") or kw.lower() in _task_lower),
+                None,
+            )
+            if _hit:
+                return (
+                    f"[org_delegate_task 路由拒绝] 派单文本里出现『{_hit}』，"
+                    f"但 wb-hh-human（数字人工作台）只能做说话头像 / 唇形 / 换脸 / "
+                    f"姿态驱动，**不能**从零生成跳舞/全身动作/运镜视频。\n"
+                    f"请改走主路径：先 org_delegate_task 派给 wb-hh-image 用 "
+                    f"hh_image_create 出首帧人物图，再 org_delegate_task 派给 "
+                    f"wb-hh-video 用 hh_i2v(from_asset_ids=[首帧 asset_id]) 做"
+                    f"图生视频。如有动作参考视频，可用 hh_r2v 而不是 hh_pose_drive。"
+                )
+
         # 工具级在途锁：堵住 ProjectStore 还没落盘前 LLM 在同一 ReAct iter
         # 内 emit 多个 delegate_task 给同 chain 同目标的并发穿透。
         # 失败路径下立即释放锁让后续重试可继续；成功路径让锁自然过期，
