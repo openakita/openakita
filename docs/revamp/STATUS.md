@@ -16,18 +16,35 @@ A user-led ADR review is the gate to flip them all to `Accepted`.
 |---|---|---|---|
 | 0 — ADRs (10 docs) | **Complete** | 10 | n/a |
 | 1 — Foundation (runtime/ leaf modules) | **Complete** | 8 | 99 runtime tests |
-| 2 — Agent rewrite | **In progress (foundation slice)** | 1 (`agent/state.py`) | 17 agent tests |
-| 3 — Runtime engine (supervisor + messenger + guardrail) | **In progress (critical path complete)** | 5 (`ledger`, `stall_detector`, `supervisor`, `messenger`, `guardrail/`) | 82 new runtime tests |
-| 4 — Nodes | **Implementation complete (G4 review pending)** | 6 (`base`+sig fix, `tool_node`, `llm_node`, `condition_node`+`human_review_node`, `workbench_node`+`manifest`, `happyhorse-video` adoption) | 89 new tests (`test_nodes_*`) + 5 plugin smoke tests |
+| 2 — Agent rewrite | **In progress (audit + state shell only)** | 1 (`agent/state.py`) + 1 audit doc | 17 agent tests |
+| 3 — Runtime engine (supervisor + messenger + guardrail + state graph) | **Complete (G3 review pending)** | 6 (`ledger`, `stall_detector`, `supervisor`, `messenger`, `guardrail/`, `state_graph`) | 110 new runtime tests |
+| 4 — Nodes | **Complete incl. plugin loader (G4 review pending)** | 7 (`base`+sig fix, `tool_node`, `llm_node`, `condition_node`+`human_review_node`, `workbench_node`+`manifest`, `happyhorse-video` adoption, `plugins/manager.py` WORKBENCH discovery) | 89 new tests (`test_nodes_*`) + 5 plugin smoke tests + 5 manifest discovery tests |
 | 5 — Templates | **Schema + registry + 4 builtins shipped (G5 review pending)** | 6 (`schema`, `registry`, `aigc_video_studio`, `software_team`, `startup_company`, `content_ops`+discovery test) | 75 template tests |
 | 6 — API / channels swap | **In progress (templates facade live)** | 2 (`orgs_v2` route + survivable factory marker, server mount) | 15 api tests |
 | 7 — Cutover + data migration | Pending | 0 | — |
 | 8 — Legacy removal | Pending | 0 | — |
 
-Total to date: **38 code commits + 10 ADR commits = 48 commits on
-`revamp/v2`**, all lint-clean (ruff over the v2 surface), test-green
-(362 / 362 across `tests/runtime/`, `tests/agent/`, `tests/api/`, and
+Total to date: **42 code commits + 10 ADR commits + 3 docs commits =
+55 commits on `revamp/v2`**, all lint-clean (ruff over the v2 surface),
+test-green (373 / 373 across `tests/runtime/`, `tests/agent/`,
+`tests/api/`, `tests/unit/test_plugins/`, `tests/orgs/`, and
 `plugins/happyhorse-video/tests/test_workbench_manifest.py`).
+
+### 2026-05-18 mid-cycle plan-vs-reality review
+
+`docs/revamp/PLAN_AUDIT.md` records a full audit of what shipped vs
+what the plan called for, and the recovery order. Two of the four
+P0 items the audit identified were closed in this cycle:
+
+* `plugins/manager.py` now discovers the v2 ``WORKBENCH`` manifest at
+  load time (the loader-side half of ADR-0009 was previously unbuilt).
+* `runtime/state_graph.py` lands as the Pregel-style routing engine
+  ``ConditionNode.next_address`` was always meant to feed.
+
+Both unblock G3/G4 sign-off. The remaining caveats are paperwork
+(gate review notes) and the Phase 2 giant rewrite, which is now
+fully scoped by `docs/revamp/core_audit.md` (the audit the plan §8
+mandated at Phase 2 entry; previously missing).
 
 ## What v2 already delivers
 
@@ -176,11 +193,11 @@ the v2 reasoning loop to be implemented as a state graph driven by
 `runtime/state_graph.py` (still pending — see Phase 3 below) so the
 full loop body fits in `reasoning.py`.
 
-### Phase 3 — Runtime engine, remaining slices
+### Phase 3 — Runtime engine (delivered)
 
 | Module | ADR | Notes |
 |---|---|---|
-| `runtime/state_graph.py` | ADR-0007 | LangGraph-style BSP engine. Required for ConditionNode + multi-node fan-out. The supervisor + messenger work end-to-end without it for single-flight, hierarchical orgs (the AIGC studio shape today). |
+| `runtime/state_graph.py` | ADR-0002 + ADR-0007 | **Done.** Pregel-style ``StateGraph`` with ``add_node`` / ``add_edge`` / ``add_conditional_edges`` / ``set_entry_point`` / ``validate``. ``route()`` resolves in priority conditional > static > delegation hint > defer-to-supervisor; unknown branch labels raise loudly. ``compile_from_org`` projects an OrgV2 into the graph (HIERARCHY/COLLABORATE → static, CONSULT dropped). 28 tests. The supervisor's deliver path will plug in here in Phase 6 as part of the channels-gateway swap. |
 
 ### Phase 4 — Nodes (delivered)
 
@@ -195,19 +212,13 @@ full loop body fits in `reasoning.py`.
 | `runtime/nodes/workbench_node.py` | ADR-0007 + ADR-0009 | **Done.** Plugin-as-node with mode-scoped tool allow-list, explicit mode switching, workbench_ready / workbench_mode_switched / workbench_cancelled lifecycle envelope. 9 tests. |
 | `plugins/happyhorse-video/plugin.py` (`WORKBENCH` constant) | ADR-0009 | **Done.** Four-role manifest (art_director / image_artist / video_animator / portrait_actor) + load-time validation in `tests/test_workbench_manifest.py`. |
 
-Outstanding before we can declare gate G4 closed:
-
-* `runtime/state_graph.py` (Phase 3 leftover; ADR-0002). The
-  ConditionNode contract is layered on top of a missing
-  StateGraph: today the supervisor delegates linearly via the
-  messenger, so a ConditionNode result with `next_address` is set
-  but no engine yet picks the next speaker from it. State graph
-  is a separate small commit (next session); ConditionNode itself
-  is fully tested in isolation.
-* End-to-end smoke test wiring `Supervisor → Messenger → ToolNode
-  + LLMNode + WorkbenchNode + ConditionNode` for one synthetic
-  org. The plumbing is all there; this is one new
-  `tests/runtime/test_node_integration.py`.
+G4 is now substantively complete: the state graph (the previously
+missing piece behind ``ConditionNode.next_address``) is shipped,
+and ``plugins/manager.py`` parses the ``WORKBENCH`` manifest at
+plugin load (so live plugins self-describe their workbench, not
+just templates that hand-build a manifest). Remaining for G4
+sign-off is the written gate review note under
+``docs/revamp/gates/G4.md`` — paperwork.
 
 ### Phase 5 — Templates (delivered)
 
@@ -258,37 +269,43 @@ log` reader can diff the world before / after.
 
 ## How to resume in the next session
 
-1. Read this `STATUS.md` first.
-2. Recommended next slice: **Phase 6 — frontend `OrgEditor` swap to
-   ``/api/v2/orgs/templates``**. Add a thin client wrapper in
-   `apps/setup-center/src/api/orgs.ts` that calls the v2 list /
-   instantiate endpoints when the runtime flag is on, and update the
-   template-picker drawer to render the v2 wire format (no
-   ``position`` / ``avatar`` / ``department`` fields). Estimate: one
-   focused commit; backend already serves.
-3. After UI: **Phase 6 — channels gateway flag**. Teach
-   `channels/gateway.py` to consult ``settings.runtime_v2_enabled``
-   per inbound message (later, per-org once the v2 OrgV2 persistence
-   lands). Until persistence lands, the flag is "everyone or no
-   one" and the channel keeps using the v1 supervisor — but the
-   plumbing should be in place.
-3. Alternatively: **Phase 3 `runtime/state_graph.py`**. Not
-   strictly on the critical path because the existing supervisor +
-   messenger handles single-flight hierarchical delegation, but
-   ConditionNode's `next_address` result is currently advisory —
-   the engine that consumes it is the missing piece. Estimate:
-   ~300 lines + tests.
-4. If continuing Phase 2: pick the smallest unfinished module from
-   the list above and stand it up under `src/openakita/agent/` with
-   a test file under `tests/agent/`.
-5. Always:
+1. Read this `STATUS.md` first, then `docs/revamp/PLAN_AUDIT.md`
+   and `docs/revamp/core_audit.md` for the rationale behind the
+   Phase 2 commit plan.
+2. **Recommended next slice — Phase 2 commit 2** of the plan in
+   `docs/revamp/core_audit.md` §"Sub-commit plan for Phase 2": port
+   `core/errors.py` + `core/state.py` + `core/working_facts.py` into
+   `agent/` as MOVE-only commits with import-path updates. These
+   are the three smallest files (15 + 75 + 53 LOC), zero behaviour
+   change, single commit. They unblock larger ports because every
+   subsequent agent module imports at least one of them.
+3. After (2): walk the MOVE list in `core_audit.md` in the order
+   given. Each commit:
+   * moves one tightly-scoped legacy file to `agent/`,
+   * leaves a re-export shim at the old path until Phase 8,
+   * runs the existing test suite — no new tests needed for moves.
+4. After the MOVE list is done: bootstrap `tests/parity/` with 5
+   baseline cases (commit 11 in the audit's plan), then begin the
+   REWRITE commits in the audit-prescribed order
+   (`tools` → `context` → `brain` → `reasoning` → `core`).
+5. Lower priority but still on the radar:
+   * **Phase 6 frontend** — `apps/setup-center/src/api/orgs.ts` v2
+     wrapper + template-picker drawer. Backend already serves.
+   * **Phase 6 channels gateway flag** — teach
+     `channels/gateway.py` to consult ``settings.runtime_v2_enabled``
+     per message; will plug into ``runtime/state_graph.compile_from_org``
+     for routing.
+   * **Gate review notes** — write `docs/revamp/gates/G1.md` …
+     `G6.md` (one commit each, paperwork only).
+6. Always:
    * one logical change per commit, English commit body, mention
      the relevant ADR;
-   * `python -m pytest tests/runtime tests/agent --no-header -q`
+   * `python -m pytest tests/runtime tests/agent tests/api --no-header -q`
      before every commit;
    * `python -m ruff check src/openakita/runtime src/openakita/agent
-     tests/runtime tests/agent` before every commit.
-6. Never edit the plan file or the ADR `Status:` lines without a
+     src/openakita/plugins/manager.py tests/runtime tests/agent
+     tests/api` before every commit.
+7. Never edit the plan file or the ADR `Status:` lines without a
    user-led review.
 
 ## How to *use* what already exists today
