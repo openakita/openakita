@@ -46,6 +46,7 @@ from .routes import (
     memory,
     memory_repair,
     orgs,
+    orgs_v2,
     pending_approvals,
     qqbot_onboard,
     scheduler,
@@ -399,6 +400,11 @@ def create_app(
     app.include_router(identity.router, tags=["身份"])
     app.include_router(orgs.router, tags=["组织编排"])
     app.include_router(orgs.inbox_router, tags=["组织消息中心"])
+    # v2 organisation facade — gated at request time by
+    # ``settings.runtime_v2_enabled`` (returns 404 when off). Safe to
+    # always-mount because the route bodies refuse to serve when the
+    # flag is false.
+    app.include_router(orgs_v2.router)
     if plugins_routes is not None:
         app.include_router(plugins_routes.router)
 
