@@ -49,7 +49,8 @@ two nits the P-RC-0 audit raised before the main work begins.
 | 89902514 | P-RC-1 #1 | feat(runtime): add session_bridge for session<->org id lookup | +231 | +8 | ADR-0002 |
 | b0653a59 | P-RC-1 #2 | feat(runtime): promote channel_routing helper to async dispatch_inbound_message_to_v2 | +398 / -5 | +6 | ADR-0002, ADR-0004 |
 | 1c0a69a3 | P-RC-1 #3 | feat(runtime): add im_stream_bridge to relay StreamBus progress to IM channels | +292 | +7 | ADR-0006 |
-| _this commit_ | P-RC-1 #4 | feat(channels): replace canary log hook with real v2 dispatch (canary-org gated) | +125 / -30 | 0 | ADR-0002, ADR-0004 |
+| fc2558dd | P-RC-1 #4 | feat(channels): replace canary log hook with real v2 dispatch (canary-org gated) | +125 / -30 | 0 | ADR-0002, ADR-0004 |
+| _this commit_ | P-RC-1 #5 | feat(channels): plumb IM cancel verb to runtime CancellationToken (per org) | +47 (gw) +147 (test) | +4 | ADR-0002, ADR-0004 |
 
 ## P-RC-2 — Frontend v2 wiring
 

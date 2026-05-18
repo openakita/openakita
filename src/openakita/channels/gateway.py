@@ -2430,6 +2430,20 @@ class MessageGateway:
             return
         # ==================== /终极重启指令拦截 ====================
 
+        # ==================== Runtime v2 cancel fast-path (P-RC-1) ====================
+        # 当该 session 上有一条 v2 dispatch 正在跑（_try_dispatch_v2 把
+        # CancellationToken 塞进 _v2_cancel_tokens），且用户文本是公认的
+        # 中止/取消指令，立即 cancel token 并 return。Supervisor 会捕获
+        # CancelledByToken、走 _terminate 写最终 checkpoint，再由
+        # ImStreamBridge 把 lifecycle.cancelled 翻译回 IM。
+        if session_key in self._v2_cancel_tokens and (
+            self._is_bare_org_cancel(_raw_text) or self._is_abort_text(_raw_text)
+        ):
+            handled = await self._cancel_v2_dispatch(session_key, message, _raw_text)
+            if handled:
+                return
+        # ==================== /Runtime v2 cancel fast-path ====================
+
         # ==================== 组织控制 fast-path ====================
         # /org cancel  /org running  /org last —— 这三条**不能**进消息队列：
         # 当一条 `/org <name> <task>` 已经在 _try_handle_org_command 的等待循环
@@ -2763,6 +2777,39 @@ class MessageGateway:
 
         logger.info(f"[Abort-FastPath] Session {session_key} cancelled: {user_text}")
         await self._send_feedback(message, "✅ 收到，正在停止当前任务…")
+
+    async def _cancel_v2_dispatch(
+        self,
+        session_key: str,
+        message: UnifiedMessage,
+        user_text: str,
+    ) -> bool:
+        """P-RC-1: fire the cooperative cancel token for a live v2 dispatch.
+
+        Returns ``True`` if a token was present and cancelled (the
+        caller should ``return`` immediately so the legacy fast-paths
+        do not also run). Returns ``False`` if the session has no
+        v2 dispatch in flight -- the caller continues with the next
+        check.
+
+        The supervisor's outer ``run`` is wrapped in a try/except
+        ``CancelledByToken`` block that always lands a final
+        checkpoint via ``_terminate``, so resume is exact.
+        """
+        token = self._v2_cancel_tokens.get(session_key)
+        if token is None:
+            return False
+        try:
+            token.cancel("user_cancel_via_im")
+        except Exception as exc:  # noqa: BLE001 -- never break the gateway loop
+            logger.warning("[v2 dispatch] cancel token raise: %s", exc, exc_info=True)
+            return False
+        logger.info(
+            "[v2 dispatch] cancel fired session=%s text=%r", session_key, user_text,
+        )
+        with contextlib.suppress(Exception):
+            await self._send_feedback(message, "✅ 收到，正在停止当前 v2 任务…")
+        return True
 
     # ==================== 中断机制 ====================
 
