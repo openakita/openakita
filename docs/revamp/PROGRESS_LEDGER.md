@@ -195,7 +195,8 @@ commit_guard WARN/REJECT documentation).
 | `e6596734` | P-RC-6 P6.1b | refactor(core/agent): delegate attachment helpers to runtime.desktop.attachments | +15 (alias block) / -184 (legacy helper bodies); core/agent.py 9602 -> 9433; baseline rebased | 0 | ADR-0002, ADR-0003 |
 | `c3b56bce` | P-RC-6 P6.1c | test(runtime/desktop): 12 cases for attachment helpers | +186 (new tests/runtime/test_desktop_attachments.py) | +12 | ADR-0002, ADR-0003 |
 | `c6b45867` | P-RC-6 P6.2a | refactor(agent/safety): scaffold agent/safety package + destructive-intent classifier (extracted from core.agent) | +355 (new agent/safety/__init__.py + destructive_intent.py with 7 helpers) | 0 (tests follow in P6.2c) | ADR-0002, ADR-0003 |
-| _this commit_ | P-RC-6 P6.2b | refactor(core/agent): delegate destructive-intent gate to agent.safety.destructive_intent | +21 (alias block) / -246 (legacy bodies + redundant imports); core/agent.py 9433 -> 9208; baseline rebased | 0 | ADR-0002, ADR-0003 |
+| `0b31a07d` | P-RC-6 P6.2b | refactor(core/agent): delegate destructive-intent gate to agent.safety.destructive_intent | +26 (alias block + ruff isort) / -250 (legacy bodies + redundant imports); core/agent.py 9433 -> 9208; baseline rebased | 0 | ADR-0002, ADR-0003 |
+| _this commit_ | P-RC-6 P6.2c | test(agent/safety): 14 cases for destructive-intent helpers | +149 (new tests/agent/test_safety_destructive_intent.py) | +14 | ADR-0002, ADR-0003 |
 
 ## P-RC-7 — Caller migration + legacy bulk delete
 
