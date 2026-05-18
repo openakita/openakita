@@ -1,23 +1,25 @@
 """Runtime v2 organisation persistence layer.
 
-A tiny JSON-file-backed store for :class:`openakita.runtime.models.OrgV2`,
-used by the ``/api/v2/orgs/{id}`` resource (Phase 6) until the real
-checkpoint-store-backed implementation lands in Phase 7.
+Two interchangeable backends share the same duck-typed contract
+(list / get / create / patch / delete + close). The default is the
+process-local :class:`JsonOrgStore` (a single ``data/orgs_v2.json``
+file under :data:`settings.data_dir`). Operators can opt into the
+multi-process-safe :class:`SqliteOrgStore` by setting
+``ORGS_V2_BACKEND=sqlite`` in ``.env`` (P-RC-3).
 
-The store is intentionally small — a single ``data/orgs_v2.json``
-file under :data:`settings.data_dir` — because v2 is in canary mode
-and any production-grade persistence (SQLite + WAL, sharding, etc.)
-should wait until the data model and access pattern have stabilised
-through real channel-gateway traffic.
+Use :func:`get_default_store` to fetch the process-wide singleton;
+use :func:`reset_default_store` to swap backend / path in tests.
 """
 
 from __future__ import annotations
 
+from .sqlite_store import SqliteOrgStore
 from .store import JsonOrgStore, OrgNotFound, get_default_store, reset_default_store
 
 __all__ = [
     "JsonOrgStore",
     "OrgNotFound",
+    "SqliteOrgStore",
     "get_default_store",
     "reset_default_store",
 ]

@@ -182,29 +182,67 @@ class JsonOrgStore:
             self._persist()
 
 
-_DEFAULT_STORE: JsonOrgStore | None = None
+# The default store is typed as ``object`` rather than ``JsonOrgStore``
+# because P-RC-3 introduces the SqliteOrgStore backend (selected via
+# ``settings.orgs_v2_backend``). Both backends implement the same
+# duck-typed surface (list / get / create / patch / delete + close)
+# enforced by ``tests/runtime/orgs/test_store_contract.py``.
+_DEFAULT_STORE: object | None = None
 _DEFAULT_LOCK = threading.RLock()
 
 
-def get_default_store() -> JsonOrgStore:
+def _build_store(backend: str, path: Path | str | None) -> object:
+    """Construct a backend by name. Defaults to JSON for unknown values."""
+    if backend == "sqlite":
+        # Local import keeps ``import openakita.runtime.orgs`` cheap
+        # when the JSON backend is in use (the SQLite store eagerly
+        # opens a connection in its __init__).
+        from .sqlite_store import SqliteOrgStore
+
+        if path is None:
+            return SqliteOrgStore()
+        sqlite_path = Path(path)
+        if sqlite_path.suffix == ".json":
+            sqlite_path = sqlite_path.with_suffix(".sqlite")
+        return SqliteOrgStore(path=sqlite_path)
+    return JsonOrgStore(path=path)
+
+
+def get_default_store() -> object:
     """Return the process-wide default store (lazily constructed).
 
-    Tests may call :func:`reset_default_store` between cases to get a
-    fresh store rooted under a tmp_path.
+    Dispatches via :data:`settings.orgs_v2_backend` (``"json"`` by
+    default; ``"sqlite"`` opt-in). Tests may call
+    :func:`reset_default_store` between cases to get a fresh store
+    rooted under a tmp_path.
     """
     global _DEFAULT_STORE
     with _DEFAULT_LOCK:
         if _DEFAULT_STORE is None:
-            _DEFAULT_STORE = JsonOrgStore()
+            from openakita.config import settings
+
+            backend = getattr(settings, "orgs_v2_backend", "json")
+            _DEFAULT_STORE = _build_store(backend, None)
         return _DEFAULT_STORE
 
 
-def reset_default_store(*, path: Path | str | None = None) -> JsonOrgStore:
+def reset_default_store(
+    *,
+    path: Path | str | None = None,
+    backend: str | None = None,
+) -> object:
     """Reset the default store, optionally rooting it at ``path``.
 
-    Returns the freshly constructed store for the caller's convenience.
+    When ``backend`` is provided it overrides
+    ``settings.orgs_v2_backend`` for the freshly-built store; useful
+    in tests that want to exercise a specific backend without
+    monkey-patching settings. Returns the new store.
     """
     global _DEFAULT_STORE
     with _DEFAULT_LOCK:
-        _DEFAULT_STORE = JsonOrgStore(path=path)
+        if backend is None:
+            from openakita.config import settings
+
+            backend = getattr(settings, "orgs_v2_backend", "json")
+        _DEFAULT_STORE = _build_store(backend, path)
         return _DEFAULT_STORE

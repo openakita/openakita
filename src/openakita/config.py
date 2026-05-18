@@ -8,7 +8,7 @@ from pathlib import Path
 
 os.environ.setdefault("OPENAKITA", "1")
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode
@@ -800,6 +800,18 @@ class Settings(BaseSettings):
             "Set RUNTIME_V2_CANARY_ORGS=org_abc,org_xyz in .env to opt in. "
             "The list is consumed by channels.gateway.MessageGateway."
             "_try_dispatch_v2 (P-RC-1)."
+        ),
+    )
+    orgs_v2_backend: Literal["json", "sqlite"] = Field(
+        default="json",
+        description=(
+            "Persistence backend for the v2 OrgV2 store. "
+            "'json' (default) uses runtime.orgs.JsonOrgStore -- a "
+            "single ``data/orgs_v2.json`` file rewritten on every "
+            "mutation; suitable for single-process operators. "
+            "'sqlite' uses runtime.orgs.SqliteOrgStore -- the "
+            "multi-process-safe option (BEGIN IMMEDIATE + WAL). "
+            "Set ORGS_V2_BACKEND=sqlite in .env to opt in (P-RC-3)."
         ),
     )
 
