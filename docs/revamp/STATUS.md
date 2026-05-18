@@ -23,6 +23,7 @@ A user-led ADR review is the gate to flip them all to `Accepted`.
 | 6 — API / channels swap | **Complete (G6 signed)** | 5 (orgs CRUD + JSON store + channel_routing helper + canary gateway hook + frontend client/drawer) | 25 api + 9 store + 7 routing |
 | 7 — Cutover + data migration | **Complete (G7 signed; burn-in is operator-side)** | 1 (migration script + flag flip + runbook) | 8 migration tests |
 | 8 — Legacy removal | **RC scope shipped; full removal staged post-RC (G8 signed)** | 2 (state.py delete + release notes + G8 note) | — |
+| P-RC-0 — Truth alignment & drift guardrails | **Complete (G-RC-0 written, awaiting user signoff)** | 6 (config doc + rollback.md + smoke artifacts gitignore + LOC audit + PROGRESS_LEDGER + parity facade detector + G-RC-0) | 763 / 763 + 1 skipped (incl. 30 parity baselines + 6 new no-facade cases + 2 LOC invariants) |
 
 Total to date: **80+ code/docs commits on `revamp/v2`**, all
 lint-clean (ruff over the v2 surface), test-green (755 / 755 + 1
