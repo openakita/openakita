@@ -47,6 +47,7 @@ from .routes import (
     memory_repair,
     orgs,
     orgs_v2,
+    orgs_v2_stream,
     pending_approvals,
     qqbot_onboard,
     scheduler,
@@ -405,6 +406,11 @@ def create_app(
     # always-mount because the route bodies refuse to serve when the
     # flag is false.
     app.include_router(orgs_v2.router)
+    # P-RC-2 commit P2.3: SSE stream endpoint for v2 orgs
+    # (``GET /api/v2/orgs/{id}/stream``). Same flag-gating story as
+    # ``orgs_v2.router`` -- always-mount, refuse-to-serve when
+    # ``runtime_v2_enabled`` is False.
+    app.include_router(orgs_v2_stream.router)
     if plugins_routes is not None:
         app.include_router(plugins_routes.router)
 

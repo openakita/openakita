@@ -68,7 +68,8 @@ cold-session `org_id` rehydration in `MessageGateway` (#3).
 |---|---|---|---|---|---|
 | `b6a77a94` | P-RC-2 P2.0 | chore(revamp): bump ledger current_phase to P-RC-2 + apply N3/N4/N5 discipline doc | +33 / -2 | 0 | — |
 | `112534d5` | P-RC-2 P2.1 | feat(runtime): add drain-on-close semantics to StreamBus | +248 / -16 | +4 | ADR-0006 |
-| _this commit_ | P-RC-2 P2.2 | feat(channels): rehydrate cold-session org_id from disk in lookup | +110 / -10 | +6 | ADR-0002 |
+| `2d35c0f9` | P-RC-2 P2.2 | feat(channels): rehydrate cold-session org_id from disk in lookup | +153 / -13 | +6 | ADR-0002 |
+| _this commit_ | P-RC-2 P2.3 | feat(api): add GET /api/v2/orgs/{id}/stream (SSE) backed by StreamBus | +399 | +5 | ADR-0006 |
 
 ## P-RC-3 — Multi-process-safe v2 persistence
 
