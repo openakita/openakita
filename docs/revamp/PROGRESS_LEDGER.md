@@ -45,7 +45,9 @@ two nits the P-RC-0 audit raised before the main work begins.
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | 80d23766 | P-RC-1 P1.0a | chore(revamp): standardise progress ledger to advertise current_phase | +60 | 0 | — |
-| _this commit_ | P-RC-1 P1.0b | test(revamp): enforce sentinel expiry against current_phase | +85 | +7 | — |
+| 9b5671ca | P-RC-1 P1.0b | test(revamp): enforce sentinel expiry against current_phase | +85 | +7 | — |
+| 89902514 | P-RC-1 #1 | feat(runtime): add session_bridge for session<->org id lookup | +231 | +8 | ADR-0002 |
+| _this commit_ | P-RC-1 #2 | feat(runtime): promote channel_routing helper to async dispatch_inbound_message_to_v2 | +398 / -5 | +6 | ADR-0002, ADR-0004 |
 
 ## P-RC-2 — Frontend v2 wiring
 
