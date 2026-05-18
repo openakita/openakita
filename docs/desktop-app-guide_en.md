@@ -219,7 +219,7 @@ The system includes 60+ system skills and 29+ external skills:
 | Web Search | web-search, news-search |
 | Task Scheduling | schedule-task, list-scheduled-tasks |
 | Memory Management | add-memory, search-memory |
-| Multimedia | generate-image, video-downloader, image-understanding |
+| Multimedia | video-downloader, image-understanding |
 
 ---
 

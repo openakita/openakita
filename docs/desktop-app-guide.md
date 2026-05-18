@@ -219,7 +219,7 @@ IM 通道页面用于查看和管理所有已配置的即时通讯通道。
 | 网络搜索 | web-search, news-search |
 | 任务调度 | schedule-task, list-scheduled-tasks |
 | 记忆管理 | add-memory, search-memory |
-| 多媒体 | generate-image, video-downloader, image-understanding |
+| 多媒体 | video-downloader, image-understanding |
 
 ---
 

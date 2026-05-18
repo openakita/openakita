@@ -1,9 +1,0 @@
-interface:
-  display_name: Generate Image
-  short_description: 文生图（Qwen-Image）。根据提示词生成图片并保存为本地 PNG 文件；需要配置 DASHSCOPE_API_KEY...
-  default_prompt: Use $generate-image
-i18n:
-  zh:
-    name: 文生图
-    description: 根据提示词生成图片并保存为本地 PNG 文件，需要配置 DASHSCOPE_API_KEY。
-

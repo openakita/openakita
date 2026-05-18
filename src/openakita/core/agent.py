@@ -1044,6 +1044,24 @@ risks_or_ambiguities:
 ```"""
 
 
+# ─────────────────────────────────────────────────────────────
+# 进程级"主 Agent"引用 —— AgentFactory 创建 sub-agent 时按需读取
+# 用于 share_from 机制（见 Agent._attach_shared_runtime）。
+# 只在主 Agent 完成一次"完整初始化"（非 lightweight）后设置，
+# 防止 sub-agent 拿到一个还没加载完插件的 parent。
+# ─────────────────────────────────────────────────────────────
+_PRIMARY_AGENT: "Agent | None" = None
+
+
+def set_primary_agent(agent: "Agent | None") -> None:
+    global _PRIMARY_AGENT
+    _PRIMARY_AGENT = agent
+
+
+def get_primary_agent() -> "Agent | None":
+    return _PRIMARY_AGENT
+
+
 class Agent:
     """
     OpenAkita 主类
@@ -2021,16 +2039,40 @@ class Agent:
                 delivery_receipts = receipts
         return tool_results, executed_tool_names, delivery_receipts
 
-    async def initialize(self, start_scheduler: bool = True, lightweight: bool = False) -> None:
+    async def initialize(
+        self,
+        start_scheduler: bool = True,
+        lightweight: bool = False,
+        share_from: "Agent | None" = None,
+    ) -> None:
         """
         初始化 Agent
 
         Args:
             start_scheduler: 是否启动定时任务调度器（定时任务执行时应设为 False）
             lightweight: 轻量模式（sub-agent），跳过预热、表情包、人格特征等非必要初始化
+            share_from: 共享一个已经完成初始化的"主 Agent"的注册表 —— skills /
+                MCP / plugins / tool catalog 全部通过引用复用，跳过 ``_load_*``
+                与 ``rebuild_engine_v2``。**仅供 lightweight=True 的 sub-agent
+                使用**。系统工具处理器（filesystem / memory / shell 等）仍绑定
+                到当前 Agent 自身的 file_tool / memory_manager，所以 org 工作
+                空间隔离不受影响；只有"重操作"——遍历技能目录、初始化
+                DashScope client、启动后台轮询协程——被去掉。
+
+                这是 AIGC 工作室"每跳一个 sub-agent 就重挂 124 个工具 + 22 个
+                插件"性能 bug 的根因修复（见 2026-05-18 编排优化方案 P0-A）。
         """
         if self._initialized:
             return
+
+        if share_from is not None and not lightweight:
+            # share_from 隐含 lightweight：full-init 路径会再次跑一遍
+            # _load_plugins，等于白白浪费 share_from 的缓存。这里直接报错让
+            # 调用方修正而不是悄悄退化。
+            raise ValueError(
+                "share_from requires lightweight=True; full initialization "
+                "would defeat the purpose of sharing the parent's registry."
+            )
 
         # 初始化 token 用量追踪
         init_token_tracking(str(settings.db_full_path))
@@ -2044,6 +2086,28 @@ class Agent:
 
         # 加载身份文档
         self.identity.load()
+
+        if share_from is not None:
+            self._attach_shared_runtime(share_from)
+            # 启动记忆会话（sub-agent 独享 session_id，但底层 store 通常
+            # 仍是主 Agent 的，除非 factory 后续 apply 了 memory_isolation）。
+            session_id = (
+                datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
+            )
+            self.memory_manager.start_session(session_id)
+            self._current_session_id = session_id
+            if hasattr(self, "_memory_handler"):
+                self._memory_handler.reset_guide()
+            # 重建 system prompt（用共享的 catalog 引用）
+            self._context.system = self._build_system_prompt()
+            self._initialized = True
+            logger.info(
+                "Agent '%s' initialized via share_from='%s' "
+                "(skills/MCP/plugins reused from parent, no reload)",
+                self.name,
+                share_from.name,
+            )
+            return
 
         # 加载已安装的技能
         await self._load_installed_skills()
@@ -2192,6 +2256,140 @@ class Agent:
             f"{total_mcp} MCP servers"
             f"{f' (builtin: {self._builtin_mcp_count})' if self._builtin_mcp_count else ''}"
         )
+        # 第一个完成 full init 的 Agent 注册为进程"主"。AgentFactory 创建
+        # sub-agent 时会用它做 share_from，省去重复加载技能 / 插件。
+        if get_primary_agent() is None:
+            set_primary_agent(self)
+            logger.debug(
+                "[share_from] registered '%s' as the process primary agent.",
+                self.name,
+            )
+
+    def _attach_shared_runtime(self, parent: "Agent") -> None:
+        """让 sub-agent 直接复用主 Agent 已经初始化好的注册表/客户端/目录。
+
+        被 ``initialize(share_from=parent)`` 调用。原本每个 sub-agent 都要重新
+        ``_load_installed_skills`` → ``_load_plugins`` → ``rebuild_engine_v2``，
+        意味着 happyhorse-video 这种"启动会建 SQLite + DashScope client + 后台
+        轮询协程"的插件被反复 boot/cancel —— 直接体现为日志里每跳一个 sub-agent
+        就出现一次 ``Initialized 30 handlers with 124 tools`` 和 7~8 次
+        ``Registered 22 tools``，整段编排被白白拖慢 5~10 倍，并且 DashScope
+        轮询任务被反复 cancel 导致照片说话永远卡在 pending。
+
+        共享策略：
+        - 技能 / MCP / 插件目录：直接复用引用（同一份内存对象）。
+        - 工具定义列表 ``_tools``：把 parent 多出的工具（一般是插件/技能
+          动态注册的）补进来，复用 parent 的描述。
+        - 插件 handler：在 self.handler_registry 里 mirror 一份引用，
+          让 ``self.tool_executor`` 走自身 registry 也能命中插件工具。
+        - 系统 handler（filesystem/memory/...）：**不复用** —— 仍绑定到
+          sub-agent 自身的 file_tool/memory_manager，保证 org workspace 隔离。
+        """
+        # 标记：shutdown 时不要 unload 共享的 PluginManager
+        self._owns_plugin_manager = False
+        self._shared_runtime_from = parent
+
+        # 技能系统
+        self.skill_registry = parent.skill_registry
+        self.skill_loader = parent.skill_loader
+        self.skill_category_registry = parent.skill_category_registry
+        self._category_store = parent._category_store
+        self._skill_usage_tracker = parent._skill_usage_tracker
+        self.skill_catalog = parent.skill_catalog
+        self._skill_activation = parent._skill_activation
+        # SkillManager 中的 registry/catalog 引用同步到共享对象，这样
+        # sub-agent 自己调 skill_manager.install_skill 也是写在共享 registry。
+        if hasattr(self, "skill_manager"):
+            self.skill_manager.skill_registry = parent.skill_registry
+            self.skill_manager.skill_catalog = parent.skill_catalog
+            self.skill_manager.skill_loader = parent.skill_loader
+        # SkillGenerator 同步
+        if hasattr(self, "skill_generator"):
+            self.skill_generator.skill_registry = parent.skill_registry
+
+        # MCP
+        self.mcp_client = parent.mcp_client
+        self.mcp_catalog = parent.mcp_catalog
+        self.browser_manager = parent.browser_manager
+        self.pw_tools = parent.pw_tools
+        self._builtin_mcp_count = parent._builtin_mcp_count
+
+        # 插件
+        self._plugin_manager = parent._plugin_manager
+        self.plugin_catalog = parent.plugin_catalog
+
+        # 把 parent 多出来的工具定义补进 self._tools（差集 by name）
+        own_names = {t.get("name") for t in self._tools if isinstance(t, dict)}
+        added = 0
+        for tool_def in parent._tools:
+            if not isinstance(tool_def, dict):
+                continue
+            name = tool_def.get("name")
+            if not name or name in own_names:
+                continue
+            self._tools.append(tool_def)
+            own_names.add(name)
+            added += 1
+
+        # 镜像 plugin handler 到 self.handler_registry，让 sub-agent
+        # 自己的 tool_executor 路由能命中插件工具。
+        # PluginAPI.register_tools 使用 ``plugin_{plugin_id}`` 命名格式，
+        # 这里按前缀识别。
+        try:
+            parent_reg = parent.handler_registry
+            own_reg = self.handler_registry
+            for handler_name, handler in list(parent_reg._handlers.items()):
+                if not handler_name.startswith("plugin_"):
+                    continue
+                if handler_name in own_reg._handlers:
+                    continue
+                tool_names = parent_reg.get_handler_tools(handler_name)
+                if not tool_names:
+                    continue
+                own_reg.register(handler_name, handler, tool_names=tool_names)
+            # 同步技能 → 系统 handler 的映射（_update_skill_tools 已经在
+            # parent 里跑过；这里把 _tool_to_handler 里所有 sub-agent 自己
+            # registry 没覆盖的映射补齐，主要是 system skill）。
+            for tool_name, hname in parent_reg._tool_to_handler.items():
+                if tool_name in own_reg._tool_to_handler:
+                    continue
+                if hname in own_reg._handlers:
+                    own_reg.map_tool_to_handler(tool_name, hname)
+        except Exception as exc:
+            logger.warning("Failed to mirror plugin handlers from parent: %s", exc)
+
+        # 重建 ToolCatalog 以反映合并后的工具列表
+        try:
+            self.tool_catalog = ToolCatalog(self._tools)
+        except Exception:
+            logger.exception("Failed to rebuild tool_catalog after sharing")
+
+        # 同步 prompt_assembler / tool_executor / reasoning_engine 中的引用
+        pa = getattr(self, "prompt_assembler", None)
+        if pa is not None:
+            pa._tool_catalog = self.tool_catalog
+            pa._skill_catalog = self.skill_catalog
+            pa._mcp_catalog = self.mcp_catalog
+            pa._plugin_catalog = self.plugin_catalog
+
+        if hasattr(self, "tool_executor") and self.tool_executor is not None:
+            self.tool_executor._plugin_hooks = self._plugin_manager.hook_registry if self._plugin_manager else None
+            self.tool_executor._plugin_manager = self._plugin_manager
+
+        if hasattr(self, "reasoning_engine") and self.reasoning_engine is not None:
+            self.reasoning_engine._plugin_hooks = (
+                self._plugin_manager.hook_registry if self._plugin_manager else None
+            )
+
+        # 让 memory_manager.retrieval_engine 也能走 plugin hook
+        if self.memory_manager and hasattr(self.memory_manager, "retrieval_engine") and self._plugin_manager:
+            self.memory_manager.retrieval_engine._plugin_hooks = self._plugin_manager.hook_registry
+
+        logger.info(
+            "[share_from] sub-agent '%s' attached to parent '%s': "
+            "+%d tool defs, plugins/skills/mcp shared by reference",
+            self.name, parent.name, added,
+        )
 
     async def _load_plugins(self) -> None:
         """Load plugins from data/plugins/ directory."""
@@ -2237,6 +2435,11 @@ class Agent:
             state_path=state_path,
             host_refs=host_refs,
         )
+        # 标记：本 Agent 是 PluginManager 的"主"——shutdown 时负责
+        # dispatch on_shutdown / unload。share_from 路径的 sub-agent 不会
+        # 走到这里，其 _owns_plugin_manager 在 _attach_shared_runtime 里
+        # 被显式设为 False。
+        self._owns_plugin_manager = True
 
         await self._plugin_manager.load_all()
 
@@ -9298,8 +9501,12 @@ class Agent:
         logger.info("Shutting down agent...")
 
         # 插件系统清理：dispatch on_shutdown → unload → 清全局 map
+        # 只有"主" Agent（_owns_plugin_manager=True）才负责真正的 unload；
+        # share_from 路径下 sub-agent 共用主 Agent 的 PluginManager，
+        # 在 sub-agent shutdown 里执行 unload 会卸掉主 Agent 还在用的插件。
         pm = getattr(self, "_plugin_manager", None)
-        if pm is not None:
+        owns_pm = getattr(self, "_owns_plugin_manager", True)
+        if pm is not None and owns_pm:
             try:
                 await pm.hook_registry.dispatch("on_shutdown", agent=self)
             except Exception as e:
@@ -9322,6 +9529,12 @@ class Agent:
                 set_prompt_hook_registry(None)
             except Exception:
                 pass
+        elif pm is not None and not owns_pm:
+            logger.debug(
+                "[share_from] sub-agent '%s' shutdown: skipping plugin unload "
+                "(plugins owned by parent agent).",
+                self.name,
+            )
 
         # F9: 清理技能相关资源
         self._cleanup_skill_resources()
@@ -9362,6 +9575,11 @@ class Agent:
                 await plan_handler._store.flush()
         except Exception as e:
             logger.debug(f"[TodoStore] Shutdown flush failed: {e}")
+
+        # 如果当前 Agent 是进程主 Agent，则清理引用，防止后续 sub-agent
+        # 拿到已经 shutdown 的 parent。
+        if get_primary_agent() is self:
+            set_primary_agent(None)
 
         self._running = False
         logger.info("Agent shutdown complete")

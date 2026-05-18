@@ -157,7 +157,7 @@ category: Web Search
 | 用户档案 | update-user-profile, get-user-profile | 用户偏好管理 |
 | 技能管理 | list-skills, install-skill, load-skill, reload-skill | 技能自身管理 |
 | 网络搜索 | web-search, news-search | 网页和新闻搜索 |
-| 多媒体 | generate-image, get-image-file, get-voice-file | 图片生成和媒体处理 |
+| 多媒体 | get-image-file, get-voice-file | 媒体文件读取 |
 | 文档处理 | docx, pptx, xlsx, pdf | 办公文档处理 |
 
 ---
@@ -350,11 +350,10 @@ Agent> [自动生成 SKILL.md + scripts → 加载 → 可用]
 | web-search | web_search | 网页搜索（DuckDuckGo） |
 | news-search | news_search | 新闻搜索 |
 
-### 其他工具（6 个）
+### 其他工具（5 个）
 
 | 技能名 | 工具名 | 说明 |
 |--------|--------|------|
-| generate-image | generate_image | AI 生成图片 |
 | get-image-file | get_image_file | 获取图片文件 |
 | get-voice-file | get_voice_file | 获取语音文件 |
 | get-chat-history | get_chat_history | 获取聊天记录 |

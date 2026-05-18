@@ -244,10 +244,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "name": "发现技能",
         "description": "帮助用户发现和安装适合的技能，当用户问「怎么做某事」或「有没有某个功能」时使用。",
     },
-    "generate-image": {
-        "name": "文生图",
-        "description": "根据提示词生成图片并保存为本地 PNG 文件，需要配置 DASHSCOPE_API_KEY。",
-    },
     "get-chat-history": {
         "name": "获取聊天记录",
         "description": "获取当前聊天历史，包括用户消息、回复和系统通知。",

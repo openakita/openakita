@@ -109,6 +109,113 @@ _TTS_CAPABLE_MODES: frozenset[str] = frozenset(
     {"photo_speak", "video_relip", "video_reface", "avatar_compose", "long_video"}
 )
 
+# ── AIGC 编排优化 P2-B：wan2.2-s2v 串行队列 ──
+# DashScope wan2.2-s2v 在同一 key 上的异步并发上限非常低（实测≈1），并行
+# 提交往往是「第二个直接 throttled / 排队几分钟才回结果」。原来的实现里
+# pipeline 直接并发 submit + poll，结果就是大家都在 30s+ 的 polling loop
+# 里傻等，体验是"两段视频都卡很久"。改用进程内 Semaphore(1) 强制串行后：
+#   - 第二个任务在 acquire 处阻塞，DB 把 status 改成 'queued'，UI/前端可
+#     看到「队列位次 #N」而不是干瘪的 "排队中…"。
+#   - 第一个任务结束（提交完 + 拿到 dashscope_id 进入正常 poll 阶段）后
+#     立刻释放给下一个，把 DashScope 的额度集中花在「真的能跑」的请求上。
+# 故意只 gate 真正吃 s2v 端点的 photo_speak / avatar_compose；i2v / t2v
+# 等走 wan-image2video 是另外的额度池，不能被 s2v 阻塞。
+_S2V_GATED_MODES: frozenset[str] = frozenset({"photo_speak", "avatar_compose"})
+_S2V_SEMAPHORE = asyncio.Semaphore(1)
+_S2V_QUEUE_DEPTH = 0  # 仅用于"位次估算"展示，靠 _S2V_QUEUE_LOCK 互斥
+_S2V_QUEUE_LOCK = asyncio.Lock()
+
+
+class _S2VQueueSlot:
+    """Async context manager 形态的串行槽。
+
+    进入 ``__aenter__``：
+      - 在全局计数器上 +1 拿到自己的"队列位次"（即 1 表示"轮到我直接做"）
+      - 写一条 status='queued', meta.queue_position=N 的 update 到 DB
+      - 通过 ``emit('task_update', ...)`` 让前端/SSE 立刻看到排队位次
+      - ``acquire`` semaphore（位次 1 的会立即过、>=2 的会真正 await）
+      - 解除"queued"状态，写回 status='running'，再 emit 一次
+    退出 ``__aexit__``：
+      - release semaphore + 全局 depth -1（其他人位次依次往前移动）
+
+    异常路径下也要保证两个不变式：semaphore 一定 release，全局 depth
+    一定 -1。失败时 emit 一次 error，让前端知道这一个槽位已经空出来。
+    """
+
+    __slots__ = ("_ctx", "_tm", "_emit", "_position", "_acquired")
+
+    def __init__(self, ctx: HappyhorsePipelineContext, tm: HappyhorseTaskManager, emit: EmitFn) -> None:
+        self._ctx = ctx
+        self._tm = tm
+        self._emit = emit
+        self._position = 0
+        self._acquired = False
+
+    async def __aenter__(self) -> _S2VQueueSlot:
+        global _S2V_QUEUE_DEPTH
+        async with _S2V_QUEUE_LOCK:
+            _S2V_QUEUE_DEPTH += 1
+            self._position = _S2V_QUEUE_DEPTH
+        if self._position > 1:
+            # 排在后面的：通过 emit 把队列位次推给前端 SSE。注意**不**改
+            # DB status —— 现有 schema 只允许 pending/running/.../cancelled
+            # 等枚举，多加一个 "queued" 会破坏其它消费方（task_manager
+            # 校验 + drain 逻辑都按这个集合写死）。位次信息走 SSE 即可，
+            # 前端拿到 queue_position > 0 时显示"队列位次 #N"。
+            try:
+                await _emit(
+                    self._emit, "task_update",
+                    _ctx_payload(
+                        self._ctx,
+                        progress=55,
+                        queue_position=self._position,
+                        queue_label=(
+                            f"DashScope wan2.2-s2v 串行排队 #{self._position}"
+                        ),
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "happyhorse-video[s2v-queue]: queued emit failed: %s", exc,
+                )
+        await _S2V_SEMAPHORE.acquire()
+        self._acquired = True
+        # 已经轮到自己：发一条 queue_position=0 让前端解除排队 UI。
+        if self._position > 1:
+            try:
+                await _emit(
+                    self._emit, "task_update",
+                    _ctx_payload(
+                        self._ctx, progress=58,
+                        queue_position=0,
+                        queue_label="DashScope wan2.2-s2v 已开始执行",
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "happyhorse-video[s2v-queue]: dequeued emit failed: %s", exc,
+                )
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        global _S2V_QUEUE_DEPTH
+        if self._acquired:
+            try:
+                _S2V_SEMAPHORE.release()
+            except Exception:
+                pass
+            self._acquired = False
+        async with _S2V_QUEUE_LOCK:
+            _S2V_QUEUE_DEPTH = max(0, _S2V_QUEUE_DEPTH - 1)
+
+
+def _s2v_queue_slot(
+    ctx: HappyhorsePipelineContext,
+    tm: HappyhorseTaskManager,
+    emit: EmitFn,
+) -> _S2VQueueSlot:
+    return _S2VQueueSlot(ctx, tm, emit)
+
 
 class ApprovalRequired(Exception):
     """Cost exceeds threshold and the caller did not pre-approve it."""
@@ -707,12 +814,13 @@ async def _step_video_synth(
 
     elif ctx.mode == "photo_speak":
         ctx.dashscope_endpoint = "wan2.2-s2v"
-        ctx.dashscope_id = await client.submit_s2v(
-            image_url=image_url,
-            audio_url=audio_url,
-            resolution=resolution or "480P",
-            duration=ctx.tts_audio_duration_sec,
-        )
+        async with _s2v_queue_slot(ctx, tm, emit):
+            ctx.dashscope_id = await client.submit_s2v(
+                image_url=image_url,
+                audio_url=audio_url,
+                resolution=resolution or "480P",
+                duration=ctx.tts_audio_duration_sec,
+            )
     elif ctx.mode == "video_relip":
         ctx.dashscope_endpoint = "videoretalk"
         ctx.dashscope_id = await client.submit_videoretalk(
@@ -746,12 +854,13 @@ async def _step_video_synth(
                 retryable=False,
                 kind="server",
             )
-        ctx.dashscope_id = await client.submit_s2v(
-            image_url=composed,
-            audio_url=audio_url,
-            resolution=resolution or "480P",
-            duration=ctx.tts_audio_duration_sec,
-        )
+        async with _s2v_queue_slot(ctx, tm, emit):
+            ctx.dashscope_id = await client.submit_s2v(
+                image_url=composed,
+                audio_url=audio_url,
+                resolution=resolution or "480P",
+                duration=ctx.tts_audio_duration_sec,
+            )
     else:
         raise ValueError(f"unknown mode {ctx.mode!r}")
 
@@ -1157,6 +1266,7 @@ def _ctx_payload(
     *,
     progress: int | None = None,
     dashscope_status: str | None = None,
+    **extras: Any,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "task_id": ctx.task_id,
@@ -1182,6 +1292,12 @@ def _ctx_payload(
         out["progress"] = max(0, min(100, int(progress)))
     if dashscope_status is not None:
         out["dashscope_status"] = dashscope_status
+    # P2-B：s2v 串行队列等"运行时副带信息"通过 extras 注入，前端按需读。
+    # 严格 not-None 过滤，避免 None 覆盖已有字段。
+    for k, v in extras.items():
+        if v is None:
+            continue
+        out[k] = v
     return out
 
 

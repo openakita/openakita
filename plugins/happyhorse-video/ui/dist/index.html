@@ -71,6 +71,18 @@ function apiBase() {
   return `${injected}/api/plugins/${PLUGIN_ID}`;
 }
 
+// P11: 自定义异常类型，把 status code 和后端 detail 原样带出去，让调用方
+// 能针对 409（cost_exceeds_threshold）做二次确认，而不是一概当作致命错误
+// alert("409 some text") 出来。
+class ApiError extends Error {
+  constructor(status, message, detail) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 async function api(method, path, body) {
   const opts = { method, headers: {} };
   if (body !== undefined) {
@@ -81,9 +93,57 @@ async function api(method, path, body) {
   const res = await fetch(url, opts);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${text || res.statusText}`);
+    // FastAPI HTTPException 的响应总是 {detail: <obj|str>}。把它解析出来
+    // 让上层能拿到结构化的 cost_breakdown。
+    let detail = null;
+    try { detail = JSON.parse(text)?.detail ?? null; } catch (_) {}
+    const message =
+      (detail && typeof detail === "object" && detail.message)
+      || (typeof detail === "string" && detail)
+      || `${res.status} ${res.statusText}`;
+    throw new ApiError(res.status, message, detail);
   }
   return res.json();
+}
+
+// P11: 通用提交助手。后端 POST /tasks 现在会同步估算成本，超阈值且未批准
+// 时返回 409 + cost_breakdown，旧的"创建后任务卡在 pending"路径不再发生。
+// 这个 helper 把"接收 409 → 弹窗显示明细 → 带 cost_approved=true 重提"
+// 的逻辑抽出来，所有提交点（视频 / 图片 / 长视频）都能复用。
+function formatCostBreakdownLines(breakdown) {
+  if (!breakdown) return "";
+  const items = Array.isArray(breakdown.items) ? breakdown.items : [];
+  return items
+    .map((it) => {
+      const sub = typeof it.subtotal === "number" ? it.subtotal.toFixed(2) : it.subtotal;
+      const u = typeof it.units === "number" && it.unit_label
+        ? ` (${it.units}${it.unit_label})` : "";
+      return `· ${it.name}${u}: ¥${sub}${it.note ? `  — ${it.note}` : ""}`;
+    })
+    .join("\n");
+}
+
+async function submitTaskWithApprovalDialog(path, body) {
+  try {
+    return await api("POST", path, body);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409 && e.detail?.cost_breakdown) {
+      const bd = e.detail.cost_breakdown;
+      const total = bd.formatted_total || `¥${(Number(bd.total) || 0).toFixed(2)}`;
+      const threshold = `¥${(Number(bd.threshold) || 0).toFixed(2)}`;
+      const lines = formatCostBreakdownLines(bd);
+      const ok = window.confirm(
+        `本次预估成本 ${total}，已超过阈值（${threshold}）。\n\n${lines}\n\n确认继续提交吗？`
+      );
+      if (!ok) {
+        const cancelled = new Error("已取消提交");
+        cancelled.cancelled = true;
+        throw cancelled;
+      }
+      return await api("POST", path, { ...body, cost_approved: true });
+    }
+    throw e;
+  }
 }
 
 function stableTaskStringify(value) {
@@ -1805,6 +1865,45 @@ function TaskPreviewPane({ taskId, task, costPreview, onGoTasks, onOpenStoryboar
         </div>
       </div>
 
+      {status === "awaiting_approval" && (
+        <div className="card cost-card">
+          <div className="card-header">
+            <h3 className="card-title">
+              <Icon name="coin" size={14} /> 等待批准成本
+            </h3>
+          </div>
+          <p style={{ marginTop: 0, color: "var(--text-muted)", fontSize: 13 }}>
+            {liveTask?.error_message || "本次预估成本超过阈值，需要您确认后才会继续生成。"}
+          </p>
+          {liveTask?.cost_breakdown && (
+            <>
+              <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", fontSize: 12 }}>
+                {(liveTask.cost_breakdown.items || []).map((it, idx) => (
+                  <li key={idx} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+                    <span>
+                      {it.name}
+                      {it.units && it.unit_label
+                        ? <span style={{ color: "var(--text-muted)" }}> · {it.units}{it.unit_label}</span>
+                        : null}
+                    </span>
+                    <strong>¥{Number(it.subtotal || 0).toFixed(2)}</strong>
+                  </li>
+                ))}
+              </ul>
+              <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                <span>合计</span>
+                <strong style={{ color: "var(--accent)" }}>
+                  {liveTask.cost_breakdown.formatted_total || `¥${Number(liveTask.cost_breakdown.total || 0).toFixed(2)}`}
+                </strong>
+              </div>
+            </>
+          )}
+          <p style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 12 }}>
+            在左侧任务卡片上点「批准并继续」即可恢复生成；不想继续则点「取消」。
+          </p>
+        </div>
+      )}
+
       {(!liveTask || status === "pending" || status === "running") && (
         <ProgressLoader task={liveTask} />
       )}
@@ -1985,6 +2084,12 @@ function CreateTab({
   const [submitting, setSubmitting] = useState(false);
   const [previewTaskId, setPreviewTaskId] = useState("");
   const [figures, setFigures] = useState([]);
+  // P11: 上传/粘贴的音频时长。photo_speak / video_relip / avatar_compose 这类
+  // 按音频时长计费的模式，必须有精确时长才能让前端 cost preview 和后端
+  // 提交时的同步估算口径一致；否则前端按兜底 5s 估算 ¥2.5 不弹窗，后端按
+  // 实际 18s 估算 ¥9 走 409，体验割裂。改用 HTMLAudioElement 拉一次
+  // metadata，CORS 不通时退化为 null（后端 409 兜底会接住）。
+  const [audioDurationSec, setAudioDurationSec] = useState(null);
   const modeIdSet = useMemo(() => (modeIds ? new Set(modeIds) : null), [modeIds]);
   const visibleModeGroups = useMemo(
     () => MODE_GROUPS
@@ -1997,6 +2102,32 @@ function CreateTab({
     setMode(initialMode);
     setPreviewTaskId("");
   }, [initialMode]);
+
+  // P11: 探测音频时长。仅在 audioUrl 是 http(s) 公网链接时才尝试，本地预览
+  // URL（blob: / data:）由浏览器自己加载，OSS 公网链接受 CORS 限制有可能
+  // 拿不到 metadata —— 拿不到就算了，后端 409 兜底逻辑会接住。
+  useEffect(() => {
+    if (!audioUrl) { setAudioDurationSec(null); return; }
+    let cancelled = false;
+    const probeAudio = new Audio();
+    probeAudio.preload = "metadata";
+    const onMeta = () => {
+      if (!cancelled) {
+        const d = Number(probeAudio.duration);
+        setAudioDurationSec(Number.isFinite(d) && d > 0 ? d : null);
+      }
+    };
+    const onErr = () => { if (!cancelled) setAudioDurationSec(null); };
+    probeAudio.addEventListener("loadedmetadata", onMeta);
+    probeAudio.addEventListener("error", onErr);
+    probeAudio.src = audioUrl;
+    return () => {
+      cancelled = true;
+      probeAudio.removeEventListener("loadedmetadata", onMeta);
+      probeAudio.removeEventListener("error", onErr);
+      probeAudio.src = "";
+    };
+  }, [audioUrl]);
 
   const loadFigures = useCallback(() => {
     api("GET", "/figures").then((r) => setFigures(r.figures || [])).catch(() => setFigures([]));
@@ -2192,6 +2323,9 @@ function CreateTab({
           aspect_ratio: aspect,
           text: needsAudioOrText ? text : "",
           tts_engine: needsAudioOrText ? ttsEngine : "",
+          // P11: 把音频真实时长传给后端，photo_speak / video_relip /
+          // avatar_compose 这类按音频时长计费的模式预估才会准确。
+          ...(audioDurationSec ? { audio_duration_sec: audioDurationSec } : {}),
           // ``audio`` / ``driving_audio_url`` shift the price tier for
           // Wan 2.6 -flash variants; include them so the preview tracks
           // the real cost as the user toggles "background audio".
@@ -2202,7 +2336,7 @@ function CreateTab({
       } catch (_) {}
     }, 300);
     return () => clearTimeout(t);
-  }, [mode, modelId, duration, resolution, aspect, text, ttsEngine, audioEnabled, drivingAudioUrl, needsAudioOrText, modelEntry]);
+  }, [mode, modelId, duration, resolution, aspect, text, ttsEngine, audioEnabled, audioDurationSec, drivingAudioUrl, needsAudioOrText, modelEntry]);
 
   const submit = async () => {
     const required = requiredAssets;
@@ -2237,10 +2371,18 @@ function CreateTab({
     if (needsAudioOrText && audioUrl.trim() && !requireDashScopeUrl("音频素材", audioUrl)) return;
     if (modelEntry?.supports_audio_url && drivingAudioUrl.trim() && !requireDashScopeUrl("背景 / 驱动音频", drivingAudioUrl)) return;
 
-    const approved = !costPreview?.exceeds_threshold || window.confirm(
-      `本次预估成本为 ${costPreview.formatted_total || "较高"}，已超过阈值。确认继续提交吗？`
-    );
-    if (!approved) return;
+    // P11: 旧代码用前端 cost preview 的结果决定是否弹 confirm，但前端 preview
+    // 经常因为缺音频时长而估算偏低。改成"前端尝试性提示 + 后端 409 兜底"：
+    // 前端能预测出超阈值就先弹一次 confirm（用户取消则直接返回），同时
+    // 在 submit 时通过 submitTaskWithApprovalDialog 接住后端 409 二次确认。
+    // 这样两条路径都能保证「成本超阈值时用户必然看到明细弹窗才会提交」，
+    // 也彻底消除"任务创建后被偷偷搁置在 awaiting_approval"的体验割裂。
+    if (costPreview?.exceeds_threshold) {
+      const ok = window.confirm(
+        `本次预估成本为 ${costPreview.formatted_total || "较高"}，已超过阈值。确认继续提交吗？`
+      );
+      if (!ok) return;
+    }
     if (duplicateSubmit) {
       alert("任务内容没有变化，不能重复提交。请修改提示词、素材或参数后再提交。");
       return;
@@ -2251,13 +2393,15 @@ function CreateTab({
         ...videoSubmitBody,
         cost_approved: !!costPreview?.exceeds_threshold,
         client_request_id: currentSubmitSignature,
+        ...(audioDurationSec ? { audio_duration_sec: audioDurationSec } : {}),
       };
-      const r = await api("POST", "/tasks", body);
+      const r = await submitTaskWithApprovalDialog("/tasks", body);
       const tid = r.task?.task_id || r.task?.id || "";
       if (tid) setPreviewTaskId(tid);
       setLastSubmittedSignature(currentSubmitSignature);
       if (tid) onSubmit?.({ taskId: tid, label: "视频任务" });
     } catch (e) {
+      if (e?.cancelled) return; // 用户在 409 弹窗里点了取消，不要再 alert
       alert(`提交失败: ${e.message}`);
     } finally {
       setSubmitting(false);
@@ -3127,19 +3271,35 @@ function ImageTab({ catalog, settings, onSubmit, onSettings }) {
 
 function TasksTab({ onOpenStoryboard }) {
   const [tasks, setTasks] = useState([]);
+  // `loading` 只在「首次进入页面」和「用户主动点刷新」时为 true，会让整个列表
+  // 被替换成 spinner —— 这是预期内的强反馈。
+  // `refreshing` 用于 SSE 推送 / HTTP 兜底轮询触发的静默后台刷新，只在「刷新任务」
+  // 按钮上转一下小圈，不卸载列表，避免每隔几秒整张列表闪一下（P8.2 修复）。
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [modeFilter, setModeFilter] = useState("all");
   const [actionBusy, setActionBusy] = useState({});
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(async (opts) => {
+    // 注意：button 的 onClick 会把 SyntheticEvent 当成第一个参数传进来，
+    // 因此只接受「显式对象 + 非事件」时才识别 opts。
+    const silent = !!(opts && typeof opts === "object" && !opts.nativeEvent && opts.silent);
+    if (silent) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const r = await api("GET", "/tasks?limit=100");
       setTasks(r.tasks || []);
     } finally {
-      setLoading(false);
+      if (silent) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -3154,6 +3314,11 @@ function TasksTab({ onOpenStoryboard }) {
         await api("POST", `/tasks/${taskId}/cancel`);
       } else if (action === "retry") {
         await api("POST", `/tasks/${taskId}/retry`);
+      } else if (action === "approve") {
+        // P11: awaiting_approval 状态的任务点「批准」直接调专用端点，
+        // 后端会保留同一个 task_id、把 cost_approved 标 true 后重启 pipeline。
+        // 不需要再弹 confirm —— 用户主动点这个按钮就已经是确认动作了。
+        await api("POST", `/tasks/${taskId}/approve`);
       }
       await refresh();
     } catch (e) {
@@ -3173,7 +3338,7 @@ function TasksTab({ onOpenStoryboard }) {
     let reconnectTimer = null;
     let stopped = false;
 
-    const onTaskEvt = () => refresh();
+    const onTaskEvt = () => refresh({ silent: true });
 
     const connect = () => {
       if (stopped) return;
@@ -3216,7 +3381,7 @@ function TasksTab({ onOpenStoryboard }) {
       return s === "pending" || s === "running" || s === "processing" || s === "submitted";
     });
     if (!hasActive) return;
-    const id = setInterval(() => { refresh(); }, 4000);
+    const id = setInterval(() => { refresh({ silent: true }); }, 4000);
     return () => clearInterval(id);
   }, [tasks, refresh]);
 
@@ -3341,8 +3506,12 @@ function TasksTab({ onOpenStoryboard }) {
             </div>
           </div>
           <div className="task-filter-actions">
-            <button className="btn btn-ghost btn-sm" onClick={refresh} disabled={loading}>
-              {loading ? <Spinner /> : <Icon name="refresh" size={12} />} 刷新任务
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => refresh()}
+              disabled={loading || refreshing}
+            >
+              {loading || refreshing ? <Spinner /> : <Icon name="refresh" size={12} />} 刷新任务
             </button>
             <span>共 {tasks.length} 个任务，当前显示 {visibleTasks.length} 个</span>
           </div>
@@ -3361,8 +3530,15 @@ function TasksTab({ onOpenStoryboard }) {
               const video = taskVideoUrl(t);
               const images = taskImageUrls(t);
               const status = t.status || "";
-              const canCancel = ["pending", "queued", "running", "processing"].includes(status);
+              const canCancel = ["pending", "queued", "awaiting_approval", "running", "processing"].includes(status);
               const canRetry = ["failed", "timeout", "cancelled"].includes(status);
+              // P11: 等待批准的任务给一个明确的「批准并继续」按钮，避免和
+              // pending 视觉混在一起。这种任务的 cost_breakdown 已经写进
+              // cost_breakdown_json，但鼠标 hover 时通过 title 提示摘要够用了。
+              const canApprove = status === "awaiting_approval";
+              const approvalSummary = canApprove && t.cost_breakdown
+                ? `预估成本 ${t.cost_breakdown.formatted_total || ""}，已超过阈值 ¥${Number(t.cost_breakdown.threshold || 0).toFixed(2)}`
+                : "";
               const busyAction = actionBusy[tid];
               const title = taskDisplayTitle(t, modeLabelMap);
               const summary = taskPromptSummary(t, t.model_id || tid);
@@ -3394,6 +3570,17 @@ function TasksTab({ onOpenStoryboard }) {
                   <div className="task-card__side" onClick={(e) => e.stopPropagation()}>
                     <TaskStatusBadge status={status} />
                     <div className="task-card__actions">
+                      {canApprove && (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={!!busyAction}
+                          onClick={() => runAction(tid, "approve")}
+                          title={approvalSummary || "批准成本并继续生成"}
+                        >
+                          {busyAction === "approve" ? <Spinner /> : <Icon name="check" size={12} />} 批准并继续
+                        </button>
+                      )}
                       {canCancel && (
                         <button
                           type="button"
@@ -5102,17 +5289,21 @@ function SettingField({ label, hint, children }) {
 function SystemComponentsPanel() {
   const [items, setItems] = useState([]);
   const [status, setStatus] = useState({});
+  // 同样拆分：`loading` 仅用于「首次进入」的占位 spinner；后台 3 秒轮询走
+  // `silent` 路径，不动 `loading`，否则每次轮询都会把每张卡片上的"重新检测"
+  // 按钮短暂变灰，看起来像在抖（P8.2 修复）。
   const [loading, setLoading] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(async (opts) => {
+    const silent = !!(opts && typeof opts === "object" && !opts.nativeEvent && opts.silent);
+    if (!silent) setLoading(true);
     try {
       const r = await api("GET", "/system/components");
       setItems(r.items || []);
     } catch (_) {
       setItems([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -5129,7 +5320,7 @@ function SystemComponentsPanel() {
           setStatus((prev) => ({ ...prev, [it.id]: r }));
         } catch (_) {}
       }
-      refresh();
+      refresh({ silent: true });
     }, 3000);
     return () => clearInterval(timer);
   }, [items, status, refresh]);
@@ -5182,7 +5373,7 @@ function SystemComponentsPanel() {
                 {busy ? <Spinner /> : <Icon name="download" size={12} />}
                 {found ? "重新安装" : "一键安装"}
               </button>
-              <button className="btn btn-sm btn-ghost" onClick={refresh} disabled={loading}>
+              <button className="btn btn-sm btn-ghost" onClick={() => refresh()} disabled={loading}>
                 <Icon name="refresh" size={12} /> 重新检测
               </button>
               {it.homepage && (

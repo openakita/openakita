@@ -3135,6 +3135,8 @@
       "incomplete": "⚠ {{name}} incomplete: {{reason}}",
       "fileOutput": "📎 {{name}} produced file: {{file}}",
       "blackboardUpdate": "~ {{name}} updated blackboard",
+      "waitingUserSummary": "⏸ {{name}} · waiting for your reply",
+      "waitingUserNotice": "📣 **{{name}}** has handed the decision back to you. Reply in the input box below (e.g. `agree to continue`, `fall back to t2v`, `drop this shot`), or click `Resume` in the command center.",
       "idleMinSec": "{{m}}m {{s}}s",
       "idleSec": "{{s}}s",
       "orgIdle": "⏳ Org has been idle for {{duration}}. Tasks are still running...",

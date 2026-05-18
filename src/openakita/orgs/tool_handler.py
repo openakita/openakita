@@ -366,6 +366,125 @@ class OrgToolHandler:
                 result.append(att)
         return result
 
+    # AIGC 编排优化 P2-A：派单文本前缀里要展示的可复用资产上限。设置上
+    # 限避免长链路场景下 prefix 把派单文本撑爆 LLM 上下文。
+    _ASSET_REUSE_PREFIX_MAX_ITEMS = 12
+
+    def _build_asset_reuse_prefix(
+        self,
+        *,
+        org_id: str,
+        caller_node_id: str,
+        to_node: str,
+        current_chain_id: str,
+    ) -> str:
+        """汇总已交付给 caller 的下游资产，形成"复用提示"前缀。
+
+        现实问题：art-director 已经在 BLACKBOARD 里看见 wb-hh-image 交付
+        的 2 张图，下一次再让 wb-hh-image 出"同 segment"的图时往往**不**写
+        asset_id，结果工作台 LLM 直接 hh_image_create 重新生成。模板 prompt
+        虽然反复要求"必须复用"，但 LLM 在长上下文里很容易漏。框架层在派
+        单文本前缀里显式列「以下 asset_id 已经交付过，相同 segment 必须
+        复用」可以兜底掉这种"重新生成"的浪费。
+
+        数据来源：``ProjectStore`` 里所有由 ``caller_node_id`` 派出去的、
+        status ∈ {DELIVERED, ACCEPTED} 的 task。它们的 ``file_attachments``
+        和 ``deliverable_content`` 包含交付物文件名与说明；插件产出的文件
+        名是 ``{asset_id}.{ext}``（见 happyhorse-video 的 _safe_asset_filename
+        + plugin task_id 命名），所以从 stem 就能反推出可复用的 asset_id。
+        """
+        try:
+            from openakita.orgs.models import TaskStatus
+            from openakita.orgs.project_store import ProjectStore
+
+            store = ProjectStore(self._runtime._manager._org_dir(org_id))
+        except Exception:
+            return ""
+
+        items: list[tuple[str, str, list[str]]] = []
+        seen_task_ids: set[str] = set()
+
+        try:
+            # 现有 ProjectStore 暴露的列表方法不一定都有，这里走最稳的
+            # "拉全部 task 再过滤"路径，避免不同 build 上 API 差异导致
+            # AttributeError。AIGC 一条编排里的 task 数量通常 <= 30，
+            # O(N) 扫描成本可以忽略。
+            all_tasks: list = []
+            for getter in ("list_tasks", "list_all_tasks", "iter_tasks"):
+                fn = getattr(store, getter, None)
+                if callable(fn):
+                    try:
+                        out = fn()
+                        all_tasks = list(out) if out else []
+                        if all_tasks:
+                            break
+                    except Exception:
+                        continue
+            if not all_tasks:
+                # fallback：基于当前 chain_id 反向找到根任务，再用 find_task_by_chain
+                # 逐级访问。在没有 list_tasks API 的极小子集运行环境下兜底。
+                return ""
+
+            for task in all_tasks:
+                if not task:
+                    continue
+                if getattr(task, "delegated_by", None) != caller_node_id:
+                    continue
+                st = getattr(task, "status", None)
+                st_value = st.value if hasattr(st, "value") else str(st)
+                if st_value not in (
+                    TaskStatus.DELIVERED.value, TaskStatus.ACCEPTED.value,
+                ):
+                    continue
+                tid = getattr(task, "id", "") or ""
+                if not tid or tid in seen_task_ids:
+                    continue
+                seen_task_ids.add(tid)
+                assignee = getattr(task, "assignee_node_id", "") or ""
+                title = (getattr(task, "title", "") or "")[:40]
+                attachments = list(getattr(task, "file_attachments", None) or [])
+                asset_ids: list[str] = []
+                for att in attachments:
+                    fname = str(att.get("filename") or "")
+                    if not fname:
+                        continue
+                    stem = fname.rsplit(".", 1)[0]
+                    if stem and stem not in asset_ids:
+                        asset_ids.append(stem)
+                summary = title or assignee or "(无标题)"
+                items.append((assignee, summary, asset_ids))
+        except Exception:
+            logger.debug(
+                "[ToolHandler] asset reuse prefix scan failed", exc_info=True,
+            )
+            return ""
+
+        if not items:
+            return ""
+
+        items = items[-self._ASSET_REUSE_PREFIX_MAX_ITEMS:]
+        lines = [
+            "[已交付资产提示 — 由 OrgRuntime 自动注入，优先复用而非重新生成]",
+            (
+                "以下是 chain 内你已经从下属处验收过的产物（含 asset_id 与文件名）。"
+                "若本次派单与既有资产 segment 相同，请在派单文本里**显式**写明"
+                "「复用 asset_id: …」并禁止下属重新调 hh_image_create / hh_t2v "
+                "等『生成型』工具；如需调整，请改用 hh_image_edit / hh_video_edit "
+                "在原资产上修改。仅当本次派单是**全新 segment** 时才允许新建。"
+            ),
+        ]
+        for assignee, summary, asset_ids in items:
+            asset_part = ", ".join(asset_ids[:6]) if asset_ids else "(无 asset_id 文件)"
+            lines.append(
+                f"  • 来源节点 `{assignee or '?'}`｜任务摘要：{summary}"
+                f"｜asset_ids: {asset_part}"
+            )
+        # 防止超长 prefix 干扰短派单（保守截断到 1500 字符）
+        prefix = "\n".join(lines)
+        if len(prefix) > 1500:
+            prefix = prefix[:1500] + "\n  …(截断)"
+        return prefix
+
     # 文件名清洗：去掉路径分隔符 / 控制字符 / 平台保留字符，避免 LLM
     # 给的标题里包含 ../ 或 :*?"<>| 这种东西穿越到 workspace 之外。
     _DELIVERABLE_NAME_FORBIDDEN = set('\\/:*?"<>|\r\n\t')
@@ -1325,6 +1444,32 @@ class OrgToolHandler:
         except Exception:
             pass
 
+        # ── 工作台路由硬护栏（AIGC 编排优化 P1-A）──
+        # 防止 art-director 把"跳舞/全身动作/运镜"类镜头错派给 wb-hh-human
+        # （数字人工作台只能做说话头像/唇形/换脸/姿态驱动，不能从零生成
+        # 全身舞蹈视频）。命中关键词时立即拒绝并给出正确路径建议，避免
+        # 工作台 LLM 拿到错误工具后又调 hh_photo_speak 死循环。
+        _dance_keywords = (
+            "跳舞", "舞蹈", "全身", "运镜", "武打", "动作戏",
+            "dance", "dancing", "full body", "full-body", "choreograph",
+        )
+        if to_node == "wb-hh-human":
+            _task_lower = str(args.get("task", "")).lower()
+            _hit = next(
+                (kw for kw in _dance_keywords if kw in args.get("task", "") or kw.lower() in _task_lower),
+                None,
+            )
+            if _hit:
+                return (
+                    f"[org_delegate_task 路由拒绝] 派单文本里出现『{_hit}』，"
+                    f"但 wb-hh-human（数字人工作台）只能做说话头像 / 唇形 / 换脸 / "
+                    f"姿态驱动，**不能**从零生成跳舞/全身动作/运镜视频。\n"
+                    f"请改走主路径：先 org_delegate_task 派给 wb-hh-image 用 "
+                    f"hh_image_create 出首帧人物图，再 org_delegate_task 派给 "
+                    f"wb-hh-video 用 hh_i2v(from_asset_ids=[首帧 asset_id]) 做"
+                    f"图生视频。如有动作参考视频，可用 hh_r2v 而不是 hh_pose_drive。"
+                )
+
         # 工具级在途锁：堵住 ProjectStore 还没落盘前 LLM 在同一 ReAct iter
         # 内 emit 多个 delegate_task 给同 chain 同目标的并发穿透。
         # 失败路径下立即释放锁让后续重试可继续；成功路径让锁自然过期，
@@ -1340,10 +1485,32 @@ class OrgToolHandler:
                 f"请改用 org_wait_for_deliverable 等待交付，或 org_list_delegated_tasks 查看进度。"
             )
 
+        # ── 资产复用提示注入（AIGC 编排优化 P2-A）──
+        # 在 chain 内已经被本节点 accept 过的下游交付物（图片 / 视频 / 各类
+        # plugin asset）以「可直接复用 asset_id 列表」的形式追加到派单文本
+        # 头部。即使模板 prompt 已经要求"复用而不是重新生成"，LLM 在长上下
+        # 文里也常常忽略 — 用框架层硬注入做最后一道兜底。如果当前 caller
+        # 没有任何已交付资产，这条 prefix 会被 helper 返回空串，零开销。
+        _reuse_prefix = ""
+        try:
+            _reuse_prefix = self._build_asset_reuse_prefix(
+                org_id=org_id,
+                caller_node_id=node_id,
+                to_node=to_node,
+                current_chain_id=chain_id,
+            )
+        except Exception:
+            logger.debug(
+                "[ToolHandler] asset reuse prefix build failed", exc_info=True,
+            )
+            _reuse_prefix = ""
+
         # BUG-3：把"用户原始指令"做成父任务硬边界，前置到子任务 task_content 里。
         # 仅当用户原话带显式约束（字数限制、不要写代码、只列纲要等）才注入，
         # 普通任务不附加边界，零行为破坏。
         _task_content = args["task"]
+        if _reuse_prefix:
+            _task_content = _reuse_prefix + "\n\n" + _task_content
         try:
             _root_intent = self._runtime.get_active_root_intent(org_id)
             if _root_intent and _has_explicit_boundary(_root_intent):

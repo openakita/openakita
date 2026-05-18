@@ -2411,6 +2411,23 @@ class MessageGateway:
                 await self._send_response(message, f"指令执行失败：{_format_user_error(exc)}")
             if handled:
                 return
+
+        # 裸文本中止 fast-path：用户发"中止 / 结束任务 / 停了"等短句时，
+        # 只要当前 session 上确实有一条组织命令在跑，立即走 command_service.cancel
+        # 而不是排在消息队列后面。命中后绕过 _message_queue + per-session 串行。
+        if self._is_bare_org_cancel(_raw_text):
+            try:
+                bare_handled = await self._handle_bare_org_cancel(message)
+            except Exception as exc:
+                logger.warning(
+                    "[IM] bare-text org cancel failed: %s", exc, exc_info=True,
+                )
+                bare_handled = False
+                await self._send_response(
+                    message, f"中止失败：{_format_user_error(exc)}",
+                )
+            if bare_handled:
+                return
         # ==================== /组织控制 fast-path ====================
 
         # ==================== 中断快路径（无锁检测） ====================
@@ -3161,6 +3178,100 @@ class MessageGateway:
         ):
             return t
         return None
+
+    # 裸文本中止短语 — 用户在 IM 里直接发"中止 / 结束任务 / 停了"等，
+    # 不带 /org 前缀，但意图就是停掉当前正在跑的组织命令。原先这些会进
+    # session 串行队列，等当前长任务结束才被处理 — 体感就是"我中止了
+    # 半天没反应"。AIGC 编排优化 P1-B：当 session 有 active org command
+    # 时，直接走 command_service.cancel 的 fast-path，绕过队列。
+    # 故意只接受**短**且**意图明确**的裸文本，避免在长正文里误命中。
+    _BARE_ORG_CANCEL_PHRASES: frozenset[str] = frozenset({
+        "中止", "中止任务",
+        "停止", "停止任务", "停了", "停了停了",
+        "结束任务", "结束",
+        "取消", "取消任务",
+        "终止", "终止任务",
+        "别做了", "不做了",
+        "/中止", "/结束", "/停止", "/取消", "/终止",
+    })
+
+    @classmethod
+    def _is_bare_org_cancel(cls, text: str) -> bool:
+        """是否为裸文本"中止当前组织任务"意图。
+
+        仅匹配整条消息就是中止短语本身（无标点、无附加内容），避免在
+        长文本里误吃用户原话。带 ASCII/CJK 标点的版本也接受，例如
+        "中止！" / "中止。" → 视作匹配。
+        """
+        if not text:
+            return False
+        t = text.strip()
+        # 剥掉首尾常见的中英文标点，再做一次比对
+        _PUNCT = "！!。.,，、；;:：?？～~ \t"
+        stripped = t.strip(_PUNCT)
+        if stripped in cls._BARE_ORG_CANCEL_PHRASES:
+            return True
+        return t.lower() in cls._BARE_ORG_CANCEL_PHRASES
+
+    async def _handle_bare_org_cancel(self, message: UnifiedMessage) -> bool:
+        """处理裸文本"中止/结束任务/停了"等意图。
+
+        与 ``_handle_org_control_command`` 的 ``/org cancel`` 分支共用底层
+        ``command_service.cancel``，但语义上"裸文本"只有在 session 当前确实
+        有 ``current_org_command`` 时才接管：
+        - 有 → 立即触发取消，回执"已对组织发起取消"。返回 True 表示已处理。
+        - 没有 → 不接管，返回 False；让消息按正常路径走，agent 自己的
+          STOP_COMMANDS 识别会兜底处理（避免对话里偶尔说"算了"被误吞）。
+        """
+        session = self.session_manager.get_session(
+            channel=message.channel,
+            chat_id=message.chat_id,
+            user_id=message.user_id,
+            thread_id=message.thread_id,
+            bot_instance_id=self._get_message_bot_instance_id(message),
+            create_if_missing=False,
+        )
+        if session is None:
+            return False
+        cur = session.get_metadata("current_org_command") or None
+        if not isinstance(cur, dict) or not cur.get("command_id"):
+            return False
+        org_id = str(cur.get("org_id") or "")
+        command_id = str(cur.get("command_id") or "")
+        if not org_id or not command_id:
+            return False
+        try:
+            from openakita.orgs.command_service import get_command_service
+
+            svc = get_command_service()
+            if svc is None:
+                await self._send_response(
+                    message, "检测到中止意图，但组织命令服务尚未就绪，请稍后再试。",
+                )
+                return True
+            result = await svc.cancel(org_id, command_id)
+        except Exception as exc:
+            logger.warning(
+                "[IM] bare-text org cancel failed: %s", exc, exc_info=True,
+            )
+            await self._send_response(message, f"中止失败：{_format_user_error(exc)}")
+            return True
+        if not result:
+            await self._send_response(
+                message, "检测到中止意图，但当前组织命令已经被清理。",
+            )
+            return True
+        if result.get("already_done"):
+            await self._send_response(
+                message, "命令已经结束，无需中止。",
+            )
+            return True
+        await self._send_response(
+            message,
+            f"✅ 检测到中止意图，已对组织发起取消（命令 ID `{command_id}`）。\n"
+            "组织会在执行完当前最小步骤后停止；结果会通过此前的等待循环发回。",
+        )
+        return True
 
     def _resolve_org_query(self, query: str) -> tuple[str | None, str | None]:
         """把用户在 IM 里输入的"组织名或 ID"解析成真实 org_id。

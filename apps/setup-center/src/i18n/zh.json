@@ -3143,6 +3143,8 @@
       "incomplete": "⚠ {{name}} 未完成：{{reason}}",
       "fileOutput": "📎 {{name}} 产出文件：{{file}}",
       "blackboardUpdate": "~ {{name}} 更新黑板",
+      "waitingUserSummary": "⏸ {{name}} · 正在等待你的回复",
+      "waitingUserNotice": "📣 **{{name}}** 已把决策权交回给你。请在下方输入框直接回应（例如：「同意继续」「换 t2v 降级」「放弃此镜头」），或在指挥台点击「继续」继续推进。",
       "idleMinSec": "{{m}}分{{s}}秒",
       "idleSec": "{{s}}秒",
       "orgIdle": "⏳ 组织已 {{duration}} 无进度。任务仍在运行中…",
