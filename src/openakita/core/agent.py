@@ -113,7 +113,6 @@ from .response_handler import (
     parse_intent_tag,
     strip_thinking_tags,
 )
-from .risk_intent import RiskIntentResult, RiskLevel, TargetKind, classify_risk_intent
 from .skill_manager import SkillManager
 from .task_monitor import RETROSPECT_PROMPT, TaskMonitor
 from .token_tracking import (
@@ -123,7 +122,6 @@ from .token_tracking import (
     set_tracking_context,
 )
 from .tool_executor import ToolExecutor
-from .trusted_paths import consume_session_trust, is_trusted_workspace_path
 from .user_profile import get_profile_manager
 
 _DESKTOP_AVAILABLE: bool | None = None  # None = not yet checked
@@ -503,15 +501,14 @@ def _looks_like_external_tool_request(message: str) -> bool:
 # directly as ``from openakita.core.agent import _format_desktop_attachment_reference``.
 # The aliases drop in P-RC-7 alongside the wider core/ legacy removal.
 from ..runtime.desktop.attachments import (
-    DATA_URI_RE as _DATA_URI_RE,
-    INLINE_IMAGE_MAX_BYTES as _INLINE_IMAGE_MAX_BYTES,
     LOCAL_UPLOAD_RE as _LOCAL_UPLOAD_RE,
-    format_desktop_attachment_reference as _format_desktop_attachment_reference,
-    maybe_inline_local_image as _maybe_inline_local_image,
-    safe_attachment_stem as _safe_attachment_stem,
-    save_data_uri_attachment as _save_data_uri_attachment,
 )
-
+from ..runtime.desktop.attachments import (
+    format_desktop_attachment_reference as _format_desktop_attachment_reference,
+)
+from ..runtime.desktop.attachments import (
+    maybe_inline_local_image as _maybe_inline_local_image,
+)
 
 # 上下文管理常量（部分迁移至 context_manager.py，压缩相关仍需就地定义）
 from .context_manager import CHARS_PER_TOKEN, CHUNK_MAX_TOKENS
@@ -573,249 +570,27 @@ class PromptStrategy:
     catalog_scope: list[str] = field(default_factory=list)
     include_project_guidelines: bool = False
 
-def _classify_risk_intent(intent: Any, message: str) -> RiskIntentResult:
-    """Single source of truth for the pre-ReAct risk gate."""
-    return classify_risk_intent(message, intent)
-
-
-def _consume_risk_authorization(session: Any, message: str) -> bool:
-    """Check + consume session-level risk authorization.
-
-    When the user previously confirmed a high-risk request that had no
-    controlled execution entry (see ``chat.py::_RiskAuthorizedReplay``),
-    the chat handler stamps the session metadata with::
-
-        risk_authorized_replay = {
-            "expires_at": <epoch_seconds>,
-            "confirmation_id": ...,
-            "original_message": ...,
-        }
-
-    PR-A2 also writes a structured ``risk_authorized_intent`` (see
-    :class:`AuthorizedIntent`). Both are checked here for backward
-    compatibility; whichever matches is consumed in a single-use fashion.
-
-    Single-use + short TTL (30s) avoids granting blanket future authority.
-    """
-    if session is None or not message:
-        return False
-    consumed_any = False
-    try:
-        stamp = session.get_metadata("risk_authorized_replay")
-    except Exception:
-        stamp = None
-    if isinstance(stamp, dict):
-        expired = False
-        try:
-            expired = float(stamp.get("expires_at", 0)) < time.time()
-        except (TypeError, ValueError):
-            expired = True
-        msg_match = (
-            (stamp.get("original_message") or "").strip()
-            == (message or "").strip()
-        )
-        if expired:
-            try:
-                session.set_metadata("risk_authorized_replay", None)
-            except Exception:
-                pass
-        elif msg_match:
-            try:
-                session.set_metadata("risk_authorized_replay", None)
-            except Exception:
-                pass
-            consumed_any = True
-        # mismatch + not expired: 保留 stamp，等正确的消息再来消费
-        # （改动原因：原实现 mismatch 也清掉，会让"先 a 再 b"场景误清 a 的授权）
-
-    # 结构化 AuthorizedIntent（PR-A2）
-    try:
-        intent_data = session.get_metadata("risk_authorized_intent")
-    except Exception:
-        intent_data = None
-    if isinstance(intent_data, dict):
-        try:
-            from .risk_intent import AuthorizedIntent
-
-            intent = AuthorizedIntent.from_dict(intent_data)
-        except Exception:
-            intent = None
-        if intent is None or intent.is_expired(time.time()):
-            try:
-                session.set_metadata("risk_authorized_intent", None)
-            except Exception:
-                pass
-        else:
-            msg_match = (intent.original_message or "").strip() == (message or "").strip()
-            if msg_match:
-                # 把 intent 暂存到 session，供 prompt builder 注入到 system prompt；
-                # 实际"消费"在 ToolExecutor 路由完成后再做（保证拿到 scope）。
-                try:
-                    session.set_metadata(
-                        "risk_authorized_intent_active",
-                        intent.to_dict(),
-                    )
-                    session.set_metadata("risk_authorized_intent", None)
-                except Exception:
-                    pass
-                consumed_any = True
-    return consumed_any
-
-
-# Targets that still require RiskGate confirmation even under trust (yolo) mode.
-#普通用户文件 / 桌面文件 / 未知目标 在信任模式下放行；
-# 安全策略 / 死亡开关 / 安全白名单 / shell 命令 / 已知受保护文件 仍要 confirm。
-# 真正的系统/密钥目录与 CRITICAL shell 由 PolicyEngine baseline 兜底拦截。
-_TRUST_MODE_MUST_CONFIRM_TARGETS = frozenset(
-    {
-        TargetKind.SECURITY_USER_ALLOWLIST,
-        TargetKind.SECURITY_POLICY,
-        TargetKind.DEATH_SWITCH,
-        TargetKind.PROTECTED_FILE,
-        TargetKind.SHELL_COMMAND,
-    }
+# Pre-LLM destructive-intent / risk-authorization gate -- helpers moved
+# to agent.safety.destructive_intent (P-RC-6 P6.2a). The legacy private
+# names below are aliases for backward compatibility with the 5 unit
+# tests under tests/unit that import them via
+# ``from openakita.core.agent import _classify_risk_intent`` etc. The
+# aliases drop in P-RC-7 alongside the wider core/ legacy removal.
+from ..agent.safety.destructive_intent import (
+    build_destructive_intent_question as _build_destructive_intent_question,
 )
-
-
-def _check_trust_mode_skip(risk_intent: RiskIntentResult | None) -> str | None:
-    """Skip the pre-LLM RiskGate confirm when the user has chosen trust mode
-    and the intent only touches ordinary user data (e.g. desktop files).
-
-    Sensitive targets (security policy, allowlists, shell commands, protected
-    files) still go through the normal confirm flow even in trust mode.
-
-    C7：保守语义 —— **必须 v1 和 v2 都报 TRUST 才 skip**。
-    - 正常生产链路：reset_policy_engine 已同步 v1+v2（C6），两层值始终一致
-    - 异常链路：若任一层（如 admin UI 直接改 v1 但 v2 还没刷新）报非 trust，
-      宁可让用户多确认一次，也不要在策略不一致时静默放行
-    - v2 不可用：退化到 v1（v1 缺失才返回 None，等同未启用 trust）
-    """
-    if risk_intent is None:
-        return None
-    if risk_intent.target_kind in _TRUST_MODE_MUST_CONFIRM_TARGETS:
-        return None
-
-    # C8b-5: 之前用 v1 ``pe._is_trust_mode()`` + v2 双查 + "保守优先"。
-    # C8b-4 后 v2 ``read_permission_mode_label()`` 已是 SoT，v1
-    # ``_frontend_mode`` 字段已删，二者不再可能 desync——双查无意义。
-    # v2 helper 自带 fail-soft fallback (v2 layer 未初始化时回 "yolo")，
-    # 故失败时退化为"未启用 trust"（fallback 是 "yolo" 但属于 fail-safe，
-    # 真正 v2 异常时不应该误信任）：用显式 try/except 区分 normal vs error。
-    try:
-        from .policy_v2 import ConfirmationMode
-        from .policy_v2.global_engine import get_config_v2
-
-        mode_value = get_config_v2().confirmation.mode
-        is_trust = (
-            mode_value == ConfirmationMode.TRUST or str(mode_value) == "trust"
-        )
-    except Exception:
-        return None  # v2 不可用 → 当作未启用 trust（保守）
-
-    if is_trust:
-        return "trust_mode"
-    return None
-
-
-def _check_trusted_path_skip(
-    session: Any,
-    message: str,
-    risk_intent: RiskIntentResult | None,
-) -> str | None:
-    """Decide whether the current request can skip the risk gate due to a
-    trusted-path or session-level grant (Fix-11).
-
-    Returns a human-readable reason string when skipped, or ``None`` when the
-    normal risk gate must run. **Never** returns a skip reason for
-    ``RiskLevel.HIGH`` — that bar (sensitive targets / shell hard verbs)
-    requires explicit confirmation regardless of trust state.
-    """
-    if risk_intent is None or not message:
-        return None
-    if risk_intent.risk_level == RiskLevel.HIGH:
-        return None
-
-    try:
-        if is_trusted_workspace_path(message):
-            return "trusted_workspace_path"
-    except Exception:
-        pass
-
-    try:
-        op_value = (
-            risk_intent.operation_kind.value
-            if hasattr(risk_intent.operation_kind, "value")
-            else str(risk_intent.operation_kind)
-        )
-        if consume_session_trust(session, message=message, operation=op_value):
-            return "session_grant"
-    except Exception:
-        pass
-
-    return None
-
-
-def _build_destructive_intent_question(message: str, classification: RiskIntentResult | None = None) -> str:
-    """生成高危确认提示。
-
-    PR-1.1：两步式 summary。先把用户的长描述抽成 ≤30 字的"准备执行 X"
-    摘要 + scope，再给三选项；避免直接抛出原始 message 让用户读不懂。
-    """
-    target = (message or "").strip()
-    summary = _summarize_destructive_action(target, classification)
-    options = "回复 **继续** / **只查看** / **取消** 三选一。"
-    if classification is not None:
-        op = (
-            classification.operation_kind.value
-            if hasattr(classification.operation_kind, "value")
-            else str(classification.operation_kind or "")
-        )
-        target_kind = (
-            classification.target_kind.value
-            if hasattr(classification.target_kind, "value")
-            else str(classification.target_kind or "")
-        )
-        meta_parts = []
-        if op and op not in ("none", "unknown"):
-            meta_parts.append(f"op={op}")
-        if target_kind and target_kind not in ("unknown",):
-            meta_parts.append(f"target={target_kind}")
-        meta_line = f"（{', '.join(meta_parts)}）" if meta_parts else ""
-    else:
-        meta_line = ""
-
-    return (
-        f"准备执行：**{summary}** {meta_line}\n\n"
-        "这个动作可能改动文件 / 配置 / 权限，做完不一定能撤回，先确认一下。\n"
-        f"{options}"
-    )
-
-
-_DESTRUCTIVE_VERBS = (
-    "删除", "删掉", "清空", "清除", "重置", "覆盖", "禁用", "关闭",
-    "卸载", "销毁", "格式化",
+from ..agent.safety.destructive_intent import (
+    check_trust_mode_skip as _check_trust_mode_skip,
 )
-
-
-def _summarize_destructive_action(text: str, classification: Any | None = None) -> str:
-    """Best-effort one-line summary of a destructive request (≤30 chars)."""
-    raw = (text or "").strip()
-    if not raw:
-        return "未指定操作"
-    if len(raw) <= 30:
-        return raw
-    # 尝试切到第一句
-    for sep in ("。", "\n", "；", ";", "！", "!"):
-        idx = raw.find(sep)
-        if 5 <= idx <= 30:
-            return raw[:idx].strip() or raw[:30] + "…"
-    # 找到第一个动词 + 下文
-    for verb in _DESTRUCTIVE_VERBS:
-        i = raw.find(verb)
-        if i != -1:
-            tail = raw[i : i + 28]
-            return tail + ("…" if len(raw) > i + 28 else "")
-    return raw[:28] + "…"
+from ..agent.safety.destructive_intent import (
+    check_trusted_path_skip as _check_trusted_path_skip,
+)
+from ..agent.safety.destructive_intent import (
+    classify_risk_intent as _classify_risk_intent,
+)
+from ..agent.safety.destructive_intent import (
+    consume_risk_authorization as _consume_risk_authorization,
+)
 
 # Prompt Compiler 系统提示词（两段式 Prompt 第一阶段）
 PROMPT_COMPILER_SYSTEM = """【角色】
