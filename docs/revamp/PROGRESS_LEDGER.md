@@ -126,7 +126,8 @@ loses its sentinel allowance for these three files.
 | `cdc26689` | P-RC-4 P4.5 | feat(agent): implement real agent/brain.py on extracted helpers (~370 LOC) | +290 (real Brain class + SupervisorBrain protocol + helper accessors + 16 v2 surface methods) / -88 (facade) | 0 (existing tests cover) | ADR-0001, ADR-0003 |
 | `7264dcc8` | P-RC-4 P4.6a | refactor(core): rename core/brain.py to core/_brain_legacy.py (pre-shim move) | 0 (pure rename) | 0 | ADR-0001 |
 | `dfa462df` | P-RC-4 P4.6b | refactor(core): replace core/brain.py body with 26-LOC lazy-import shim | core/brain 2015 -> 26 (shim, lazy __getattr__) | 0 | ADR-0001, ADR-0003 |
-| _this commit_ | P-RC-4 P4.7 | test(parity): real parity for Brain (5 fixtures + __file__ divergence) | +176 (test_brain_parity.py) + 5 JSON fixtures | +7 (5 fixtures + __file__ + class-identity) | ADR-0001, ADR-0003 |
+| `4b5d385c` | P-RC-4 P4.7 | test(parity): real parity for Brain (5 fixtures + __file__ divergence) | +176 (test_brain_parity.py) + 5 JSON fixtures | +7 (5 fixtures + __file__ + class-identity) | ADR-0001, ADR-0003 |
+| _this commit_ | P-RC-4 P4.8 | refactor(runtime/io): extract truncate + overflow from core.tool_executor | +307 (truncate.py + overflow.py + __init__ + tests) | +8 (truncate / overflow / cleanup / constant) | ADR-0001 |
  refactor(core): replace core/brain.py body with thin import shim | core/brain 2015 -> 19 (shim), _brain_legacy preserves legacy body | 0 | ADR-0001, ADR-0003 |
 
 ## P-RC-5 — Phase 2 real slim-down: reasoning_engine
