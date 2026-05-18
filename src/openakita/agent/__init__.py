@@ -12,6 +12,15 @@ from :mod:`openakita.agent.facade` once the rewrite slices land.
 from __future__ import annotations
 
 from .audit import AuditLogger, get_audit_logger, reset_audit_logger
+from .capabilities import (
+    CapabilityDescriptor,
+    CapabilityKind,
+    CapabilityOrigin,
+    CapabilityVisibility,
+    build_capability_id,
+    build_namespace,
+    normalize_slug,
+)
 from .confirmation import (
     ConfirmationDecision,
     PendingRiskConfirmation,
@@ -84,6 +93,23 @@ from .resource_budget import (
     ResourceBudget,
     create_budget_from_settings,
 )
+from .security_actions import (
+    add_security_allowlist_entry,
+    execute_controlled_action,
+    list_security_allowlist,
+    list_skill_external_allowlist,
+    maybe_broadcast_death_switch_reset,
+    maybe_refresh_skills,
+    remove_security_allowlist_entry,
+    reset_death_switch,
+    set_skill_external_allowlist,
+)
+from .skill_manager import (
+    SKILL_GIT_CLONE_TIMEOUT_SECONDS,
+    SKILL_INSTALL_CIRCUIT_COOLDOWN_SECONDS,
+    SKILL_INSTALL_CIRCUIT_THRESHOLD,
+    SkillManager,
+)
 from .token_budget import TokenBudget, parse_token_budget
 from .tool_result_budget import (
     DEFAULT_MAX_RESULT_CHARS,
@@ -117,6 +143,10 @@ __all__ = [
     "CODE_EXEC_TOOLS",
     "COORDINATOR_MODE_RULESET",
     "CallbackHook",
+    "CapabilityDescriptor",
+    "CapabilityKind",
+    "CapabilityOrigin",
+    "CapabilityVisibility",
     "ConfirmationDecision",
     "DEFAULT_MAX_RESULT_CHARS",
     "DEFAULT_RULESET",
@@ -146,7 +176,11 @@ __all__ = [
     "READONLY_EXPLORATION_TOOLS",
     "ResourceBudget",
     "Ruleset",
+    "SKILL_GIT_CLONE_TIMEOUT_SECONDS",
+    "SKILL_INSTALL_CIRCUIT_COOLDOWN_SECONDS",
+    "SKILL_INSTALL_CIRCUIT_THRESHOLD",
     "ShellHook",
+    "SkillManager",
     "StreamJSONFormatter",
     "TextFormatter",
     "TokenBudget",
@@ -157,6 +191,9 @@ __all__ = [
     "ValidationResult",
     "ValidatorOutput",
     "ValidatorRegistry",
+    "add_security_allowlist_entry",
+    "build_capability_id",
+    "build_namespace",
     "check_mode_permission",
     "check_path",
     "check_permission",
@@ -165,6 +202,7 @@ __all__ = [
     "create_formatter",
     "detect_numeric_output",
     "detect_numeric_task",
+    "execute_controlled_action",
     "extract_working_facts",
     "format_working_facts",
     "get_audit_logger",
@@ -172,14 +210,22 @@ __all__ = [
     "get_hook_executor",
     "get_pending_approvals_store",
     "get_ui_confirm_bus",
+    "list_security_allowlist",
+    "list_skill_external_allowlist",
+    "maybe_broadcast_death_switch_reset",
+    "maybe_refresh_skills",
     "merge_working_facts",
     "normalize_confirmation_answer",
+    "normalize_slug",
     "parse_token_budget",
     "persist_trait_to_memory",
+    "remove_security_allowlist_entry",
     "reset_audit_logger",
+    "reset_death_switch",
     "reset_pending_approvals_store",
     "reset_ui_confirm_bus",
     "set_hook_executor",
+    "set_skill_external_allowlist",
     "truncate_tool_result",
     "validate_no_fabricated_numbers",
 ]
