@@ -19,13 +19,13 @@ A user-led ADR review is the gate to flip them all to `Accepted`.
 | 2 — Agent rewrite | **In progress (foundation slice)** | 1 (`agent/state.py`) | 17 agent tests |
 | 3 — Runtime engine (supervisor + messenger + guardrail) | **In progress (critical path complete)** | 5 (`ledger`, `stall_detector`, `supervisor`, `messenger`, `guardrail/`) | 82 new runtime tests |
 | 4 — Nodes | **Implementation complete (G4 review pending)** | 6 (`base`+sig fix, `tool_node`, `llm_node`, `condition_node`+`human_review_node`, `workbench_node`+`manifest`, `happyhorse-video` adoption) | 89 new tests (`test_nodes_*`) + 5 plugin smoke tests |
-| 5 — Templates | Pending | 0 | — |
+| 5 — Templates | **Schema + registry + 4 builtins shipped (G5 review pending)** | 6 (`schema`, `registry`, `aigc_video_studio`, `software_team`, `startup_company`, `content_ops`+discovery test) | 75 template tests |
 | 6 — API / channels swap | Pending | 0 | — |
 | 7 — Cutover + data migration | Pending | 0 | — |
 | 8 — Legacy removal | Pending | 0 | — |
 
-Total to date: **30 code commits + 10 ADR commits = 40 commits on
-`revamp/v2`**, all lint-clean (ruff), test-green (272 / 272 across
+Total to date: **36 code commits + 10 ADR commits = 46 commits on
+`revamp/v2`**, all lint-clean (ruff), test-green (344 / 344 across
 `tests/runtime/`, `tests/agent/`, and `plugins/happyhorse-video/tests/test_workbench_manifest.py`).
 
 ## What v2 already delivers
@@ -115,6 +115,20 @@ src/openakita/runtime/nodes/         Phase 4 — first-class node types
   workbench_node.py                    plugin-as-node, manifest-driven
   manifest.py                          WORKBENCH manifest parser/validator
 
+src/openakita/runtime/templates/    Phase 5 — typed templates + registry
+  __init__.py                          public exports
+  schema.py                            TemplateSpec / NodeSpec / EdgeSpec /
+                                       DefaultsSpec / GuardrailSpec /
+                                       WorkbenchBindingSpec / NodeRuntimeOverridesSpec
+  registry.py                          @template decorator, TemplateRegistry,
+                                       discover_builtins, GLOBAL_REGISTRY
+  builtin/
+    __init__.py                        package marker
+    aigc_video_studio.py               7-node AIGC pipeline (workbench-bound)
+    software_team.py                   10-node engineering team
+    startup_company.py                 16-node startup org
+    content_ops.py                     7-node editorial team
+
 src/openakita/agent/
   __init__.py                          empty shell (Phase 2 fills it)
   state.py                             v2 minimal TaskState + AgentState
@@ -124,7 +138,8 @@ plugins/happyhorse-video/
                                        constant (4 roles, mode-scoped tools)
   tests/test_workbench_manifest.py     load-time validation guard
 
-tests/runtime/                         99 (Phase 1) + 82 (Phase 3) + 89 (Phase 4) = 270
+tests/runtime/                         99 (Phase 1) + 82 (Phase 3) + 89 (Phase 4) +
+                                       75 (Phase 5 templates) = 345 (incl. integration)
 tests/agent/                           17 tests
 plugins/happyhorse-video/tests/        + 5 manifest smoke tests
 ```
@@ -193,14 +208,29 @@ Outstanding before we can declare gate G4 closed:
   org. The plumbing is all there; this is one new
   `tests/runtime/test_node_integration.py`.
 
-### Phase 5 — Templates
+### Phase 5 — Templates (delivered)
 
-`runtime/templates/registry.py`, `runtime/templates/schema.py`, and
-one file per built-in template under `runtime/templates/builtin/`,
-starting with `aigc_video_studio.py`. The legacy
-`orgs/templates.py` (1 234 lines) and
+| Module | ADR | Status |
+|---|---|---|
+| `runtime/templates/schema.py` | ADR-0008 | **Done.** TemplateSpec / NodeSpec / EdgeSpec / DefaultsSpec / GuardrailSpec / WorkbenchBindingSpec / NodeRuntimeOverridesSpec dataclasses with construction-time `validate()` and JSON round-trip. 25 tests. |
+| `runtime/templates/registry.py` | ADR-0008 | **Done.** @template decorator (lazy queue), TemplateRegistry (register / get / list / clear / bootstrap), `instantiate(template_id, name=, overrides=)` mints fresh `OrgV2` with prefixed ULIDs and applies a closed override whitelist (`defaults`, `node_persona_prompts`, `node_runtime_overrides`); unknown override keys raise loudly. `discover_builtins()` auto-imports `runtime.templates.builtin.*`. 16 tests. |
+| `runtime/templates/builtin/aigc_video_studio.py` | ADR-0008 + ADR-0009 | **Done.** 7-node AIGC studio: producer → screenwriter / art_director → wb_image / wb_video / wb_human / wb_long; four workbench leaves bound to the `happyhorse-video` manifest, with the stitching node narrowed to `(storyboard, long_video, video_concat)` capabilities. Personas Chinese, ~190 lines vs the legacy ~420-line dict. 12 tests. |
+| `runtime/templates/builtin/software_team.py` | ADR-0008 | **Done.** 10-node engineering org with HIERARCHY / COLLABORATE / CONSULT edges (qa→leads as CONSULT). 7 tests. |
+| `runtime/templates/builtin/startup_company.py` | ADR-0008 | **Done.** 16-node generic startup with four C-level departments and four cross-department COLLABORATE edges. 6 tests. |
+| `runtime/templates/builtin/content_ops.py` | ADR-0008 | **Done.** 7-node editorial team with the data-loop COLLABORATE edge from data_analyst → planner. 6 tests. |
+| `tests/runtime/templates/test_builtin_discovery.py` | ADR-0008 | **Done.** Generic guard: `discover_builtins` imports every non-underscore module under `builtin/`, every registered TemplateSpec validates and instantiates, and the four flagship template ids are present. |
+
+The legacy `orgs/templates.py` (1 234 lines) and
 `orgs/plugin_workbench_templates.py` (225 lines) are deleted in
-Phase 8.
+Phase 8 once the API surface in Phase 6 is wired to the v2
+registry. The Phase 6 facade should call::
+
+    from openakita.runtime.templates import discover_builtins, GLOBAL_REGISTRY
+    discover_builtins()
+    GLOBAL_REGISTRY.bootstrap()
+
+once at startup and serve `GLOBAL_REGISTRY.list()` from
+`/api/orgs/templates`.
 
 ### Phase 6 — API / channels swap
 
@@ -227,17 +257,20 @@ log` reader can diff the world before / after.
 ## How to resume in the next session
 
 1. Read this `STATUS.md` first.
-2. Recommended next slice: **Phase 3 `runtime/state_graph.py`** —
-   the BSP engine ConditionNode is already plumbed for. It also
-   unblocks the end-to-end smoke test that closes gate G4. Estimate:
-   one focused commit (~300 lines + tests), no external deps.
-3. After state_graph: **Phase 5 `runtime/templates/registry.py` +
-   `templates/builtin/aigc_video_studio.py`**. The user's explicit
-   constraint: organisation templates must be preserved and
-   instantiable from the UI. The legacy
-   `orgs/templates.py` (1234 lines) and
-   `orgs/plugin_workbench_templates.py` (225 lines) are the source
-   material to port.
+2. Recommended next slice: **Phase 6 — API facade for templates**.
+   Mount `runtime.templates.GLOBAL_REGISTRY` behind
+   `/api/orgs/templates` (list) + `/api/orgs/templates/{id}/instantiate`
+   (POST → returns the fresh `OrgV2`). The frontend
+   `OrgEditor` template-picker can then drop the legacy
+   `orgs/templates.py` import. Estimate: one focused commit
+   (route + DI wiring + tests), feature-flagged on
+   `runtime_v2_enabled`.
+3. Alternatively: **Phase 3 `runtime/state_graph.py`**. Not
+   strictly on the critical path because the existing supervisor +
+   messenger handles single-flight hierarchical delegation, but
+   ConditionNode's `next_address` result is currently advisory —
+   the engine that consumes it is the missing piece. Estimate:
+   ~300 lines + tests.
 4. If continuing Phase 2: pick the smallest unfinished module from
    the list above and stand it up under `src/openakita/agent/` with
    a test file under `tests/agent/`.
