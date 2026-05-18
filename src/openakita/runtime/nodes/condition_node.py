@@ -8,8 +8,11 @@ The node:
   payload,
 * returns a :class:`DelegationResult` whose ``message`` is the chosen
   branch label and whose ``metadata["next_address"]`` carries the
-  routing target (a node id, role, or workbench address) the
-  supervisor's StateGraph will dispatch to next,
+  routing target (a node id, role, or workbench address). The
+  supervisor consumes this hint via :class:`runtime.state_graph.StateGraph`
+  (see ADR-0007 and ``runtime/state_graph.py``); when the template
+  declares formal conditional edges from this node, the StateGraph's
+  router takes precedence over the hint,
 * never calls a tool and never speaks to an LLM.
 
 The predicate is supplied by the template author. For the most
