@@ -10,6 +10,8 @@ legacy Brain god-class:
 * :mod:`multimodal` -- pure conversions between ``openakita.llm.types``
   blocks and Anthropic API block shapes (text / tool_use /
   ``<thinking>`` interleaving + stop-reason mapping).
+* :mod:`stream` -- thin streaming primitive over ``LLMClient.chat_stream``
+  with a separable token-tracking context manager.
 
 The agent rewrite in P-RC-4 (``openakita.agent.brain``) composes these
 helpers rather than inheriting from the giant.
@@ -24,11 +26,14 @@ from .multimodal import (
     map_stop_reason,
     response_to_anthropic_message,
 )
+from .stream import llm_stream_tracking, stream_llm_events
 
 __all__ = [
     "CompilerCircuitBreaker",
     "EndpointFailoverView",
     "collect_thinking_texts",
+    "llm_stream_tracking",
     "map_stop_reason",
     "response_to_anthropic_message",
+    "stream_llm_events",
 ]

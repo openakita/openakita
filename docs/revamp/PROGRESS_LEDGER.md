@@ -121,7 +121,8 @@ loses its sentinel allowance for these three files.
 | `210eb39f` | P-RC-4 P4.1b | refactor(core/brain): delegate nine endpoint wrappers to EndpointFailoverView | +35 / -95 (core.brain delegations) | 0 | ADR-0001, ADR-0002 |
 | `5e7e0e79` | P-RC-4 P4.2 | refactor(runtime/llm): extract compiler-LLM circuit breaker from core.brain | +280 (circuit_breaker.py + tests + delegation) / -70 (state fields + 3 method bodies + reset block) | +11 (5 transition + 6 auth-keyword param) | ADR-0001, ADR-0002 |
 | `2d39b49c` | P-RC-4 P4.3 | refactor(runtime/llm): scaffold multimodal block conversion module | +328 (multimodal.py + tests + __init__ exports + ledger row) | +10 (multimodal conversion cases) | ADR-0001, ADR-0002 |
-| _this commit_ | P-RC-4 P4.3b | refactor(core/brain): delegate _convert_response_to_anthropic to multimodal module | +6 / -82 (legacy method body) | 0 | ADR-0001, ADR-0002 |
+| `1b77a4ed` | P-RC-4 P4.3b | refactor(core/brain): delegate _convert_response_to_anthropic to multimodal module | +6 / -82 (legacy method body) | 0 | ADR-0001, ADR-0002 |
+| _this commit_ | P-RC-4 P4.4 | refactor(runtime/llm): extract LLM streaming primitive from core.brain | +281 (stream.py + tests + __init__ exports) | +5 (stream + tracking cases) | ADR-0001, ADR-0002, ADR-0006 |
 
 ## P-RC-5 — Phase 2 real slim-down: reasoning_engine
 
