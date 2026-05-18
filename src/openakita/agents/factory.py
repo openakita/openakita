@@ -166,13 +166,38 @@ class AgentFactory:
         profile: AgentProfile,
         *,
         parent_brain: Any = None,
+        share_from: Any = None,
         **kwargs: Any,
     ) -> Agent:
-        from openakita.core.agent import Agent
+        from openakita.core.agent import Agent, get_primary_agent
 
         agent = Agent(name=profile.get_display_name(), brain=parent_brain, **kwargs)
 
-        await agent.initialize(start_scheduler=False, lightweight=True)
+        # ── share_from 选取策略（P0-A 性能修复）──
+        # 默认尝试复用进程主 Agent 的注册表 —— sub-agent 不再各自加载一次
+        # 124 个工具/22 个插件/30 个 handler，把节点切换延迟从 30~80s 降到 <1s。
+        # 但只有"完全共享"配置才能安全 share_from（plugin/identity/memory 任何
+        # 一个隔离都会破坏共享语义，必须走传统的 lightweight full-init）。
+        # 注意：``plugins_mode == "all"`` 且没显式列 plugins 视作"全部继承"。
+        share_target = share_from if share_from is not None else get_primary_agent()
+        can_share = (
+            share_target is not None
+            and share_target is not agent
+            and getattr(share_target, "_initialized", False)
+            and getattr(profile, "identity_mode", "shared") == "shared"
+            and getattr(profile, "memory_mode", "shared") == "shared"
+            and (
+                getattr(profile, "plugins_mode", "all") == "all"
+                or not getattr(profile, "plugins", None)
+            )
+        )
+
+        if can_share:
+            await agent.initialize(
+                start_scheduler=False, lightweight=True, share_from=share_target
+            )
+        else:
+            await agent.initialize(start_scheduler=False, lightweight=True)
         agent.configure_runtime_environment(profile)
 
         self._apply_skill_filter(agent, profile)
