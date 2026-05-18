@@ -116,7 +116,8 @@ loses its sentinel allowance for these three files.
 
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
-| _this commit_ | P-RC-4 P4.0 | chore(revamp): bump ledger to P-RC-4 + raise commit-guard baseline | +1 line (header bump) + this block | 0 | — |
+| `4817bf1b` | P-RC-4 P4.0 | chore(revamp): bump ledger to P-RC-4 + raise commit-guard baseline | +1 line (header bump) + this block | 0 | — |
+| _this commit_ | P-RC-4 P4.1 | refactor(runtime/llm): scaffold EndpointFailoverView extracted from core.brain | +145 (failover.py + __init__.py + ledger row) | +7 (failover view cases incl. async health-check) | ADR-0001, ADR-0002 |
 
 ## P-RC-5 — Phase 2 real slim-down: reasoning_engine
 
