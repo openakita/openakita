@@ -93,6 +93,20 @@ BASELINE_CASES: list[ParityCase] = [
             "label": "tool_output",
         },
     ),
+    ParityCase(
+        id="context-estimate-tokens-mixed",
+        kind="context_estimate_tokens",
+        label="estimate_tokens on bilingual content",
+        inputs={
+            "text": "Hello world，这是一个用于上下文估算的混合中英文样本。" * 10,
+        },
+    ),
+    ParityCase(
+        id="context-estimate-tokens-empty",
+        kind="context_estimate_tokens",
+        label="estimate_tokens on empty string is zero",
+        inputs={"text": ""},
+    ),
 ]
 
 

@@ -216,6 +216,33 @@ RunnerFn = Callable[[ParityCase], ParityResult]
 
 
 # ---------------------------------------------------------------------------
+# Kind 7 — context estimate_tokens parity
+# ---------------------------------------------------------------------------
+
+
+def _context_estimate_v1(case: ParityCase) -> ParityResult:
+    from openakita.core.context_utils import estimate_tokens
+
+    return _context_estimate_eval(estimate_tokens, case)
+
+
+def _context_estimate_v2(case: ParityCase) -> ParityResult:
+    from openakita.agent.context import estimate_tokens
+
+    return _context_estimate_eval(estimate_tokens, case)
+
+
+def _context_estimate_eval(estimate_fn, case: ParityCase) -> ParityResult:
+    text = case.inputs["text"]
+    n = estimate_fn(text)
+    return ParityResult(
+        final_message=str(n),
+        success=True,
+        extras={"tokens": n},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Kind 6 — tool executor smart_truncate parity
 # ---------------------------------------------------------------------------
 
@@ -260,6 +287,7 @@ V1_RUNNERS: dict[str, RunnerFn] = {
     "loop_budget": _loop_budget_v1,
     "trusted_paths": _trusted_paths_v1,
     "smart_truncate": _smart_truncate_v1,
+    "context_estimate_tokens": _context_estimate_v1,
 }
 
 V2_RUNNERS: dict[str, RunnerFn] = {
@@ -269,6 +297,7 @@ V2_RUNNERS: dict[str, RunnerFn] = {
     "loop_budget": _loop_budget_v2,
     "trusted_paths": _trusted_paths_v2,
     "smart_truncate": _smart_truncate_v2,
+    "context_estimate_tokens": _context_estimate_v2,
 }
 
 
