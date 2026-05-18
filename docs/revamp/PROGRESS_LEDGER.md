@@ -93,7 +93,8 @@ runs identical cases against both backends.
 | `20021b71` | P-RC-3 P3.1 | docs(revamp): correct G-RC-2 5ms polling wording (T2) | +4 / -2 (gate doc) | 0 | — |
 | `69225c0f` | P-RC-3 P3.2 | feat(runtime): add closed-gate to StreamBus + public subscription API (T3+T5) | +156 / -14 | +5 (closed-gate + public-api) | ADR-0006 |
 | `7aabdce3` | P-RC-3 P3.3 | feat(runtime): add idle-bus cleanup to StreamRegistry (T4) | +306 / -6 | +6 (cleanup_idle + periodic + reattach) | ADR-0006 |
-| _this commit_ | P-RC-3 P3.4 | feat(runtime/orgs): add SqliteOrgStore mirroring JsonOrgStore contract | +371 (sqlite_store + tests) | +9 (CRUD + concurrent + reopen + corrupted) | ADR-0010 |
+| `723fd1d5` | P-RC-3 P3.4 | feat(runtime/orgs): add SqliteOrgStore mirroring JsonOrgStore contract | +371 (sqlite_store + tests) | +9 (CRUD + concurrent + reopen + corrupted) | ADR-0010 |
+| _this commit_ | P-RC-3 P3.5 | feat(runtime/orgs): contract suite shared across Json + Sqlite stores | +205 / -1 (contract test + sqlite trailing nl) | +18 (9 cases x 2 backends) | ADR-0010 |
 
 ## P-RC-4 — Phase 2 real slim-down: brain / tools / context
 
