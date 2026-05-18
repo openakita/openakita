@@ -20,18 +20,21 @@ from fastapi.testclient import TestClient
 
 from openakita.api.routes import orgs_v2
 from openakita.config import settings
+from openakita.runtime.orgs import reset_default_store
 
 
 @pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[TestClient]:
     """Return a TestClient bound to a one-off app with v2 enabled.
 
     Each test gets a freshly-constructed app + a fresh registry-
-    bootstrap latch so that registration side effects from one test
-    cannot leak into another.
+    bootstrap latch + a tmp-rooted org store so that registration
+    side effects and persisted orgs from one test cannot leak into
+    another.
     """
     monkeypatch.setattr(settings, "runtime_v2_enabled", True, raising=False)
     monkeypatch.setattr(orgs_v2, "_BOOTSTRAPPED", False, raising=False)
+    reset_default_store(path=tmp_path / "orgs_v2.json")
     app = FastAPI()
     app.include_router(orgs_v2.router)
     with TestClient(app) as c:
@@ -234,3 +237,91 @@ def test_instantiate_missing_name_returns_422(client: TestClient) -> None:
         json={},
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# OrgV2 resource CRUD (Phase 6)
+# ---------------------------------------------------------------------------
+
+
+def _instantiate(client: TestClient, template_id: str = "content_ops", **kw) -> dict:
+    payload = {"name": kw.pop("name", "Test Org")}
+    payload.update(kw)
+    resp = client.post(f"/api/v2/orgs/templates/{template_id}/instantiate", json=payload)
+    assert resp.status_code == 200
+    return resp.json()
+
+
+def test_create_then_list_returns_persisted_org(client: TestClient) -> None:
+    org = _instantiate(client, name="Acme Editorial")
+    resp = client.post("/api/v2/orgs", json={"org": org})
+    assert resp.status_code == 201
+    saved = resp.json()
+    assert saved["id"] == org["id"]
+    listing = client.get("/api/v2/orgs").json()
+    assert listing["count"] == 1
+    assert listing["orgs"][0]["id"] == org["id"]
+
+
+def test_create_duplicate_returns_409(client: TestClient) -> None:
+    org = _instantiate(client, name="Once")
+    client.post("/api/v2/orgs", json={"org": org})
+    resp = client.post("/api/v2/orgs", json={"org": org})
+    assert resp.status_code == 409
+
+
+def test_get_unknown_org_returns_404(client: TestClient) -> None:
+    resp = client.get("/api/v2/orgs/org_does_not_exist")
+    assert resp.status_code == 404
+
+
+def test_get_persisted_org_round_trips(client: TestClient) -> None:
+    org = _instantiate(client, name="Round Trip")
+    client.post("/api/v2/orgs", json={"org": org})
+    got = client.get(f"/api/v2/orgs/{org['id']}").json()
+    assert got["id"] == org["id"]
+    assert got["name"] == "Round Trip"
+
+
+def test_patch_updates_name_and_description(client: TestClient) -> None:
+    org = _instantiate(client, name="Old")
+    client.post("/api/v2/orgs", json={"org": org})
+    resp = client.patch(
+        f"/api/v2/orgs/{org['id']}",
+        json={"name": "New", "description": "now editorial"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "New"
+    assert body["description"] == "now editorial"
+
+
+def test_patch_unknown_org_returns_404(client: TestClient) -> None:
+    resp = client.patch("/api/v2/orgs/org_does_not_exist", json={"name": "x"})
+    assert resp.status_code == 404
+
+
+def test_delete_removes_org(client: TestClient) -> None:
+    org = _instantiate(client, name="Will Delete")
+    client.post("/api/v2/orgs", json={"org": org})
+    del_resp = client.delete(f"/api/v2/orgs/{org['id']}")
+    assert del_resp.status_code == 204
+    assert client.get(f"/api/v2/orgs/{org['id']}").status_code == 404
+
+
+def test_delete_unknown_org_returns_404(client: TestClient) -> None:
+    resp = client.delete("/api/v2/orgs/org_does_not_exist")
+    assert resp.status_code == 404
+
+
+def test_create_returns_400_on_malformed_payload(client: TestClient) -> None:
+    resp = client.post("/api/v2/orgs", json={"org": {"id": "x"}})
+    assert resp.status_code == 400
+
+
+def test_crud_returns_404_when_v2_disabled(disabled_client: TestClient) -> None:
+    assert disabled_client.get("/api/v2/orgs").status_code == 404
+    assert disabled_client.post("/api/v2/orgs", json={"org": {}}).status_code == 404
+    assert disabled_client.get("/api/v2/orgs/x").status_code == 404
+    assert disabled_client.patch("/api/v2/orgs/x", json={}).status_code == 404
+    assert disabled_client.delete("/api/v2/orgs/x").status_code == 404

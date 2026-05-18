@@ -23,15 +23,18 @@ Why a separate module instead of adding endpoints to ``orgs.py``:
 
 Endpoints (all gated by ``runtime_v2_enabled``):
 
-``GET  /api/v2/orgs/templates``                  list TemplateSpec records
-``GET  /api/v2/orgs/templates/{id}``              one TemplateSpec
-``POST /api/v2/orgs/templates/{id}/instantiate``  -> fresh OrgV2
+``GET    /api/v2/orgs/templates``                   list TemplateSpec records
+``GET    /api/v2/orgs/templates/{id}``               one TemplateSpec
+``POST   /api/v2/orgs/templates/{id}/instantiate``   -> fresh OrgV2 (not persisted)
+``POST   /api/v2/orgs``                              persist an instantiated org
+``GET    /api/v2/orgs``                              list persisted orgs
+``GET    /api/v2/orgs/{id}``                         get one persisted org
+``PATCH  /api/v2/orgs/{id}``                         patch name / description
+``DELETE /api/v2/orgs/{id}``                         delete one persisted org
 
-The instantiate endpoint never persists. Phase 7 adds a
-``/api/v2/orgs`` resource with full CRUD on top of the
-``runtime/checkpoint`` store; for now the route lets the frontend
-preview a template (e.g. for the "create org" wizard) and let the
-caller decide where to persist the result.
+Persistence layer: :mod:`openakita.runtime.orgs` (JSON file under
+``data/orgs_v2.json``). Phase 7 upgrades this to the SQLite-backed
+checkpointer; the API contract stays the same.
 """
 
 from __future__ import annotations
@@ -43,6 +46,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from openakita.config import settings
+from openakita.runtime.orgs import OrgNotFound, get_default_store
 from openakita.runtime.templates import (
     GLOBAL_REGISTRY,
     TemplateValidationError,
@@ -198,12 +202,11 @@ def get_template(template_id: str) -> dict[str, Any]:
 def instantiate_template(template_id: str, body: _InstantiateBody) -> dict[str, Any]:
     """Mint a fresh :class:`OrgV2` from the template and return it.
 
-    The returned org is *not* persisted — Phase 7 will add a separate
-    ``POST /api/v2/orgs`` endpoint that persists. Today the editor
-    posts to this endpoint to get the resolved structure (with fresh
-    ULIDs and overrides applied), then either renders it for review
-    or immediately POSTs it to the legacy persistence layer through
-    a one-time bridge.
+    The returned org is *not* persisted — pass it to ``POST /api/v2/
+    orgs`` to commit it to the store. Today the editor posts to this
+    endpoint to get the resolved structure (with fresh ULIDs and
+    overrides applied), then either renders it for review or
+    immediately POSTs it to the persistence endpoint.
     """
     _require_v2_enabled()
     _ensure_registry_bootstrapped()
@@ -232,3 +235,103 @@ def instantiate_template(template_id: str, body: _InstantiateBody) -> dict[str, 
             detail=str(exc),
         ) from exc
     return org.to_jsonable()
+
+
+# ---------------------------------------------------------------------------
+# OrgV2 resource CRUD
+# ---------------------------------------------------------------------------
+
+
+class _CreateOrgBody(BaseModel):
+    """Persist an already-instantiated OrgV2 returned by
+    :func:`instantiate_template`. Posting the raw ``to_jsonable()``
+    payload back here is the canonical create flow."""
+
+    org: dict[str, Any] = Field(
+        ...,
+        description="The OrgV2 payload returned by /templates/{id}/instantiate.",
+    )
+
+
+class _PatchOrgBody(BaseModel):
+    """Whitelisted patch surface. Nodes/edges/defaults regen via the
+    template instantiate flow rather than mutating in place."""
+
+    name: str | None = Field(default=None, min_length=1)
+    description: str | None = None
+
+
+@router.get("", summary="List persisted v2 organisations")
+def list_orgs() -> dict[str, Any]:
+    _require_v2_enabled()
+    store = get_default_store()
+    items = [org.to_jsonable() for org in store.list()]
+    return {"orgs": items, "count": len(items)}
+
+
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Persist a v2 organisation")
+def create_org(body: _CreateOrgBody) -> dict[str, Any]:
+    _require_v2_enabled()
+    from openakita.runtime.models import OrgV2
+
+    try:
+        org = OrgV2.from_jsonable(body.org)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid OrgV2 payload: {exc}",
+        ) from exc
+    store = get_default_store()
+    try:
+        saved = store.create(org)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    return saved.to_jsonable()
+
+
+@router.get("/{org_id}", summary="Get a persisted v2 organisation")
+def get_org(org_id: str) -> dict[str, Any]:
+    _require_v2_enabled()
+    try:
+        org = get_default_store().get(org_id)
+    except OrgNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return org.to_jsonable()
+
+
+@router.patch("/{org_id}", summary="Patch a v2 organisation (name / description)")
+def patch_org(org_id: str, body: _PatchOrgBody) -> dict[str, Any]:
+    _require_v2_enabled()
+    try:
+        org = get_default_store().patch(
+            org_id, name=body.name, description=body.description
+        )
+    except OrgNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return org.to_jsonable()
+
+
+@router.delete(
+    "/{org_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a persisted v2 organisation",
+)
+def delete_org(org_id: str) -> None:
+    _require_v2_enabled()
+    try:
+        get_default_store().delete(org_id)
+    except OrgNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return None
