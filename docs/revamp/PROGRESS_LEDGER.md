@@ -157,7 +157,8 @@ long-tail Decision cascade; ``core/reasoning_engine.py`` collapses to a thin laz
 | `5906b606` | P-RC-5 P5.0c | test(parity): exercise runtime/llm/failover.py through real Brain (N6) | +85 / -1 (test_brain_parity.py +N6 fixture + stub LLMClient + endpoint-info parity) | +1 (test_failover_endpoint_info_parity) | ADR-0001, ADR-0003 |
 | `44bbb7cb` | P-RC-5 P5.1 | refactor(runtime): convert state_graph.py to package + scaffold guards/ + reasoning_nodes/ | +43 / -2 (state_graph -> package; new guards/__init__ + agent/reasoning_nodes/__init__ docstrings) | 0 | ADR-0002, ADR-0007 |
 | `dd580538` | P-RC-5 P5.2 | refactor(runtime/state_graph/guards): extract source-tag consistency + regex patterns | +180 (_text_patterns.py + source_tag.py + 19 new tests) / -49 (legacy bodies replaced by 3 re-imports); core/reasoning_engine 8725 -> 8676; baseline rebased | +19 (5 text_patterns + 14 source_tag incl. 10 parity cases) | ADR-0001, ADR-0002 |
-| _this commit_ | P-RC-5 P5.3a | refactor(runtime/state_graph/guards): extract tool-failure ack + successful-tool aggregator | +175 (tool_failure_ack.py) / -107 (4 legacy bodies replaced with re-imports); core/reasoning_engine 8676 -> 8565; baseline rebased | 0 (tests follow in P5.3b) | ADR-0001, ADR-0002 |
+| `80412fd5` | P-RC-5 P5.3a | refactor(runtime/state_graph/guards): extract tool-failure ack + successful-tool aggregator | +175 (tool_failure_ack.py) / -107 (4 legacy bodies replaced with re-imports); core/reasoning_engine 8676 -> 8565; baseline rebased | 0 (tests follow in P5.3b) | ADR-0001, ADR-0002 |
+| _this commit_ | P-RC-5 P5.3b | test(runtime/state_graph/guards): 20 cases for tool-failure ack + successful-tool aggregator | +133 (test_tool_failure_ack.py) | +20 (8 ack parity + 5 ack negative + 1 banner shape + 1 word-list anchors + 5 successful-tool + 1 successful-tool parity) | ADR-0001 |
 
 ## P-RC-6 — Phase 2 real slim-down: agent.py
 
