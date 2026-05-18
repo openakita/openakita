@@ -11,7 +11,7 @@
     "src/openakita/core/_context_manager_legacy.py": 0,
     "src/openakita/core/_reasoning_engine_legacy.py": 0,
     "src/openakita/core/_tool_executor_legacy.py": 0,
-    "src/openakita/core/agent.py": 9602,
+    "src/openakita/core/agent.py": 9433,
     "src/openakita/core/brain.py": 26,
     "src/openakita/core/context_manager.py": 36,
     "src/openakita/core/reasoning_engine.py": 25,

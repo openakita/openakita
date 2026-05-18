@@ -191,7 +191,8 @@ commit_guard WARN/REJECT documentation).
 | `be9c1b13` | P-RC-6 P6.0a | chore(revamp): bump ledger to P-RC-6 + close N11 (legacy LOC visibility) and N12 (commit_guard docs) | +60 / -7 (TRACKED_FILES + INFO_ONLY_FILES + commit_guard docstring + baseline cleanup + ledger header + section + Discipline N12) | 0 | --- |
 | `89038ecc` | P-RC-6 P6.0b | test(parity): 5 non-trivial reasoning fixtures + non-triviality structural assertion (N9) | +136 (5 JSON fixtures + structural test) | +11 (10 parity + 1 structural) | --- |
 | `89ddd95f` | P-RC-6 P6.0c | test(parity): diff-test sanity wrapper proving parity infrastructure catches divergence (N10) | +135 (new test_parity_diffability.py with 3 xfail-strict cases) | +3 (xfailed) | --- |
-| _this commit_ | P-RC-6 P6.1a | refactor(runtime/desktop): scaffold runtime/desktop package + attachments helpers (extracted from core.agent) | +284 (new runtime/desktop/__init__.py + attachments.py) | 0 (tests follow in P6.1c) | ADR-0002, ADR-0003 |
+| `d64ed7df` | P-RC-6 P6.1a | refactor(runtime/desktop): scaffold runtime/desktop package + attachments helpers (extracted from core.agent) | +284 (new runtime/desktop/__init__.py + attachments.py) | 0 (tests follow in P6.1c) | ADR-0002, ADR-0003 |
+| _this commit_ | P-RC-6 P6.1b | refactor(core/agent): delegate attachment helpers to runtime.desktop.attachments | +15 (alias block) / -184 (legacy helper bodies); core/agent.py 9602 -> 9433; baseline rebased | 0 | ADR-0002, ADR-0003 |
 
 ## P-RC-7 — Caller migration + legacy bulk delete
 

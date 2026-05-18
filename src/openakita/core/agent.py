@@ -496,190 +496,21 @@ def _looks_like_external_tool_request(message: str) -> bool:
     return any(marker in text for marker in _EXTERNAL_TOOL_MARKERS)
 
 
-# ---- 本地图片附件 → data URL（BUG-1 修复） ----
-# 上传到 /api/uploads/<name> 的图片只能在本机通过 HTTP 访问，
-# 远端云模型（通义/OpenAI vision）无法回调 127.0.0.1，会报 InvalidParameter。
-# 本函数把这类本地 URL 解析回磁盘文件并转为 data URL；超过阈值或失败时返回 None。
-_LOCAL_UPLOAD_RE = re.compile(
-    r"^(?:https?://(?:127\.0\.0\.1|localhost|0\.0\.0\.0)(?::\d+)?)?/api/uploads/([\w\-.]+)$",
-    re.IGNORECASE,
+# Desktop / IM attachment routing -- helpers moved to
+# runtime.desktop.attachments (P-RC-6 P6.1a). The legacy private
+# names below are aliases for backward compatibility with the
+# tests/unit/test_desktop_attachment_*.py units that import them
+# directly as ``from openakita.core.agent import _format_desktop_attachment_reference``.
+# The aliases drop in P-RC-7 alongside the wider core/ legacy removal.
+from ..runtime.desktop.attachments import (
+    DATA_URI_RE as _DATA_URI_RE,
+    INLINE_IMAGE_MAX_BYTES as _INLINE_IMAGE_MAX_BYTES,
+    LOCAL_UPLOAD_RE as _LOCAL_UPLOAD_RE,
+    format_desktop_attachment_reference as _format_desktop_attachment_reference,
+    maybe_inline_local_image as _maybe_inline_local_image,
+    safe_attachment_stem as _safe_attachment_stem,
+    save_data_uri_attachment as _save_data_uri_attachment,
 )
-_INLINE_IMAGE_MAX_BYTES = 5 * 1024 * 1024  # 5 MB，超出走文本降级
-
-
-_DATA_URI_RE = re.compile(
-    r"^data:(?P<mime>[^;,]+)?(?P<params>(?:;[^,]*)*),(?P<data>.*)$",
-    re.DOTALL,
-)
-
-
-def _maybe_inline_local_image(att_url: str, att_mime: str) -> str | None:
-    """If *att_url* points to a locally served upload, return a base64 data URL.
-
-    Returns None when the URL is not local, file is missing/too large, or
-    any IO error occurs — caller falls back to its existing degraded path.
-    """
-    if not att_url or att_url.startswith("data:"):
-        return None
-    m = _LOCAL_UPLOAD_RE.match(att_url.strip())
-    if not m:
-        return None
-    filename = m.group(1)
-    try:
-        from ..api.routes.upload import get_upload_dir
-
-        upload_dir = get_upload_dir().resolve()
-        filepath = (upload_dir / filename).resolve()
-        filepath.relative_to(upload_dir)  # 防穿越
-        if not filepath.is_file():
-            return None
-        size = filepath.stat().st_size
-        if size > _INLINE_IMAGE_MAX_BYTES:
-            logger.info(
-                "[InlineImage] skip %s: %.1f MB exceeds limit",
-                filename, size / 1024 / 1024,
-            )
-            return None
-        mime = att_mime or ""
-        if not mime.startswith("image/"):
-            import mimetypes
-            mime = mimetypes.guess_type(str(filepath))[0] or "image/png"
-        data = filepath.read_bytes()
-        b64 = base64.b64encode(data).decode("ascii")
-        return f"data:{mime};base64,{b64}"
-    except Exception as exc:
-        logger.warning("[InlineImage] failed to inline %s: %s", att_url, exc)
-        return None
-
-
-def _safe_attachment_stem(filename: str) -> str:
-    stem = Path(filename or "attachment").stem or "attachment"
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")
-    return stem[:80] or "attachment"
-
-
-def _save_data_uri_attachment(
-    att_url: str,
-    *,
-    att_name: str,
-    att_mime: str,
-) -> dict[str, Any] | None:
-    """Persist non-media data URI attachments and return a short local reference.
-
-    Desktop/API clients should normally upload files through /api/upload. This
-    fallback prevents old clients from replaying large base64 payloads into the
-    LLM prompt while still preserving the file for tools to inspect.
-    """
-    match = _DATA_URI_RE.match((att_url or "").strip())
-    if not match:
-        return None
-
-    try:
-        import mimetypes
-        from urllib.parse import unquote_to_bytes
-
-        from ..api.routes.upload import (
-            BLOCKED_EXTENSIONS,
-            MAX_UPLOAD_SIZE,
-            get_upload_dir,
-        )
-
-        mime = (att_mime or match.group("mime") or "application/octet-stream").strip()
-        payload = match.group("data") or ""
-        params = (match.group("params") or "").lower()
-        if ";base64" in params:
-            raw = base64.b64decode(payload, validate=False)
-        else:
-            raw = unquote_to_bytes(payload)
-
-        if len(raw) > MAX_UPLOAD_SIZE:
-            logger.warning(
-                "[DesktopAttachment] data URI attachment %s exceeds upload limit: %.1f MB",
-                att_name,
-                len(raw) / 1024 / 1024,
-            )
-            return None
-
-        original = Path(att_name or "attachment")
-        suffix = original.suffix.lower()
-        if suffix in BLOCKED_EXTENSIONS:
-            suffix = ".bin"
-        if not suffix:
-            suffix = mimetypes.guess_extension(mime) or ".bin"
-
-        filename = (
-            f"{int(time.time())}_{uuid.uuid4().hex[:8]}_"
-            f"{_safe_attachment_stem(att_name)}{suffix}"
-        )
-        filepath = get_upload_dir() / filename
-        filepath.write_bytes(raw)
-        return {
-            "url": f"/api/uploads/{filename}",
-            "local_path": str(filepath),
-            "mime_type": mime,
-            "size": len(raw),
-        }
-    except Exception as exc:
-        logger.warning(
-            "[DesktopAttachment] failed to persist data URI attachment %s: %s",
-            att_name,
-            exc,
-        )
-        return None
-
-
-def _format_desktop_attachment_reference(
-    *,
-    att_type: str,
-    att_name: str,
-    att_mime: str,
-    att_url: str,
-    att_local_path: str | None = None,
-    att_size: int | None = None,
-) -> str:
-    """Return a prompt-safe text reference for non-image/video attachments."""
-    if (att_url or "").strip().startswith("data:"):
-        saved = _save_data_uri_attachment(att_url, att_name=att_name, att_mime=att_mime)
-        if saved:
-            return (
-                f"[附件: {att_name} ({saved['mime_type']})，"
-                f"已保存到本地路径: {saved['local_path']}，"
-                f"URL: {saved['url']}，大小: {saved['size']} bytes。"
-                "如需读取内容，请使用文件或数据处理工具打开该本地路径。]"
-            )
-        return (
-            f"[附件: {att_name} ({att_mime or att_type}) 是内联 data URI，"
-            "为避免超大 base64 内容进入模型上下文，已隐藏原始内容。"
-            "请使用上传文件 URL 或重新上传附件后继续处理。]"
-        )
-
-    local_path = att_local_path
-    if not local_path and att_url:
-        try:
-            from ..api.routes.upload import resolve_upload_path
-
-            resolved = resolve_upload_path(att_url)
-            if resolved:
-                local_path = str(resolved)
-                att_size = resolved.stat().st_size
-        except Exception as exc:
-            logger.debug("[DesktopAttachment] failed to resolve upload path %s: %s", att_url, exc)
-
-    if att_type == "document":
-        label = "文档"
-    elif att_type == "voice" or (att_mime or "").startswith("audio/"):
-        label = "音频"
-    else:
-        label = "附件"
-
-    size_text = f"，大小: {att_size} bytes" if att_size is not None else ""
-    if local_path:
-        return (
-            f"[{label}: {att_name} ({att_mime or att_type})，"
-            f"已保存到本地路径: {local_path}，URL: {att_url or '无'}{size_text}。"
-            "如需读取、转写或分析，请直接使用文件/音频处理工具打开该本地路径。]"
-        )
-    return f"[{label}: {att_name} ({att_mime or att_type})] URL: {att_url}"
 
 
 # 上下文管理常量（部分迁移至 context_manager.py，压缩相关仍需就地定义）
