@@ -9,7 +9,7 @@ import pytest
 
 from openakita.runtime.cancel_token import CancellationToken, CancelledByToken
 from openakita.runtime.checkpoint import MemoryCheckpointer
-from openakita.runtime.messenger import NodeAddress, NodeMessage
+from openakita.runtime.messenger import MessengerNode, NodeAddress, NodeMessage
 from openakita.runtime.models import NodeStatus
 from openakita.runtime.nodes import (
     BaseNode,
@@ -65,7 +65,7 @@ class _Slow(BaseNode):
     async def handle_message(
         self, ctx: NodeContext, msg: NodeMessage
     ) -> DelegationResult:
-        await self.emit_progress(ctx, {"phase": "started"})
+        await self.emit_progress({"phase": "started"})
         for _ in range(5):
             ctx.cancel_token.raise_if_cancelled()
             await asyncio.sleep(0)
@@ -97,30 +97,20 @@ def _msg(*, instruction: str = "do it") -> NodeMessage:
 
 
 class _StreamCollector:
-    """Small helper: subscribe in the background and collect events.
-
-    Use ``async with _StreamCollector(stream, "lifecycle") as c:`` to
-    start, then await the actions, then ``await c.flush(n)`` to grab
-    the first ``n`` events. The collector closes the stream on exit so
-    the background consumer terminates.
-    """
+    """Subscribe in the background and collect events."""
 
     def __init__(self, stream: StreamBus, *channels: str) -> None:
         self._stream = stream
         self._channels = channels
         self._events: list[StreamEvent] = []
-        self._ready = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
     async def __aenter__(self) -> _StreamCollector:
         async def consume() -> None:
             async for ev in self._stream.subscribe(*self._channels):
-                if not self._ready.is_set():
-                    self._ready.set()
                 self._events.append(ev)
 
         self._task = asyncio.create_task(consume())
-        # Yield once so the subscriber attaches before tests emit.
         await asyncio.sleep(0)
         await asyncio.sleep(0.01)
         return self
@@ -152,6 +142,12 @@ def test_basenode_satisfies_protocol() -> None:
     assert isinstance(node, NodeProtocol)
 
 
+def test_basenode_is_drop_in_messenger_node() -> None:
+    """Critical: BaseNode must be drop-in for MessengerNode (1-arg signatures)."""
+    node = _Echo(node_id="n-1", org_id="org-1", role="echoer")
+    assert isinstance(node, MessengerNode)
+
+
 def test_registration_record_carries_role_and_workbench() -> None:
     plain = _Echo(node_id="n-1", org_id="org-1", role="r")
     assert plain.registration() == NodeRegistration(
@@ -172,11 +168,12 @@ def test_registration_record_carries_role_and_workbench() -> None:
 
 
 @pytest.mark.asyncio
-async def test_first_message_auto_activates_and_emits_lifecycle() -> None:
+async def test_activation_then_message_emits_full_lifecycle() -> None:
     stream, ctx = _make_ctx()
     async with _StreamCollector(stream, "lifecycle") as collector:
         node = _Echo(node_id="n-1", org_id="org-1", role="echoer")
-        result = await node.on_message(ctx, _msg())
+        await node.on_activate(ctx)
+        result = await node.on_message(_msg())
         events = await collector.flush(4)
     assert result.success
     assert result.message == "echo: do it"
@@ -192,15 +189,12 @@ async def test_first_message_auto_activates_and_emits_lifecycle() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explicit_activation_then_message_skips_double_activate() -> None:
+async def test_message_before_activation_returns_failure_without_emitting() -> None:
     stream, ctx = _make_ctx()
-    async with _StreamCollector(stream, "lifecycle") as collector:
-        node = _Echo(node_id="n-1", org_id="org-1", role="echoer")
-        await node.on_activate(ctx)
-        await node.on_message(ctx, _msg())
-        events = await collector.flush(4)
-    types = [e.type for e in events]
-    assert types.count(NodeLifecycleEvent.ACTIVATED.value) == 1
+    node = _Echo(node_id="n-1", org_id="org-1", role="echoer")
+    result = await node.on_message(_msg())
+    assert not result.success
+    assert "before activation" in result.message
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +211,8 @@ async def test_unexpected_exception_promotes_to_error_status() -> None:
             org_id="org-1",
             exc=RuntimeError("boom"),
         )
-        result = await node.on_message(ctx, _msg())
+        await node.on_activate(ctx)
+        result = await node.on_message(_msg())
         events = await collector.flush(4)
     assert not result.success
     assert "RuntimeError" in result.message
@@ -241,8 +236,9 @@ async def test_cancel_token_observed_inside_handle_message() -> None:
     stream, ctx = _make_ctx(cancel=cancel)
     async with _StreamCollector(stream, "lifecycle") as collector:
         node = _Slow(node_id="n-1", org_id="org-1")
+        await node.on_activate(ctx)
         cancel.cancel("user pressed stop")
-        result = await node.on_message(ctx, _msg())
+        result = await node.on_message(_msg())
         events = await collector.flush(5)
     assert not result.success
     assert "user pressed stop" in result.message
@@ -256,9 +252,10 @@ async def test_explicit_cancel_is_idempotent() -> None:
     stream, ctx = _make_ctx()
     async with _StreamCollector(stream, "lifecycle") as collector:
         node = _Echo(node_id="n-1", org_id="org-1")
-        await node.on_cancel(ctx, "first")
-        await node.on_cancel(ctx, "second")
-        events = await collector.flush(1)
+        await node.on_activate(ctx)
+        await node.on_cancel("first")
+        await node.on_cancel("second")
+        events = await collector.flush(3)
     types = [e.type for e in events]
     assert types.count(NodeLifecycleEvent.CANCELLED.value) == 1
 
@@ -273,8 +270,8 @@ async def test_message_after_cancel_returns_failure_without_executing() -> None:
     stream, ctx = _make_ctx()
     node = _Echo(node_id="n-1", org_id="org-1")
     await node.on_activate(ctx)
-    await node.on_cancel(ctx, "stop")
-    result = await node.on_message(ctx, _msg())
+    await node.on_cancel("stop")
+    result = await node.on_message(_msg())
     assert not result.success
     assert "cancelled" in result.message
     assert node.status is NodeStatus.CANCELLED
@@ -290,7 +287,7 @@ async def test_save_and_load_state_round_trip() -> None:
     stream, ctx = _make_ctx()
     src = _Echo(node_id="n-1", org_id="org-1", role="echoer")
     await src.on_activate(ctx)
-    await src.on_message(ctx, _msg())
+    await src.on_message(_msg())
     state = await src.save_state()
     fresh = _Echo(node_id="n-1", org_id="org-1", role="echoer")
     await fresh.load_state(state)
@@ -309,7 +306,8 @@ async def test_emit_progress_records_timestamp_and_event() -> None:
     stream, ctx = _make_ctx()
     async with _StreamCollector(stream, "lifecycle") as collector:
         node = _Slow(node_id="n-1", org_id="org-1")
-        await node.on_message(ctx, _msg())
+        await node.on_activate(ctx)
+        await node.on_message(_msg())
         events = await collector.flush(5)
     types = [e.type for e in events]
     assert NodeLifecycleEvent.PROGRESS.value in types
@@ -328,7 +326,8 @@ async def test_base_handle_message_is_abstract_in_practice() -> None:
 
     stream, ctx = _make_ctx()
     node = _Bare(node_id="n-1", org_id="org-1")
-    result = await node.on_message(ctx, _msg())
+    await node.on_activate(ctx)
+    result = await node.on_message(_msg())
     assert not result.success
     assert "NotImplementedError" in result.message
     assert node.status is NodeStatus.ERROR
@@ -348,7 +347,8 @@ async def test_handle_message_raising_cancelled_by_token_routes_to_on_cancel() -
         org_id="org-1",
         exc=CancelledByToken("explicit"),
     )
-    result = await node.on_message(ctx, _msg())
+    await node.on_activate(ctx)
+    result = await node.on_message(_msg())
     assert not result.success
     assert "explicit" in result.message
     assert node.status is NodeStatus.CANCELLED

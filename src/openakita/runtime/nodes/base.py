@@ -126,34 +126,35 @@ class NodeRegistration:
 
 @runtime_checkable
 class NodeProtocol(Protocol):
-    """Lifecycle and execution contract for a runtime node (ADR-0007)."""
+    """Lifecycle and execution contract for a runtime node (ADR-0007).
+
+    The protocol is *messenger-compatible*: ``on_message`` and
+    ``on_cancel`` take a single argument because the messenger
+    (ADR-0007 + :mod:`runtime.messenger`) does not know about
+    per-organization context. The node binds its
+    :class:`NodeContext` once in :meth:`on_activate` and re-reads it
+    on every message.
+    """
 
     node_id: str
     node_type: str
     org_id: str
 
     async def on_activate(self, ctx: NodeContext) -> None: ...
-    """Called once when the node becomes part of an active run.
+    """Bind the per-run context and announce readiness.
 
-    Implementations may load resources, prime caches, register
-    custom guardrails, etc. MUST emit
-    ``NodeLifecycleEvent.ACTIVATED`` on the lifecycle channel."""
+    MUST emit :class:`NodeLifecycleEvent.ACTIVATED` on the lifecycle
+    channel and store ``ctx`` so subsequent ``on_message`` / ``on_cancel``
+    calls have access to the stream, checkpointer, cancel token, and
+    command/org identifiers."""
 
-    async def on_message(
-        self, ctx: NodeContext, msg: NodeMessage
-    ) -> DelegationResult: ...
+    async def on_message(self, message: NodeMessage) -> DelegationResult: ...
     """Process exactly one delegation.
 
-    Implementations:
-        - emit at least one ``updates`` event so the activity feed
-          reflects work happened (mandatory per ADR-0006);
-        - check ``ctx.cancel_token.is_cancelled()`` at safe points and
-          return early on cooperative cancel;
-        - return a :class:`DelegationResult` whose ``success`` field
-          accurately reflects the outcome so the supervisor's
-          guardrail / replan path sees the right signal."""
+    Signature matches :class:`runtime.messenger.MessengerNode` so the
+    messenger can dispatch without an extra context argument."""
 
-    async def on_cancel(self, ctx: NodeContext, reason: str) -> None: ...
+    async def on_cancel(self, reason: str) -> None: ...
     """Cooperative cancel hook. Idempotent."""
 
     async def save_state(self) -> dict[str, Any]: ...
@@ -210,6 +211,7 @@ class BaseNode:
         self.last_seen: datetime | None = None
         self.last_progress_at: datetime | None = None
         self._activated: bool = False
+        self._ctx: NodeContext | None = None
 
     # ------------------------------------------------------------------
     # Subclass hooks
@@ -232,21 +234,20 @@ class BaseNode:
         raise NotImplementedError
 
     async def on_activate(self, ctx: NodeContext) -> None:
-        """Default: emit ACTIVATED, mark IDLE. Override to pre-load."""
+        """Bind ``ctx`` and emit ACTIVATED + IDLE. Override to pre-load."""
+        self._ctx = ctx
         self._activated = True
         self.status = NodeStatus.IDLE
         self.last_seen = datetime.now(UTC)
-        await self._emit_lifecycle(ctx, NodeLifecycleEvent.ACTIVATED, {})
-        await self._emit_lifecycle(ctx, NodeLifecycleEvent.IDLE, {})
+        await self._emit_lifecycle(NodeLifecycleEvent.ACTIVATED, {})
+        await self._emit_lifecycle(NodeLifecycleEvent.IDLE, {})
 
-    async def on_cancel(self, ctx: NodeContext, reason: str) -> None:
+    async def on_cancel(self, reason: str) -> None:
         """Default cooperative cancel. Idempotent."""
         if self.status is NodeStatus.CANCELLED:
             return
         self.status = NodeStatus.CANCELLED
-        await self._emit_lifecycle(
-            ctx, NodeLifecycleEvent.CANCELLED, {"reason": reason}
-        )
+        await self._emit_lifecycle(NodeLifecycleEvent.CANCELLED, {"reason": reason})
 
     async def save_state(self) -> dict[str, Any]:
         """Default: surface the public lifecycle fields. Override to add."""
@@ -277,12 +278,25 @@ class BaseNode:
     # Protocol entry points
     # ------------------------------------------------------------------
 
-    async def on_message(
-        self, ctx: NodeContext, msg: NodeMessage
-    ) -> DelegationResult:
-        """Default: lifecycle-wrapped invocation of :meth:`handle_message`."""
-        if not self._activated:
-            await self.on_activate(ctx)
+    async def on_message(self, message: NodeMessage) -> DelegationResult:
+        """Lifecycle-wrapped invocation of :meth:`handle_message`.
+
+        Reads the per-run :class:`NodeContext` previously bound by
+        :meth:`on_activate`. If a node receives a message before it
+        has been activated, it returns a failure result rather than
+        raising — the supervisor will surface that to the user via the
+        normal failure path.
+        """
+        if not self._activated or self._ctx is None:
+            return DelegationResult(
+                success=False,
+                speaker=self.node_id,
+                message=(
+                    f"node {self.node_id} received a message before activation"
+                ),
+                metadata={"correlation_id": message.correlation_id},
+            )
+        ctx = self._ctx
         if self.status in (NodeStatus.OFFLINE, NodeStatus.CANCELLED):
             return DelegationResult(
                 success=False,
@@ -291,22 +305,23 @@ class BaseNode:
                     f"node {self.node_id} is in terminal status "
                     f"{self.status.value}"
                 ),
-                metadata={"correlation_id": msg.correlation_id},
+                metadata={"correlation_id": message.correlation_id},
             )
         self.status = NodeStatus.BUSY
         self.last_seen = datetime.now(UTC)
         await self._emit_lifecycle(
-            ctx, NodeLifecycleEvent.BUSY, {"correlation_id": msg.correlation_id}
+            NodeLifecycleEvent.BUSY,
+            {"correlation_id": message.correlation_id},
         )
         try:
-            result = await self.handle_message(ctx, msg)
+            result = await self.handle_message(ctx, message)
         except CancelledByToken as exc:
-            await self.on_cancel(ctx, exc.reason)
+            await self.on_cancel(exc.reason)
             return DelegationResult(
                 success=False,
                 speaker=self.node_id,
                 message=f"cancelled: {exc.reason}",
-                metadata={"correlation_id": msg.correlation_id},
+                metadata={"correlation_id": message.correlation_id},
             )
         except BaseException as exc:  # noqa: BLE001 — see docstring
             logger.exception(
@@ -314,27 +329,28 @@ class BaseNode:
             )
             self.status = NodeStatus.ERROR
             await self._emit_lifecycle(
-                ctx,
                 NodeLifecycleEvent.ERROR,
                 {
                     "exception": type(exc).__name__,
                     "message": str(exc)[:512],
-                    "correlation_id": msg.correlation_id,
+                    "correlation_id": message.correlation_id,
                 },
             )
             return DelegationResult(
                 success=False,
                 speaker=self.node_id,
                 message=f"{type(exc).__name__}: {exc}",
-                metadata={"correlation_id": msg.correlation_id},
+                metadata={"correlation_id": message.correlation_id},
             )
         # Success-path lifecycle bookkeeping.
         self.last_progress_at = datetime.now(UTC)
         self.status = NodeStatus.IDLE
         await self._emit_lifecycle(
-            ctx,
             NodeLifecycleEvent.IDLE,
-            {"correlation_id": msg.correlation_id, "success": result.success},
+            {
+                "correlation_id": message.correlation_id,
+                "success": result.success,
+            },
         )
         return result
 
@@ -351,9 +367,7 @@ class BaseNode:
     # Helpers exposed to subclasses
     # ------------------------------------------------------------------
 
-    async def emit_progress(
-        self, ctx: NodeContext, payload: dict[str, Any]
-    ) -> None:
+    async def emit_progress(self, payload: dict[str, Any]) -> None:
         """Refresh the lifecycle UI on long operations.
 
         Subclasses call this from inside :meth:`handle_message` for
@@ -363,11 +377,14 @@ class BaseNode:
         per-node) does not promote the node to SUSPECT prematurely.
         """
         self.last_progress_at = datetime.now(UTC)
-        await self._emit_lifecycle(ctx, NodeLifecycleEvent.PROGRESS, payload)
+        await self._emit_lifecycle(NodeLifecycleEvent.PROGRESS, payload)
 
     async def _emit_lifecycle(
-        self, ctx: NodeContext, type_: NodeLifecycleEvent, payload: dict[str, Any]
+        self, type_: NodeLifecycleEvent, payload: dict[str, Any]
     ) -> None:
+        ctx = self._ctx
+        if ctx is None:
+            return
         await ctx.stream.emit(
             "lifecycle",
             type_.value,
