@@ -96,7 +96,8 @@ runs identical cases against both backends.
 | `723fd1d5` | P-RC-3 P3.4 | feat(runtime/orgs): add SqliteOrgStore mirroring JsonOrgStore contract | +371 (sqlite_store + tests) | +9 (CRUD + concurrent + reopen + corrupted) | ADR-0010 |
 | `fea6a347` | P-RC-3 P3.5 | feat(runtime/orgs): contract suite shared across Json + Sqlite stores | +205 / -1 (contract test + sqlite trailing nl) | +18 (9 cases x 2 backends) | ADR-0010 |
 | `a0339d12` | P-RC-3 P3.6 | feat(runtime/orgs): pluggable backend via settings.orgs_v2_backend (json|sqlite) | +138 / -17 (config + factory + tests) | +6 (config + factory dispatch) | ADR-0010 |
-| _this commit_ | P-RC-3 P3.7 | feat(scripts): migrate_orgs_v2_json_to_sqlite (idempotent) | +338 (script + tests + rollback) | +5 (migrate fresh/idempotent/dry-run/malformed/empty) | ADR-0010 |
+| `4e6d665c` | P-RC-3 P3.7 | feat(scripts): migrate_orgs_v2_json_to_sqlite (idempotent) | +340 / -1 (script + tests + rollback) | +5 (migrate fresh/idempotent/dry-run/malformed/empty) | ADR-0010 |
+| _this commit_ | P-RC-3 P3.8 | docs(revamp): G-RC-3 gate review + STATUS scoreboard update | +246 (G-RC-3) + 1 row (STATUS) + sqlite warm-up test harden | 0 | — |
 
 ## P-RC-4 — Phase 2 real slim-down: brain / tools / context
 

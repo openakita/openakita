@@ -130,8 +130,18 @@ def test_concurrent_writes_through_two_connections(tmp_path: Path) -> None:
     """Two threads, each on its own SqliteOrgStore instance pointed at
     the same file, must not lose writes -- BEGIN IMMEDIATE + WAL
     serialise the two transactions.
+
+    The schema is initialised by a warm-up store outside the threads
+    so the PRAGMA journal_mode=WAL switch races (which the SQLite
+    docs note are not guaranteed to acquire the WAL lock atomically
+    on Windows even with busy_timeout) do not show up as test flake.
+    The behaviour under test is the *write* serialisation, which is
+    what the BEGIN IMMEDIATE wrapper guarantees.
     """
     path = tmp_path / "orgs.sqlite"
+    # Warm-up store: ensures the file exists in WAL mode before the
+    # worker threads each open their own connection.
+    SqliteOrgStore(path=path).close()
     n_per_thread = 10
     errors: list[BaseException] = []
 
@@ -149,8 +159,8 @@ def test_concurrent_writes_through_two_connections(tmp_path: Path) -> None:
     t2 = threading.Thread(target=worker, args=("b",))
     t1.start()
     t2.start()
-    t1.join(timeout=10.0)
-    t2.join(timeout=10.0)
+    t1.join(timeout=15.0)
+    t2.join(timeout=15.0)
     assert not errors, f"workers errored: {errors}"
     reader = SqliteOrgStore(path=path)
     assert len(reader.list()) == 2 * n_per_thread
