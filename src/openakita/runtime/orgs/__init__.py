@@ -1,23 +1,27 @@
-"""Runtime v2 organisation persistence layer.
+"""Runtime v2 organisation surfaces.
 
-Two interchangeable backends share the same duck-typed contract
-(list / get / create / patch / delete + close). The default is the
-process-local :class:`JsonOrgStore` (a single ``data/orgs_v2.json``
-file under :data:`settings.data_dir`). Operators can opt into the
-multi-process-safe :class:`SqliteOrgStore` by setting
-``ORGS_V2_BACKEND=sqlite`` in ``.env`` (P-RC-3).
-
-Use :func:`get_default_store` to fetch the process-wide singleton;
-use :func:`reset_default_store` to swap backend / path in tests.
+* **Org entity persistence** (P-RC-3): :class:`JsonOrgStore` /
+  :class:`SqliteOrgStore` -- duck-typed contract list / get /
+  create / patch / delete + close. Default JSON; opt into SQLite
+  via ``ORGS_V2_BACKEND=sqlite``.
+* **Org subsystem models** (P-RC-9 P9.1a0): the shared
+  :class:`MemoryScope` / :class:`MemoryType` /
+  :class:`OrgMemoryEntry` dataclass used by the P9.1
+  :class:`OrgBlackboard` (added in the next commit) and by the
+  parity / contract test harnesses.
 """
 
 from __future__ import annotations
 
+from .memory_models import MemoryScope, MemoryType, OrgMemoryEntry
 from .sqlite_store import SqliteOrgStore
 from .store import JsonOrgStore, OrgNotFound, get_default_store, reset_default_store
 
 __all__ = [
     "JsonOrgStore",
+    "MemoryScope",
+    "MemoryType",
+    "OrgMemoryEntry",
     "OrgNotFound",
     "SqliteOrgStore",
     "get_default_store",

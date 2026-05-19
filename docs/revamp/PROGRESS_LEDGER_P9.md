@@ -54,3 +54,15 @@ current_phase: P-RC-9
 |---|---|---|---|---|---|
 | ``ff8f695a`` | P-RC-10 charter | docs(revamp): write P-RC-10 charter for runtime/ hygiene flattening (v2.1.0 prep) | +309 (new ``P-RC-10-CHARTER.md`` 272 + STATUS.md 27 + ledger 11) | 0 | --- (planning; previews ADR-0014) |
 | _this commit_ | P-RC-9 Q-lock | docs(revamp): lock in Q-A/Q-B/Q-C defaults + write Q_DECISIONS.md ledger | +~250 (new ``Q_DECISIONS.md`` + P-RC-9-PLAN.md section 7 ACCEPTED markers + ledger) | 0 | --- (paperwork; cites ADR-0011/0012/0013 indirectly via plan section 7) |
+
+## P9.1 -- OrgBlackboard (charter subsystem #1)
+
+> Implements ADR-0011 subsystem #1 (charter section 1).
+> Replaces v1 ``openakita.orgs.blackboard.OrgBlackboard`` (344
+> LOC, 19 methods) with a Protocol-typed, backend-pluggable v2
+> surface under ``runtime/orgs/`` while preserving v1''s public
+> sync API verbatim (parity gate per P-RC-9-PLAN section 0.2).
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-9 P9.1a0 | feat(runtime/orgs): add v2 memory models (MemoryScope/Type/OrgMemoryEntry) | +150 (memory_models.py NEW + __init__.py exports) | 0 | ADR-0011 (subsystem decomposition; this is the shared model layer) |
