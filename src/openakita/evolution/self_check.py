@@ -19,8 +19,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from ..agent.brain import Brain
 from ..config import settings
-from ..core.brain import Brain
 from ..tools.file import FileTool
 from ..tools.shell import ShellTool
 from .log_analyzer import ErrorPattern, LogAnalyzer
@@ -1446,7 +1446,7 @@ ID: {result.test_id}
         for attempt in range(max_retries):
             agent = None
             try:
-                from ..core.agent import Agent
+                from ..agent.core import Agent
 
                 agent = Agent()
                 await agent.initialize(start_scheduler=False)

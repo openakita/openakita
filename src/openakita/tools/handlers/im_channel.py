@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING, Any, Optional
 from ...core.policy_v2 import ApprovalClass
 
 if TYPE_CHECKING:
+    from ...agent.core import Agent
     from ...channels.base import ChannelAdapter
-    from ...core.agent import Agent
 
 logger = logging.getLogger(__name__)
 

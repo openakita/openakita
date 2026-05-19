@@ -30,7 +30,7 @@ from ...core.policy_v2 import ApprovalClass
 from ...memory.json_utils import coerce_text, coerce_tool_names
 
 if TYPE_CHECKING:
-    from ...core.agent import Agent
+    from ...agent.core import Agent
 
 logger = logging.getLogger(__name__)
 

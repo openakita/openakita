@@ -34,7 +34,7 @@ from .group_response import GroupResponseMode, SmartModeThrottle
 from .types import MediaStatus, MessageContent, OutgoingMessage, UnifiedMessage
 
 if TYPE_CHECKING:
-    from ..core.brain import Brain
+    from ..agent.brain import Brain
     from ..llm.stt_client import STTClient
     from .dm_pairing import DMPairingManager
     from .media_parser import MediaParseResult

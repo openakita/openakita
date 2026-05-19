@@ -32,7 +32,7 @@ from ...core.policy_v2 import ApprovalClass
 from ..path_safety import resolve_within_root
 
 if TYPE_CHECKING:
-    from ...core.agent import Agent
+    from ...agent.core import Agent
 
 logger = logging.getLogger(__name__)
 
@@ -557,7 +557,7 @@ class FilesystemHandler:
             return text
 
         total_lines = len(lines)
-        from ...core.tool_executor import save_overflow
+        from ...agent.tools import save_overflow
 
         overflow_path = save_overflow("run_shell", text)
         truncated = "\n".join(lines[: self.SHELL_MAX_LINES])
@@ -965,7 +965,7 @@ class FilesystemHandler:
         output = header + "\n".join(lines)
 
         if len(output.split("\n")) > self.SHELL_MAX_LINES:
-            from ...core.tool_executor import save_overflow
+            from ...agent.tools import save_overflow
 
             overflow_path = save_overflow("grep", output)
             truncated = "\n".join(output.split("\n")[: self.SHELL_MAX_LINES])

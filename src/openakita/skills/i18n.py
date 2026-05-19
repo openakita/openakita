@@ -21,7 +21,7 @@ import yaml
 from ..utils.atomic_io import safe_write
 
 if TYPE_CHECKING:
-    from ..core.brain import Brain
+    from ..agent.brain import Brain
 
 logger = logging.getLogger(__name__)
 
