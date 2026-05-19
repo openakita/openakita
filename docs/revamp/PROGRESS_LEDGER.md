@@ -2,7 +2,7 @@
 
 <!-- machine-readable phase marker; do NOT remove.
      Parsed by tests/revamp/_ledger.py + tests/parity/test_no_facade.py. -->
-current_phase: P-RC-7
+current_phase: P-RC-8
 
 > Source of truth for every commit landed on `revamp/v2` during
 > the post-RC continuation phases (P-RC-0 → P-RC-8). One row per
@@ -246,9 +246,22 @@ the residual-risk note.
 | `a21cdd4b` | P-RC-7 P7.14 | refactor(core): `git rm` 5 lazy shim files (agent.py, brain.py, context_manager.py, reasoning_engine.py, tool_executor.py = 169 LOC total) + drop 5 LOC_BASELINE rows + 5 TRACKED_FILES rows | -179 (5 shim files deleted + 10 audit-script rows removed) | 0 | ADR-0001, ADR-0003 |
 | `5fdfc00c` | P-RC-7 P7.15 | docs(revamp): G-RC-7 gate review + STATUS.md scoreboard (P-RC-7 close; auto-signoff with R-RC-7-A `orgs/` + R-RC-7-B `supervisor.py` deletions deferred to P-RC-8) | +296 (G-RC-7.md) +2 (STATUS row) +2 (ledger row backfill + P7.15) | 0 | ADR-0001, ADR-0003 |
 
-## P-RC-8 — Endgame (renames, docs, acceptance, release)
+## P-RC-8 — Endgame (audit nits + docs + acceptance + release tag)
 
-_Not started._
+G-RC-7 was signed; this phase closes the three P-RC-7 audit nits
+(N-G7-1 v2-only Brain endpoint-info smoke, N-G7-2 supervisor.py
+rename-not-delete, N-G7-3 evolution/log_analyzer dead string
+prefixes), flips ADR-0001..0010 from Status: Proposed to Accepted,
+writes ACCEPTANCE.md against the original plan section 9 criteria,
+writes a P-RC-9 charter documenting the deferred orgs/ integral
+migration, updates RELEASE_v2.md to v2.0.0-rc2, signs G-RC-8, and
+cuts a local v2.0.0-rc2 tag. The R-RC-7-A orgs/ migration is
+explicitly OUT OF SCOPE and documented as a separate P-RC-9 plan
+that requires writing 6 new v2 subsystems (~4-6 weeks).
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-8 P8.0 | chore(revamp): bump ledger to P-RC-8 + close P-RC-7 audit nits (N-G7-1/2/3) | +30 (test_brain.py) +6 (LOC audit TRACKED_FILES/INFO_ONLY_FILES) +1 (legacy import retarget) +8 (4 test files supervisor import) +2 (log_analyzer prefixes) +ledger | +1 (smoke test_brain_get_current_endpoint_info_smoke) | --- |
 
 ## Discipline reminders (auto-collected by audits)
 

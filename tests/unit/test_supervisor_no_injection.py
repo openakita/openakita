@@ -5,7 +5,7 @@
 导致模型行为退化（缩短回答、减少工具调用）。已移除全部注入逻辑。
 """
 
-from openakita.core.supervisor import (
+from openakita.core._supervisor_legacy import (
     Intervention,
     InterventionLevel,
     PatternType,

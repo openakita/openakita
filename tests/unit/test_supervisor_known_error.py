@@ -5,7 +5,7 @@ and TERMINATE (>=3) when failures match KNOWN_ERROR_PATTERNS, while keeping
 the original 8-window/3-threshold STRATEGY_SWITCH path for normal failures.
 """
 
-from openakita.core.supervisor import (
+from openakita.core._supervisor_legacy import (
     InterventionLevel,
     PatternType,
     RuntimeSupervisor,

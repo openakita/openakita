@@ -35,6 +35,7 @@ from ..llm.converters.tools import PARSE_ERROR_KEY
 from ..tracing.tracer import get_tracer
 from ._context_manager_legacy import ContextManager
 from ._context_manager_legacy import _CancelledError as _CtxCancelledError
+from ._supervisor_legacy import TOKEN_ANOMALY_THRESHOLD, RuntimeSupervisor
 from .agent_state import AgentState, TaskState, TaskStatus
 from .errors import UserCancelledError
 from .loop_budget_guard import LoopBudgetGuard
@@ -47,7 +48,6 @@ from .response_handler import (
     strip_internal_trace_markers,
     strip_thinking_tags,
 )
-from .supervisor import TOKEN_ANOMALY_THRESHOLD, RuntimeSupervisor
 
 # 不产出"最终交付物"的管理类工具集合 —— 用于：
 #   1) ``tools_executed_in_task`` 标记（仅这些工具被调用 → 视为本轮无实质执行）

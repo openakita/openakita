@@ -64,6 +64,7 @@ TRACKED_FILES: list[str] = [
     "src/openakita/core/_context_manager_legacy.py",
     "src/openakita/core/_reasoning_engine_legacy.py",
     "src/openakita/core/_agent_legacy.py",
+    "src/openakita/core/_supervisor_legacy.py",
     "src/openakita/orgs/runtime.py",
     "src/openakita/orgs/tool_handler.py",
     "src/openakita/orgs/templates.py",
@@ -94,6 +95,7 @@ INFO_ONLY_FILES: set[str] = {
     "src/openakita/core/_context_manager_legacy.py",
     "src/openakita/core/_reasoning_engine_legacy.py",
     "src/openakita/core/_agent_legacy.py",
+    "src/openakita/core/_supervisor_legacy.py",
 }
 
 # Sentinel for the informational-only budget: large enough that any

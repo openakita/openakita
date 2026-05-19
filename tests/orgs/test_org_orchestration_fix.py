@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from openakita.config import settings
-from openakita.core.supervisor import (
+from openakita.core._supervisor_legacy import (
     POLL_FRIENDLY_TOOLS,
     InterventionLevel,
     RuntimeSupervisor,
