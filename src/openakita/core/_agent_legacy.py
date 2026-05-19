@@ -32,6 +32,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..sessions import Session
 
+from openakita.agent.confirmation import (
+    get_confirmation_store,  # P7.7: break circular import via canonical home
+)
+
 from ..config import settings
 
 # 记忆系统
@@ -94,7 +98,6 @@ from ..tools.shell import ShellTool
 from ..tools.web import WebTool
 from .agent_state import AgentState
 from .brain import Brain, Context
-from .confirmation_state import get_confirmation_store
 from .context_manager import ContextManager
 from .context_manager import _CancelledError as _CtxCancelledError
 from .context_utils import get_max_context_tokens as _shared_get_max_context_tokens
