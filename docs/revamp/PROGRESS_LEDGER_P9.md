@@ -4,6 +4,8 @@
      Parsed by tests/revamp/_ledger.py + tests/parity/test_no_facade.py. -->
 current_phase: P-RC-9
 
+> **Sub-phase status (2026-05-19, G-RC-9.1 sign-off)**: P9.0 closed, P9.1 closed, P-RC-10 charter recorded, Q-A/Q-B/Q-C locked in. **HARD STOP** -- P9.2 ProjectStore NOT started; awaiting operator review of `docs/revamp/gates/G-RC-9.1.md` before resuming.
+
 > Source of truth for every commit landed on ``revamp/v3-orgs``
 > during the P-RC-9 ``src/openakita/orgs/`` integral migration.
 > One row per commit, in commit order. Each row is appended *in
@@ -70,4 +72,5 @@ current_phase: P-RC-9
 | ``57977dd0`` | P-RC-9 P9.1b | feat(runtime/orgs): complete v2 OrgBlackboard with concurrency + schema validation (JsonFile half) | +202 (blackboard.py +198/-4 + ledger +3) | 0 | ADR-0011; ADR-0013 |
 | ``d1c8f235`` | P-RC-9 P9.1b2 | feat(runtime/orgs): add SqliteBlackboardBackend + get_default_blackboard_backend factory | +237 (blackboard.py +230 + __init__.py +4 + ledger +3) | 0 (sqlite smoke run during commit prep) | ADR-0011; ADR-0012 |
 | ``7f3445e3`` | P-RC-9 P9.1c | test(parity/orgs): activate 8 blackboard parity fixtures (xfail -> pass) | +229 (test_blackboard_parity.py REPLACE: 18-line xfail placeholder -> 228-line fixture suite + ledger +3) | +8 / -1 xfail | ADR-0011; ADR-0013 |
-| _this commit_ | P-RC-9 P9.1d | test(runtime/orgs): add 12 blackboard contract tests covering both backends | +348 (test_blackboard_contract.py NEW 345 + ledger +3) | +24 (12 cases x 2 backends; json + sqlite parametrised) | ADR-0011 (cross-backend observational equivalence); ADR-0012 (sqlite backend smoke-tested via every test) |
+| ``272b108e`` | P-RC-9 P9.1d | test(runtime/orgs): add 12 blackboard contract tests covering both backends | +351 (test_blackboard_contract.py NEW 345 + ledger +3) | +24 | ADR-0011; ADR-0012 |
+| _this commit_ | P-RC-9 G-RC-9.1 | docs(revamp): write G-RC-9.1 mini-gate (P9.1 OrgBlackboard sign-off) | +189 (G-RC-9.1.md NEW 186 + ledger +3) | 0 | ADR-0011; ADR-0012; ADR-0013 |
