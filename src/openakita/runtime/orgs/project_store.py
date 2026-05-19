@@ -22,7 +22,9 @@ Commit split (≤380 LOC per step):
 * P9.2b -- tree / query half: ``all_tasks``,
   ``find_task_by_chain``, ``get_task``, ``get_subtasks``,
   ``get_task_tree``, ``get_ancestors``, ``recalc_progress``.
-* P9.2c -- :class:`SqliteProjectStore` + factory.
+* P9.2c (this commit) -- :class:`SqliteProjectStore`.
+* P9.2c2 -- ``get_default_project_store`` /
+  ``reset_default_project_stores`` factory + per-org cache.
 
 ADR refs: ADR-0011 (Protocol-typed subsystem decomposition),
 ADR-0012 (orgs/ deletion strategy -- no shim under v1).
@@ -32,13 +34,19 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from .project_models import OrgProject, ProjectTask, TaskStatus, now_iso
 
-__all__ = ["JsonProjectStore", "ProjectStoreProtocol"]
+__all__ = [
+    "JsonProjectStore",
+    "ProjectStoreProtocol",
+    "SqliteProjectStore",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -435,3 +443,365 @@ class JsonProjectStore:
         """
         with self._lock:
             self._closed = True
+
+
+# ---------------------------------------------------------------------------
+# SQLite backend (cross-process safe via WAL + BEGIN IMMEDIATE)
+# ---------------------------------------------------------------------------
+
+
+_SQLITE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS projects (
+    id          TEXT PRIMARY KEY,
+    org_id      TEXT NOT NULL,
+    payload     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tasks (
+    id              TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    parent_task_id  TEXT,
+    chain_id        TEXT,
+    status          TEXT NOT NULL,
+    payload         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks (project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent  ON tasks (parent_task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_chain   ON tasks (chain_id);
+"""
+
+
+class SqliteProjectStore:
+    """SQLite-backed projects store; cross-process safe via WAL.
+
+    Schema is split: ``projects`` holds the project header (id,
+    org_id, payload without tasks), ``tasks`` holds each task as
+    a single row keyed by ``id`` with indexed ``project_id`` /
+    ``parent_task_id`` / ``chain_id`` for the v1 query surface.
+    Public methods are 1:1 with :class:`JsonProjectStore`; the
+    P9.2e contract test runs the same 18 cases against both
+    backends.
+    """
+
+    def __init__(self, db_path: Path | str) -> None:
+        self._db_path = Path(db_path)
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False, isolation_level=None)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._conn.executescript(_SQLITE_SCHEMA)
+        self._closed = False
+
+    # ----- write transaction helper -----
+    @contextmanager
+    def _write_txn(self):
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+            except Exception:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+            else:
+                self._conn.execute("COMMIT")
+
+    # ----- project payload helpers -----
+    @staticmethod
+    def _proj_to_header_payload(proj: OrgProject) -> str:
+        """Project payload sans tasks (tasks live in their own table)."""
+        d = proj.to_dict()
+        d.pop("tasks", None)
+        return json.dumps(d, ensure_ascii=False)
+
+    def _hydrate_project(self, row: tuple) -> OrgProject:
+        pid, _org_id, payload, _updated_at = row
+        proj = OrgProject.from_dict(json.loads(payload))
+        proj.id = pid
+        task_rows = self._conn.execute(
+            "SELECT payload FROM tasks WHERE project_id=?", (pid,)
+        ).fetchall()
+        proj.tasks = [ProjectTask.from_dict(json.loads(p)) for (p,) in task_rows]
+        return proj
+
+    # ----- project CRUD -----
+    def list_projects(self) -> list[OrgProject]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, org_id, payload, updated_at FROM projects"
+            ).fetchall()
+            return [self._hydrate_project(r) for r in rows]
+
+    def get_project(self, project_id: str) -> OrgProject | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, org_id, payload, updated_at FROM projects WHERE id=?",
+                (project_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return self._hydrate_project(row)
+
+    def create_project(self, proj: OrgProject) -> OrgProject:
+        with self._write_txn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO projects (id, org_id, payload, updated_at)"
+                " VALUES (?, ?, ?, ?)",
+                (proj.id, proj.org_id, self._proj_to_header_payload(proj), proj.updated_at),
+            )
+            for t in proj.tasks:
+                t.project_id = proj.id
+                self._upsert_task(conn, t)
+            return proj
+
+    def update_project(self, project_id: str, updates: dict) -> OrgProject | None:
+        with self._lock:
+            proj = self.get_project(project_id)
+            if not proj:
+                return None
+            for k, v in updates.items():
+                if k == "tasks":
+                    continue
+                if hasattr(proj, k):
+                    setattr(proj, k, v)
+            proj.updated_at = now_iso()
+            with self._write_txn() as conn:
+                conn.execute(
+                    "UPDATE projects SET payload=?, org_id=?, updated_at=? WHERE id=?",
+                    (
+                        self._proj_to_header_payload(proj),
+                        proj.org_id,
+                        proj.updated_at,
+                        project_id,
+                    ),
+                )
+            return proj
+
+    def delete_project(self, project_id: str) -> bool:
+        with self._write_txn() as conn:
+            cur = conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+            if (cur.rowcount or 0) == 0:
+                return False
+            conn.execute("DELETE FROM tasks WHERE project_id=?", (project_id,))
+            return True
+
+    # ----- task helpers -----
+    @staticmethod
+    def _upsert_task(conn: sqlite3.Connection, task: ProjectTask) -> None:
+        conn.execute(
+            "INSERT OR REPLACE INTO tasks"
+            " (id, project_id, parent_task_id, chain_id, status, payload)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                task.id,
+                task.project_id,
+                task.parent_task_id,
+                task.chain_id,
+                task.status.value,
+                json.dumps(task.to_dict(), ensure_ascii=False),
+            ),
+        )
+
+    def add_task(self, project_id: str, task: ProjectTask) -> ProjectTask | None:
+        with self._write_txn() as conn:
+            proj_row = conn.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone()
+            if not proj_row:
+                return None
+            task.project_id = project_id
+            self._upsert_task(conn, task)
+            conn.execute(
+                "UPDATE projects SET updated_at=? WHERE id=?",
+                (now_iso(), project_id),
+            )
+            return task
+
+    def update_task(self, project_id: str, task_id: str, updates: dict) -> ProjectTask | None:
+        with self._write_txn() as conn:
+            row = conn.execute(
+                "SELECT payload FROM tasks WHERE id=? AND project_id=?",
+                (task_id, project_id),
+            ).fetchone()
+            if not row:
+                return None
+            t = ProjectTask.from_dict(json.loads(row[0]))
+            new_status_raw = updates.get("status")
+            new_status: TaskStatus | None = None
+            if isinstance(new_status_raw, TaskStatus):
+                new_status = new_status_raw
+            elif isinstance(new_status_raw, str):
+                try:
+                    new_status = TaskStatus(new_status_raw)
+                except ValueError:
+                    new_status = None
+            for k, v in updates.items():
+                if not hasattr(t, k):
+                    continue
+                if k == "status" and isinstance(v, str):
+                    try:
+                        v = TaskStatus(v)
+                    except ValueError:
+                        continue
+                setattr(t, k, v)
+            if new_status is not None:
+                now = now_iso()
+                if new_status == TaskStatus.IN_PROGRESS and not t.started_at:
+                    t.started_at = now
+                elif new_status == TaskStatus.DELIVERED and not t.delivered_at:
+                    t.delivered_at = now
+                elif new_status == TaskStatus.ACCEPTED and not t.completed_at:
+                    t.completed_at = now
+            self._upsert_task(conn, t)
+            conn.execute(
+                "UPDATE projects SET updated_at=? WHERE id=?",
+                (now_iso(), project_id),
+            )
+            return t
+
+    def delete_task(self, project_id: str, task_id: str) -> bool:
+        with self._write_txn() as conn:
+            cur = conn.execute(
+                "DELETE FROM tasks WHERE id=? AND project_id=?",
+                (task_id, project_id),
+            )
+            if (cur.rowcount or 0) == 0:
+                return False
+            conn.execute(
+                "UPDATE projects SET updated_at=? WHERE id=?",
+                (now_iso(), project_id),
+            )
+            return True
+
+    # ----- queries / tree -----
+    def all_tasks(
+        self,
+        status: str | None = None,
+        assignee: str | None = None,
+        chain_id: str | None = None,
+        parent_task_id: str | None = None,
+        root_only: bool = False,
+        delegated_by: str | None = None,
+        project_id: str | None = None,
+    ) -> list[dict]:
+        with self._lock:
+            proj_meta: dict[str, tuple[str, str]] = {}
+            for pid, payload in self._conn.execute("SELECT id, payload FROM projects").fetchall():
+                d = json.loads(payload)
+                proj_meta[pid] = (d.get("name", ""), d.get("project_type", "temporary"))
+            sql = "SELECT payload, project_id FROM tasks WHERE 1=1"
+            args: list[object] = []
+            if status:
+                sql += " AND status=?"
+                args.append(status)
+            if chain_id:
+                sql += " AND chain_id=?"
+                args.append(chain_id)
+            if parent_task_id is not None:
+                sql += " AND parent_task_id=?"
+                args.append(parent_task_id)
+            if project_id:
+                sql += " AND project_id=?"
+                args.append(project_id)
+            rows = self._conn.execute(sql, args).fetchall()
+        result: list[dict] = []
+        for payload, pid in rows:
+            d = json.loads(payload)
+            if assignee and d.get("assignee_node_id") != assignee:
+                continue
+            if root_only and d.get("parent_task_id") is not None:
+                continue
+            if delegated_by is not None and d.get("delegated_by") != delegated_by:
+                continue
+            meta = proj_meta.get(pid, ("", "temporary"))
+            d["project_name"] = meta[0]
+            d["project_type"] = meta[1]
+            result.append(d)
+        return result
+
+    def find_task_by_chain(self, chain_id: str) -> ProjectTask | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM tasks WHERE chain_id=? LIMIT 1",
+                (chain_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return ProjectTask.from_dict(json.loads(row[0]))
+
+    def get_task(self, task_id: str) -> tuple[ProjectTask | None, OrgProject | None]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload, project_id FROM tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
+            if not row:
+                return None, None
+            task = ProjectTask.from_dict(json.loads(row[0]))
+            proj = self.get_project(row[1])
+            return task, proj
+
+    def get_subtasks(self, parent_task_id: str) -> list[ProjectTask]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM tasks WHERE parent_task_id=?",
+                (parent_task_id,),
+            ).fetchall()
+        return [ProjectTask.from_dict(json.loads(p)) for (p,) in rows]
+
+    def get_task_tree(self, task_id: str) -> dict:
+        task, proj = self.get_task(task_id)
+        if not task:
+            return {}
+        node: dict = task.to_dict()
+        node["project_name"] = proj.name if proj else ""
+        node["children"] = [self.get_task_tree(child.id) for child in self.get_subtasks(task_id)]
+        return node
+
+    def get_ancestors(self, task_id: str) -> list[ProjectTask]:
+        result: list[ProjectTask] = []
+        seen: set[str] = set()
+        task, _ = self.get_task(task_id)
+        while task and task.parent_task_id:
+            if task.parent_task_id in seen:
+                break
+            seen.add(task.parent_task_id)
+            parent, _ = self.get_task(task.parent_task_id)
+            if not parent:
+                break
+            result.append(parent)
+            task = parent
+        return result
+
+    def recalc_progress(self, task_id: str) -> int | None:
+        with self._lock:
+            task, proj = self.get_task(task_id)
+            if not task or not proj:
+                return None
+            children = self.get_subtasks(task_id)
+            if not children:
+                return task.progress_pct
+            total = sum(
+                100 if c.status == TaskStatus.ACCEPTED else c.progress_pct for c in children
+            )
+            new_pct = total // len(children)
+            task.progress_pct = new_pct
+            with self._write_txn() as conn:
+                self._upsert_task(conn, task)
+                conn.execute(
+                    "UPDATE projects SET updated_at=? WHERE id=?",
+                    (now_iso(), task.project_id),
+                )
+            return new_pct
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                self._conn.close()
+            except sqlite3.Error:
+                pass
