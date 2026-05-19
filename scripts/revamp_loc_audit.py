@@ -55,11 +55,6 @@ BASELINE_PATH = ROOT / "docs" / "revamp" / "LOC_BASELINE.json"
 # Files we track. Order matters only for the printed table; the
 # rules below are keyed by path prefix.
 TRACKED_FILES: list[str] = [
-    "src/openakita/core/agent.py",
-    "src/openakita/core/reasoning_engine.py",
-    "src/openakita/core/brain.py",
-    "src/openakita/core/tool_executor.py",
-    "src/openakita/core/context_manager.py",
     # Legacy renames preserved during the phased rewrite -- listed here
     # for visibility only (N11 P-RC-6 audit fix). The audit prints their
     # current LOC in the table but never enforces a cap on them; they
