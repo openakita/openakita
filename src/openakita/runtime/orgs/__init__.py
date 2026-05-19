@@ -42,10 +42,20 @@
     contract; six methods stubbed -- bodies ride P9.6beta).
     See ADR-0014 for the budget revision driving the
     seven-sibling decomposition.
+  - P9.6b ships the :class:`InMemoryEventBus` /
+    :class:`WebSocketEventBus` real-backend pair + the
+    ``get_default_event_bus`` factory in
+    ``_runtime_event_bus.py`` (the Protocol contract is in
+    ``runtime.py`` P9.6a0).
 """
 
 from __future__ import annotations
 
+from ._runtime_event_bus import (
+    InMemoryEventBus,
+    WebSocketEventBus,
+    get_default_event_bus,
+)
 from .blackboard import (
     MAX_DEPT_MEMORIES,
     MAX_NODE_MEMORIES,
@@ -192,6 +202,7 @@ __all__ = [
     "get_default_project_store",
     "get_default_store",
     "get_org_manager",
+    "get_default_event_bus",
     "get_runtime",
     "new_command_id",
     "new_project_id",
@@ -202,7 +213,9 @@ __all__ = [
     "reset_default_store",
     "set_command_service",
     "EventBusProtocol",
+    "InMemoryEventBus",
     "NodeLifecycleProtocol",
     "OrgRuntime",
     "RuntimeStateProtocol",
+    "WebSocketEventBus",
 ]
