@@ -65,4 +65,5 @@ current_phase: P-RC-9
 
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
-| _this commit_ | P-RC-9 P9.1a0 | feat(runtime/orgs): add v2 memory models (MemoryScope/Type/OrgMemoryEntry) | +150 (memory_models.py NEW + __init__.py exports) | 0 | ADR-0011 (subsystem decomposition; this is the shared model layer) |
+| ``040256b2`` | P-RC-9 P9.1a0 | feat(runtime/orgs): add v2 memory models (MemoryScope/Type/OrgMemoryEntry) | +162 (memory_models.py NEW 127 + __init__.py +17/-10 + ledger) | 0 | ADR-0011 (subsystem decomposition; this is the shared model layer) |
+| _this commit_ | P-RC-9 P9.1a | feat(runtime/orgs): scaffold BlackboardProtocol + minimal v2 implementation | +312 (blackboard.py NEW 288 + __init__.py +20/-5) | 0 (smoke import only, no test additions) | ADR-0011 (Protocol-typed subsystem); ADR-0012 (no shim under v1) |
