@@ -24,8 +24,8 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
+from .agent.core import Agent
 from .config import settings
-from .core.agent import Agent
 from .logging import setup_logging
 
 # MCP stdio 子进程模式：stdout 专属 JSONRPC 协议，禁止一切控制台日志输出

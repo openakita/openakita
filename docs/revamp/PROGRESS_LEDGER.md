@@ -267,6 +267,7 @@ that requires writing 6 new v2 subsystems (~4-6 weeks).
 | `483b8b13` | P-RC-8 P8.4 | docs(revamp): write P-RC-9 charter for deferred orgs/ integral migration | +169 / -1 (new P-RC-9-CHARTER.md + STATUS.md scoreboard pointer + ledger row) | 0 | --- (charter, not implementing) |
 | `df4e1bf1` | P-RC-8 P8.5 | docs(revamp): update RELEASE_v2.md to v2.0.0-rc2 + acceptance summary | +113 / -3 (new rc2 section prepended + rc1 H1 demoted + STATUS.md P-RC-8 row bump + ledger row) | 0 | ADR-0001 (overall) |
 | _this commit_ | P-RC-8 P8.6 | docs(revamp): G-RC-8 final gate review (continuation plan endgame) | +281 (new gates/G-RC-8.md) +1 (STATUS.md P-RC-8 row -> Complete) +ledger | 0 | ADR-0001 (overall close-out) |
+| _this commit_ | P-RC-8 P8.7-fix | fix(entrypoints): repair core.agent -> agent.core in main.py + mcp_server.py (P8.7-fix release blocker) | +56 / -2 (1-line redirect x2 + new tests/integration/test_entrypoints.py 50 LOC + ledger) | +3 (entry-point smoke: main import, mcp_server import, cli --help) | ADR-0003 (entry points are stable consumers of agent.core.Agent) |
 
 ## Discipline reminders (auto-collected by audits)
 

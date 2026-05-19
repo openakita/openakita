@@ -72,7 +72,7 @@ class MCPServer:
     async def _ensure_agent(self):
         if self._agent is not None:
             return
-        from .core.agent import Agent
+        from .agent.core import Agent
 
         self._agent = Agent()
         await self._agent.initialize(start_scheduler=False)
