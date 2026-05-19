@@ -33,6 +33,36 @@ See `docs/adr/0001-...md`..`docs/adr/0010-...md`; original Proposed status flip 
 | P-RC-7 — Caller migration + shim removal | **Complete (G-RC-7 signed)** | 15 (P7.0a/b/c nits + 7 caller-migration directories + 1 circular-import fix + mass test migration + final test mop-up + internal-import retarget + 3 obsolete parity tests deleted + 47-caller residual + 5-shim delete) | 1363 / 1363 + 44 skipped + 5 xfailed (-22 vs P-RC-6; removals are 3 obsolete test_*_parity.py shim-resolution tests whose v2-subclass invariant is now structural; the 2 failures (test_memory_manager::test_delete_nonexistent, test_telegram_simple::test_bot_info) are pre-existing and unrelated to P-RC-7) |
 | P-RC-8 — Endgame (audit nits + docs + ADR flip + acceptance + release tag) | **Complete (G-RC-8 signed; v2.0.0-rc2 tag pending P8.7 shell step)** | 6 (P8.0 nits + P8.2 ADR flip + P8.3 ACCEPTANCE + P8.4 P-RC-9 charter + P8.5 RELEASE_v2 rc2 + P8.6 G-RC-8) | 1123 / 1123 + 1 skipped + 5 xfailed (+1 brain smoke vs P-RC-7) |
 
+## P-RC-9 -- orgs/ integral migration (LIVE on revamp/v3-orgs)
+
+The deferred work the P8.4 pointer describes is now **actively
+planned** on its own branch ``revamp/v3-orgs`` (forked from the
+``v2.0.0-rc2`` tag at commit ``594d5cb1``). P-RC-9 keeps its
+own paperwork separate from the P-RC-0..8 history that produced
+the v2.0.0-rc2 release:
+
+* Branch: ``revamp/v3-orgs`` (not pushed; ``revamp/v2`` and the
+  ``v2.0.0-rc1`` / ``v2.0.0-rc2`` tags remain untouched).
+* Ledger: [docs/revamp/PROGRESS_LEDGER_P9.md](PROGRESS_LEDGER_P9.md)
+  (separate from the main ``PROGRESS_LEDGER.md`` so the two
+  histories diff cleanly).
+* Recon: [docs/revamp/P-RC-9-RECON.md](P-RC-9-RECON.md) (read-only
+  analysis of the 26-file ``orgs/`` package, the 86 production
+  callers, the 89-endpoint v1 REST surface, and the 6 v2
+  subsystems the charter mandates).
+* Plan: [docs/revamp/P-RC-9-PLAN.md](P-RC-9-PLAN.md) (P9.0..P9.10
+  phase decomposition with LOC budgets and gate criteria).
+* ADRs: ADR-0011 (subsystem decomposition), ADR-0012 (orgs/
+  deletion strategy), ADR-0013 (wall-clock SLA tests).
+* Mini-gate: each phase has its own ``G-RC-9.x.md`` review
+  before the next phase opens; the full ``G-RC-9.md`` gate
+  signs the v2.0.0-rc3 release after P9.10.
+
+The original P-RC-9 deferred-work pointer below remains in place
+because operators running v2.0.0-rc2 today still pull from
+``revamp/v2`` and the legacy ``orgs/`` package is what their
+deployment uses until P-RC-9 lands.
+
 > **P-RC-9 deferred-work pointer (added at P8.4):** the wholesale ``src/openakita/orgs/`` integral migration the original plan section 8 implied is **not** executed in the continuation plan. See ``docs/revamp/P-RC-9-CHARTER.md`` for scope, estimate (4-6 weeks, ~30-50 commits, separate parity harness), and the six v2 subsystems (OrgManager / OrgRuntime / OrgCommandService / OrgBlackboard / ProjectStore / NodeScheduler) that must be written before ``orgs/`` can be deleted cleanly. Operators running v2 in production keep the legacy ``orgs/`` surface live until P-RC-9 lands.
 
 Total to date: **95+ code/docs commits on `revamp/v2`**, all
