@@ -4,7 +4,7 @@
   "files": {
     "src/openakita/agent/brain.py": 370,
     "src/openakita/agent/context.py": 336,
-    "src/openakita/agent/core.py": 58,
+    "src/openakita/agent/core.py": 336,
     "src/openakita/agent/reasoning.py": 352,
     "src/openakita/agent/tools.py": 347,
     "src/openakita/core/_agent_legacy.py": 0,
