@@ -197,7 +197,8 @@ commit_guard WARN/REJECT documentation).
 | `c6b45867` | P-RC-6 P6.2a | refactor(agent/safety): scaffold agent/safety package + destructive-intent classifier (extracted from core.agent) | +355 (new agent/safety/__init__.py + destructive_intent.py with 7 helpers) | 0 (tests follow in P6.2c) | ADR-0002, ADR-0003 |
 | `0b31a07d` | P-RC-6 P6.2b | refactor(core/agent): delegate destructive-intent gate to agent.safety.destructive_intent | +26 (alias block + ruff isort) / -250 (legacy bodies + redundant imports); core/agent.py 9433 -> 9208; baseline rebased | 0 | ADR-0002, ADR-0003 |
 | `11350920` | P-RC-6 P6.2c | test(agent/safety): 14 cases for destructive-intent helpers | +149 (new tests/agent/test_safety_destructive_intent.py) | +14 | ADR-0002, ADR-0003 |
-| _this commit_ | P-RC-6 P6.3 | refactor(core): rename agent.py to _agent_legacy.py (pre-shim move) | 0 net (pure git mv, R100) | 0 (transient red until P6.4 shim) | ADR-0001 |
+| `32c29c54` | P-RC-6 P6.3 | refactor(core): rename agent.py to _agent_legacy.py (pre-shim move) | 0 net (pure git mv, R100) | 0 (transient red, restored by P6.4) | ADR-0001 |
+| _this commit_ | P-RC-6 P6.4 | refactor(core): replace core/agent.py body with thin import shim | +27 (new shim) / 0 deletions; baseline core/agent.py 9208 -> 27, _agent_legacy.py 9208 retained info-only | 0 (gate restored) | ADR-0001 |
 
 ## P-RC-7 — Caller migration + legacy bulk delete
 
