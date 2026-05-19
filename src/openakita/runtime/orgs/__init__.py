@@ -12,8 +12,10 @@
     abstraction, default :class:`JsonFileBlackboardBackend`,
     :class:`SqliteBlackboardBackend` and the
     ``get_default_blackboard_backend`` factory.
-  - P9.2 ships :class:`ProjectStoreProtocol` + the v2 project
-    + task models. Backends and factory land in P9.2b/c.
+  - P9.2 ships :class:`ProjectStoreProtocol` + v2 project /
+    task models + :class:`JsonProjectStore`. The
+    :class:`SqliteProjectStore` backend and the
+    ``get_default_project_store`` factory land in P9.2c.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from .project_models import (
     new_project_id,
     new_task_id,
 )
+from .project_store import JsonProjectStore, ProjectStoreProtocol
 from .sqlite_store import SqliteOrgStore
 from .store import JsonOrgStore, OrgNotFound, get_default_store, reset_default_store
 
@@ -45,6 +48,7 @@ __all__ = [
     "BlackboardBackendProtocol",
     "JsonFileBlackboardBackend",
     "JsonOrgStore",
+    "JsonProjectStore",
     "MAX_DEPT_MEMORIES",
     "MAX_NODE_MEMORIES",
     "MAX_ORG_MEMORIES",
@@ -55,6 +59,7 @@ __all__ = [
     "OrgNotFound",
     "OrgProject",
     "ProjectStatus",
+    "ProjectStoreProtocol",
     "ProjectTask",
     "ProjectType",
     "SqliteBlackboardBackend",
