@@ -229,7 +229,8 @@ the residual-risk note.
 |---|---|---|---|---|---|
 | `eec1b068` | P-RC-7 P7.0a | chore(revamp): bump ledger to P-RC-7 + close N-G6-3 (core.agent shim docstring) | +33 / -7 (shim docstring rewrite + baseline rebase 27 -> 45 + ledger section + header bump) | 0 | --- |
 | `c53e1e47` | P-RC-7 P7.0b | test(parity): 2 e2e fixtures for V2Agent.classify_inbound_risk + should_skip_risk_gate (N-G6-1) | +56 (2 fixtures + probe branch) | +2 (e2e probes) | --- |
-| _this commit_ | P-RC-7 P7.0c | test(parity): diff-test sanity wrapper for V2Agent (N-G6-2) | +130 (new file, 2 xfail tests) | +2 (xfailed) | --- |
+| `3c12e579` | P-RC-7 P7.0c | test(parity): diff-test sanity wrapper for V2Agent (N-G6-2) | +130 (new file, 2 xfail tests) | +2 (xfailed) | --- |
+| _this commit_ | P-RC-7 P7.1 | refactor(sessions): retarget smart_truncate imports to openakita.agent.tools | +2 / -2 (2 production callers) | 0 | ADR-0001, ADR-0003 |
 
 ## P-RC-8 — Endgame (renames, docs, acceptance, release)
 
