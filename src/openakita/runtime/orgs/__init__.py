@@ -17,6 +17,9 @@
     :class:`SqliteProjectStore`, and the
     ``get_default_project_store`` /
     ``reset_default_project_stores`` factory.
+  - P9.3 ships v2 :class:`NodeSchedule` / :class:`ScheduleType`
+    schedule models (this commit, P9.3a0); the Protocols + the
+    :class:`OrgNodeScheduler` itself land in P9.3a/b.
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ from .project_store import (
     get_default_project_store,
     reset_default_project_stores,
 )
+from .scheduler_models import NodeSchedule, ScheduleType, new_schedule_id
 from .sqlite_store import SqliteOrgStore
 from .store import JsonOrgStore, OrgNotFound, get_default_store, reset_default_store
 
@@ -61,6 +65,7 @@ __all__ = [
     "MAX_ORG_MEMORIES",
     "MemoryScope",
     "MemoryType",
+    "NodeSchedule",
     "OrgBlackboard",
     "OrgMemoryEntry",
     "OrgNotFound",
@@ -69,6 +74,7 @@ __all__ = [
     "ProjectStoreProtocol",
     "ProjectTask",
     "ProjectType",
+    "ScheduleType",
     "SqliteBlackboardBackend",
     "SqliteOrgStore",
     "SqliteProjectStore",
@@ -77,6 +83,7 @@ __all__ = [
     "get_default_project_store",
     "get_default_store",
     "new_project_id",
+    "new_schedule_id",
     "new_task_id",
     "reset_default_project_stores",
     "reset_default_store",

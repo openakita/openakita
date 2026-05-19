@@ -4,7 +4,7 @@
      Parsed by tests/revamp/_ledger.py + tests/parity/test_no_facade.py. -->
 current_phase: P-RC-9
 
-> **Sub-phase status (2026-05-19, G-RC-9.2 sign-off)**: P9.0 closed, P9.1 closed (Nit-3 of 5 cleared; 4 ride to G-RC-9), P9.2 ProjectStore closed (parity 6/6, contract 18 x 2 = 36/36, no v1 touch). **HARD STOP** -- P9.3 NodeScheduler NOT started; awaiting operator review of `docs/revamp/gates/G-RC-9.2.md` before resuming.
+> **Sub-phase status (2026-05-19, P9.3a0 in-flight)**: P9.0 closed, P9.1 closed (Nit-3 of 5 cleared; 4 ride to G-RC-9), P9.2 closed (parity 6/6, contract 36/36), P9.3 NodeScheduler in progress (P9.3a0 lands v2 schedule models; Protocols + scaffold in P9.3a).
 
 > Source of truth for every commit landed on ``revamp/v3-orgs``
 > during the P-RC-9 ``src/openakita/orgs/`` integral migration.
@@ -109,3 +109,22 @@ current_phase: P-RC-9
 | _this commit_ | P-RC-9 P9.2e2 | test(runtime/orgs): add 8 project_store contract cases (malformed/schema/concurrent/perf) -> +16 collected tests, total 36 | +PLACEHOLDER (test_project_store_contract.py +229/-5 + ledger) | +16 | ADR-0011 (Protocol-typed subsystem); ADR-0013 (perf envelope; wall-clock concurrent-write SLA) |
 
 | _this commit_ | P-RC-9 G-RC-9.2 | docs(revamp): write G-RC-9.2 mini-gate (P9.2 ProjectStore sign-off) | +PLACEHOLDER (G-RC-9.2.md NEW 292 + ledger +3) | 0 | ADR-0011; ADR-0012; ADR-0013 |
+
+
+## P9.3 -- NodeScheduler (charter subsystem #3)
+
+> Implements ADR-0011 subsystem #3 (charter section 1).
+> Replaces v1 ``openakita.orgs.node_scheduler.OrgNodeScheduler``
+> (215 LOC, 10 methods, OrgRuntime-coupled) with a
+> Protocol-typed, dependency-injected v2 surface under
+> ``runtime/orgs/`` while preserving v1''s public sync API
+> verbatim (parity gate per P-RC-9-PLAN section 0.2 and
+> section 5.2 NodeScheduler ignore set). The three injected
+> Protocols (CommandDispatcher / ScheduleStore /
+> SchedulerRuntimeProbe) make the scheduler testable without
+> ``OrgRuntime`` and pre-position the P9.4 OrgCommandService
+> boundary.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-9 P9.3a0 | feat(runtime/orgs): add v2 schedule models (NodeSchedule/ScheduleType + monotonic-counter ULID id mint) | +PLACEHOLDER (scheduler_models.py NEW 145 + __init__.py +7 + ledger) | 0 | ADR-0011 (subsystem decomposition; shared model layer for NodeScheduler); ADR-0012 (no shim under v1); Nit-1 fold-in from G-RC-9.2 (monotonic-counter id mint) |
