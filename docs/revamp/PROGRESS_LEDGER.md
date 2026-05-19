@@ -2,7 +2,7 @@
 
 <!-- machine-readable phase marker; do NOT remove.
      Parsed by tests/revamp/_ledger.py + tests/parity/test_no_facade.py. -->
-current_phase: P-RC-6
+current_phase: P-RC-7
 
 > Source of truth for every commit landed on `revamp/v2` during
 > the post-RC continuation phases (P-RC-0 → P-RC-8). One row per
@@ -205,7 +205,29 @@ commit_guard WARN/REJECT documentation).
 
 ## P-RC-7 — Caller migration + legacy bulk delete
 
-_Not started._
+G-RC-6 was signed; this phase migrates the ~40 in-tree call sites
+that still import from the five `core.{agent,brain,reasoning_engine,
+tool_executor,context_manager}` shims onto the v2
+`openakita.agent.*` surface, fixes the one pre-existing circular
+import the P-RC-6 audit surfaced (`confirmation_state` <->
+`_agent_legacy` via `agent/__init__`), and -- once every
+production caller is moved -- deletes the five lazy `core/*.py`
+shims plus the unused `core/supervisor.py` runtime monitor (the
+v2 supervisor lives at `runtime/supervisor`). The `_*_legacy.py`
+files STAY: the v2 classes inherit from them byte-faithfully and
+their deletion is deferred to P-RC-8 (or later, after the post-RC
+burn-in window confirms no regression). Wholesale `orgs/`
+deletion is also deferred: the v1 package is ~880 KB across 26
+files with ~80 active import sites in `api/routes/orgs.py`,
+`api/server.py`, `channels/gateway.py`, and the v2
+`runtime/orgs/` package is storage-only (no manager/runtime/
+tool_handler equivalents yet), so a clean deletion is multi-week
+scope and out of P-RC-7. See `docs/revamp/gates/G-RC-7.md` for
+the residual-risk note.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-7 P7.0a | chore(revamp): bump ledger to P-RC-7 + close N-G6-3 (core.agent shim docstring) | +33 / -7 (shim docstring rewrite + baseline rebase 27 -> 45 + ledger section + header bump) | 0 | --- |
 
 ## P-RC-8 — Endgame (renames, docs, acceptance, release)
 
