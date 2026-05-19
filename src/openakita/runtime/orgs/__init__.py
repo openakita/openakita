@@ -52,6 +52,7 @@ from .node_scheduler import (
     OrgNodeScheduler,
     SchedulerRuntimeProbe,
     ScheduleStore,
+    build_schedule_prompt,
     compute_next_fire_time,
 )
 from .project_models import (
@@ -107,6 +108,7 @@ __all__ = [
     "SqliteOrgStore",
     "SqliteProjectStore",
     "TaskStatus",
+    "build_schedule_prompt",
     "compute_next_fire_time",
     "get_default_blackboard_backend",
     "get_default_project_store",

@@ -28,13 +28,14 @@ at the call site).
 Commit split (Nit-4 fold-in from G-RC-9.2: pre-split if
 projected > 350 LOC):
 
-* P9.3a (this commit) -- ``scheduler_models.py`` + the four
-  Protocols + ``compute_next_fire_time`` pure helper +
-  :class:`OrgNodeScheduler` skeleton (methods raise
-  ``NotImplementedError`` until P9.3b).
-* P9.3b -- :class:`OrgNodeScheduler` implementation
-  (``_schedule_loop`` + ``_execute_schedule`` + the seven
-  lifecycle methods).
+* P9.3a0 -- ``scheduler_models.py`` ships ``NodeSchedule`` /
+  ``ScheduleType``.
+* P9.3a -- the four Protocols + ``compute_next_fire_time``
+  pure helper + :class:`OrgNodeScheduler` skeleton (methods
+  raise ``NotImplementedError``).
+* P9.3b (this commit) -- :class:`OrgNodeScheduler` body --
+  ``_schedule_loop`` + ``_execute_schedule`` + the seven
+  lifecycle methods.
 * P9.3c -- 4 parity fixtures (xfail -> pass).
 * P9.3d -- 12 contract cases (single in-memory backend).
 * G-RC-9.3 -- mini-gate doc + ledger close.
@@ -42,7 +43,10 @@ projected > 350 LOC):
 ADR refs: ADR-0011 (Protocol-typed subsystem decomposition),
 ADR-0012 (orgs/ deletion strategy -- no shim under v1),
 ADR-0013 (wall-clock SLA: ``compute_next_fire_time`` is a pure
-function so the parity 1-ms safety net asserts deterministically).
+function so the parity 1-ms safety net asserts
+deterministically; the smart-frequency back-off bounded by
+``MAX_FREQUENCY_FACTOR * base_interval`` is the wall-clock
+ceiling).
 """
 
 from __future__ import annotations
@@ -53,7 +57,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 
-from .scheduler_models import NodeSchedule, ScheduleType
+from .scheduler_models import NodeSchedule, ScheduleType, now_iso
 
 __all__ = [
     "CLEAN_THRESHOLD",
@@ -65,6 +69,7 @@ __all__ = [
     "OrgNodeScheduler",
     "ScheduleStore",
     "SchedulerRuntimeProbe",
+    "build_schedule_prompt",
     "compute_next_fire_time",
 ]
 
@@ -169,7 +174,7 @@ class NodeSchedulerProtocol(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Pure next-fire-time helper (parity gate per P-RC-9-PLAN section 5.2)
+# Pure helpers (parity gates per P-RC-9-PLAN section 5.2)
 # ---------------------------------------------------------------------------
 
 
@@ -205,8 +210,50 @@ def compute_next_fire_time(sched: NodeSchedule, now: datetime) -> datetime:
     return now + timedelta(seconds=interval)
 
 
+def build_schedule_prompt(sched: NodeSchedule) -> str:
+    """Pure helper: build the v1-faithful scheduled-task prompt.
+
+    Parity-faithful to v1 ``OrgNodeScheduler._execute_schedule``
+    byte-for-byte:
+
+    * Header: ``[\u5b9a\u65f6\u4efb\u52a1] {name}\\n\u65f6\u95f4: {now_iso}\\n\u6307\u4ee4: {prompt}\\n\\n\u8bf7\u6267\u884c\u4e0a\u8ff0\u4efb\u52a1\u3002``
+    * If ``report_condition == \"on_issue\"``: appends two
+      lines describing the conditional report rule.
+    * Else if ``report_condition == \"always\"`` and
+      ``report_to`` is set: appends an unconditional report
+      directive.
+
+    Pure function so the P9.3c parity test can compare prompt
+    structure modulo the ``\u65f6\u95f4: {now_iso}`` line
+    (which differs between v1 and v2 invocation; the parity
+    runner strips that line before comparison).
+    """
+    header = (
+        f"[\u5b9a\u65f6\u4efb\u52a1] {sched.name}\n"
+        f"\u65f6\u95f4: {now_iso()}\n"
+        f"\u6307\u4ee4: {sched.prompt}\n\n"
+        f"\u8bf7\u6267\u884c\u4e0a\u8ff0\u4efb\u52a1\u3002"
+    )
+    if sched.report_condition == "on_issue":
+        report_to = sched.report_to or "\u4e0a\u7ea7"
+        header += (
+            f"\n\n\u6c47\u62a5\u89c4\u5219\uff1a\u4ec5\u5728"
+            f"\u53d1\u73b0\u5f02\u5e38/\u95ee\u9898\u65f6"
+            f"\u5411 {report_to} \u6c47\u62a5\u3002"
+            f"\u5982\u679c\u4e00\u5207\u6b63\u5e38\uff0c"
+            f"\u7b80\u8981\u8bb0\u5f55\u5230\u4f60\u7684"
+            f"\u79c1\u6709\u8bb0\u5fc6\u5373\u53ef\u3002"
+        )
+    elif sched.report_condition == "always" and sched.report_to:
+        header += (
+            f"\n\n\u6267\u884c\u5b8c\u6bd5\u540e\u8bf7"
+            f"\u5411 {sched.report_to} \u6c47\u62a5\u7ed3\u679c\u3002"
+        )
+    return header
+
+
 # ---------------------------------------------------------------------------
-# OrgNodeScheduler (P9.3a skeleton; P9.3b lands the implementations)
+# OrgNodeScheduler implementation (P9.3b)
 # ---------------------------------------------------------------------------
 
 
@@ -220,19 +267,13 @@ class OrgNodeScheduler:
 
     Concurrency model: pure asyncio. Schedule task handles live
     in ``self._tasks`` keyed by ``f\"{org_id}:{node_id}:{sched_id}\"``;
-    mutation is serialised by ``self._task_lock`` (an
-    :class:`asyncio.Lock`) so concurrent ``trigger_once`` /
-    ``reload_node_schedules`` calls cannot race
-    cancel-then-replace. v1 had no such lock; the contract
-    suite ``test_concurrent_reload_no_loss`` (P9.3d) is the
-    Nit-2 fold-in stress (4 tasks x 25 reload cycles = 100
-    concurrent reloads).
-
-    P9.3a (this commit) ships every method as a
-    ``NotImplementedError`` stub so the Protocol-conformance
-    smoke test in P9.3a-prep can verify the class shape
-    without exercising the loop. P9.3b lands the actual
-    implementations.
+    public mutators take ``self._task_lock`` (an
+    :class:`asyncio.Lock`) for the cancel-then-replace window so
+    concurrent ``trigger_once`` / ``reload_node_schedules``
+    calls cannot race. v1 had no such lock; the contract suite
+    ``test_concurrent_reload_no_loss`` (P9.3d) is the Nit-2
+    fold-in stress (4 worker coroutines x 25 reload cycles =
+    100 concurrent reloads).
     """
 
     def __init__(
@@ -248,16 +289,180 @@ class OrgNodeScheduler:
         self._task_lock = asyncio.Lock()
 
     async def start_for_org(self, org_id: str, node_ids: Iterable[str]) -> None:
-        raise NotImplementedError("P9.3b lands start_for_org")
+        """Start schedule loops for every enabled schedule on every node."""
+        async with self._task_lock:
+            for node_id in node_ids:
+                for sched in self._store.get_node_schedules(org_id, node_id):
+                    if sched.enabled:
+                        self._start_schedule_locked(org_id, node_id, sched)
 
     async def stop_for_org(self, org_id: str) -> None:
-        raise NotImplementedError("P9.3b lands stop_for_org")
+        """Cancel every schedule loop owned by the given org."""
+        prefix = f"{org_id}:"
+        async with self._task_lock:
+            keys = [k for k in self._tasks if k.startswith(prefix)]
+            tasks = [self._tasks.pop(k) for k in keys]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
 
     async def stop_all(self) -> None:
-        raise NotImplementedError("P9.3b lands stop_all")
+        """Cancel every schedule loop across every org."""
+        async with self._task_lock:
+            tasks = list(self._tasks.values())
+            self._tasks.clear()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
 
     async def reload_node_schedules(self, org_id: str, node_id: str) -> None:
-        raise NotImplementedError("P9.3b lands reload_node_schedules")
+        """Cancel + restart loops for a node after schedule CRUD."""
+        prefix = f"{org_id}:{node_id}:"
+        async with self._task_lock:
+            old_keys = [k for k in self._tasks if k.startswith(prefix)]
+            old_tasks = [self._tasks.pop(k) for k in old_keys]
+            schedules = self._store.get_node_schedules(org_id, node_id)
+            for sched in schedules:
+                if sched.enabled:
+                    self._start_schedule_locked(org_id, node_id, sched)
+        for task in old_tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
 
     async def trigger_once(self, org_id: str, node_id: str, schedule_id: str) -> dict[str, Any]:
-        raise NotImplementedError("P9.3b lands trigger_once")
+        """Manually trigger a schedule execution by id."""
+        schedules = self._store.get_node_schedules(org_id, node_id)
+        sched = next((s for s in schedules if s.id == schedule_id), None)
+        if sched is None:
+            return {"error": "Schedule not found"}
+        return await self._execute_schedule(org_id, node_id, sched)
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _start_schedule_locked(self, org_id: str, node_id: str, sched: NodeSchedule) -> None:
+        """Create the asyncio task; caller must hold ``self._task_lock``."""
+        key = f"{org_id}:{node_id}:{sched.id}"
+        if key in self._tasks:
+            return
+        task = asyncio.create_task(self._schedule_loop(org_id, node_id, sched))
+        self._tasks[key] = task
+
+    async def _schedule_loop(self, org_id: str, node_id: str, sched: NodeSchedule) -> None:
+        """Main loop for a single scheduled task (parity-faithful to v1)."""
+        base_interval = sched.interval_s if sched.interval_s and sched.interval_s > 0 else 3600
+        current_interval: float = float(base_interval)
+
+        while True:
+            try:
+                if sched.schedule_type == ScheduleType.ONCE:
+                    if sched.run_at:
+                        target = datetime.fromisoformat(sched.run_at)
+                        if target.tzinfo is None:
+                            target = target.replace(tzinfo=UTC)
+                        wait = (target - datetime.now(UTC)).total_seconds()
+                        if wait > 0:
+                            await asyncio.sleep(wait)
+                    await self._execute_schedule(org_id, node_id, sched)
+                    return
+
+                await asyncio.sleep(current_interval)
+
+                if not self._probe.is_node_runnable(org_id, node_id):
+                    continue
+
+                result = await self._execute_schedule(org_id, node_id, sched)
+
+                result_str = str(result).lower()
+                has_issue = (
+                    "\u5f02\u5e38" in str(result)
+                    or "\u9519\u8bef" in str(result)
+                    or "error" in result_str
+                )
+
+                if has_issue:
+                    sched.consecutive_clean = 0
+                    current_interval = float(base_interval)
+                    self._save_schedule(org_id, node_id, sched)
+                    await asyncio.sleep(RECHECK_DELAY)
+                    await self._execute_schedule(org_id, node_id, sched)
+                else:
+                    sched.consecutive_clean += 1
+                    if sched.consecutive_clean >= CLEAN_THRESHOLD:
+                        new_interval = min(
+                            current_interval * FREQUENCY_MULTIPLIER,
+                            base_interval * MAX_FREQUENCY_FACTOR,
+                        )
+                        if new_interval != current_interval:
+                            logger.info(
+                                "[Scheduler] %s/%s: down-shift %ds -> %ds (consecutive clean=%d)",
+                                node_id,
+                                sched.name,
+                                int(current_interval),
+                                int(new_interval),
+                                sched.consecutive_clean,
+                            )
+                            current_interval = new_interval
+                    self._save_schedule(org_id, node_id, sched)
+
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.error("[Scheduler] error in %s/%s: %s", node_id, sched.name, exc)
+                await asyncio.sleep(60)
+
+    async def _execute_schedule(
+        self, org_id: str, node_id: str, sched: NodeSchedule
+    ) -> dict[str, Any]:
+        """Execute one scheduled task via the injected dispatcher."""
+        self._probe.emit_event(
+            org_id,
+            "schedule_triggered",
+            node_id,
+            {"schedule_id": sched.id, "name": sched.name},
+        )
+
+        prompt = build_schedule_prompt(sched)
+        result = await self._dispatcher.dispatch(org_id, node_id, prompt)
+
+        sched.last_run_at = now_iso()
+        result_text = result.get("result", "") if isinstance(result, dict) else ""
+        sched.last_result_summary = (
+            result_text[:200] if isinstance(result_text, str) and result_text else None
+        )
+        self._save_schedule(org_id, node_id, sched)
+
+        self._probe.emit_event(
+            org_id,
+            "schedule_completed",
+            node_id,
+            {
+                "schedule_id": sched.id,
+                "result_preview": (
+                    result_text[:100] if isinstance(result_text, str) and result_text else ""
+                ),
+            },
+        )
+        return result if isinstance(result, dict) else {"result": result}
+
+    def _save_schedule(self, org_id: str, node_id: str, sched: NodeSchedule) -> None:
+        """Persist schedule state changes through the injected store."""
+        schedules = self._store.get_node_schedules(org_id, node_id)
+        for i, s in enumerate(schedules):
+            if s.id == sched.id:
+                schedules[i] = sched
+                break
+        self._store.save_node_schedules(org_id, node_id, schedules)
