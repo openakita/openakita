@@ -682,4 +682,184 @@ P9.9 ships ``tests/integration/test_orgs_migration_smoke.py``:
 4. Assert the 80 P9.7 v2 REST endpoints all respond with the
    expected golden JSON shape.
 
-<!-- P9.0d ends here. P9.0e appends sections 6 + 7 + 8. -->
+## 6. ADR additions
+
+Three ADRs land in P9.0f/g/h with ``Status: Proposed``. They flip
+to ``Status: Accepted`` at G-RC-9 (P9.10) after the
+implementation has shipped, matching the P-RC-0..P-RC-8 pattern
+where ADR-0001..0010 stayed Proposed until G-RC-8 signed off on
+real implementations.
+
+### ADR-0011 -- org subsystem decomposition (Why 6 subsystems instead of monolith)
+
+* **Decision:** split the v1 ``orgs/`` package into 6 named v2
+  subsystems (OrgBlackboard / ProjectStore / NodeScheduler /
+  OrgCommandService / OrgManager / OrgRuntime) plus a handful of
+  preserved leaf modules (failure_diagnoser, plugin_assets,
+  policies, tool_categories, tool_definitions, identity).
+* **Alternative considered:** keep ``OrgRuntime`` as one class
+  with composition (the v1 shape). Rejected because the legacy
+  144-method class is the structural reason the file is 5 734
+  LOC, and the dependency back-references that compose it
+  (heartbeat / inbox / notifier / scaler / scheduler / reporter
+  all hold runtime references) make every subsystem untestable
+  in isolation.
+* **Trade-off accepted:** 6 small subsystems vs 1 big one means
+  the dependency DAG must be honoured at construction time
+  (injection, not back-reference). This is more upfront wiring
+  but exactly what P-RC-2/3 did for ``runtime.supervisor`` and
+  the wins (Protocol-typed cross-subsystem boundaries, fully
+  isolated unit tests, easier reasoning) are proven.
+
+### ADR-0012 -- ``orgs/`` deletion strategy (rename-shim-delete vs direct delete)
+
+* **Decision:** **direct delete** for source files at P9.9 (no
+  ``git mv X _X_legacy`` interim step like P-RC-4..6 used for
+  core/). Justification: the v2 ``runtime/orgs/`` package gets
+  the new code under a different path, so there is no shim
+  question for the source itself. The v1 REST endpoints at
+  ``/api/orgs/...`` get a configurable deprecation strategy
+  per Q-B (default = keep v1 endpoints as 410-Gone-with-helpful-
+  message shims for v2.0.x; hard-delete in v2.1.0).
+* **Alternative considered:** rename ``orgs/X.py`` to
+  ``orgs/_X_legacy.py`` and keep them in tree for a release.
+  Rejected because nothing imports the v1 paths after P9.8 is
+  complete (mechanical migration ensures this); keeping them
+  in-tree only adds maintenance cost.
+* **Consequence:** the P9.9 deletion is a single ``git rm -r
+  src/openakita/orgs/`` + ``git rm -r tests/orgs/`` operation,
+  not a multi-commit rename-then-delete pattern. The audit
+  trail is the deletion commit message which lists every file
+  removed.
+
+### ADR-0013 -- wall-clock SLA tests for cancel/checkpoint
+
+* **Decision:** the v2 IM-cancel pipeline ships with a
+  ``perf_counter()`` wall-clock budget assertion that pins the
+  contract: from IM-cancel-verb receipt to a written cancelled
+  checkpoint, < 2.0 s; from a follow-up IM message to resumed
+  supervisor, < 3.0 s. These tests live in
+  ``tests/runtime/test_cancel_wall_clock_budget.py`` and run in
+  every CI pass.
+* **Alternative considered:** keep the structural assertion from
+  ACCEPTANCE.md #2 (Pass-with-caveat) and rely on the asyncio
+  fixture default to keep the wall clock small. Rejected because
+  the asyncio default is implementation-dependent and silently
+  changes when fixtures get reused across tests.
+* **Closes:** ACCEPTANCE.md #2 caveat (P-RC-8 P8.7-doc-fix
+  recorded the deferral).
+* **Implementation phase:** P9.4 (OrgCommandService) lands the
+  3 wall-clock tests; P9.6 (OrgRuntime) verifies they still
+  pass after the runtime shell rewrite.
+
+## 7. User decision points
+
+Three open decisions need an answer before P9.1 work starts.
+The defaults below are the recommendation; the user may
+override any of them at G-RC-9.0 review.
+
+### Q-A -- Should ``runtime/orgs/`` keep the ``runtime`` prefix, or rename to ``orgs_v2`` after migration?
+
+* **Options:**
+  * (a) Keep as ``src/openakita/runtime/orgs/`` indefinitely
+    (the path the existing 3 storage-only files already use).
+  * (b) Rename to ``src/openakita/orgs_v2/`` after P9.9 so the
+    v2 surface has a clean top-level package.
+  * (c) Rename to ``src/openakita/orgs/`` after P9.9 (reclaim
+    the v1 path now that v1 is gone).
+* **Default:** (a). Justification: every other v2 surface
+  (``runtime/supervisor``, ``runtime/templates``,
+  ``runtime/state_graph``, ``runtime/nodes``) lives under
+  ``runtime/``; consistency wins. Path renames cost commits and
+  caller churn for zero behavioural benefit. If a top-level
+  ``orgs/`` path is wanted for ergonomics, do it as a separate
+  plan after v2.0.0 ships.
+
+### Q-B -- v1 REST endpoint deletion strategy
+
+* **Options:**
+  * (a) **Hard-delete** v1 endpoints at P9.9 alongside the
+    source deletion. Any client still hitting ``/api/orgs/...``
+    gets a 404.
+  * (b) **Deprecation shim for 1 release:** v1 endpoints
+    respond with HTTP 410 Gone + a body pointing at the v2
+    equivalent (``"/api/v2/orgs/{...}"``). Shim is removed in
+    the next minor release (v2.1.0).
+  * (c) **Full passthrough:** v1 endpoints proxy to v2
+    handlers (1:1 mapping inside the same FastAPI process).
+    Slowest to remove but most caller-friendly.
+* **Default:** (b). Justification: matches the P-RC-7 shim
+  pattern for core/agent.py (gone in v2.0.0-rc1, fully
+  deleted in v2.0.0-rc2 endgame). One release of 410-Gone
+  responses gives operators time to migrate clients without
+  carrying real passthrough code.
+
+### Q-C -- Acceptable timeline
+
+* **Options:**
+  * (a) **2 weeks aggressive:** parallel multi-engineer
+    sprint; mini-gates condensed; mandatory daily standup.
+    Charter estimates this is doable only with 2-3 engineers.
+  * (b) **4 weeks normal:** one engineer full-time, 5-10
+    commits/day; mini-gates per phase as designed.
+  * (c) **6 weeks conservative:** allows time for unanticipated
+    REST contract edge cases and the OrgRuntime fold complexity
+    to slip 1-2 weeks.
+* **Default:** (b) 4 weeks normal. Justification: matches the
+  charter's projection and the P-RC-4..P-RC-7 cadence (those
+  four phases shipped in roughly 4 weeks of effort). The 4-week
+  plan has slack at P9.6 (the OrgRuntime fold) and P9.7 (the
+  80-endpoint REST mint); if those phases slip the calendar
+  becomes 5-6 weeks naturally.
+
+## 8. Acceptance upgrades after P-RC-9 closes
+
+ACCEPTANCE.md (P-RC-8 P8.3 ``709767b3``) currently rates the
+5 criteria as:
+
+1. AIGC single-run no-duplicate -- **Pass**
+2. IM cancel + checkpoint < 2 s -- **Pass-with-caveat**
+3. Resume after cancel -- **Pass**
+4. happyhorse-video single WorkbenchNode -- **Pass**
+5. All built-in templates + 1-click new org -- **Partial**
+
+After P-RC-9 closes, criteria 2 and 5 upgrade to Pass:
+
+### Criterion 2: Pass-with-caveat -> Pass
+
+* **Trigger:** P9.4 lands the three wall-clock budget tests
+  per ADR-0013 (IM-cancel <2s, resume <3s, 10-concurrent
+  burst). The pytest assertion is structural (perf_counter on
+  the test machine, not documentary).
+* **Evidence:** add a citation in ACCEPTANCE.md criterion 2 to
+  ``tests/runtime/test_cancel_wall_clock_budget.py`` test ids
+  + the P9.4 commit hash + ADR-0013.
+
+### Criterion 5: Partial -> Pass
+
+* **Trigger:** P9.7 lands the 80 missing v2 REST endpoints +
+  the UI default-port flip to v2. The setup-center dist-web
+  artifact loads and successfully creates an org from any
+  built-in template via the v2 REST API.
+* **Evidence:** add a citation in ACCEPTANCE.md criterion 5 to
+  the P9.7 commit hashes + the build-artifact test
+  (``test_frontend_v2_default``) + the per-endpoint contract
+  tests under ``tests/api/golden/orgs_v1/``.
+
+Both upgrades are documented in the same commit
+(``docs(revamp): upgrade ACCEPTANCE #2 #5 to Pass``) at P9.10
+as part of the G-RC-9 review.
+
+### Out of scope: criteria 1, 3, 4
+
+These remain Pass with the existing evidence chain; P-RC-9 does
+not touch the supervisor decision table, the checkpoint resume
+contract, or the WorkbenchNode plugin manifest path. If any of
+the three regresses during P-RC-9, the phase's mini-gate
+catches it.
+
+---
+
+End of plan. Next decision (operator): review this document,
+answer Q-A / Q-B / Q-C, and approve P9.1 launch -- or request
+revisions.
