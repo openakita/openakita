@@ -7,8 +7,8 @@ should pick up. It complements the plan file
 `docs/adr/`.
 
 Branch: `revamp/v2` (forked from `main`).
-ADR sign-off gate: **G0 pending — every ADR is `Status: Proposed`.**
-A user-led ADR review is the gate to flip them all to `Accepted`.
+ADR sign-off gate: **G0 signed — all 10 ADRs Accepted at G-RC-8 (2026-05-19).**
+See `docs/adr/0001-...md`..`docs/adr/0010-...md`; original Proposed status flip was deferred until P-RC-0..P-RC-7 had shipped real implementations against each ADR.
 
 ## Scoreboard
 

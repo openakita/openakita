@@ -261,7 +261,8 @@ that requires writing 6 new v2 subsystems (~4-6 weeks).
 
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
-| _this commit_ | P-RC-8 P8.0 | chore(revamp): bump ledger to P-RC-8 + close P-RC-7 audit nits (N-G7-1/2/3) | +30 (test_brain.py) +6 (LOC audit TRACKED_FILES/INFO_ONLY_FILES) +1 (legacy import retarget) +8 (4 test files supervisor import) +2 (log_analyzer prefixes) +ledger | +1 (smoke test_brain_get_current_endpoint_info_smoke) | --- |
+| `caf5d7f3` | P-RC-8 P8.0 | chore(revamp): bump ledger to P-RC-8 + close P-RC-7 audit nits (N-G7-1/2/3) | +99 / -22 (rename core/supervisor.py -> core/_supervisor_legacy.py R100; +57 tests/agent/test_brain.py; +9 LOC audit + ledger; -3 production import retargets) | +1 (smoke test_brain_get_current_endpoint_info_smoke) | --- |
+| _this commit_ | P-RC-8 P8.2 | docs(adr): flip ADR-0001..0010 Status from Proposed to Accepted | +30 (10 ADRs x Status+Accepted) +2 (STATUS.md G0 line) +ledger | 0 | ADR-0001..0010 |
 
 ## Discipline reminders (auto-collected by audits)
 

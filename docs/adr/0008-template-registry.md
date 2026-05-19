@@ -1,7 +1,8 @@
 # ADR-0008 — Template Registry and Schema
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-05-18
+- **Accepted**: 2026-05-19 (after P-RC-0..7 implementation review at G-RC-8)
 - **Phase**: 0 (Spec Freeze)
 
 ## Context

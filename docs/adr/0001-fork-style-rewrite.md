@@ -1,7 +1,8 @@
 # ADR-0001 — Fork-Style Rewrite Policy
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-05-18
+- **Accepted**: 2026-05-19 (after P-RC-0..7 implementation review at G-RC-8)
 - **Phase**: 0 (Spec Freeze)
 - **Decision owner**: project owner
 - **Implementer**: AI agent on `revamp/v2`
