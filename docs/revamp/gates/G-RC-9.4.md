@@ -27,9 +27,9 @@ Protocol-typed, DI v2 surface that implements the
 In scope (P-RC-9-PLAN section 4 P9.4 charter):
 ``command_models.py`` (Request/Response/Source/ForwardTarget
 + Surface/Scope enums + Nit-1 monotonic ``new_command_id``);
-``command_service.py`` (``OrgCommandServiceProtocol`` + 6 DI
-Protocols Lookup/Runtime/Session/Gateway/Emitter/Brain +
-service impl); 10 activated parity fixtures (xfail removed);
+``command_service.py`` (``OrgCommandServiceProtocol`` + 5 DI
+Protocols Lookup/Runtime/Session/Gateway/Emitter + 1
+SLA-test-only ``BrainProtocol`` + service impl); 10 activated parity fixtures (xfail removed);
 16 contract cases; 3 wall-clock SLA tests
 (``test_cancel_wall_clock_budget.py``; ADR-0013 closure of
 ACCEPTANCE.md #2).
@@ -42,7 +42,7 @@ redirection (P9.8), real-runtime integration (P9.6).
 | commit hash | phase | one-line subject | staged-diff LOC |
 |---|---|---|---|
 | ``9a085922`` | P9.4a0 | feat(runtime/orgs): add v2 command models (Request/Response/Source/ForwardTarget + Surface/Scope enums + monotonic-counter id mint) | +367 (324 src + 24 init + 19 ledger) |
-| ``eb4d6478`` | P9.4a | feat(runtime/orgs): OrgCommandServiceProtocol + 7 injected Protocols + service scaffold implementing CommandDispatcher | +372 (347 src + 22 init + 3 ledger) |
+| ``eb4d6478`` | P9.4a | feat(runtime/orgs): OrgCommandServiceProtocol + 5 DI Protocols + 1 SLA-test-only BrainProtocol + service scaffold implementing CommandDispatcher | +372 (347 src + 22 init + 3 ledger) |
 | ``ef9c6d6f`` | P9.4b | feat(runtime/orgs): OrgCommandService.submit + 5 private helpers (asyncio.Lock + conflict gate + Nit-1 cmd id; get_status/cancel deferred) | +360 (357 src + 3 ledger) |
 | ``71597235`` | P9.4b2 | feat(runtime/orgs): OrgCommandService get_status + cancel + 5 fan-out methods + _dispatch_forwards + _live_snapshot_view | +338 (335 src + 3 ledger) |
 | ``0893a112`` | P9.4c | test(parity/orgs): activate 10 command_service parity fixtures (xfail -> pass) | +365 (362 test + 3 ledger) |
@@ -55,8 +55,9 @@ command-service surface = 1003 LOC (324 models + 679
 service) + 332 contract + 362 parity + 234 SLA + ~30
 ACCEPTANCE upgrade = 2265 LOC of net additions across 7
 commits. The 1003 / ~963 src ratio reflects the explicit
-Protocol scaffolding (6 dependency Protocols + 1 service
-Protocol) that did not exist in v1.
+Protocol scaffolding (5 DI dependency Protocols + 1
+public-contract Protocol + 1 SLA-test-only BrainProtocol)
+that did not exist in v1.
 
 ## 3. Test counts (before / after) -- per G-RC-9.3 section 3 format
 
@@ -143,7 +144,7 @@ verdict for the OrgCommandService design space (NOT lumped).
 |---|---|---|---|
 | ``01-cortex.md`` | Cortex -- SWIM + Telemetry event bus | YES | rejected. ``Telemetry`` is sibling to ``EventEmitterProtocol``; not lifted because v1 emits via per-org ``EventStore.emit`` (no pubsub topic) -- BREAKS parity. NDJSON sink revisit at P-RC-10+. |
 | ``02-sint-protocol.md`` | SINT -- CapabilityToken + EvidenceLedger + LifecycleState FSM | YES | rejected. SINT ``RequestLifecycleState`` FSM mirrors our snapshot.status; v1 uses string-typed status (no enum FSM) -- enum-strengthening BREAKS parity. EvidenceLedger is closer to ADR-0005 supervisor checkpoints than command-service. |
-| ``03-langgraph.md`` | LangGraph -- Pregel BSP + Checkpoint/Resume + multi-stream + cron SDK | YES | **partial -- see repo row 6.2**. ``stream_mode=["checkpoints", ...]`` is the closest analogue to our ``subscribe_summary``/``publish_summary``; NOT lifted (v1 ships a single summary feed -- multi-mode subscription BREAKS parity). The ADR-0013 SLA test methodology (perf_counter straddling cancel) takes its cue from LangGraph''s ``BgTaskFramework.cancel`` ``CancelScope`` pattern (cited inline in the SLA test module docstring). |
+| ``03-langgraph.md`` | LangGraph -- Pregel BSP + Checkpoint/Resume + multi-stream + cron SDK | YES | rejected. ``stream_mode=["checkpoints", ...]`` is the closest analogue to our ``subscribe_summary``/``publish_summary``; NOT lifted (v1 ships a single summary feed -- multi-mode subscription BREAKS parity). No code was lifted from LangGraph; the ADR-0013 ``perf_counter`` SLA pattern is a universal cancel-then-time-the-checkpoint idiom (the G-RC-9.4 audit verified neither the SLA module docstring nor the P9.4e commit body cites LangGraph; NIT-E-1 cleanup re-attributes to the universal pattern). |
 | ``04-metagpt.md`` | MetaGPT -- SOP Role + Environment | NO | No command-bus/verb-dispatch layer; ``Role.run`` is a fixed observe->think->act loop. ``Environment`` broker is agent-to-agent (sibling to ``ChannelGatewayProtocol`` but different layer). Not relevant. |
 | ``05-crewai.md`` | CrewAI -- Role + Task + Crew + EventBus | YES | rejected. ``EventBus`` decorator-based subscribe (``@on_event``) is sibling to ``EventEmitterProtocol``; v1 has no decorator subscribe -- BREAKS parity. ``Process.HIERARCHICAL`` is closer to P9.5 OrgManager. |
 | ``06-autogen.md`` | AutoGen -- async event queue + Magentic-One ledger | YES | rejected. ``output_message_queue`` single-Queue model is sibling to our late-subscriber buffer; v1 uses per-subscriber Queue (not per-service) -- single-queue model BREAKS parity. Magentic-One ledger is closer to ADR-0004 supervisor. |
@@ -155,7 +156,7 @@ verdict for the OrgCommandService design space (NOT lumped).
 | ``autogen/`` | Microsoft AutoGen monorepo | YES | rejected. ``MessageHandlerContext`` (per-message ContextVar cancel-scope) is sibling to our ``CancellationToken``; not lifted because v1 routes cancel through ``runtime.cancel_user_command`` only -- ContextVar-based propagation would BREAK parity. |
 | ``cortex/`` | Elixir Cortex multi-agent CLI orchestrator | NO | already covered by brief 01. Cortex''s OTP supervision tree is at the BEAM-runtime layer, not the application-command layer. |
 | ``crewAI/`` | CrewAI framework source | NO | already covered by brief 05. No command-service-named source files (``rg -l "command_service\|verb_dispatch"`` empty under ``src/``). |
-| ``langgraph/`` | LangGraph monorepo (``libs/checkpoint/`` + bg-task cancel) | YES | **partial -- methodology cue only**. ``BackgroundTaskFramework`` cooperative cancel via ``CancelScope`` + final-checkpoint-on-cancel is the EXACT pattern ADR-0013 SLA #1/#3 measure. NO code lifted (heavy DB abstraction); methodology only (perf_counter straddling cancel -> checkpoint). Cited in SLA module docstring + P9.4e commit body. |
+| ``langgraph/`` | LangGraph monorepo (``libs/checkpoint/`` + bg-task cancel) | YES | rejected. Repo verified present (12 entries; ``libs/`` has checkpoint/cli/sdk/...) but contains ZERO occurrences of ``BackgroundTaskFramework`` or ``CancelScope`` -- the prior G-RC-9.4 section 6.1 cite was an artefact of an earlier draft (NIT-E-1 cleanup). No code or methodology was lifted; the ADR-0013 ``perf_counter`` SLA idiom stands on its own as a universal cancel-then-time-the-checkpoint pattern. |
 | ``MetaGPT/`` | MetaGPT source tree | NO | already covered by brief 04. No command-service-named source files. |
 | ``sint-protocol/`` | SINT capability/ledger reference | NO | already covered by brief 02. The ``RequestLifecycleState`` FSM lives in the protocol-spec markdown, not in code. |
 
@@ -168,15 +169,16 @@ because adopting their semantics extends OrgCommandService
 beyond v1 and breaks the P-RC-9-PLAN section 0.2 parity
 gate.
 
-**Indirectly adopted (methodology only): 1 brief + 1 repo**
-(``03-langgraph.md`` + ``langgraph/``). The ADR-0013
-wall-clock SLA test pattern in
-``tests/runtime/test_cancel_wall_clock_budget.py``
+**Indirectly adopted: none.** The ADR-0013 wall-clock SLA
+test pattern in ``tests/runtime/test_cancel_wall_clock_budget.py``
 (``perf_counter`` straddling cancel -> checkpoint
-observation) follows LangGraph's ``BackgroundTaskFramework``
-cancel-scope methodology. No code was lifted; the citation
-is inline in the module docstring + the P9.4e commit body
-(per G-RC-9.2/9.3 honesty discipline).
+observation) is a universal perf-test idiom; no specific
+external attribution applies. The G-RC-9.4 auditor verified
+that the prior LangGraph ``BackgroundTaskFramework.CancelScope``
+attribution was an artefact of an earlier draft (neither
+the SLA module docstring nor the P9.4e commit body actually
+contained the cite); NIT-E-1 closes the gap by re-attributing
+to the universal pattern.
 
 **Not relevant: 1 brief (metagpt) + 1 repo (MetaGPT/).**
 MetaGPT has no command-bus layer.
@@ -207,12 +209,12 @@ after P9.4c; 5 new SLA after P9.4e with 5x flake-guard:
 ## 9. ADR refs
 
 * **ADR-0011** (subsystem decomposition) -- every P9.4 code
-  commit references it. The seven Protocols (1 service +
-  6 dependency: ``OrgCommandServiceProtocol`` +
-  ``OrgLookupProtocol`` + ``CommandRuntimeProtocol`` +
-  ``SessionManagerProtocol`` + ``ChannelGatewayProtocol`` +
-  ``EventEmitterProtocol`` + ``BrainProtocol``) ARE the
-  decomposition. Most notably, ``CommandRuntimeProtocol``
+  commit references it. The seven Protocols (1
+  public-contract ``OrgCommandServiceProtocol`` + 5 DI
+  dependency: ``CommandRuntimeProtocol`` +
+  ``OrgLookupProtocol`` + ``SessionManagerProtocol`` +
+  ``ChannelGatewayProtocol`` + ``EventEmitterProtocol`` +
+  1 SLA-test-only ``BrainProtocol``) ARE the decomposition. Most notably, ``CommandRuntimeProtocol``
   replaces v1''s ``self._runtime._manager.xxx`` reach-in
   pattern (the explicit G-RC-9.3 auditor recommendation #4).
 * **ADR-0012** (no shim under v1) -- P9.4 lands the v2
