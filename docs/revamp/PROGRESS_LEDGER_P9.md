@@ -2492,3 +2492,57 @@ sentinel held off-limits), so it needs its own planning round.
 > final roll-up gate NOT started this commit; eta-1b opens on
 > the immediate follow-up commit per the split.
 
+
+> ### P9.9eta-1b -- G-RC-9.9 mini-gate doc + ledger close
+>
+> | commit hash | phase | title | LOC delta | tests delta | ADR refs |
+> |---|---|---|---|---|---|
+> | _this commit_ | P-RC-9 P9.9eta-1b (G-RC-9.9) | docs(revamp/gates): G-RC-9.9 mini-gate -- PASS (closes P9.9; 9/9 sentinels ACTIVE; -35 493 LOC v1 retirement axis; P9.x Nit roster closed) | +PLACEHOLDER (G-RC-9.9.md ~308 + ledger row ~30) | 0 | ADR-0011 / ADR-0012 / ADR-0015 (gate cites all three; eta-2 closes ADR-0013 / ADR-0014 final tally) |
+>
+> Lands the second half of the brief's eta-1 split:
+> ``docs/revamp/gates/G-RC-9.9.md`` (308 lines) closing the
+> P9.9 v1 physical-deletion phase. Section 0 summary headline:
+> v1 retirement axis -35 493 LOC; 9/9 sentinels ACTIVE; all 4
+> R-epsilon risks RETIRED; P9.x Nit roster final disposition
+> recorded.
+>
+> **Gate sections** (mirrors G-RC-9.8.md structure):
+>
+> * sec 0 -- summary + headline numbers.
+> * sec 1 -- 17 P9.9 commits + this gate (alpha-1 / beta-1 /
+>   gamma-1 / gamma-2 / gamma-2b / gamma-1b / delta-1..4 /
+>   epsilon-1a..2b / eta-1a + eta-1b).
+> * sec 2 -- acceptance evidence (6 axes).
+> * sec 3 -- P9.x Nit roster final disposition (10-row table).
+> * sec 4 -- R-epsilon final verdicts (all RETIRED).
+> * sec 5 -- architectural deviations (Scheme C epsilon;
+>   gamma-2b/gamma-1b absorption; OPTIONAL gaps O1/O2; 9th
+>   sentinel scope).
+> * sec 6 -- known residuals (308 shim -> v2.1.0; runtime/
+>   flattening -> P-RC-10).
+> * sec 7 -- sign-off PASS.
+>
+> **P9.x Nit roster final disposition** (sec 3 summary):
+>
+> | disposition | count | nits |
+> |---|--:|---|
+> | CLOSED in P9.x execution | 1 | M-3 (v1 method residue) -- closed by construction at epsilon-2b atomic delete |
+> | CLOSED-OBE | 1 | M-4 (commit-subject suffix cosmetic; cannot be retroactively edited) |
+> | DEFERRED-TO-P-RC-10 | 4 | M-2 (ADR-0014 sub-cap rebalance via flatten) + P9.7-B (contract LOC cap) + eps-O1 (test_plan_features) + eps-O2 (test_org_*_fix) + GroupC (3 v1 frontend literals) |
+> | DEFERRED-TO-v2.1.0 | 1 | 308 shim retirement per ADR-0015 option (b) LOCKED |
+> | RIDES-TO-G-RC-9-FINAL eta-2 | 2 | B-1 (burst-test) + M-1 (runtime_parity golden-dict) |
+>
+> Total: **9 distinct roster entries** disposed (some Nits
+> appear under multiple categories e.g. M-2 ratifies at eta-2
+> while concrete fix lands at P-RC-10; the table reflects the
+> primary gate vector).
+>
+> **Verification**: gate doc landed; no source-code touch
+> beyond the gate doc + ledger row; sentinel matrix unchanged
+> from eta-1a (9/9 ACTIVE, 68 cases); narrow slice unchanged
+> at 587/587; canary 1/1; collect 6162/6168.
+>
+> **HARD STOP**: G-RC-9 final eta-2 (full P-RC-9 roll-up gate)
+> NOT started this commit. P-RC-9 closure pending operator
+> signal to open eta-2.
+
