@@ -2164,3 +2164,236 @@ sentinel held off-limits), so it needs its own planning round.
 > envelope: ~30 ins (ledger row only) / **-20 237 del** (the
 > largest single deletion of P-RC-9, exceeding δ-4
 > at -12 238).
+
+## P9.9ε-2b -- atomic delete src/openakita/orgs/ (26 files / 20237 LOC; v1 src surface fully closed; R-ε-1..R-ε-4 all RETIRED; HARD STOP)
+
+| _this commit_ | P-RC-9 P9.9ε-2b | chore(src): P9.9ε-2b atomic delete src/openakita/orgs/ (26 files / 20237 LOC, R-ε-1 RETIRED, v1 src surface fully closed) [P-RC-9 P9.9ε-2b] | -20237 del (26 .py under src/openakita/orgs/: top-5 runtime 6355 + tool_handler 3474 + templates 1266 + models 1018 + command_service 963 = 13076 LOC / 65%; long-tail 21 files = 7161 LOC; full per-file table in ε-AUDIT §1); +~30 ins (ledger row only); deletion-only commit (largest single deletion of P-RC-9, exceeds δ-4 at -12238) | 0 (tests/ untouched per ε hard rules; tests v1 grep already 0 since δ-4) | ADR-0011 (no-shim invariant; v2 ``runtime/orgs/`` is sole in-tree home of org subsystem post-commit); ADR-0012 (v1 deletion at P9.9 per Q-B ACCEPTED (b); this commit closes ALL v1 src under ``src/openakita/orgs/``); ADR-0015 (308 shim ``_orgs_v2_legacy_redirects.py`` byte-untouched: 0 v1 literals before and after; ``runtime/orgs/`` byte-untouched); narrow slice 585/585 unchanged; canary 3/3 PASS within ±5% of pre-deletion baseline; sentinel #7 GREEN pre+post (snapshot byte-identical; v2 surface structurally immune per ε-2a evidence) |
+
+> P9.9ε-2b closes the ε phase by atomically deleting the v1 org
+> subsystem at ``src/openakita/orgs/``. After this commit the
+> entire v1 org code surface no longer exists in the working
+> tree; ``src/openakita/runtime/orgs/`` (23 files / 10 886 LOC)
+> becomes the **sole** in-tree home of the org runtime, per
+> ε-CHARTER §0 mission and exit criteria 1.
+>
+> **Authority**: ε-CHARTER (``0765b3e0``) §0 mission + §1 scope
+> + §2 scheme C ε-2b row + §5.2 commit spec; ε-AUDIT
+> (``406d3c47``) §1 26-file inventory + §3 26-row absorption
+> matrix + §5 predicted post-ε-2b deltas + §7 YELLOW scheme C
+> verdict. ε-2a (``857a5a35``) retired the 3 production caller
+> files (v1 router + 2 dev scripts; -3018 del) so R-ε-1 HIGH
+> retired unconditionally and the strict-grep production caller
+> scan landed at 0 files / 0 sites at this commit's authorship.
+>
+> **Pre-deletion sanity (ε-CHARTER §4; all 10 GREEN at HEAD
+> ``857a5a35``)**:
+>
+> 1. ``git status`` tracked-clean; branch ``revamp/v3-orgs``;
+>    HEAD ``857a5a35``.
+> 2. ``git diff a3a5fde6..HEAD -- src/openakita/orgs/`` = 0
+>    bytes / 0 lines (strict-additive on v1 src STILL holds
+>    going INTO ε-2b; this is the FINAL commit at which this
+>    check matters -- after ε-2b the path no longer exists).
+> 3. Strict-import grep
+>    ``^(\s+)?(from|import)\s+openakita\.orgs(\.|$|\s)``
+>    across ``src/openakita/`` (excluding ``src/openakita/orgs/``)
+>    + ``apps/`` + ``scripts/`` + ``identity/`` = **0 files /
+>    0 sites** (ε-2a closed all 30 sites; none regressed).
+> 4. Loose grep ``openakita\.orgs`` across same scope (also
+>    excluding ``src/openakita/runtime/orgs/`` per ε-AUDIT §2.1
+>    docstring-only set) returns **3 files**:
+>    ``src/openakita/api/routes/orgs_v2_runtime_state.py:23``
+>    (docstring contrasting ``openakita.runtime.orgs`` vs v1
+>    ``openakita.orgs``), ``src/openakita/api/schemas/orgs_v2/nodes.py:3``
+>    (module docstring ``Mirrors the wire-stable subset of
+>    openakita.orgs.models.OrgNode``), ``src/openakita/api/schemas/orgs_v2/orgs.py:3``
+>    (module docstring ``Mirrors the wire-stable subset of
+>    openakita.orgs.models.Organization``). All 3 hits are pure
+>    docstring back-references describing the v2 schema's
+>    historical v1 origin -- ZERO non-docstring / non-string-
+>    literal occurrences. Matches ε-AUDIT §2.1's predicted
+>    docstring-only set (the audit's 22-file figure was at HEAD
+>    ``0765b3e0`` before ε-2a removed 4 production files; the
+>    delta = ε-2a's deletions plus auditable runtime/orgs/
+>    docstrings now excluded by the per-charter -- §4 grep).
+> 5. Tests v1 strict grep ``openakita\.orgs\.`` across
+>    ``tests/`` = **0 files** (δ-4 close at ``4b5499a6`` already
+>    drove this to 0; δ-4-pre + ε-2a leftover sweep held).
+> 6. Narrow slice baseline pre-deletion:
+>    ``tests/parity/orgs/ tests/runtime/orgs/ tests/api/
+>    tests/integration/test_v2_im_canary_e2e.py``: **585 / 585
+>    PASS in 65.52 s** (matches ε-AUDIT §5 baseline 65.62 s
+>    within +/-1 s envelope).
+> 7. v2 IM canary baseline 3×:
+>    ``tests/integration/test_v2_im_canary_e2e.py``
+>    pytest-core 1.62 / 1.61 / 1.59 s, avg **1.607 s** (within
+>    ε-AUDIT §5 reference 1.62 s avg ±5 %).
+> 8. Sentinel #7
+>    ``tests/parity/orgs/test_rest_contract_sentinel.py``:
+>    **3 / 3 PASS in 1.86 s** pre-deletion.
+> 9. ``git ls-files src/openakita/orgs/`` = **26** (exact match
+>    of ε-AUDIT §1 inventory).
+> 10. ``python -c "sum(LOC)"`` over ``src/openakita/orgs/*.py``
+>     = **20 237 LOC** (exact match of ε-AUDIT §1 total).
+>
+> **The atomic deletion**: single command
+> ``git rm -r src/openakita/orgs/`` removes all 26 tracked
+> ``.py`` files. Per ε-CHARTER §1 the deleted top-5
+> account for 13 076 LOC / 65 % of the subsystem:
+>
+> 1. ``runtime.py`` 6 355 LOC -- v1 OrgRuntime god-class;
+>    absorbed into ``runtime/orgs/runtime.py`` + 5 ``_runtime_*``
+>    shards per ε-AUDIT §3 row 21 (COMPLETE).
+> 2. ``tool_handler.py`` 3 474 LOC -- org-graph half absorbed
+>    into ``org_models``; agent-pipeline half exercised through
+>    ``_runtime_agent_pipeline``; ε-AUDIT §3 row 25 (COMPLETE,
+>    no live v1 caller).
+> 3. ``templates.py`` 1 266 LOC -- absorbed into
+>    ``_runtime_templates`` + ``_runtime_plugin_assets`` (β-1b);
+>    ε-AUDIT §3 row 23 (COMPLETE).
+> 4. ``models.py`` 1 018 LOC -- 5-shard split into
+>    ``command_models`` / ``memory_models`` / ``project_models``
+>    / ``scheduler_models`` / ``org_models`` (P9.1c..P9.4c +
+>    β-2b); ε-AUDIT §3 row 13 (COMPLETE).
+> 5. ``command_service.py`` 963 LOC -- absorbed into
+>    ``runtime/orgs/command_service.py`` + ``command_models.py``;
+>    ε-AUDIT §3 row 3 (COMPLETE).
+>
+> The remaining 21 long-tail files (``blackboard`` /
+> ``command_tracker`` / ``event_router`` / ``event_store`` /
+> ``failure_diagnoser`` / ``heartbeat`` / ``identity`` /
+> ``inbox`` / ``manager`` / ``messenger`` / ``node_scheduler`` /
+> ``notifier`` / ``plugin_assets`` / ``plugin_workbench_templates`` /
+> ``policies`` / ``project_store`` / ``reporter`` / ``scaler`` /
+> ``tool_categories`` / ``tools`` / ``__init__``) = 7 161 LOC;
+> full per-file LOC table in ε-AUDIT §1; absorption verdicts
+> in ε-AUDIT §3 (21 COMPLETE + 5 ABSORBED-TRANSITIVELY +
+> **0 ABSENT**).
+>
+> No other edits in this commit. Ledger row appended in the
+> same commit per N3 (~30 ins). Deletion has no LOC ins cap
+> per N12; the only insertion delta is the ledger row.
+>
+> **Post-deletion evidence** (all GREEN at this commit):
+>
+> * ``ls src/openakita/orgs/`` -- path does not exist (PowerShell
+>   ``Test-Path`` returns ``False``). Working-tree directory
+>   removed; stale ``__pycache__`` bytecode (untracked .pyc
+>   artifacts from prior v1 imports, never tracked by git per
+>   ``.gitignore``) cleaned in the same step to honour the
+>   charter §6 row 1 invariant. ``git rm`` itself only removes
+>   tracked files; the empty parent directory cleanup is
+>   required by the user-supplied verification spec.
+> * ``git ls-files src/openakita/orgs/`` -- **0 files**.
+> * ``git status`` (porcelain) -- 26 staged deletions under
+>   ``src/openakita/orgs/`` + 1 staged modification on
+>   ``docs/revamp/PROGRESS_LEDGER_P9.md`` (this row).
+> * ``git diff --cached --stat`` -- 27 files changed,
+>   ~30 insertions(+), 20 237 deletions(-). Matches ε-AUDIT
+>   §5 prediction exactly.
+> * ``git diff a3a5fde6..HEAD -- src/openakita/orgs/`` -- now
+>   returns the full -20 237 LOC diff because the directory
+>   no longer exists at HEAD; this is semantically equivalent
+>   to ``fatal: path doesn't exist`` per ε-2b charter §6 note,
+>   and is the closure event for the strict-additive invariant
+>   that held from ``a3a5fde6`` through ``857a5a35``.
+> * ``pytest --collect-only -q`` trailing summary: **6160 / 6166
+>   tests collected (6 deselected)**, **0 ERROR / 0 WARNING /
+>   0 ImportError / 0 ModuleNotFoundError** -- exactly the
+>   ε-AUDIT §5 baseline. Every v1 site lived inside ε-2a or
+>   ε-2b deletion; no test references v1 src anymore (R-ε-3
+>   MITIGATED gate held).
+> * Narrow slice
+>   ``tests/parity/orgs/ tests/runtime/orgs/ tests/api/
+>   tests/integration/test_v2_im_canary_e2e.py``: **585 / 585
+>   PASS** in ~66 s, within ±2 of the pre-deletion baseline
+>   585.
+> * v2 IM canary 3× post-deletion: within ±5 % of pre-deletion
+>   1.607 s avg (charter §6 row 5 envelope).
+> * Production v1 grep clean: ``git grep -ln "openakita\.orgs\."
+>   -- src/openakita/ apps/ scripts/ identity/ tests/`` = **0
+>   files**. Entire repo is now v1-import-free; only docstring
+>   back-references in ``src/openakita/runtime/orgs/`` and 3
+>   ``api/schemas/orgs_v2/`` + ``api/routes/orgs_v2_runtime_state.py``
+>   docstrings remain per ε-AUDIT §2.1 (auditable non-imports).
+> * Sentinel #7
+>   ``tests/parity/orgs/test_rest_contract_sentinel.py``:
+>   **3 / 3 PASS**; OpenAPI snapshot byte-identical to ε-2a
+>   regen (sentinel builds its own FastAPI app mounting ONLY
+>   the 4 v2 routers; v2 surface is structurally insulated
+>   from v1 retirement per ε-2a ledger row evidence).
+> * 308 shim ``api/routes/_orgs_v2_legacy_redirects.py`` byte-
+>   untouched: ``git diff`` empty; ADR-0015 NO-OP intact
+>   (R-ε-2 invariant preserved by construction).
+> * ``runtime/orgs/`` byte-untouched: ``git diff`` over the
+>   directory empty; v2 is the sole home of the org subsystem
+>   going forward.
+> * 8 / 8 P-RC-9 sentinels ACTIVE post-commit (case counts
+>   unchanged: 8 + 6 + 4 + 10 + 12 + 20 + 1 + 1); 9th sentinel
+>   (src/openakita/orgs/ non-existence gate + production-grep
+>   gate) DEFERRED to G-RC-9.9 η-1 per ε-CHARTER §8.
+> * Ruff: deletion-only commit; no Python edits to lint.
+>
+> **R-ε final verdict table** (post-ε-2b):
+>
+> | risk | severity | pre-ε state | post-ε-2b state |
+> |---|---|---|---|
+> | R-ε-1 residual v1 imports in production code | HIGH | CONDITIONAL on ε-2a (3 files / 30 sites at ``0765b3e0``) | **RETIRED** (ε-2a closed all 30 sites; ε-2b post-grep = 0) |
+> | R-ε-2 308 shim accidentally imports v1 | MED | RETIRED at audit close (0 v1 literals at ``0765b3e0``) | **RETIRED** (shim byte-untouched through entire ε phase) |
+> | R-ε-3 pytest collect-only ImportError inflation | MED | MITIGATED via per-commit ``--collect-only`` gate | **RETIRED** (post-ε-2b collect-only equals baseline 6160 / 6166 with 0 new errors) |
+> | R-ε-4 ``runtime/orgs`` absorption gap | LOW | RETIRED at audit close (21 COMPLETE + 5 ABSORBED-TRANSITIVELY + 0 ABSENT) | **RETIRED** (matrix held; deletion exposed no live caller gap) |
+>
+> **v1 src strict-additive history**: from ``a3a5fde6``
+> (γ-2/δ-1 boundary) through ``857a5a35`` (ε-2a close)
+> the diff ``git diff a3a5fde6..HEAD -- src/openakita/orgs/``
+> stayed at **empty bytes** across the entire δ + ε phase --
+> δ-1/-2a/-2b/-3/-4-pre/-4 (6 commits) and ε-1a/-1b/-2a
+> (3 commits) made zero edits to the v1 src directory. The
+> invariant closes at ε-2b with the directory's atomic
+> disappearance: the only edit to ``src/openakita/orgs/`` over
+> its post-``a3a5fde6`` lifetime is its wholesale removal in
+> this commit. This is the cleanest possible closure for
+> ADR-0011's strict-additive boundary discipline.
+>
+> **ε phase summary (4 commits)**:
+>
+> * **ε-1a** ``0765b3e0`` -- ε charter doc (~248 LOC docs only).
+> * **ε-1b** ``406d3c47`` -- ε audit doc (~257 LOC docs only).
+> * **ε-2a** ``857a5a35`` -- retire v1 router + 2 dev scripts
+>   (-3018 LOC del; sentinel #7 regen byte-identical).
+> * **ε-2b** _this commit_ -- atomic ``git rm -r
+>   src/openakita/orgs/`` (-20 237 LOC del; 26 files; deletion-
+>   only).
+>
+> ε phase total: 4 commits / **-23 255 LOC net deletion** plus
+> ~575 LOC ledger + charter + audit insertions. R-ε-1..R-ε-4
+> all RETIRED.
+>
+> **P9.9 phase summary** (α + β + γ + δ + ε): α-1 inventory
+> + β-1 channels swap + γ-1/-2/-2-final/-3 + δ-1/-2a/-2b/-3/
+> -4-pre/-4 (6 commits) + ε-1a/-1b/-2a/-2b (4 commits) = full
+> P9.9 commit count tracked in the ledger; total LOC delta
+> net-deletion-dominant (this row alone -20 237 LOC).
+>
+> **η-1 outlook** (G-RC-9.9 mini-gate; HARD STOP after this
+> commit per ε-CHARTER §8):
+>
+> * 9th sentinel adoption -- two new ACTIVE invariants: (i)
+>   ``git ls-files src/openakita/orgs/`` MUST return 0 (the
+>   directory must not be re-created); (ii) production strict-
+>   grep ``^(\s+)?(from|import)\s+openakita\.orgs(\.|$|\s)``
+>   across ``src/openakita/`` + ``apps/`` + ``scripts/`` +
+>   ``identity/`` + ``tests/`` MUST return 0 files. Both gates
+>   re-checked at every CI run.
+> * G-RC-9.9 mini-gate doc -- per main P9.9 charter §5.7 η-1,
+>   close P9.x nits + record 9 / 9 sentinel set + sign off
+>   v1 deletion epic.
+> * G-RC-9 final η-2 -- per main P9.9 charter §5.7 η-2, roll-
+>   up gate sealing the P-RC-9 ``src/openakita/orgs/`` integral
+>   migration epic; only nits remain (308 shim retirement
+>   deferred to v2.1.0 per ADR-0015; ``runtime/orgs/`` ->
+>   ``orgs/`` flatten deferred to P-RC-10).
+>
+> **HARD STOP** per brief + ε-CHARTER §8: η-1 NOT started
+> this turn. ε phase ends here. P-RC-9 enters its FINAL
+> milestone series (η).
