@@ -1190,3 +1190,81 @@ sentinel held off-limits), so it needs its own planning round.
 >
 > **HARD STOP per brief**: γ-2 (cross-tree swap) rides next;
 > δ-1 (test coverage audit doc) NOT started this turn.
+
+## P9.9γ-2 -- cross-tree import swap (1 of 2 sites; 1 deferred on manager.py:55 absorption debt)
+
+| _this commit_ | P-RC-9 P9.9γ-2 | refactor(core): P9.9γ-2 swap core/ import v1→v2 runtime (1 of 2 sites; 1 deferred on v2-internal absorption debt) [P-RC-9 P9.9γ-2] | +~2 net source LOC (``core/_reasoning_engine_legacy.py`` 1 ins / 1 del at L7920 deferred import; ledger +~73 LOC; total ~75 under charter §6 80-LOC γ-2 cap) | 0 (core/-only source touch; ``git diff 09fdb795..HEAD -- src/openakita/orgs/ src/openakita/channels/ src/openakita/runtime/ src/openakita/api/ apps/ tests/`` returns empty bytes; 8 / 8 P-RC-9 sentinels unchanged) | ADR-0011 (mechanical re-route to v2 ``runtime.orgs.runtime``); ADR-0012 (γ-before-ε: core/ must resolve to v2 BEFORE ε-1 ``git rm`` per R3); canary 3/3 PASS |
+
+> P9.9γ-2 swaps the single cross-tree ``openakita.orgs.*``
+> import in ``src/openakita/core/`` onto v2 ``runtime.orgs.runtime``
+> and documents an **absorption-debt finding** on the
+> ``runtime/orgs/manager.py:55`` "special" site investigated
+> per user-task brief.
+>
+> Swapped (1 file / 1 site):
+>
+> * ``core/_reasoning_engine_legacy.py`` L7920 (deferred
+>   import inside a method body; Chinese cycle-break comment
+>   ``# 延迟导入避免环路`` preserved verbatim):
+>     BEFORE: from openakita.orgs.runtime import get_runtime
+>     AFTER:  from openakita.runtime.orgs.runtime import get_runtime
+>   ``get_runtime`` verified in v2 ``runtime.orgs.runtime`` +
+>   ``runtime/orgs/__init__.py`` re-export pre-write.
+>
+> Deferred (``runtime/orgs/manager.py:55``, investigation
+> result per user-task "special" clause): the 10-symbol
+> ``from openakita.orgs.models import (NodeSchedule,
+> Organization, OrgEdge, OrgNode, OrgStatus, ScheduleType,
+> UserPersona, _new_id, _now_iso,
+> infer_agent_profile_id_for_node)``. α-1 §3 per-symbol
+> map claims a 4-shard split (org-graph types to
+> ``command_models``, ids to any shard, schedule types to
+> ``scheduler_models``). STRICT verification (``rg "^(class|def)
+> \s+SYM"`` across the 4 v2 shards) shows ONLY ``NodeSchedule``
+> + ``ScheduleType`` exist (in ``scheduler_models``); the
+> other 8 (``Organization``, ``OrgEdge``, ``OrgNode``,
+> ``OrgStatus``, ``UserPersona``, ``_new_id``, ``_now_iso``,
+> ``infer_agent_profile_id_for_node``) have **no v2 definition**
+> anywhere under ``src/openakita/runtime/``. The α-1 §3
+> ``models.py`` row was aspirational — the org-graph
+> dataclasses + id helpers never landed. Per "if non-1:1
+> absorption is unclear, document the finding and choose
+> the safest path", the v1 import stays. v2 manager.py works
+> today because v1 ``models.py`` is still in tree; absorption
+> (~600+ LOC) MUST land before ε-1 deletes v1, suitable for
+> a dedicated γ-2b or ε-1 pre-deletion absorption commit.
+> No circular risk materialised (user's concern was about
+> the v1 ``identity`` → v2 ``manager`` mapping inverting;
+> manager.py only imports v1 ``models``, no inversion).
+>
+> Verification: (1) canary 3/3 PASS — ``tests/integration/test_v2_im_canary_e2e.py`` green at 1.50s / 1.52s / 1.53s
+> (canary IM→gateway→runtime path now exercises
+> channels β-1 + api/server γ-1 + core/ γ-2 swaps end-
+> to-end). (2) Narrow slice **585 / 585 PASS** in 63.99s;
+> identical to baseline 585 at parent γ-1 HEAD; zero test
+> delta. (3) Module-import smoke green: ``import openakita;
+> import openakita.agent; import openakita.core._reasoning_engine_legacy;
+> import openakita.runtime.orgs.runtime`` resolves with the
+> new L7920 line traversed (direct ``python -c "import
+> openakita.core._reasoning_engine_legacy"`` triggers a
+> **pre-existing** ``core.errors`` ↔ ``agent.errors``
+> ↔ ``llm.client`` circular bootstrap that exists at parent
+> HEAD too — ``git stash`` round-trip confirmed; not
+> introduced by γ-2). (4) Ruff drift in
+> ``_reasoning_engine_legacy.py`` (27 F401 + 2 F811) is
+> **pre-existing at parent HEAD ``09fdb795``**, all in
+> unused-import sections (L23 / L392-528 / L7956-7979) far
+> from L7920; deferred per "don't fix pre-existing ruff
+> drift outside scope".
+>
+> Strict-additive boundary: ``git diff 09fdb795..HEAD --
+> src/openakita/orgs/ src/openakita/channels/ src/openakita/runtime/
+> src/openakita/api/ apps/ tests/`` returns empty bytes —
+> only ``src/openakita/core/_reasoning_engine_legacy.py`` +
+> this ledger touched. Cumulative ``git diff 112bc62b..HEAD
+> -- src/openakita/orgs/`` (both γ commits): empty bytes
+> per Q-B / R3. 8 / 8 P-RC-9 sentinels ACTIVE.
+>
+> **HARD STOP per brief**: δ-1
+> (``tests/runtime/orgs/coverage_audit.md`` planning task)
+> NOT started this turn.

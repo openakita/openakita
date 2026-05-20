@@ -7917,7 +7917,7 @@ class ReasoningEngine:
             if not org_id or not node_id:
                 return {}
 
-            from openakita.orgs.runtime import get_runtime  # 延迟导入避免环路
+            from openakita.runtime.orgs.runtime import get_runtime  # 延迟导入避免环路
             runtime = get_runtime()
             if runtime is None:
                 return {}
