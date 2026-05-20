@@ -2397,3 +2397,98 @@ sentinel held off-limits), so it needs its own planning round.
 > **HARD STOP** per brief + ε-CHARTER §8: η-1 NOT started
 > this turn. ε phase ends here. P-RC-9 enters its FINAL
 > milestone series (η).
+
+> ### P9.9eta-1a -- 9th sentinel (v1 src retired) [active assertions]
+>
+> | commit hash | phase | title | LOC delta | tests delta | ADR refs |
+> |---|---|---|---|---|---|
+> | _this commit_ | P-RC-9 P9.9eta-1a | test(parity/orgs): 9th sentinel (v1 src retired) -- two active invariants for src/openakita/orgs/ retirement + zero-v1-import production scan | +PLACEHOLDER (sentinel test ~300 + ledger row ~15) | +2 (test_v1_src_directory_retired + test_production_imports_v1_free) | ADR-0011 (no new Protocol; ceiling held); ADR-0012 (v1 deletion at P9.9; sentinel locks in the retirement); ADR-0015 (308 shim NO-OP; sentinel scope is openakita.orgs.* import literals, not api/routes/) |
+>
+> Split decision: brief LOC budget rule "split if total > 400";
+> combined eta-1 ~610 ins; this commit (eta-1a) = ~400 ins;
+> eta-1b (G-RC-9.9 mini-gate) ~295 ins.
+>
+> **Sentinel #9 file**:
+> ``tests/parity/orgs/test_v1_src_retired_sentinel.py`` (300 LOC).
+> Two test functions activated as live assertions (no @xfail):
+>
+> 1. ``test_v1_src_directory_retired`` -- ``src/openakita/orgs/``
+>    must not exist (or be empty if it does). Defends the ε-2b
+>    atomic delete (``90a7d77f``; -20 237 LOC; 26 files) against
+>    silent recreation. PASS at HEAD: directory absent.
+> 2. ``test_production_imports_v1_free`` -- a strict line-anchored
+>    regex ``^\s*(?:from|import)\s+openakita\.orgs(?:\.|$|\s)``
+>    walks ``*.py`` + ``*.pyi`` under ``src/openakita/`` + ``apps/``
+>    + ``scripts/`` + ``identity/`` + ``tests/`` and asserts zero
+>    hits. Audited exemptions: ``runtime/orgs/`` (v2 path; brief)
+>    + ``apps/setup-center/src-tauri/`` (Tauri Rust build outputs;
+>    gitignored; ``git ls-files`` returns 0 tracked Python files
+>    under that prefix). PASS at HEAD: 0 hits across 1 174 scanned
+>    .py files post-prune.
+>
+> **Performance**: ~0.7-0.8 s wall-clock for the scan (warm cache),
+> within the < 1 s charter envelope. Achieved via two
+> optimisations: (i) directory-level pruning in ``_iter_python_files``
+> (``os.walk`` + ``dirnames[:] = kept``) skips the ~22 655 stale
+> ``.py`` files in the gitignored Tauri build outputs before
+> descent; (ii) bytes-level pre-filter (``b"openakita.orgs"
+> not in blob``) skips the UTF-8 decode + per-line regex for files
+> that do not contain the literal substring (~99% of the 1 174
+> production .py files at HEAD).
+>
+> **Discriminator**: line-anchored regex correctly exempts
+> docstring back-references (e.g. v2 modules whose docstring
+> mentions ``openakita.orgs.X`` as the module they replaced)
+> per ε-AUDIT sec 2.1; only ``from`` / ``import`` syntax at line
+> start matches. The exemption is structural to the regex, not a
+> per-file allowlist -- so future docstring edits do not need to
+> touch the sentinel.
+>
+> **Ruff + format**: ruff check clean (0 errors after the UP037
+> annotation-quote fix during draft); ruff format clean.
+>
+> **Verification at this commit**:
+>
+> * ``pytest tests/parity/orgs/test_v1_src_retired_sentinel.py -v``
+>   -- **2 passed in ~2.5 s** (pytest wall-clock; per-test scan
+>   ~0.7-0.8 s).
+> * Narrow slice extended:
+>   ``pytest tests/parity/orgs/ tests/runtime/orgs/ tests/api/
+>   tests/integration/test_v2_im_canary_e2e.py -q --tb=no``
+>   = **587 passed in ~67 s** (= 585 ε-2b baseline + 2 new
+>   sentinel cases). Zero regression.
+> * ``parity/orgs/`` collection: 66 -> **68 cases** (+2).
+> * ``pytest --collect-only -q`` trailing summary:
+>   **6162 / 6168 tests collected (6 deselected)** vs ε-2b baseline
+>   6160 / 6166; +2 new sentinel cases, 0 new ImportError /
+>   ModuleNotFoundError.
+> * v2 IM canary 3 reruns: 1 / 1 PASS each (per-pytest body times
+>   ~1.89 / 1.97 / 1.90 s); within the ε-2b ledger ±5 % envelope
+>   around the 1.62 s reference.
+>
+> **Sentinel matrix after this commit (9 / 9 ACTIVE; case counts
+> by file in P9-phase order)**:
+>
+> | # | file | added in | cases |
+> |--:|---|---|--:|
+> | 1 | ``test_blackboard_parity.py`` | P9.1c (``7f3445e3``) | 8 |
+> | 2 | ``test_project_store_parity.py`` | P9.2c | 6 |
+> | 3 | ``test_node_scheduler_parity.py`` | P9.3c | 4 |
+> | 4 | ``test_command_service_parity.py`` | P9.4c | 10 |
+> | 5 | ``test_manager_parity.py`` | P9.5c | 12 |
+> | 6 | ``test_runtime_parity.py`` | P9.6gamma | 20 |
+> | 7 | ``test_rest_contract_sentinel.py`` | P9.7gamma-2 (``6421508a``) | 3 |
+> | 8 | ``test_frontend_stale_paths_sentinel.py`` | P9.8delta-1 (``a31c679f``) | 3 |
+> | 9 | ``test_v1_src_retired_sentinel.py`` _(NEW; this commit)_ | P9.9eta-1a | **2** |
+> | **total** | -- | -- | **68** |
+>
+> Note on matrix notation: brief value 8/6/4/10/12/20/1/1/2
+> uses the per-file "active sentinel block" count tracked since
+> ε-2b ("case counts unchanged: 8+6+4+10+12+20+1+1"); the
+> literal ``pytest --collect-only`` per-file count is 3/3 for
+> sentinels #7+#8 and 2 for #9 (verified post-eta-1a).
+>
+> **HARD STOP**: G-RC-9.9 mini-gate doc (eta-1b) and η-2 G-RC-9
+> final roll-up gate NOT started this commit; eta-1b opens on
+> the immediate follow-up commit per the split.
+
