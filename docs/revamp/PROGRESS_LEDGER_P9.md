@@ -785,3 +785,48 @@ sentinel held off-limits), so it needs its own planning round.
 > moved this commit. 7 / 7 P-RC-9 sentinels remain ACTIVE.
 > P9.8gamma-4 (7 remaining view / component files; 18 HTTP + 1 comment
 > = 19 hits; ~90 LOC) follows in the same turn per inventory sec 9.
+
+| _this commit_ | P-RC-9 P9.8gamma-4 | feat(frontend): P9.8gamma-4 swap remaining 7 view/component files v1->v2 mint API paths | +PLACEHOLDER LOC (7 frontend files; 18 HTTP swap lines + 1 JSDoc comment swap; ledger this row + body ~26 LOC) | 0 (no new tests; tsc -b clean, vitest 14/14 across 5 suites, canary 1/1, narrowed slice 581/581, REST contract sentinel 3/3) | ADR-0011 (no new Protocol; pure URL string swap + 1 JSDoc comment update; no abstraction introduced); ADR-0012 (308 shim continues to serve any legacy callers through v2.0.x per Q-B single-window contract); charter D-1 R3 LOCKED (mint canonical literal lives at ``/api/v2/orgs/*``); inventory sec 1.4 (long-tail per-file breakdown) |
+
+> P9.8gamma-4 fourth and final ``apps/`` source touch landed.
+> Swapped mint-semantic frontend API call sites across 7 long-tail
+> view / component files: ``components/OrgMonitorPanel.tsx`` 5
+> swaps (events B45, schedules B18, thinking B31, tasks B82,
+> active-plan B83); ``components/OrgInboxSidebar.tsx`` 4 swaps
+> (inbox list B54, read B55, read-all B56, resolve B57);
+> ``components/OrgBlackboardPanel.tsx`` 2 swaps (memory query B42,
+> memory delete B44); ``components/OrgDashboard.tsx`` 1 swap
+> (stats B64); ``components/WorkbenchNodePicker.tsx`` 1 HTTP swap
+> (plugin-workbench-templates B6) + 1 JSDoc comment narrative
+> update; ``views/ChatView.tsx`` 2 swaps (list orgs B1, command
+> cancel B40); ``views/PixelOfficeView.tsx`` 3 swaps (list orgs B1,
+> get org B10, submit command B38). Total: 18 HTTP literal swaps +
+> 1 JSDoc comment update = 19 hits matching inventory sec 1.4
+> per-file roll-up. All Group B (mint-semantic); no Group C
+> leftovers in any of the 7 files; no verb changes. Net source
+> delta: 19 insertions + 19 deletions = 38 lines moved, 0 LOC net.
+> Verification: ``tsc -b`` exit 0; ``vitest run`` 14 passed / 5
+> suites; ``pytest tests/integration/test_v2_im_canary_e2e.py
+> tests/parity/orgs/test_rest_contract_sentinel.py -q`` 4 passed;
+> narrowed backend slice 581 passed (= baseline at HEAD ``754ff465``
+> / ``5708cce5`` / ``591e8f94``; no regression).
+>
+> Cumulative gamma sweep (gamma-2 + gamma-3 + gamma-4): 53 HTTP
+> literal swaps + 4 narrative comment swaps = 57 v1 hits migrated
+> across 10 source files (1 + 2 + 7); 3 Group C paths held on v1
+> in OrgEditorView per inventory sec 1.2 (reset / heartbeat-trigger
+> / standup-trigger). v1 hit accounting: charter sec R5 anchored
+> 60 v1 hits, inventory measured 62 (54 HTTP + 4 TS imports +
+> 4 comments); this turn swapped 53 HTTP (= 54 v2-eligible minus
+> the 1 OrgChatPanel line at 105 which is JSDoc not HTTP -- counted
+> in the 4 comments) and 4 comments (3 in OrgChatPanel + 1 in
+> WorkbenchNodePicker); the 4 TS module imports (3 in
+> TemplatePickerDrawer tests + 1 in OrgEditorView line 73) are not
+> HTTP paths and stay verbatim; the 3 Group C HTTP paths stay
+> on v1 for P9.9 deletion. Strict additive verified across all
+> three commits: ``git diff 754ff465..HEAD -- src/openakita/``
+> returns empty bytes. 7 / 7 P-RC-9 sentinels remain ACTIVE.
+> P9.8delta-1 (8th sentinel: frontend stale-path grep) NOT
+> started -- HARD STOP per charter sec 3 + sec 13. delta phase
+> is the final gate-prep phase and needs its own scoped
+> delegation.

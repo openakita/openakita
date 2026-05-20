@@ -38,7 +38,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
       try {
         const params = new URLSearchParams({ limit: "100" });
         if (s && s !== "all") params.set("scope", s);
-        const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/memory?${params}`);
+        const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/memory?${params}`);
         const data = await res.json();
         setEntries(data || []);
       } catch {
@@ -74,7 +74,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
 
     const handleDelete = async (entryId: string) => {
       try {
-        await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/memory/${entryId}`, { method: "DELETE" });
+        await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/memory/${entryId}`, { method: "DELETE" });
         setEntries(prev => prev.filter(e => e.id !== entryId));
       } catch { /* ignore */ }
     };

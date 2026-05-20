@@ -173,9 +173,9 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
     const fetchNodeDetail = async () => {
       try {
         const [eventsRes, schedulesRes, thinkingRes] = await Promise.all([
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/events?actor=${nodeId}&limit=20`),
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/nodes/${nodeId}/schedules`),
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/nodes/${nodeId}/thinking?limit=30`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/events?actor=${nodeId}&limit=20`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/nodes/${nodeId}/schedules`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/nodes/${nodeId}/thinking?limit=30`),
         ]);
         if (eventsRes.ok) setNodeEvents(await eventsRes.json());
         if (schedulesRes.ok) setNodeSchedules(await schedulesRes.json());
@@ -203,8 +203,8 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
     const fetchNodeTasks = async () => {
       try {
         const [tasksRes, planRes] = await Promise.all([
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/nodes/${nodeId}/tasks`),
-          safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/nodes/${nodeId}/active-plan`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/nodes/${nodeId}/tasks`),
+          safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/nodes/${nodeId}/active-plan`),
         ]);
         if (tasksRes.ok) {
           const data = await tasksRes.json();

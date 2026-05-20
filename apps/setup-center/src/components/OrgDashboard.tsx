@@ -173,7 +173,7 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${orgId}/stats`);
+      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${orgId}/stats`);
       if (res.ok) setStats(await res.json());
     } catch { /* ignore */ }
     setLoading(false);

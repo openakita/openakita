@@ -74,7 +74,7 @@ export function PixelOfficeView({
 
     const fetchOrgList = async () => {
       try {
-        const resp = await safeFetch(`${apiBaseUrl}/api/orgs`);
+        const resp = await safeFetch(`${apiBaseUrl}/api/v2/orgs`);
         if (!cancelled) {
           const data = await resp.json();
           const orgs = (data.organizations ?? data) as Array<{ id: string; name: string }>;
@@ -106,7 +106,7 @@ export function PixelOfficeView({
 
     const fetchOrgData = async () => {
       try {
-        const resp = await safeFetch(`${apiBaseUrl}/api/orgs/${selectedOrgId}`);
+        const resp = await safeFetch(`${apiBaseUrl}/api/v2/orgs/${selectedOrgId}`);
         if (!resp.ok || !mounted) return;
         const org = await resp.json();
 
@@ -224,7 +224,7 @@ export function PixelOfficeView({
   const handleAssignTask = useCallback((nodeId: string) => {
     const task = prompt(`分配任务给 ${nodeId}：`);
     if (!task) return;
-    safeFetch(`${apiBaseUrl}/api/orgs/${selectedOrgId}/command`, {
+    safeFetch(`${apiBaseUrl}/api/v2/orgs/${selectedOrgId}/command`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: task, target_node_id: nodeId }),
