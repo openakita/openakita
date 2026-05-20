@@ -1019,3 +1019,15 @@ sentinel held off-limits), so it needs its own planning round.
 > ~31000 LOC v1 deletion event execution plan; this ADR only
 > ratifies the governance question that the charter section 8
 > needs as a stable input.
+
+## P9.9.charter -- final P-RC-9 planning round (deletion + import sweep; cites ADR-0015)
+
+| _this commit_ | P-RC-9 P9.9.charter | docs(revamp): P9.9 charter -- final P-RC-9 planning (deletion + import sweep; cites ADR-0015) | +PLACEHOLDER LOC (docs/revamp/P-RC-9-P9.9-CHARTER.md NEW 495 LOC mirroring P9.7 + P9.8 charter sec 1-13 structure; this ledger section + row + blockquote ~5 LOC; total ~500 LOC at 500 hard cap, target ~420) | 0 (docs-only commit; ``git diff d49388bb..HEAD -- src/openakita/ tests/ apps/`` returns empty bytes; 8 / 8 P-RC-9 sentinels unchanged at HEAD; charter recommends 9th "v1 deletion guard" sentinel adoption in eta-1) | ADR-0011 (no new Protocol; charter is planning artefact; 9th sentinel another instance of established collection-time grep pattern); ADR-0012 (operationalises v1 deletion per Q-B ACCEPTED (b); hard ``git rm`` selected over fresh 410 shim because P9.7 v2 mint + 308 shim + P9.8 55-hit frontend swap already gave callers one full v2.0.x window); ADR-0014 (LOC budget: charter sec 6 ~1 590 positive within +/-10% tolerance against ~1 500 anchor; negative ~-35 000 LOC bounded by commit_guard insertions-only check per P9.6gamma precedent); **ADR-0015** (308 shim retirement governance -- option (b) v2.1.0 LOCKED; charter sec 5.6 zeta NO-OP + sec 8 documents 3-step v2.1.0 milestone task list verbatim from ADR-0015 Implementation notes) |
+
+> P9.9.charter docs-only commit lands the final P-RC-9 planning
+> round. Charter mirrors P9.7 + P9.8 13-section format; covers
+> physical deletion of v1 orgs surface (~-35 000 net LOC: 20 237
+> subsystem + 2 533 router + 12 238 tests/orgs), 40 import sweep
+> sites + 8 absorbed mappings (sec 3.3 per G-RC-9.6 sec 13), 12
+> commits split alpha..eta. 9th sentinel: **ADOPT (Y)** in eta-1.
+> **HARD STOP per brief**: P9.9alpha-1 NOT started.
