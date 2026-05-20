@@ -133,3 +133,16 @@ def p97_health() -> dict[str, Any]:
         "subsystems": list(_SUBSYSTEMS),
         "p97_phase": "alpha-2",
     }
+
+
+# ---------------------------------------------------------------------------
+# Sub-module aggregation -- P9.7beta endpoint clusters (B1-B83).
+#
+# Each sub-module imports ``router`` + the ``_get_*`` helpers from this
+# module and registers its cluster of endpoints via decorators. Importing
+# the sub-modules HERE (not in server.py) keeps the router-aggregation
+# story in a single place; the side effects of the imports are the
+# ``@router.<method>`` decorations.
+# ---------------------------------------------------------------------------
+
+from . import orgs_v2_runtime_orgs  # noqa: E402, F401 -- side-effect import (B1-B17)

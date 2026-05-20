@@ -70,30 +70,35 @@ def spec_client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[TestClien
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_get_org_returns_308_to_spec(shim_client: TestClient) -> None:
-    """Old ``GET /api/v2/orgs/{id}`` issues 308 -> ``/api/v2/orgs-spec/{id}``."""
+def test_legacy_get_org_now_claimed_by_mint(shim_client: TestClient) -> None:
+    """After P9.7beta-1 lands B10, ``GET /api/v2/orgs/{id}`` is claimed by
+    the mint (not the legacy redirect). Without ``app.state.org_manager``
+    bound on the shim app, ``_get_manager`` returns 503 -- the route is
+    REACHED, the redirect no longer fires."""
     resp = shim_client.get("/api/v2/orgs/org_dummy")
-    assert resp.status_code == 308
-    assert resp.headers["Location"] == "/api/v2/orgs-spec/org_dummy"
+    assert resp.status_code == 503
+    assert "Location" not in resp.headers
 
 
-def test_legacy_list_orgs_returns_308_to_spec(shim_client: TestClient) -> None:
-    """Old ``GET /api/v2/orgs`` issues 308 -> ``/api/v2/orgs-spec``."""
+def test_legacy_list_orgs_now_claimed_by_mint(shim_client: TestClient) -> None:
+    """After P9.7beta-1 lands B1, ``GET /api/v2/orgs`` is claimed by mint."""
     resp = shim_client.get("/api/v2/orgs")
-    assert resp.status_code == 308
-    assert resp.headers["Location"] == "/api/v2/orgs-spec"
+    assert resp.status_code == 503
+    assert "Location" not in resp.headers
 
 
-def test_legacy_templates_returns_308_to_spec(shim_client: TestClient) -> None:
+def test_legacy_templates_now_claimed_by_mint(shim_client: TestClient) -> None:
+    """After P9.7beta-1 lands B5, ``GET /api/v2/orgs/templates`` -> mint."""
     resp = shim_client.get("/api/v2/orgs/templates")
-    assert resp.status_code == 308
-    assert resp.headers["Location"] == "/api/v2/orgs-spec/templates"
+    assert resp.status_code == 503
+    assert "Location" not in resp.headers
 
 
-def test_legacy_template_get_returns_308_to_spec(shim_client: TestClient) -> None:
+def test_legacy_template_get_now_claimed_by_mint(shim_client: TestClient) -> None:
+    """After P9.7beta-1 lands B7, ``GET /api/v2/orgs/templates/{id}`` -> mint."""
     resp = shim_client.get("/api/v2/orgs/templates/software_team")
-    assert resp.status_code == 308
-    assert resp.headers["Location"] == "/api/v2/orgs-spec/templates/software_team"
+    assert resp.status_code == 503
+    assert "Location" not in resp.headers
 
 
 def test_legacy_instantiate_post_returns_308_preserves_method(
@@ -114,16 +119,21 @@ def test_legacy_patch_org_returns_308(shim_client: TestClient) -> None:
     assert resp.headers["Location"] == "/api/v2/orgs-spec/org_dummy"
 
 
-def test_legacy_delete_org_returns_308(shim_client: TestClient) -> None:
+def test_legacy_delete_org_now_claimed_by_mint(shim_client: TestClient) -> None:
+    """After P9.7beta-1 lands B12, ``DELETE /api/v2/orgs/{id}`` -> mint."""
     resp = shim_client.delete("/api/v2/orgs/org_dummy")
-    assert resp.status_code == 308
-    assert resp.headers["Location"] == "/api/v2/orgs-spec/org_dummy"
+    assert resp.status_code == 503
+    assert "Location" not in resp.headers
 
 
-def test_legacy_create_post_returns_308(shim_client: TestClient) -> None:
+def test_legacy_create_post_now_claimed_by_mint(shim_client: TestClient) -> None:
+    """After P9.7beta-1 lands B2, ``POST /api/v2/orgs`` -> mint.
+
+    Empty/invalid body raises 422 from Pydantic before the manager helper
+    runs -- still a mint hit (NOT a redirect)."""
     resp = shim_client.post("/api/v2/orgs", json={"org": {}})
-    assert resp.status_code == 308
-    assert resp.headers["Location"] == "/api/v2/orgs-spec"
+    assert resp.status_code in (422, 503)
+    assert "Location" not in resp.headers
 
 
 def test_legacy_stream_returns_308(shim_client: TestClient) -> None:
@@ -132,11 +142,14 @@ def test_legacy_stream_returns_308(shim_client: TestClient) -> None:
     assert resp.headers["Location"] == "/api/v2/orgs-spec/org_dummy/stream"
 
 
-def test_redirect_preserves_query_string(shim_client: TestClient) -> None:
-    """Query string must round-trip through the shim verbatim."""
-    resp = shim_client.get("/api/v2/orgs?include_archived=true&limit=10")
+def test_redirect_preserves_query_string_for_unclaimed_path(
+    shim_client: TestClient,
+) -> None:
+    """Query-string round-trip is now exercised on the still-unclaimed
+    ``/{id}/stream`` path (the list path was claimed by mint at B1)."""
+    resp = shim_client.get("/api/v2/orgs/org_dummy/stream?since=42")
     assert resp.status_code == 308
-    assert resp.headers["Location"] == "/api/v2/orgs-spec?include_archived=true&limit=10"
+    assert resp.headers["Location"] == "/api/v2/orgs-spec/org_dummy/stream?since=42"
 
 
 # ---------------------------------------------------------------------------
@@ -154,12 +167,17 @@ def test_spec_path_get_templates_returns_real_payload(spec_client: TestClient) -
     assert body["count"] >= 4
 
 
-def test_legacy_path_followed_yields_same_shape_as_spec(spec_client: TestClient) -> None:
-    """Through the redirect, the old path yields the same Group A envelope."""
-    old = spec_client.get("/api/v2/orgs/templates")
-    new = spec_client.get("/api/v2/orgs-spec/templates")
-    assert old.status_code == 200
-    assert new.status_code == 200
+def test_legacy_unclaimed_path_followed_yields_same_shape_as_spec(
+    spec_client: TestClient,
+) -> None:
+    """After P9.7beta-1 lands B5, ``/templates`` is claimed by the mint.
+    The redirect identity assertion now runs on ``/templates/X/instantiate``
+    which the mint does NOT claim and still falls through to Group A."""
+    old = spec_client.post("/api/v2/orgs/templates/software_team/instantiate", json={})
+    new = spec_client.post(
+        "/api/v2/orgs-spec/templates/software_team/instantiate", json={}
+    )
+    assert old.status_code == new.status_code
     assert old.json() == new.json()
 
 

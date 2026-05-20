@@ -320,3 +320,26 @@ current_phase: P-RC-9
 | _this commit_ | P-RC-9 P9.7a-2a | feat(api/routes): Group A rename to ``/api/v2/orgs-spec`` + 308 Permanent Redirect shim at the original ``/api/v2/orgs`` paths (9 routes) + register shim router after spec routers in server.py + smoke tests for redirects | +311 src/test LOC (orgs_v2.py +18/-15 prefix+docstring; orgs_v2_stream.py +2/-2 prefix; server.py +21/-12 import + register block; _orgs_v2_legacy_redirects.py NEW 101; test_orgs_v2.py +37/-37 path swap; test_orgs_v2_stream.py +9/-6 path swap; test_p97_alpha2_smoke.py NEW 160; ledger +PLACEHOLDER) | +12 smoke (test_p97_alpha2_smoke.py: 9 308 shim checks + 1 query-string preservation + 2 spec-path Group A logic smoke); gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ 265 -> 277 passed (44.67s) | ADR-0011 (no new Protocol; shim is a thin APIRouter; spec router rename is one-line prefix flip); ADR-0012 (one-window relaxation for 308 redirect window through v2.0.x; physical v1 delete still waits for P9.9); cites P-RC-9-P9.7-DECISIONS.md D-1 R3 LOCKED |
 | _this commit_ | P-RC-9 P9.7a-2b | feat(api/schemas): orgs_v2/ Pydantic shapes skeleton (D-3 LOCKED) -- 7 enums + 12 models across 4 sub-modules; all pin ConfigDict(extra="forbid"); nested nodes/edges/tasks ride as opaque dicts | +344 LOC (schemas/__init__.py NEW 1 + schemas/orgs_v2/__init__.py NEW 44 + orgs.py NEW 70 + nodes.py NEW 61 + commands.py NEW 78 + projects.py NEW 90; ledger +PLACEHOLDER) | 0 new (smoke: `from openakita.api.schemas.orgs_v2 import ...` collects all 16 names; gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ unchanged at 277 passed) | ADR-0011 (D-3 layer separation: shapes live under schemas/orgs_v2/* decoupled from router so contract tests import without dragging FastAPI); ADR-0012 (no shim under v1; v1 returns bare dict so nothing to mirror) |
 | _this commit_ | P-RC-9 P9.7a-2c | feat(api/routes): orgs_v2_runtime.py skeleton (P9.7 mint surface at ``/api/v2/orgs``) + 6 Depends-free ``_get_*(request)`` subsystem helpers (D-4 LOCKED) + GET ``/_p97/health`` stub + register BEFORE the 308 redirect shim + smoke tests for runtime probe + Pydantic schemas import sanity | +PLACEHOLDER LOC (orgs_v2_runtime.py NEW 135 + server.py +9/-2 import + register block + test_p97_alpha2_smoke.py +95 extend; ledger +PLACEHOLDER) | +3 smoke (test_p97_alpha2_smoke.py: health probe envelope + redirect-precedence + 16-name schemas import sanity); gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ 277 -> 280 passed (44.47s) | ADR-0011 (D-3 layer separation: router consumes schemas/orgs_v2/* indirectly; D-4 R4 granularity ceiling preserved -- 6 free-function helpers, NOT FastAPI Depends factories); ADR-0012 (no shim under v1; pure new code) |
+
+## P9.7beta-1 -- mint cluster 3.1 Org CRUD + templates + lifecycle (17 endpoints) (this turn)
+
+> First beta mint commit. 17 endpoints across ``/api/v2/orgs[...]``
+> (B1-B17 per ``P-RC-9-P9.7-ENDPOINT-INVENTORY.md`` section 3.1)
+> land in a new sub-module ``orgs_v2_runtime_orgs.py`` which the
+> main ``orgs_v2_runtime.py`` imports at load time so the
+> ``@router`` decorators register on the shared APIRouter.
+> Wiring is thin (D-4 LOCKED helpers; no business logic in route
+> bodies). 23 smoke tests in NEW ``test_p97_beta_smoke.py`` pin
+> 200/201/404/422 status codes + subsystem method-call shape.
+> 8 alpha-2 redirect tests reframed: paths the mint now claims
+> (B1/B2/B5/B7/B10/B12) no longer 308 -- they REACH the mint
+> route and surface 503 on the bare ``shim_client`` (subsystems
+> unbound). One redirect test pivots from ``/templates`` to
+> ``/{id}/stream`` (the mint does NOT claim ``/stream``;
+> still falls through to Group A). New ``project_root``
+> monkeypatch lets the avatar-upload smoke verify file landing
+> under ``tmp_path/data/avatars/``.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-9 P9.7beta-1 | feat(api/routes): mint cluster 3.1 Org CRUD + templates + lifecycle (17 endpoints: B1-B17) in orgs_v2_runtime_orgs.py + side-effect import from orgs_v2_runtime.py + 23 smoke tests + reframe 8 alpha-2 redirect tests for mint-claimed paths | +PLACEHOLDER LOC (orgs_v2_runtime_orgs.py NEW 303 + orgs_v2_runtime.py +13 sub-module import; test_p97_beta_smoke.py NEW 301 + test_p97_alpha2_smoke.py +31 reframe; ledger +PLACEHOLDER) | +23 smoke (B1-B17 wiring smokes via TestClient + MagicMock subsystems); gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ 280 -> 303 passed (54.09s) | ADR-0011 (D-3 layer separation -- ``OrgCreate``/``OrgPatch`` schemas consumed for input validation; response stays dict for v1 parity); ADR-0012 (no shim under v1; v2 mint reaches v1 free-function helpers ``list_avatar_presets`` / ``build_workbench_templates`` because they are NOT v1 ``OrgManager`` methods; the no-shim invariant covers class boundary, not free-function helpers); cites P-RC-9-P9.7-ENDPOINT-INVENTORY.md section 3.1 B1-B17 |
