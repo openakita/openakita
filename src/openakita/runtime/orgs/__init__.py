@@ -93,6 +93,21 @@
   emits ``agent_run_started`` / ``agent_run_finished`` /
   ``agent_run_failed`` / ``org_paused_quota`` /
   ``llm_usage`` events through the bus.
+- P9.6g ships :class:`NodeStatusController` +
+  :class:`NodeMessageRouter` + ``format_incoming_message``
+  + ``is_stop_intent`` in ``_runtime_node_lifecycle.py``
+  (~330 LOC). Lifts v1 ``_on_node_message`` (175 LOC) +
+  ``_format_incoming_message`` (96 LOC) +
+  ``_drain_node_pending`` (86 LOC) + ``_post_task_hook``
+  (81 LOC) + ``_set_node_status`` / ``set_node_status`` /
+  ``_mark_effective_action`` / ``_try_route_to_clone`` /
+  ``_make_message_handler`` / ``_register_clone_in_messenger``
+  / ``_on_inbound_for_node`` / ``_is_stop_intent``
+  / ``evict_node_agent`` / ``_connect_node_mcp_servers``
+  (~600 v1 LOC) into two focused classes + 4
+  ``STATUS_*`` constants. Routes inbound messages through
+  stop-intent detection, busy-queueing, agent pipeline
+  delivery, and post-task hook orchestration.
 """
 
 from __future__ import annotations
@@ -126,6 +141,16 @@ from ._runtime_lifecycle import (
     STATE_STOPPED,
     IllegalOrgTransition,
     OrgLifecycleManager,
+)
+from ._runtime_node_lifecycle import (
+    STATUS_BUSY,
+    STATUS_ERROR,
+    STATUS_IDLE,
+    STATUS_STOPPED,
+    NodeMessageRouter,
+    NodeStatusController,
+    format_incoming_message,
+    is_stop_intent,
 )
 from ._runtime_watchdog import CommandWatchdog, IdleProbeLoop
 from .blackboard import (
@@ -273,6 +298,10 @@ __all__ = [
     "STATE_DELETED",
     "STATE_PAUSED",
     "STATE_STOPPED",
+    "STATUS_BUSY",
+    "STATUS_ERROR",
+    "STATUS_IDLE",
+    "STATUS_STOPPED",
     "ScheduleStore",
     "ScheduleType",
     "SchedulerRuntimeProbe",
@@ -288,6 +317,7 @@ __all__ = [
     "build_schedule_prompt",
     "compute_next_fire_time",
     "default_scope_for_surface",
+    "format_incoming_message",
     "get_command_service",
     "get_default_blackboard_backend",
     "get_default_project_store",
@@ -295,6 +325,7 @@ __all__ = [
     "get_org_manager",
     "get_default_event_bus",
     "get_runtime",
+    "is_stop_intent",
     "new_command_id",
     "new_project_id",
     "new_schedule_id",
@@ -306,6 +337,8 @@ __all__ = [
     "EventBusProtocol",
     "InMemoryEventBus",
     "NodeLifecycleProtocol",
+    "NodeMessageRouter",
+    "NodeStatusController",
     "ORG_STATE_ACTIVE",
     "ORG_STATE_PAUSED",
     "OrgRuntime",
