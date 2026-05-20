@@ -1,0 +1,167 @@
+{
+  "command_default_scope_console": {
+    "extras": {
+      "scope": "console_full"
+    },
+    "final_message": "default_scope",
+    "success": true,
+    "tool_sequence": []
+  },
+  "command_default_scope_desktop": {
+    "extras": {
+      "scope": "chat_summary"
+    },
+    "final_message": "default_scope",
+    "success": true,
+    "tool_sequence": []
+  },
+  "command_default_scope_im_group": {
+    "extras": {
+      "scope": "final_only"
+    },
+    "final_message": "default_scope",
+    "success": true,
+    "tool_sequence": []
+  },
+  "command_default_scope_im_private": {
+    "extras": {
+      "scope": "im_summary"
+    },
+    "final_message": "default_scope",
+    "success": true,
+    "tool_sequence": []
+  },
+  "command_forward_target_rejects_empty": {
+    "extras": {
+      "dict": null
+    },
+    "final_message": "forward_from_dict",
+    "success": true,
+    "tool_sequence": []
+  },
+  "command_forward_target_roundtrip": {
+    "extras": {
+      "dict": {
+        "bot_instance_id": "bot_b",
+        "channel": "wecom",
+        "chat_id": "wxc_id_42",
+        "label": "finance",
+        "thread_id": "th_1"
+      }
+    },
+    "final_message": "forward_from_dict",
+    "success": true,
+    "tool_sequence": []
+  },
+  "command_request_to_dict_desktop_chat": {
+    "extras": {
+      "dict": {
+        "content": "人事报表",
+        "continue_previous": false,
+        "forward_to": [],
+        "org_id": "org_parity_sample",
+        "origin_surface": "desktop_chat",
+        "output_scope": "chat_summary",
+        "replace_existing": false,
+        "source": {
+          "channel": "desktop",
+          "chat_id": "",
+          "client_id": "",
+          "display_name": "",
+          "thread_id": null,
+          "user_id": "desktop_user"
+        },
+        "target_node_id": null
+      }
+    },
+    "final_message": "to_dict",
+    "success": true,
+    "tool_sequence": []
+  },
+  "command_request_to_dict_full": {
+    "extras": {
+      "dict": {
+        "content": "do the thing",
+        "continue_previous": true,
+        "forward_to": [
+          {
+            "bot_instance_id": "bot_main",
+            "channel": "telegram",
+            "chat_id": "-100123",
+            "label": "ops",
+            "thread_id": null
+          }
+        ],
+        "org_id": "org_parity_sample",
+        "origin_surface": "im",
+        "output_scope": "im_summary",
+        "replace_existing": true,
+        "source": {
+          "channel": "feishu",
+          "chat_id": "oc_123",
+          "client_id": "client_alpha",
+          "display_name": "张三",
+          "thread_id": "th_7",
+          "user_id": "u_42"
+        },
+        "target_node_id": "node_ceo"
+      }
+    },
+    "final_message": "to_dict",
+    "success": true,
+    "tool_sequence": []
+  },
+  "command_request_to_dict_minimal": {
+    "extras": {
+      "dict": {
+        "content": "task A",
+        "continue_previous": false,
+        "forward_to": [],
+        "org_id": "org_parity_sample",
+        "origin_surface": "org_console",
+        "output_scope": "console_full",
+        "replace_existing": false,
+        "source": {
+          "channel": "desktop",
+          "chat_id": "",
+          "client_id": "",
+          "display_name": "",
+          "thread_id": null,
+          "user_id": "desktop_user"
+        },
+        "target_node_id": null
+      }
+    },
+    "final_message": "to_dict",
+    "success": true,
+    "tool_sequence": []
+  },
+  "command_submit_record_shape": {
+    "extras": {
+      "record": {
+        "continue_previous": false,
+        "error": null,
+        "forward_to": [],
+        "org_id": "org_parity_sample",
+        "origin_surface": "im",
+        "output_scope": "final_only",
+        "phase": "running",
+        "result": null,
+        "root_node_id": "node_root",
+        "source": {
+          "channel": "feishu",
+          "chat_id": "oc_test",
+          "client_id": "",
+          "display_name": "alice",
+          "thread_id": null,
+          "user_id": "u_1"
+        },
+        "status": "running",
+        "target_node_id": null
+      }
+    },
+    "final_message": "submit_record",
+    "success": true,
+    "tool_sequence": []
+  }
+}

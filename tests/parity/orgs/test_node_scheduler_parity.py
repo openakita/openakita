@@ -1,109 +1,45 @@
-"""Parity fixtures for OrgNodeScheduler v1 -> v2 (P-RC-9 P9.3c).
+"""Parity fixtures for OrgNodeScheduler v2-baseline (P-RC-9 P9.9δ-2a; was P9.3c v1 oracle).
 
-Each :class:`ParityCase` exercises the same scripted scenario
-against v1 ``openakita.orgs.node_scheduler.OrgNodeScheduler``
-and the v2
-``openakita.runtime.orgs.node_scheduler.OrgNodeScheduler`` and
-asserts equality on a normalised :class:`ParityResult` via
-:func:`assert_parity`.
+Each :class:`ParityCase` exercises a scripted scenario against
+the v2 ``openakita.runtime.orgs.node_scheduler.OrgNodeScheduler``
+and asserts the normalised :class:`ParityResult` equals the
+captured golden dict in ``_golden_node_scheduler.json``.
 
-Per P-RC-9-PLAN section 5.2 (NodeScheduler parity contract):
-*assert next-fire-time computed by both paths is within 1 ms
-of each other*. v1 has no exposed next-fire-time helper -- the
-computation is inlined in
-``_schedule_loop`` -- so the v1 runner re-implements the
-literal formula from v1''s source (``now + interval_s`` for
-INTERVAL/CRON; ``datetime.fromisoformat(run_at)`` UTC-coerced
-for ONCE) with a source-line comment for traceability. The
-1-ms tolerance is the safety net for any unintended drift.
+Per P-RC-9-P9.9 δ-2a (audit §6 Option B): this file shipped 4
+v1-vs-v2 oracle cases in P9.3c. The v1 import / runners were
+removed in δ-2a; the golden dicts were captured from the v2
+output at HEAD ``a3a5fde6`` (close of δ-1). The 1-ms next-
+fire-time tolerance from the v1-vs-v2 contract is dropped --
+v2 is the single source of truth at this commit, so the
+asserts collapse to verbatim equality.
 
-For the dispatch-prompt case the v1 path actually drives v1''s
-``OrgNodeScheduler.trigger_once`` against a MagicMock runtime
-(same pattern as ``tests/orgs/test_node_scheduler.py``) so the
-v1 prompt is captured from a real v1 call rather than
-re-implemented. v2 calls
-``runtime.orgs.node_scheduler.OrgNodeScheduler.trigger_once``
-against an analogous stub dispatcher / store / probe. The
-ignore set strips the ``\u65f6\u95f4: <iso>`` timestamp line
-because both paths read ``datetime.now`` at dispatch time.
+The dispatch_prompt case strips the ``时间: <iso>`` line so
+the prompt compares structurally; that timestamp line is also
+absent from the golden dict.
 
-P9.0i shipped a single ``xfail`` placeholder; this commit
-replaces it wholesale. Four cases per P9.3 charter:
-
-* ``scheduler_next_fire_interval``    -- INTERVAL 600 s.
-* ``scheduler_next_fire_once``        -- ONCE 120 s ahead.
-* ``scheduler_next_fire_cron``        -- CRON falls through
-  to interval timing in both v1 and v2 (the documented v1
-  quirk preserved in v2 ``compute_next_fire_time``).
-* ``scheduler_dispatch_prompt``       -- v1 vs v2
-  ``trigger_once`` produce the same prompt structure modulo
-  the ``\u65f6\u95f4`` timestamp line.
+Sentinel discipline (P-RC-9 §7.1): sentinel #3 stays ACTIVE
+through G-RC-9.9; semantics shift from oracle-equality to
+v2-baseline.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from pathlib import Path
 
 import pytest
 
-from tests.parity.harness import ParityCase, ParityResult, assert_parity
+from tests.parity.harness import ParityCase, ParityResult
 
-# ---------------------------------------------------------------------------
-# Normalisation
-# ---------------------------------------------------------------------------
-
-
-# Strict 1-ms tolerance per P-RC-9-PLAN section 5.2.
-_FIRE_TIME_TOLERANCE_MS = 1.0
+_GOLDEN: dict[str, dict] = json.loads(
+    (Path(__file__).parent / "_golden_node_scheduler.json").read_text(encoding="utf-8")
+)
 
 
 def _strip_timestamp_line(prompt: str) -> str:
-    """Remove the ``\u65f6\u95f4: <iso>`` line so prompts compare structurally."""
-    return "\n".join(line for line in prompt.split("\n") if not line.startswith("\u65f6\u95f4: "))
-
-
-# ---------------------------------------------------------------------------
-# Runners -- next-fire-time
-# ---------------------------------------------------------------------------
-
-
-def _next_fire_v1(case: ParityCase, now: datetime) -> ParityResult:
-    """v1 next-fire formula re-implementing v1 ``_schedule_loop`` inline.
-
-    Source reference: ``src/openakita/orgs/node_scheduler.py``
-    around lines 115-125 (ONCE branch:
-    ``target = datetime.fromisoformat(sched.run_at)``;
-    INTERVAL / CRON fall-through:
-    ``current_interval = sched.interval_s ... else 3600`` ->
-    ``asyncio.sleep(current_interval)``).
-    """
-    from openakita.orgs.models import NodeSchedule as V1NS
-    from openakita.orgs.models import ScheduleType as V1ST
-
-    sched = V1NS(
-        name=case.inputs["name"],
-        schedule_type=V1ST(case.inputs["schedule_type"]),
-        cron=case.inputs.get("cron"),
-        interval_s=case.inputs.get("interval_s"),
-        run_at=case.inputs.get("run_at"),
-        prompt=case.inputs["prompt"],
-    )
-    if sched.schedule_type == V1ST.ONCE:
-        if not sched.run_at:
-            target = now
-        else:
-            target = datetime.fromisoformat(sched.run_at)
-            if target.tzinfo is None:
-                target = target.replace(tzinfo=UTC)
-    else:
-        interval = sched.interval_s if sched.interval_s and sched.interval_s > 0 else 3600
-        target = now + timedelta(seconds=interval)
-    return ParityResult(
-        final_message="next_fire",
-        success=True,
-        extras={"fire_iso": target.isoformat()},
-    )
+    """Remove the ``时间: <iso>`` line so prompts compare structurally."""
+    return "\n".join(line for line in prompt.split("\n") if not line.startswith("时间: "))
 
 
 def _next_fire_v2(case: ParityCase, now: datetime) -> ParityResult:
@@ -126,39 +62,6 @@ def _next_fire_v2(case: ParityCase, now: datetime) -> ParityResult:
         success=True,
         extras={"fire_iso": target.isoformat()},
     )
-
-
-# ---------------------------------------------------------------------------
-# Runners -- dispatch prompt (v1 trigger_once vs v2 trigger_once)
-# ---------------------------------------------------------------------------
-
-
-def _v1_capture_prompt(case: ParityCase) -> str:
-    """Run v1 ``OrgNodeScheduler.trigger_once`` end-to-end and capture the prompt."""
-    import asyncio
-
-    from openakita.orgs.models import NodeSchedule as V1NS
-    from openakita.orgs.models import ScheduleType as V1ST
-    from openakita.orgs.node_scheduler import OrgNodeScheduler as V1Sched
-
-    rt = MagicMock()
-    sched = V1NS(
-        name=case.inputs["name"],
-        schedule_type=V1ST(case.inputs["schedule_type"]),
-        interval_s=case.inputs.get("interval_s"),
-        prompt=case.inputs["prompt"],
-        report_condition=case.inputs.get("report_condition", "on_issue"),
-        report_to=case.inputs.get("report_to"),
-    )
-    rt._manager.get_node_schedules = MagicMock(return_value=[sched])
-    rt._manager.save_node_schedules = MagicMock()
-    rt.get_event_store = MagicMock(return_value=MagicMock())
-    rt.send_command = AsyncMock(return_value={"result": "ok"})
-
-    scheduler = V1Sched(rt)
-    asyncio.run(scheduler.trigger_once("o", "n", sched.id))
-    # send_command(org_id, node_id, prompt) -> positional [2]
-    return rt.send_command.call_args[0][2]
 
 
 def _v2_capture_prompt(case: ParityCase) -> str:
@@ -207,11 +110,6 @@ def _v2_capture_prompt(case: ParityCase) -> str:
     return captured["prompt"]
 
 
-# ---------------------------------------------------------------------------
-# Cases + dispatch
-# ---------------------------------------------------------------------------
-
-
 _NOW = datetime(2026, 5, 19, 12, 0, 0, tzinfo=UTC)
 
 
@@ -255,44 +153,32 @@ CASES: list[ParityCase] = [
         kind="node_scheduler",
         inputs={
             "op": "dispatch_prompt",
-            "name": "\u5de1\u68c0",  # \u5de1\u68c0 = inspection
+            "name": "巡检",
             "schedule_type": "interval",
             "interval_s": 3600,
-            "prompt": "\u68c0\u67e5\u670d\u52a1\u72b6\u6001",
+            "prompt": "检查服务状态",
             "report_condition": "on_issue",
-            "report_to": "\u9886\u5bfc",
+            "report_to": "领导",
         },
     ),
 ]
 
 
-def _run_case(case: ParityCase) -> tuple[ParityResult, ParityResult]:
-    if case.inputs["op"] == "next_fire":
-        return _next_fire_v1(case, _NOW), _next_fire_v2(case, _NOW)
-    if case.inputs["op"] == "dispatch_prompt":
-        v1_prompt = _strip_timestamp_line(_v1_capture_prompt(case))
-        v2_prompt = _strip_timestamp_line(_v2_capture_prompt(case))
-        v1_res = ParityResult(final_message="prompt", success=True, extras={"prompt": v1_prompt})
-        v2_res = ParityResult(final_message="prompt", success=True, extras={"prompt": v2_prompt})
-        return v1_res, v2_res
-    raise KeyError(f"unknown op: {case.inputs['op']}")
+def _run_case(case: ParityCase) -> ParityResult:
+    op = case.inputs["op"]
+    if op == "next_fire":
+        return _next_fire_v2(case, _NOW)
+    if op == "dispatch_prompt":
+        prompt = _strip_timestamp_line(_v2_capture_prompt(case))
+        return ParityResult(final_message="prompt", success=True, extras={"prompt": prompt})
+    raise KeyError(f"unknown op: {op}")
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.id)
 def test_node_scheduler_parity(case: ParityCase) -> None:
-    """v1 vs v2 OrgNodeScheduler parity (P-RC-9 P9.3c, 4 cases)."""
-    v1, v2 = _run_case(case)
-    if case.inputs["op"] == "next_fire":
-        # Wall-clock 1-ms safety net (P-RC-9-PLAN section 5.2). Both
-        # paths feed off the same ``_NOW`` constant so the delta is
-        # effectively zero; the explicit assertion guards against
-        # later drift if either path changes the formula.
-        from datetime import datetime as _dt
-
-        t1 = _dt.fromisoformat(v1.extras["fire_iso"])
-        t2 = _dt.fromisoformat(v2.extras["fire_iso"])
-        delta_ms = abs((t1 - t2).total_seconds()) * 1000.0
-        assert delta_ms < _FIRE_TIME_TOLERANCE_MS, (
-            f"next-fire-time drift {delta_ms:.3f} ms exceeds 1 ms budget for {case.id}"
-        )
-    assert_parity(v1, v2, case=case)
+    """v2-baseline OrgNodeScheduler contract (P-RC-9 P9.9δ-2a, 4 cases)."""
+    v2 = _run_case(case)
+    expected = _GOLDEN[case.id]
+    actual = dict(v2.to_compare())
+    actual["tool_sequence"] = [list(t) for t in actual.get("tool_sequence", [])]
+    assert actual == expected, f"v2-baseline drift on {case.id}: {actual} != {expected}"

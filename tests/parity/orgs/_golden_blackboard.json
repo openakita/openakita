@@ -1,0 +1,164 @@
+{
+  "bb_concurrent_writes": {
+    "extras": {
+      "any_rows_survived": true,
+      "errors": []
+    },
+    "final_message": "conc",
+    "success": true,
+    "tool_sequence": []
+  },
+  "bb_dup_org_returns_none": {
+    "extras": {
+      "dup_returned_none": true,
+      "first_written": true,
+      "row_count": 1
+    },
+    "final_message": "dup",
+    "success": true,
+    "tool_sequence": []
+  },
+  "bb_eviction_caps_org": {
+    "extras": {
+      "top_count": 10,
+      "top_importance_desc": [
+        0.6,
+        0.59,
+        0.58,
+        0.57,
+        0.56,
+        0.55,
+        0.54,
+        0.53,
+        0.52,
+        0.51
+      ]
+    },
+    "final_message": "evict",
+    "success": true,
+    "tool_sequence": []
+  },
+  "bb_query_by_type": {
+    "extras": {
+      "decision_content": [
+        "decision1"
+      ],
+      "decision_count": 1
+    },
+    "final_message": "qtype",
+    "success": true,
+    "tool_sequence": []
+  },
+  "bb_tag_filter": {
+    "extras": {
+      "alpha_contents": [
+        "a",
+        "c"
+      ],
+      "alpha_count": 2
+    },
+    "final_message": "tag",
+    "success": true,
+    "tool_sequence": []
+  },
+  "bb_write_read_dept": {
+    "extras": {
+      "contents": [
+        "dept content"
+      ],
+      "count": 1,
+      "importance_per_row": [
+        0.5
+      ],
+      "memory_types": [
+        "decision"
+      ],
+      "scope_owners": [
+        "eng"
+      ],
+      "scopes": [
+        "department"
+      ],
+      "source_nodes": [
+        "node_b"
+      ],
+      "tags_per_row": [
+        []
+      ],
+      "ttl_hours_per_row": [
+        null
+      ]
+    },
+    "final_message": "rows",
+    "success": true,
+    "tool_sequence": []
+  },
+  "bb_write_read_node": {
+    "extras": {
+      "contents": [
+        "private note"
+      ],
+      "count": 1,
+      "importance_per_row": [
+        0.5
+      ],
+      "memory_types": [
+        "progress"
+      ],
+      "scope_owners": [
+        "node_c"
+      ],
+      "scopes": [
+        "node"
+      ],
+      "source_nodes": [
+        "node_c"
+      ],
+      "tags_per_row": [
+        [
+          "nt"
+        ]
+      ],
+      "ttl_hours_per_row": [
+        null
+      ]
+    },
+    "final_message": "rows",
+    "success": true,
+    "tool_sequence": []
+  },
+  "bb_write_read_org": {
+    "extras": {
+      "contents": [
+        "hello world"
+      ],
+      "count": 1,
+      "importance_per_row": [
+        0.5
+      ],
+      "memory_types": [
+        "fact"
+      ],
+      "scope_owners": [
+        "org_parity_a"
+      ],
+      "scopes": [
+        "org"
+      ],
+      "source_nodes": [
+        "node_a"
+      ],
+      "tags_per_row": [
+        [
+          "t1"
+        ]
+      ],
+      "ttl_hours_per_row": [
+        null
+      ]
+    },
+    "final_message": "rows",
+    "success": true,
+    "tool_sequence": []
+  }
+}

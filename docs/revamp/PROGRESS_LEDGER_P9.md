@@ -1566,3 +1566,77 @@ sentinel held off-limits), so it needs its own planning round.
 > empty. 9 / 9 P-RC-9 sentinels stay ACTIVE (docs-only
 > commit). **HARD STOP per brief**: δ-2 NOT started this
 > turn.
+
+
+
+## P9.9δ-2a -- parity 5 files Option B (v1→v2-only smoke + golden dicts) (R2 retired at P9.9δ-1; v1 oracle path retired here)
+
+| _this commit_ | P-RC-9 P9.9δ-2a | refactor(tests/parity/orgs): P9.9δ-2a parity 5 files Option B (v1→v2-only smoke + golden dicts) [P-RC-9 P9.9δ-2a] | 5 .py rewritten (+174 / -405 = net -231 LOC code) + 5 NEW ``_golden_*.json`` fixtures (1376 LOC data) + ledger this section | 66 / 66 parity green (40 in the 5 swept files + 20 sentinel #6 + 6 contract sentinels); 161 / 161 runtime/orgs/ green; 184 / 184 api/contracts/ green; 1 / 1 v2 IM canary green x3 | ADR-0011 (Protocol-typed subsystem decomposition; v2 contracts pin public surface); ADR-0012 (v1 deletion at P9.9 per Q-B ACCEPTED (b)); ADR-0014 (v2 captures v1 observable surface; the golden dicts continue that lineage) |
+
+> P9.9δ-2a executes audit §6 Option B across the 5 parity
+> sentinel files (sentinels #1-#5; 40 cases; case counts
+> preserved at 8 / 10 / 12 / 4 / 6 -- matches the v2-side
+> v2 collection actual, modulo audit §6 stale headline
+> count of 8 / 10 / 12 / 10 / 8 which projected v1 oracle
+> totals; the +/- 2 tolerance applies). Per-file rewrite:
+>
+> * ``test_blackboard_parity.py`` (8 cases / 235 → 230 LOC):
+>   drop ``openakita.orgs.blackboard.OrgBlackboard as
+>   V1Blackboard`` + ``openakita.orgs.models.{MemoryScope,
+>   MemoryType}``; keep ``openakita.runtime.orgs.blackboard``
+>   + ``openakita.runtime.orgs.memory_models`` runner; load
+>   golden from ``_golden_blackboard.json`` (164 LOC; 8
+>   cases).
+> * ``test_command_service_parity.py`` (10 cases / 362 →
+>   318 LOC): drop ``openakita.orgs.command_service``
+>   class loader; keep ``openakita.runtime.orgs.command_models``
+>   loader; load golden from ``_golden_command_service.json``
+>   (167 LOC; 10 cases).
+> * ``test_manager_parity.py`` (12 cases / 319 → 289
+>   LOC): drop ``openakita.orgs.manager.OrgManager``;
+>   keep ``openakita.runtime.orgs.manager.OrgManager``;
+>   load golden from ``_golden_manager.json`` (666 LOC;
+>   12 cases incl. the 100-blob roundtrip dominating the
+>   golden file size).
+> * ``test_node_scheduler_parity.py`` (4 cases / 298 →
+>   184 LOC): drop ``openakita.orgs.node_scheduler.OrgNodeScheduler``
+>   + ``openakita.orgs.models.{NodeSchedule, ScheduleType}``;
+>   keep ``openakita.runtime.orgs.node_scheduler.compute_next_fire_time``
+>   + ``runtime.orgs.scheduler_models`` shard; drop the 1-ms
+>   next-fire-time tolerance (v2 is single source of truth);
+>   load golden from ``_golden_node_scheduler.json`` (34 LOC;
+>   4 cases).
+> * ``test_project_store_parity.py`` (6 cases / 293 →
+>   255 LOC): drop ``openakita.orgs.project_store.ProjectStore``
+>   + ``openakita.orgs.models.{OrgProject, ProjectTask,
+>   TaskStatus}``; keep ``openakita.runtime.orgs.project_models``
+>   shard + ``openakita.runtime.orgs.project_store.JsonProjectStore``;
+>   load golden from ``_golden_project_store.json`` (345 LOC;
+>   6 cases).
+>
+> Sentinel semantics shift per audit §6 paragraph 4: from
+> "v1 oracle == v2" to "v2 == captured golden". Same shape
+> as sentinel #6 ``test_runtime_parity.py`` already v2-only
+> since P9.6γ.
+>
+> Verification: ``pytest tests/parity/orgs/ -q --tb=no``
+> reports 66 passed (unchanged from pre-rewrite baseline);
+> ``pytest tests/runtime/orgs/ -q --tb=no`` 161 / 161;
+> ``pytest tests/api/contracts/ -q --tb=no`` 184 / 184;
+> v2 IM canary 1 / 1 x3. Strict additive on v1: ``git diff
+> a3a5fde6..HEAD -- src/openakita/orgs/`` empty. ``grep
+> -rn "openakita\.orgs\." tests/parity/orgs/`` = 0 hits
+> across all 7 parity/orgs/ .py files (was 11 sites across
+> 5 files at HEAD ``a3a5fde6``; δ-2b drops the remaining
+> 14 unit sites). Ruff clean on the 5 rewritten files.
+>
+> 8 / 8 P-RC-9 sentinels ACTIVE -- per-sentinel case
+> counts: #1 (8) / #2 (6) / #3 (4) / #4 (10) / #5 (12) /
+> #6 (20) / #7 (1 OpenAPI snapshot) / #8 (1 frontend stale
+> v1 path scan). Total green: 60 parity + 161 runtime + 184
+> contract = 405 + 1 canary + 1 OpenAPI snapshot + 1
+> frontend stale scan. 9th sentinel (η-phase) not yet added.
+>
+> **HARD STOP per brief**: δ-2b (tests/unit/ 8-file sweep)
+> ships in the NEXT commit; δ-3 (tests/e2e/ + tests/integration/
+> sweep) NOT started this turn.

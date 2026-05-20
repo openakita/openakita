@@ -1,63 +1,38 @@
-"""Parity fixtures for OrgCommandService v1 -> v2 (P-RC-9 P9.4c).
+"""Parity fixtures for OrgCommandService v2-baseline (P-RC-9 P9.9δ-2a; was P9.4c v1 oracle).
 
-Each :class:`ParityCase` runs the same scripted scenario
-against v1 ``openakita.orgs.command_service`` data classes
-and the v2 ``openakita.runtime.orgs.command_models`` siblings,
-asserting equality on :class:`ParityResult` via
-:func:`assert_parity`.
+Each :class:`ParityCase` builds an :class:`OrgCommandRequest` (and
+related v2 dataclasses) from the v2
+``openakita.runtime.orgs.command_models`` shard and asserts the
+resulting :class:`ParityResult` equals the captured golden dict
+in ``_golden_command_service.json``.
 
-Per P-RC-9-PLAN section 5.2 OrgCommandService contract:
-*assert verb dispatch produces the same
-OrgCommandRequest.to_dict() on both paths; assert the
-wall-clock budget test in P9.4 gate criteria.* The wall-clock
-assertions live in P9.4e (ADR-0013 closure). This file ships
-**10 fixtures** per section 5.1 -- 9 covering the
-request/surface/scope/forward-target dataclass surfaces and
-the 10th covering the submitted-command record shape that v1
-stores in ``OrgCommandService._commands``.
+Per P-RC-9-P9.9 δ-2a (audit §6 Option B): this file shipped 10
+v1-vs-v2 oracle cases in P9.4c. The v1 import / class loader was
+removed in δ-2a; the golden dicts were captured from the v2
+output at HEAD ``a3a5fde6`` (close of δ-1).
 
-Ignore set per section 5.2: ``command_id`` (v1
-``uuid.uuid4().hex[:12]``; v2 ``cmd_<ms>_<seq>_<rand>``)
-plus the ``created_at`` / ``updated_at`` / ``finished_at`` /
-``delivered_to`` timestamps that both paths read from
-``time.time()`` at submission. Stripping happens at the runner
-via :func:`_strip_volatile`.
+Ignore set per P-RC-9-PLAN §5.2 (``command_id`` plus volatile
+timestamps) is still applied via :func:`_strip_volatile`; the
+golden dict already has those keys stripped.
 
-P9.0i shipped a single xfail placeholder; this commit replaces
-it wholesale.
+Sentinel discipline (P-RC-9 §7.1): sentinel #4 stays ACTIVE
+through G-RC-9.9; semantics shift from oracle-equality to
+v2-baseline.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests.parity.harness import ParityCase, ParityResult, assert_parity
+from tests.parity.harness import ParityCase, ParityResult
 
-# ---------------------------------------------------------------------------
-# Class loaders (v1 / v2 namespaces)
-# ---------------------------------------------------------------------------
-
-
-def _v1_classes() -> dict[str, Any]:
-    from openakita.orgs.command_service import (
-        ForwardTarget,
-        OrgCommandRequest,
-        OrgCommandSource,
-        OrgCommandSurface,
-        OrgOutputScope,
-        default_scope_for_surface,
-    )
-
-    return {
-        "Surface": OrgCommandSurface,
-        "Scope": OrgOutputScope,
-        "Source": OrgCommandSource,
-        "Forward": ForwardTarget,
-        "Request": OrgCommandRequest,
-        "default_scope": default_scope_for_surface,
-    }
+_GOLDEN: dict[str, dict] = json.loads(
+    (Path(__file__).parent / "_golden_command_service.json").read_text(encoding="utf-8")
+)
 
 
 def _v2_classes() -> dict[str, Any]:
@@ -80,21 +55,14 @@ def _v2_classes() -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Normalisation
-# ---------------------------------------------------------------------------
-
-
 _VOLATILE = frozenset({"command_id", "created_at", "updated_at", "finished_at", "delivered_to"})
 
 
 def _strip_volatile(d: dict[str, Any]) -> dict[str, Any]:
-    """Drop volatile fields per P-RC-9-PLAN section 5.2 ignore set."""
     return {k: v for k, v in d.items() if k not in _VOLATILE}
 
 
 def _source_dict(src: Any) -> dict[str, Any]:
-    """Construct an OrgCommandSource dict view -- v1 and v2 identical."""
     return {
         "channel": src.channel,
         "chat_id": src.chat_id,
@@ -106,7 +74,6 @@ def _source_dict(src: Any) -> dict[str, Any]:
 
 
 def _forward_dict(ft: Any) -> dict[str, Any]:
-    """Construct a ForwardTarget dict view -- v1 and v2 identical."""
     return {
         "channel": ft.channel,
         "chat_id": ft.chat_id,
@@ -117,7 +84,6 @@ def _forward_dict(ft: Any) -> dict[str, Any]:
 
 
 def _request_dict(req: Any) -> dict[str, Any]:
-    """Construct an OrgCommandRequest dict view (v1 has no to_dict)."""
     return {
         "org_id": req.org_id,
         "content": req.content,
@@ -132,7 +98,6 @@ def _request_dict(req: Any) -> dict[str, Any]:
 
 
 def _submit_record(req: Any, *, root_node_id: str) -> dict[str, Any]:
-    """Synthesise v1 ``OrgCommandService.submit`` record (no runtime)."""
     return {
         "command_id": "placeholder",  # stripped via _VOLATILE
         "org_id": req.org_id,
@@ -154,11 +119,6 @@ def _submit_record(req: Any, *, root_node_id: str) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Runner (single function; v1/v2 differ only in the class module)
-# ---------------------------------------------------------------------------
-
-
 def _build_request(case: ParityCase, mod: dict[str, Any]) -> Any:
     inputs = case.inputs
     src = mod["Source"](**inputs.get("source", {}))
@@ -177,7 +137,6 @@ def _build_request(case: ParityCase, mod: dict[str, Any]) -> Any:
 
 
 def _run_case(case: ParityCase, mod: dict[str, Any]) -> ParityResult:
-    """Execute a single case against either v1 or v2 class module."""
     op = case.inputs["op"]
     if op == "request_to_dict":
         return ParityResult(
@@ -214,11 +173,6 @@ def _run_case(case: ParityCase, mod: dict[str, Any]) -> ParityResult:
             },
         )
     raise KeyError(f"unknown op: {op}")
-
-
-# ---------------------------------------------------------------------------
-# Cases
-# ---------------------------------------------------------------------------
 
 
 _BASE_REQUEST = {
@@ -356,7 +310,9 @@ CASES: list[ParityCase] = [
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.id)
 def test_command_service_parity(case: ParityCase) -> None:
-    """v1 vs v2 ``OrgCommandService`` parity (P-RC-9 P9.4c, 10 cases)."""
-    v1 = _run_case(case, _v1_classes())
+    """v2-baseline ``OrgCommandService`` dataclass contract (P-RC-9 P9.9δ-2a, 10 cases)."""
     v2 = _run_case(case, _v2_classes())
-    assert_parity(v1, v2, case=case)
+    expected = _GOLDEN[case.id]
+    actual = dict(v2.to_compare())
+    actual["tool_sequence"] = [list(t) for t in actual.get("tool_sequence", [])]
+    assert actual == expected, f"v2-baseline drift on {case.id}: {actual} != {expected}"

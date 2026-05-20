@@ -1,41 +1,38 @@
-"""Parity fixtures for OrgManager v1 -> v2 (P-RC-9 P9.5c).
+"""Parity fixtures for OrgManager v2-baseline (P-RC-9 P9.9δ-2a; was P9.5c v1 oracle).
 
-Each :class:`ParityCase` exercises the same scripted scenario
-against v1 ``openakita.orgs.manager.OrgManager`` and the v2
-``openakita.runtime.orgs.manager.OrgManager`` on disjoint
-``tmp_path`` subtrees, then asserts equality on a normalised
-:class:`ParityResult` via :func:`assert_parity`.
+Each :class:`ParityCase` exercises a scripted scenario against the
+v2 ``openakita.runtime.orgs.manager.OrgManager`` on a ``tmp_path``
+subtree and asserts the normalised :class:`ParityResult` equals
+the captured golden dict in ``_golden_manager.json``.
 
-Per P-RC-9-PLAN section 5.2 OrgManager contract: *assert
-create() -> dict -> Organization.to_dict() round-trip; assert
-dir layout is identical for data/orgs/<id>/*. Twelve cases per
-P-RC-9-PLAN section 5.1 (the largest of any P9.x phase).
+Per P-RC-9-P9.9 δ-2a (audit §6 Option B): this file shipped 12
+v1-vs-v2 oracle cases in P9.5c. The v1 import / manager loader
+was removed in δ-2a; the golden dicts were captured from the
+v2 output at HEAD ``a3a5fde6`` (close of δ-1).
 
 Ignore set: ``id`` (org/node/edge ULIDs differ per call) +
 ``created_at`` / ``updated_at`` (volatile timestamps). The
-v2 OrgManager reuses v1's ``Organization`` dataclass + v1's
-``_new_id`` factory, so the serialised dict shape is
-structurally identical by construction; these fixtures
-verify that the v2 *manager wiring* (Protocol injection,
-``_init_dirs`` ordering, ``apply_initial_tree_layout`` reuse,
-lifecycle emit no-op) does not introduce drift.
+golden dict already has those keys stripped via
+:func:`_strip_org_dict` / :func:`_strip_summary`.
 
-P9.0i shipped a single ``xfail`` placeholder; this commit
-replaces it wholesale with 12 active cases.
+Sentinel discipline (P-RC-9 §7.1): sentinel #5 stays ACTIVE
+through G-RC-9.9; semantics shift from oracle-equality to
+v2-baseline.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests.parity.harness import ParityCase, ParityResult, assert_parity
+from tests.parity.harness import ParityCase, ParityResult
 
-# ---------------------------------------------------------------------------
-# Normalisation
-# ---------------------------------------------------------------------------
+_GOLDEN: dict[str, dict] = json.loads(
+    (Path(__file__).parent / "_golden_manager.json").read_text(encoding="utf-8")
+)
 
 
 _VOLATILE_TOP = frozenset({"id", "created_at", "updated_at"})
@@ -44,7 +41,6 @@ _VOLATILE_EDGE = frozenset({"id", "source", "target"})
 
 
 def _strip_org_dict(d: dict[str, Any]) -> dict[str, Any]:
-    """Strip volatile org-level + per-node + per-edge keys."""
     clean = {k: v for k, v in d.items() if k not in _VOLATILE_TOP}
     if isinstance(clean.get("nodes"), list):
         clean["nodes"] = [
@@ -58,12 +54,10 @@ def _strip_org_dict(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def _strip_summary(s: dict[str, Any]) -> dict[str, Any]:
-    """Strip volatile keys from a ``list_orgs`` summary dict."""
     return {k: v for k, v in s.items() if k not in _VOLATILE_TOP}
 
 
 def _walk_org_dir(org_dir: Path) -> list[str]:
-    """Sorted relative file/dir listing -- the dir-layout parity surface."""
     if not org_dir.exists():
         return []
     out: list[str] = []
@@ -73,17 +67,6 @@ def _walk_org_dir(org_dir: Path) -> list[str]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Manager loader
-# ---------------------------------------------------------------------------
-
-
-def _v1_manager(data_dir: Path) -> Any:
-    from openakita.orgs.manager import OrgManager
-
-    return OrgManager(data_dir)
-
-
 def _v2_manager(data_dir: Path) -> Any:
     from openakita.runtime.orgs.manager import OrgManager
 
@@ -91,12 +74,6 @@ def _v2_manager(data_dir: Path) -> Any:
 
 
 def _run_case(case: ParityCase, manager: Any, root: Path) -> ParityResult:
-    """Execute a single case against either v1 or v2 manager.
-
-    ``manager`` is already constructed on ``root`` (which is
-    a per-path tmp subtree). Returns a :class:`ParityResult`
-    whose ``extras`` carries the canonical comparison payload.
-    """
     op = case.inputs["op"]
     if op == "create_org":
         org = manager.create(case.inputs["data"])
@@ -191,7 +168,6 @@ def _run_case(case: ParityCase, manager: Any, root: Path) -> ParityResult:
     if op == "to_dict_roundtrip":
         org = manager.create(case.inputs["data"])
         first = _strip_org_dict(org.to_dict())
-        # Reload from disk via persistence backend bypass: hit get_org
         loaded = manager.get_org(org.id)
         second = _strip_org_dict(loaded.to_dict())
         return ParityResult(
@@ -213,11 +189,6 @@ def _run_case(case: ParityCase, manager: Any, root: Path) -> ParityResult:
             },
         )
     raise KeyError(f"unknown op: {op}")
-
-
-# ---------------------------------------------------------------------------
-# Cases
-# ---------------------------------------------------------------------------
 
 
 _BASE_DATA = {"name": "Acme", "description": "a", "icon": "x", "tags": ["t1"]}
@@ -307,13 +278,12 @@ _CASES: list[ParityCase] = [
 
 @pytest.mark.parametrize("case", _CASES, ids=lambda c: c.id)
 def test_manager_parity(case: ParityCase, tmp_path: Path) -> None:
-    """Run ``case`` against v1 and v2 OrgManager; assert equality."""
-    v1_root = tmp_path / "v1"
+    """v2-baseline OrgManager contract (P-RC-9 P9.9δ-2a, 12 cases)."""
     v2_root = tmp_path / "v2"
-    v1_root.mkdir()
     v2_root.mkdir()
-    v1_mgr = _v1_manager(v1_root)
     v2_mgr = _v2_manager(v2_root)
-    v1_res = _run_case(case, v1_mgr, v1_root)
     v2_res = _run_case(case, v2_mgr, v2_root)
-    assert_parity(v1_res, v2_res, case=case)
+    expected = _GOLDEN[case.id]
+    actual = dict(v2_res.to_compare())
+    actual["tool_sequence"] = [list(t) for t in actual.get("tool_sequence", [])]
+    assert actual == expected, f"v2-baseline drift on {case.id}: {actual} != {expected}"
