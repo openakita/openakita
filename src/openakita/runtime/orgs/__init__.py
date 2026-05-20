@@ -108,6 +108,18 @@
   ``STATUS_*`` constants. Routes inbound messages through
   stop-intent detection, busy-queueing, agent pipeline
   delivery, and post-task hook orchestration.
+- P9.6h1 ships :class:`PluginAssetRecorder` +
+  :class:`ToolHandlerBridge` + :class:`PluginAsset`
+  dataclass + helpers (``safe_asset_filename`` /
+  ``ext_for_url`` / ``is_plugin_tool`` /
+  ``plugin_id_for_tool``) in ``_runtime_plugin_assets.py``.
+  Lifts v1 ``_record_plugin_asset_output`` (349 LOC) +
+  ``_register_org_tool_handler`` (161 LOC) + 6 smaller
+  helpers (~570 v1 LOC) into ~375 v2 LOC. The recorder
+  emits ``plugin_asset_recorded`` events through the bus;
+  the bridge adapts the legacy ``handle_org_tool``
+  callable. P9.6h2 next will append file output registry
+  + react-trace analysis + task-delivery synth.
 """
 
 from __future__ import annotations
@@ -151,6 +163,14 @@ from ._runtime_node_lifecycle import (
     NodeStatusController,
     format_incoming_message,
     is_stop_intent,
+)
+from ._runtime_plugin_assets import (
+    PluginAsset,
+    ToolHandlerBridge,
+    ext_for_url,
+    is_plugin_tool,
+    plugin_id_for_tool,
+    safe_asset_filename,
 )
 from ._runtime_watchdog import CommandWatchdog, IdleProbeLoop
 from .blackboard import (
@@ -288,6 +308,7 @@ __all__ = [
     "OrgPersistenceProtocol",
     "OrgProject",
     "ProjectStatus",
+    "PluginAsset",
     "ProfileResolver",
     "ProjectStoreProtocol",
     "ProjectTask",
@@ -313,10 +334,12 @@ __all__ = [
     "TRACKER_DEADLOCK_STOPPED",
     "TRACKER_FINALIZED",
     "TRACKER_RUNNING",
+    "ToolHandlerBridge",
     "TaskStatus",
     "build_schedule_prompt",
     "compute_next_fire_time",
     "default_scope_for_surface",
+    "ext_for_url",
     "format_incoming_message",
     "get_command_service",
     "get_default_blackboard_backend",
@@ -325,8 +348,11 @@ __all__ = [
     "get_org_manager",
     "get_default_event_bus",
     "get_runtime",
+    "is_plugin_tool",
     "is_stop_intent",
     "new_command_id",
+    "plugin_id_for_tool",
+    "safe_asset_filename",
     "new_project_id",
     "new_schedule_id",
     "new_task_id",
