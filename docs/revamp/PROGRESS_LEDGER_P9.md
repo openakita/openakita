@@ -361,3 +361,20 @@ current_phase: P-RC-9
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-9 P9.7beta-2 | feat(api/routes): mint cluster 3.2 Node lifecycle + schedules + identity + MCP (16 endpoints: B18-B33) in orgs_v2_runtime_nodes.py + side-effect import from orgs_v2_runtime.py + 20 smoke tests | +PLACEHOLDER LOC (orgs_v2_runtime_nodes.py NEW 264 + orgs_v2_runtime.py +3 sub-module import; test_p97_beta_smoke.py +233 cluster 3.2 smokes; ledger +PLACEHOLDER) | +20 smoke (B18-B33 wiring smokes -- schedules CRUD x4 + identity file IO x2 + MCP file IO x2 + status controllers x4 + observability snapshots x4 + 404 branches x4); gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ 303 -> 323 passed (53.67s) | ADR-0011 (D-3 layer separation -- ``NodeRegister`` Pydantic shape exported for future node-create POST endpoints; D-4 R4 granularity ceiling preserved; OrgRuntime methods consumed are duck-typed -- no new Protocols); ADR-0012 (no shim under v1; v2 manager exposes ``get_org_dir`` so file-IO never reaches v1 OrgManager) |
+
+## P9.7beta-3 -- mint cluster 3.3 Runtime control + Commands + Broadcast (8 endpoints) (this turn)
+
+> Third beta mint commit. 8 endpoints (B34-B41 per
+> ``P-RC-9-P9.7-ENDPOINT-INVENTORY.md`` section 3.3) land in a
+> new sub-module ``orgs_v2_runtime_dispatch.py``. Cluster covers
+> the org lifecycle verbs (start/stop/pause/resume) duck-typed
+> on OrgRuntime, the user-command submit / poll / cancel
+> trifecta on OrgCommandService (using the ``CommandSubmit`` /
+> ``CancelRequest`` Pydantic shapes from schemas/orgs_v2), and
+> the org-level broadcast adapter. Resolves a ruff-format
+> regression that dropped the dispatch import in the multi-line
+> tuple after this commit's first ruff format pass.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-9 P9.7beta-3 | feat(api/routes): mint cluster 3.3 Runtime control + Commands + Broadcast (8 endpoints: B34-B41) in orgs_v2_runtime_dispatch.py + side-effect import + 13 smoke tests | +PLACEHOLDER LOC (orgs_v2_runtime_dispatch.py NEW 191 + orgs_v2_runtime.py +1 multi-line import addition; test_p97_beta_smoke.py +134 cluster 3.3 smokes; ledger +PLACEHOLDER) | +13 smoke (B34-B41 wiring smokes + lifecycle 400-on-ValueError branch + command 404 branches x2 + Pydantic 422 on empty content + broadcast 400 on empty content); gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ 323 -> 336 passed (56.20s) | ADR-0011 (D-3 layer separation -- ``CommandSubmit`` / ``CancelRequest`` schemas consumed for body validation; ``OrgCommandRequest`` / ``OrgCommandSource`` / ``ForwardTarget`` constructed from typed inputs; D-4 R4 granularity ceiling preserved); ADR-0012 (no shim under v1; OrgRuntime lifecycle methods are duck-typed -- integration with the existing P9.6 ``OrgLifecycleManager`` sibling lands in P9.7gamma) |

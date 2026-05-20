@@ -532,3 +532,137 @@ def test_b33_get_node_status_snapshot(mint_app: FastAPI, mint_client: TestClient
     resp = mint_client.get("/api/v2/orgs/org_x/nodes/n1/status")
     assert resp.status_code == 200
     assert resp.json()["status"] == "idle"
+
+
+# ===========================================================================
+# Cluster 3.3 -- Runtime control + Commands + Broadcast (B34-B41).
+# ===========================================================================
+
+
+def _async_returns(value: Any):
+    async def _run(*args, **kwargs):
+        return value
+
+    return _run
+
+
+# ---------------------------------------------------------------------------
+# B34-B37: lifecycle verbs
+# ---------------------------------------------------------------------------
+
+
+def test_b34_start_org_calls_runtime(mint_app: FastAPI, mint_client: TestClient) -> None:
+    started = MagicMock(spec=["to_dict"])
+    started.to_dict.return_value = {"id": "org_x", "status": "active"}
+    mint_app.state.org_runtime.start_org = MagicMock(side_effect=_async_returns(started))
+    resp = mint_client.post("/api/v2/orgs/org_x/start")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "active"
+
+
+def test_b34_start_org_400_on_value_error(mint_app: FastAPI, mint_client: TestClient) -> None:
+    async def _raise(*a, **k):
+        raise ValueError("Already running")
+
+    mint_app.state.org_runtime.start_org = MagicMock(side_effect=_raise)
+    resp = mint_client.post("/api/v2/orgs/org_x/start")
+    assert resp.status_code == 400
+
+
+def test_b35_stop_org_calls_runtime(mint_app: FastAPI, mint_client: TestClient) -> None:
+    stopped = MagicMock(spec=["to_dict"])
+    stopped.to_dict.return_value = {"id": "org_x", "status": "stopped"}
+    mint_app.state.org_runtime.stop_org = MagicMock(side_effect=_async_returns(stopped))
+    resp = mint_client.post("/api/v2/orgs/org_x/stop")
+    assert resp.status_code == 200
+
+
+def test_b36_pause_org_calls_runtime(mint_app: FastAPI, mint_client: TestClient) -> None:
+    paused = MagicMock(spec=["to_dict"])
+    paused.to_dict.return_value = {"id": "org_x", "status": "paused"}
+    mint_app.state.org_runtime.pause_org = MagicMock(side_effect=_async_returns(paused))
+    resp = mint_client.post("/api/v2/orgs/org_x/pause")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "paused"
+
+
+def test_b37_resume_org_calls_runtime(mint_app: FastAPI, mint_client: TestClient) -> None:
+    resumed = MagicMock(spec=["to_dict"])
+    resumed.to_dict.return_value = {"id": "org_x", "status": "active"}
+    mint_app.state.org_runtime.resume_org = MagicMock(side_effect=_async_returns(resumed))
+    resp = mint_client.post("/api/v2/orgs/org_x/resume")
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# B38-B40: command submit + poll + cancel
+# ---------------------------------------------------------------------------
+
+
+def test_b38_submit_command_calls_service(mint_app: FastAPI, mint_client: TestClient) -> None:
+    mint_app.state.org_command_service.submit = MagicMock(
+        side_effect=_async_returns({"command_id": "cmd1", "status": "queued"})
+    )
+    resp = mint_client.post(
+        "/api/v2/orgs/org_x/command",
+        json={"content": "say hello"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["command_id"] == "cmd1"
+    mint_app.state.org_command_service.submit.assert_called_once()
+
+
+def test_b38_submit_command_422_on_empty(mint_client: TestClient) -> None:
+    """``content`` has ``min_length=1``; empty body fails validation."""
+    resp = mint_client.post("/api/v2/orgs/org_x/command", json={"content": ""})
+    assert resp.status_code == 422
+
+
+def test_b39_get_command_status(mint_app: FastAPI, mint_client: TestClient) -> None:
+    mint_app.state.org_command_service.get_status.return_value = {
+        "command_id": "cmd1",
+        "status": "done",
+    }
+    resp = mint_client.get("/api/v2/orgs/org_x/commands/cmd1")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "done"
+
+
+def test_b39_get_command_status_404(mint_app: FastAPI, mint_client: TestClient) -> None:
+    mint_app.state.org_command_service.get_status.return_value = None
+    resp = mint_client.get("/api/v2/orgs/org_x/commands/missing")
+    assert resp.status_code == 404
+
+
+def test_b40_cancel_command(mint_app: FastAPI, mint_client: TestClient) -> None:
+    mint_app.state.org_command_service.cancel = MagicMock(
+        side_effect=_async_returns({"command_id": "cmd1", "status": "cancelled"})
+    )
+    resp = mint_client.post("/api/v2/orgs/org_x/commands/cmd1/cancel", json={"reason": "user"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+
+
+def test_b40_cancel_command_404(mint_app: FastAPI, mint_client: TestClient) -> None:
+    mint_app.state.org_command_service.cancel = MagicMock(side_effect=_async_returns(None))
+    resp = mint_client.post("/api/v2/orgs/org_x/commands/missing/cancel")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# B41: broadcast
+# ---------------------------------------------------------------------------
+
+
+def test_b41_broadcast(mint_app: FastAPI, mint_client: TestClient) -> None:
+    mint_app.state.org_runtime.broadcast_to_org = MagicMock(
+        side_effect=_async_returns({"delivered": 3})
+    )
+    resp = mint_client.post("/api/v2/orgs/org_x/broadcast", json={"content": "hi"})
+    assert resp.status_code == 200
+    assert resp.json()["result"]["delivered"] == 3
+
+
+def test_b41_broadcast_400_empty_content(mint_client: TestClient) -> None:
+    resp = mint_client.post("/api/v2/orgs/org_x/broadcast", json={"content": ""})
+    assert resp.status_code == 400
