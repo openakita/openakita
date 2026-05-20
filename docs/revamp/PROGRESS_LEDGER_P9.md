@@ -275,3 +275,21 @@ current_phase: P-RC-9
 | ``88603c4b`` | P-RC-9 P9.6gamma-2b | test(runtime/orgs): append 12 OrgRuntime contract cases (1 AgentBuilderProtocol + 3 composition smokes + 4 concurrency + 1 integration + 2 wall-clock SLA + 1 get_active_root_intent) -- contract suite now 25/25 | +PLACEHOLDER (test_runtime_contract.py +244 + ledger +3) | +12 contract (25/25 total; ~25 charter target met) | ADR-0013 (2 wall-clock SLA perf_counter cases per NIT-I-1 lesson); ADR-0014 (contract closure); ADR-0011 (Protocol-checked composition) |
 | _this commit_ | P-RC-9 G-RC-9.6 | docs(revamp): G-RC-9.6 P9.6 (OrgRuntime) mini-gate -- PASS (closes P9.6; 22 commits clean; parity 20/20 + contract 25/25; sentinel 6/6 ACTIVE; ADR-0014 budget held 2708 of 3000 LOC; v1 ``src/openakita/orgs/`` untouched; ACCEPTANCE.md NOT bumped) | +PLACEHOLDER (G-RC-9.6.md NEW 338 LOC + ledger header bump + ledger row +5) | 0 (gate review; cites measured numbers from full pytest 6538p/116s/5xf/13f in 1043.33s + narrowed slice 1457p/12s/5xf in 113.74s) | ADR-0011 (Protocol granularity ceiling held; 4 new public Protocols all <=5 methods); ADR-0014 (OrgRuntime budget revision empirical outcome 2708 LOC of 3000 LOC); ADR-0012 (no-shim invariant held: 22 commits, zero src/openakita/{orgs,core,channels,api}/ touch); ADR-0013 (2 wall-clock SLA perf_counter contract cases per NIT-I-1 lesson) |
 | _this commit_ | P-RC-9 P9.6.nit2 | docs(revamp): clean up G-RC-9.6 NIT-M-5 / M-6 / M-7 / M-8 (post-flight) -- N3 phrasing carve-out for P9.6f2 retroactive backfill (M-5); P9.6h1a LOC 393 -> 197 + max-LOC sentence rewrite to 370 at P9.6e (``1daa2fe8``) (M-6); P9.6.pause LOC 35 -> 179 (M-7); backfill P9.6d row ``_this commit_`` -> ``9274a6f2`` (M-8). 4 remaining G-RC-9.6 NITs (M-1 runtime_parity golden-dict / M-2 ADR-0014 sub-cap breach / M-3 v1 method residue) + pre-existing G-RC-9.4 B-1 + M-4 (no-op historical) all TRACKED for G-RC-9 final | +PLACEHOLDER (G-RC-9.6.md ~9 LOC narrow edits + ledger +2 rows + 1 P9.6d backfill) | 0 (docs-only; no .py touch; ruff not applicable) | n/a (cleanup commit; folds 4 of 8 G-RC-9.6 NITs; 4 tracked for G-RC-9 final) |
+
+## P9.7 charter -- v2 REST endpoint mint planning round (this turn)
+
+> Planning charter for P9.7. Catalogues 86 v1 + 9 existing
+> v2 endpoints; classifies Group A (9; P-RC-3) / Group B
+> (~80 mint) / Group C (~6 retired); defines alpha/beta/gamma
+> (11-14 commits / ~1 910 src LOC inside ADR-0014 ~10 %
+> tolerance / ~2 080 test LOC); parity DEPARTURE -- REST
+> contract tests via FastAPI ``TestClient`` + optional
+> snapshot capture for ~12 frontend-critical endpoints (not
+> v1<->v2 import parity). New REST contract sentinel brings
+> active sentinels to 7 = 6 parity + 1 REST. ADR-0015 NOT
+> written (within tolerance); precedent in place for turn-1
+> escape hatch. P9.7alpha-1 NOT started.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-9 P9.7.charter | docs(revamp): add P9.7 v2 REST endpoint charter (planning round) | +PLACEHOLDER (P-RC-9-P9.7-CHARTER.md NEW ~380 + ledger ~16) | 0 (planning only; ``git diff 89703a28..HEAD -- src/openakita/ tests/`` empty) | ADR-0011 (no new Protocols per R4); ADR-0012 (v1 delete waits for P9.9 per Q-B 410); ADR-0013 (perf_counter SLA extended to ~5 REST cases); ADR-0014 (budget precedent; ADR-0015 NOT needed this round) |
