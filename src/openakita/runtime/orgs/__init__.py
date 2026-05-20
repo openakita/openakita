@@ -61,6 +61,18 @@
     ``STOPPED`` / ``DELETED``) +
     :class:`IllegalOrgTransition` guard exception in
     ``_runtime_lifecycle.py``.
+  - P9.6e ships :class:`CommandDispatchManager` --
+    send_command / cancel_user_command /
+    get_command_tracker_snapshot / has_active_delegations /
+    get_active_root_intent + chain helpers (v1 ~22
+    dispatch / tracker / chain methods absorbed; the
+    cross-cutting v1 ``tracker`` x 254 + ``chain_id`` x 221
+    references collapse to one focused manager) +
+    ``_CommandTracker`` dataclass + four ``TRACKER_*``
+    state constants in ``_runtime_dispatch.py``. This is
+    the manager that the P9.6 runtime.py main class
+    composes to satisfy the four ``CommandRuntimeProtocol``
+    stub methods left by P9.6a.
 """
 
 from __future__ import annotations
@@ -69,6 +81,13 @@ from ._runtime_event_bus import (
     InMemoryEventBus,
     WebSocketEventBus,
     get_default_event_bus,
+)
+from ._runtime_dispatch import (
+    TRACKER_CANCELLED,
+    TRACKER_DEADLOCK_STOPPED,
+    TRACKER_FINALIZED,
+    TRACKER_RUNNING,
+    CommandDispatchManager,
 )
 from ._runtime_lifecycle import (
     STATE_ACTIVE,
@@ -171,6 +190,7 @@ __all__ = [
     "ChannelGatewayProtocol",
     "CommandWatchdog",
     "CommandDispatcher",
+    "CommandDispatchManager",
     "CommandRuntimeProtocol",
     "EventEmitterProtocol",
     "FREQUENCY_MULTIPLIER",
@@ -226,6 +246,10 @@ __all__ = [
     "SqliteBlackboardBackend",
     "SqliteOrgStore",
     "SqliteProjectStore",
+    "TRACKER_CANCELLED",
+    "TRACKER_DEADLOCK_STOPPED",
+    "TRACKER_FINALIZED",
+    "TRACKER_RUNNING",
     "TaskStatus",
     "build_schedule_prompt",
     "compute_next_fire_time",
