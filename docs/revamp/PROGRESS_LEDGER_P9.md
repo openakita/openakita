@@ -378,3 +378,18 @@ current_phase: P-RC-9
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-9 P9.7beta-3 | feat(api/routes): mint cluster 3.3 Runtime control + Commands + Broadcast (8 endpoints: B34-B41) in orgs_v2_runtime_dispatch.py + side-effect import + 13 smoke tests | +PLACEHOLDER LOC (orgs_v2_runtime_dispatch.py NEW 191 + orgs_v2_runtime.py +1 multi-line import addition; test_p97_beta_smoke.py +134 cluster 3.3 smokes; ledger +PLACEHOLDER) | +13 smoke (B34-B41 wiring smokes + lifecycle 400-on-ValueError branch + command 404 branches x2 + Pydantic 422 on empty content + broadcast 400 on empty content); gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ 323 -> 336 passed (56.20s) | ADR-0011 (D-3 layer separation -- ``CommandSubmit`` / ``CancelRequest`` schemas consumed for body validation; ``OrgCommandRequest`` / ``OrgCommandSource`` / ``ForwardTarget`` constructed from typed inputs; D-4 R4 granularity ceiling preserved); ADR-0012 (no shim under v1; OrgRuntime lifecycle methods are duck-typed -- integration with the existing P9.6 ``OrgLifecycleManager`` sibling lands in P9.7gamma) |
+
+## P9.7beta-4 -- mint cluster 3.4 Memory + Events + Activity + Messages + audit + Policies (12 endpoints) (this turn)
+
+> Fourth beta mint commit. 12 endpoints (B42-B53 per
+> ``P-RC-9-P9.7-ENDPOINT-INVENTORY.md`` section 3.4) land in a
+> new sub-module ``orgs_v2_runtime_state.py``. Cluster covers
+> blackboard memory CRUD (3 -> OrgBlackboard), event-store
+> queries (events / activity / messages / audit; 4 ->
+> OrgRuntime.get_event_store + ``get_org_dir`` file IO for the
+> JSONL communications log), and policy markdown CRUD (5 ->
+> ``get_org_dir`` file IO under ``<org_dir>/policies/``).
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-9 P9.7beta-4 | feat(api/routes): mint cluster 3.4 Memory + Events + Activity + Messages + audit + Policies (12 endpoints: B42-B53) in orgs_v2_runtime_state.py + side-effect import + 17 smoke tests | +PLACEHOLDER LOC (orgs_v2_runtime_state.py NEW 255 + orgs_v2_runtime.py +1 multi-line import addition; test_p97_beta_smoke.py +164 cluster 3.4 smokes; ledger +PLACEHOLDER) | +17 smoke (B42-B53 wiring smokes + 400-on-bad-scope + 400-on-empty-content + 404 on memory delete + 400 on policies search empty q + policy file write/read verification + path-traversal guard); gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ 336 -> 353 passed (58.81s) | ADR-0011 (D-3 layer separation -- ``MemoryScope`` / ``MemoryType`` enums imported from ``openakita.runtime.orgs``; D-4 R4 granularity ceiling preserved); ADR-0012 (no shim under v1; policies + messages file IO uses ``OrgManager.get_org_dir`` only -- v1 ``_org_dir`` never reached) |

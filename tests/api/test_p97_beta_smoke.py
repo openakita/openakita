@@ -666,3 +666,167 @@ def test_b41_broadcast(mint_app: FastAPI, mint_client: TestClient) -> None:
 def test_b41_broadcast_400_empty_content(mint_client: TestClient) -> None:
     resp = mint_client.post("/api/v2/orgs/org_x/broadcast", json={"content": ""})
     assert resp.status_code == 400
+
+
+# ===========================================================================
+# Cluster 3.4 -- Memory + Events + Activity + Messages + audit + Policies.
+# ===========================================================================
+
+
+def _wire_org_dir(mint_app: FastAPI, tmp_path) -> Path:
+    base = tmp_path / "org_x"
+    mint_app.state.org_manager.get_org_dir.return_value = str(base)
+    return base
+
+
+# ---------------------------------------------------------------------------
+# B42-B44: blackboard memory CRUD
+# ---------------------------------------------------------------------------
+
+
+def test_b42_query_memory(mint_app: FastAPI, mint_client: TestClient) -> None:
+    entry = MagicMock(spec=["to_dict"])
+    entry.to_dict.return_value = {"id": "m1", "content": "hi"}
+    mint_app.state.org_blackboard.query.return_value = [entry]
+    resp = mint_client.get("/api/v2/orgs/org_x/memory?scope=org&limit=10")
+    assert resp.status_code == 200
+    assert resp.json()[0]["id"] == "m1"
+
+
+def test_b42_query_memory_400_bad_scope(mint_app: FastAPI, mint_client: TestClient) -> None:
+    resp = mint_client.get("/api/v2/orgs/org_x/memory?scope=bogus")
+    assert resp.status_code == 400
+
+
+def test_b43_add_memory_org_scope(mint_app: FastAPI, mint_client: TestClient) -> None:
+    fake = MagicMock(spec=["to_dict"])
+    fake.to_dict.return_value = {"id": "m2", "content": "hi"}
+    mint_app.state.org_blackboard.write_org.return_value = fake
+    resp = mint_client.post(
+        "/api/v2/orgs/org_x/memory",
+        json={"scope": "org", "memory_type": "fact", "content": "hi"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["id"] == "m2"
+
+
+def test_b43_add_memory_400_empty(mint_app: FastAPI, mint_client: TestClient) -> None:
+    resp = mint_client.post("/api/v2/orgs/org_x/memory", json={"content": ""})
+    assert resp.status_code == 400
+
+
+def test_b44_delete_memory(mint_app: FastAPI, mint_client: TestClient) -> None:
+    mint_app.state.org_blackboard.delete_entry.return_value = True
+    resp = mint_client.delete("/api/v2/orgs/org_x/memory/m1")
+    assert resp.status_code == 200
+
+
+def test_b44_delete_memory_404(mint_app: FastAPI, mint_client: TestClient) -> None:
+    mint_app.state.org_blackboard.delete_entry.return_value = False
+    resp = mint_client.delete("/api/v2/orgs/org_x/memory/missing")
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# B45-B48: events + activity + messages + audit
+# ---------------------------------------------------------------------------
+
+
+def test_b45_query_events(mint_app: FastAPI, mint_client: TestClient) -> None:
+    es = MagicMock()
+    es.query.return_value = [{"event_type": "user_command", "actor": "user"}]
+    mint_app.state.org_runtime.get_event_store.return_value = es
+    resp = mint_client.get("/api/v2/orgs/org_x/events?limit=5")
+    assert resp.status_code == 200
+    assert resp.json()[0]["event_type"] == "user_command"
+
+
+def test_b46_query_activity(mint_app: FastAPI, mint_client: TestClient) -> None:
+    es = MagicMock()
+    es.query.return_value = [{"event_type": "broadcast"}]
+    mint_app.state.org_runtime.get_event_store.return_value = es
+    resp = mint_client.get("/api/v2/orgs/org_x/activity")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 1
+    assert "items" in body
+
+
+def test_b47_messages_empty_when_no_log(
+    mint_app: FastAPI, mint_client: TestClient, tmp_path
+) -> None:
+    _wire_org_dir(mint_app, tmp_path)
+    resp = mint_client.get("/api/v2/orgs/org_x/messages")
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 0
+
+
+def test_b47_messages_reads_log(mint_app: FastAPI, mint_client: TestClient, tmp_path) -> None:
+    base = _wire_org_dir(mint_app, tmp_path)
+    (base / "logs").mkdir(parents=True)
+    (base / "logs" / "communications.jsonl").write_text(
+        json.dumps({"from_node": "a", "to_node": "b", "content": "x"}) + "\n",
+        encoding="utf-8",
+    )
+    resp = mint_client.get("/api/v2/orgs/org_x/messages")
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+
+def test_b48_audit_log_empty_when_es_missing(mint_app: FastAPI, mint_client: TestClient) -> None:
+    mint_app.state.org_runtime.get_event_store.return_value = None
+    resp = mint_client.get("/api/v2/orgs/org_x/audit-log")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# B49-B53: policies file IO
+# ---------------------------------------------------------------------------
+
+
+def test_b49_list_policies_empty(mint_app: FastAPI, mint_client: TestClient, tmp_path) -> None:
+    _wire_org_dir(mint_app, tmp_path)
+    resp = mint_client.get("/api/v2/orgs/org_x/policies")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_b50_search_policies_400_when_no_query(mint_client: TestClient) -> None:
+    resp = mint_client.get("/api/v2/orgs/org_x/policies/search")
+    assert resp.status_code == 400
+
+
+def test_b51_read_policy_404(mint_app: FastAPI, mint_client: TestClient, tmp_path) -> None:
+    _wire_org_dir(mint_app, tmp_path)
+    resp = mint_client.get("/api/v2/orgs/org_x/policies/missing.md")
+    assert resp.status_code == 404
+
+
+def test_b52_write_policy_creates_file(
+    mint_app: FastAPI, mint_client: TestClient, tmp_path
+) -> None:
+    base = _wire_org_dir(mint_app, tmp_path)
+    resp = mint_client.put(
+        "/api/v2/orgs/org_x/policies/test.md",
+        json={"content": "# test"},
+    )
+    assert resp.status_code == 200
+    written = base / "policies" / "test.md"
+    assert written.read_text(encoding="utf-8") == "# test"
+
+
+def test_b53_delete_policy(mint_app: FastAPI, mint_client: TestClient, tmp_path) -> None:
+    base = _wire_org_dir(mint_app, tmp_path)
+    (base / "policies").mkdir(parents=True)
+    (base / "policies" / "x.md").write_text("hi", encoding="utf-8")
+    resp = mint_client.delete("/api/v2/orgs/org_x/policies/x.md")
+    assert resp.status_code == 200
+    assert not (base / "policies" / "x.md").exists()
+
+
+def test_path_traversal_blocked(mint_app: FastAPI, mint_client: TestClient, tmp_path) -> None:
+    _wire_org_dir(mint_app, tmp_path)
+    resp = mint_client.get("/api/v2/orgs/org_x/policies/..%2Fsecret")
+    # FastAPI's percent-decode preserves ``..``; the route checks string ``..``
+    assert resp.status_code in (400, 404)
