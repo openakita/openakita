@@ -1031,3 +1031,33 @@ sentinel held off-limits), so it needs its own planning round.
 > sites + 8 absorbed mappings (sec 3.3 per G-RC-9.6 sec 13), 12
 > commits split alpha..eta. 9th sentinel: **ADOPT (Y)** in eta-1.
 > **HARD STOP per brief**: P9.9alpha-1 NOT started.
+
+## P9.9α-1 -- import sweep inventory (docs-only)
+
+| _this commit_ | P-RC-9 P9.9α-1 | docs(revamp): P9.9α-1 import sweep inventory (22 external sites + 5 parity transition strategy after FP filter) [P-RC-9 P9.9α-1] | +PLACEHOLDER LOC (``docs/revamp/P-RC-9-P9.9-IMPORT-SWEEP-INVENTORY.md`` NEW 438 LOC mirroring P9.7γ ENDPOINT-INVENTORY + P9.8α CALLER-INVENTORY format; this ledger section + row + blockquote ~10 LOC; total ~448 LOC; target ~400, under 500 hard cap; positive only, deletions 0) | 0 (docs-only commit; ``git diff 1071a8b0..HEAD -- src/openakita/ tests/ apps/`` returns empty bytes; 8 / 8 P-RC-9 sentinels unchanged at HEAD; inventory §7 confirms zero ``__init__.py`` re-exports (R4 risk CLEAR); inventory §6 documents runtime=14 charter estimate -> 1 real STRICT hit (13-file substring false-positive on ``openakita.runtime.orgs.X``)) | ADR-0011 (no new Protocol; per-file:line inventory of v1 import surface for sweep planning; mirrors P9.7γ + P9.8α α-1 inventory pattern); ADR-0012 (β / γ / δ / ε phase assignments operationalise v1 deletion per Q-B ACCEPTED (b); recommends γ reduced to 2 commits not 3 because FP filter shrinks runtime/ scope from 14 -> 1 file); ADR-0015 (308 shim ζ NO-OP confirmed -- STRICT scan returns zero hits in ``_orgs_v2_legacy_redirects.py``; shim continues to serve legacy callers byte-untouched through G-RC-9.9) |
+
+> P9.9α-1 docs-only commit lands the import-sweep inventory.
+> STRICT regex ``(?<![\w.])openakita\.orgs(?=[.\s])`` scan at
+> HEAD ``1071a8b0`` measured 13 src files (87 sites) + 62 test
+> files (227 sites). External-sweep targets (after stripping
+> internal trees + self-deleting v1 router): **7 src files / 38
+> sites + 15 test files / 32 sites = 22 files / 70 sites**, NOT
+> the charter loose-grep 40-file estimate. The ~18-file delta is
+> dominated by ``src/openakita/runtime/`` (charter 14 -> real 1;
+> remaining 13 are pure substring matches on the v2 dotted path
+> ``openakita.runtime.orgs.X``; §6 false-positive forensics in
+> inventory). γ reduces to 2 commits (γ-1 api/ 3 files / 7
+> sites; γ-2 cross-tree core+runtime 2 files / 2 sites; γ-3 NOT
+> scheduled). δ remains 4 commits (δ-1 coverage audit doc; δ-2
+> parity/orgs/ 5 + tests/unit/ 8 = 13 files / 25 sites; δ-3
+> tests/e2e/ + tests/integration/ 2 files / 7 sites (no
+> tests/api/ touch -- 0 STRICT hits there); δ-4 atomic
+> ``git rm -r tests/orgs/`` -12 238 LOC). 5 ``tests/parity/orgs/``
+> files (sentinels #1-#5) get **Option B** transition in δ-2
+> (drop v1 oracle import, convert to v2-only smoke against
+> golden-dict baselines, preserves regression net; same shape as
+> sentinel #6 ``test_runtime_parity.py`` which is already
+> v2-only). R4 ``__init__.py`` re-export audit CLEAR (zero
+> hits). **HARD STOP per brief**: P9.9β-1 NOT started this turn
+> -- next operator signal opens β-1 (``channels/gateway.py``
+> 5-site swap; R3 invariant: β before ε).
