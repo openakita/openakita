@@ -41,7 +41,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from openakita.api.routes import orgs_v2
+from openakita.api.routes import _orgs_v2_legacy_redirects, orgs_v2
 from openakita.channels.gateway import MessageGateway
 from openakita.config import settings
 from openakita.runtime import channel_routing as cr_module
@@ -104,6 +104,8 @@ def v2_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[TestC
     reset_default_store(path=tmp_path / "orgs_v2.json")
     app = FastAPI()
     app.include_router(orgs_v2.router)
+    # P9.7.nit-a: mount 308 shim so TestClient auto-follows legacy /api/v2/orgs/* to /api/v2/orgs-spec/*.
+    app.include_router(_orgs_v2_legacy_redirects.router)
     with TestClient(app) as c:
         yield c
     reset_default_store()

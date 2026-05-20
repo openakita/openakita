@@ -563,6 +563,22 @@ current_phase: P-RC-9
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-9 P9.7gamma-3b (G-RC-9.7) | docs(revamp/gates): G-RC-9.7 P9.7 (v2 REST endpoint mint) mini-gate -- PASS + ledger close summary | +PLACEHOLDER LOC (G-RC-9.7.md NEW 356 + ledger this section + header bump ~62 LOC) | 0 net new test cases this commit (gate doc + ledger close only); main-gate measurement performed in this commit's preparation, not in the diff | ADR-0011 (no new Protocol -- gate doc cites zero net Protocol delta from P9.7); ADR-0012 (no shim under v1 -- 308 redirect shims live under api/routes/_orgs_v2_legacy_redirects); ADR-0013 (perf_counter SLA NOT exercised in P9.7; banked for P-RC-10); ADR-0014 (v2 src LOC 2 871 over ~1 910 target; surplus in shim+schema+Group A layers; per-endpoint 19.2 LOC under 25 LOC REJECT; no ADR-0015 filed); cites P-RC-9-P9.7-CHARTER.md sections 9 (gate criteria) + 12 (HARD STOP) |
 
+
+
+## P9.7.nit-a -- canary fixture regression closure (NIT-G4 from G-RC-9.7 audit)
+
+> Post-gate hot-fix. G-RC-9.7 auditor's NIT-G4 root-caused the
+> ``test_v2_im_canary_e2e`` failure to P9.7Î±-2a (``31332276``)
+> renaming the Group A prefix without updating this fixture.
+> Fix (Auditor Option A): also mount
+> ``_orgs_v2_legacy_redirects.router`` in ``v2_client``; TestClient
+> 308-follows ``/api/v2/orgs/*`` -> ``/api/v2/orgs-spec/*``.
+> Canary 3/3 isolated; narrow slice 581 -> 582 passed.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-9 P9.7.nit-a | fix(tests/integration): P9.7.nit-a restore v2_im_canary_e2e by mounting legacy redirects router | +PLACEHOLDER LOC (fixture +9 / ledger this section) | +1 narrow-slice green (canary regression closed) | ADR-0011 (no new Protocol); ADR-0012 (the 308 shim exercised exactly as intended for v2.0.x); cites G-RC-9.7 audit NIT-G4 |
+
 ## P9.7 CLOSED -- phase summary
 
 P9.7 v2 REST endpoint mint **CLOSED** after 17 implementation
