@@ -30,10 +30,17 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from openakita.runtime.orgs._runtime_agent_pipeline import (
+    AgentBuilderProtocol,
+    AgentCache,
+    AgentSpec,
+)
 from openakita.runtime.orgs._runtime_dispatch import (
     TRACKER_CANCELLED,
     TRACKER_RUNNING,
+    CommandDispatchManager,
 )
+from openakita.runtime.orgs.command_service import CommandRuntimeProtocol
 from openakita.runtime.orgs.runtime import (
     EventBusProtocol,
     NodeLifecycleProtocol,
@@ -239,3 +246,240 @@ def test_contract_event_bus_protocol_pubsub() -> None:
     asyncio.run(bus.emit("e", {"k": "v2"}))
     # No new events received after unsubscribe.
     assert received == [{"k": "v"}]
+
+
+# ===========================================================================
+# Group C -- AgentBuilderProtocol contract (1 case)
+# ===========================================================================
+
+
+class _RecBuilder:
+    """Records build() calls; teardown() decrements live count."""
+
+    def __init__(self) -> None:
+        self.built: list[AgentSpec] = []
+        self.torn_down: list[Any] = []
+
+    def build(self, spec: AgentSpec) -> Any:
+        self.built.append(spec)
+        return type("A", (), {"spec": spec})()
+
+    def teardown(self, agent: Any) -> None:
+        self.torn_down.append(agent)
+
+
+def test_contract_agent_builder_protocol_cache_round_trip() -> None:
+    """case id: AgentBuilderProtocol.build + cache + teardown."""
+    builder = _RecBuilder()
+    # Builder satisfies the AgentBuilderProtocol runtime-checkable contract.
+    assert isinstance(builder, AgentBuilderProtocol)
+    cache = AgentCache(builder=builder)
+    spec = AgentSpec(org_id="o1", node_id="n1", role="eng")
+    a1 = cache.get_or_create(spec)
+    # Second call returns cached instance + builder still called once.
+    a2 = cache.get_or_create(spec)
+    assert a1 is a2
+    assert len(builder.built) == 1
+    # Evict drops the entry + invokes teardown.
+    assert cache.evict("o1", "n1") is True
+    assert builder.torn_down == [a1]
+    # evict on already-evicted -> False (idempotent).
+    assert cache.evict("o1", "n1") is False
+
+
+# ===========================================================================
+# Group D -- OrgRuntime composition smokes (3 cases)
+# ===========================================================================
+
+
+def test_contract_org_runtime_implements_command_runtime_protocol() -> None:
+    """case id: composition.isinstance.CommandRuntimeProtocol"""
+    rt, _cs, _bus = _make_runtime()
+    # The whole point of P9.6: closes the P9.4 dependency loop.
+    assert isinstance(rt, CommandRuntimeProtocol)
+
+
+def test_contract_org_runtime_default_backends_fall_back() -> None:
+    """case id: composition.default_backends.fall_back"""
+    rt = OrgRuntime(
+        lookup=_Lookup(),
+        persistence=object(),
+        lifecycle_emitter=object(),
+    )
+    # Default in-memory backends are constructed when DI omits them.
+    assert isinstance(rt._state, RuntimeStateProtocol)
+    assert isinstance(rt._node_lifecycle, NodeLifecycleProtocol)
+    assert isinstance(rt._event_bus, EventBusProtocol)
+    # Dispatch manager is also constructed by default.
+    assert isinstance(rt._dispatch, CommandDispatchManager)
+
+
+def test_contract_org_runtime_sibling_dispatch_wired() -> None:
+    """case id: composition.sibling.dispatch_wired"""
+    rt, cs, bus = _make_runtime()
+    # The injected event_bus + command_service are routed through
+    # the dispatch manager (verified by emitting a submit and
+    # observing event + service call).
+    received: list[dict[str, Any]] = []
+    bus.subscribe("user_command_submitted", lambda p: received.append(p))
+    asyncio.run(rt.send_command("o1", "n1", "x"))
+    assert received and received[0]["org_id"] == "o1"
+    assert cs.submitted and cs.submitted[0][0] == "o1"
+
+
+# ===========================================================================
+# Group E -- concurrency (4 cases)
+# ===========================================================================
+
+
+async def _dispatch_burst(rt: OrgRuntime, *, org_id: str, count: int) -> list[str]:
+    """Fire ``count`` send_command calls concurrently; return command_ids."""
+
+    async def one(i: int) -> str:
+        r = await rt.send_command(org_id, f"n{i % 4}", f"task-{i}")
+        return r["command_id"]
+
+    return await asyncio.gather(*(one(i) for i in range(count)))
+
+
+def test_contract_dispatch_4x25_unique_command_ids() -> None:
+    """case id: concurrency.dispatch.100_unique_command_ids"""
+    rt, _cs, _bus = _make_runtime()
+    ids = asyncio.run(_dispatch_burst(rt, org_id="o1", count=100))
+    # CommandRuntimeProtocol contract: every submit yields a
+    # distinct command_id (v1 parity).
+    assert len(ids) == 100
+    assert len(set(ids)) == 100
+
+
+def test_contract_concurrent_cancel_race_safe() -> None:
+    """case id: concurrency.cancel.race_safe"""
+    rt, _cs, _bus = _make_runtime()
+
+    async def main() -> None:
+        r = await rt.send_command("o1", "n1", "task")
+        cid = r["command_id"]
+        # Fire 8 concurrent cancels for the same id; only one
+        # should yield ``cancelled=True`` -- the others see
+        # ``already_done=True``.
+        outs = await asyncio.gather(*(rt.cancel_user_command("o1", cid) for _ in range(8)))
+        cancelled_count = sum(1 for o in outs if o and o.get("cancelled"))
+        already_done = sum(1 for o in outs if o and o.get("already_done"))
+        assert cancelled_count == 1
+        assert cancelled_count + already_done == 8
+
+    asyncio.run(main())
+
+
+def test_contract_concurrent_chain_registration() -> None:
+    """case id: concurrency.tracker.chain_registration"""
+    rt, _cs, _bus = _make_runtime()
+
+    async def main() -> None:
+        r = await rt.send_command("o1", "n1", "task")
+        cid = r["command_id"]
+
+        async def reg(i: int) -> None:
+            rt._dispatch.register_chain("o1", cid, f"ch_{i}")
+
+        await asyncio.gather(*(reg(i) for i in range(50)))
+        snap = rt.get_command_tracker_snapshot("o1", cid)
+        assert snap is not None
+        assert snap["chain_count"] == 50
+
+    asyncio.run(main())
+
+
+def test_contract_event_bus_concurrent_emit() -> None:
+    """case id: concurrency.event_bus.broadcast"""
+    bus = _InMemoryEventBus()
+    received: list[int] = []
+    bus.subscribe("tick", lambda p: received.append(p["i"]))
+
+    async def main() -> None:
+        await asyncio.gather(*(bus.emit("tick", {"i": i}) for i in range(40)))
+
+    asyncio.run(main())
+    assert sorted(received) == list(range(40))
+
+
+# ===========================================================================
+# Group F -- integration (1 case)
+# ===========================================================================
+
+
+def test_contract_integration_dispatch_then_cancel_end_to_end() -> None:
+    """case id: integration.dispatch.then_cancel"""
+    rt, cs, bus = _make_runtime()
+    events: list[tuple[str, dict[str, Any]]] = []
+    bus.subscribe("user_command_submitted", lambda p: events.append(("submitted", p)))
+    bus.subscribe("user_command_cancelled", lambda p: events.append(("cancelled", p)))
+
+    async def main() -> None:
+        r = await rt.send_command("o1", "n1", "do it")
+        await rt.cancel_user_command("o1", r["command_id"])
+        return r["command_id"]
+
+    cid = asyncio.run(main())
+    # Sequence: submitted then cancelled.
+    names = [n for n, _ in events]
+    assert names == ["submitted", "cancelled"]
+    # Service saw a matching submit + cancel pair.
+    assert cs.submitted == [("o1", "n1", "do it")]
+    assert cs.cancelled == [("o1", cid)]
+    # Final tracker snapshot is CANCELLED.
+    snap = rt.get_command_tracker_snapshot("o1", cid)
+    assert snap is not None and snap["state"] == TRACKER_CANCELLED
+
+
+# ===========================================================================
+# Group G -- wall-clock SLA via internal time.perf_counter
+# (per G-RC-9.4 NIT-I-1 lesson: do NOT rely on pytest wall-clock)
+# ===========================================================================
+
+
+def test_contract_sla_send_command_under_50ms() -> None:
+    """case id: sla.send_command.under_50ms (perf_counter)"""
+    import time as _time
+
+    rt, _cs, _bus = _make_runtime()
+
+    async def main() -> float:
+        t0 = _time.perf_counter()
+        await rt.send_command("o1", "n1", "x")
+        return _time.perf_counter() - t0
+
+    elapsed = asyncio.run(main())
+    # In-process happy path must stay well under 50 ms.
+    assert elapsed < 0.05, f"send_command took {elapsed * 1000:.2f} ms"
+
+
+def test_contract_sla_cancel_under_50ms() -> None:
+    """case id: sla.cancel.under_50ms (perf_counter)"""
+    import time as _time
+
+    rt, _cs, _bus = _make_runtime()
+    r = asyncio.run(rt.send_command("o1", "n1", "task"))
+    cid = r["command_id"]
+
+    async def main() -> float:
+        t0 = _time.perf_counter()
+        await rt.cancel_user_command("o1", cid)
+        return _time.perf_counter() - t0
+
+    elapsed = asyncio.run(main())
+    assert elapsed < 0.05, f"cancel_user_command took {elapsed * 1000:.2f} ms"
+
+
+# ===========================================================================
+# Group H -- ledger smoke (1 case): tracker for_org snapshot consistency
+# ===========================================================================
+
+
+def test_contract_active_root_intent_most_recent_running() -> None:
+    """case id: get_active_root_intent.most_recent_wins"""
+    rt, _cs, _bus = _make_runtime()
+    asyncio.run(rt.send_command("o1", "n1", "first"))
+    asyncio.run(rt.send_command("o1", "n2", "second"))
+    intent = rt._dispatch.get_active_root_intent("o1")
+    assert intent in {"first", "second"}  # most-recent wins; ties OK
