@@ -448,3 +448,23 @@ current_phase: P-RC-9
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-9 P9.7gamma-1a | test(api/contracts): scaffold contracts/ + cluster 3.1 orgs (41 cases) + cluster 3.2 nodes (28 cases) | +PLACEHOLDER LOC (contracts/__init__.py NEW 12 + conftest.py NEW 89 + test_orgs_v2_contracts_orgs.py NEW 283 + test_orgs_v2_contracts_nodes.py NEW 247; ledger +PLACEHOLDER) | +69 contract (B1-B17 41 cases + B18-B33 28 cases); gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ 394 -> 463 passed (62.60s) | ADR-0011 (D-3 layer separation -- shared fixtures factor out duck-typed mock wiring; charter section 6 contract matrix); ADR-0012 (no shim under v1; assertions reach only v2 schemas + runtime.orgs subsystems); cites P-RC-9-P9.7-CHARTER.md section 6 (contract test matrix) + section 3 P9.7gamma-1 brief |
+
+## P9.7gamma-1b -- contract clusters dispatch (B34-B41) + state (B42-B53) + ops (B54-B67) (this turn)
+
+> Second gamma-1 commit: lands the dispatch / state / ops
+> per-cluster contract files. Coverage matches the charter
+> section 6 contract matrix: happy / 404 / 422 / 409 / 503 /
+> 400 (subsystem ValueError envelopes) per endpoint. Dispatch
+> exercises the ``CommandSubmit`` Pydantic body strictness
+> (``content`` min_length=1 + ``extra="forbid"``), the
+> ``OrgCommandConflict`` 409 envelope, and the ``OrgCommandError``
+> 400 path. State exercises the ``MemoryScope`` / ``MemoryType``
+> 400 envelope on bad enum values, the path-traversal guard on
+> policy file IO, and the duck-typed event-store empty / happy
+> branches. Ops exercises the inbox 200/404/400 matrix, the
+> 503 scaler-not-wired case, and the file-IO branches for
+> reports / status / stats.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-9 P9.7gamma-1b | test(api/contracts): mint cluster contracts for dispatch (20 cases) + state (29 cases) + ops (30 cases) | +PLACEHOLDER LOC (test_orgs_v2_contracts_dispatch.py NEW 141 + test_orgs_v2_contracts_state.py NEW 233 + test_orgs_v2_contracts_ops.py NEW 228; ledger +PLACEHOLDER) | +79 contract (B34-B41 20 + B42-B53 29 + B54-B67 30); gate slice tests/api/ + tests/runtime/orgs/ + tests/parity/orgs/ 463 -> 542 passed (70.45s) | ADR-0011 (D-3 layer separation; dispatch + state + ops touch P9.4 OrgCommandService / P9.6 OrgRuntime / P9.1 OrgBlackboard surface only via the v2 routes); ADR-0012 (no shim under v1; assertions reach only v2 schemas + runtime.orgs subsystems); cites P-RC-9-P9.7-CHARTER.md section 6 (~120 contract cases / ~1 600 LOC) |
