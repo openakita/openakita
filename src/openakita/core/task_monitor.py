@@ -423,9 +423,12 @@ class TaskMonitor:
             self._timeout_triggered = True
             self.metrics.retry_count = self._timeout_retry_count
             if not self.fallback_model:
-                logger.error(
-                    "[TaskMonitor] Timeout retries exhausted but no fallback_model configured; "
-                    "cannot switch model."
+                # 单端点部署的正常路径：没有备选模型可切换，由上层（reasoning_engine /
+                # agent）决定是直接失败还是继续在当前端点上重试。这里只是登记一下，
+                # 不打 ERROR，避免日志误报。
+                logger.info(
+                    "[TaskMonitor] Timeout retries exhausted; no fallback model configured "
+                    "(single-endpoint deployment). Letting caller decide next step."
                 )
             else:
                 self.switch_model(

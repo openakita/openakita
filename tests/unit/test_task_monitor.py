@@ -117,6 +117,46 @@ class TestTimeout:
         assert tm.should_switch_model is False
         assert tm.current_model == "primary-model"
 
+    def test_single_endpoint_timeout_is_not_logged_as_error(self, caplog):
+        """单端点部署：超时重试耗尽后没有 fallback，应只记录 INFO 而非 ERROR。
+
+        旧实现假设至少 2 个端点，一旦 fallback_model 为空就打 ERROR；
+        现在单端点是合法配置，不应在日志里被当成错误。
+        """
+        import logging
+
+        tm = TaskMonitor(
+            task_id="t9-single",
+            description="Single-endpoint timeout",
+            timeout_seconds=1,
+            fallback_model="",
+            retry_before_switch=1,
+        )
+        tm.start(model="only-model")
+
+        # 直接驱动 _handle_timeout，绕过 begin_iteration 里的 _touch_progress 重置。
+        # 模拟"超时重试已用尽 + 没有 fallback"的瞬间状态。
+        with caplog.at_level(logging.INFO, logger="openakita.core.task_monitor"):
+            tm._handle_timeout()
+
+        assert tm.is_timeout is True
+        # fallback_model 为空时不应调用 switch_model，current_model 保持不变。
+        assert tm.current_model == "only-model"
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not error_records, (
+            "单端点超时不应当作 ERROR 报告，"
+            f"实际看到: {[r.getMessage() for r in error_records]}"
+        )
+        info_messages = " ".join(
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "openakita.core.task_monitor" and r.levelno == logging.INFO
+        )
+        assert "single-endpoint" in info_messages.lower(), (
+            f"期望出现单端点 INFO 提示，实际只看到: {info_messages!r}"
+        )
+
 
 class TestRetry:
     def test_record_error_and_retry(self):

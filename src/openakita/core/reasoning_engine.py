@@ -7934,6 +7934,15 @@ class ReasoningEngine:
             return None
 
         new_model = task_monitor.fallback_model
+        if not new_model:
+            # 单端点部署：没有备用模型可切换，由外层 LLM 错误处理 / 总重试上限收尾。
+            # 这里直接返回 None，避免对外发送"正在切换到备用模型..."的误导提示，也避免
+            # 用空字符串去调用 switch_model 污染 TaskMonitor.metrics。
+            logger.info(
+                "[ModelSwitch] should_switch_model=True but no fallback_model configured "
+                "(single-endpoint deployment); keeping current endpoint."
+            )
+            return None
         self._switch_llm_endpoint(new_model, reason="task_monitor timeout fallback")
         task_monitor.switch_model(
             new_model,
@@ -8443,10 +8452,27 @@ class ReasoningEngine:
         # --- 检查 fallback 模型是否可用 ---
         new_model = task_monitor.fallback_model
         if not new_model:
-            logger.warning(
-                "[ModelSwitch] No fallback model available (all endpoints may be in cooldown), "
-                "aborting model switch"
-            )
+            # 区分两种"没有 fallback"的情况：
+            #   1. 单端点部署 —— 用户本来就只配了 1 个端点，这是合法配置；
+            #   2. 多端点部署但全部进入冷静期 —— 是异常状态。
+            # 用 list_available_models 的总数区分，避免对单端点用户报告误导信息。
+            try:
+                llm_client = getattr(self._brain, "_llm_client", None)
+                total_endpoints = (
+                    len(llm_client.list_available_models()) if llm_client else 0
+                )
+            except Exception:
+                total_endpoints = 0
+            if total_endpoints <= 1:
+                logger.info(
+                    "[ModelSwitch] No fallback model available (single-endpoint deployment), "
+                    "aborting model switch and surfacing the error to the user."
+                )
+            else:
+                logger.warning(
+                    "[ModelSwitch] No fallback model available "
+                    "(all endpoints may be in cooldown), aborting model switch."
+                )
             return None
 
         resolved = self._resolve_endpoint_name(new_model)

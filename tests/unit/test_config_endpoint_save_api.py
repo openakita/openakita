@@ -531,12 +531,8 @@ async def test_save_endpoints_batch_returns_saved_endpoints(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_save_endpoints_rejects_below_two_chat_endpoints_when_flag(monkeypatch):
-    """P1-5: batch save 至少需要 2 条启用的 chat endpoint（可被 feature flag 关闭）。"""
-    from openakita.core.feature_flags import clear_overrides, set_flag
-
-    clear_overrides()
-    set_flag("llm_view_min_endpoints_v1", True)
+async def test_save_endpoints_batch_allows_single_chat_endpoint(monkeypatch):
+    """Single-endpoint setups are valid; fallback endpoints are optional."""
     manager = _FakeEndpointManager()
     monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: manager)
     monkeypatch.setattr(
@@ -544,21 +540,28 @@ async def test_save_endpoints_rejects_below_two_chat_endpoints_when_flag(monkeyp
         "_trigger_reload",
         lambda request: {"status": "ok", "reloaded": True},
     )
-    try:
-        resp = await config_routes.save_endpoints(
-            config_routes.SaveEndpointsRequest(
-                endpoints=[
-                    {"name": "solo", "provider": "openai", "model": "gpt-4o"},
-                ],
-                api_key="sk-x",
-            ),
-            SimpleNamespace(),
-        )
-        assert resp["status"] == "error"
-        assert "2" in resp.get("error", "")
-        assert manager.endpoints == []
-    finally:
-        clear_overrides()
+
+    resp = await config_routes.save_endpoints(
+        config_routes.SaveEndpointsRequest(
+            endpoints=[
+                {"name": "solo", "provider": "openai", "model": "gpt-4o"},
+            ],
+            api_key="sk-x",
+        ),
+        SimpleNamespace(),
+    )
+
+    assert resp["status"] == "ok"
+    assert resp["count"] == 1
+    assert manager.endpoints == [
+        {
+            "name": "solo",
+            "provider": "openai",
+            "model": "gpt-4o",
+            "api_key_env": "OPENAI_API_KEY",
+            "endpoint_type": "endpoints",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -610,11 +613,7 @@ def test_delete_stt_endpoint_accepts_slash_in_name(monkeypatch):
     }
 
 
-def test_delete_last_chat_endpoint_is_allowed_when_min_endpoint_flag_is_on(monkeypatch):
-    from openakita.core.feature_flags import clear_overrides, set_flag
-
-    clear_overrides()
-    set_flag("llm_view_min_endpoints_v1", True)
+def test_delete_last_chat_endpoint_is_allowed(monkeypatch):
     manager = _FakeEndpointManager()
     manager.endpoints = [{"name": "solo", "provider": "dashscope", "model": "qwen3"}]
     monkeypatch.setattr(config_routes, "_get_endpoint_manager", lambda: manager)
@@ -624,18 +623,15 @@ def test_delete_last_chat_endpoint_is_allowed_when_min_endpoint_flag_is_on(monke
     app.include_router(config_routes.router)
     client = TestClient(app)
 
-    try:
-        response = client.delete("/api/config/endpoint/solo?endpoint_type=endpoints")
+    response = client.delete("/api/config/endpoint/solo?endpoint_type=endpoints")
 
-        assert response.status_code == 200
-        assert response.json()["status"] == "ok"
-        assert manager.deleted_endpoint == {
-            "name": "solo",
-            "endpoint_type": "endpoints",
-            "clean_env": True,
-        }
-    finally:
-        clear_overrides()
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert manager.deleted_endpoint == {
+        "name": "solo",
+        "endpoint_type": "endpoints",
+        "clean_env": True,
+    }
 
 
 def test_apply_llm_runtime_config_refreshes_all_runtime_components(tmp_path, monkeypatch):
