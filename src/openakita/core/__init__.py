@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._agent_legacy import Agent
     from ._brain_legacy import Brain
+    from ._reasoning_engine_legacy import ReasoningEngine
     from .agent_state import AgentState, TaskState, TaskStatus
     from .errors import UserCancelledError
     from .identity import Identity
@@ -27,6 +28,7 @@ __all__ = [
     "Brain",
     "Identity",
     "RalphLoop",
+    "ReasoningEngine",
     "UserCancelledError",
 ]
 
@@ -38,6 +40,7 @@ _LAZY_IMPORTS = {
     "Brain": ("._brain_legacy", "Brain"),
     "Identity": (".identity", "Identity"),
     "RalphLoop": (".ralph", "RalphLoop"),
+    "ReasoningEngine": ("._reasoning_engine_legacy", "ReasoningEngine"),
     "UserCancelledError": (".errors", "UserCancelledError"),
 }
 
