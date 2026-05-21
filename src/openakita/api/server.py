@@ -366,11 +366,23 @@ def create_app(
     org_manager = OrgManager(data_dir)
     ensure_builtin_templates(data_dir / "org_templates")
     app.state.org_manager = org_manager
-    org_runtime = OrgRuntime(org_manager)
+    # P-RC-9 P9.6 made ``OrgRuntime.__init__`` keyword-only with required
+    # ``lookup`` / ``persistence`` / ``lifecycle_emitter`` Protocols.  The
+    # v2 ``OrgManager`` itself implements ``OrgLookupProtocol`` and owns
+    # the default ``_FilesystemOrgPersistence`` + ``_NoopOrgLifecycleEmitter``
+    # siblings, so the composition root re-uses them.  See
+    # ``tests/api/test_server_app_wiring.py`` for the regression guard.
+    org_runtime = OrgRuntime(
+        lookup=org_manager,
+        persistence=org_manager._persistence,
+        lifecycle_emitter=org_manager._lifecycle,
+    )
     app.state.org_runtime = org_runtime
     from openakita.runtime.orgs.command_service import OrgCommandService, set_command_service
 
-    org_command_service = OrgCommandService(org_runtime, session_manager)
+    # P-RC-9 P9.4 made ``OrgCommandService.__init__`` keyword-only after
+    # the leading ``runtime`` argument; pass session_manager by name.
+    org_command_service = OrgCommandService(org_runtime, session_manager=session_manager)
     set_command_service(org_command_service)
     app.state.org_command_service = org_command_service
 
