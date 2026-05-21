@@ -1,341 +1,275 @@
-# OpenAkita P-RC-9 关闭后 / v2.0.0 打标签前 — 手动 smoke 验收 checklist（简体中文）
+# OpenAkita 人工烟雾测试清单（v3 真·人类专属）
 
-> 面向工程维护者，在浏览器 + PowerShell shell 中独立于 AI 驱动的 smoke 跑一遍。
-> 预计总耗时：**30 ~ 45 分钟**。每条按 **操作 → 预期 → 失败时怎么办** 描述。
-> 重复的服务启停 / 冷启动脚本请直接参考 `tmp_p10/_smoke_startup.md` §2-§3；本文件**只**描述"做什么 / 看什么"。
+> 本清单已收敛到**只有人才能完成的项**：视觉对照、真 IM 跨平台、真浏览器交互、真 LLM provider 失败切换、长跑稳定性。AI 能跑的 API 校验已全部移到 `tmp_p10/_step2_report.md`（Phase B 60 轮自动报告）；可一键回归脚本见 `tmp_p10/_smoke_auto.ps1`。
 
-**当前 HEAD**：`432a4ed6` `fix(frontend): stable bundle version across backend restarts in dev mode [smoke-banner]`
-**当前分支**：`revamp/v3-orgs`
-**最近修复链**（自旧到新）：`b363bfa8` (F-1) → `e4dba69c` (F-0/F-6) → `6f7e281e` (F-5) → `4fc5c4e6` (F-7) → `432a4ed6` (smoke-banner)
-**当前服务**：后端 <http://127.0.0.1:18900> (PID 26600 cold-recovery 后) / 前端 <http://127.0.0.1:5173/web/> (Vite PID 38768)
-
-> 横幅修复 (`432a4ed6`) 后**必须**重启一次 Vite dev server 才能让 dev-sentinel 短路生效（详见第 0.5 节 N1）。
+**适用范围**：v2.0.0 tag 放行前的最后一道闸门。
+**前置**：HEAD 在 `0cf41604`（或更新；本次 Step 2 的 Phase A/B/C 都基于此）。
+**预计总耗时**：约 60-75 分钟（顺序执行）。
 
 ---
 
-## 第 0 节：smoke-fix-1 三大修复回归（必查，~6 min）
+## 准备：环境就绪（≈ 3 分钟）
 
-### S1. F-5 `PATCH /api/v2/orgs/{id}` 三联组（~3 min）
-
-**操作**：在 PowerShell 中：
-1. `$o = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:18900/api/v2/orgs -ContentType "application/json" -Body '{"name":"patch-trio-1"}'; $id = $o.id`
-2. (b1 正向) `Invoke-WebRequest -Method Patch -Uri "http://127.0.0.1:18900/api/v2/orgs/$id" -ContentType "application/json" -Body '{"name":"renamed"}' -UseBasicParsing`
-3. (b2 未知 id) 对 `http://127.0.0.1:18900/api/v2/orgs/org_does_not_exist` 发同样 PATCH，try/catch
-4. (b3 空 body) 对 `$id` 发 PATCH，body 为 `{}`
-
-**预期**：
-- (b1) `StatusCode = 200`，返回对象 `name = "renamed"`
-- (b2) status code = **404**（**不是** 308 或 405）
-- (b3) `StatusCode = 200`（空 patch 幂等）
-
-**失败时**：
-- (b1) 返回 308 → F-5 修复未生效；`git log --oneline | Select-String "smoke-F5"` 应有 `6f7e281e`；若有就重启后端
-- (b2) 返回 308 → mint runtime 没注册 PATCH，落到了 308 shim；查 `src/openakita/api/routes/orgs_v2_runtime_orgs.py` 是否有 `@router.patch("/{org_id}", ...)`
-- 抓日志：`tmp_p10/_smoke_backend_v2.log`（或最近 cold-recovery 后的 `_smoke_backend_v3.log` / `_smoke_backend_v4.log`）
-
-### S2. F-0 / F-6 prompt-core 循环导入恢复（~1 min）
-
-**操作**：在仓库根目录跑两条 import：
-- `.\.venv\Scripts\python.exe -c "from openakita.prompt.compiler import check_compiled_outdated; print('F-0 OK')"`
-- `.\.venv\Scripts\python.exe -c "from openakita.core import Brain; print('F-6 OK', Brain)"`
-
-**预期**：两行都打印 `F-0 OK` / `F-6 OK <class 'openakita.core._brain_legacy.Brain'>`，**无任何 ImportError**。
-
-**失败时**：报 `cannot import name ... (most likely due to a circular import)` → `e4dba69c` 未生效；`git show e4dba69c --stat` 确认补丁仍在 HEAD 链。
-
-### S3. F-7 `core.ReasoningEngine` lazy export（~1 min）
-
-**操作**：
-- `.\.venv\Scripts\python.exe -c "from openakita.core import ReasoningEngine; print(ReasoningEngine)"`
-- `.\.venv\Scripts\python.exe -m pytest tests/unit/test_core_import_surface.py -q --tb=no`
-
-**预期**：第一条打印 `<class 'openakita.core._reasoning_engine_legacy.ReasoningEngine'>`；第二条 `3 passed`。
-
-**失败时**：`AttributeError: module 'openakita.core' has no attribute 'ReasoningEngine'` → `4fc5c4e6` 三行 lazy import 增补未生效；`Get-Content src/openakita/core/__init__.py | Select-String "_LAZY_IMPORTS|ReasoningEngine"` 应能匹配。
+| 项 | 检查 |
+|---|---|
+| 后端 | 浏览器打开 `http://127.0.0.1:18900/api/health` 看到 `status: ok`、`agent_initialized: true`、`ready: true` |
+| 前端 | 终端 `cd apps/setup-center && npm run dev` 起来；浏览器打开 `http://127.0.0.1:5173` |
+| 控制台 | 浏览器 DevTools → Console 清空，准备观察报错 |
+| Network | DevTools → Network 打开，关注 `/api/v2/orgs/...` 调用 |
 
 ---
 
-## 第 0.5 节：smoke-banner（横幅修复回归，~4 min）
+## 1. 视觉对照：组织编排侧边栏标题（≈ 3 分钟）
 
-### N1. 重启 Vite dev server（~1 min）
-
-**操作**：先 `Get-NetTCPConnection -LocalPort 5173 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }` 杀旧进程；再按 `_smoke_startup.md` §2.3 用 `VITE_BUILD_TARGET=web` 重启。日志在 `tmp_p10/_smoke_frontend_v3.log`。
-
-**预期**：~6 秒内日志末尾出现 `ready in NNNN ms` 与 `Local: http://127.0.0.1:5173/web/`。
-
-**失败时**：`EADDRINUSE` → Stop-Process 没杀到；列出 `Get-NetTCPConnection -LocalPort 5173 | Format-List` 再补一刀。
-
-### N2. 浏览器硬刷后横幅不再出现（~2 min）
-
-**操作**：
-1. 浏览器打开 <http://127.0.0.1:5173/web/>，F12 打开 DevTools → Console
-2. Ctrl+Shift+R 硬刷
-3. 等 **30 秒**
-
-**预期**：
-- Console 出现一行 `[StaleBundleBanner] dev-sentinel bundle id detected ( dev-xxxxx ) -- skipping stale-bundle poll.`
-- 页面顶部**没有**橙色 `新版本可用，请刷新页面 [立即刷新]` 横幅
-- Network 过滤 `build-info` → **列表为空**（dev-sentinel 命中后压根没注册 setInterval）
-
-**失败时**：
-- Console 无 info 行 → 浏览器吃了 service-worker 缓存；DevTools → Application → Service Workers → Unregister；Application → Storage → Clear site data；硬刷
-- 横幅仍弹 → 查 `apps/setup-center/src/components/StaleBundleBanner.tsx` line ~62 是否含 `if (!myId || myId.startsWith("dev-"))`；若无，`git log -- apps/setup-center/src/components/StaleBundleBanner.tsx` 确认 `432a4ed6` 还在
-- 出现 `/api/build-info` 请求 → 旧 tab 还开着，关掉所有非新硬刷的 tab
-
-### N3. 后端再重启一次，横幅仍不应弹（~1 min）
-
-**操作**：用 `_smoke_startup.md` §2 的命令重启后端 → 等 `/api/health` 返回 200 → 回浏览器 Ctrl+Shift+R → 等 30 秒。
-
-**预期**：横幅**不出现**（这正是用户原始 bug 复发条件）。
-
-**失败时**：横幅出现 → N2 修复未真正应用到当前 Vite bundle；`Get-Content apps\setup-center\src\components\StaleBundleBanner.tsx | Select-String "dev-sentinel"` 应能匹配。
+- **类别**：视觉
+- **操作**：
+  1. 在组织编排页面，让左侧栏处于默认宽度（不要拖拽缩放）
+  2. 截图整个页面（推荐 `Win + Shift + S`）
+- **预期**：左上角"组织编排"四个字横向显示在一行，**不能**出现一字一行的竖排（Step 2 修了 `whiteSpace: nowrap` + `flexShrink: 0`）。右侧"模板/新建/新建 v2 组织（从模板）/导入"四个按钮如果撑不下，应换行到标题下方一行；不能挤压标题。
+- **失败**：发现"组"、"织"、"编"、"排"四个字纵向排列 → 说明 Phase A 的 nowrap 没生效；保留截图，记下当时窗口宽度，截 `apps/setup-center/src/views/OrgEditorView.tsx` 第 1986 / 2146 行附近的 inline style 给我。
+- **耗时**：≤ 3 分钟
 
 ---
 
-## A 节：后端基础存活（~3 min，4 项）
+## 2. 视觉对照：模板挑选弹窗（≈ 5 分钟）
 
-### A1. `/api/health` 200 + agent_initialized（~30 s）
-
-**操作**：`Invoke-RestMethod http://127.0.0.1:18900/api/health | ConvertTo-Json -Depth 4`
-**预期**：JSON 含 `status: "ok"`、`agent_initialized: true`、`readiness.http_ready: true`、`version: "1.27.9"`。
-**失败时**：500 / 连接拒绝 → 后端没起；按 `_smoke_startup.md` §2.2 重启。
-
-### A2. `/openapi.json` 已知失败 F-2（~15 s）
-
-**操作**：`try { Invoke-WebRequest http://127.0.0.1:18900/openapi.json -UseBasicParsing } catch { $_.Exception.Response.StatusCode.Value__ }`
-**预期**：返回 **500**（已知 F-2，15+ 插件 `-> FileResponse` 注解触发 Pydantic 2.12 ForwardRef 解析失败；**不修**）。
-**失败时**：返回 200 → 插件兼容修复已落地（好事）；登记到 backlog。
-
-### A3. `/docs` Swagger UI 同 A2（~15 s）
-
-**操作**：浏览器打开 <http://127.0.0.1:18900/docs>。
-**预期**：500 错误页（依赖 `/openapi.json`，根因同 A2）。
-
-### A4. 后端日志关键启动行（~30 s）
-
-**操作**：`Get-Content tmp_p10\_smoke_backend_v2.log | Select-String "StreamRegistry|SessionManager started"`
-**预期**：至少看到 `[Startup] StreamRegistry cleanup task started` 和 `SessionManager started`。
-**失败时**：缺其一 → 启动半途夭折；从日志开头找抛异常的位置。
+- **类别**：视觉 / 真实操作
+- **操作**：
+  1. 点击侧边栏顶端的「**新建 v2 组织（从模板）**」按钮
+  2. 观察弹窗形式：必须是**居中弹出的 Modal**（黑色半透明背景 + 中央卡片），**不应**是从右侧滑出的抽屉
+  3. 用鼠标依次点击列表中的不同模板卡片（至少切换 2 次：先点"内容运营团队"，再点"软件研发团队"）
+  4. 观察被选中的卡片有无明显视觉反馈：**外层边框变靛蓝（indigo-500）+ 浅靛蓝背景 + 右上小标"已选中"**
+  5. 在「新组织名称」输入框留空 → 「创建组织」按钮应处于**禁用**态（灰）
+  6. 输入"smoke-用户测试"→ 「创建组织」按钮变为可点
+  7. 按 `Esc` → 弹窗关闭；再点「新建 v2 组织（从模板）」打开 → 之前的"smoke-用户测试"应已**清空**（弹窗 lifecycle 重置）
+- **预期**：满足以上 7 条；模板列表显示**至少 5 个**（content-ops / software-team / startup-company / aigc-video-studio + 至少 1 个其他），描述与节点数中文渲染正常。
+- **失败**：弹窗仍是抽屉 → 说明 `apps/setup-center/src/components/TemplatePickerDialog.tsx` 没被加载（重启 Vite 试试）；选中态不明显 → 抓 `data-testid="v2-template-card-tpl_a"` 元素的 `class` 属性给我。
+- **耗时**：≈ 5 分钟
 
 ---
 
-## B 节：v2 orgs CRUD（mint runtime 路径，~5 min，6 项）
+## 3. 真浏览器交互：完整 v2 组织 E2E（≈ 8 分钟）
 
-> 本节假设 S1 已通过；所有命令针对 mint runtime（POST → GET/PUT/PATCH/DELETE）。
-
-### B1. POST 新 org（~30 s）
-
-**操作**：POST `http://127.0.0.1:18900/api/v2/orgs`，body `{"name":"manual-smoke-B1","description":"smoke-B1 desc"}`；把 response 中的 `id` 存为 `$global:smokeId`。
-**预期**：`status = 201`，`id` 形态 `org_...`。
-**失败时**：500 → 后端日志看 `OrgManager.create` 栈帧；常见 SQLite 锁。
-
-### B2. GET 单 org（~10 s）
-
-**操作**：`Invoke-RestMethod "http://127.0.0.1:18900/api/v2/orgs/$global:smokeId"`
-**预期**：返回对象 `name = "manual-smoke-B1"`。
-**失败时**：404 → POST 没真落库；检查 SQLite 路径。
-
-### B3. GET 列表包含新 id（~10 s）
-
-**操作**：`(Invoke-RestMethod http://127.0.0.1:18900/api/v2/orgs).id -contains $global:smokeId`
-**预期**：`True`。
-
-### B4. PUT 改名（~15 s）
-
-**操作**：PUT `/api/v2/orgs/$global:smokeId`，body `{"name":"manual-smoke-B4-renamed","description":"x"}`。
-**预期**：StatusCode = 200，GET 后 `name = "manual-smoke-B4-renamed"`。
-
-### B5. PATCH 改名（F-5 修复后应 200，~15 s）
-
-**操作**：PATCH `/api/v2/orgs/$global:smokeId`，body `{"name":"manual-smoke-B5-patched"}`。
-**预期**：**StatusCode = 200**（不再是 308 → 404），GET 后 `name = "manual-smoke-B5-patched"`。
-**失败时**：见第 0 节 S1 失败时排查。
-
-### B6. DELETE 幂等（~20 s）
-
-**操作**：DELETE 两次同一 id。
-**预期**：第一次 **200 或 204**；第二次 **404**（删除后幂等错误语义）。
+- **类别**：真浏览器交互 / 视觉
+- **要输入的内容**：组织名 = `smoke-真人E2E`；模板 = `内容运营团队`
+- **操作**：
+  1. 接续第 2 项：选好「内容运营团队」+ 输入名称 → 点击「创建组织」
+  2. 弹窗自动关闭后，**侧边栏左侧**应**立即**出现新组织 `smoke-真人E2E`，并被自动选中（高亮）
+  3. **观察 DevTools → Network**：应有一次 `POST /api/v2/orgs/from-template` 返回 201，紧接着一次 `GET /api/v2/orgs` 返回 200（侧边栏刷新）
+  4. 主画布应渲染出 7 个左右的节点（content-ops 模板默认 7 节点 + 11 边）
+  5. 鼠标拖动其中一个节点（如"主编"）：节点位置应跟随鼠标平滑移动，松开后保持新位置
+  6. 删除测试：右键侧边栏的 `smoke-真人E2E` → 选「删除」→ 弹出"确认删除？"确认 → 确认后侧边栏立即移除该组织
+  7. **观察 Network**：删除应触发 `DELETE /api/v2/orgs/{id}` 返回 200/204
+- **预期**：1-7 步全过；不出现红色报错气泡；DevTools Console 无 uncaught exception；Network 没有 4xx/5xx
+- **失败**：第 3 步如果 POST 落到 `/api/v2/orgs-spec/...` → Step 1 的 fix 回退了；第 4 步只看到 1 个节点 → mint runtime template materialisation 又坏了；任何一步出现 5xx → 立刻打开 `_smoke_backend.log` 抓最后 50 行
+- **耗时**：≈ 8 分钟
 
 ---
 
-## C 节：v2 templates（~3 min，3 项）
+## 4. 真浏览器交互：banner 刷新提示遮挡测试（≈ 5 分钟）
 
-### C1. 模板列表完整（~30 s）
-
-**操作**：`$t = (Invoke-RestMethod http://127.0.0.1:18900/api/v2/orgs/templates).id`；检查 `$t -contains 'aigc-video-studio'`、`'software-team'`、`'startup-company'`、`'content-ops'`。
-**预期**：4 条全 `True`。
-**失败时**：少哪个 → `data/templates/` 是否被改；登记 backlog。
-
-### C2. F-4 nit：仍有非 ASCII id（~15 s）
-
-**操作**：`$t | Where-Object { $_ -cmatch '[^\x00-\x7F]' }`
-**预期**：至少打印一个非 ASCII id（当前 `运营团队`）。**已知 F-4 LOW nit**，不阻塞 v2.0.0。
-
-### C3. instantiate aigc-video-studio（~1 min）
-
-**操作**：POST `/api/v2/orgs/templates/aigc-video-studio/instantiate`，body `{"name":"aigc-smoke-C3"}`，检查响应 `nodes.Count`。
-**预期**：StatusCode = 200；`nodes.Count >= 5`（模板当前固定 7 节点）。
-**失败时**：500 → 后端日志看 `TemplateRegistry.instantiate`；常见模板 JSON 损坏。
-
----
-
-## D 节：308 shim + Group A 兼容（~2 min，2 项）
-
-### D1. mint runtime GET 不触发 308（~30 s）
-
-**操作**：用 `[System.Net.WebRequest]` 关闭 `AllowAutoRedirect`，GET `/api/v2/orgs/<某新建 id>`。
-**预期**：`OK`（即 200）；**不是** `PermanentRedirect (308)`。
-**失败时**：返回 308 → mint runtime GET 路由被卸；查 `orgs_v2_runtime_orgs.py` 是否有 `@router.get("/{org_id}", ...)`。
-
-### D2. orgs-spec/templates 仍可工作（~30 s）
-
-**操作**：`Invoke-RestMethod http://127.0.0.1:18900/api/v2/orgs-spec/templates`
-**预期**：返回模板 id 列表（与 C1 同源；spec 路由还活着）。
-**失败时**：500 / 404 → Group A 路由被误移除；不阻塞 v2.0.0（FE 已 100% 走 v2），但需登记 backlog。
+- **类别**：视觉 / 真浏览器交互
+- **背景**：StaleBundleBanner 在前后端 build_id 不一致时出现；普通 `npm run dev` 模式下被设计为不显示。要触发它需要"假装版本错位"。
+- **操作**：
+  1. 在浏览器 DevTools → Console 跑下面这一行注入测试 banner：
+     ```js
+     (() => {
+       const div = document.createElement('div');
+       div.setAttribute('data-testid', 'manual-test-banner');
+       div.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:linear-gradient(135deg,#f59e0b,#f97316);color:#fff;padding:10px 16px;text-align:center;height:24px;line-height:24px;';
+       div.textContent = '【人工测试模拟】banner 占据 44px';
+       document.body.appendChild(div);
+       document.documentElement.style.setProperty('--app-banner-height', '44px');
+       document.body.style.paddingTop = '44px';
+     })();
+     ```
+  2. 观察：整个页面（包括组织编排标题、侧边栏、画布）应**整体下移 44px**，不被 banner 遮挡
+  3. 销毁 banner：
+     ```js
+     document.querySelector('[data-testid=manual-test-banner]').remove();
+     document.body.style.paddingTop = '';
+     document.documentElement.style.removeProperty('--app-banner-height');
+     ```
+  4. 观察：banner 消失后，整个页面应**回弹到顶**，无空白条留下
+- **预期**：步 2 页面整体下移；步 4 完全回弹
+- **失败**：步 2 页面**没有**下移 → Step 2 的 `body.style.paddingTop` 逻辑没生效；翻 `apps/setup-center/src/components/StaleBundleBanner.tsx` 的 useEffect
+- **耗时**：≈ 5 分钟
 
 ---
 
-## E 节：前端 dev surface（~5 min，4 项）
+## 5. 真 IM 跨进程：飞书机器人收发（≈ 8 分钟）
 
-### E1. 主页加载（~30 s）
-
-**操作**：浏览器 <http://127.0.0.1:5173/web/>。
-**预期**：OpenAkita 设置中心首页正常渲染；无白屏；tab 标题正常。
-**失败时**：白屏 → Console 若有 `Cannot read properties of null (reading 'useContext')` 即 react-i18next 双实例问题；查 `vite.config.ts` 的 `dedupe`。
-
-### E2. Vite 代理把 /api 转给后端（~30 s）
-
-**操作**：DevTools → Network 过滤 `api/`，触发任一 API 调用（例如点左侧导航"组织"）。
-**预期**：看到 `http://127.0.0.1:5173/api/...` 请求，status 200/201/204；response header `server` 为 `uvicorn`（或类似）。
-**失败时**：504 / 502 → 代理目标坏；查 `apps/setup-center/vite.config.ts` 的 `server.proxy['/api'].target = 'http://127.0.0.1:18900'`。
-
-### E3. Org 编辑器视图（~2 min）
-
-**操作**：左侧导航 → "组织" → 选 B1/B3 创建的某个 org → 进编辑器 → 在 ReactFlow 画布空白处右键 → 新建节点。
-**预期**：节点出现在画布；右侧 detail panel 显示节点 id；无 GlobalErrorBoundary 兜底。
-**失败时**：白屏 / "出错了" → Console 看堆栈；常见 chunk 404，硬刷一次。
-
-### E4. 模板抽屉（~1 min）
-
-**操作**：编辑器顶栏 "新建组织 / 模板" → 展开抽屉 → 选一个英文 id 模板 → 点 "立即实例化"。
-**预期**：列表 ≥4 项；每条有 `display_name`（中文）+ `id`（多为英文连字符）；实例化成功提示。
+- **类别**：真 IM
+- **前提**：你的飞书工作台里至少配有 1 个 OpenAkita bot（fei-bot-main 或 fei-bot-zimeiti）
+- **要输入的内容**：在飞书与 bot 的私聊里发 `今天日期是？`
+- **操作**：
+  1. 打开飞书 PC 客户端 → 与 OpenAkita bot 的私聊
+  2. 发送上面那条消息
+  3. 等 ≤ 30 秒
+- **预期**：bot 回复"今天是 2026 年 5 月 21 日"或同义内容；后端日志（`_smoke_backend.log`）应可见 `FeishuChannel` / `received message` 等日志
+- **失败**：
+  - bot 不回复 → 检查 `/api/health` 的 `started_im_channels` 列表是否包含飞书；检查 token 是否过期
+  - 回复内容是 v1 格式（无中文）→ 说明 prompt 装配有 regression
+  - 抓 `data/llm_debug/llm_request_*.json` 最新一条 看 `system` 长度（>5000 表示主对话路径）
+- **耗时**：≈ 8 分钟
 
 ---
 
-## F 节：前端源代码 hygiene（sentinel #8 抽查，~2 min，3 项）
+## 6. 真 IM 跨进程：钉钉机器人收发（≈ 8 分钟）
 
-### F1. 4 个核心组件不再走 v1 `/api/orgs/` 路径（~1 min）
-
-**操作**：对 `OrgEditorView.tsx` / `OrgProjectBoard.tsx` / `OrgChatPanel.tsx` / `TemplatePickerDrawer.tsx` 4 个文件分别 `Select-String -Pattern "['""]\/api\/orgs\/(?!v2\/)"`。
-**预期**：每个文件命中 **0**。
-**失败时**：>0 → 有遗漏的 v1 调用；记录文件 + 行号；阻塞 v2.0.0。
-
-### F2. FE/BE version 对齐（~30 s）
-
-**操作**：对比 `(Get-Content apps/setup-center/package.json | ConvertFrom-Json).version` 与 `(Invoke-RestMethod http://127.0.0.1:18900/api/health).version`。
-**预期**：两侧相等（当前 `1.27.9`；打 v2.0.0 前需先升级两侧）。
-**失败时**：不一致 → 哪边没升；`npm version` 或编辑 `pyproject.toml` 对齐。
-
-### F3. Vite 代理 target 正确（~15 s）
-
-**操作**：`Get-Content apps/setup-center/vite.config.ts | Select-String "127.0.0.1:18900"`
-**预期**：至少 1 行命中。
-**失败时**：无命中 → 代理 target 改了；E2 也会跟着挂。
+- **类别**：真 IM
+- **前提**：钉钉里有 ding-bot-akita / ding-bot-main
+- **要输入的内容**：在钉钉与 bot 的私聊里发 `1+2+3+4+5 等于多少？`
+- **操作**：发送上面那条消息
+- **预期**：bot 回复"15"或包含 15 的句子；连续追问"再 +6 是多少"应得到 21（验证多轮上下文记忆）
+- **失败**：bot 失忆 → ContextManager 或 SessionManager 出问题；抓 `data/llm_debug` 最新两条请求看 `messages` 数组里的历史是否完整
+- **耗时**：≈ 8 分钟
 
 ---
 
-## G 节：哨兵 + 测试套件（~6 min，5 项）
+## 7. 真 IM 跨进程：企微/Telegram/QQ（≈ 5 分钟）
 
-> **本节定义 v2.0.0 标签的硬门槛**。任一 FAIL → 不打 v2.0.0。
-
-### G1. orgs parity / 哨兵全绿（~2 min）
-
-**操作**：`.\.venv\Scripts\python.exe -m pytest tests/parity/orgs/ -q --tb=no`
-**预期**：`68 passed`（或更多）。
-**失败时**：定位哪个 sentinel 红 → 对应文件 README 给出修复指引。
-
-### G2. F-1 DI wiring 回归（~1 min）
-
-**操作**：`.\.venv\Scripts\python.exe -m pytest tests/api/test_server_app_wiring.py -q --tb=no`
-**预期**：`2 passed`。
-
-### G3. stall_detector 套件（ADR-0014，Acceptance #1）（~1 min）
-
-**操作**：`.\.venv\Scripts\python.exe -m pytest tests/runtime/test_stall_detector.py -q --tb=no`
-**预期**：全 passed。
-
-### G4. cancel_wall_clock_budget（ADR-0013，Acceptance #2）（~1 min）
-
-**操作**：`.\.venv\Scripts\python.exe -m pytest tests/runtime/test_cancel_wall_clock_budget.py -q --tb=no`
-**预期**：全 passed。
-
-### G5. smoke-banner 前端单测（新增，~1 min）
-
-**操作**：`cd apps/setup-center; npx --no-install vitest run src/components/__tests__/StaleBundleBanner.test.tsx; cd ..\..`
-**预期**：`Tests 3 passed`（含新增的 dev-sentinel 案例）。
-**失败时**：`Tests 2 passed` → `432a4ed6` 未生效或被回滚；`git log --oneline | Select-String "smoke-banner"` 确认。
+- **类别**：真 IM
+- **操作**：从 `/api/health` 的 `started_im_channels` 里挑任意一个**还没测过**的通道，私聊 bot 发送"你好"
+- **预期**：≤ 30 秒内有中文回复
+- **耗时**：≈ 5 分钟
 
 ---
 
-## H 节：冷启动恢复（~3 min，1 项）
+## 8. 真 LLM Provider 失败切换（≈ 8 分钟）
 
-### H1. 后端进程级 cold-recovery（~3 min）
-
-**操作**：按 `_smoke_startup.md` §3 的命令模板：杀 18900 进程 → wait 3s → `openakita serve` → 轮询 `/api/health` 至 ready → `Invoke-RestMethod /api/v2/orgs` 看之前 session 留下的 orgs 是否仍在。
-**预期**：30s 内 ready；列表里仍能看到 B 节创建（且未删）的 orgs。
-**失败时**：超时 → 看新 log 最后一帧；常见 SQLite `.db-shm` / `.db-wal` 残留锁；删除后重启。
-
----
-
-## I 节：已知不修（read-only 确认，~1 min，2 项）
-
-### I1. F-2 plugin-induced `/openapi.json` 500（同 A2）
-**预期**：仍 500，不阻塞 v2.0.0。Backlog：让各插件 `-> FileResponse` 注解改 `model_rebuild` 或字符串 forward-ref。
-
-### I2. F-4 非 ASCII 模板 id `运营团队`（同 C2）
-**预期**：仍存在。Backlog：改 ASCII id + display_name 中文。
+- **类别**：真实 LLM 切换 / 跨进程
+- **前提**：`config.yaml` 或环境变量里至少配置了 2 个 provider（例如 anthropic + openai-compatible）
+- **操作**：
+  1. 在 IM 私聊或 chat 页面发一句"你好"，确认主 provider 正常回复
+  2. 进入设置中心 → LLM → 把当前主 provider 的 API key 改成 `sk-bad-key-for-failover-test`
+  3. 保存设置
+  4. 立即再发一句"你好，验证 failover"
+  5. 等 ≤ 90 秒
+- **预期**：第二条回复仍然成功，但来自**备用** provider（可在 LLM debug 日志或 token 统计页看到 model 名变化）
+- **测试完毕**：把 API key 改回正确值
+- **失败**：第二条直接报错给用户 → failover 链路坏；抓 `_smoke_backend.log` 中 `provider_registry` / `fallback` 关键字
+- **耗时**：≈ 8 分钟
 
 ---
 
-## 第 X 节：v2.0.0 放行 / 不放行 决策表
+## 9. 多 tab 同步：组织状态实时一致（≈ 6 分钟）
 
-> **所有 BLOCKER 行 PASS** 才可执行 `git tag v2.0.0`。NIT 行仅登记 backlog，不阻塞。
-
-| 编号 | 项目 | 等级 | 通过条件 | PASS/FAIL |
-|---|---|---|---|---|
-| S1   | F-5 PATCH 三联组 | BLOCKER | (b1=200, b2=404, b3=200) | □ |
-| S2   | F-0/F-6 prompt-core import 恢复 | BLOCKER | 两条 import 均不抛 | □ |
-| S3   | F-7 `core.ReasoningEngine` lazy export | BLOCKER | import 通 + 3 passed | □ |
-| N2   | banner 在 dev 模式硬刷后不出现 | BLOCKER | Console 有 dev-sentinel info；UI 无横幅 | □ |
-| N3   | backend 重启后 banner 仍不弹 | BLOCKER | UI 无横幅 | □ |
-| A1   | `/api/health` 200 + agent_initialized | BLOCKER | 见 A1 预期 | □ |
-| A4   | backend 日志关键启动行 | NIT     | 两行都有 | □ |
-| B1-B4| v2 orgs 基本 CRUD (POST/GET/list/PUT) | BLOCKER | 4 项全过 | □ |
-| B5   | PATCH 主路径 200（与 S1.b1 重复） | BLOCKER | 200 + name 变化 | □ |
-| B6   | DELETE 幂等 | BLOCKER | 第二次 404 | □ |
-| C1   | 4 个核心模板 id 全部存在 | BLOCKER | 4 行 True | □ |
-| C3   | aigc-video-studio instantiate 200 + 节点齐 | BLOCKER | 200 + nodes ≥ 5 | □ |
-| D1   | mint runtime GET 不再 308 | BLOCKER | 200 | □ |
-| D2   | orgs-spec/templates 仍工作 | NIT     | 200 | □ |
-| E1-E4| 前端 4 项手感检查 | BLOCKER | 全过 | □ |
-| F1   | 4 核心组件无 v1 `/api/orgs/` 残留 | BLOCKER | 4 行均 0 hits | □ |
-| F2   | FE/BE version 对齐 | NIT     | 相等 | □ |
-| F3   | Vite 代理 target 正确 | BLOCKER | 1+ 命中 | □ |
-| G1   | parity/orgs 全绿 | BLOCKER | 68+ passed | □ |
-| G2   | F-1 DI 回归 | BLOCKER | 2 passed | □ |
-| G3   | stall_detector 全绿 | BLOCKER | all passed | □ |
-| G4   | cancel_wall_clock_budget 全绿 | BLOCKER | all passed | □ |
-| G5   | smoke-banner 前端单测 | BLOCKER | 3 passed | □ |
-| H1   | backend cold-recovery + 数据持久 | BLOCKER | ready + orgs 在 | □ |
-| A2/A3/I1 | `/openapi.json` + `/docs` 500 (F-2) | KNOWN-FAIL | 仍 500 (不修) | □ (确认) |
-| C2/I2 | 非 ASCII 模板 id (F-4) | KNOWN-NIT | 仍存在 (不修) | □ (确认) |
-
-**判定**：所有 BLOCKER PASS → **可打 `git tag v2.0.0`**；任一 BLOCKER FAIL → 修复后回到对应小节重跑，禁止跳过。
+- **类别**：真浏览器交互
+- **操作**：
+  1. 在浏览器开两个 tab，都打开 `http://127.0.0.1:5173`，都进入"组织编排"
+  2. tab A：从模板创建一个新 v2 组织 `smoke-多tab同步`
+  3. **不刷新** tab B
+- **预期**：tab B 的侧边栏应在 ≤ 5 秒内自动出现 `smoke-多tab同步`（如果实现了 polling 或 SSE 通知）；如果没自动出现，**手动刷新**后应可见
+- **可接受降级**：若产品当前没有跨 tab 推送实现，则手动刷新可见即视为 PASS；记录到失败行为里
+- **耗时**：≈ 6 分钟
 
 ---
 
-## 附：服务进程清理
+## 10. 长跑稳定性：30 分钟空载内存观察（≈ 30 分钟，但只看头尾）
 
-`Get-NetTCPConnection -LocalPort 18900,5173 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`
+- **类别**：长跑
+- **操作**：
+  1. 记录后端进程当前内存：任务管理器找 `python.exe` PID 52504 → 工作集 (Memory) 列读数（例 250 MB）
+  2. 让前后端**保持运行不操作**
+  3. 30 分钟后再读一次内存
+- **预期**：内存增长 ≤ 200 MB；进程**不**崩溃；`/api/health` 仍 200
+- **失败**：内存爬升 > 500 MB 或进程消失 → 抓 `_smoke_backend.log` 最后 200 行
+- **耗时**：30 分钟挂机；纯观察 ≤ 5 分钟
 
-> 历史英文版本保留在 `tmp_p10/_smoke_manual_checklist_en_backup.md`，供对照查阅。
+---
+
+## 11. 桌面打包冒烟（≈ 8 分钟，可选）
+
+- **类别**：跨平台打包
+- **前提**：本地装了 Rust + Cargo（Tauri 依赖）；`apps/setup-center/src-tauri/` 有 Cargo.toml
+- **操作**：`cd apps/setup-center && npm run tauri dev`
+- **预期**：原生窗口启动，能正常进入设置中心；标题栏图标存在；关闭窗口进程退出
+- **可跳过**：v2.0.0 不阻塞 Tauri；记 SKIP 即可
+- **耗时**：≈ 8 分钟
+
+---
+
+## 12. 组织生命周期视觉（≈ 5 分钟）
+
+- **类别**：视觉 / 真浏览器交互
+- **操作**：
+  1. 创建一个新 v2 组织（任意模板）
+  2. 观察侧边栏该组织左侧的状态徽章：应为 **休眠**
+  3. 点击主画布的"启动组织"或类似按钮（或在右键菜单中触发）
+  4. 观察徽章变化：休眠 → 运行中（绿色或脉动小圆点）
+  5. 触发"停止"或"归档"
+  6. 观察徽章：运行中 → 已停止 / 已归档
+- **预期**：状态切换在 UI 上可见；颜色 / 文字符合直觉
+- **可接受降级**：若 v2 mint runtime 当前没有 lifecycle 启停按钮（这是已知 P-RC-10 范畴），仅观察新建后的休眠态即可，记 PARTIAL
+- **耗时**：≈ 5 分钟
+
+---
+
+## 13. 已知 BLOCKER 复现验证（≈ 5 分钟）
+
+- **类别**：跨进程 / 真浏览器交互
+- **背景**：Phase B 发现 mint runtime 创建的 v2 组织没有 SSE 流。这一项就是要让你**亲眼**看到这个问题，确认复现，然后等 P-RC-10 修复。
+- **操作**：
+  1. 创建一个新 v2 组织（任意模板，名字 `smoke-SSE观察`）
+  2. 进入该组织详情页
+  3. 打开 DevTools → Network → 过滤 EventStream 或 stream
+  4. 应看到一次 `GET /api/v2/orgs-spec/{id}/stream` 请求
+  5. 观察该请求状态码
+- **预期（已知）**：404，response body `"detail":"org ... not found"`
+- **解读**：这是 Phase B RT13/RT34 报告的 HIGH 项，QUEUED-FOR-USER。复现到 = 与报告一致 = PASS（你确认了问题状态）。如果**没有**404 → 说明你或别人已经修了；非常欢迎，但请告诉我 hash。
+- **耗时**：≈ 5 分钟
+
+---
+
+## 14. 真键盘操作：弹窗焦点穿透检查（≈ 3 分钟）
+
+- **类别**：真键盘 / 视觉
+- **操作**：
+  1. 打开模板挑选弹窗（点「新建 v2 组织（从模板）」）
+  2. 用 `Tab` 键反复按 → 焦点应在弹窗内部循环（取消按钮 / 创建按钮 / 输入框 / 模板卡片）
+  3. 不应跳出到 banner 或侧边栏
+  4. 按 `Shift + Tab` 反向同样
+  5. 按 `Esc` 关闭
+- **预期**：焦点被正确 trap 在弹窗内；Esc 能关
+- **失败**：Tab 跳出弹窗 → Radix Dialog 的 focus trap 失效；抓 `apps/setup-center/src/components/ui/dialog.tsx` 给我
+- **耗时**：≈ 3 分钟
+
+---
+
+## 15. v2.0.0 放行决策表
+
+填表（每项打 √ / ✗ / SKIP）：
+
+| 项 | 通过 | 说明 |
+|---|:--:|---|
+| 1 视觉：侧边栏标题横排 | | |
+| 2 视觉：模板弹窗居中 + 选中态 | | |
+| 3 真浏览器：v2 完整 E2E | | |
+| 4 视觉：banner padding 推开页面 | | |
+| 5 真 IM：飞书 | | |
+| 6 真 IM：钉钉（多轮上下文） | | |
+| 7 真 IM：第三个通道 | | |
+| 8 真 LLM：failover | | |
+| 9 多 tab 同步 | | |
+| 10 长跑：30 min 不崩 | | |
+| 11 Tauri 桌面（可选） | | |
+| 12 lifecycle 视觉 | | |
+| 13 BLOCKER 复现确认 | | |
+| 14 弹窗 focus trap | | |
+
+**决策**：
+- 如 1/2/3/4/5/8/13/14 全过 + 其余 ≥ 60% 过 → **GREEN**：可以打 v2.0.0 tag
+- 如 13 是"已修"且 1-14 全过 → **GREEN+**：建议打 tag 并附 P-RC-10 ETA
+- 如 1/2/3/4 任一不过 → **RED**：阻塞 tag；回到 Step 2 Phase A 找 regression
+- 如 5/6/7 全部都跑不通 → **YELLOW**：tag 可打，但发版说明里要写"IM 通道需手动重新配置"
+- 其他情况 → **YELLOW**：可灵活判断
+
+---
+
+## 备注
+
+- AI 已经做完的部分（API contract、sentinel 70/70、ruff、tsc、vitest、并发创建、F-2/F-4/F-5 fix 验证）请见 `tmp_p10/_step2_report.md`，不重复做
+- 一键回归：`tmp_p10/_smoke_auto.ps1`（如需要）
+- 历史版本：`tmp_p10/_smoke_manual_checklist_v2_backup.md`（342 行的旧版备份）
+- HEAD 信息：`0cf41604`（Phase A 末尾），未 push 未 tag
