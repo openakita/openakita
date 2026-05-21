@@ -61,6 +61,10 @@ async def _get_db() -> Database | None:
                         "message": "Database.connect() completed but connection is None",
                     }
                 )
+                _register_degraded_token_stats(
+                    "no_connection",
+                    "Database.connect() returned but connection is None",
+                )
                 return None
             _db_instance = db
             _last_db_error.clear()
@@ -73,8 +77,43 @@ async def _get_db() -> Database | None:
                     "message": str(e)[:500],
                 }
             )
+            # Bubble the failure into the cross-subsystem registry so the
+            # unified ``DegradedBanner`` reflects token_stats outages,
+            # not just the daemon-thread writer (token_tracking) ones.
+            # We map both `Database` and `SQLiteUnavailable` failures to
+            # the same key ``token_tracking`` because the underlying
+            # ``agent.db`` is shared; quarantining one cures the other.
+            _register_degraded_token_stats(
+                _classify_db_error(e),
+                str(e)[:200],
+            )
             return None
     return _db_instance
+
+
+def _classify_db_error(exc: BaseException) -> str:
+    try:
+        from openakita.storage.safe_sqlite import SQLiteUnavailable
+
+        if isinstance(exc, SQLiteUnavailable):
+            return exc.reason
+    except Exception:
+        pass
+    return "open_failed"
+
+
+def _register_degraded_token_stats(reason: str, details: str) -> None:
+    try:
+        from openakita.storage.degraded import registry as _degraded
+
+        _degraded.register(
+            "token_tracking",
+            reason or "unknown",
+            repair="quarantine_token_db",
+            details=details[:200] if details else None,
+        )
+    except Exception:
+        pass
 
 
 async def _reset_db() -> None:

@@ -1186,10 +1186,17 @@ class AgentOrchestrator:
     # ------------------------------------------------------------------
 
     def _persist_sub_states(self) -> None:
-        """Write _sub_agent_states to disk so they survive restarts."""
+        """Write _sub_agent_states to disk so they survive restarts.
+
+        Uses ``safe_json_write`` for atomic temp+rename + ``.bak`` backup
+        so kill -9 mid-write can't leave a half-written JSON that would
+        crash next boot.
+        """
         if self._log_dir is None:
             return
         try:
+            from openakita.utils.atomic_io import safe_json_write
+
             path = self._log_dir.parent / "sub_agent_states.json"
             snapshot = {}
             for key, state in list(self._sub_agent_states.items()):
@@ -1198,27 +1205,34 @@ class AgentOrchestrator:
                     for k, v in state.items()
                     if isinstance(v, (str, int, float, bool, list, dict, type(None)))
                 }
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(snapshot, f, ensure_ascii=False, indent=2, default=str)
+            safe_json_write(path, snapshot)
         except Exception:
             logger.debug("[Orchestrator] Failed to persist sub-agent states", exc_info=True)
 
     def _load_sub_states(self) -> None:
-        """Load persisted sub-agent states from disk on startup."""
+        """Load persisted sub-agent states from disk on startup.
+
+        Uses ``read_json_safe`` which falls back to the ``.bak`` copy
+        if the primary is corrupted; outer try/except remains as a final
+        safety net.
+        """
         if self._log_dir is None:
             return
         try:
+            from openakita.utils.atomic_io import read_json_safe
+
             path = self._log_dir.parent / "sub_agent_states.json"
-            if path.exists():
-                with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    for key, state in data.items():
-                        status = state.get("status", "")
-                        if status in ("running", "starting"):
-                            state["status"] = "interrupted"
-                        self._sub_agent_states[key] = state
-                    logger.info(f"[Orchestrator] Restored {len(data)} sub-agent states from disk")
+            data = read_json_safe(path)
+            if isinstance(data, dict):
+                for key, state in data.items():
+                    status = state.get("status", "")
+                    if status in ("running", "starting"):
+                        state["status"] = "interrupted"
+                    self._sub_agent_states[key] = state
+                logger.info(
+                    "[Orchestrator] Restored %d sub-agent states from disk",
+                    len(data),
+                )
         except Exception:
             logger.debug("[Orchestrator] Failed to load sub-agent states", exc_info=True)
 

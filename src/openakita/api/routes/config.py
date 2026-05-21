@@ -1300,16 +1300,18 @@ async def write_skills_config(body: SkillsWriteRequest, request: Request):
     content = body.content if isinstance(body.content, dict) else {}
     al = content.get("external_allowlist") if isinstance(content, dict) else None
 
-    # 优先走唯一写入点；若 payload 不是标准 allowlist 结构，回退到旧的整文件覆盖，
+    # 优先走唯一写入点；若 payload 不是标准 allowlist 结构，回退到原子整文件覆盖，
     # 以保持前端「原样写入」的兼容（例如把非 allowlist 字段写进去）。
     if isinstance(al, list):
         set_skill_external_allowlist([str(x).strip() for x in al if str(x).strip()])
     else:
+        from openakita.utils.atomic_io import safe_json_write
+
         sk_path = _project_root() / "data" / "skills.json"
-        sk_path.parent.mkdir(parents=True, exist_ok=True)
-        sk_path.write_text(
-            json.dumps(content, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
+        safe_json_write(sk_path, content)
+        logger.warning(
+            "[Config API] skills.json written via non-standard payload — "
+            "consider using set_skill_external_allowlist or allowlist_io APIs"
         )
 
     # 触发统一刷新（rescan=False：仅重算 allowlist+catalog+pool，无需再扫盘）
@@ -1337,25 +1339,22 @@ async def write_skill_external_allowlist(body: dict, request: Request):
 @router.get("/api/config/disabled-views")
 async def read_disabled_views():
     """Read the list of disabled module views."""
+    from openakita.utils.atomic_io import read_json_safe
+
     dv_path = _project_root() / "data" / "disabled_views.json"
-    if not dv_path.exists():
-        return {"disabled_views": []}
-    try:
-        data = json.loads(dv_path.read_text(encoding="utf-8"))
+    data = read_json_safe(dv_path)
+    if isinstance(data, dict):
         return {"disabled_views": data.get("disabled_views", [])}
-    except Exception as e:
-        return {"error": str(e), "disabled_views": []}
+    return {"disabled_views": []}
 
 
 @router.post("/api/config/disabled-views")
 async def write_disabled_views(body: DisabledViewsRequest):
     """Update the list of disabled module views."""
+    from openakita.utils.atomic_io import safe_json_write
+
     dv_path = _project_root() / "data" / "disabled_views.json"
-    dv_path.parent.mkdir(parents=True, exist_ok=True)
-    dv_path.write_text(
-        json.dumps({"disabled_views": body.views}, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    safe_json_write(dv_path, {"disabled_views": body.views})
     logger.info(f"[Config API] Updated disabled_views: {body.views}")
     return {"status": "ok", "disabled_views": body.views}
 

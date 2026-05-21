@@ -587,17 +587,17 @@ class OrgManager:
     # ------------------------------------------------------------------
 
     def load_state(self, org_id: str) -> dict:
+        from openakita.utils.atomic_io import read_json_safe
+
         p = self._state_json(org_id)
-        if not p.is_file():
-            return {}
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = read_json_safe(p)
+        return data if isinstance(data, dict) else {}
 
     def save_state(self, org_id: str, state: dict) -> None:
+        from openakita.utils.atomic_io import safe_json_write
+
         p = self._state_json(org_id)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(
-            json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        safe_json_write(p, state)
 
     # ------------------------------------------------------------------
     # Internal

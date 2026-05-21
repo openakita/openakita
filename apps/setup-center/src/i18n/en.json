@@ -423,7 +423,7 @@
     "readOnlyHint": "Built-in system skill, read-only",
     "filePath": "File Path",
     "source": "Source",
-    "confirmUninstall": "Are you sure you want to uninstall \"{{name}}\"? The skill files will be deleted.",
+    "confirmUninstall": "Are you sure you want to uninstall \"{{name}}\"? This will delete the skill files.",
     "uninstalling": "Uninstalling...",
     "uninstallSuccess": "Skill \"{{name}}\" has been uninstalled",
     "uninstallFailed": "Uninstall failed",
@@ -436,11 +436,6 @@
     "installDownloading": "Downloading skill...",
     "installParsing": "Parsing skill...",
     "installDone": "Installation complete",
-    "confirmUninstall": "Are you sure you want to uninstall \"{{name}}\"? This will delete the skill files.",
-    "uninstalling": "Uninstalling...",
-    "uninstallSuccess": "Skill \"{{name}}\" has been uninstalled",
-    "uninstallFailed": "Uninstall failed",
-    "systemCannotUninstall": "System skills cannot be uninstalled",
     "category": {
       "groupView": "Group by category",
       "create": "+ New Category",
@@ -1204,7 +1199,15 @@
     "intervalDays": "days",
     "timeAt": "Time",
     "weekday": "Weekday",
-    "weekdays": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    "weekdays": [
+      "Sun",
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+      "Fri",
+      "Sat"
+    ],
     "dayOfMonth": "Day of Month",
     "cronExpression": "Cron Expression",
     "cronHint": "Format: min hour day month weekday (e.g. 0 9 * * * = daily at 9am)",
@@ -1547,7 +1550,6 @@
     "refresh": "Refresh",
     "copy": "Copy",
     "copied": "Copied",
-    "close": "Close",
     "confirmTitle": "Confirm",
     "enabled": "{{label}} enabled",
     "disabled": "{{label}} disabled",
@@ -2098,7 +2100,6 @@
     "backupSaved": "Backup settings saved",
     "backupNoPath": "Please set a backup location first",
     "backupSize": "Size",
-
     "migrateTitle": "Workspace Migration",
     "migrateHint": "Move the .openakita data directory to another location",
     "migrateCurrentPath": "Current Path",
@@ -2120,7 +2121,6 @@
     "migrateBusy": "Migrating...",
     "migrateChecking": "Checking...",
     "migrateNeedRestart": "Restart the app after migration to load the new path",
-
     "webNetworkTitle": "Web Access / Network",
     "webNetworkHint": "Control the HTTP API listening scope and proxy settings. Restart the backend to apply changes.",
     "apiHostLabel": "Allow External Access (LAN/WAN)",
@@ -2348,9 +2348,7 @@
     "noFileSelected": "Select a file from the left panel to edit",
     "fullTextInject": "Full-text injection, changes take effect immediately",
     "needsCompile": "Changes require compilation to take effect",
-
     "pageBanner": "Identity files define the Agent's core personality and behavior. Improper changes may cause the Agent to behave abnormally, lose critical capabilities, or produce unexpected responses. If unsure about the impact, back up first.",
-
     "soulWarning": "SOUL defines the Agent's core values and personality foundation. It is injected as full text into the system prompt and changes take effect immediately. Removing key principles may cause the Agent to lose honesty calibration and safety boundary constraints.",
     "agentWarning": "AGENT defines task execution flow, tool usage rules, and prohibited behaviors. Improper changes may cause the Agent to fail tasks, enter infinite loops, or bypass safety restrictions. Click 'LM Optimize' to compile after editing.",
     "memoryWarning": "This file is auto-refreshed daily by the system. Manual changes may be completely overwritten on the next refresh. For persistent rules, use the memory system's add_memory (type=rule).",
@@ -2358,13 +2356,11 @@
     "policiesYamlWarning": "This file controls tool permissions and security policies. Incorrect configuration may cause the Agent to lose access to critical tools, lose confirmation protection for dangerous operations, or disable path/command blocklists.",
     "policiesMdWarning": "When merged with system policies, sections with the same '## title' will be overridden by the system version. Only non-system sections are editable.",
     "runtimeWarning": "This is a compiled artifact that the Agent actually loads. Manual edits can fine-tune behavior but will be overwritten on recompilation.",
-
     "confirmTitle": "Confirm Identity File Change",
     "confirmSave": "I understand the risks, save",
     "confirmCancel": "Cancel",
     "confirmRiskSoulAgent": "This change will directly affect every conversation the Agent has with all users.",
     "confirmChangesSummary": "Changes: {{added}} lines added, {{removed}} lines removed",
-
     "compiling": "Running LM optimization...",
     "compilingRules": "Running rule compilation...",
     "tokenCount": "~{{count}} / {{budget}} tokens",
@@ -3573,6 +3569,24 @@
       "edgeTarget": "Target",
       "edgeTypeLabel": "Edge Type"
     }
+  },
+  "degraded": {
+    "bannerSummary": "{{count}} subsystem(s) degraded — click to repair",
+    "dialogTitle": "Degraded subsystems",
+    "dialogDescription": "OpenAkita detected one or more subsystems unable to open their database. You can quarantine each one (rename the file, recreate empty on next boot) — no other data is touched.",
+    "loading": "Loading…",
+    "allHealthy": "All subsystems healthy.",
+    "reasonLabel": "reason",
+    "sinceLabel": "since",
+    "quarantineBtn": "Quarantine + recreate",
+    "quarantining": "Quarantining…",
+    "quarantined": "Quarantined",
+    "errorNoToken": "Failed to acquire confirmation token. Please refresh the page and try again.",
+    "restartTitle": "Restart required",
+    "restartTauri": "OpenAkita will stop the backend; the desktop app will respawn it automatically.",
+    "restartStandalone": "Stop the current backend with Ctrl+C in your terminal and run `openakita serve` again.",
+    "restartNow": "Restart now",
+    "openMemoryRepair": "Open memory repair tool",
+    "wideImpactWarning": "Quarantining this resets agent.db — token usage history and legacy stats will be cleared."
   }
 }
-

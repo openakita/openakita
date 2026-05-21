@@ -436,11 +436,6 @@
     "installDownloading": "正在下载技能...",
     "installParsing": "正在解析技能...",
     "installDone": "安装完成",
-    "confirmUninstall": "确定要卸载技能「{{name}}」吗？卸载后将删除技能文件。",
-    "uninstalling": "卸载中...",
-    "uninstallSuccess": "技能「{{name}}」已卸载",
-    "uninstallFailed": "卸载失败",
-    "systemCannotUninstall": "系统技能不可卸载",
     "category": {
       "groupView": "按分类分组",
       "create": "+ 新建分类",
@@ -1204,7 +1199,15 @@
     "intervalDays": "天",
     "timeAt": "时间",
     "weekday": "星期",
-    "weekdays": ["周日", "周一", "周二", "周三", "周四", "周五", "周六"],
+    "weekdays": [
+      "周日",
+      "周一",
+      "周二",
+      "周三",
+      "周四",
+      "周五",
+      "周六"
+    ],
     "dayOfMonth": "每月第几天",
     "cronExpression": "Cron 表达式",
     "cronHint": "格式：分 时 日 月 周（如 0 9 * * * 表示每天9点）",
@@ -1547,7 +1550,6 @@
     "refresh": "刷新",
     "copy": "复制",
     "copied": "已复制",
-    "close": "关闭",
     "confirmTitle": "确认操作",
     "enabled": "{{label}} 已启用",
     "disabled": "{{label}} 已禁用",
@@ -2098,7 +2100,6 @@
     "backupSaved": "备份设置已保存",
     "backupNoPath": "请先设置备份存储位置",
     "backupSize": "大小",
-
     "migrateTitle": "工作区迁移",
     "migrateHint": "将 .openakita 数据目录迁移到其他位置",
     "migrateCurrentPath": "当前路径",
@@ -2120,7 +2121,6 @@
     "migrateBusy": "正在迁移...",
     "migrateChecking": "正在检查...",
     "migrateNeedRestart": "迁移完成后需要重启应用以加载新路径",
-
     "webNetworkTitle": "Web 访问 / 网络",
     "webNetworkHint": "控制 HTTP API 服务的监听范围和代理设置。修改后需重启后端生效。",
     "apiHostLabel": "允许外部访问（局域网/公网）",
@@ -2348,9 +2348,7 @@
     "noFileSelected": "请从左侧选择一个文件进行编辑",
     "fullTextInject": "全文注入，修改即生效",
     "needsCompile": "修改后需编译生效",
-
     "pageBanner": "身份文件是 Agent 的核心人格和行为基础。不当修改可能导致 Agent 行为异常、丧失关键能力或产生不可预期的回复。如果你不确定某项修改的影响，建议先备份原文件。",
-
     "soulWarning": "SOUL 定义了 Agent 的核心价值观和人格基础，全文直接注入系统提示词，修改立即生效。删除关键原则可能导致 Agent 丧失诚实校准、安全边界等核心行为约束。",
     "agentWarning": "AGENT 定义了任务执行流程、工具使用规范和禁止行为。不当修改可能导致 Agent 无法正确执行任务、陷入死循环或绕过安全限制。修改后需点击「LM 优化」编译才能生效。",
     "memoryWarning": "此文件由系统每日自动刷新。手动修改的内容可能在下次自动刷新时被完全覆盖。如需持久化规则，建议使用记忆系统的 add_memory 功能（type=rule）。",
@@ -2358,13 +2356,11 @@
     "policiesYamlWarning": "此文件控制工具权限和安全策略。错误的配置可能导致 Agent 无法使用关键工具、危险操作失去确认保护、路径/命令黑名单失效。请确保理解每个字段的含义后再修改。",
     "policiesMdWarning": "与系统内置策略合并时，同名「## 标题」段落会以系统版本为准（您的修改会被忽略）。仅非系统段落的修改会生效。",
     "runtimeWarning": "此文件为编译产物，是 Agent 实际加载的精简版。手动修改可精细调优 Agent 行为，但重新编译时会被覆盖。",
-
     "confirmTitle": "确认修改身份文件",
     "confirmSave": "我已了解风险，确认保存",
     "confirmCancel": "取消",
     "confirmRiskSoulAgent": "此修改将直接影响 Agent 与所有用户的每一次对话。",
     "confirmChangesSummary": "本次修改：{{added}} 行新增，{{removed}} 行删除",
-
     "compiling": "正在进行 LM 优化编译...",
     "compilingRules": "正在进行规则编译...",
     "tokenCount": "~{{count}} / {{budget}} tokens",
@@ -3588,6 +3584,24 @@
       "edgeTarget": "终点",
       "edgeTypeLabel": "连线类型"
     }
+  },
+  "degraded": {
+    "bannerSummary": "检测到 {{count}} 个子系统降级中 — 点击查看修复",
+    "dialogTitle": "降级子系统",
+    "dialogDescription": "OpenAkita 检测到部分子系统数据库无法打开。你可以对每一项执行隔离重建（把对应 .db 文件改名挪走，下次启动时重建空库），不会影响其他数据。",
+    "loading": "加载中…",
+    "allHealthy": "所有子系统恢复正常。",
+    "reasonLabel": "原因",
+    "sinceLabel": "降级起始",
+    "quarantineBtn": "隔离 + 重建",
+    "quarantining": "正在隔离…",
+    "quarantined": "已隔离",
+    "errorNoToken": "获取确认令牌失败，请刷新页面后重试。",
+    "restartTitle": "需要重启 backend",
+    "restartTauri": "OpenAkita 将停止当前后端进程；桌面端会自动重新拉起。",
+    "restartStandalone": "在运行 backend 的终端按 Ctrl+C 停止，然后重新运行 `openakita serve`。",
+    "restartNow": "立即重启",
+    "openMemoryRepair": "打开记忆修复工具",
+    "wideImpactWarning": "执行隔离会重置 agent.db — token 用量历史与旧版统计将被清空。"
   }
 }
-

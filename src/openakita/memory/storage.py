@@ -105,21 +105,46 @@ class MemoryStorage:
     # ======================================================================
 
     def _init_db(self) -> None:
-        conn: sqlite3.Connection | None = None
-        try:
-            if self._is_sync_folder_path() and os.environ.get("OPENAKITA_ALLOW_SYNC_FOLDER_DB") != "1":
-                raise MemoryStorageUnavailable(
-                    "path_in_sync_folder",
-                    details=str(self._db_path),
-                )
-            conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-            conn.execute(f"PRAGMA busy_timeout={self._BUSY_TIMEOUT_MS}")
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-            self._conn = conn
+        # `path_in_sync_folder` is a domain concern for the memory subsystem
+        # (we surface it through MemoryStorageUnavailable so memory_repair
+        # can recognise it), so we keep the pre-check here even though
+        # safe_open_sync would also catch it.
+        if self._is_sync_folder_path() and os.environ.get("OPENAKITA_ALLOW_SYNC_FOLDER_DB") != "1":
+            raise MemoryStorageUnavailable(
+                "path_in_sync_folder",
+                details=str(self._db_path),
+            )
 
-            self.quick_check_or_raise()
+        # Delegate the actual open + PRAGMA + quick_check matrix to the
+        # shared safe_sqlite helper. This consolidates the connection-open
+        # path with token_tracking / asset_bus / feedback_store etc., so
+        # any future safety tweak (e.g. fsync, journal mode bump, retry
+        # heuristic) only has to land in one file.
+        from openakita.storage.safe_sqlite import SQLiteUnavailable, safe_open_sync
+
+        try:
+            conn = safe_open_sync(
+                self._db_path,
+                want_wal=True,
+                busy_ms=self._BUSY_TIMEOUT_MS,
+                run_quick_check=True,
+                foreign_keys=True,
+                check_same_thread=False,
+            )
+        except SQLiteUnavailable as e:
+            # Map safe_sqlite reasons to the historical MemoryStorageUnavailable
+            # reason vocabulary so callers (memory_repair UI, telemetry events,
+            # tests) keep working unchanged. "corrupted" → "schema_corrupt"
+            # is the only renaming; everything else passes through.
+            mapped_reason = "schema_corrupt" if e.reason == "corrupted" else e.reason
+            raise MemoryStorageUnavailable(
+                mapped_reason,
+                details=e.details or str(e),
+                extra=dict(e.extra),
+            ) from e
+
+        self._conn = conn
+        try:
             current_version = self._get_schema_version()
             if current_version > _SCHEMA_VERSION:
                 raise MemoryStorageUnavailable(
@@ -165,17 +190,30 @@ class MemoryStorage:
         self._conn = None
 
     def quick_check_or_raise(self) -> None:
+        """Run ``PRAGMA quick_check`` and translate failures to MemoryStorageUnavailable.
+
+        Implementation now delegates to the shared safe_sqlite helper so the
+        memory subsystem and every other SQLite caller share one
+        quick_check implementation. The thrown exception type stays
+        ``MemoryStorageUnavailable`` so existing memory_repair / telemetry
+        consumers don't need to change.
+        """
         if self._conn is None:
             raise MemoryStorageUnavailable("not_open", details="database connection is not open")
+        from openakita.storage.safe_sqlite import (
+            SQLiteUnavailable,
+            quick_check_or_raise_sync,
+        )
+
         try:
-            row = self._conn.execute("PRAGMA quick_check").fetchone()
-        except sqlite3.DatabaseError as e:
-            if _is_corruption_error(e):
-                raise MemoryStorageUnavailable("schema_corrupt", details=str(e)) from e
-            raise
-        result = str(row[0] if row else "").strip().lower()
-        if result != "ok":
-            raise MemoryStorageUnavailable("schema_corrupt", details=result or "quick_check failed")
+            quick_check_or_raise_sync(self._conn, path=self._db_path)
+        except SQLiteUnavailable as e:
+            mapped_reason = "schema_corrupt" if e.reason == "corrupted" else e.reason
+            raise MemoryStorageUnavailable(
+                mapped_reason,
+                details=e.details or str(e),
+                extra=dict(e.extra),
+            ) from e
 
     def _get_schema_version(self) -> int:
         try:
@@ -2539,6 +2577,16 @@ class MemoryStorage:
         with _instance_lock:
             if _instance_registry.get(key) is self:
                 del _instance_registry[key]
+
+    async def quiesce(self) -> None:
+        """Close the underlying sqlite handle for quarantine to rename files.
+
+        Async signature for consistency with the rest of the quiesce protocol;
+        internally just delegates to :meth:`close`. Idempotent.
+        """
+        import asyncio as _asyncio
+
+        await _asyncio.to_thread(self.close)
 
     def checkpoint_and_close(self, *, truncate: bool = True) -> None:
         with self._lock:

@@ -1,9 +1,19 @@
 """
 SQLite 数据库封装
+
+.. deprecated::
+    Direct use of :class:`Database` is discouraged for new code. Long-term
+    storage should go through the relevant subsystem store
+    (``MemoryStorage``, ``AssetBus``, ``feedback_store``...) which already
+    pipe their connections through :mod:`openakita.storage.safe_sqlite`.
+    This class itself now uses the same helpers but exists primarily as
+    legacy infrastructure for ``/api/stats/tokens`` style endpoints.
 """
 
+import contextlib
 import json
 import logging
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,28 +27,65 @@ from .models import (
     Message,
     SkillRecord,
 )
+from .safe_sqlite import SQLiteUnavailable, safe_open_async
 
 logger = logging.getLogger(__name__)
 
 
 class Database:
-    """SQLite 数据库"""
+    """SQLite 数据库 (legacy facade — see module docstring)."""
 
     def __init__(self, db_path: Path | None = None):
+        warnings.warn(
+            "openakita.storage.database.Database is legacy; use a subsystem-"
+            "specific store routed through openakita.storage.safe_sqlite instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.db_path = db_path or settings.db_full_path
         self._connection: aiosqlite.Connection | None = None
 
     async def connect(self) -> None:
-        """连接数据库"""
-        # 确保目录存在
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        """连接数据库 (via safe_sqlite helper).
 
-        self._connection = await aiosqlite.connect(self.db_path)
-        self._connection.row_factory = aiosqlite.Row
+        Raises :class:`openakita.storage.safe_sqlite.SQLiteUnavailable`
+        when the database is corrupted / unavailable. Callers should
+        catch the exception and degrade rather than crashing the
+        backend.
+        """
+        try:
+            self._connection = await safe_open_async(
+                self.db_path,
+                want_wal=True,
+                run_quick_check=True,
+                foreign_keys=False,
+                row_factory=aiosqlite.Row,
+            )
+        except SQLiteUnavailable:
+            self._connection = None
+            raise
 
-        await self._init_tables()
+        try:
+            await self._init_tables()
+        except Exception as e:
+            # Schema bootstrap failures shouldn't leave a half-initialised
+            # connection around — close it and re-raise as SQLiteUnavailable
+            # so the caller treats it like any other unavailable backend.
+            await self._close_quiet()
+            logger.error("[Database] schema init failed: %s", e)
+            raise SQLiteUnavailable(
+                "schema_init_failed",
+                path=self.db_path,
+                details=str(e)[:200],
+            ) from e
 
         logger.info(f"Database connected: {self.db_path}")
+
+    async def _close_quiet(self) -> None:
+        if self._connection is not None:
+            with contextlib.suppress(Exception):
+                await self._connection.close()
+            self._connection = None
 
     async def close(self) -> None:
         """关闭数据库连接"""
@@ -46,6 +93,10 @@ class Database:
             await self._connection.close()
             self._connection = None
             logger.info("Database connection closed")
+
+    async def quiesce(self) -> None:
+        """Drop the underlying connection so a quarantine handler can rename files."""
+        await self._close_quiet()
 
     async def _init_tables(self) -> None:
         """初始化数据表"""

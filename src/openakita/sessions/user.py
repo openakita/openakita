@@ -8,7 +8,6 @@
 - 权限管理
 """
 
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -347,21 +346,30 @@ class UserManager:
 
     def _load_users(self) -> None:
         """加载用户数据"""
+        from openakita.utils.atomic_io import read_json_safe
+
         users_file = self.storage_path / "users.json"
 
-        if not users_file.exists():
-            return
-
         try:
-            with open(users_file, encoding="utf-8") as f:
-                data = json.load(f)
+            data = read_json_safe(users_file)
+            if not isinstance(data, list):
+                # ``read_json_safe`` returns dict | None, but users.json is
+                # a list at the top level. ``read_json_safe`` typing is
+                # historical — accept whatever it returns and bail if it
+                # doesn't look like a list.
+                if data is None:
+                    return
+                logger.warning(
+                    "users.json has unexpected top-level type %s; ignoring",
+                    type(data).__name__,
+                )
+                return
 
             for item in data:
                 try:
                     user = User.from_dict(item)
                     self._users[user.id] = user
 
-                    # 重建绑定索引
                     for channel, channel_user_id in user.bindings.items():
                         binding_key = f"{channel}:{channel_user_id}"
                         self._binding_index[binding_key] = user.id
@@ -376,14 +384,13 @@ class UserManager:
 
     def _save_users(self) -> None:
         """保存用户数据"""
+        from openakita.utils.atomic_io import safe_json_write
+
         users_file = self.storage_path / "users.json"
 
         try:
             data = [user.to_dict() for user in self._users.values()]
-
-            with open(users_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
+            safe_json_write(users_file, data)
             logger.debug(f"Saved {len(data)} users to storage")
 
         except Exception as e:

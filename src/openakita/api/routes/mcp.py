@@ -364,7 +364,6 @@ async def add_mcp_server(request: Request, body: MCPServerAddRequest):
 @router.post("/api/mcp/servers/{server_name}/toggle")
 async def toggle_mcp_server(request: Request, server_name: str, body: MCPToggleRequest):
     """Toggle a MCP server's enabled state (persisted to SERVER_METADATA.json)."""
-    import json
     from pathlib import Path
 
     catalog = _get_mcp_catalog(request)
@@ -380,14 +379,14 @@ async def toggle_mcp_server(request: Request, server_name: str, body: MCPToggleR
     catalog.invalidate_cache()
 
     if server_info.config_dir:
+        from openakita.utils.atomic_io import read_json_safe, safe_json_write
+
         metadata_path = Path(server_info.config_dir) / "SERVER_METADATA.json"
         if metadata_path.exists():
             try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                metadata = read_json_safe(metadata_path) or {}
                 metadata["enabled"] = body.enabled
-                metadata_path.write_text(
-                    json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
-                )
+                safe_json_write(metadata_path, metadata)
             except Exception as e:
                 logger.warning("Failed to persist enabled state for %s: %s", server_name, e)
 

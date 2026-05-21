@@ -307,6 +307,32 @@ class MemoryManager:
             with contextlib.suppress(Exception):
                 record_health_event("memory_degraded", {"reason": e.reason})
             emit_memory_health_event("degraded", {"reason": e.reason})
+            # Also mirror into the cross-subsystem DegradedRegistry so the
+            # unified ``DegradedBanner`` in the UI sees memory failures
+            # alongside token_tracking / feedback / asset_bus. Without
+            # this the user gets a banner for the trivial subsystems but
+            # has to dig into the Status view for the most important one.
+            # The legacy ``memory_repair`` flow in StatusView keeps
+            # working in parallel — it reads ``memory_subsystem`` (a
+            # superset payload with backup/snapshot lists), not the
+            # registry, so this is purely additive.
+            #
+            # ONLY the main MemoryManager (no ``agent_id`` set) maps to
+            # the global ``memory`` key — that's the one StatusView's
+            # memory_subsystem block tracks and the one mark_repair_*
+            # clears. Isolated sub-agent / profile managers use a
+            # namespaced key so a sub-agent's broken DB doesn't make the
+            # banner imply the user's primary memory is degraded.
+            with contextlib.suppress(Exception):
+                from openakita.storage.degraded import registry as _degraded
+
+                key = "memory" if not self.agent_id else f"memory:{self.agent_id}"
+                _degraded.register(
+                    key,
+                    e.reason or "unknown",
+                    repair="memory_repair_flow" if key == "memory" else "manual_quarantine",
+                    details=e.details or None,
+                )
 
     def _on_store_event(self, kind: str, payload: Any) -> None:
         """Observer mirror for ``UnifiedStore`` semantic writes.

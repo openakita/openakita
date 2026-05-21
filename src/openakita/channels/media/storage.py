@@ -8,7 +8,6 @@
 """
 
 import hashlib
-import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -246,21 +245,22 @@ class MediaStorage:
 
     def _load_index(self) -> None:
         """加载索引"""
-        if not self.index_file.exists():
-            return
+        from openakita.utils.atomic_io import read_json_safe
 
         try:
-            with open(self.index_file, encoding="utf-8") as f:
-                self._index = json.load(f)
-            logger.info(f"Loaded media index: {len(self._index)} files")
+            data = read_json_safe(self.index_file)
+            if isinstance(data, dict):
+                self._index = data
+                logger.info(f"Loaded media index: {len(self._index)} files")
         except Exception as e:
             logger.error(f"Failed to load media index: {e}")
 
     def _save_index(self) -> None:
         """保存索引"""
+        from openakita.utils.atomic_io import safe_json_write
+
         try:
-            with open(self.index_file, "w", encoding="utf-8") as f:
-                json.dump(self._index, f, ensure_ascii=False, indent=2)
+            safe_json_write(self.index_file, self._index)
         except Exception as e:
             logger.error(f"Failed to save media index: {e}")
 

@@ -22,11 +22,12 @@ Design constraints (kept deliberately small for v1):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -55,11 +56,11 @@ CREATE INDEX IF NOT EXISTS idx_asset_bus_expires ON assets_bus(expires_at);
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _iso_at(epoch_seconds: float) -> str:
-    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).isoformat(
+    return datetime.fromtimestamp(epoch_seconds, tz=UTC).isoformat(
         timespec="seconds"
     )
 
@@ -103,35 +104,103 @@ class AssetBus:
         self._db: aiosqlite.Connection | None = None
         self._init_lock = asyncio.Lock()
         self._initialized = False
+        # ``True`` once we've decided the bus can't be opened safely (e.g.
+        # corrupted DB, sync-folder path). All mutation methods short-circuit
+        # to no-op / empty result when degraded so plugins keep running.
+        self._degraded = False
+        self._degraded_reason: str | None = None
+        self._warned_once = False
 
     # ------------------------------------------------------------------ init
 
     async def init(self) -> None:
-        """Open the connection and create the schema. Idempotent."""
+        """Open the connection and create the schema. Idempotent.
+
+        On any safe_sqlite failure (corruption / disk full / sync folder
+        path) we flip into a degraded state instead of raising: plugins
+        keep loading and the host stays up. Subsequent operations return
+        empty results / become no-ops; the user sees a banner via
+        ``/api/health`` and can quarantine + rebuild from the UI.
+        """
+        from openakita.storage.degraded import registry as _degraded_registry
+        from openakita.storage.safe_sqlite import SQLiteUnavailable, safe_open_async
+
         async with self._init_lock:
-            if self._initialized:
+            if self._initialized or self._degraded:
                 return
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._db = await aiosqlite.connect(self._db_path)
-            self._db.row_factory = aiosqlite.Row
-            await self._db.execute("PRAGMA journal_mode=WAL")
-            await self._db.execute("PRAGMA foreign_keys=ON")
-            await self._db.executescript(SCHEMA_SQL)
-            await self._db.commit()
+            try:
+                self._db = await safe_open_async(
+                    self._db_path,
+                    want_wal=True,
+                    run_quick_check=True,
+                    foreign_keys=True,
+                    row_factory=aiosqlite.Row,
+                )
+                await self._db.executescript(SCHEMA_SQL)
+                await self._db.commit()
+            except SQLiteUnavailable as e:
+                self._degraded = True
+                self._degraded_reason = e.reason
+                logger.error(
+                    "AssetBus disabled at %s: reason=%s details=%s",
+                    self._db_path,
+                    e.reason,
+                    e.details or "",
+                )
+                _degraded_registry.register(
+                    "asset_bus",
+                    e.reason,
+                    repair="quarantine_asset_bus_db",
+                    details=e.details or None,
+                )
+                if self._db is not None:
+                    with contextlib.suppress(Exception):
+                        await self._db.close()
+                    self._db = None
+                return
             self._initialized = True
             logger.info("AssetBus initialised at %s", self._db_path)
 
     async def _ensure_init(self) -> None:
-        if self._initialized:
+        if self._initialized or self._degraded:
             return
         await self.init()
 
+    def _warn_degraded_once(self, op: str) -> None:
+        if self._warned_once:
+            return
+        self._warned_once = True
+        logger.warning(
+            "AssetBus degraded (reason=%s); %s returning no-op / empty result",
+            self._degraded_reason or "unknown",
+            op,
+        )
+
     async def close(self) -> None:
-        """Close the underlying connection. Safe to call repeatedly."""
+        """Close the underlying connection. Safe to call repeatedly.
+
+        Also acts as the ``quiesce()`` interface used by the quarantine
+        endpoint: after close(), the next ``init()`` will be a no-op
+        because we stay in degraded mode until process restart.
+        """
         if self._db is not None:
-            await self._db.close()
+            with contextlib.suppress(Exception):
+                await self._db.close()
             self._db = None
         self._initialized = False
+
+    async def quiesce(self) -> None:
+        """Close the connection so a quarantine handler can rename files.
+
+        Idempotent; calling it on a never-opened bus is a no-op. After
+        quiesce returns the subsystem behaves like ``_degraded=True``
+        forever (until process restart): every method short-circuits to
+        an empty / no-op response so callers don't crash.
+        """
+        await self.close()
+        self._degraded = True
+        if self._degraded_reason is None:
+            self._degraded_reason = "quiesced"
 
     # --------------------------------------------------------------- publish
 
@@ -153,7 +222,11 @@ class AssetBus:
         if not asset_kind:
             raise ValueError("asset_kind is required")
         await self._ensure_init()
-        assert self._db is not None
+        if self._degraded or self._db is None:
+            self._warn_degraded_once("publish")
+            # Return a stable placeholder asset_id so callers that immediately
+            # log / persist it don't crash. Subsequent get() will return None.
+            return uuid.uuid4().hex
 
         asset_id = uuid.uuid4().hex
         now = _iso_now()
@@ -212,7 +285,9 @@ class AssetBus:
         if not requester_plugin_id:
             return None
         await self._ensure_init()
-        assert self._db is not None
+        if self._degraded or self._db is None:
+            self._warn_degraded_once("get")
+            return None
         cur = await self._db.execute(
             "SELECT * FROM assets_bus WHERE asset_id = ?",
             (asset_id,),
@@ -230,7 +305,9 @@ class AssetBus:
     async def list_owned(self, plugin_id: str) -> list[dict[str, Any]]:
         """Return all assets owned by ``plugin_id`` (most recent first)."""
         await self._ensure_init()
-        assert self._db is not None
+        if self._degraded or self._db is None:
+            self._warn_degraded_once("list_owned")
+            return []
         cur = await self._db.execute(
             """
             SELECT * FROM assets_bus
@@ -246,7 +323,9 @@ class AssetBus:
     async def delete_owned(self, asset_id: str, plugin_id: str) -> bool:
         """Delete an asset only if the caller is its owner. Returns True iff a row was removed."""
         await self._ensure_init()
-        assert self._db is not None
+        if self._degraded or self._db is None:
+            self._warn_degraded_once("delete_owned")
+            return False
         cur = await self._db.execute(
             "DELETE FROM assets_bus WHERE asset_id = ? AND created_by_plugin = ?",
             (asset_id, plugin_id),
@@ -259,7 +338,9 @@ class AssetBus:
     async def sweep_expired(self, *, now: float | None = None) -> int:
         """Delete all rows whose ``expires_at`` is in the past. Returns count removed."""
         await self._ensure_init()
-        assert self._db is not None
+        if self._degraded or self._db is None:
+            self._warn_degraded_once("sweep_expired")
+            return 0
         cutoff = _iso_at(now if now is not None else time.time())
         cur = await self._db.execute(
             "DELETE FROM assets_bus WHERE expires_at IS NOT NULL AND expires_at <= ?",
@@ -277,7 +358,9 @@ class AssetBus:
         if not plugin_id:
             return 0
         await self._ensure_init()
-        assert self._db is not None
+        if self._degraded or self._db is None:
+            self._warn_degraded_once("sweep_owner")
+            return 0
         cur = await self._db.execute(
             "DELETE FROM assets_bus WHERE created_by_plugin = ?",
             (plugin_id,),
@@ -295,7 +378,9 @@ class AssetBus:
     async def count_all(self) -> int:
         """Return total number of rows. Useful for ops/health checks."""
         await self._ensure_init()
-        assert self._db is not None
+        if self._degraded or self._db is None:
+            self._warn_degraded_once("count_all")
+            return 0
         cur = await self._db.execute("SELECT COUNT(*) FROM assets_bus")
         row = await cur.fetchone()
         await cur.close()

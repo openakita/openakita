@@ -21,6 +21,22 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
+# ──────────────────────── 健康状态 ────────────────────────
+#
+# 后台写入线程崩溃后我们必须做两件事：
+#   (a) 暴露给 /api/health 让用户看见降级；
+#   (b) 拒收 record_usage() 的入队，避免 _write_queue 在 writer 死后
+#       无界堆积（每次 LLM 调用都会丢一条进去）。
+#
+# 这里用 threading.Event 让 daemon thread 和主线程之间不需要再过 lock，
+# 同时方便测试通过 `_writer_dead.is_set()` 断言状态。
+
+_writer_dead = threading.Event()
+_drop_warned = threading.Event()
+_writer_stop = threading.Event()
+_writer_thread: threading.Thread | None = None
+
+
 # ──────────────────────── contextvars ────────────────────────
 
 
@@ -119,18 +135,40 @@ _initialized = False
 
 def init_token_tracking(db_path: str) -> None:
     """启动后台写入线程。在应用启动时调用一次。"""
-    global _initialized
+    global _initialized, _writer_thread
     if _initialized:
         return
     _initialized = True
-    t = threading.Thread(
+    _writer_stop.clear()
+    _writer_dead.clear()
+    _drop_warned.clear()
+    _writer_thread = threading.Thread(
         target=_writer_loop,
         args=(str(db_path),),
         daemon=True,
         name="token-usage-writer",
     )
-    t.start()
+    _writer_thread.start()
     logger.info(f"[TokenTracking] Background writer started (db={db_path})")
+
+
+def shutdown_token_tracking(timeout: float = 5.0) -> None:
+    """Stop the background writer and wait for it to drain (idempotent).
+
+    Used by the quarantine flow before renaming ``agent.db`` so the
+    writer doesn't hold the file open on Windows. Safe to call multiple
+    times.
+    """
+    global _writer_thread, _initialized
+    if not _initialized:
+        return
+    _writer_stop.set()
+    thread = _writer_thread
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=timeout)
+    _writer_thread = None
+    _initialized = False
+    _writer_dead.set()
 
 
 def record_usage(
@@ -158,6 +196,15 @@ def record_usage(
                 budget.max_tokens,
             )
     if not _initialized:
+        return
+    if _writer_dead.is_set():
+        # Writer thread already gave up (DB corruption / disk full / etc).
+        # Drop the record silently — but warn once so it shows up in logs.
+        if not _drop_warned.is_set():
+            _drop_warned.set()
+            logger.warning(
+                "[TokenTracking] dropping new records — writer thread is dead"
+            )
         return
     ctx = _tracking_ctx.get()
     _write_queue.put(
@@ -261,31 +308,71 @@ def ensure_token_usage_schema_sync(conn: sqlite3.Connection) -> None:
 
 def _writer_loop(db_path: str) -> None:
     """后台守护线程主循环：批量写入 token_usage 记录。"""
+    from openakita.storage.degraded import registry as _degraded_registry
+    from openakita.storage.safe_sqlite import SQLiteUnavailable, safe_open_sync
+
     try:
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        conn = safe_open_sync(
+            db_path,
+            want_wal=True,
+            run_quick_check=True,
+            foreign_keys=False,
+            check_same_thread=False,
+        )
         ensure_token_usage_schema_sync(conn)
-    except Exception as e:
+    except SQLiteUnavailable as e:
+        # Database is unrecoverable for this process — flag the writer as
+        # dead so record_usage() stops feeding _write_queue. Registering
+        # degraded lets /api/health surface a banner to the user.
+        logger.error(
+            "[TokenTracking] disabled: reason=%s details=%s",
+            e.reason,
+            e.details or "",
+        )
+        _writer_dead.set()
+        _degraded_registry.register(
+            "token_tracking",
+            e.reason,
+            repair="quarantine_token_db",
+            details=e.details or None,
+        )
+        return
+    except Exception as e:  # noqa: BLE001 - last-line guard
         logger.error(f"[TokenTracking] Failed to open database: {e}")
+        _writer_dead.set()
+        _degraded_registry.register(
+            "token_tracking",
+            "open_failed",
+            repair="quarantine_token_db",
+            details=str(e)[:200],
+        )
         return
 
     batch: list[tuple] = []
-    while True:
-        try:
-            data = _write_queue.get(timeout=2.0)
-        except queue.Empty:
-            if batch:
+    try:
+        while not _writer_stop.is_set():
+            try:
+                data = _write_queue.get(timeout=2.0)
+            except queue.Empty:
+                if batch:
+                    _flush(conn, batch)
+                    batch.clear()
+                continue
+
+            row = tuple(data[col] for col in _COLUMN_ORDER)
+            batch.append(row)
+
+            if len(batch) >= 10:
                 _flush(conn, batch)
                 batch.clear()
-            continue
-
-        row = tuple(data[col] for col in _COLUMN_ORDER)
-        batch.append(row)
-
-        if len(batch) >= 10:
+        # Drain pending batch on graceful shutdown.
+        if batch:
             _flush(conn, batch)
-            batch.clear()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _flush(conn: sqlite3.Connection, batch: list[tuple]) -> None:

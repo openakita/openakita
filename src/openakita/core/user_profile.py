@@ -8,7 +8,6 @@
 - 更新 USER.md 文件
 """
 
-import json
 import logging
 import random
 from dataclasses import dataclass, field
@@ -443,20 +442,22 @@ class UserProfileManager:
 
     def _load_state(self) -> UserProfileState:
         """加载状态"""
-        if self.state_file.exists():
-            try:
-                with open(self.state_file, encoding="utf-8") as f:
-                    data = json.load(f)
+        try:
+            from openakita.utils.atomic_io import read_json_safe
+
+            data = read_json_safe(self.state_file)
+            if isinstance(data, dict):
                 return UserProfileState.from_dict(data)
-            except Exception as e:
-                logger.warning(f"Failed to load profile state: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to load profile state: {e}")
         return UserProfileState()
 
     def _save_state(self) -> None:
         """保存状态"""
         try:
-            with open(self.state_file, "w", encoding="utf-8") as f:
-                json.dump(self.state.to_dict(), f, ensure_ascii=False, indent=2)
+            from openakita.utils.atomic_io import safe_json_write
+
+            safe_json_write(self.state_file, self.state.to_dict())
         except Exception as e:
             logger.error(f"Failed to save profile state: {e}")
 

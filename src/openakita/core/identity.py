@@ -20,7 +20,6 @@ Identity 模块 - 加载和管理核心文档
 """
 
 import hashlib
-import json
 import logging
 import re
 from pathlib import Path
@@ -41,19 +40,18 @@ _TRACKED_FILES = ["SOUL.md", "AGENT.md", "USER.md"]
 
 
 def _load_hashes(identity_dir: Path) -> dict[str, str]:
+    from openakita.utils.atomic_io import read_json_safe
+
     hash_path = identity_dir / _HASH_FILE
-    if hash_path.exists():
-        try:
-            return json.loads(hash_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
+    data = read_json_safe(hash_path)
+    return data if isinstance(data, dict) else {}
 
 
 def _save_hashes(identity_dir: Path, hashes: dict[str, str]) -> None:
+    from openakita.utils.atomic_io import safe_json_write
+
     hash_path = identity_dir / _HASH_FILE
-    hash_path.parent.mkdir(parents=True, exist_ok=True)
-    hash_path.write_text(json.dumps(hashes, indent=2), encoding="utf-8")
+    safe_json_write(hash_path, hashes)
 
 
 def _file_hash(path: Path) -> str:

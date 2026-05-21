@@ -8,7 +8,6 @@ MCPClient + MCPCatalog via their public APIs.
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 from pathlib import Path
@@ -146,11 +145,10 @@ async def add_server_to_workspace(
     if headers:
         metadata["headers"] = headers
 
+    from openakita.utils.atomic_io import safe_json_write
+
     metadata_file = server_dir / "SERVER_METADATA.json"
-    metadata_file.write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    safe_json_write(metadata_file, metadata)
 
     if instructions:
         (server_dir / "INSTRUCTIONS.md").write_text(instructions, encoding="utf-8")

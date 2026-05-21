@@ -716,21 +716,58 @@ async def get_profile_memory_stats(profile_id: str):
     if not db_path.exists():
         return {"exists": False, "semantic_count": 0, "db_size_bytes": 0}
 
-    import aiosqlite
+    from openakita.storage.safe_sqlite import SQLiteUnavailable, safe_open_async_ctx
 
     semantic_count = 0
+    degraded = False
+    degraded_reason: str | None = None
     try:
-        async with aiosqlite.connect(str(db_path)) as db:
+        async with safe_open_async_ctx(
+            db_path,
+            want_wal=False,
+            run_quick_check=True,
+            foreign_keys=False,
+        ) as db:
             cursor = await db.execute("SELECT COUNT(*) FROM semantic_memories")
             row = await cursor.fetchone()
             semantic_count = row[0] if row else 0
-    except Exception:
-        pass
+    except SQLiteUnavailable as e:
+        degraded = True
+        degraded_reason = e.reason
+        logger.warning(
+            "[Agents API] profile memory stats degraded for %s: reason=%s",
+            profile_id,
+            e.reason,
+        )
+        # Surface this in the unified DegradedBanner too. The registry
+        # key is per-profile so two simultaneously-broken profiles
+        # render as two separate banner entries. ``manual_quarantine``
+        # is intentional — there is no generic quarantine target for
+        # arbitrary profile dirs, so the repair is operator-driven.
+        try:
+            from openakita.storage.degraded import registry as _degraded
+
+            _degraded.register(
+                f"profile_memory:{profile_id}",
+                e.reason or "unknown",
+                repair="manual_quarantine",
+                details=(e.details or "")[:200] or None,
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug(
+            "[Agents API] profile memory stats query failed for %s: %s",
+            profile_id,
+            e,
+        )
 
     return {
         "exists": True,
         "semantic_count": semantic_count,
         "db_size_bytes": db_path.stat().st_size,
+        "degraded": degraded,
+        "degraded_reason": degraded_reason,
     }
 
 

@@ -27,8 +27,24 @@ _memory_repair_restart_required = False
 
 
 def mark_memory_repair_completed_restart_required() -> None:
+    """Flag the memory subsystem as 'repaired, needs restart'.
+
+    Also clears the matching entry in the cross-subsystem
+    :class:`openakita.storage.degraded.DegradedRegistry` so the unified
+    ``DegradedBanner`` stops surfacing memory as degraded (it would
+    otherwise stay yellow until the user restarts the backend, even
+    though they already took the corrective action via the
+    memory_repair flow).
+    """
     global _memory_repair_restart_required
     _memory_repair_restart_required = True
+    try:
+        from openakita.storage.degraded import registry as _registry
+
+        _registry.unregister("memory")
+    except Exception:
+        # Best-effort: never let registry bookkeeping break the repair flow.
+        pass
 
 
 def clear_memory_repair_restart_required() -> None:
@@ -231,6 +247,14 @@ async def health(request: Request):
             "ready": bool(gateway is not None),
         }
 
+    # Pull degraded subsystems from the module-level DegradedRegistry. We
+    # use the registry instead of ``app.state`` because token_tracking
+    # (daemon thread) and asset_bus (early lifespan init) register
+    # themselves before ``app.state.*`` is reliably populated. The
+    # registry snapshot is a defensive copy, so callers can mutate it
+    # freely without leaking back into the shared map.
+    from openakita.storage.degraded import registry as _degraded_registry
+
     return {
         "status": "ok",
         "service": "openakita",
@@ -249,6 +273,7 @@ async def health(request: Request):
         "startup_phase": readiness.get("phase", "http_ready"),
         "readiness": readiness,
         "memory_subsystem": _memory_subsystem_status(request),
+        "degraded_subsystems": _degraded_registry.snapshot(),
         "last_shutdown": _read_last_shutdown_marker(),
     }
 

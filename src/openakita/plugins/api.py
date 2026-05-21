@@ -192,26 +192,25 @@ class PluginAPI:
 
     def _read_config_file(self) -> dict:
         """Read config.json without permission check (internal use)."""
-        import json
+        from openakita.utils.atomic_io import read_json_safe
 
         config_path = self._data_dir / "config.json"
-        if not config_path.exists():
-            return {}
         try:
-            return json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            data = read_json_safe(config_path)
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
             self.log(f"Corrupt config.json, returning empty config: {e}", "warning")
             return {}
 
     def set_config(self, updates: dict) -> None:
         if not self._check_permission("config.write"):
             return
-        import json
+        from openakita.utils.atomic_io import safe_json_write
 
         config = self._read_config_file()
         config.update(updates)
         config_path = self._data_dir / "config.json"
-        config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+        safe_json_write(config_path, config)
 
     def get_data_dir(self) -> Path | None:
         if not self._check_permission("data.own"):
