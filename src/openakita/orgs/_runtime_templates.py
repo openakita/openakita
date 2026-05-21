@@ -1330,7 +1330,7 @@ def _auto_assign_avatars(tpl_data: dict) -> None:
 
 def _auto_assign_agent_profiles(tpl_data: dict) -> None:
     """Fill missing profile bindings so org nodes inherit specialized presets."""
-    from openakita.runtime.orgs.org_models import infer_agent_profile_id_for_node
+    from .org_models import infer_agent_profile_id_for_node
 
     for node in tpl_data.get("nodes", []):
         if not node.get("agent_profile_id"):

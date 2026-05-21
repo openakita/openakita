@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from openakita.memory.types import normalize_tags
-from openakita.runtime.orgs.org_models import (
+from .org_models import (
     Organization,
     OrgEdge,
     OrgNode,
@@ -62,7 +62,7 @@ from openakita.runtime.orgs.org_models import (
     _now_iso,
     infer_agent_profile_id_for_node,
 )
-from openakita.runtime.orgs.scheduler_models import NodeSchedule, ScheduleType
+from .scheduler_models import NodeSchedule, ScheduleType
 
 from ._org_layout import apply_initial_tree_layout, normalize_org_name
 from .command_service import OrgLookupProtocol
@@ -906,7 +906,7 @@ class OrgManager:
         if template_id:
             tid = template_id
         else:
-            from openakita.runtime.orgs._slug import slugify_template_id
+            from ._slug import slugify_template_id
 
             tid = slugify_template_id(org.name)
         p = self._templates_dir / f"{tid}.json"
