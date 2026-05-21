@@ -104,6 +104,13 @@ app = typer.Typer(
     add_completion=False,
 )
 
+# Sub-app: ``openakita plugins ...`` (see ``cli/plugins_cmd.py``).
+# Registered eagerly so ``--help`` discovers it without importing the
+# rest of the CLI surface (Typer lazily resolves the command body).
+from .cli.plugins_cmd import plugins_app as _plugins_app  # noqa: E402
+
+app.add_typer(_plugins_app, name="plugins")
+
 # Rich 控制台
 console = Console()
 

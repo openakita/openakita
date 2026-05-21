@@ -38,8 +38,10 @@ __all__ = [
     "MTIME_TOLERANCE_SEC",
     "DiffEntry",
     "DriftReport",
+    "ApplyResult",
     "compute_drift",
     "warn_on_drift",
+    "apply_reseed",
     "format_human_delta",
 ]
 
@@ -328,3 +330,89 @@ def warn_on_drift(
             )
 
     return len(source_newer)
+
+
+# --- Action -------------------------------------------------------------------
+
+
+@dataclass
+class ApplyResult:
+    """Summary of what :func:`apply_reseed` did (or *would* do in dry-run)."""
+
+    copied: list[DiffEntry] = field(default_factory=list)
+    skipped_runtime_newer: list[DiffEntry] = field(default_factory=list)
+    forced: list[DiffEntry] = field(default_factory=list)
+    errors: list[tuple[DiffEntry, str]] = field(default_factory=list)
+
+    @property
+    def total_copied(self) -> int:
+        return len(self.copied) + len(self.forced)
+
+
+def apply_reseed(
+    source_root: Path,
+    runtime_root: Path,
+    report: DriftReport,
+    *,
+    force: bool = False,
+    dry_run: bool = True,
+) -> ApplyResult:
+    """Copy SOURCE-NEWER and SOURCE-ONLY files from source to runtime.
+
+    Parameters
+    ----------
+    source_root, runtime_root:
+        Same meaning as for :func:`compute_drift`.
+    report:
+        A :class:`DriftReport` produced by :func:`compute_drift`; ``apply_reseed``
+        does not re-walk the tree -- callers can compute the diff once and
+        re-use it for both the dry-run preview and the apply.
+    force:
+        When True, also overwrite RUNTIME-NEWER files (the caller has decided
+        that the local edit was stale and should be replaced by the seed
+        version).  Without ``force`` such files are returned in
+        ``skipped_runtime_newer`` so the CLI can print a clear hint.
+    dry_run:
+        When True (default), no filesystem writes happen; the returned
+        :class:`ApplyResult` reports what *would* be copied.
+
+    The copy preserves mtime via :func:`shutil.copy2` so a subsequent
+    :func:`compute_drift` reports IDENTICAL.  Parent directories are created
+    as needed.
+    """
+    import shutil
+
+    source_root = Path(source_root)
+    runtime_root = Path(runtime_root)
+    result = ApplyResult()
+
+    to_copy: list[DiffEntry] = list(report.by_status[STATUS_SOURCE_NEWER])
+    to_copy.extend(report.by_status[STATUS_SOURCE_ONLY])
+
+    if force:
+        # RUNTIME-NEWER entries are *also* eligible when --force is set.
+        to_copy.extend(report.by_status[STATUS_RUNTIME_NEWER])
+    else:
+        result.skipped_runtime_newer = list(report.by_status[STATUS_RUNTIME_NEWER])
+
+    for entry in to_copy:
+        src = source_root / entry.plugin_id / entry.rel_path
+        dst = runtime_root / entry.plugin_id / entry.rel_path
+        bucket = (
+            result.forced
+            if entry.status == STATUS_RUNTIME_NEWER
+            else result.copied
+        )
+        if dry_run:
+            bucket.append(entry)
+            continue
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        except OSError as exc:
+            result.errors.append((entry, str(exc)))
+            continue
+        bucket.append(entry)
+
+    return result
+
