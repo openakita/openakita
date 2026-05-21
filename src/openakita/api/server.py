@@ -344,7 +344,25 @@ def create_app(
             pending = ext.pop("_pending_plugin_routers", [])
             for plugin_id, router in pending:
                 try:
-                    app.include_router(router, prefix=f"/api/plugins/{plugin_id}")
+                    # F-2 §B: third-party plugin endpoints are excluded
+                    # from the public OpenAPI schema. Two reasons:
+                    #   1. /openapi.json must not 500 because of a single
+                    #      plugin's broken return-type annotation
+                    #      (Pydantic >=2.12 raises PydanticUserError when
+                    #      walking ForwardRef('FileResponse') / similar
+                    #      annotations defined inside register-factory
+                    #      closures; see tmp_p10/_f2_repro.py).
+                    #   2. Plugin endpoints are not a stable public API
+                    #      contract -- the frontend always reaches them
+                    #      via explicit /api/plugins/{id}/... URLs, never
+                    #      via OpenAPI-derived codegen.
+                    # Plugin admin/control-plane routes mounted earlier
+                    # via plugins_routes.router stay in the schema.
+                    app.include_router(
+                        router,
+                        prefix=f"/api/plugins/{plugin_id}",
+                        include_in_schema=False,
+                    )
                     logger.info("Mounted pending plugin routes for '%s'", plugin_id)
                 except Exception as e:
                     logger.warning(
