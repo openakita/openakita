@@ -189,11 +189,19 @@ def test_contract_get_command_tracker_snapshot_missing() -> None:
 
 
 def test_contract_get_event_store_default() -> None:
-    """case id: get_event_store.default -> None (lazy-populate slot)"""
+    """case id: get_event_store.default -> lazy-mint when lookup resolves."""
     rt, _cs, _bus = _make_runtime()
-    # v1 parity: event_store is lazy-populated by the
-    # lifecycle sibling; default OrgRuntime has no rows.
-    assert rt.get_event_store("o1") is None
+    # Post-d6484ae3 (#5 SSE event-bus fix): on first access we lazy-mint
+    # + cache an OrgEventStore for any org id the OrgLookupProtocol can
+    # resolve, so mint-runtime orgs (POST /api/v2/orgs/from-template) get
+    # /events + /stream wired without a separate register step. The same
+    # call still returns ``None`` for genuinely unknown ids -- preserves
+    # the B45 404 contract (test_b45_events_404_when_no_store).
+    store = rt.get_event_store("o1")
+    assert store is not None
+    assert rt.get_event_store("o1") is store  # cached, not re-minted
+    rt2, _cs2, _bus2 = _make_runtime(lookup_present=False)
+    assert rt2.get_event_store("nope") is None
 
 
 def test_contract_get_inbox_default() -> None:

@@ -13,6 +13,7 @@ Verifies:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -21,11 +22,17 @@ _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "migrate_non_ascii_t
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
+    # Force the child Python to encode stdout/stderr as utf-8 so this
+    # test capture works on Windows (where the default console codepage
+    # is cp936/gbk and CJK template stems otherwise crash the parent
+    # reader thread with UnicodeDecodeError, leaving r.stdout = None).
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
         [sys.executable, str(_SCRIPT), *args],
         capture_output=True,
         text=True,
         encoding="utf-8",
+        env=env,
     )
 
 
