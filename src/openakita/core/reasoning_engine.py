@@ -4006,8 +4006,32 @@ class ReasoningEngine:
                 )
 
                 # --- 状态转换: REASONING（与 run() 一致） ---
+                # 并发保护：如果用户在上一次回复尚未收尾时重复发送同一条消息，
+                # 共享的 TaskState 可能已经被另一个协程推到了终态
+                # (COMPLETED / FAILED / CANCELLED)，此时 transition(REASONING)
+                # 会抛 ValueError。run() 内的同名调用点（line 2283 / 2795 / 2826）
+                # 一直是 try/except 兜底，这里漏写了——issue #572 的崩溃链路就是
+                # 这一个无保护调用未捕获时整条 SSE 流断裂、前端"任务系统直接爆炸"。
                 if state.status != TaskStatus.REASONING:
-                    state.transition(TaskStatus.REASONING)
+                    try:
+                        state.transition(TaskStatus.REASONING)
+                    except ValueError:
+                        if state.is_terminal:
+                            logger.warning(
+                                "[ReAct-Stream] state already terminal (%s) before "
+                                "iter %d; aborting stream (likely concurrent request on "
+                                "session=%r)",
+                                state.status.value,
+                                _iteration + 1,
+                                _session_key,
+                            )
+                            yield {
+                                "type": "error",
+                                "message": "上一条消息正在收尾，请稍候再试或新建会话。",
+                            }
+                            yield {"type": "done"}
+                            return
+                        state.status = TaskStatus.REASONING
 
                 _ctx_compressed_info: dict | None = None
                 effective_prompt = _build_effective_prompt()
@@ -8513,7 +8537,18 @@ class ReasoningEngine:
             }
         )
 
-        state.transition(TaskStatus.MODEL_SWITCHING)
+        # 并发兜底：与 reason_stream 主循环其他 transition 调用点（4609 / 4624 /
+        # 4845 / 5026 / 5845 等）保持一致——只要状态机本身判定不合法，回退到
+        # 直接覆写 status，避免在共享 TaskState 被另一个协程推到终态后崩溃。
+        try:
+            state.transition(TaskStatus.MODEL_SWITCHING)
+        except ValueError:
+            logger.warning(
+                "[ModelSwitch] Illegal transition %s -> MODEL_SWITCHING, "
+                "forcing status overwrite (likely concurrent task on session)",
+                state.status.value,
+            )
+            state.status = TaskStatus.MODEL_SWITCHING
         state.reset_for_model_switch()
         return new_model, new_messages
 
