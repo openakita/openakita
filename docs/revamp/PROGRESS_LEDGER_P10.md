@@ -44,3 +44,19 @@ current_phase: P-RC-10
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-10 P10.0a | docs(revamp): expand P-RC-10 charter with sub-phases, nits, merge-to-main plan [P-RC-10-charter] | +PLACEHOLDER (overwrite ``P-RC-10-CHARTER.md`` ~+420 + archive prior 220 LOC as ``.archived`` + new ``PROGRESS_LEDGER_P10.md`` ~+45) | 0 | --- (planning; cites ADR-0011 / 0014 / 0015 as references; no new ADR) |
+
+> **Sub-phase status (2026-05-21, P10.0b RECON LANDED)**:
+> P10.0b docs-only recon inventory landed.
+> Measurements at HEAD ``52f8709a``: 25 v2 files
+> (``runtime/orgs/``; LOC sum ~9 810) all relocate 1:1
+> to ``orgs/`` at P10.1; 124 strict import sites across
+> 63 files (M=122 / PT=0 / N=2 README.md citations);
+> 104 doc citations (no rewrite in P10.3); 0 string-
+> literal callers; P10.1 readiness verdict **GREEN**;
+> P10.3 split refined to **5 mini-commits** (P10.3a..e)
+> all within the 380-LOC envelope. See
+> ``docs/revamp/P-RC-10-RECON.md``.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-10 P10.0b | docs(revamp): P10.0b RECON import-sweep inventory + flatten mapping [P-RC-10 P10.0b] | +~365 (``P-RC-10-RECON.md`` ~351 + ``PROGRESS_LEDGER_P10.md`` append ~15) | 0 | --- (recon; cites ADR-0011 / 0014 / 0015 as references; no new ADR) |
