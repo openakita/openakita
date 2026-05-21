@@ -2144,7 +2144,9 @@ export function OrgEditorView({
       >
         <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4 }}>
           <span style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", flexShrink: 0 }}>{t("orgEditor.title")}</span>
-          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          {/* smoke-B2: flexWrap+justifyContent so the 4-button row (模板/创建/新建 v2/导入)
+              wraps gracefully inside the 260px sidebar instead of clipping 导入. */}
+          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0 }}>
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
