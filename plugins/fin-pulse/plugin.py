@@ -1642,7 +1642,7 @@ class Plugin(PluginBase):
             return {"ok": True, "digest": row}
 
         @router.get("/digests/{digest_id}/html", response_class=HTMLResponse)
-        async def get_digest_html(digest_id: str) -> HTMLResponse:
+        async def get_digest_html(digest_id: str):
             if self._tm is None:
                 raise HTTPException(status_code=503, detail="task_manager_unavailable")
             row = await self._tm.get_digest(digest_id)
