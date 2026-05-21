@@ -320,7 +320,11 @@ def test_legitimate_orgs_spec_callers_still_present() -> None:
         end = min(len(lines), ln + 5)
         if not any(_ORGS_SPEC_HTTP_RE.search(s) for s in lines[start:end]):
             missing.append(
-                (rel, ln, f"no orgs-spec literal in window L{start + 1}..L{end} ({justification!r})")
+                (
+                    rel,
+                    ln,
+                    f"no orgs-spec literal in window L{start + 1}..L{end} ({justification!r})",
+                )
             )
     assert not missing, (
         "LEGITIMATE_ORGS_SPEC_CALLERS drift: an allowlisted Group A "
