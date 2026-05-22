@@ -535,3 +535,86 @@ current_phase: P-RC-10
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-10 P10.5c | test(api/contracts): P10.5c clear deferred nit epsilon-O1 -- add 5 strategic v2 contract cases (state-machine edges + cancel-during-plan body invariants) [P-RC-10 P10.5c] | +71 / -0 (dispatch.py 192 -> 263; 5 new cases + 2 section header banners) + ~37 ledger row | 267 parity+contracts (262 -> 267; **+5 legitimate from new contract cases**) / 192 runtime-orgs (unchanged; backend untouched) | ADR-0011 (subsystem decomposition; v2 lifecycle + cancel exercise the OrgRuntime / OrgCommandService protocols that replaced v1 ``orgs/runtime.py`` toggles) |
+
+## P10.5a -- close deferred nit M-2 (ADR-0014 sub-cap breach)
+
+> **Sub-phase status (2026-05-22, P10.5a LANDED)**: shard-split
+> the two oversized v2 ``runtime/orgs/`` siblings flagged by
+> G-RC-9.6 mini-gate as the M-2 (sub-cap rebalance) deferral.
+> ``_runtime_agent_pipeline.py`` (521 LOC) and
+> ``_runtime_plugin_assets.py`` (564 LOC) both exceeded the
+> ADR-0014 per-shard 400-LOC soft cap (by 121 / 164 LOC
+> respectively). Per P-RC-10 CHARTER section 1.3 first
+> bullet, P10.5a splits each into TWO sibling shards along
+> the natural cohesive seam already marked in the source
+> (``# === AgentPipelineExecutor ===`` /
+> ``# === FileOutputRegistry + react-trace + delivery ===``
+> banner comments) and re-exports the moved symbols from the
+> original module path so every existing
+> ``from openakita.orgs._runtime_agent_pipeline import ...`` and
+> ``from openakita.orgs._runtime_plugin_assets import ...`` line
+> in ``src/`` and ``tests/`` keeps resolving byte-for-byte
+> unchanged (verified by ``git grep`` on both module names
+> across ``src/openakita/orgs/__init__.py``,
+> ``tests/parity/orgs/test_runtime_parity.py``,
+> ``tests/runtime/orgs/test_runtime_contract.py`` and
+> ``tests/e2e/test_p0_regression.py`` -- ZERO importer edits).
+>
+> Resulting four shards (all <= 400 LOC):
+>
+> * ``_runtime_agent_pipeline.py`` 521 -> 286 LOC -- kept name;
+>   owns the agent build / cache infrastructure
+>   (:class:`AgentSpec`, :class:`AgentBuilderProtocol`,
+>   :class:`_NullAgentBuilder`, :class:`_CachedAgent`,
+>   :class:`AgentCache`, :class:`ProfileResolver`,
+>   ``ORG_STATE_*`` constants).
+> * ``_runtime_agent_pipeline_executor.py`` NEW 272 LOC --
+>   the activate-and-run pipeline
+>   (:class:`AgentPipelineExecutor`,
+>   ``_QUOTA_AUTH_HINTS`` table, ``_AgentRunCallable``
+>   Protocol, ``_looks_like_quota_or_auth_error``).
+> * ``_runtime_plugin_assets.py`` 564 -> 351 LOC -- kept name;
+>   owns the plugin-tool detection helpers
+>   (``safe_asset_filename``, ``ext_for_url``,
+>   ``is_plugin_tool``, ``plugin_id_for_tool``),
+>   :class:`PluginAsset`, :class:`ToolHandlerBridge` and the
+>   :class:`PluginAssetRecorder`.
+> * ``_runtime_plugin_assets_outputs.py`` NEW 262 LOC -- file
+>   outputs / trace stats / task-delivery synth
+>   (:class:`FileOutput`, :class:`FileOutputRegistry`,
+>   ``react_trace_has_tool``,
+>   ``collect_tool_stats_from_trace``,
+>   ``extract_accepted_chain_ids``,
+>   :class:`SynthesizedDelivery`,
+>   :class:`TaskDeliverySynthesizer`).
+>
+> Re-export strategy: each kept file ends with a small late
+> ``from ._<new>_shard import ...`` block (``# noqa: E402``;
+> E402 is in the project-wide ruff ignore list anyway) plus a
+> verbatim-copy ``__all__`` listing every previously public
+> symbol. The new files import their cross-shard companion
+> dependencies as a one-way edge -- the executor imports
+> ``ORG_STATE_PAUSED`` from the kept agent shard (a string
+> constant; safe under partial module load) and uses
+> ``TYPE_CHECKING`` for :class:`AgentCache` /
+> :class:`ProfileResolver` annotations; the outputs shard
+> imports :class:`PluginAsset` only under ``TYPE_CHECKING``.
+> No circular runtime import.
+>
+> Net LOC delta: ``+86`` ((286 + 272 + 351 + 262) - (521 + 564))
+> -- charter target was ~0 (pure splitting); the ~+86
+> overhead is entirely two new module docstrings + two new
+> ``__all__`` blocks + two inserted "split note" paragraphs in
+> the kept files' docstrings + two re-export trailers (six
+> lines each). ZERO behavior change. ZERO importer edits.
+> ZERO touch to the ADR-0014 doc, the shim file, the sentinel
+> file or the P-RC-10 CHARTER. 267 parity+contracts
+> (unchanged) / 192 runtime-orgs (unchanged); ruff clean on
+> all four shards (the pre-existing
+> ``src/openakita/orgs/manager.py`` I001 import-order issue
+> visible at HEAD is OUTSIDE the P10.5a touch budget and is
+> not introduced by this commit).
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-10 P10.5a | refactor(orgs): P10.5a clear deferred nit M-2 -- shard split _runtime_agent_pipeline + _runtime_plugin_assets to satisfy ADR-0014 per-shard cap [P-RC-10 P10.5a] | net +86 LOC across 2 modified shards + 2 new shards (agent_pipeline 521 -> 286; agent_pipeline_executor NEW 272; plugin_assets 564 -> 351; plugin_assets_outputs NEW 262) + ~80 ledger row | 267 parity+contracts (unchanged) / 192 runtime-orgs (unchanged) | ADR-0014 (per-shard 400-LOC soft cap; this commit closes the M-2 deferral by bringing both oversized siblings under the cap via cohesive sibling-shard splits) |
