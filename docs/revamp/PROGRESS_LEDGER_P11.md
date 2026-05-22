@@ -372,3 +372,58 @@ single-row summary table at the end.
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-11 P11.3 | test(api): P11.3 mark 3 v1 308-shim smoke tests xfail pending v2.1.0 retirement (cluster C; ADR-0015) [P-RC-11 P11.3] | +3 decorator lines in `tests/api/test_p97_alpha2_smoke.py` + ledger row; net +3 test LOC | -3 failed / +3 xfailed in cluster C narrow run; narrow slice `459 / 459` unchanged | ADR-0015 (option (b) v2.1.0 retirement lock) -- informational, no ADR edits |
+
+
+## P11.4 ledger -- 2026-05-22
+
+> Cluster D (test_policy_v2_* static-grep stale paths; 4 cases)
+> closed by repointing test path strings to the post-flatten
+> canonical locations:
+>
+> * `tests/unit/test_policy_v2_c8b3_apply_resolution.py`
+>   `::TestCallsiteMigrationStatic::test_agent_cleanup_migrated`
+>   -- `self._read("core/agent.py")` ->
+>   `self._read("core/_agent_legacy.py")` (rename trail:
+>   `32c29c54` -> `3d43af41` -> `a21cdd4b`; latter deleted
+>   the shim leaving `_agent_legacy.py` as the only artifact).
+> * `tests/unit/test_policy_v2_c8b5_trust_mode_isolation.py`
+>   `::TestExternalCallersGone::test_agent_py_no_v1_is_trust_mode_call`
+>   -- `(SRC_ROOT / "core" / "agent.py")` ->
+>   `(SRC_ROOT / "core" / "_agent_legacy.py")`; invariants
+>   (`getattr(engine, "_is_trust_mode"` absent, etc.) still hold
+>   in `_agent_legacy.py` (verified by `Select-String` --
+>   only `policy_v2` imports present).
+> * Same file `::test_check_trust_mode_skip_is_pure_v2` --
+>   the function `check_trust_mode_skip` itself was extracted
+>   out of `core/agent.py` into the canonical
+>   `agent/safety/destructive_intent.py`;
+>   `_agent_legacy.py` only carries an `as _check_trust_mode_skip`
+>   re-export. Repoint reads `destructive_intent.py` and drops
+>   the leading underscore from the regex; widens the v2-import
+>   assertion to `"policy_v2 import ConfirmationMode"` so both
+>   `from .policy_v2 ...` (relative) and
+>   `from openakita.core.policy_v2 ...` (absolute, the canonical
+>   form) match.
+> * `tests/unit/test_policy_v2_c13_multi_agent.py`
+>   `::test_tool_executor_security_confirm_marker_has_no_c13_fields`
+>   -- recon section 4 / charter section 2 forecast this as Cluster B
+>   collateral that would self-clear after P11.2; in practice the
+>   failure surfaced as `ModuleNotFoundError: openakita.core.tool_executor`
+>   (same rename pattern: `cd69cd60` rename + `8e8e7da7` shim +
+>   `a21cdd4b` delete) -- fixed by the same string-edit
+>   `openakita.core.tool_executor` -> `openakita.core._tool_executor_legacy`.
+>   Cluster D scope thus absorbs this 4th case correctly.
+>
+> Verification: `pytest tests/unit/test_policy_v2_c8b3*
+> tests/unit/test_policy_v2_c8b5* tests/unit/test_policy_v2_c13*
+> -q --tb=line` -> `50 passed` (was `46 passed / 4 failed`;
+> +4 passing). Narrow slice `tests/parity/orgs/ +
+> tests/api/contracts/ + tests/runtime/orgs/` =
+> `459 / 459 passed` unchanged.
+>
+> ZERO source / sentinel / ADR / gate / charter / recon edits;
+> only the 3 test files + this ledger row.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-11 P11.4 | test(unit): P11.4 update test_policy_v2_* static-grep paths to post-flatten canonical locations (cluster D) [P-RC-11 P11.4] | +15 / -8 net +7 across 3 test files (c8b3 +1/-1, c8b5 +14/-6, c13 +1/-1); within ~+10/-10 charter envelope (R-11-3 LOC budget); ledger row not counted toward test LOC | +4 passed (46 -> 50 in the c8b3/c8b5/c13 trio); narrow slice `459 / 459` unchanged | ADR-0014 (post-flatten shard naming convention) -- informational, no ADR edits |

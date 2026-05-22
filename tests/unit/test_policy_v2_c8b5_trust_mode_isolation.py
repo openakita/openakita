@@ -48,7 +48,7 @@ class TestExternalCallersGone:
     """C8b-5 静态守卫：``_is_trust_mode`` 已无外部 callsite（排除 doc 注释）。"""
 
     def test_agent_py_no_v1_is_trust_mode_call(self) -> None:
-        agent_text = (SRC_ROOT / "core" / "agent.py").read_text(encoding="utf-8")
+        agent_text = (SRC_ROOT / "core" / "_agent_legacy.py").read_text(encoding="utf-8")
         for ln, line in _strip_comments_and_doc(agent_text):
             assert 'getattr(engine, "_is_trust_mode"' not in line, f"agent.py:{ln}"
             assert "engine._is_trust_mode(" not in line, f"agent.py:{ln}"
@@ -63,10 +63,17 @@ class TestExternalCallersGone:
         assert "from ..core.policy_v2 import read_permission_mode_label" in gateway_text
 
     def test_check_trust_mode_skip_is_pure_v2(self) -> None:
-        agent_text = (SRC_ROOT / "core" / "agent.py").read_text(encoding="utf-8")
-        # Locate function body
+        # P-RC-11 P11.4 / Cluster D: function migrated out of
+        # `core/agent.py` (deleted) into the canonical
+        # `agent/safety/destructive_intent.py` (post-flatten); the
+        # `core/_agent_legacy.py` only re-exports it under the old
+        # `_check_trust_mode_skip` private alias.
+        agent_text = (
+            SRC_ROOT / "agent" / "safety" / "destructive_intent.py"
+        ).read_text(encoding="utf-8")
+        # Locate function body (canonical name has no leading underscore)
         m = re.search(
-            r"def _check_trust_mode_skip\([^)]*\)[^:]*:\s*\n(.*?)\n(?=\n\S|\nclass |\ndef )",
+            r"def check_trust_mode_skip\([^)]*\)[^:]*:\s*\n(.*?)\n(?=\n\S|\nclass |\ndef )",
             agent_text,
             re.DOTALL,
         )
@@ -74,8 +81,8 @@ class TestExternalCallersGone:
         body = m.group(1)
         assert "from .policy import get_policy_engine" not in body
         assert "v1_trust" not in body
-        # Must have v2 read
-        assert "from .policy_v2 import ConfirmationMode" in body
+        # Must have v2 read (absolute or relative import form)
+        assert "policy_v2 import ConfirmationMode" in body
         assert "get_config_v2()" in body
 
 

@@ -445,7 +445,7 @@ def test_tool_executor_security_confirm_marker_has_no_c13_fields() -> None:
     contributor 不会重蹈覆辙。"""
     import inspect
 
-    import openakita.core.tool_executor as te
+    import openakita.core._tool_executor_legacy as te
 
     src = inspect.getsource(te)
     # 找到 _security_confirm 块
