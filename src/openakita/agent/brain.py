@@ -208,6 +208,7 @@ class Brain(_LegacyBrainImpl):
 
     async def think_lightweight(
         self,
+        prompt: str | None = None,
         *,
         system: str = "",
         messages: list[dict[str, Any]] | None = None,
@@ -217,10 +218,28 @@ class Brain(_LegacyBrainImpl):
     ) -> Response:
         """Lightweight one-shot completion -- inherits the legacy impl.
 
-        Documented separately at this level so the
-        :class:`SupervisorBrain` protocol resolves explicitly against
-        the v2 class.
+        Two calling conventions are accepted for backward compatibility:
+
+        * ``think_lightweight(prompt_text, max_tokens=...)`` -- the
+          legacy positional form still used by
+          :meth:`scheduler.executor._system_memory_nudge_review`,
+          several plugins (e.g. ``fin-pulse``), and the v1 agent's
+          fast-reply path. Routed straight through the legacy impl.
+        * ``think_lightweight(system=..., messages=[...])`` -- the v2
+          :class:`SupervisorBrain` protocol surface.
+
+        Without the positional branch, callers like the scheduler raise
+        ``TypeError: think_lightweight() takes 1 positional argument
+        but 2 were given`` and the periodic memory-nudge task fails
+        every interval (Issue #9 in exploratory v10 report).
         """
+        if prompt is not None and not messages:
+            return await _LegacyBrainImpl.think_lightweight(
+                self,
+                prompt,
+                system=(system or None),
+                max_tokens=(max_tokens if max_tokens is not None else 2048),
+            )
         return await super().think_lightweight(
             system=system,
             messages=messages or [],

@@ -234,17 +234,29 @@ async def list_identity_files():
 
 
 @router.get("/file")
-async def read_identity_file(name: str):
-    """Read a single identity file."""
-    path = _resolve_file(name)
-    if not path.exists():
-        raise HTTPException(404, f"File not found: {name}")
-    content = path.read_text(encoding="utf-8")
+async def read_identity_file(name: str | None = None, path: str | None = None):
+    """Read a single identity file.
+
+    The canonical query parameter is ``name`` (the identity-relative
+    path, e.g. ``SOUL.md`` or ``personas/coder.md``). For ergonomic
+    parity with neighbouring endpoints that use ``path`` (``/api/files``,
+    ``/api/workspaces``) we also accept ``path`` as an alias. When both
+    are provided, ``name`` wins so callers can override the alias
+    explicitly. Issue #16 (exploratory v10): callers were getting 422
+    after passing the more conventional ``path`` query string.
+    """
+    target = name if name else path
+    if not target:
+        raise HTTPException(422, "Missing required query parameter 'name' (or alias 'path')")
+    resolved = _resolve_file(target)
+    if not resolved.exists():
+        raise HTTPException(404, f"File not found: {target}")
+    content = resolved.read_text(encoding="utf-8")
     return {
-        "name": name,
+        "name": target,
         "content": content,
         "tokens": estimate_tokens(content),
-        "budget_tokens": _BUDGET_MAP.get(name),
+        "budget_tokens": _BUDGET_MAP.get(target),
     }
 
 

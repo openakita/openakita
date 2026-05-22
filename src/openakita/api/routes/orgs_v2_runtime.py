@@ -56,11 +56,37 @@ router = APIRouter(prefix="/api/v2/orgs", tags=["v2:组织运行时"])
 # ---------------------------------------------------------------------------
 
 
+_NEXT_MILESTONE = "P9.7gamma"
+
+
+def _subsystem_unavailable(subsystem: str, klass: str) -> HTTPException:
+    """Return a structured 503 for an unwired subsystem.
+
+    The exploratory v10 report (issue #1) flagged that the original
+    "<Klass> not initialized" string leaked through to the desktop chat
+    as raw text. A structured detail lets the frontend choose between a
+    "Subsystem coming soon" banner and a full error dialog without
+    having to regex the message.
+    """
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "subsystem_not_wired",
+            "subsystem": subsystem,
+            "message": (
+                f"{klass} is registered but not yet connected. "
+                "See PR-9.7 wiring."
+            ),
+            "next_milestone": _NEXT_MILESTONE,
+        },
+    )
+
+
 def _get_runtime(request: Request) -> Any:
     """Lift ``OrgRuntime`` (P9.6) off ``request.app.state``."""
     rt = getattr(request.app.state, "org_runtime", None)
     if rt is None:
-        raise HTTPException(503, "OrgRuntime not initialized")
+        raise _subsystem_unavailable("runtime", "OrgRuntime")
     return rt
 
 
@@ -68,7 +94,7 @@ def _get_manager(request: Request) -> Any:
     """Lift ``OrgManager`` (P9.5) off ``request.app.state``."""
     mgr = getattr(request.app.state, "org_manager", None)
     if mgr is None:
-        raise HTTPException(503, "OrgManager not initialized")
+        raise _subsystem_unavailable("manager", "OrgManager")
     return mgr
 
 
@@ -76,7 +102,7 @@ def _get_command_service(request: Request) -> Any:
     """Lift ``OrgCommandService`` (P9.4) off ``request.app.state``."""
     svc = getattr(request.app.state, "org_command_service", None)
     if svc is None:
-        raise HTTPException(503, "OrgCommandService not initialized")
+        raise _subsystem_unavailable("command_service", "OrgCommandService")
     return svc
 
 
@@ -84,7 +110,7 @@ def _get_blackboard(request: Request) -> Any:
     """Lift ``OrgBlackboard`` (P9.1) off ``request.app.state``."""
     bb = getattr(request.app.state, "org_blackboard", None)
     if bb is None:
-        raise HTTPException(503, "OrgBlackboard not initialized")
+        raise _subsystem_unavailable("blackboard", "OrgBlackboard")
     return bb
 
 
@@ -92,7 +118,7 @@ def _get_project_store(request: Request) -> Any:
     """Lift ``ProjectStore`` (P9.2) off ``request.app.state``."""
     ps = getattr(request.app.state, "project_store", None)
     if ps is None:
-        raise HTTPException(503, "ProjectStore not initialized")
+        raise _subsystem_unavailable("project_store", "ProjectStore")
     return ps
 
 
@@ -100,7 +126,7 @@ def _get_scheduler(request: Request) -> Any:
     """Lift ``NodeScheduler`` (P9.3) off ``request.app.state``."""
     sch = getattr(request.app.state, "node_scheduler", None)
     if sch is None:
-        raise HTTPException(503, "NodeScheduler not initialized")
+        raise _subsystem_unavailable("scheduler", "NodeScheduler")
     return sch
 
 
@@ -118,20 +144,73 @@ _SUBSYSTEMS: tuple[str, ...] = (
     "scheduler",
 )
 
+_SUBSYSTEM_STATE_ATTRS: dict[str, str] = {
+    "runtime": "org_runtime",
+    "manager": "org_manager",
+    "command_service": "org_command_service",
+    "blackboard": "org_blackboard",
+    "project_store": "project_store",
+    "scheduler": "node_scheduler",
+}
+
+# Methods we expect to be live before declaring a subsystem fully
+# "wired" (vs. only "registered"). The exploratory v10 report flagged
+# several subsystems returning 503 from individual endpoints even
+# though /_p97/health reported them as healthy, because health only
+# checked whether ``app.state`` had a non-None reference. The frontend
+# needs a stricter signal so it can hide UI sections whose endpoints
+# would 503.
+_SUBSYSTEM_REQUIRED_METHODS: dict[str, tuple[str, ...]] = {
+    "runtime": ("get_status_snapshot", "freeze_node", "set_node_status"),
+    "manager": ("list_orgs",),
+    "command_service": ("submit",),
+    "blackboard": ("publish",),
+    "project_store": ("list_projects",),
+    "scheduler": ("list_schedules",),
+}
+
+
+def _probe_subsystem(request: Request, name: str) -> dict[str, Any]:
+    """Inspect a single subsystem's state for ``/_p97/health``."""
+    attr = _SUBSYSTEM_STATE_ATTRS[name]
+    instance = getattr(request.app.state, attr, None)
+    registered = instance is not None
+    required = _SUBSYSTEM_REQUIRED_METHODS.get(name, ())
+    missing: list[str] = []
+    if registered and required:
+        for method in required:
+            target = getattr(instance, method, None)
+            if not callable(target):
+                missing.append(method)
+    wired = registered and not missing
+    return {
+        "name": name,
+        "registered": registered,
+        "wired": wired,
+        "missing_methods": missing,
+    }
+
 
 @router.get("/_p97/health", summary="P9.7 router wiring sanity probe")
-def p97_health() -> dict[str, Any]:
-    """Return a tiny envelope confirming the P9.7 router is mounted.
+def p97_health(request: Request) -> dict[str, Any]:
+    """Return a small envelope describing P9.7 wiring state.
 
-    Does NOT touch any subsystem -- the probe must work even when
-    ``request.app.state`` is empty (e.g. a pytest-only app),
-    otherwise the test gate cannot smoke the wiring before the
-    real endpoints land.
+    Backward-compatible: the legacy ``ok`` / ``subsystems`` /
+    ``p97_phase`` fields stay; the per-subsystem ``details`` array
+    gives ``{name, registered, wired, missing_methods}`` so the
+    frontend (and exploratory probes) can decide whether to call the
+    real endpoints. Does NOT touch any subsystem beyond a
+    ``getattr(..., method) is callable`` check, so it remains safe on
+    a pytest-only app where ``request.app.state`` is empty.
     """
+    details = [_probe_subsystem(request, name) for name in _SUBSYSTEMS]
+    all_wired = all(item["wired"] for item in details)
     return {
         "ok": True,
         "subsystems": list(_SUBSYSTEMS),
         "p97_phase": "alpha-2",
+        "details": details,
+        "all_wired": all_wired,
     }
 
 

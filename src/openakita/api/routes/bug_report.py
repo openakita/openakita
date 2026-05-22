@@ -1878,7 +1878,23 @@ async def public_feedback_search(
     state: str = "all",
     type: str = "",
 ):
-    """Proxy public feedback search to FC /issues/search."""
+    """Proxy public feedback search to FC /issues/search.
+
+    Reject queries longer than 256 chars up front (Fix-11 / issue #18):
+    the upstream feedback hub answered slow paginated scans in 7-8s for
+    long strings, blocking the desktop chat thread while it waited.
+    """
+    if len(q) > 256:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "query_too_long",
+                "message": "Search query must be 256 characters or fewer.",
+                "max_length": 256,
+                "received_length": len(q),
+            },
+        )
+
     import httpx
 
     endpoint = _get_bug_report_endpoint()

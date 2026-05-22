@@ -832,6 +832,41 @@ def create_app(
         except Exception as e:  # noqa: BLE001
             logger.warning("[Shutdown] StreamRegistry cleanup stop error: %s", e)
 
+    # ------------------------------------------------------------
+    # Fix-5 / exploratory v10 issue #5b: frontend bundle drift warn.
+    # ------------------------------------------------------------
+    app.state.frontend_bundle_build_id = None
+    app.state.frontend_bundle_outdated = False
+
+    @app.on_event("startup")
+    async def _check_frontend_bundle_freshness() -> None:
+        try:
+            from openakita import __version__ as backend_version
+            from openakita.api.routes.build_info import (
+                detect_frontend_bundle_build_id,
+            )
+
+            dist = _find_web_dist()
+            if dist is None:
+                return
+            bundle_id = detect_frontend_bundle_build_id(dist)
+            app.state.frontend_bundle_build_id = bundle_id
+            if bundle_id is None:
+                return
+            # The dev fallback is unambiguously stale relative to any
+            # released backend (it never matches a semver version).
+            outdated = bundle_id.startswith("dev-") or bundle_id != backend_version
+            app.state.frontend_bundle_outdated = outdated
+            if outdated:
+                logger.warning(
+                    "[Startup] Frontend bundle build_id=%s lags backend "
+                    "version=%s; consider rebuilding apps/setup-center",
+                    bundle_id,
+                    backend_version,
+                )
+        except Exception as e:  # noqa: BLE001 -- never block startup
+            logger.debug("[Startup] Frontend bundle freshness check skipped: %s", e)
+
     return app
 
 

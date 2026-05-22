@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 __all__ = [
     "CancelRequest",
@@ -38,6 +38,19 @@ class OrgOutputScope(StrEnum):
     FINAL_ONLY = "final_only"
 
 
+# Frontend clients (OrgEditorView, PixelOfficeView) historically POSTed
+# `origin_surface=desktop` or `web` against this endpoint. The canonical
+# enum values are `desktop_chat` / `org_console` / `im`; without an alias
+# layer those legacy payloads dead-end at 422. The alias map normalizes
+# the common short forms before enum coercion so the wire contract stays
+# canonical while older callers keep working.
+_ORIGIN_SURFACE_ALIASES: dict[str, str] = {
+    "desktop": OrgCommandSurface.DESKTOP_CHAT.value,
+    "web": OrgCommandSurface.DESKTOP_CHAT.value,
+    "console": OrgCommandSurface.ORG_CONSOLE.value,
+}
+
+
 class CommandSubmit(BaseModel):
     """Body for ``POST /api/v2/orgs/{id}/command`` -- ``content`` required."""
 
@@ -51,6 +64,13 @@ class CommandSubmit(BaseModel):
     replace_existing: bool = False
     continue_previous: bool = False
     forward_to: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("origin_surface", mode="before")
+    @classmethod
+    def _normalize_origin_surface(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return _ORIGIN_SURFACE_ALIASES.get(v.lower(), v)
+        return v
 
 
 class CommandSnapshot(BaseModel):

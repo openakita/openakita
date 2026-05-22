@@ -797,23 +797,28 @@ class OrgManager:
     def get_template(self, template_id: str) -> dict[str, Any] | None:
         """Raw template dict or ``None`` on miss.
 
-        F-4 §A-3 backward-compat: when a direct file lookup misses, we
-        consult an optional ``_aliases.json`` map in the templates
-        directory and retry once. This lets legacy callers that hold
-        a pre-migration template id (e.g. a pure-CJK id from before
-        F-4 §A-2 enforced ASCII slugs) keep working after the user
-        has run the §A-4 migration script.
+        Lookup order:
 
-        ``_aliases.json`` format::
-
-            {"内容运营团队": "content-ops-zh", ...}
-
-        Absent file -> behavior is identical to pre-§A-3. The alias
-        lookup is one hop only (no chains) and cycle-safe.
+        1. Direct file ``{template_id}.json``.
+        2. Hyphen/underscore variant. Built-in templates ship as
+           hyphen-case (``aigc-video-studio``) but the v2
+           ``runtime.templates`` registry exposes the same templates
+           under underscore-case (``aigc_video_studio``); callers that
+           pick up an id from the runtime registry must still resolve
+           against the file-backed store.
+        3. ``_aliases.json`` map (F-4 §A-3) for any custom legacy
+           mapping. One hop only; cycle-safe.
         """
         p = self._templates_dir / f"{template_id}.json"
         if p.is_file():
             return json.loads(p.read_text(encoding="utf-8"))
+
+        # Hyphen <-> underscore fallback. Try both directions because
+        # we cannot tell which convention the caller used.
+        for variant in self._template_id_variants(template_id):
+            p2 = self._templates_dir / f"{variant}.json"
+            if p2.is_file():
+                return json.loads(p2.read_text(encoding="utf-8"))
 
         aliased = self._resolve_template_alias(template_id)
         if aliased is not None and aliased != template_id:
@@ -821,6 +826,22 @@ class OrgManager:
             if p2.is_file():
                 return json.loads(p2.read_text(encoding="utf-8"))
         return None
+
+    @staticmethod
+    def _template_id_variants(template_id: str) -> list[str]:
+        """Return hyphen/underscore variants of ``template_id``.
+
+        ``aigc_video_studio`` -> ``["aigc-video-studio"]``;
+        ``aigc-video-studio`` -> ``["aigc_video_studio"]``;
+        ids that contain both characters are returned as-is in both
+        flavours.
+        """
+        out: list[str] = []
+        if "_" in template_id:
+            out.append(template_id.replace("_", "-"))
+        if "-" in template_id:
+            out.append(template_id.replace("-", "_"))
+        return out
 
     def _resolve_template_alias(self, template_id: str) -> str | None:
         """Look up ``template_id`` in ``_aliases.json``; return canonical id or None.

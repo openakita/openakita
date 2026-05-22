@@ -12,11 +12,19 @@ import mimetypes
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/files", tags=["files"])
+
+# Path values that the desktop chat / file picker sends to mean "show me
+# the workspace root listing" rather than "serve a specific file". The
+# v10 exploratory report (issue #15) flagged ``GET /api/files?path=.``
+# returning 404 as unintuitive; treat these as a directory-listing
+# request against the workspace root.
+_WORKSPACE_ROOT_ALIASES: frozenset[str] = frozenset({"", ".", "./", "/"})
+_MAX_DIR_LISTING_ENTRIES = 500
 
 
 def _get_workspace_root(request: Request) -> Path:
@@ -50,11 +58,16 @@ async def serve_file(request: Request, path: str = ""):
     Query parameter `path` can be relative to workspace root or absolute.
     Example: /api/files?path=data/temp/image.png
     Example: /api/files?path=D:/coder/myagent/data/temp/image.png
-    """
-    if not path:
-        raise HTTPException(status_code=400, detail="Missing 'path' parameter")
 
+    When ``path`` is empty, ``.``, ``./``, or ``/``, the endpoint
+    returns a JSON listing of the workspace root instead of a file
+    response. The frontend file picker expects "list the root" to
+    work without a special endpoint.
+    """
     workspace = _get_workspace_root(request)
+
+    if (path or "").strip() in _WORKSPACE_ROOT_ALIASES:
+        return _list_directory(workspace, workspace)
 
     # Handle both relative and absolute paths
     requested = Path(path)
@@ -83,7 +96,13 @@ async def serve_file(request: Request, path: str = ""):
             status_code=403, detail="Access denied: path outside allowed directories"
         )
 
-    if not full_path.exists() or not full_path.is_file():
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+    if full_path.is_dir():
+        return _list_directory(full_path, workspace_resolved)
+
+    if not full_path.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
     content_type = _guess_content_type(full_path)
@@ -94,6 +113,50 @@ async def serve_file(request: Request, path: str = ""):
         media_type=content_type,
         filename=full_path.name,
         content_disposition_type="inline" if is_inline else "attachment",
+    )
+
+
+def _list_directory(directory: Path, workspace_root: Path) -> JSONResponse:
+    """Return a directory listing as JSON.
+
+    Only used for the workspace-root convenience alias and when the
+    caller targets a directory explicitly; the security checks above
+    have already constrained ``directory`` to safe roots.
+    """
+    try:
+        entries = sorted(directory.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Cannot list directory: {exc}") from exc
+
+    items: list[dict[str, object]] = []
+    for entry in entries[:_MAX_DIR_LISTING_ENTRIES]:
+        try:
+            stat = entry.stat()
+        except OSError:
+            continue
+        rel = ""
+        try:
+            rel = entry.relative_to(workspace_root).as_posix()
+        except ValueError:
+            rel = entry.as_posix()
+        items.append(
+            {
+                "name": entry.name,
+                "path": rel,
+                "is_dir": entry.is_dir(),
+                "size": stat.st_size if entry.is_file() else 0,
+                "modified": stat.st_mtime,
+            }
+        )
+    truncated = len(entries) > _MAX_DIR_LISTING_ENTRIES
+    return JSONResponse(
+        {
+            "directory": str(directory),
+            "workspace_root": str(workspace_root),
+            "items": items,
+            "count": len(items),
+            "truncated": truncated,
+        }
     )
 
 

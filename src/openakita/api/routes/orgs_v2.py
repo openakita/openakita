@@ -126,6 +126,29 @@ def _require_v2_enabled() -> None:
         )
 
 
+def _resolve_template_id(template_id: str) -> str | None:
+    """Return a registered template id, trying hyphen <-> underscore variants.
+
+    Built-in v2 templates self-register under underscore-case
+    (``aigc_video_studio``), but file-backed mint templates live under
+    hyphen-case (``aigc-video-studio``). Frontend OrgEditorView may
+    forward either form depending on which catalog it last fetched.
+    Normalize here so both flavours resolve to the same TemplateSpec.
+    Returns ``None`` when no variant is registered.
+    """
+    if template_id in GLOBAL_REGISTRY:
+        return template_id
+    variants = []
+    if "-" in template_id:
+        variants.append(template_id.replace("-", "_"))
+    if "_" in template_id:
+        variants.append(template_id.replace("_", "-"))
+    for v in variants:
+        if v in GLOBAL_REGISTRY:
+            return v
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Request bodies
 # ---------------------------------------------------------------------------
@@ -190,13 +213,13 @@ def get_template(template_id: str) -> dict[str, Any]:
     """
     _require_v2_enabled()
     _ensure_registry_bootstrapped()
-    try:
-        spec = GLOBAL_REGISTRY.get(template_id)
-    except KeyError as exc:
+    resolved = _resolve_template_id(template_id)
+    if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+            detail=f"unknown template id {template_id!r}",
+        )
+    spec = GLOBAL_REGISTRY.get(resolved)
     return spec.to_jsonable()
 
 
@@ -222,9 +245,15 @@ def instantiate_template(template_id: str, body: _InstantiateBody) -> dict[str, 
         overrides["node_persona_prompts"] = body.node_persona_prompts
     if body.node_runtime_overrides is not None:
         overrides["node_runtime_overrides"] = body.node_runtime_overrides
+    resolved = _resolve_template_id(template_id)
+    if resolved is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"unknown template id {template_id!r}",
+        )
     try:
         org = GLOBAL_REGISTRY.instantiate(
-            template_id,
+            resolved,
             name=body.name,
             description=body.description,
             overrides=overrides or None,

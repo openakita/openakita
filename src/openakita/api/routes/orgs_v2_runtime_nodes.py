@@ -52,6 +52,130 @@ def _require_org_and_node(mgr: Any, org_id: str, node_id: str) -> None:
         raise HTTPException(404, f"Node not found: {node_id}")
 
 
+def _call_runtime_method(rt: Any, method_name: str, *args: Any, **kwargs: Any) -> Any:
+    """Duck-call a method on ``OrgRuntime`` with a structured 503 guard.
+
+    Mirrors :func:`orgs_v2_runtime_dispatch._call_lifecycle`: when the
+    runtime singleton predates a given subsystem method (e.g. P9.7gamma
+    has not landed yet), surface a 503 with the missing-method name so
+    the frontend can degrade the corresponding panel instead of seeing
+    a 500 AttributeError.
+    """
+    method = getattr(rt, method_name, None)
+    if method is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "subsystem_not_wired",
+                "subsystem": f"runtime_method:{method_name}",
+                "message": (
+                    f"OrgRuntime.{method_name} is not yet connected. "
+                    "See PR-9.7gamma wiring."
+                ),
+                "next_milestone": "P9.7gamma",
+            },
+        )
+    return method(*args, **kwargs)
+
+
+_TRIGGER_TYPE_TO_SCHEDULE_TYPE: dict[str, str] = {
+    "cron": "cron",
+    "interval": "interval",
+    "once": "once",
+    "schedule": "interval",
+}
+
+
+def _normalize_schedule_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Flatten nested ``trigger: {type, expr|run_at|seconds}`` payloads.
+
+    Older OrgEditor/test clients POST::
+
+        {"trigger": {"type": "cron", "expr": "0 9 * * *"}, "prompt": "..."}
+
+    while the persisted ``NodeSchedule`` dataclass expects flat
+    ``schedule_type / cron / run_at / interval_s`` fields. The legacy
+    behaviour silently dropped the nested object and left every trigger
+    field unset, producing schedules that never fire. We translate the
+    nested shape into the flat one when present; flat payloads pass
+    through untouched for backward compatibility. Returns a *new* dict
+    so the caller's input is not mutated.
+    """
+    payload = dict(body)
+    trigger = payload.pop("trigger", None)
+    if isinstance(trigger, dict):
+        t_type = str(trigger.get("type") or "").lower()
+        schedule_type = _TRIGGER_TYPE_TO_SCHEDULE_TYPE.get(t_type, t_type)
+        if schedule_type and "schedule_type" not in payload:
+            payload["schedule_type"] = schedule_type
+        expr = trigger.get("expr") or trigger.get("cron")
+        if expr is not None and "cron" not in payload:
+            payload["cron"] = expr
+        run_at = trigger.get("run_at") or trigger.get("when")
+        if run_at is not None and "run_at" not in payload:
+            payload["run_at"] = run_at
+        seconds = trigger.get("seconds") or trigger.get("interval_s")
+        if seconds is not None and "interval_s" not in payload:
+            try:
+                payload["interval_s"] = int(seconds)
+            except (TypeError, ValueError):
+                pass
+
+    # Legacy flat-flat shape used by the OrgEditor v1 form and several
+    # contract tests (e.g. test_b19_create_schedule_returns_201):
+    #
+    #     {"type": "cron", "expression": "0 0 * * *"}
+    #
+    # When the canonical ``schedule_type`` is absent we map the top-level
+    # ``type`` / ``expression`` / ``seconds`` / ``run_at`` keys to the
+    # canonical flat schema. The same normalisation rules as the nested
+    # ``trigger`` branch apply.
+    if "schedule_type" not in payload and "type" in payload:
+        t_type = str(payload.get("type") or "").lower()
+        schedule_type = _TRIGGER_TYPE_TO_SCHEDULE_TYPE.get(t_type, t_type)
+        if schedule_type:
+            payload["schedule_type"] = schedule_type
+            payload.pop("type", None)
+    if "cron" not in payload and "expression" in payload:
+        payload["cron"] = payload.pop("expression")
+    if "interval_s" not in payload and "seconds" in payload:
+        try:
+            payload["interval_s"] = int(payload.pop("seconds"))
+        except (TypeError, ValueError):
+            payload.pop("seconds", None)
+    if "run_at" not in payload and "when" in payload:
+        payload["run_at"] = payload.pop("when")
+    return payload
+
+
+def _require_schedule_trigger_field(body: dict[str, Any]) -> None:
+    """Reject schedules whose trigger fields are all missing.
+
+    Without this guard a request body with ``schedule_type=interval``
+    but no ``cron / run_at / interval_s`` would silently produce a
+    schedule that the scheduler never fires; the v10 exploratory pass
+    captured this as ``E3.8`` "schedule_type 被改写为 interval, cron /
+    interval_s / run_at 全为 null". We surface that here as 422.
+    """
+    schedule_type = str(body.get("schedule_type") or "").lower()
+    if not schedule_type:
+        # ``NodeSchedule.from_dict`` defaults to ``INTERVAL``; we still
+        # want at least one trigger field so the schedule can fire.
+        schedule_type = "interval"
+    cron = body.get("cron")
+    interval_s = body.get("interval_s")
+    run_at = body.get("run_at")
+    if schedule_type == "cron" and not cron:
+        raise HTTPException(422, "cron schedule requires 'cron' expression")
+    if schedule_type == "once" and not run_at:
+        raise HTTPException(422, "once schedule requires 'run_at' timestamp")
+    if schedule_type == "interval" and not interval_s and not run_at and not cron:
+        raise HTTPException(
+            422,
+            "schedule requires one of 'cron', 'run_at', or 'interval_s'",
+        )
+
+
 # ---------------------------------------------------------------------------
 # B18-B21: schedules CRUD (delegates to OrgManager v2)
 # ---------------------------------------------------------------------------
@@ -74,7 +198,11 @@ async def create_node_schedule(request: Request, org_id: str, node_id: str) -> d
     _require_org_and_node(mgr, org_id, node_id)
     from openakita.orgs import NodeSchedule
 
-    body = await request.json()
+    raw_body = await request.json()
+    if not isinstance(raw_body, dict):
+        raise HTTPException(422, "schedule body must be a JSON object")
+    body = _normalize_schedule_body(raw_body)
+    _require_schedule_trigger_field(body)
     schedule = NodeSchedule.from_dict(body) if hasattr(NodeSchedule, "from_dict") else body
     result = mgr.add_node_schedule(org_id, node_id, schedule)
     return result.to_dict() if hasattr(result, "to_dict") else result
@@ -172,31 +300,39 @@ async def update_node_mcp(request: Request, org_id: str, node_id: str) -> dict[s
 
 @router.post("/{org_id}/nodes/{node_id}/freeze", summary="B26 freeze node")
 async def freeze_node(request: Request, org_id: str, node_id: str) -> dict[str, Any]:
+    mgr = _get_manager(request)
+    _require_org_and_node(mgr, org_id, node_id)
     rt = _get_runtime(request)
     body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
     reason = body.get("reason", "user action")
-    result = await rt.freeze_node(org_id, node_id, reason=reason)
+    result = await _call_runtime_method(rt, "freeze_node", org_id, node_id, reason=reason)
     return {"ok": True, "result": result}
 
 
 @router.post("/{org_id}/nodes/{node_id}/unfreeze", summary="B27 unfreeze node")
 async def unfreeze_node(request: Request, org_id: str, node_id: str) -> dict[str, Any]:
+    mgr = _get_manager(request)
+    _require_org_and_node(mgr, org_id, node_id)
     rt = _get_runtime(request)
-    result = await rt.unfreeze_node(org_id, node_id)
+    result = await _call_runtime_method(rt, "unfreeze_node", org_id, node_id)
     return {"ok": True, "result": result}
 
 
 @router.post("/{org_id}/nodes/{node_id}/offline", summary="B28 set node offline")
 async def set_node_offline(request: Request, org_id: str, node_id: str) -> dict[str, Any]:
+    mgr = _get_manager(request)
+    _require_org_and_node(mgr, org_id, node_id)
     rt = _get_runtime(request)
-    await rt.set_node_status(org_id, node_id, "offline")
+    await _call_runtime_method(rt, "set_node_status", org_id, node_id, "offline")
     return {"ok": True, "status": "offline"}
 
 
 @router.post("/{org_id}/nodes/{node_id}/online", summary="B29 set node online")
 async def set_node_online(request: Request, org_id: str, node_id: str) -> dict[str, Any]:
+    mgr = _get_manager(request)
+    _require_org_and_node(mgr, org_id, node_id)
     rt = _get_runtime(request)
-    await rt.set_node_status(org_id, node_id, "idle")
+    await _call_runtime_method(rt, "set_node_status", org_id, node_id, "idle")
     return {"ok": True, "status": "idle"}
 
 
@@ -207,8 +343,10 @@ async def set_node_online(request: Request, org_id: str, node_id: str) -> dict[s
 
 @router.delete("/{org_id}/nodes/{node_id}/dismiss", summary="B30 dismiss ephemeral node")
 async def dismiss_node(request: Request, org_id: str, node_id: str) -> dict[str, Any]:
+    mgr = _get_manager(request)
+    _require_org_and_node(mgr, org_id, node_id)
     rt = _get_runtime(request)
-    ok = await rt.dismiss_node(org_id, node_id, by="user")
+    ok = await _call_runtime_method(rt, "dismiss_node", org_id, node_id, by="user")
     if not ok:
         raise HTTPException(400, "Cannot dismiss this node (non-ephemeral or missing)")
     return {"ok": True}
@@ -216,20 +354,26 @@ async def dismiss_node(request: Request, org_id: str, node_id: str) -> dict[str,
 
 @router.get("/{org_id}/nodes/{node_id}/thinking", summary="B31 get node thinking timeline")
 def get_node_thinking(request: Request, org_id: str, node_id: str) -> dict[str, Any]:
+    mgr = _get_manager(request)
+    _require_org_and_node(mgr, org_id, node_id)
     rt = _get_runtime(request)
-    return rt.get_node_thinking(org_id, node_id)
+    return _call_runtime_method(rt, "get_node_thinking", org_id, node_id)
 
 
 @router.get("/{org_id}/nodes/{node_id}/prompt-preview", summary="B32 preview assembled node prompt")
 def preview_node_prompt(request: Request, org_id: str, node_id: str) -> dict[str, Any]:
+    mgr = _get_manager(request)
+    _require_org_and_node(mgr, org_id, node_id)
     rt = _get_runtime(request)
-    return rt.preview_node_prompt(org_id, node_id)
+    return _call_runtime_method(rt, "preview_node_prompt", org_id, node_id)
 
 
 @router.get("/{org_id}/nodes/{node_id}/status", summary="B33 get node status snapshot")
 def get_node_status(request: Request, org_id: str, node_id: str) -> dict[str, Any]:
+    mgr = _get_manager(request)
+    _require_org_and_node(mgr, org_id, node_id)
     rt = _get_runtime(request)
-    return rt.get_node_status_snapshot(org_id, node_id)
+    return _call_runtime_method(rt, "get_node_status_snapshot", org_id, node_id)
 
 
 # NodeRegister is re-exported for future POST node-create endpoints that
