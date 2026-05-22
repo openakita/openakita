@@ -6128,29 +6128,22 @@ class Agent:
         conversation_id = self._resolve_conversation_id(session, session_id)
         self._current_conversation_id = conversation_id
 
-        # 清理上一轮残留的任务状态（按 session 隔离）
-        _prev_task = None
-        _reset_key = session_id
-        if self.agent_state:
-            _prev_task = self.agent_state.get_task_for_session(session_id)
-        if not _prev_task and self.agent_state:
-            _prev_task = self.agent_state.current_task
-            if _prev_task:
-                _reset_key = _prev_task.session_id or _prev_task.task_id
-        if _prev_task:
-            if _prev_task.cancelled or not _prev_task.is_active:
-                logger.info(
-                    f"[Session:{session_id}] Resetting stale task "
-                    f"(cancelled={_prev_task.cancelled}, status={_prev_task.status.value}, "
-                    f"reset_key={_reset_key!r})"
-                )
-                self.agent_state.reset_task(session_id=_reset_key)
-            else:
-                _prev_task.clear_skip()
-                await _prev_task.drain_user_inserts()
-
-        # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
-        self._pending_cancels.pop(session_id, None) if session_id else None
+        # v1.27.14 (plan: conversation concurrency v1.28, S1.3 + S1.4):
+        # 把旧的 "clear_skip + drain_user_inserts 让两个并发请求共享同一个
+        # TaskState" 反模式替换为显式 preempt/queue 协议。详见
+        # :meth:`_preempt_or_queue_prev_task`。
+        # FIX 1: 传入 conversation_id，reason_stream / run 用它作 task key。
+        _preempt_decision = await self._preempt_or_queue_prev_task(
+            session_id=session_id,
+            session=session,
+            conversation_id=conversation_id,
+        )
+        logger.debug(
+            "[ChatSync] preempt decision for session=%s conv=%s: %s",
+            session_id,
+            conversation_id,
+            _preempt_decision,
+        )
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期，不让上一轮的错误阻塞本轮
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -6563,29 +6556,20 @@ class Agent:
         conversation_id = self._resolve_conversation_id(session, session_id)
         self._current_conversation_id = conversation_id
 
-        # 清理上一轮残留的任务状态（按 session 隔离）
-        _prev_task = None
-        _reset_key = session_id
-        if self.agent_state:
-            _prev_task = self.agent_state.get_task_for_session(session_id)
-        if not _prev_task and self.agent_state:
-            _prev_task = self.agent_state.current_task
-            if _prev_task:
-                _reset_key = _prev_task.session_id or _prev_task.task_id
-        if _prev_task:
-            if _prev_task.cancelled or not _prev_task.is_active:
-                logger.info(
-                    f"[Session:{session_id}] Resetting stale task "
-                    f"(cancelled={_prev_task.cancelled}, status={_prev_task.status.value}, "
-                    f"reset_key={_reset_key!r})"
-                )
-                self.agent_state.reset_task(session_id=_reset_key)
-            else:
-                _prev_task.clear_skip()
-                await _prev_task.drain_user_inserts()
-
-        # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
-        self._pending_cancels.pop(session_id, None) if session_id else None
+        # v1.27.14 (plan: conversation concurrency v1.28, S1.3 + S1.4):
+        # 与 chat_with_session 同源；详见 :meth:`_preempt_or_queue_prev_task`。
+        # FIX 1: 传入 conversation_id，reason_stream / run 用它作 task key。
+        _preempt_decision = await self._preempt_or_queue_prev_task(
+            session_id=session_id,
+            session=session,
+            conversation_id=conversation_id,
+        )
+        logger.debug(
+            "[ChatStream] preempt decision for session=%s conv=%s: %s",
+            session_id,
+            conversation_id,
+            _preempt_decision,
+        )
 
         # 用户主动发新消息 → 无条件清除所有端点冷却期
         llm_client = getattr(self.brain, "_llm_client", None)
@@ -8265,6 +8249,353 @@ class Agent:
         实时取消由 cancel_event 机制在 reason_stream/run 内部处理。
         """
         return bool(session_id and session_id in self._pending_cancels)
+
+    def _append_preempt_marker(
+        self,
+        *,
+        session: Any,
+        policy: str,
+        prev_task_id: str,
+        reason: str,
+        partial_text: str = "",
+        partial_thinking: str = "",
+        partial_truncated: bool = False,
+    ) -> None:
+        """Append a "task was interrupted" marker to session history.
+
+        v1.27.14 (plan: v1.28, S1.8). Bypasses :meth:`Session.add_message`
+        de-dup so multiple rapid preempts each leave a visible record.
+        Frontend can render these specially via ``marker_type``.
+
+        v1.27.15 (S2 P0-3) — extended to also persist the partial
+        assistant text the user already saw before the cancel.  When
+        ``partial_text`` is non-empty we write a SECOND marker right
+        after the bare "[interrupted]" placeholder, with
+        ``marker_type="aborted_partial"`` and the actual partial
+        content.  This avoids the previous behaviour where mid-answer
+        cancel made the timeline look like the model never said
+        anything at all.
+
+        Silently no-ops if ``session`` does not expose ``append_marker``
+        (CLI / unit-test stubs); the lifecycle reset has already been
+        recorded via logger + telemetry counters.
+        """
+        if session is None:
+            return
+        appender = getattr(session, "append_marker", None)
+        if appender is None:
+            return
+        try:
+            # 1) Preempt placeholder — always written so the timeline
+            # has a "this turn was cut short" anchor that the front-end
+            # can render specially (e.g. amber separator).
+            appender(
+                "assistant",
+                "[上一条任务被新请求中断]",
+                marker_type="preempted",
+                policy=policy,
+                preempted_task_id=prev_task_id,
+                reason=reason,
+                has_partial=bool(partial_text or partial_thinking),
+                partial_truncated=partial_truncated,
+            )
+            # 2) Partial assistant content — only when there *is* partial
+            # to show.  We persist text + thinking as separate markers
+            # so the front-end can collapse thinking the same way it
+            # does for finished turns.  Without this, the user used to
+            # see "task was interrupted" placeholder with zero context
+            # for what they had already started reading.
+            if partial_text:
+                appender(
+                    "assistant",
+                    partial_text,
+                    marker_type="aborted_partial",
+                    partial_channel="text",
+                    policy=policy,
+                    preempted_task_id=prev_task_id,
+                    reason=reason,
+                    truncated=partial_truncated,
+                )
+            if partial_thinking:
+                appender(
+                    "assistant",
+                    partial_thinking,
+                    marker_type="aborted_partial",
+                    partial_channel="thinking",
+                    policy=policy,
+                    preempted_task_id=prev_task_id,
+                    reason=reason,
+                    truncated=partial_truncated,
+                )
+        except Exception:
+            logger.debug(
+                "[Preempt] append_marker failed (prev_task=%s, policy=%s)",
+                prev_task_id[:8] if prev_task_id else "?",
+                policy,
+                exc_info=True,
+            )
+
+    async def _preempt_or_queue_prev_task(
+        self,
+        *,
+        session_id: str,
+        session: Any = None,
+        conversation_id: str | None = None,
+    ) -> str:
+        """Resolve prev_task lifecycle before starting a new run on the same session.
+
+        v1.27.14 (plan: conversation concurrency v1.28, S1.3 + S1.4).
+
+        Replaces the legacy ad-hoc "clear_skip + drain_user_inserts" block
+        that silently shared a single ``TaskState`` between two concurrent
+        requests on the same conversation — the root cause behind
+        ``completed -> reasoning`` crashes (issue #572) and "thinking
+        bleeding across turns" complaints.
+
+        Key resolution (FIX 1 vs v1.27.14 first cut):
+        ``reasoning_engine.reason_stream`` / ``run`` register the
+        :class:`TaskState` under ``conversation_id`` (after
+        ``Agent._resolve_conversation_id``).  ``session_id`` is the raw
+        chat/channel identifier, which may differ — especially for IM /
+        org-mode where the resolver maps a ``chat_id`` to a synthetic
+        conversation key.  Looking up by ``session_id`` alone misses the
+        live task in that case, leaving the new request to silently share
+        state with the old one.  We now query ``conversation_id`` first,
+        falling back to ``session_id`` for direct-CLI / sub-agent paths
+        where the caller did not supply a ``conversation_id``.
+
+        Resolution policy comes from
+        :func:`openakita.api.routes.double_texting.resolve_policy`
+        (channel-aware, with INTERRUPT down-graded to QUEUE while
+        ``settings.double_texting_allow_interrupt`` is off; pre-S4 default).
+
+        Returns one of:
+
+        * ``"proceed"`` — old task already settled / was inactive; the
+          caller should fall through to the normal ``begin_task()`` flow.
+        * ``"queued_then_proceed"`` — old task settled within the timeout
+          (or was abandoned on timeout); the caller may proceed.
+        * ``"preempted"`` — old task was actively cancelled and waited on
+          (or marked abandoned on timeout); the caller may proceed.
+
+        REJECT is **not** handled here: the HTTP/IM entry layer already
+        rejects via :class:`ConversationLifecycleManager` busy-lock 409s
+        before reaching Agent; if a REJECT-policy request still makes it
+        here it is treated as "proceed" (lifecycle already permitted the
+        run, presumably because the previous lock was finished).
+        """
+        # Lazy import to avoid circular: agent.py -> api.routes.* would
+        # otherwise pull the FastAPI router stack into Agent import time.
+        from ..api.routes.double_texting import DoubleTextingPolicy, resolve_policy
+        from ..config import settings
+        from .conversation_metrics import (
+            inc_abandon,
+            inc_preempt,
+            inc_queue,
+            inc_settled_timeout,
+        )
+
+        if not self.agent_state:
+            return "proceed"
+
+        # FIX 1: reason_stream / run register TaskState under conversation_id;
+        # query that first.  Fall back to session_id (legacy CLI / sub-agent
+        # paths) and then to current_task (best-effort cross-key search).
+        _prev_task = None
+        _reset_key: str = ""
+        if conversation_id:
+            _prev_task = self.agent_state.get_task_for_session(conversation_id)
+            if _prev_task:
+                _reset_key = conversation_id
+        if not _prev_task and session_id and session_id != conversation_id:
+            _prev_task = self.agent_state.get_task_for_session(session_id)
+            if _prev_task:
+                _reset_key = session_id
+        if not _prev_task:
+            _prev_task = self.agent_state.current_task
+            if _prev_task:
+                _reset_key = _prev_task.session_id or _prev_task.task_id
+        if not _prev_task:
+            return "proceed"
+
+        # 旧 task 已死（cancelled 或非活动状态）→ 清理 + proceed，与老逻辑一致
+        if _prev_task.cancelled or not _prev_task.is_active:
+            logger.info(
+                "[Session:%s] Resetting stale task (cancelled=%s, status=%s, "
+                "reset_key=%r)",
+                session_id,
+                _prev_task.cancelled,
+                _prev_task.status.value,
+                _reset_key,
+            )
+            self.agent_state.reset_task(session_id=_reset_key)
+            # Discard any pending_cancel that targeted the now-gone task to
+            # avoid mis-firing on the next task created here.
+            if session_id:
+                self._pending_cancels.pop(session_id, None)
+            return "proceed"
+
+        # 旧 task 仍在跑：按 policy 处理
+        channel = getattr(session, "channel", None) if session is not None else None
+        policy = resolve_policy(channel=channel)
+        timeout_s = max(0.5, settings.preempt_settle_timeout_ms / 1000.0)
+
+        if policy is DoubleTextingPolicy.REJECT:
+            # HTTP/IM 入口应已 409；走到这里意味着 lifecycle 允许进入但
+            # agent_state 里却还有活 task。安全处理：reset_task 让新流自己
+            # begin_task。打 warning 让运维注意。
+            logger.warning(
+                "[Session:%s] REJECT policy reached agent layer with active "
+                "task %s; HTTP layer should have blocked. Resetting to "
+                "recover.",
+                session_id,
+                _prev_task.task_id[:8],
+            )
+            _prev_task.abandoned = True
+            self.agent_state.reset_task(session_id=_reset_key)
+            if session_id:
+                self._pending_cancels.pop(session_id, None)
+            return "proceed"
+
+        if policy is DoubleTextingPolicy.QUEUE:
+            inc_queue(channel=channel)
+            try:
+                # NOTE: do NOT wrap this in ``asyncio.shield`` — when the
+                # outer coroutine is cancelled while the shield is in
+                # effect, the *inner* wait_for() keeps running with no
+                # awaiter, producing zombie "Task was destroyed but it
+                # is pending" warnings and a leaked asyncio task that
+                # only completes once the prev task naturally settles.
+                # We don't need shield here: ``inc_abandon`` below is
+                # sync, and CancelledError is only injected at await
+                # points — so the except-handler can always run to
+                # completion before re-raising.
+                await asyncio.wait_for(
+                    _prev_task.wait_until_settled(), timeout=timeout_s
+                )
+                logger.info(
+                    "[Session:%s] QUEUE: old task %s settled; proceeding",
+                    session_id,
+                    _prev_task.task_id[:8],
+                )
+            except asyncio.CancelledError:
+                # Outer cancel.  Don't write a marker (the new turn is
+                # being abandoned, not the old one), but DO record the
+                # event in telemetry so we can see queue-cancel rates.
+                try:
+                    inc_abandon(policy=policy.value, channel=channel)
+                except Exception:
+                    pass
+                raise
+            except TimeoutError:
+                logger.warning(
+                    "[Session:%s] QUEUE wait timed out after %dms; "
+                    "cancelling+abandoning old task %s and proceeding",
+                    session_id,
+                    settings.preempt_settle_timeout_ms,
+                    _prev_task.task_id[:8],
+                )
+                inc_settled_timeout(policy=policy.value, channel=channel)
+                inc_abandon(policy=policy.value, channel=channel)
+                # FIX 4: 不光标 abandoned (reason_stream 头部检查)，还要
+                # 调 cancel() 让 cancel_event 触发——长 running tool 的
+                # handler 监听的是 cancel_event，不是 abandoned 标志。
+                # 不调 cancel 的话 QUEUE 超时后老工具（shell / browser）
+                # 会继续跑直到自己返回，跟新 task 的工具产生 cwd / fs
+                # 副作用 race。
+                _prev_task.cancel(
+                    f"QUEUE timeout after {settings.preempt_settle_timeout_ms}ms"
+                )
+                _prev_task.abandoned = True
+                # S1.8 + P0-3: when abandoning, also surface whatever
+                # partial answer the user already saw — otherwise the
+                # timeline looks like the model never said anything,
+                # even if 800 chars had already streamed.
+                self._append_preempt_marker(
+                    session=session,
+                    policy=policy.value,
+                    prev_task_id=_prev_task.task_id,
+                    reason="queue_timeout_abandoned",
+                    partial_text=_prev_task.partial_text,
+                    partial_thinking=_prev_task.partial_thinking,
+                    partial_truncated=_prev_task.partial_truncated,
+                )
+            self.agent_state.reset_task(session_id=_reset_key)
+            if session_id:
+                self._pending_cancels.pop(session_id, None)
+            return "queued_then_proceed"
+
+        # INTERRUPT / STEER：cancel 旧 task，等 settled，超时则 abandon
+        inc_preempt(policy=policy.value, channel=channel)
+        logger.info(
+            "[Session:%s] Preempting active task %s (status=%s, policy=%s)",
+            session_id,
+            _prev_task.task_id[:8],
+            _prev_task.status.value,
+            policy.value,
+        )
+        _prev_task.cancel(f"被新请求抢占 (policy={policy.value})")
+        # S1.8 + P0-3: surface both the bare interrupt marker AND the
+        # partial assistant text/thinking that already streamed.  The
+        # user's UI now reads as "<half-finished answer>\n[interrupted]"
+        # instead of just "[interrupted]" with no context.
+        #
+        # P2-9: even if an upstream cancel arrives between cancel() and
+        # marker, we want the marker recorded so the user doesn't lose
+        # their partial answer.  ``_append_preempt_marker`` is sync, so
+        # wrapping the *next* await in shield ensures we got here.
+        self._append_preempt_marker(
+            session=session,
+            policy=policy.value,
+            prev_task_id=_prev_task.task_id,
+            reason="preempted_by_new_message",
+            partial_text=_prev_task.partial_text,
+            partial_thinking=_prev_task.partial_thinking,
+            partial_truncated=_prev_task.partial_truncated,
+        )
+        # S1.3: preempt 已显式 cancel 老 task，pending_cancel 失效，避免新
+        # task 被几秒前的过期 cancel 误杀。
+        if session_id:
+            popped = self._pending_cancels.pop(session_id, None)
+            if popped:
+                logger.debug(
+                    "[Preempt] Discarded pending_cancel for session=%s "
+                    "(preempt supersedes; reason=%r)",
+                    session_id,
+                    popped,
+                )
+        try:
+            # NOTE: do NOT wrap this in ``asyncio.shield`` — the inner
+            # wait_for would become a zombie task with no awaiter when
+            # the outer is cancelled.  The except-handler below is sync
+            # except for the final ``raise``, so cleanup still runs to
+            # completion before propagation.
+            await asyncio.wait_for(
+                _prev_task.wait_until_settled(), timeout=timeout_s
+            )
+        except asyncio.CancelledError:
+            # Outer cancel mid-wait — still flip abandoned so the old
+            # coroutine knows to bail out at its next iteration check.
+            _prev_task.abandoned = True
+            try:
+                inc_abandon(policy=policy.value, channel=channel)
+            except Exception:
+                pass
+            raise
+        except TimeoutError:
+            logger.warning(
+                "[Session:%s] Old task %s did not settle within %dms; "
+                "marking abandoned. Old coroutine will exit on its next "
+                "iteration check.",
+                session_id,
+                _prev_task.task_id[:8],
+                settings.preempt_settle_timeout_ms,
+            )
+            inc_settled_timeout(policy=policy.value, channel=channel)
+            inc_abandon(policy=policy.value, channel=channel)
+            _prev_task.abandoned = True
+        self.agent_state.reset_task(session_id=_reset_key)
+        return "preempted"
 
     def _consume_pending_cancel(self, session_id: str | None = None) -> str | None:
         """消费并返回挂起的取消原因，如果没有则返回 None。"""

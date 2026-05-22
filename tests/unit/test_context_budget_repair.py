@@ -203,7 +203,9 @@ def test_tool_failures_are_tracked_by_exact_invocation():
 
 
 def test_stream_tool_failure_tracking_uses_current_tool_call():
-    source = inspect.getsource(ReasoningEngine.reason_stream)
+    # v1.27.14 (plan v1.28, S1.5): reason_stream 是 outer wrapper，主体
+    # 重命名到 _reason_stream_impl；测试同步切到新方法。
+    source = inspect.getsource(ReasoningEngine._reason_stream_impl)
 
     assert 'tool_args=_stc.get("input", _stc.get("arguments", {}))' not in source
     assert 'tool_args=tc_rec.get("input", tc_rec.get("arguments", {}))' in source

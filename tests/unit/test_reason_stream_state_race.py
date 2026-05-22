@@ -95,7 +95,9 @@ class TestReasonStreamRaceGuard:
         return "\n".join(cleaned)
 
     def test_reason_stream_main_loop_transition_is_guarded(self) -> None:
-        src = self._strip_comments(inspect.getsource(ReasoningEngine.reason_stream))
+        # v1.27.14 (plan S1.5): hotfix 内容现在位于 _reason_stream_impl；
+        # reason_stream 是薄的 outer wrapper 只做 settle hook，不含原循环。
+        src = self._strip_comments(inspect.getsource(ReasoningEngine._reason_stream_impl))
         # Find the main-loop guard: "if state.status != TaskStatus.REASONING:"
         # followed (within a few lines) by `try:` then `state.transition(
         # TaskStatus.REASONING)` then `except ValueError:`.
@@ -117,7 +119,7 @@ class TestReasonStreamRaceGuard:
         """When the race-guard catches ValueError AND the state is terminal,
         we must short-circuit with an SSE error+done sequence instead of
         force-overwriting state and continuing into a dead LLM call."""
-        src = self._strip_comments(inspect.getsource(ReasoningEngine.reason_stream))
+        src = self._strip_comments(inspect.getsource(ReasoningEngine._reason_stream_impl))
         assert "state.is_terminal" in src, (
             "reason_stream must inspect state.is_terminal in the race-guard "
             "branch (issue #572 fix)."
@@ -157,7 +159,9 @@ class TestAllReasoningTransitionsGuarded:
     """
 
     def test_no_bare_state_transition_in_reason_stream(self) -> None:
-        src = inspect.getsource(ReasoningEngine.reason_stream)
+        # v1.27.14 (plan S1.5): hotfix 内容现在位于 _reason_stream_impl；
+        # wrapper 只做 settle hook，不含 state.transition 调用。
+        src = inspect.getsource(ReasoningEngine._reason_stream_impl)
         lines = src.splitlines()
         bare: list[tuple[int, str]] = []
         for idx, line in enumerate(lines):

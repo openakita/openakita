@@ -125,6 +125,52 @@ class Settings(BaseSettings):
         description="硬超时上限（秒），0=禁用（默认）。仅作为最终兜底，避免无限任务",
     )
 
+    # === Conversation Concurrency / Double-texting（v1.27.14, plan: conversation concurrency v1.28）===
+    # 同一 conversation_id 上短时间内重发的语义。每 channel 一个策略：
+    #   reject    — 旧任务在跑就 409 拒绝（不同 client 永远走这条）
+    #   queue     — 排在旧任务后面串行执行（默认，最稳）
+    #   interrupt — cancel 旧任务再开新流（需要 double_texting_allow_interrupt=True）
+    #   steer     — 把新消息注入到正在跑的 turn（实验性）
+    # 默认全部 queue/reject，避免对正在跑的 shell/browser 工具误中断。
+    # S4（v1.28.2）把工具 interruptBehavior 标注做完后，再考虑把 desktop 默认切到 interrupt。
+    double_texting_default: str = Field(
+        default="queue",
+        description="默认 double-texting 策略（reject/queue/interrupt/steer），未配 per-channel 时使用。",
+    )
+    double_texting_per_channel: dict = Field(
+        default_factory=lambda: {
+            "feishu": "reject",
+            "wework": "reject",
+            "wework_ws": "reject",
+            "telegram": "queue",
+            "dingtalk": "reject",
+            "qqbot": "queue",
+            "onebot": "queue",
+            "wechat": "reject",
+            "desktop": "queue",
+            "cli": "queue",
+        },
+        description="按 channel 名维度的 double-texting 策略覆盖；缺省回落到 double_texting_default。",
+    )
+    double_texting_allow_interrupt: bool = Field(
+        default=False,
+        description=(
+            "Feature flag：是否允许 INTERRUPT 策略真的 cancel 当前任务。"
+            "默认 False，任何 INTERRUPT 请求在 caller 层降级为 QUEUE。"
+            "S4（v1.28.2）完成工具 interrupt_behavior 标注后，可安全开启。"
+        ),
+    )
+    preempt_settle_timeout_ms: int = Field(
+        default=6000,
+        ge=500,
+        le=120000,
+        description=(
+            "preempt/queue 等旧任务 settled 的超时（毫秒）。"
+            "超时后老协程标记 abandoned，新流继续。"
+            "建议 > 最长工具 soft-timeout。"
+        ),
+    )
+
     # === ForceToolCall（工具护栏）===
     # 默认信任模型自主判断是否需要工具；仅由意图分析或用户配置显式开启追问。
     force_tool_call_max_retries: int = Field(

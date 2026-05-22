@@ -122,6 +122,34 @@ class TaskState:
     cancel_reason: str = ""
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
 
+    # Settle 机制（v1.27.14, plan: conversation concurrency v1.28, S1.5）
+    # ``settled_event`` 由 reasoning_engine 在任意出口路径（正常完成 / cancel /
+    # max_iter / exception）的 finally 中调用 :meth:`mark_settled` 设置，
+    # 用于 S1.4 抢占协议的 "wait until old task is finished" 语义。
+    # ``abandoned`` 由抢占方在 ``preempt_settle_timeout_ms`` 超时后置 True，
+    # reason_stream / run() 在每轮迭代头部检查到 True 时立即返回，避免老协程
+    # 继续写入共享 state（这是 issue #572 类崩溃的另一条来源）。
+    settled_event: asyncio.Event = field(default_factory=asyncio.Event)
+    abandoned: bool = False
+
+    # Partial assistant text accumulator (v1.27.15, plan v1.28 S2 P0-3).
+    # ``reason_stream`` outer wrapper appends every ``text_delta.content``
+    # here while a turn is streaming; ``_preempt_or_queue_prev_task``
+    # reads it on cancel/preempt to persist a ``marker_type="aborted_partial"``
+    # message into session history — so a user who got cut off mid-answer
+    # still sees the 500 chars they already received, instead of an opaque
+    # "task was interrupted" placeholder.
+    #
+    # Capped at ``_PARTIAL_TEXT_CAP`` chars to prevent runaway memory on
+    # very long answers (we only need enough to make the UI honest, not
+    # the full transcript — that flows through ``Session.add_message`` on
+    # the normal completion path).  Older content is dropped silently
+    # once the cap is exceeded; ``partial_truncated`` flips True so the
+    # marker can render an "…(truncated)" hint.
+    partial_text: str = ""
+    partial_thinking: str = ""
+    partial_truncated: bool = False
+
     # 单步跳过机制
     skip_event: asyncio.Event = field(default_factory=asyncio.Event)
     skip_reason: str = ""
@@ -197,6 +225,70 @@ class TaskState:
             f"cancel_event.is_set={self.cancel_event.is_set()}, "
             f"reason={reason!r}"
         )
+
+    # v1.27.15 (S2 P0-3) — cap chosen large enough to keep a typical
+    # answer intact (≈3-4 typical paragraphs) but small enough not to
+    # bloat per-task memory if a long generation is being abandoned.
+    _PARTIAL_TEXT_CAP: int = 16_000
+
+    def append_partial_text(self, content: str) -> None:
+        """Accumulate streamed assistant text for later abort-marker use.
+
+        Called by the ``reason_stream`` outer wrapper.  No-op when the
+        cap has already been hit (just flips ``partial_truncated``).
+        Cheap string concatenation — Python interns short repeated
+        substrings, and our growth is bounded by the cap.
+        """
+        if not content:
+            return
+        if len(self.partial_text) >= self._PARTIAL_TEXT_CAP:
+            self.partial_truncated = True
+            return
+        room = self._PARTIAL_TEXT_CAP - len(self.partial_text)
+        if len(content) <= room:
+            self.partial_text += content
+        else:
+            self.partial_text += content[:room]
+            self.partial_truncated = True
+
+    def append_partial_thinking(self, content: str) -> None:
+        """Accumulate streamed thinking text. Same cap as ``append_partial_text``."""
+        if not content:
+            return
+        if len(self.partial_thinking) >= self._PARTIAL_TEXT_CAP:
+            self.partial_truncated = True
+            return
+        room = self._PARTIAL_TEXT_CAP - len(self.partial_thinking)
+        if len(content) <= room:
+            self.partial_thinking += content
+        else:
+            self.partial_thinking += content[:room]
+            self.partial_truncated = True
+
+    def mark_settled(self) -> None:
+        """标记本任务已"settle"（推理循环所有清理已完成，可安全替换）。
+
+        Reasoning engine 在 ``reason_stream`` / ``run`` 的最外层 finally 中
+        无条件调用本方法；多次调用是幂等的。
+
+        v1.27.14 (plan S1.5): 用于 S1.4 ``_preempt_or_queue`` 协议的
+        "wait until old task is finished" 语义——抢占方通过
+        :meth:`wait_until_settled` 等待这个 event，避免与未清理完的老协程
+        共享 state。
+        """
+        _safe_event_set(self.settled_event)
+
+    async def wait_until_settled(self) -> None:
+        """异步等待本任务 settled。
+
+        Caller 负责包裹 :func:`asyncio.wait_for`/timeout；本方法本身是
+        无超时阻塞等待。
+
+        如果调用方在等待超时后想"放弃"老任务（不再让它写入共享 state），
+        应该设置 ``self.abandoned = True``；reason_stream / run 在每轮
+        迭代头部检测到 abandoned=True 后会立即退出。
+        """
+        await self.settled_event.wait()
 
     def request_skip(self, reason: str = "用户请求跳过当前步骤") -> None:
         """请求跳过当前正在执行的工具/步骤（不终止整个任务，跨循环安全）"""

@@ -32,7 +32,7 @@ from .types import normalize_tags
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 # Process-level singleton registry: same db_path → same MemoryStorage instance
 _instance_registry: dict[str, MemoryStorage] = {}
@@ -309,6 +309,8 @@ class MemoryStorage:
                 self._migrate_v2_to_v3(mig_conn, commit=False)
             if from_version < 4:
                 self._migrate_v3_to_v4(mig_conn, commit=False)
+            if from_version < 5:
+                self._migrate_v4_to_v5(mig_conn, commit=False)
 
             self._set_schema_version(_SCHEMA_VERSION, conn=mig_conn, commit=False)
             mig_conn.execute("COMMIT")
@@ -588,6 +590,44 @@ class MemoryStorage:
         if commit:
             c.commit()
 
+    def _migrate_v4_to_v5(
+        self,
+        conn: sqlite3.Connection | None = None,
+        *,
+        commit: bool = True,
+    ) -> None:
+        """Add ``conversation_turns.metadata`` JSON column.
+
+        v1.27.15 (plan v1.28 S2 P1-6).  Old schemas had no place to record
+        per-turn metadata, so ``Session.append_marker`` could persist the
+        bare role/content of a ``marker_type="aborted_partial"`` /
+        ``"preempted"`` message but lost the marker_type itself — which
+        meant the memory extraction lifecycle could not distinguish a
+        real assistant turn from a "[task was interrupted]" placeholder
+        and would happily index the placeholder as a long-term memory.
+
+        Idempotent ALTER (only adds the column if not already present, in
+        case the table was just created at v5 in this same session).
+        """
+        c = conn or self._conn
+        # FIX-D (post-S2 audit): do NOT swallow ALTER TABLE failures.  If
+        # we silently continue and then ``_set_schema_version(5)`` bumps
+        # the schema marker, the database lands in a "claims v5 but has
+        # no metadata column" state, causing every subsequent
+        # ``save_turn`` INSERT (11 placeholders against a 10-column
+        # table) to fail with OperationalError.  Letting the exception
+        # propagate makes the migration transaction rollback so the
+        # next startup retries cleanly at v4.
+        cur = c.execute("PRAGMA table_info(conversation_turns)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "metadata" not in cols:
+            c.execute("ALTER TABLE conversation_turns ADD COLUMN metadata TEXT")
+            logger.info(
+                "[MemoryStorage] v4→v5: added conversation_turns.metadata column"
+            )
+        if commit:
+            c.commit()
+
     def _create_tables(
         self,
         conn: sqlite3.Connection | None = None,
@@ -717,6 +757,7 @@ class MemoryStorage:
                 token_estimate INTEGER,
                 episode_id TEXT,
                 extracted BOOLEAN DEFAULT FALSE,
+                metadata TEXT,
                 UNIQUE(session_id, turn_index)
             )
         """)
@@ -1926,19 +1967,41 @@ class MemoryStorage:
         tool_results: list[dict] | None = None,
         timestamp: str | None = None,
         token_estimate: int | None = None,
+        metadata: dict | None = None,
     ) -> None:
+        """Persist a single turn.
+
+        v1.27.15 (P1-6): added ``metadata`` JSON column persistence.
+        Lifecycle extraction reads ``metadata.marker_type`` to skip
+        ``preempted`` / ``aborted_partial`` markers (they should NOT
+        become long-term memories).
+        """
         if not self._conn:
             return
         ts = timestamp or datetime.now().isoformat()
         has_tools = bool(tool_calls)
+        # Only persist non-empty metadata; saves a few bytes per row
+        # and keeps queries that filter ``metadata IS NULL`` meaningful.
+        meta_json: str | None = None
+        if metadata:
+            try:
+                meta_json = json.dumps(metadata, ensure_ascii=False, default=str)
+            except Exception:
+                meta_json = None
+        # Auto-mark marker turns as "extracted" so the lifecycle background
+        # loop never picks them up.  This is the second line of defense
+        # alongside the lifecycle-side filter — even if a future code path
+        # forgets to filter, the marker still won't pollute memory.
+        marker_type = (metadata or {}).get("marker_type")
+        is_marker = marker_type in ("preempted", "aborted_partial")
         with self._lock:
             try:
                 self._conn.execute(
                     """
                     INSERT OR REPLACE INTO conversation_turns
                     (session_id, turn_index, role, content, tool_calls, tool_results,
-                     has_tool_calls, timestamp, token_estimate, extracted)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE)
+                     has_tool_calls, timestamp, token_estimate, extracted, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -1950,6 +2013,8 @@ class MemoryStorage:
                         has_tools,
                         ts,
                         token_estimate,
+                        bool(is_marker),
+                        meta_json,
                     ),
                 )
                 self._conn.commit()
@@ -1968,7 +2033,12 @@ class MemoryStorage:
                     "ORDER BY timestamp ASC LIMIT ?",
                     (limit,),
                 )
-                return self._rows_to_dicts(cur, json_fields=["tool_calls", "tool_results"])
+                # v1.27.15: also parse ``metadata`` JSON so callers can
+                # short-circuit on ``marker_type``.
+                return self._rows_to_dicts(
+                    cur,
+                    json_fields=["tool_calls", "tool_results", "metadata"],
+                )
             except Exception as e:
                 logger.error(f"Failed to get unextracted turns: {e}")
                 return []

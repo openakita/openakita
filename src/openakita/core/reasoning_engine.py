@@ -1882,6 +1882,79 @@ class ReasoningEngine:
         is_sub_agent: bool = False,
         mode: str = "agent",
     ) -> str:
+        """Outer wrapper for :meth:`_run_impl` (v1.27.14, plan S1.5).
+
+        Mirrors the wrapper around :meth:`reason_stream`: guarantees
+        ``state.mark_settled()`` runs in ``finally`` on every exit path so
+        that S1.4 preempt protocol can ``await wait_until_settled()``
+        reliably.  The inner impl reports the resolved :class:`TaskState`
+        through ``_on_state_resolved`` so we don't re-resolve in ``finally``
+        (where ``self._state.current_task`` may already point at the new
+        task).
+        """
+        captured_state_ref: dict[str, Any] = {"state": None}
+
+        def _on_state_resolved(st: Any) -> None:
+            captured_state_ref["state"] = st
+
+        try:
+            return await self._run_impl(
+                messages,
+                tools=tools,
+                system_prompt=system_prompt,
+                base_system_prompt=base_system_prompt,
+                task_description=task_description,
+                task_monitor=task_monitor,
+                session_type=session_type,
+                interrupt_check_fn=interrupt_check_fn,
+                conversation_id=conversation_id,
+                thinking_mode=thinking_mode,
+                thinking_depth=thinking_depth,
+                progress_callback=progress_callback,
+                agent_profile_id=agent_profile_id,
+                endpoint_override=endpoint_override,
+                endpoint_policy=endpoint_policy,
+                force_tool_retries=force_tool_retries,
+                tool_evidence_required=tool_evidence_required,
+                is_sub_agent=is_sub_agent,
+                mode=mode,
+                _on_state_resolved=_on_state_resolved,
+            )
+        finally:
+            st = captured_state_ref.get("state")
+            if st is not None and not st.settled_event.is_set():
+                try:
+                    st.mark_settled()
+                except Exception:
+                    logger.debug(
+                        "[ReAct] mark_settled failed in run() outer wrapper finally",
+                        exc_info=True,
+                    )
+
+    async def _run_impl(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict],
+        system_prompt: str = "",
+        base_system_prompt: str = "",
+        task_description: str = "",
+        task_monitor: Any = None,
+        session_type: str = "cli",
+        interrupt_check_fn: Any = None,
+        conversation_id: str | None = None,
+        thinking_mode: str | None = None,
+        thinking_depth: str | None = None,
+        progress_callback: Any = None,
+        agent_profile_id: str = "default",
+        endpoint_override: str | None = None,
+        endpoint_policy: str = "prefer",
+        force_tool_retries: int | None = None,
+        tool_evidence_required: bool = False,
+        is_sub_agent: bool = False,
+        mode: str = "agent",
+        _on_state_resolved: Any = None,
+    ) -> str:
         """
         主推理循环: Reason -> Act -> Observe。
 
@@ -1939,6 +2012,19 @@ class ReasoningEngine:
             state.cancelled = False
             state.cancel_reason = ""
             state.cancel_event = asyncio.Event()
+
+        # v1.27.14 (plan: conversation concurrency v1.28, S1.5):
+        # 通知 outer wrapper 把这个 state 捕获，wrapper finally 才能精确
+        # mark_settled 这个具体的 state（避免 self._state.current_task
+        # 在 finally 阶段已被新流替换的 race）。
+        if _on_state_resolved is not None:
+            try:
+                _on_state_resolved(state)
+            except Exception:
+                logger.debug(
+                    "[ReAct] _on_state_resolved callback failed",
+                    exc_info=True,
+                )
 
         self._context_manager.set_cancel_event(state.cancel_event)
 
@@ -2126,6 +2212,19 @@ class ReasoningEngine:
         for iteration in range(max_iterations):
             self._last_working_messages = working_messages
             state.iteration = iteration
+
+            # v1.27.14 (plan: conversation concurrency v1.28, S1.5):
+            # abandoned 由 S1.4 preempt 协议在 wait_until_settled 超时后置 True。
+            # 老协程立即静默退出，绝不再写共享 state（避免 issue #572 类的
+            # "终态 -> REASONING" 状态机崩溃路径）。
+            if getattr(state, "abandoned", False):
+                logger.info(
+                    "[ReAct] Task %s abandoned by preempt; exiting silently at iter=%d",
+                    state.task_id[:8],
+                    iteration,
+                )
+                tracer.end_trace(metadata={"result": "abandoned", "iterations": iteration})
+                return ""
 
             # 检查取消
             if state.cancelled:
@@ -3609,6 +3708,111 @@ class ReasoningEngine:
         request_id: str = "",
         turn_id: str = "",
     ):
+        """Outer wrapper for :meth:`_reason_stream_impl` (v1.27.14, plan S1.5).
+
+        Adds a top-level ``try/finally`` that guarantees ``state.mark_settled()``
+        runs on every exit path (normal completion, exception, generator close,
+        explicit ``return``).  Inner impl notifies us of the resolved
+        ``TaskState`` through a tiny callback so we don't have to re-resolve
+        it in ``finally`` (avoiding the "new task already took over current_task"
+        race).
+        """
+        captured_state_ref: dict[str, Any] = {"state": None}
+
+        def _on_state_resolved(st: Any) -> None:
+            captured_state_ref["state"] = st
+
+        try:
+            async for event in self._reason_stream_impl(
+                messages,
+                tools=tools,
+                system_prompt=system_prompt,
+                base_system_prompt=base_system_prompt,
+                task_description=task_description,
+                task_monitor=task_monitor,
+                session_type=session_type,
+                plan_mode=plan_mode,
+                mode=mode,
+                endpoint_override=endpoint_override,
+                endpoint_policy=endpoint_policy,
+                conversation_id=conversation_id,
+                thinking_mode=thinking_mode,
+                thinking_depth=thinking_depth,
+                agent_profile_id=agent_profile_id,
+                session=session,
+                force_tool_retries=force_tool_retries,
+                tool_evidence_required=tool_evidence_required,
+                is_sub_agent=is_sub_agent,
+                request_id=request_id,
+                turn_id=turn_id,
+                _on_state_resolved=_on_state_resolved,
+            ):
+                # v1.27.15 (S2 P0-3): record streamed text/thinking into
+                # TaskState so a later cancel/preempt can persist a
+                # ``marker_type="aborted_partial"`` message containing
+                # whatever the user has already seen.  Cheap O(len)
+                # per-event work; capped at 16k chars per channel.
+                _st = captured_state_ref.get("state")
+                if _st is not None:
+                    _et = event.get("type")
+                    if _et in ("text_delta", "chain_text"):
+                        _content = event.get("content", "")
+                        if isinstance(_content, str) and _content:
+                            try:
+                                _st.append_partial_text(_content)
+                            except Exception:  # pragma: no cover
+                                logger.debug(
+                                    "[ReAct-Stream] append_partial_text failed",
+                                    exc_info=True,
+                                )
+                    elif _et in ("thinking_delta", "reasoning_delta"):
+                        _content = event.get("content", "")
+                        if isinstance(_content, str) and _content:
+                            try:
+                                _st.append_partial_thinking(_content)
+                            except Exception:  # pragma: no cover
+                                logger.debug(
+                                    "[ReAct-Stream] append_partial_thinking failed",
+                                    exc_info=True,
+                                )
+                yield event
+        finally:
+            st = captured_state_ref.get("state")
+            if st is not None and not st.settled_event.is_set():
+                try:
+                    st.mark_settled()
+                except Exception:
+                    logger.debug(
+                        "[ReAct-Stream] mark_settled failed in outer wrapper finally",
+                        exc_info=True,
+                    )
+
+    async def _reason_stream_impl(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        system_prompt: str = "",
+        base_system_prompt: str = "",
+        task_description: str = "",
+        task_monitor: Any = None,
+        session_type: str = "desktop",
+        plan_mode: bool = False,
+        mode: str = "agent",
+        endpoint_override: str | None = None,
+        endpoint_policy: str = "prefer",
+        conversation_id: str | None = None,
+        thinking_mode: str | None = None,
+        thinking_depth: str | None = None,
+        agent_profile_id: str = "default",
+        session: Any = None,
+        force_tool_retries: int | None = None,
+        tool_evidence_required: bool = False,
+        is_sub_agent: bool = False,
+        request_id: str = "",
+        turn_id: str = "",
+        _on_state_resolved: Any = None,
+    ):
         """
         流式推理循环，为 HTTP API (SSE) 设计。
 
@@ -3672,6 +3876,19 @@ class ReasoningEngine:
             state.cancelled = False
             state.cancel_reason = ""
             state.cancel_event = asyncio.Event()
+
+        # v1.27.14 (plan: conversation concurrency v1.28, S1.5):
+        # 通知 outer wrapper 把这个 state 捕获，wrapper finally 才能精确
+        # mark_settled 这个具体的 state（避免 self._state.current_task
+        # 在 finally 阶段已被新流替换的 race）。
+        if _on_state_resolved is not None:
+            try:
+                _on_state_resolved(state)
+            except Exception:
+                logger.debug(
+                    "[ReAct-Stream] _on_state_resolved callback failed",
+                    exc_info=True,
+                )
 
         self._context_manager.set_cancel_event(state.cancel_event)
 
@@ -3900,6 +4117,19 @@ class ReasoningEngine:
             for _iteration in range(max_iterations):
                 self._last_working_messages = working_messages
                 state.iteration = _iteration
+
+                # v1.27.14 (plan: conversation concurrency v1.28, S1.5):
+                # abandoned 由 S1.4 preempt 协议在 wait_until_settled 超时后置 True。
+                # 老协程立即静默退出（不 yield "error"，让被抢占体感丝滑），
+                # outer wrapper finally 兜底 mark_settled。
+                if getattr(state, "abandoned", False):
+                    logger.info(
+                        "[ReAct-Stream] Task %s abandoned by preempt; exiting silently at iter=%d",
+                        state.task_id[:8],
+                        _iteration,
+                    )
+                    yield {"type": "done"}
+                    return
 
                 # --- 取消检查 ---
                 if state.cancelled:

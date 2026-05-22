@@ -235,6 +235,105 @@ class ShellTool:
     # 进程清理（Windows 安全杀死进程树）
     # ------------------------------------------------------------------
 
+    # v1.27.15 (S2 P2-8): soft-kill grace and partial-drain caps.
+    # Tuned so a cancelled `ls -R /` still surfaces enough head-of-output
+    # to be useful in the abort marker, without unbounded memory cost.
+    _SOFT_KILL_GRACE_S = 1.5
+    _PARTIAL_DRAIN_CAP_BYTES = 64 * 1024  # 64KB per stream
+    _PARTIAL_DRAIN_TIMEOUT_S = 0.25
+
+    async def _soft_kill_then_hard(
+        self, process: asyncio.subprocess.Process
+    ) -> None:
+        """Try a polite SIGINT/Ctrl-C first, then hard-kill if needed.
+
+        v1.27.15 (S2 P2-8).  Previously cancel went straight to
+        ``taskkill /T /F`` / ``process.kill()`` which sends SIGKILL —
+        the child gets no chance to flush stdout or release file
+        handles.  A polite SIGINT lets well-behaved programs print
+        their pending output and exit cleanly, so the abort marker
+        can actually surface "what the tool was doing when we cut it
+        off".  Falls back to the existing hard kill after a 1.5s
+        grace.
+
+        On Windows we don't have a clean way to forward Ctrl-C to a
+        detached process from the parent's event loop, so we go
+        straight to ``_kill_process_tree`` — taskkill /T /F is still
+        more reliable than the asyncio default for Windows process
+        trees (the original reason ``_kill_process_tree`` exists).
+        """
+        if process.returncode is not None:
+            return
+
+        if self._is_windows:
+            # No reliable SIGINT path on Windows without Job Objects;
+            # rely on the existing tree-kill.  ``communicate`` will
+            # naturally surface whatever was already in the pipe.
+            await self._kill_process_tree(process)
+            return
+
+        try:
+            import signal as _signal
+
+            process.send_signal(_signal.SIGINT)
+        except Exception as exc:
+            logger.debug("send_signal(SIGINT) failed pid=%s: %s", process.pid, exc)
+            await self._kill_process_tree(process)
+            return
+
+        try:
+            await asyncio.wait_for(
+                process.wait(), timeout=self._SOFT_KILL_GRACE_S
+            )
+            return
+        except TimeoutError:
+            logger.info(
+                "Soft kill grace (%.1fs) elapsed, escalating to tree kill pid=%s",
+                self._SOFT_KILL_GRACE_S,
+                process.pid,
+            )
+            await self._kill_process_tree(process)
+
+    async def _drain_partial_output(
+        self, process: asyncio.subprocess.Process
+    ) -> dict:
+        """Best-effort drain of any data still buffered in stdout/stderr pipes.
+
+        v1.27.15 (S2 P2-8).  Called after ``_soft_kill_then_hard`` —
+        the polite signal may have triggered a final flush from the
+        child.  We read up to ``_PARTIAL_DRAIN_CAP_BYTES`` per stream
+        with a tight timeout so this never hangs the abort path.
+
+        Returns a dict ``{stdout, stderr, returncode, reason}`` ready
+        to be JSON-serialised into a CancelledError args slot or a
+        cancel marker.  Always returns valid keys (empty strings on
+        failure) so callers don't need to guard.
+        """
+        out_buf = b""
+        err_buf = b""
+        try:
+            if process.stdout is not None:
+                out_buf = await asyncio.wait_for(
+                    process.stdout.read(self._PARTIAL_DRAIN_CAP_BYTES),
+                    timeout=self._PARTIAL_DRAIN_TIMEOUT_S,
+                )
+        except (TimeoutError, Exception) as exc:  # noqa: BLE001
+            logger.debug("partial stdout drain skipped: %s", exc)
+        try:
+            if process.stderr is not None:
+                err_buf = await asyncio.wait_for(
+                    process.stderr.read(self._PARTIAL_DRAIN_CAP_BYTES),
+                    timeout=self._PARTIAL_DRAIN_TIMEOUT_S,
+                )
+        except (TimeoutError, Exception) as exc:  # noqa: BLE001
+            logger.debug("partial stderr drain skipped: %s", exc)
+        return {
+            "stdout": self._decode_output(out_buf),
+            "stderr": self._decode_output(err_buf),
+            "returncode": process.returncode,
+            "reason": "cancelled",
+        }
+
     async def _kill_process_tree(self, process: asyncio.subprocess.Process) -> None:
         """杀死进程及其所有子进程，然后带超时地等待退出。
 
@@ -499,11 +598,44 @@ class ShellTool:
             return result
 
         except asyncio.CancelledError:
-            # 三路竞速 cancel/skip：立即杀掉子进程，实时中断
-            logger.warning(f"Command cancelled, killing subprocess: {original_command[:200]}")
+            # v1.27.15 (S2 P2-8): soft-kill-then-hard + drain partial.
+            # Previously: SIGKILL immediately → user's abort marker said
+            # "[interrupted]" with zero context for what the shell was
+            # doing.  Now we send SIGINT first (POSIX), give 1.5s for the
+            # child to flush, then read whatever's still in the stdout
+            # pipe and attach it to the CancelledError args so the
+            # caller can fold it into the preempt marker.  Falls back
+            # to the existing tree kill on Windows / timeout / signal
+            # failure — so this is strictly additive.
+            logger.warning(
+                "Command cancelled, soft-killing subprocess: %s",
+                original_command[:200],
+            )
+            partial_payload: dict = {}
             if process and process.returncode is None:
-                await self._kill_process_tree(process)
-            raise  # 重新抛出，让上层三路竞速逻辑处理
+                try:
+                    await self._soft_kill_then_hard(process)
+                except Exception as _exc:  # pragma: no cover - defensive
+                    logger.debug("soft kill failed: %s", _exc)
+                try:
+                    partial_payload = await self._drain_partial_output(process)
+                except Exception as _exc:  # pragma: no cover - defensive
+                    logger.debug("partial drain failed: %s", _exc)
+                if partial_payload and (
+                    partial_payload.get("stdout") or partial_payload.get("stderr")
+                ):
+                    logger.info(
+                        "Shell cancel partial: cmd=%r stdout=%d stderr=%d",
+                        original_command[:100],
+                        len(partial_payload.get("stdout", "")),
+                        len(partial_payload.get("stderr", "")),
+                    )
+            # Re-raise to honor asyncio cancel contract.  The partial
+            # snapshot rides as the first arg of the CancelledError;
+            # most upstream handlers ignore args and just re-raise,
+            # which is fine — callers that want partial can do
+            # ``except asyncio.CancelledError as ce: ce.args[0]``.
+            raise asyncio.CancelledError(partial_payload or "shell_cancelled") from None
 
         except TimeoutError:
             logger.error(f"Command timed out after {cmd_timeout}s")

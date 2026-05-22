@@ -197,6 +197,35 @@ class SessionContext:
                 self.update_focus_terms(content)
             return True
 
+    def append_marker(self, role: str, content: str, **metadata) -> None:
+        """直接追加一条消息，**绕过** :meth:`add_message` 的去重逻辑。
+
+        v1.27.14 (plan: conversation concurrency v1.28, S1.8):
+        ``_preempt_or_queue_prev_task`` 抢占 / abandon 老 task 时，需要在
+        会话历史里留一条 ``"[上一条任务被中断]"`` 标记，让前端时间线和
+        后续 LLM 上下文知道这里"老回答没说完"。这种 marker 几秒内连发可能
+        相同（连续被多次抢占），dedup 会把后几条丢掉——但 dedup 丢掉
+        marker 会让会话历史**变得不诚实**（前端"以为"老回答完整结束）。
+
+        本方法保证：每次调用都真的 append 一条，不做任何去重检查。
+
+        Args:
+            role: 通常是 ``"assistant"`` 或 ``"system"``；当作普通消息渲染。
+            content: marker 文本。
+            **metadata: 额外字段（``marker_type``、``preempted_task_id``、
+                ``policy`` 等）一并存入这条消息记录，便于前端按 marker_type
+                决定渲染样式。
+        """
+        with self._msg_lock:
+            self.messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "timestamp": datetime.now().isoformat(),
+                    **metadata,
+                }
+            )
+
     _FOCUS_FILE_RE = re.compile(
         r"(?:[A-Za-z]:[\\/][^\s\"'<>|]+|[\w./\\-]+\.(?:py|ts|tsx|js|jsx|md|json|yaml|yml|toml|rs|go))"
     )
@@ -583,6 +612,32 @@ class Session:
     _HEAVY_METADATA_KEYS = ("chain_summary", "tool_summary", "artifacts")
     # 保留最近 N 条消息的完整元数据（前端展示思考链等），更早的仅保留 base content
     _METADATA_PRESERVE_WINDOW = 50
+
+    def append_marker(self, role: str, content: str, **metadata) -> None:
+        """直接追加一条消息（绕过去重）；用于 cancel/preempt marker。
+
+        v1.27.14 (plan v1.28, S1.8). 详见 :meth:`SessionContext.append_marker`.
+
+        FIX 5 (vs v1.27.14 first cut): also persist to SqliteTurnStore so
+        markers survive a process restart.  Without persistence, after a
+        backend restart the frontend timeline silently looks "as if the
+        previous answer finished normally" — defeating the whole point
+        of writing the marker.  We mirror ``Session.add_message``'s
+        best-effort persistence path (history_db_merge_v1 feature-gated,
+        skip on transient_for_llm, swallow exceptions to never block
+        the chat loop).
+        """
+        self.context.append_marker(role, content, **metadata)
+        self.touch()
+
+        # Best-effort SQLite persistence, identical guards to ``add_message``.
+        try:
+            if role in ("user", "assistant", "tool") and not metadata.get(
+                "transient_for_llm"
+            ):
+                self._write_turn_to_store(role, content, metadata)
+        except Exception as exc:
+            logger.debug(f"[Session] append_marker write_turn_to_store skipped: {exc}")
 
     def add_message(self, role: str, content: str, **metadata) -> bool:
         """添加消息并更新活跃时间。返回 True 表示消息被添加，False 表示被去重跳过。"""

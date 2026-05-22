@@ -350,8 +350,47 @@ class LifecycleManager:
         if not unextracted:
             return {"processed": 0, "partial": False} if deadline_monotonic else 0
 
+        # v1.27.15 (S2 P1-6): drop ``preempted`` / ``aborted_partial``
+        # markers before they reach the LLM-driven extractor.  These
+        # placeholders are UI-only signals that a turn was cut short
+        # — extracting "[上一条任务被新请求中断]" as a long-term
+        # memory would actively confuse the agent (it would learn the
+        # user wants tasks to be interrupted!) and waste extraction
+        # tokens.  We immediately ``mark_turns_extracted`` so they're
+        # not picked up on the next pass either.
+        _markers_per_session: dict[str, list[int]] = defaultdict(list)
+        _real_turns: list[dict] = []
+        for _t in unextracted:
+            _meta = _t.get("metadata")
+            _marker_type = (
+                _meta.get("marker_type") if isinstance(_meta, dict) else None
+            )
+            if _marker_type in ("preempted", "aborted_partial"):
+                _markers_per_session[_t["session_id"]].append(_t["turn_index"])
+            else:
+                _real_turns.append(_t)
+        if _markers_per_session:
+            _total_markers = sum(len(v) for v in _markers_per_session.values())
+            logger.debug(
+                "[Lifecycle] skipping %d marker turn(s) across %d session(s)",
+                _total_markers,
+                len(_markers_per_session),
+            )
+            for _sid, _indices in _markers_per_session.items():
+                try:
+                    self.store.mark_turns_extracted(_sid, _indices)
+                except Exception as _exc:  # pragma: no cover - defensive
+                    logger.debug(
+                        "[Lifecycle] mark_turns_extracted(markers) failed for %s: %s",
+                        _sid,
+                        _exc,
+                    )
+
+        if not _real_turns:
+            return {"processed": 0, "partial": False} if deadline_monotonic else 0
+
         by_session: dict[str, list[dict]] = defaultdict(list)
-        for turn in unextracted:
+        for turn in _real_turns:
             by_session[turn["session_id"]].append(turn)
 
         total = 0

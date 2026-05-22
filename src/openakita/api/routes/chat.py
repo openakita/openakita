@@ -1016,17 +1016,80 @@ async def _stream_chat(
         _disconnect_watcher_task = asyncio.create_task(_disconnect_watcher())
 
         # --- 主 SSE 事件循环：从 queue 读取事件并转发 ---
-        # 每 SSE_KEEPALIVE_INTERVAL 秒无真实事件时发送 keepalive，
-        # 防止前端 fetch 连接因长时间无数据而超时断开（LLM 重试等场景）。
+        # v1.27.15 P0-2: every `text_delta` / `thinking_delta` / `chain_text`
+        # used to round-trip as its own HTTP chunk, saturating the React
+        # bubble-renderer on long contexts ("字一个一个慢慢出" 用户反馈).
+        # We now coalesce these high-frequency deltas through a 50ms /
+        # 2000-char window before emitting (DeltaCoalescer).  Non-delta
+        # events (tool_call_*, ask_user, artifact, ...) bypass the
+        # coalescer and remain on the low-latency path; arrival of any
+        # non-delta event also flushes pending deltas first so ordering
+        # is preserved end-to-end.
+        from ...core.sse_throttle import DeltaCoalescer
+
+        coalescer = DeltaCoalescer()
+
+        # Keepalive: 15s of true silence still needs a comment ping so
+        # nginx / cloudflare / corp proxies don't drop the SSE socket
+        # for being idle.  We can no longer use the agent_queue wait
+        # timeout for this — the coalescer needs us to tick the loop
+        # roughly every 50ms — so track elapsed-since-last-emit
+        # independently.
         SSE_KEEPALIVE_INTERVAL = 15.0
+        COALESCER_TICK_INTERVAL = 0.05
+        _last_emit_ts = time.time()
         _agent_errored = False
         _agent_error_msg = ""
+
+        def _emit_via_coalescer(
+            etype: str, edata: dict | None
+        ) -> list[str]:
+            """Push one upstream event through the coalescer.
+
+            Returns the (possibly empty) list of fully-formed SSE
+            frames to ``yield``.  ``_sse`` is called once per merged
+            event so ``_full_reply`` / ``_reply_chars`` / replay
+            ringbuffer all see the post-merge content (their semantics
+            are unchanged — the merged event is functionally identical
+            to the sum of its parts).
+            """
+            out: list[str] = []
+            for et, ed in coalescer.offer(etype, edata or {}):
+                out.append(_sse(et, ed))
+            return out
+
+        def _tick_coalescer() -> list[str]:
+            """Flush any time-window-due bucket without taking new input."""
+            out: list[str] = []
+            for et, ed in coalescer.tick():
+                out.append(_sse(et, ed))
+            return out
+
+        def _drain_coalescer() -> list[str]:
+            out: list[str] = []
+            for et, ed in coalescer.drain():
+                out.append(_sse(et, ed))
+            return out
+
         while True:
             try:
-                event = await asyncio.wait_for(_agent_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
+                event = await asyncio.wait_for(
+                    _agent_queue.get(), timeout=COALESCER_TICK_INTERVAL
+                )
             except TimeoutError:
-                if not _client_disconnected and not await _check_disconnected():
-                    yield _sse("heartbeat", {"ts": time.time()})
+                # No new event in the last 50ms.  Two responsibilities:
+                # 1) Flush any time-window-due coalescer buckets.
+                # 2) If we're approaching the 15s keepalive deadline,
+                #    emit a heartbeat to keep proxies happy.
+                _is_conn = not _client_disconnected and not await _check_disconnected()
+                if _is_conn:
+                    for line in _tick_coalescer():
+                        if line:
+                            _last_emit_ts = time.time()
+                            yield line
+                    if time.time() - _last_emit_ts >= SSE_KEEPALIVE_INTERVAL:
+                        yield _sse("heartbeat", {"ts": time.time()})
+                        _last_emit_ts = time.time()
                 continue
             if event is None:
                 break
@@ -1037,12 +1100,23 @@ async def _stream_chat(
                 _agent_errored = True
                 _agent_error_msg = event.get("__exc_msg__") or "Unknown error"
                 if not _client_disconnected:
+                    # Flush any buffered deltas before the error so the
+                    # user sees as much of the partial answer as possible.
+                    for line in _drain_coalescer():
+                        if line:
+                            yield line
                     yield _sse("error", {"message": _agent_error_msg, "is_truncated": True})
                     yield _sse("done")
                 break
 
             # 拦截 done 事件：不在此处转发，等 usage 收集完毕后统一发送
             if event_type == "done":
+                # ensure any pending deltas get out before we hold done
+                if not _client_disconnected:
+                    for line in _drain_coalescer():
+                        if line:
+                            _last_emit_ts = time.time()
+                            yield line
                 continue
 
             # 捕获 ask_user 问题文本和选项（用于 session 保存）
@@ -1051,14 +1125,20 @@ async def _stream_chat(
                 _ask_user_options = event.get("options", [])
                 _ask_user_questions = event.get("questions", [])
 
-            # Always call _sse to accumulate _full_reply regardless of connection
+            # Push the event through the coalescer.  For non-delta types
+            # it bypasses immediately (potentially preceded by pending
+            # delta flushes); for delta types it may be buffered.
             event_data = {k: v for k, v in event.items() if k != "type"}
-            sse_line = _sse(event_type, event_data)
+            _emitted = _emit_via_coalescer(event_type, event_data)
 
-            # Client disconnected — text is accumulated by _sse above, skip SSE output
+            # Client disconnected — text is accumulated by _sse above
+            # (which we still call via the coalescer), skip wire output.
             _is_connected = not _client_disconnected
             if _is_connected and not await _check_disconnected():
-                yield sse_line
+                for line in _emitted:
+                    if line:
+                        _last_emit_ts = time.time()
+                        yield line
             else:
                 continue
 
@@ -1070,11 +1150,17 @@ async def _stream_chat(
                         http_request.app.state.last_link_diagnostic = dict(_source_used)
                 except Exception:
                     pass
+                # FIX-F (post-S2 audit): these direct-yield paths bypass
+                # the coalescer, so we need to update _last_emit_ts
+                # ourselves or the heartbeat watchdog will think the
+                # stream has been silent and emit spurious pings.
                 yield _sse("source_used", _source_used)
+                _last_emit_ts = time.time()
 
             _mcp_call = _extract_mcp_call(event)
             if _mcp_call:
                 yield _sse("mcp_call", _mcp_call)
+                _last_emit_ts = time.time()
 
             # deliver_artifacts / send_sticker 都可能返回带 receipts 的 JSON
             _artifact_tools = ("deliver_artifacts", "send_sticker")
@@ -1099,6 +1185,7 @@ async def _stream_chat(
                             }
                             _collected_artifacts.append(art_data)
                             yield _sse("artifact", art_data)
+                            _last_emit_ts = time.time()
                             _emitted += 1
                     logger.info(
                         f"[Chat API] Artifact SSE: tool={event.get('tool')}, "
@@ -1136,6 +1223,7 @@ async def _stream_chat(
                                 }
                                 _collected_artifacts.append(art_data)
                                 yield _sse("artifact", art_data)
+                                _last_emit_ts = time.time()
                                 _del_emitted += 1
                     except (json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
                         logger.warning(
@@ -1161,6 +1249,7 @@ async def _stream_chat(
                         ui_pref = result_data.get("ui_preference")
                         if ui_pref:
                             yield _sse("ui_preference", ui_pref)
+                            _last_emit_ts = time.time()
                 except (json.JSONDecodeError, TypeError, KeyError):
                     pass
 
@@ -1319,6 +1408,13 @@ async def _stream_chat(
                 session_manager.mark_dirty()
 
         if not _client_disconnected and not _agent_errored:
+            # P0-2: ensure any final pending deltas are flushed before
+            # we send the terminating ``done`` — otherwise the last few
+            # tens of characters of the answer can race the done frame
+            # and be dropped by a strict client.
+            for _final_line in _drain_coalescer():
+                if _final_line:
+                    yield _final_line
             # 透传本轮真实生效的 mode（IntentAnalyzer 可能把 CHAT 类闲聊静默
             # 降级为 ask），让前端能识别"用户传 agent 但被降为 ask"的场景。
             _eff_mode = getattr(actual_agent, "_last_effective_mode", None) or chat_request.mode
@@ -1334,6 +1430,14 @@ async def _stream_chat(
     except Exception as e:
         logger.error(f"Chat stream error: {e}", exc_info=True)
         if not _client_disconnected:
+            # Flush remaining deltas so the user sees as much of the
+            # partial answer as possible before the error frame.
+            try:
+                for _err_line in _drain_coalescer():
+                    if _err_line:
+                        yield _err_line
+            except Exception:
+                pass
             err_msg = str(e)[:500] or f"{type(e).__name__}: unknown error"
             yield _sse("error", {"message": err_msg})
             yield _sse("done")
@@ -1427,6 +1531,29 @@ async def _stream_chat(
                         "last_message_preview": _full_reply[:100],
                         "timestamp": time.time(),
                     },
+                )
+
+        # v1.27.14 (plan: v1.28, S1.6): mark turn finished so subsequent
+        # retries with the same turn_id receive turn_already_finished 409
+        # instead of opening a duplicate stream.
+        _turn_id = (getattr(chat_request, "turn_id", "") or "").strip()
+        if _turn_id:
+            from .turn_registry import get_turn_registry
+
+            try:
+                if _full_reply:
+                    await get_turn_registry().mark_succeeded(
+                        _turn_id, summary=_full_reply[:80]
+                    )
+                else:
+                    await get_turn_registry().mark_failed(
+                        _turn_id, summary="no_reply"
+                    )
+            except Exception:
+                logger.debug(
+                    "[Chat API] turn_registry mark failed for turn_id=%s",
+                    _turn_id,
+                    exc_info=True,
                 )
 
 
@@ -1697,12 +1824,66 @@ async def chat(request: Request, body: ChatRequest):
     elif pending_response is not None:
         return pending_response
 
+    # ── Per-turn idempotency short-circuit ──
+    # (v1.27.14, plan: conversation concurrency v1.28, S1.6)
+    # 客户端可在 body.turn_id 提供一个稳定 ID（前端 retry / SSE 重连用同
+    # 一个 turn_id；用户重新点 send 用新 turn_id）。同 turn_id 在 TTL=60s
+    # 内重发返回 409 + Retry-After，避免重复开 SSE 流写脏 session。
+    turn_id = (getattr(body, "turn_id", None) or "").strip()
+    if turn_id:
+        from .turn_registry import get_turn_registry
+
+        registry = get_turn_registry()
+        status, _rec = await registry.begin(turn_id)
+        if status == "in_flight":
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "turn_already_processing",
+                    "turn_id": turn_id,
+                    "conversation_id": conversation_id,
+                    "retry_after_ms": 2000,
+                    "message": "上一次相同请求仍在处理中，请稍后再试。",
+                },
+                headers={"Retry-After": "2"},
+            )
+        # succeeded / failed: 也按"重复请求"短路；客户端要新请求得换 turn_id。
+        if status in ("succeeded", "failed"):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "turn_already_finished",
+                    "turn_id": turn_id,
+                    "conversation_id": conversation_id,
+                    "previous_status": status,
+                    "message": "该 turn_id 上一次已完成。若是新消息，请使用新的 turn_id。",
+                },
+            )
+
     # ── Busy-lock check (via lifecycle manager) ──
+    # v1.27.14 FIX 2/3: honour DoubleTextingPolicy at the HTTP layer.
+    # Default for desktop is QUEUE (per settings.double_texting_per_channel).
+    # On QUEUE same-client conflict we await wait_for_idle and retry once
+    # before falling back to 409.  Header X-OpenAkita-DoubleTexting can
+    # override per request (used by frontend "force interrupt" button when
+    # double_texting_allow_interrupt is enabled).
+    from .double_texting import resolve_policy
+
+    _dt_header = request.headers.get("x-openakita-doubletexting")
+    _dt_policy = resolve_policy(channel="desktop", header_value=_dt_header)
+
     lifecycle = get_lifecycle_manager()
     busy_gen = 0
     if client_id:
         try:
-            conflict, busy_gen = await lifecycle.start(conversation_id, client_id)
+            start_result = await lifecycle.start(
+                conversation_id,
+                client_id,
+                policy=_dt_policy,
+                turn_id=turn_id or None,
+            )
+            conflict = start_result.conflict
+            busy_gen = start_result.generation
         except Exception as exc:
             return _chat_startup_error_response(
                 exc,
@@ -1710,7 +1891,332 @@ async def chat(request: Request, body: ChatRequest):
                 request_id=request_id,
                 stage="conversation_lifecycle",
             )
+
+        # P1-4 (v1.27.15): STEER policy short-circuit.  Lifecycle didn't
+        # acquire the lock; we just need to hand the new message off to
+        # the still-running ReAct loop via insert_user_message and tell
+        # the client "we got it, follow the existing stream via
+        # /api/chat/resume".
+        if start_result.steered:
+            actual_agent = _resolve_agent(_get_existing_agent(request, conversation_id))
+            ok = False
+            if actual_agent is not None:
+                try:
+                    # FIX-E (post-S2 audit): STEER is "user wanted to add
+                    # to the running task" — the new message MUST land in
+                    # the active task's pending_user_inserts buffer even
+                    # if the client immediately disconnects (e.g. mobile
+                    # browser tab swipe-away).  Without shield, a client
+                    # cancel between the HTTP request landing and the
+                    # insert completing would silently drop the message
+                    # and the user would think "I sent it but the agent
+                    # never saw it."  insert_user_message is fast (single
+                    # asyncio.Lock acquire + list append), so the shield
+                    # cannot meaningfully delay cancel propagation.
+                    ok = await asyncio.shield(
+                        actual_agent.insert_user_message(
+                            body.message or "",
+                            session_id=conversation_id,
+                        )
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("[Chat API] STEER insert failed: %s", exc)
+                    ok = False
+            if turn_id:
+                from .turn_registry import get_turn_registry
+
+                # Mark this turn as succeeded so a retry with the same
+                # turn_id is treated as duplicate (steered messages are
+                # not "new turns" — they are appendices to the active one).
+                await get_turn_registry().mark_succeeded(
+                    turn_id, summary="steered"
+                )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": "steered" if ok else "steer_failed",
+                    "conversation_id": conversation_id,
+                    "policy": _dt_policy.value,
+                    "message": (
+                        "已加入当前任务的上下文，请通过 /api/chat/resume 跟随原回复。"
+                        if ok
+                        else "Steer 失败：当前任务可能已结束，请重试发送新消息。"
+                    ),
+                    "resume_hint": {
+                        "endpoint": "/api/chat/resume",
+                        "params": {"conversation_id": conversation_id},
+                    },
+                },
+            )
+
+        # FIX 3 + P1-5: QUEUE same-client conflict → await previous lock
+        # inside a StreamingResponse generator so we can emit SSE keepalive
+        # pings while waiting (nginx/cloudflare drop the socket after 30-60s
+        # of no data; the wait can legitimately take that long).  If
+        # wait_for_idle returns True we retry start() and fall back into
+        # the normal SSE pipeline; on timeout we emit a final error frame
+        # and close cleanly.
+        if (
+            conflict is not None
+            and start_result.queued_after_generation is not None
+        ):
+            from openakita.config import settings
+
+            _queue_timeout_s = max(0.5, settings.preempt_settle_timeout_ms / 1000.0)
+            _queued_after_gen = start_result.queued_after_generation
+            logger.info(
+                "[Chat API] QUEUE wait conv=%s after gen=%d (timeout=%.1fs)",
+                conversation_id,
+                _queued_after_gen,
+                _queue_timeout_s,
+            )
+
+            async def _queued_stream() -> AsyncIterator[str]:
+                # 1) Tell the client we're queued — gives the UI a chance
+                # to show "排队中…" instead of an opaque empty stream.
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "type": "queued",
+                            "conversation_id": conversation_id,
+                            "after_generation": _queued_after_gen,
+                            "timeout_ms": settings.preempt_settle_timeout_ms,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
+                )
+
+                # 2) Race wait_for_idle against a 5s ping loop.  We do this
+                # by polling wait_for_idle in 5s slices instead of one
+                # long await — same effect, but we get to yield ping
+                # between slices so transparent HTTP proxies don't kill
+                # the connection during long settle.
+                _PING_INTERVAL = 5.0
+                _waited = 0.0
+                _idle_reached = False
+                while _waited < _queue_timeout_s:
+                    _slice = min(_PING_INTERVAL, _queue_timeout_s - _waited)
+                    _slice_start = time.time()
+                    _idle_reached = await lifecycle.wait_for_idle(
+                        conversation_id,
+                        target_generation=_queued_after_gen,
+                        timeout=_slice,
+                    )
+                    _waited += time.time() - _slice_start
+                    if _idle_reached:
+                        break
+                    # Periodic ping — SSE comment line, ignored by all
+                    # spec-compliant clients but keeps proxies happy.
+                    yield f": ping queued-wait elapsed={_waited:.1f}s\n\n"
+                    if await request.is_disconnected():
+                        logger.info(
+                            "[Chat API] QUEUE wait abandoned (client disconnect) "
+                            "conv=%s",
+                            conversation_id,
+                        )
+                        return
+
+                if not _idle_reached:
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "type": "error",
+                                "error": "queue_timeout",
+                                "message": (
+                                    f"等待上一次任务结束超过 {settings.preempt_settle_timeout_ms}ms，"
+                                    "请稍后重试或显式取消上一次任务。"
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    )
+                    yield 'data: {"type": "done"}\n\n'
+                    if turn_id:
+                        try:
+                            from .turn_registry import get_turn_registry
+
+                            await get_turn_registry().mark_failed(
+                                turn_id, summary="queue_timeout"
+                            )
+                        except Exception:
+                            pass
+                    return
+
+                # 3) Idle reached — retry lifecycle.start.  If that still
+                # conflicts (rare; someone raced in between), surface a
+                # 409-style error frame and close.
+                try:
+                    retry_result = await lifecycle.start(
+                        conversation_id,
+                        client_id,
+                        policy=_dt_policy,
+                        turn_id=turn_id or None,
+                    )
+                except Exception as exc:
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "type": "error",
+                                "error": "lifecycle_retry_failed",
+                                "message": str(exc)[:200],
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    )
+                    yield 'data: {"type": "done"}\n\n'
+                    return
+
+                if retry_result.conflict is not None:
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "type": "error",
+                                "error": "conversation_busy",
+                                "message": (
+                                    "上一次任务结束后立即又有新任务占用，"
+                                    "请稍后重试。"
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    )
+                    yield 'data: {"type": "done"}\n\n'
+                    if turn_id:
+                        try:
+                            from .turn_registry import get_turn_registry
+
+                            await get_turn_registry().mark_failed(
+                                turn_id, summary="conversation_busy_after_queue"
+                            )
+                        except Exception:
+                            pass
+                    return
+
+                # 4) Got the lock — splice into the normal SSE pipeline.
+                # We delegate to _stream_chat exactly like the no-conflict
+                # path; the queued frame above already informed the UI.
+                #
+                # FIX-A (post-S2 audit): wrap everything from lock acquire
+                # to ownership-transfer in try/finally.  If the client
+                # cancels mid-await (network drop, browser tab close,
+                # browser-side fetch abort) between ``lifecycle.start``
+                # returning and ``_stream_chat`` 's finally block taking
+                # over, CancelledError would skip ``except Exception``
+                # and leak the lock forever — the conversation becomes
+                # un-startable until process restart.  The safety-net
+                # finish() below is idempotent (generation-guarded), so
+                # it is a no-op when _stream_chat already cleaned up.
+                _lock_owned_by_outer = True
+                try:
+                    try:
+                        _agent_lazy = await _get_agent_for_session(
+                            request,
+                            conversation_id,
+                            body.agent_profile_id,
+                        )
+                    except Exception as exc:
+                        await lifecycle.finish(
+                            conversation_id,
+                            generation=retry_result.generation,
+                        )
+                        _lock_owned_by_outer = False
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "type": "error",
+                                    "error": "agent_init_failed",
+                                    "message": str(exc)[:200],
+                                },
+                                ensure_ascii=False,
+                            )
+                            + "\n\n"
+                        )
+                        yield 'data: {"type": "done"}\n\n'
+                        return
+                    _sm_lazy = getattr(request.app.state, "session_manager", None)
+                    # Mirror the main path's mode resolution: plan_mode shim
+                    # + permission_mode override.  Don't duplicate the full
+                    # block here — the main flow's effective_mode lives only
+                    # in that scope, so we re-derive the minimal set.
+                    _eff_mode_lazy = body.mode
+                    if body.plan_mode and _eff_mode_lazy == "agent":
+                        _eff_mode_lazy = "plan"
+                    if body.permission_mode == "plan" and _eff_mode_lazy == "agent":
+                        _eff_mode_lazy = "plan"
+                    _requested_mode_lazy = body.mode
+                    body.mode = _eff_mode_lazy
+                    body.conversation_id = conversation_id
+
+                    _sub_gen = _stream_chat(
+                        body,
+                        _agent_lazy,
+                        _sm_lazy,
+                        http_request=request,
+                        busy_generation=retry_result.generation,
+                        request_id=request_id,
+                        requested_mode=_requested_mode_lazy,
+                    )
+                    if is_dual_loop():
+                        _sub_gen = engine_stream(_sub_gen)
+                    # Once we start iterating _sub_gen, its body enters
+                    # the try-block (the first yield suspends inside the
+                    # try), so its finally is guaranteed to run on any
+                    # subsequent cancel — flip the ownership flag so the
+                    # outer safety-net doesn't double-finish.
+                    async for _line in _sub_gen:
+                        if _lock_owned_by_outer:
+                            _lock_owned_by_outer = False
+                        yield _line
+                finally:
+                    if _lock_owned_by_outer:
+                        try:
+                            await lifecycle.finish(
+                                conversation_id,
+                                generation=retry_result.generation,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "[Chat API] queued-stream safety-net "
+                                "finish failed (conv=%s, gen=%d)",
+                                conversation_id,
+                                retry_result.generation,
+                                exc_info=True,
+                            )
+
+            # IMPORTANT: do NOT call _stream_chat directly here.  The
+            # queued path needs its own StreamingResponse so the SSE
+            # connection opens immediately (so the proxy sees data
+            # within seconds), instead of blocking on wait_for_idle
+            # before even sending headers.
+            return StreamingResponse(
+                _queued_stream(),
+                media_type="text/event-stream; charset=utf-8",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         if conflict is not None:
+            # REJECT, cross-client, or QUEUE that timed out / re-conflicted
+            # after the wait. Mark the registered turn (if any) as failed so
+            # the client must supply a fresh turn_id to retry.
+            if turn_id:
+                from .turn_registry import get_turn_registry
+
+                await get_turn_registry().mark_failed(
+                    turn_id, summary="conversation_busy"
+                )
             return JSONResponse(
                 status_code=409,
                 content={
@@ -1718,6 +2224,7 @@ async def chat(request: Request, body: ChatRequest):
                     "conversation_id": conversation_id,
                     "busy_client_id": conflict.client_id,
                     "busy_since": conflict.start_time,
+                    "policy": _dt_policy.value,
                     "message": "该会话正在其他终端进行中，请新建会话或稍后再试",
                 },
             )
@@ -2160,6 +2667,196 @@ async def chat_answer(request: Request, body: ChatAnswerRequest):
         "answer": body.answer,
         "hint": "No pending risk confirmation matched this conversation_id and answer.",
     }
+
+
+@router.get("/api/chat/resume")
+async def chat_resume(
+    request: Request,
+    conversation_id: str,
+    since_seq: int = 0,
+):
+    """Read-only SSE attach to an in-flight agent task.
+
+    v1.27.15 (S2 P0-1, follow-up to S1).  Solves the "agent still running
+    but UI shows nothing after reconnect" problem.
+
+    Why a separate endpoint instead of just letting POST /api/chat with
+    Last-Event-ID re-enter?
+    --------------------------------------------------------------
+    S1 made ``POST /api/chat`` go through ``lifecycle.start()`` which
+    409s same-conversation overlap (REJECT) or QUEUE-waits up to 30s
+    (QUEUE).  Either way a reconnecting client can't actually get back
+    to the original SSE stream — it would either be rejected or queued
+    behind the still-running task forever.  The C17 Phase B replay
+    logic inside ``_stream_chat`` therefore became unreachable in the
+    common case.
+
+    This endpoint is **strictly read-only attach**:
+
+    * Does NOT touch ``ConversationLifecycleManager`` (no busy-lock
+      change, no generation bump, no policy resolution).
+    * Does NOT call any Agent method, does NOT register a turn in
+      ``TurnRegistry``.
+    * Does NOT modify the SSE session except by reading its current_seq.
+
+    Flow:
+    1. Flush ringbuffer events with ``seq > since_seq`` immediately
+       (this carries replay frames with their ORIGINAL seq so the
+       client's ``seenSequenceNums`` dedup works).
+    2. Tail-poll the ringbuffer every 100ms; whenever ``current_seq``
+       advances, flush the newly-buffered events.
+    3. Exit when ANY of:
+       - Client disconnects (``request.is_disconnected()``).
+       - Lifecycle reports the conversation idle (task ended).
+       - 15 minutes elapse with no new events (matches the SSE
+         disconnect grace period — beyond this we'd just be a leak).
+
+    The same conversation can have multiple concurrent ``/resume``
+    subscribers (e.g. user has the app open on two devices); each gets
+    its own polling loop reading the shared ringbuffer.
+
+    Query params:
+        conversation_id: required.  The conversation to attach to.
+        since_seq: optional, default 0.  Skip events with seq <= this
+            value.  Pass the highest seq the client has already rendered
+            to avoid double-rendering after a reconnect.
+    """
+    from ...core.sse_replay import format_sse_frame
+    from ...core.sse_replay import get_registry as _get_sse_registry
+
+    sse_session = _get_sse_registry().get(conversation_id)
+    if sse_session is None:
+        # No buffered events for this conversation at all (process restart,
+        # GC'd after TTL, or the conversation never streamed anything).
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "no_sse_session",
+                "conversation_id": conversation_id,
+                "message": (
+                    "没有可恢复的会话流。可能是后端重启或会话已超时；"
+                    "请直接发起新消息。"
+                ),
+            },
+        )
+
+    lifecycle = get_lifecycle_manager()
+
+    async def _resume_stream() -> AsyncIterator[str]:
+        _tail_started_at = time.time()
+        _MAX_TAIL_SECONDS = 15 * 60  # 15min — matches DISCONNECT_GRACE_SECONDS
+        _POLL_INTERVAL = 0.1
+        _last_emitted_seq = since_seq if since_seq >= 0 else 0
+        _last_event_time = time.time()
+
+        # 1) Initial flush — everything past since_seq right now.
+        try:
+            initial = sse_session.replay_from(_last_emitted_seq)
+            if initial:
+                logger.info(
+                    "[Chat Resume] conv=%s flushing %d buffered event(s) "
+                    "(since_seq=%d → up to %d)",
+                    conversation_id,
+                    len(initial),
+                    _last_emitted_seq,
+                    initial[-1].seq,
+                )
+                for evt in initial:
+                    yield format_sse_frame(
+                        evt,
+                        data_json=json.dumps(evt.payload, ensure_ascii=False),
+                    )
+                    _last_emitted_seq = evt.seq
+                _last_event_time = time.time()
+
+            # Send a synthetic "resume_attached" so the client UI can
+            # transition out of "connecting…" state immediately even
+            # before the next real event arrives.
+            yield (
+                f"data: {json.dumps({'type': 'resume_attached', 'conversation_id': conversation_id, 'last_seq': _last_emitted_seq}, ensure_ascii=False)}\n\n"
+            )
+
+            # 2) Tail loop — poll for new events.
+            # FIX-C (post-S2 audit): emit SSE comment pings every
+            # SSE_KEEPALIVE_INTERVAL (15s) of idle so cloudflare /
+            # nginx / corporate proxies don't drop the resume socket
+            # while the underlying agent is taking a long thinking
+            # turn (LLM with extended-thinking can pause 30-60s
+            # between deltas).  Without this, mobile clients see the
+            # stream silently die after ~30s on idle.
+            _last_ping_time = time.time()
+            while True:
+                if time.time() - _tail_started_at > _MAX_TAIL_SECONDS:
+                    logger.info(
+                        "[Chat Resume] conv=%s max tail duration reached, closing",
+                        conversation_id,
+                    )
+                    break
+                try:
+                    if await request.is_disconnected():
+                        logger.debug(
+                            "[Chat Resume] conv=%s client disconnected", conversation_id
+                        )
+                        break
+                except Exception:
+                    pass
+
+                cur = sse_session.current_seq
+                if cur > _last_emitted_seq:
+                    new_events = sse_session.replay_from(_last_emitted_seq)
+                    for evt in new_events:
+                        yield format_sse_frame(
+                            evt,
+                            data_json=json.dumps(evt.payload, ensure_ascii=False),
+                        )
+                        _last_emitted_seq = evt.seq
+                    _now = time.time()
+                    _last_event_time = _now
+                    _last_ping_time = _now
+                else:
+                    # No new events.  Check if the lifecycle says the
+                    # conversation is no longer busy and we've quiesced
+                    # for a bit — then we can close cleanly.
+                    try:
+                        status = await lifecycle.get_busy_status(conversation_id)
+                        busy = bool(status.get("busy"))
+                    except Exception:
+                        busy = False
+                    if not busy and time.time() - _last_event_time > 1.0:
+                        # Emit a synthetic done so the client can clean up.
+                        yield (
+                            f"data: {json.dumps({'type': 'done', 'reason': 'task_idle', 'last_seq': _last_emitted_seq}, ensure_ascii=False)}\n\n"
+                        )
+                        break
+                    # Idle but still busy — periodic keepalive ping so
+                    # the connection survives long LLM thinking turns.
+                    if time.time() - _last_ping_time >= 15.0:
+                        yield (
+                            f": ping resume-tail elapsed={(time.time() - _tail_started_at):.0f}s\n\n"
+                        )
+                        _last_ping_time = time.time()
+
+                await asyncio.sleep(_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            # Client gone or server shutdown.  Just exit; ringbuffer is
+            # unaffected so other subscribers / future reconnects still work.
+            logger.debug("[Chat Resume] conv=%s tail cancelled", conversation_id)
+            raise
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[Chat Resume] conv=%s tail error: %s", conversation_id, exc)
+            yield (
+                f"data: {json.dumps({'type': 'error', 'message': f'resume tail failed: {exc!s}'[:200]}, ensure_ascii=False)}\n\n"
+            )
+
+    return StreamingResponse(
+        _resume_stream(),
+        media_type="text/event-stream; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/api/chat/cancel")

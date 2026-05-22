@@ -89,8 +89,14 @@ def test_v3_migration_backs_up_and_quarantines_legacy_desktop_memory(tmp_path):
 
     rows = storage.load_all(scope="legacy_quarantine", scope_owner="", user_id="legacy")
     assert [row["content"] for row in rows] == ["legacy desktop memory"]
-    # v4: backup filename uses target schema version, so v2 dbs upgrade through to v4.
-    assert list(db_path.parent.glob("openakita.db.bak.v2_to_v4.*"))
+    # Backup filename uses target schema version, so v2 dbs upgrade
+    # through to the current ``_SCHEMA_VERSION`` (was v4, bumped to v5
+    # by v1.27.15 S2 P1-6 for ``conversation_turns.metadata``).
+    from openakita.memory.storage import _SCHEMA_VERSION
+
+    assert list(
+        db_path.parent.glob(f"openakita.db.bak.v2_to_v{_SCHEMA_VERSION}.*")
+    )
 
 
 def test_two_users_do_not_see_each_other_long_term_memory(tmp_path):

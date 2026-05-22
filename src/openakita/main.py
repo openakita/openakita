@@ -277,13 +277,32 @@ def _setup_session_backfill(agent_or_master):
             )
 
             def _write_turn(safe_id, turn_index, role, content, metadata):
+                # v1.27.15 (P1-6): forward metadata so SqliteTurnStore.save_turn
+                # can persist ``marker_type``, ``policy``, etc. — required for
+                # the lifecycle extractor to skip ``preempted`` / ``aborted_partial``
+                # markers when building long-term memory.
+                #
+                # Filter the metadata to what's actually useful for downstream
+                # consumers: timestamp goes via its own arg; the rest is JSON.
                 try:
+                    _meta = None
+                    if isinstance(metadata, dict):
+                        _meta = {
+                            k: v
+                            for k, v in metadata.items()
+                            if k != "timestamp"
+                            and v is not None
+                            and isinstance(k, str)
+                        }
+                        if not _meta:
+                            _meta = None
                     _mm.store.save_turn(
                         session_id=safe_id,
                         turn_index=turn_index,
                         role=role,
                         content=content if isinstance(content, str) else str(content),
-                        timestamp=metadata.get("timestamp"),
+                        timestamp=(metadata or {}).get("timestamp"),
+                        metadata=_meta,
                     )
                 except Exception as exc:
                     logger.debug(f"[main] turn writer failed: {exc}")
