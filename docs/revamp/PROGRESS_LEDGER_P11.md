@@ -114,3 +114,22 @@ single-row summary table at the end.
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-11 P11.0a | docs(revamp): P11.0a draft P-RC-11 charter for G-RC-10 carry-over absorption epic [P-RC-11 P11.0a] | +358 P-RC-11-CHARTER.md (NEW) + ~+85 ledger seed (NEW) = ~+443 docs-only | unchanged (zero source / test edits in this commit; G-RC-10 baseline = 6026 passed / 60 carry-overs target) | ADR-0015 (308 shim retirement; respected as LOCKED -- shim NOT touched) + cross-refs to ADR-0011 / ADR-0014 (informational only; no ADR file edits) |
+
+
+---
+
+## P11.0b -- P-RC-11 recon doc landed (per-cluster carry-over inventory)
+
+> Mints `docs/revamp/P-RC-11-RECON.md` (434 LOC) --
+> 7-cluster companion to P11.0a charter; per cluster
+> (A..G): failing tests, source files, root cause
+> (grep-verified at `5b32d845`), fix strategy, LOC,
+> dependencies. Section 8 endorses charter 4.1 ordering
+> (A -> B+G -> D -> C -> E -> F); section 9 confirms
+> ~+1 330 net envelope. Supplement: `agents/profile.py`
+> imports `tool_categories` (beyond charter R-11-2);
+> P11.1 re-export handles it. BOM-free; docs-only. Next: P11.1.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-11 P11.0b | docs(revamp): P11.0b add P-RC-11 reconnaissance doc with per-cluster carry-over inventory [P-RC-11 P11.0b] | +434 P-RC-11-RECON.md (NEW) + ~+18 ledger row = ~+452 docs-only | unchanged (baseline 6026 / 60 carry-overs) | ADR-0015 (Cluster C xfail; LOCKED) + ADR-0011 / ADR-0014 (informational) |
