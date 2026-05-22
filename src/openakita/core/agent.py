@@ -8495,19 +8495,38 @@ class Agent:
             in_flight = _prev_task.get_in_flight_tools()
             if in_flight:
                 from .tool_interrupt_behavior import (
-                    has_any_block_tool,
+                    has_any_block_in_flight,
                     is_unknown_tool,
-                    partition_by_behavior,
+                    parse_mcp_sub_tool,
+                    resolve_in_flight_behavior,
                 )
 
-                if has_any_block_tool(in_flight):
-                    block_tools, _cancel_tools = partition_by_behavior(in_flight)
+                # v1.28.2 FOLLOW-UP-S4-B: pass mcp_client so encoded
+                # ``mcp:server:sub_tool`` entries can resolve via MCP
+                # annotations rather than treating every MCP call as block.
+                mcp_client = getattr(self, "mcp_client", None)
+                if has_any_block_in_flight(in_flight, mcp_client=mcp_client):
+                    # Use the mcp-aware resolver for partition + reason
+                    # too — keeps logging accurate.
+                    block_tools: list[str] = []
+                    for n in in_flight:
+                        if (
+                            resolve_in_flight_behavior(n, mcp_client=mcp_client)
+                            == "block"
+                        ):
+                            block_tools.append(n)
                     # Distinguish "我们标了 block 的工具" vs "未知工具默认
                     # block"——后者表明 _INTERRUPT_BEHAVIOR_MAP 漏标了，
                     # 运维需要在监控里看到这个比例。
-                    only_unknown = all(
-                        is_unknown_tool(n) for n in block_tools
-                    )
+                    # MCP sub-tool encoding counts as "unknown" only when
+                    # the annotations themselves are missing — the
+                    # encoded prefix is intentional, not a registry drift.
+                    def _is_drift(n: str) -> bool:
+                        if parse_mcp_sub_tool(n) is not None:
+                            return False
+                        return is_unknown_tool(n)
+
+                    only_unknown = all(_is_drift(n) for n in block_tools)
                     downgrade_reason = (
                         "unknown_tool" if only_unknown else "block_in_flight"
                     )
@@ -8535,6 +8554,16 @@ class Agent:
 
         if policy is DoubleTextingPolicy.QUEUE:
             inc_queue(channel=channel)
+            # v1.28.2 FOLLOW-UP-S4-A: 第一次 timeout 后如果仍有 block 工具
+            # 在跑，再延长一次等待（不直接 cancel）。覆盖大多数 long-write
+            # 场景，避免 write_file/run_shell 超过 preempt_settle_timeout_ms
+            # 仍被中断造成数据损坏。设 extension_ms=0 即关闭该机制。
+            extension_ms = getattr(
+                settings, "preempt_block_tool_extension_ms", 0
+            )
+            extension_s = max(0.0, extension_ms / 1000.0)
+            timed_out = False
+            extended_once = False
             try:
                 # NOTE: do NOT wrap this in ``asyncio.shield`` — when the
                 # outer coroutine is cancelled while the shield is in
@@ -8564,11 +8593,91 @@ class Agent:
                     pass
                 raise
             except TimeoutError:
+                # First timeout — check if a block-class tool is still in
+                # flight.  If yes (and extension is configured), give the
+                # old task one more grace window before forcibly cancelling.
+                in_flight_after_timeout = _prev_task.get_in_flight_tools()
+                if (
+                    extension_s > 0
+                    and in_flight_after_timeout
+                ):
+                    from .tool_interrupt_behavior import (
+                        has_any_block_in_flight,
+                        is_unknown_tool,
+                        parse_mcp_sub_tool,
+                    )
+
+                    mcp_client_for_ext = getattr(self, "mcp_client", None)
+                    if has_any_block_in_flight(
+                        in_flight_after_timeout,
+                        mcp_client=mcp_client_for_ext,
+                    ):
+                        only_unknown = all(
+                            parse_mcp_sub_tool(n) is None
+                            and is_unknown_tool(n)
+                            for n in in_flight_after_timeout
+                        )
+                        ext_reason = (
+                            "unknown_tool" if only_unknown else "block_in_flight"
+                        )
+                        logger.info(
+                            "[Session:%s] QUEUE wait timed out after %dms but "
+                            "block tool(s) still in flight (sample=%s, "
+                            "reason=%s); extending +%dms before cancel",
+                            session_id,
+                            settings.preempt_settle_timeout_ms,
+                            ",".join(in_flight_after_timeout[:3])
+                            + (
+                                "…"
+                                if len(in_flight_after_timeout) > 3
+                                else ""
+                            ),
+                            ext_reason,
+                            extension_ms,
+                        )
+                        try:
+                            from .conversation_metrics import inc_queue_extended
+
+                            inc_queue_extended(
+                                channel=channel, reason=ext_reason
+                            )
+                        except Exception:
+                            pass
+                        extended_once = True
+                        try:
+                            await asyncio.wait_for(
+                                _prev_task.wait_until_settled(),
+                                timeout=extension_s,
+                            )
+                            logger.info(
+                                "[Session:%s] QUEUE: old task %s settled "
+                                "during extension window; proceeding",
+                                session_id,
+                                _prev_task.task_id[:8],
+                            )
+                        except asyncio.CancelledError:
+                            try:
+                                inc_abandon(policy=policy.value, channel=channel)
+                            except Exception:
+                                pass
+                            raise
+                        except TimeoutError:
+                            timed_out = True
+                if not extended_once:
+                    timed_out = True
+
+            if timed_out:
+                total_waited_ms = (
+                    settings.preempt_settle_timeout_ms
+                    + (extension_ms if extended_once else 0)
+                )
                 logger.warning(
-                    "[Session:%s] QUEUE wait timed out after %dms; "
-                    "cancelling+abandoning old task %s and proceeding",
+                    "[Session:%s] QUEUE wait timed out after %dms "
+                    "(extended=%s); cancelling+abandoning old task %s "
+                    "and proceeding",
                     session_id,
-                    settings.preempt_settle_timeout_ms,
+                    total_waited_ms,
+                    extended_once,
                     _prev_task.task_id[:8],
                 )
                 inc_settled_timeout(policy=policy.value, channel=channel)
@@ -8580,7 +8689,7 @@ class Agent:
                 # 会继续跑直到自己返回，跟新 task 的工具产生 cwd / fs
                 # 副作用 race。
                 _prev_task.cancel(
-                    f"QUEUE timeout after {settings.preempt_settle_timeout_ms}ms"
+                    f"QUEUE timeout after {total_waited_ms}ms"
                 )
                 _prev_task.abandoned = True
                 # S1.8 + P0-3: when abandoning, also surface whatever

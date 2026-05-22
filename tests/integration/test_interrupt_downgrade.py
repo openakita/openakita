@@ -159,12 +159,14 @@ class TestToolExecutorBeginEndWiring:
         from openakita.core.tool_executor import ToolExecutor
 
         src = inspect.getsource(ToolExecutor.execute_tool)
-        # Begin in try, end in finally — both must be present.
-        assert "task.begin_tool(tool_name)" in src
-        assert "task.end_tool(tool_name)" in src
+        # Begin in try, end in finally — both must be present.  The
+        # parameter is ``in_flight_name`` (FOLLOW-UP-S4-B) — a regular
+        # tool name passes through unchanged, ``call_mcp_tool`` is
+        # rewritten to ``mcp:server:sub`` so the preempt resolver can
+        # consult MCP annotations per sub-tool.
+        assert "task.begin_tool(in_flight_name)" in src
+        assert "task.end_tool(in_flight_name)" in src
         # The end_tool MUST be reached on every code path → live in finally.
-        # We don't dissect AST here but the presence + S4 comment is enough
-        # of a tripwire for future refactors.
         assert "finally" in src
         # Same task lookup serves S3 AbortScope + S4 in_flight tracking.
         assert "_resolve_task" in src or "task = self._resolve_task" in src
@@ -179,12 +181,12 @@ class TestToolExecutorBeginEndWiring:
         from openakita.core.tool_executor import ToolExecutor
 
         src = inspect.getsource(ToolExecutor.execute_tool_with_policy)
-        assert "task.begin_tool(tool_name)" in src, (
+        assert "task.begin_tool(in_flight_name)" in src, (
             "FIX-S4-1 regression: execute_tool_with_policy must call "
             "task.begin_tool — it is the primary dispatch path; wiring "
             "only execute_tool leaves in_flight_tools empty in production."
         )
-        assert "task.end_tool(tool_name)" in src
+        assert "task.end_tool(in_flight_name)" in src
         assert "finally" in src
         assert "_resolve_task" in src
 
@@ -603,3 +605,304 @@ class TestRegistryRuntime:
     def test_is_unknown_tool(self) -> None:
         assert not is_unknown_tool("read_file")
         assert is_unknown_tool("never_registered_xyz")
+
+
+# ── FOLLOW-UP-S4-A: QUEUE timeout extension when block tool still in flight ─
+
+
+class TestQueueTimeoutBlockExtension:
+    """v1.28.2 FOLLOW-UP-S4-A: when the QUEUE wait times out but the
+    old task is still running a block-class tool, extend the wait
+    once before cancelling.  Prevents long-write tools (write_file
+    spanning > preempt_settle_timeout_ms) from being cancelled mid
+    flight purely because the operator picked a tight timeout."""
+
+    @pytest.fixture
+    def _queue_channel(self, monkeypatch):
+        """Channel resolving to QUEUE policy (no allow_interrupt)."""
+        monkeypatch.setitem(
+            config_mod.settings.double_texting_per_channel, "ch_q", "queue"
+        )
+        return "ch_q"
+
+    @pytest.mark.asyncio
+    async def test_extension_kicks_in_when_block_tool_in_flight(
+        self, monkeypatch, _queue_channel, _short_settle_timeout
+    ) -> None:
+        """First wait times out with write_file in_flight, extension
+        window settles the task, decision is 'queued_then_proceed'
+        WITHOUT firing the cancel marker."""
+        # ``timeout_s = max(0.5, preempt_settle_timeout_ms/1000)`` so the
+        # first wait floor is 500ms regardless of fixture-set 200ms.  We
+        # need the settle to happen AFTER first timeout (>500ms) but
+        # WITHIN the extension window (extension_ms=500 -> total <1000ms).
+        monkeypatch.setattr(
+            config_mod.settings, "preempt_block_tool_extension_ms", 500
+        )
+
+        a = _make_stub_agent()
+        prev = a.agent_state.begin_task(session_id="s_ext1")
+        prev.transition(TaskStatus.REASONING)
+        prev.begin_tool("write_file")
+
+        a._append_preempt_marker = MagicMock()
+
+        async def settle_during_extension():
+            # Settle at 700ms: past 500ms first-timeout, before 1000ms
+            # second-timeout (500 + 500 extension).
+            await asyncio.sleep(0.7)
+            prev.mark_settled()
+
+        asyncio.create_task(settle_during_extension())
+
+        sess = MagicMock(channel=_queue_channel)
+        decision = await a._preempt_or_queue_prev_task(
+            session_id="s_ext1", session=sess
+        )
+
+        assert decision == "queued_then_proceed"
+        labels = [
+            r["labels"]
+            for r in metrics.snapshot()
+            if r["name"] == "queue_extended"
+        ]
+        assert any(
+            label.get("reason") == "block_in_flight" for label in labels
+        )
+        # Settled within extension window -> no cancel marker.
+        a._append_preempt_marker.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_extension_when_in_flight_is_cancel_only(
+        self, monkeypatch, _queue_channel, _short_settle_timeout
+    ) -> None:
+        """Old task has only cancel-class tools in flight -> no extension,
+        normal timeout -> cancel marker written."""
+        monkeypatch.setattr(
+            config_mod.settings, "preempt_block_tool_extension_ms", 5000
+        )
+
+        a = _make_stub_agent()
+        prev = a.agent_state.begin_task(session_id="s_ext2")
+        prev.transition(TaskStatus.REASONING)
+        prev.begin_tool("read_file")
+
+        a._append_preempt_marker = MagicMock()
+
+        sess = MagicMock(channel=_queue_channel)
+        decision = await a._preempt_or_queue_prev_task(
+            session_id="s_ext2", session=sess
+        )
+        assert decision == "queued_then_proceed"
+        labels = [
+            r["labels"]
+            for r in metrics.snapshot()
+            if r["name"] == "queue_extended"
+        ]
+        assert labels == []
+        a._append_preempt_marker.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_extension_disabled_when_ms_zero(
+        self, monkeypatch, _queue_channel, _short_settle_timeout
+    ) -> None:
+        """preempt_block_tool_extension_ms=0 disables the mechanism even
+        with block tools in flight (back-compat with v1.28.2 pre-fix)."""
+        monkeypatch.setattr(
+            config_mod.settings, "preempt_block_tool_extension_ms", 0
+        )
+
+        a = _make_stub_agent()
+        prev = a.agent_state.begin_task(session_id="s_ext3")
+        prev.transition(TaskStatus.REASONING)
+        prev.begin_tool("write_file")
+
+        a._append_preempt_marker = MagicMock()
+
+        sess = MagicMock(channel=_queue_channel)
+        decision = await a._preempt_or_queue_prev_task(
+            session_id="s_ext3", session=sess
+        )
+        assert decision == "queued_then_proceed"
+        labels = [
+            r["labels"]
+            for r in metrics.snapshot()
+            if r["name"] == "queue_extended"
+        ]
+        assert labels == []
+        a._append_preempt_marker.assert_called_once()
+
+
+# ── FOLLOW-UP-S4-B: MCP sub-tool name encoding ─────────────────────────
+
+
+class TestMcpSubToolEncoding:
+    """v1.28.2 FOLLOW-UP-S4-B: when ``call_mcp_tool`` is dispatched,
+    in_flight_tools registers the encoded sub-tool reference
+    (``mcp:server:tool_name``) and the preempt resolver consults MCP
+    annotations to make a per-sub-tool decision."""
+
+    def test_encode_round_trip(self) -> None:
+        from openakita.core.tool_interrupt_behavior import (
+            encode_mcp_sub_tool,
+            parse_mcp_sub_tool,
+        )
+
+        enc = encode_mcp_sub_tool("notion", "create_page")
+        assert enc == "mcp:notion:create_page"
+        assert parse_mcp_sub_tool(enc) == ("notion", "create_page")
+
+    def test_encode_missing_pieces_falls_back(self) -> None:
+        from openakita.core.tool_interrupt_behavior import encode_mcp_sub_tool
+
+        assert encode_mcp_sub_tool("", "x") == "call_mcp_tool"
+        assert encode_mcp_sub_tool("srv", "") == "call_mcp_tool"
+        assert encode_mcp_sub_tool("", "") == "call_mcp_tool"
+
+    def test_parse_rejects_non_mcp_names(self) -> None:
+        from openakita.core.tool_interrupt_behavior import parse_mcp_sub_tool
+
+        assert parse_mcp_sub_tool("read_file") is None
+        assert parse_mcp_sub_tool("mcp:malformed") is None
+        assert parse_mcp_sub_tool("") is None
+
+    def test_resolve_mcp_tool_behavior_uses_annotations(self) -> None:
+        from openakita.core.tool_interrupt_behavior import (
+            resolve_mcp_tool_behavior,
+        )
+
+        fake_tool = MagicMock()
+        fake_tool.annotations = {"interruptBehavior": "cancel"}
+        client = MagicMock()
+        client._tools = {"notion:search_pages": fake_tool}
+
+        assert (
+            resolve_mcp_tool_behavior(
+                "notion", "search_pages", mcp_client=client
+            )
+            == "cancel"
+        )
+
+    def test_resolve_mcp_falls_back_to_block_when_no_annotation(self) -> None:
+        from openakita.core.tool_interrupt_behavior import (
+            resolve_mcp_tool_behavior,
+        )
+
+        fake_tool = MagicMock()
+        fake_tool.annotations = {}
+        client = MagicMock()
+        client._tools = {"github:create_issue": fake_tool}
+
+        assert (
+            resolve_mcp_tool_behavior(
+                "github", "create_issue", mcp_client=client
+            )
+            == "block"
+        )
+
+    def test_resolve_mcp_no_client(self) -> None:
+        from openakita.core.tool_interrupt_behavior import (
+            resolve_mcp_tool_behavior,
+        )
+
+        assert (
+            resolve_mcp_tool_behavior("any", "any", mcp_client=None)
+            == "block"
+        )
+
+    def test_has_any_block_in_flight_with_readonly_mcp(self) -> None:
+        """Mixed in_flight: pure-cancel built-in + read-only MCP sub-tool
+        -> no block tool actually in flight -> resolver returns False
+        even though a generic 'call_mcp_tool' would have been block."""
+        from openakita.core.tool_interrupt_behavior import (
+            has_any_block_in_flight,
+        )
+
+        fake_tool = MagicMock()
+        fake_tool.annotations = {"interruptBehavior": "cancel"}
+        client = MagicMock()
+        client._tools = {"notion:search_pages": fake_tool}
+
+        result = has_any_block_in_flight(
+            ["read_file", "mcp:notion:search_pages"],
+            mcp_client=client,
+        )
+        assert result is False
+
+    def test_has_any_block_in_flight_with_writing_mcp(self) -> None:
+        """MCP sub-tool with no annotation -> defaults to block."""
+        from openakita.core.tool_interrupt_behavior import (
+            has_any_block_in_flight,
+        )
+
+        fake_tool = MagicMock()
+        fake_tool.annotations = {}
+        client = MagicMock()
+        client._tools = {"notion:create_page": fake_tool}
+
+        result = has_any_block_in_flight(
+            ["read_file", "mcp:notion:create_page"],
+            mcp_client=client,
+        )
+        assert result is True
+
+    def test_in_flight_name_helper(self) -> None:
+        """ToolExecutor._in_flight_name encodes call_mcp_tool inputs."""
+        from openakita.core.tool_executor import ToolExecutor
+
+        assert (
+            ToolExecutor._in_flight_name(
+                "call_mcp_tool",
+                {"server": "notion", "tool_name": "search_pages"},
+            )
+            == "mcp:notion:search_pages"
+        )
+        assert (
+            ToolExecutor._in_flight_name("call_mcp_tool", {})
+            == "call_mcp_tool"
+        )
+        assert (
+            ToolExecutor._in_flight_name("read_file", {"path": "/x"})
+            == "read_file"
+        )
+
+    @pytest.mark.asyncio
+    async def test_readonly_mcp_does_not_downgrade_interrupt(
+        self,
+        monkeypatch,
+        _short_settle_timeout,
+        _interrupt_channel,
+    ) -> None:
+        """End-to-end: only an annotated-as-cancel MCP sub-tool is in
+        flight -> INTERRUPT proceeds with a real preempt, not a downgrade."""
+        a = _make_stub_agent()
+        a._append_preempt_marker = MagicMock()
+
+        fake_tool = MagicMock()
+        fake_tool.annotations = {"interruptBehavior": "cancel"}
+        client = MagicMock()
+        client._tools = {"notion:search_pages": fake_tool}
+        a.mcp_client = client
+
+        prev = a.agent_state.begin_task(session_id="s_mcp_ro")
+        prev.transition(TaskStatus.REASONING)
+        prev.begin_tool("mcp:notion:search_pages")
+
+        async def settle_later():
+            await asyncio.sleep(0.05)
+            prev.mark_settled()
+
+        asyncio.create_task(settle_later())
+
+        sess = MagicMock(channel=_interrupt_channel)
+        decision = await a._preempt_or_queue_prev_task(
+            session_id="s_mcp_ro", session=sess
+        )
+        assert decision == "preempted"
+        # No downgrade counter — INTERRUPT proceeded as real preempt.
+        labels = [
+            r["labels"]
+            for r in metrics.snapshot()
+            if r["name"] == "interrupt_downgrade"
+        ]
+        assert labels == []

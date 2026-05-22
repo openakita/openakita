@@ -105,6 +105,29 @@ def inc_illegal_reasoning_entry(source: str = "unknown") -> None:
     _table.inc("illegal_reasoning_entry", labels={"source": source})
 
 
+def inc_queue_extended(channel: str | None = None, reason: str = "block_in_flight") -> None:
+    """v1.28.2 FOLLOW-UP-S4-A: QUEUE wait 第一次 timeout 但老 task 仍有 block
+    工具在跑，延长一轮等待。
+
+    触发条件：``_preempt_or_queue_prev_task`` 在 QUEUE 分支收到 TimeoutError 时，
+    重新检查 ``_prev_task.get_in_flight_tools()``，若仍有 ``"block"`` 类工具
+    （write_file / run_shell / browser_click / …）则再延长
+    ``preempt_block_tool_extension_ms`` 毫秒等待，而不是立即 cancel。
+
+    监控用途：
+
+    * 命中频次低 → 大多数 block 工具能在第一次 timeout 内完成，机制运行良好。
+    * 命中频次高 → 用户的 block 工具实际耗时超过 ``preempt_settle_timeout_ms``；
+      可以考虑直接提高这个 timeout，或排查工具实现是否有阻塞 bug。
+    * ``reason`` 标签：``block_in_flight``（已标 block 工具）vs ``unknown_tool``
+      （未标注的工具走默认 block）—— 与 ``inc_interrupt_downgrade`` 共享语义。
+    """
+    _table.inc(
+        "queue_extended",
+        labels={"channel": channel or "unknown", "reason": reason},
+    )
+
+
 def inc_interrupt_downgrade(channel: str | None = None, reason: str = "block_in_flight") -> None:
     """v1.28 S4: INTERRUPT 策略到达 agent 层但被自动降级为 QUEUE。
 
@@ -145,6 +168,7 @@ __all__ = [
     "inc_takeover",
     "inc_illegal_reasoning_entry",
     "inc_interrupt_downgrade",
+    "inc_queue_extended",
     "snapshot",
     "reset_for_tests",
 ]

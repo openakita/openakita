@@ -170,6 +170,18 @@ class Settings(BaseSettings):
             "建议 > 最长工具 soft-timeout。"
         ),
     )
+    preempt_block_tool_extension_ms: int = Field(
+        default=24000,
+        ge=0,
+        le=600000,
+        description=(
+            "QUEUE wait 第一次 timeout 时，若老 task 仍有 block 类工具在跑"
+            "（write_file / run_shell / browser_click 等会留下副作用的工具），"
+            "再延长这么多毫秒等一次。覆盖大多数长写场景；第二次 timeout 才"
+            "硬 cancel。设为 0 即关闭延长机制（保持 v1.28.2 之前的行为）。"
+            "v1.28.2 FOLLOW-UP-S4-A。"
+        ),
+    )
 
     # === ForceToolCall（工具护栏）===
     # 默认信任模型自主判断是否需要工具；仅由意图分析或用户配置显式开启追问。

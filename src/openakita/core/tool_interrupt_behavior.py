@@ -340,13 +340,135 @@ def warn_unclassified_tools(tool_names: list[str]) -> int:
     return warned
 
 
+# ── MCP sub-tool name encoding (v1.28.2 FOLLOW-UP-S4-B) ─────────────
+#
+# When ``call_mcp_tool`` is invoked, the dispatcher itself is marked
+# ``"block"`` (safe default).  But the REAL remote tool is whatever
+# ``tool_input["tool_name"]`` is, and *that* tool's MCP annotations
+# may declare a different interrupt behavior (read-only MCP tools can
+# legitimately opt into ``"cancel"``).
+#
+# To make ``in_flight_tools`` and ``has_any_block_tool`` see the
+# correct granularity, we encode the sub-tool as
+# ``mcp:{server}:{sub_tool_name}`` when registering and decode at
+# resolution time.
+
+MCP_TOOL_PREFIX: Final[str] = "mcp:"
+
+
+def encode_mcp_sub_tool(server: str, sub_tool_name: str) -> str:
+    """Encode an MCP sub-tool reference for ``begin_tool`` / ``end_tool``.
+
+    The encoded string is opaque to in_flight_tools — it's just a tag —
+    but ``get_tool_interrupt_behavior`` and ``parse_mcp_sub_tool``
+    understand the format.
+
+    Empty or missing pieces fall back to the literal dispatcher name
+    ``"call_mcp_tool"`` so the rest of the pipeline still sees a known
+    tool (and thus defaults to block).
+    """
+    s = (server or "").strip()
+    t = (sub_tool_name or "").strip()
+    if not s or not t:
+        return "call_mcp_tool"
+    return f"{MCP_TOOL_PREFIX}{s}:{t}"
+
+
+def parse_mcp_sub_tool(name: str) -> tuple[str, str] | None:
+    """Inverse of :func:`encode_mcp_sub_tool`.
+
+    Returns ``(server, sub_tool_name)`` or ``None`` if ``name`` isn't
+    an encoded MCP reference (e.g., it's a regular built-in tool name).
+    """
+    if not name or not name.startswith(MCP_TOOL_PREFIX):
+        return None
+    rest = name[len(MCP_TOOL_PREFIX):]
+    if ":" not in rest:
+        return None
+    server, sub_tool_name = rest.split(":", 1)
+    if not server or not sub_tool_name:
+        return None
+    return server, sub_tool_name
+
+
+def resolve_mcp_tool_behavior(
+    server: str,
+    sub_tool_name: str,
+    *,
+    mcp_client: Any = None,
+) -> InterruptBehavior:
+    """Resolve the interrupt behavior of a real MCP sub-tool.
+
+    Looks up ``mcp_client._tools[f"{server}:{sub_tool_name}"].annotations``
+    (the dict populated by ``MCPClient._discover_capabilities`` at
+    server-connect time), reads
+    ``annotations.get("interruptBehavior")``, and falls back to
+    ``DEFAULT_BEHAVIOR`` ("block") when missing or invalid.
+
+    Returns "block" when ``mcp_client`` is None — safe default for the
+    "called before the catalog is available" case.
+    """
+    if mcp_client is None:
+        return DEFAULT_BEHAVIOR
+    tools_map = getattr(mcp_client, "_tools", None)
+    if not isinstance(tools_map, dict):
+        return DEFAULT_BEHAVIOR
+    tool = tools_map.get(f"{server}:{sub_tool_name}")
+    annotations = getattr(tool, "annotations", None) if tool else None
+    if not isinstance(annotations, dict):
+        return DEFAULT_BEHAVIOR
+    return get_tool_interrupt_behavior(
+        sub_tool_name, mcp_annotations=annotations
+    )
+
+
+def resolve_in_flight_behavior(
+    name: str,
+    *,
+    mcp_client: Any = None,
+) -> InterruptBehavior:
+    """Resolve a possibly-encoded in_flight name to its behavior.
+
+    Convenience for ``_preempt_or_queue_prev_task``: handles both the
+    encoded ``mcp:server:sub_tool`` form (looks up MCP annotations) and
+    the plain form (consults the static map).
+    """
+    parsed = parse_mcp_sub_tool(name)
+    if parsed is not None:
+        server, sub_tool_name = parsed
+        return resolve_mcp_tool_behavior(
+            server, sub_tool_name, mcp_client=mcp_client
+        )
+    return get_tool_interrupt_behavior(name)
+
+
+def has_any_block_in_flight(
+    names: list[str],
+    *,
+    mcp_client: Any = None,
+) -> bool:
+    """Like :func:`has_any_block_tool` but understands MCP sub-tool
+    encoding.  Use this in the preempt-or-queue resolver where the
+    in_flight list can contain encoded MCP references."""
+    for n in names:
+        if resolve_in_flight_behavior(n, mcp_client=mcp_client) == "block":
+            return True
+    return False
+
+
 __all__ = [
     "DEFAULT_BEHAVIOR",
     "InterruptBehavior",
+    "MCP_TOOL_PREFIX",
+    "encode_mcp_sub_tool",
     "get_tool_interrupt_behavior",
+    "has_any_block_in_flight",
     "has_any_block_tool",
     "is_unknown_tool",
     "known_tools",
+    "parse_mcp_sub_tool",
     "partition_by_behavior",
+    "resolve_in_flight_behavior",
+    "resolve_mcp_tool_behavior",
     "warn_unclassified_tools",
 ]

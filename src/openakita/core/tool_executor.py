@@ -519,12 +519,18 @@ class ToolExecutor:
         #   ``execute_tool_with_policy`` (the execute_batch path) wraps
         #   the same in-flight tracking around ITS body for the
         #   reasoning_engine code path; both entry points are covered.
+        # FOLLOW-UP-S4-B — when the dispatched tool is ``call_mcp_tool``
+        #   the actual remote tool name lives in ``tool_input["tool_name"]``;
+        #   register the encoded ``mcp:server:sub`` form so the preempt
+        #   resolver can consult MCP annotations per sub-tool instead of
+        #   treating every MCP call as block.
         #
         # All teardown happens in the same finally so they pair up
         # regardless of which arm raised.
         task = self._resolve_task(session_id)
+        in_flight_name = self._in_flight_name(tool_name, tool_input)
         if task is not None:
-            task.begin_tool(tool_name)
+            task.begin_tool(in_flight_name)
 
         parent_scope: AbortScope | None = current_abort_scope.get()
         if parent_scope is None and task is not None:
@@ -549,7 +555,26 @@ class ToolExecutor:
             if tool_scope is not None and parent_scope is not None:
                 parent_scope.remove_child(tool_scope)
             if task is not None:
-                task.end_tool(tool_name)
+                task.end_tool(in_flight_name)
+
+    @staticmethod
+    def _in_flight_name(tool_name: str, tool_input: dict | None) -> str:
+        """Encode the in-flight tracking name for a tool dispatch.
+
+        For ``call_mcp_tool`` we extract the remote ``server`` /
+        ``tool_name`` from ``tool_input`` and return
+        ``mcp:server:sub_tool`` so the preempt resolver can look up the
+        real tool's MCP annotations.  For everything else we return the
+        canonical tool name unchanged.  Missing / malformed inputs fall
+        back to ``"call_mcp_tool"`` so the static-map default applies.
+        """
+        if tool_name != "call_mcp_tool" or not isinstance(tool_input, dict):
+            return tool_name
+        from .tool_interrupt_behavior import encode_mcp_sub_tool
+
+        server = tool_input.get("server") or ""
+        sub_tool_name = tool_input.get("tool_name") or ""
+        return encode_mcp_sub_tool(str(server), str(sub_tool_name))
 
     def _resolve_task(self, session_id: str | None) -> Any | None:
         """Look up the active TaskState for the given session_id.
@@ -956,10 +981,15 @@ class ToolExecutor:
         todo-gate / grounding-gate early returns that exit before the
         impl is reached, and the original S3/S4 wiring only at
         ``execute_tool`` was bypassed by the ``execute_batch`` path.
+
+        FOLLOW-UP-S4-B: ``call_mcp_tool`` dispatches register an encoded
+        sub-tool reference (``mcp:server:tool_name``) so the preempt
+        resolver can consult MCP annotations per sub-tool.
         """
         task = self._resolve_task(session_id)
+        in_flight_name = self._in_flight_name(tool_name, tool_input)
         if task is not None:
-            task.begin_tool(tool_name)
+            task.begin_tool(in_flight_name)
 
         parent_scope: AbortScope | None = current_abort_scope.get()
         if parent_scope is None and task is not None:
@@ -983,7 +1013,7 @@ class ToolExecutor:
             if tool_scope is not None and parent_scope is not None:
                 parent_scope.remove_child(tool_scope)
             if task is not None:
-                task.end_tool(tool_name)
+                task.end_tool(in_flight_name)
 
     async def _execute_tool_with_policy_inner(
         self,
