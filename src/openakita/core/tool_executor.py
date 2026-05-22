@@ -506,17 +506,29 @@ class ToolExecutor:
         if grounding_block:
             return grounding_block, None
 
-        # v1.28 S3 (plan: conversation concurrency v1.28): derive a per-tool
-        # AbortScope so subprocesses, nested awaits, and tool handlers can
-        # observe cancel without explicit parameter threading.  The parent
-        # scope comes from contextvar (set by ReasoningEngine at turn start);
-        # if absent we fall back to the current task's ``abort_root`` so the
-        # cancel signal still propagates downstream.  Child is removed in the
-        # finally so the parent's children list doesn't grow unboundedly
-        # over a long turn.
+        # v1.28 S3 + S4 (plan: conversation concurrency v1.28).
+        #
+        # Two parallel concerns, both want the active TaskState:
+        #
+        # * S3 — per-tool AbortScope so subprocesses, nested awaits, and tool
+        #   handlers can observe cancel without explicit parameter threading.
+        #   Parent scope comes from the contextvar set by ReasoningEngine at
+        #   turn start; if absent we fall back to the task's ``abort_root``.
+        # * S4 — register the running tool name in ``TaskState.in_flight_tools``
+        #   so a sibling chat handler arriving with INTERRUPT policy can ask
+        #   "is anything block-class running?" and downgrade to QUEUE when the
+        #   answer is yes (write_file / run_shell mid-flight → never cancel).
+        #
+        # Both effects need the same task lookup — do it once.  Child scope
+        # and in-flight entry are torn down in the same finally so they
+        # always pair up regardless of which arm raised.
+        task = self._resolve_task(session_id)
+        if task is not None:
+            task.begin_tool(tool_name)
+
         parent_scope: AbortScope | None = current_abort_scope.get()
-        if parent_scope is None:
-            parent_scope = self._resolve_parent_scope(session_id)
+        if parent_scope is None and task is not None:
+            parent_scope = getattr(task, "abort_root", None)
 
         tool_scope: AbortScope | None = None
         scope_token = None
@@ -534,26 +546,38 @@ class ToolExecutor:
                     pass
             if tool_scope is not None and parent_scope is not None:
                 parent_scope.remove_child(tool_scope)
+            if task is not None:
+                task.end_tool(tool_name)
 
-    def _resolve_parent_scope(self, session_id: str | None) -> AbortScope | None:
-        """Fallback to find the current task's ``abort_root`` when the caller
-        didn't set ``current_abort_scope`` (older code paths, scheduler-spawned
-        tasks).  Returns ``None`` if no active task — execute_tool then runs
-        without scope tracking (still works; just loses sub-tool fan-out)."""
+    def _resolve_task(self, session_id: str | None) -> Any | None:
+        """Look up the active TaskState for the given session_id.
+
+        Shared by S3 (AbortScope lookup) and S4 (in_flight_tools tracking).
+        Returns ``None`` when there's no agent state attached (CLI direct
+        execution, scheduler-spawned tasks, unit tests) — callers should
+        handle that gracefully and run without per-task tracking.
+        """
         agent = self._agent_ref
         if agent is None:
             return None
         state = getattr(agent, "agent_state", None)
         if state is None:
             return None
-        task = None
         try:
             if session_id:
-                task = state.get_task_for_session(session_id)
-            if task is None:
-                task = state.current_task
+                t = state.get_task_for_session(session_id)
+                if t is not None:
+                    return t
+            return state.current_task
         except Exception:
             return None
+
+    def _resolve_parent_scope(self, session_id: str | None) -> AbortScope | None:
+        """Legacy helper retained for callers that only need the abort scope
+        (not the task).  Internally delegates to :meth:`_resolve_task`.
+        Returns ``None`` if no active task — execute_tool then runs without
+        scope tracking (still works; just loses sub-tool fan-out)."""
+        task = self._resolve_task(session_id)
         if task is None:
             return None
         return getattr(task, "abort_root", None)

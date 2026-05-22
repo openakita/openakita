@@ -163,6 +163,22 @@ class TaskState:
     skip_event: asyncio.Event = field(default_factory=asyncio.Event)
     skip_reason: str = ""
 
+    # v1.28 S4: in-flight tool tracking for INTERRUPT-policy downgrade.
+    # ``_preempt_or_queue_prev_task`` reads ``get_in_flight_tools()`` snapshot
+    # when an INTERRUPT request arrives.  If any in-flight tool has
+    # ``interrupt_behavior == "block"`` (write_file, run_shell, browser_click,
+    # …) the policy is auto-downgraded to QUEUE — we wait for the unsafe
+    # tools to finish instead of yanking the rug out from under them.
+    # See ``core/tool_interrupt_behavior.py`` for the classification table.
+    #
+    # No lock needed: ``tool_executor.execute_tool`` runs on a single
+    # asyncio event loop per Agent; even parallel batch execution
+    # (``execute_batch`` with max_parallel>1) serializes through ``await``
+    # points, so ``list.append`` / ``list.remove`` calls from begin/end
+    # are sequential.  Snapshot via ``list(...)`` for the reader so a
+    # concurrent end_tool can't mutate the returned slice.
+    in_flight_tools: list[str] = field(default_factory=list)
+
     # 用户消息插入队列（任务执行期间用户发送的非指令消息）
     pending_user_inserts: list[str] = field(default_factory=list)
     _insert_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -316,6 +332,49 @@ class TaskState:
         else:
             self.partial_thinking += content[:room]
             self.partial_truncated = True
+
+    # v1.28 S4: in-flight tool tracking ───────────────────────────────
+    def begin_tool(self, tool_name: str) -> None:
+        """Register a tool that just started executing.
+
+        Called by ``tool_executor.execute_tool`` at dispatch.  Idempotent
+        on repeated names (parallel batches can run multiple instances of
+        the same tool concurrently — each one ``end_tool``s separately).
+        """
+        if not tool_name:
+            return
+        self.in_flight_tools.append(tool_name)
+
+    def end_tool(self, tool_name: str) -> None:
+        """Unregister a tool whose execution just finished.
+
+        Removes ONE instance of ``tool_name`` from the list — handles the
+        parallel-batch case where the same tool appears multiple times.
+        Silent no-op when the tool isn't registered (defensive: a
+        misordered finally shouldn't crash the agent).
+        """
+        if not tool_name:
+            return
+        try:
+            self.in_flight_tools.remove(tool_name)
+        except ValueError:
+            logger.debug(
+                "[State] end_tool(%r) called but tool not in_flight (task=%s, "
+                "current_list=%s) — likely double-finally or begin missed",
+                tool_name,
+                self.task_id[:8] if self.task_id else "?",
+                self.in_flight_tools,
+            )
+
+    def get_in_flight_tools(self) -> list[str]:
+        """Return a snapshot (shallow copy) of the in-flight tool list.
+
+        Always returns a new list so the caller can iterate safely while
+        another coroutine ``begin/end_tool``s concurrently — important for
+        ``_preempt_or_queue_prev_task`` which evaluates this from a
+        different chat-handler coroutine than the one running the tools.
+        """
+        return list(self.in_flight_tools)
 
     def mark_settled(self) -> None:
         """标记本任务已"settle"（推理循环所有清理已完成，可安全替换）。

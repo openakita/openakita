@@ -105,6 +105,28 @@ def inc_illegal_reasoning_entry(source: str = "unknown") -> None:
     _table.inc("illegal_reasoning_entry", labels={"source": source})
 
 
+def inc_interrupt_downgrade(channel: str | None = None, reason: str = "block_in_flight") -> None:
+    """v1.28 S4: INTERRUPT 策略到达 agent 层但被自动降级为 QUEUE。
+
+    触发条件：``_preempt_or_queue_prev_task`` 检查 in_flight_tools 时发现
+    至少一个 "block" 类工具（write_file / run_shell / browser_click / …）
+    正在执行——立即 cancel 会留下半成品副作用，所以降级走 QUEUE 流程。
+
+    监控用途：
+
+    * ``downgrade_rate = inc_interrupt_downgrade / inc_preempt``
+      —— 评估 INTERRUPT 策略实际可用度；持续 > 30% 说明用户多在写工具
+      执行期间按抢占，需要前端给更清晰的 "loading" 反馈。
+    * ``reason`` 标签后续可扩展为 ``unknown_tool``（未标注工具走默认
+      block 降级）和 ``block_in_flight``（标注为 block 的工具在跑），
+      区分"我们漏标了"vs"用户姿势正常但确实在做重操作"。
+    """
+    _table.inc(
+        "interrupt_downgrade",
+        labels={"channel": channel or "unknown", "reason": reason},
+    )
+
+
 def snapshot() -> list[dict[str, object]]:
     """返回所有 counter 当前值的快照。"""
     return _table.snapshot()
@@ -122,6 +144,7 @@ __all__ = [
     "inc_abandon",
     "inc_takeover",
     "inc_illegal_reasoning_entry",
+    "inc_interrupt_downgrade",
     "snapshot",
     "reset_for_tests",
 ]

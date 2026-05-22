@@ -155,6 +155,12 @@ def _ensure_desktop():
 logger = logging.getLogger(__name__)
 
 
+# v1.28 S4: process-wide flag so the tool-interrupt-behavior startup warn
+# only fires once even when multi-agent fan-out creates several Agents in
+# the same process.  See ``_init_handlers`` for the consumer.
+_INTERRUPT_BEHAVIOR_WARN_DONE: bool = False
+
+
 def _resolve_force_tool_policy(intent: Any) -> tuple[int | None, bool]:
     """Return (force_tool_retries, tool_evidence_required) for the reasoning engine.
 
@@ -2588,6 +2594,23 @@ class Agent:
         logger.info(
             f"Initialized {len(self.handler_registry._handlers)} handlers with {len(self.handler_registry._tool_to_handler)} tools"
         )
+
+        # v1.28 S4: surface any tools missing from
+        # ``_INTERRUPT_BEHAVIOR_MAP`` so contributors notice drift.  Runs
+        # at most once per process — sub-agents share the same warning
+        # state via module-level flag, otherwise multi-agent fan-out
+        # would spam the same warning N times.  Cheap to call (just dict
+        # lookups), but no point doing it more than once.
+        global _INTERRUPT_BEHAVIOR_WARN_DONE
+        if not _INTERRUPT_BEHAVIOR_WARN_DONE:
+            try:
+                from .tool_interrupt_behavior import warn_unclassified_tools
+
+                warn_unclassified_tools(self.handler_registry.list_tools())
+            except Exception as exc:
+                logger.debug("[S4] startup warn skipped: %s", exc)
+            finally:
+                _INTERRUPT_BEHAVIOR_WARN_DONE = True
 
         # C7：handler 全部注册完毕 → 让 PolicyEngineV2 classifier 拿到
         # SystemHandlerRegistry.get_tool_class 作 explicit_lookup。这样 handler
@@ -8456,6 +8479,59 @@ class Agent:
             if session_id:
                 self._pending_cancels.pop(session_id, None)
             return "proceed"
+
+        # v1.28 S4: INTERRUPT 降级判定。
+        #
+        # 走到 INTERRUPT 意味着用户/客户端期望"立即抢占"，老 task 应被
+        # cancel。但若老 task 此刻正在执行 "block" 类工具（write_file /
+        # run_shell / browser_click / mcp_call …），中途 cancel 会留下
+        # 半成品副作用：半写文件、subprocess 持锁、远端 RPC 半执行。
+        # 此时降级为 QUEUE——让老 task 把当前工具跑完，再开始新的请求。
+        # 未知工具默认 block，触发同样降级。
+        #
+        # 不影响 REJECT（HTTP 层已 409 不进 agent）/ STEER（HTTP 层
+        # short-circuit）/ QUEUE（本来就要等）。
+        if policy is DoubleTextingPolicy.INTERRUPT:
+            in_flight = _prev_task.get_in_flight_tools()
+            if in_flight:
+                from .tool_interrupt_behavior import (
+                    has_any_block_tool,
+                    is_unknown_tool,
+                    partition_by_behavior,
+                )
+
+                if has_any_block_tool(in_flight):
+                    block_tools, _cancel_tools = partition_by_behavior(in_flight)
+                    # Distinguish "我们标了 block 的工具" vs "未知工具默认
+                    # block"——后者表明 _INTERRUPT_BEHAVIOR_MAP 漏标了，
+                    # 运维需要在监控里看到这个比例。
+                    only_unknown = all(
+                        is_unknown_tool(n) for n in block_tools
+                    )
+                    downgrade_reason = (
+                        "unknown_tool" if only_unknown else "block_in_flight"
+                    )
+                    logger.info(
+                        "[Session:%s] Downgrading INTERRUPT -> QUEUE on task "
+                        "%s: %d block-class tool(s) in flight "
+                        "(reason=%s, sample=%s)",
+                        session_id,
+                        _prev_task.task_id[:8],
+                        len(block_tools),
+                        downgrade_reason,
+                        ",".join(block_tools[:5])
+                        + ("…" if len(block_tools) > 5 else ""),
+                    )
+                    try:
+                        from .conversation_metrics import inc_interrupt_downgrade
+
+                        inc_interrupt_downgrade(
+                            channel=channel, reason=downgrade_reason
+                        )
+                    except Exception:
+                        pass
+                    # Fall through to QUEUE branch below by mutating policy.
+                    policy = DoubleTextingPolicy.QUEUE
 
         if policy is DoubleTextingPolicy.QUEUE:
             inc_queue(channel=channel)
