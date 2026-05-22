@@ -7994,3 +7994,38 @@ class ReasoningEngine:
             pass
         return False
 
+
+# P11.2b: restore legacy private aliases dropped during P-RC-5 reasoning-engine trim.
+# Canonical homes now live under runtime/state_graph/guards/*; tests in
+# tests/runtime/state_graph/guards/* still access them via
+# openakita.core._reasoning_engine_legacy.<_private_name>.
+from openakita.runtime.state_graph.guards._verb_tool_map import (
+    CLAIMED_TOOL_TO_FRAGMENTS as _CLAIMED_TOOL_TO_FRAGMENTS,  # noqa: F401
+)
+from openakita.runtime.state_graph.guards._verb_tool_map import (
+    VERB_TO_TOOL_FRAGMENTS as _VERB_TO_TOOL_FRAGMENTS,  # noqa: F401
+)
+from openakita.runtime.state_graph.guards.recap_context import (
+    is_recap_context as _is_recap_context,  # noqa: F401
+)
+from openakita.runtime.state_graph.guards.tool_failure_ack import (
+    successful_tool_names as _successful_tool_names,  # noqa: F401
+)
+from openakita.runtime.state_graph.guards.tool_filters import (
+    CHAT_INTENT_CORE_TOOLS as _CHAT_INTENT_CORE_TOOLS,  # noqa: F401
+)
+from openakita.runtime.state_graph.guards.tool_filters import (
+    SHELL_WRITE_PATTERNS as _SHELL_WRITE_PATTERNS,  # noqa: F401
+)
+from openakita.runtime.state_graph.guards.tool_filters import (
+    filter_tools_by_intent as _filter_tools_by_intent,  # noqa: F401
+)
+from openakita.runtime.state_graph.guards.tool_filters import (
+    get_mode_ruleset as _get_mode_ruleset,  # noqa: F401
+)
+from openakita.runtime.state_graph.guards.tool_filters import (
+    is_shell_write_command as _is_shell_write_command,  # noqa: F401
+)
+from openakita.runtime.state_graph.guards.unbacked_action import (
+    extract_unbacked_verbs as _extract_unbacked_verbs,  # noqa: F401
+)
