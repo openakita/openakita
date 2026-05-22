@@ -16,19 +16,25 @@ physically retiring the v1 src surface:
   ``git rm -r src/openakita/orgs/`` (-20 237 LOC; 26 files);
   largest single deletion of P-RC-9.
 
-Two invariants (P-RC-10 P10.4 reverses Test 2 polarity --
-see Test 2 docstring for the post-flatten reality):
+Two invariants (P-RC-10 P10.4 reverses Test 2 polarity; P10.6
+tightens Test 2 further -- see Test 2 docstring for the
+post-shim-removal reality):
 
 1. **v1 src directory retired (Option-Z augmented at P10.2)** --
    ``src/openakita/orgs/`` is either gone (original P-RC-9
    state) or hosts the post-P10.1 v2 flatten (structural
    markers required; v1 regrowth still blocked).
 
-2. **production sources are LEGACY-shim-import-free (post-P10.4)**
+2. **production sources are LEGACY-import-free (post-P10.6)**
    -- strict regex ``^\\s*(?:from|import)\\s+openakita\\.runtime\\.orgs(?:\\.|$|\\s)``
-   MUST find zero hits under ``src/openakita/`` except for the
-   P10.2 shim file. Polarity reversed at P10.4 because P10.1
-   flattened ``runtime/orgs/`` -> ``orgs/``; see Test 2 docstring.
+   MUST find zero hits under ``src/openakita/``, with NO
+   whitelist. P10.6 (``git rm``) removed the lone P10.2
+   deprecation shim file at
+   ``src/openakita/runtime/orgs/__init__.py`` and the
+   companion directory; the whitelist tuple has been dropped
+   (was length 1). Test 2 additionally asserts that the
+   ``src/openakita/runtime/orgs/`` directory itself no longer
+   exists -- a hard post-removal invariant.
 
 Charter cross-refs:
 
@@ -42,12 +48,15 @@ Charter cross-refs:
   docstring back-references that the strict regex correctly
   exempts).
 * ``docs/revamp/P-RC-10-CHARTER.md`` sec 3 P10.4 + RECON sec 4
-  (polarity flip after P10.1 flatten; shim whitelist below).
+  (polarity flip after P10.1 flatten) + sec 2 P10.6 (shim
+  removal trigger conditions and post-removal directory
+  invariant).
 
 The sentinel does **not** activate via ``@pytest.mark.xfail``
 -- in the P9.x convention "sentinel" means **active
 assertion**; xfail markers are removed when the invariant is
-met (which is now, post-epsilon-2b and post-P10.4).
+met (which is now, post-epsilon-2b, post-P10.4 and
+post-P10.6).
 """
 
 from __future__ import annotations
@@ -64,20 +73,19 @@ _V1_DIR = _REPO / "src" / "openakita" / "orgs"
 # Production source root scanned by Test 2 (post-P10.4 polarity).
 _SRC_ROOT = _REPO / "src" / "openakita"
 
-# Files allowed to reference the legacy ``openakita.runtime.orgs``
-# path. Today only the P10.2 deprecation shim itself; the strict
-# regex below would not match the shim's current ``sys.modules``
-# wiring but the file is whitelisted defensively against future
-# shim-internal back-references. Drops to empty at P10.6.
-_SHIM_ALLOWLIST: tuple[str, ...] = (
-    "src/openakita/runtime/orgs/__init__.py",
-)
+# P-RC-10 P10.6 invariant: the deprecation shim location is GONE.
+# Test 2 asserts non-existence of this directory before scanning for
+# residual imports. The companion ``__init__.py`` file was removed
+# via ``git rm`` and the directory itself was pruned (any leftover
+# ``__pycache__`` from a pre-removal interpreter run was wiped).
+_SHIM_DIR = _REPO / "src" / "openakita" / "runtime" / "orgs"
 
-# Strict legacy-import regex (post-P10.4 polarity). Same shape as
-# the historical v1 regex: ``re.MULTILINE`` + leading ``\s*`` for
-# indented (deferred) imports + literal ``from``/``import`` keyword
-# (so docstring back-references do not match) + terminator alt that
-# discriminates the legacy module from any future sibling.
+# Strict legacy-import regex (post-P10.4 polarity; whitelist dropped
+# at P10.6). Same shape as the historical v1 regex: ``re.MULTILINE``
+# + leading ``\s*`` for indented (deferred) imports + literal
+# ``from``/``import`` keyword (so docstring back-references do not
+# match) + terminator alt that discriminates the legacy module from
+# any future sibling.
 _LEGACY_IMPORT_RE = re.compile(
     r"^\s*(?:from|import)\s+openakita\.runtime\.orgs(?:\.|$|\s)",
     re.MULTILINE,
@@ -91,8 +99,10 @@ def _scan_legacy_imports() -> list[tuple[str, int, str]]:
     """Walk ``src/openakita/`` for legacy ``openakita.runtime.orgs`` imports.
 
     Returns ``(rel_posix, line_no, line_text)`` for every matching line.
-    Files in ``_SHIM_ALLOWLIST`` are skipped (the deprecation shim is
-    allowed to self-reference its own legacy dotted path).
+    Post-P10.6 there is **no whitelist** -- the lone shim file that
+    was previously exempt (``src/openakita/runtime/orgs/__init__.py``)
+    has been physically removed and any production import of the
+    deprecated dotted path is therefore a hard failure.
     """
     hits: list[tuple[str, int, str]] = []
     files: list[Path] = sorted(
@@ -100,8 +110,6 @@ def _scan_legacy_imports() -> list[tuple[str, int, str]]:
     )
     for file in files:
         rel = file.relative_to(_REPO).as_posix()
-        if rel in _SHIM_ALLOWLIST:
-            continue
         try:
             blob = file.read_bytes()
         except OSError:
@@ -155,10 +163,9 @@ def test_v1_src_directory_retired() -> None:
     of the deleted v1 file set) trips this assertion.
 
     Test 2 (``test_production_imports_v1_free``) holds the strict
-    "no abs ``from openakita.orgs.X`` import" invariant. P-RC-10 P10.4
-    augments sentinel #9 with a complementary
-    ``openakita.runtime.orgs.*`` regex once the P10.3 sweep completes.
-    The 308 shim under
+    "no abs ``from openakita.runtime.orgs.X`` import" invariant
+    (post-P10.4 polarity; tightened at P10.6 with shim removal +
+    directory non-existence guard). The 308 shim under
     ``src/openakita/api/routes/_orgs_v2_legacy_redirects.py``
     remains the only v1-tagged surface (ADR-0015 option (b); v2.1.0).
     """
@@ -182,40 +189,85 @@ def test_v1_src_directory_retired() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 2 -- production sources are deprecated-shim-import-free
-# (P-RC-10 P10.4: polarity reversed; test name kept byte-stable).
+# Test 2 -- production sources are deprecated-import-free
+# (P-RC-10 P10.4: polarity reversed; P10.6: shim removal + directory
+# non-existence guard + whitelist tuple dropped; test name kept
+# byte-stable so CI / sentinel tracking dashboards follow the same
+# checkpoint identifier across both flips).
 # ---------------------------------------------------------------------------
 
 
 def test_production_imports_v1_free() -> None:
     """Zero ``openakita.runtime.orgs.*`` imports under ``src/openakita/``.
 
-    **Polarity reversed in P-RC-10 P10.4** (post-flatten reality):
-    P-RC-9 era this test banned ``openakita.orgs.*`` (then the
-    retired v1 surface) while ``openakita.runtime.orgs.*`` was the
-    canonical v2 path. P10.1 (``37536a62``) atomically flattened
-    ``runtime/orgs/`` -> ``orgs/``; P10.2 (``d8275080``) turned the
-    old location into a one-release deprecation shim; P10.3a
-    (``5ac2c786``) swept 31 production sites to the new canonical
-    path. This sentinel now guards the inverse invariant: production
-    code under ``src/openakita/`` MUST NOT regrow imports of the
-    deprecated ``openakita.runtime.orgs.*`` path -- except the shim
-    file itself (whitelisted until P10.6 removes it).
+    **Polarity reversed in P-RC-10 P10.4 + tightened in P10.6**
+    (post-flatten + post-shim-removal reality):
 
-    Test name kept byte-stable across the flip so CI/sentinel
-    tracking dashboards follow the same checkpoint identifier.
+    * P-RC-9 era this test banned ``openakita.orgs.*`` (then the
+      retired v1 surface) while ``openakita.runtime.orgs.*`` was
+      the canonical v2 path.
+    * P10.1 (``37536a62``) atomically flattened
+      ``runtime/orgs/`` -> ``orgs/``.
+    * P10.2 (``d8275080``) turned the old location into a
+      one-release deprecation shim
+      (``src/openakita/runtime/orgs/__init__.py``).
+    * P10.3a-f (``5ac2c786`` .. ``e1680941``) swept all
+      production + test + script + docstring sites to the new
+      canonical path.
+    * P10.4 (``eb96fc15``) reversed sentinel #9 Test 2 to ban
+      the deprecated path, whitelisting only the shim file.
+    * **P10.6 (this commit) ``git rm``ed the shim file and
+      pruned the directory.** The shim allowlist tuple
+      (previously of length 1) has been dropped entirely and
+      replaced with the stronger post-removal invariant that
+      the directory ``src/openakita/runtime/orgs/`` itself
+      MUST NOT exist.
+
+    Net effect: production code under ``src/openakita/`` MUST
+    NOT regrow imports of the deprecated
+    ``openakita.runtime.orgs.*`` path under ANY circumstance.
+    Legacy callers now receive a loud ``ModuleNotFoundError``
+    at import time, which is the intended P10.6 behavior.
+
+    Test name kept byte-stable across the polarity flip + the
+    shim removal so CI / sentinel tracking dashboards follow
+    the same checkpoint identifier.
     """
+    # ---- Post-P10.6 directory invariant -----------------------------
+    # The deprecation shim file was removed via ``git rm`` and the
+    # parent directory pruned. Any reappearance (including a stray
+    # ``__pycache__`` left behind by a stale interpreter) is a
+    # regression: either someone re-added the shim or an external
+    # caller is still importing the legacy dotted path and Python is
+    # materializing a phantom package directory.
+    assert not _SHIM_DIR.exists(), (
+        "``src/openakita/runtime/orgs/`` still exists post-P-RC-10 P10.6 -- "
+        "the deprecation shim should have been removed via "
+        "``git rm src/openakita/runtime/orgs/__init__.py`` AND the "
+        "directory pruned (no stale ``__pycache__``). Listing: "
+        + str(sorted(p.name for p in _SHIM_DIR.iterdir()))
+        + "\n\nFix: ``Remove-Item -Path src/openakita/runtime/orgs/ "
+        "-Recurse -Force`` (Windows) or ``rm -rf "
+        "src/openakita/runtime/orgs/`` (POSIX); if the dir was "
+        "regenerated by a phantom import, audit ``src/`` for any "
+        "``openakita.runtime.orgs`` reference Test 2's import scan "
+        "may have missed (e.g. dynamic ``importlib.import_module`` "
+        "or ``__import__`` calls)."
+    )
+
+    # ---- Strict legacy-import scan (no whitelist post-P10.6) --------
     hits = _scan_legacy_imports()
     assert not hits, (
         "Stale ``openakita.runtime.orgs`` import statement(s) found in "
         "production source under ``src/openakita/`` -- this is the "
-        "post-P10.1 flatten polarity guard. The legacy path is a "
-        "deprecation shim only (removal scheduled at P-RC-10 P10.6); "
-        "new code MUST import from ``openakita.orgs.*`` directly:\n"
+        "post-P10.1 flatten polarity guard tightened at P10.6 (the "
+        "P10.2 deprecation shim has been removed; there is NO "
+        "whitelist). The legacy path no longer resolves at runtime "
+        "and would raise ``ModuleNotFoundError`` if imported; new "
+        "code MUST import from ``openakita.orgs.*`` directly:\n"
         + "\n".join(f"  {rel}:{ln}: {line}" for rel, ln, line in hits)
         + "\n\nFix: rewrite ``openakita.runtime.orgs.X`` -> "
         "``openakita.orgs.X`` (1:1 prefix swap; see "
         "docs/revamp/P-RC-10-RECON.md section 1 for the 25-file "
-        "mapping).\nWhitelisted shim file (do NOT add new entries "
-        "without a charter row): " + ", ".join(_SHIM_ALLOWLIST)
+        "mapping)."
     )

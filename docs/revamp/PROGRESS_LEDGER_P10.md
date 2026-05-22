@@ -660,3 +660,100 @@ current_phase: P-RC-10
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-10 P10.5f | docs(revamp): P10.5f close P10.5 deferred-nits roster sign-off (5/5 nits closed) [P-RC-10 P10.5f] | ledger only (~+45 lines) | 267 parity+contracts (unchanged) / 192 runtime-orgs (unchanged) | ADR-0014 (M-2 via P10.5a closes the cap-breach deferral) |
+
+## P10.6 -- remove openakita.runtime.orgs deprecation shim + tighten sentinel #9
+
+> **Sub-phase status (2026-05-22, P10.6 LANDED)**: Physical
+> removal of the P10.2 deprecation shim. The lone tracked
+> file `src/openakita/runtime/orgs/__init__.py` (-46 LOC) is
+> deleted via `git rm` and the now-empty directory pruned
+> (stale `__pycache__` swept). Sentinel #9 Test 2 is
+> tightened accordingly: the 1-entry `_SHIM_ALLOWLIST`
+> tuple is dropped entirely (no whitelist) and a new
+> directory-non-existence assertion guards the post-removal
+> invariant. Test 1 (Option-Z augmented at P10.2) is
+> deliberately left byte-stable -- it polices
+> `src/openakita/orgs/` (the v2 canonical location), not the
+> retired shim path.
+>
+> Trigger conditions per P-RC-10 CHARTER section 2 P10.6:
+>
+> * (a) "one full release shipped with >=7 day burn-in" -- NOT
+>   met (no release tagged on this branch yet).
+> * (b) "zero third-party callers depend on the legacy path" --
+>   MET. The P10.3 cluster (P10.3a-f, commits `5ac2c786`
+>   through `e1680941`) swept all 122 internal call sites
+>   (122 of 124 RECON-strict sites -- 31 src + 30 + 37 + 19 +
+>   3 tests/scripts + 12 docstring back-refs) to the new
+>   canonical `openakita.orgs.*` path; no external plugins
+>   are known to depend on the transitional shim.
+> * Additional gating per CHARTER: P10.5 closure (achieved at
+>   P10.5f `579c7b40` -- this commit's HEAD parent) provided
+>   the green-light to proceed.
+>
+> Shim contents removed (1-paragraph summary): the deleted
+> `__init__.py` issued a one-shot `DeprecationWarning` on
+> first import, re-exported `openakita.orgs.*` via a wildcard
+> `from openakita.orgs import *`, and installed 24
+> `sys.modules` aliases for every sibling submodule
+> (13 public + 11 private; matched the
+> P10.1 flatten RECON section 1 ordering) so that
+> `from openakita.runtime.orgs.X import Y` kept resolving
+> byte-for-byte across the transition. With the shim gone any
+> caller still on the legacy path now receives a
+> `ModuleNotFoundError: No module named 'openakita.runtime.orgs'`
+> at import time -- the intended **loud failure** per P10.6
+> spec.
+>
+> Sentinel #9 Test 2 (`test_production_imports_v1_free`)
+> tightening (whitelist comparison):
+>
+> | aspect | P10.4 (eb96fc15) | P10.6 (this commit) |
+> |---|---|---|
+> | `_SHIM_ALLOWLIST` tuple | `("src/openakita/runtime/orgs/__init__.py",)` (length 1) | **DROPPED** -- constant removed entirely |
+> | `_scan_legacy_imports` skip clause | `if rel in _SHIM_ALLOWLIST: continue` | **REMOVED** -- every src `*.py` / `*.pyi` is scanned, no exemption |
+> | Pre-scan dir invariant | none | **NEW**: `assert not _SHIM_DIR.exists()` -- catches a re-added shim, a phantom package dir from a stray `__pycache__`, or any future regrowth attempt |
+> | Scan regex | `^\s*(?:from\|import)\s+openakita\.runtime\.orgs(?:\.\|$\|\s)` | UNCHANGED (carried byte-stable from P10.4) |
+> | Scope of scan | `src/openakita/**/*.{py,pyi}` minus `_SHIM_ALLOWLIST` | `src/openakita/**/*.{py,pyi}` -- NO exemption |
+>
+> The sentinel file itself lives at
+> `tests/parity/orgs/test_v1_src_retired_sentinel.py` which
+> is OUTSIDE `_SRC_ROOT = repo/src/openakita`, so its own
+> `_LEGACY_BYTES_NEEDLE` regex source and docstring
+> back-references are never scanned -- the "no whitelist
+> except the sentinel's own needle" wording in the P10.6
+> brief is satisfied implicitly by the scan-scope geometry,
+> not by an explicit whitelist entry.
+>
+> Verification matrix (8 checks per P10.6 brief):
+>
+> | # | check | result |
+> |---|---|---|
+> | 1 | `Test-Path src/openakita/runtime/orgs/__init__.py` -> False | PASS (`git rm` succeeded; file removed from index) |
+> | 1b | `Test-Path src/openakita/runtime/orgs` -> False | PASS (directory pruned via `Remove-Item -Recurse -Force` after stale `__pycache__` blocked auto-removal) |
+> | 2 | repo-wide `git grep openakita.runtime.orgs` excluding `docs/revamp/` + `tmp_p10/` | PASS -- 9 hits ALL inside `tests/parity/orgs/test_v1_src_retired_sentinel.py` (regex source bytes + 8 docstring/error-message back-references; ZERO actual imports) |
+> | 3 | `python -c "from openakita.api.server import create_app; create_app()"` | PASS -- 417 routes registered; 0 `openakita.runtime.orgs`-related `DeprecationWarning` (22 other unrelated warnings remain from pre-existing FastAPI `on_event` + sqlalchemy noise -- OUT OF P10.6 SCOPE) |
+> | 4 | `python -c "import openakita.runtime.orgs"` -> `ModuleNotFoundError` | PASS -- raises `ModuleNotFoundError: No module named 'openakita.runtime.orgs'`; exit 1; this is the INTENDED loud failure |
+> | 5 | `pytest tests/parity/orgs/test_v1_src_retired_sentinel.py -v` | PASS -- both tests green (`test_v1_src_directory_retired` byte-stable; `test_production_imports_v1_free` with new dir-invariant + tightened scan) |
+> | 6 | `pytest tests/parity/orgs/ tests/api/contracts/ -q --tb=no` | PASS -- **267 passed** (baseline unchanged from P10.5c floor) |
+> | 7 | `pytest tests/runtime/orgs/ -q --tb=no` | PASS -- **192 passed** (baseline unchanged) |
+> | 8 | adversarial: inject `from openakita.runtime.orgs import OrgManager` into `src/openakita/_adv_p10_6_inject.py`, re-run sentinel | PASS -- Test 2 FAILED loudly (1 hit reported with file:line:text and rewrite instruction); after `Remove-Item` revert, sentinel green again |
+>
+> Hard-rule compliance: only the shim file (deleted) + the
+> sentinel test (tightened) + this ledger row are modified.
+> `src/openakita/orgs/` content untouched. `src/openakita/runtime/__init__.py`
+> inspection (`git grep -nP "orgs" -- src/openakita/runtime/__init__.py`)
+> returned a SINGLE hit on a docstring line ("replaces
+> `src/openakita/orgs/` per ADR-0002"), i.e. NO active
+> `orgs` re-export to remove. Other tests / scripts / ADRs /
+> CHARTER / 308 redirect shim (`api/routes/_orgs_v2_legacy_redirects.py`)
+> all untouched. BOM-free tempfile via .NET
+> `System.Text.UTF8Encoding $false` API (newer PowerShell
+> `-Encoding utf8NoBOM` parameter unavailable in 5.1).
+>
+> Next: P10.7 (G-RC-10 final gate audit + merge-to-main
+> charter -- `revamp/v3-orgs` -> `main`).
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-10 P10.6 | refactor(orgs): P10.6 remove openakita.runtime.orgs deprecation shim + tighten sentinel #9 whitelist [P-RC-10 P10.6] | -46 shim + net ~+30 sentinel (5-entry allowlist tuple + skip clause removed; dir-invariant assertion + new docstring blocks added) + ~+85 ledger row | 267 parity+contracts (unchanged) / 192 runtime-orgs (unchanged); sentinel #9 both tests pass post-tighten; adversarial inject FAIL-then-revert confirmed | ADR-0002 (v2 runtime architecture; shim was a transition aid only -- no architectural delta) |
