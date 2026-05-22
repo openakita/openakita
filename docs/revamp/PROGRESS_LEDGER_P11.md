@@ -611,3 +611,42 @@ single-row summary table at the end.
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-11 P11.6 | test(unit): P11.6 close cluster F residual legacy test failures (3 cases) [P-RC-11 P11.6] | +10 / -3 net +7 across 3 test files (memory_manager +8/-1 contract update + comment, c23_security_confirm +1/-1 path, c23_tool_intent_preview +1/-1 path); well under `<= 50` task-brief budget; ledger row not counted toward test LOC | +3 passed (43 -> 46 in the c17/c23/memory_manager quartet); narrow slice `459 / 459` unchanged | none (contract reaffirmation only; no ADR edits) |
+
+## P11.7a -- G-RC-11 final gate doc + P-RC-11 epic closure (PASS)
+
+> **Sub-phase status (2026-05-22, P11.7a LANDED)**: G-RC-11
+> final roll-up gate authored at
+> ``docs/revamp/gates/G-RC-11.md`` (~230 LOC, 10 sections +
+> sign-off). All 7 carry-over cluster groups from G-RC-10
+> section 6 are CLOSED (A=de05d585 / B=57eb2f6d + 34241bff
+> / C=a1dff4f7 / D=8f99993b / E=d371e01e / F=ecff4fbd /
+> G absorbed by P11.2b). Verdict: **PASS** -- 5 / 7 acceptance
+> rows SATISFIED outright; 1 SATISFIED-WITH-NOTE (literal
+> 6080 target vs actual 6073 reconciled by P11.3 xfail
+> migration); 1 DEFERRED-TO-OPERATOR (canary 3x, inherited
+> from G-RC-10 row 6). Zero rows FAILED.
+>
+> Full-suite delta G-RC-10 -> G-RC-11:
+> passed 6048 -> 6073 (+25), failed 33 -> 0 (-33),
+> errors 3 -> 0 (-3), xfailed 5 -> 8 (+3 Cluster C lock),
+> skipped 103 unchanged. Narrow slice 459 / 459 stable
+> across all 9 phase commits. 308 redirect shim
+> ``api/routes/_orgs_v2_legacy_redirects.py`` byte-untouched
+> by every P-RC-11 commit (ADR-0015 still OPEN; v2.1.0
+> retirement unaffected).
+>
+> Hard-rule discipline held: ZERO touch to source code,
+> sentinels, ADRs, charter, recon, gates/G-RC-10.md,
+> gates/G-RC-9*, 308 redirect shim, MERGE_TO_MAIN_v2.md.
+> Only ``docs/revamp/gates/G-RC-11.md`` (new) and this
+> ledger row touched.
+>
+> Next: merge path to ``main`` is cleared from a
+> test-baseline standpoint. Operator-driven pre-merge work
+> (``MERGE_TO_MAIN_v2.md`` section 3 checklist rows 2 + 3,
+> section 7 decision matrix 1-4) remains the final gate
+> before ``revamp/v3-orgs -> main``.
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-11 P11.7a | docs(revamp): P11.7a draft G-RC-11 final gate + close P-RC-11 epic (PASS; 60 carry-overs cleared) [P-RC-11 P11.7a] | gate doc ~230 LOC + ledger ~40 LOC; no source / test touch | full-suite 6073 / 0 / 0 (unchanged from P11.6); narrow slice 459 / 459 (unchanged) | ADR-0015 (Cluster C xfail pinning); informational ADR-0011 + ADR-0014 |
