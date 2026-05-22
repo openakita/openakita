@@ -1144,17 +1144,17 @@ export function OrgEditorView({
   const [confirmReset, setConfirmReset] = useState(false);
   const handleResetOrg = useCallback(async () => {
     if (!currentOrg) return;
+    // P-RC-10 P10.5e (GroupC): the v1 server-side reset endpoint was
+    // retired at P-RC-9 P9.9eta-2 (v1 router deletion) and v2 mint has
+    // no equivalent; gracefully degrade to a local-only UI reset.
     try {
-      const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/reset`, { method: "POST" });
-      const data = await res.json();
-      setCurrentOrg(data);
       setLayoutLocked(false);
       bbPanelRef.current?.refresh();
       setOrgStats(null);
       showToast(t("org.editor.orgReset"));
     } catch (e) { console.error("Failed to reset org:", e); }
     setConfirmReset(false);
-  }, [currentOrg, apiBaseUrl]);
+  }, [currentOrg]);
 
   // ── Save ──
 
@@ -5342,14 +5342,9 @@ export function OrgEditorView({
                 {t("org.editor.importConfig")}
                 <input type="file" accept=".json" style={{ display: "none" }} onChange={handleImportOrg} />
               </label>
-              {liveMode && (<>
-                <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
-                  try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/heartbeat/trigger`, { method: "POST" }); } catch {}
-                }}>{t("org.editor.triggerHeartbeat")}</button>
-                <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
-                  try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/standup/trigger`, { method: "POST" }); } catch {}
-                }}>{t("org.editor.triggerStandup")}</button>
-              </>)}
+              {/* P-RC-10 P10.5e (GroupC): heartbeat-trigger and standup-trigger
+                  buttons removed -- their v1 server-side endpoints were retired
+                  at P-RC-9 P9.9eta-2 and v2 mint exposes no equivalents. */}
             </div>
           </div>
         </div>

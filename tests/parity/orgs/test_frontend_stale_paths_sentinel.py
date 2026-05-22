@@ -10,13 +10,14 @@ caller migration has fully rewired the frontend off the v1
 
 Three invariants:
 
-1. **No stale v1 HTTP literals outside the Group C allowlist** --
+1. **No stale v1 HTTP literals (Group C closed at P10.5e)** --
    no ``/api/orgs/...`` HTTP path literal appears under
-   ``apps/setup-center/src/`` (``*.ts`` + ``*.tsx``) except the 3
-   deprecated debug-only endpoints in ``views/OrgEditorView.tsx``
-   that ride to P9.9 deletion with the v1 router (``reset`` /
-   ``heartbeat/trigger`` / ``standup/trigger``). Collection-time
-   grep; ~30 ms on the current tree.
+   ``apps/setup-center/src/`` (``*.ts`` + ``*.tsx``). The 3 Group C
+   debug-only endpoints (``reset`` / ``heartbeat/trigger`` /
+   ``standup/trigger``) that previously rode the allowlist were
+   deleted at P-RC-10 P10.5e together with the closing of nit
+   GroupC; the allowlist is now empty but kept as a drift guard
+   slot. Collection-time grep; ~30 ms on the current tree.
 2. **Group C allowlist still present** -- the 3 allowlisted
    paths must still exist in ``OrgEditorView.tsx`` at (or near)
    their recorded line numbers. When P9.9 deletes the v1
@@ -57,26 +58,14 @@ _FRONTEND_SRC = _REPO / "apps" / "setup-center" / "src"
 # whitespace, or BOL; TS imports always by ``../`` (i.e. by ``.``).
 _V1_HTTP_RE = re.compile(r"(?<!\.)/api/orgs")
 
-# Three Group C HTTP paths that intentionally stay on v1 through
-# P9.8 -- deprecated debug-only endpoints scheduled for P9.9
-# deletion alongside ``src/openakita/api/routes/orgs.py``.
-# Each entry: (repo-relative path, line, canonical HTTP-path suffix).
-GROUP_C_ALLOWLIST: list[tuple[str, int, str]] = [
-    # Bumped by smoke-B2 follow-up: the two B2 sidebar toolbar inserts
-    # (L~1971 empty-state, L~2147 compact) added 3 lines above these
-    # paths; line numbers below shift 5344 -> 5347 and 5347 -> 5350.
-    ("apps/setup-center/src/views/OrgEditorView.tsx", 1148, "/api/orgs/${currentOrg.id}/reset"),
-    (
-        "apps/setup-center/src/views/OrgEditorView.tsx",
-        5347,
-        "/api/orgs/${currentOrg.id}/heartbeat/trigger",
-    ),
-    (
-        "apps/setup-center/src/views/OrgEditorView.tsx",
-        5350,
-        "/api/orgs/${currentOrg.id}/standup/trigger",
-    ),
-]
+# Group C HTTP path allowlist -- CLOSED at P-RC-10 P10.5e. The three
+# v1 debug-only literals (reset / heartbeat trigger / standup trigger)
+# that previously rode the allowlist have been deleted from
+# ``OrgEditorView.tsx`` now that their owning v1 router was retired at
+# P-RC-9 P9.9eta-2 (v1 src deletion). An empty list keeps the drift
+# test (``test_group_c_allowlist_paths_still_present``) wired as a
+# no-op guard against future re-addition of v1 HTTP literals.
+GROUP_C_ALLOWLIST: list[tuple[str, int, str]] = []
 
 # Four TS module-import paths that look superficially like
 # ``/api/orgs`` but are relative-path module specifiers. Pinned

@@ -397,3 +397,52 @@ current_phase: P-RC-10
 | commit hash | phase | title | LOC delta | tests delta | ADR refs |
 |---|---|---|---|---|---|
 | _this commit_ | P-RC-10 P10.5d | docs(revamp): P10.5d clear deferred nit epsilon-O2 -- record monitor + back-fill disposition for v1 regression-pin tests [P-RC-10 P10.5d] | +0 / -0 (ledger-only; ~28 lines of narrative + 1 table row) | 262 parity+contracts (unchanged) / 192 runtime-orgs (unchanged) | ADR-0011 (subsystem decomposition; v2 OrgRuntime re-implementation closes the v1 regression vectors structurally) |
+
+
+## P10.5e -- close deferred nit GroupC (frontend stale v1 paths)
+
+> **Sub-phase status (2026-05-22, P10.5e LANDED)**: dead-code
+> deletion in ``apps/setup-center/src/views/OrgEditorView.tsx``
+> plus sentinel-allowlist closure. Nit GroupC (from
+> ``docs/revamp/gates/G-RC-9.8.md`` section 1 + P9.8delta-1
+> sentinel #8 allowlist) covered three v1 ``/api/orgs/...`` HTTP
+> literals that survived the P9.8 frontend caller migration as
+> "debug-only endpoints scheduled for P9.9 deletion" -- the v1
+> ``reset`` / ``heartbeat/trigger`` / ``standup/trigger`` paths.
+> At P-RC-9 P9.9eta-2 the v1 router was retired (commit
+> ``857a5a35``) and these endpoints began 404-ing on the server;
+> the frontend kept silent ``try/catch`` callers. v2 mint exposes
+> no equivalents. Per charter section 1.3 fifth bullet option
+> (a), P10.5e DELETES the dead UI code paths.
+>
+> Two coordinated edits:
+>
+> * ``OrgEditorView.tsx`` -- ``handleResetOrg`` callback retains
+>   its local UI reset (layout unlock, blackboard refresh,
+>   org-stats clear, toast) but drops the dead ``safeFetch`` +
+>   response-parse trio; ``apiBaseUrl`` exits the useCallback
+>   deps list. The ``liveMode && (<>...</>)`` fragment carrying
+>   the heartbeat / standup trigger buttons is removed wholesale
+>   (both buttons were 100 % server-dependent with no local
+>   side-effects). Two explanatory comments left in place; both
+>   avoid the literal ``/api/orgs`` substring so the sentinel #8
+>   regex does NOT flag them.
+> * ``test_frontend_stale_paths_sentinel.py`` -- the 3-entry
+>   ``GROUP_C_ALLOWLIST`` is replaced with ``[]`` and the module
+>   docstring's invariant 1 wording is updated to note "Group C
+>   closed at P10.5e". The drift test
+>   ``test_group_c_allowlist_paths_still_present`` becomes a
+>   trivial no-op (empty iterable) but stays wired as a guard
+>   against future re-addition.
+>
+> i18n strings ``org.editor.triggerHeartbeat`` /
+> ``triggerStandup`` are now orphaned in ``i18n/en.json`` +
+> ``i18n/zh.json`` but harmless; deferred to a future hygiene
+> sweep (out of scope for the deferred-nit close-out epic).
+> 262 parity+contracts (unchanged; sentinel #8 still 5 / 5 with
+> empty allowlist) / 192 runtime-orgs (unchanged; backend
+> untouched).
+
+| commit hash | phase | title | LOC delta | tests delta | ADR refs |
+|---|---|---|---|---|---|
+| _this commit_ | P-RC-10 P10.5e | refactor(frontend,parity): P10.5e clear deferred nit GroupC -- delete 3 stale v1 ``/api/orgs/*`` HTTP literals + empty sentinel #8 allowlist [P-RC-10 P10.5e] | +12 / -30 (OrgEditorView -4 net; sentinel allowlist -19 net + docstring +/-equal) + ~50 ledger row | 262 parity+contracts (unchanged; sentinel #8 5 / 5 with empty Group C list) / 192 runtime-orgs (unchanged; backend untouched) | ADR-0011 (v2 subsystem decomposition; v2 mint exposes no equivalent of the retired v1 debug-only endpoints; legitimate clean removal) |
