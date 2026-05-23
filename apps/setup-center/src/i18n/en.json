@@ -3489,6 +3489,8 @@
       "template": "Template",
       "create": "Create",
       "import": "Import",
+      "newOrgBtn": "+ New Org",
+      "createBlankBtn": "Blank",
       "notActivated": "Not activated",
       "onlineIdle": "Online idle",
       "nodeIdle": "Idle",

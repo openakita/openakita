@@ -3504,6 +3504,8 @@
       "template": "模板",
       "create": "创建",
       "import": "导入",
+      "newOrgBtn": "+ 新建组织",
+      "createBlankBtn": "空白",
       "notActivated": "未激活",
       "onlineIdle": "在线空闲",
       "nodeIdle": "空闲",

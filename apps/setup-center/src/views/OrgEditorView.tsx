@@ -93,7 +93,7 @@ import {
   EDGE_COLORS, DEPT_COLORS, getDeptColor,
   BB_TYPE_COLORS, BB_TYPE_LABELS,
   type OrgNodeData, type OrgEdgeData, type OrgSummary,
-  type OrgFull, type TemplateSummary,
+  type OrgFull,
 } from "./orgEditorConstants";
 import agentOrgImg from "../assets/agent_org.png";
 
@@ -644,7 +644,6 @@ export function OrgEditorView({
 
   // State
   const [orgList, setOrgList] = useState<OrgSummary[]>([]);
-  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
   const [currentOrg, setCurrentOrg] = useState<OrgFull | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -653,7 +652,6 @@ export function OrgEditorView({
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lastSavedRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [showTemplates, setShowTemplates] = useState(false);
   const [showNewNodeForm, setShowNewNodeForm] = useState(false);
   const [showWorkbenchPicker, setShowWorkbenchPicker] = useState(false);
   const [propsTab, setPropsTab] = useState<"overview" | "identity" | "capabilities">("overview");
@@ -852,16 +850,6 @@ export function OrgEditorView({
     }
   }, [apiBaseUrl]);
 
-  const fetchTemplates = useCallback(async () => {
-    try {
-      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/templates`);
-      const data = await res.json();
-      setTemplates(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error("Failed to fetch templates:", e);
-    }
-  }, [apiBaseUrl]);
-
   const fetchOrg = useCallback(async (orgId: string) => {
     setLoading(true);
     setActiveDrawer(null);
@@ -931,12 +919,11 @@ export function OrgEditorView({
   useEffect(() => {
     if (visible) {
       fetchOrgList();
-      fetchTemplates();
       fetchMcpServers();
       fetchAvailableSkills();
       fetchAgentProfiles();
     }
-  }, [visible, fetchOrgList, fetchTemplates, fetchMcpServers, fetchAvailableSkills, fetchAgentProfiles]);
+  }, [visible, fetchOrgList, fetchMcpServers, fetchAvailableSkills, fetchAgentProfiles]);
 
   useEffect(() => {
     if (selectedOrgId && visible) {
@@ -1313,36 +1300,6 @@ export function OrgEditorView({
       setCreatingOrg(false);
     }
   }, [apiBaseUrl, fetchOrgList, showToast]);
-
-  const handleCreateFromTemplate = useCallback(async (templateId: string) => {
-    if (orgCreateBusyRef.current) return;
-    orgCreateBusyRef.current = true;
-    setCreatingOrg(true);
-    try {
-      const res = await safeFetch(`${apiBaseUrl}/api/v2/orgs/from-template`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template_id: templateId }),
-      });
-      const data = (await res.json()) as { id?: string; name?: string };
-      const list = await fetchOrgList();
-      let newId = typeof data?.id === "string" && data.id ? data.id : "";
-      if (!newId && list.length > 0) {
-        const sorted = [...list].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-        newId = sorted[0]?.id ?? "";
-      }
-      if (newId) setSelectedOrgId(newId);
-      setShowTemplates(false);
-      showToast(newId ? t("org.editor.createdFromTemplate") : t("org.editor.createdButNotFound"), newId ? "ok" : "error");
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("Failed to create from template:", e);
-      showToast(t("org.editor.createFromTemplateFailed", { error: msg }), "error");
-    } finally {
-      orgCreateBusyRef.current = false;
-      setCreatingOrg(false);
-    }
-  }, [apiBaseUrl, fetchOrgList, showToast, t]);
 
   // P9.8gamma fix: TemplatePickerDialog (formerly Drawer) POSTs to mint runtime's
   // /api/v2/orgs/from-template (B8), which instantiates AND persists
@@ -1982,23 +1939,15 @@ export function OrgEditorView({
             borderRadius: 12, overflow: "hidden",
             boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
           }}>
-            <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4 }}>
+            {/* Sidebar header — flush against the card top so the action row
+                does not float in white space (user report 2026-05-23).  Since
+                v1 orgs were removed, the legacy inline "模板" dropdown is gone
+                and the modal-based TemplatePickerDialog is the single canonical
+                "create from template" entry. */}
+            <div style={{ padding: "8px 10px 6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
               <span style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", flexShrink: 0 }}>{t("orgEditor.title")}</span>
-              {/* smoke-B2: same flex-wrap fix as the compact sidebar (see L~2150). */}
-              <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0 }}>
+              <div style={{ display: "flex", gap: 2, alignItems: "center", flexShrink: 0 }}>
                 <TooltipProvider delayDuration={300}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">{t("org.editor.template")}</Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">{t("org.editor.createFromTemplate")}</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">{t("org.editor.create")}</Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">{t("org.editor.createBlank")}</TooltipContent>
-                  </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span data-testid="org-editor-v2-template-trigger">
@@ -2006,7 +1955,7 @@ export function OrgEditorView({
                           apiBase={apiBaseUrl}
                           onCreated={(org) => void handleCreateOrgV2FromTemplate(org)}
                         >
-                          <Button variant="link" size="sm" disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">新建 v2 组织（从模板）</Button>
+                          <Button variant="link" size="sm" disabled={creatingOrg} className="h-7 px-2 text-xs font-medium text-primary cursor-pointer">{t("org.editor.newOrgBtn")}</Button>
                         </TemplatePickerDialog>
                       </span>
                     </TooltipTrigger>
@@ -2014,35 +1963,26 @@ export function OrgEditorView({
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">{t("org.editor.import")}</Button>
+                      <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-1.5 text-xs text-muted-foreground cursor-pointer">{t("org.editor.createBlankBtn")}</Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{t("org.editor.createBlank")}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-1.5 text-xs text-muted-foreground cursor-pointer">{t("org.editor.import")}</Button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">{t("org.editor.importFromFile")}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+                <input
+                  ref={orgImportRef}
+                  type="file"
+                  accept=".json,.akita-org"
+                  style={{ display: "none" }}
+                  onChange={handleImportOrg}
+                />
               </div>
             </div>
-            {showTemplates && (
-              <div style={{ padding: "0 8px 8px" }}>
-                <div className="card" style={{ padding: 8, fontSize: 12 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("org.editor.createFromTemplateLong")}</div>
-                  {templates.length === 0 && (
-                    <div style={{ color: "var(--muted)", padding: "6px 8px" }}>{t("org.editor.emptyOrgHint")}</div>
-                  )}
-                  {templates.map((tpl) => (
-                    <div key={tpl.id} onClick={() => handleCreateFromTemplate(tpl.id)}
-                      style={{ padding: "6px 8px", borderRadius: "var(--radius-sm)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}
-                      className="navItem"
-                    >
-                      <span><IconBuilding size={14} /></span>
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{tpl.name}</div>
-                        <div style={{ fontSize: 10, color: "var(--muted)" }}>{t("org.editor.nodeCount", { count: tpl.node_count })}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
             <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px" }}>
               {orgList.length === 0 && (
                 <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 20 }}>
@@ -2143,28 +2083,15 @@ export function OrgEditorView({
           boxShadow: "0 8px 24px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)",
         }}
       >
-        <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 4 }}>
+        {/* Compact sidebar header — 3 actions in one tight row, flush with
+            the panel top (user report 2026-05-23).  v1 orgs were removed at
+            P-RC-9, so the legacy "模板" inline dropdown is gone and the modal
+            TemplatePickerDialog is the single canonical "create from template"
+            entry; "空白" is the quick shortcut for a blank org. */}
+        <div style={{ padding: "8px 10px 6px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
           <span style={{ fontWeight: 600, fontSize: 14, whiteSpace: "nowrap", flexShrink: 0 }}>{t("orgEditor.title")}</span>
-          {/* smoke-B2: flexWrap+justifyContent so the 4-button row (模板/创建/新建 v2/导入)
-              wraps gracefully inside the 260px sidebar instead of clipping 导入. */}
-          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", minWidth: 0 }}>
+          <div style={{ display: "flex", gap: 2, alignItems: "center", flexShrink: 0 }}>
             <TooltipProvider delayDuration={300}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    {t("org.editor.template")}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">{t("org.editor.createFromTemplate")}</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    {t("org.editor.create")}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">{t("org.editor.createBlank")}</TooltipContent>
-              </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span data-testid="org-editor-v2-template-trigger-compact">
@@ -2172,8 +2099,8 @@ export function OrgEditorView({
                       apiBase={apiBaseUrl}
                       onCreated={(org) => void handleCreateOrgV2FromTemplate(org)}
                     >
-                      <Button variant="link" size="sm" disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                        新建 v2 组织（从模板）
+                      <Button variant="link" size="sm" disabled={creatingOrg} className="h-7 px-2 text-xs font-medium text-primary cursor-pointer">
+                        {t("org.editor.newOrgBtn")}
                       </Button>
                     </TemplatePickerDialog>
                   </span>
@@ -2182,7 +2109,15 @@ export function OrgEditorView({
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
+                  <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-1.5 text-xs text-muted-foreground cursor-pointer">
+                    {t("org.editor.createBlankBtn")}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("org.editor.createBlank")}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-1.5 text-xs text-muted-foreground cursor-pointer">
                     {t("org.editor.import")}
                   </Button>
                 </TooltipTrigger>
@@ -2196,45 +2131,11 @@ export function OrgEditorView({
               style={{ display: "none" }}
               onChange={handleImportOrg}
             />
-            <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title={t("org.editor.close")} style={{ minWidth: 28, minHeight: 28, opacity: 0.5 }}>
+            <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title={t("org.editor.close")} style={{ minWidth: 24, minHeight: 24, opacity: 0.5, marginLeft: 2 }}>
               <IconX size={14} />
             </button>
           </div>
         </div>
-
-        {/* Templates dropdown */}
-        {showTemplates && (
-          <div style={{ padding: "0 8px 8px" }}>
-            <div className="card" style={{ padding: 8, fontSize: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("org.editor.createFromTemplateLong")}</div>
-              {templates.length === 0 && (
-                <div style={{ color: "var(--muted)", padding: "6px 8px" }}>{t("org.editor.emptyOrgHint")}</div>
-              )}
-              {templates.map((tpl) => (
-                <div
-                  key={tpl.id}
-                  onClick={() => handleCreateFromTemplate(tpl.id)}
-                  style={{
-                    padding: "6px 8px",
-                    borderRadius: "var(--radius-sm)",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    marginBottom: 2,
-                  }}
-                  className="navItem"
-                >
-                  <span><IconBuilding size={14} /></span>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{tpl.name}</div>
-                    <div style={{ fontSize: 10, color: "var(--muted)" }}>{t("org.editor.nodeCount", { count: tpl.node_count })}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Org list */}
         <div style={{ flex: 1, overflowY: "auto", padding: "0 8px" }}>
